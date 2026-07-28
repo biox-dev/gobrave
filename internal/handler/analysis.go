@@ -1770,6 +1770,12 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to get analysis node").WithDetails(err.Error()))
 		return
 	}
+	script, err := h.workflowService.GetScriptByID(c.Request.Context(), analysisNode.ScriptID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to get script").WithDetails(err.Error()))
+		return
+	}
+	scriptType := script.ScriptType
 
 	nodePayload, err := h.buildVisualizationNodePayload(c, analysisNode)
 	if err != nil {
@@ -1777,7 +1783,7 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 		return
 	}
 
-	result, err := visualizationResultsPath(analysisNode.OutputDir, h.config)
+	result, err := visualizationResultsPath(analysisNode.OutputDir, scriptType, h.config)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to list visualization files").WithDetails(err.Error()))
 		return
@@ -2100,7 +2106,7 @@ func (h *AnalysisHandler) attachContainerInfoToNode(c *gin.Context, node map[str
 	return node, nil
 }
 
-func visualizationResultsPath(path string, cfg *config.Config) (VisualizationResultResponse, error) {
+func visualizationResultsPath(path string, scriptType string, cfg *config.Config) (VisualizationResultResponse, error) {
 	result := VisualizationResultResponse{
 		Images: make([]map[string]interface{}, 0),
 		Tables: make([]map[string]interface{}, 0),
@@ -2112,6 +2118,18 @@ func visualizationResultsPath(path string, cfg *config.Config) (VisualizationRes
 	if path == "" {
 		return result, nil
 	}
+	// if scriptType == "qmd" {
+	// 	fullPath := filepath.Join(path, "output.md")
+	// 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+	// 		return result, nil
+	// 	}
+	// 	markdownItem, err := buildMarkdownOutput(fullPath, cfg)
+	// 	if err != nil {
+	// 		return result, err
+	// 	}
+	// 	result.Tables = append(result.Tables, markdownItem)
+	// 	return result, nil
+	// }
 
 	entries, err := os.ReadDir(path)
 
@@ -2147,20 +2165,27 @@ func visualizationResultsPath(path string, cfg *config.Config) (VisualizationRes
 		lowerName := strings.ToLower(filename)
 
 		switch {
-		case isImageFile(lowerName):
+		case isImageFile(lowerName) && scriptType != "qmd":
 			imageItem := buildImageOutput(fullPath, cfg)
 			baseName := imageGroupName(filename)
 			imageGroups[baseName] = append(imageGroups[baseName], imageItem)
-		case strings.HasSuffix(lowerName, ".html"):
+		case strings.HasSuffix(lowerName, ".html") && scriptType != "qmd":
 			htmlItem := buildHTMLOutput(fullPath, cfg)
 			result.HTMLs = append(result.HTMLs, htmlItem)
-		case isTableFile(lowerName):
+		case isTableFile(lowerName) && scriptType != "qmd":
 			tableItem, err := buildTableOutput(fullPath, cfg, 10)
 			if err != nil {
 				return result, err
 			}
 			result.Tables = append(result.Tables, tableItem)
+		case strings.HasSuffix(lowerName, ".md"):
+			markdownItem, err := buildMarkdownOutput(fullPath, cfg)
+			if err != nil {
+				return result, err
+			}
+			result.Tables = append(result.Tables, markdownItem)
 		}
+
 	}
 
 	groupNames := make([]string, 0, len(imageGroups))
@@ -2215,7 +2240,7 @@ func isImageFile(name string) bool {
 
 func isTableFile(name string) bool {
 	return strings.HasSuffix(name, ".csv") ||
-		strings.HasSuffix(name, ".md") ||
+		// strings.HasSuffix(name, ".md") ||
 		strings.HasSuffix(name, ".tsv") ||
 		strings.HasSuffix(name, ".txt") ||
 		strings.HasSuffix(name, ".xlsx") ||
@@ -2266,6 +2291,20 @@ func buildHTMLOutput(path string, cfg *config.Config) map[string]interface{} {
 		"filename": filepath.Base(path),
 		"url":      url,
 	}
+}
+func buildMarkdownOutput(path string, cfg *config.Config) (map[string]interface{}, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	item := map[string]interface{}{
+		"data":     string(content),
+		"type":     "md",
+		"filename": filepath.Base(path),
+		"url":      buildAnalysisFileURL(path, cfg),
+	}
+	return item, nil
 }
 
 func buildTableOutput(path string, cfg *config.Config, rowLimit int) (map[string]interface{}, error) {
@@ -2342,15 +2381,15 @@ func buildTableOutput(path string, cfg *config.Config, rowLimit int) (map[string
 		item["type"] = "info"
 		item["order"] = 10
 		return item, nil
-	case strings.HasSuffix(name, ".md"):
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		item["data"] = string(content)
-		item["type"] = "md"
-		item["order"] = 10
-		return item, nil
+	// case strings.HasSuffix(name, ".md"):
+	// content, err := os.ReadFile(path)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// item["data"] = string(content)
+	// item["type"] = "md"
+	// item["order"] = 10
+	// 	return item, nil
 	case strings.HasSuffix(name, ".xlsx"):
 		item["data"] = []interface{}{}
 		item["type"] = "download"
