@@ -509,6 +509,138 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 
 }
 
+func (h *WorkflowHandler) InstallScript(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("active project not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get active project").WithDetails(err.Error()))
+		return
+	}
+	if h.cfg == nil || strings.TrimSpace(h.cfg.Storage.BaseDir) == "" {
+		c.Error(errors.NewInternalServerError("storage base dir is not configured"))
+		return
+	}
+	storeID := c.Param("storeId")
+	if storeID == "" {
+		c.Error(errors.NewValidationError("storeId is required"))
+		return
+	}
+	storeIDInt, err := strconv.ParseInt(storeID, 10, 64)
+	if err != nil || storeIDInt == 0 {
+		c.Error(errors.NewValidationError("storeId must be a valid integer"))
+		return
+	}
+
+	store, err := h.storeService.GetStoreByID(c.Request.Context(), storeIDInt)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("store not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get store").WithDetails(err.Error()))
+		return
+	}
+	if store == nil || strings.TrimSpace(store.Path) == "" {
+		c.Error(errors.NewValidationError("store path is empty"))
+		return
+	}
+
+	scriptJSONPath, err := resolveStoreScriptJSONPath(store.Path)
+	if err != nil {
+		c.Error(errors.NewNotFoundError("script.json not found in store"))
+		return
+	}
+
+	content, err := os.ReadFile(scriptJSONPath)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to read script json").WithDetails(err.Error()))
+		return
+	}
+
+	payload := &types.ScriptJSONExportResponse{}
+	if err := json.Unmarshal(content, payload); err != nil {
+		c.Error(errors.NewInternalServerError("failed to parse script json").WithDetails(err.Error()))
+		return
+	}
+	if payload.ScriptID == "" {
+		c.Error(errors.NewValidationError("script_id is required in script.json"))
+		return
+	}
+
+	scriptBytes, err := json.Marshal(payload.Script)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to decode script body").WithDetails(err.Error()))
+		return
+	}
+	installScript := &types.Script{}
+	if err := json.Unmarshal(scriptBytes, installScript); err != nil {
+		c.Error(errors.NewInternalServerError("failed to parse script body").WithDetails(err.Error()))
+		return
+	}
+
+	installScript.ID = 0
+	installScript.ProjectID = project.ID
+	installScript.StoreID = store.ID
+	if installScript.ComponentType == "" {
+		installScript.ComponentType = "script"
+	}
+	if strings.TrimSpace(store.URL) != "" {
+		installScript.InstallKey = store.URL
+	}
+	if strings.TrimSpace(store.Version) != "" {
+		installScript.Version = store.Version
+	}
+	if strings.TrimSpace(store.Message) != "" {
+		installScript.Message = store.Message
+	}
+
+	existingScript, err := h.workflowService.ExistsScriptInProjectByScriptID(c.Request.Context(), project.ID, payload.ScriptID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to check existing script").WithDetails(err.Error()))
+		return
+	}
+
+	if existingScript != nil {
+		installScript.ID = existingScript.ID
+		if err := h.workflowService.UpdateScript(c.Request.Context(), installScript); err != nil {
+			c.Error(errors.NewInternalServerError("failed to update installed script").WithDetails(err.Error()))
+			return
+		}
+	} else {
+		if err := h.workflowService.CreateScript(c.Request.Context(), installScript); err != nil {
+			c.Error(errors.NewInternalServerError("failed to install script").WithDetails(err.Error()))
+			return
+		}
+	}
+
+	scriptID := strings.TrimSpace(installScript.ScriptID)
+	if scriptID == "" {
+		scriptID = payload.ScriptID
+	}
+	if scriptID != "" {
+		targetScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, scriptID)
+		sourceScriptDir := filepath.Join(store.Path, "script")
+		// targetScriptDir := filepath.Join(scriptDir, scriptID)
+		if copyErr := copyDirReplace(sourceScriptDir, targetScriptDir); copyErr != nil {
+			c.Error(errors.NewInternalServerError("failed to install script files").WithDetails(copyErr.Error()))
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":             "success",
+		"script_id":           installScript.ScriptID,
+		"installed_script_id": installScript.ID,
+	})
+}
+
 func resolveStoreWorkflowJSONPath(storePath string) (string, error) {
 	storePath = strings.TrimSpace(storePath)
 	if storePath == "" {
@@ -539,6 +671,40 @@ func resolveStoreWorkflowJSONPath(storePath string) (string, error) {
 	}
 	if found == "" {
 		return "", fmt.Errorf("workflow.json not found")
+	}
+	return found, nil
+}
+
+func resolveStoreScriptJSONPath(storePath string) (string, error) {
+	storePath = strings.TrimSpace(storePath)
+	if storePath == "" {
+		return "", fmt.Errorf("store path is empty")
+	}
+
+	directPath := filepath.Join(storePath, "script.json")
+	if stat, err := os.Stat(directPath); err == nil && !stat.IsDir() {
+		return directPath, nil
+	}
+
+	var found string
+	err := filepath.Walk(storePath, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info == nil || info.IsDir() {
+			return nil
+		}
+		if strings.EqualFold(info.Name(), "script.json") {
+			found = path
+			return io.EOF
+		}
+		return nil
+	})
+	if err != nil && !stderrs.Is(err, io.EOF) {
+		return "", err
+	}
+	if found == "" {
+		return "", fmt.Errorf("script.json not found")
 	}
 	return found, nil
 }
