@@ -830,6 +830,61 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 	c.JSON(http.StatusOK, workflowVersion)
 }
 
+// GetScriptById godoc
+// @Summary      根据 ID 获取脚本
+// @Description  根据主键 scriptId 查询脚本详情，附带 StoreVersion
+// @Tags         工作流
+// @Produce      json
+// @Param        scriptId  path      string                true  "脚本主键 ID"
+// @Success      200       {object}  types.ScriptVersion
+// @Failure      400       {object}  errors.AppError
+// @Failure      401       {object}  errors.AppError
+// @Failure      404       {object}  errors.AppError
+// @Failure      500       {object}  errors.AppError
+// @Security     Bearer
+// @Router       /script/{scriptId} [get]
+func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
+	scriptId := c.Param("scriptId")
+	if scriptId == "" {
+		c.Error(errors.NewValidationError("scriptId is required"))
+		return
+	}
+	scriptIDInt, err := strconv.ParseInt(scriptId, 10, 64)
+	if err != nil {
+		c.Error(errors.NewValidationError("scriptId must be a valid integer"))
+		return
+	}
+	script, err := h.workflowService.GetScriptByID(c.Request.Context(), scriptIDInt)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("script not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get script").WithDetails(err.Error()))
+		return
+	}
+
+	storeVersion := ""
+	storeID := script.StoreID
+	if storeID != 0 {
+		store, err := h.storeService.GetStoreByID(c.Request.Context(), storeID)
+		if err != nil {
+			c.Error(errors.NewInternalServerError("failed to get store").WithDetails(err.Error()))
+			return
+		}
+		if store != nil {
+			storeVersion = store.Version
+		}
+	}
+
+	scriptVersion := &types.ScriptVersion{
+		Script:       *script,
+		StoreVersion: storeVersion,
+	}
+
+	c.JSON(http.StatusOK, scriptVersion)
+}
+
 // GenerateWorkflowJSON godoc
 // @Summary      生成工作流 JSON
 // @Description  根据 workflowId 读取工作流、脚本与 ContainerTemplateID，导出可落盘的 workflow.json

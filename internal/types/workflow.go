@@ -33,6 +33,8 @@ type Script struct {
 	OrderIndex          int       `json:"order_index"`
 	Position            string    `json:"position" gorm:"type:text"`
 	Edges               string    `json:"edges" gorm:"type:text"`
+	Version             string    `json:"version" gorm:"type:varchar(255)"`
+	Message             string    `json:"message" gorm:"type:longtext"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }
@@ -132,5 +134,10 @@ type WorkflowVersion struct {
 	// CreatedAt          time.Time      `json:"created_at"`
 	// UpdatedAt          time.Time      `json:"updated_at"`
 	Workflow
+	StoreVersion string `json:"store_version"`
+}
+
+type ScriptVersion struct {
+	Script
 	StoreVersion string `json:"store_version"`
 }

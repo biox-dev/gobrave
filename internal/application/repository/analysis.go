@@ -220,7 +220,7 @@ func (r *analysisRepository) PageAnalysisNodesByProjectID(ctx context.Context, p
 		pagination = &types.Pagination{}
 	}
 
-	err := query.Order("updated_at DESC").Order("id DESC").
+	err := query.Order("created_at DESC").Order("id DESC").
 		Offset(pagination.Offset()).
 		Limit(pagination.Limit()).
 		Find(&items).Error
