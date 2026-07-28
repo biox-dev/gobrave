@@ -21,9 +21,12 @@ func NewProjectService(projectRepo interfaces.ProjectRepository) interfaces.Proj
 func (s *projectService) ListProjectByUserID(ctx context.Context, userID string) ([]*types.Project, error) {
 	return s.projectRepo.ListProjectByUserID(ctx, userID)
 }
-
 func (s *projectService) GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error) {
 	return s.projectRepo.GetActiveProjectByUserID(ctx, userID)
+}
+
+func (s *projectService) GetProjectByID(ctx context.Context, id int64) (*types.Project, error) {
+	return s.projectRepo.GetProjectByID(ctx, id)
 }
 
 func (s *projectService) AddUserProject(ctx context.Context, userID, projectID string) error {

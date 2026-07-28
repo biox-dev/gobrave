@@ -10,6 +10,7 @@ import (
 type ProjectService interface {
 	ListProjectByUserID(ctx context.Context, userID string) ([]*types.Project, error)
 	GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error)
+	GetProjectByID(ctx context.Context, id int64) (*types.Project, error)
 	AddUserProject(ctx context.Context, userID, projectID string) error
 	ActivateUserProject(ctx context.Context, userID, projectID string) error
 	AddProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error

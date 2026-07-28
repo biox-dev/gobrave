@@ -280,6 +280,37 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 	return exportPayload, nil
 }
 
+func (s *workflowService) GenerateScriptJSONByScriptID(ctx context.Context, scriptID int64) (*types.ScriptJSONExportResponse, error) {
+	script, err := s.workflowRepo.GetScriptByID(ctx, scriptID)
+	if err != nil {
+		return nil, err
+	}
+
+	scriptMap, err := structToMap(script)
+	if err != nil {
+		return nil, err
+	}
+
+	containerTemplates := make([]map[string]any, 0)
+	if script.ContainerTemplateID != 0 {
+		template, templateErr := s.containerRepo.GetContainerTemplateByID(ctx, script.ContainerTemplateID)
+		if templateErr == nil && template != nil {
+			templateMap, templateMapErr := structToMap(template)
+			if templateMapErr != nil {
+				return nil, templateMapErr
+			}
+			scriptMap["container_template"] = templateMap
+			containerTemplates = append(containerTemplates, templateMap)
+		}
+	}
+
+	return &types.ScriptJSONExportResponse{
+		ScriptID:           script.ScriptID,
+		Script:             scriptMap,
+		ContainerTemplates: containerTemplates,
+	}, nil
+}
+
 func (s *workflowService) CreateWorkflow(ctx context.Context, workflow *types.Workflow) error {
 	return s.workflowRepo.CreateWorkflow(ctx, workflow)
 }

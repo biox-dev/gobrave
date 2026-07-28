@@ -176,6 +176,154 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 
 }
 
+type PublishScriptRequest struct {
+	ScriptID int64  `json:"script_id,string"`
+	Url      string `json:"url"`
+	Version  string `json:"version"`
+	Message  string `json:"message"`
+}
+
+func (h *WorkflowHandler) PublishScript(c *gin.Context) {
+	var req PublishScriptRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+	if h.cfg == nil || strings.TrimSpace(h.cfg.Storage.BaseDir) == "" {
+		c.Error(errors.NewInternalServerError("storage base dir is not configured"))
+		return
+	}
+
+	script, err := h.workflowService.GetScriptByID(c.Request.Context(), req.ScriptID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("script not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get script").WithDetails(err.Error()))
+		return
+	}
+
+	exportPayload, err := h.workflowService.GenerateScriptJSONByScriptID(c.Request.Context(), script.ID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to generate script export").WithDetails(err.Error()))
+		return
+	}
+
+	pathName, err := buildStorePathNameFromURL(req.Url)
+	if err != nil {
+		pathName = script.ScriptID
+	}
+	storePath := filepath.Join(h.cfg.Storage.BaseDir, "store", pathName)
+
+	publishURLsJSON, err := buildPublishURLsJSON(pathName)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to build publish urls").WithDetails(err.Error()))
+		return
+	}
+
+	store := &types.Store{
+		StoreType:   "script",
+		Name:        script.ComponentName,
+		Origin:      "local",
+		URL:         req.Url,
+		Status:      "done",
+		Path:        storePath,
+		PathName:    pathName,
+		Category:    script.Category,
+		Tags:        nil,
+		Img:         script.Img,
+		PublishURLs: publishURLsJSON,
+		Version:     req.Version,
+		Message:     req.Message,
+	}
+
+	if script.Tags != "" {
+		if json.Valid([]byte(script.Tags)) {
+			store.Tags = datatypes.JSON(script.Tags)
+		}
+	}
+
+	if err := os.MkdirAll(storePath, 0o755); err != nil {
+		c.Error(errors.NewInternalServerError("failed to create store path").WithDetails(err.Error()))
+		return
+	}
+
+	if script.StoreID != 0 {
+		existingStore, storeErr := h.storeService.GetStoreByID(c.Request.Context(), script.StoreID)
+		if storeErr != nil {
+			if stderrs.Is(storeErr, gorm.ErrRecordNotFound) {
+				c.Error(errors.NewNotFoundError("store not found"))
+				return
+			}
+			c.Error(errors.NewInternalServerError("failed to get store").WithDetails(storeErr.Error()))
+			return
+		}
+
+		if existingStore != nil {
+			if existingStore.Path != "" && existingStore.Path != storePath {
+				if stat, statErr := os.Stat(existingStore.Path); statErr == nil && stat.IsDir() {
+					if rmErr := os.RemoveAll(existingStore.Path); rmErr != nil {
+						c.Error(errors.NewInternalServerError("failed to clean old store path").WithDetails(rmErr.Error()))
+						return
+					}
+				}
+			}
+			store.ID = existingStore.ID
+		}
+
+		if err := h.storeService.UpdateStore(c.Request.Context(), store); err != nil {
+			c.Error(errors.NewInternalServerError("failed to update store").WithDetails(err.Error()))
+			return
+		}
+	} else {
+		if err := h.storeService.CreateStore(c.Request.Context(), store); err != nil {
+			c.Error(errors.NewInternalServerError("failed to create store").WithDetails(err.Error()))
+			return
+		}
+		script.StoreID = store.ID
+	}
+
+	script.URL = req.Url
+	script.Version = req.Version
+	script.Message = req.Message
+	if err := h.workflowService.UpdateScript(c.Request.Context(), script); err != nil {
+		c.Error(errors.NewInternalServerError("failed to update script publish info").WithDetails(err.Error()))
+		return
+	}
+
+	storeScriptJSONPath := filepath.Join(storePath, "script.json")
+	storeScriptBytes, err := json.MarshalIndent(exportPayload, "", "  ")
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to encode store script json").WithDetails(err.Error()))
+		return
+	}
+	if err := os.WriteFile(storeScriptJSONPath, storeScriptBytes, 0o644); err != nil {
+		c.Error(errors.NewInternalServerError("failed to write store script json").WithDetails(err.Error()))
+		return
+	}
+	project, err := h.projectService.GetProjectByID(c.Request.Context(), script.ProjectID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to get project").WithDetails(err.Error()))
+		return
+	}
+
+	sourceScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
+	// sourceScriptDir := filepath.Join(h.cfg.Storage.BaseDir, "pipeline", "script", script.ScriptID)
+	targetScriptDir := filepath.Join(storePath, "script")
+	if err := copyDirReplace(sourceScriptDir, targetScriptDir); err != nil {
+		c.Error(errors.NewInternalServerError("failed to copy script files").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "success",
+		"store":      store,
+		"script":     script,
+		"store_path": storePath,
+	})
+}
+
 func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	userID, ok := getCurrentUserID(c)
 	if !ok {

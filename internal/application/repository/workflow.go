@@ -391,6 +391,10 @@ func (r *workflowRepository) UpdateScript(ctx context.Context, script *types.Scr
 		"order_index":           script.OrderIndex,
 		"position":              script.Position,
 		"edges":                 script.Edges,
+		"url":                   script.URL,
+		"store_id":              script.StoreID,
+		"version":               script.Version,
+		"message":               script.Message,
 	}
 
 	result := r.db.WithContext(ctx).Model(&types.Script{}).Where("id = ?", script.ID).Updates(updates)

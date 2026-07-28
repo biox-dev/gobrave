@@ -10,33 +10,35 @@ import (
 
 type Script struct {
 	// ID                  uint      `json:"id" gorm:"primaryKey;autoIncrement"`
-	ID                  int64     `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-	StoreID             int64     `json:"store_id,string" gorm:"column:store_id;type:bigint"`
-	ProjectID           int64     `json:"project_id,string" gorm:"column:project_id;type:bigint"`
-	ScriptID            string    `json:"component_id" gorm:"column:component_id;type:varchar(255)"`
-	InstallKey          string    `json:"install_key" gorm:"type:varchar(255)"`
-	ComponentType       string    `json:"component_type" gorm:"type:varchar(255)"`
-	ComponentName       string    `json:"component_name" gorm:"type:varchar(255)"`
-	Description         string    `json:"description" gorm:"type:longtext"`
-	ComponentIDs        string    `json:"component_ids" gorm:"type:longtext"`
-	Img                 string    `json:"img" gorm:"type:varchar(255)"`
-	ContainerTemplateID int64     `json:"container_template_id,string" gorm:"column:container_template_id;type:bigint"`
-	ToolsContainerID    string    `json:"tools_container_id" gorm:"type:text"`
-	Prompt              string    `json:"prompt" gorm:"type:longtext"`
-	IOSchema            string    `json:"io_schema" gorm:"column:io_schema;type:longtext"`
-	SubContainerID      string    `json:"sub_container_id" gorm:"type:varchar(255)"`
-	Tags                string    `json:"tags" gorm:"type:varchar(255)"`
-	FileType            string    `json:"file_type" gorm:"type:varchar(255)"`
-	ScriptType          string    `json:"script_type" gorm:"type:varchar(255)"`
-	Category            string    `json:"category" gorm:"type:varchar(255);default:default"`
-	Content             string    `json:"content" gorm:"type:text"`
-	OrderIndex          int       `json:"order_index"`
-	Position            string    `json:"position" gorm:"type:text"`
-	Edges               string    `json:"edges" gorm:"type:text"`
-	Version             string    `json:"version" gorm:"type:varchar(255)"`
-	Message             string    `json:"message" gorm:"type:longtext"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	ID                  int64  `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
+	StoreID             int64  `json:"store_id,string" gorm:"column:store_id;type:bigint"`
+	ProjectID           int64  `json:"project_id,string" gorm:"column:project_id;type:bigint"`
+	ScriptID            string `json:"component_id" gorm:"column:component_id;type:varchar(255)"`
+	InstallKey          string `json:"install_key" gorm:"type:varchar(255)"`
+	ComponentType       string `json:"component_type" gorm:"type:varchar(255)"`
+	ComponentName       string `json:"component_name" gorm:"type:varchar(255)"`
+	Description         string `json:"description" gorm:"type:longtext"`
+	ComponentIDs        string `json:"component_ids" gorm:"type:longtext"`
+	Img                 string `json:"img" gorm:"type:varchar(255)"`
+	ContainerTemplateID int64  `json:"container_template_id,string" gorm:"column:container_template_id;type:bigint"`
+	ToolsContainerID    string `json:"tools_container_id" gorm:"type:text"`
+	Prompt              string `json:"prompt" gorm:"type:longtext"`
+	IOSchema            string `json:"io_schema" gorm:"column:io_schema;type:longtext"`
+	SubContainerID      string `json:"sub_container_id" gorm:"type:varchar(255)"`
+	Tags                string `json:"tags" gorm:"type:varchar(255)"`
+	FileType            string `json:"file_type" gorm:"type:varchar(255)"`
+	ScriptType          string `json:"script_type" gorm:"type:varchar(255)"`
+	Category            string `json:"category" gorm:"type:varchar(255);default:default"`
+	Content             string `json:"content" gorm:"type:text"`
+	OrderIndex          int    `json:"order_index"`
+	Position            string `json:"position" gorm:"type:text"`
+	Edges               string `json:"edges" gorm:"type:text"`
+	URL                 string `json:"url" gorm:"column:url;type:varchar(255)"`
+
+	Version   string    `json:"version" gorm:"type:varchar(255)"`
+	Message   string    `json:"message" gorm:"type:longtext"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (Script) TableName() string {
@@ -140,4 +142,10 @@ type WorkflowVersion struct {
 type ScriptVersion struct {
 	Script
 	StoreVersion string `json:"store_version"`
+}
+
+type ScriptJSONExportResponse struct {
+	ScriptID           string           `json:"script_id"`
+	Script             map[string]any   `json:"script"`
+	ContainerTemplates []map[string]any `json:"container_templates,omitempty"`
 }

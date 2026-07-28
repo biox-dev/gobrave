@@ -28,6 +28,7 @@ type WorkflowService interface {
 	GetScriptFileByScriptID(ctx context.Context, scriptID int64) (string, string, error)
 	GetScriptContainerSnapshotByScriptID(ctx context.Context, scriptID int64) (*types.ScriptContainerSnapshot, error)
 	GenerateWorkflowJSONByWorkflowID(ctx context.Context, workflowID int64, storageBaseDir string) (*types.WorkflowJSONExportResponse, error)
+	GenerateScriptJSONByScriptID(ctx context.Context, scriptID int64) (*types.ScriptJSONExportResponse, error)
 	CreateWorkflow(ctx context.Context, workflow *types.Workflow) error
 	UpdateWorkflow(ctx context.Context, workflow *types.Workflow) error
 	CreateScript(ctx context.Context, script *types.Script) error

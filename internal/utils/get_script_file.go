@@ -15,7 +15,10 @@ func GetScriptFile(baseDir, projectID, scriptType, scriptID string) (string, str
 	scriptDir := GetScriptDir(baseDir, projectID)
 	return filepath.Join(scriptDir, scriptID), mainFileByScriptType(scriptType), nil
 }
-
+func GetScriptFileDir(baseDir, projectId, scriptID string) string {
+	scriptDir := GetScriptDir(baseDir, projectId)
+	return filepath.Join(scriptDir, scriptID)
+}
 func GetScriptDir(baseDir, projectId string) string {
 	return filepath.Join(baseDir, "data", projectId, "pipeline", "script")
 }
