@@ -263,6 +263,8 @@ func RegisterSettingRoutes(r *gin.RouterGroup, handler *handler.SettingHandler) 
 }
 
 func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler) {
+	r.POST("/workflow/publish-to-doc/:workflowId", handler.PublishToDocByWorkflowID)
+	r.POST("/analysis/publish-to-doc/:analsyisId", handler.PublishToDocByAnalysisID)
 	r.POST("/analysis-node/:analysisNodeId/publish-to-doc", handler.PublishToDocByAnalysisNodeID)
 	r.POST("/script/:scriptId/publish-to-doc", handler.PublishScriptAnalysisNodeToDoc)
 	r.POST("/analysis/parse-params", handler.ParseParams)

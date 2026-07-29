@@ -625,6 +625,259 @@ func (h *AnalysisHandler) writeScriptToDoc(script *types.Script, projectID, proj
 	}
 	return nil
 }
+func (h *AnalysisHandler) PublishToDocByWorkflowID(c *gin.Context) {
+	workflowIDStr := strings.TrimSpace(c.Param("workflowId"))
+	// workflowID, err := strconv.ParseInt(workflowIDStr, 10, 64)
+	// if err != nil || workflowID <= 0 {
+	// 	c.Error(errors.NewValidationError("invalid workflow_id").WithDetails(err.Error()))
+	// 	return
+	// }
+	workflow, err := h.workflowService.GetWorkflowByWorkflowID(c.Request.Context(), workflowIDStr)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to get workflow").WithDetails(err.Error()))
+		return
+	}
+	project, err := h.projectRepo.GetProjectByID(c.Request.Context(), workflow.ProjectID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to get project").WithDetails(err.Error()))
+		return
+	}
+	projectDocDir := utils.GetProjectDocDir(h.config.Storage.BaseDir, project.ProjectID)
+	// 将 SUMMARY.md 中添加该分析的链接
+	summaryFilePath := filepath.Join(projectDocDir, "SUMMARY.md")
+	if _, err := os.Stat(summaryFilePath); os.IsNotExist(err) {
+		f, err := os.Create(summaryFilePath)
+		if err != nil {
+			c.Error(errors.NewInternalServerError("failed to create SUMMARY.md").WithDetails(err.Error()))
+			return
+		}
+		defer f.Close()
+		f.WriteString("# Summary\n\n")
+	}
+	f, err := os.OpenFile(summaryFilePath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to open SUMMARY.md").WithDetails(err.Error()))
+		return
+	}
+	defer f.Close()
+	content, err := os.ReadFile(summaryFilePath)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to read SUMMARY.md").WithDetails(err.Error()))
+		return
+	}
+
+	if !strings.Contains(string(content), fmt.Sprintf("./%d/workflow.md", workflow.ID)) {
+		line := fmt.Sprintf("- [%s](./%d/workflow.md)\n", workflow.Name, workflow.ID)
+		if _, err := f.WriteString(line); err != nil {
+			c.Error(errors.NewInternalServerError("failed to write to SUMMARY.md").WithDetails(err.Error()))
+			return
+		}
+	}
+
+	analysisList, err := h.analysisService.ListAnalysisByWorkflowID(c.Request.Context(), workflow.WorkflowID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to list analysis by workflow ID").WithDetails(err.Error()))
+		return
+	}
+	var workflowTitleList strings.Builder
+
+	for _, analysis := range analysisList {
+		analsyisTitleLine := fmt.Sprintf("- [%s](./%d/analysis.md)\n", analysis.AnalysisName, analysis.ID)
+		workflowTitleList.WriteString(analsyisTitleLine)
+		if !strings.Contains(string(content), fmt.Sprintf("./%d/%d/analysis.md", workflow.ID, analysis.ID)) {
+			line := fmt.Sprintf("- [%s](./%d/%d/analysis.md)\n", analysis.AnalysisName, workflow.ID, analysis.ID)
+
+			if _, err := f.WriteString(fmt.Sprintf("\t%s", line)); err != nil {
+
+				c.Error(errors.NewInternalServerError("failed to write to SUMMARY.md").WithDetails(err.Error()))
+				return
+			}
+		}
+
+		analysisNodes, err := h.analysisService.ListAnalysisNodesByAnalysisID(c.Request.Context(), analysis.ID)
+		if err != nil {
+			c.Error(errors.NewInternalServerError("failed to list analysis nodes").WithDetails(err.Error()))
+			return
+		}
+		// 构建 analysisNodeTitleList  markdown 随后放在 script.md 中，可以使用 strings.Builder 来构建
+		var analysisNodeTitleList strings.Builder
+
+		for _, node := range analysisNodes {
+			content, err := os.ReadFile(summaryFilePath)
+			if err != nil {
+				c.Error(errors.NewInternalServerError("failed to read SUMMARY.md").WithDetails(err.Error()))
+				return
+			}
+			// titleLine := fmt.Sprintf("- [%s](./%d/%d/%d/output.md)\n", node.NodeName, workflow.ID, analysis.ID, node.ID)
+			workflowNodeTitleLine := fmt.Sprintf("- [%s](./%d/%d/output.md)\n", node.NodeName, analysis.ID, node.ID)
+
+			workflowTitleList.WriteString(fmt.Sprintf("\t%s", workflowNodeTitleLine))
+			nodeTitleLine := fmt.Sprintf("- [%s](./%d/output.md)\n", node.NodeName, node.ID)
+
+			analysisNodeTitleList.WriteString(nodeTitleLine)
+			if !strings.Contains(string(content), fmt.Sprintf("./%d/%d/%d/output.md", workflow.ID, analysis.ID, node.ID)) {
+				line := fmt.Sprintf("\t\t- [%s](./%d/%d/%d/output.md)\n", node.NodeName, workflow.ID, analysis.ID, node.ID)
+				if _, err := f.WriteString(line); err != nil {
+					c.Error(errors.NewInternalServerError("failed to write to SUMMARY.md").WithDetails(err.Error()))
+					return
+				}
+			}
+
+			sourceDir := node.OutputDir
+			destDir := filepath.Join(projectDocDir, fmt.Sprint(workflow.ID), fmt.Sprint(analysis.ID), fmt.Sprint(node.ID))
+			err = utils.CopyDir(sourceDir, destDir)
+			if err != nil {
+				c.Error(errors.NewInternalServerError("failed to copy analysis node output to project doc dir").WithDetails(err.Error()))
+				return
+			}
+		}
+
+		targetAnalysisFile := filepath.Join(projectDocDir, fmt.Sprint(workflow.ID), fmt.Sprint(analysis.ID), "analysis.md")
+
+		if err := h.writeAnalysisToDoc(analysis, targetAnalysisFile, analysisNodeTitleList.String()); err != nil {
+			c.Error(err)
+			return
+		}
+
+	}
+
+	targetWorkflowFile := filepath.Join(projectDocDir, fmt.Sprint(workflow.ID), "workflow.md")
+
+	if err := h.writeWorkflowToDoc(workflow, targetWorkflowFile, workflowTitleList.String()); err != nil {
+		c.Error(err)
+		return
+	}
+}
+
+func (h *AnalysisHandler) writeWorkflowToDoc(workflow *types.Workflow, targetWorkflowFile, workflowTitleList string) error {
+	markdownContent := fmt.Sprintf("# %s\n\n%s\n", workflow.Name, workflowTitleList)
+
+	if err := os.MkdirAll(filepath.Dir(targetWorkflowFile), 0o755); err != nil {
+		return errors.NewInternalServerError("failed to create target workflow dir").WithDetails(err.Error())
+	}
+
+	if err := os.WriteFile(targetWorkflowFile, []byte(markdownContent), 0o644); err != nil {
+		return errors.NewInternalServerError("failed to write workflow markdown file").WithDetails(err.Error())
+	}
+	return nil
+}
+
+func (h *AnalysisHandler) PublishToDocByAnalysisID(c *gin.Context) {
+	analysisIDStr := strings.TrimSpace(c.Param("analsyisId"))
+	analysisID, err := strconv.ParseInt(analysisIDStr, 10, 64)
+	if err != nil || analysisID <= 0 {
+		c.Error(errors.NewValidationError("invalid analysis_id").WithDetails(err.Error()))
+		return
+	}
+	analysis, err := h.analysisService.GetAnalysisByID(c.Request.Context(), analysisID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to get analysis").WithDetails(err.Error()))
+		return
+	}
+	project, err := h.projectRepo.GetProjectByID(c.Request.Context(), analysis.ProjectID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to get project").WithDetails(err.Error()))
+		return
+	}
+	analysisNodes, err := h.analysisService.ListAnalysisNodesByAnalysisID(c.Request.Context(), analysis.ID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to list analysis nodes").WithDetails(err.Error()))
+		return
+	}
+	projectDocDir := utils.GetProjectDocDir(h.config.Storage.BaseDir, project.ProjectID)
+	// analysisOutputDir := analysis.OutputDir
+	// projectDocAnalysisDir := filepath.Join(projectDocDir, fmt.Sprint(analysis.ID))
+	// 拷贝 analysisOutputDir 下的所有文件到 projectDocDir 下
+
+	for _, node := range analysisNodes {
+		sourceDir := node.OutputDir
+		destDir := filepath.Join(projectDocDir, fmt.Sprint(analysis.ID), fmt.Sprint(node.ID))
+		err = utils.CopyDir(sourceDir, destDir)
+		if err != nil {
+			c.Error(errors.NewInternalServerError("failed to copy analysis node output to project doc dir").WithDetails(err.Error()))
+			return
+		}
+	}
+
+	// 将 SUMMARY.md 中添加该分析的链接
+	summaryFilePath := filepath.Join(projectDocDir, "SUMMARY.md")
+	if _, err := os.Stat(summaryFilePath); os.IsNotExist(err) {
+		f, err := os.Create(summaryFilePath)
+		if err != nil {
+			c.Error(errors.NewInternalServerError("failed to create SUMMARY.md").WithDetails(err.Error()))
+			return
+		}
+		defer f.Close()
+		f.WriteString("# Summary\n\n")
+	}
+	f, err := os.OpenFile(summaryFilePath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to open SUMMARY.md").WithDetails(err.Error()))
+		return
+	}
+	defer f.Close()
+	content, err := os.ReadFile(summaryFilePath)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to read SUMMARY.md").WithDetails(err.Error()))
+		return
+	}
+
+	if !strings.Contains(string(content), fmt.Sprintf("./%d/analysis.md", analysisID)) {
+		line := fmt.Sprintf("- [%s](./%d/analysis.md)\n", analysis.AnalysisName, analysisID)
+		if _, err := f.WriteString(line); err != nil {
+			c.Error(errors.NewInternalServerError("failed to write to SUMMARY.md").WithDetails(err.Error()))
+			return
+		}
+	}
+
+	// 构建 analysisNodeTitleList  markdown 随后放在 script.md 中，可以使用 strings.Builder 来构建
+	var analysisNodeTitleList strings.Builder
+
+	for _, node := range analysisNodes {
+		// 实现避免重复写入的逻辑，先读取 SUMMARY.md 的内容，检查是否已经存在该节点的链接
+		content, err := os.ReadFile(summaryFilePath)
+		if err != nil {
+			c.Error(errors.NewInternalServerError("failed to read SUMMARY.md").WithDetails(err.Error()))
+			return
+		}
+		titleLine := fmt.Sprintf("- [%s](./%d/output.md)\n", node.NodeName, node.ID)
+
+		analysisNodeTitleList.WriteString(titleLine)
+		if strings.Contains(string(content), fmt.Sprintf("./%d/%d/output.md", analysis.ID, node.ID)) {
+			continue // 如果已经存在该节点的链接，则跳过写入
+		}
+		line := fmt.Sprintf("\t- [%s](./%d/%d/output.md)\n", node.NodeName, analysis.ID, node.ID)
+		if _, err := f.WriteString(line); err != nil {
+			c.Error(errors.NewInternalServerError("failed to write to SUMMARY.md").WithDetails(err.Error()))
+			return
+		}
+	}
+	targetAnalysisFile := filepath.Join(projectDocDir, fmt.Sprint(analysis.ID), "analysis.md")
+
+	if err := h.writeAnalysisToDoc(analysis, targetAnalysisFile, analysisNodeTitleList.String()); err != nil {
+		c.Error(err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "analysis output published to project doc dir successfully",
+	})
+}
+
+func (h *AnalysisHandler) writeAnalysisToDoc(analysis *types.Analysis, targetAnalysisFile, analysisNodeTitleList string) error {
+	// analysisFilePath := filepath.Join(projectDocDir, fmt.Sprint(analysis.ID), "analysis.md")
+
+	markdownContent := fmt.Sprintf("# %s\n\n%s\n", analysis.AnalysisName, analysisNodeTitleList)
+
+	if err := os.MkdirAll(filepath.Dir(targetAnalysisFile), 0o755); err != nil {
+		return errors.NewInternalServerError("failed to create target analysis dir").WithDetails(err.Error())
+	}
+
+	if err := os.WriteFile(targetAnalysisFile, []byte(markdownContent), 0o644); err != nil {
+		return errors.NewInternalServerError("failed to write analysis markdown file").WithDetails(err.Error())
+	}
+	return nil
+}
 func (h *AnalysisHandler) PublishToDocByAnalysisNodeID(c *gin.Context) {
 
 	analysisNodeIDStr := strings.TrimSpace(c.Param("analysisNodeId"))
@@ -1782,8 +2035,16 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to build visualization node payload").WithDetails(err.Error()))
 		return
 	}
+	outputDir := strings.TrimSpace(analysisNode.OutputDir)
+	dataDir := filepath.Join(h.config.Storage.BaseDir, "data")
+	// outputDir 去除 dataDir 前缀
+	if after, ok := strings.CutPrefix(outputDir, dataDir); ok {
+		outputDir = after
+	}
 
-	result, err := visualizationResultsPath(analysisNode.OutputDir, scriptType, h.config)
+	prefix := fmt.Sprintf("/data-analysis%s/", outputDir)
+
+	result, err := visualizationResultsPath(analysisNode.OutputDir, prefix, scriptType, h.config)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to list visualization files").WithDetails(err.Error()))
 		return
@@ -1799,16 +2060,12 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 
 	}
 
-	project, err := h.projectRepo.GetProjectByID(c.Request.Context(), projectID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to get project").WithDetails(err.Error()))
-		return
-	}
-	prefix := ""
-	if analysisNode.CreationSource == "standalone" {
-		// http://localhost:5174/data-analysis/default/analysis_node/2079940227312390144/2080304958791487488/output/iris.png?t=1784819748658
-		prefix = fmt.Sprintf("/data-analysis/%s/analysis_node/%d/%d/output/", project.ProjectID, analysisNode.ScriptID, analysisNode.ID)
-	}
+	// project, err := h.projectRepo.GetProjectByID(c.Request.Context(), projectID)
+	// if err != nil {
+	// 	c.Error(errors.NewInternalServerError("failed to get project").WithDetails(err.Error()))
+	// 	return
+	// }
+
 	c.JSON(http.StatusOK, VisualizationNodeFileResponse{
 		Node:         nodePayload,
 		Result:       result,
@@ -2106,7 +2363,7 @@ func (h *AnalysisHandler) attachContainerInfoToNode(c *gin.Context, node map[str
 	return node, nil
 }
 
-func visualizationResultsPath(path string, scriptType string, cfg *config.Config) (VisualizationResultResponse, error) {
+func visualizationResultsPath(path, prefix string, scriptType string, cfg *config.Config) (VisualizationResultResponse, error) {
 	result := VisualizationResultResponse{
 		Images: make([]map[string]interface{}, 0),
 		Tables: make([]map[string]interface{}, 0),
@@ -2151,6 +2408,7 @@ func visualizationResultsPath(path string, scriptType string, cfg *config.Config
 		result.Files = append(result.Files, map[string]interface{}{
 			"filename": filename,
 			"filepath": fullPath,
+			"url":      filepath.Join(prefix, filename),
 		})
 	}
 

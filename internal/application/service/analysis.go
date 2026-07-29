@@ -439,6 +439,9 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 	return nil
 }
 
+func (s *analysisService) ListAnalysisByWorkflowID(ctx context.Context, workflowID string) ([]*types.Analysis, error) {
+	return s.analysisRepo.ListAnalysisByWorkflowID(ctx, workflowID)
+}
 func (s *analysisService) resolveStorageBaseDir() string {
 	if s.cfg != nil && s.cfg.Storage != nil {
 		if base := strings.TrimSpace(s.cfg.Storage.BaseDir); base != "" {

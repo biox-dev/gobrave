@@ -142,7 +142,7 @@ func (r *analysisRepository) PageAnalysisByProjectID(ctx context.Context, pagina
 		return nil, 0, err
 	}
 
-	orderBy := "updated_at"
+	orderBy := "created_at"
 	orderDirection := "DESC"
 	if query != nil {
 		orderBy = query.GetSortColumn()
@@ -315,4 +315,13 @@ func (r *analysisRepository) CreateAnalysisEdges(ctx context.Context, items []*t
 		return nil
 	}
 	return r.db.WithContext(ctx).Create(&items).Error
+}
+
+func (r *analysisRepository) ListAnalysisByWorkflowID(ctx context.Context, workflowID string) ([]*types.Analysis, error) {
+	items := make([]*types.Analysis, 0)
+	err := r.db.WithContext(ctx).Where("relation_id = ?", workflowID).Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
 }
