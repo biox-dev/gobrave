@@ -70,7 +70,7 @@ func (q *AnalysisQuey) GetServerStatus() string {
 
 func (q *AnalysisQuey) GetSortColumn() string {
 	if q == nil {
-		return "updated_at"
+		return "created_at"
 	}
 
 	switch strings.ToLower(strings.TrimSpace(q.SortBy)) {
@@ -93,7 +93,7 @@ func (q *AnalysisQuey) GetSortColumn() string {
 	case "updated_at":
 		return "updated_at"
 	default:
-		return "updated_at"
+		return "created_at"
 	}
 }
 

@@ -3,16 +3,16 @@ package service
 import (
 	"context"
 	"encoding/json"
-	stderrs "errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/gobravedev/gobrave/internal/config"
+	"github.com/gobravedev/gobrave/internal/errors"
 	"github.com/gobravedev/gobrave/internal/types"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
 	"github.com/gobravedev/gobrave/internal/utils"
-	"gorm.io/gorm"
 )
 
 type workflowService struct {
@@ -226,10 +226,10 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 	for _, scriptID := range scriptIDs {
 		script, scriptErr := s.workflowRepo.GetScriptByScriptID(ctx, workflow.ProjectID, scriptID)
 		if scriptErr != nil {
-			if stderrs.Is(scriptErr, gorm.ErrRecordNotFound) {
-				continue
-			}
-			return nil, scriptErr
+			// if stderrs.Is(scriptErr, gorm.ErrRecordNotFound) {
+			// 	continue
+			// }
+			return nil, errors.NewInternalServerError(fmt.Sprintf("failed to get script by script_id: %s and project_id: %d", scriptID, workflow.ProjectID)).WithDetails(scriptErr.Error())
 		}
 
 		scriptMap, scriptMapErr := structToMap(script)
