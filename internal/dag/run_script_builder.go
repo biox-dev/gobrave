@@ -52,8 +52,12 @@ func (QmdScriptBuilder) Build(node *types.AnalysisNode, scriptPath string, _ str
 set -euo pipefail
 export HOME=$PWD/.home
 export XDG_CACHE_HOME=$HOME/.cache
-quarto render %q --to md --output-dir %q --execute-dir %q --output - > %q
-`, scriptPath, node.OutputDir, node.WorkspaceDir, outputFile), nil
+export TMPDIR=$PWD/.tmp
+mkdir -p "$TMPDIR"
+
+quarto render main.qmd --to md --output-dir %q --execute-dir %q --output - > output.md
+mv output.md %q
+`, node.OutputDir, node.WorkspaceDir, outputFile), nil
 
 }
 
