@@ -55,14 +55,14 @@ func (e *DockerExecutor) Execute(ctx context.Context, node *types.AnalysisNode) 
 		return nil, fmt.Errorf("load script failed: %w", err)
 	}
 	if scriptItem.ContainerTemplateID == 0 {
-		return nil, fmt.Errorf("script container_template_id is required: script_id=%s", scriptID)
+		return nil, fmt.Errorf("script container_template_id is required: script_id=%d", scriptID)
 	}
 
 	if node.ID == 0 {
 		return nil, fmt.Errorf("docker executor requires persisted analysis node id")
 	}
 
-	instanceName := fmt.Sprintf("dag-node-%s-%s", node.AnalysisID, node.NodeID)
+	instanceName := fmt.Sprintf("dag-node-%d-%d", node.AnalysisID, node.ID)
 	inst, err := e.containerMgr.CreateByTemplate(
 		ctx,
 		"",

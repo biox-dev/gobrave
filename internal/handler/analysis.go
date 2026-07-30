@@ -177,6 +177,11 @@ func (h *AnalysisHandler) ParseParams(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to get form JSON").WithDetails(err.Error()))
 		return
 	}
+	dagDefinition, err := h.workflowService.GetWorkflowVisByWorkflowID(c.Request.Context(), workflowID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to get workflow visualization").WithDetails(err.Error()))
+		return
+	}
 	parseAnalysisResult, err := buildParseAnalysisResult(c.Request.Context(), h.dataService, requestParam, formJSONWrap)
 	// 将requestParam+formJSONWrap写入json文件，方便调试
 	if true {
@@ -205,14 +210,19 @@ func (h *AnalysisHandler) ParseParams(c *gin.Context) {
 			f.Close()
 			logger.Infof(context.Background(), "debug parse analysis result, analysis_id: %d, result_path: %s", analysisID, resultPath)
 		}
+		dagDefinitionPath := filepath.Join(debugDir, "dag_definition.json")
+		f, err = os.Create(dagDefinitionPath)
+		if err == nil {
+			encoder := json.NewEncoder(f)
+			encoder.SetIndent("", "  ")
+			_ = encoder.Encode(dagDefinition)
+			f.Close()
+			logger.Infof(context.Background(), "debug parse analysis result, analysis_id: %d, dag_definition_path: %s", analysisID, dagDefinitionPath)
+		}
+
 	}
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
-		return
-	}
-	dagDefinition, err := h.workflowService.GetWorkflowVisByWorkflowID(c.Request.Context(), workflowID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to get workflow visualization").WithDetails(err.Error()))
 		return
 	}
 
