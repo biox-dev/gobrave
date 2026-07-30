@@ -1,0 +1,16 @@
+sequenceDiagram
+    participant CM as ContainerManager
+    participant DR as DockerRuntime
+    participant FSM as FSM
+    
+    CM->>CM: transition(inst, Creating)
+    CM->>DR: Start(container)
+    DR->>DR: ContainerStart() ✓
+    DR->>CM: emitEvent("ContainerStarted")
+    Note over CM: ⚠️ 若此事件未被正确处理...
+    DR->>DR: Monitor() → waitContainerExit()
+    Note over DR: bwa index 脚本很快退出
+    DR->>CM: emitEvent("ContainerExited")
+    CM->>FSM: transition(Creating → Stopped)
+    FSM-->>CM: ❌ INVALID! (原只允许 Creating→Running/Failed)
+    Note over CM: 静默吞掉错误，容器永久卡在 creating

@@ -417,18 +417,37 @@ func (m *ContainerManager) GetLogs(ctx context.Context, id int64, tail int) (str
 
 // 	case "Exited":
 
-//			_ = m.transition(
-//				context.Background(),
-//				inst,
-//				Stopped,
-//				"ContainerStopped",
-//			)
-//		}
+//		_ = m.transition(
+//			context.Background(),
+//			inst,
+//			Stopped,
+//			"ContainerStopped",
+//		)
 //	}
+
+// 如果容器运行太快，ContainerStarted与 ContainerExited可能会竞争
 func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 	inst, err := m.repo.GetContainerInstanceByRuntimeID(context.Background(), e.RuntimeID)
 	if err != nil {
+		logger.Warnf(context.Background(), "[ContainerManager] OnEvent: GetContainerInstanceByRuntimeID failed, runtime_id=%s event=%s err=%v", e.RuntimeID, e.Type, err)
 		return
+	}
+
+	// 防御性检查：如果收到终端事件但容器状态仍为 Creating，
+	// 说明 ContainerStarted 事件可能丢失，先补偿 started 时间戳再处理。
+	currentStatus := strings.ToLower(strings.TrimSpace(string(inst.Status)))
+	isCreating := currentStatus == string(types.ContainerCreating)
+	isTerminalEvent := e.Type == "ContainerExited" || e.Type == "ContainerFailed"
+	if isCreating && isTerminalEvent {
+		logger.Warnf(context.Background(), "[ContainerManager] received terminal event while container still creating, runtime_id=%s event=%s status=%s, compensating started_at", e.RuntimeID, e.Type, inst.Status)
+		now := time.Now()
+		inst.StartedAt = &now
+		inst.FinishedAt = nil
+		if rt, rtErr := m.getRuntimeByInstance(inst); rtErr == nil {
+			m.syncInstanceIPAddress(context.Background(), rt, inst)
+		}
+		// 先尝试转 Running，失败也无妨（FSM 现在允许 Creating→Stopped）
+		_ = m.transition(context.Background(), inst, fsm.Running, "ContainerStarted")
 	}
 
 	switch e.Type {
@@ -866,7 +885,7 @@ func (m *ContainerManager) buildRuntimeResolveVariables(
 			setRuntimeVar(vars, "SYS_USER_ID", session.UserID)
 			// setRuntimeVar(vars, "USERID", session.UserID)
 			setRuntimeVar(vars, "PROJECT_ID", strconv.FormatInt(session.ProjectID, 10))
-			user_project_dir := fmt.Sprintf("%s/data/%s", baseDir, session.ProjectID)
+			user_project_dir := fmt.Sprintf("%s/data/%d", baseDir, session.ProjectID)
 			if baseDir != "" {
 				setRuntimeVar(vars, "USER_PROJECT_DIR", user_project_dir)
 			}

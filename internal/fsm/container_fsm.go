@@ -29,8 +29,9 @@ func (f *FSM) Transition(
 			return nil
 		}
 
+		// 如果容器运行太快，ContainerStarted与 ContainerExited可能会竞争
 	case Creating:
-		if to == Running || to == Failed {
+		if to == Running || to == Failed || to == Stopped {
 			return nil
 		}
 
