@@ -81,6 +81,13 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 	if workflowID == "" {
 		return nil, fmt.Errorf("request_param.relation_id is required")
 	}
+	workflow, err := s.workflowRepo.GetWorkflowByWorkflowID(ctx, workflowID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workflow by workflow_id: %v", err)
+	}
+	if workflow == nil {
+		return nil, fmt.Errorf("workflow not found for workflow_id: %s", workflowID)
+	}
 	// var workflowID string
 	// switch analysisType {
 	// case "workflow":
@@ -151,7 +158,7 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 			analysisID = utils.GenerateID()
 		}
 
-		analsyisDir := utils.GetAnalysisDir(baseDir, input.Project.ProjectID)
+		analsyisDir := utils.GetAnalysisDir(baseDir, input.Project.ProjectID, workflow.ID)
 
 		outputDir := filepath.Join(analsyisDir, fmt.Sprintf("%d", analysisID))
 		workDir := filepath.Join(analsyisDir, fmt.Sprintf("%d", analysisID))

@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 )
@@ -25,8 +26,8 @@ func GetScriptDir(baseDir, projectId string) string {
 func GetWorkflowDir(baseDir, projectId string) string {
 	return filepath.Join(baseDir, "data", projectId, "pipeline", "workflow")
 }
-func GetAnalysisDir(baseDir, projectId string) string {
-	return filepath.Join(baseDir, "data", projectId, "analysis")
+func GetAnalysisDir(baseDir, projectId string, workflow int64) string {
+	return filepath.Join(baseDir, "data", projectId, "analysis", fmt.Sprintf("%d", workflow))
 }
 func GetAnalysisNodeDir(baseDir, projectId, scriptID string) string {
 	return filepath.Join(baseDir, "data", projectId, "analysis_node", scriptID)
