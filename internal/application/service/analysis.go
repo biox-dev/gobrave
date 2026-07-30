@@ -162,7 +162,7 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 
 		outputDir := filepath.Join(analsyisDir, fmt.Sprintf("%d", analysisID))
 		workDir := filepath.Join(analsyisDir, fmt.Sprintf("%d", analysisID))
-		if existing != nil {
+		if existing != nil && cacheType != types.CacheTypeRerunAll {
 			analysisID = existing.ID
 			if strings.TrimSpace(existing.OutputDir) != "" {
 				outputDir = existing.OutputDir
