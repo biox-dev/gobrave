@@ -20,14 +20,27 @@ import (
 )
 
 type analysisService struct {
-	analysisRepo interfaces.AnalysisRepository
-	workflowRepo interfaces.WorkflowRepository
-	projectRepo  interfaces.ProjectRepository
-	cfg          *config.Config
+	analysisRepo     interfaces.AnalysisRepository
+	workflowRepo     interfaces.WorkflowRepository
+	projectRepo      interfaces.ProjectRepository
+	containerService interfaces.ContainerService
+	cfg              *config.Config
 }
 
-func NewAnalysisService(analysisRepo interfaces.AnalysisRepository, workflowRepo interfaces.WorkflowRepository, projectRepo interfaces.ProjectRepository, cfg *config.Config) interfaces.AnalysisService {
-	return &analysisService{analysisRepo: analysisRepo, workflowRepo: workflowRepo, projectRepo: projectRepo, cfg: cfg}
+func NewAnalysisService(
+	analysisRepo interfaces.AnalysisRepository,
+	workflowRepo interfaces.WorkflowRepository,
+	projectRepo interfaces.ProjectRepository,
+	containerService interfaces.ContainerService,
+	cfg *config.Config,
+) interfaces.AnalysisService {
+	return &analysisService{
+		analysisRepo:     analysisRepo,
+		workflowRepo:     workflowRepo,
+		projectRepo:      projectRepo,
+		containerService: containerService,
+		cfg:              cfg,
+	}
 }
 
 func (s *analysisService) GetAnalysisByAnalysisID(ctx context.Context, analysisID string) (*types.Analysis, error) {
@@ -297,6 +310,98 @@ func (s *analysisService) DeleteAnalysisNode(ctx context.Context, id int64) erro
 		return fmt.Errorf("invalid analysis node id: %d", id)
 	}
 	return s.analysisRepo.DeleteAnalysisNodeByID(ctx, id)
+}
+
+func (s *analysisService) DeleteAnalysis(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return fmt.Errorf("invalid analysis id: %d", id)
+	}
+
+	analysis, err := s.analysisRepo.GetAnalysisByID(ctx, id)
+	if err != nil {
+		logger.Warnf(ctx, "[AnalysisService] failed to get analysis by id=%d, err=%v", id, err)
+		return err
+	}
+
+	project, err := s.projectRepo.GetProjectByID(ctx, analysis.ProjectID)
+	if err != nil {
+		logger.Warnf(ctx, "[AnalysisService] failed to get project by id=%d, err=%v", analysis.ProjectID, err)
+		return err
+	}
+	projectDataDir := filepath.Join(s.cfg.Storage.BaseDir, "data", project.ProjectID)
+
+	// 1. List all analysis nodes for this analysis
+	nodes, err := s.analysisRepo.ListAnalysisNodesByAnalysisID(ctx, id)
+	if err != nil {
+		logger.Warnf(ctx, "[AnalysisService] failed to list analysis nodes for analysis id=%d, err=%v", id, err)
+		return err
+	}
+
+	// 2. Collect node IDs for container cleanup
+	nodeIDs := make([]int64, 0, len(nodes))
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		nodeIDs = append(nodeIDs, node.ID)
+
+		// 3. Delete each node's workspace directory
+		if strings.TrimSpace(node.WorkspaceDir) != "" {
+			if strings.HasPrefix(node.WorkspaceDir, projectDataDir) {
+				if err := os.RemoveAll(node.WorkspaceDir); err != nil {
+					logger.Warnf(ctx, "[AnalysisService] failed to remove node workspace dir=%s, err=%v", node.WorkspaceDir, err)
+				}
+			} else {
+				logger.Warnf(ctx, "[AnalysisService] node workspace dir=%s is not under project data dir=%s, skip delete", node.WorkspaceDir, projectDataDir)
+			}
+		}
+	}
+
+	// 4. Delete container instances associated with the analysis nodes
+	if len(nodeIDs) > 0 {
+		if err := s.containerService.DeleteContainerInstancesByOwnerTypeAndOwnerIDs(
+			ctx,
+			types.ContainerOwnerDagNode,
+			nodeIDs,
+		); err != nil {
+			logger.Warnf(ctx, "[AnalysisService] failed to delete container instances for nodes, err=%v", err)
+			// non-fatal, continue with deletion
+		}
+	}
+
+	// 5. Delete analysis edges
+	if err := s.analysisRepo.DeleteAnalysisEdgesByAnalysisID(ctx, id); err != nil {
+		logger.Warnf(ctx, "[AnalysisService] failed to delete analysis edges for analysis id=%d, err=%v", id, err)
+		return err
+	}
+
+	// 6. Delete analysis nodes
+	if err := s.analysisRepo.DeleteAnalysisNodesByAnalysisID(ctx, id); err != nil {
+		logger.Warnf(ctx, "[AnalysisService] failed to delete analysis nodes for analysis id=%d, err=%v", id, err)
+		return err
+	}
+
+	// 7. Delete the analysis workspace/WorkDir
+	if strings.TrimSpace(analysis.WorkDir) != "" {
+		if strings.HasPrefix(analysis.WorkDir, projectDataDir) {
+			if err := os.RemoveAll(analysis.WorkDir); err != nil {
+				logger.Warnf(ctx, "[AnalysisService] failed to remove analysis work dir=%s, err=%v", analysis.WorkDir, err)
+			}
+		} else {
+			logger.Warnf(ctx, "[AnalysisService] analysis work dir=%s is not under project data dir=%s, skip delete", analysis.WorkDir, projectDataDir)
+		}
+	}
+	// Also delete OutputDir if different from WorkDir
+	if strings.TrimSpace(analysis.OutputDir) != "" && analysis.OutputDir != analysis.WorkDir {
+		if strings.HasPrefix(analysis.OutputDir, projectDataDir) {
+			if err := os.RemoveAll(analysis.OutputDir); err != nil {
+				logger.Warnf(ctx, "[AnalysisService] failed to remove analysis output dir=%s, err=%v", analysis.OutputDir, err)
+			}
+		}
+	}
+
+	// 8. Delete the analysis record
+	return s.analysisRepo.DeleteAnalysisByID(ctx, id)
 }
 
 func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces.AnalysisRepository, analysis *types.Analysis, dagRuntime map[string]any) error {

@@ -317,6 +317,10 @@ func (r *analysisRepository) CreateAnalysisEdges(ctx context.Context, items []*t
 	return r.db.WithContext(ctx).Create(&items).Error
 }
 
+func (r *analysisRepository) DeleteAnalysisByID(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.Analysis{}).Error
+}
+
 func (r *analysisRepository) ListAnalysisByWorkflowID(ctx context.Context, workflowID string) ([]*types.Analysis, error) {
 	items := make([]*types.Analysis, 0)
 	err := r.db.WithContext(ctx).Where("relation_id = ?", workflowID).Find(&items).Error

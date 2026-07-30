@@ -31,8 +31,10 @@ type WorkflowService interface {
 	GenerateScriptJSONByScriptID(ctx context.Context, scriptID int64) (*types.ScriptJSONExportResponse, error)
 	CreateWorkflow(ctx context.Context, workflow *types.Workflow) error
 	UpdateWorkflow(ctx context.Context, workflow *types.Workflow) error
+	DeleteWorkflow(ctx context.Context, id int64) error
 	CreateScript(ctx context.Context, script *types.Script) error
 	UpdateScript(ctx context.Context, script *types.Script) error
+	DeleteScript(ctx context.Context, id int64) error
 }
 
 type WorkflowRepository interface {
@@ -48,6 +50,9 @@ type WorkflowRepository interface {
 	GetScriptContainerSnapshotByScriptID(ctx context.Context, scriptID int64) (*types.ScriptContainerSnapshot, error)
 	CreateWorkflow(ctx context.Context, workflow *types.Workflow) error
 	UpdateWorkflow(ctx context.Context, workflow *types.Workflow) error
+	DeleteWorkflowByID(ctx context.Context, id int64) error
 	CreateScript(ctx context.Context, script *types.Script) error
 	UpdateScript(ctx context.Context, script *types.Script) error
+	DeleteScriptByID(ctx context.Context, id int64) error
+	ListWorkflowsByProjectID(ctx context.Context, projectID int64) ([]*types.Workflow, error)
 }

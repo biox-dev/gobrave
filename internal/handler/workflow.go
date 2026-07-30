@@ -935,6 +935,96 @@ func (h *WorkflowHandler) GenerateWorkflowJSON(c *gin.Context) {
 	c.JSON(http.StatusOK, exportPayload)
 }
 
+// DeleteWorkflow godoc
+// @Summary      删除工作流
+// @Description  按 workflowId 删除工作流；如果该 workflow 下存在 analysis 记录则拒绝删除
+// @Tags         工作流
+// @Produce      json
+// @Param        workflowId  path      string             true  "工作流 ID"
+// @Success      200         {object}  map[string]string
+// @Failure      400         {object}  errors.AppError
+// @Failure      401         {object}  errors.AppError
+// @Failure      404         {object}  errors.AppError
+// @Failure      409         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
+// @Security     Bearer
+// @Router       /workflow/delete/{workflowId} [post]
+func (h *WorkflowHandler) DeleteWorkflow(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	workflowID := c.Param("workflowId")
+	if workflowID == "" {
+		c.Error(errors.NewValidationError("workflowId is required"))
+		return
+	}
+	workflowIDInt, err := strconv.ParseInt(workflowID, 10, 64)
+	if err != nil {
+		c.Error(errors.NewValidationError("workflowId must be a valid integer"))
+		return
+	}
+
+	if err := h.workflowService.DeleteWorkflow(c.Request.Context(), workflowIDInt); err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("workflow not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to delete workflow").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"workflow_id": workflowID,
+		"message":     "workflow deleted successfully",
+	})
+}
+
+// DeleteScript godoc
+// @Summary      删除脚本组件
+// @Description  按 scriptId 删除脚本；如果该脚本下存在 analysis_node 记录，或被某 workflow 的 dag_definition 引用，则拒绝删除
+// @Tags         工作流
+// @Produce      json
+// @Param        scriptId  path      string             true  "脚本主键 ID"
+// @Success      200       {object}  map[string]string
+// @Failure      400       {object}  errors.AppError
+// @Failure      401       {object}  errors.AppError
+// @Failure      404       {object}  errors.AppError
+// @Failure      409       {object}  errors.AppError
+// @Failure      500       {object}  errors.AppError
+// @Security     Bearer
+// @Router       /script/delete/{scriptId} [post]
+func (h *WorkflowHandler) DeleteScript(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	scriptID := c.Param("scriptId")
+	if scriptID == "" {
+		c.Error(errors.NewValidationError("scriptId is required"))
+		return
+	}
+	scriptIDInt, err := strconv.ParseInt(scriptID, 10, 64)
+	if err != nil {
+		c.Error(errors.NewValidationError("scriptId must be a valid integer"))
+		return
+	}
+
+	if err := h.workflowService.DeleteScript(c.Request.Context(), scriptIDInt); err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("script not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to delete script").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"script_id": scriptID,
+		"message":   "script deleted successfully",
+	})
+}
+
 func buildCompatSampleItem(item interface{}) (map[string]interface{}, error) {
 	b, err := json.Marshal(item)
 	if err != nil {

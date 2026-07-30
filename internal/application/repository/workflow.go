@@ -361,6 +361,10 @@ func (r *workflowRepository) UpdateWorkflow(ctx context.Context, workflow *types
 	return nil
 }
 
+func (r *workflowRepository) DeleteWorkflowByID(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.Workflow{}).Error
+}
+
 func (r *workflowRepository) CreateScript(ctx context.Context, script *types.Script) error {
 	return r.db.WithContext(ctx).Create(script).Error
 }
@@ -405,4 +409,17 @@ func (r *workflowRepository) UpdateScript(ctx context.Context, script *types.Scr
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+func (r *workflowRepository) DeleteScriptByID(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.Script{}).Error
+}
+
+func (r *workflowRepository) ListWorkflowsByProjectID(ctx context.Context, projectID int64) ([]*types.Workflow, error) {
+	items := make([]*types.Workflow, 0)
+	err := r.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
 }

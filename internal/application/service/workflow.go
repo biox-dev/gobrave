@@ -19,11 +19,24 @@ type workflowService struct {
 	workflowRepo  interfaces.WorkflowRepository
 	containerRepo interfaces.ContainerRepository
 	projectRepo   interfaces.ProjectRepository
+	analysisRepo  interfaces.AnalysisRepository
 	cfg           *config.Config
 }
 
-func NewWorkflowService(workflowRepo interfaces.WorkflowRepository, containerRepo interfaces.ContainerRepository, projectRepo interfaces.ProjectRepository, cfg *config.Config) interfaces.WorkflowService {
-	return &workflowService{workflowRepo: workflowRepo, containerRepo: containerRepo, projectRepo: projectRepo, cfg: cfg}
+func NewWorkflowService(
+	workflowRepo interfaces.WorkflowRepository,
+	containerRepo interfaces.ContainerRepository,
+	projectRepo interfaces.ProjectRepository,
+	analysisRepo interfaces.AnalysisRepository,
+	cfg *config.Config,
+) interfaces.WorkflowService {
+	return &workflowService{
+		workflowRepo:  workflowRepo,
+		containerRepo: containerRepo,
+		projectRepo:   projectRepo,
+		analysisRepo:  analysisRepo,
+		cfg:           cfg,
+	}
 }
 
 func (s *workflowService) GetWorkflowByID(ctx context.Context, id int64) (*types.Workflow, error) {
@@ -319,6 +332,27 @@ func (s *workflowService) UpdateWorkflow(ctx context.Context, workflow *types.Wo
 	return s.workflowRepo.UpdateWorkflow(ctx, workflow)
 }
 
+func (s *workflowService) DeleteWorkflow(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return fmt.Errorf("invalid workflow id: %d", id)
+	}
+
+	workflow, err := s.workflowRepo.GetWorkflowByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	analyses, err := s.analysisRepo.ListAnalysisByWorkflowID(ctx, workflow.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("failed to check existing analyses: %w", err)
+	}
+	if len(analyses) > 0 {
+		return fmt.Errorf("cannot delete workflow: %d associated analysis record(s) exist, delete them first", len(analyses))
+	}
+
+	return s.workflowRepo.DeleteWorkflowByID(ctx, id)
+}
+
 func (s *workflowService) CreateScript(ctx context.Context, script *types.Script) error {
 	return s.workflowRepo.CreateScript(ctx, script)
 }
@@ -326,6 +360,68 @@ func (s *workflowService) CreateScript(ctx context.Context, script *types.Script
 func (s *workflowService) UpdateScript(ctx context.Context, script *types.Script) error {
 	return s.workflowRepo.UpdateScript(ctx, script)
 }
+
+func (s *workflowService) DeleteScript(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return fmt.Errorf("invalid script id: %d", id)
+	}
+
+	script, err := s.workflowRepo.GetScriptByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// 1. Check: no AnalysisNodes reference this script
+	nodes, err := s.analysisRepo.ListAnalysisNodesByProjectIDAndScriptID(ctx, script.ProjectID, script.ID)
+	if err != nil {
+		return fmt.Errorf("failed to check existing analysis nodes: %w", err)
+	}
+	if len(nodes) > 0 {
+		return fmt.Errorf("cannot delete script: %d associated analysis node(s) exist, delete them first", len(nodes))
+	}
+
+	// 2. Check: script is not referenced in any Workflow's DagDefinition
+	workflows, err := s.workflowRepo.ListWorkflowsByProjectID(ctx, script.ProjectID)
+	if err != nil {
+		return fmt.Errorf("failed to list workflows for project: %w", err)
+	}
+	for _, wf := range workflows {
+		if strings.TrimSpace(wf.DagDefinition) == "" {
+			continue
+		}
+		var dag map[string]any
+		if err := json.Unmarshal([]byte(wf.DagDefinition), &dag); err != nil {
+			continue
+		}
+		nodesAny, _ := dag["nodes"].([]any)
+		for _, n := range nodesAny {
+			node, ok := n.(map[string]any)
+			if !ok {
+				continue
+			}
+			nodeScriptID := fmt.Sprintf("%v", node["script_id"])
+			if nodeScriptID == script.ScriptID {
+				return fmt.Errorf("cannot delete script: it is referenced in workflow \"%s\" (id=%d), remove it from the dag_definition first", wf.Name, wf.ID)
+			}
+		}
+	}
+
+	// 3. Delete the script's file directory on disk
+	project, err := s.projectRepo.GetProjectByID(ctx, script.ProjectID)
+	if err != nil {
+		return fmt.Errorf("failed to get project: %w", err)
+	}
+	scriptDir := utils.GetScriptFileDir(s.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
+	projectDataPrefix := filepath.Join(s.cfg.Storage.BaseDir, "data", project.ProjectID)
+	if strings.HasPrefix(scriptDir, projectDataPrefix) {
+		if err := os.RemoveAll(scriptDir); err != nil {
+			return fmt.Errorf("failed to remove script directory %s: %w", scriptDir, err)
+		}
+	}
+
+	return s.workflowRepo.DeleteScriptByID(ctx, id)
+}
+
 func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID int64) ([]any, error) {
 	script, err := s.workflowRepo.GetScriptByID(ctx, scriptID)
 	if err != nil {

@@ -19,6 +19,7 @@ type AnalysisService interface {
 	ListAnalysisNodesByProjectIDAndScriptID(ctx context.Context, projectID, scriptID int64) ([]*types.AnalysisNode, error)
 	SaveAnalysisController(ctx context.Context, input *types.AnalysisControllerSaveInput) (*types.Analysis, error)
 	DeleteAnalysisNode(ctx context.Context, id int64) error
+	DeleteAnalysis(ctx context.Context, id int64) error
 	ListAnalysisByWorkflowID(ctx context.Context, workflowID string) ([]*types.Analysis, error)
 }
 
@@ -48,5 +49,6 @@ type AnalysisRepository interface {
 	CreateAnalysisNodes(ctx context.Context, items []*types.AnalysisNode) error
 	DeleteAnalysisEdgesByAnalysisID(ctx context.Context, analysisID int64) error
 	CreateAnalysisEdges(ctx context.Context, items []*types.AnalysisEdge) error
+	DeleteAnalysisByID(ctx context.Context, id int64) error
 	ListAnalysisByWorkflowID(ctx context.Context, workflowID string) ([]*types.Analysis, error)
 }

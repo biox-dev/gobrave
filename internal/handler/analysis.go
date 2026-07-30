@@ -1634,6 +1634,47 @@ func (h *AnalysisHandler) DeleteAnalysisNode(c *gin.Context) {
 	})
 }
 
+// DeleteAnalysis godoc
+// @Summary      删除分析任务
+// @Description  按 analysisId 删除分析任务，同时清理关联的 analysis_nodes、analysis_edges、container_instances 及工作目录
+// @Tags         分析
+// @Produce      json
+// @Param        analysisId  path      string             true  "分析 ID"
+// @Success      200         {object}  map[string]string
+// @Failure      400         {object}  errors.AppError
+// @Failure      401         {object}  errors.AppError
+// @Failure      404         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
+// @Security     Bearer
+// @Router       /analysis/delete/{analysisId} [post]
+func (h *AnalysisHandler) DeleteAnalysis(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	analysisIDParam := strings.TrimSpace(c.Param("analysisId"))
+	if analysisIDParam == "" {
+		c.Error(errors.NewValidationError("analysisId is required"))
+		return
+	}
+
+	analysisID, err := strconv.ParseInt(analysisIDParam, 10, 64)
+	if err != nil || analysisID <= 0 {
+		c.Error(errors.NewValidationError("analysisId must be a positive integer"))
+		return
+	}
+
+	if err := h.analysisService.DeleteAnalysis(c.Request.Context(), analysisID); err != nil {
+		c.Error(errors.NewInternalServerError("failed to delete analysis").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"analysis_id": analysisID,
+		"message":     "analysis deleted successfully",
+	})
+}
+
 // PageAnalysisByProject godoc
 // @Summary      按当前项目分页查询分析任务
 // @Description  默认按当前用户 active project 的 project_id 过滤，支持可选 query 条件

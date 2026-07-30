@@ -242,6 +242,7 @@ func RegisterStoreRoutes(r *gin.RouterGroup, handler *handler.StoreHandler) {
 func RegisterWorkflowRoutes(r *gin.RouterGroup, handler *handler.WorkflowHandler) {
 	r.POST("/workflow/save-script", handler.SaveScript)
 	r.POST("/workflow/save-workflow", handler.SaveWorkflow)
+	r.POST("/workflow/delete/:workflowId", handler.DeleteWorkflow)
 	r.POST("/workflow/publish-workflow", handler.PublishWorkflow)
 	r.POST("/workflow/publish-script", handler.PublishScript)
 	r.POST("/workflow/install-workflow/:storeId", handler.InstallWorkflow)
@@ -250,6 +251,7 @@ func RegisterWorkflowRoutes(r *gin.RouterGroup, handler *handler.WorkflowHandler
 	r.POST("/workflow/:workflowId/generate-workflow-json", handler.GenerateWorkflowJSON)
 	r.GET("/find-script/:id", handler.FindScript)
 	r.GET("/script/:scriptId/get-script", handler.GetScriptById)
+	r.POST("/script/delete/:scriptId", handler.DeleteScript)
 	r.POST("/workflow/page-script", handler.PageScript)
 	r.POST("/workflow/page-workflow", handler.PageWorkflow)
 	r.GET("/workflow/tools/get-from-json/:workflowId", handler.GetFromJSONByWorlflow)
@@ -281,6 +283,7 @@ func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler
 	r.POST("/analysis/stop/:analysisId", handler.StopAnalysis)
 	r.POST("/analysis/node/stop/:analysisNodeId", handler.StopAnalysisNode)
 	r.POST("/analysis/node/delete/:analysisNodeId", handler.DeleteAnalysisNode)
+	r.POST("/analysis/delete/:analysisId", handler.DeleteAnalysis)
 	r.POST("/analysis/edit-params-v2/:analysisId", handler.EditParamsV2)
 	r.POST("/analysis/edit-node-params/:analysisNodeId", handler.EditNodeParams)
 	r.POST("/analysis/list-by-project-page", handler.PageAnalysisByProject)
