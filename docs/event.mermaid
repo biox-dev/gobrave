@@ -1,0 +1,20 @@
+flowchart LR
+    subgraph "OutboxDispatcher"
+        OD_Poll["轮询 DB pending"] --> OD_Check{"type?"}
+        OD_Check -->|"ContainerCreateRequest"| OD_Proc["标记 processing"]
+        OD_Proc --> OD_PubCR["发布 OutboxCreateRequestEvent"]
+        OD_Check -->|"其他"| OD_Pub["发布 ContainerEvent"]
+        OD_Pub --> OD_Sent["标记 sent"]
+    end
+    subgraph "EventBus"
+        Bus["event.Bus"]
+    end
+    subgraph "ContainerCreateWorker (event.Handler)"
+        CW_Handle["Handle()"] --> CW_Sem["获取信号量"]
+        CW_Sem --> CW_Exec["executeCreate"]
+        CW_Exec -->|"成功"| CW_Sent["标记 sent"]
+        CW_Exec -->|"失败"| CW_Pending["标记 pending（重试）"]
+    end
+    OD_PubCR --> Bus
+    OD_Pub --> Bus
+    Bus --> CW_Handle

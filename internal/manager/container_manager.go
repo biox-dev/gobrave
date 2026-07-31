@@ -33,6 +33,7 @@ type ContainerManager struct {
 	res             ContainerRuntimeResolver
 	img             *ImageManager
 	cfg             *config.Config
+	createWorker    *ContainerCreateWorker
 	monitorOnce     sync.Once
 }
 
@@ -54,6 +55,13 @@ func NewContainerManager(
 		img = NewImageManager(repo, reg)
 	}
 	return &ContainerManager{repo: repo, projectRepo: projectRepo, analysisRepo: analysisRepo, workflowService: workflowService, reg: reg, bus: bus, res: res, img: img, cfg: cfg}
+}
+
+// SetCreateWorker attaches a ContainerCreateWorker to enable queue-based creation.
+// When set and the queue is enabled via config, CreateByTemplate will enqueue requests
+// instead of executing them synchronously.
+func (m *ContainerManager) SetCreateWorker(w *ContainerCreateWorker) {
+	m.createWorker = w
 }
 
 // func (m *ContainerManager) Create(ctx context.Context, spec Spec) error {
@@ -92,12 +100,12 @@ func (m *ContainerManager) CreateByTemplate(
 		return nil, err
 	}
 
-	img, err := m.repo.GetContainerImageByID(ctx, tpl.ImageID)
+	_, err = m.repo.GetContainerImageByID(ctx, tpl.ImageID)
 	if err != nil {
 		return nil, err
 	}
 
-	rt, err := m.getRuntimeByName(runtimeName)
+	_, err = m.getRuntimeByName(runtimeName)
 	if err != nil {
 		return nil, err
 	}
@@ -114,11 +122,92 @@ func (m *ContainerManager) CreateByTemplate(
 	}
 	_ = m.createContainerEvent(ctx, inst.ID, "ContainerPending", "container instance created")
 
+	// If the create queue is enabled, enqueue the request and return immediately.
+	if m.createWorker != nil && m.isCreateQueueEnabled() {
+		userID := ""
+		if ctx != nil {
+			if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
+				userID = uid
+			} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
+				userID = uid
+			}
+		}
+
+		req := containerCreatePayload{
+			ContainerInstanceID: inst.ID,
+			RuntimeName:         runtimeName,
+			TemplateID:          templateID,
+			OwnerType:           string(ownerType),
+			OwnerID:             ownerID,
+			Name:                name,
+			UserID:              userID,
+		}
+
+		if err := m.createWorker.Enqueue(ctx, req); err != nil {
+			// Queue full or other error — clean up the instance we just created.
+			_ = m.repo.DeleteContainerInstance(ctx, inst.ID)
+			return nil, err
+		}
+
+		logger.Infof(ctx, "[ContainerManager] enqueued create request, instance_id=%d name=%s", inst.ID, name)
+		return inst, nil
+	}
+
+	// Direct execution path (original behaviour).
+	if err := m.executeCreate(ctx, runtimeName, templateID, ownerType, ownerID, name, inst.ID); err != nil {
+		return nil, err
+	}
+
+	return inst, nil
+}
+
+// isCreateQueueEnabled checks whether the queue is enabled via config.
+func (m *ContainerManager) isCreateQueueEnabled() bool {
+	return m.cfg != nil &&
+		m.cfg.Container != nil &&
+		m.cfg.Container.CreateQueueEnabled
+}
+
+// executeCreate performs the actual container creation and start. It is called either
+// directly by CreateByTemplate (sync path) or by ContainerCreateWorker (async path).
+// The ContainerInstance must already exist in DB with status=pending.
+func (m *ContainerManager) executeCreate(
+	ctx context.Context,
+	runtimeName string,
+	templateID int64,
+	ownerType types.ContainerOwnerType,
+	ownerID int64,
+	name string,
+	instanceID int64,
+) error {
+	inst, err := m.repo.GetContainerInstanceByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+
+	tpl, err := m.repo.GetContainerTemplateByID(ctx, templateID)
+	if err != nil {
+		_ = m.transition(ctx, inst, fsm.Failed, "ContainerTemplateNotFound")
+		return err
+	}
+
+	img, err := m.repo.GetContainerImageByID(ctx, tpl.ImageID)
+	if err != nil {
+		_ = m.transition(ctx, inst, fsm.Failed, "ContainerImageNotFound")
+		return err
+	}
+
+	rt, err := m.getRuntimeByName(runtimeName)
+	if err != nil {
+		_ = m.transition(ctx, inst, fsm.Failed, "ContainerRuntimeNotFound")
+		return err
+	}
+
 	if m.img != nil {
 		if err := m.img.EnsureImageReadyByEntity(ctx, runtimeName, img); err != nil {
 			_ = m.transition(ctx, inst, fsm.Failed, "ContainerImagePrepareFailed")
 			_ = m.createContainerEvent(ctx, inst.ID, "ContainerImagePrepareFailedDetail", err.Error())
-			return nil, err
+			return err
 		}
 	}
 
@@ -135,12 +224,14 @@ func (m *ContainerManager) CreateByTemplate(
 		// 添加 挂载点 $PACKAGE_DIR/brave-env.sh ，如果文件不存在则先创建
 		packageDir := filepath.Join(m.cfg.Storage.BaseDir, "package")
 		if err := os.MkdirAll(packageDir, 0755); err != nil {
-			return nil, err
+			_ = m.transition(ctx, inst, fsm.Failed, "ContainerCreatePackageDirFailed")
+			return err
 		}
 		braveEnvFile := filepath.Join(packageDir, "brave-env.sh")
 		if _, err := os.Stat(braveEnvFile); os.IsNotExist(err) {
 			if _, err := os.Create(braveEnvFile); err != nil {
-				return nil, err
+				_ = m.transition(ctx, inst, fsm.Failed, "ContainerCreateBraveEnvFailed")
+				return err
 			}
 		}
 		volumes = append(volumes, types.ContainerVolume{
@@ -177,7 +268,6 @@ func (m *ContainerManager) CreateByTemplate(
 
 	resolveVars := m.buildRuntimeResolveVariables(ctx, m.cfg, img, templateID, ownerType, ownerID, name)
 	if ownerType == types.ContainerOwnerDagNode {
-		// 生成node需要运行的脚本
 		applyDagNodeRuntimeSpec(spec, resolveVars, runtimeName)
 	}
 
@@ -187,7 +277,7 @@ func (m *ContainerManager) CreateByTemplate(
 		if err != nil {
 			_ = m.transition(ctx, inst, fsm.Failed, "ContainerResolveSpecFailed")
 			_ = m.createContainerEvent(ctx, inst.ID, "ContainerResolveSpecFailedDetail", err.Error())
-			return nil, err
+			return err
 		}
 	}
 
@@ -195,27 +285,31 @@ func (m *ContainerManager) CreateByTemplate(
 	if err != nil {
 		_ = m.transition(ctx, inst, fsm.Failed, "ContainerCreateFailed")
 		_ = m.createContainerEvent(ctx, inst.ID, "ContainerCreateFailedDetail", err.Error())
-		return nil, err
+		return err
 	}
 
 	inst.RuntimeID = runtimeID
 	if err := m.repo.UpdateContainerInstance(ctx, inst); err != nil {
-		return nil, err
+		return err
 	}
 	if err := m.transition(ctx, inst, fsm.Creating, "ContainerCreating"); err != nil {
-		return nil, err
+		return err
 	}
 
 	if err := rt.Start(ctx, runtimeID); err != nil {
 		_ = m.transition(ctx, inst, fsm.Failed, "ContainerStartFailed")
 		_ = m.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
-		return nil, err
+		return err
 	}
 
-	return inst, nil
+	return nil
 }
 
 func (m *ContainerManager) resolveOwnerProjectVolumes(ctx context.Context, ownerType types.ContainerOwnerType, ownerID int64) []types.ContainerVolume {
+	if m.projectRepo == nil {
+		return nil
+	}
+
 	projectID := m.resolveProjectIDByOwner(ctx, ownerType, ownerID)
 	if projectID == 0 {
 		return nil

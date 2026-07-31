@@ -383,6 +383,45 @@ func (r *containerRepository) ListPendingOutboxEvent(ctx context.Context, limit 
 	return items, nil
 }
 
+func (r *containerRepository) ListPendingOutboxEventsByType(ctx context.Context, eventType string, limit int) ([]*types.OutboxEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	items := make([]*types.OutboxEvent, 0)
+	err := r.db.WithContext(ctx).
+		Where("status = ? AND type = ?", "pending", eventType).
+		Order("id ASC").
+		Limit(limit).
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *containerRepository) CountPendingOutboxEventsByType(ctx context.Context, eventType string) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&types.OutboxEvent{}).
+		Where("status = ? AND type = ?", "pending", eventType).
+		Count(&count).Error
+	return count, err
+}
+
+func (r *containerRepository) MarkOutboxEventProcessing(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).
+		Model(&types.OutboxEvent{}).
+		Where("id = ?", id).
+		Update("status", "processing").Error
+}
+
+func (r *containerRepository) MarkOutboxEventPending(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).
+		Model(&types.OutboxEvent{}).
+		Where("id = ?", id).
+		Update("status", "pending").Error
+}
+
 func (r *containerRepository) MarkOutboxEventSent(ctx context.Context, id int64) error {
 	now := time.Now()
 	return r.db.WithContext(ctx).

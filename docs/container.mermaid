@@ -1,0 +1,20 @@
+sequenceDiagram
+    participant Client
+    participant CreateByTemplate
+    participant DB as OutboxEvent (DB)
+    participant Worker as ContainerCreateWorker
+    participant Runtime as Docker/K8s
+
+    Client->>CreateByTemplate: 请求创建容器
+    CreateByTemplate->>DB: 创建 ContainerInstance (status=pending)
+    CreateByTemplate->>DB: 写入 OutboxEvent (type=ContainerCreateRequest)
+    CreateByTemplate-->>Client: 返回 inst (status=pending)
+
+    loop 每 2s 轮询
+        Worker->>DB: 查询 pending ContainerCreateRequest
+        Worker->>Worker: 获取信号量 (限并发)
+        Worker->>CreateByTemplate: executeCreate()
+        Worker->>Runtime: rt.Create() + rt.Start()
+        Worker->>DB: 标记 OutboxEvent 为 sent
+        Worker->>Worker: 释放信号量
+    end

@@ -107,6 +107,13 @@ container:
   # DAG 流程结束（finished/failed/timeout）时，是否自动回收 owner_type=dag_node 的容器实例。
   # 可选: none | stop | delete
   dag_node_cleanup_on_dag_finished: delete
+  # 是否启用容器创建队列。启用后，CreateByTemplate 会将创建请求写入 outbox，
+  # 由后台 worker 以受控并发度异步执行，避免瞬间大量容器创建耗尽资源。
+  create_queue_enabled: false
+  # 容器创建队列的最大并发数（同时创建多少个容器）。
+  create_queue_max_concurrency: 3
+  # 容器创建队列的最大排队数（超出后新请求直接返回错误）。
+  create_queue_max_pending: 50
 
 tenant:
   # default_tenant_id: "default"

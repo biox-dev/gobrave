@@ -332,6 +332,49 @@ func (m *mockContainerRepo) ListPendingOutboxEvent(ctx context.Context, limit in
 	return items, nil
 }
 
+func (m *mockContainerRepo) ListPendingOutboxEventsByType(ctx context.Context, eventType string, limit int) ([]*types.OutboxEvent, error) {
+	items := make([]*types.OutboxEvent, 0)
+	for _, v := range m.outbox {
+		if v.Status == "pending" && v.Type == eventType {
+			items = append(items, v)
+			if limit > 0 && len(items) >= limit {
+				break
+			}
+		}
+	}
+	return items, nil
+}
+
+func (m *mockContainerRepo) CountPendingOutboxEventsByType(ctx context.Context, eventType string) (int64, error) {
+	var count int64
+	for _, v := range m.outbox {
+		if v.Status == "pending" && v.Type == eventType {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *mockContainerRepo) MarkOutboxEventProcessing(ctx context.Context, id int64) error {
+	for _, v := range m.outbox {
+		if v.ID == id {
+			v.Status = "processing"
+			return nil
+		}
+	}
+	return errors.New("outbox event not found")
+}
+
+func (m *mockContainerRepo) MarkOutboxEventPending(ctx context.Context, id int64) error {
+	for _, v := range m.outbox {
+		if v.ID == id {
+			v.Status = "pending"
+			return nil
+		}
+	}
+	return errors.New("outbox event not found")
+}
+
 func (m *mockContainerRepo) MarkOutboxEventSent(ctx context.Context, id int64) error {
 	for _, v := range m.outbox {
 		if v.ID == id {

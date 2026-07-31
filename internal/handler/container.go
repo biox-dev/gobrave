@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gobravedev/gobrave/internal/config"
 	"github.com/gobravedev/gobrave/internal/errors"
+	"github.com/gobravedev/gobrave/internal/manager"
 	"github.com/gobravedev/gobrave/internal/types"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
 )
@@ -18,6 +19,7 @@ type ContainerHandler struct {
 	projectService   interfaces.ProjectService
 	analysisService  interfaces.AnalysisService
 	workflowService  interfaces.WorkflowService
+	createWorker     *manager.ContainerCreateWorker
 	cfg              *config.Config
 }
 
@@ -80,12 +82,15 @@ type appSessionPageItem struct {
 
 func NewContainerHandler(containerService interfaces.ContainerService,
 	projectService interfaces.ProjectService,
-	analysisService interfaces.AnalysisService, workflowService interfaces.WorkflowService, cfg *config.Config) *ContainerHandler {
+	analysisService interfaces.AnalysisService, workflowService interfaces.WorkflowService,
+	createWorker *manager.ContainerCreateWorker,
+	cfg *config.Config) *ContainerHandler {
 	return &ContainerHandler{
 		containerService: containerService,
 		analysisService:  analysisService,
 		projectService:   projectService,
 		workflowService:  workflowService,
+		createWorker:     createWorker,
 		cfg:              cfg,
 	}
 }
@@ -990,5 +995,44 @@ func (h *ContainerHandler) PageOutboxEvent(c *gin.Context) {
 		"total":     result.Total,
 		"page":      result.Page,
 		"page_size": result.PageSize,
+	})
+}
+
+// GetCreateQueueStatus godoc
+// @Summary      容器创建队列状态
+// @Description  返回创建队列的运行中/等待中/最大并发/最大排队数量
+// @Tags         容器管理
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}
+// @Failure      401  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/create-queue/status [get]
+func (h *ContainerHandler) GetCreateQueueStatus(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	if h.createWorker == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"active_count":    0,
+			"pending_count":   0,
+			"max_concurrency": 0,
+			"max_pending":     0,
+			"queue_enabled":   false,
+		})
+		return
+	}
+
+	pending, err := h.createWorker.PendingCount(c.Request.Context())
+	if err != nil {
+		pending = -1
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"active_count":    h.createWorker.ActiveCount(),
+		"pending_count":   pending,
+		"max_concurrency": h.createWorker.MaxConcurrency(),
+		"max_pending":     h.createWorker.MaxPending(),
+		"queue_enabled":   true,
 	})
 }
