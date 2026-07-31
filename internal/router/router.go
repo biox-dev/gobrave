@@ -277,6 +277,7 @@ func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler
 	r.POST("/analysis/controllerV2", handler.SaveAnalysisControllerV2)
 	r.POST("/analysis/controller-script", handler.SaveAnalysisNodeControllerWithScript)
 	r.POST("/analysis/:analysisNodeId/run-node", handler.RunAnalysisNode)
+	r.POST("/script/:scriptId/run-analysis-nodes", handler.RunAnalysisNodeByScriptID)
 	r.POST("/analysis/controllerV3", handler.SaveAnalysisControllerV3)
 	r.POST("/fast-api/analysis-controller", handler.SaveAnalysisController)
 	r.POST("/fast-api/analysis-controllerV2", handler.SaveAnalysisControllerV2)

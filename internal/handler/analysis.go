@@ -1176,6 +1176,92 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// RunAnalysisNodeByScriptID 批量运行 script 下所有 creation_source=standalone 的 analysis node
+func (h *AnalysisHandler) RunAnalysisNodeByScriptID(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	scriptIDStr := strings.TrimSpace(c.Param("scriptId"))
+	scriptID, err := strconv.ParseInt(scriptIDStr, 10, 64)
+	if err != nil || scriptID <= 0 {
+		c.Error(errors.NewValidationError("invalid script_id").WithDetails(err.Error()))
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("active project not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get active project").WithDetails(err.Error()))
+		return
+	}
+
+	nodes, err := h.analysisService.ListAnalysisNodesByProjectIDAndScriptID(c.Request.Context(), project.ID, scriptID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to list analysis nodes").WithDetails(err.Error()))
+		return
+	}
+
+	standaloneNodes := make([]*types.AnalysisNode, 0)
+	for _, node := range nodes {
+		if strings.EqualFold(node.CreationSource, "standalone") {
+			standaloneNodes = append(standaloneNodes, node)
+		}
+	}
+
+	if len(standaloneNodes) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"script_id":     scriptID,
+			"total":         0,
+			"submitted":     0,
+			"submitted_ids": []int64{},
+			"message":       "no standalone analysis nodes found for this script",
+		})
+		return
+	}
+
+	var submittedIDs []int64
+	var errors []string
+
+	for _, node := range standaloneNodes {
+		if err := h.analysisRepo.UpdateAnalysisNodeByAnalysisNodeID(c.Request.Context(), node.AnalysisNodeID, map[string]any{
+			"status":                   dagruntime.StatusReady,
+			"server_status":            "",
+			"cache_hit":                false,
+			"rerun_reason":             "batch rerun by script",
+			"error_message":            "",
+			"exit_code":                0,
+			"pid":                      0,
+			"job_id":                   "",
+			"started_at":               nil,
+			"finished_at":              nil,
+			"output_validation_errors": types.JSONSlice{},
+			"updated_at":               time.Now().UTC(),
+		}); err != nil {
+			errors = append(errors, fmt.Sprintf("failed to reset node %d: %v", node.ID, err))
+			continue
+		}
+
+		if err := h.nodeOrchestrator.StartAsync(c.Request.Context(), node.ID); err != nil {
+			errors = append(errors, fmt.Sprintf("failed to submit node %d: %v", node.ID, err))
+			continue
+		}
+		submittedIDs = append(submittedIDs, node.ID)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"script_id":     scriptID,
+		"total":         len(standaloneNodes),
+		"submitted":     len(submittedIDs),
+		"submitted_ids": submittedIDs,
+		"errors":        errors,
+	})
+}
+
 func (h *AnalysisHandler) RunAnalysisNode(c *gin.Context) {
 	analysisNodeID := strings.TrimSpace(c.Param("analysisNodeId"))
 	analysisNodeIDInt, err := strconv.ParseInt(analysisNodeID, 10, 64)
@@ -1184,11 +1270,11 @@ func (h *AnalysisHandler) RunAnalysisNode(c *gin.Context) {
 		return
 	}
 	if err := h.RunAnalysisNodeWithID(c.Request.Context(), analysisNodeIDInt); err != nil {
-		c.Error(errors.NewInternalServerError("failed to run analaysis ndoe!").WithDetails(err.Error()))
+		c.Error(errors.NewInternalServerError("failed to run analysis node!").WithDetails(err.Error()))
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"analysis_ndoe_id": analysisNodeID})
+	c.JSON(http.StatusOK, gin.H{"analysis_node_id": analysisNodeID})
 
 }
 
