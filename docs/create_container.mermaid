@@ -1,0 +1,28 @@
+sequenceDiagram
+    participant OD as OutboxDispatcher
+    participant Bus as event.Bus
+    participant CW as ContainerCreateWorker
+    participant RT as Runtime(Docker/K8s)
+    participant CM as ContainerManager
+
+    OD->>Bus: OutboxCreateRequestEvent
+    Bus->>CW: Handle(OutboxCreateRequestEvent)
+    CW->>CW: 获取信号量 (阻塞)
+    CW->>CM: executeCreate (rt.Create + rt.Start)
+    CM->>RT: Create + Start
+    CM-->>CW: 返回成功 (status=Creating)
+    CW->>CW: tracking.Store(instanceID, doneCh)
+    CW->>CW: select { doneCh / timeout }
+    
+    Note over CW: 信号量仍被持有...
+
+    RT-->>CM: ContainerStarted 事件
+    CM->>CM: transition → Running
+    CM->>CM: 写 OutboxEvent
+    OD->>OD: 轮询 → 发布 ContainerEvent
+    Bus->>CW: Handle(ContainerEvent)
+    CW->>CW: tracking.Load → close(doneCh)
+    
+    CW->>CW: <-doneCh 解除阻塞
+    CW->>CW: MarkOutboxEventSent
+    CW->>CW: 释放信号量
