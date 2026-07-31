@@ -1228,6 +1228,12 @@ func (h *AnalysisHandler) RunAnalysisNodeByScriptID(c *gin.Context) {
 	var errors []string
 
 	for _, node := range standaloneNodes {
+		// Skip nodes that are already in an active (non-terminal) state to prevent double-submission
+		if node.Status == dagruntime.StatusRunning || node.Status == dagruntime.StatusSubmitted || node.Status == dagruntime.StatusStopping {
+			errors = append(errors, fmt.Sprintf("node %d is already %s, skipped", node.ID, node.Status))
+			continue
+		}
+
 		if err := h.analysisRepo.UpdateAnalysisNodeByAnalysisNodeID(c.Request.Context(), node.AnalysisNodeID, map[string]any{
 			"status":                   dagruntime.StatusReady,
 			"server_status":            "",
@@ -1289,6 +1295,11 @@ func (h *AnalysisHandler) RunAnalysisNodeWithID(ctx context.Context, analsyisNod
 			return errors.NewNotFoundError("analysis node not found")
 		}
 		return errors.NewInternalServerError("failed to query analysis node").WithDetails(err.Error())
+	}
+
+	// Guard against double-submission: skip if node is already in an active state
+	if node.Status == dagruntime.StatusRunning || node.Status == dagruntime.StatusSubmitted || node.Status == dagruntime.StatusStopping {
+		return errors.NewBadRequestError(fmt.Sprintf("analysis node is already %s, please wait for it to finish", node.Status))
 	}
 
 	if err := h.analysisRepo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
