@@ -23,10 +23,14 @@ type Config struct {
 	LLM       *LLMConfig       `yaml:"llm" json:"llm"`
 	Container *ContainerConfig `yaml:"container" json:"container"`
 	// Ingest   *IngestConfig   `yaml:"ingest"   json:"ingest"`
-	Tenant *TenantConfig `yaml:"tenant"   json:"tenant"`
+	Tenant      *TenantConfig `yaml:"tenant"   json:"tenant"`
+	DebugConfig *DebugConfig  `yaml:"debug"    json:"debug"`
+
 	// Audio  *AudioConfig  `yaml`
 }
-
+type DebugConfig struct {
+	EnableDagOrchestrator bool `yaml:"enable_dag_orchestrator" json:"enable_dag_orchestrator"`
+}
 type LLMConfig struct {
 	CLIURL      string             `yaml:"cli_url" json:"cli_url"`
 	Model       string             `yaml:"model" json:"model"`
@@ -263,6 +267,9 @@ func LoadConfig() (*Config, error) {
 		// },
 		Tenant: &TenantConfig{
 			AesKey: "your-aes-key-here",
+		},
+		DebugConfig: &DebugConfig{
+			EnableDagOrchestrator: false,
 		},
 	}
 

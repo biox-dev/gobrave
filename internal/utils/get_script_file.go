@@ -40,6 +40,10 @@ func GetProjectDir(baseDir, projectId string) string {
 func GetProjectDocDir(baseDir, projectId string) string {
 	return filepath.Join(baseDir, "data", projectId, "docs", "src")
 }
+
+func GetAnalysisDebugDir(baseDir, analysisID, version string) string {
+	return filepath.Join(baseDir, "debug", analysisID, version)
+}
 func mainFileByScriptType(scriptType string) string {
 	switch strings.ToLower(strings.TrimSpace(scriptType)) {
 	case "r":

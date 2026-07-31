@@ -69,7 +69,7 @@ type dynamicDagOrchestratorV2 struct {
 	// registry tracks in-memory running tasks for fast duplicate-run checks and stop state.
 	registry *dagruntime.RunningRegistry
 
-	projectID int64
+	// projectID int64
 	// mu is reserved for future critical sections in V2 orchestration state transitions.
 	mu sync.Mutex
 }
@@ -107,7 +107,7 @@ func NewDynamicDagOrchestratorV2(
 // 3) Compile templates from current JSON dag_definition.
 // 4) Register running state + heartbeat renewer.
 // 5) Spawn run loop goroutine that performs dynamic materialization and dispatch.
-func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, projectID int64, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
+func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
 	if analysisID <= 0 {
 		return fmt.Errorf("analysis_id is required")
 	}

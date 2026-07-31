@@ -478,7 +478,31 @@ func (h *AnalysisHandler) SaveAnalysisControllerV2(c *gin.Context) {
 	}
 
 	if req.IsSubmit {
-		if err := h.dynamicDagOrchestrator.StartAsyncV2(c.Request.Context(), project.ID, saved.ID, parseAnalysisResult, dagDefinition); err != nil {
+		if h.config.DebugConfig.EnableDagOrchestrator {
+			// 将参数  saved.ID, parseAnalysisResult, dagDefinition用json 写入到debug文件
+			debugDir := utils.GetAnalysisDebugDir(h.config.Storage.BaseDir, fmt.Sprint(saved.ID), "V2")
+			_ = os.MkdirAll(debugDir, os.ModePerm)
+			debugPath := filepath.Join(debugDir, "input.json")
+			f, err := os.Create(debugPath)
+			if err != nil {
+				c.Error(errors.NewInternalServerError("failed to create debug input file").WithDetails(err.Error()))
+				return
+			}
+			defer f.Close()
+			// 构建一个map[string]interface{}，包含 saved.ID, parseAnalysisResult, dagDefinition
+			debugData := map[string]interface{}{
+				"analysis_id":           fmt.Sprint(saved.ID),
+				"parse_analysis_result": parseAnalysisResult,
+				"dag_definition":        dagDefinition,
+			}
+			// 将 debugData 写入到文件
+			encoder := json.NewEncoder(f)
+			if err := encoder.Encode(debugData); err != nil {
+				c.Error(errors.NewInternalServerError("failed to write debug input file").WithDetails(err.Error()))
+				return
+			}
+		}
+		if err := h.dynamicDagOrchestrator.StartAsyncV2(c.Request.Context(), saved.ID, parseAnalysisResult, dagDefinition); err != nil {
 			c.Error(errors.NewInternalServerError("failed to start dynamic dag scheduler").WithDetails(err.Error()))
 			return
 		}
