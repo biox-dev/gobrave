@@ -1,0 +1,26 @@
+flowchart TD
+    A[StartAsyncV2] --> B[Acquire DB Lease]
+    B --> C[BuildRuntimeTasks]
+    C --> D[Register Running State]
+    D --> E[runDynamicLoop]
+
+    E --> F[Compile DAG Templates]
+    F --> G[Create Dependency Manager]
+    G --> H[Find Ready Nodes]
+
+    H --> I[reconcileDynamicCandidates]
+    I --> J[Create AnalysisNode]
+    J --> K[pumpReadyQueue]
+
+    K --> L[WorkerPool]
+    L --> M[NodeDispatcher]
+    M --> N[Executor]
+
+    N --> O[RuntimeEvent]
+    O --> P{Node Success?}
+
+    P -->|Yes| Q[Unlock downstream nodes]
+    P -->|No| R[Block downstream nodes]
+
+    Q --> H
+    R --> H
