@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" fill="none">
+  <defs>
+    <linearGradient id="gobraveGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00ADD8"/>
+      <stop offset="100%" stop-color="#007D9C"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00ADD8"/>
+      <stop offset="100%" stop-color="#00D8A0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Icon: DAG + DNA concept — 6 interconnected nodes in double-helix layout -->
+  <g transform="translate(40, 10)">
+    <!-- Connecting edges (DAG flow) -->
+    <line x1="35" y1="30" x2="85" y2="60" stroke="url(#accentGrad)" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+    <line x1="10" y1="60" x2="60" y2="90" stroke="url(#accentGrad)" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+    <line x1="60" y1="60" x2="110" y2="90" stroke="url(#accentGrad)" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+    <line x1="35" y1="110" x2="85" y2="140" stroke="url(#accentGrad)" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+
+    <!-- Cross connections (helix feel) -->
+    <line x1="10" y1="60" x2="85" y2="30" stroke="#00ADD8" stroke-width="1.5" stroke-linecap="round" opacity="0.25" stroke-dasharray="4 4"/>
+    <line x1="110" y1="90" x2="35" y2="140" stroke="#00ADD8" stroke-width="1.5" stroke-linecap="round" opacity="0.25" stroke-dasharray="4 4"/>
+
+    <!-- Nodes row 1 -->
+    <circle cx="35" cy="30" r="10" fill="url(#gobraveGrad)" opacity="0.9"/>
+    <circle cx="85" cy="30" r="10" fill="url(#gobraveGrad)" opacity="0.5"/>
+
+    <!-- Nodes row 2 -->
+    <circle cx="10" cy="60" r="10" fill="url(#gobraveGrad)" opacity="0.55"/>
+    <circle cx="60" cy="60" r="10" fill="url(#gobraveGrad)" opacity="0.9"/>
+    <circle cx="110" cy="60" r="10" fill="url(#gobraveGrad)" opacity="0.55"/>
+
+    <!-- Nodes row 3 -->
+    <circle cx="35" cy="90" r="10" fill="url(#gobraveGrad)" opacity="0.55"/>
+    <circle cx="85" cy="90" r="10" fill="url(#gobraveGrad)" opacity="0.55"/>
+
+    <!-- Nodes row 4 -->
+    <circle cx="60" cy="120" r="10" fill="url(#gobraveGrad)" opacity="0.9"/>
+    <circle cx="110" cy="120" r="10" fill="url(#gobraveGrad)" opacity="0.5"/>
+
+    <!-- Active/pulse dot on center node -->
+    <circle cx="60" cy="60" r="4" fill="#fff" opacity="0.8"/>
+  </g>
+
+  <!-- Wordmark: gobrave -->
+  <g transform="translate(170, 0)">
+    <!-- "go" in Go blue -->
+    <text x="0" y="95" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-weight="800" font-size="52" letter-spacing="-1">
+      <tspan fill="#00ADD8">go</tspan><tspan fill="#1a1a2e">brave</tspan>
+    </text>
+
+    <!-- Tagline -->
+    <text x="4" y="126" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-weight="500" font-size="16" fill="#5a6a7a" letter-spacing="0.5">
+      Bioinformatics Analysis &amp; Visualization Platform
+    </text>
+  </g>
+
+  <!-- Bottom accent bar -->
+  <rect x="174" y="136" width="120" height="3" rx="1.5" fill="url(#accentGrad)" opacity="0.7"/>
+</svg>
