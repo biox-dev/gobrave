@@ -64,13 +64,7 @@ Launch full analysis environments **on demand**, right from your pipeline.
 - Auto-provisioned reverse proxy (Traefik / K8s Ingress / built-in gateway)
 - User-namespaced, isolated containers with host UID mapping
 
-### 🤖 Built-in AI Copilot
-An LLM-powered assistant embedded directly in the platform.
 
-- Streaming chat via **WebSocket** (real-time token delivery)
-- Permission-gated tool execution (write files, run commands)
-- Session-aware context with persistent conversation history
-- Powered by Copilot SDK — extensible to any LLM backend
 
 ### 🌐 Real-time Collaboration
 Stay in sync with every event in the system.
@@ -88,11 +82,6 @@ Organize your research artifacts with project-scoped CRUD.
 - Bulk import & project-level listing
 - Transactional integrity with cascading cleanup
 
-### 🔐 Enterprise-Ready
-- JWT + API Key dual authentication
-- Multi-tenant isolation
-- OnlyOffice collaborative document editing
-- Swagger auto-generated API docs
 
 ---
 
