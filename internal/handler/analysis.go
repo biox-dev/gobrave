@@ -1279,6 +1279,12 @@ func (h *AnalysisHandler) RunAnalysisNodeByScriptID(c *gin.Context) {
 			continue
 		}
 
+		// Regenerate the run script to reflect the latest parameters before re-submitting.
+		if err := h.regenerateNodeRunScript(c.Request.Context(), node); err != nil {
+			errors = append(errors, fmt.Sprintf("failed to regenerate run script for node %d: %v", node.ID, err))
+			continue
+		}
+
 		if err := h.nodeOrchestrator.StartAsync(c.Request.Context(), node.ID); err != nil {
 			errors = append(errors, fmt.Sprintf("failed to submit node %d: %v", node.ID, err))
 			continue
@@ -1344,6 +1350,11 @@ func (h *AnalysisHandler) RunAnalysisNodeWithID(ctx context.Context, analsyisNod
 		"updated_at":               time.Now().UTC(),
 	}); err != nil {
 		return errors.NewInternalServerError("failed to reset analysis node status").WithDetails(err.Error())
+	}
+
+	// Regenerate the run script to reflect the latest parameters before re-submitting.
+	if err := h.regenerateNodeRunScript(ctx, node); err != nil {
+		return errors.NewInternalServerError("failed to regenerate node run script").WithDetails(err.Error())
 	}
 
 	if err := h.nodeOrchestrator.StartAsync(ctx, analsyisNodeId); err != nil {
@@ -1507,6 +1518,60 @@ func buildStandaloneRunScript(
 ) (string, error) {
 
 	return dagruntime.BuildRunScript(node, scriptType, scriptPath, scriptContent, params)
+}
+
+// regenerateNodeRunScript rebuilds the run script for an existing analysis node
+// and writes it to the node's command file. This is used when re-running a node
+// to ensure the command reflects the latest parameters.
+func (h *AnalysisHandler) regenerateNodeRunScript(ctx context.Context, node *types.AnalysisNode) error {
+	paramsBytes, err := os.ReadFile(node.ParamsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read params file %s: %w", node.ParamsPath, err)
+	}
+	var params map[string]interface{}
+	if err := json.Unmarshal(paramsBytes, &params); err != nil {
+		return fmt.Errorf("failed to parse params file %s: %w", node.ParamsPath, err)
+	}
+
+	script, err := h.workflowService.GetScriptByID(ctx, node.ScriptID)
+	if err != nil {
+		return fmt.Errorf("failed to get script %d: %w", node.ScriptID, err)
+	}
+	if script == nil {
+		return fmt.Errorf("script %d not found", node.ScriptID)
+	}
+
+	scriptDir, scriptMainFile, err := h.workflowService.GetScriptFileByScriptID(ctx, script.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get script file path: %w", err)
+	}
+
+	scriptPath := filepath.Join(scriptDir, scriptMainFile)
+	baseDir := "."
+	if h.config != nil && h.config.Storage != nil {
+		if v := strings.TrimSpace(h.config.Storage.BaseDir); v != "" {
+			baseDir = v
+		}
+	}
+	if !filepath.IsAbs(scriptPath) {
+		scriptPath = filepath.Join(baseDir, scriptPath)
+	}
+
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return fmt.Errorf("failed to read script file %s: %w", scriptPath, err)
+	}
+
+	runScript, err := buildStandaloneRunScript(node, script.ScriptType, scriptPath, string(scriptContent), params)
+	if err != nil {
+		return fmt.Errorf("failed to build run script: %w", err)
+	}
+
+	if err := os.WriteFile(node.CommandPath, []byte(runScript), 0o755); err != nil {
+		return fmt.Errorf("failed to write command file %s: %w", node.CommandPath, err)
+	}
+
+	return nil
 }
 
 func cloneAnyMapForNode(in map[string]interface{}) map[string]interface{} {
