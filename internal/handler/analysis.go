@@ -716,6 +716,9 @@ func (h *AnalysisHandler) PublishToDocByWorkflowID(c *gin.Context) {
 	var workflowTitleList strings.Builder
 
 	for _, analysis := range analysisList {
+		if !analysis.IsReport {
+			continue
+		}
 		analsyisTitleLine := fmt.Sprintf("- [%s](./%d/analysis.md)\n", analysis.AnalysisName, analysis.ID)
 		workflowTitleList.WriteString(analsyisTitleLine)
 		if !strings.Contains(string(content), fmt.Sprintf("./%d/%d/analysis.md", workflow.ID, analysis.ID)) {
@@ -1793,6 +1796,61 @@ func (h *AnalysisHandler) DeleteAnalysis(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"analysis_id": analysisID,
 		"message":     "analysis deleted successfully",
+	})
+}
+
+// ToggleAnalysisReport godoc
+// @Summary      切换分析任务的 is_report 状态
+// @Description  按 analysisId 切换 is_report 字段的 true/false 值
+// @Tags         分析
+// @Produce      json
+// @Param        analysisId  path      string             true  "分析 ID"
+// @Success      200         {object}  map[string]interface{}
+// @Failure      400         {object}  errors.AppError
+// @Failure      401         {object}  errors.AppError
+// @Failure      404         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
+// @Security     Bearer
+// @Router       /analysis/toggle-report/{analysisId} [post]
+func (h *AnalysisHandler) ToggleAnalysisReport(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	analysisIDParam := strings.TrimSpace(c.Param("analysisId"))
+	if analysisIDParam == "" {
+		c.Error(errors.NewValidationError("analysisId is required"))
+		return
+	}
+
+	analysisID, err := strconv.ParseInt(analysisIDParam, 10, 64)
+	if err != nil || analysisID <= 0 {
+		c.Error(errors.NewValidationError("analysisId must be a positive integer"))
+		return
+	}
+
+	analysis, err := h.analysisService.GetAnalysisByID(c.Request.Context(), analysisID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("analysis not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get analysis").WithDetails(err.Error()))
+		return
+	}
+
+	newValue := !analysis.IsReport
+	if err := h.analysisService.UpdateAnalysisByID(c.Request.Context(), analysisID, map[string]any{
+		"is_report": newValue,
+	}); err != nil {
+		c.Error(errors.NewInternalServerError("failed to update is_report").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"analysis_id": analysisID,
+		"is_report":   newValue,
+		"message":     "is_report toggled successfully",
 	})
 }
 

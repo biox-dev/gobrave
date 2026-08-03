@@ -106,6 +106,14 @@ editor_options:
   chunk_output_type: console
 ---
         ` + fullCode
+	case "jupyter":
+		return `{
+ "cells": [],
+ "metadata": {},
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
+`
 	default:
 		return `
     `

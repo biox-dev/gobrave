@@ -30,10 +30,11 @@ func BuildRunScript(
 
 func NewRunScriptBuilders() map[string]RunScriptBuilder {
 	return map[string]RunScriptBuilder{
-		"r":      RScriptBuilder{},
-		"python": PythonScriptBuilder{},
-		"shell":  ShellScriptBuilder{},
-		"qmd":    QmdScriptBuilder{},
+		"r":       RScriptBuilder{},
+		"python":  PythonScriptBuilder{},
+		"shell":   ShellScriptBuilder{},
+		"qmd":     QmdScriptBuilder{},
+		"jupyter": JupyterScriptBuilder{},
 	}
 }
 
@@ -41,6 +42,20 @@ type RScriptBuilder struct{}
 
 func (RScriptBuilder) Build(node *types.AnalysisNode, scriptPath string, _ string, _ map[string]any) (string, error) {
 	return fmt.Sprintf("#!/usr/bin/env bash\nset -euo pipefail\nRscript %q %q %q\n", scriptPath, node.ParamsPath, node.OutputDir), nil
+}
+
+type JupyterScriptBuilder struct{}
+
+func (JupyterScriptBuilder) Build(node *types.AnalysisNode, scriptPath string, _ string, _ map[string]any) (string, error) {
+	return fmt.Sprintf(`#!/usr/bin/env bash
+export HOME=$PWD/.home
+export XDG_CACHE_HOME=$HOME/.cache
+export TMPDIR=$PWD/.tmp
+mkdir -p "$TMPDIR"
+
+set -euo pipefail
+jupyter nbconvert --to notebook --execute %q --output-dir %q
+`, scriptPath, node.OutputDir), nil
 }
 
 type QmdScriptBuilder struct{}

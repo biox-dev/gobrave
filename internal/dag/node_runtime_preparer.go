@@ -207,7 +207,7 @@ func (p *FileSystemNodeRuntimePreparer) resolveScriptPath(scriptID string, scrip
 func normalizeScriptType(scriptType string) string {
 	typeName := strings.ToLower(strings.TrimSpace(scriptType))
 	switch typeName {
-	case "", "jupyter", "bash", "sh":
+	case "", "bash", "sh":
 		return "shell"
 	default:
 		return typeName
