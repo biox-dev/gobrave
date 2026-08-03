@@ -47,6 +47,7 @@ func (RScriptBuilder) Build(node *types.AnalysisNode, scriptPath string, _ strin
 type JupyterScriptBuilder struct{}
 
 func (JupyterScriptBuilder) Build(node *types.AnalysisNode, scriptPath string, _ string, _ map[string]any) (string, error) {
+	outputFileName := "output.md"
 	return fmt.Sprintf(`#!/usr/bin/env bash
 export HOME=$PWD/.home
 export XDG_CACHE_HOME=$HOME/.cache
@@ -54,8 +55,8 @@ export TMPDIR=$PWD/.tmp
 mkdir -p "$TMPDIR"
 
 set -euo pipefail
-jupyter nbconvert --to notebook --execute %q --output-dir %q
-`, scriptPath, node.OutputDir), nil
+jupyter nbconvert --to markdown --execute %q --output-dir %q  --output %q
+`, scriptPath, node.OutputDir, outputFileName), nil
 }
 
 type QmdScriptBuilder struct{}
