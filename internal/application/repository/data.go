@@ -184,18 +184,37 @@ func (r *dataRepository) GetFileByPath(ctx context.Context, path string) (*types
 }
 
 func (r *dataRepository) UpdateFile(ctx context.Context, file *types.File) error {
+	updates := make(map[string]interface{})
+	if file.FileID != "" {
+		updates["file_id"] = file.FileID
+	}
+	if file.FileName != "" {
+		updates["file_name"] = file.FileName
+	}
+	if file.Path != "" {
+		updates["path"] = file.Path
+	}
+	if file.Format != "" {
+		updates["format"] = file.Format
+	}
+	if file.Size != 0 {
+		updates["size"] = file.Size
+	}
+	if file.MD5 != "" {
+		updates["md5"] = file.MD5
+	}
+	if file.Storage != "" {
+		updates["storage"] = file.Storage
+	}
+	// Description always set (allows clearing)
+	updates["description"] = file.Description
+
+	if len(updates) == 0 {
+		return nil
+	}
 	return r.db.WithContext(ctx).Model(&types.File{}).
 		Where("id = ?", file.ID).
-		Updates(map[string]interface{}{
-			"file_id":     file.FileID,
-			"file_name":   file.FileName,
-			"path":        file.Path,
-			"format":      file.Format,
-			"size":        file.Size,
-			"md5":         file.MD5,
-			"storage":     file.Storage,
-			"description": file.Description,
-		}).Error
+		Updates(updates).Error
 }
 
 func (r *dataRepository) DeleteFile(ctx context.Context, id int64) error {
@@ -338,13 +357,16 @@ func (r *dataRepository) GetDatasetFileByID(ctx context.Context, id int64) (*typ
 }
 
 func (r *dataRepository) UpdateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error {
+	updates := make(map[string]interface{})
+	if datasetFile.Role != "" {
+		updates["role"] = datasetFile.Role
+	}
+	if len(updates) == 0 {
+		return nil
+	}
 	return r.db.WithContext(ctx).Model(&types.DatasetFile{}).
-		Where("id = ?", datasetFile.ID).
-		Updates(map[string]interface{}{
-			"dataset_id": datasetFile.DatasetID,
-			"file_id":    datasetFile.FileID,
-			"role":       datasetFile.Role,
-		}).Error
+		Where("dataset_id = ? AND file_id = ?", datasetFile.DatasetID, datasetFile.FileID).
+		Updates(updates).Error
 }
 
 func (r *dataRepository) DeleteDatasetFile(ctx context.Context, id int64) error {

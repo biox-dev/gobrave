@@ -64,11 +64,20 @@ func (t *DatasetFile) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// UpdateDatasetFileRequest DTO: lookup by DatasetID + FileID, only Role is updatable
+type UpdateDatasetFileRequest struct {
+	DatasetID int64  `json:"dataset_id,string" binding:"required"`
+	FileID    int64  `json:"file_id,string" binding:"required"`
+	Role      string `json:"role"`
+}
+
 type AddFileToDatasetRequest struct {
 	DatasetID int64  `json:"dataset_id,string" binding:"required"`
 	ProjectID string `json:"-"`
 	Path      string `json:"path" binding:"required"`
 	Role      string `json:"role"`
+	FileName  string `json:"file_name" gorm:"type:varchar(255)"`
+	IsCopy    bool   `json:"is_copy"` // if true, copy the file to the dataset, otherwise just link it
 	// data analysis external
 	Source string `json:"source"`
 }

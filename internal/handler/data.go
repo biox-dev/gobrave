@@ -908,11 +908,11 @@ func (h *DataHandler) GetDatasetFile(c *gin.Context) {
 
 // UpdateDatasetFile godoc
 // @Summary      更新数据集-文件映射
-// @Description  按 ID 更新 DatasetFile 记录
+// @Description  根据 DatasetID + FileID 更新 DatasetFile 的 Role 字段
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
-// @Param        request  body      types.DatasetFile   true  "请求参数"
+// @Param        request  body      types.UpdateDatasetFileRequest  true  "请求参数"
 // @Success      200      {object}  map[string]string
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
@@ -925,17 +925,20 @@ func (h *DataHandler) UpdateDatasetFile(c *gin.Context) {
 		return
 	}
 
-	var req types.DatasetFile
+	var req types.UpdateDatasetFileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
-	if req.ID == 0 {
-		c.Error(errors.NewValidationError("id is required"))
-		return
+
+	// Convert DTO to domain model
+	datasetFile := &types.DatasetFile{
+		DatasetID: req.DatasetID,
+		FileID:    req.FileID,
+		Role:      req.Role,
 	}
 
-	if err := h.dataService.UpdateDatasetFile(c.Request.Context(), &req); err != nil {
+	if err := h.dataService.UpdateDatasetFile(c.Request.Context(), datasetFile); err != nil {
 		handleDataError(c, err, "failed to update dataset file")
 		return
 	}

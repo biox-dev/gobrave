@@ -4,10 +4,12 @@ import (
 	"context"
 	stderrs "errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gobravedev/gobrave/internal/config"
 	"github.com/gobravedev/gobrave/internal/types"
@@ -283,6 +285,32 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 		return nil, fmt.Errorf("file path is a directory: %s", resolvedPath)
 	}
 
+	// If copy is requested, copy file to analysis_result dir with timestamp prefix
+	if req.IsCopy {
+		destDir := filepath.Join(absBaseDir, req.ProjectID, "analysis_result")
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create destination directory: %w", err)
+		}
+
+		origName := strings.TrimSpace(req.FileName)
+		if origName == "" {
+			origName = filepath.Base(resolvedPath)
+		}
+		timestamp := time.Now().Format("20060102150405")
+		destName := timestamp + "_" + origName
+		destPath := filepath.Join(destDir, destName)
+
+		if err := copyFile(resolvedPath, destPath); err != nil {
+			return nil, fmt.Errorf("failed to copy file: %w", err)
+		}
+		// Refresh stat on the new file
+		info, err = os.Stat(destPath)
+		if err != nil {
+			return nil, err
+		}
+		resolvedPath = destPath
+	}
+
 	role := strings.TrimSpace(req.Role)
 	if role == "" {
 		role = "DEFAULT"
@@ -293,12 +321,18 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 		return nil, err
 	}
 
+	// Use custom file name if provided, otherwise derive from path
+	displayName := strings.TrimSpace(req.FileName)
+	if displayName == "" {
+		displayName = filepath.Base(resolvedPath)
+	}
+
 	response := &types.AddFileToDatasetResponse{}
 	err = s.dataRepo.WithTransaction(ctx, func(tx interfaces.DataRepository) error {
 		if file == nil {
 			file = &types.File{
 				FileID:   strconv.FormatInt(utils.GenerateID(), 10),
-				FileName: filepath.Base(resolvedPath),
+				FileName: displayName,
 				Path:     resolvedPath,
 				Format:   strings.TrimPrefix(strings.ToLower(filepath.Ext(resolvedPath)), "."),
 				Size:     info.Size(),
@@ -342,24 +376,11 @@ func (s *dataService) GetDatasetFileByID(ctx context.Context, id int64) (*types.
 }
 
 func (s *dataService) UpdateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error {
-	_, err := s.dataRepo.GetDatasetFileByID(ctx, datasetFile.ID)
+	exists, err := s.dataRepo.ExistsDatasetFile(ctx, datasetFile.DatasetID, datasetFile.FileID)
 	if err != nil {
 		return err
 	}
-
-	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetFile.DatasetID)
-	if err != nil {
-		return err
-	}
-	if !datasetExists {
-		return gorm.ErrRecordNotFound
-	}
-
-	fileExists, err := s.dataRepo.ExistsFileByID(ctx, datasetFile.FileID)
-	if err != nil {
-		return err
-	}
-	if !fileExists {
+	if !exists {
 		return gorm.ErrRecordNotFound
 	}
 
@@ -543,4 +564,29 @@ func (s *dataService) DeleteDatasetSample(ctx context.Context, id int64) error {
 
 func (s *dataService) ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error) {
 	return s.dataRepo.ListDatasetSample(ctx)
+}
+
+// copyFile copies src to dst, preserving permissions but not timestamps.
+func copyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	srcInfo, err := srcFile.Stat()
+	if err != nil {
+		return err
+	}
+
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return err
+	}
+	return nil
 }
