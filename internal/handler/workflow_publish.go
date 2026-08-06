@@ -16,6 +16,7 @@ import (
 	"github.com/gobravedev/gobrave/internal/types"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
 	"github.com/gobravedev/gobrave/internal/utils"
+	"github.com/google/uuid"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -514,6 +515,7 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	if !ok {
 		return
 	}
+	createMode := strings.EqualFold(strings.TrimSpace(c.Query("create")), "true")
 	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
@@ -601,22 +603,31 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		installScript.Message = store.Message
 	}
 
-	existingScript, err := h.workflowService.ExistsScriptInProjectByScriptID(c.Request.Context(), project.ID, payload.ScriptID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to check existing script").WithDetails(err.Error()))
-		return
-	}
-
-	if existingScript != nil {
-		installScript.ID = existingScript.ID
-		if err := h.workflowService.UpdateScript(c.Request.Context(), installScript); err != nil {
-			c.Error(errors.NewInternalServerError("failed to update installed script").WithDetails(err.Error()))
-			return
-		}
-	} else {
+	if createMode {
+		installScript.ScriptID = uuid.NewString()
+		installScript.ComponentName = fmt.Sprintf("%s_Copy", installScript.ComponentName)
 		if err := h.workflowService.CreateScript(c.Request.Context(), installScript); err != nil {
 			c.Error(errors.NewInternalServerError("failed to install script").WithDetails(err.Error()))
 			return
+		}
+	} else {
+		existingScript, err := h.workflowService.ExistsScriptInProjectByScriptID(c.Request.Context(), project.ID, payload.ScriptID)
+		if err != nil {
+			c.Error(errors.NewInternalServerError("failed to check existing script").WithDetails(err.Error()))
+			return
+		}
+
+		if existingScript != nil {
+			installScript.ID = existingScript.ID
+			if err := h.workflowService.UpdateScript(c.Request.Context(), installScript); err != nil {
+				c.Error(errors.NewInternalServerError("failed to update installed script").WithDetails(err.Error()))
+				return
+			}
+		} else {
+			if err := h.workflowService.CreateScript(c.Request.Context(), installScript); err != nil {
+				c.Error(errors.NewInternalServerError("failed to install script").WithDetails(err.Error()))
+				return
+			}
 		}
 	}
 
