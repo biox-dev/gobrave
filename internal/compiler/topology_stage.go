@@ -15,13 +15,33 @@ func (s *TopologyStage) Run(ctx *CompileContext) error {
 
 	ctx.NodeMap = map[string]map[string]any{}
 	aliasToCanonical := map[string]string{}
+	scriptAliasToCanonical := map[string]string{}
+	scriptAliasConflict := map[string]struct{}{}
 	for _, node := range ctx.Nodes {
 		nid := nodeKey(node)
 		if nid == "" {
 			return fmt.Errorf("dag node id is required")
 		}
+		if _, exists := ctx.NodeMap[nid]; exists {
+			return fmt.Errorf("duplicate dag node id: %s", nid)
+		}
 		ctx.NodeMap[nid] = node
 		registerNodeAliases(aliasToCanonical, nid, node)
+
+		scriptID := strings.TrimSpace(fmt.Sprintf("%v", firstNonNil(node["script_id"], "")))
+		if scriptID != "" {
+			if existing, ok := scriptAliasToCanonical[scriptID]; ok && existing != nid {
+				scriptAliasConflict[scriptID] = struct{}{}
+			} else {
+				scriptAliasToCanonical[scriptID] = nid
+			}
+		}
+	}
+	for scriptID, canonical := range scriptAliasToCanonical {
+		if _, conflict := scriptAliasConflict[scriptID]; conflict {
+			continue
+		}
+		aliasToCanonical[scriptID] = canonical
 	}
 
 	ctx.Incoming = map[string][]map[string]any{}

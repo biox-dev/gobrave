@@ -31,18 +31,18 @@ func TestTopologyStage_NormalizesEdgeNodeAliases(t *testing.T) {
 		t.Fatalf("TopologyStage.Run failed: %v", err)
 	}
 
-	if len(ctx.Outgoing["A"]) != 1 {
-		t.Fatalf("expected 1 outgoing edge for A, got %d", len(ctx.Outgoing["A"]))
+	if len(ctx.Outgoing["A_1"]) != 1 {
+		t.Fatalf("expected 1 outgoing edge for A_1, got %d", len(ctx.Outgoing["A_1"]))
 	}
-	if len(ctx.Incoming["B"]) != 1 {
-		t.Fatalf("expected 1 incoming edge for B, got %d", len(ctx.Incoming["B"]))
+	if len(ctx.Incoming["B_1"]) != 1 {
+		t.Fatalf("expected 1 incoming edge for B_1, got %d", len(ctx.Incoming["B_1"]))
 	}
 
-	edge := ctx.Outgoing["A"][0]
-	if got := edge["source"]; got != "A" {
-		t.Fatalf("expected normalized source=A, got %v", got)
+	edge := ctx.Outgoing["A_1"][0]
+	if got := edge["source"]; got != "A_1" {
+		t.Fatalf("expected normalized source=A_1, got %v", got)
 	}
-	if got := edge["target"]; got != "B" {
-		t.Fatalf("expected normalized target=B, got %v", got)
+	if got := edge["target"]; got != "B_1" {
+		t.Fatalf("expected normalized target=B_1, got %v", got)
 	}
 }

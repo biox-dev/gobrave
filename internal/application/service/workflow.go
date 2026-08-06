@@ -129,12 +129,18 @@ func (s *workflowService) GetWorkflowVisByWorkflowID(ctx context.Context, workfl
 			for k, v := range node {
 				merged[k] = v
 			}
+			if nid := strings.TrimSpace(fmt.Sprintf("%v", merged["node_id"])); nid != "" {
+				merged["id"] = nid
+			}
 			nodesRes = append(nodesRes, merged)
 			continue
 		}
 
 		merged := cloneAnyMap(node)
 		merged["name"] = "unknown"
+		if nid := strings.TrimSpace(fmt.Sprintf("%v", merged["node_id"])); nid != "" {
+			merged["id"] = nid
+		}
 		nodesRes = append(nodesRes, merged)
 	}
 

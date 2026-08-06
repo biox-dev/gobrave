@@ -121,8 +121,9 @@ func cloneMap(src map[string]any) map[string]any {
 }
 
 func nodeKey(node map[string]any) string {
-	// Prefer DAG-level `id` so source/target edge references match node lookup.
-	return fmt.Sprintf("%v", firstNonNil(node["id"], node["node_id"], node["name"], ""))
+	// `node_id` is the workflow-instance identity and must be unique even when
+	// the same script is reused multiple times in a DAG.
+	return strings.TrimSpace(fmt.Sprintf("%v", firstNonNil(node["node_id"], node["id"], node["name"], "")))
 }
 
 func nodeName(node map[string]any) string {
@@ -130,8 +131,13 @@ func nodeName(node map[string]any) string {
 }
 
 func nodeIDBase(node map[string]any) string {
+	// Prefer node_id to avoid collisions when multiple nodes share the same name/script.
+	raw := strings.TrimSpace(fmt.Sprintf("%v", firstNonNil(node["node_id"], node["id"], node["name"], "")))
+	if raw == "" {
+		raw = "node"
+	}
 	re := regexp.MustCompile(`\s+`)
-	return re.ReplaceAllString(strings.TrimSpace(nodeName(node)), "_")
+	return re.ReplaceAllString(raw, "_")
 }
 
 func buildNodeID(nodeIDBase string, sampleLabel string) string {

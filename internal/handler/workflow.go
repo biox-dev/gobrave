@@ -593,6 +593,43 @@ func (h *WorkflowHandler) GetFromJSONByWorlflow(c *gin.Context) {
 	})
 }
 
+// GetWorkflowVis godoc
+// @Summary      获取工作流可视化 DAG
+// @Description  根据 workflowId 返回 DAG 可视化结构（包含 nodes/edges，并补充 script 视图字段）
+// @Tags         工作流
+// @Produce      json
+// @Param        workflowId  path      string  true  "工作流 ID"
+// @Success      200         {object}  map[string]interface{}
+// @Failure      400         {object}  errors.AppError
+// @Failure      401         {object}  errors.AppError
+// @Failure      404         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
+// @Security     Bearer
+// @Router       /tools/get-workflow-vis/{workflowId} [get]
+func (h *WorkflowHandler) GetWorkflowVis(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	workflowID := strings.TrimSpace(c.Param("workflowId"))
+	if workflowID == "" {
+		c.Error(errors.NewValidationError("workflowId is required"))
+		return
+	}
+
+	dagDefinition, err := h.workflowService.GetWorkflowVisByWorkflowID(c.Request.Context(), workflowID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("workflow not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get workflow visualization").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, dagDefinition)
+}
+
 // GetWorkflowForm godoc
 // @Summary      获取工作流表单与分析数据
 // @Description  基于 workflowId 返回 formJson，并按 input_type 自动补充 analysis_result（sample 与按 role 分组的文件）
