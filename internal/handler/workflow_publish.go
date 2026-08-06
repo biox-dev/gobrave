@@ -418,6 +418,9 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	if strings.TrimSpace(store.Message) != "" {
 		installWorkflow.Message = store.Message
 	}
+	// 修改创建时间为当前时间，避免覆盖原有的创建时间
+	installWorkflow.CreatedAt = utils.GetCurrentTime()
+	installWorkflow.UpdatedAt = utils.GetCurrentTime()
 
 	existingWorkflow, err := h.workflowService.ExistsWorkflowInProjectByWorkflowID(c.Request.Context(), project.ID, payload.WorkflowID)
 	if err != nil {
@@ -602,10 +605,13 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	if strings.TrimSpace(store.Message) != "" {
 		installScript.Message = store.Message
 	}
+	installScript.CreatedAt = utils.GetCurrentTime()
+	installScript.UpdatedAt = utils.GetCurrentTime()
 
 	if createMode {
 		installScript.ScriptID = uuid.NewString()
 		installScript.ComponentName = fmt.Sprintf("%s_Copy", installScript.ComponentName)
+		installScript.StoreID = 0
 		if err := h.workflowService.CreateScript(c.Request.Context(), installScript); err != nil {
 			c.Error(errors.NewInternalServerError("failed to install script").WithDetails(err.Error()))
 			return
