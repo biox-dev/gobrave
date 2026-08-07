@@ -1,3 +1,7 @@
+## Docs Index
+
+- sqlite driver migration notes: sqlite-driver-migration.md
+
 ```
 swag init -g ./cmd/server/main.go  -o ./docs --parseDependency --parseInternal
 
