@@ -154,6 +154,20 @@ go build -tags embed_frontend -o gobrave ./cmd/server
 ./gobrave
 ```
 
+## Run with Docker
+
+```bash
+# Build Docker image
+docker build -t gobrave:latest .
+# Run container
+docker run -d -p 8080:8080 --name gobrave gobrave:latest
+```
+
+
+```bash
+docker run --rm -p 8083:8082  -it registry.cn-hangzhou.aliyuncs.com/wybioinfo/gobrave 
+```
+
 
 ---
 

@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /tmp/brave-ui
 
 # 浅克隆仓库（只获取最新 commit）
-RUN git clone --depth 1 https://github.com/pybrave/brave-ui.git .
+RUN git clone --depth 1 https://github.com/gobravedev/brave-ui.git .
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 # 安装依赖并构建
