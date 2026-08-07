@@ -10,6 +10,7 @@ type StoreService interface {
 	CreateStore(ctx context.Context, item *types.Store) error
 	GetStoreByID(ctx context.Context, id int64) (*types.Store, error)
 	GetStoreByStoreID(ctx context.Context, storeID string) (*types.Store, error)
+	GetStoreByURL(ctx context.Context, rawURL string) (*types.Store, error)
 	UpdateStore(ctx context.Context, item *types.Store) error
 	DeleteStore(ctx context.Context, id int64) error
 	ListStore(ctx context.Context) ([]*types.Store, error)
@@ -20,6 +21,7 @@ type StoreRepository interface {
 	CreateStore(ctx context.Context, item *types.Store) error
 	GetStoreByID(ctx context.Context, id int64) (*types.Store, error)
 	GetStoreByStoreID(ctx context.Context, storeID string) (*types.Store, error)
+	GetStoreByURL(ctx context.Context, rawURL string) (*types.Store, error)
 	UpdateStore(ctx context.Context, item *types.Store) error
 	DeleteStore(ctx context.Context, id int64) error
 	ListStore(ctx context.Context) ([]*types.Store, error)

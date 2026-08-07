@@ -185,12 +185,14 @@ docker run -d --rm -p 53306:3306 \
    --character-set-server=utf8mb4 \
    --lower-case-table-names=1 \
    --collation-server=utf8mb4_unicode_ci
+# 2) Create database
+docker exec -it mysql mysql -uroot -p123456 -e "CREATE DATABASE brave CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
-# 2) Download the latest release (single binary with embedded frontend)
+# 3) Download the latest release (single binary with embedded frontend)
 wget https://github.com/gobravedev/gobrave/releases/download/v0.1.0/gobrave-v0.1.0-linux-amd64-embed -O gobrave
 chmod +x gobrave
 
-# 3) Run gobrave with CLI-specified database (no config.yml needed)
+# 4) Run gobrave with CLI-specified database (no config.yml needed)
 export GOBRAVE_BASE_DIR=/home/admin/.brave
 ./gobrave \
    --db-driver=mysql \

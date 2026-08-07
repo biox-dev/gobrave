@@ -37,6 +37,14 @@ func (r *storeRepository) GetStoreByStoreID(ctx context.Context, storeID string)
 	return item, nil
 }
 
+func (r *storeRepository) GetStoreByURL(ctx context.Context, rawURL string) (*types.Store, error) {
+	item := &types.Store{}
+	if err := r.db.WithContext(ctx).Where("url = ?", rawURL).Take(item).Error; err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
 func (r *storeRepository) UpdateStore(ctx context.Context, item *types.Store) error {
 	return r.db.WithContext(ctx).Model(&types.Store{}).Where("id = ?", item.ID).Updates(map[string]interface{}{
 		// "store_id":     item.StoreID,
@@ -58,7 +66,17 @@ func (r *storeRepository) UpdateStore(ctx context.Context, item *types.Store) er
 }
 
 func (r *storeRepository) DeleteStore(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.Store{}).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&types.Script{}).Where("store_id = ?", id).Update("store_id", 0).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&types.Workflow{}).Where("store_id = ?", id).Update("store_id", 0).Error; err != nil {
+			return err
+		}
+
+		return tx.Where("id = ?", id).Delete(&types.Store{}).Error
+	})
 }
 
 func (r *storeRepository) ListStore(ctx context.Context) ([]*types.Store, error) {

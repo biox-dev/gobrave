@@ -597,7 +597,7 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		installScript.ComponentType = "script"
 	}
 	if strings.TrimSpace(store.URL) != "" {
-		installScript.InstallKey = store.URL
+		installScript.URL = store.URL
 	}
 	if strings.TrimSpace(store.Version) != "" {
 		installScript.Version = store.Version

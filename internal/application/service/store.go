@@ -31,6 +31,10 @@ func (s *storeService) GetStoreByStoreID(ctx context.Context, storeID string) (*
 	return s.storeRepo.GetStoreByStoreID(ctx, storeID)
 }
 
+func (s *storeService) GetStoreByURL(ctx context.Context, rawURL string) (*types.Store, error) {
+	return s.storeRepo.GetStoreByURL(ctx, rawURL)
+}
+
 func (s *storeService) UpdateStore(ctx context.Context, item *types.Store) error {
 	if _, err := s.storeRepo.GetStoreByID(ctx, item.ID); err != nil {
 		return err
