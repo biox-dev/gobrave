@@ -3,10 +3,13 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gobravedev/gobrave/internal/types"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	"github.com/gobravedev/gobrave/internal/utils"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -46,6 +49,34 @@ func (s *projectService) AddUserProject(ctx context.Context, userID, projectID s
 
 func (s *projectService) ActivateUserProject(ctx context.Context, userID, projectID string) error {
 	return s.projectRepo.ActivateUserProject(ctx, userID, projectID)
+}
+
+func (s *projectService) CreateDefaultProjectForUser(ctx context.Context, userID, username string) error {
+	projectID := uuid.New().String()
+	projectName := fmt.Sprintf("%s's Project", username)
+
+	project := &types.Project{
+		ID:          utils.GenerateID(),
+		ProjectID:   projectID,
+		ProjectName: projectName,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if err := s.projectRepo.CreateProject(ctx, project); err != nil {
+		return fmt.Errorf("failed to create default project: %w", err)
+	}
+
+	if err := s.projectRepo.AddUserProject(ctx, &types.UserProject{
+		UserID:    userID,
+		ProjectID: projectID,
+		IsActive:  true,
+		CreatedAt: time.Now(),
+	}); err != nil {
+		return fmt.Errorf("failed to link user to project: %w", err)
+	}
+
+	return nil
 }
 
 func (s *projectService) AddProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error {

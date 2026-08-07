@@ -16,6 +16,10 @@ func NewProjectRepository(db *gorm.DB) interfaces.ProjectRepository {
 	return &projectRepository{db: db}
 }
 
+func (r *projectRepository) CreateProject(ctx context.Context, project *types.Project) error {
+	return r.db.WithContext(ctx).Create(project).Error
+}
+
 func (r *projectRepository) AddUserProject(ctx context.Context, up *types.UserProject) error {
 	return r.db.WithContext(ctx).Create(up).Error
 }

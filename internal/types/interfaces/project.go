@@ -13,6 +13,7 @@ type ProjectService interface {
 	GetProjectByID(ctx context.Context, id int64) (*types.Project, error)
 	AddUserProject(ctx context.Context, userID, projectID string) error
 	ActivateUserProject(ctx context.Context, userID, projectID string) error
+	CreateDefaultProjectForUser(ctx context.Context, userID, username string) error
 	AddProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error
 	UpdateProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error
 	DeleteProjectReport(ctx context.Context, userID string, reportID int64) error
@@ -25,6 +26,7 @@ type ProjectRepository interface {
 	ListProjectByUserID(ctx context.Context, userID string) ([]*types.Project, error)
 	GetProjectByID(ctx context.Context, id int64) (*types.Project, error)
 	GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error)
+	CreateProject(ctx context.Context, project *types.Project) error
 	AddUserProject(ctx context.Context, up *types.UserProject) error
 	ExistsUserProject(ctx context.Context, userID, projectID string) (bool, error)
 	ActivateUserProject(ctx context.Context, userID, projectID string) error

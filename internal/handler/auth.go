@@ -19,8 +19,9 @@ import (
 // Provides functionality for user registration, login, logout, and token management
 // through the REST API endpoints
 type AuthHandler struct {
-	userService interfaces.UserService
-	configInfo  *config.Config
+	userService    interfaces.UserService
+	projectService interfaces.ProjectService
+	configInfo     *config.Config
 }
 
 const (
@@ -29,10 +30,12 @@ const (
 )
 
 func NewAuthHandler(configInfo *config.Config,
-	userService interfaces.UserService) *AuthHandler {
+	userService interfaces.UserService,
+	projectService interfaces.ProjectService) *AuthHandler {
 	return &AuthHandler{
-		configInfo:  configInfo,
-		userService: userService,
+		configInfo:     configInfo,
+		userService:    userService,
+		projectService: projectService,
 	}
 }
 
@@ -87,6 +90,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		appErr := errors.NewBadRequestError(err.Error())
 		c.Error(appErr)
 		return
+	}
+
+	// Create a default project for the new user and activate it
+	if err := h.projectService.CreateDefaultProjectForUser(ctx, user.ID, user.Username); err != nil {
+		logger.Errorf(ctx, "Failed to create default project for user %s: %v", user.ID, err)
+		// Don't fail registration — the user is already created
 	}
 
 	// Return success response
