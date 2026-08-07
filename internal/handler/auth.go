@@ -3,7 +3,6 @@ package handler
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -55,9 +54,9 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	logger.Info(ctx, "Start user registration")
 
-	// 通过环境变量 DISABLE_REGISTRATION=true 禁止注册
-	if os.Getenv("DISABLE_REGISTRATION") == "true" {
-		logger.Warn(ctx, "Registration is disabled by DISABLE_REGISTRATION env")
+	// 通过配置 user.disable_registration 禁止注册
+	if h.configInfo.User != nil && h.configInfo.User.DisableRegistration {
+		logger.Warn(ctx, "Registration is disabled by config")
 		appErr := errors.NewForbiddenError("Registration is disabled")
 		c.Error(appErr)
 		return

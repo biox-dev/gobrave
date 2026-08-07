@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +29,19 @@ type CLIFlags struct {
 	DBPath     string // --db-path, sqlite database file path
 	DBSSLMode  string // --db-ssl-mode, database ssl mode
 	Runtime    string // --runtime, container runtime (docker/k8s/k3s)
+
+	// disableRegistration points to a bool set by --disable-registration.
+	// nil means the flag was not provided on the command line.
+	disableRegistration *bool
+}
+
+// DisableRegistrationSet reports whether --disable-registration was explicitly
+// provided on the command line and returns its value.
+func (f *CLIFlags) DisableRegistrationSet() (value bool, ok bool) {
+	if f.disableRegistration == nil {
+		return false, false
+	}
+	return *f.disableRegistration, true
 }
 
 // cliFlags holds the parsed command-line overrides.
@@ -57,6 +71,14 @@ func ParseCLIFlags() *CLIFlags {
 	flag.StringVar(&f.DBPath, "db-path", "", "SQLite database file path")
 	flag.StringVar(&f.DBSSLMode, "db-ssl-mode", "", "Database SSL mode")
 	flag.StringVar(&f.Runtime, "runtime", "", "Container runtime: docker, k8s, k3s")
+	flag.Func("disable-registration", "Disable user registration (true/false)", func(s string) error {
+		v, err := strconv.ParseBool(s)
+		if err != nil {
+			return fmt.Errorf("invalid boolean value %q for --disable-registration: %v", s, err)
+		}
+		f.disableRegistration = &v
+		return nil
+	})
 	return f
 }
 
@@ -73,11 +95,16 @@ type Config struct {
 	// Ingest   *IngestConfig   `yaml:"ingest"   json:"ingest"`
 	Tenant      *TenantConfig `yaml:"tenant"   json:"tenant"`
 	DebugConfig *DebugConfig  `yaml:"debug"    json:"debug"`
+	User        *UserConfig   `yaml:"user"     json:"user"`
 
 	// Audio  *AudioConfig  `yaml`
 }
 type DebugConfig struct {
 	EnableDagOrchestrator bool `yaml:"enable_dag_orchestrator" json:"enable_dag_orchestrator"`
+}
+
+type UserConfig struct {
+	DisableRegistration bool `yaml:"disable_registration" json:"disable_registration"`
 }
 type LLMConfig struct {
 	CLIURL      string             `yaml:"cli_url" json:"cli_url"`
@@ -319,6 +346,9 @@ func LoadConfig() (*Config, error) {
 		DebugConfig: &DebugConfig{
 			EnableDagOrchestrator: false,
 		},
+		User: &UserConfig{
+			DisableRegistration: false,
+		},
 	}
 
 	// Resolve config file path: CLI --config > BRAVE_CONFIG_DIR > cwd/config.yml
@@ -408,6 +438,12 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.Realtime.AckMaxRetries < 0 {
 		cfg.Realtime.AckMaxRetries = 3
+	}
+	if cfg.DebugConfig == nil {
+		cfg.DebugConfig = &DebugConfig{}
+	}
+	if cfg.User == nil {
+		cfg.User = &UserConfig{}
 	}
 
 	cfg.Container.DagNodeCleanupOnFailed = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnFailed, "stop")
@@ -587,5 +623,13 @@ func applyCLIOverrides(cfg *Config) {
 			cfg.Container = &ContainerConfig{}
 		}
 		cfg.Container.Runtime = f.Runtime
+	}
+
+	// Debug / User
+	if v, ok := f.DisableRegistrationSet(); ok {
+		if cfg.User == nil {
+			cfg.User = &UserConfig{}
+		}
+		cfg.User.DisableRegistration = v
 	}
 }

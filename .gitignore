@@ -10,3 +10,4 @@ stop.sh
 cp_web.sh
 traefik/
 .vscode/
+server
