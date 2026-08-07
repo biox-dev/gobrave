@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	gobraveassets "github.com/gobravedev/gobrave"
 	_ "github.com/gobravedev/gobrave/docs" // IGNORE
 
 	"github.com/gobravedev/gobrave/internal/config"
@@ -374,18 +376,31 @@ func serveStatic(r *gin.Engine, cfg *config.Config) {
 }
 
 func serveFrontendStatic(r *gin.Engine, cfg *config.Config) {
+	if embeddedRoot, ok := gobraveassets.EmbeddedFrontendFS(); ok {
+		webFS, err := fs.Sub(embeddedRoot, "web")
+		if err == nil && mountFrontendStatic(r, cfg, webFS, "embedded:web") {
+			return
+		}
+		if err != nil {
+			logger.Warnf(context.Background(), "[Router] Failed to load embedded frontend subfs: %v", err)
+		}
+	}
+
 	absDir, err := utils.ResolveExternalPath("web")
 	if err != nil {
 		return
 	}
-	indexPath := filepath.Join(absDir, "index.html")
-	if _, err := os.Stat(indexPath); err != nil {
-		return
+
+	_ = mountFrontendStatic(r, cfg, os.DirFS(absDir), absDir)
+}
+
+func mountFrontendStatic(r *gin.Engine, cfg *config.Config, frontendFS fs.FS, source string) bool {
+	if _, err := fs.Stat(frontendFS, "index.html"); err != nil {
+		return false
 	}
 
-	logger.Infof(context.Background(), "[Router] Serving frontend static files from %s", absDir)
-	fs := http.Dir(absDir)
-	fileServer := http.FileServer(fs)
+	logger.Infof(context.Background(), "[Router] Serving frontend static files from %s", source)
+	fileServer := http.FileServer(http.FS(frontendFS))
 	analysisAppsPrefix := config.ResolveAppsPathPrefix(cfg)
 
 	r.Use(func(c *gin.Context) {
@@ -423,8 +438,18 @@ func serveFrontendStatic(r *gin.Engine, cfg *config.Config) {
 			c.Next()
 			return
 		}
-		fullPath := filepath.Join(absDir, path)
-		if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+
+		requestedPath := strings.TrimPrefix(path, "/")
+		if requestedPath != "" {
+			if info, err := fs.Stat(frontendFS, requestedPath); err == nil && !info.IsDir() {
+				setFrontendCacheHeaders(c.Writer, path)
+				fileServer.ServeHTTP(c.Writer, c.Request)
+				c.Abort()
+				return
+			}
+		}
+
+		if requestedPath == "" || strings.HasSuffix(path, "/") {
 			setFrontendCacheHeaders(c.Writer, path)
 			fileServer.ServeHTTP(c.Writer, c.Request)
 			c.Abort()
@@ -439,9 +464,13 @@ func serveFrontendStatic(r *gin.Engine, cfg *config.Config) {
 		}
 
 		setFrontendCacheHeaders(c.Writer, "/index.html")
-		c.File(indexPath)
+		req := c.Request.Clone(c.Request.Context())
+		req.URL.Path = "/index.html"
+		fileServer.ServeHTTP(c.Writer, req)
 		c.Abort()
 	})
+
+	return true
 }
 
 // setFrontendCacheHeaders sets Cache-Control headers for frontend static resources.
