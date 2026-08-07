@@ -8,6 +8,7 @@ import (
 )
 
 // embeddedWebFiles contains the whole frontend directory when built with -tags embed_frontend.
+//
 //go:embed web
 var embeddedWebFiles embed.FS
 

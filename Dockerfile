@@ -53,12 +53,12 @@ COPY --from=gobuilder /app/gobrave /app/gobrave
 COPY --from=frontend /tmp/brave-ui/dist /app/web
 
 # 复制 Docker 环境配置文件
-COPY config.docker.yml /app/config.yml
+# COPY config.docker.yml /app/config.yml
 
 # 复制静态资源（logo 等）
 COPY assets/ /app/assets/
 
-EXPOSE 8084
+EXPOSE 8082
 
 CMD ["/app/gobrave"]
 
