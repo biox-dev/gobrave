@@ -154,7 +154,7 @@ go build -tags embed_frontend -o gobrave ./cmd/server
 ./gobrave
 ```
 
-## Run with Docker
+### Run with Docker
 
 ```bash
 # Build Docker image
@@ -168,8 +168,72 @@ docker run -d -p 8082:8082 --name gobrave gobrave:latest
 docker run --rm -p 8082:8082  -it registry.cn-hangzhou.aliyuncs.com/wybioinfo/gobrave 
 ```
 
+### Run with Command-Line Database Configuration
+
+You can override database settings directly via CLI flags — no config file needed. Timezone is fixed to **UTC** in all database DSNs.
+
+```bash
+# 1) Start MySQL via Docker
+docker run -d --rm -p 53306:3306 \
+   --name mysql \
+   -e MYSQL_ROOT_PASSWORD=123456 \
+   -e LANG=C.UTF-8 \
+   --shm-size=10G \
+   -v /home/admin/data/mysql:/var/lib/mysql \
+   registry.cn-hangzhou.aliyuncs.com/wybioinfo/mysql:8.0.21 \
+   --default-authentication-plugin=mysql_native_password \
+   --character-set-server=utf8mb4 \
+   --lower-case-table-names=1 \
+   --collation-server=utf8mb4_unicode_ci
+
+# 2) Download the latest release (single binary with embedded frontend)
+wget https://github.com/gobravedev/gobrave/releases/download/v0.1.0/gobrave-v0.1.0-linux-amd64-embed -O gobrave
+chmod +x gobrave
+
+# 3) Run gobrave with CLI-specified database (no config.yml needed)
+export GOBRAVE_BASE_DIR=/home/admin/.brave
+./gobrave \
+   --db-driver=mysql \
+   --db-host=localhost \
+   --db-port=53306 \
+   --db-user=root \
+   --db-password=123456 \
+   --db-name=brave \
+   --runtime=docker
+```
+
+> **Note:** The database timezone is hardcoded to **UTC** in the connection string (`loc=UTC` for MySQL, `TimeZone=UTC` for PostgreSQL). Make sure your application logic accounts for UTC timestamps.
+
+Available CLI flags for database:
+
+| Flag | Description | Default (MySQL) |
+|------|-------------|-----------------|
+| `--db-driver` | Database driver: `mysql`, `postgres`, or `sqlite` | `sqlite` |
+| `--db-host` | Database host | `127.0.0.1` |
+| `--db-port` | Database port | `3306` |
+| `--db-user` | Database user | — |
+| `--db-password` | Database password | — |
+| `--db-name` | Database name | — |
+| `--db-path` | SQLite database file path | `$GOBRAVE_BASE_DIR/db/gobrave.db` |
+| `--db-ssl-mode` | SSL mode (PostgreSQL only) | `disable` |
+| `--runtime` | Container runtime: `docker`, `k8s`, or `k3s` | `docker` |
+
 
 ---
+
+## Runtime Environment
+### K3s
+```bash
+# Install k3s (lightweight Kubernetes)
+curl -sfL https://get.k3s.io | sh -
+sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+# Check k3s status
+kubectl get nodes
+
+# Check kubectl version
+kubectl version --client
+```
+
 
 ## 📖 Documentation
 
