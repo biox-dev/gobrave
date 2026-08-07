@@ -1,0 +1,87 @@
+name: Tag Release Artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build brave-ui dist
+        run: |
+          set -euxo pipefail
+          corepack enable
+          rm -rf .tmp/brave-ui
+          git clone --depth 1 https://github.com/gobravedev/brave-ui.git .tmp/brave-ui
+          cd .tmp/brave-ui
+          yarn install --frozen-lockfile
+          yarn build
+
+      - name: Prepare web assets
+        run: |
+          set -euxo pipefail
+          rm -rf web
+          mkdir -p web
+          cp -a .tmp/brave-ui/dist/. web/
+
+      - name: Build embedded single binary
+        run: |
+          set -euxo pipefail
+          mkdir -p release
+          TAG="${GITHUB_REF_NAME}"
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags embed_frontend -o "release/gobrave-${TAG}-linux-amd64-embed" ./cmd/server
+
+      - name: Build standard binary
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "release/gobrave-${TAG}-linux-amd64" ./cmd/server
+
+      - name: Package standard binary with web directory
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          PKG_DIR="release/pkg/gobrave-${TAG}-linux-amd64"
+          rm -rf "$PKG_DIR"
+          mkdir -p "$PKG_DIR/web"
+          cp "release/gobrave-${TAG}-linux-amd64" "$PKG_DIR/gobrave"
+          cp -a web/. "$PKG_DIR/web/"
+          (cd release/pkg && zip -r "../gobrave-${TAG}-linux-amd64-with-web.zip" "gobrave-${TAG}-linux-amd64")
+
+      - name: Package clean source
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          git archive --format=zip --output "release/gobrave-${TAG}-source.zip" "$GITHUB_SHA"
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            release/gobrave-${{ github.ref_name }}-linux-amd64-embed
+            release/gobrave-${{ github.ref_name }}-linux-amd64-with-web.zip
+            release/gobrave-${{ github.ref_name }}-source.zip

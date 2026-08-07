@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://gobrave.dev"><img src="https://img.shields.io/badge/docs-gobrave.dev-00ADD8?style=flat-square&logo=go" alt="docs"></a>
+  <a href="https://gobravedev.github.io/gobrave-doc/"><img src="https://img.shields.io/badge/docs-gobrave.dev-00ADD8?style=flat-square&logo=go" alt="docs"></a>
   <a href="https://github.com/gobravedev/gobrave/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="license"></a>
   <img src="https://img.shields.io/badge/go-%3E%3D1.25-00ADD8?style=flat-square&logo=go" alt="go version">
   <img src="https://img.shields.io/badge/status-active-success?style=flat-square" alt="status">
@@ -160,12 +160,12 @@ go build -tags embed_frontend -o gobrave ./cmd/server
 # Build Docker image
 docker build -t gobrave:latest .
 # Run container
-docker run -d -p 8080:8080 --name gobrave gobrave:latest
+docker run -d -p 8082:8082 --name gobrave gobrave:latest
 ```
 
 
 ```bash
-docker run --rm -p 8083:8082  -it registry.cn-hangzhou.aliyuncs.com/wybioinfo/gobrave 
+docker run --rm -p 8082:8082  -it registry.cn-hangzhou.aliyuncs.com/wybioinfo/gobrave 
 ```
 
 
