@@ -36,10 +36,10 @@ import (
 	// "github.com/minebiome/ai-agent-go/internal/types"
 	// "github.com/minebiome/ai-agent-go/internal/utils"
 
+	"github.com/ncruces/go-sqlite3/gormlite"
 	"go.uber.org/dig"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -486,7 +486,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		}
 		// sqlite_vec.Auto()
 		dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on"
-		dialector = sqlite.Open(dsn)
+		dialector = gormlite.Open(dsn)
 		logger.Infof(context.Background(), "DB Config: driver=sqlite path=%s", dbPath)
 	default:
 		return nil, fmt.Errorf("unsupported database driver: %s", driver)

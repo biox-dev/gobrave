@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"gorm.io/driver/sqlite"
+	"github.com/ncruces/go-sqlite3/gormlite"
 	"gorm.io/gorm"
 )
 
@@ -13,7 +13,7 @@ func newTestGatewayRegistry(t *testing.T) *GatewayRegistry {
 	t.Helper()
 
 	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(gormlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -29,7 +29,7 @@ func newTestGatewayRegistry(t *testing.T) *GatewayRegistry {
 func newTestGatewayRegistryWithDB(t *testing.T, dsn string) *GatewayRegistry {
 	t.Helper()
 
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(gormlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
