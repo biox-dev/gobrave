@@ -134,6 +134,14 @@ cp config.example.yml config.yml
 go run ./cmd/server
 ```
 
+### Build a Static Binary
+
+```bash
+# Build for your platform
+go build -o gobrave ./cmd/server
+# Run the binary
+./gobrave
+```
 
 
 ---

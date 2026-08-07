@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +31,7 @@ type CLIFlags struct {
 	DBPath     string // --db-path, sqlite database file path
 	DBSSLMode  string // --db-ssl-mode, database ssl mode
 	Runtime    string // --runtime, container runtime (docker/k8s/k3s)
+	BaseDir    string // --base-dir, storage base directory
 
 	// disableRegistration points to a bool set by --disable-registration.
 	// nil means the flag was not provided on the command line.
@@ -71,6 +74,7 @@ func ParseCLIFlags() *CLIFlags {
 	flag.StringVar(&f.DBPath, "db-path", "", "SQLite database file path")
 	flag.StringVar(&f.DBSSLMode, "db-ssl-mode", "", "Database SSL mode")
 	flag.StringVar(&f.Runtime, "runtime", "", "Container runtime: docker, k8s, k3s")
+	flag.StringVar(&f.BaseDir, "base-dir", "", "Storage base directory (overrides config.yml)")
 	flag.Func("disable-registration", "Disable user registration (true/false)", func(s string) error {
 		v, err := strconv.ParseBool(s)
 		if err != nil {
@@ -169,6 +173,27 @@ type RouteConfig struct {
 }
 
 const defaultAppsPrefix = "/apps"
+
+// resolveDefaultBaseDir returns the default storage base directory.
+// Priority: GOBRAVE_BASE_DIR env > $HOME/.gobrave
+func resolveDefaultBaseDir() string {
+	if dir := strings.TrimSpace(os.Getenv("GOBRAVE_BASE_DIR")); dir != "" {
+		return dir
+	}
+	homeDir := ""
+	if u, err := user.Current(); err == nil {
+		homeDir = u.HomeDir
+	}
+	if homeDir == "" {
+		if d, err := os.UserHomeDir(); err == nil {
+			homeDir = d
+		}
+	}
+	if homeDir == "" {
+		return ".gobrave"
+	}
+	return filepath.Join(homeDir, ".gobrave")
+}
 
 type TraefikRouteConfig struct {
 	Provider      string `yaml:"provider"        json:"provider"`
@@ -298,7 +323,7 @@ func LoadConfig() (*Config, error) {
 		},
 		Storage: &StorageConfig{
 			ImageDir: "",
-			BaseDir:  "",
+			BaseDir:  resolveDefaultBaseDir(),
 		},
 		Realtime: &RealtimeConfig{
 			Transport:             "ws",
@@ -380,9 +405,12 @@ func LoadConfig() (*Config, error) {
 	applyCLIOverrides(cfg)
 
 	if cfg.Storage == nil {
-		cfg.Storage = &StorageConfig{ImageDir: ""}
+		cfg.Storage = &StorageConfig{ImageDir: "", BaseDir: resolveDefaultBaseDir()}
 	} else if strings.TrimSpace(cfg.Storage.ImageDir) == "" {
 		cfg.Storage.ImageDir = ""
+	}
+	if strings.TrimSpace(cfg.Storage.BaseDir) == "" {
+		cfg.Storage.BaseDir = resolveDefaultBaseDir()
 	}
 	if cfg.Container == nil {
 		cfg.Container = &ContainerConfig{
@@ -623,6 +651,14 @@ func applyCLIOverrides(cfg *Config) {
 			cfg.Container = &ContainerConfig{}
 		}
 		cfg.Container.Runtime = f.Runtime
+	}
+
+	// Storage
+	if f.BaseDir != "" {
+		if cfg.Storage == nil {
+			cfg.Storage = &StorageConfig{}
+		}
+		cfg.Storage.BaseDir = f.BaseDir
 	}
 
 	// Debug / User
