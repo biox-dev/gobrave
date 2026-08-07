@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,53 @@ import (
 	"github.com/gobravedev/gobrave/internal/utils"
 	"github.com/goccy/go-yaml"
 )
+
+// CLIFlags holds command-line arguments that can override config.yml values.
+type CLIFlags struct {
+	ConfigPath string // --config, config file path
+	Port       int    // --port, server port
+	Host       string // --host, server host
+	LogPath    string // --log-path, server log path
+	DBDriver   string // --db-driver, database driver (sqlite/postgres)
+	DBHost     string // --db-host, database host
+	DBPort     string // --db-port, database port
+	DBUser     string // --db-user, database user
+	DBPassword string // --db-password, database password
+	DBName     string // --db-name, database name
+	DBPath     string // --db-path, sqlite database file path
+	DBSSLMode  string // --db-ssl-mode, database ssl mode
+	Runtime    string // --runtime, container runtime (docker/k8s/k3s)
+}
+
+// cliFlags holds the parsed command-line overrides.
+// Set via SetCLIFlags before LoadConfig is called.
+var cliFlags *CLIFlags
+
+// SetCLIFlags sets the CLI overrides to be applied by LoadConfig.
+// Call this before LoadConfig is invoked (e.g. in main.go).
+func SetCLIFlags(f *CLIFlags) {
+	cliFlags = f
+}
+
+// ParseCLIFlags parses command-line flags into a CLIFlags struct.
+// It does NOT call flag.Parse() — the caller should do that.
+func ParseCLIFlags() *CLIFlags {
+	f := &CLIFlags{}
+	flag.StringVar(&f.ConfigPath, "config", "", "Path to config.yml file")
+	flag.IntVar(&f.Port, "port", 0, "Server port (overrides config.yml)")
+	flag.StringVar(&f.Host, "host", "", "Server host (overrides config.yml)")
+	flag.StringVar(&f.LogPath, "log-path", "", "Server log path (overrides config.yml)")
+	flag.StringVar(&f.DBDriver, "db-driver", "", "Database driver: sqlite or postgres")
+	flag.StringVar(&f.DBHost, "db-host", "", "Database host")
+	flag.StringVar(&f.DBPort, "db-port", "", "Database port")
+	flag.StringVar(&f.DBUser, "db-user", "", "Database user")
+	flag.StringVar(&f.DBPassword, "db-password", "", "Database password")
+	flag.StringVar(&f.DBName, "db-name", "", "Database name")
+	flag.StringVar(&f.DBPath, "db-path", "", "SQLite database file path")
+	flag.StringVar(&f.DBSSLMode, "db-ssl-mode", "", "Database SSL mode")
+	flag.StringVar(&f.Runtime, "runtime", "", "Container runtime: docker, k8s, k3s")
+	return f
+}
 
 type Config struct {
 	Server    *ServerConfig    `yaml:"server"   json:"server"`
@@ -273,7 +321,12 @@ func LoadConfig() (*Config, error) {
 		},
 	}
 
-	configPath, err := utils.ResolveExternalPath("config.yml")
+	// Resolve config file path: CLI --config > BRAVE_CONFIG_DIR > cwd/config.yml
+	defaultConfigFile := "config.yml"
+	if cliFlags != nil && strings.TrimSpace(cliFlags.ConfigPath) != "" {
+		defaultConfigFile = strings.TrimSpace(cliFlags.ConfigPath)
+	}
+	configPath, err := utils.ResolveExternalPath(defaultConfigFile)
 	logger.Infof(context.Background(), "Resolved config.yml path: %s", configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve config path: %w", err)
@@ -282,6 +335,8 @@ func LoadConfig() (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Apply CLI overrides even when config file is missing
+			applyCLIOverrides(cfg)
 			return cfg, nil
 		}
 		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
@@ -290,6 +345,9 @@ func LoadConfig() (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
+
+	// Apply CLI overrides on top of config.yml values
+	applyCLIOverrides(cfg)
 
 	if cfg.Storage == nil {
 		cfg.Storage = &StorageConfig{ImageDir: ""}
@@ -472,5 +530,62 @@ func normalizeRealtimeTransport(value string) string {
 		return v
 	default:
 		return "ws"
+	}
+}
+
+// applyCLIOverrides applies command-line flag values on top of the config.
+// Only non-zero / non-empty values from CLI flags override the config.
+func applyCLIOverrides(cfg *Config) {
+	if cliFlags == nil {
+		return
+	}
+	f := cliFlags
+
+	// Server
+	if f.Port != 0 {
+		cfg.Server.Port = f.Port
+	}
+	if f.Host != "" {
+		cfg.Server.Host = f.Host
+	}
+	if f.LogPath != "" {
+		cfg.Server.LogPath = f.LogPath
+	}
+
+	// Database
+	if cfg.Database == nil {
+		cfg.Database = &DatabaseConfig{}
+	}
+	if f.DBDriver != "" {
+		cfg.Database.Driver = f.DBDriver
+	}
+	if f.DBHost != "" {
+		cfg.Database.Host = f.DBHost
+	}
+	if f.DBPort != "" {
+		cfg.Database.Port = f.DBPort
+	}
+	if f.DBUser != "" {
+		cfg.Database.User = f.DBUser
+	}
+	if f.DBPassword != "" {
+		cfg.Database.Password = f.DBPassword
+	}
+	if f.DBName != "" {
+		cfg.Database.Name = f.DBName
+	}
+	if f.DBPath != "" {
+		cfg.Database.Path = f.DBPath
+	}
+	if f.DBSSLMode != "" {
+		cfg.Database.SSLMode = f.DBSSLMode
+	}
+
+	// Container runtime
+	if f.Runtime != "" {
+		if cfg.Container == nil {
+			cfg.Container = &ContainerConfig{}
+		}
+		cfg.Container.Runtime = f.Runtime
 	}
 }

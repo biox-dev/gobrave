@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -36,6 +37,11 @@ import (
 )
 
 func main() {
+	// Parse command-line flags (overrides config.yml).
+	cliFlags := config.ParseCLIFlags()
+	flag.Parse()
+	config.SetCLIFlags(cliFlags)
+
 	utils.InitSnowflake(1)
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)

@@ -470,7 +470,8 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 	case "sqlite":
 		dbPath := dbCfg.Path
 		if dbPath == "" {
-			dbPath = filepath.Join("data", "ai-agent-go.db")
+			baseDir := cfg.Storage.BaseDir
+			dbPath = filepath.Join(baseDir, "db", "gobrave.db")
 		}
 		resolvedDBPath, err := utils.ResolveExternalPath(dbPath)
 		logger.Infof(context.Background(), "Resolved SQLite DB path: %s", resolvedDBPath)

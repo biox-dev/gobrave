@@ -6,17 +6,17 @@ import (
 	"strings"
 )
 
-const projectDirEnv = "AI_AGENT_GO_DIR"
+const configDir = "BRAVE_CONFIG_DIR"
 
 // ResolveExternalPath resolves project external file paths.
-// If AI_AGENT_GO_DIR is set, the path is resolved relative to it;
+// If BRAVE_CONFIG_DIR is set, the path is resolved relative to it;
 // otherwise, it is resolved relative to current working directory.
 func ResolveExternalPath(relativePath string) (string, error) {
 	if filepath.IsAbs(relativePath) {
 		return filepath.Abs(relativePath)
 	}
 
-	baseDir := os.Getenv(projectDirEnv)
+	baseDir := os.Getenv(configDir)
 	if baseDir != "" {
 		return filepath.Abs(filepath.Join(baseDir, relativePath))
 	}
