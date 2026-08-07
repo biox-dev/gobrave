@@ -41,3 +41,7 @@ func ResolveConfiguredPath(configuredPath string, defaultRelativeToExecutable st
 	executableDir := filepath.Dir(executablePath)
 	return filepath.Abs(filepath.Join(executableDir, defaultRelativeToExecutable))
 }
+
+func ResolveImageDir(baseDir string) string {
+	return filepath.Join(baseDir, "images")
+}

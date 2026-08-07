@@ -322,17 +322,15 @@ func RegisterLLMRoutes(r *gin.RouterGroup, handler *handler.LLMHandler) {
 
 // serveStatic maps local image resources under /images.
 func serveStatic(r *gin.Engine, cfg *config.Config) {
-	configuredDir := ""
-	baseDir := ""
-	if cfg != nil && cfg.Storage != nil {
-		configuredDir = cfg.Storage.ImageDir
-		baseDir = cfg.Storage.BaseDir
-	}
+	// configuredDir := ""
+	// baseDir := ""
+	// if cfg != nil && cfg.Storage != nil {
+	// 	configuredDir = cfg.Storage.ImageDir
+	// 	baseDir = cfg.Storage.BaseDir
+	// }
 
-	imageDir, err := utils.ResolveConfiguredPath(configuredDir, "images")
-	if err != nil {
-		return
-	}
+	// imageDir, err := utils.ResolveConfiguredPath(configuredDir, "images")
+	imageDir := utils.ResolveImageDir(cfg.Storage.BaseDir)
 	if err := os.MkdirAll(imageDir, 0o755); err != nil {
 		return
 	}
@@ -340,7 +338,7 @@ func serveStatic(r *gin.Engine, cfg *config.Config) {
 	logger.Infof(context.Background(), "[Router] Serving image files from %s at /images", imageDir)
 	r.StaticFS("/images", http.Dir(imageDir))
 
-	baseDir = strings.TrimSpace(baseDir)
+	baseDir := strings.TrimSpace(cfg.Storage.BaseDir)
 	if baseDir == "" {
 		return
 	}

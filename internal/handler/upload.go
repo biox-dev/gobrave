@@ -85,15 +85,7 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 		return
 	}
 
-	storageDir := ""
-	if h.config != nil && h.config.Storage != nil {
-		storageDir = h.config.Storage.ImageDir
-	}
-	absImageDir, err := utils.ResolveConfiguredPath(storageDir, "images")
-	if err != nil {
-		c.Error(appErrors.NewInternalServerError("failed to resolve image storage path").WithDetails(err.Error()))
-		return
-	}
+	absImageDir := utils.ResolveImageDir(h.config.Storage.BaseDir)
 
 	relativeDateDir := filepath.Join(
 		time.Now().UTC().Format("2006"),

@@ -155,8 +155,8 @@ type KubernetesRuntimeConfig struct {
 }
 
 type StorageConfig struct {
-	ImageDir string `yaml:"image_dir" json:"image_dir"`
-	BaseDir  string `yaml:"base_dir" json:"base_dir"`
+	// ImageDir string `yaml:"image_dir" json:"image_dir"`
+	BaseDir string `yaml:"base_dir" json:"base_dir"`
 }
 
 type ProxyConfig struct {
@@ -322,8 +322,8 @@ func LoadConfig() (*Config, error) {
 			},
 		},
 		Storage: &StorageConfig{
-			ImageDir: "",
-			BaseDir:  resolveDefaultBaseDir(),
+			// ImageDir: "",
+			BaseDir: resolveDefaultBaseDir(),
 		},
 		Realtime: &RealtimeConfig{
 			Transport:             "ws",
@@ -405,9 +405,7 @@ func LoadConfig() (*Config, error) {
 	applyCLIOverrides(cfg)
 
 	if cfg.Storage == nil {
-		cfg.Storage = &StorageConfig{ImageDir: "", BaseDir: resolveDefaultBaseDir()}
-	} else if strings.TrimSpace(cfg.Storage.ImageDir) == "" {
-		cfg.Storage.ImageDir = ""
+		cfg.Storage = &StorageConfig{BaseDir: resolveDefaultBaseDir()}
 	}
 	if strings.TrimSpace(cfg.Storage.BaseDir) == "" {
 		cfg.Storage.BaseDir = resolveDefaultBaseDir()
