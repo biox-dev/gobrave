@@ -31,9 +31,6 @@ type DockerRuntime struct {
 	once    sync.Once
 	client  *client.Client
 	initErr error
-
-	monitorMu      sync.Mutex
-	monitoringByID map[string]struct{}
 }
 
 func NewDockerRuntime() *DockerRuntime {
@@ -150,23 +147,16 @@ func (d *DockerRuntime) Monitor(ctx context.Context, runtimeID string) error {
 		return fmt.Errorf("inspect container %s for monitor: %w", containerID, err)
 	}
 
-	d.monitorMu.Lock()
-	if d.monitoringByID == nil {
-		d.monitoringByID = map[string]struct{}{}
-	}
-	if _, ok := d.monitoringByID[runtimeID]; ok {
-		d.monitorMu.Unlock()
+	if !containerruntime.MarkIfNotMonitoring(runtimeID) {
 		return nil
 	}
-	d.monitoringByID[runtimeID] = struct{}{}
-	d.monitorMu.Unlock()
 
 	go d.waitContainerExit(runtimeID)
 	return nil
 }
 
 func (d *DockerRuntime) waitContainerExit(runtimeID string) {
-	defer d.unmarkMonitoring(runtimeID)
+	defer containerruntime.UnmarkRuntimeMonitoring(runtimeID)
 
 	containerID, err := d.toContainerID(runtimeID)
 	if err != nil {
@@ -220,15 +210,6 @@ func (d *DockerRuntime) waitContainerExit(runtimeID string) {
 			return
 		}
 	}
-}
-
-func (d *DockerRuntime) unmarkMonitoring(runtimeID string) {
-	d.monitorMu.Lock()
-	defer d.monitorMu.Unlock()
-	if d.monitoringByID == nil {
-		return
-	}
-	delete(d.monitoringByID, runtimeID)
 }
 
 func (d *DockerRuntime) Stop(ctx context.Context, id string) error {

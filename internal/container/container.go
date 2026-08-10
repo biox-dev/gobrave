@@ -67,6 +67,17 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(initDatabase))
 	must(container.Provide(func() event.Bus { return event.NewMemoryBus() }))
 	must(container.Provide(containerruntime.NewRegistry))
+	must(container.Provide(func(cfg *config.Config) containerruntime.MonitoringRegistry {
+		// Default to in-memory monitoring registry. This provider is intentionally
+		// wired through DI so we can later switch to Redis-backed implementation
+		// for distributed deployments.
+		_ = cfg
+		return containerruntime.NewInMemoryMonitoringRegistry()
+	}))
+	must(container.Invoke(func(reg containerruntime.MonitoringRegistry) {
+		containerruntime.SetMonitoringRegistry(reg)
+	}))
+	// Register container runtimes based on configuration
 	must(container.Invoke(func(cfg *config.Config, reg *containerruntime.Registry) error {
 		switch config.ResolveContainerRuntime(cfg) {
 		case "docker":

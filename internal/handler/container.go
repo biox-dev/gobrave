@@ -3,11 +3,13 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gobravedev/gobrave/internal/config"
+	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
 	"github.com/gobravedev/gobrave/internal/errors"
 	"github.com/gobravedev/gobrave/internal/manager"
 	"github.com/gobravedev/gobrave/internal/types"
@@ -66,6 +68,12 @@ type containerInstancePageRequest struct {
 	types.Pagination
 }
 
+type containerInstancePageItem struct {
+	*types.ContainerInstance
+	InMonitoringRegistry bool `json:"in_monitoring_registry"`
+	RefCount             int  `json:"ref_count"`
+}
+
 type containerEventPageRequest struct {
 	types.Pagination
 }
@@ -78,6 +86,11 @@ type appSessionPageItem struct {
 	*types.AppSession
 	PathPrefix string `json:"path_prefix"`
 	NodeName   string `json:"node_name"`
+}
+
+type runtimeMonitoringSnapshotItem struct {
+	RuntimeID string `json:"runtime_id"`
+	RefCount  int    `json:"ref_count"`
 }
 
 func NewContainerHandler(containerService interfaces.ContainerService,
@@ -914,6 +927,23 @@ func (h *ContainerHandler) PageContainerInstance(c *gin.Context) {
 		return
 	}
 
+	if items, ok := result.Data.([]*types.ContainerInstance); ok {
+		snapshot := containerruntime.RuntimeMonitoringSnapshot()
+		dtos := make([]*containerInstancePageItem, 0, len(items))
+		for _, inst := range items {
+			if inst == nil {
+				continue
+			}
+			runtimeID := strings.TrimSpace(inst.RuntimeID)
+			dtos = append(dtos, &containerInstancePageItem{
+				ContainerInstance:    inst,
+				InMonitoringRegistry: snapshot[runtimeID] > 0,
+				RefCount:             snapshot[runtimeID],
+			})
+		}
+		result.Data = dtos
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"data":      result.Data,
 		"total":     result.Total,
@@ -995,6 +1025,45 @@ func (h *ContainerHandler) PageOutboxEvent(c *gin.Context) {
 		"total":     result.Total,
 		"page":      result.Page,
 		"page_size": result.PageSize,
+	})
+}
+
+// ListRuntimeMonitoringSnapshot godoc
+// @Summary      运行时监控快照
+// @Description  返回全局运行时监控表快照（runtime_id 与引用计数）
+// @Tags         容器管理
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}
+// @Failure      401  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/runtime/monitoring/list [get]
+func (h *ContainerHandler) ListRuntimeMonitoringSnapshot(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	raw := containerruntime.RuntimeMonitoringSnapshot()
+	items := make([]*runtimeMonitoringSnapshotItem, 0, len(raw))
+	for runtimeID, refCount := range raw {
+		if strings.TrimSpace(runtimeID) == "" {
+			continue
+		}
+		if refCount <= 0 {
+			continue
+		}
+		items = append(items, &runtimeMonitoringSnapshotItem{RuntimeID: runtimeID, RefCount: refCount})
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].RefCount == items[j].RefCount {
+			return items[i].RuntimeID < items[j].RuntimeID
+		}
+		return items[i].RefCount > items[j].RefCount
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":  items,
+		"total": len(items),
 	})
 }
 

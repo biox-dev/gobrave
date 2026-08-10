@@ -124,7 +124,7 @@ type traefikProfileMiddlewareBuilder struct {
 
 var traefikProfileMiddlewareBuilders = map[string]traefikProfileMiddlewareBuilder{
 	"default": {
-		build: buildDefaultMiddlewares,
+		build: buildSCodeMiddlewares,
 	},
 	"rstudio": {
 		build: buildRStudioMiddlewares,

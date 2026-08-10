@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -48,11 +47,6 @@ type KubernetesRuntime struct {
 	clientset kubernetes.Interface
 
 	handler containerruntime.RuntimeEventHandler
-
-	monitorMu      sync.Mutex
-	monitoringByID map[string]struct{}
-	startMu        sync.Mutex
-	startingByID   map[string]struct{}
 }
 
 func NewKubernetesRuntime(cfg KubernetesRuntimeConfig) (*KubernetesRuntime, error) {
@@ -157,8 +151,7 @@ func (k *KubernetesRuntime) Start(ctx context.Context, runtimeID string) error {
 		if err := k.scaleDeployment(ctx, meta.Namespace, meta.Name, 1); err != nil {
 			return err
 		}
-		k.monitorStarted(runtimeID, meta.Namespace, meta.Name)
-		return nil
+		return k.Monitor(ctx, runtimeID)
 	case workloadKindJob:
 		_, err := k.clientset.BatchV1().Jobs(meta.Namespace).Get(ctx, meta.Name, metav1.GetOptions{})
 		if err != nil {
@@ -167,7 +160,6 @@ func (k *KubernetesRuntime) Start(ctx context.Context, runtimeID string) error {
 			}
 			return fmt.Errorf("get job %s: %w", meta.Name, err)
 		}
-		k.monitorStarted(runtimeID, meta.Namespace, meta.Name)
 		return k.Monitor(ctx, runtimeID)
 	default:
 		return fmt.Errorf("unsupported workload kind: %s", meta.Kind)
@@ -315,32 +307,28 @@ func (k *KubernetesRuntime) Inspect(ctx context.Context, runtimeID string) (*con
 	}
 }
 
+// 监控creating的 deployment和job，监控running的job
 func (k *KubernetesRuntime) Monitor(ctx context.Context, runtimeID string) error {
 	meta, err := k.parseRuntimeID(runtimeID)
 	if err != nil {
 		return err
 	}
-	if meta.Kind != workloadKindJob {
+
+	if !containerruntime.MarkIfNotMonitoring(runtimeID) {
 		return nil
 	}
 
-	k.monitorMu.Lock()
-	if k.monitoringByID == nil {
-		k.monitoringByID = map[string]struct{}{}
+	switch meta.Kind {
+	case workloadKindDeployment:
+		go k.monitorDeploymentStarted(runtimeID, meta.Namespace, meta.Name)
+	case workloadKindJob:
+		go k.waitJobExit(runtimeID, meta.Namespace, meta.Name)
 	}
-	if _, ok := k.monitoringByID[runtimeID]; ok {
-		k.monitorMu.Unlock()
-		return nil
-	}
-	k.monitoringByID[runtimeID] = struct{}{}
-	k.monitorMu.Unlock()
-
-	go k.waitJobExit(runtimeID, meta.Namespace, meta.Name)
 	return nil
 }
 
 func (k *KubernetesRuntime) waitJobExit(runtimeID string, namespace string, jobName string) {
-	defer k.unmarkMonitoring(runtimeID)
+	defer containerruntime.UnmarkRuntimeMonitoring(runtimeID)
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -376,47 +364,23 @@ func (k *KubernetesRuntime) waitJobExit(runtimeID string, namespace string, jobN
 	}
 }
 
-func (k *KubernetesRuntime) unmarkMonitoring(runtimeID string) {
-	k.monitorMu.Lock()
-	defer k.monitorMu.Unlock()
-	if k.monitoringByID == nil {
-		return
-	}
-	delete(k.monitoringByID, runtimeID)
-}
+func (k *KubernetesRuntime) monitorDeploymentStarted(runtimeID string, namespace string, workloadName string) {
+	defer containerruntime.UnmarkRuntimeMonitoring(runtimeID)
 
-func (k *KubernetesRuntime) monitorStarted(runtimeID string, namespace string, workloadName string) {
-	if !k.markStarting(runtimeID) {
-		return
-	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 
-	go func() {
-		defer k.unmarkStarting(runtimeID)
-
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-
-		timeout := time.NewTimer(2 * time.Minute)
-		defer timeout.Stop()
-
-		labels := map[string]string{"gobrave-workload": workloadName}
-		for {
-			podName, err := k.resolveLatestPodName(context.Background(), namespace, labels)
-			if err == nil {
-				pod, podErr := k.clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
-				if podErr == nil && isPodReady(pod) {
-					k.emitEvent("ContainerStarted", runtimeID, "")
-					return
-				}
-			}
-
-			select {
-			case <-timeout.C:
+	labels := map[string]string{"gobrave-workload": workloadName}
+	for range ticker.C {
+		podName, err := k.resolveLatestPodName(context.Background(), namespace, labels)
+		if err == nil {
+			pod, podErr := k.clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
+			if podErr == nil && isPodReady(pod) {
+				k.emitEvent("ContainerStarted", runtimeID, "")
 				return
-			case <-ticker.C:
 			}
 		}
-	}()
+	}
 }
 
 func isPodReady(pod *corev1.Pod) bool {
@@ -429,28 +393,6 @@ func isPodReady(pod *corev1.Pod) bool {
 		}
 	}
 	return false
-}
-
-func (k *KubernetesRuntime) markStarting(runtimeID string) bool {
-	k.startMu.Lock()
-	defer k.startMu.Unlock()
-	if k.startingByID == nil {
-		k.startingByID = map[string]struct{}{}
-	}
-	if _, ok := k.startingByID[runtimeID]; ok {
-		return false
-	}
-	k.startingByID[runtimeID] = struct{}{}
-	return true
-}
-
-func (k *KubernetesRuntime) unmarkStarting(runtimeID string) {
-	k.startMu.Lock()
-	defer k.startMu.Unlock()
-	if k.startingByID == nil {
-		return
-	}
-	delete(k.startingByID, runtimeID)
 }
 
 func (k *KubernetesRuntime) emitEvent(eventType string, runtimeID string, message string) {
@@ -802,14 +744,14 @@ func (k *KubernetesRuntime) resolveLatestPodName(ctx context.Context, namespace 
 	return list.Items[0].Name, nil
 }
 
+func (k *KubernetesRuntime) runtimeID(namespace, kind, name string) string {
+	return k.name + "-" + namespace + "|" + kind + "|" + name
+}
+
 type runtimeMeta struct {
 	Namespace string
 	Kind      string
 	Name      string
-}
-
-func (k *KubernetesRuntime) runtimeID(namespace, kind, name string) string {
-	return k.name + "-" + namespace + "|" + kind + "|" + name
 }
 
 func (k *KubernetesRuntime) parseRuntimeID(runtimeID string) (*runtimeMeta, error) {

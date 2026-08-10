@@ -229,6 +229,7 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	r.POST("/container/instance/list-by-page", handler.PageContainerInstance)
 	r.POST("/container/event/list-by-page", handler.PageContainerEvent)
 	r.POST("/container/outbox/list-by-page", handler.PageOutboxEvent)
+	r.GET("/container/runtime/monitoring/list", handler.ListRuntimeMonitoringSnapshot)
 	r.GET("/container/create-queue/status", handler.GetCreateQueueStatus)
 }
 
