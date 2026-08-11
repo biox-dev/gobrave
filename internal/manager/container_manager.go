@@ -122,7 +122,7 @@ func (m *ContainerManager) CreateByTemplate(
 	}
 	_ = m.createContainerEvent(ctx, inst.ID, "ContainerPending", "container instance created")
 
-	// Determine user ID for context propagation.
+	// Always enqueue the create request through the worker.
 	userID := ""
 	if ctx != nil {
 		if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
@@ -132,46 +132,25 @@ func (m *ContainerManager) CreateByTemplate(
 		}
 	}
 
-	// Check if async creation queue is enabled.
-	if m.cfg != nil && m.cfg.Container != nil && m.cfg.Container.CreateQueueEnabled {
-		req := containerCreatePayload{
-			ContainerInstanceID: inst.ID,
-			RuntimeName:         runtimeName,
-			TemplateID:          templateID,
-			OwnerType:           string(ownerType),
-			OwnerID:             ownerID,
-			Name:                name,
-			UserID:              userID,
-		}
-
-		if err := m.createWorker.Enqueue(ctx, req); err != nil {
-			// Queue full or other error — clean up the instance we just created.
-			_ = m.repo.DeleteContainerInstance(ctx, inst.ID)
-			return nil, err
-		}
-
-		logger.Infof(ctx, "[ContainerManager] enqueued create request, instance_id=%d name=%s", inst.ID, name)
-		return inst, nil
+	req := containerCreatePayload{
+		ContainerInstanceID: inst.ID,
+		RuntimeName:         runtimeName,
+		TemplateID:          templateID,
+		OwnerType:           string(ownerType),
+		OwnerID:             ownerID,
+		Name:                name,
+		UserID:              userID,
 	}
 
-	// Sync path: execute directly via the worker.
-	if m.createWorker == nil {
+	if err := m.createWorker.Enqueue(ctx, req); err != nil {
+		// Queue full or other error — clean up the instance we just created.
 		_ = m.repo.DeleteContainerInstance(ctx, inst.ID)
-		return nil, errors.New("container create worker is not configured")
-	}
-	if err := m.createWorker.executeCreate(ctx, runtimeName, templateID, ownerType, ownerID, name, inst.ID); err != nil {
 		return nil, err
 	}
 
+	logger.Infof(ctx, "[ContainerManager] enqueued create request, instance_id=%d name=%s", inst.ID, name)
 	return inst, nil
 }
-
-// isCreateQueueEnabled checks whether the queue is enabled via config.
-// func (m *ContainerManager) isCreateQueueEnabled() bool {
-// 	return m.cfg != nil &&
-// 		m.cfg.Container != nil &&
-// 		m.cfg.Container.CreateQueueEnabled
-// }
 
 func (m *ContainerManager) Start(ctx context.Context, id int64) error {
 	inst, rt, err := m.getInstanceAndRuntime(ctx, id)
@@ -215,53 +194,32 @@ func (m *ContainerManager) Stop(ctx context.Context, id int64) error {
 		return nil
 	}
 
-	// Check if async stop queue is enabled.
-	if m.cfg != nil && m.cfg.Container != nil && m.cfg.Container.CreateQueueEnabled {
-		// Transition to stop_pending.
-		if err := m.transition(ctx, inst, fsm.StopPending, "ContainerStopPending"); err != nil {
-			return err
-		}
-
-		userID := ""
-		if ctx != nil {
-			if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
-				userID = uid
-			} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
-				userID = uid
-			}
-		}
-
-		req := containerStopPayload{
-			ContainerInstanceID: inst.ID,
-			UserID:              userID,
-		}
-
-		if err := m.createWorker.EnqueueStop(ctx, req); err != nil {
-			logger.Errorf(ctx, "[ContainerManager] enqueue stop failed, instance_id=%d err=%v", inst.ID, err)
-			return err
-		}
-
-		logger.Infof(ctx, "[ContainerManager] enqueued stop request, instance_id=%d", inst.ID)
-		return nil
-	}
-
-	// Sync path: execute directly.
-	inst, rt, err := m.getInstanceAndRuntime(ctx, id)
-	if err != nil {
+	// Always enqueue the stop request through the worker.
+	// Transition to stop_pending.
+	if err := m.transition(ctx, inst, fsm.StopPending, "ContainerStopPending"); err != nil {
 		return err
 	}
 
-	if err := rt.Stop(ctx, inst.RuntimeID); err != nil {
-		_ = m.transition(ctx, inst, fsm.Failed, "ContainerStopFailed")
-		_ = m.createContainerEvent(ctx, inst.ID, "ContainerStopFailedDetail", err.Error())
+	userID := ""
+	if ctx != nil {
+		if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
+			userID = uid
+		} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
+			userID = uid
+		}
+	}
+
+	req := containerStopPayload{
+		ContainerInstanceID: inst.ID,
+		UserID:              userID,
+	}
+
+	if err := m.createWorker.EnqueueStop(ctx, req); err != nil {
+		logger.Errorf(ctx, "[ContainerManager] enqueue stop failed, instance_id=%d err=%v", inst.ID, err)
 		return err
 	}
 
-	now := time.Now()
-	inst.FinishedAt = &now
-	if err := m.transition(ctx, inst, fsm.Stopped, "ContainerStopped"); err != nil {
-		return err
-	}
+	logger.Infof(ctx, "[ContainerManager] enqueued stop request, instance_id=%d", inst.ID)
 	return nil
 }
 

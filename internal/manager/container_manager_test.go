@@ -459,13 +459,18 @@ func (d *dockerMockRuntime) Monitor(ctx context.Context, runtimeID string) error
 }
 
 func newTestManager(repo *mockContainerRepo, rt *dockerMockRuntime) *ContainerManager {
+	mgr, _ := newTestManagerWithWorker(repo, rt)
+	return mgr
+}
+
+func newTestManagerWithWorker(repo *mockContainerRepo, rt *dockerMockRuntime) (*ContainerManager, *ContainerCreateWorker) {
 	reg := containerruntime.NewRegistry()
 	reg.Register("docker", rt)
 	imgMgr := NewImageManager(repo, reg)
 	mgr := NewContainerManager(repo, nil, nil, nil, reg, nil, NewDefaultContainerRuntimeResolver(), imgMgr, nil)
 	worker := NewContainerCreateWorker(repo, nil, nil, nil, reg, NewDefaultContainerRuntimeResolver(), imgMgr, nil, 1, 10)
 	mgr.SetCreateWorker(worker)
-	return mgr
+	return mgr, worker
 }
 
 func mustSeedTemplate(t *testing.T, repo *mockContainerRepo) {
@@ -479,17 +484,25 @@ func TestContainerManager_CreateByTemplate_StaysCreatingUntilStartedEvent(t *tes
 	repo := newMockContainerRepo()
 	mustSeedTemplate(t, repo)
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-1"}
-	mgr := newTestManager(repo, rt)
+	mgr, worker := newTestManagerWithWorker(repo, rt)
 
+	// create instance via CreateByTemplate (always enqueues)
 	inst, err := mgr.CreateByTemplate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo")
 	if err != nil {
 		t.Fatalf("CreateByTemplate failed: %v", err)
 	}
 
-	if inst.Status != types.ContainerCreating {
-		t.Fatalf("expected creating before runtime started event, got %s", inst.Status)
+	// After enqueue, status should still be pending (not yet processed by worker)
+	if inst.Status != types.ContainerPending {
+		t.Fatalf("expected pending after enqueue, got %s", inst.Status)
 	}
 
+	// Now simulate worker processing: execute create synchronously
+	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID); err != nil {
+		t.Fatalf("worker.executeCreate failed: %v", err)
+	}
+
+	// After execution, status should be creating (before started event)
 	stored, err := repo.GetContainerInstanceByID(ctx, inst.ID)
 	if err != nil {
 		t.Fatalf("load instance failed: %v", err)
@@ -656,10 +669,13 @@ func TestContainerManager_CreateByTemplate_ResolvesEnvAndVolumes(t *testing.T) {
 	}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-9"}
-	mgr := newTestManager(repo, rt)
+	_, worker := newTestManagerWithWorker(repo, rt)
 
-	if _, err := mgr.CreateByTemplate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo"); err != nil {
-		t.Fatalf("CreateByTemplate failed: %v", err)
+	// Seed instance and execute create synchronously
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	_ = repo.CreateContainerInstance(ctx, inst)
+	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID); err != nil {
+		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -707,10 +723,13 @@ func TestContainerManager_CreateByTemplate_UsesAppSessionContextVariables(t *tes
 	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: "session-user", ProjectID: 001}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-10"}
-	mgr := newTestManager(repo, rt)
+	_, worker := newTestManagerWithWorker(repo, rt)
 
-	if _, err := mgr.CreateByTemplate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo"); err != nil {
-		t.Fatalf("CreateByTemplate failed: %v", err)
+	// Seed instance and execute create synchronously
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	_ = repo.CreateContainerInstance(ctx, inst)
+	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID); err != nil {
+		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -745,10 +764,13 @@ func TestContainerManager_CreateByTemplate_AppSessionMergesProjectVolumes(t *tes
 	}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-11"}
-	mgr := newTestManager(repo, rt)
+	_, worker := newTestManagerWithWorker(repo, rt)
 
-	if _, err := mgr.CreateByTemplate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo"); err != nil {
-		t.Fatalf("CreateByTemplate failed: %v", err)
+	// Seed instance and execute create synchronously
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	_ = repo.CreateContainerInstance(ctx, inst)
+	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID); err != nil {
+		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -778,10 +800,13 @@ func TestContainerManager_CreateByTemplate_DagNodeUsesTaskCommand(t *testing.T) 
 	}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-dag"}
-	mgr := newTestManager(repo, rt)
+	_, worker := newTestManagerWithWorker(repo, rt)
 
-	if _, err := mgr.CreateByTemplate(ctx, "docker", 10, types.ContainerOwnerDagNode, 2001, "dag-node-1"); err != nil {
-		t.Fatalf("CreateByTemplate failed: %v", err)
+	// Seed instance and execute create synchronously
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerDagNode, OwnerID: 2001, Name: "dag-node-1", Status: types.ContainerPending}
+	_ = repo.CreateContainerInstance(ctx, inst)
+	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerDagNode, 2001, "dag-node-1", inst.ID); err != nil {
+		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -820,10 +845,13 @@ func TestContainerManager_CreateByTemplate_ParsesSchedulingConstraint(t *testing
 	}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-node-selector"}
-	mgr := newTestManager(repo, rt)
+	_, worker := newTestManagerWithWorker(repo, rt)
 
-	if _, err := mgr.CreateByTemplate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo"); err != nil {
-		t.Fatalf("CreateByTemplate failed: %v", err)
+	// Seed instance and execute create synchronously
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	_ = repo.CreateContainerInstance(ctx, inst)
+	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID); err != nil {
+		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -855,11 +883,14 @@ func TestContainerManager_CreateByTemplate_UpdatesImageStatusToReady(t *testing.
 	repo.images[1] = &types.ContainerImage{ID: 1, FullName: "docker.io/library/busybox:latest", Status: types.ImageStatusPending}
 	repo.templates[10] = &types.ContainerTemplate{ID: 10, ImageID: 1, Command: "echo ok"}
 
-	rt := &dockerMockRuntime{runtimeID: "docker-abc-11"}
-	mgr := newTestManager(repo, rt)
+	rt := &dockerMockRuntime{runtimeID: "docker-abc-img"}
+	_, worker := newTestManagerWithWorker(repo, rt)
 
-	if _, err := mgr.CreateByTemplate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo"); err != nil {
-		t.Fatalf("CreateByTemplate failed: %v", err)
+	// Seed instance and execute create synchronously
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	_ = repo.CreateContainerInstance(ctx, inst)
+	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID); err != nil {
+		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
 	img, err := repo.GetContainerImageByID(ctx, 1)
@@ -881,10 +912,14 @@ func TestContainerManager_CreateByTemplate_ImagePrepareFailureMarksImageFailed(t
 	repo.templates[10] = &types.ContainerTemplate{ID: 10, ImageID: 1, Command: "echo ok"}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-12", imageErr: errors.New("pull denied")}
-	mgr := newTestManager(repo, rt)
+	_, worker := newTestManagerWithWorker(repo, rt)
 
-	if _, err := mgr.CreateByTemplate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo"); err == nil {
-		t.Fatalf("expected CreateByTemplate to fail when image prepare fails")
+	// Seed instance and execute create synchronously
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	_ = repo.CreateContainerInstance(ctx, inst)
+	err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID)
+	if err == nil {
+		t.Fatalf("expected worker.executeCreate to fail when image prepare fails")
 	}
 
 	img, err := repo.GetContainerImageByID(ctx, 1)

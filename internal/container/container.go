@@ -400,15 +400,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 
 	// Wire up the container create worker.
 	// The worker is already subscribed to the event bus via dig.Group("event_handlers").
-	// When CreateQueueEnabled, CreateByTemplate enqueues; otherwise it executes directly via the worker.
+	// All container create/stop operations go through the queue-based worker.
 	must(container.Invoke(func(cfg *config.Config, mgr *manager.ContainerManager, worker *manager.ContainerCreateWorker) {
 		mgr.SetCreateWorker(worker)
-		if cfg != nil && cfg.Container != nil && cfg.Container.CreateQueueEnabled {
-			logger.Infof(context.Background(), "[Container] container create queue enabled, maxConcurrency=%d maxPending=%d",
-				cfg.Container.CreateQueueMaxConcurrency, cfg.Container.CreateQueueMaxPending)
-		} else {
-			logger.Debugf(context.Background(), "[Container] container create queue is disabled (direct execution)")
-		}
+		logger.Infof(context.Background(), "[Container] container worker wired, maxConcurrency=%d maxPending=%d",
+			cfg.Container.CreateQueueMaxConcurrency, cfg.Container.CreateQueueMaxPending)
 	}))
 
 	return container

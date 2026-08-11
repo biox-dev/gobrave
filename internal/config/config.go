@@ -140,8 +140,6 @@ type ContainerConfig struct {
 	DeleteContainerOnNodeSuccess        bool                     `yaml:"delete_container_on_node_success" json:"delete_container_on_node_success"`
 	DagNodeCleanupOnFailed              string                   `yaml:"dag_node_cleanup_on_failed" json:"dag_node_cleanup_on_failed"`
 	DagNodeCleanupOnDagFinished         string                   `yaml:"dag_node_cleanup_on_dag_finished" json:"dag_node_cleanup_on_dag_finished"`
-	// CreateQueue enables queue-based container creation to limit concurrent container operations.
-	CreateQueueEnabled bool `yaml:"create_queue_enabled" json:"create_queue_enabled"`
 	// CreateQueueMaxConcurrency limits how many containers can be created concurrently.
 	CreateQueueMaxConcurrency int `yaml:"create_queue_max_concurrency" json:"create_queue_max_concurrency"`
 	// CreateQueueMaxPending limits how many creation requests can wait in the queue.
@@ -351,9 +349,8 @@ func LoadConfig() (*Config, error) {
 			DeleteContainerOnNodeSuccess:        true,
 			DagNodeCleanupOnFailed:              "stop",
 			DagNodeCleanupOnDagFinished:         "delete",
-			// CreateQueueEnabled:                  true,
-			CreateQueueMaxConcurrency: 3,
-			CreateQueueMaxPending:     50,
+			CreateQueueMaxConcurrency:           3,
+			CreateQueueMaxPending:               50,
 		},
 		// Ingest: &IngestConfig{
 		// 	Enabled:                 true,

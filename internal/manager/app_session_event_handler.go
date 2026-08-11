@@ -13,6 +13,15 @@ import (
 
 var _ event.Handler = (*AppSessionEventHandler)(nil)
 
+// AppSessionEventHandler listens for ContainerEvent on the event bus and
+// synchronizes the corresponding AppSession status accordingly.
+//
+// When a container transitions to creating/running/stopped/failed, this handler
+// updates the owning AppSession's Status, StartedAt, and StoppedAt fields so
+// that the AppSession reflects the actual container lifecycle.
+//
+// Only containers with OwnerType == ContainerOwnerAppSession are processed;
+// DAG nodes and services are ignored.
 type AppSessionEventHandler struct {
 	repo interfaces.ContainerRepository
 }
@@ -67,6 +76,8 @@ func (h *AppSessionEventHandler) Handle(evt event.Event) {
 	}
 }
 
+// normalizeContainerEvent maps the container-level event names (e.g. "ContainerStarted",
+// "ContainerStopped") to a simplified AppSession status key: creating, running, stopped, or failed.
 func normalizeContainerEvent(eventName string) string {
 	eventName = strings.TrimSpace(eventName)
 	switch eventName {

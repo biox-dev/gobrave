@@ -137,9 +137,9 @@ func (s *containerService) createAppSessionByTemplate(ctx context.Context, userI
 	}
 
 	if strings.TrimSpace(name) == "" {
-		name = fmt.Sprintf("app-session-%s-%d", projectID, containerTemplateID)
+		name = fmt.Sprintf("app-session-%d-%d", projectID, containerTemplateID)
 		if strings.TrimSpace(tpl.Name) != "" {
-			name = fmt.Sprintf("%s-%s", strings.TrimSpace(tpl.Name), projectID)
+			name = fmt.Sprintf("%s-%d", strings.TrimSpace(tpl.Name), projectID)
 		}
 	}
 
