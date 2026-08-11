@@ -33,7 +33,6 @@ type ContainerManager struct {
 	res             ContainerRuntimeResolver
 	img             *ImageManager
 	cfg             *config.Config
-	createWorker    *ContainerCreateWorker
 	monitorOnce     sync.Once
 }
 
@@ -55,13 +54,6 @@ func NewContainerManager(
 		img = NewImageManager(repo, reg)
 	}
 	return &ContainerManager{repo: repo, projectRepo: projectRepo, analysisRepo: analysisRepo, workflowService: workflowService, reg: reg, bus: bus, res: res, img: img, cfg: cfg}
-}
-
-// SetCreateWorker attaches a ContainerCreateWorker to enable queue-based creation.
-// When set and the queue is enabled via config, CreateByTemplate will enqueue requests
-// instead of executing them synchronously.
-func (m *ContainerManager) SetCreateWorker(w *ContainerCreateWorker) {
-	m.createWorker = w
 }
 
 // func (m *ContainerManager) Create(ctx context.Context, spec Spec) error {
@@ -117,10 +109,6 @@ func (m *ContainerManager) CreateByTemplate(
 		Name:       name,
 		Status:     types.ContainerPending,
 	}
-	if err := m.repo.CreateContainerInstance(ctx, inst); err != nil {
-		return nil, err
-	}
-	_ = m.createContainerEvent(ctx, inst.ID, "ContainerPending", "container instance created")
 
 	// Always enqueue the create request through the worker.
 	userID := ""
@@ -133,18 +121,51 @@ func (m *ContainerManager) CreateByTemplate(
 	}
 
 	req := containerCreatePayload{
-		ContainerInstanceID: inst.ID,
-		RuntimeName:         runtimeName,
-		TemplateID:          templateID,
-		OwnerType:           string(ownerType),
-		OwnerID:             ownerID,
-		Name:                name,
-		UserID:              userID,
+		RuntimeName: runtimeName,
+		TemplateID:  templateID,
+		OwnerType:   string(ownerType),
+		OwnerID:     ownerID,
+		Name:        name,
+		UserID:      userID,
 	}
+	maxPending := m.getCreateQueueMaxPending()
 
-	if err := m.createWorker.Enqueue(ctx, req); err != nil {
-		// Queue full or other error — clean up the instance we just created.
-		_ = m.repo.DeleteContainerInstance(ctx, inst.ID)
+	err = m.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+		if maxPending > 0 {
+			count, err := m.countPendingCreateQueueRequests(ctx, tx)
+			if err != nil {
+				return fmt.Errorf("count pending create/start requests: %w", err)
+			}
+			if count >= int64(maxPending) {
+				return fmt.Errorf("container create queue is full (%d/%d pending), please try again later",
+					count, maxPending)
+			}
+		}
+
+		if err := tx.CreateContainerInstance(ctx, inst); err != nil {
+			return err
+		}
+		if err := tx.CreateContainerEvent(ctx, &types.ContainerEvent{
+			ContainerInstanceID: inst.ID,
+			Event:               "ContainerPending",
+			Message:             "container instance created",
+		}); err != nil {
+			return err
+		}
+
+		req.ContainerInstanceID = inst.ID
+		payload, err := json.Marshal(req)
+		if err != nil {
+			return fmt.Errorf("marshal create payload: %w", err)
+		}
+
+		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
+			Type:    OutboxEventTypeCreateRequest,
+			Payload: payload,
+			Status:  "pending",
+		})
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -152,16 +173,69 @@ func (m *ContainerManager) CreateByTemplate(
 	return inst, nil
 }
 
-func (m *ContainerManager) Start(ctx context.Context, id int64) error {
-	inst, err := m.repo.GetContainerInstanceByID(ctx, id)
-	if err != nil {
-		return err
+func (m *ContainerManager) getCreateQueueMaxPending() int {
+	if m.cfg != nil && m.cfg.Container != nil && m.cfg.Container.CreateQueueMaxPending > 0 {
+		return m.cfg.Container.CreateQueueMaxPending
+	}
+	return 50
+}
+
+func (m *ContainerManager) getCreateQueueMaxConcurrency() int {
+	if m.cfg != nil && m.cfg.Container != nil && m.cfg.Container.CreateQueueMaxConcurrency > 0 {
+		return m.cfg.Container.CreateQueueMaxConcurrency
+	}
+	return 3
+}
+
+func (m *ContainerManager) CreateQueueMaxConcurrency() int {
+	return m.getCreateQueueMaxConcurrency()
+}
+
+func (m *ContainerManager) CreateQueueMaxPending() int {
+	return m.getCreateQueueMaxPending()
+}
+
+func (m *ContainerManager) QueueStatus(ctx context.Context) (*CreateQueueStatus, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	// Always enqueue the start request through the worker.
-	// Transition to start_pending.
-	if err := m.transition(ctx, inst, fsm.StartPending, "ContainerStartPending"); err != nil {
-		return err
+	status := &CreateQueueStatus{
+		MaxConcurrency: m.getCreateQueueMaxConcurrency(),
+		MaxPending:     m.getCreateQueueMaxPending(),
+	}
+
+	err := m.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+		active, err := tx.CountContainerInstanceByStatuses(ctx, concurrencyOccupiedStatuses())
+		if err != nil {
+			return err
+		}
+		pending, err := m.countPendingCreateQueueRequests(ctx, tx)
+		if err != nil {
+			return err
+		}
+		status.ActiveCount = active
+		status.PendingCount = pending
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return status, nil
+}
+
+func (m *ContainerManager) Start(ctx context.Context, id int64) error {
+	maxPending := m.getCreateQueueMaxPending()
+	if maxPending > 0 {
+		count, err := m.countPendingCreateQueueRequests(ctx, m.repo)
+		if err != nil {
+			return fmt.Errorf("count pending create/start requests: %w", err)
+		}
+		if count >= int64(maxPending) {
+			return fmt.Errorf("container start queue is full (%d/%d pending), please try again later",
+				count, maxPending)
+		}
 	}
 
 	userID := ""
@@ -174,21 +248,24 @@ func (m *ContainerManager) Start(ctx context.Context, id int64) error {
 	}
 
 	req := containerStartPayload{
-		ContainerInstanceID: inst.ID,
+		ContainerInstanceID: id,
 		UserID:              userID,
 	}
 
-	if err := m.createWorker.EnqueueStart(ctx, req); err != nil {
-		logger.Errorf(ctx, "[ContainerManager] enqueue start failed, instance_id=%d err=%v", inst.ID, err)
+	if err := m.enqueueLifecycleRequest(ctx, id, fsm.StartPending, "ContainerStartPending", OutboxEventTypeStartRequest, req); err != nil {
+		logger.Errorf(ctx, "[ContainerManager] enqueue start failed, instance_id=%d err=%v", id, err)
 		return err
 	}
 
-	logger.Infof(ctx, "[ContainerManager] enqueued start request, instance_id=%d", inst.ID)
+	logger.Infof(ctx, "[ContainerManager] enqueued start request, instance_id=%d", id)
 	return nil
 }
 
+func (m *ContainerManager) countPendingCreateQueueRequests(ctx context.Context, repo interfaces.ContainerRepository) (int64, error) {
+	return repo.CountPendingOutboxEvents(ctx, OutboxEventTypeCreateRequest, OutboxEventTypeStartRequest)
+}
+
 func (m *ContainerManager) Stop(ctx context.Context, id int64) error {
-	// inst, _, err := m.getInstanceAndRuntime(ctx, id)
 	inst, err := m.repo.GetContainerInstanceByID(ctx, id)
 	if err != nil {
 		return err
@@ -198,12 +275,6 @@ func (m *ContainerManager) Stop(ctx context.Context, id int64) error {
 	switch strings.TrimSpace(strings.ToLower(string(inst.Status))) {
 	case string(types.ContainerStopped), string(types.ContainerFailed), string(types.ContainerExited):
 		return nil
-	}
-
-	// Always enqueue the stop request through the worker.
-	// Transition to stop_pending.
-	if err := m.transition(ctx, inst, fsm.StopPending, "ContainerStopPending"); err != nil {
-		return err
 	}
 
 	userID := ""
@@ -220,7 +291,7 @@ func (m *ContainerManager) Stop(ctx context.Context, id int64) error {
 		UserID:              userID,
 	}
 
-	if err := m.createWorker.EnqueueStop(ctx, req); err != nil {
+	if err := m.enqueueLifecycleRequest(ctx, inst.ID, fsm.StopPending, "ContainerStopPending", OutboxEventTypeStopRequest, req); err != nil {
 		logger.Errorf(ctx, "[ContainerManager] enqueue stop failed, instance_id=%d err=%v", inst.ID, err)
 		return err
 	}
@@ -260,12 +331,6 @@ func (m *ContainerManager) Delete(ctx context.Context, id int64) error {
 		return nil
 	}
 
-	// Always enqueue the delete request through the worker.
-	// Transition to delete_pending.
-	if err := m.transition(ctx, inst, fsm.DeletePending, "ContainerDeletePending"); err != nil {
-		return err
-	}
-
 	userID := ""
 	if ctx != nil {
 		if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
@@ -280,7 +345,7 @@ func (m *ContainerManager) Delete(ctx context.Context, id int64) error {
 		UserID:              userID,
 	}
 
-	if err := m.createWorker.EnqueueDelete(ctx, req); err != nil {
+	if err := m.enqueueLifecycleRequest(ctx, inst.ID, fsm.DeletePending, "ContainerDeletePending", OutboxEventTypeDeleteRequest, req); err != nil {
 		logger.Errorf(ctx, "[ContainerManager] enqueue delete failed, instance_id=%d err=%v", inst.ID, err)
 		return err
 	}
@@ -556,6 +621,54 @@ func (m *ContainerManager) createContainerEvent(ctx context.Context, instanceID 
 		ContainerInstanceID: instanceID,
 		Event:               evt,
 		Message:             msg,
+	})
+}
+
+func (m *ContainerManager) enqueueLifecycleRequest(
+	ctx context.Context,
+	instanceID int64,
+	to fsm.State,
+	transitionEventType string,
+	requestType string,
+	requestPayload interface{},
+) error {
+	return m.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+		latest, err := tx.GetContainerInstanceByID(ctx, instanceID)
+		if err != nil {
+			return err
+		}
+
+		if latest.Status != types.ContainerStatus(to) {
+			f := &fsm.FSM{}
+			if err := f.Transition(fsm.State(latest.Status), to); err != nil {
+				return err
+			}
+
+			latest.Status = types.ContainerStatus(to)
+			if err := tx.UpdateContainerInstance(ctx, latest); err != nil {
+				return err
+			}
+
+			domainEvent := &types.ContainerEvent{
+				ContainerInstanceID: latest.ID,
+				Event:               transitionEventType,
+				Message:             string(to),
+			}
+			if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
+				return err
+			}
+		}
+
+		payload, err := json.Marshal(requestPayload)
+		if err != nil {
+			return err
+		}
+
+		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
+			Type:    requestType,
+			Payload: payload,
+			Status:  "pending",
+		})
 	})
 }
 

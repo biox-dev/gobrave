@@ -368,6 +368,34 @@ func (m *mockContainerRepo) ListPendingOutboxEventsByType(ctx context.Context, e
 	return items, nil
 }
 
+func (m *mockContainerRepo) CountPendingOutboxEvents(ctx context.Context, eventTypes ...string) (int64, error) {
+	if len(eventTypes) == 0 {
+		var total int64
+		for _, v := range m.outbox {
+			if v.Status == "pending" {
+				total++
+			}
+		}
+		return total, nil
+	}
+
+	allowed := make(map[string]struct{}, len(eventTypes))
+	for _, eventType := range eventTypes {
+		allowed[eventType] = struct{}{}
+	}
+
+	var count int64
+	for _, v := range m.outbox {
+		if v.Status != "pending" {
+			continue
+		}
+		if _, ok := allowed[v.Type]; ok {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (m *mockContainerRepo) CountPendingOutboxEventsByType(ctx context.Context, eventType string) (int64, error) {
 	var count int64
 	for _, v := range m.outbox {
@@ -487,9 +515,29 @@ func newTestManagerWithWorker(repo *mockContainerRepo, rt *dockerMockRuntime) (*
 	reg.Register("docker", rt)
 	imgMgr := NewImageManager(repo, reg)
 	mgr := NewContainerManager(repo, nil, nil, nil, reg, nil, NewDefaultContainerRuntimeResolver(), imgMgr, nil)
-	worker := NewContainerCreateWorker(repo, nil, nil, nil, reg, NewDefaultContainerRuntimeResolver(), imgMgr, nil, 1, 10)
-	mgr.SetCreateWorker(worker)
+	worker := NewContainerCreateWorker(repo, nil, nil, nil, reg, NewDefaultContainerRuntimeResolver(), imgMgr, nil)
 	return mgr, worker
+}
+
+func TestContainerManager_QueueStatus_PendingIncludesCreateAndStart(t *testing.T) {
+	ctx := context.Background()
+	repo := newMockContainerRepo()
+	repo.outbox = append(repo.outbox,
+		&types.OutboxEvent{Type: OutboxEventTypeCreateRequest, Status: "pending"},
+		&types.OutboxEvent{Type: OutboxEventTypeStartRequest, Status: "pending"},
+		&types.OutboxEvent{Type: OutboxEventTypeStopRequest, Status: "pending"},
+		&types.OutboxEvent{Type: OutboxEventTypeStartRequest, Status: "sent"},
+	)
+
+	mgr := NewContainerManager(repo, nil, nil, nil, nil, nil, NewDefaultContainerRuntimeResolver(), nil, nil)
+	status, err := mgr.QueueStatus(ctx)
+	if err != nil {
+		t.Fatalf("QueueStatus failed: %v", err)
+	}
+
+	if status.PendingCount != 2 {
+		t.Fatalf("expected pending create/start count 2, got %d", status.PendingCount)
+	}
 }
 
 func mustSeedTemplate(t *testing.T, repo *mockContainerRepo) {

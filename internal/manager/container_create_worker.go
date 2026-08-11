@@ -68,13 +68,6 @@ type containerStartPayload struct {
 	UserID              string `json:"user_id,omitempty"`
 }
 
-type CreateQueueStatus struct {
-	ActiveCount    int64
-	PendingCount   int64
-	MaxConcurrency int
-	MaxPending     int
-}
-
 // ContainerCreateWorker subscribes to OutboxCreateRequestEvent and ContainerEvent
 // from the event bus. For creation requests it executes rt.Create + rt.Start,
 // and updates the active create request count while the request is being handled.
@@ -88,7 +81,6 @@ type ContainerCreateWorker struct {
 	img             *ImageManager
 	cfg             *config.Config
 	maxConcurrency  int
-	maxPending      int
 }
 
 // NewContainerCreateWorker creates a new worker.
@@ -101,14 +93,14 @@ func NewContainerCreateWorker(
 	res ContainerRuntimeResolver,
 	img *ImageManager,
 	cfg *config.Config,
-	maxConcurrency int,
-	maxPending int,
 ) *ContainerCreateWorker {
+	maxConcurrency := 3
+	if cfg != nil && cfg.Container != nil && cfg.Container.CreateQueueMaxConcurrency > 0 {
+		maxConcurrency = cfg.Container.CreateQueueMaxConcurrency
+	}
+
 	if maxConcurrency <= 0 {
 		maxConcurrency = 3
-	}
-	if maxPending <= 0 {
-		maxPending = 50
 	}
 	return &ContainerCreateWorker{
 		repo:            repo,
@@ -120,7 +112,6 @@ func NewContainerCreateWorker(
 		img:             img,
 		cfg:             cfg,
 		maxConcurrency:  maxConcurrency,
-		maxPending:      maxPending,
 	}
 }
 
@@ -223,21 +214,6 @@ func (w *ContainerCreateWorker) handleStopRequest(ctx context.Context, req Outbo
 	}
 }
 
-// EnqueueStop writes a container stop request to the outbox. It does not enforce
-// a pending queue limit — stop requests are always accepted.
-func (w *ContainerCreateWorker) EnqueueStop(ctx context.Context, req containerStopPayload) error {
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("marshal stop payload: %w", err)
-	}
-
-	return w.repo.CreateOutboxEvent(ctx, &types.OutboxEvent{
-		Type:    OutboxEventTypeStopRequest,
-		Payload: payload,
-		Status:  "pending",
-	})
-}
-
 // handleDeleteRequest unmarshals the payload, executes the delete, and marks the outbox as sent.
 func (w *ContainerCreateWorker) handleDeleteRequest(ctx context.Context, req OutboxDeleteRequestEvent) {
 	var payload containerDeletePayload
@@ -264,21 +240,6 @@ func (w *ContainerCreateWorker) handleDeleteRequest(ctx context.Context, req Out
 	if err := w.repo.MarkOutboxEventSent(ctx, req.OutboxID); err != nil {
 		logger.Errorf(ctx, "[ContainerCreateWorker] mark outbox sent failed, outbox_id=%d err=%v", req.OutboxID, err)
 	}
-}
-
-// EnqueueDelete writes a container delete request to the outbox. It does not enforce
-// a pending queue limit — delete requests are always accepted.
-func (w *ContainerCreateWorker) EnqueueDelete(ctx context.Context, req containerDeletePayload) error {
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("marshal delete payload: %w", err)
-	}
-
-	return w.repo.CreateOutboxEvent(ctx, &types.OutboxEvent{
-		Type:    OutboxEventTypeDeleteRequest,
-		Payload: payload,
-		Status:  "pending",
-	})
 }
 
 // handleStartRequest unmarshals the payload, executes the start, and marks the outbox as sent.
@@ -313,103 +274,6 @@ func (w *ContainerCreateWorker) handleStartRequest(ctx context.Context, req Outb
 	if err := w.repo.MarkOutboxEventSent(ctx, req.OutboxID); err != nil {
 		logger.Errorf(ctx, "[ContainerCreateWorker] mark outbox sent failed, outbox_id=%d err=%v", req.OutboxID, err)
 	}
-}
-
-// EnqueueStart writes a container start request to the outbox.
-func (w *ContainerCreateWorker) EnqueueStart(ctx context.Context, req containerStartPayload) error {
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("marshal start payload: %w", err)
-	}
-
-	return w.repo.CreateOutboxEvent(ctx, &types.OutboxEvent{
-		Type:    OutboxEventTypeStartRequest,
-		Payload: payload,
-		Status:  "pending",
-	})
-}
-
-// Enqueue writes a container creation request to the outbox. It returns an error
-// if the pending queue is full.
-func (w *ContainerCreateWorker) Enqueue(ctx context.Context, req containerCreatePayload) error {
-	if w.maxPending > 0 {
-		count, err := w.repo.CountPendingOutboxEventsByType(ctx, OutboxEventTypeCreateRequest)
-		if err != nil {
-			return fmt.Errorf("count pending create requests: %w", err)
-		}
-		if count >= int64(w.maxPending) {
-			return fmt.Errorf("container create queue is full (%d/%d pending), please try again later",
-				count, w.maxPending)
-		}
-	}
-
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("marshal create payload: %w", err)
-	}
-
-	return w.repo.CreateOutboxEvent(ctx, &types.OutboxEvent{
-		Type:    OutboxEventTypeCreateRequest,
-		Payload: payload,
-		Status:  "pending",
-	})
-}
-
-// PendingCount returns the number of pending create requests in the queue.
-func (w *ContainerCreateWorker) PendingCount(ctx context.Context) (int64, error) {
-	return w.repo.CountPendingOutboxEventsByType(ctx, OutboxEventTypeCreateRequest)
-}
-
-// ActiveCount returns the number of container instances currently occupying
-// concurrency slots for create/start operations.
-func (w *ContainerCreateWorker) ActiveCount() int64 {
-	active, err := w.repo.CountContainerInstanceByStatuses(context.Background(), concurrencyOccupiedStatuses())
-	if err != nil {
-		logger.Warnf(context.Background(), "[ContainerCreateWorker] count active container instances failed: %v", err)
-		return 0
-	}
-
-	return active
-}
-
-func (w *ContainerCreateWorker) QueueStatus(ctx context.Context) (*CreateQueueStatus, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	status := &CreateQueueStatus{
-		MaxConcurrency: w.maxConcurrency,
-		MaxPending:     w.maxPending,
-	}
-
-	err := w.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		active, err := tx.CountContainerInstanceByStatuses(ctx, concurrencyOccupiedStatuses())
-		if err != nil {
-			return err
-		}
-		pending, err := tx.CountPendingOutboxEventsByType(ctx, OutboxEventTypeCreateRequest)
-		if err != nil {
-			return err
-		}
-		status.ActiveCount = active
-		status.PendingCount = pending
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return status, nil
-}
-
-// MaxConcurrency returns the maximum number of concurrent container creations.
-func (w *ContainerCreateWorker) MaxConcurrency() int {
-	return w.maxConcurrency
-}
-
-// MaxPending returns the maximum number of queued creation requests.
-func (w *ContainerCreateWorker) MaxPending() int {
-	return w.maxPending
 }
 
 // executeCreate performs the actual container creation and start. It is called either

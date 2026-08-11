@@ -416,13 +416,25 @@ func (r *containerRepository) ListPendingOutboxEventsByType(ctx context.Context,
 	return items, nil
 }
 
-func (r *containerRepository) CountPendingOutboxEventsByType(ctx context.Context, eventType string) (int64, error) {
+func (r *containerRepository) CountPendingOutboxEvents(ctx context.Context, eventTypes ...string) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).
+
+	query := r.db.WithContext(ctx).
 		Model(&types.OutboxEvent{}).
-		Where("status = ? AND type = ?", "pending", eventType).
-		Count(&count).Error
+		Where("status = ?", "pending")
+
+	if len(eventTypes) == 1 {
+		query = query.Where("type = ?", eventTypes[0])
+	} else if len(eventTypes) > 1 {
+		query = query.Where("type IN ?", eventTypes)
+	}
+
+	err := query.Count(&count).Error
 	return count, err
+}
+
+func (r *containerRepository) CountPendingOutboxEventsByType(ctx context.Context, eventType string) (int64, error) {
+	return r.CountPendingOutboxEvents(ctx, eventType)
 }
 
 func (r *containerRepository) MarkOutboxEventProcessing(ctx context.Context, id int64) error {

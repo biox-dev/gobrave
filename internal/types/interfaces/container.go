@@ -83,6 +83,7 @@ type ContainerRepository interface {
 	CreateOutboxEvent(ctx context.Context, item *types.OutboxEvent) error
 	ListPendingOutboxEvent(ctx context.Context, limit int) ([]*types.OutboxEvent, error)
 	ListPendingOutboxEventsByType(ctx context.Context, eventType string, limit int) ([]*types.OutboxEvent, error)
+	CountPendingOutboxEvents(ctx context.Context, eventTypes ...string) (int64, error)
 	CountPendingOutboxEventsByType(ctx context.Context, eventType string) (int64, error)
 	MarkOutboxEventProcessing(ctx context.Context, id int64) error
 	MarkOutboxEventPending(ctx context.Context, id int64) error

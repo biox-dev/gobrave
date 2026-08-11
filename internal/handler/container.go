@@ -21,7 +21,7 @@ type ContainerHandler struct {
 	projectService   interfaces.ProjectService
 	analysisService  interfaces.AnalysisService
 	workflowService  interfaces.WorkflowService
-	createWorker     *manager.ContainerCreateWorker
+	containerManager *manager.ContainerManager
 	cfg              *config.Config
 }
 
@@ -96,14 +96,14 @@ type runtimeMonitoringSnapshotItem struct {
 func NewContainerHandler(containerService interfaces.ContainerService,
 	projectService interfaces.ProjectService,
 	analysisService interfaces.AnalysisService, workflowService interfaces.WorkflowService,
-	createWorker *manager.ContainerCreateWorker,
+	containerManager *manager.ContainerManager,
 	cfg *config.Config) *ContainerHandler {
 	return &ContainerHandler{
 		containerService: containerService,
 		analysisService:  analysisService,
 		projectService:   projectService,
 		workflowService:  workflowService,
-		createWorker:     createWorker,
+		containerManager: containerManager,
 		cfg:              cfg,
 	}
 }
@@ -1081,7 +1081,7 @@ func (h *ContainerHandler) GetQueueStatus(c *gin.Context) {
 		return
 	}
 
-	if h.createWorker == nil {
+	if h.containerManager == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"active_count":    0,
 			"pending_count":   0,
@@ -1092,13 +1092,13 @@ func (h *ContainerHandler) GetQueueStatus(c *gin.Context) {
 		return
 	}
 
-	status, err := h.createWorker.QueueStatus(c.Request.Context())
+	status, err := h.containerManager.QueueStatus(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"active_count":    -1,
 			"pending_count":   -1,
-			"max_concurrency": h.createWorker.MaxConcurrency(),
-			"max_pending":     h.createWorker.MaxPending(),
+			"max_concurrency": h.containerManager.CreateQueueMaxConcurrency(),
+			"max_pending":     h.containerManager.CreateQueueMaxPending(),
 			"queue_enabled":   true,
 		})
 		return

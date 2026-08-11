@@ -132,20 +132,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(manager.NewImageManager))
 	must(container.Provide(manager.NewContainerManager))
 	must(container.Provide(manager.NewOutboxDispatcher))
-	// Provide ContainerCreateWorker as its concrete type (for SetCreateWorker injection).
-	must(container.Provide(func(cfg *config.Config, repo interfaces.ContainerRepository, projectRepo interfaces.ProjectRepository, analysisRepo interfaces.AnalysisRepository, workflowService interfaces.WorkflowService, reg *containerruntime.Registry, res manager.ContainerRuntimeResolver, img *manager.ImageManager) *manager.ContainerCreateWorker {
-		maxConcurrency := 3
-		maxPending := 50
-		if cfg != nil && cfg.Container != nil {
-			if cfg.Container.CreateQueueMaxConcurrency > 0 {
-				maxConcurrency = cfg.Container.CreateQueueMaxConcurrency
-			}
-			if cfg.Container.CreateQueueMaxPending > 0 {
-				maxPending = cfg.Container.CreateQueueMaxPending
-			}
-		}
-		return manager.NewContainerCreateWorker(repo, projectRepo, analysisRepo, workflowService, reg, res, img, cfg, maxConcurrency, maxPending)
-	}))
+	// Provide ContainerCreateWorker as its concrete type.
+	must(container.Provide(manager.NewContainerCreateWorker))
 	// Also register the same instance in the event_handlers group so it receives bus events.
 	must(container.Provide(func(w *manager.ContainerCreateWorker) event.Handler {
 		return w
@@ -398,14 +386,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	must(container.Invoke(manager.RunOutboxDispatcher))
 
-	// Wire up the container create worker.
-	// The worker is already subscribed to the event bus via dig.Group("event_handlers").
-	// All container create/stop operations go through the queue-based worker.
-	must(container.Invoke(func(cfg *config.Config, mgr *manager.ContainerManager, worker *manager.ContainerCreateWorker) {
-		mgr.SetCreateWorker(worker)
-		logger.Infof(context.Background(), "[Container] container worker wired, maxConcurrency=%d maxPending=%d",
-			cfg.Container.CreateQueueMaxConcurrency, cfg.Container.CreateQueueMaxPending)
-	}))
+	// The worker is subscribed to the event bus via dig.Group("event_handlers")
+	// and acts as a pure consumer/executor for outbox request events.
 
 	return container
 }
