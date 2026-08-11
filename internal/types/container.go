@@ -204,13 +204,15 @@ const (
 type ContainerStatus string
 
 const (
-	ContainerPending  ContainerStatus = "pending"
-	ContainerCreating ContainerStatus = "creating"
-	ContainerRunning  ContainerStatus = "running"
-	ContainerPaused   ContainerStatus = "paused"
-	ContainerStopped  ContainerStatus = "stopped"
-	ContainerFailed   ContainerStatus = "failed"
-	ContainerExited   ContainerStatus = "exited"
+	ContainerPending     ContainerStatus = "pending"
+	ContainerCreating    ContainerStatus = "creating"
+	ContainerRunning     ContainerStatus = "running"
+	ContainerPaused      ContainerStatus = "paused"
+	ContainerStopPending ContainerStatus = "stop_pending"
+	ContainerStopping    ContainerStatus = "stopping"
+	ContainerStopped     ContainerStatus = "stopped"
+	ContainerFailed      ContainerStatus = "failed"
+	ContainerExited      ContainerStatus = "exited"
 )
 
 type ContainerInstance struct {

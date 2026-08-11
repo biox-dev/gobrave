@@ -19,6 +19,13 @@ type OutboxCreateRequestEvent struct {
 	RawPayload []byte
 }
 
+// OutboxStopRequestEvent is published to the event bus when a
+// ContainerStopRequest outbox event is picked up.
+type OutboxStopRequestEvent struct {
+	OutboxID   int64
+	RawPayload []byte
+}
+
 type OutboxDispatcher struct {
 	repo         interfaces.ContainerRepository
 	bus          event.Bus
@@ -80,6 +87,20 @@ func (d *OutboxDispatcher) dispatchOnce(ctx context.Context) {
 				continue
 			}
 			d.bus.Publish(OutboxCreateRequestEvent{
+				OutboxID:   item.ID,
+				RawPayload: []byte(item.Payload),
+			})
+			continue
+		}
+
+		// ContainerStopRequest events are handled by ContainerCreateWorker
+		// via the event bus. Same pattern as create requests.
+		if item.Type == OutboxEventTypeStopRequest {
+			if err := d.repo.MarkOutboxEventProcessing(ctx, item.ID); err != nil {
+				logger.Errorf(ctx, "[OutboxDispatcher] mark stop request processing failed, id=%d err=%v", item.ID, err)
+				continue
+			}
+			d.bus.Publish(OutboxStopRequestEvent{
 				OutboxID:   item.ID,
 				RawPayload: []byte(item.Payload),
 			})

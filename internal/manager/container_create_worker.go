@@ -25,6 +25,8 @@ import (
 const (
 	// OutboxEventTypeCreateRequest is the outbox event type for container creation requests.
 	OutboxEventTypeCreateRequest = "ContainerCreateRequest"
+	// OutboxEventTypeStopRequest is the outbox event type for container stop requests.
+	OutboxEventTypeStopRequest = "ContainerStopRequest"
 )
 
 // Ensure ContainerCreateWorker implements event.Handler.
@@ -38,6 +40,12 @@ type containerCreatePayload struct {
 	OwnerType           string `json:"owner_type"`
 	OwnerID             int64  `json:"owner_id"`
 	Name                string `json:"name"`
+	UserID              string `json:"user_id,omitempty"`
+}
+
+// containerStopPayload is stored in OutboxEvent.Payload for deferred container stop.
+type containerStopPayload struct {
+	ContainerInstanceID int64  `json:"container_instance_id"`
 	UserID              string `json:"user_id,omitempty"`
 }
 
@@ -98,8 +106,9 @@ func NewContainerCreateWorker(
 	}
 }
 
-// Handle dispatches events from the event bus. It handles two event types:
+// Handle dispatches events from the event bus. It handles three event types:
 //   - OutboxCreateRequestEvent: executes deferred container creation
+//   - OutboxStopRequestEvent: executes deferred container stop
 //   - types.ContainerEvent: releases semaphore when a tracked container reaches a stable state
 func (w *ContainerCreateWorker) Handle(evt event.Event) {
 	switch e := evt.(type) {
@@ -110,6 +119,9 @@ func (w *ContainerCreateWorker) Handle(evt event.Event) {
 		w.handleCreateRequest(context.Background(), e)
 		w.activeCount.Add(-1)
 		<-w.sem
+
+	case OutboxStopRequestEvent:
+		w.handleStopRequest(context.Background(), e)
 
 	case types.ContainerEvent:
 		w.handleContainerEvent(e)
@@ -181,6 +193,49 @@ func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req Out
 	if err := w.repo.MarkOutboxEventSent(ctx, req.OutboxID); err != nil {
 		logger.Errorf(ctx, "[ContainerCreateWorker] mark outbox sent failed, outbox_id=%d err=%v", req.OutboxID, err)
 	}
+}
+
+// handleStopRequest unmarshals the payload, executes the stop, and marks the outbox as sent.
+func (w *ContainerCreateWorker) handleStopRequest(ctx context.Context, req OutboxStopRequestEvent) {
+	var payload containerStopPayload
+	if err := json.Unmarshal(req.RawPayload, &payload); err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] unmarshal stop payload failed, outbox_id=%d err=%v", req.OutboxID, err)
+		_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
+		return
+	}
+
+	logger.Infof(ctx, "[ContainerCreateWorker] handling stop request, outbox_id=%d instance_id=%d",
+		req.OutboxID, payload.ContainerInstanceID)
+
+	execCtx := ctx
+	if payload.UserID != "" {
+		execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
+	}
+
+	if err := w.executeStop(execCtx, payload.ContainerInstanceID); err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] execute stop failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
+		_ = w.repo.MarkOutboxEventPending(ctx, req.OutboxID)
+		return
+	}
+
+	if err := w.repo.MarkOutboxEventSent(ctx, req.OutboxID); err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] mark outbox sent failed, outbox_id=%d err=%v", req.OutboxID, err)
+	}
+}
+
+// EnqueueStop writes a container stop request to the outbox. It does not enforce
+// a pending queue limit — stop requests are always accepted.
+func (w *ContainerCreateWorker) EnqueueStop(ctx context.Context, req containerStopPayload) error {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal stop payload: %w", err)
+	}
+
+	return w.repo.CreateOutboxEvent(ctx, &types.OutboxEvent{
+		Type:    OutboxEventTypeStopRequest,
+		Payload: payload,
+		Status:  "pending",
+	})
 }
 
 // handleContainerEvent checks if a ContainerEvent corresponds to a tracked
@@ -464,6 +519,68 @@ func (w *ContainerCreateWorker) createContainerEvent(ctx context.Context, instan
 		Event:               evt,
 		Message:             msg,
 	})
+}
+
+// executeStop performs the actual container stop. It is called by
+// ContainerCreateWorker.handleStopRequest (async path).
+func (w *ContainerCreateWorker) executeStop(ctx context.Context, instanceID int64) error {
+	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+
+	// If already in a terminal state, nothing to do.
+	switch inst.Status {
+	case types.ContainerStopped, types.ContainerFailed, types.ContainerExited:
+		return nil
+	}
+
+	rt, err := w.getRuntimeByInstance(inst)
+	if err != nil {
+		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStopFailed")
+		_ = w.createContainerEvent(ctx, inst.ID, "ContainerStopFailedDetail", err.Error())
+		return err
+	}
+
+	// Transition to stopping.
+	if err := w.transition(ctx, inst, fsm.Stopping, "ContainerStopping"); err != nil {
+		return err
+	}
+
+	// Execute runtime stop.
+	if err := rt.Stop(ctx, inst.RuntimeID); err != nil {
+		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStopFailed")
+		_ = w.createContainerEvent(ctx, inst.ID, "ContainerStopFailedDetail", err.Error())
+		return err
+	}
+
+	// Transition to stopped.
+	now := time.Now()
+	inst.FinishedAt = &now
+	if err := w.transition(ctx, inst, fsm.Stopped, "ContainerStopped"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// getRuntimeByInstance resolves a runtime from a container instance's RuntimeID.
+func (w *ContainerCreateWorker) getRuntimeByInstance(inst *types.ContainerInstance) (containerruntime.Runtime, error) {
+	if inst == nil {
+		return nil, errors.New("container instance is nil")
+	}
+
+	for _, item := range w.reg.List() {
+		if strings.HasPrefix(inst.RuntimeID, item.Name()+"-") {
+			return item, nil
+		}
+	}
+
+	items := w.reg.List()
+	if len(items) == 1 {
+		return items[0], nil
+	}
+
+	return nil, fmt.Errorf("failed to resolve runtime for instance %d", inst.ID)
 }
 
 // resolveOwnerProjectVolumes appends project-level volumes based on the owner.
