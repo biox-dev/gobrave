@@ -33,6 +33,10 @@ func (m *ContainerManager) RecoverRuntimeMonitoring(ctx context.Context) (int, e
 			continue
 		}
 
+		if shouldBackfillRuntimeNodeNameForRunning(inst) {
+			m.syncInstanceIPAddress(ctx, rt, inst)
+		}
+
 		if err := monitor.Monitor(ctx, inst.RuntimeID); err != nil {
 			logger.Warnf(ctx, "[ContainerManager] recover runtime monitoring failed, instance_id=%d runtime_id=%s err=%v", inst.ID, inst.RuntimeID, err)
 			continue
@@ -45,44 +49,11 @@ func (m *ContainerManager) RecoverRuntimeMonitoring(ctx context.Context) (int, e
 	return recovered, nil
 }
 
-func (m *ContainerManager) BackfillRuntimeNodeName(ctx context.Context) (int, error) {
-	instances, err := m.repo.ListContainerInstance(ctx)
-	if err != nil {
-		return 0, err
-	}
-
-	backfilled := 0
-	for _, inst := range instances {
-		if !shouldBackfillRuntimeNodeName(inst) {
-			continue
-		}
-
-		rt, err := m.getRuntimeByInstance(inst)
-		if err != nil {
-			logger.Warnf(ctx, "[ContainerManager] resolve runtime for node backfill failed, instance_id=%d runtime_id=%s err=%v", inst.ID, inst.RuntimeID, err)
-			continue
-		}
-
-		beforeNodeName := strings.TrimSpace(inst.RuntimeNodeName)
-		m.syncInstanceIPAddress(ctx, rt, inst)
-		afterNodeName := strings.TrimSpace(inst.RuntimeNodeName)
-		if beforeNodeName == "" && afterNodeName != "" {
-			backfilled++
-		}
-	}
-
-	return backfilled, nil
-}
-
-// RunRuntimeReconciler periodically reconnects runtime monitoring and backfills runtime node names.
+// RunRuntimeReconciler periodically reconnects runtime monitoring.
 func (m *ContainerManager) RunRuntimeReconciler(ctx context.Context, interval time.Duration) {
 	m.monitorOnce.Do(func() {
 		if interval <= 0 {
 			interval = 30 * time.Second
-		}
-		nodeBackfillInterval := interval * 10
-		if nodeBackfillInterval < 2*time.Minute {
-			nodeBackfillInterval = 2 * time.Minute
 		}
 		if ctx == nil {
 			ctx = context.Background()
@@ -96,17 +67,8 @@ func (m *ContainerManager) RunRuntimeReconciler(ctx context.Context, interval ti
 				logger.Infof(ctx, "[ContainerManager] startup runtime monitor recovery completed, recovered=%d", recovered)
 			}
 
-			backfilled, err := m.BackfillRuntimeNodeName(ctx)
-			if err != nil {
-				logger.Warnf(ctx, "[ContainerManager] startup runtime node backfill failed: %v", err)
-			} else if backfilled > 0 {
-				logger.Infof(ctx, "[ContainerManager] startup runtime node backfill completed, backfilled=%d", backfilled)
-			}
-
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
-			nodeTicker := time.NewTicker(nodeBackfillInterval)
-			defer nodeTicker.Stop()
 
 			for {
 				select {
@@ -121,22 +83,13 @@ func (m *ContainerManager) RunRuntimeReconciler(ctx context.Context, interval ti
 					if recovered > 0 {
 						logger.Infof(context.Background(), "[ContainerManager] periodic runtime monitor recovery completed, recovered=%d", recovered)
 					}
-				case <-nodeTicker.C:
-					backfilled, err := m.BackfillRuntimeNodeName(context.Background())
-					if err != nil {
-						logger.Warnf(context.Background(), "[ContainerManager] periodic runtime node backfill failed: %v", err)
-						continue
-					}
-					if backfilled > 0 {
-						logger.Infof(context.Background(), "[ContainerManager] periodic runtime node backfill completed, backfilled=%d", backfilled)
-					}
 				}
 			}
 		}()
 	})
 }
 
-func shouldBackfillRuntimeNodeName(inst *types.ContainerInstance) bool {
+func shouldBackfillRuntimeNodeNameForRunning(inst *types.ContainerInstance) bool {
 	if inst == nil {
 		return false
 	}
@@ -146,13 +99,10 @@ func shouldBackfillRuntimeNodeName(inst *types.ContainerInstance) bool {
 	if strings.TrimSpace(inst.RuntimeNodeName) != "" {
 		return false
 	}
-
-	switch inst.Status {
-	case types.ContainerCreating, types.ContainerRunning, types.ContainerPaused:
-		return true
-	default:
+	if inst.Status != types.ContainerRunning {
 		return false
 	}
+	return true
 }
 
 func shouldRecoverRuntimeMonitoring(inst *types.ContainerInstance) bool {
@@ -164,16 +114,16 @@ func shouldRecoverRuntimeMonitoring(inst *types.ContainerInstance) bool {
 	}
 
 	switch inst.Status {
-	case types.ContainerCreating, types.ContainerPaused:
+	case types.ContainerCreating, types.ContainerPaused, types.ContainerRunning:
 		return true
-	case types.ContainerRunning:
-		// TODO inst 暂时没有 runtime type 字段，暂时通过 runtimeID 判断是否为 job 类型的容器
-		// 判断只有job才需要恢复监控，其他类型的容器不需要恢复监控
-		if inst.RuntimeID != "" && strings.Contains(inst.RuntimeID, "job") {
-			// For Kubernetes, we only recover monitoring for running containers if they are in the monitoring registry.
-			return true
-		}
-		return false
+	// case types.ContainerRunning:
+	// 	// TODO inst 暂时没有 runtime type 字段，暂时通过 runtimeID 判断是否为 job 类型的容器
+	// 	// 判断只有job才需要恢复监控，其他类型的容器不需要恢复监控
+	// 	if inst.RuntimeID != "" && strings.Contains(inst.RuntimeID, "job") {
+	// 		// For Kubernetes, we only recover monitoring for running containers if they are in the monitoring registry.
+	// 		return true
+	// 	}
+	// 	return false
 	default:
 		return false
 	}
