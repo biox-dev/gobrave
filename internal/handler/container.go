@@ -1092,16 +1092,23 @@ func (h *ContainerHandler) GetCreateQueueStatus(c *gin.Context) {
 		return
 	}
 
-	pending, err := h.createWorker.PendingCount(c.Request.Context())
+	status, err := h.createWorker.QueueStatus(c.Request.Context())
 	if err != nil {
-		pending = -1
+		c.JSON(http.StatusOK, gin.H{
+			"active_count":    -1,
+			"pending_count":   -1,
+			"max_concurrency": h.createWorker.MaxConcurrency(),
+			"max_pending":     h.createWorker.MaxPending(),
+			"queue_enabled":   true,
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"active_count":    h.createWorker.ActiveCount(),
-		"pending_count":   pending,
-		"max_concurrency": h.createWorker.MaxConcurrency(),
-		"max_pending":     h.createWorker.MaxPending(),
+		"active_count":    status.ActiveCount,
+		"pending_count":   status.PendingCount,
+		"max_concurrency": status.MaxConcurrency,
+		"max_pending":     status.MaxPending,
 		"queue_enabled":   true,
 	})
 }

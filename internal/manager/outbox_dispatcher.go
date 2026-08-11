@@ -26,6 +26,20 @@ type OutboxStopRequestEvent struct {
 	RawPayload []byte
 }
 
+// OutboxDeleteRequestEvent is published to the event bus when a
+// ContainerDeleteRequest outbox event is picked up.
+type OutboxDeleteRequestEvent struct {
+	OutboxID   int64
+	RawPayload []byte
+}
+
+// OutboxStartRequestEvent is published to the event bus when a
+// ContainerStartRequest outbox event is picked up.
+type OutboxStartRequestEvent struct {
+	OutboxID   int64
+	RawPayload []byte
+}
+
 type OutboxDispatcher struct {
 	repo         interfaces.ContainerRepository
 	bus          event.Bus
@@ -101,6 +115,34 @@ func (d *OutboxDispatcher) dispatchOnce(ctx context.Context) {
 				continue
 			}
 			d.bus.Publish(OutboxStopRequestEvent{
+				OutboxID:   item.ID,
+				RawPayload: []byte(item.Payload),
+			})
+			continue
+		}
+
+		// ContainerDeleteRequest events are handled by ContainerCreateWorker
+		// via the event bus. Same pattern as create/stop requests.
+		if item.Type == OutboxEventTypeDeleteRequest {
+			if err := d.repo.MarkOutboxEventProcessing(ctx, item.ID); err != nil {
+				logger.Errorf(ctx, "[OutboxDispatcher] mark delete request processing failed, id=%d err=%v", item.ID, err)
+				continue
+			}
+			d.bus.Publish(OutboxDeleteRequestEvent{
+				OutboxID:   item.ID,
+				RawPayload: []byte(item.Payload),
+			})
+			continue
+		}
+
+		// ContainerStartRequest events are handled by ContainerCreateWorker
+		// via the event bus. Same pattern as other requests.
+		if item.Type == OutboxEventTypeStartRequest {
+			if err := d.repo.MarkOutboxEventProcessing(ctx, item.ID); err != nil {
+				logger.Errorf(ctx, "[OutboxDispatcher] mark start request processing failed, id=%d err=%v", item.ID, err)
+				continue
+			}
+			d.bus.Publish(OutboxStartRequestEvent{
 				OutboxID:   item.ID,
 				RawPayload: []byte(item.Payload),
 			})

@@ -153,37 +153,43 @@ func (m *ContainerManager) CreateByTemplate(
 }
 
 func (m *ContainerManager) Start(ctx context.Context, id int64) error {
-	inst, rt, err := m.getInstanceAndRuntime(ctx, id)
+	inst, err := m.repo.GetContainerInstanceByID(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	if err := rt.Start(ctx, inst.RuntimeID); err != nil {
-		_ = m.transition(ctx, inst, fsm.Failed, "ContainerStartFailed")
-		_ = m.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
+	// Always enqueue the start request through the worker.
+	// Transition to start_pending.
+	if err := m.transition(ctx, inst, fsm.StartPending, "ContainerStartPending"); err != nil {
 		return err
 	}
+
+	userID := ""
+	if ctx != nil {
+		if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
+			userID = uid
+		} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
+			userID = uid
+		}
+	}
+
+	req := containerStartPayload{
+		ContainerInstanceID: inst.ID,
+		UserID:              userID,
+	}
+
+	if err := m.createWorker.EnqueueStart(ctx, req); err != nil {
+		logger.Errorf(ctx, "[ContainerManager] enqueue start failed, instance_id=%d err=%v", inst.ID, err)
+		return err
+	}
+
+	logger.Infof(ctx, "[ContainerManager] enqueued start request, instance_id=%d", inst.ID)
 	return nil
 }
 
-// func (m *ContainerManager) Stop(ctx context.Context, id uint64) error {
-
-// 	inst := m.repo.Get(id)
-
-// 	// FSM check
-// 	_ = m.fsm.Transition(inst.Status, Stopped)
-
-// 	err := m.runtime.Stop(ctx, inst.RuntimeID)
-// 	if err != nil {
-// 		_ = m.transition(ctx, inst, Failed, "ContainerFailed")
-// 		return err
-// 	}
-
-// 	return m.transition(ctx, inst, Stopped, "ContainerStopped")
-// }
-
 func (m *ContainerManager) Stop(ctx context.Context, id int64) error {
-	inst, _, err := m.getInstanceAndRuntime(ctx, id)
+	// inst, _, err := m.getInstanceAndRuntime(ctx, id)
+	inst, err := m.repo.GetContainerInstanceByID(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -236,75 +242,62 @@ func (m *ContainerManager) StopByOwner(ctx context.Context, ownerType types.Cont
 	}
 	switch strings.TrimSpace(strings.ToLower(string(inst.Status))) {
 	case string(types.ContainerStopped), string(types.ContainerFailed), string(types.ContainerExited),
-		string(types.ContainerStopPending), string(types.ContainerStopping):
+		string(types.ContainerStopPending), string(types.ContainerStopping),
+		string(types.ContainerStartPending), string(types.ContainerStarting):
 		return nil
 	}
 	return m.Stop(ctx, inst.ID)
 }
 
 func (m *ContainerManager) Delete(ctx context.Context, id int64) error {
-	inst, rt, err := m.getInstanceAndRuntime(ctx, id)
+	inst, err := m.repo.GetContainerInstanceByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if inst.RuntimeID != "" {
-		if err := rt.Delete(ctx, inst.RuntimeID); err != nil {
-			logger.Error(context.Background(), err.Error())
-			// return err
+
+	// If already deleted, nothing to do.
+	if inst == nil || inst.ID == 0 {
+		return nil
+	}
+
+	// Always enqueue the delete request through the worker.
+	// Transition to delete_pending.
+	if err := m.transition(ctx, inst, fsm.DeletePending, "ContainerDeletePending"); err != nil {
+		return err
+	}
+
+	userID := ""
+	if ctx != nil {
+		if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
+			userID = uid
+		} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
+			userID = uid
 		}
 	}
 
-	_ = m.createContainerEvent(ctx, inst.ID, "ContainerDeleted", "container deleted")
-	return m.repo.DeleteContainerInstance(ctx, inst.ID)
-}
+	req := containerDeletePayload{
+		ContainerInstanceID: inst.ID,
+		UserID:              userID,
+	}
 
-func (m *ContainerManager) Restart(ctx context.Context, id int64) error {
-	if err := m.Stop(ctx, id); err != nil {
+	if err := m.createWorker.EnqueueDelete(ctx, req); err != nil {
+		logger.Errorf(ctx, "[ContainerManager] enqueue delete failed, instance_id=%d err=%v", inst.ID, err)
 		return err
 	}
-	if err := m.Start(ctx, id); err != nil {
-		return err
-	}
-	_ = m.createContainerEvent(ctx, id, "ContainerRestarted", "container restarted")
+
+	logger.Infof(ctx, "[ContainerManager] enqueued delete request, instance_id=%d", inst.ID)
 	return nil
-}
-
-func (m *ContainerManager) Pause(ctx context.Context, id int64) error {
-	inst, rt, err := m.getInstanceAndRuntime(ctx, id)
-	if err != nil {
-		return err
-	}
-
-	if err := rt.Pause(ctx, inst.RuntimeID); err != nil {
-		_ = m.transition(ctx, inst, fsm.Failed, "ContainerPauseFailed")
-		_ = m.createContainerEvent(ctx, id, "ContainerPauseFailedDetail", err.Error())
-		return err
-	}
-
-	return m.transition(ctx, inst, fsm.Paused, "ContainerPaused")
-}
-
-func (m *ContainerManager) Resume(ctx context.Context, id int64) error {
-	inst, rt, err := m.getInstanceAndRuntime(ctx, id)
-	if err != nil {
-		return err
-	}
-
-	if err := rt.Resume(ctx, inst.RuntimeID); err != nil {
-		_ = m.transition(ctx, inst, fsm.Failed, "ContainerResumeFailed")
-		_ = m.createContainerEvent(ctx, id, "ContainerResumeFailedDetail", err.Error())
-		return err
-	}
-
-	return m.transition(ctx, inst, fsm.Running, "ContainerResumed")
 }
 
 func (m *ContainerManager) GetLogs(ctx context.Context, id int64, tail int) (string, error) {
 	if tail <= 0 {
 		tail = 200
 	}
-
-	inst, rt, err := m.getInstanceAndRuntime(ctx, id)
+	inst, err := m.repo.GetContainerInstanceByID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	rt, err := m.getRuntimeByInstance(inst)
 	if err != nil {
 		return "", err
 	}
@@ -546,17 +539,17 @@ func (m *ContainerManager) getRuntimeByInstance(inst *types.ContainerInstance) (
 	return nil, fmt.Errorf("failed to resolve runtime for instance %d", inst.ID)
 }
 
-func (m *ContainerManager) getInstanceAndRuntime(ctx context.Context, id int64) (*types.ContainerInstance, containerruntime.Runtime, error) {
-	inst, err := m.repo.GetContainerInstanceByID(ctx, id)
-	if err != nil {
-		return nil, nil, err
-	}
-	rt, err := m.getRuntimeByInstance(inst)
-	if err != nil {
-		return nil, nil, err
-	}
-	return inst, rt, nil
-}
+// func (m *ContainerManager) getInstanceAndRuntime(ctx context.Context, id int64) (*types.ContainerInstance, containerruntime.Runtime, error) {
+// inst, err := m.repo.GetContainerInstanceByID(ctx, id)
+// if err != nil {
+// 	return nil, nil, err
+// }
+// rt, err := m.getRuntimeByInstance(inst)
+// if err != nil {
+// 	return nil, nil, err
+// }
+// 	return inst, rt, nil
+// }
 
 func (m *ContainerManager) createContainerEvent(ctx context.Context, instanceID int64, evt string, msg string) error {
 	return m.repo.CreateContainerEvent(ctx, &types.ContainerEvent{

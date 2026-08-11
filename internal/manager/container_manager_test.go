@@ -240,6 +240,29 @@ func (m *mockContainerRepo) ListContainerInstance(ctx context.Context) ([]*types
 	return items, nil
 }
 
+func (m *mockContainerRepo) CountContainerInstanceByStatuses(ctx context.Context, statuses []types.ContainerStatus) (int64, error) {
+	if len(statuses) == 0 {
+		return 0, nil
+	}
+
+	statusSet := make(map[types.ContainerStatus]struct{}, len(statuses))
+	for _, status := range statuses {
+		statusSet[status] = struct{}{}
+	}
+
+	var total int64
+	for _, item := range m.instances {
+		if item == nil {
+			continue
+		}
+		if _, ok := statusSet[item.Status]; ok {
+			total++
+		}
+	}
+
+	return total, nil
+}
+
 func (m *mockContainerRepo) ListContainerInstanceByOwnerTypeAndOwnerIDs(ctx context.Context, ownerType types.ContainerOwnerType, ownerIDs []int64) ([]*types.ContainerInstance, error) {
 	if len(ownerIDs) == 0 {
 		return []*types.ContainerInstance{}, nil
@@ -398,8 +421,6 @@ type dockerMockRuntime struct {
 	monitored  []string
 	startErr   error
 	stopErr    error
-	pauseErr   error
-	resumeErr  error
 	deleteErr  error
 	createErr  error
 	imageErr   error
@@ -426,12 +447,10 @@ func (d *dockerMockRuntime) EnsureImage(ctx context.Context, image string, pullP
 	return d.imageErr
 }
 
-func (d *dockerMockRuntime) Start(ctx context.Context, runtimeID string) error { return d.startErr }
-func (d *dockerMockRuntime) Stop(ctx context.Context, runtimeID string) error  { return d.stopErr }
-
-func (d *dockerMockRuntime) Pause(ctx context.Context, runtimeID string) error { return d.pauseErr }
-
-func (d *dockerMockRuntime) Resume(ctx context.Context, runtimeID string) error { return d.resumeErr }
+func (d *dockerMockRuntime) Start(ctx context.Context, runtimeID string) error  { return d.startErr }
+func (d *dockerMockRuntime) Stop(ctx context.Context, runtimeID string) error   { return d.stopErr }
+func (d *dockerMockRuntime) Pause(ctx context.Context, runtimeID string) error  { return nil }
+func (d *dockerMockRuntime) Resume(ctx context.Context, runtimeID string) error { return nil }
 
 func (d *dockerMockRuntime) Delete(ctx context.Context, runtimeID string) error { return d.deleteErr }
 
@@ -509,78 +528,6 @@ func TestContainerManager_CreateByTemplate_StaysCreatingUntilStartedEvent(t *tes
 	}
 	if stored.Status != types.ContainerCreating {
 		t.Fatalf("expected stored status creating before runtime started event, got %s", stored.Status)
-	}
-}
-
-func TestContainerManager_PauseResume_FSMTransitions(t *testing.T) {
-	ctx := context.Background()
-	repo := newMockContainerRepo()
-	rt := &dockerMockRuntime{runtimeID: "docker-abc-2"}
-	mgr := newTestManager(repo, rt)
-
-	inst := &types.ContainerInstance{RuntimeID: "docker-abc-2", Status: types.ContainerRunning, Name: "demo"}
-	if err := repo.CreateContainerInstance(ctx, inst); err != nil {
-		t.Fatalf("seed instance failed: %v", err)
-	}
-
-	if err := mgr.Pause(ctx, inst.ID); err != nil {
-		t.Fatalf("pause failed: %v", err)
-	}
-	if inst.Status != types.ContainerPaused {
-		t.Fatalf("expected paused, got %s", inst.Status)
-	}
-
-	if err := mgr.Resume(ctx, inst.ID); err != nil {
-		t.Fatalf("resume failed: %v", err)
-	}
-	if inst.Status != types.ContainerRunning {
-		t.Fatalf("expected running, got %s", inst.Status)
-	}
-}
-
-func TestContainerManager_PauseFromStopped_ReturnsFSMError(t *testing.T) {
-	ctx := context.Background()
-	repo := newMockContainerRepo()
-	rt := &dockerMockRuntime{runtimeID: "docker-abc-3"}
-	mgr := newTestManager(repo, rt)
-
-	inst := &types.ContainerInstance{RuntimeID: "docker-abc-3", Status: types.ContainerStopped, Name: "demo"}
-	if err := repo.CreateContainerInstance(ctx, inst); err != nil {
-		t.Fatalf("seed instance failed: %v", err)
-	}
-
-	err := mgr.Pause(ctx, inst.ID)
-	if err == nil {
-		t.Fatalf("expected fsm transition error, got nil")
-	}
-	if err.Error() != "invalid transition" {
-		t.Fatalf("expected invalid transition, got %v", err)
-	}
-
-	if inst.Status != types.ContainerStopped {
-		t.Fatalf("expected status to remain stopped, got %s", inst.Status)
-	}
-}
-
-func TestContainerManager_OnEvent_PauseAndResume(t *testing.T) {
-	ctx := context.Background()
-	repo := newMockContainerRepo()
-	rt := &dockerMockRuntime{}
-	mgr := newTestManager(repo, rt)
-
-	inst := &types.ContainerInstance{RuntimeID: "docker-abc-4", Status: types.ContainerRunning, Name: "demo"}
-	if err := repo.CreateContainerInstance(ctx, inst); err != nil {
-		t.Fatalf("seed instance failed: %v", err)
-	}
-
-	mgr.OnEvent(containerruntime.RuntimeEvent{Type: "ContainerPaused", RuntimeID: "docker-abc-4"})
-	if inst.Status != types.ContainerPaused {
-		t.Fatalf("expected paused after event, got %s", inst.Status)
-	}
-
-	mgr.OnEvent(containerruntime.RuntimeEvent{Type: "ContainerResumed", RuntimeID: "docker-abc-4"})
-	if inst.Status != types.ContainerRunning {
-		t.Fatalf("expected running after resume event, got %s", inst.Status)
 	}
 }
 

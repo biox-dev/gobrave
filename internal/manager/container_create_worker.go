@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gobravedev/gobrave/internal/config"
@@ -22,11 +20,20 @@ import (
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
 )
 
+var (
+	errWorkerConcurrencyLimit = errors.New("worker concurrency limit reached")
+	errWorkerInvalidState     = errors.New("worker event invalid for current state")
+)
+
 const (
 	// OutboxEventTypeCreateRequest is the outbox event type for container creation requests.
 	OutboxEventTypeCreateRequest = "ContainerCreateRequest"
 	// OutboxEventTypeStopRequest is the outbox event type for container stop requests.
 	OutboxEventTypeStopRequest = "ContainerStopRequest"
+	// OutboxEventTypeDeleteRequest is the outbox event type for container delete requests.
+	OutboxEventTypeDeleteRequest = "ContainerDeleteRequest"
+	// OutboxEventTypeStartRequest is the outbox event type for container start requests.
+	OutboxEventTypeStartRequest = "ContainerStartRequest"
 )
 
 // Ensure ContainerCreateWorker implements event.Handler.
@@ -49,11 +56,28 @@ type containerStopPayload struct {
 	UserID              string `json:"user_id,omitempty"`
 }
 
+// containerDeletePayload is stored in OutboxEvent.Payload for deferred container delete.
+type containerDeletePayload struct {
+	ContainerInstanceID int64  `json:"container_instance_id"`
+	UserID              string `json:"user_id,omitempty"`
+}
+
+// containerStartPayload is stored in OutboxEvent.Payload for deferred container start.
+type containerStartPayload struct {
+	ContainerInstanceID int64  `json:"container_instance_id"`
+	UserID              string `json:"user_id,omitempty"`
+}
+
+type CreateQueueStatus struct {
+	ActiveCount    int64
+	PendingCount   int64
+	MaxConcurrency int
+	MaxPending     int
+}
+
 // ContainerCreateWorker subscribes to OutboxCreateRequestEvent and ContainerEvent
 // from the event bus. For creation requests it executes rt.Create + rt.Start,
-// then holds the semaphore until the container reaches a terminal state
-// (Stopped/Failed/Exited) — signalled by ContainerEvent from the bus.
-// This ensures the semaphore tracks actual resource usage, not just creation rate.
+// and updates the active create request count while the request is being handled.
 type ContainerCreateWorker struct {
 	repo            interfaces.ContainerRepository
 	projectRepo     interfaces.ProjectRepository
@@ -65,10 +89,6 @@ type ContainerCreateWorker struct {
 	cfg             *config.Config
 	maxConcurrency  int
 	maxPending      int
-	startTimeout    time.Duration
-	sem             chan struct{}
-	tracking        sync.Map // instanceID → chan struct{}
-	activeCount     atomic.Int64
 }
 
 // NewContainerCreateWorker creates a new worker.
@@ -101,36 +121,33 @@ func NewContainerCreateWorker(
 		cfg:             cfg,
 		maxConcurrency:  maxConcurrency,
 		maxPending:      maxPending,
-		startTimeout:    5 * time.Minute,
-		sem:             make(chan struct{}, maxConcurrency),
 	}
 }
 
-// Handle dispatches events from the event bus. It handles three event types:
+// Handle dispatches events from the event bus. It handles four event types:
 //   - OutboxCreateRequestEvent: executes deferred container creation
 //   - OutboxStopRequestEvent: executes deferred container stop
-//   - types.ContainerEvent: releases semaphore when a tracked container reaches a stable state
+//   - OutboxDeleteRequestEvent: executes deferred container delete
+//   - OutboxStartRequestEvent: executes deferred container start
 func (w *ContainerCreateWorker) Handle(evt event.Event) {
 	switch e := evt.(type) {
 	case OutboxCreateRequestEvent:
-		// Acquire semaphore before processing — this blocks if at max concurrency.
-		w.sem <- struct{}{}
-		w.activeCount.Add(1)
 		w.handleCreateRequest(context.Background(), e)
-		w.activeCount.Add(-1)
-		<-w.sem
 
 	case OutboxStopRequestEvent:
 		w.handleStopRequest(context.Background(), e)
 
-	case types.ContainerEvent:
-		w.handleContainerEvent(e)
+	case OutboxDeleteRequestEvent:
+		w.handleDeleteRequest(context.Background(), e)
+
+	case OutboxStartRequestEvent:
+		w.handleStartRequest(context.Background(), e)
 	}
 }
 
-// handleCreateRequest unmarshals the payload, executes creation, then waits
-// for the container to reach a stable state before marking the outbox as sent.
-// The semaphore is held for the entire duration (including the wait).
+// handleCreateRequest unmarshals the payload and executes creation.
+// The outbox is marked sent later in handleContainerEvent when the
+// corresponding container reaches a stable state.
 func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req OutboxCreateRequestEvent) {
 	var payload containerCreatePayload
 	if err := json.Unmarshal(req.RawPayload, &payload); err != nil {
@@ -158,41 +175,24 @@ func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req Out
 		payload.Name,
 		payload.ContainerInstanceID,
 	); err != nil {
+		if errors.Is(err, errWorkerInvalidState) {
+			logger.Warnf(ctx, "[ContainerCreateWorker] skip stale create request, outbox_id=%d instance_id=%d err=%v",
+				req.OutboxID, payload.ContainerInstanceID, err)
+			_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
+			return
+		}
 		logger.Errorf(ctx, "[ContainerCreateWorker] execute create failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
 		_ = w.repo.MarkOutboxEventPending(ctx, req.OutboxID)
 		return
 	}
 
-	// Register a completion channel and wait for the container to reach
-	// a stable state (via handleContainerEvent) or timeout.
-	done := make(chan struct{}, 1)
-	w.tracking.Store(payload.ContainerInstanceID, done)
-	defer w.tracking.Delete(payload.ContainerInstanceID)
-
-	// Check current status — the runtime event may have arrived before we registered.
-	inst, _ := w.repo.GetContainerInstanceByID(ctx, payload.ContainerInstanceID)
-	if inst != nil && isStableContainerStatus(inst.Status) {
-		logger.Infof(ctx, "[ContainerCreateWorker] container already stable, instance_id=%d status=%s",
-			payload.ContainerInstanceID, inst.Status)
-	} else {
-		logger.Debugf(ctx, "[ContainerCreateWorker] waiting for container to stabilize, instance_id=%d timeout=%s",
-			payload.ContainerInstanceID, w.startTimeout)
-
-		select {
-		case <-done:
-			logger.Infof(ctx, "[ContainerCreateWorker] container stabilized via event, instance_id=%d",
-				payload.ContainerInstanceID)
-		case <-time.After(w.startTimeout):
-			logger.Warnf(ctx, "[ContainerCreateWorker] timed out waiting for container, instance_id=%d timeout=%s",
-				payload.ContainerInstanceID, w.startTimeout)
-		}
-	}
-
-	// Mark outbox as sent regardless of how we exited. The container lifecycle
-	// continues independently via runtime events.
 	if err := w.repo.MarkOutboxEventSent(ctx, req.OutboxID); err != nil {
-		logger.Errorf(ctx, "[ContainerCreateWorker] mark outbox sent failed, outbox_id=%d err=%v", req.OutboxID, err)
+		logger.Errorf(ctx, "[ContainerCreateWorker] mark outbox sent failed, outbox_id=%d instance_id=%d err=%v",
+			req.OutboxID, payload.ContainerInstanceID, err)
+		return
 	}
+	logger.Infof(ctx, "[ContainerCreateWorker] create request completed and marked sent, outbox_id=%d instance_id=%d",
+		req.OutboxID, payload.ContainerInstanceID)
 }
 
 // handleStopRequest unmarshals the payload, executes the stop, and marks the outbox as sent.
@@ -238,28 +238,95 @@ func (w *ContainerCreateWorker) EnqueueStop(ctx context.Context, req containerSt
 	})
 }
 
-// handleContainerEvent checks if a ContainerEvent corresponds to a tracked
-// in-flight container. If the container reached a stable status, it signals
-// the waiting handleCreateRequest goroutine to release the semaphore.
-func (w *ContainerCreateWorker) handleContainerEvent(ce types.ContainerEvent) {
-	chRaw, ok := w.tracking.Load(ce.ContainerInstanceID)
-	if !ok {
+// handleDeleteRequest unmarshals the payload, executes the delete, and marks the outbox as sent.
+func (w *ContainerCreateWorker) handleDeleteRequest(ctx context.Context, req OutboxDeleteRequestEvent) {
+	var payload containerDeletePayload
+	if err := json.Unmarshal(req.RawPayload, &payload); err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] unmarshal delete payload failed, outbox_id=%d err=%v", req.OutboxID, err)
+		_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
 		return
 	}
 
-	if !isStableContainerEvent(ce.Event) {
+	logger.Infof(ctx, "[ContainerCreateWorker] handling delete request, outbox_id=%d instance_id=%d",
+		req.OutboxID, payload.ContainerInstanceID)
+
+	execCtx := ctx
+	if payload.UserID != "" {
+		execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
+	}
+
+	if err := w.executeDelete(execCtx, payload.ContainerInstanceID); err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] execute delete failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
+		_ = w.repo.MarkOutboxEventPending(ctx, req.OutboxID)
 		return
 	}
 
-	// Delete first to prevent double-close, then signal.
-	w.tracking.Delete(ce.ContainerInstanceID)
-	ch := chRaw.(chan struct{})
-
-	select {
-	case ch <- struct{}{}:
-	default:
-		// Already signaled (e.g., duplicate event).
+	if err := w.repo.MarkOutboxEventSent(ctx, req.OutboxID); err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] mark outbox sent failed, outbox_id=%d err=%v", req.OutboxID, err)
 	}
+}
+
+// EnqueueDelete writes a container delete request to the outbox. It does not enforce
+// a pending queue limit — delete requests are always accepted.
+func (w *ContainerCreateWorker) EnqueueDelete(ctx context.Context, req containerDeletePayload) error {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal delete payload: %w", err)
+	}
+
+	return w.repo.CreateOutboxEvent(ctx, &types.OutboxEvent{
+		Type:    OutboxEventTypeDeleteRequest,
+		Payload: payload,
+		Status:  "pending",
+	})
+}
+
+// handleStartRequest unmarshals the payload, executes the start, and marks the outbox as sent.
+func (w *ContainerCreateWorker) handleStartRequest(ctx context.Context, req OutboxStartRequestEvent) {
+	var payload containerStartPayload
+	if err := json.Unmarshal(req.RawPayload, &payload); err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] unmarshal start payload failed, outbox_id=%d err=%v", req.OutboxID, err)
+		_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
+		return
+	}
+
+	logger.Infof(ctx, "[ContainerCreateWorker] handling start request, outbox_id=%d instance_id=%d",
+		req.OutboxID, payload.ContainerInstanceID)
+
+	execCtx := ctx
+	if payload.UserID != "" {
+		execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
+	}
+
+	if err := w.executeStart(execCtx, payload.ContainerInstanceID); err != nil {
+		if errors.Is(err, errWorkerInvalidState) {
+			logger.Warnf(ctx, "[ContainerCreateWorker] skip stale start request, outbox_id=%d instance_id=%d err=%v",
+				req.OutboxID, payload.ContainerInstanceID, err)
+			_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
+			return
+		}
+		logger.Errorf(ctx, "[ContainerCreateWorker] execute start failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
+		_ = w.repo.MarkOutboxEventPending(ctx, req.OutboxID)
+		return
+	}
+
+	if err := w.repo.MarkOutboxEventSent(ctx, req.OutboxID); err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] mark outbox sent failed, outbox_id=%d err=%v", req.OutboxID, err)
+	}
+}
+
+// EnqueueStart writes a container start request to the outbox.
+func (w *ContainerCreateWorker) EnqueueStart(ctx context.Context, req containerStartPayload) error {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal start payload: %w", err)
+	}
+
+	return w.repo.CreateOutboxEvent(ctx, &types.OutboxEvent{
+		Type:    OutboxEventTypeStartRequest,
+		Payload: payload,
+		Status:  "pending",
+	})
 }
 
 // Enqueue writes a container creation request to the outbox. It returns an error
@@ -293,9 +360,46 @@ func (w *ContainerCreateWorker) PendingCount(ctx context.Context) (int64, error)
 	return w.repo.CountPendingOutboxEventsByType(ctx, OutboxEventTypeCreateRequest)
 }
 
-// ActiveCount returns the number of currently executing create requests.
+// ActiveCount returns the number of container instances currently occupying
+// concurrency slots for create/start operations.
 func (w *ContainerCreateWorker) ActiveCount() int64 {
-	return w.activeCount.Load()
+	active, err := w.repo.CountContainerInstanceByStatuses(context.Background(), concurrencyOccupiedStatuses())
+	if err != nil {
+		logger.Warnf(context.Background(), "[ContainerCreateWorker] count active container instances failed: %v", err)
+		return 0
+	}
+
+	return active
+}
+
+func (w *ContainerCreateWorker) QueueStatus(ctx context.Context) (*CreateQueueStatus, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	status := &CreateQueueStatus{
+		MaxConcurrency: w.maxConcurrency,
+		MaxPending:     w.maxPending,
+	}
+
+	err := w.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+		active, err := tx.CountContainerInstanceByStatuses(ctx, concurrencyOccupiedStatuses())
+		if err != nil {
+			return err
+		}
+		pending, err := tx.CountPendingOutboxEventsByType(ctx, OutboxEventTypeCreateRequest)
+		if err != nil {
+			return err
+		}
+		status.ActiveCount = active
+		status.PendingCount = pending
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return status, nil
 }
 
 // MaxConcurrency returns the maximum number of concurrent container creations.
@@ -325,6 +429,11 @@ func (w *ContainerCreateWorker) executeCreate(
 	if err != nil {
 		return err
 	}
+
+	if err := w.acquireCapacityAndTransition(ctx, inst.ID, fsm.Pending, fsm.Creating, "ContainerCreating"); err != nil {
+		return err
+	}
+	inst.Status = types.ContainerCreating
 
 	tpl, err := w.repo.GetContainerTemplateByID(ctx, templateID)
 	if err != nil {
@@ -431,9 +540,6 @@ func (w *ContainerCreateWorker) executeCreate(
 
 	inst.RuntimeID = runtimeID
 	if err := w.repo.UpdateContainerInstance(ctx, inst); err != nil {
-		return err
-	}
-	if err := w.transition(ctx, inst, fsm.Creating, "ContainerCreating"); err != nil {
 		return err
 	}
 
@@ -563,6 +669,68 @@ func (w *ContainerCreateWorker) executeStop(ctx context.Context, instanceID int6
 	return nil
 }
 
+// executeStart performs the actual container start. It is called by
+// ContainerCreateWorker.handleStartRequest (async path).
+func (w *ContainerCreateWorker) executeStart(ctx context.Context, instanceID int64) error {
+	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+
+	if err := w.acquireCapacityAndTransition(ctx, inst.ID, fsm.StartPending, fsm.Starting, "ContainerStarting"); err != nil {
+		return err
+	}
+	inst.Status = types.ContainerStarting
+
+	rt, err := w.getRuntimeByInstance(inst)
+	if err != nil {
+		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStartFailed")
+		_ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
+		return err
+	}
+
+	if err := rt.Start(ctx, inst.RuntimeID); err != nil {
+		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStartFailed")
+		_ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// executeDelete performs the actual container delete. It is called by
+// ContainerCreateWorker.handleDeleteRequest (async path).
+func (w *ContainerCreateWorker) executeDelete(ctx context.Context, instanceID int64) error {
+	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+
+	// Transition to deleting.
+	if err := w.transition(ctx, inst, fsm.Deleting, "ContainerDeleting"); err != nil {
+		return err
+	}
+
+	// Resolve runtime and delete the runtime resource.
+	rt, rtErr := w.getRuntimeByInstance(inst)
+	if rtErr == nil && inst.RuntimeID != "" {
+		if err := rt.Delete(ctx, inst.RuntimeID); err != nil {
+			logger.Errorf(ctx, "[ContainerCreateWorker] runtime delete failed, instance_id=%d err=%v", instanceID, err)
+			// Continue with DB cleanup even if runtime delete fails.
+		}
+	}
+
+	// Transition to stopped, then delete the DB record.
+	_ = w.transition(ctx, inst, fsm.Stopped, "ContainerDeleted")
+	_ = w.createContainerEvent(ctx, inst.ID, "ContainerDeleted", "container deleted")
+
+	if err := w.repo.DeleteContainerInstance(ctx, inst.ID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // getRuntimeByInstance resolves a runtime from a container instance's RuntimeID.
 func (w *ContainerCreateWorker) getRuntimeByInstance(inst *types.ContainerInstance) (containerruntime.Runtime, error) {
 	if inst == nil {
@@ -581,6 +749,83 @@ func (w *ContainerCreateWorker) getRuntimeByInstance(inst *types.ContainerInstan
 	}
 
 	return nil, fmt.Errorf("failed to resolve runtime for instance %d", inst.ID)
+}
+
+func (w *ContainerCreateWorker) acquireCapacityAndTransition(
+	ctx context.Context,
+	instanceID int64,
+	from fsm.State,
+	to fsm.State,
+	eventType string,
+) error {
+	return w.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+		latest, err := tx.GetContainerInstanceByID(ctx, instanceID)
+		if err != nil {
+			return err
+		}
+
+		if latest.Status != types.ContainerStatus(from) {
+			return fmt.Errorf("%w: expected=%s actual=%s instance_id=%d", errWorkerInvalidState, from, latest.Status, instanceID)
+		}
+
+		if w.maxConcurrency > 0 {
+			active, err := tx.CountContainerInstanceByStatuses(ctx, concurrencyOccupiedStatuses())
+			if err != nil {
+				return err
+			}
+			if active >= int64(w.maxConcurrency) {
+				return fmt.Errorf("%w: active=%d max=%d", errWorkerConcurrencyLimit, active, w.maxConcurrency)
+			}
+		}
+
+		f := &fsm.FSM{}
+		if err := f.Transition(from, to); err != nil {
+			return err
+		}
+
+		latest.Status = types.ContainerStatus(to)
+		if err := tx.UpdateContainerInstance(ctx, latest); err != nil {
+			return err
+		}
+
+		domainEvent := &types.ContainerEvent{
+			ContainerInstanceID: latest.ID,
+			Event:               eventType,
+			Message:             string(to),
+		}
+		if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
+			return err
+		}
+
+		payload, err := json.Marshal(domainEvent)
+		if err != nil {
+			return err
+		}
+
+		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
+			Type:    eventType,
+			Payload: payload,
+			Status:  "pending",
+		})
+	})
+}
+
+func isConcurrencyOccupiedStatus(status types.ContainerStatus) bool {
+	switch status {
+	case types.ContainerCreating, types.ContainerRunning, types.ContainerStarting, types.ContainerStopping:
+		return true
+	default:
+		return false
+	}
+}
+
+func concurrencyOccupiedStatuses() []types.ContainerStatus {
+	return []types.ContainerStatus{
+		types.ContainerCreating,
+		types.ContainerRunning,
+		types.ContainerStarting,
+		types.ContainerStopping,
+	}
 }
 
 // resolveOwnerProjectVolumes appends project-level volumes based on the owner.
@@ -797,28 +1042,4 @@ func (w *ContainerCreateWorker) buildRuntimeResourceName(ownerType types.Contain
 		return fmt.Sprintf("%s-%d", name, instanceID)
 	}
 	return name
-}
-
-// isStableContainerStatus returns true when a container has reached a terminal
-// (finished) state. Running is NOT considered terminal — the container still
-// consumes resources while running, so the semaphore stays held.
-func isStableContainerStatus(s types.ContainerStatus) bool {
-	switch s {
-	case types.ContainerStopped, types.ContainerFailed, types.ContainerExited:
-		return true
-	default:
-		return false
-	}
-}
-
-// isStableContainerEvent returns true for ContainerEvent names that indicate
-// the container has finished (successfully or not). ContainerStarted is NOT
-// included — the container is still running and consuming resources.
-func isStableContainerEvent(eventName string) bool {
-	switch eventName {
-	case "ContainerStopped", "ContainerFailed", "ContainerExited", "ContainerDeleted":
-		return true
-	default:
-		return false
-	}
 }

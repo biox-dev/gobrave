@@ -262,6 +262,23 @@ func (r *containerRepository) ListContainerInstance(ctx context.Context) ([]*typ
 	return items, nil
 }
 
+func (r *containerRepository) CountContainerInstanceByStatuses(ctx context.Context, statuses []types.ContainerStatus) (int64, error) {
+	if len(statuses) == 0 {
+		return 0, nil
+	}
+
+	var total int64
+	err := r.db.WithContext(ctx).
+		Model(&types.ContainerInstance{}).
+		Where("status IN ?", statuses).
+		Count(&total).Error
+	if err != nil {
+		return 0, err
+	}
+
+	return total, nil
+}
+
 func (r *containerRepository) ListContainerInstanceByOwnerTypeAndOwnerIDs(ctx context.Context, ownerType types.ContainerOwnerType, ownerIDs []int64) ([]*types.ContainerInstance, error) {
 	if len(ownerIDs) == 0 {
 		return []*types.ContainerInstance{}, nil
