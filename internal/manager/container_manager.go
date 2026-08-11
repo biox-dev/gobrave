@@ -122,17 +122,18 @@ func (m *ContainerManager) CreateByTemplate(
 	}
 	_ = m.createContainerEvent(ctx, inst.ID, "ContainerPending", "container instance created")
 
-	// If the create queue is enabled, enqueue the request and return immediately.
-	if m.createWorker != nil && m.isCreateQueueEnabled() {
-		userID := ""
-		if ctx != nil {
-			if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
-				userID = uid
-			} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
-				userID = uid
-			}
+	// Determine user ID for context propagation.
+	userID := ""
+	if ctx != nil {
+		if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
+			userID = uid
+		} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
+			userID = uid
 		}
+	}
 
+	// Check if async creation queue is enabled.
+	if m.cfg != nil && m.cfg.Container != nil && m.cfg.Container.CreateQueueEnabled {
 		req := containerCreatePayload{
 			ContainerInstanceID: inst.ID,
 			RuntimeName:         runtimeName,
@@ -153,8 +154,12 @@ func (m *ContainerManager) CreateByTemplate(
 		return inst, nil
 	}
 
-	// Direct execution path (original behaviour).
-	if err := m.executeCreate(ctx, runtimeName, templateID, ownerType, ownerID, name, inst.ID); err != nil {
+	// Sync path: execute directly via the worker.
+	if m.createWorker == nil {
+		_ = m.repo.DeleteContainerInstance(ctx, inst.ID)
+		return nil, errors.New("container create worker is not configured")
+	}
+	if err := m.createWorker.executeCreate(ctx, runtimeName, templateID, ownerType, ownerID, name, inst.ID); err != nil {
 		return nil, err
 	}
 
@@ -162,199 +167,11 @@ func (m *ContainerManager) CreateByTemplate(
 }
 
 // isCreateQueueEnabled checks whether the queue is enabled via config.
-func (m *ContainerManager) isCreateQueueEnabled() bool {
-	return m.cfg != nil &&
-		m.cfg.Container != nil &&
-		m.cfg.Container.CreateQueueEnabled
-}
-
-// executeCreate performs the actual container creation and start. It is called either
-// directly by CreateByTemplate (sync path) or by ContainerCreateWorker (async path).
-// The ContainerInstance must already exist in DB with status=pending.
-func (m *ContainerManager) executeCreate(
-	ctx context.Context,
-	runtimeName string,
-	templateID int64,
-	ownerType types.ContainerOwnerType,
-	ownerID int64,
-	name string,
-	instanceID int64,
-) error {
-	inst, err := m.repo.GetContainerInstanceByID(ctx, instanceID)
-	if err != nil {
-		return err
-	}
-
-	tpl, err := m.repo.GetContainerTemplateByID(ctx, templateID)
-	if err != nil {
-		_ = m.transition(ctx, inst, fsm.Failed, "ContainerTemplateNotFound")
-		return err
-	}
-
-	img, err := m.repo.GetContainerImageByID(ctx, tpl.ImageID)
-	if err != nil {
-		_ = m.transition(ctx, inst, fsm.Failed, "ContainerImageNotFound")
-		return err
-	}
-
-	rt, err := m.getRuntimeByName(runtimeName)
-	if err != nil {
-		_ = m.transition(ctx, inst, fsm.Failed, "ContainerRuntimeNotFound")
-		return err
-	}
-
-	if m.img != nil {
-		if err := m.img.EnsureImageReadyByEntity(ctx, runtimeName, img); err != nil {
-			_ = m.transition(ctx, inst, fsm.Failed, "ContainerImagePrepareFailed")
-			_ = m.createContainerEvent(ctx, inst.ID, "ContainerImagePrepareFailedDetail", err.Error())
-			return err
-		}
-	}
-
-	volumes := parseVolumes(tpl.Volumes)
-	volumes = append(volumes, m.resolveOwnerProjectVolumes(ctx, ownerType, ownerID)...)
-
-	// volumes默认添加 cfg.Storage.BaseDir 目录的绑定，确保容器可以访问到这个目录下的文件（如Rprofile等）
-	if m.cfg != nil && m.cfg.Storage != nil && m.cfg.Storage.BaseDir != "" {
-		volumes = append(volumes, types.ContainerVolume{
-			Source: m.cfg.Storage.BaseDir,
-			Target: m.cfg.Storage.BaseDir,
-			Mode:   "rw",
-		})
-		// 添加 挂载点 $PACKAGE_DIR/brave-env.sh ，如果文件不存在则先创建
-		packageDir := filepath.Join(m.cfg.Storage.BaseDir, "package")
-		if err := os.MkdirAll(packageDir, 0755); err != nil {
-			_ = m.transition(ctx, inst, fsm.Failed, "ContainerCreatePackageDirFailed")
-			return err
-		}
-		braveEnvFile := filepath.Join(packageDir, "brave-env.sh")
-		if _, err := os.Stat(braveEnvFile); os.IsNotExist(err) {
-			if _, err := os.Create(braveEnvFile); err != nil {
-				_ = m.transition(ctx, inst, fsm.Failed, "ContainerCreateBraveEnvFailed")
-				return err
-			}
-		}
-		volumes = append(volumes, types.ContainerVolume{
-			Source: braveEnvFile,
-			Target: "/etc/profile.d/brave-env.sh",
-			Mode:   "rw",
-		})
-	}
-
-	spec := &types.ContainerSpec{
-		Image:                img.FullName,
-		Command:              parseCommand(tpl.Command),
-		Env:                  parseEnv(tpl.Env),
-		Volumes:              volumes,
-		SchedulingConstraint: parseSchedulingConstraint(tpl.SchedulingConstraint),
-		CPU:                  tpl.CPU,
-		Memory:               tpl.Memory,
-		WorkDir:              tpl.WorkDir,
-		RuntimeName:          m.buildRuntimeResourceName(ownerType, inst.ID, name),
-		ExposedPort:          tpl.Port,
-		Labels: map[string]string{
-			"gobrave-owner-type":  string(ownerType),
-			"gobrave-owner-id":    strconv.FormatInt(ownerID, 10),
-			"gobrave-instance-id": strconv.FormatInt(inst.ID, 10),
-		},
-	}
-	if ownerType == types.ContainerOwnerAppSession {
-		spec.WorkloadKind = "deployment"
-		spec.ExposeService = tpl.Port > 0
-	} else {
-		spec.WorkloadKind = "job"
-		spec.ExposeService = false
-	}
-
-	resolveVars := m.buildRuntimeResolveVariables(ctx, m.cfg, img, templateID, ownerType, ownerID, name)
-	if ownerType == types.ContainerOwnerDagNode {
-		applyDagNodeRuntimeSpec(spec, resolveVars, runtimeName)
-	}
-
-	if m.res != nil {
-		m.ensureRuntimeFilesAndDirs(ctx, resolveVars)
-		spec, err = m.res.Resolve(ctx, &ContainerRuntimeResolveInput{Spec: spec, Variables: resolveVars})
-		if err != nil {
-			_ = m.transition(ctx, inst, fsm.Failed, "ContainerResolveSpecFailed")
-			_ = m.createContainerEvent(ctx, inst.ID, "ContainerResolveSpecFailedDetail", err.Error())
-			return err
-		}
-	}
-
-	runtimeID, err := rt.Create(ctx, spec)
-	if err != nil {
-		_ = m.transition(ctx, inst, fsm.Failed, "ContainerCreateFailed")
-		_ = m.createContainerEvent(ctx, inst.ID, "ContainerCreateFailedDetail", err.Error())
-		return err
-	}
-
-	inst.RuntimeID = runtimeID
-	if err := m.repo.UpdateContainerInstance(ctx, inst); err != nil {
-		return err
-	}
-	if err := m.transition(ctx, inst, fsm.Creating, "ContainerCreating"); err != nil {
-		return err
-	}
-
-	if err := rt.Start(ctx, runtimeID); err != nil {
-		_ = m.transition(ctx, inst, fsm.Failed, "ContainerStartFailed")
-		_ = m.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
-		return err
-	}
-
-	return nil
-}
-
-func (m *ContainerManager) resolveOwnerProjectVolumes(ctx context.Context, ownerType types.ContainerOwnerType, ownerID int64) []types.ContainerVolume {
-	if m.projectRepo == nil {
-		return nil
-	}
-
-	projectID := m.resolveProjectIDByOwner(ctx, ownerType, ownerID)
-	if projectID == 0 {
-		return nil
-	}
-
-	// project, err := m.repo.GetProjectByProjectID(ctx, projectID)
-	project, err := m.projectRepo.GetProjectByID(ctx, projectID)
-	if err != nil || project == nil {
-		return nil
-	}
-
-	return parseVolumes(project.Volumes)
-}
-
-func (m *ContainerManager) resolveProjectIDByOwner(ctx context.Context, ownerType types.ContainerOwnerType, ownerID int64) int64 {
-	switch ownerType {
-	case types.ContainerOwnerAppSession:
-		session, err := m.repo.GetAppSessionByID(ctx, ownerID)
-		if err != nil || session == nil {
-			return 0
-		}
-		return session.ProjectID
-	case types.ContainerOwnerDagNode:
-		if m.analysisRepo == nil {
-			return 0
-		}
-		node, err := m.analysisRepo.GetAnalysisNodeByID(ctx, ownerID)
-		if err != nil || node == nil {
-			return 0
-		}
-		// TODO dag analysis 创建的 analysisNode 暂时没有projectID
-
-		if node.ProjectID != 0 {
-			return node.ProjectID
-		}
-		analysis, err := m.analysisRepo.GetAnalysisByID(ctx, node.AnalysisID)
-		if err != nil || analysis == nil {
-			return 0
-		}
-		logger.Warn(context.Background(), "use analysis projectid for resolveProjectIDByOwner")
-		return analysis.ProjectID
-	default:
-		return 0
-	}
-}
+// func (m *ContainerManager) isCreateQueueEnabled() bool {
+// 	return m.cfg != nil &&
+// 		m.cfg.Container != nil &&
+// 		m.cfg.Container.CreateQueueEnabled
+// }
 
 func (m *ContainerManager) Start(ctx context.Context, id int64) error {
 	inst, rt, err := m.getInstanceAndRuntime(ctx, id)
@@ -748,149 +565,6 @@ func (m *ContainerManager) createContainerEvent(ctx context.Context, instanceID 
 	})
 }
 
-func (m *ContainerManager) buildRuntimeResolveVariables(
-	ctx context.Context,
-	cfg *config.Config,
-	img *types.ContainerImage,
-	templateID int64,
-	ownerType types.ContainerOwnerType,
-	ownerID int64,
-	name string,
-) map[string]string {
-	vars := map[string]string{}
-	baseDir := ""
-	if cfg != nil && cfg.Storage != nil {
-		baseDir = strings.TrimSpace(cfg.Storage.BaseDir)
-	}
-
-	setRuntimeVar(vars, "CONTAINER_TEMPLATE_ID", strconv.FormatInt(templateID, 10))
-	setRuntimeVar(vars, "TEMPLATE_ID", strconv.FormatInt(templateID, 10))
-	setRuntimeVar(vars, "OWNER_TYPE", string(ownerType))
-	setRuntimeVar(vars, "OWNER_ID", strconv.FormatInt(ownerID, 10))
-	setRuntimeVar(vars, "CONTAINER_NAME", name)
-
-	if baseDir != "" {
-		packageDir := fmt.Sprintf("%s/package", baseDir)
-		profilePath := fmt.Sprintf("%s/Rprofile", packageDir)
-		ensureEmptyFileIfNotExists(ctx, profilePath)
-		setRuntimeVar(vars, "R_PROFILE", profilePath)
-		setRuntimeVar(vars, "PACKAGE_DIR", packageDir)
-
-		rPackageDir := fmt.Sprintf("%s/package/R/%s", baseDir, img.LibraryVersion)
-		setRuntimeVar(vars, "R_PACKAGE_DIR", rPackageDir)
-	}
-
-	// 优先读取环境变量，未配置时再回退到当前系统用户和组。
-	if userID, ok := os.LookupEnv("USERID"); ok {
-		setRuntimeVar(vars, "USERID", userID)
-	} else {
-		setRuntimeVar(vars, "USERID", strconv.Itoa(os.Getuid()))
-	}
-	if groupID, ok := os.LookupEnv("GROUPID"); ok {
-		setRuntimeVar(vars, "GROUPID", groupID)
-	} else {
-		setRuntimeVar(vars, "GROUPID", strconv.Itoa(os.Getgid()))
-	}
-
-	if dockerGID, ok := os.LookupEnv("DOCKER_GID"); ok {
-		setRuntimeVar(vars, "DOCKER_GID", dockerGID)
-	} else if gid, ok := resolvePathGID("/var/run/docker.sock"); ok {
-		setRuntimeVar(vars, "DOCKER_GID", gid)
-	} else {
-		setRuntimeVar(vars, "DOCKER_GID", vars["GROUPID"])
-	}
-
-	if ctx != nil {
-		if userID, ok := ctx.Value(types.UserIDContextKey).(string); ok {
-			setRuntimeVar(vars, "SYS_USER_ID", userID)
-			// setRuntimeVar(vars, "USERID", userID)
-		}
-		if userID, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
-			setRuntimeVar(vars, "SYS_USER_ID", userID)
-			// setRuntimeVar(vars, "USERID", userID)
-		}
-	}
-
-	if ownerType == types.ContainerOwnerAppSession && ownerID > 0 {
-		if session, err := m.repo.GetAppSessionByID(ctx, ownerID); err == nil && session != nil {
-			setRuntimeVar(vars, "APP_SESSION_ID", strconv.FormatInt(session.ID, 10))
-			setRuntimeVar(vars, "APPSESSION_ID", strconv.FormatInt(session.ID, 10))
-			setRuntimeVar(vars, "SYS_USER_ID", session.UserID)
-			// setRuntimeVar(vars, "USERID", session.UserID)
-			setRuntimeVar(vars, "PROJECT_ID", strconv.FormatInt(session.ProjectID, 10))
-			user_project_dir := fmt.Sprintf("%s/data/%d", baseDir, session.ProjectID)
-			if baseDir != "" {
-				setRuntimeVar(vars, "USER_PROJECT_DIR", user_project_dir)
-			}
-
-			setRuntimeVar(vars, "PROJECTID", strconv.FormatInt(session.ProjectID, 10))
-			setRuntimeVar(vars, "WORKSPACE_PATH", session.WorkspacePath)
-			if session.WorkspacePath == "" {
-				setRuntimeVar(vars, "WORKSPACE_PATH", user_project_dir)
-			}
-
-			analysisNodeID := session.AnalysisNodeID
-			if analysisNodeID != 0 {
-				analysisNode, err := m.analysisRepo.GetAnalysisNodeByID(ctx, analysisNodeID)
-				if err == nil && analysisNode != nil {
-					if m.workflowService != nil {
-						scriptDir, mainFile, err := m.workflowService.GetScriptFileByScriptID(ctx, analysisNode.ScriptID)
-						if err == nil && strings.TrimSpace(mainFile) != "" && strings.TrimSpace(scriptDir) != "" {
-							// /home/admin/.brave/pipeline/script/4a34dad8-7ad6-4daf-9cdb-5cfb8f64d611/main.R
-							scriptFile := filepath.Join(scriptDir, mainFile)
-							setRuntimeVar(vars, "SCRIPT_FILE", scriptFile)
-						}
-					}
-
-				}
-			}
-
-			setRuntimeVar(vars, "APP_TYPE", session.AppType)
-		}
-	}
-
-	if ownerType == types.ContainerOwnerDagNode && ownerID > 0 && m.analysisRepo != nil {
-		if node, err := m.analysisRepo.GetAnalysisNodeByID(ctx, ownerID); err == nil && node != nil {
-			setRuntimeVar(vars, "ANALYSIS_NODE_ID", strconv.FormatUint(uint64(node.ID), 10))
-			setRuntimeVar(vars, "ANALYSIS_ID", strconv.FormatInt(node.AnalysisID, 10))
-			setRuntimeVar(vars, "NODE_ID", node.NodeID)
-			setRuntimeVar(vars, "WORKSPACE_PATH", node.WorkspaceDir)
-			setRuntimeVar(vars, "WORKSPACE_DIR", node.WorkspaceDir)
-			setRuntimeVar(vars, "OUTPUT_DIR", node.OutputDir)
-			setRuntimeVar(vars, "COMMAND_PATH", node.CommandPath)
-			setRuntimeVar(vars, "LOG_PATH", node.LogPath)
-
-			if strings.TrimSpace(node.LogPath) == "" {
-				if outputDir := strings.TrimSpace(node.OutputDir); outputDir != "" {
-					setRuntimeVar(vars, "LOG_PATH", filepath.Join(outputDir, "run.log"))
-				}
-			}
-		}
-	}
-
-	return vars
-}
-
-func (m *ContainerManager) ensureRuntimeFilesAndDirs(ctx context.Context, vars map[string]string) {
-	if len(vars) == 0 {
-		return
-	}
-
-	for _, key := range []string{"R_PACKAGE_DIR", "USER_PROJECT_DIR", "WORKSPACE_PATH"} {
-		dir := strings.TrimSpace(vars[key])
-		if dir == "" {
-			continue
-		}
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			logger.Warnf(ctx, "[ContainerManager] create runtime directory failed, key=%s path=%s err=%v", key, dir, err)
-		}
-	}
-
-	if profilePath := strings.TrimSpace(vars["R_PROFILE"]); profilePath != "" {
-		ensureEmptyFileIfNotExists(ctx, profilePath)
-	}
-}
-
 func setRuntimeVar(vars map[string]string, key string, value string) {
 	if vars == nil {
 		return
@@ -1009,31 +683,6 @@ func shellSingleQuote(text string) string {
 		value = "./run.log"
 	}
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-}
-
-func (m *ContainerManager) buildRuntimeResourceName(ownerType types.ContainerOwnerType, instanceID int64, fallbackName string) string {
-	prefix := "workload"
-	switch ownerType {
-	case types.ContainerOwnerAppSession:
-		prefix = "app-session"
-	case types.ContainerOwnerDagNode:
-		prefix = "dag-node"
-	case types.ContainerOwnerService:
-		prefix = "service"
-	}
-
-	name := strings.TrimSpace(fallbackName)
-	if name != "" {
-		name = sanitizeKubernetesResourceName(name)
-	}
-	if name == "" {
-		name = prefix
-	}
-
-	if instanceID > 0 {
-		return fmt.Sprintf("%s-%d", name, instanceID)
-	}
-	return name
 }
 
 func sanitizeKubernetesResourceName(raw string) string {

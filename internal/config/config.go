@@ -351,9 +351,9 @@ func LoadConfig() (*Config, error) {
 			DeleteContainerOnNodeSuccess:        true,
 			DagNodeCleanupOnFailed:              "stop",
 			DagNodeCleanupOnDagFinished:         "delete",
-			CreateQueueEnabled:                  true,
-			CreateQueueMaxConcurrency:           3,
-			CreateQueueMaxPending:               50,
+			// CreateQueueEnabled:                  true,
+			CreateQueueMaxConcurrency: 3,
+			CreateQueueMaxPending:     50,
 		},
 		// Ingest: &IngestConfig{
 		// 	Enabled:                 true,

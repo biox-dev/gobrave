@@ -133,7 +133,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(manager.NewContainerManager))
 	must(container.Provide(manager.NewOutboxDispatcher))
 	// Provide ContainerCreateWorker as its concrete type (for SetCreateWorker injection).
-	must(container.Provide(func(cfg *config.Config, mgr *manager.ContainerManager, repo interfaces.ContainerRepository) *manager.ContainerCreateWorker {
+	must(container.Provide(func(cfg *config.Config, repo interfaces.ContainerRepository, projectRepo interfaces.ProjectRepository, analysisRepo interfaces.AnalysisRepository, workflowService interfaces.WorkflowService, reg *containerruntime.Registry, res manager.ContainerRuntimeResolver, img *manager.ImageManager) *manager.ContainerCreateWorker {
 		maxConcurrency := 3
 		maxPending := 50
 		if cfg != nil && cfg.Container != nil {
@@ -144,7 +144,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 				maxPending = cfg.Container.CreateQueueMaxPending
 			}
 		}
-		return manager.NewContainerCreateWorker(mgr, repo, maxConcurrency, maxPending)
+		return manager.NewContainerCreateWorker(repo, projectRepo, analysisRepo, workflowService, reg, res, img, cfg, maxConcurrency, maxPending)
 	}))
 	// Also register the same instance in the event_handlers group so it receives bus events.
 	must(container.Provide(func(w *manager.ContainerCreateWorker) event.Handler {
@@ -398,17 +398,17 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	must(container.Invoke(manager.RunOutboxDispatcher))
 
-	// Wire up the container create worker if queued creation is enabled.
+	// Wire up the container create worker.
 	// The worker is already subscribed to the event bus via dig.Group("event_handlers").
-	// When enabled, SetCreateWorker makes CreateByTemplate enqueue instead of executing directly.
+	// When CreateQueueEnabled, CreateByTemplate enqueues; otherwise it executes directly via the worker.
 	must(container.Invoke(func(cfg *config.Config, mgr *manager.ContainerManager, worker *manager.ContainerCreateWorker) {
-		if cfg == nil || cfg.Container == nil || !cfg.Container.CreateQueueEnabled {
-			logger.Debugf(context.Background(), "[Container] container create queue is disabled (direct execution)")
-			return
-		}
 		mgr.SetCreateWorker(worker)
-		logger.Infof(context.Background(), "[Container] container create queue enabled, maxConcurrency=%d maxPending=%d",
-			cfg.Container.CreateQueueMaxConcurrency, cfg.Container.CreateQueueMaxPending)
+		if cfg != nil && cfg.Container != nil && cfg.Container.CreateQueueEnabled {
+			logger.Infof(context.Background(), "[Container] container create queue enabled, maxConcurrency=%d maxPending=%d",
+				cfg.Container.CreateQueueMaxConcurrency, cfg.Container.CreateQueueMaxPending)
+		} else {
+			logger.Debugf(context.Background(), "[Container] container create queue is disabled (direct execution)")
+		}
 	}))
 
 	return container
