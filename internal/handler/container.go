@@ -1067,16 +1067,16 @@ func (h *ContainerHandler) ListRuntimeMonitoringSnapshot(c *gin.Context) {
 	})
 }
 
-// GetCreateQueueStatus godoc
-// @Summary      容器创建队列状态
-// @Description  返回创建队列的运行中/等待中/最大并发/最大排队数量
+// GetQueueStatus godoc
+// @Summary      容器队列状态
+// @Description  返回队列的运行中/等待中/最大并发/最大排队数量
 // @Tags         容器管理
 // @Produce      json
 // @Success      200  {object}  map[string]interface{}
 // @Failure      401  {object}  errors.AppError
 // @Security     Bearer
-// @Router       /container/create-queue/status [get]
-func (h *ContainerHandler) GetCreateQueueStatus(c *gin.Context) {
+// @Router       /container/queue/status [get]
+func (h *ContainerHandler) GetQueueStatus(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
