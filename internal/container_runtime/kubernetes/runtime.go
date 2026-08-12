@@ -41,15 +41,35 @@ type KubernetesRuntimeConfig struct {
 	InCluster   bool
 }
 
+type KubernetesRuntimeMonitor interface {
+	Monitor(ctx context.Context, runtimeID string) error
+}
+
+type KubernetesRuntimeOption func(*KubernetesRuntime)
+
+func WithKubernetesRuntimeMonitor(monitor KubernetesRuntimeMonitor) KubernetesRuntimeOption {
+	return func(runtime *KubernetesRuntime) {
+		if runtime == nil || monitor == nil {
+			return
+		}
+		runtime.monitor = monitor
+	}
+}
+
 type KubernetesRuntime struct {
 	name      string
 	namespace string
 	clientset kubernetes.Interface
+	monitor   KubernetesRuntimeMonitor
 
 	handler containerruntime.RuntimeEventHandler
 }
 
 func NewKubernetesRuntime(cfg KubernetesRuntimeConfig) (*KubernetesRuntime, error) {
+	return NewKubernetesRuntimeWithOptions(cfg)
+}
+
+func NewKubernetesRuntimeWithOptions(cfg KubernetesRuntimeConfig, opts ...KubernetesRuntimeOption) (*KubernetesRuntime, error) {
 	runtimeName := strings.TrimSpace(strings.ToLower(cfg.RuntimeName))
 	if runtimeName == "" {
 		runtimeName = "k8s"
@@ -73,7 +93,17 @@ func NewKubernetesRuntime(cfg KubernetesRuntimeConfig) (*KubernetesRuntime, erro
 		return nil, fmt.Errorf("init kubernetes client: %w", err)
 	}
 
-	return &KubernetesRuntime{name: runtimeName, namespace: namespace, clientset: cs}, nil
+	runtime := &KubernetesRuntime{name: runtimeName, namespace: namespace, clientset: cs}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(runtime)
+		}
+	}
+	if runtime.monitor == nil {
+		runtime.monitor = newKubernetesMonitorV1(runtime)
+	}
+
+	return runtime, nil
 }
 
 func (k *KubernetesRuntime) Name() string {
@@ -328,157 +358,10 @@ func (k *KubernetesRuntime) Inspect(ctx context.Context, runtimeID string) (*con
 
 // 监控 deployment 和 job 的生命周期（启动与退出）。
 func (k *KubernetesRuntime) Monitor(ctx context.Context, runtimeID string) error {
-	meta, err := k.parseRuntimeID(runtimeID)
-	if err != nil {
-		return err
+	if k.monitor == nil {
+		return newKubernetesMonitorV1(k).Monitor(ctx, runtimeID)
 	}
-
-	if !containerruntime.MarkIfNotMonitoring(runtimeID) {
-		return nil
-	}
-
-	switch meta.Kind {
-	case workloadKindDeployment:
-		go k.waitDeploymentLifecycle(runtimeID, meta.Namespace, meta.Name)
-	case workloadKindJob:
-		go k.waitJobLifecycle(runtimeID, meta.Namespace, meta.Name)
-	}
-	return nil
-}
-
-func (k *KubernetesRuntime) waitJobLifecycle(runtimeID string, namespace string, jobName string) {
-	defer containerruntime.UnmarkRuntimeMonitoring(runtimeID)
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	startedEmitted := false
-
-	for {
-		job, err := k.clientset.BatchV1().Jobs(namespace).Get(context.Background(), jobName, metav1.GetOptions{})
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				k.emitEvent("ContainerDeleted", runtimeID, "job not found")
-				return
-			}
-			k.emitEvent("ContainerFailed", runtimeID, err.Error())
-			return
-		}
-
-		if !startedEmitted && jobHasStarted(job) {
-			k.emitEvent("ContainerStarted", runtimeID, "")
-			startedEmitted = true
-		}
-
-		if job.Status.Succeeded > 0 {
-			k.emitEvent("ContainerExited", runtimeID, "0")
-			return
-		}
-		if job.Status.Failed > 0 {
-			msg := jobFailureMessage(job)
-			k.emitEvent("ContainerFailed", runtimeID, msg)
-			return
-		}
-
-		<-ticker.C
-	}
-}
-
-func (k *KubernetesRuntime) waitDeploymentLifecycle(runtimeID string, namespace string, workloadName string) {
-	defer containerruntime.UnmarkRuntimeMonitoring(runtimeID)
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	startedEmitted := false
-
-	for range ticker.C {
-		dep, err := k.clientset.AppsV1().Deployments(namespace).Get(context.Background(), workloadName, metav1.GetOptions{})
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				k.emitEvent("ContainerDeleted", runtimeID, "deployment not found")
-				return
-			}
-			k.emitEvent("ContainerFailed", runtimeID, err.Error())
-			return
-		}
-
-		if !startedEmitted && deploymentHasStarted(dep) {
-			k.emitEvent("ContainerStarted", runtimeID, "")
-			startedEmitted = true
-		}
-
-		if msg, failed := deploymentFailureMessage(dep); failed {
-			k.emitEvent("ContainerFailed", runtimeID, msg)
-			return
-		}
-
-		if deploymentHasExited(dep) {
-			k.emitEvent("ContainerExited", runtimeID, "0")
-			return
-		}
-	}
-}
-
-func jobHasStarted(job *batchv1.Job) bool {
-	if job == nil {
-		return false
-	}
-	if job.Status.Active > 0 {
-		return true
-	}
-	return job.Status.StartTime != nil
-}
-
-func jobFailureMessage(job *batchv1.Job) string {
-	if job == nil {
-		return "job failed"
-	}
-	msg := strconv.Itoa(int(job.Status.Failed))
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobFailed && strings.TrimSpace(c.Message) != "" {
-			return c.Message
-		}
-	}
-	return msg
-}
-
-func deploymentHasStarted(dep *appsv1.Deployment) bool {
-	if dep == nil {
-		return false
-	}
-	return dep.Status.ReadyReplicas > 0
-}
-
-func deploymentHasExited(dep *appsv1.Deployment) bool {
-	if dep == nil || dep.Spec.Replicas == nil {
-		return false
-	}
-	return *dep.Spec.Replicas == 0 && dep.Status.Replicas == 0
-}
-
-func deploymentFailureMessage(dep *appsv1.Deployment) (string, bool) {
-	if dep == nil {
-		return "deployment is nil", true
-	}
-	for _, cond := range dep.Status.Conditions {
-		if cond.Type == appsv1.DeploymentReplicaFailure && cond.Status == corev1.ConditionTrue {
-			msg := strings.TrimSpace(cond.Message)
-			if msg == "" {
-				msg = strings.TrimSpace(cond.Reason)
-			}
-			if msg == "" {
-				msg = "deployment replica failure"
-			}
-			return msg, true
-		}
-		if cond.Type == appsv1.DeploymentProgressing && cond.Status == corev1.ConditionFalse && cond.Reason == "ProgressDeadlineExceeded" {
-			msg := strings.TrimSpace(cond.Message)
-			if msg == "" {
-				msg = "deployment exceeded progress deadline"
-			}
-			return msg, true
-		}
-	}
-	return "", false
+	return k.monitor.Monitor(ctx, runtimeID)
 }
 
 func isPodReady(pod *corev1.Pod) bool {
