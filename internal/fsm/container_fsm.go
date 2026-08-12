@@ -7,7 +7,7 @@ import (
 type State string
 
 const (
-	Pending       State = "pending"
+	Pending       State = "create_pending"
 	Creating      State = "creating"
 	Running       State = "running"
 	Paused        State = "paused"
@@ -67,12 +67,12 @@ func (f *FSM) Transition(
 		}
 
 	case StartPending:
-		if to == Starting || to == Failed {
+		if to == Starting || to == Failed || to == StopPending || to == DeletePending {
 			return nil
 		}
 
 	case Starting:
-		if to == Running || to == Failed {
+		if to == Running || to == Failed || to == DeletePending || to == StopPending {
 			return nil
 		}
 

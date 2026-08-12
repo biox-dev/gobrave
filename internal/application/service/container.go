@@ -150,7 +150,7 @@ func (s *containerService) createAppSessionByTemplate(ctx context.Context, userI
 		ContainerTemplateID: containerTemplateID,
 		Name:                name,
 		AppType:             tpl.AppType,
-		Status:              "CREATING",
+		Status:              "PENDING_CREATION",
 		WorkspacePath:       strings.TrimSpace(workspacePath),
 	}
 	if err := s.containerRepo.CreateAppSession(ctx, session); err != nil {
@@ -183,7 +183,7 @@ func (s *containerService) StartAppSession(ctx context.Context, userID string, a
 		return err
 	}
 
-	session.Status = "RESUMING"
+	session.Status = "START_PENDING"
 	session.StoppedAt = nil
 	return s.containerRepo.UpdateAppSession(ctx, session)
 }

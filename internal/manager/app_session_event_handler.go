@@ -61,6 +61,9 @@ func (h *AppSessionEventHandler) Handle(evt event.Event) {
 	case "creating":
 		session.Status = "CREATING"
 		session.StoppedAt = nil
+	case "starting":
+		session.Status = "STARTING"
+		session.StoppedAt = nil
 	case "stopped":
 		session.Status = "STOPPED"
 		session.StoppedAt = &now
@@ -81,8 +84,10 @@ func (h *AppSessionEventHandler) Handle(evt event.Event) {
 func normalizeContainerEvent(eventName string) string {
 	eventName = strings.TrimSpace(eventName)
 	switch eventName {
-	case "ContainerCreating", "ContainerStarting":
+	case "ContainerCreating":
 		return "creating"
+	case "ContainerStarting":
+		return "starting"
 	case "ContainerStarted", "ContainerResumed":
 		return "running"
 	case "ContainerStopped", "ContainerExited", "ContainerDeleted":
