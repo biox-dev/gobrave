@@ -70,6 +70,14 @@ func (h *AppSessionEventHandler) Handle(evt event.Event) {
 	case "failed":
 		session.Status = "FAILED"
 		session.StoppedAt = &now
+	case "stopping":
+		session.Status = "STOPPING"
+		session.StoppedAt = &now
+	// case "deleting":
+	// 	session.Status = "DELETING"
+	// 	session.StoppedAt = &now
+	// case "deleted":
+	// 	h.repo.DeleteAppSession(ctx, session.ID)
 	default:
 		return
 	}
@@ -90,8 +98,15 @@ func normalizeContainerEvent(eventName string) string {
 		return "starting"
 	case "ContainerStarted", "ContainerResumed":
 		return "running"
-	case "ContainerStopped", "ContainerExited", "ContainerDeleted":
+	case "ContainerStopped", "ContainerExited":
 		return "stopped"
+	case "ContainerDeleting":
+		return "deleting"
+	case "ContainerDeleted":
+		return "deleted"
+	case "ContainerStopping":
+		return "stopping"
+
 	}
 
 	if strings.Contains(strings.ToLower(eventName), "failed") {

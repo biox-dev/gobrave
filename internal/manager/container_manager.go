@@ -274,7 +274,7 @@ func (m *ContainerManager) Stop(ctx context.Context, id int64) error {
 	// If already in a terminal state, nothing to do.
 	switch strings.TrimSpace(strings.ToLower(string(inst.Status))) {
 	case string(types.ContainerStopped), string(types.ContainerFailed), string(types.ContainerExited):
-		return nil
+		return types.ErrContainerAlreadyStopped
 	}
 
 	userID := ""

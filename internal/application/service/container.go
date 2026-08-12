@@ -5,7 +5,6 @@ import (
 	stderrs "errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/gobravedev/gobrave/internal/manager"
 	"github.com/gobravedev/gobrave/internal/types"
@@ -199,15 +198,20 @@ func (s *containerService) StopAppSession(ctx context.Context, userID string, ap
 	}
 
 	if err := s.containerMgr.Stop(ctx, inst.ID); err != nil {
+		if err == types.ErrContainerAlreadyStopped {
+			session.Status = "STOPPED"
+			return s.containerRepo.UpdateAppSession(ctx, session)
+		}
 		session.Status = "FAILED"
 		_ = s.containerRepo.UpdateAppSession(ctx, session)
 		return err
 	}
 
-	now := time.Now()
-	session.Status = "STOPPED"
-	session.StoppedAt = &now
-	return s.containerRepo.UpdateAppSession(ctx, session)
+	// now := time.Now()
+	// session.Status = "STOPPED"
+	// session.StoppedAt = &now
+	// s.containerRepo.UpdateAppSession(ctx, session)
+	return nil
 }
 
 func (s *containerService) DeleteAppSession(ctx context.Context, userID string, appSessionID int64) error {
