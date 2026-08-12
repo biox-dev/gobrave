@@ -87,7 +87,7 @@ func (f *FSM) Transition(
 		}
 
 	case Failed:
-		if to == DeletePending {
+		if to == DeletePending || to == Running || to == Stopped {
 			return nil
 		}
 	}

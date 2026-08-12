@@ -174,11 +174,22 @@ func (k *KubernetesRuntime) Stop(ctx context.Context, runtimeID string) error {
 
 	switch meta.Kind {
 	case workloadKindDeployment:
-		return k.scaleDeployment(ctx, meta.Namespace, meta.Name, 0)
+		if err := k.scaleDeployment(ctx, meta.Namespace, meta.Name, 0); err != nil {
+			if apierrors.IsNotFound(err) {
+				k.emitEvent("ContainerExited", runtimeID, "deployment not found")
+				return nil
+			}
+			return err
+		}
+		return nil
 	case workloadKindJob:
 		policy := metav1.DeletePropagationForeground
 		err := k.clientset.BatchV1().Jobs(meta.Namespace).Delete(ctx, meta.Name, metav1.DeleteOptions{PropagationPolicy: &policy})
-		if err != nil && !apierrors.IsNotFound(err) {
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				k.emitEvent("ContainerExited", runtimeID, "job not found")
+				return nil
+			}
 			return fmt.Errorf("delete job %s: %w", meta.Name, err)
 		}
 		return nil
@@ -207,13 +218,21 @@ func (k *KubernetesRuntime) Delete(ctx context.Context, runtimeID string) error 
 		if err := k.clientset.CoreV1().Services(meta.Namespace).Delete(ctx, svcName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete service %s: %w", svcName, err)
 		}
-		if err := k.clientset.AppsV1().Deployments(meta.Namespace).Delete(ctx, meta.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		if err := k.clientset.AppsV1().Deployments(meta.Namespace).Delete(ctx, meta.Name, metav1.DeleteOptions{}); err != nil {
+			if apierrors.IsNotFound(err) {
+				k.emitEvent("ContainerDeleted", runtimeID, "deployment not found")
+				return nil
+			}
 			return fmt.Errorf("delete deployment %s: %w", meta.Name, err)
 		}
 		return nil
 	case workloadKindJob:
 		policy := metav1.DeletePropagationForeground
-		if err := k.clientset.BatchV1().Jobs(meta.Namespace).Delete(ctx, meta.Name, metav1.DeleteOptions{PropagationPolicy: &policy}); err != nil && !apierrors.IsNotFound(err) {
+		if err := k.clientset.BatchV1().Jobs(meta.Namespace).Delete(ctx, meta.Name, metav1.DeleteOptions{PropagationPolicy: &policy}); err != nil {
+			if apierrors.IsNotFound(err) {
+				k.emitEvent("ContainerDeleted", runtimeID, "job not found")
+				return nil
+			}
 			return fmt.Errorf("delete job %s: %w", meta.Name, err)
 		}
 		return nil
@@ -307,7 +326,7 @@ func (k *KubernetesRuntime) Inspect(ctx context.Context, runtimeID string) (*con
 	}
 }
 
-// 监控creating的 deployment和job，监控running的job
+// 监控 deployment 和 job 的生命周期（启动与退出）。
 func (k *KubernetesRuntime) Monitor(ctx context.Context, runtimeID string) error {
 	meta, err := k.parseRuntimeID(runtimeID)
 	if err != nil {
@@ -320,18 +339,19 @@ func (k *KubernetesRuntime) Monitor(ctx context.Context, runtimeID string) error
 
 	switch meta.Kind {
 	case workloadKindDeployment:
-		go k.monitorDeploymentStarted(runtimeID, meta.Namespace, meta.Name)
+		go k.waitDeploymentLifecycle(runtimeID, meta.Namespace, meta.Name)
 	case workloadKindJob:
-		go k.waitJobExit(runtimeID, meta.Namespace, meta.Name)
+		go k.waitJobLifecycle(runtimeID, meta.Namespace, meta.Name)
 	}
 	return nil
 }
 
-func (k *KubernetesRuntime) waitJobExit(runtimeID string, namespace string, jobName string) {
+func (k *KubernetesRuntime) waitJobLifecycle(runtimeID string, namespace string, jobName string) {
 	defer containerruntime.UnmarkRuntimeMonitoring(runtimeID)
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	startedEmitted := false
 
 	for {
 		job, err := k.clientset.BatchV1().Jobs(namespace).Get(context.Background(), jobName, metav1.GetOptions{})
@@ -344,18 +364,17 @@ func (k *KubernetesRuntime) waitJobExit(runtimeID string, namespace string, jobN
 			return
 		}
 
+		if !startedEmitted && jobHasStarted(job) {
+			k.emitEvent("ContainerStarted", runtimeID, "")
+			startedEmitted = true
+		}
+
 		if job.Status.Succeeded > 0 {
 			k.emitEvent("ContainerExited", runtimeID, "0")
 			return
 		}
 		if job.Status.Failed > 0 {
-			msg := strconv.Itoa(int(job.Status.Failed))
-			for _, c := range job.Status.Conditions {
-				if c.Type == batchv1.JobFailed && strings.TrimSpace(c.Message) != "" {
-					msg = c.Message
-					break
-				}
-			}
+			msg := jobFailureMessage(job)
 			k.emitEvent("ContainerFailed", runtimeID, msg)
 			return
 		}
@@ -364,23 +383,102 @@ func (k *KubernetesRuntime) waitJobExit(runtimeID string, namespace string, jobN
 	}
 }
 
-func (k *KubernetesRuntime) monitorDeploymentStarted(runtimeID string, namespace string, workloadName string) {
+func (k *KubernetesRuntime) waitDeploymentLifecycle(runtimeID string, namespace string, workloadName string) {
 	defer containerruntime.UnmarkRuntimeMonitoring(runtimeID)
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	startedEmitted := false
 
-	labels := map[string]string{"gobrave-workload": workloadName}
 	for range ticker.C {
-		podName, err := k.resolveLatestPodName(context.Background(), namespace, labels)
-		if err == nil {
-			pod, podErr := k.clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
-			if podErr == nil && isPodReady(pod) {
-				k.emitEvent("ContainerStarted", runtimeID, "")
+		dep, err := k.clientset.AppsV1().Deployments(namespace).Get(context.Background(), workloadName, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				k.emitEvent("ContainerDeleted", runtimeID, "deployment not found")
 				return
 			}
+			k.emitEvent("ContainerFailed", runtimeID, err.Error())
+			return
+		}
+
+		if !startedEmitted && deploymentHasStarted(dep) {
+			k.emitEvent("ContainerStarted", runtimeID, "")
+			startedEmitted = true
+		}
+
+		if msg, failed := deploymentFailureMessage(dep); failed {
+			k.emitEvent("ContainerFailed", runtimeID, msg)
+			return
+		}
+
+		if deploymentHasExited(dep) {
+			k.emitEvent("ContainerExited", runtimeID, "0")
+			return
 		}
 	}
+}
+
+func jobHasStarted(job *batchv1.Job) bool {
+	if job == nil {
+		return false
+	}
+	if job.Status.Active > 0 {
+		return true
+	}
+	return job.Status.StartTime != nil
+}
+
+func jobFailureMessage(job *batchv1.Job) string {
+	if job == nil {
+		return "job failed"
+	}
+	msg := strconv.Itoa(int(job.Status.Failed))
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobFailed && strings.TrimSpace(c.Message) != "" {
+			return c.Message
+		}
+	}
+	return msg
+}
+
+func deploymentHasStarted(dep *appsv1.Deployment) bool {
+	if dep == nil {
+		return false
+	}
+	return dep.Status.ReadyReplicas > 0
+}
+
+func deploymentHasExited(dep *appsv1.Deployment) bool {
+	if dep == nil || dep.Spec.Replicas == nil {
+		return false
+	}
+	return *dep.Spec.Replicas == 0 && dep.Status.Replicas == 0
+}
+
+func deploymentFailureMessage(dep *appsv1.Deployment) (string, bool) {
+	if dep == nil {
+		return "deployment is nil", true
+	}
+	for _, cond := range dep.Status.Conditions {
+		if cond.Type == appsv1.DeploymentReplicaFailure && cond.Status == corev1.ConditionTrue {
+			msg := strings.TrimSpace(cond.Message)
+			if msg == "" {
+				msg = strings.TrimSpace(cond.Reason)
+			}
+			if msg == "" {
+				msg = "deployment replica failure"
+			}
+			return msg, true
+		}
+		if cond.Type == appsv1.DeploymentProgressing && cond.Status == corev1.ConditionFalse && cond.Reason == "ProgressDeadlineExceeded" {
+			msg := strings.TrimSpace(cond.Message)
+			if msg == "" {
+				msg = "deployment exceeded progress deadline"
+			}
+			return msg, true
+		}
+	}
+	return "", false
 }
 
 func isPodReady(pod *corev1.Pod) bool {

@@ -703,6 +703,7 @@ func concurrencyOccupiedStatuses() []types.ContainerStatus {
 		types.ContainerRunning,
 		types.ContainerStarting,
 		types.ContainerStopping,
+		types.ContainerStopPending,
 	}
 }
 

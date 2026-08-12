@@ -53,7 +53,7 @@ func (m *ContainerManager) RecoverRuntimeMonitoring(ctx context.Context) (int, e
 func (m *ContainerManager) RunRuntimeReconciler(ctx context.Context, interval time.Duration) {
 	m.monitorOnce.Do(func() {
 		if interval <= 0 {
-			interval = 30 * time.Second
+			interval = 300 * time.Second
 		}
 		if ctx == nil {
 			ctx = context.Background()
@@ -114,7 +114,7 @@ func shouldRecoverRuntimeMonitoring(inst *types.ContainerInstance) bool {
 	}
 
 	switch inst.Status {
-	case types.ContainerCreating, types.ContainerPaused, types.ContainerRunning:
+	case types.ContainerCreating, types.ContainerPaused, types.ContainerRunning, types.ContainerFailed:
 		return true
 	// case types.ContainerRunning:
 	// 	// TODO inst 暂时没有 runtime type 字段，暂时通过 runtimeID 判断是否为 job 类型的容器

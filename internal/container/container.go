@@ -324,7 +324,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 
 	// Startup runtime reconciler
 	must(container.Invoke(func(mgr *manager.ContainerManager) {
-		mgr.RunRuntimeReconciler(context.Background(), 30*time.Second)
+		mgr.RunRuntimeReconciler(context.Background(), 600*time.Second)
 	}))
 	// Startup node completion coordinator
 	must(container.Invoke(func(bootstrap *service.NodeCompletionBootstrap) {
