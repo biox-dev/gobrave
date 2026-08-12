@@ -110,6 +110,7 @@ func (d *OutboxDispatcher) dispatchOnce(ctx context.Context) {
 		// ContainerStopRequest events are handled by ContainerCreateWorker
 		// via the event bus. Same pattern as create requests.
 		if item.Type == OutboxEventTypeStopRequest {
+			// 状态变为 processing，避免下次轮询再次处理
 			if err := d.repo.MarkOutboxEventProcessing(ctx, item.ID); err != nil {
 				logger.Errorf(ctx, "[OutboxDispatcher] mark stop request processing failed, id=%d err=%v", item.ID, err)
 				continue
@@ -138,6 +139,7 @@ func (d *OutboxDispatcher) dispatchOnce(ctx context.Context) {
 		// ContainerStartRequest events are handled by ContainerCreateWorker
 		// via the event bus. Same pattern as other requests.
 		if item.Type == OutboxEventTypeStartRequest {
+			// 状态变为 processing，避免下次轮询再次处理
 			if err := d.repo.MarkOutboxEventProcessing(ctx, item.ID); err != nil {
 				logger.Errorf(ctx, "[OutboxDispatcher] mark start request processing failed, id=%d err=%v", item.ID, err)
 				continue

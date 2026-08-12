@@ -107,7 +107,7 @@ func (m *ContainerManager) CreateByTemplate(
 		OwnerType:  ownerType,
 		OwnerID:    ownerID,
 		Name:       name,
-		Status:     types.ContainerPending,
+		Status:     types.ContainerCreatePending,
 	}
 
 	// Always enqueue the create request through the worker.

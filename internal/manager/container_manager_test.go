@@ -560,7 +560,7 @@ func TestContainerManager_CreateByTemplate_StaysCreatingUntilStartedEvent(t *tes
 	}
 
 	// After enqueue, status should still be pending (not yet processed by worker)
-	if inst.Status != types.ContainerPending {
+	if inst.Status != types.ContainerCreatePending {
 		t.Fatalf("expected pending after enqueue, got %s", inst.Status)
 	}
 
@@ -667,7 +667,7 @@ func TestContainerManager_CreateByTemplate_ResolvesEnvAndVolumes(t *testing.T) {
 	_, worker := newTestManagerWithWorker(repo, rt)
 
 	// Seed instance and execute create synchronously
-	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
 	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
@@ -721,7 +721,7 @@ func TestContainerManager_CreateByTemplate_UsesAppSessionContextVariables(t *tes
 	_, worker := newTestManagerWithWorker(repo, rt)
 
 	// Seed instance and execute create synchronously
-	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
 	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
@@ -762,7 +762,7 @@ func TestContainerManager_CreateByTemplate_AppSessionMergesProjectVolumes(t *tes
 	_, worker := newTestManagerWithWorker(repo, rt)
 
 	// Seed instance and execute create synchronously
-	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
 	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
@@ -798,7 +798,7 @@ func TestContainerManager_CreateByTemplate_DagNodeUsesTaskCommand(t *testing.T) 
 	_, worker := newTestManagerWithWorker(repo, rt)
 
 	// Seed instance and execute create synchronously
-	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerDagNode, OwnerID: 2001, Name: "dag-node-1", Status: types.ContainerPending}
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerDagNode, OwnerID: 2001, Name: "dag-node-1", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
 	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerDagNode, 2001, "dag-node-1", inst.ID); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
@@ -843,7 +843,7 @@ func TestContainerManager_CreateByTemplate_ParsesSchedulingConstraint(t *testing
 	_, worker := newTestManagerWithWorker(repo, rt)
 
 	// Seed instance and execute create synchronously
-	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
 	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
@@ -882,7 +882,7 @@ func TestContainerManager_CreateByTemplate_UpdatesImageStatusToReady(t *testing.
 	_, worker := newTestManagerWithWorker(repo, rt)
 
 	// Seed instance and execute create synchronously
-	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
 	if err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
@@ -910,7 +910,7 @@ func TestContainerManager_CreateByTemplate_ImagePrepareFailureMarksImageFailed(t
 	_, worker := newTestManagerWithWorker(repo, rt)
 
 	// Seed instance and execute create synchronously
-	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerPending}
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
 	err := worker.executeCreate(ctx, "docker", 10, types.ContainerOwnerAppSession, 1001, "demo", inst.ID)
 	if err == nil {

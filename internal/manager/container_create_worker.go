@@ -242,6 +242,11 @@ func (w *ContainerCreateWorker) handleDeleteRequest(ctx context.Context, req Out
 	}
 }
 
+// 补充一个现状风险：
+// 如果进程在 MarkOutboxEventProcessing 之后、MarkOutboxEventPending/Sent 之前崩溃，事件可能卡在 processing。当前 recoverStaleProcessing 还是占位实现，没有真正回收 processing：
+// internal/manager/outbox_dispatcher.go#L169
+// internal/manager/outbox_dispatcher.go#L177
+
 // handleStartRequest unmarshals the payload, executes the start, and marks the outbox as sent.
 func (w *ContainerCreateWorker) handleStartRequest(ctx context.Context, req OutboxStartRequestEvent) {
 	var payload containerStartPayload
@@ -266,6 +271,7 @@ func (w *ContainerCreateWorker) handleStartRequest(ctx context.Context, req Outb
 			_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
 			return
 		}
+		// If the start fails, we mark the outbox event as pending so it can be retried later.
 		logger.Errorf(ctx, "[ContainerCreateWorker] execute start failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
 		_ = w.repo.MarkOutboxEventPending(ctx, req.OutboxID)
 		return
@@ -289,15 +295,13 @@ func (w *ContainerCreateWorker) executeCreate(
 	name string,
 	instanceID int64,
 ) error {
-	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
+	// 1. Acquire capacity and transition to creating.
+	// 2. 变更ContainerInstance状态为 creating，创建 ContainerCreating 事件
+	// 3. 调用 runtime.Create + runtime.Start
+	inst, err := w.acquireCapacityAndTransition(ctx, instanceID, fsm.Pending, fsm.Creating, "ContainerCreating")
 	if err != nil {
 		return err
 	}
-
-	if err := w.acquireCapacityAndTransition(ctx, inst.ID, fsm.Pending, fsm.Creating, "ContainerCreating"); err != nil {
-		return err
-	}
-	inst.Status = types.ContainerCreating
 
 	tpl, err := w.repo.GetContainerTemplateByID(ctx, templateID)
 	if err != nil {
@@ -536,15 +540,13 @@ func (w *ContainerCreateWorker) executeStop(ctx context.Context, instanceID int6
 // executeStart performs the actual container start. It is called by
 // ContainerCreateWorker.handleStartRequest (async path).
 func (w *ContainerCreateWorker) executeStart(ctx context.Context, instanceID int64) error {
-	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
+	// 1. Acquire capacity and transition to starting.
+	// 2. 变更ContainerInstance状态为 starting，创建 ContainerStarting 事件
+	// 3. 调用 runtime.Start
+	inst, err := w.acquireCapacityAndTransition(ctx, instanceID, fsm.StartPending, fsm.Starting, "ContainerStarting")
 	if err != nil {
 		return err
 	}
-
-	if err := w.acquireCapacityAndTransition(ctx, inst.ID, fsm.StartPending, fsm.Starting, "ContainerStarting"); err != nil {
-		return err
-	}
-	inst.Status = types.ContainerStarting
 
 	rt, err := w.getRuntimeByInstance(inst)
 	if err != nil {
@@ -621,8 +623,9 @@ func (w *ContainerCreateWorker) acquireCapacityAndTransition(
 	from fsm.State,
 	to fsm.State,
 	eventType string,
-) error {
-	return w.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+) (*types.ContainerInstance, error) {
+	var updated *types.ContainerInstance
+	err := w.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
 		latest, err := tx.GetContainerInstanceByID(ctx, instanceID)
 		if err != nil {
 			return err
@@ -652,6 +655,8 @@ func (w *ContainerCreateWorker) acquireCapacityAndTransition(
 			return err
 		}
 
+		updated = latest
+
 		domainEvent := &types.ContainerEvent{
 			ContainerInstanceID: latest.ID,
 			Event:               eventType,
@@ -672,16 +677,20 @@ func (w *ContainerCreateWorker) acquireCapacityAndTransition(
 			Status:  "pending",
 		})
 	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
 }
 
-func isConcurrencyOccupiedStatus(status types.ContainerStatus) bool {
-	switch status {
-	case types.ContainerCreating, types.ContainerRunning, types.ContainerStarting, types.ContainerStopping:
-		return true
-	default:
-		return false
-	}
-}
+// func isConcurrencyOccupiedStatus(status types.ContainerStatus) bool {
+// 	switch status {
+// 	case types.ContainerCreating, types.ContainerRunning, types.ContainerStarting, types.ContainerStopping:
+// 		return true
+// 	default:
+// 		return false
+// 	}
+// }
 
 func concurrencyOccupiedStatuses() []types.ContainerStatus {
 	return []types.ContainerStatus{
