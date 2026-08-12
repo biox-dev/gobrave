@@ -100,7 +100,7 @@ func NewKubernetesRuntimeWithOptions(cfg KubernetesRuntimeConfig, opts ...Kubern
 		}
 	}
 	if runtime.monitor == nil {
-		runtime.monitor = newKubernetesMonitorV1(runtime)
+		runtime.monitor = newKubernetesMonitorV2(runtime)
 	}
 
 	return runtime, nil
@@ -359,7 +359,7 @@ func (k *KubernetesRuntime) Inspect(ctx context.Context, runtimeID string) (*con
 // 监控 deployment 和 job 的生命周期（启动与退出）。
 func (k *KubernetesRuntime) Monitor(ctx context.Context, runtimeID string) error {
 	if k.monitor == nil {
-		return newKubernetesMonitorV1(k).Monitor(ctx, runtimeID)
+		return newKubernetesMonitorV2(k).Monitor(ctx, runtimeID)
 	}
 	return k.monitor.Monitor(ctx, runtimeID)
 }
