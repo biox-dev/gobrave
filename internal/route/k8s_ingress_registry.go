@@ -300,8 +300,16 @@ func detectTraefikMiddlewareGVR(clientset kubernetes.Interface) (schema.GroupVer
 func traefikMiddlewareSpecToUnstructured(spec traefikMiddlewareSpec) map[string]any {
 	out := map[string]any{}
 	if spec.StripPrefix != nil {
+		prefixes := make([]any, 0, len(spec.StripPrefix.Prefixes))
+		for _, prefix := range spec.StripPrefix.Prefixes {
+			prefix = strings.TrimSpace(prefix)
+			if prefix == "" {
+				continue
+			}
+			prefixes = append(prefixes, prefix)
+		}
 		out["stripPrefix"] = map[string]any{
-			"prefixes":   append([]string(nil), spec.StripPrefix.Prefixes...),
+			"prefixes":   prefixes,
 			"forceSlash": spec.StripPrefix.ForceSlash,
 		}
 	}

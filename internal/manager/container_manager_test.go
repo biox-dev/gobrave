@@ -579,7 +579,7 @@ func TestContainerManager_CreateByTemplate_StaysCreatingUntilStartedEvent(t *tes
 	}
 }
 
-func TestContainerManager_OnEvent_ContainerDeleted_TransitionsToStopped(t *testing.T) {
+func TestContainerManager_OnEvent_ContainerDeleted_DeletesContainerInstance(t *testing.T) {
 	ctx := context.Background()
 	repo := newMockContainerRepo()
 	rt := &dockerMockRuntime{}
@@ -591,8 +591,8 @@ func TestContainerManager_OnEvent_ContainerDeleted_TransitionsToStopped(t *testi
 	}
 
 	mgr.OnEvent(containerruntime.RuntimeEvent{Type: "ContainerDeleted", RuntimeID: inst.RuntimeID, Message: "container not found"})
-	if inst.Status != types.ContainerStopped {
-		t.Fatalf("expected stopped after delete event, got %s", inst.Status)
+	if _, err := repo.GetContainerInstanceByID(ctx, inst.ID); err == nil {
+		t.Fatalf("expected container instance deleted after ContainerDeleted event")
 	}
 }
 

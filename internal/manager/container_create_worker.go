@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gobravedev/gobrave/internal/config"
 	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
@@ -528,12 +527,15 @@ func (w *ContainerCreateWorker) executeStop(ctx context.Context, instanceID int6
 		return err
 	}
 
+	// 状态变更为 stopped 由 runtime event 触发，见 kubernetes_executor.go#L103
+	// func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent)
+
 	// Transition to stopped.
-	now := time.Now()
-	inst.FinishedAt = &now
-	if err := w.transition(ctx, inst, fsm.Stopped, "ContainerStopped"); err != nil {
-		return err
-	}
+	// now := time.Now()
+	// inst.FinishedAt = &now
+	// if err := w.transition(ctx, inst, fsm.Stopped, "ContainerStopped"); err != nil {
+	// 	return err
+	// }
 	return nil
 }
 
@@ -587,12 +589,15 @@ func (w *ContainerCreateWorker) executeDelete(ctx context.Context, instanceID in
 	}
 
 	// Transition to stopped, then delete the DB record.
-	_ = w.transition(ctx, inst, fsm.Stopped, "ContainerDeleted")
+	// _ = w.transition(ctx, inst, fsm.Stopped, "ContainerDeleted")
 	// _ = w.createContainerEvent(ctx, inst.ID, "ContainerDeleted", "container deleted")
 
-	if err := w.repo.DeleteContainerInstance(ctx, inst.ID); err != nil {
-		return err
-	}
+	// 删除ContainerInstance由 runtime event 触发，见 kubernetes_executor.go#L103
+	// func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent)
+
+	// if err := w.repo.DeleteContainerInstance(ctx, inst.ID); err != nil {
+	// 	return err
+	// }
 
 	return nil
 }

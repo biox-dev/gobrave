@@ -397,9 +397,10 @@ func (m *ContainerManager) GetLogs(ctx context.Context, id int64, tail int) (str
 
 // 如果容器运行太快，ContainerStarted与 ContainerExited可能会竞争
 func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
-	inst, err := m.repo.GetContainerInstanceByRuntimeID(context.Background(), e.RuntimeID)
+	ctx := context.Background()
+	inst, err := m.repo.GetContainerInstanceByRuntimeID(ctx, e.RuntimeID)
 	if err != nil {
-		logger.Warnf(context.Background(), "[ContainerManager] OnEvent: GetContainerInstanceByRuntimeID failed, runtime_id=%s event=%s err=%v", e.RuntimeID, e.Type, err)
+		logger.Warnf(ctx, "[ContainerManager] OnEvent: GetContainerInstanceByRuntimeID failed, runtime_id=%s event=%s err=%v", e.RuntimeID, e.Type, err)
 		return
 	}
 
@@ -409,15 +410,15 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 	isCreating := currentStatus == string(types.ContainerCreating)
 	isTerminalEvent := e.Type == "ContainerExited" || e.Type == "ContainerFailed"
 	if isCreating && isTerminalEvent {
-		logger.Warnf(context.Background(), "[ContainerManager] received terminal event while container still creating, runtime_id=%s event=%s status=%s, compensating started_at", e.RuntimeID, e.Type, inst.Status)
+		logger.Warnf(ctx, "[ContainerManager] received terminal event while container still creating, runtime_id=%s event=%s status=%s, compensating started_at", e.RuntimeID, e.Type, inst.Status)
 		now := time.Now()
 		inst.StartedAt = &now
 		inst.FinishedAt = nil
 		if rt, rtErr := m.getRuntimeByInstance(inst); rtErr == nil {
-			m.syncInstanceIPAddress(context.Background(), rt, inst)
+			m.syncInstanceIPAddress(ctx, rt, inst)
 		}
 		// 先尝试转 Running，失败也无妨（FSM 现在允许 Creating→Stopped）
-		_ = m.transition(context.Background(), inst, fsm.Running, "ContainerStarted")
+		_ = m.transition(ctx, inst, fsm.Running, "ContainerStarted")
 	}
 
 	switch e.Type {
@@ -427,21 +428,29 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		inst.StartedAt = &now
 		inst.FinishedAt = nil
 		if rt, rtErr := m.getRuntimeByInstance(inst); rtErr == nil {
-			m.syncInstanceIPAddress(context.Background(), rt, inst)
+			m.syncInstanceIPAddress(ctx, rt, inst)
 		}
-		_ = m.transition(context.Background(), inst, fsm.Running, "ContainerStarted")
+		_ = m.transition(ctx, inst, fsm.Running, "ContainerStarted")
 
 	case "ContainerPaused":
-		_ = m.transition(context.Background(), inst, fsm.Paused, "ContainerPaused")
+		_ = m.transition(ctx, inst, fsm.Paused, "ContainerPaused")
 
 	case "ContainerResumed":
 		now := time.Now()
 		inst.StartedAt = &now
 		inst.FinishedAt = nil
 		if rt, rtErr := m.getRuntimeByInstance(inst); rtErr == nil {
-			m.syncInstanceIPAddress(context.Background(), rt, inst)
+			m.syncInstanceIPAddress(ctx, rt, inst)
 		}
-		_ = m.transition(context.Background(), inst, fsm.Running, "ContainerResumed")
+		_ = m.transition(ctx, inst, fsm.Running, "ContainerResumed")
+
+	case "ContainerStopped":
+		now := time.Now()
+		inst.FinishedAt = &now
+		if code, ok := parseRuntimeExitCode(e.Message); ok {
+			inst.ExitCode = &code
+		}
+		_ = m.transition(ctx, inst, fsm.Stopped, "ContainerStopped")
 
 	case "ContainerExited":
 		now := time.Now()
@@ -449,7 +458,7 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		if code, ok := parseRuntimeExitCode(e.Message); ok {
 			inst.ExitCode = &code
 		}
-		_ = m.transition(context.Background(), inst, fsm.Stopped, "ContainerStopped")
+		_ = m.transition(ctx, inst, fsm.Stopped, "ContainerStopped")
 
 	case "ContainerFailed":
 		now := time.Now()
@@ -457,13 +466,25 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		if code, ok := parseRuntimeExitCode(e.Message); ok {
 			inst.ExitCode = &code
 		}
-		_ = m.transition(context.Background(), inst, fsm.Failed, "ContainerFailed")
+		_ = m.transition(ctx, inst, fsm.Failed, "ContainerFailed")
 
 	case "ContainerDeleted":
 		now := time.Now()
 		inst.FinishedAt = &now
-		_ = m.transition(context.Background(), inst, fsm.Stopped, "ContainerStopped")
-		// _ = m.createContainerEvent(context.Background(), inst.ID, "ContainerDeleted", e.Message)
+		_ = m.transition(ctx, inst, fsm.Stopped, "ContainerStopped")
+
+		// Publish delete event immediately so current subscribers can react in this callback flow.
+		if m.bus != nil {
+			m.bus.Publish(types.ContainerEvent{
+				ContainerInstanceID: inst.ID,
+				Event:               "ContainerDeleted",
+				Message:             e.Message,
+			})
+		}
+
+		if err := m.repo.DeleteContainerInstance(ctx, inst.ID); err != nil {
+			logger.Warnf(ctx, "[ContainerManager] delete container instance failed, instance_id=%d runtime_id=%s err=%v", inst.ID, e.RuntimeID, err)
+		}
 
 		// default:
 		// _ = m.createContainerEvent(context.Background(), inst.ID, e.Type, e.Message)
