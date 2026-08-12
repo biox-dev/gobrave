@@ -171,6 +171,17 @@ func (s *containerService) StartAppSession(ctx context.Context, userID string, a
 	if err != nil {
 		return err
 	}
+	queueStatus, err := s.containerMgr.QueueStatus(ctx)
+	if err != nil {
+		return err
+	}
+	if queueStatus != nil && queueStatus.MaxPending > 0 && queueStatus.PendingCount >= int64(queueStatus.MaxPending) {
+		session.Status = "FAILED"
+		_ = s.containerRepo.UpdateAppSession(ctx, session)
+		return fmt.Errorf("container start queue is full (%d/%d pending), please try again later",
+			queueStatus.PendingCount, queueStatus.MaxPending)
+	}
+
 	inst, err := s.containerRepo.GetContainerInstanceByOwner(ctx, types.ContainerOwnerAppSession, session.ID)
 	if err != nil {
 		return err
