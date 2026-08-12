@@ -965,30 +965,30 @@ func (h *ContainerHandler) PageContainerInstance(c *gin.Context) {
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
 // @Router       /container/event/list-by-page [post]
-func (h *ContainerHandler) PageContainerEvent(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
+// func (h *ContainerHandler) PageContainerEvent(c *gin.Context) {
+// 	if _, ok := getCurrentUserID(c); !ok {
+// 		return
+// 	}
 
-	var req containerEventPageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
+// 	var req containerEventPageRequest
+// 	if err := c.ShouldBindJSON(&req); err != nil {
+// 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+// 		return
+// 	}
 
-	result, err := h.containerService.PageContainerEvent(c.Request.Context(), &req.Pagination)
-	if err != nil {
-		handleDataError(c, err, "failed to page container event")
-		return
-	}
+// 	result, err := h.containerService.PageContainerEvent(c.Request.Context(), &req.Pagination)
+// 	if err != nil {
+// 		handleDataError(c, err, "failed to page container event")
+// 		return
+// 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"data":      result.Data,
-		"total":     result.Total,
-		"page":      result.Page,
-		"page_size": result.PageSize,
-	})
-}
+// 	c.JSON(http.StatusOK, gin.H{
+// 		"data":      result.Data,
+// 		"total":     result.Total,
+// 		"page":      result.Page,
+// 		"page_size": result.PageSize,
+// 	})
+// }
 
 // PageOutboxEvent godoc
 // @Summary      分页查询事件出箱

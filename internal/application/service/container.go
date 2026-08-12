@@ -299,18 +299,18 @@ func (s *containerService) PageContainerInstance(ctx context.Context, pagination
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-func (s *containerService) PageContainerEvent(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error) {
-	if pagination == nil {
-		pagination = &types.Pagination{}
-	}
+// func (s *containerService) PageContainerEvent(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error) {
+// 	if pagination == nil {
+// 		pagination = &types.Pagination{}
+// 	}
 
-	items, total, err := s.containerRepo.PageContainerEvent(ctx, pagination)
-	if err != nil {
-		return nil, err
-	}
+// 	items, total, err := s.containerRepo.PageContainerEvent(ctx, pagination)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	return types.NewPageResult(total, pagination, items), nil
-}
+// 	return types.NewPageResult(total, pagination, items), nil
+// }
 
 func (s *containerService) PageOutboxEvent(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error) {
 	if pagination == nil {

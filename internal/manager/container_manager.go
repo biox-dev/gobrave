@@ -145,13 +145,13 @@ func (m *ContainerManager) CreateByTemplate(
 		if err := tx.CreateContainerInstance(ctx, inst); err != nil {
 			return err
 		}
-		if err := tx.CreateContainerEvent(ctx, &types.ContainerEvent{
-			ContainerInstanceID: inst.ID,
-			Event:               "ContainerPending",
-			Message:             "container instance created",
-		}); err != nil {
-			return err
-		}
+		// if err := tx.CreateContainerEvent(ctx, &types.ContainerEvent{
+		// 	ContainerInstanceID: inst.ID,
+		// 	Event:               "ContainerPending",
+		// 	Message:             "container instance created",
+		// }); err != nil {
+		// 	return err
+		// }
 
 		req.ContainerInstanceID = inst.ID
 		payload, err := json.Marshal(req)
@@ -463,10 +463,10 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		now := time.Now()
 		inst.FinishedAt = &now
 		_ = m.transition(context.Background(), inst, fsm.Stopped, "ContainerStopped")
-		_ = m.createContainerEvent(context.Background(), inst.ID, "ContainerDeleted", e.Message)
+		// _ = m.createContainerEvent(context.Background(), inst.ID, "ContainerDeleted", e.Message)
 
-	default:
-		_ = m.createContainerEvent(context.Background(), inst.ID, e.Type, e.Message)
+		// default:
+		// _ = m.createContainerEvent(context.Background(), inst.ID, e.Type, e.Message)
 	}
 }
 
@@ -518,9 +518,9 @@ func (m *ContainerManager) transition(
 			Event:               eventType,
 			Message:             string(to),
 		}
-		if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
-			return err
-		}
+		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
+		// 	return err
+		// }
 
 		payload, err := json.Marshal(domainEvent)
 		if err != nil {
@@ -616,13 +616,13 @@ func (m *ContainerManager) getRuntimeByInstance(inst *types.ContainerInstance) (
 // 	return inst, rt, nil
 // }
 
-func (m *ContainerManager) createContainerEvent(ctx context.Context, instanceID int64, evt string, msg string) error {
-	return m.repo.CreateContainerEvent(ctx, &types.ContainerEvent{
-		ContainerInstanceID: instanceID,
-		Event:               evt,
-		Message:             msg,
-	})
-}
+// func (m *ContainerManager) createContainerEvent(ctx context.Context, instanceID int64, evt string, msg string) error {
+// 	return m.repo.CreateContainerEvent(ctx, &types.ContainerEvent{
+// 		ContainerInstanceID: instanceID,
+// 		Event:               evt,
+// 		Message:             msg,
+// 	})
+// }
 
 func (m *ContainerManager) enqueueLifecycleRequest(
 	ctx context.Context,
@@ -649,14 +649,14 @@ func (m *ContainerManager) enqueueLifecycleRequest(
 				return err
 			}
 
-			domainEvent := &types.ContainerEvent{
-				ContainerInstanceID: latest.ID,
-				Event:               transitionEventType,
-				Message:             string(to),
-			}
-			if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
-				return err
-			}
+			// domainEvent := &types.ContainerEvent{
+			// 	ContainerInstanceID: latest.ID,
+			// 	Event:               transitionEventType,
+			// 	Message:             string(to),
+			// }
+			// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
+			// 	return err
+			// }
 		}
 
 		payload, err := json.Marshal(requestPayload)

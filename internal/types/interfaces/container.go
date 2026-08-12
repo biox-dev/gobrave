@@ -33,7 +33,7 @@ type ContainerService interface {
 	DeleteContainerInstancesByOwnerTypeAndOwnerIDs(ctx context.Context, ownerType types.ContainerOwnerType, ownerIDs []int64) error
 
 	PageContainerInstance(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
-	PageContainerEvent(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
+	// PageContainerEvent(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
 	PageOutboxEvent(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
 }
 
@@ -73,12 +73,12 @@ type ContainerRepository interface {
 	ListContainerInstanceByOwnerTypeAndOwnerIDs(ctx context.Context, ownerType types.ContainerOwnerType, ownerIDs []int64) ([]*types.ContainerInstance, error)
 	PageContainerInstance(ctx context.Context, pagination *types.Pagination) ([]*types.ContainerInstance, int64, error)
 
-	CreateContainerEvent(ctx context.Context, item *types.ContainerEvent) error
-	GetContainerEventByID(ctx context.Context, id int64) (*types.ContainerEvent, error)
-	UpdateContainerEvent(ctx context.Context, item *types.ContainerEvent) error
-	DeleteContainerEvent(ctx context.Context, id int64) error
-	ListContainerEvent(ctx context.Context) ([]*types.ContainerEvent, error)
-	PageContainerEvent(ctx context.Context, pagination *types.Pagination) ([]*types.ContainerEvent, int64, error)
+	// CreateContainerEvent(ctx context.Context, item *types.ContainerEvent) error
+	// GetContainerEventByID(ctx context.Context, id int64) (*types.ContainerEvent, error)
+	// UpdateContainerEvent(ctx context.Context, item *types.ContainerEvent) error
+	// DeleteContainerEvent(ctx context.Context, id int64) error
+	// ListContainerEvent(ctx context.Context) ([]*types.ContainerEvent, error)
+	// PageContainerEvent(ctx context.Context, pagination *types.Pagination) ([]*types.ContainerEvent, int64, error)
 
 	CreateOutboxEvent(ctx context.Context, item *types.OutboxEvent) error
 	ListPendingOutboxEvent(ctx context.Context, limit int) ([]*types.OutboxEvent, error)

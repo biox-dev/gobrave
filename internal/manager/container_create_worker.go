@@ -324,7 +324,7 @@ func (w *ContainerCreateWorker) executeCreate(
 	if w.img != nil {
 		if err := w.img.EnsureImageReadyByEntity(ctx, runtimeName, img); err != nil {
 			_ = w.transition(ctx, inst, fsm.Failed, "ContainerImagePrepareFailed")
-			_ = w.createContainerEvent(ctx, inst.ID, "ContainerImagePrepareFailedDetail", err.Error())
+			// _ = w.createContainerEvent(ctx, inst.ID, "ContainerImagePrepareFailedDetail", err.Error())
 			return err
 		}
 	}
@@ -394,7 +394,7 @@ func (w *ContainerCreateWorker) executeCreate(
 		spec, err = w.res.Resolve(ctx, &ContainerRuntimeResolveInput{Spec: spec, Variables: resolveVars})
 		if err != nil {
 			_ = w.transition(ctx, inst, fsm.Failed, "ContainerResolveSpecFailed")
-			_ = w.createContainerEvent(ctx, inst.ID, "ContainerResolveSpecFailedDetail", err.Error())
+			// _ = w.createContainerEvent(ctx, inst.ID, "ContainerResolveSpecFailedDetail", err.Error())
 			return err
 		}
 	}
@@ -402,7 +402,7 @@ func (w *ContainerCreateWorker) executeCreate(
 	runtimeID, err := rt.Create(ctx, spec)
 	if err != nil {
 		_ = w.transition(ctx, inst, fsm.Failed, "ContainerCreateFailed")
-		_ = w.createContainerEvent(ctx, inst.ID, "ContainerCreateFailedDetail", err.Error())
+		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerCreateFailedDetail", err.Error())
 		return err
 	}
 
@@ -413,7 +413,7 @@ func (w *ContainerCreateWorker) executeCreate(
 
 	if err := rt.Start(ctx, runtimeID); err != nil {
 		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStartFailed")
-		_ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
+		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
 		return err
 	}
 
@@ -469,9 +469,9 @@ func (w *ContainerCreateWorker) transition(
 			Event:               eventType,
 			Message:             string(to),
 		}
-		if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
-			return err
-		}
+		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
+		// 	return err
+		// }
 
 		payload, err := json.Marshal(domainEvent)
 		if err != nil {
@@ -487,13 +487,13 @@ func (w *ContainerCreateWorker) transition(
 }
 
 // createContainerEvent creates a simple container event record.
-func (w *ContainerCreateWorker) createContainerEvent(ctx context.Context, instanceID int64, evt string, msg string) error {
-	return w.repo.CreateContainerEvent(ctx, &types.ContainerEvent{
-		ContainerInstanceID: instanceID,
-		Event:               evt,
-		Message:             msg,
-	})
-}
+// func (w *ContainerCreateWorker) createContainerEvent(ctx context.Context, instanceID int64, evt string, msg string) error {
+// 	return w.repo.CreateContainerEvent(ctx, &types.ContainerEvent{
+// 		ContainerInstanceID: instanceID,
+// 		Event:               evt,
+// 		Message:             msg,
+// 	})
+// }
 
 // executeStop performs the actual container stop. It is called by
 // ContainerCreateWorker.handleStopRequest (async path).
@@ -512,7 +512,7 @@ func (w *ContainerCreateWorker) executeStop(ctx context.Context, instanceID int6
 	rt, err := w.getRuntimeByInstance(inst)
 	if err != nil {
 		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStopFailed")
-		_ = w.createContainerEvent(ctx, inst.ID, "ContainerStopFailedDetail", err.Error())
+		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStopFailedDetail", err.Error())
 		return err
 	}
 
@@ -524,7 +524,7 @@ func (w *ContainerCreateWorker) executeStop(ctx context.Context, instanceID int6
 	// Execute runtime stop.
 	if err := rt.Stop(ctx, inst.RuntimeID); err != nil {
 		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStopFailed")
-		_ = w.createContainerEvent(ctx, inst.ID, "ContainerStopFailedDetail", err.Error())
+		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStopFailedDetail", err.Error())
 		return err
 	}
 
@@ -551,13 +551,13 @@ func (w *ContainerCreateWorker) executeStart(ctx context.Context, instanceID int
 	rt, err := w.getRuntimeByInstance(inst)
 	if err != nil {
 		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStartFailed")
-		_ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
+		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
 		return err
 	}
 
 	if err := rt.Start(ctx, inst.RuntimeID); err != nil {
 		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStartFailed")
-		_ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
+		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
 		return err
 	}
 
@@ -588,7 +588,7 @@ func (w *ContainerCreateWorker) executeDelete(ctx context.Context, instanceID in
 
 	// Transition to stopped, then delete the DB record.
 	_ = w.transition(ctx, inst, fsm.Stopped, "ContainerDeleted")
-	_ = w.createContainerEvent(ctx, inst.ID, "ContainerDeleted", "container deleted")
+	// _ = w.createContainerEvent(ctx, inst.ID, "ContainerDeleted", "container deleted")
 
 	if err := w.repo.DeleteContainerInstance(ctx, inst.ID); err != nil {
 		return err
@@ -662,9 +662,9 @@ func (w *ContainerCreateWorker) acquireCapacityAndTransition(
 			Event:               eventType,
 			Message:             string(to),
 		}
-		if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
-			return err
-		}
+		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
+		// 	return err
+		// }
 
 		payload, err := json.Marshal(domainEvent)
 		if err != nil {
