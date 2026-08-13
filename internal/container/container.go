@@ -65,7 +65,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	logger.Debugf(ctx, "[Container] Registering core infrastructure...")
 	must(container.Provide(config.LoadConfig))
 	must(container.Provide(initDatabase))
-	must(container.Provide(func() event.Bus { return event.NewMemoryBus() }))
+	must(container.Provide(func() event.Bus { return event.NewOrderedMemoryBus() }))
 	must(container.Provide(containerruntime.NewRegistry))
 	must(container.Provide(func(cfg *config.Config) containerruntime.MonitoringRegistry {
 		// Default to in-memory monitoring registry. This provider is intentionally
