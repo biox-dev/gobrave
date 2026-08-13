@@ -114,7 +114,7 @@ func shouldRecoverRuntimeMonitoring(inst *types.ContainerInstance) bool {
 	}
 
 	switch inst.Status {
-	case types.ContainerCreating, types.ContainerPaused, types.ContainerRunning, types.ContainerFailed, types.ContainerStopping:
+	case types.ContainerCreating, types.ContainerPaused, types.ContainerRunning, types.ContainerFailed, types.ContainerStopping, types.ContainerDeleting:
 		return true
 	// case types.ContainerRunning:
 	// 	// TODO inst 暂时没有 runtime type 字段，暂时通过 runtimeID 判断是否为 job 类型的容器
