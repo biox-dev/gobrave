@@ -1,14 +1,26 @@
 package kubernetes
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
+
+type testRuntimeEventHandler struct {
+	events []containerruntime.RuntimeEvent
+}
+
+func (h *testRuntimeEventHandler) OnEvent(evt containerruntime.RuntimeEvent) {
+	h.events = append(h.events, evt)
+}
 
 func TestIsPodReady_NilPod(t *testing.T) {
 	if isPodReady(nil) {
@@ -127,5 +139,41 @@ func TestDeploymentFailureMessage_ProgressDeadlineExceeded(t *testing.T) {
 	}
 	if msg != "deployment exceeded deadline" {
 		t.Fatalf("unexpected failure message: %s", msg)
+	}
+}
+
+func TestDeleteJob_EmitsContainerDeletedWhenNotMonitored(t *testing.T) {
+	handler := &testRuntimeEventHandler{}
+	k := &KubernetesRuntime{
+		name:      "k8s",
+		namespace: "default",
+		clientset: fake.NewSimpleClientset(&batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{Name: "demo-job", Namespace: "default"},
+		}),
+	}
+	k.SetEventHandler(handler)
+
+	runtimeID := k.runtimeID("default", workloadKindJob, "demo-job")
+	for containerruntime.IsRuntimeMonitoring(runtimeID) {
+		containerruntime.UnmarkRuntimeMonitoring(runtimeID)
+	}
+
+	if err := k.Delete(context.Background(), runtimeID); err != nil {
+		t.Fatalf("delete job failed: %v", err)
+	}
+
+	if len(handler.events) != 1 {
+		t.Fatalf("expected exactly one runtime event, got %d", len(handler.events))
+	}
+	if handler.events[0].Type != "ContainerDeleted" {
+		t.Fatalf("expected ContainerDeleted event, got %s", handler.events[0].Type)
+	}
+	if handler.events[0].RuntimeID != runtimeID {
+		t.Fatalf("unexpected runtime id in event, got %s", handler.events[0].RuntimeID)
+	}
+
+	_, err := k.clientset.BatchV1().Jobs("default").Get(context.Background(), "demo-job", metav1.GetOptions{})
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected job to be deleted, err=%v", err)
 	}
 }
