@@ -215,6 +215,8 @@ const (
 	ContainerStopped       ContainerStatus = "stopped"
 	ContainerFailed        ContainerStatus = "failed"
 	ContainerExited        ContainerStatus = "exited"
+	ContainerDeletePending ContainerStatus = "delete_pending"
+	ContainerDeleting      ContainerStatus = "deleting"
 )
 
 type ContainerInstance struct {

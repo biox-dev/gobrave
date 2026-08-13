@@ -515,7 +515,7 @@ func newTestManagerWithWorker(repo *mockContainerRepo, rt *dockerMockRuntime) (*
 	reg.Register("docker", rt)
 	imgMgr := NewImageManager(repo, reg)
 	mgr := NewContainerManager(repo, nil, nil, nil, reg, nil, NewDefaultContainerRuntimeResolver(), imgMgr, nil)
-	worker := NewContainerCreateWorker(repo, nil, nil, nil, reg, NewDefaultContainerRuntimeResolver(), imgMgr, nil)
+	worker := NewContainerCreateWorker(repo, nil, nil, nil, reg, NewDefaultContainerRuntimeResolver(), imgMgr, nil, nil)
 	return mgr, worker
 }
 

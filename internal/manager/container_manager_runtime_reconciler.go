@@ -11,7 +11,7 @@ import (
 )
 
 func (m *ContainerManager) RecoverRuntimeMonitoring(ctx context.Context) (int, error) {
-	instances, err := m.repo.ListContainerInstance(ctx)
+	instances, err := m.containerRepo.ListContainerInstance(ctx)
 	if err != nil {
 		return 0, err
 	}

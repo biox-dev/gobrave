@@ -13,15 +13,13 @@ import (
 	"github.com/gobravedev/gobrave/internal/config"
 	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
 	"github.com/gobravedev/gobrave/internal/event"
-	"github.com/gobravedev/gobrave/internal/fsm"
 	"github.com/gobravedev/gobrave/internal/logger"
 	"github.com/gobravedev/gobrave/internal/types"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
 )
 
 var (
-	errWorkerConcurrencyLimit = errors.New("worker concurrency limit reached")
-	errWorkerInvalidState     = errors.New("worker event invalid for current state")
+	errWorkerInvalidState = errors.New("worker event invalid for current state")
 )
 
 const (
@@ -49,37 +47,39 @@ type containerCreatePayload struct {
 	UserID              string `json:"user_id,omitempty"`
 }
 
-// containerStopPayload is stored in OutboxEvent.Payload for deferred container stop.
-type containerStopPayload struct {
-	ContainerInstanceID int64  `json:"container_instance_id"`
-	UserID              string `json:"user_id,omitempty"`
-}
+// // containerStopPayload is stored in OutboxEvent.Payload for deferred container stop.
+// type containerStopPayload struct {
+// 	ContainerInstanceID int64 `json:"container_instance_id"`
+// 	// UserID              string `json:"user_id,omitempty"`
+// }
 
-// containerDeletePayload is stored in OutboxEvent.Payload for deferred container delete.
-type containerDeletePayload struct {
-	ContainerInstanceID int64  `json:"container_instance_id"`
-	UserID              string `json:"user_id,omitempty"`
-}
+// // containerDeletePayload is stored in OutboxEvent.Payload for deferred container delete.
+// type containerDeletePayload struct {
+// 	ContainerInstanceID int64 `json:"container_instance_id"`
+// 	// UserID              string `json:"user_id,omitempty"`
+// }
 
-// containerStartPayload is stored in OutboxEvent.Payload for deferred container start.
-type containerStartPayload struct {
-	ContainerInstanceID int64  `json:"container_instance_id"`
-	UserID              string `json:"user_id,omitempty"`
-}
+// // containerStartPayload is stored in OutboxEvent.Payload for deferred container start.
+// type containerStartPayload struct {
+// 	ContainerInstanceID int64 `json:"container_instance_id"`
+// 	// UserID              string `json:"user_id,omitempty"`
+// }
 
 // ContainerCreateWorker subscribes to OutboxCreateRequestEvent and ContainerEvent
 // from the event bus. For creation requests it executes rt.Create + rt.Start,
 // and updates the active create request count while the request is being handled.
 type ContainerCreateWorker struct {
-	repo            interfaces.ContainerRepository
-	projectRepo     interfaces.ProjectRepository
-	analysisRepo    interfaces.AnalysisRepository
-	workflowService interfaces.WorkflowService
-	reg             *containerruntime.Registry
-	res             ContainerRuntimeResolver
-	img             *ImageManager
-	cfg             *config.Config
-	maxConcurrency  int
+	containerService interfaces.ContainerService
+	repo             interfaces.ContainerRepository
+	projectRepo      interfaces.ProjectRepository
+	analysisRepo     interfaces.AnalysisRepository
+	workflowService  interfaces.WorkflowService
+	reg              *containerruntime.Registry
+	res              ContainerRuntimeResolver
+	img              *ImageManager
+	containerManager *ContainerManager
+	cfg              *config.Config
+	// maxConcurrency   int
 }
 
 // NewContainerCreateWorker creates a new worker.
@@ -91,26 +91,21 @@ func NewContainerCreateWorker(
 	reg *containerruntime.Registry,
 	res ContainerRuntimeResolver,
 	img *ImageManager,
+	containerManager *ContainerManager,
 	cfg *config.Config,
 ) *ContainerCreateWorker {
-	maxConcurrency := 3
-	if cfg != nil && cfg.Container != nil && cfg.Container.CreateQueueMaxConcurrency > 0 {
-		maxConcurrency = cfg.Container.CreateQueueMaxConcurrency
-	}
 
-	if maxConcurrency <= 0 {
-		maxConcurrency = 3
-	}
 	return &ContainerCreateWorker{
-		repo:            repo,
-		projectRepo:     projectRepo,
-		analysisRepo:    analysisRepo,
-		workflowService: workflowService,
-		reg:             reg,
-		res:             res,
-		img:             img,
-		cfg:             cfg,
-		maxConcurrency:  maxConcurrency,
+		repo:             repo,
+		projectRepo:      projectRepo,
+		analysisRepo:     analysisRepo,
+		workflowService:  workflowService,
+		reg:              reg,
+		res:              res,
+		img:              img,
+		containerManager: containerManager,
+		cfg:              cfg,
+		// maxConcurrency:  maxConcurrency,
 	}
 }
 
@@ -187,7 +182,7 @@ func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req Out
 
 // handleStopRequest unmarshals the payload, executes the stop, and marks the outbox as sent.
 func (w *ContainerCreateWorker) handleStopRequest(ctx context.Context, req OutboxStopRequestEvent) {
-	var payload containerStopPayload
+	var payload types.ContainerEvent
 	if err := json.Unmarshal(req.RawPayload, &payload); err != nil {
 		logger.Errorf(ctx, "[ContainerCreateWorker] unmarshal stop payload failed, outbox_id=%d err=%v", req.OutboxID, err)
 		_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
@@ -198,9 +193,9 @@ func (w *ContainerCreateWorker) handleStopRequest(ctx context.Context, req Outbo
 		req.OutboxID, payload.ContainerInstanceID)
 
 	execCtx := ctx
-	if payload.UserID != "" {
-		execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
-	}
+	// if payload.UserID != "" {
+	// 	execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
+	// }
 
 	if err := w.executeStop(execCtx, payload.ContainerInstanceID); err != nil {
 		logger.Errorf(ctx, "[ContainerCreateWorker] execute stop failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
@@ -215,7 +210,7 @@ func (w *ContainerCreateWorker) handleStopRequest(ctx context.Context, req Outbo
 
 // handleDeleteRequest unmarshals the payload, executes the delete, and marks the outbox as sent.
 func (w *ContainerCreateWorker) handleDeleteRequest(ctx context.Context, req OutboxDeleteRequestEvent) {
-	var payload containerDeletePayload
+	var payload types.ContainerEvent
 	if err := json.Unmarshal(req.RawPayload, &payload); err != nil {
 		logger.Errorf(ctx, "[ContainerCreateWorker] unmarshal delete payload failed, outbox_id=%d err=%v", req.OutboxID, err)
 		_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
@@ -226,9 +221,9 @@ func (w *ContainerCreateWorker) handleDeleteRequest(ctx context.Context, req Out
 		req.OutboxID, payload.ContainerInstanceID)
 
 	execCtx := ctx
-	if payload.UserID != "" {
-		execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
-	}
+	// if payload.UserID != "" {
+	// 	execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
+	// }
 
 	if err := w.executeDelete(execCtx, payload.ContainerInstanceID); err != nil {
 		logger.Errorf(ctx, "[ContainerCreateWorker] execute delete failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
@@ -248,7 +243,7 @@ func (w *ContainerCreateWorker) handleDeleteRequest(ctx context.Context, req Out
 
 // handleStartRequest unmarshals the payload, executes the start, and marks the outbox as sent.
 func (w *ContainerCreateWorker) handleStartRequest(ctx context.Context, req OutboxStartRequestEvent) {
-	var payload containerStartPayload
+	var payload types.ContainerEvent
 	if err := json.Unmarshal(req.RawPayload, &payload); err != nil {
 		logger.Errorf(ctx, "[ContainerCreateWorker] unmarshal start payload failed, outbox_id=%d err=%v", req.OutboxID, err)
 		_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
@@ -259,9 +254,9 @@ func (w *ContainerCreateWorker) handleStartRequest(ctx context.Context, req Outb
 		req.OutboxID, payload.ContainerInstanceID)
 
 	execCtx := ctx
-	if payload.UserID != "" {
-		execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
-	}
+	// if payload.UserID != "" {
+	// 	execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
+	// }
 
 	if err := w.executeStart(execCtx, payload.ContainerInstanceID); err != nil {
 		if errors.Is(err, errWorkerInvalidState) {
@@ -297,32 +292,40 @@ func (w *ContainerCreateWorker) executeCreate(
 	// 1. Acquire capacity and transition to creating.
 	// 2. 变更ContainerInstance状态为 creating，创建 ContainerCreating 事件
 	// 3. 调用 runtime.Create + runtime.Start
-	inst, err := w.acquireCapacityAndTransition(ctx, instanceID, fsm.Pending, fsm.Creating, "ContainerCreating")
+	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	if inst.Status != types.ContainerCreatePending {
+		return fmt.Errorf("%w: expected=%s actual=%s instance_id=%d", errWorkerInvalidState, types.ContainerCreatePending, inst.Status, instanceID)
+	}
+	// inst, err := w.acquireCapacityAndTransition(ctx, instanceID, types.ContainerCreatePending, types.ContainerCreating, "ContainerCreating")
+	err = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerCreating, "ContainerCreating")
 	if err != nil {
 		return err
 	}
 
 	tpl, err := w.repo.GetContainerTemplateByID(ctx, templateID)
 	if err != nil {
-		_ = w.transition(ctx, inst, fsm.Failed, "ContainerTemplateNotFound")
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerTemplateNotFound")
 		return err
 	}
 
 	img, err := w.repo.GetContainerImageByID(ctx, tpl.ImageID)
 	if err != nil {
-		_ = w.transition(ctx, inst, fsm.Failed, "ContainerImageNotFound")
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerImageNotFound")
 		return err
 	}
 
 	rt, err := w.getRuntimeByName(runtimeName)
 	if err != nil {
-		_ = w.transition(ctx, inst, fsm.Failed, "ContainerRuntimeNotFound")
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerRuntimeNotFound")
 		return err
 	}
 
 	if w.img != nil {
 		if err := w.img.EnsureImageReadyByEntity(ctx, runtimeName, img); err != nil {
-			_ = w.transition(ctx, inst, fsm.Failed, "ContainerImagePrepareFailed")
+			_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerImagePrepareFailed")
 			// _ = w.createContainerEvent(ctx, inst.ID, "ContainerImagePrepareFailedDetail", err.Error())
 			return err
 		}
@@ -341,13 +344,13 @@ func (w *ContainerCreateWorker) executeCreate(
 		// 添加 挂载点 $PACKAGE_DIR/brave-env.sh ，如果文件不存在则先创建
 		packageDir := filepath.Join(w.cfg.Storage.BaseDir, "package")
 		if err := os.MkdirAll(packageDir, 0755); err != nil {
-			_ = w.transition(ctx, inst, fsm.Failed, "ContainerCreatePackageDirFailed")
+			_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerCreatePackageDirFailed")
 			return err
 		}
 		braveEnvFile := filepath.Join(packageDir, "brave-env.sh")
 		if _, err := os.Stat(braveEnvFile); os.IsNotExist(err) {
 			if _, err := os.Create(braveEnvFile); err != nil {
-				_ = w.transition(ctx, inst, fsm.Failed, "ContainerCreateBraveEnvFailed")
+				_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerCreateBraveEnvFailed")
 				return err
 			}
 		}
@@ -392,7 +395,7 @@ func (w *ContainerCreateWorker) executeCreate(
 		w.ensureRuntimeFilesAndDirs(ctx, resolveVars)
 		spec, err = w.res.Resolve(ctx, &ContainerRuntimeResolveInput{Spec: spec, Variables: resolveVars})
 		if err != nil {
-			_ = w.transition(ctx, inst, fsm.Failed, "ContainerResolveSpecFailed")
+			_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerResolveSpecFailed")
 			// _ = w.createContainerEvent(ctx, inst.ID, "ContainerResolveSpecFailedDetail", err.Error())
 			return err
 		}
@@ -400,7 +403,7 @@ func (w *ContainerCreateWorker) executeCreate(
 
 	runtimeID, err := rt.Create(ctx, spec)
 	if err != nil {
-		_ = w.transition(ctx, inst, fsm.Failed, "ContainerCreateFailed")
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerCreateFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerCreateFailedDetail", err.Error())
 		return err
 	}
@@ -411,7 +414,7 @@ func (w *ContainerCreateWorker) executeCreate(
 	}
 
 	if err := rt.Start(ctx, runtimeID); err != nil {
-		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStartFailed")
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerStartFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
 		return err
 	}
@@ -432,58 +435,58 @@ func (w *ContainerCreateWorker) getRuntimeByName(name string) (containerruntime.
 }
 
 // transition performs an FSM state transition for a container instance within a transaction.
-func (w *ContainerCreateWorker) transition(
-	ctx context.Context,
-	inst *types.ContainerInstance,
-	to fsm.State,
-	eventType string,
-) error {
-	if inst == nil {
-		return errors.New("container instance is nil")
-	}
+// func (w *ContainerCreateWorker) transition(
+// 	ctx context.Context,
+// 	inst *types.ContainerInstance,
+// 	to types.ContainerStatus,
+// 	eventType string,
+// ) error {
+// 	if inst == nil {
+// 		return errors.New("container instance is nil")
+// 	}
 
-	return w.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		latest, err := tx.GetContainerInstanceByID(ctx, inst.ID)
-		if err != nil {
-			return err
-		}
+// 	return w.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+// 		latest, err := tx.GetContainerInstanceByID(ctx, inst.ID)
+// 		if err != nil {
+// 			return err
+// 		}
 
-		if latest.Status == types.ContainerStatus(to) {
-			inst.Status = latest.Status
-			return nil
-		}
+// 		if latest.Status == to {
+// 			inst.Status = latest.Status
+// 			return nil
+// 		}
 
-		f := &fsm.FSM{}
-		if err := f.Transition(fsm.State(latest.Status), to); err != nil {
-			return err
-		}
+// 		f := &fsm.FSM{}
+// 		if err := f.Transition(latest.Status, to); err != nil {
+// 			return err
+// 		}
 
-		inst.Status = types.ContainerStatus(to)
-		if err := tx.UpdateContainerInstance(ctx, inst); err != nil {
-			return err
-		}
+// 		inst.Status = to
+// 		if err := tx.UpdateContainerInstance(ctx, inst); err != nil {
+// 			return err
+// 		}
 
-		domainEvent := &types.ContainerEvent{
-			ContainerInstanceID: inst.ID,
-			Event:               eventType,
-			Message:             string(to),
-		}
-		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
-		// 	return err
-		// }
+// 		domainEvent := &types.ContainerEvent{
+// 			ContainerInstanceID: inst.ID,
+// 			Event:               eventType,
+// 			Message:             string(to),
+// 		}
+// 		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
+// 		// 	return err
+// 		// }
 
-		payload, err := json.Marshal(domainEvent)
-		if err != nil {
-			return err
-		}
+// 		payload, err := json.Marshal(domainEvent)
+// 		if err != nil {
+// 			return err
+// 		}
 
-		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
-			Type:    eventType,
-			Payload: payload,
-			Status:  "pending",
-		})
-	})
-}
+// 		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
+// 			Type:    eventType,
+// 			Payload: payload,
+// 			Status:  "pending",
+// 		})
+// 	})
+// }
 
 // createContainerEvent creates a simple container event record.
 // func (w *ContainerCreateWorker) createContainerEvent(ctx context.Context, instanceID int64, evt string, msg string) error {
@@ -510,19 +513,19 @@ func (w *ContainerCreateWorker) executeStop(ctx context.Context, instanceID int6
 
 	rt, err := w.getRuntimeByInstance(inst)
 	if err != nil {
-		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStopFailed")
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerStopFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStopFailedDetail", err.Error())
 		return err
 	}
 
 	// Transition to stopping.
-	if err := w.transition(ctx, inst, fsm.Stopping, "ContainerStopping"); err != nil {
+	if err := w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerStopping, "ContainerStopping"); err != nil {
 		return err
 	}
 
 	// Execute runtime stop.
 	if err := rt.Stop(ctx, inst.RuntimeID); err != nil {
-		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStopFailed")
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerStopFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStopFailedDetail", err.Error())
 		return err
 	}
@@ -545,20 +548,32 @@ func (w *ContainerCreateWorker) executeStart(ctx context.Context, instanceID int
 	// 1. Acquire capacity and transition to starting.
 	// 2. 变更ContainerInstance状态为 starting，创建 ContainerStarting 事件
 	// 3. 调用 runtime.Start
-	inst, err := w.acquireCapacityAndTransition(ctx, instanceID, fsm.StartPending, fsm.Starting, "ContainerStarting")
+	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	if inst.Status != types.ContainerStartPending {
+		return fmt.Errorf("%w: expected=%s actual=%s instance_id=%d", errWorkerInvalidState, types.ContainerStartPending, inst.Status, instanceID)
+	}
+	err = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerStarting, "ContainerStarting")
 	if err != nil {
 		return err
 	}
 
+	// inst, err := w.acquireCapacityAndTransition(ctx, instanceID, types.ContainerStartPending, types.ContainerStarting, "ContainerStarting")
+	// if err != nil {
+	// 	return err
+	// }
+
 	rt, err := w.getRuntimeByInstance(inst)
 	if err != nil {
-		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStartFailed")
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerStartFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
 		return err
 	}
 
 	if err := rt.Start(ctx, inst.RuntimeID); err != nil {
-		_ = w.transition(ctx, inst, fsm.Failed, "ContainerStartFailed")
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerStartFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
 		return err
 	}
@@ -575,7 +590,7 @@ func (w *ContainerCreateWorker) executeDelete(ctx context.Context, instanceID in
 	}
 
 	// Transition to deleting.
-	if err := w.transition(ctx, inst, fsm.Deleting, "ContainerDeleting"); err != nil {
+	if err := w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerDeleting, "ContainerDeleting"); err != nil {
 		return err
 	}
 
@@ -622,71 +637,71 @@ func (w *ContainerCreateWorker) getRuntimeByInstance(inst *types.ContainerInstan
 	return nil, fmt.Errorf("failed to resolve runtime for instance %d", inst.ID)
 }
 
-func (w *ContainerCreateWorker) acquireCapacityAndTransition(
-	ctx context.Context,
-	instanceID int64,
-	from fsm.State,
-	to fsm.State,
-	eventType string,
-) (*types.ContainerInstance, error) {
-	var updated *types.ContainerInstance
-	err := w.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		latest, err := tx.GetContainerInstanceByID(ctx, instanceID)
-		if err != nil {
-			return err
-		}
+// func (w *ContainerCreateWorker) acquireCapacityAndTransition(
+// 	ctx context.Context,
+// 	instanceID int64,
+// 	from types.ContainerStatus,
+// 	to types.ContainerStatus,
+// 	eventType string,
+// ) (*types.ContainerInstance, error) {
+// 	var updated *types.ContainerInstance
+// 	err := w.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+// 		latest, err := tx.GetContainerInstanceByID(ctx, instanceID)
+// 		if err != nil {
+// 			return err
+// 		}
 
-		if latest.Status != types.ContainerStatus(from) {
-			return fmt.Errorf("%w: expected=%s actual=%s instance_id=%d", errWorkerInvalidState, from, latest.Status, instanceID)
-		}
+// 		if latest.Status != from {
+// 			return fmt.Errorf("%w: expected=%s actual=%s instance_id=%d", errWorkerInvalidState, from, latest.Status, instanceID)
+// 		}
 
-		if w.maxConcurrency > 0 {
-			active, err := tx.CountContainerInstanceByStatuses(ctx, concurrencyOccupiedStatuses())
-			if err != nil {
-				return err
-			}
-			if active >= int64(w.maxConcurrency) {
-				return fmt.Errorf("%w: active=%d max=%d", errWorkerConcurrencyLimit, active, w.maxConcurrency)
-			}
-		}
+// 		if w.maxConcurrency > 0 {
+// 			active, err := tx.CountContainerInstanceByStatuses(ctx, concurrencyOccupiedStatuses())
+// 			if err != nil {
+// 				return err
+// 			}
+// 			if active >= int64(w.maxConcurrency) {
+// 				return fmt.Errorf("%w: active=%d max=%d", errWorkerConcurrencyLimit, active, w.maxConcurrency)
+// 			}
+// 		}
 
-		f := &fsm.FSM{}
-		if err := f.Transition(from, to); err != nil {
-			return err
-		}
+// 		f := &fsm.FSM{}
+// 		if err := f.Transition(from, to); err != nil {
+// 			return err
+// 		}
 
-		latest.Status = types.ContainerStatus(to)
-		if err := tx.UpdateContainerInstance(ctx, latest); err != nil {
-			return err
-		}
+// 		latest.Status = to
+// 		if err := tx.UpdateContainerInstance(ctx, latest); err != nil {
+// 			return err
+// 		}
 
-		updated = latest
+// 		updated = latest
 
-		domainEvent := &types.ContainerEvent{
-			ContainerInstanceID: latest.ID,
-			Event:               eventType,
-			Message:             string(to),
-		}
-		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
-		// 	return err
-		// }
+// 		domainEvent := &types.ContainerEvent{
+// 			ContainerInstanceID: latest.ID,
+// 			Event:               eventType,
+// 			Message:             string(to),
+// 		}
+// 		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
+// 		// 	return err
+// 		// }
 
-		payload, err := json.Marshal(domainEvent)
-		if err != nil {
-			return err
-		}
+// 		payload, err := json.Marshal(domainEvent)
+// 		if err != nil {
+// 			return err
+// 		}
 
-		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
-			Type:    eventType,
-			Payload: payload,
-			Status:  "pending",
-		})
-	})
-	if err != nil {
-		return nil, err
-	}
-	return updated, nil
-}
+// 		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
+// 			Type:    eventType,
+// 			Payload: payload,
+// 			Status:  "pending",
+// 		})
+// 	})
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return updated, nil
+// }
 
 // func isConcurrencyOccupiedStatus(status types.ContainerStatus) bool {
 // 	switch status {
@@ -697,15 +712,15 @@ func (w *ContainerCreateWorker) acquireCapacityAndTransition(
 // 	}
 // }
 
-func concurrencyOccupiedStatuses() []types.ContainerStatus {
-	return []types.ContainerStatus{
-		types.ContainerCreating,
-		types.ContainerRunning,
-		types.ContainerStarting,
-		types.ContainerStopping,
-		types.ContainerStopPending,
-	}
-}
+// func concurrencyOccupiedStatuses() []types.ContainerStatus {
+// 	return []types.ContainerStatus{
+// 		types.ContainerCreating,
+// 		types.ContainerRunning,
+// 		types.ContainerStarting,
+// 		types.ContainerStopping,
+// 		types.ContainerStopPending,
+// 	}
+// }
 
 // resolveOwnerProjectVolumes appends project-level volumes based on the owner.
 func (w *ContainerCreateWorker) resolveOwnerProjectVolumes(ctx context.Context, ownerType types.ContainerOwnerType, ownerID int64) []types.ContainerVolume {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gobravedev/gobrave/internal/config"
 	"github.com/gobravedev/gobrave/internal/manager"
 	"github.com/gobravedev/gobrave/internal/types"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
@@ -15,10 +16,13 @@ import (
 type containerService struct {
 	containerRepo interfaces.ContainerRepository
 	containerMgr  *manager.ContainerManager
+	cfg           *config.Config
 }
 
-func NewContainerService(containerRepo interfaces.ContainerRepository, containerMgr *manager.ContainerManager) interfaces.ContainerService {
-	return &containerService{containerRepo: containerRepo, containerMgr: containerMgr}
+// var ()
+
+func NewContainerService(containerRepo interfaces.ContainerRepository, containerMgr *manager.ContainerManager, config *config.Config) interfaces.ContainerService {
+	return &containerService{containerRepo: containerRepo, containerMgr: containerMgr, cfg: config}
 }
 
 func (s *containerService) CreateContainerImage(ctx context.Context, item *types.ContainerImage) error {

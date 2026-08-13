@@ -23,21 +23,26 @@ import (
 	"gorm.io/gorm"
 )
 
+var (
+	errWorkerConcurrencyLimit = errors.New("worker concurrency limit reached")
+)
+
 type ContainerManager struct {
-	repo            interfaces.ContainerRepository
-	projectRepo     interfaces.ProjectRepository
-	analysisRepo    interfaces.AnalysisRepository
-	workflowService interfaces.WorkflowService
-	reg             *containerruntime.Registry
-	bus             event.Bus
-	res             ContainerRuntimeResolver
-	img             *ImageManager
-	cfg             *config.Config
-	monitorOnce     sync.Once
+	containerService interfaces.ContainerService
+	containerRepo    interfaces.ContainerRepository
+	projectRepo      interfaces.ProjectRepository
+	analysisRepo     interfaces.AnalysisRepository
+	workflowService  interfaces.WorkflowService
+	reg              *containerruntime.Registry
+	bus              event.Bus
+	res              ContainerRuntimeResolver
+	img              *ImageManager
+	cfg              *config.Config
+	monitorOnce      sync.Once
 }
 
 func NewContainerManager(
-	repo interfaces.ContainerRepository,
+	containerRepo interfaces.ContainerRepository,
 	analysisRepo interfaces.AnalysisRepository,
 	projectRepo interfaces.ProjectRepository,
 	workflowService interfaces.WorkflowService,
@@ -51,9 +56,91 @@ func NewContainerManager(
 	// 	res = NewDefaultContainerRuntimeResolver()
 	// }
 	if img == nil {
-		img = NewImageManager(repo, reg)
+		img = NewImageManager(containerRepo, reg)
 	}
-	return &ContainerManager{repo: repo, projectRepo: projectRepo, analysisRepo: analysisRepo, workflowService: workflowService, reg: reg, bus: bus, res: res, img: img, cfg: cfg}
+	return &ContainerManager{
+		containerRepo: containerRepo, projectRepo: projectRepo, analysisRepo: analysisRepo, workflowService: workflowService, reg: reg, bus: bus, res: res, img: img, cfg: cfg}
+}
+
+func (s *ContainerManager) TransitionContainerAndEnqueueOutbox(ctx context.Context, inst *types.ContainerInstance, to types.ContainerStatus, eventType string) error {
+	if inst == nil {
+		return errors.New("container instance is nil")
+	}
+
+	return s.containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+		latest, err := tx.GetContainerInstanceByID(ctx, inst.ID)
+		if err != nil {
+			return err
+		}
+		if to == types.ContainerCreating || to == types.ContainerStarting {
+			if s.GetMaxConcurrency() > 0 {
+				active, err := tx.CountContainerInstanceByStatuses(ctx, concurrencyOccupiedStatuses())
+				if err != nil {
+					return err
+				}
+				if active >= int64(s.GetMaxConcurrency()) {
+					return fmt.Errorf("%w: active=%d max=%d", errWorkerConcurrencyLimit, active, s.GetMaxConcurrency())
+				}
+			}
+		}
+
+		if latest.Status == to {
+			inst.Status = latest.Status
+			return nil
+		}
+
+		f := &fsm.FSM{}
+		if err := f.Transition(latest.Status, to); err != nil {
+			return err
+		}
+
+		inst.Status = to
+		if err := tx.UpdateContainerInstance(ctx, inst); err != nil {
+			return err
+		}
+
+		domainEvent := &types.ContainerEvent{
+			ContainerInstanceID: inst.ID,
+			Event:               eventType,
+			Message:             string(to),
+		}
+		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
+		// 	return err
+		// }
+
+		payload, err := json.Marshal(domainEvent)
+		if err != nil {
+			return err
+		}
+
+		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
+			Type:    eventType,
+			Payload: payload,
+			Status:  "pending",
+		})
+	})
+}
+
+func concurrencyOccupiedStatuses() []types.ContainerStatus {
+	return []types.ContainerStatus{
+		types.ContainerCreating,
+		types.ContainerRunning,
+		types.ContainerStarting,
+		types.ContainerStopping,
+		types.ContainerStopPending,
+	}
+}
+
+func (s *ContainerManager) GetMaxConcurrency() int {
+	maxConcurrency := 3
+	if s.cfg != nil && s.cfg.Container != nil && s.cfg.Container.CreateQueueMaxConcurrency > 0 {
+		maxConcurrency = s.cfg.Container.CreateQueueMaxConcurrency
+	}
+
+	if maxConcurrency <= 0 {
+		maxConcurrency = 3
+	}
+	return maxConcurrency
 }
 
 // func (m *ContainerManager) Create(ctx context.Context, spec Spec) error {
@@ -87,12 +174,12 @@ func (m *ContainerManager) CreateByTemplate(
 ) (*types.ContainerInstance, error) {
 	runtimeName = m.resolveRuntimeName(runtimeName)
 
-	tpl, err := m.repo.GetContainerTemplateByID(ctx, templateID)
+	tpl, err := m.containerRepo.GetContainerTemplateByID(ctx, templateID)
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = m.repo.GetContainerImageByID(ctx, tpl.ImageID)
+	_, err = m.containerRepo.GetContainerImageByID(ctx, tpl.ImageID)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +217,7 @@ func (m *ContainerManager) CreateByTemplate(
 	}
 	maxPending := m.getCreateQueueMaxPending()
 
-	err = m.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+	err = m.containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
 		if maxPending > 0 {
 			count, err := m.countPendingCreateQueueRequests(ctx, tx)
 			if err != nil {
@@ -180,16 +267,16 @@ func (m *ContainerManager) getCreateQueueMaxPending() int {
 	return 50
 }
 
-func (m *ContainerManager) getCreateQueueMaxConcurrency() int {
-	if m.cfg != nil && m.cfg.Container != nil && m.cfg.Container.CreateQueueMaxConcurrency > 0 {
-		return m.cfg.Container.CreateQueueMaxConcurrency
-	}
-	return 3
-}
+// func (m *ContainerManager) getCreateQueueMaxConcurrency() int {
+// 	if m.cfg != nil && m.cfg.Container != nil && m.cfg.Container.CreateQueueMaxConcurrency > 0 {
+// 		return m.cfg.Container.CreateQueueMaxConcurrency
+// 	}
+// 	return 3
+// }
 
-func (m *ContainerManager) CreateQueueMaxConcurrency() int {
-	return m.getCreateQueueMaxConcurrency()
-}
+// func (m *ContainerManager) CreateQueueMaxConcurrency() int {
+// 	return m.getCreateQueueMaxConcurrency()
+// }
 
 func (m *ContainerManager) CreateQueueMaxPending() int {
 	return m.getCreateQueueMaxPending()
@@ -201,11 +288,11 @@ func (m *ContainerManager) QueueStatus(ctx context.Context) (*CreateQueueStatus,
 	}
 
 	status := &CreateQueueStatus{
-		MaxConcurrency: m.getCreateQueueMaxConcurrency(),
+		MaxConcurrency: m.GetMaxConcurrency(),
 		MaxPending:     m.getCreateQueueMaxPending(),
 	}
 
-	err := m.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+	err := m.containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
 		active, err := tx.CountContainerInstanceByStatuses(ctx, concurrencyOccupiedStatuses())
 		if err != nil {
 			return err
@@ -228,7 +315,7 @@ func (m *ContainerManager) QueueStatus(ctx context.Context) (*CreateQueueStatus,
 func (m *ContainerManager) Start(ctx context.Context, id int64) error {
 	maxPending := m.getCreateQueueMaxPending()
 	if maxPending > 0 {
-		count, err := m.countPendingCreateQueueRequests(ctx, m.repo)
+		count, err := m.countPendingCreateQueueRequests(ctx, m.containerRepo)
 		if err != nil {
 			return fmt.Errorf("count pending create/start requests: %w", err)
 		}
@@ -238,24 +325,33 @@ func (m *ContainerManager) Start(ctx context.Context, id int64) error {
 		}
 	}
 
-	userID := ""
-	if ctx != nil {
-		if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
-			userID = uid
-		} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
-			userID = uid
-		}
-	}
+	// userID := ""
+	// if ctx != nil {
+	// 	if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
+	// 		userID = uid
+	// 	} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
+	// 		userID = uid
+	// 	}
+	// }
 
-	req := containerStartPayload{
-		ContainerInstanceID: id,
-		UserID:              userID,
-	}
-
-	if err := m.enqueueLifecycleRequest(ctx, id, fsm.StartPending, OutboxEventTypeStartRequest, req); err != nil {
-		logger.Errorf(ctx, "[ContainerManager] enqueue start failed, instance_id=%d err=%v", id, err)
+	// req := containerStartPayload{
+	// 	ContainerInstanceID: id,
+	// 	UserID:              userID,
+	// }
+	instance, err := m.containerRepo.GetContainerInstanceByID(ctx, id)
+	if err != nil {
 		return err
 	}
+	if err := m.TransitionContainerAndEnqueueOutbox(ctx, instance, types.ContainerStartPending, OutboxEventTypeStartRequest); err != nil {
+		logger.Errorf(ctx, "[ContainerManager] enqueue start failed, instance_id=%d err=%v", id, err)
+
+		return err
+	}
+
+	// if err := m.enqueueLifecycleRequest(ctx, id, fsm.StartPending, OutboxEventTypeStartRequest, req); err != nil {
+	// 	logger.Errorf(ctx, "[ContainerManager] enqueue start failed, instance_id=%d err=%v", id, err)
+	// 	return err
+	// }
 
 	logger.Infof(ctx, "[ContainerManager] enqueued start request, instance_id=%d", id)
 	return nil
@@ -266,7 +362,7 @@ func (m *ContainerManager) countPendingCreateQueueRequests(ctx context.Context, 
 }
 
 func (m *ContainerManager) Stop(ctx context.Context, id int64) error {
-	inst, err := m.repo.GetContainerInstanceByID(ctx, id)
+	inst, err := m.containerRepo.GetContainerInstanceByID(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -276,32 +372,40 @@ func (m *ContainerManager) Stop(ctx context.Context, id int64) error {
 	case string(types.ContainerStopped), string(types.ContainerFailed), string(types.ContainerExited):
 		return types.ErrContainerAlreadyStopped
 	}
-
-	userID := ""
-	if ctx != nil {
-		if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
-			userID = uid
-		} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
-			userID = uid
-		}
-	}
-
-	req := containerStopPayload{
-		ContainerInstanceID: inst.ID,
-		UserID:              userID,
-	}
-
-	if err := m.enqueueLifecycleRequest(ctx, inst.ID, fsm.StopPending, OutboxEventTypeStopRequest, req); err != nil {
-		logger.Errorf(ctx, "[ContainerManager] enqueue stop failed, instance_id=%d err=%v", inst.ID, err)
+	instaince, err := m.containerRepo.GetContainerInstanceByID(ctx, id)
+	if err != nil {
 		return err
 	}
+	if err := m.TransitionContainerAndEnqueueOutbox(ctx, instaince, types.ContainerStopPending, OutboxEventTypeStopRequest); err != nil {
+		logger.Errorf(ctx, "[ContainerManager] enqueue stop failed, instance_id=%d err=%v", id, err)
+		return err
+	}
+
+	// userID := ""
+	// if ctx != nil {
+	// 	if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
+	// 		userID = uid
+	// 	} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
+	// 		userID = uid
+	// 	}
+	// }
+
+	// req := containerStopPayload{
+	// 	ContainerInstanceID: inst.ID,
+	// 	UserID:              userID,
+	// }
+
+	// if err := m.enqueueLifecycleRequest(ctx, inst.ID, fsm.StopPending, OutboxEventTypeStopRequest, req); err != nil {
+	// 	logger.Errorf(ctx, "[ContainerManager] enqueue stop failed, instance_id=%d err=%v", inst.ID, err)
+	// 	return err
+	// }
 
 	logger.Infof(ctx, "[ContainerManager] enqueued stop request, instance_id=%d", inst.ID)
 	return nil
 }
 
 func (m *ContainerManager) StopByOwner(ctx context.Context, ownerType types.ContainerOwnerType, ownerID int64) error {
-	inst, err := m.repo.GetContainerInstanceByOwner(ctx, ownerType, ownerID)
+	inst, err := m.containerRepo.GetContainerInstanceByOwner(ctx, ownerType, ownerID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
@@ -321,7 +425,7 @@ func (m *ContainerManager) StopByOwner(ctx context.Context, ownerType types.Cont
 }
 
 func (m *ContainerManager) Delete(ctx context.Context, id int64) error {
-	inst, err := m.repo.GetContainerInstanceByID(ctx, id)
+	inst, err := m.containerRepo.GetContainerInstanceByID(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -330,25 +434,33 @@ func (m *ContainerManager) Delete(ctx context.Context, id int64) error {
 	if inst == nil || inst.ID == 0 {
 		return nil
 	}
-
-	userID := ""
-	if ctx != nil {
-		if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
-			userID = uid
-		} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
-			userID = uid
-		}
-	}
-
-	req := containerDeletePayload{
-		ContainerInstanceID: inst.ID,
-		UserID:              userID,
-	}
-
-	if err := m.enqueueLifecycleRequest(ctx, inst.ID, fsm.DeletePending, OutboxEventTypeDeleteRequest, req); err != nil {
-		logger.Errorf(ctx, "[ContainerManager] enqueue delete failed, instance_id=%d err=%v", inst.ID, err)
+	instance, err := m.containerRepo.GetContainerInstanceByID(ctx, id)
+	if err != nil {
 		return err
 	}
+	if err := m.TransitionContainerAndEnqueueOutbox(ctx, instance, types.ContainerDeletePending, OutboxEventTypeDeleteRequest); err != nil {
+		logger.Errorf(ctx, "[ContainerManager] enqueue delete failed, instance_id=%d err=%v", id, err)
+		return err
+	}
+
+	// userID := ""
+	// if ctx != nil {
+	// 	if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
+	// 		userID = uid
+	// 	} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
+	// 		userID = uid
+	// 	}
+	// }
+
+	// req := containerDeletePayload{
+	// 	ContainerInstanceID: inst.ID,
+	// 	UserID:              userID,
+	// }
+
+	// if err := m.enqueueLifecycleRequest(ctx, inst.ID, fsm.DeletePending, OutboxEventTypeDeleteRequest, req); err != nil {
+	// 	logger.Errorf(ctx, "[ContainerManager] enqueue delete failed, instance_id=%d err=%v", inst.ID, err)
+	// 	return err
+	// }
 
 	logger.Infof(ctx, "[ContainerManager] enqueued delete request, instance_id=%d", inst.ID)
 	return nil
@@ -358,7 +470,7 @@ func (m *ContainerManager) GetLogs(ctx context.Context, id int64, tail int) (str
 	if tail <= 0 {
 		tail = 200
 	}
-	inst, err := m.repo.GetContainerInstanceByID(ctx, id)
+	inst, err := m.containerRepo.GetContainerInstanceByID(ctx, id)
 	if err != nil {
 		return "", err
 	}
@@ -398,7 +510,7 @@ func (m *ContainerManager) GetLogs(ctx context.Context, id int64, tail int) (str
 // 如果容器运行太快，ContainerStarted与 ContainerExited可能会竞争
 func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 	ctx := context.Background()
-	inst, err := m.repo.GetContainerInstanceByRuntimeID(ctx, e.RuntimeID)
+	inst, err := m.containerRepo.GetContainerInstanceByRuntimeID(ctx, e.RuntimeID)
 	if err != nil {
 		logger.Warnf(ctx, "[ContainerManager] OnEvent: GetContainerInstanceByRuntimeID failed, runtime_id=%s event=%s err=%v", e.RuntimeID, e.Type, err)
 		return
@@ -418,7 +530,8 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 			m.syncInstanceIPAddress(ctx, rt, inst)
 		}
 		// 先尝试转 Running，失败也无妨（FSM 现在允许 Creating→Stopped）
-		_ = m.transition(ctx, inst, fsm.Running, "ContainerStarted")
+		// _ = m.transition(ctx, inst, fsm.Running, "ContainerStarted")
+		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerRunning, "ContainerStarted")
 	}
 
 	switch e.Type {
@@ -430,10 +543,12 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		if rt, rtErr := m.getRuntimeByInstance(inst); rtErr == nil {
 			m.syncInstanceIPAddress(ctx, rt, inst)
 		}
-		_ = m.transition(ctx, inst, fsm.Running, "ContainerStarted")
+		// _ = m.transition(ctx, inst, fsm.Running, "ContainerStarted")
+		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerRunning, "ContainerStarted")
 
 	case "ContainerPaused":
-		_ = m.transition(ctx, inst, fsm.Paused, "ContainerPaused")
+		// _ = m.transition(ctx, inst, fsm.Paused, "ContainerPaused")
+		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerPaused, "ContainerPaused")
 
 	case "ContainerResumed":
 		now := time.Now()
@@ -442,7 +557,8 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		if rt, rtErr := m.getRuntimeByInstance(inst); rtErr == nil {
 			m.syncInstanceIPAddress(ctx, rt, inst)
 		}
-		_ = m.transition(ctx, inst, fsm.Running, "ContainerResumed")
+		// _ = m.transition(ctx, inst, fsm.Running, "ContainerResumed")
+		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerRunning, "ContainerResumed")
 
 	case "ContainerStopped":
 		now := time.Now()
@@ -450,7 +566,8 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		if code, ok := parseRuntimeExitCode(e.Message); ok {
 			inst.ExitCode = &code
 		}
-		_ = m.transition(ctx, inst, fsm.Stopped, "ContainerStopped")
+		// _ = m.transition(ctx, inst, fsm.Stopped, "ContainerStopped")
+		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerStopped, "ContainerStopped")
 
 	case "ContainerExited":
 		now := time.Now()
@@ -458,7 +575,8 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		if code, ok := parseRuntimeExitCode(e.Message); ok {
 			inst.ExitCode = &code
 		}
-		_ = m.transition(ctx, inst, fsm.Stopped, "ContainerStopped")
+		// _ = m.transition(ctx, inst, fsm.Stopped, "ContainerStopped")
+		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerStopped, "ContainerStopped")
 
 	case "ContainerFailed":
 		now := time.Now()
@@ -466,12 +584,14 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		if code, ok := parseRuntimeExitCode(e.Message); ok {
 			inst.ExitCode = &code
 		}
-		_ = m.transition(ctx, inst, fsm.Failed, "ContainerFailed")
+		// _ = m.transition(ctx, inst, fsm.Failed, "ContainerFailed")
+		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerFailed")
 
 	case "ContainerDeleted":
 		now := time.Now()
 		inst.FinishedAt = &now
-		_ = m.transition(ctx, inst, fsm.Stopped, "ContainerStopped")
+		// _ = m.transition(ctx, inst, fsm.Stopped, "ContainerStopped")
+		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerStopped, "ContainerStopped")
 
 		// Publish delete event immediately so current subscribers can react in this callback flow.
 		if m.bus != nil {
@@ -482,7 +602,7 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 			})
 		}
 
-		if err := m.repo.DeleteContainerInstance(ctx, inst.ID); err != nil {
+		if err := m.containerRepo.DeleteContainerInstance(ctx, inst.ID); err != nil {
 			logger.Warnf(ctx, "[ContainerManager] delete container instance failed, instance_id=%d runtime_id=%s err=%v", inst.ID, e.RuntimeID, err)
 		}
 
@@ -503,58 +623,58 @@ func parseRuntimeExitCode(raw string) (int, bool) {
 	return code, true
 }
 
-func (m *ContainerManager) transition(
-	ctx context.Context,
-	inst *types.ContainerInstance,
-	to fsm.State,
-	eventType string,
-) error {
-	if inst == nil {
-		return errors.New("container instance is nil")
-	}
+// func (m *ContainerManager) transition(
+// 	ctx context.Context,
+// 	inst *types.ContainerInstance,
+// 	to fsm.State,
+// 	eventType string,
+// ) error {
+// 	if inst == nil {
+// 		return errors.New("container instance is nil")
+// 	}
 
-	return m.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		latest, err := tx.GetContainerInstanceByID(ctx, inst.ID)
-		if err != nil {
-			return err
-		}
+// 	return m.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+// 		latest, err := tx.GetContainerInstanceByID(ctx, inst.ID)
+// 		if err != nil {
+// 			return err
+// 		}
 
-		if latest.Status == types.ContainerStatus(to) {
-			inst.Status = latest.Status
-			return nil
-		}
+// 		if latest.Status == types.ContainerStatus(to) {
+// 			inst.Status = latest.Status
+// 			return nil
+// 		}
 
-		f := &fsm.FSM{}
-		if err := f.Transition(fsm.State(latest.Status), to); err != nil {
-			return err
-		}
+// 		f := &fsm.FSM{}
+// 		if err := f.Transition(fsm.State(latest.Status), to); err != nil {
+// 			return err
+// 		}
 
-		inst.Status = types.ContainerStatus(to)
-		if err := tx.UpdateContainerInstance(ctx, inst); err != nil {
-			return err
-		}
+// 		inst.Status = types.ContainerStatus(to)
+// 		if err := tx.UpdateContainerInstance(ctx, inst); err != nil {
+// 			return err
+// 		}
 
-		domainEvent := &types.ContainerEvent{
-			ContainerInstanceID: inst.ID,
-			Event:               eventType,
-			Message:             string(to),
-		}
-		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
-		// 	return err
-		// }
+// 		domainEvent := &types.ContainerEvent{
+// 			ContainerInstanceID: inst.ID,
+// 			Event:               eventType,
+// 			Message:             string(to),
+// 		}
+// 		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
+// 		// 	return err
+// 		// }
 
-		payload, err := json.Marshal(domainEvent)
-		if err != nil {
-			return err
-		}
+// 		payload, err := json.Marshal(domainEvent)
+// 		if err != nil {
+// 			return err
+// 		}
 
-		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
-			Type:    eventType,
-			Payload: payload,
-			Status:  "pending",
-		})
-	})
-}
+// 		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
+// 			Type:    eventType,
+// 			Payload: payload,
+// 			Status:  "pending",
+// 		})
+// 	})
+// }
 
 func (m *ContainerManager) getRuntimeByName(name string) (containerruntime.Runtime, error) {
 	if name == "" {
@@ -643,54 +763,55 @@ func (m *ContainerManager) getRuntimeByInstance(inst *types.ContainerInstance) (
 // 		Event:               evt,
 // 		Message:             msg,
 // 	})
+// // // }
+
+// func (m *ContainerManager) enqueueLifecycleRequest(
+// 	ctx context.Context,
+// 	instanceID int64,
+// 	to fsm.State,
+// 	requestType string,
+// 	requestPayload interface{},
+// ) error {
+// 	return m.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+// 		latest, err := tx.GetContainerInstanceByID(ctx, instanceID)
+// 		if err != nil {
+// 			return err
+// 		}
+// 		// ctx, id, fsm.StartPending, OutboxEventTypeStartRequest, req
+
+// 		if latest.Status != types.ContainerStatus(to) {
+// 			f := &fsm.FSM{}
+// 			if err := f.Transition(fsm.State(latest.Status), to); err != nil {
+// 				return err
+// 			}
+
+// 			latest.Status = types.ContainerStatus(to)
+// 			if err := tx.UpdateContainerInstance(ctx, latest); err != nil {
+// 				return err
+// 			}
+
+// 			// domainEvent := &types.ContainerEvent{
+// 			// 	ContainerInstanceID: latest.ID,
+// 			// 	Event:               transitionEventType,
+// 			// 	Message:             string(to),
+// 			// }
+// 			// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
+// 			// 	return err
+// 			// }
+// 		}
+
+// 		payload, err := json.Marshal(requestPayload)
+// 		if err != nil {
+// 			return err
+// 		}
+
+// 		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
+// 			Type:    requestType,
+// 			Payload: payload,
+// 			Status:  "pending",
+// 		})
+// 	})
 // }
-
-func (m *ContainerManager) enqueueLifecycleRequest(
-	ctx context.Context,
-	instanceID int64,
-	to fsm.State,
-	requestType string,
-	requestPayload interface{},
-) error {
-	return m.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		latest, err := tx.GetContainerInstanceByID(ctx, instanceID)
-		if err != nil {
-			return err
-		}
-
-		if latest.Status != types.ContainerStatus(to) {
-			f := &fsm.FSM{}
-			if err := f.Transition(fsm.State(latest.Status), to); err != nil {
-				return err
-			}
-
-			latest.Status = types.ContainerStatus(to)
-			if err := tx.UpdateContainerInstance(ctx, latest); err != nil {
-				return err
-			}
-
-			// domainEvent := &types.ContainerEvent{
-			// 	ContainerInstanceID: latest.ID,
-			// 	Event:               transitionEventType,
-			// 	Message:             string(to),
-			// }
-			// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
-			// 	return err
-			// }
-		}
-
-		payload, err := json.Marshal(requestPayload)
-		if err != nil {
-			return err
-		}
-
-		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
-			Type:    requestType,
-			Payload: payload,
-			Status:  "pending",
-		})
-	})
-}
 
 func setRuntimeVar(vars map[string]string, key string, value string) {
 	if vars == nil {
@@ -877,7 +998,7 @@ func (m *ContainerManager) syncInstanceIPAddress(ctx context.Context, rt contain
 		return
 	}
 
-	if err := m.repo.UpdateContainerInstance(ctx, inst); err != nil {
+	if err := m.containerRepo.UpdateContainerInstance(ctx, inst); err != nil {
 		logger.Warnf(ctx, "[ContainerManager] persist runtime inspect failed, instance_id=%d ip=%s node=%s err=%v", inst.ID, inst.IPAddress, inst.RuntimeNodeName, err)
 	}
 }

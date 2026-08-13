@@ -1097,7 +1097,7 @@ func (h *ContainerHandler) GetQueueStatus(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"active_count":    -1,
 			"pending_count":   -1,
-			"max_concurrency": h.containerManager.CreateQueueMaxConcurrency(),
+			"max_concurrency": h.containerManager.GetMaxConcurrency(),
 			"max_pending":     h.containerManager.CreateQueueMaxPending(),
 			"queue_enabled":   true,
 		})

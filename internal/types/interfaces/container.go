@@ -13,6 +13,8 @@ type ContainerService interface {
 	DeleteContainerImage(ctx context.Context, id int64) error
 	ListContainerImage(ctx context.Context) ([]*types.ContainerImage, error)
 	PageContainerImage(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
+	// TransitionContainerAndEnqueueOutbox(ctx context.Context, instance *types.ContainerInstance, to types.ContainerStatus, eventType string) error
+	// GetMaxConcurrency() int
 
 	CreateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error
 	GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error)
