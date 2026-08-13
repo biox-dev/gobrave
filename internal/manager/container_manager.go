@@ -252,7 +252,7 @@ func (m *ContainerManager) Start(ctx context.Context, id int64) error {
 		UserID:              userID,
 	}
 
-	if err := m.enqueueLifecycleRequest(ctx, id, fsm.StartPending, "ContainerStartPending", OutboxEventTypeStartRequest, req); err != nil {
+	if err := m.enqueueLifecycleRequest(ctx, id, fsm.StartPending, OutboxEventTypeStartRequest, req); err != nil {
 		logger.Errorf(ctx, "[ContainerManager] enqueue start failed, instance_id=%d err=%v", id, err)
 		return err
 	}
@@ -291,7 +291,7 @@ func (m *ContainerManager) Stop(ctx context.Context, id int64) error {
 		UserID:              userID,
 	}
 
-	if err := m.enqueueLifecycleRequest(ctx, inst.ID, fsm.StopPending, "ContainerStopPending", OutboxEventTypeStopRequest, req); err != nil {
+	if err := m.enqueueLifecycleRequest(ctx, inst.ID, fsm.StopPending, OutboxEventTypeStopRequest, req); err != nil {
 		logger.Errorf(ctx, "[ContainerManager] enqueue stop failed, instance_id=%d err=%v", inst.ID, err)
 		return err
 	}
@@ -345,7 +345,7 @@ func (m *ContainerManager) Delete(ctx context.Context, id int64) error {
 		UserID:              userID,
 	}
 
-	if err := m.enqueueLifecycleRequest(ctx, inst.ID, fsm.DeletePending, "ContainerDeletePending", OutboxEventTypeDeleteRequest, req); err != nil {
+	if err := m.enqueueLifecycleRequest(ctx, inst.ID, fsm.DeletePending, OutboxEventTypeDeleteRequest, req); err != nil {
 		logger.Errorf(ctx, "[ContainerManager] enqueue delete failed, instance_id=%d err=%v", inst.ID, err)
 		return err
 	}
@@ -649,7 +649,6 @@ func (m *ContainerManager) enqueueLifecycleRequest(
 	ctx context.Context,
 	instanceID int64,
 	to fsm.State,
-	transitionEventType string,
 	requestType string,
 	requestPayload interface{},
 ) error {

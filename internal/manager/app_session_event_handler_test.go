@@ -19,7 +19,7 @@ func TestAppSessionEventHandler_Handle_UpdatesToRunningOnContainerStarted(t *tes
 		t.Fatalf("seed container instance failed: %v", err)
 	}
 
-	h := NewAppSessionEventHandler(repo)
+	h := NewAppSessionEventHandler(repo, nil)
 	h.Handle(types.ContainerEvent{ContainerInstanceID: inst.ID, Event: "ContainerStarted"})
 
 	stored, err := repo.GetAppSessionByID(ctx, session.ID)
@@ -49,7 +49,7 @@ func TestAppSessionEventHandler_Handle_UpdatesToStoppedOnContainerStopped(t *tes
 		t.Fatalf("seed container instance failed: %v", err)
 	}
 
-	h := NewAppSessionEventHandler(repo)
+	h := NewAppSessionEventHandler(repo, nil)
 	h.Handle(types.ContainerEvent{ContainerInstanceID: inst.ID, Event: "ContainerStopped"})
 
 	stored, err := repo.GetAppSessionByID(ctx, session.ID)
@@ -76,7 +76,7 @@ func TestAppSessionEventHandler_Handle_UpdatesToFailedOnContainerFailure(t *test
 		t.Fatalf("seed container instance failed: %v", err)
 	}
 
-	h := NewAppSessionEventHandler(repo)
+	h := NewAppSessionEventHandler(repo, nil)
 	h.Handle(types.ContainerEvent{ContainerInstanceID: inst.ID, Event: "ContainerStartFailed"})
 
 	stored, err := repo.GetAppSessionByID(ctx, session.ID)
@@ -103,7 +103,7 @@ func TestAppSessionEventHandler_Handle_IgnoresNonAppSessionOwner(t *testing.T) {
 		t.Fatalf("seed container instance failed: %v", err)
 	}
 
-	h := NewAppSessionEventHandler(repo)
+	h := NewAppSessionEventHandler(repo, nil)
 	h.Handle(types.ContainerEvent{ContainerInstanceID: inst.ID, Event: "ContainerStarted"})
 
 	stored, err := repo.GetAppSessionByID(ctx, session.ID)

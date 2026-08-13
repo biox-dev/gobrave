@@ -20,6 +20,7 @@ import (
 	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
 	dockerruntime "github.com/gobravedev/gobrave/internal/container_runtime/docker"
 	kubernetesruntime "github.com/gobravedev/gobrave/internal/container_runtime/kubernetes"
+	"github.com/gobravedev/gobrave/internal/dag"
 	dagruntime "github.com/gobravedev/gobrave/internal/dag"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/handler"
@@ -219,7 +220,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		dig.Group("event_handlers"),
 	))
 	must(container.Provide(
-		realtime.NewDagRuntimeEventNotifier,
+		dag.NewDagRuntimeEventNotifier,
 		dig.As(new(event.Handler)),
 		dig.Group("event_handlers"),
 	))

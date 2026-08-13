@@ -2,11 +2,13 @@ package manager
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/logger"
+	"github.com/gobravedev/gobrave/internal/realtime"
 	"github.com/gobravedev/gobrave/internal/types"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
 )
@@ -24,10 +26,11 @@ var _ event.Handler = (*AppSessionEventHandler)(nil)
 // DAG nodes and services are ignored.
 type AppSessionEventHandler struct {
 	repo interfaces.ContainerRepository
+	hub  *realtime.Hub
 }
 
-func NewAppSessionEventHandler(repo interfaces.ContainerRepository) *AppSessionEventHandler {
-	return &AppSessionEventHandler{repo: repo}
+func NewAppSessionEventHandler(repo interfaces.ContainerRepository, hub *realtime.Hub) *AppSessionEventHandler {
+	return &AppSessionEventHandler{repo: repo, hub: hub}
 }
 
 func (h *AppSessionEventHandler) Handle(evt event.Event) {
@@ -51,7 +54,8 @@ func (h *AppSessionEventHandler) Handle(evt event.Event) {
 	}
 
 	now := time.Now()
-	switch normalizeContainerEvent(ce.Event) {
+	normalizedEvent := normalizeContainerEvent(ce.Event)
+	switch normalizedEvent {
 	case "running":
 		session.Status = "RUNNING"
 		if session.StartedAt == nil {
@@ -84,6 +88,54 @@ func (h *AppSessionEventHandler) Handle(evt event.Event) {
 
 	if err := h.repo.UpdateAppSession(ctx, session); err != nil {
 		logger.Warnf(ctx, "[AppSessionEventHandler] update app session failed, session_id=%d event=%s err=%v", session.ID, ce.Event, err)
+		return
+	}
+
+	h.notifyStatusChanged(ctx, session, normalizedEvent)
+}
+
+func (h *AppSessionEventHandler) notifyStatusChanged(ctx context.Context, session *types.AppSession, normalizedEvent string) {
+	if h.hub == nil || session == nil {
+		return
+	}
+	userID := strings.TrimSpace(session.UserID)
+	if userID == "" {
+		return
+	}
+
+	method := appSessionRealtimeMethod(normalizedEvent)
+	msg := map[string]any{
+		"action": "component.invoke",
+		"payload": map[string]any{
+			"category": "analysis",
+			"id":       strconv.FormatInt(session.ID, 10),
+			"parentId": "container",
+			"method":   method,
+			"args": map[string]any{
+				"id":     session.ID,
+				"status": strings.ToLower(strings.TrimSpace(session.Status)),
+			},
+		},
+	}
+
+	if err := h.hub.PushMessage(userID, msg); err != nil {
+		if strings.Contains(err.Error(), "no_client_for_user:") {
+			return
+		}
+		logger.Warnf(ctx, "[AppSessionEventHandler] push app session event failed user_id=%s session_id=%d event=%s err=%v", userID, session.ID, normalizedEvent, err)
+	}
+}
+
+func appSessionRealtimeMethod(normalizedEvent string) string {
+	switch normalizedEvent {
+	case "creating", "starting":
+		return "analysisSubmitted"
+	case "running":
+		return "analysisStarted"
+	case "stopped", "failed", "stopping":
+		return "analysisDone"
+	default:
+		return "analysisStarted"
 	}
 }
 

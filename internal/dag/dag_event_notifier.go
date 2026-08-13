@@ -1,4 +1,4 @@
-package realtime
+package dag
 
 import (
 	"context"
@@ -7,9 +7,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gobravedev/gobrave/internal/dag"
+	// "github.com/gobravedev/gobrave/internal/dag"
+	// "github.com/gobravedev/gobrave/internal/dag"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/logger"
+	"github.com/gobravedev/gobrave/internal/realtime"
 	"github.com/gobravedev/gobrave/internal/types"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
 	"gorm.io/gorm"
@@ -21,10 +23,10 @@ type DagRuntimeEventNotifier struct {
 	db           *gorm.DB
 	analysisRepo interfaces.AnalysisRepository
 	projectRepo  interfaces.ProjectRepository
-	hub          *Hub
+	hub          *realtime.Hub
 }
 
-func NewDagRuntimeEventNotifier(db *gorm.DB, projectRepo interfaces.ProjectRepository, analysisRepo interfaces.AnalysisRepository, hub *Hub) *DagRuntimeEventNotifier {
+func NewDagRuntimeEventNotifier(db *gorm.DB, projectRepo interfaces.ProjectRepository, analysisRepo interfaces.AnalysisRepository, hub *realtime.Hub) *DagRuntimeEventNotifier {
 	return &DagRuntimeEventNotifier{
 		db:           db,
 		analysisRepo: analysisRepo,
@@ -34,7 +36,7 @@ func NewDagRuntimeEventNotifier(db *gorm.DB, projectRepo interfaces.ProjectRepos
 }
 
 func (n *DagRuntimeEventNotifier) Handle(evt event.Event) {
-	runtimeEvent, ok := evt.(dag.RuntimeEvent)
+	runtimeEvent, ok := evt.(RuntimeEvent)
 	if !ok {
 		return
 	}
@@ -100,14 +102,14 @@ func (n *DagRuntimeEventNotifier) Handle(evt event.Event) {
 
 func (n *DagRuntimeEventNotifier) shouldNotify(eventName string) bool {
 	switch eventName {
-	case dag.EventDagStarted,
-		dag.EventDagCompleted,
-		dag.EventDagFailed,
-		dag.EventNodeSubmitted,
-		dag.EventNodeRunning,
-		dag.EventNodeStateChange,
-		dag.EventNodeCompleted,
-		dag.EventNodeFailed:
+	case EventDagStarted,
+		EventDagCompleted,
+		EventDagFailed,
+		EventNodeSubmitted,
+		EventNodeRunning,
+		EventNodeStateChange,
+		EventNodeCompleted,
+		EventNodeFailed:
 		return true
 	default:
 		return false
@@ -127,7 +129,7 @@ func (n *DagRuntimeEventNotifier) listProjectUserIDs(ctx context.Context, projec
 	return rows, nil
 }
 
-func (n *DagRuntimeEventNotifier) buildRealtimeMessage(ctx context.Context, runtimeEvent dag.RuntimeEvent) (map[string]any, bool) {
+func (n *DagRuntimeEventNotifier) buildRealtimeMessage(ctx context.Context, runtimeEvent RuntimeEvent) (map[string]any, bool) {
 	message := map[string]any{
 		"action": "component.invoke",
 		"payload": map[string]any{
@@ -137,22 +139,22 @@ func (n *DagRuntimeEventNotifier) buildRealtimeMessage(ctx context.Context, runt
 	payload := message["payload"].(map[string]any)
 
 	switch runtimeEvent.Name {
-	case dag.EventDagStarted:
+	case EventDagStarted:
 		payload["id"] = fmt.Sprint(runtimeEvent.AnalysisID)
 		payload["method"] = "dagStarted"
 		payload["args"] = map[string]any{"status": "running", "id": runtimeEvent.AnalysisID}
 		return message, true
-	case dag.EventDagCompleted:
+	case EventDagCompleted:
 		payload["id"] = fmt.Sprint(runtimeEvent.AnalysisID)
 		payload["method"] = "dagDone"
 		payload["args"] = map[string]any{"status": "done", "id": runtimeEvent.AnalysisID}
 		return message, true
-	case dag.EventDagFailed:
+	case EventDagFailed:
 		payload["id"] = fmt.Sprint(runtimeEvent.AnalysisID)
 		payload["method"] = "dagDone"
 		payload["args"] = map[string]any{"status": "failed", "id": runtimeEvent.AnalysisID}
 		return message, true
-	case dag.EventNodeSubmitted, dag.EventNodeRunning, dag.EventNodeStateChange, dag.EventNodeCompleted, dag.EventNodeFailed:
+	case EventNodeSubmitted, EventNodeRunning, EventNodeStateChange, EventNodeCompleted, EventNodeFailed:
 		analysisNodeID, err := n.resolveAnalysisNodeID(ctx, runtimeEvent)
 		if err != nil {
 			logger.Warnf(ctx, "[Realtime] resolve analysis node id failed analysis_id=%s node_id=%s event=%s err=%v", runtimeEvent.AnalysisID, runtimeEvent.NodeID, runtimeEvent.Name, err)
@@ -171,7 +173,7 @@ func (n *DagRuntimeEventNotifier) buildRealtimeMessage(ctx context.Context, runt
 	}
 }
 
-func (n *DagRuntimeEventNotifier) resolveAnalysisNodeID(ctx context.Context, runtimeEvent dag.RuntimeEvent) (string, error) {
+func (n *DagRuntimeEventNotifier) resolveAnalysisNodeID(ctx context.Context, runtimeEvent RuntimeEvent) (string, error) {
 	if runtimeEvent.AnalysisNodeID > 0 {
 		return strconv.FormatInt(runtimeEvent.AnalysisNodeID, 10), nil
 	}
@@ -191,52 +193,52 @@ func (n *DagRuntimeEventNotifier) resolveAnalysisNodeID(ctx context.Context, run
 	// return strconv.FormatInt(node.ID, 10), nil
 }
 
-func (n *DagRuntimeEventNotifier) resolveNodeRealtimeStatusAndMethod(runtimeEvent dag.RuntimeEvent) (string, string) {
+func (n *DagRuntimeEventNotifier) resolveNodeRealtimeStatusAndMethod(runtimeEvent RuntimeEvent) (string, string) {
 	payloadStatus := strings.TrimSpace(strings.ToLower(n.payloadString(runtimeEvent, "status")))
 
 	switch runtimeEvent.Name {
-	case dag.EventNodeSubmitted:
+	case EventNodeSubmitted:
 		if payloadStatus == "" {
-			payloadStatus = dag.StatusSubmitted
+			payloadStatus = StatusSubmitted
 		}
 		return payloadStatus, "analysisSubmitted"
-	case dag.EventNodeRunning:
+	case EventNodeRunning:
 		if payloadStatus == "" {
-			payloadStatus = dag.StatusRunning
+			payloadStatus = StatusRunning
 		}
 		return payloadStatus, "analysisStarted"
-	case dag.EventNodeFailed:
+	case EventNodeFailed:
 		if payloadStatus == "" {
-			payloadStatus = dag.StatusFailed
+			payloadStatus = StatusFailed
 		}
 		return payloadStatus, "analysisDone"
-	case dag.EventNodeCompleted:
+	case EventNodeCompleted:
 		if payloadStatus == "" {
-			payloadStatus = dag.StatusDone
+			payloadStatus = StatusDone
 		}
 		return payloadStatus, "analysisDone"
-	case dag.EventNodeStateChange:
+	case EventNodeStateChange:
 		if payloadStatus == "" {
-			payloadStatus = dag.StatusRunning
+			payloadStatus = StatusRunning
 		}
 		switch payloadStatus {
-		case dag.StatusDone, dag.StatusFailed, dag.StatusStopped, dag.StatusSkipped, dag.StatusCached:
+		case StatusDone, StatusFailed, StatusStopped, StatusSkipped, StatusCached:
 			return payloadStatus, "analysisDone"
-		case dag.StatusSubmitted:
+		case StatusSubmitted:
 			return payloadStatus, "analysisSubmitted"
 		default:
 			return payloadStatus, "analysisStarted"
 		}
 	default:
-		return dag.StatusRunning, "analysisStarted"
+		return StatusRunning, "analysisStarted"
 	}
 }
 
-func (n *DagRuntimeEventNotifier) analysisNodeIDFromPayload(runtimeEvent dag.RuntimeEvent) string {
+func (n *DagRuntimeEventNotifier) analysisNodeIDFromPayload(runtimeEvent RuntimeEvent) string {
 	return n.payloadString(runtimeEvent, "analysis_node_id")
 }
 
-func (n *DagRuntimeEventNotifier) payloadString(runtimeEvent dag.RuntimeEvent, key string) string {
+func (n *DagRuntimeEventNotifier) payloadString(runtimeEvent RuntimeEvent, key string) string {
 	if runtimeEvent.Payload == nil {
 		return ""
 	}
