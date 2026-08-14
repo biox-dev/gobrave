@@ -339,18 +339,18 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 
 	// Startup image status refresh
-	must(container.Invoke(func(cfg *config.Config, imageMgr *manager.ImageManager) {
-		enabled := true
-		if cfg != nil && cfg.Container != nil {
-			enabled = cfg.Container.RefreshImageStatusOnStart
-		}
-		if !enabled {
-			logger.Infof(context.Background(), "[Container] startup image status refresh disabled by config")
-			return
-		}
+	// must(container.Invoke(func(cfg *config.Config, imageMgr *manager.ImageManager) {
+	// 	enabled := true
+	// 	if cfg != nil && cfg.Container != nil {
+	// 		enabled = cfg.Container.RefreshImageStatusOnStart
+	// 	}
+	// 	if !enabled {
+	// 		logger.Infof(context.Background(), "[Container] startup image status refresh disabled by config")
+	// 		return
+	// 	}
 
-		manager.RunImageStatusRefreshOnStart(imageMgr)
-	}))
+	// 	manager.RunImageStatusRefreshOnStart(imageMgr)
+	// }))
 
 	// Startup DAG recovery
 	must(container.Invoke(func(cfg *config.Config, orchestrator interfaces.DagOrchestrator) {

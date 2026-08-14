@@ -76,7 +76,7 @@ type ContainerCreateWorker struct {
 	workflowService  interfaces.WorkflowService
 	reg              *containerruntime.Registry
 	res              ContainerRuntimeResolver
-	img              *ImageManager
+	// img              *ImageManager
 	containerManager *ContainerManager
 	cfg              *config.Config
 	// maxConcurrency   int
@@ -90,19 +90,19 @@ func NewContainerCreateWorker(
 	workflowService interfaces.WorkflowService,
 	reg *containerruntime.Registry,
 	res ContainerRuntimeResolver,
-	img *ImageManager,
+	// img *ImageManager,
 	containerManager *ContainerManager,
 	cfg *config.Config,
 ) *ContainerCreateWorker {
 
 	return &ContainerCreateWorker{
-		repo:             repo,
-		projectRepo:      projectRepo,
-		analysisRepo:     analysisRepo,
-		workflowService:  workflowService,
-		reg:              reg,
-		res:              res,
-		img:              img,
+		repo:            repo,
+		projectRepo:     projectRepo,
+		analysisRepo:    analysisRepo,
+		workflowService: workflowService,
+		reg:             reg,
+		res:             res,
+		// img:              img,
 		containerManager: containerManager,
 		cfg:              cfg,
 		// maxConcurrency:  maxConcurrency,
@@ -323,13 +323,13 @@ func (w *ContainerCreateWorker) executeCreate(
 		return err
 	}
 
-	if w.img != nil {
-		if err := w.img.EnsureImageReadyByEntity(ctx, runtimeName, img); err != nil {
-			_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerImagePrepareFailed")
-			// _ = w.createContainerEvent(ctx, inst.ID, "ContainerImagePrepareFailedDetail", err.Error())
-			return err
-		}
-	}
+	// if w.img != nil {
+	// 	if err := w.img.EnsureImageReadyByEntity(ctx, runtimeName, img); err != nil {
+	// 		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerImagePrepareFailed")
+	// 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerImagePrepareFailedDetail", err.Error())
+	// 		return err
+	// 	}
+	// }
 
 	volumes := parseVolumes(tpl.Volumes)
 	volumes = append(volumes, w.resolveOwnerProjectVolumes(ctx, ownerType, ownerID)...)
