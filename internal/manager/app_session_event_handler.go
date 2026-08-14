@@ -107,12 +107,11 @@ func (h *AppSessionEventHandler) notifyStatusChanged(ctx context.Context, sessio
 	msg := map[string]any{
 		"action": "component.invoke",
 		"payload": map[string]any{
-			"category": "analysis",
+			"category": "app-session",
 			"id":       strconv.FormatInt(session.ID, 10),
-			"parentId": "container",
 			"method":   method,
 			"args": map[string]any{
-				"id":     session.ID,
+				"id":     strconv.FormatInt(session.ID, 10),
 				"status": strings.ToLower(strings.TrimSpace(session.Status)),
 			},
 		},
