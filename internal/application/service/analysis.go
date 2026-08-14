@@ -47,6 +47,10 @@ func (s *analysisService) GetAnalysisByAnalysisID(ctx context.Context, analysisI
 	return s.analysisRepo.GetAnalysisByAnalysisID(ctx, analysisID)
 }
 
+func (s *analysisService) ListAnalysisByProjectID(ctx context.Context, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, error) {
+	return s.analysisRepo.ListAnalysisByProjectID(ctx, projectID, query)
+}
+
 func (s *analysisService) PageAnalysisByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}

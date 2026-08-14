@@ -83,6 +83,59 @@ func (r *analysisRepository) ListAnalysisByJobStatus(ctx context.Context, jobSta
 	return items, nil
 }
 
+func (r *analysisRepository) ListAnalysisByProjectID(ctx context.Context, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, error) {
+	items := make([]*types.Analysis, 0)
+	base := r.db.WithContext(ctx).Model(&types.Analysis{}).Where("project_id = ?", projectID)
+
+	if query != nil {
+		if len(query.IDs) > 0 {
+			base = base.Where("id IN ?", query.IDs)
+		}
+
+		if query.ID != nil && *query.ID > 0 {
+			base = base.Where("id = ?", *query.ID)
+		}
+
+		if analysisID := query.GetAnalysisID(); analysisID != "" {
+			base = base.Where("analysis_id = ?", analysisID)
+		}
+
+		if analysisName := query.GetAnalysisName(); analysisName != "" {
+			base = base.Where("analysis_name LIKE ?", "%"+analysisName+"%")
+		}
+
+		if workflowID := query.GetWorkflowID(); workflowID != "" {
+			base = base.Where("relation_id = ?", workflowID)
+		}
+
+		if jobStatus := query.GetJobStatus(); jobStatus != "" {
+			base = base.Where("job_status = ?", jobStatus)
+		}
+
+		if serverStatus := query.GetServerStatus(); serverStatus != "" {
+			base = base.Where("server_status = ?", serverStatus)
+		}
+
+		if query.IsReport != nil {
+			base = base.Where("is_report = ?", *query.IsReport)
+		}
+
+		if query.CacheType != nil {
+			base = base.Where("cache_type = ?", *query.CacheType)
+		}
+	}
+
+	err := base.
+		Order("created_at DESC").
+		Order("id DESC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
 func (r *analysisRepository) PageAnalysisByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}

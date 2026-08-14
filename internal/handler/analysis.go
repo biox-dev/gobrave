@@ -96,6 +96,30 @@ type VisualizationNodeTreeResponse struct {
 	Result       []VisualizationNodeTreeItem `json:"result"`
 }
 
+type listAnalysisTreeRequest struct {
+	types.AnalysisQuey
+}
+
+type listAnalysisTreeChild struct {
+	Title              string `json:"title"`
+	Type               string `json:"type"`
+	Key                string `json:"key"`
+	AnalysisID         string `json:"analysis_id"`
+	RelationID         string `json:"relation_id"`
+	RelationName       string `json:"relation_name"`
+	RelationType       string `json:"relation_type"`
+	JobStatus          string `json:"job_status"`
+	ServerStatus       string `json:"server_status"`
+	RelationOrderIndex int    `json:"relation_order_index"`
+}
+
+type listAnalysisTreeParent struct {
+	Title    string                  `json:"title"`
+	Key      string                  `json:"key"`
+	Type     string                  `json:"type"`
+	Children []listAnalysisTreeChild `json:"children"`
+}
+
 type analysisControllerRequest struct {
 	RequestParam   map[string]interface{} `json:"request_param" binding:"required"`
 	AnalysisNodeID string                 `json:"analysis_node_id"`
@@ -2450,6 +2474,156 @@ func (h *AnalysisHandler) AnalysisNodeParams(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, params)
+}
+
+// ListAnalysisTree godoc
+// @Summary      分析树列表
+// @Description  兼容 Python /list-analysis-tree，按 workflow(relation) 分组返回分析树，子节点 key 使用 analysis_id
+// @Tags         分析
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.listAnalysisTreeRequest  true  "查询参数"
+// @Success      200      {array}   handler.listAnalysisTreeParent
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /list-analysis-tree [post]
+func (h *AnalysisHandler) ListAnalysisTree(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req listAnalysisTreeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	activeProject, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("active project not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get active project").WithDetails(err.Error()))
+		return
+	}
+
+	analysisList, err := h.analysisService.ListAnalysisByProjectID(c.Request.Context(), activeProject.ID, &req.AnalysisQuey)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to list analyses").WithDetails(err.Error()))
+		return
+	}
+
+	type relationMeta struct {
+		Name       string
+		Type       string
+		OrderIndex int
+	}
+
+	relationMetaMap := make(map[string]relationMeta)
+	for _, item := range analysisList {
+		if item == nil {
+			continue
+		}
+		relationID := strings.TrimSpace(item.WorkflowID)
+		if relationID == "" {
+			continue
+		}
+		if _, exists := relationMetaMap[relationID]; exists {
+			continue
+		}
+
+		workflow, err := h.workflowService.GetWorkflowByWorkflowID(c.Request.Context(), relationID)
+		if err != nil {
+			if stderrs.Is(err, gorm.ErrRecordNotFound) {
+				relationMetaMap[relationID] = relationMeta{Name: relationID, Type: "", OrderIndex: 0}
+				continue
+			}
+			c.Error(errors.NewInternalServerError("failed to get workflow metadata").WithDetails(err.Error()))
+			return
+		}
+
+		name := relationID
+		relationType := ""
+		orderIndex := 0
+		if workflow != nil {
+			if v := strings.TrimSpace(workflow.Name); v != "" {
+				name = v
+			}
+			relationType = strings.TrimSpace(workflow.RelationType)
+			orderIndex = workflow.OrderIndex
+		}
+
+		relationMetaMap[relationID] = relationMeta{Name: name, Type: relationType, OrderIndex: orderIndex}
+	}
+
+	sort.SliceStable(analysisList, func(i, j int) bool {
+		left := relationMetaMap[strings.TrimSpace(analysisList[i].WorkflowID)].OrderIndex
+		right := relationMetaMap[strings.TrimSpace(analysisList[j].WorkflowID)].OrderIndex
+
+		leftHas := left > 0
+		rightHas := right > 0
+		if leftHas != rightHas {
+			return leftHas
+		}
+		if left != right {
+			return left > right
+		}
+		return analysisList[i].CreatedAt.After(analysisList[j].CreatedAt)
+	})
+
+	parentByRelation := make(map[string]*listAnalysisTreeParent)
+	relationOrder := make([]string, 0)
+
+	for _, item := range analysisList {
+		if item == nil {
+			continue
+		}
+		relationID := strings.TrimSpace(item.WorkflowID)
+		if relationID == "" {
+			continue
+		}
+
+		meta := relationMetaMap[relationID]
+		parent, exists := parentByRelation[relationID]
+		if !exists {
+			parent = &listAnalysisTreeParent{
+				Title:    meta.Name,
+				Key:      relationID,
+				Type:     "relation",
+				Children: make([]listAnalysisTreeChild, 0),
+			}
+			parentByRelation[relationID] = parent
+			relationOrder = append(relationOrder, relationID)
+		}
+
+		analysisKey := fmt.Sprintf("%d", item.ID)
+		parent.Children = append(parent.Children, listAnalysisTreeChild{
+			Title:              item.AnalysisName,
+			Type:               "analysis",
+			Key:                analysisKey,
+			AnalysisID:         analysisKey,
+			RelationID:         relationID,
+			RelationName:       meta.Name,
+			RelationType:       meta.Type,
+			JobStatus:          item.JobStatus,
+			ServerStatus:       item.ServerStatus,
+			RelationOrderIndex: meta.OrderIndex,
+		})
+	}
+
+	result := make([]listAnalysisTreeParent, 0, len(relationOrder))
+	for _, relationID := range relationOrder {
+		if parent := parentByRelation[relationID]; parent != nil {
+			result = append(result, *parent)
+		}
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 // VisualizationNodeTree godoc

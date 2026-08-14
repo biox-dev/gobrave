@@ -12,6 +12,7 @@ type AnalysisService interface {
 	UpdateAnalysisNodeByID(ctx context.Context, analysisNodeID int64, values map[string]any) error
 	GetAnalysisByID(ctx context.Context, analysisID int64) (*types.Analysis, error)
 	GetAnalysisByAnalysisID(ctx context.Context, analysisID string) (*types.Analysis, error)
+	ListAnalysisByProjectID(ctx context.Context, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, error)
 	PageAnalysisByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, int64, error)
 	GetAnalysisNodeByID(ctx context.Context, id int64) (*types.AnalysisNode, error)
 	GetAnalysisNodeByAnalysisNodeID(ctx context.Context, analysisNodeID string) (*types.AnalysisNode, error)
@@ -27,6 +28,7 @@ type AnalysisRepository interface {
 	GetAnalysisByID(ctx context.Context, analysisID int64) (*types.Analysis, error)
 	GetAnalysisByAnalysisID(ctx context.Context, analysisID string) (*types.Analysis, error)
 	ListAnalysisByJobStatus(ctx context.Context, jobStatus string) ([]*types.Analysis, error)
+	ListAnalysisByProjectID(ctx context.Context, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, error)
 	PageAnalysisByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, int64, error)
 	GetAnalysisNodeByID(ctx context.Context, id int64) (*types.AnalysisNode, error)
 	GetAnalysisNodeByAnalysisNodeID(ctx context.Context, analysisNodeID string) (*types.AnalysisNode, error)
