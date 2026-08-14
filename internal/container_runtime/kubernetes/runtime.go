@@ -211,6 +211,9 @@ func (k *KubernetesRuntime) Stop(ctx context.Context, runtimeID string) error {
 			}
 			return err
 		}
+		if !containerruntime.IsRuntimeMonitoring(runtimeID) {
+			k.emitEvent("ContainerExited", runtimeID, "0")
+		}
 		return nil
 	case workloadKindJob:
 		policy := metav1.DeletePropagationForeground
@@ -221,6 +224,9 @@ func (k *KubernetesRuntime) Stop(ctx context.Context, runtimeID string) error {
 				return nil
 			}
 			return fmt.Errorf("delete job %s: %w", meta.Name, err)
+		}
+		if !containerruntime.IsRuntimeMonitoring(runtimeID) {
+			k.emitEvent("ContainerExited", runtimeID, "0")
 		}
 		return nil
 	default:

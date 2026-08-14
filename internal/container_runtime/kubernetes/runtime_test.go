@@ -177,3 +177,39 @@ func TestDeleteJob_EmitsContainerDeletedWhenNotMonitored(t *testing.T) {
 		t.Fatalf("expected job to be deleted, err=%v", err)
 	}
 }
+
+func TestStopJob_EmitsContainerExitedWhenNotMonitored(t *testing.T) {
+	handler := &testRuntimeEventHandler{}
+	k := &KubernetesRuntime{
+		name:      "k8s",
+		namespace: "default",
+		clientset: fake.NewSimpleClientset(&batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{Name: "stop-job", Namespace: "default"},
+		}),
+	}
+	k.SetEventHandler(handler)
+
+	runtimeID := k.runtimeID("default", workloadKindJob, "stop-job")
+	for containerruntime.IsRuntimeMonitoring(runtimeID) {
+		containerruntime.UnmarkRuntimeMonitoring(runtimeID)
+	}
+
+	if err := k.Stop(context.Background(), runtimeID); err != nil {
+		t.Fatalf("stop job failed: %v", err)
+	}
+
+	if len(handler.events) != 1 {
+		t.Fatalf("expected exactly one runtime event, got %d", len(handler.events))
+	}
+	if handler.events[0].Type != "ContainerExited" {
+		t.Fatalf("expected ContainerExited event, got %s", handler.events[0].Type)
+	}
+	if handler.events[0].Message != "0" {
+		t.Fatalf("expected exit code message 0, got %s", handler.events[0].Message)
+	}
+
+	_, err := k.clientset.BatchV1().Jobs("default").Get(context.Background(), "stop-job", metav1.GetOptions{})
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected job to be deleted by stop, err=%v", err)
+	}
+}
