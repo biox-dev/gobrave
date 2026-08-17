@@ -31,6 +31,7 @@ const (
 	OutboxEventTypeDeleteRequest = "ContainerDeleteRequest"
 	// OutboxEventTypeStartRequest is the outbox event type for container start requests.
 	OutboxEventTypeStartRequest = "ContainerStartRequest"
+	dockerSocketPath            = "/var/run/docker.sock"
 )
 
 // Ensure ContainerCreateWorker implements event.Handler.
@@ -332,7 +333,9 @@ func (w *ContainerCreateWorker) executeCreate(
 	// }
 
 	volumes := parseVolumes(tpl.Volumes)
-	volumes = append(volumes, w.resolveOwnerProjectVolumes(ctx, ownerType, ownerID)...)
+	ownerCtx := w.loadOwnerRuntimeContext(ctx, ownerType, ownerID)
+	volumes = append(volumes, w.resolveOwnerProjectVolumes(ownerCtx)...)
+	resolveVars := w.buildRuntimeResolveVariables(ctx, w.cfg, img, templateID, ownerType, ownerID, name, ownerCtx)
 
 	// volumes默认添加 cfg.Storage.BaseDir 目录的绑定，确保容器可以访问到这个目录下的文件（如Rprofile等）
 	if w.cfg != nil && w.cfg.Storage != nil && w.cfg.Storage.BaseDir != "" {
@@ -386,7 +389,6 @@ func (w *ContainerCreateWorker) executeCreate(
 		spec.ExposeService = false
 	}
 
-	resolveVars := w.buildRuntimeResolveVariables(ctx, w.cfg, img, templateID, ownerType, ownerID, name)
 	if ownerType == types.ContainerOwnerDagNode {
 		applyDagNodeRuntimeSpec(spec, resolveVars, runtimeName)
 	}
@@ -398,6 +400,12 @@ func (w *ContainerCreateWorker) executeCreate(
 			_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerResolveSpecFailed")
 			// _ = w.createContainerEvent(ctx, inst.ID, "ContainerResolveSpecFailedDetail", err.Error())
 			return err
+		}
+	}
+
+	if hasDockerSocketVolume(spec.Volumes) {
+		if gid, ok := resolvePathGID(dockerSocketPath); ok {
+			spec.SupplementalGroups = appendUniqueInt64(spec.SupplementalGroups, parseInt64WithDefault(gid, 0))
 		}
 	}
 
@@ -722,55 +730,66 @@ func (w *ContainerCreateWorker) getRuntimeByInstance(inst *types.ContainerInstan
 // 	}
 // }
 
-// resolveOwnerProjectVolumes appends project-level volumes based on the owner.
-func (w *ContainerCreateWorker) resolveOwnerProjectVolumes(ctx context.Context, ownerType types.ContainerOwnerType, ownerID int64) []types.ContainerVolume {
-	if w.projectRepo == nil {
-		return nil
-	}
-
-	projectID := w.resolveProjectIDByOwner(ctx, ownerType, ownerID)
-	if projectID == 0 {
-		return nil
-	}
-
-	project, err := w.projectRepo.GetProjectByID(ctx, projectID)
-	if err != nil || project == nil {
-		return nil
-	}
-
-	return parseVolumes(project.Volumes)
+type ownerRuntimeContext struct {
+	session   *types.AppSession
+	node      *types.AnalysisNode
+	project   *types.Project
+	projectID int64
 }
 
-// resolveProjectIDByOwner resolves a project ID from an owner type and ID.
-func (w *ContainerCreateWorker) resolveProjectIDByOwner(ctx context.Context, ownerType types.ContainerOwnerType, ownerID int64) int64 {
+func (w *ContainerCreateWorker) loadOwnerRuntimeContext(ctx context.Context, ownerType types.ContainerOwnerType, ownerID int64) *ownerRuntimeContext {
+	ownerCtx := &ownerRuntimeContext{}
+
 	switch ownerType {
 	case types.ContainerOwnerAppSession:
 		session, err := w.repo.GetAppSessionByID(ctx, ownerID)
-		if err != nil || session == nil {
-			return 0
-		}
-		return session.ProjectID
-	case types.ContainerOwnerDagNode:
-		if w.analysisRepo == nil {
-			return 0
-		}
-		node, err := w.analysisRepo.GetAnalysisNodeByID(ctx, ownerID)
-		if err != nil || node == nil {
-			return 0
+		if err == nil && session != nil {
+			ownerCtx.session = session
+			ownerCtx.projectID = session.ProjectID
+
+			if session.AnalysisNodeID != 0 && w.analysisRepo != nil {
+				node, nodeErr := w.analysisRepo.GetAnalysisNodeByID(ctx, session.AnalysisNodeID)
+				if nodeErr == nil && node != nil {
+					ownerCtx.node = node
+				}
+			}
 		}
 
-		if node.ProjectID != 0 {
-			return node.ProjectID
+	case types.ContainerOwnerDagNode:
+		if w.analysisRepo != nil {
+			node, err := w.analysisRepo.GetAnalysisNodeByID(ctx, ownerID)
+			if err == nil && node != nil {
+				ownerCtx.node = node
+				ownerCtx.projectID = node.ProjectID
+
+				if ownerCtx.projectID == 0 {
+					analysis, analysisErr := w.analysisRepo.GetAnalysisByID(ctx, node.AnalysisID)
+					if analysisErr == nil && analysis != nil {
+						logger.Warn(context.Background(), "use analysis projectid for owner context")
+						ownerCtx.projectID = analysis.ProjectID
+					}
+				}
+			}
 		}
-		analysis, err := w.analysisRepo.GetAnalysisByID(ctx, node.AnalysisID)
-		if err != nil || analysis == nil {
-			return 0
-		}
-		logger.Warn(context.Background(), "use analysis projectid for resolveProjectIDByOwner")
-		return analysis.ProjectID
-	default:
-		return 0
 	}
+
+	if ownerCtx.projectID != 0 && w.projectRepo != nil {
+		project, err := w.projectRepo.GetProjectByID(ctx, ownerCtx.projectID)
+		if err == nil && project != nil {
+			ownerCtx.project = project
+		}
+	}
+
+	return ownerCtx
+}
+
+// resolveOwnerProjectVolumes appends project-level volumes based on the owner.
+func (w *ContainerCreateWorker) resolveOwnerProjectVolumes(ownerCtx *ownerRuntimeContext) []types.ContainerVolume {
+	if ownerCtx == nil || ownerCtx.project == nil {
+		return nil
+	}
+
+	return parseVolumes(ownerCtx.project.Volumes)
 }
 
 // buildRuntimeResolveVariables builds the variable map used by the runtime resolver.
@@ -782,6 +801,7 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 	ownerType types.ContainerOwnerType,
 	ownerID int64,
 	name string,
+	ownerCtx *ownerRuntimeContext,
 ) map[string]string {
 	vars := map[string]string{}
 	baseDir := ""
@@ -834,56 +854,56 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 		}
 	}
 
-	if ownerType == types.ContainerOwnerAppSession && ownerID > 0 {
-		if session, err := w.repo.GetAppSessionByID(ctx, ownerID); err == nil && session != nil {
-			setRuntimeVar(vars, "APP_SESSION_ID", strconv.FormatInt(session.ID, 10))
-			setRuntimeVar(vars, "APPSESSION_ID", strconv.FormatInt(session.ID, 10))
-			setRuntimeVar(vars, "SYS_USER_ID", session.UserID)
-			setRuntimeVar(vars, "PROJECT_ID", strconv.FormatInt(session.ProjectID, 10))
-			user_project_dir := fmt.Sprintf("%s/data/%d", baseDir, session.ProjectID)
+	if ownerCtx != nil {
+		if ownerCtx.projectID != 0 {
+			setRuntimeVar(vars, "PROJECT_ID", strconv.FormatInt(ownerCtx.projectID, 10))
+			setRuntimeVar(vars, "PROJECTID", strconv.FormatInt(ownerCtx.projectID, 10))
+
 			if baseDir != "" {
-				setRuntimeVar(vars, "USER_PROJECT_DIR", user_project_dir)
+				setRuntimeVar(vars, "USER_PROJECT_DIR", fmt.Sprintf("%s/data/%d", baseDir, ownerCtx.projectID))
 			}
+		}
 
-			setRuntimeVar(vars, "PROJECTID", strconv.FormatInt(session.ProjectID, 10))
-			setRuntimeVar(vars, "WORKSPACE_PATH", session.WorkspacePath)
-			if session.WorkspacePath == "" {
-				setRuntimeVar(vars, "WORKSPACE_PATH", user_project_dir)
-			}
-
-			analysisNodeID := session.AnalysisNodeID
-			if analysisNodeID != 0 {
-				analysisNode, err := w.analysisRepo.GetAnalysisNodeByID(ctx, analysisNodeID)
-				if err == nil && analysisNode != nil {
-					if w.workflowService != nil {
-						scriptDir, mainFile, err := w.workflowService.GetScriptFileByScriptID(ctx, analysisNode.ScriptID)
-						if err == nil && strings.TrimSpace(mainFile) != "" && strings.TrimSpace(scriptDir) != "" {
-							scriptFile := filepath.Join(scriptDir, mainFile)
-							setRuntimeVar(vars, "SCRIPT_FILE", scriptFile)
-						}
-					}
-				}
-			}
-
-			setRuntimeVar(vars, "APP_TYPE", session.AppType)
+		if ownerCtx.project != nil {
+			setRuntimeVar(vars, "PROJECT_NAME", ownerCtx.project.ProjectName)
 		}
 	}
 
-	if ownerType == types.ContainerOwnerDagNode && ownerID > 0 && w.analysisRepo != nil {
-		if node, err := w.analysisRepo.GetAnalysisNodeByID(ctx, ownerID); err == nil && node != nil {
-			setRuntimeVar(vars, "ANALYSIS_NODE_ID", strconv.FormatUint(uint64(node.ID), 10))
-			setRuntimeVar(vars, "ANALYSIS_ID", strconv.FormatInt(node.AnalysisID, 10))
-			setRuntimeVar(vars, "NODE_ID", node.NodeID)
-			setRuntimeVar(vars, "WORKSPACE_PATH", node.WorkspaceDir)
-			setRuntimeVar(vars, "WORKSPACE_DIR", node.WorkspaceDir)
-			setRuntimeVar(vars, "OUTPUT_DIR", node.OutputDir)
-			setRuntimeVar(vars, "COMMAND_PATH", node.CommandPath)
-			setRuntimeVar(vars, "LOG_PATH", node.LogPath)
+	if ownerType == types.ContainerOwnerAppSession && ownerCtx != nil && ownerCtx.session != nil {
+		session := ownerCtx.session
+		setRuntimeVar(vars, "APP_SESSION_ID", strconv.FormatInt(session.ID, 10))
+		setRuntimeVar(vars, "APPSESSION_ID", strconv.FormatInt(session.ID, 10))
+		setRuntimeVar(vars, "SYS_USER_ID", session.UserID)
+		setRuntimeVar(vars, "WORKSPACE_PATH", session.WorkspacePath)
+		if session.WorkspacePath == "" && ownerCtx.projectID != 0 && baseDir != "" {
+			setRuntimeVar(vars, "WORKSPACE_PATH", fmt.Sprintf("%s/data/%s", baseDir, ownerCtx.project.ProjectID))
+		}
 
-			if strings.TrimSpace(node.LogPath) == "" {
-				if outputDir := strings.TrimSpace(node.OutputDir); outputDir != "" {
-					setRuntimeVar(vars, "LOG_PATH", filepath.Join(outputDir, "run.log"))
-				}
+		if ownerCtx.node != nil && w.workflowService != nil {
+			scriptDir, mainFile, err := w.workflowService.GetScriptFileByScriptID(ctx, ownerCtx.node.ScriptID)
+			if err == nil && strings.TrimSpace(mainFile) != "" && strings.TrimSpace(scriptDir) != "" {
+				scriptFile := filepath.Join(scriptDir, mainFile)
+				setRuntimeVar(vars, "SCRIPT_FILE", scriptFile)
+			}
+		}
+
+		setRuntimeVar(vars, "APP_TYPE", session.AppType)
+	}
+
+	if ownerType == types.ContainerOwnerDagNode && ownerCtx != nil && ownerCtx.node != nil {
+		node := ownerCtx.node
+		setRuntimeVar(vars, "ANALYSIS_NODE_ID", strconv.FormatUint(uint64(node.ID), 10))
+		setRuntimeVar(vars, "ANALYSIS_ID", strconv.FormatInt(node.AnalysisID, 10))
+		setRuntimeVar(vars, "NODE_ID", node.NodeID)
+		setRuntimeVar(vars, "WORKSPACE_PATH", node.WorkspaceDir)
+		setRuntimeVar(vars, "WORKSPACE_DIR", node.WorkspaceDir)
+		setRuntimeVar(vars, "OUTPUT_DIR", node.OutputDir)
+		setRuntimeVar(vars, "COMMAND_PATH", node.CommandPath)
+		setRuntimeVar(vars, "LOG_PATH", node.LogPath)
+
+		if strings.TrimSpace(node.LogPath) == "" {
+			if outputDir := strings.TrimSpace(node.OutputDir); outputDir != "" {
+				setRuntimeVar(vars, "LOG_PATH", filepath.Join(outputDir, "run.log"))
 			}
 		}
 	}
@@ -936,4 +956,35 @@ func (w *ContainerCreateWorker) buildRuntimeResourceName(ownerType types.Contain
 		return fmt.Sprintf("%s-%d", name, instanceID)
 	}
 	return name
+}
+
+func hasDockerSocketVolume(volumes []types.ContainerVolume) bool {
+	for _, volume := range volumes {
+		source := strings.TrimSpace(volume.Source)
+		target := strings.TrimSpace(volume.Target)
+		if source == dockerSocketPath || target == dockerSocketPath {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueInt64(values []int64, value int64) []int64 {
+	if value <= 0 {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func parseInt64WithDefault(raw string, fallback int64) int64 {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

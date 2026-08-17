@@ -309,6 +309,7 @@ type ContainerSpec struct {
 	Command              []string
 	Env                  map[string]string
 	Volumes              []ContainerVolume
+	SupplementalGroups   []int64
 	SchedulingConstraint *ContainerSchedulingSelector
 	User                 string
 	Labels               map[string]string

@@ -95,6 +95,9 @@ func cloneContainerSpec(spec *types.ContainerSpec) *types.ContainerSpec {
 	if spec.Volumes != nil {
 		cloned.Volumes = append([]types.ContainerVolume(nil), spec.Volumes...)
 	}
+	if spec.SupplementalGroups != nil {
+		cloned.SupplementalGroups = append([]int64(nil), spec.SupplementalGroups...)
+	}
 	if spec.SchedulingConstraint != nil {
 		constraints := make([]types.ContainerSchedulingConstraint, 0, len(spec.SchedulingConstraint.Constraints))
 		for _, item := range spec.SchedulingConstraint.Constraints {

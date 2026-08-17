@@ -542,12 +542,33 @@ func buildPodSpec(spec *types.ContainerSpec) corev1.PodSpec {
 	}
 
 	affinity := buildNodeAffinity(spec.SchedulingConstraint)
+	podSecurityContext := buildPodSecurityContext(spec)
 
 	return corev1.PodSpec{
-		Containers: []corev1.Container{container},
-		Volumes:    volumes,
-		Affinity:   affinity,
+		Containers:      []corev1.Container{container},
+		Volumes:         volumes,
+		Affinity:        affinity,
+		SecurityContext: podSecurityContext,
 	}
+}
+
+func buildPodSecurityContext(spec *types.ContainerSpec) *corev1.PodSecurityContext {
+	if spec == nil || len(spec.SupplementalGroups) == 0 {
+		return nil
+	}
+
+	groups := make([]int64, 0, len(spec.SupplementalGroups))
+	for _, gid := range spec.SupplementalGroups {
+		if gid <= 0 {
+			continue
+		}
+		groups = append(groups, gid)
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+
+	return &corev1.PodSecurityContext{SupplementalGroups: groups}
 }
 
 func buildNodeAffinity(selector *types.ContainerSchedulingSelector) *corev1.Affinity {
