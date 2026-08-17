@@ -39,6 +39,7 @@ type RouterParams struct {
 	SettingHandler   *handler.SettingHandler
 	SheetHandler     *handler.SheetHandler
 	UploadHandler    *handler.UploadHandler
+	FileHandler      *handler.FileHandler
 	ProxyHandler     *handler.ProxyHandler
 	RealtimeHandler  *handler.RealtimeHandler
 	LLMHandler       *handler.LLMHandler
@@ -97,6 +98,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterWorkflowRoutes(v1, params.WorkflowHandler)
 		RegisterSettingRoutes(v1, params.SettingHandler)
 		RegisterSheetRoutes(v1, params.SheetHandler)
+		RegisterFileRoutes(v1, params.FileHandler)
 		RegisterRealtimeRoutes(v1, params.RealtimeHandler)
 		RegisterLLMRoutes(v1, params.LLMHandler)
 	}
@@ -149,6 +151,17 @@ func RegisterSheetRoutes(r *gin.RouterGroup, handler *handler.SheetHandler) {
 	r.POST("/sheet/workbook/save", handler.WriteWorkbook)
 	r.GET("/sheet/workbook/by-file-id", handler.ReadWorkbookByFileID)
 	r.POST("/sheet/workbook/save/by-file-id", handler.WriteWorkbookByFileID)
+}
+
+func RegisterFileRoutes(r *gin.RouterGroup, handler *handler.FileHandler) {
+	r.GET("/file/list-project-dir", handler.ListProjectDir)
+	r.GET("/file/search", handler.Search)
+	r.GET("/file/download", handler.Download)
+	r.POST("/file/upload", handler.Upload)
+	r.POST("/file/create-dir", handler.CreateDir)
+	r.POST("/file/create-file", handler.CreateFile)
+	r.POST("/file/move", handler.Move)
+	r.POST("/file/delete", handler.Delete)
 }
 
 func RegisterDataRoutes(r *gin.RouterGroup, handler *handler.DataHandler) {

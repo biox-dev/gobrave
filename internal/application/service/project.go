@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gobravedev/gobrave/internal/types"
@@ -26,6 +27,20 @@ func (s *projectService) ListProjectByUserID(ctx context.Context, userID string)
 }
 func (s *projectService) GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error) {
 	return s.projectRepo.GetActiveProjectByUserID(ctx, userID)
+}
+
+func (s *projectService) GetActiveProjectDirByUserID(ctx context.Context, userID, baseDir string) (string, error) {
+	baseDir = strings.TrimSpace(baseDir)
+	if baseDir == "" {
+		return "", fmt.Errorf("storage base dir is empty")
+	}
+
+	project, err := s.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+
+	return utils.GetProjectDir(baseDir, project.ProjectID), nil
 }
 
 func (s *projectService) GetProjectByID(ctx context.Context, id int64) (*types.Project, error) {

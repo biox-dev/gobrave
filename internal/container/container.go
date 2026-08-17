@@ -286,6 +286,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewSettingHandler))
 	must(container.Provide(handler.NewSheetHandler))
 	must(container.Provide(handler.NewUploadHandler))
+	must(container.Provide(handler.NewFileHandler))
 	must(container.Provide(handler.NewProxyHandler))
 	must(container.Provide(realtime.NewHub))
 	must(container.Provide(handler.NewRealtimeHandler))
