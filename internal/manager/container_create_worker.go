@@ -335,7 +335,7 @@ func (w *ContainerCreateWorker) executeCreate(
 	volumes := parseVolumes(tpl.Volumes)
 	ownerCtx := w.loadOwnerRuntimeContext(ctx, ownerType, ownerID)
 	volumes = append(volumes, w.resolveOwnerProjectVolumes(ownerCtx)...)
-	resolveVars := w.buildRuntimeResolveVariables(ctx, w.cfg, img, templateID, ownerType, ownerID, name, ownerCtx)
+	resolveVars := w.buildRuntimeResolveVariables(ctx, tpl, w.cfg, templateID, ownerType, ownerID, name, ownerCtx)
 
 	// volumes默认添加 cfg.Storage.BaseDir 目录的绑定，确保容器可以访问到这个目录下的文件（如Rprofile等）
 	if w.cfg != nil && w.cfg.Storage != nil && w.cfg.Storage.BaseDir != "" {
@@ -795,8 +795,9 @@ func (w *ContainerCreateWorker) resolveOwnerProjectVolumes(ownerCtx *ownerRuntim
 // buildRuntimeResolveVariables builds the variable map used by the runtime resolver.
 func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 	ctx context.Context,
+	tpl *types.ContainerTemplate,
 	cfg *config.Config,
-	img *types.ContainerImage,
+	// img *types.ContainerImage,
 	templateID int64,
 	ownerType types.ContainerOwnerType,
 	ownerID int64,
@@ -822,8 +823,10 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 		setRuntimeVar(vars, "R_PROFILE", profilePath)
 		setRuntimeVar(vars, "PACKAGE_DIR", packageDir)
 
-		rPackageDir := fmt.Sprintf("%s/package/R/%s", baseDir, img.LibraryVersion)
+		rPackageDir := fmt.Sprintf("%s/package/R/%s", baseDir, tpl.RLibraryPath)
 		setRuntimeVar(vars, "R_PACKAGE_DIR", rPackageDir)
+		pythonPackageDir := fmt.Sprintf("%s/package/python/%s", baseDir, tpl.PythonLibraryPath)
+		setRuntimeVar(vars, "PYTHON_PACKAGE_DIR", pythonPackageDir)
 	}
 
 	if userID, ok := os.LookupEnv("USERID"); ok {
@@ -839,10 +842,13 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 
 	if dockerGID, ok := os.LookupEnv("DOCKER_GID"); ok {
 		setRuntimeVar(vars, "DOCKER_GID", dockerGID)
+		setRuntimeVar(vars, "DOCKER_GROUPID", dockerGID)
 	} else if gid, ok := resolvePathGID("/var/run/docker.sock"); ok {
 		setRuntimeVar(vars, "DOCKER_GID", gid)
+		setRuntimeVar(vars, "DOCKER_GROUPID", gid)
 	} else {
 		setRuntimeVar(vars, "DOCKER_GID", vars["GROUPID"])
+		setRuntimeVar(vars, "DOCKER_GROUPID", vars["GROUPID"])
 	}
 
 	if ctx != nil {
@@ -852,22 +858,25 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 		if userID, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
 			setRuntimeVar(vars, "SYS_USER_ID", userID)
 		}
+		setRuntimeVar(vars, "USER_PROJECT_DIR", fmt.Sprintf("%s/data/%s", baseDir, ownerCtx.project.ProjectID))
+		setRuntimeVar(vars, "USER_CONFIG_DIR", fmt.Sprintf("%s/data/%s/.config", baseDir, ownerCtx.project.ProjectID))
+
 	}
 
-	if ownerCtx != nil {
-		if ownerCtx.projectID != 0 {
-			setRuntimeVar(vars, "PROJECT_ID", strconv.FormatInt(ownerCtx.projectID, 10))
-			setRuntimeVar(vars, "PROJECTID", strconv.FormatInt(ownerCtx.projectID, 10))
+	// if ownerCtx != nil {
+	// 	if ownerCtx.projectID != 0 {
+	// 		setRuntimeVar(vars, "PROJECT_ID", strconv.FormatInt(ownerCtx.projectID, 10))
+	// 		// setRuntimeVar(vars, "PROJECTID", strconv.FormatInt(ownerCtx.projectID, 10))
 
-			if baseDir != "" {
-				setRuntimeVar(vars, "USER_PROJECT_DIR", fmt.Sprintf("%s/data/%d", baseDir, ownerCtx.projectID))
-			}
-		}
+	// 		if baseDir != "" {
+	// 			setRuntimeVar(vars, "USER_PROJECT_DIR", fmt.Sprintf("%s/data/%d", baseDir, ownerCtx.projectID))
+	// 		}
+	// 	}
 
-		if ownerCtx.project != nil {
-			setRuntimeVar(vars, "PROJECT_NAME", ownerCtx.project.ProjectName)
-		}
-	}
+	// 	if ownerCtx.project != nil {
+	// 		setRuntimeVar(vars, "PROJECT_NAME", ownerCtx.project.ProjectName)
+	// 	}
+	// }
 
 	if ownerType == types.ContainerOwnerAppSession && ownerCtx != nil && ownerCtx.session != nil {
 		session := ownerCtx.session
@@ -917,7 +926,7 @@ func (w *ContainerCreateWorker) ensureRuntimeFilesAndDirs(ctx context.Context, v
 		return
 	}
 
-	for _, key := range []string{"R_PACKAGE_DIR", "USER_PROJECT_DIR", "WORKSPACE_PATH"} {
+	for _, key := range []string{"R_PACKAGE_DIR", "USER_PROJECT_DIR", "WORKSPACE_PATH", "PYTHON_PACKAGE_DIR", "USER_CONFIG_DIR"} {
 		dir := strings.TrimSpace(vars[key])
 		if dir == "" {
 			continue

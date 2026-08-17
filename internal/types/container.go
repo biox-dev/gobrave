@@ -34,7 +34,7 @@ type ContainerImage struct {
 	Tag string `json:"tag" gorm:"type:varchar(128);not null;index"`
 	// 4.4
 
-	LibraryVersion string `json:"library_version" gorm:"type:varchar(128);index"`
+	// LibraryVersion string `json:"library_version" gorm:"type:varchar(128);index"`
 	// R 4.4 / Python 3.11
 
 	Registry string `json:"registry" gorm:"type:varchar(255);not null"`
@@ -110,8 +110,10 @@ type ContainerTemplate struct {
 	Labels               datatypes.JSON `json:"labels" gorm:"type:json"`
 	ChangeUID            bool           `json:"change_uid" gorm:"default:false"`
 
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	RLibraryPath      string    `json:"r_library_path" gorm:"type:varchar(512)"`
+	PythonLibraryPath string    `json:"python_library_path" gorm:"type:varchar(512)"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 func (ContainerTemplate) TableName() string {
