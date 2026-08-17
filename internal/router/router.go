@@ -376,6 +376,7 @@ func serveStatic(r *gin.Engine, cfg *config.Config) {
 	r.StaticFS("/images-data", http.Dir(dataDir))
 	logger.Infof(context.Background(), "[Router] Serving data files form %s at /data-analysis", dataDir)
 	r.StaticFS("/data-analysis", http.Dir(dataDir))
+	r.StaticFS("/data-project", http.Dir(dataDir))
 
 	analysisDir, err := utils.SafePathUnderBase(baseDir, filepath.Join(baseDir, "analysis"))
 	if err != nil {

@@ -2,6 +2,7 @@ package handler
 
 import (
 	stderrs "errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gobravedev/gobrave/internal/config"
 	appErrors "github.com/gobravedev/gobrave/internal/errors"
+	"github.com/gobravedev/gobrave/internal/types"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
 	"github.com/gobravedev/gobrave/internal/utils"
 	"gorm.io/gorm"
@@ -32,14 +34,16 @@ type fileItem struct {
 	IsDir    bool   `json:"is_dir"`
 	Size     *int64 `json:"size"`
 	Modified int64  `json:"modified"`
+	URL      string `json:"url"`
 }
 
 type listProjectDirResponse struct {
-	Items []fileItem `json:"items"`
-	Dir   string     `json:"dir"`
-	Total int        `json:"total"`
-	Page  int        `json:"page"`
-	Limit int        `json:"limit"`
+	Items     []fileItem `json:"items"`
+	Dir       string     `json:"dir"`
+	UrlPrefix string     `json:"url_prefix"`
+	Total     int        `json:"total"`
+	Page      int        `json:"page"`
+	Limit     int        `json:"limit"`
 }
 
 func (h *FileHandler) ListProjectDir(c *gin.Context) {
@@ -49,7 +53,9 @@ func (h *FileHandler) ListProjectDir(c *gin.Context) {
 	}
 
 	scope := strings.ToLower(strings.TrimSpace(c.DefaultQuery("type", "data")))
-	rootDir, err := h.resolveUserRootDir(c, userID, scope)
+	project, rootDir, err := h.resolveUserRootDir(c, userID, scope)
+	prefix := fmt.Sprintf("/data-project/%s", project.ProjectID)
+
 	if err != nil {
 		c.Error(err)
 		return
@@ -103,11 +109,14 @@ func (h *FileHandler) ListProjectDir(c *gin.Context) {
 			size = &s
 		}
 
+		itemURL := joinURLPath(prefix, currentPath, name)
+
 		items = append(items, fileItem{
 			Name:     name,
 			IsDir:    entry.IsDir(),
 			Size:     size,
 			Modified: info.ModTime().Unix(),
+			URL:      itemURL,
 		})
 	}
 
@@ -129,11 +138,12 @@ func (h *FileHandler) ListProjectDir(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, listProjectDirResponse{
-		Items: items[start:end],
-		Dir:   currentPath,
-		Total: total,
-		Page:  page,
-		Limit: limit,
+		Items:     items[start:end],
+		Dir:       currentPath,
+		UrlPrefix: prefix,
+		Total:     total,
+		Page:      page,
+		Limit:     limit,
 	})
 }
 
@@ -154,7 +164,7 @@ func (h *FileHandler) CreateDir(c *gin.Context) {
 		return
 	}
 
-	rootDir, err := h.resolveUserRootDir(c, userID, req.Type)
+	_, rootDir, err := h.resolveUserRootDir(c, userID, req.Type)
 	if err != nil {
 		c.Error(err)
 		return
@@ -200,7 +210,7 @@ func (h *FileHandler) CreateFile(c *gin.Context) {
 		return
 	}
 
-	rootDir, err := h.resolveUserRootDir(c, userID, req.Type)
+	_, rootDir, err := h.resolveUserRootDir(c, userID, req.Type)
 	if err != nil {
 		c.Error(err)
 		return
@@ -266,7 +276,7 @@ func (h *FileHandler) Move(c *gin.Context) {
 		return
 	}
 
-	rootDir, err := h.resolveUserRootDir(c, userID, req.Type)
+	_, rootDir, err := h.resolveUserRootDir(c, userID, req.Type)
 	if err != nil {
 		c.Error(err)
 		return
@@ -354,7 +364,7 @@ func (h *FileHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	rootDir, err := h.resolveUserRootDir(c, userID, req.Type)
+	_, rootDir, err := h.resolveUserRootDir(c, userID, req.Type)
 	if err != nil {
 		c.Error(err)
 		return
@@ -400,7 +410,7 @@ func (h *FileHandler) Upload(c *gin.Context) {
 	}
 
 	scope := c.DefaultPostForm("type", "data")
-	rootDir, err := h.resolveUserRootDir(c, userID, scope)
+	_, rootDir, err := h.resolveUserRootDir(c, userID, scope)
 	if err != nil {
 		c.Error(err)
 		return
@@ -478,7 +488,7 @@ func (h *FileHandler) Download(c *gin.Context) {
 	}
 
 	scope := strings.ToLower(strings.TrimSpace(c.DefaultQuery("type", "data")))
-	rootDir, err := h.resolveUserRootDir(c, userID, scope)
+	_, rootDir, err := h.resolveUserRootDir(c, userID, scope)
 	if err != nil {
 		c.Error(err)
 		return
@@ -538,7 +548,7 @@ func (h *FileHandler) Search(c *gin.Context) {
 	}
 
 	scope := strings.ToLower(strings.TrimSpace(c.DefaultQuery("type", "data")))
-	rootDir, err := h.resolveUserRootDir(c, userID, scope)
+	_, rootDir, err := h.resolveUserRootDir(c, userID, scope)
 	if err != nil {
 		c.Error(err)
 		return
@@ -632,32 +642,20 @@ func (h *FileHandler) Search(c *gin.Context) {
 	})
 }
 
-func (h *FileHandler) resolveUserRootDir(c *gin.Context, userID, scope string) (string, error) {
+func (h *FileHandler) resolveUserRootDir(c *gin.Context, userID, scope string) (*types.Project, string, error) {
 	if h.cfg == nil || h.cfg.Storage == nil {
-		return "", appErrors.NewInternalServerError("storage config is not available")
+		return nil, "", appErrors.NewInternalServerError("storage config is not available")
 	}
 
 	baseDir := strings.TrimSpace(h.cfg.Storage.BaseDir)
 	if baseDir == "" {
-		return "", appErrors.NewInternalServerError("storage.base_dir is empty")
+		return nil, "", appErrors.NewInternalServerError("storage.base_dir is empty")
 	}
-
-	switch strings.ToLower(strings.TrimSpace(scope)) {
-	case "", "data":
-		dir, err := h.projectService.GetActiveProjectDirByUserID(c.Request.Context(), userID, baseDir)
-		if err != nil {
-			return "", mapProjectErr(err)
-		}
-		return dir, nil
-	case "analysis":
-		project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
-		if err != nil {
-			return "", mapProjectErr(err)
-		}
-		return filepath.Join(baseDir, "analysis", project.ProjectID), nil
-	default:
-		return "", appErrors.NewValidationError("invalid type, expected data or analysis")
+	project, dir, err := h.projectService.GetActiveProjectDirByUserID(c.Request.Context(), userID, baseDir)
+	if err != nil {
+		return nil, "", mapProjectErr(err)
 	}
+	return project, dir, nil
 }
 
 func mapProjectErr(err error) error {
@@ -745,4 +743,21 @@ func parsePositiveInt(raw string, fallback int) int {
 		return fallback
 	}
 	return v
+}
+
+func joinURLPath(parts ...string) string {
+	cleanParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		p := strings.TrimSpace(part)
+		if p == "" || p == "/" {
+			continue
+		}
+		cleanParts = append(cleanParts, strings.Trim(p, "/"))
+	}
+
+	if len(cleanParts) == 0 {
+		return "/"
+	}
+
+	return "/" + strings.Join(cleanParts, "/")
 }
