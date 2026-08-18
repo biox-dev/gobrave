@@ -89,7 +89,7 @@ jsonlite::write_json(outputs, file.path(output_dir, "outputs.json"), auto_unbox 
 `
 
 		// 用双引号包裹反引号，再和原始字符串拼接
-		fullCode := "\n```{r}\n" + rCode + "\n```"
+		fullCode := "\n```\n" + rCode + "\n```"
 		return `
 ---
 title: "title"
@@ -99,11 +99,11 @@ format:
 editor: source
 execute:
   echo: false
-knitr:
-  opts_chunk:
-    cache.path: "../cache/"
-editor_options: 
-  chunk_output_type: console
+# knitr:
+#   opts_chunk:
+#     cache.path: "../cache/"
+# editor_options: 
+#   chunk_output_type: console
 ---
         ` + fullCode
 	case "jupyter":
