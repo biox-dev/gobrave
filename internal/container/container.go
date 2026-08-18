@@ -132,6 +132,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(manager.NewDefaultContainerRuntimeResolver))
 	must(container.Provide(manager.NewImageManager))
 	must(container.Provide(manager.NewContainerManager))
+	must(container.Provide(func(mgr *manager.ContainerManager) dagruntime.NodeContainerOperator {
+		return mgr
+	}))
 	must(container.Provide(manager.NewOutboxDispatcher))
 	// Provide ContainerCreateWorker as its concrete type.
 	must(container.Provide(manager.NewContainerCreateWorker))
@@ -258,7 +261,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewContainerService))
 	must(container.Provide(service.NewLLMService))
 	must(container.Provide(service.NewSheetFileService))
-	must(container.Provide(service.NewNodeCompletionBootstrap))
+	must(container.Provide(
+		dagruntime.NewNodeCompletionCoordinator,
+		dig.As(new(event.Handler)),
+		dig.Group("event_handlers"),
+	))
 
 	// must(container.Provide(service.NewTraceService))
 	// must(container.Provide(service.NewAuthService))
@@ -327,10 +334,6 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// Startup runtime reconciler
 	must(container.Invoke(func(mgr *manager.ContainerManager) {
 		mgr.RunRuntimeReconciler(context.Background(), 600*time.Second)
-	}))
-	// Startup node completion coordinator
-	must(container.Invoke(func(bootstrap *service.NodeCompletionBootstrap) {
-		bootstrap.Start(context.Background())
 	}))
 	// Startup event handlers
 	must(container.Invoke(func(bus event.Bus, in eventHandlerGroupIn) {

@@ -235,6 +235,7 @@ const (
 	ContainerStartPending  ContainerStatus = "start_pending"
 	ContainerStarting      ContainerStatus = "starting"
 	ContainerStopped       ContainerStatus = "stopped"
+	ContainerDeleted       ContainerStatus = "deleted"
 	ContainerFailed        ContainerStatus = "failed"
 	ContainerExited        ContainerStatus = "exited"
 	ContainerDeletePending ContainerStatus = "delete_pending"

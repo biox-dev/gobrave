@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gobravedev/gobrave/internal/config"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/logger"
 	"github.com/gobravedev/gobrave/internal/types"
@@ -24,7 +25,7 @@ var _ event.Handler = (*NodeCompletionCoordinator)(nil)
 type NodeCompletionCoordinator struct {
 	analysisRepo    interfaces.AnalysisRepository
 	containerRepo   interfaces.ContainerRepository
-	containerOps    nodeContainerOperator
+	containerOps    NodeContainerOperator
 	outputResolver  nodeOutputResolver
 	runtime         *RuntimeEngine
 	bus             event.Bus
@@ -46,22 +47,24 @@ func newFileSystemNodeOutputResolver() nodeOutputResolver {
 	return &fileSystemNodeOutputResolver{}
 }
 
-type nodeContainerOperator interface {
+type NodeContainerOperator interface {
 	Delete(ctx context.Context, id int64) error
 }
 
 func NewNodeCompletionCoordinator(
 	analysisRepo interfaces.AnalysisRepository,
 	containerRepo interfaces.ContainerRepository,
-	containerOps nodeContainerOperator,
-	runtime *RuntimeEngine,
+	containerOps NodeContainerOperator,
 	bus event.Bus,
-	cleanup NodeFailureCleanupFunc,
-	deleteOnSuccess bool,
-	pollInterval time.Duration,
+	cfg *config.Config,
 ) *NodeCompletionCoordinator {
-	if runtime == nil {
-		runtime = NewRuntimeEngine(analysisRepo)
+	runtime := NewRuntimeEngine(analysisRepo)
+	pollInterval := 2 * time.Second
+	deleteOnSuccess := false
+	cleanup := buildNodeFailureCleanup(containerRepo, containerOps, cfg)
+
+	if cfg != nil && cfg.Container != nil {
+		deleteOnSuccess = cfg.Container.DeleteContainerOnNodeSuccess
 	}
 	if pollInterval <= 0 {
 		pollInterval = 2 * time.Second
@@ -78,6 +81,41 @@ func NewNodeCompletionCoordinator(
 		pollInterval:    pollInterval,
 		pollBatchLimit:  0,
 		inFlight:        make(map[int64]struct{}),
+	}
+}
+
+func buildNodeFailureCleanup(
+	containerRepo interfaces.ContainerRepository,
+	containerOps NodeContainerOperator,
+	cfg *config.Config,
+) NodeFailureCleanupFunc {
+	if containerRepo == nil || containerOps == nil {
+		return nil
+	}
+	if cfg == nil || cfg.Container == nil {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(cfg.Container.DagNodeCleanupOnFailed), "delete") {
+		return nil
+	}
+
+	return func(ctx context.Context, node *types.AnalysisNode) {
+		if node == nil || node.ID == 0 {
+			return
+		}
+		instances, err := containerRepo.ListContainerInstanceByOwnerTypeAndOwnerIDs(ctx, types.ContainerOwnerDagNode, []int64{int64(node.ID)})
+		if err != nil {
+			logger.Warnf(ctx, "[NodeCompletionCoordinator] list container instances for failed node cleanup failed, node_id=%s err=%v", node.NodeID, err)
+			return
+		}
+		for _, inst := range instances {
+			if inst == nil || inst.OwnerType != types.ContainerOwnerDagNode || inst.OwnerID != int64(node.ID) {
+				continue
+			}
+			if err := containerOps.Delete(ctx, inst.ID); err != nil {
+				logger.Warnf(ctx, "[NodeCompletionCoordinator] failed node cleanup delete failed, instance_id=%d runtime_id=%s err=%v", inst.ID, inst.RuntimeID, err)
+			}
+		}
 	}
 }
 
@@ -218,7 +256,7 @@ func (c *NodeCompletionCoordinator) reconcileContainer(ctx context.Context, inst
 		if latestErr == nil && latest != nil && IsTerminalStatus(latest.Status) {
 			return
 		}
-		logger.Warnf(ctx, "[NodeCompletionCoordinator] complete node failed, source=%s analysis_id=%s node_id=%s status=%s err=%v", source, node.AnalysisID, node.NodeID, finalStatus, err)
+		logger.Warnf(ctx, "[NodeCompletionCoordinator] complete node failed, source=%s analysis_id=%d node_id=%s status=%s err=%v", source, node.AnalysisID, node.NodeID, finalStatus, err)
 		return
 	}
 	// TODO 目前容器失败直接删除, 后续需要可配置, 方便查看失败日志

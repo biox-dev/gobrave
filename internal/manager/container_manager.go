@@ -591,16 +591,16 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		now := time.Now()
 		inst.FinishedAt = &now
 		// _ = m.transition(ctx, inst, fsm.Stopped, "ContainerStopped")
-		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerStopped, "ContainerStopped")
 
 		// Publish delete event immediately so current subscribers can react in this callback flow.
-		if m.bus != nil {
-			m.bus.Publish(types.ContainerEvent{
-				ContainerInstanceID: inst.ID,
-				Event:               "ContainerDeleted",
-				Message:             e.Message,
-			})
-		}
+		// if m.bus != nil {
+		// 	m.bus.Publish(types.ContainerEvent{
+		// 		ContainerInstanceID: inst.ID,
+		// 		Event:               "ContainerDeleted",
+		// 		Message:             e.Message,
+		// 	})
+		// }
+		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerDeleted, "ContainerDeleted")
 
 		if err := m.containerRepo.DeleteContainerInstance(ctx, inst.ID); err != nil {
 			logger.Warnf(ctx, "[ContainerManager] delete container instance failed, instance_id=%d runtime_id=%s err=%v", inst.ID, e.RuntimeID, err)
