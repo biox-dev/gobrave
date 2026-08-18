@@ -83,9 +83,9 @@ outputs <- list(
 jsonlite::write_json(outputs, file.path(output_dir, "outputs.json"), auto_unbox = TRUE, pretty = TRUE)
     `
 	case "qmd":
-		rCode := `library(tidyverse)
-params <- jsonlite::fromJSON("params.json", simplifyVector = FALSE)
-output_dir <- params$output_dir
+		rCode := `# library(tidyverse)
+# params <- jsonlite::fromJSON("params.json", simplifyVector = FALSE)
+# output_dir <- params$output_dir
 `
 
 		// 用双引号包裹反引号，再和原始字符串拼接

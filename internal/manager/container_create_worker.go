@@ -823,10 +823,12 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 		setRuntimeVar(vars, "R_PROFILE", profilePath)
 		setRuntimeVar(vars, "PACKAGE_DIR", packageDir)
 
-		rPackageDir := fmt.Sprintf("%s/package/R/%s", baseDir, tpl.RLibraryPath)
+		rPackageDir := fmt.Sprintf("%s/package/R/%s", baseDir, tpl.GetRLibraryPath())
 		setRuntimeVar(vars, "R_PACKAGE_DIR", rPackageDir)
-		pythonPackageDir := fmt.Sprintf("%s/package/python/%s", baseDir, tpl.PythonLibraryPath)
+		pythonPackageDir := fmt.Sprintf("%s/package/python/%s", baseDir, tpl.GetPythonLibraryPath())
 		setRuntimeVar(vars, "PYTHON_PACKAGE_DIR", pythonPackageDir)
+		condaPackageDir := fmt.Sprintf("%s/package/conda/%s", baseDir, tpl.GetCondaLibraryPath())
+		setRuntimeVar(vars, "CONDA_PACKAGE_DIR", condaPackageDir)
 	}
 
 	if userID, ok := os.LookupEnv("USERID"); ok {
@@ -926,7 +928,7 @@ func (w *ContainerCreateWorker) ensureRuntimeFilesAndDirs(ctx context.Context, v
 		return
 	}
 
-	for _, key := range []string{"R_PACKAGE_DIR", "USER_PROJECT_DIR", "WORKSPACE_PATH", "PYTHON_PACKAGE_DIR", "USER_CONFIG_DIR"} {
+	for _, key := range []string{"R_PACKAGE_DIR", "USER_PROJECT_DIR", "WORKSPACE_PATH", "PYTHON_PACKAGE_DIR", "USER_CONFIG_DIR", "CONDA_PACKAGE_DIR"} {
 		dir := strings.TrimSpace(vars[key])
 		if dir == "" {
 			continue

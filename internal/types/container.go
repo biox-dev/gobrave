@@ -112,8 +112,28 @@ type ContainerTemplate struct {
 
 	RLibraryPath      string    `json:"r_library_path" gorm:"type:varchar(512)"`
 	PythonLibraryPath string    `json:"python_library_path" gorm:"type:varchar(512)"`
+	CondaLibraryPath  string    `json:"conda_library_path" gorm:"type:varchar(512)"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+func (c *ContainerTemplate) GetRLibraryPath() string {
+	if c.RLibraryPath == "" {
+		return "R_DEFAULT_LIBS"
+	}
+	return c.RLibraryPath
+}
+func (c *ContainerTemplate) GetPythonLibraryPath() string {
+	if c.PythonLibraryPath == "" {
+		return "PYTHON_DEFAULT_LIBS"
+	}
+	return c.PythonLibraryPath
+}
+func (c *ContainerTemplate) GetCondaLibraryPath() string {
+	if c.CondaLibraryPath == "" {
+		return "CONDA_DEFAULT_LIBS"
+	}
+	return c.CondaLibraryPath
 }
 
 func (ContainerTemplate) TableName() string {
