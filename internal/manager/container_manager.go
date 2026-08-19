@@ -166,13 +166,11 @@ func (s *ContainerManager) GetMaxConcurrency() int {
 //	}
 func (m *ContainerManager) CreateByTemplate(
 	ctx context.Context,
-	runtimeName string,
 	templateID int64,
 	ownerType types.ContainerOwnerType,
 	ownerID int64,
 	name string,
 ) (*types.ContainerInstance, error) {
-	runtimeName = m.resolveRuntimeName(runtimeName)
 
 	tpl, err := m.containerRepo.GetContainerTemplateByID(ctx, templateID)
 	if err != nil {
@@ -184,7 +182,7 @@ func (m *ContainerManager) CreateByTemplate(
 		return nil, err
 	}
 
-	_, err = m.getRuntimeByName(runtimeName)
+	_, err = m.getRuntime()
 	if err != nil {
 		return nil, err
 	}
@@ -198,22 +196,27 @@ func (m *ContainerManager) CreateByTemplate(
 	}
 
 	// Always enqueue the create request through the worker.
-	userID := ""
-	if ctx != nil {
-		if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
-			userID = uid
-		} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
-			userID = uid
-		}
-	}
+	// userID := ""
+	// if ctx != nil {
+	// 	if uid, ok := ctx.Value(types.UserIDContextKey).(string); ok {
+	// 		userID = uid
+	// 	} else if uid, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
+	// 		userID = uid
+	// 	}
+	// }
 
-	req := containerCreatePayload{
-		RuntimeName: runtimeName,
-		TemplateID:  templateID,
-		OwnerType:   string(ownerType),
-		OwnerID:     ownerID,
-		Name:        name,
-		UserID:      userID,
+	// req := containerCreatePayload{
+	// 	// RuntimeName: runtimeName,
+	// 	TemplateID: templateID,
+	// 	OwnerType:  string(ownerType),
+	// 	OwnerID:    ownerID,
+	// 	Name:       name,
+	// 	UserID:     userID,
+	// }
+	req := types.ContainerEvent{
+		ContainerInstanceID: inst.ID,
+		Event:               string(types.ContainerCreatePending),
+		Message:             string(types.ContainerCreatePending),
 	}
 	maxPending := m.getCreateQueueMaxPending()
 
@@ -676,40 +679,41 @@ func parseRuntimeExitCode(raw string) (int, bool) {
 // 	})
 // }
 
-func (m *ContainerManager) getRuntimeByName(name string) (containerruntime.Runtime, error) {
-	if name == "" {
+func (m *ContainerManager) getRuntime() (containerruntime.Runtime, error) {
+	runtimeName := m.resolveRuntimeName()
+	if runtimeName == "" {
 		return nil, errors.New("runtime name is required")
 	}
-	rt := m.reg.Get(name)
+	rt := m.reg.Get(runtimeName)
 	if rt == nil {
-		return nil, fmt.Errorf("runtime not found: %s", name)
+		return nil, fmt.Errorf("runtime not found: %s", runtimeName)
 	}
 	return rt, nil
 }
 
-func (m *ContainerManager) resolveRuntimeName(runtimeName string) string {
-	runtimeName = strings.TrimSpace(runtimeName)
-	if runtimeName != "" {
-		normalized := strings.ToLower(runtimeName)
-		switch normalized {
-		case "kubernetes":
-			normalized = "k8s"
-		}
+func (m *ContainerManager) resolveRuntimeName() string {
+	// runtimeName = strings.TrimSpace(runtimeName)
+	// if runtimeName != "" {
+	// 	normalized := strings.ToLower(runtimeName)
+	// 	switch normalized {
+	// 	case "kubernetes":
+	// 		normalized = "k8s"
+	// 	}
 
-		if m.reg != nil {
-			if m.reg.Get(normalized) != nil {
-				return normalized
-			}
-			if normalized == "k8s" && m.reg.Get("k3s") != nil {
-				return "k3s"
-			}
-			if normalized == "k3s" && m.reg.Get("k8s") != nil {
-				return "k8s"
-			}
-		}
+	// 	if m.reg != nil {
+	// 		if m.reg.Get(normalized) != nil {
+	// 			return normalized
+	// 		}
+	// 		if normalized == "k8s" && m.reg.Get("k3s") != nil {
+	// 			return "k3s"
+	// 		}
+	// 		if normalized == "k3s" && m.reg.Get("k8s") != nil {
+	// 			return "k8s"
+	// 		}
+	// 	}
 
-		return normalized
-	}
+	// 	return normalized
+	// }
 
 	if m.cfg != nil {
 		resolved := config.ResolveContainerRuntime(m.cfg)
@@ -886,7 +890,7 @@ func applyDagNodeTaskSpec(spec *types.ContainerSpec, logPath string) {
 	spec.Command = []string{"-c", script}
 }
 
-func applyDagNodeRuntimeSpec(spec *types.ContainerSpec, resolveVars map[string]string, runtimeName string) {
+func (m *ContainerManager) applyDagNodeRuntimeSpec(spec *types.ContainerSpec, resolveVars map[string]string) {
 	if spec == nil {
 		return
 	}
@@ -910,7 +914,7 @@ func applyDagNodeRuntimeSpec(spec *types.ContainerSpec, resolveVars map[string]s
 		return
 	}
 	gid := strings.TrimSpace(resolveVars["GROUPID"])
-
+	runtimeName := m.resolveRuntimeName()
 	switch strings.ToLower(strings.TrimSpace(runtimeName)) {
 	case "docker":
 		if gid != "" {

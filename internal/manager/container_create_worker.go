@@ -30,6 +30,8 @@ const (
 	// OutboxEventTypeDeleteRequest is the outbox event type for container delete requests.
 	OutboxEventTypeDeleteRequest = "ContainerDeleteRequest"
 	// OutboxEventTypeStartRequest is the outbox event type for container start requests.
+	OutboxEventTypeRecreateRequest = "AppSessionContainerRecreateRequest"
+
 	OutboxEventTypeStartRequest = "ContainerStartRequest"
 	dockerSocketPath            = "/var/run/docker.sock"
 )
@@ -38,15 +40,15 @@ const (
 var _ event.Handler = (*ContainerCreateWorker)(nil)
 
 // containerCreatePayload is stored in OutboxEvent.Payload for deferred container creation.
-type containerCreatePayload struct {
-	ContainerInstanceID int64  `json:"container_instance_id"`
-	RuntimeName         string `json:"runtime_name"`
-	TemplateID          int64  `json:"template_id"`
-	OwnerType           string `json:"owner_type"`
-	OwnerID             int64  `json:"owner_id"`
-	Name                string `json:"name"`
-	UserID              string `json:"user_id,omitempty"`
-}
+// type containerCreatePayload struct {
+// 	ContainerInstanceID int64 `json:"container_instance_id"`
+// 	// RuntimeName         string `json:"runtime_name"`
+// 	TemplateID int64  `json:"template_id"`
+// 	OwnerType  string `json:"owner_type"`
+// 	OwnerID    int64  `json:"owner_id"`
+// 	Name       string `json:"name"`
+// 	UserID     string `json:"user_id,omitempty"`
+// }
 
 // // containerStopPayload is stored in OutboxEvent.Payload for deferred container stop.
 // type containerStopPayload struct {
@@ -128,6 +130,8 @@ func (w *ContainerCreateWorker) Handle(evt event.Event) {
 
 	case OutboxStartRequestEvent:
 		w.handleStartRequest(context.Background(), e)
+	case OutboxRecreateRequestEvent:
+		w.handleRecreateRequest(context.Background(), e)
 	}
 }
 
@@ -135,7 +139,7 @@ func (w *ContainerCreateWorker) Handle(evt event.Event) {
 // The outbox is marked sent later in handleContainerEvent when the
 // corresponding container reaches a stable state.
 func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req OutboxCreateRequestEvent) {
-	var payload containerCreatePayload
+	var payload types.ContainerEvent
 	if err := json.Unmarshal(req.RawPayload, &payload); err != nil {
 		logger.Errorf(ctx, "[ContainerCreateWorker] unmarshal create payload failed, outbox_id=%d err=%v", req.OutboxID, err)
 		_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
@@ -143,22 +147,22 @@ func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req Out
 	}
 
 	logger.Infof(ctx, "[ContainerCreateWorker] handling create request, outbox_id=%d instance_id=%d name=%s",
-		req.OutboxID, payload.ContainerInstanceID, payload.Name)
+		req.OutboxID, payload.ContainerInstanceID)
 
 	execCtx := ctx
-	if payload.UserID != "" {
-		execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
-	}
+	// if payload.UserID != "" {
+	// 	execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
+	// }
 
-	ownerType := types.ContainerOwnerType(payload.OwnerType)
+	// ownerType := types.ContainerOwnerType(payload.OwnerType)
 
 	if err := w.executeCreate(
 		execCtx,
-		payload.RuntimeName,
-		payload.TemplateID,
-		ownerType,
-		payload.OwnerID,
-		payload.Name,
+		// payload.RuntimeName,
+		// payload.TemplateID,
+		// ownerType,
+		// payload.OwnerID,
+		// payload.Name,
 		payload.ContainerInstanceID,
 	); err != nil {
 		if errors.Is(err, errWorkerInvalidState) {
@@ -181,6 +185,32 @@ func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req Out
 		req.OutboxID, payload.ContainerInstanceID)
 }
 
+func (w *ContainerCreateWorker) handleRecreateRequest(ctx context.Context, req OutboxRecreateRequestEvent) {
+	var payload types.ContainerEvent
+	if err := json.Unmarshal(req.RawPayload, &payload); err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] unmarshal recreate payload failed, outbox_id=%d err=%v", req.OutboxID, err)
+		_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
+		return
+	}
+
+	logger.Infof(ctx, "[ContainerCreateWorker] handling recreate request, outbox_id=%d instance_id=%d",
+		req.OutboxID, payload.ContainerInstanceID)
+
+	execCtx := ctx
+
+	if err := w.executeRecreate(execCtx, payload.ContainerInstanceID); err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] execute recreate failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
+		_ = w.repo.MarkOutboxEventPending(ctx, req.OutboxID)
+		return
+	}
+
+	if err := w.repo.MarkOutboxEventSent(ctx, req.OutboxID); err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] mark outbox sent failed, outbox_id=%d instance_id=%d err=%v", req.OutboxID, payload.ContainerInstanceID, err)
+		return
+	}
+
+}
+
 // handleStopRequest unmarshals the payload, executes the stop, and marks the outbox as sent.
 func (w *ContainerCreateWorker) handleStopRequest(ctx context.Context, req OutboxStopRequestEvent) {
 	var payload types.ContainerEvent
@@ -193,10 +223,10 @@ func (w *ContainerCreateWorker) handleStopRequest(ctx context.Context, req Outbo
 	logger.Infof(ctx, "[ContainerCreateWorker] handling stop request, outbox_id=%d instance_id=%d",
 		req.OutboxID, payload.ContainerInstanceID)
 
-	execCtx := ctx
 	// if payload.UserID != "" {
 	// 	execCtx = context.WithValue(ctx, types.UserIDContextKey, payload.UserID)
 	// }
+	execCtx := ctx
 
 	if err := w.executeStop(execCtx, payload.ContainerInstanceID); err != nil {
 		logger.Errorf(ctx, "[ContainerCreateWorker] execute stop failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
@@ -283,11 +313,11 @@ func (w *ContainerCreateWorker) handleStartRequest(ctx context.Context, req Outb
 // The ContainerInstance must already exist in DB with status=pending.
 func (w *ContainerCreateWorker) executeCreate(
 	ctx context.Context,
-	runtimeName string,
-	templateID int64,
-	ownerType types.ContainerOwnerType,
-	ownerID int64,
-	name string,
+	// runtimeName string,
+	// templateID int64,
+	// ownerType types.ContainerOwnerType,
+	// ownerID int64,
+	// name string,
 	instanceID int64,
 ) error {
 	// 1. Acquire capacity and transition to creating.
@@ -306,7 +336,7 @@ func (w *ContainerCreateWorker) executeCreate(
 		return err
 	}
 
-	tpl, err := w.repo.GetContainerTemplateByID(ctx, templateID)
+	tpl, err := w.repo.GetContainerTemplateByID(ctx, inst.TemplateID)
 	if err != nil {
 		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerTemplateNotFound")
 		return err
@@ -318,7 +348,8 @@ func (w *ContainerCreateWorker) executeCreate(
 		return err
 	}
 
-	rt, err := w.getRuntimeByName(runtimeName)
+	// rt, err := w.getRuntimeByName(runtimeName)
+	rt, err := w.containerManager.getRuntime()
 	if err != nil {
 		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerRuntimeNotFound")
 		return err
@@ -333,9 +364,9 @@ func (w *ContainerCreateWorker) executeCreate(
 	// }
 
 	volumes := parseVolumes(tpl.Volumes)
-	ownerCtx := w.loadOwnerRuntimeContext(ctx, ownerType, ownerID)
+	ownerCtx := w.loadOwnerRuntimeContext(ctx, inst.OwnerType, inst.OwnerID)
 	volumes = append(volumes, w.resolveOwnerProjectVolumes(ownerCtx)...)
-	resolveVars := w.buildRuntimeResolveVariables(ctx, tpl, w.cfg, templateID, ownerType, ownerID, name, ownerCtx)
+	resolveVars := w.buildRuntimeResolveVariables(ctx, tpl, w.cfg, inst.TemplateID, inst.OwnerType, inst.OwnerID, inst.Name, ownerCtx)
 
 	// volumes默认添加 cfg.Storage.BaseDir 目录的绑定，确保容器可以访问到这个目录下的文件（如Rprofile等）
 	if w.cfg != nil && w.cfg.Storage != nil && w.cfg.Storage.BaseDir != "" {
@@ -373,15 +404,15 @@ func (w *ContainerCreateWorker) executeCreate(
 		CPU:                  tpl.CPU,
 		Memory:               tpl.Memory,
 		WorkDir:              tpl.WorkDir,
-		RuntimeName:          w.buildRuntimeResourceName(ownerType, inst.ID, name),
+		RuntimeName:          w.buildRuntimeResourceName(inst.OwnerType, inst.ID, inst.Name),
 		ExposedPort:          tpl.Port,
 		Labels: map[string]string{
-			"gobrave-owner-type":  string(ownerType),
-			"gobrave-owner-id":    strconv.FormatInt(ownerID, 10),
+			"gobrave-owner-type":  string(inst.OwnerType),
+			"gobrave-owner-id":    strconv.FormatInt(inst.OwnerID, 10),
 			"gobrave-instance-id": strconv.FormatInt(inst.ID, 10),
 		},
 	}
-	if ownerType == types.ContainerOwnerAppSession {
+	if inst.OwnerType == types.ContainerOwnerAppSession {
 		spec.WorkloadKind = "deployment"
 		spec.ExposeService = tpl.Port > 0
 	} else {
@@ -389,8 +420,8 @@ func (w *ContainerCreateWorker) executeCreate(
 		spec.ExposeService = false
 	}
 
-	if ownerType == types.ContainerOwnerDagNode {
-		applyDagNodeRuntimeSpec(spec, resolveVars, runtimeName)
+	if inst.OwnerType == types.ContainerOwnerDagNode {
+		w.containerManager.applyDagNodeRuntimeSpec(spec, resolveVars)
 	}
 
 	if w.res != nil {
@@ -430,79 +461,24 @@ func (w *ContainerCreateWorker) executeCreate(
 	return nil
 }
 
-// getRuntimeByName resolves a runtime by name from the registry.
-func (w *ContainerCreateWorker) getRuntimeByName(name string) (containerruntime.Runtime, error) {
-	if name == "" {
-		return nil, errors.New("runtime name is required")
+func (w *ContainerCreateWorker) executeRecreate(ctx context.Context, instanceID int64) error {
+	if err := w.executeDelete(ctx, instanceID); err != nil {
+		return err
 	}
-	rt := w.reg.Get(name)
-	if rt == nil {
-		return nil, fmt.Errorf("runtime not found: %s", name)
-	}
-	return rt, nil
+	w.executeCreate(ctx, instanceID)
+	return nil
 }
 
-// transition performs an FSM state transition for a container instance within a transaction.
-// func (w *ContainerCreateWorker) transition(
-// 	ctx context.Context,
-// 	inst *types.ContainerInstance,
-// 	to types.ContainerStatus,
-// 	eventType string,
-// ) error {
-// 	if inst == nil {
-// 		return errors.New("container instance is nil")
+// getRuntimeByName resolves a runtime by name from the registry.
+// func (w *ContainerCreateWorker) getRuntimeByName(name string) (containerruntime.Runtime, error) {
+// 	if name == "" {
+// 		return nil, errors.New("runtime name is required")
 // 	}
-
-// 	return w.repo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-// 		latest, err := tx.GetContainerInstanceByID(ctx, inst.ID)
-// 		if err != nil {
-// 			return err
-// 		}
-
-// 		if latest.Status == to {
-// 			inst.Status = latest.Status
-// 			return nil
-// 		}
-
-// 		f := &fsm.FSM{}
-// 		if err := f.Transition(latest.Status, to); err != nil {
-// 			return err
-// 		}
-
-// 		inst.Status = to
-// 		if err := tx.UpdateContainerInstance(ctx, inst); err != nil {
-// 			return err
-// 		}
-
-// 		domainEvent := &types.ContainerEvent{
-// 			ContainerInstanceID: inst.ID,
-// 			Event:               eventType,
-// 			Message:             string(to),
-// 		}
-// 		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
-// 		// 	return err
-// 		// }
-
-// 		payload, err := json.Marshal(domainEvent)
-// 		if err != nil {
-// 			return err
-// 		}
-
-// 		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
-// 			Type:    eventType,
-// 			Payload: payload,
-// 			Status:  "pending",
-// 		})
-// 	})
-// }
-
-// createContainerEvent creates a simple container event record.
-// func (w *ContainerCreateWorker) createContainerEvent(ctx context.Context, instanceID int64, evt string, msg string) error {
-// 	return w.repo.CreateContainerEvent(ctx, &types.ContainerEvent{
-// 		ContainerInstanceID: instanceID,
-// 		Event:               evt,
-// 		Message:             msg,
-// 	})
+// 	rt := w.reg.Get(name)
+// 	if rt == nil {
+// 		return nil, fmt.Errorf("runtime not found: %s", name)
+// 	}
+// 	return rt, nil
 // }
 
 // executeStop performs the actual container stop. It is called by

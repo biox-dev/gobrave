@@ -238,6 +238,7 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	r.GET("/container/app-session/get", handler.GetAppSession)
 	r.GET("/container/app-session/list", handler.ListAppSession)
 	r.POST("/container/app-session/list-by-page", handler.PageAppSession)
+	r.POST("/container/app-session/recreate-container", handler.RecreateAppSessionContainer)
 
 	r.POST("/container/instance/list-by-page", handler.PageContainerInstance)
 	// r.POST("/container/event/list-by-page", handler.PageContainerEvent)

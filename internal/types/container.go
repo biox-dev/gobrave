@@ -226,20 +226,21 @@ const (
 type ContainerStatus string
 
 const (
-	ContainerCreatePending ContainerStatus = "create_pending"
-	ContainerCreating      ContainerStatus = "creating"
-	ContainerRunning       ContainerStatus = "running"
-	ContainerPaused        ContainerStatus = "paused"
-	ContainerStopPending   ContainerStatus = "stop_pending"
-	ContainerStopping      ContainerStatus = "stopping"
-	ContainerStartPending  ContainerStatus = "start_pending"
-	ContainerStarting      ContainerStatus = "starting"
-	ContainerStopped       ContainerStatus = "stopped"
-	ContainerDeleted       ContainerStatus = "deleted"
-	ContainerFailed        ContainerStatus = "failed"
-	ContainerExited        ContainerStatus = "exited"
-	ContainerDeletePending ContainerStatus = "delete_pending"
-	ContainerDeleting      ContainerStatus = "deleting"
+	ContainerCreatePending   ContainerStatus = "create_pending"
+	ContainerReCreatePending ContainerStatus = "recreate_pending"
+	ContainerCreating        ContainerStatus = "creating"
+	ContainerRunning         ContainerStatus = "running"
+	ContainerPaused          ContainerStatus = "paused"
+	ContainerStopPending     ContainerStatus = "stop_pending"
+	ContainerStopping        ContainerStatus = "stopping"
+	ContainerStartPending    ContainerStatus = "start_pending"
+	ContainerStarting        ContainerStatus = "starting"
+	ContainerStopped         ContainerStatus = "stopped"
+	ContainerDeleted         ContainerStatus = "deleted"
+	ContainerFailed          ContainerStatus = "failed"
+	ContainerExited          ContainerStatus = "exited"
+	ContainerDeletePending   ContainerStatus = "delete_pending"
+	ContainerDeleting        ContainerStatus = "deleting"
 )
 
 type ContainerInstance struct {

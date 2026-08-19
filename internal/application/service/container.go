@@ -153,14 +153,14 @@ func (s *containerService) createAppSessionByTemplate(ctx context.Context, userI
 		ContainerTemplateID: containerTemplateID,
 		Name:                name,
 		AppType:             tpl.AppType,
-		Status:              "PENDING_CREATION",
+		Status:              "CREATE_PENDING", //create_pending PENDING_CREATION
 		WorkspacePath:       strings.TrimSpace(workspacePath),
 	}
 	if err := s.containerRepo.CreateAppSession(ctx, session); err != nil {
 		return nil, err
 	}
 
-	_, err = s.containerMgr.CreateByTemplate(ctx, "", containerTemplateID, types.ContainerOwnerAppSession, session.ID, name)
+	_, err = s.containerMgr.CreateByTemplate(ctx, containerTemplateID, types.ContainerOwnerAppSession, session.ID, name)
 	if err != nil {
 		session.Status = "FAILED"
 		_ = s.containerRepo.UpdateAppSession(ctx, session)
@@ -353,4 +353,41 @@ func (s *containerService) ensureOwnedAppSession(ctx context.Context, userID str
 		return nil, gorm.ErrRecordNotFound
 	}
 	return session, nil
+}
+func (s *containerService) RecreateAppSessionContainer(ctx context.Context, userID string, appSessionID int64) error {
+	session, err := s.ensureOwnedAppSession(ctx, userID, appSessionID)
+	if err != nil {
+		return err
+	}
+
+	// payload, err := json.Marshal(map[string]any{
+	// 	"app_session_id": appSessionID,
+	// 	"user_id":        strings.TrimSpace(userID),
+	// })
+	if err != nil {
+		return err
+	}
+
+	// if err := s.containerRepo.CreateOutboxEvent(ctx, &types.OutboxEvent{
+	// 	Type:    manager.OutboxEventTypeAppSessionRecreateRequest,
+	// 	Payload: payload,
+	// 	Status:  "pending",
+	// }); err != nil {
+	// 	return err
+	// }
+
+	session.Status = "RECREATE_PENDING"
+	session.StoppedAt = nil
+	if err := s.containerRepo.UpdateAppSession(ctx, session); err != nil {
+		return err
+	}
+	inst, err := s.containerRepo.GetContainerInstanceByOwner(ctx, types.ContainerOwnerAppSession, session.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.containerMgr.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerReCreatePending, manager.OutboxEventTypeRecreateRequest); err != nil {
+		return err
+	}
+
+	return nil
 }

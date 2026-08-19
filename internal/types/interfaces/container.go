@@ -15,6 +15,7 @@ type ContainerService interface {
 	PageContainerImage(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
 	// TransitionContainerAndEnqueueOutbox(ctx context.Context, instance *types.ContainerInstance, to types.ContainerStatus, eventType string) error
 	// GetMaxConcurrency() int
+	RecreateAppSessionContainer(ctx context.Context, userID string, appSessionID int64) error
 
 	CreateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error
 	GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error)

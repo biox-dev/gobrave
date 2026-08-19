@@ -44,12 +44,18 @@ func (f *FSM) Transition(
 		}
 
 	case types.ContainerRunning:
-		if to == types.ContainerStopped || to == types.ContainerStopPending || to == types.ContainerStartPending || to == types.ContainerDeletePending || to == types.ContainerPaused || to == types.ContainerFailed {
+		if to == types.ContainerStopped ||
+			to == types.ContainerStopPending ||
+			to == types.ContainerStartPending ||
+			to == types.ContainerDeletePending ||
+			to == types.ContainerReCreatePending ||
+			to == types.ContainerPaused ||
+			to == types.ContainerFailed {
 			return nil
 		}
 
 	case types.ContainerPaused:
-		if to == types.ContainerRunning || to == types.ContainerStopped || to == types.ContainerStopPending || to == types.ContainerStartPending || to == types.ContainerDeletePending || to == types.ContainerFailed {
+		if to == types.ContainerRunning || to == types.ContainerStopped || to == types.ContainerStopPending || to == types.ContainerStartPending || to == types.ContainerDeletePending || to == types.ContainerFailed || to == types.ContainerReCreatePending {
 			return nil
 		}
 
@@ -64,7 +70,7 @@ func (f *FSM) Transition(
 		}
 
 	case types.ContainerStopped:
-		if to == types.ContainerRunning || to == types.ContainerStartPending || to == types.ContainerDeletePending {
+		if to == types.ContainerRunning || to == types.ContainerStartPending || to == types.ContainerDeletePending || to == types.ContainerReCreatePending {
 			return nil
 		}
 
@@ -89,7 +95,7 @@ func (f *FSM) Transition(
 		}
 
 	case types.ContainerFailed:
-		if to == types.ContainerDeletePending || to == types.ContainerRunning || to == types.ContainerStopped {
+		if to == types.ContainerDeletePending || to == types.ContainerRunning || to == types.ContainerStopped || to == types.ContainerReCreatePending {
 			return nil
 		}
 	}

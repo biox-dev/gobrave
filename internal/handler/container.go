@@ -543,6 +543,40 @@ func (h *ContainerHandler) CreateAppSession(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
+// RecreateAppSessionContainer godoc
+// @Summary      重建应用会话容器
+// @Description  不创建 AppSession，删除并重新创建 AppSession 对应的容器实例
+// @Tags         容器管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      appSessionIDBody        true  "请求参数"
+// @Success      200      {object}  map[string]string
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/app-session/recreate-container [post]
+func (h *ContainerHandler) RecreateAppSessionContainer(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req appSessionIDBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if err := h.containerService.RecreateAppSessionContainer(c.Request.Context(), userID, req.ID); err != nil {
+		handleDataError(c, err, "failed to recreate app session container")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "app session container recreate request submitted successfully"})
+}
+
 // CreateAppSessionByAnalysisNode godoc
 // @Summary      通过分析节点创建应用会话
 // @Description  依据 analysis_node_id 查询 AnalysisNode/Analysis/Module，自动推导 ProjectID、ContainerTemplateID、WorkspacePath 并创建 AppSession

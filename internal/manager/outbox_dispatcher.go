@@ -33,6 +33,11 @@ type OutboxDeleteRequestEvent struct {
 	RawPayload []byte
 }
 
+type OutboxRecreateRequestEvent struct {
+	OutboxID   int64
+	RawPayload []byte
+}
+
 // OutboxStartRequestEvent is published to the event bus when a
 // ContainerStartRequest outbox event is picked up.
 type OutboxStartRequestEvent struct {
@@ -145,6 +150,18 @@ func (d *OutboxDispatcher) dispatchOnce(ctx context.Context) {
 				continue
 			}
 			d.bus.Publish(OutboxStartRequestEvent{
+				OutboxID:   item.ID,
+				RawPayload: []byte(item.Payload),
+			})
+			continue
+		}
+
+		if item.Type == OutboxEventTypeRecreateRequest {
+			if err := d.repo.MarkOutboxEventProcessing(ctx, item.ID); err != nil {
+				logger.Errorf(ctx, "[OutboxDispatcher] mark recreate request processing failed, id=%d err=%v", item.ID, err)
+				continue
+			}
+			d.bus.Publish(OutboxRecreateRequestEvent{
 				OutboxID:   item.ID,
 				RawPayload: []byte(item.Payload),
 			})

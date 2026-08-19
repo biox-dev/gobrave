@@ -65,7 +65,6 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, node *types.AnalysisNo
 	instanceName := fmt.Sprintf("dag-node-%d-%d", node.AnalysisID, node.ID)
 	inst, err := e.containerMgr.CreateByTemplate(
 		ctx,
-		"",
 		scriptItem.ContainerTemplateID,
 		types.ContainerOwnerDagNode,
 		int64(node.ID),
