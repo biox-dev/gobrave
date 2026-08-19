@@ -228,6 +228,7 @@ type ContainerStatus string
 const (
 	ContainerCreatePending   ContainerStatus = "create_pending"
 	ContainerReCreatePending ContainerStatus = "recreate_pending"
+	ContainerReCreating      ContainerStatus = "recreating"
 	ContainerCreating        ContainerStatus = "creating"
 	ContainerRunning         ContainerStatus = "running"
 	ContainerPaused          ContainerStatus = "paused"

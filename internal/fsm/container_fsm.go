@@ -31,9 +31,16 @@ func (f *FSM) Transition(
 ) error {
 
 	switch from {
-
+	case types.ContainerReCreating:
+		if to == types.ContainerCreatePending {
+			return nil
+		}
+	case types.ContainerReCreatePending:
+		if to == types.ContainerReCreating {
+			return nil
+		}
 	case types.ContainerCreatePending:
-		if to == types.ContainerCreating || to == types.ContainerFailed || to == types.ContainerCreatePending {
+		if to == types.ContainerCreating || to == types.ContainerFailed {
 			return nil
 		}
 

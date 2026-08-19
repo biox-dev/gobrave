@@ -603,10 +603,15 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		// 		Message:             e.Message,
 		// 	})
 		// }
-		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerDeleted, "ContainerDeleted")
+		if inst.Status == types.ContainerReCreating {
+			_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerCreatePending, "OutboxEventTypeCreateRequest")
 
-		if err := m.containerRepo.DeleteContainerInstance(ctx, inst.ID); err != nil {
-			logger.Warnf(ctx, "[ContainerManager] delete container instance failed, instance_id=%d runtime_id=%s err=%v", inst.ID, e.RuntimeID, err)
+		} else {
+			_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerDeleted, "ContainerDeleted")
+
+			if err := m.containerRepo.DeleteContainerInstance(ctx, inst.ID); err != nil {
+				logger.Warnf(ctx, "[ContainerManager] delete container instance failed, instance_id=%d runtime_id=%s err=%v", inst.ID, e.RuntimeID, err)
+			}
 		}
 
 		// default:

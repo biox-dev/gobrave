@@ -468,6 +468,13 @@ func (w *ContainerCreateWorker) executeRecreate(ctx context.Context, instanceID 
 	if err != nil {
 		return err
 	}
+
+	// Transition to recreating.
+	if err := w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerReCreating, "ContainerReCreating"); err != nil {
+		return err
+	}
+
+	// Resolve runtime and delete the runtime resource.
 	rt, rtErr := w.getRuntimeByInstance(inst)
 	if rtErr == nil && inst.RuntimeID != "" {
 		if err := rt.Delete(ctx, inst.RuntimeID); err != nil {
@@ -475,7 +482,7 @@ func (w *ContainerCreateWorker) executeRecreate(ctx context.Context, instanceID 
 			// Continue with DB cleanup even if runtime delete fails.
 		}
 	}
-	w.executeCreate(ctx, inst)
+
 	return nil
 }
 
