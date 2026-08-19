@@ -565,7 +565,7 @@ func TestContainerManager_CreateByTemplate_StaysCreatingUntilStartedEvent(t *tes
 	}
 
 	// Now simulate worker processing: execute create synchronously
-	if err := worker.executeCreate(ctx, inst.ID); err != nil {
+	if err := worker.executeCreate(ctx, inst); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
@@ -669,7 +669,7 @@ func TestContainerManager_CreateByTemplate_ResolvesEnvAndVolumes(t *testing.T) {
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst.ID); err != nil {
+	if err := worker.executeCreate(ctx, inst); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
@@ -723,7 +723,7 @@ func TestContainerManager_CreateByTemplate_UsesAppSessionContextVariables(t *tes
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst.ID); err != nil {
+	if err := worker.executeCreate(ctx, inst); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
@@ -764,7 +764,7 @@ func TestContainerManager_CreateByTemplate_AppSessionMergesProjectVolumes(t *tes
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst.ID); err != nil {
+	if err := worker.executeCreate(ctx, inst); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
@@ -800,7 +800,7 @@ func TestContainerManager_CreateByTemplate_DagNodeUsesTaskCommand(t *testing.T) 
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerDagNode, OwnerID: 2001, Name: "dag-node-1", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst.ID); err != nil {
+	if err := worker.executeCreate(ctx, inst); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
@@ -845,7 +845,7 @@ func TestContainerManager_CreateByTemplate_ParsesSchedulingConstraint(t *testing
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst.ID); err != nil {
+	if err := worker.executeCreate(ctx, inst); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
@@ -884,7 +884,7 @@ func TestContainerManager_CreateByTemplate_UpdatesImageStatusToReady(t *testing.
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst.ID); err != nil {
+	if err := worker.executeCreate(ctx, inst); err != nil {
 		t.Fatalf("worker.executeCreate failed: %v", err)
 	}
 
@@ -912,7 +912,7 @@ func TestContainerManager_CreateByTemplate_ImagePrepareFailureMarksImageFailed(t
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	err := worker.executeCreate(ctx, inst.ID)
+	err := worker.executeCreate(ctx, inst)
 	if err == nil {
 		t.Fatalf("expected worker.executeCreate to fail when image prepare fails")
 	}

@@ -155,7 +155,12 @@ func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req Out
 	// }
 
 	// ownerType := types.ContainerOwnerType(payload.OwnerType)
-
+	inst, err := w.repo.GetContainerInstanceByID(ctx, payload.ContainerInstanceID)
+	if err != nil {
+		logger.Errorf(ctx, "[ContainerCreateWorker] get container instance failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
+		_ = w.repo.MarkOutboxEventPending(ctx, req.OutboxID)
+		return
+	}
 	if err := w.executeCreate(
 		execCtx,
 		// payload.RuntimeName,
@@ -163,7 +168,7 @@ func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req Out
 		// ownerType,
 		// payload.OwnerID,
 		// payload.Name,
-		payload.ContainerInstanceID,
+		inst,
 	); err != nil {
 		if errors.Is(err, errWorkerInvalidState) {
 			logger.Warnf(ctx, "[ContainerCreateWorker] skip stale create request, outbox_id=%d instance_id=%d err=%v",
@@ -318,20 +323,17 @@ func (w *ContainerCreateWorker) executeCreate(
 	// ownerType types.ContainerOwnerType,
 	// ownerID int64,
 	// name string,
-	instanceID int64,
+	inst *types.ContainerInstance,
 ) error {
 	// 1. Acquire capacity and transition to creating.
 	// 2. 变更ContainerInstance状态为 creating，创建 ContainerCreating 事件
 	// 3. 调用 runtime.Create + runtime.Start
-	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
-	if err != nil {
-		return err
-	}
+
 	if inst.Status != types.ContainerCreatePending {
-		return fmt.Errorf("%w: expected=%s actual=%s instance_id=%d", errWorkerInvalidState, types.ContainerCreatePending, inst.Status, instanceID)
+		return fmt.Errorf("%w: expected=%s actual=%s instance_id=%d", errWorkerInvalidState, types.ContainerCreatePending, inst.Status, inst.ID)
 	}
 	// inst, err := w.acquireCapacityAndTransition(ctx, instanceID, types.ContainerCreatePending, types.ContainerCreating, "ContainerCreating")
-	err = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerCreating, "ContainerCreating")
+	err := w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerCreating, "ContainerCreating")
 	if err != nil {
 		return err
 	}
@@ -462,10 +464,18 @@ func (w *ContainerCreateWorker) executeCreate(
 }
 
 func (w *ContainerCreateWorker) executeRecreate(ctx context.Context, instanceID int64) error {
-	if err := w.executeDelete(ctx, instanceID); err != nil {
+	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
+	if err != nil {
 		return err
 	}
-	w.executeCreate(ctx, instanceID)
+	rt, rtErr := w.getRuntimeByInstance(inst)
+	if rtErr == nil && inst.RuntimeID != "" {
+		if err := rt.Delete(ctx, inst.RuntimeID); err != nil {
+			logger.Errorf(ctx, "[ContainerCreateWorker] runtime delete failed, instance_id=%d err=%v", instanceID, err)
+			// Continue with DB cleanup even if runtime delete fails.
+		}
+	}
+	w.executeCreate(ctx, inst)
 	return nil
 }
 
