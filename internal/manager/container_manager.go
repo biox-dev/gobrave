@@ -604,7 +604,7 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		// 	})
 		// }
 		if inst.Status == types.ContainerReCreating {
-			_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerCreatePending, "OutboxEventTypeCreateRequest")
+			_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerCreatePending, OutboxEventTypeCreateRequest)
 
 		} else {
 			_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerDeleted, "ContainerDeleted")
