@@ -365,6 +365,9 @@ type ContainerVolume struct {
 	Source string
 	Target string
 	Mode   string
+	// Type 可选：值为 "file" 时源路径按文件创建，否则按目录创建。
+	Type  string
+	Owner string
 }
 
 type OutboxEvent struct {

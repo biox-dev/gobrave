@@ -364,11 +364,12 @@ func (w *ContainerCreateWorker) executeCreate(
 	// 		return err
 	// 	}
 	// }
-
-	volumes := parseVolumes(tpl.Volumes)
 	ownerCtx := w.loadOwnerRuntimeContext(ctx, inst.OwnerType, inst.OwnerID)
-	volumes = append(volumes, w.resolveOwnerProjectVolumes(ownerCtx)...)
 	resolveVars := w.buildRuntimeResolveVariables(ctx, tpl, w.cfg, inst.TemplateID, inst.OwnerType, inst.OwnerID, inst.Name, ownerCtx)
+
+	volumes := parseVolumes(tpl.Volumes, inst.OwnerType)
+	projectVolumes := parseVolumes(ownerCtx.project.Volumes, inst.OwnerType)
+	volumes = append(volumes, projectVolumes...)
 
 	// volumes默认添加 cfg.Storage.BaseDir 目录的绑定，确保容器可以访问到这个目录下的文件（如Rprofile等）
 	if w.cfg != nil && w.cfg.Storage != nil && w.cfg.Storage.BaseDir != "" {
@@ -427,13 +428,19 @@ func (w *ContainerCreateWorker) executeCreate(
 	}
 
 	if w.res != nil {
-		w.ensureRuntimeFilesAndDirs(ctx, resolveVars)
+		// w.ensureRuntimeFilesAndDirs(ctx, resolveVars)
 		spec, err = w.res.Resolve(ctx, &ContainerRuntimeResolveInput{Spec: spec, Variables: resolveVars})
 		if err != nil {
 			_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerResolveSpecFailed")
 			// _ = w.createContainerEvent(ctx, inst.ID, "ContainerResolveSpecFailedDetail", err.Error())
 			return err
 		}
+	}
+
+	// 创建 runtime 资源前，确保 volume source 都存在
+	if err := w.ensureVolumeSources(ctx, spec.Volumes); err != nil {
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerCreateVolumeSourceFailed")
+		return err
 	}
 
 	if hasDockerSocketVolume(spec.Volumes) {
@@ -777,13 +784,13 @@ func (w *ContainerCreateWorker) loadOwnerRuntimeContext(ctx context.Context, own
 }
 
 // resolveOwnerProjectVolumes appends project-level volumes based on the owner.
-func (w *ContainerCreateWorker) resolveOwnerProjectVolumes(ownerCtx *ownerRuntimeContext) []types.ContainerVolume {
-	if ownerCtx == nil || ownerCtx.project == nil {
-		return nil
-	}
+// func (w *ContainerCreateWorker) resolveOwnerProjectVolumes(ownerCtx *ownerRuntimeContext) []types.ContainerVolume {
+// 	if ownerCtx == nil || ownerCtx.project == nil {
+// 		return nil
+// 	}
 
-	return parseVolumes(ownerCtx.project.Volumes)
-}
+// 	return parseVolumes(ownerCtx.project.Volumes)
+// }
 
 // buildRuntimeResolveVariables builds the variable map used by the runtime resolver.
 func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
@@ -809,20 +816,18 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 	setRuntimeVar(vars, "OWNER_ID", strconv.FormatInt(ownerID, 10))
 	setRuntimeVar(vars, "CONTAINER_NAME", name)
 
-	if baseDir != "" {
-		packageDir := fmt.Sprintf("%s/package", baseDir)
-		profilePath := fmt.Sprintf("%s/Rprofile", packageDir)
-		ensureEmptyFileIfNotExists(ctx, profilePath)
-		setRuntimeVar(vars, "R_PROFILE", profilePath)
-		setRuntimeVar(vars, "PACKAGE_DIR", packageDir)
+	packageDir := fmt.Sprintf("%s/package", baseDir)
+	profilePath := fmt.Sprintf("%s/Rprofile", packageDir)
+	ensureEmptyFileIfNotExists(ctx, profilePath)
+	setRuntimeVar(vars, "R_PROFILE", profilePath)
+	setRuntimeVar(vars, "PACKAGE_DIR", packageDir)
 
-		rPackageDir := fmt.Sprintf("%s/package/R/%s", baseDir, tpl.GetRLibraryPath())
-		setRuntimeVar(vars, "R_PACKAGE_DIR", rPackageDir)
-		pythonPackageDir := fmt.Sprintf("%s/package/python/%s", baseDir, tpl.GetPythonLibraryPath())
-		setRuntimeVar(vars, "PYTHON_PACKAGE_DIR", pythonPackageDir)
-		condaPackageDir := fmt.Sprintf("%s/package/conda/%s", baseDir, tpl.GetCondaLibraryPath())
-		setRuntimeVar(vars, "CONDA_PACKAGE_DIR", condaPackageDir)
-	}
+	rPackageDir := fmt.Sprintf("%s/package/R/%s", baseDir, tpl.GetRLibraryPath())
+	setRuntimeVar(vars, "R_PACKAGE_DIR", rPackageDir)
+	pythonPackageDir := fmt.Sprintf("%s/package/python/%s", baseDir, tpl.GetPythonLibraryPath())
+	setRuntimeVar(vars, "PYTHON_PACKAGE_DIR", pythonPackageDir)
+	condaPackageDir := fmt.Sprintf("%s/package/conda/%s", baseDir, tpl.GetCondaLibraryPath())
+	setRuntimeVar(vars, "CONDA_PACKAGE_DIR", condaPackageDir)
 
 	if userID, ok := os.LookupEnv("USERID"); ok {
 		setRuntimeVar(vars, "USERID", userID)
@@ -846,17 +851,19 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 		setRuntimeVar(vars, "DOCKER_GROUPID", vars["GROUPID"])
 	}
 
-	if ctx != nil {
-		if userID, ok := ctx.Value(types.UserIDContextKey).(string); ok {
-			setRuntimeVar(vars, "SYS_USER_ID", userID)
-		}
-		if userID, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
-			setRuntimeVar(vars, "SYS_USER_ID", userID)
-		}
-		setRuntimeVar(vars, "USER_PROJECT_DIR", fmt.Sprintf("%s/data/%s", baseDir, ownerCtx.project.ProjectID))
-		setRuntimeVar(vars, "USER_CONFIG_DIR", fmt.Sprintf("%s/data/%s/.config", baseDir, ownerCtx.project.ProjectID))
+	// if ctx != nil {
+	// 	// if userID, ok := ctx.Value(types.UserIDContextKey).(string); ok {
+	// 	// 	setRuntimeVar(vars, "SYS_USER_ID", userID)
+	// 	// }
+	// 	// if userID, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
+	// 	// 	setRuntimeVar(vars, "SYS_USER_ID", userID)
+	// 	// }
 
-	}
+	// }
+	projectDir := fmt.Sprintf("%s/data/%s", baseDir, ownerCtx.project.ProjectID)
+	setRuntimeVar(vars, "PROJECT_DIR", projectDir)
+	projectConfigDir := fmt.Sprintf("%s/data/%s/.config", baseDir, ownerCtx.project.ProjectID)
+	setRuntimeVar(vars, "PROJECT_CONFIG_DIR", projectConfigDir)
 
 	// if ownerCtx != nil {
 	// 	if ownerCtx.projectID != 0 {
@@ -872,6 +879,8 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 	// 		setRuntimeVar(vars, "PROJECT_NAME", ownerCtx.project.ProjectName)
 	// 	}
 	// }
+	ensureEmptyFileIfNotExists(ctx, profilePath)
+	ensureDirs(ctx, []string{rPackageDir, pythonPackageDir, condaPackageDir, projectDir, projectConfigDir})
 
 	if ownerType == types.ContainerOwnerAppSession && ownerCtx != nil && ownerCtx.session != nil {
 		session := ownerCtx.session
@@ -879,8 +888,15 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 		setRuntimeVar(vars, "APPSESSION_ID", strconv.FormatInt(session.ID, 10))
 		setRuntimeVar(vars, "SYS_USER_ID", session.UserID)
 		setRuntimeVar(vars, "WORKSPACE_PATH", session.WorkspacePath)
+		userDir := fmt.Sprintf("%s/user/%s", baseDir, session.UserID)
+		setRuntimeVar(vars, "USER_DIR", userDir)
+		userConfigDir := fmt.Sprintf("%s/user/%s/.config", baseDir, session.UserID)
+		setRuntimeVar(vars, "USER_CONFIG_DIR", userConfigDir)
+
 		if session.WorkspacePath == "" && ownerCtx.projectID != 0 && baseDir != "" {
-			setRuntimeVar(vars, "WORKSPACE_PATH", fmt.Sprintf("%s/data/%s", baseDir, ownerCtx.project.ProjectID))
+			session.WorkspacePath = fmt.Sprintf("%s/data/%s", baseDir, ownerCtx.project.ProjectID)
+
+			setRuntimeVar(vars, "WORKSPACE_PATH", session.WorkspacePath)
 		}
 
 		if ownerCtx.node != nil && w.workflowService != nil {
@@ -892,6 +908,8 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 		}
 
 		setRuntimeVar(vars, "APP_TYPE", session.AppType)
+		ensureDirs(ctx, []string{session.WorkspacePath, userDir, userConfigDir})
+
 	}
 
 	if ownerType == types.ContainerOwnerDagNode && ownerCtx != nil && ownerCtx.node != nil {
@@ -910,30 +928,58 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 				setRuntimeVar(vars, "LOG_PATH", filepath.Join(outputDir, "run.log"))
 			}
 		}
+		ensureDirs(ctx, []string{node.WorkspaceDir, node.OutputDir})
+
 	}
 
 	return vars
 }
 
 // ensureRuntimeFilesAndDirs creates necessary directories and files for the runtime.
-func (w *ContainerCreateWorker) ensureRuntimeFilesAndDirs(ctx context.Context, vars map[string]string) {
-	if len(vars) == 0 {
+func ensureDirs(ctx context.Context, dirs []string) {
+	if len(dirs) == 0 {
 		return
 	}
-
-	for _, key := range []string{"R_PACKAGE_DIR", "USER_PROJECT_DIR", "WORKSPACE_PATH", "PYTHON_PACKAGE_DIR", "USER_CONFIG_DIR", "CONDA_PACKAGE_DIR"} {
-		dir := strings.TrimSpace(vars[key])
+	//  []string{"R_PACKAGE_DIR", "USER_PROJECT_DIR", "WORKSPACE_PATH", "PYTHON_PACKAGE_DIR", "USER_CONFIG_DIR", "CONDA_PACKAGE_DIR"}
+	for _, dir := range dirs {
+		// dir := strings.TrimSpace(vars[key])
 		if dir == "" {
 			continue
 		}
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			logger.Warnf(ctx, "[ContainerCreateWorker] create runtime directory failed, key=%s path=%s err=%v", key, dir, err)
-		}
+		ensureDir(ctx, dir)
 	}
 
-	if profilePath := strings.TrimSpace(vars["R_PROFILE"]); profilePath != "" {
-		ensureEmptyFileIfNotExists(ctx, profilePath)
+	// if profilePath := strings.TrimSpace(vars["R_PROFILE"]); profilePath != "" {
+	// 	ensureEmptyFileIfNotExists(ctx, profilePath)
+	// }
+}
+
+func ensureDir(ctx context.Context, dir string) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		logger.Warnf(ctx, "[ContainerCreateWorker] create runtime directory failed, path=%s err=%v", dir, err)
 	}
+}
+
+// ensureVolumeSources creates the host-side source path for each volume:
+// a file when Type is "file", otherwise a directory.
+func (w *ContainerCreateWorker) ensureVolumeSources(ctx context.Context, volumes []types.ContainerVolume) error {
+	for _, vol := range volumes {
+		source := strings.TrimSpace(vol.Source)
+		if source == "" {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(vol.Type), "file") {
+			ensureEmptyFileIfNotExists(ctx, source)
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(vol.Type), "dir") {
+			if err := os.MkdirAll(source, 0755); err != nil {
+				return err
+			}
+		}
+
+	}
+	return nil
 }
 
 // buildRuntimeResourceName builds a sanitized resource name for the container runtime.

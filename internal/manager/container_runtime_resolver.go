@@ -130,7 +130,7 @@ func resolveVolumes(volumes []types.ContainerVolume, vars map[string]string) []t
 		if source == "" || target == "" {
 			continue
 		}
-		resolved = append(resolved, types.ContainerVolume{Source: source, Target: target, Mode: mode})
+		resolved = append(resolved, types.ContainerVolume{Source: source, Target: target, Mode: mode, Type: strings.TrimSpace(vol.Type)})
 	}
 	return resolved
 }

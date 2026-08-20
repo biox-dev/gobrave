@@ -1053,40 +1053,53 @@ func parseEnv(raw []byte) map[string]string {
 	return map[string]string{}
 }
 
-func parseVolumes(raw []byte) []types.ContainerVolume {
+func parseVolumes(raw []byte, ownerType types.ContainerOwnerType) []types.ContainerVolume {
 	if len(raw) == 0 {
 		return nil
 	}
 
-	obj := map[string]map[string]interface{}{}
-	if err := json.Unmarshal(raw, &obj); err == nil {
-		out := make([]types.ContainerVolume, 0, len(obj))
-		for rawTarget, item := range obj {
-			target := strings.TrimSpace(rawTarget)
-			if target == "" {
-				continue
-			}
+	// obj := map[string]map[string]interface{}{}
+	// if err := json.Unmarshal(raw, &obj); err == nil {
+	// 	out := make([]types.ContainerVolume, 0, len(obj))
+	// 	for rawTarget, item := range obj {
+	// 		target := strings.TrimSpace(rawTarget)
+	// 		if target == "" {
+	// 			continue
+	// 		}
 
-			source := target
-			if bind, ok := item["bind"]; ok {
-				if text, ok := normalizeScalarValue(bind); ok {
-					source = strings.TrimSpace(text)
-				}
-			}
-			mode := ""
-			if rawMode, ok := item["mode"]; ok {
-				if text, ok := normalizeScalarValue(rawMode); ok {
-					mode = strings.TrimSpace(text)
-				}
-			}
+	// 		source := target
+	// 		if bind, ok := item["bind"]; ok {
+	// 			if text, ok := normalizeScalarValue(bind); ok {
+	// 				source = strings.TrimSpace(text)
+	// 			}
+	// 		}
+	// 		mode := ""
+	// 		if rawMode, ok := item["mode"]; ok {
+	// 			if text, ok := normalizeScalarValue(rawMode); ok {
+	// 				mode = strings.TrimSpace(text)
+	// 			}
+	// 		}
+	// 		volType := ""
+	// 		if rawType, ok := item["type"]; ok {
+	// 			if text, ok := normalizeScalarValue(rawType); ok {
+	// 				volType = strings.TrimSpace(text)
+	// 			}
+	// 		}
+	// 		if rawOwner, ok := item["owner"]; ok {
+	// 			if text, ok := normalizeScalarValue(rawOwner); ok {
+	// 				if text != string(ownerType) {
+	// 					continue
+	// 				}
+	// 			}
+	// 		}
 
-			if source == "" || target == "" {
-				continue
-			}
-			out = append(out, types.ContainerVolume{Source: source, Target: target, Mode: mode})
-		}
-		return out
-	}
+	// 		if source == "" || target == "" {
+	// 			continue
+	// 		}
+	// 		out = append(out, types.ContainerVolume{Source: source, Target: target, Mode: mode, Type: volType})
+	// 	}
+	// 	return out
+	// }
 
 	volumes := []types.ContainerVolume{}
 	if err := json.Unmarshal(raw, &volumes); err != nil {
@@ -1100,10 +1113,14 @@ func parseVolumes(raw []byte) []types.ContainerVolume {
 		if source == "" || target == "" {
 			continue
 		}
+		if vol.Owner != "" && strings.TrimSpace(vol.Owner) != string(ownerType) {
+			continue
+		}
 		out = append(out, types.ContainerVolume{
 			Source: source,
 			Target: target,
 			Mode:   strings.TrimSpace(vol.Mode),
+			Type:   strings.TrimSpace(vol.Type),
 		})
 	}
 
