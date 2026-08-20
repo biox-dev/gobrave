@@ -18,6 +18,7 @@ type Project struct {
 	Research     string         `json:"research" gorm:"type:text"`
 	Parameter    string         `json:"parameter" gorm:"type:text"`
 	Volumes      datatypes.JSON `json:"volumes" gorm:"type:json"`
+	Env          datatypes.JSON `json:"env" gorm:"type:json"`
 
 	Description string    `json:"description" gorm:"type:text"`
 	CreatedAt   time.Time `json:"created_at"`

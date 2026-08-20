@@ -371,6 +371,12 @@ func (w *ContainerCreateWorker) executeCreate(
 	projectVolumes := parseVolumes(ownerCtx.project.Volumes, inst.OwnerType)
 	volumes = append(volumes, projectVolumes...)
 
+	envs := parseEnv(tpl.Env)
+	projectEnvs := parseEnv(ownerCtx.project.Env)
+	for k, v := range projectEnvs {
+		envs[k] = v
+	}
+
 	// volumes默认添加 cfg.Storage.BaseDir 目录的绑定，确保容器可以访问到这个目录下的文件（如Rprofile等）
 	if w.cfg != nil && w.cfg.Storage != nil && w.cfg.Storage.BaseDir != "" {
 		volumes = append(volumes, types.ContainerVolume{
@@ -401,7 +407,7 @@ func (w *ContainerCreateWorker) executeCreate(
 	spec := &types.ContainerSpec{
 		Image:                img.FullName,
 		Command:              parseCommand(tpl.Command),
-		Env:                  parseEnv(tpl.Env),
+		Env:                  envs,
 		Volumes:              volumes,
 		SchedulingConstraint: parseSchedulingConstraint(tpl.SchedulingConstraint),
 		CPU:                  tpl.CPU,
