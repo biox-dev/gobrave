@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gobravedev/gobrave/internal/logger"
 	"github.com/gobravedev/gobrave/internal/types"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
 	"github.com/gobravedev/gobrave/internal/utils"
@@ -60,44 +61,6 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if node == nil {
 		return fmt.Errorf("analysis node is nil")
 	}
-	if node.AnalysisID == 0 {
-		p.initializeStandaloneNodeArtifacts(ctx, node)
-		// return fmt.Errorf("analysis_id is required")
-		return nil
-	}
-	if strings.TrimSpace(node.AnalysisNodeID) == "" {
-		return fmt.Errorf("analysis_node_id is required")
-	}
-	if node.ScriptID == 0 {
-		return fmt.Errorf("script_id is required")
-	}
-
-	analysis, err := p.analysisRepo.GetAnalysisByID(ctx, node.AnalysisID)
-	if err != nil {
-		return fmt.Errorf("load analysis failed: %w", err)
-	}
-
-	if err := p.ensureNodePaths(node, analysis); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(node.WorkspaceDir, 0o755); err != nil {
-		return fmt.Errorf("create workspace dir failed: %w", err)
-	}
-	if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
-		return fmt.Errorf("create output dir failed: %w", err)
-	}
-	if err := cleanDirContents(node.OutputDir); err != nil {
-		return fmt.Errorf("clean output dir failed: %w", err)
-	}
-	// 构建参数
-	params, err := p.buildNodeParams(node, analysis)
-	if err != nil {
-		return err
-	}
-	if err := writeJSONAtomic(node.ParamsPath, params, 0o644); err != nil {
-		return fmt.Errorf("write params json failed: %w", err)
-	}
-
 	script, err := p.workflowRepo.GetScriptByID(ctx, node.ScriptID)
 	if err != nil {
 		return fmt.Errorf("load script failed: %w", err)
@@ -106,15 +69,142 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	// scriptPath := p.resolveScriptPath(script.ScriptID, scriptType)
 	project, err := p.projectRepo.GetProjectByID(ctx, script.ProjectID)
 	if err != nil {
+		return fmt.Errorf("load project failed: %w", err)
+	}
+	if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
 		return err
 	}
-	scriptDir, scriptFile, _ := utils.GetScriptFile(p.storageBase, project.ProjectID, script.ScriptType, script.ScriptID)
-	scriptPath := filepath.Join(scriptDir, scriptFile)
+
+	if node.AnalysisID == 0 {
+		// p.initializeStandaloneNodeArtifacts(ctx, node)
+
+		projectDir := utils.GetProjectDir(p.storageBase, project.ProjectID)
+
+		paramsPayload := cloneAnyMapForNode(map[string]interface{}(node.Params))
+		paramsPayload["output_dir"] = node.OutputDir
+		paramsPayload["project_dir"] = projectDir
+		paramsBytes, err := json.MarshalIndent(paramsPayload, "", "  ")
+		if err != nil {
+			return err
+		}
+		paramsBytes = append(paramsBytes, '\n')
+		if err := os.WriteFile(node.ParamsPath, paramsBytes, 0o644); err != nil {
+			return err
+		}
+
+		scriptDir, scriptMainFile, err := p.workflowService.GetScriptFileByScriptID(ctx, script.ID)
+		if err != nil {
+			return err
+		}
+		scriptPath := filepath.Join(scriptDir, scriptMainFile)
+
+		if !filepath.IsAbs(scriptPath) {
+			scriptPath = filepath.Join(p.storageBase, scriptPath)
+		}
+
+		// scriptContent, err := os.ReadFile(scriptPath)
+		// if err != nil {
+		// 	return err
+		// }
+
+		scriptWorkspaceDir := filepath.Join(node.WorkspaceDir, scriptMainFile)
+		if _, err := os.Lstat(scriptWorkspaceDir); err != nil {
+			if os.IsNotExist(err) {
+				if err := os.Symlink(scriptPath, scriptWorkspaceDir); err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+		}
+		// synlink io_schema.json
+		ioSchemaPath := filepath.Join(scriptDir, "io_schema.json")
+		scriptWorkspaceIoSchemaPath := filepath.Join(node.WorkspaceDir, "io_schema.json")
+		if _, err := os.Lstat(ioSchemaPath); err == nil {
+			if _, err := os.Lstat(scriptWorkspaceIoSchemaPath); err != nil {
+
+				if os.IsNotExist(err) {
+					if err := os.Symlink(ioSchemaPath, scriptWorkspaceIoSchemaPath); err != nil {
+						return err
+					}
+				}
+			}
+		}
+
+		// runScript, err := BuildRunScript(node, script.ScriptType, scriptPath, string(scriptContent), paramsPayload)
+		// if err != nil {
+		// 	return err
+		// }
+		// if err := os.WriteFile(node.CommandPath, []byte(runScript), 0o755); err != nil {
+		// 	return err
+		// }
+		if err := p.WriteCommand(node, script.ScriptType, scriptPath, paramsPayload); err != nil {
+			return fmt.Errorf("write command failed: %w", err)
+		}
+
+		// if _, err := os.Stat(node.LogPath); err != nil {
+		// 	if os.IsNotExist(err) {
+		// 		if err := os.WriteFile(node.LogPath, []byte(""), 0o644); err != nil {
+		// 			return err
+		// 		}
+		// 	} else {
+		// 		return err
+		// 	}
+		// }
+
+	} else {
+		if strings.TrimSpace(node.AnalysisNodeID) == "" {
+			return fmt.Errorf("analysis_node_id is required")
+		}
+		if node.ScriptID == 0 {
+			return fmt.Errorf("script_id is required")
+		}
+
+		analysis, err := p.analysisRepo.GetAnalysisByID(ctx, node.AnalysisID)
+		if err != nil {
+			return fmt.Errorf("load analysis failed: %w", err)
+		}
+
+		if err := p.ensureNodePaths(node, analysis); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(node.WorkspaceDir, 0o755); err != nil {
+			return fmt.Errorf("create workspace dir failed: %w", err)
+		}
+		if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
+			return fmt.Errorf("create output dir failed: %w", err)
+		}
+
+		// 构建参数
+		params, err := p.buildNodeParams(node, analysis)
+		if err != nil {
+			return err
+		}
+		if err := writeJSONAtomic(node.ParamsPath, params, 0o644); err != nil {
+			return fmt.Errorf("write params json failed: %w", err)
+		}
+		scriptDir, scriptFile, _ := utils.GetScriptFile(p.storageBase, project.ProjectID, script.ScriptType, script.ScriptID)
+		scriptPath := filepath.Join(scriptDir, scriptFile)
+		if err := p.WriteCommand(node, script.ScriptType, scriptPath, params); err != nil {
+			return fmt.Errorf("write command failed: %w", err)
+		}
+	}
+	prefix := filepath.Join(p.storageBase, "data", project.ProjectID)
+
+	if err := cleanDirContents(node.OutputDir, prefix); err != nil {
+		return fmt.Errorf("clean output dir failed: %w", err)
+	}
+
+	return nil
+}
+
+func (p *FileSystemNodeRuntimePreparer) WriteCommand(node *types.AnalysisNode, scriptType, scriptPath string, params map[string]any) error {
+
 	scriptContent, err := os.ReadFile(scriptPath)
 	if err != nil {
 		return fmt.Errorf("read script file failed: %w", err)
 	}
-	scriptType := normalizeScriptType(script.ScriptType)
+	scriptType = normalizeScriptType(scriptType)
 	builder := p.builders[scriptType]
 	if builder == nil {
 		builder = p.builders["shell"]
@@ -126,7 +216,6 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if err := writeTextAtomic(node.CommandPath, runScript, 0o755); err != nil {
 		return fmt.Errorf("write run.sh failed: %w", err)
 	}
-
 	return nil
 }
 
@@ -197,116 +286,117 @@ func cloneAnyMapForNode(in map[string]interface{}) map[string]interface{} {
 	}
 	return out
 }
-func (p *FileSystemNodeRuntimePreparer) initializeStandaloneNodeArtifacts(
-	ctx context.Context,
-	// scriptID int64,
-	node *types.AnalysisNode,
-	// analysis *types.Analysis,
-	// artifacts *standaloneNodeArtifacts,
-	// params map[string]interface{},
-) error {
-	// if artifacts == nil {
-	// 	return fmt.Errorf("artifacts is nil")
-	// }
 
-	if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
-		return err
-	}
-	// projectDir := utils.GetProjectDir(p.storageBase, projectID)
+// func (p *FileSystemNodeRuntimePreparer) initializeStandaloneNodeArtifacts(
+// 	ctx context.Context,
+// 	// scriptID int64,
+// 	node *types.AnalysisNode,
+// 	// analysis *types.Analysis,
+// 	// artifacts *standaloneNodeArtifacts,
+// 	// params map[string]interface{},
+// ) error {
+// 	// if artifacts == nil {
+// 	// 	return fmt.Errorf("artifacts is nil")
+// 	// }
 
-	paramsPayload := cloneAnyMapForNode(map[string]interface{}(node.Params))
-	paramsPayload["output_dir"] = node.OutputDir
-	// paramsPayload["project_dir"] = node.projectDir
-	paramsBytes, err := json.MarshalIndent(paramsPayload, "", "  ")
-	if err != nil {
-		return err
-	}
-	paramsBytes = append(paramsBytes, '\n')
-	if err := os.WriteFile(node.ParamsPath, paramsBytes, 0o644); err != nil {
-		return err
-	}
+// 	if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
+// 		return err
+// 	}
+// 	// projectDir := utils.GetProjectDir(p.storageBase, projectID)
 
-	script, err := p.workflowService.GetScriptByID(ctx, node.ScriptID)
-	if err != nil {
-		return err
-	}
-	if script == nil {
-		return fmt.Errorf("script not found")
-	}
-	scriptDir, scriptMainFile, err := p.workflowService.GetScriptFileByScriptID(ctx, script.ID)
-	if err != nil {
-		return err
-	}
-	scriptPath := filepath.Join(scriptDir, scriptMainFile)
-	// baseDir := "."
-	// if h != nil && h.config != nil && h.config.Storage != nil {
-	// 	if v := strings.TrimSpace(h.config.Storage.BaseDir); v != "" {
-	// 		baseDir = v
-	// 	}
-	// }
-	if !filepath.IsAbs(scriptPath) {
-		scriptPath = filepath.Join(p.storageBase, scriptPath)
-	}
+// 	paramsPayload := cloneAnyMapForNode(map[string]interface{}(node.Params))
+// 	paramsPayload["output_dir"] = node.OutputDir
+// 	// paramsPayload["project_dir"] = node.projectDir
+// 	paramsBytes, err := json.MarshalIndent(paramsPayload, "", "  ")
+// 	if err != nil {
+// 		return err
+// 	}
+// 	paramsBytes = append(paramsBytes, '\n')
+// 	if err := os.WriteFile(node.ParamsPath, paramsBytes, 0o644); err != nil {
+// 		return err
+// 	}
 
-	scriptContent, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return err
-	}
+// 	script, err := p.workflowService.GetScriptByID(ctx, node.ScriptID)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	if script == nil {
+// 		return fmt.Errorf("script not found")
+// 	}
+// 	scriptDir, scriptMainFile, err := p.workflowService.GetScriptFileByScriptID(ctx, script.ID)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	scriptPath := filepath.Join(scriptDir, scriptMainFile)
+// 	// baseDir := "."
+// 	// if h != nil && h.config != nil && h.config.Storage != nil {
+// 	// 	if v := strings.TrimSpace(h.config.Storage.BaseDir); v != "" {
+// 	// 		baseDir = v
+// 	// 	}
+// 	// }
+// 	if !filepath.IsAbs(scriptPath) {
+// 		scriptPath = filepath.Join(p.storageBase, scriptPath)
+// 	}
 
-	scriptWorkspaceDir := filepath.Join(node.WorkspaceDir, scriptMainFile)
-	if _, err := os.Lstat(scriptWorkspaceDir); err != nil {
-		if os.IsNotExist(err) {
-			if err := os.Symlink(scriptPath, scriptWorkspaceDir); err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-	}
-	// synlink io_schema.json
-	ioSchemaPath := filepath.Join(scriptDir, "io_schema.json")
-	scriptWorkspaceIoSchemaPath := filepath.Join(node.WorkspaceDir, "io_schema.json")
-	if _, err := os.Lstat(ioSchemaPath); err == nil {
-		if _, err := os.Lstat(scriptWorkspaceIoSchemaPath); err != nil {
+// 	scriptContent, err := os.ReadFile(scriptPath)
+// 	if err != nil {
+// 		return err
+// 	}
 
-			if os.IsNotExist(err) {
-				if err := os.Symlink(ioSchemaPath, scriptWorkspaceIoSchemaPath); err != nil {
-					return err
-				}
-			}
-		}
-	}
+// 	scriptWorkspaceDir := filepath.Join(node.WorkspaceDir, scriptMainFile)
+// 	if _, err := os.Lstat(scriptWorkspaceDir); err != nil {
+// 		if os.IsNotExist(err) {
+// 			if err := os.Symlink(scriptPath, scriptWorkspaceDir); err != nil {
+// 				return err
+// 			}
+// 		} else {
+// 			return err
+// 		}
+// 	}
+// 	// synlink io_schema.json
+// 	ioSchemaPath := filepath.Join(scriptDir, "io_schema.json")
+// 	scriptWorkspaceIoSchemaPath := filepath.Join(node.WorkspaceDir, "io_schema.json")
+// 	if _, err := os.Lstat(ioSchemaPath); err == nil {
+// 		if _, err := os.Lstat(scriptWorkspaceIoSchemaPath); err != nil {
 
-	// node := &types.AnalysisNode{
-	// 	ID:           artifacts.ID,
-	// 	ParamsPath:   artifacts.ParamsPath,
-	// 	OutputDir:    artifacts.OutputDir,
-	// 	WorkspaceDir: artifacts.WorkspaceDir,
-	// 	CommandPath:  artifacts.CommandPath,
-	// 	LogPath:      artifacts.LogPath,
-	// }
-	// runScript, err := buildStandaloneRunScript(node, script.ScriptType, scriptPath, string(scriptContent), paramsPayload)
+// 			if os.IsNotExist(err) {
+// 				if err := os.Symlink(ioSchemaPath, scriptWorkspaceIoSchemaPath); err != nil {
+// 					return err
+// 				}
+// 			}
+// 		}
+// 	}
 
-	runScript, err := BuildRunScript(node, script.ScriptType, scriptPath, string(scriptContent), paramsPayload)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(node.CommandPath, []byte(runScript), 0o755); err != nil {
-		return err
-	}
+// 	// node := &types.AnalysisNode{
+// 	// 	ID:           artifacts.ID,
+// 	// 	ParamsPath:   artifacts.ParamsPath,
+// 	// 	OutputDir:    artifacts.OutputDir,
+// 	// 	WorkspaceDir: artifacts.WorkspaceDir,
+// 	// 	CommandPath:  artifacts.CommandPath,
+// 	// 	LogPath:      artifacts.LogPath,
+// 	// }
+// 	// runScript, err := buildStandaloneRunScript(node, script.ScriptType, scriptPath, string(scriptContent), paramsPayload)
 
-	if _, err := os.Stat(node.LogPath); err != nil {
-		if os.IsNotExist(err) {
-			if err := os.WriteFile(node.LogPath, []byte(""), 0o644); err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-	}
+// 	runScript, err := BuildRunScript(node, script.ScriptType, scriptPath, string(scriptContent), paramsPayload)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	if err := os.WriteFile(node.CommandPath, []byte(runScript), 0o755); err != nil {
+// 		return err
+// 	}
 
-	return nil
-}
+// 	if _, err := os.Stat(node.LogPath); err != nil {
+// 		if os.IsNotExist(err) {
+// 			if err := os.WriteFile(node.LogPath, []byte(""), 0o644); err != nil {
+// 				return err
+// 			}
+// 		} else {
+// 			return err
+// 		}
+// 	}
+
+// 	return nil
+// }
 
 // func buildStandaloneRunScript(
 // 	node *types.AnalysisNode,
@@ -319,13 +409,13 @@ func (p *FileSystemNodeRuntimePreparer) initializeStandaloneNodeArtifacts(
 // 	return BuildRunScript(node, scriptType, scriptPath, scriptContent, params)
 // }
 
-func (p *FileSystemNodeRuntimePreparer) resolveScriptPath(scriptID string, scriptType string) string {
-	mainFile := mainFileByScriptType(scriptType)
-	if strings.TrimSpace(p.storageBase) == "" {
-		return filepath.Join("pipeline", "script", scriptID, mainFile)
-	}
-	return filepath.Join(p.storageBase, "pipeline", "script", scriptID, mainFile)
-}
+// func (p *FileSystemNodeRuntimePreparer) resolveScriptPath(scriptID string, scriptType string) string {
+// 	mainFile := mainFileByScriptType(scriptType)
+// 	if strings.TrimSpace(p.storageBase) == "" {
+// 		return filepath.Join("pipeline", "script", scriptID, mainFile)
+// 	}
+// 	return filepath.Join(p.storageBase, "pipeline", "script", scriptID, mainFile)
+// }
 
 func normalizeScriptType(scriptType string) string {
 	typeName := strings.ToLower(strings.TrimSpace(scriptType))
@@ -350,19 +440,42 @@ func mainFileByScriptType(scriptType string) string {
 	}
 }
 
-func cleanDirContents(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
+func cleanDirContents(outputDir, prefix string) error {
+	// entries, err := os.ReadDir(dir)
+	// if err != nil {
+	// 	if os.IsNotExist(err) {
+	// 		return nil
+	// 	}
+	// 	return err
+	// }
+	// for _, entry := range entries {
+	// 	if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+	// 		return err
+	// 	}
+	// }
+	// return nil
+	//判断是否以prefix开头 如果不是就不删除
+	if !strings.HasPrefix(outputDir, prefix) {
+		logger.Warnf(context.Background(), "[cleanDirContents] output dir=%s is not under project data dir=%s, skip delete", outputDir, prefix)
+		return fmt.Errorf("output dir=%s is not under project data dir=%s", outputDir, prefix)
 	}
-	for _, entry := range entries {
-		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+	// 删除outputDir下的所有内容，，直接判断文件夹是否存在，如果存在就删除，如果不存在就不删除
+	if _, err := os.Stat(outputDir); err == nil {
+		// 不删除outputDir本身，只删除里面的内容
+		files, err := os.ReadDir(outputDir)
+		if err != nil {
+			logger.Warnf(context.Background(), "[cleanDirContents] failed to read output dir=%s, err=%v", outputDir, err)
 			return err
 		}
+		for _, file := range files {
+			filePath := filepath.Join(outputDir, file.Name())
+			if err := os.RemoveAll(filePath); err != nil {
+				logger.Warnf(context.Background(), "[cleanDirContents] failed to delete file=%s in output dir=%s, err=%v", filePath, outputDir, err)
+				return err
+			}
+		}
 	}
+
 	return nil
 }
 

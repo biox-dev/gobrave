@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -69,37 +67,37 @@ func (o *nodeOrchestrator) StartAsync(ctx context.Context, analysisNodeID int64)
 	node, err := o.repo.GetAnalysisNodeByID(ctx, analysisNodeID)
 
 	// 运行前删除文件夹ouput下内容 如果路径存在就删除 如果不存在就不删除
-	outputDir := node.OutputDir
-	if outputDir != "" {
-		project, err := o.projectRepo.GetProjectByID(ctx, node.ProjectID)
-		if err != nil {
-			logger.Warnf(ctx, "[NodeOrchestrator] failed to get project by id=%d, err=%v", node.ProjectID, err)
-			return err
-		}
-		prefix := filepath.Join(o.cfg.Storage.BaseDir, "data", project.ProjectID)
-		//判断是否以prefix开头 如果不是就不删除
-		if !strings.HasPrefix(outputDir, prefix) {
-			logger.Warnf(ctx, "[NodeOrchestrator] output dir=%s is not under project data dir=%s, skip delete", outputDir, prefix)
-			return fmt.Errorf("output dir is not under project data dir")
-		}
-		// 删除outputDir下的所有内容，，直接判断文件夹是否存在，如果存在就删除，如果不存在就不删除
-		if _, err := os.Stat(outputDir); err == nil {
-			// 不删除outputDir本身，只删除里面的内容
-			files, err := os.ReadDir(outputDir)
-			if err != nil {
-				logger.Warnf(ctx, "[NodeOrchestrator] failed to read output dir=%s, err=%v", outputDir, err)
-				return err
-			}
-			for _, file := range files {
-				filePath := filepath.Join(outputDir, file.Name())
-				if err := os.RemoveAll(filePath); err != nil {
-					logger.Warnf(ctx, "[NodeOrchestrator] failed to delete file=%s in output dir=%s, err=%v", filePath, outputDir, err)
-					return err
-				}
-			}
-		}
+	// outputDir := node.OutputDir
+	// if outputDir != "" {
+	// 	project, err := o.projectRepo.GetProjectByID(ctx, node.ProjectID)
+	// 	if err != nil {
+	// 		logger.Warnf(ctx, "[NodeOrchestrator] failed to get project by id=%d, err=%v", node.ProjectID, err)
+	// 		return err
+	// 	}
+	// 	prefix := filepath.Join(o.cfg.Storage.BaseDir, "data", project.ProjectID)
+	// 	//判断是否以prefix开头 如果不是就不删除
+	// 	if !strings.HasPrefix(outputDir, prefix) {
+	// 		logger.Warnf(ctx, "[NodeOrchestrator] output dir=%s is not under project data dir=%s, skip delete", outputDir, prefix)
+	// 		return fmt.Errorf("output dir is not under project data dir")
+	// 	}
+	// 	// 删除outputDir下的所有内容，，直接判断文件夹是否存在，如果存在就删除，如果不存在就不删除
+	// 	if _, err := os.Stat(outputDir); err == nil {
+	// 		// 不删除outputDir本身，只删除里面的内容
+	// 		files, err := os.ReadDir(outputDir)
+	// 		if err != nil {
+	// 			logger.Warnf(ctx, "[NodeOrchestrator] failed to read output dir=%s, err=%v", outputDir, err)
+	// 			return err
+	// 		}
+	// 		for _, file := range files {
+	// 			filePath := filepath.Join(outputDir, file.Name())
+	// 			if err := os.RemoveAll(filePath); err != nil {
+	// 				logger.Warnf(ctx, "[NodeOrchestrator] failed to delete file=%s in output dir=%s, err=%v", filePath, outputDir, err)
+	// 				return err
+	// 			}
+	// 		}
+	// 	}
 
-	}
+	// }
 
 	if err != nil {
 		return err
