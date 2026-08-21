@@ -74,6 +74,17 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
 		return err
 	}
+	// create cached dir
+	nodeCachedDir := filepath.Join(node.WorkspaceDir, "cached")
+	if err := os.MkdirAll(nodeCachedDir, 0o755); err != nil {
+		return err
+	}
+	prefix := filepath.Join(p.storageBase, "data", project.ProjectID)
+
+	projectCachedDir := filepath.Join(prefix, "cached")
+	if err := os.MkdirAll(projectCachedDir, 0o755); err != nil {
+		return err
+	}
 
 	if node.AnalysisID == 0 {
 		// p.initializeStandaloneNodeArtifacts(ctx, node)
@@ -189,7 +200,6 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 			return fmt.Errorf("write command failed: %w", err)
 		}
 	}
-	prefix := filepath.Join(p.storageBase, "data", project.ProjectID)
 
 	if err := cleanDirContents(node.OutputDir, prefix); err != nil {
 		return fmt.Errorf("clean output dir failed: %w", err)
