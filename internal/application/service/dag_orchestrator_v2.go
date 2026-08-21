@@ -53,7 +53,8 @@ type dynamicDagOrchestratorV2 struct {
 	// repo is the main persistence boundary for analysis, nodes, and edges.
 	repo interfaces.AnalysisRepository
 	// workflowRepo is used by runtime preparer/dispatcher for script/runtime metadata.
-	workflowRepo interfaces.WorkflowRepository
+	workflowRepo    interfaces.WorkflowRepository
+	workflowService interfaces.WorkflowService
 	// containerRepo is reserved for future V2 node/container lifecycle enhancements.
 	containerRepo interfaces.ContainerRepository
 	// containerMgr is passed into executor factory so container-backed executors are reused.
@@ -79,6 +80,7 @@ type dynamicDagOrchestratorV2 struct {
 func NewDynamicDagOrchestratorV2(
 	repo interfaces.AnalysisRepository,
 	workflowRepo interfaces.WorkflowRepository,
+	workflowService interfaces.WorkflowService,
 	containerRepo interfaces.ContainerRepository,
 	containerMgr *manager.ContainerManager,
 	projectRepo interfaces.ProjectRepository,
@@ -94,6 +96,7 @@ func NewDynamicDagOrchestratorV2(
 		containerMgr:      containerMgr,
 		projectRepo:       projectRepo,
 		dispatcher:        dispatcher,
+		workflowService:   workflowService,
 		runScriptBuilders: runScriptBuilders,
 		cfg:               cfg,
 		bus:               bus,
@@ -371,7 +374,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 	if o.cfg != nil && o.cfg.Storage != nil {
 		storageBase = strings.TrimSpace(o.cfg.Storage.BaseDir)
 	}
-	preparer := prepare.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, storageBase, o.runScriptBuilders)
+	preparer := prepare.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, o.workflowService, storageBase, o.runScriptBuilders)
 	// dispatcher := dagruntime.NewNodeDispatcher(
 	// 	runtime,
 	// 	o.repo,

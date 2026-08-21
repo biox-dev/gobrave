@@ -19,7 +19,6 @@ import (
 	"github.com/gobravedev/gobrave/internal/compiler"
 	"github.com/gobravedev/gobrave/internal/config"
 	dagruntime "github.com/gobravedev/gobrave/internal/dag"
-	"github.com/gobravedev/gobrave/internal/dag/prepare"
 	"github.com/gobravedev/gobrave/internal/errors"
 	"github.com/gobravedev/gobrave/internal/logger"
 	"github.com/gobravedev/gobrave/internal/types"
@@ -1196,10 +1195,26 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		}
 	}
 
-	if err := h.initializeStandaloneNodeArtifacts(c.Request.Context(), scriptIDInt, artifacts, parseAnalysisResult); err != nil {
-		c.Error(errors.NewInternalServerError("failed to initialize node runtime files").WithDetails(err.Error()))
-		return
-	}
+	// if err := h.initializeStandaloneNodeArtifacts(c.Request.Context(), scriptIDInt, artifacts, parseAnalysisResult); err != nil {
+	// 	c.Error(errors.NewInternalServerError("failed to initialize node runtime files").WithDetails(err.Error()))
+	// 	return
+	// }
+
+	// paramsPayload := cloneAnyMapForNode(parseAnalysisResult)
+	// paramsPayload["output_dir"] = artifacts.OutputDir
+	// paramsPayload["project_dir"] = artifacts.projectDir
+	// paramsBytes, err := json.MarshalIndent(paramsPayload, "", "  ")
+	// if err != nil {
+	// 	// return errors.NewInternalServerError("failed to serialize params").WithDetails(err.Error())
+	// 	c.Error(errors.NewInternalServerError("failed to serialize params").WithDetails(err.Error()))
+	// 	return
+	// }
+	// paramsBytes = append(paramsBytes, '\n')
+	// if err := os.WriteFile(artifacts.ParamsPath, paramsBytes, 0o644); err != nil {
+	// 	// return errors.NewInternalServerError("failed to write params file").WithDetails(err.Error())
+	// 	c.Error(errors.NewInternalServerError("failed to write params file").WithDetails(err.Error()))
+	// 	return
+	// }
 
 	response := gin.H{
 		// "analysis_id":           analysisID,
@@ -1305,10 +1320,10 @@ func (h *AnalysisHandler) RunAnalysisNodeByScriptID(c *gin.Context) {
 		}
 
 		// Regenerate the run script to reflect the latest parameters before re-submitting.
-		if err := h.regenerateNodeRunScript(c.Request.Context(), node); err != nil {
-			errors = append(errors, fmt.Sprintf("failed to regenerate run script for node %d: %v", node.ID, err))
-			continue
-		}
+		// if err := h.regenerateNodeRunScript(c.Request.Context(), node); err != nil {
+		// 	errors = append(errors, fmt.Sprintf("failed to regenerate run script for node %d: %v", node.ID, err))
+		// 	continue
+		// }
 
 		if err := h.nodeOrchestrator.StartAsync(c.Request.Context(), node.ID); err != nil {
 			errors = append(errors, fmt.Sprintf("failed to submit node %d: %v", node.ID, err))
@@ -1378,9 +1393,9 @@ func (h *AnalysisHandler) RunAnalysisNodeWithID(ctx context.Context, analsyisNod
 	}
 
 	// Regenerate the run script to reflect the latest parameters before re-submitting.
-	if err := h.regenerateNodeRunScript(ctx, node); err != nil {
-		return errors.NewInternalServerError("failed to regenerate node run script").WithDetails(err.Error())
-	}
+	// if err := h.regenerateNodeRunScript(ctx, node); err != nil {
+	// 	return errors.NewInternalServerError("failed to regenerate node run script").WithDetails(err.Error())
+	// }
 
 	if err := h.nodeOrchestrator.StartAsync(ctx, analsyisNodeId); err != nil {
 		return errors.NewInternalServerError("failed to submit analysis node").WithDetails(err.Error())
@@ -1428,176 +1443,59 @@ func (h *AnalysisHandler) buildStandaloneNodeArtifactPaths(
 	}
 }
 
-func (h *AnalysisHandler) initializeStandaloneNodeArtifacts(
-	ctx context.Context,
-	scriptID int64,
-	artifacts *standaloneNodeArtifacts,
-	params map[string]interface{},
-) error {
-	if artifacts == nil {
-		return fmt.Errorf("artifacts is nil")
-	}
-
-	if err := os.MkdirAll(artifacts.OutputDir, 0o755); err != nil {
-		return err
-	}
-
-	paramsPayload := cloneAnyMapForNode(params)
-	paramsPayload["output_dir"] = artifacts.OutputDir
-	paramsPayload["project_dir"] = artifacts.projectDir
-	paramsBytes, err := json.MarshalIndent(paramsPayload, "", "  ")
-	if err != nil {
-		return err
-	}
-	paramsBytes = append(paramsBytes, '\n')
-	if err := os.WriteFile(artifacts.ParamsPath, paramsBytes, 0o644); err != nil {
-		return err
-	}
-
-	script, err := h.workflowService.GetScriptByID(ctx, scriptID)
-	if err != nil {
-		return err
-	}
-	if script == nil {
-		return fmt.Errorf("script not found")
-	}
-	scriptDir, scriptMainFile, err := h.workflowService.GetScriptFileByScriptID(ctx, script.ID)
-	if err != nil {
-		return err
-	}
-	scriptPath := filepath.Join(scriptDir, scriptMainFile)
-	baseDir := "."
-	if h != nil && h.config != nil && h.config.Storage != nil {
-		if v := strings.TrimSpace(h.config.Storage.BaseDir); v != "" {
-			baseDir = v
-		}
-	}
-	if !filepath.IsAbs(scriptPath) {
-		scriptPath = filepath.Join(baseDir, scriptPath)
-	}
-
-	scriptContent, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return err
-	}
-
-	scriptWorkspaceDir := filepath.Join(artifacts.WorkspaceDir, scriptMainFile)
-	if _, err := os.Lstat(scriptWorkspaceDir); err != nil {
-		if os.IsNotExist(err) {
-			if err := os.Symlink(scriptPath, scriptWorkspaceDir); err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-	}
-	// synlink io_schema.json
-	ioSchemaPath := filepath.Join(scriptDir, "io_schema.json")
-	scriptWorkspaceIoSchemaPath := filepath.Join(artifacts.WorkspaceDir, "io_schema.json")
-	if _, err := os.Lstat(ioSchemaPath); err == nil {
-		if _, err := os.Lstat(scriptWorkspaceIoSchemaPath); err != nil {
-
-			if os.IsNotExist(err) {
-				if err := os.Symlink(ioSchemaPath, scriptWorkspaceIoSchemaPath); err != nil {
-					return err
-				}
-			}
-		}
-	}
-
-	node := &types.AnalysisNode{
-		ID:           artifacts.ID,
-		ParamsPath:   artifacts.ParamsPath,
-		OutputDir:    artifacts.OutputDir,
-		WorkspaceDir: artifacts.WorkspaceDir,
-		CommandPath:  artifacts.CommandPath,
-		LogPath:      artifacts.LogPath,
-	}
-	runScript, err := buildStandaloneRunScript(node, script.ScriptType, scriptPath, string(scriptContent), paramsPayload)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(artifacts.CommandPath, []byte(runScript), 0o755); err != nil {
-		return err
-	}
-
-	if _, err := os.Stat(artifacts.LogPath); err != nil {
-		if os.IsNotExist(err) {
-			if err := os.WriteFile(artifacts.LogPath, []byte(""), 0o644); err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func buildStandaloneRunScript(
-	node *types.AnalysisNode,
-	scriptType string,
-	scriptPath string,
-	scriptContent string,
-	params map[string]interface{},
-) (string, error) {
-
-	return prepare.BuildRunScript(node, scriptType, scriptPath, scriptContent, params)
-}
-
 // regenerateNodeRunScript rebuilds the run script for an existing analysis node
 // and writes it to the node's command file. This is used when re-running a node
 // to ensure the command reflects the latest parameters.
-func (h *AnalysisHandler) regenerateNodeRunScript(ctx context.Context, node *types.AnalysisNode) error {
-	paramsBytes, err := os.ReadFile(node.ParamsPath)
-	if err != nil {
-		return fmt.Errorf("failed to read params file %s: %w", node.ParamsPath, err)
-	}
-	var params map[string]interface{}
-	if err := json.Unmarshal(paramsBytes, &params); err != nil {
-		return fmt.Errorf("failed to parse params file %s: %w", node.ParamsPath, err)
-	}
+// func (h *AnalysisHandler) regenerateNodeRunScript(ctx context.Context, node *types.AnalysisNode) error {
+// 	paramsBytes, err := os.ReadFile(node.ParamsPath)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to read params file %s: %w", node.ParamsPath, err)
+// 	}
+// 	var params map[string]interface{}
+// 	if err := json.Unmarshal(paramsBytes, &params); err != nil {
+// 		return fmt.Errorf("failed to parse params file %s: %w", node.ParamsPath, err)
+// 	}
 
-	script, err := h.workflowService.GetScriptByID(ctx, node.ScriptID)
-	if err != nil {
-		return fmt.Errorf("failed to get script %d: %w", node.ScriptID, err)
-	}
-	if script == nil {
-		return fmt.Errorf("script %d not found", node.ScriptID)
-	}
+// 	script, err := h.workflowService.GetScriptByID(ctx, node.ScriptID)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to get script %d: %w", node.ScriptID, err)
+// 	}
+// 	if script == nil {
+// 		return fmt.Errorf("script %d not found", node.ScriptID)
+// 	}
 
-	scriptDir, scriptMainFile, err := h.workflowService.GetScriptFileByScriptID(ctx, script.ID)
-	if err != nil {
-		return fmt.Errorf("failed to get script file path: %w", err)
-	}
+// 	scriptDir, scriptMainFile, err := h.workflowService.GetScriptFileByScriptID(ctx, script.ID)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to get script file path: %w", err)
+// 	}
 
-	scriptPath := filepath.Join(scriptDir, scriptMainFile)
-	baseDir := "."
-	if h.config != nil && h.config.Storage != nil {
-		if v := strings.TrimSpace(h.config.Storage.BaseDir); v != "" {
-			baseDir = v
-		}
-	}
-	if !filepath.IsAbs(scriptPath) {
-		scriptPath = filepath.Join(baseDir, scriptPath)
-	}
+// 	scriptPath := filepath.Join(scriptDir, scriptMainFile)
+// 	baseDir := "."
+// 	if h.config != nil && h.config.Storage != nil {
+// 		if v := strings.TrimSpace(h.config.Storage.BaseDir); v != "" {
+// 			baseDir = v
+// 		}
+// 	}
+// 	if !filepath.IsAbs(scriptPath) {
+// 		scriptPath = filepath.Join(baseDir, scriptPath)
+// 	}
 
-	scriptContent, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return fmt.Errorf("failed to read script file %s: %w", scriptPath, err)
-	}
+// 	scriptContent, err := os.ReadFile(scriptPath)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to read script file %s: %w", scriptPath, err)
+// 	}
 
-	runScript, err := buildStandaloneRunScript(node, script.ScriptType, scriptPath, string(scriptContent), params)
-	if err != nil {
-		return fmt.Errorf("failed to build run script: %w", err)
-	}
+// 	runScript, err := buildStandaloneRunScript(node, script.ScriptType, scriptPath, string(scriptContent), params)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to build run script: %w", err)
+// 	}
 
-	if err := os.WriteFile(node.CommandPath, []byte(runScript), 0o755); err != nil {
-		return fmt.Errorf("failed to write command file %s: %w", node.CommandPath, err)
-	}
+// 	if err := os.WriteFile(node.CommandPath, []byte(runScript), 0o755); err != nil {
+// 		return fmt.Errorf("failed to write command file %s: %w", node.CommandPath, err)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
 func cloneAnyMapForNode(in map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(in))

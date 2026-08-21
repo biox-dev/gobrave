@@ -14,41 +14,45 @@ import (
 )
 
 type FileSystemNodeRuntimePreparer struct {
-	analysisRepo interfaces.AnalysisRepository
-	workflowRepo interfaces.WorkflowRepository
-	projectRepo  interfaces.ProjectRepository
-	storageBase  string
-	builders     map[string]RunScriptBuilder
+	analysisRepo    interfaces.AnalysisRepository
+	workflowService interfaces.WorkflowService
+	workflowRepo    interfaces.WorkflowRepository
+	projectRepo     interfaces.ProjectRepository
+	storageBase     string
+	builders        map[string]RunScriptBuilder
 }
 
-func NewFileSystemNodeRuntimePreparer(
-	analysisRepo interfaces.AnalysisRepository,
-	workflowRepo interfaces.WorkflowRepository,
-	projectRepo interfaces.ProjectRepository,
-	storageBase string,
-) *FileSystemNodeRuntimePreparer {
-	return NewFileSystemNodeRuntimePreparerWithBuilders(
-		analysisRepo,
-		workflowRepo,
-		projectRepo,
-		storageBase,
-		nil,
-	)
-}
+// func NewFileSystemNodeRuntimePreparer(
+// 	analysisRepo interfaces.AnalysisRepository,
+// 	workflowRepo interfaces.WorkflowRepository,
+// 	projectRepo interfaces.ProjectRepository,
+// 	workflowService interfaces.WorkflowService,
+// 	storageBase string,
+// ) *FileSystemNodeRuntimePreparer {
+// 	return NewFileSystemNodeRuntimePreparerWithBuilders(
+// 		analysisRepo,
+// 		workflowRepo,
+// 		projectRepo,
+// 		storageBase,
+// 		nil,
+// 	)
+// }
 
 func NewFileSystemNodeRuntimePreparerWithBuilders(
 	analysisRepo interfaces.AnalysisRepository,
 	workflowRepo interfaces.WorkflowRepository,
 	projectRepo interfaces.ProjectRepository,
+	workflowService interfaces.WorkflowService,
 	storageBase string,
 	builders map[string]RunScriptBuilder,
 ) *FileSystemNodeRuntimePreparer {
 	return &FileSystemNodeRuntimePreparer{
-		analysisRepo: analysisRepo,
-		workflowRepo: workflowRepo,
-		projectRepo:  projectRepo,
-		storageBase:  strings.TrimSpace(storageBase),
-		builders:     cloneRunScriptBuilders(builders),
+		analysisRepo:    analysisRepo,
+		workflowService: workflowService,
+		workflowRepo:    workflowRepo,
+		projectRepo:     projectRepo,
+		storageBase:     strings.TrimSpace(storageBase),
+		builders:        cloneRunScriptBuilders(builders),
 	}
 }
 
@@ -57,6 +61,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		return fmt.Errorf("analysis node is nil")
 	}
 	if node.AnalysisID == 0 {
+		p.initializeStandaloneNodeArtifacts(ctx, node)
 		// return fmt.Errorf("analysis_id is required")
 		return nil
 	}
@@ -97,11 +102,6 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if err != nil {
 		return fmt.Errorf("load script failed: %w", err)
 	}
-	scriptType := normalizeScriptType(script.ScriptType)
-	builder := p.builders[scriptType]
-	if builder == nil {
-		builder = p.builders["shell"]
-	}
 
 	// scriptPath := p.resolveScriptPath(script.ScriptID, scriptType)
 	project, err := p.projectRepo.GetProjectByID(ctx, script.ProjectID)
@@ -114,7 +114,11 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if err != nil {
 		return fmt.Errorf("read script file failed: %w", err)
 	}
-
+	scriptType := normalizeScriptType(script.ScriptType)
+	builder := p.builders[scriptType]
+	if builder == nil {
+		builder = p.builders["shell"]
+	}
 	runScript, err := builder.Build(node, scriptPath, string(scriptContent), params)
 	if err != nil {
 		return fmt.Errorf("build run script failed: %w", err)
@@ -186,6 +190,134 @@ func (p *FileSystemNodeRuntimePreparer) buildNodeParams(node *types.AnalysisNode
 
 	return merged, nil
 }
+func cloneAnyMapForNode(in map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+func (p *FileSystemNodeRuntimePreparer) initializeStandaloneNodeArtifacts(
+	ctx context.Context,
+	// scriptID int64,
+	node *types.AnalysisNode,
+	// analysis *types.Analysis,
+	// artifacts *standaloneNodeArtifacts,
+	// params map[string]interface{},
+) error {
+	// if artifacts == nil {
+	// 	return fmt.Errorf("artifacts is nil")
+	// }
+
+	if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
+		return err
+	}
+	// projectDir := utils.GetProjectDir(p.storageBase, projectID)
+
+	paramsPayload := cloneAnyMapForNode(map[string]interface{}(node.Params))
+	paramsPayload["output_dir"] = node.OutputDir
+	// paramsPayload["project_dir"] = node.projectDir
+	paramsBytes, err := json.MarshalIndent(paramsPayload, "", "  ")
+	if err != nil {
+		return err
+	}
+	paramsBytes = append(paramsBytes, '\n')
+	if err := os.WriteFile(node.ParamsPath, paramsBytes, 0o644); err != nil {
+		return err
+	}
+
+	script, err := p.workflowService.GetScriptByID(ctx, node.ScriptID)
+	if err != nil {
+		return err
+	}
+	if script == nil {
+		return fmt.Errorf("script not found")
+	}
+	scriptDir, scriptMainFile, err := p.workflowService.GetScriptFileByScriptID(ctx, script.ID)
+	if err != nil {
+		return err
+	}
+	scriptPath := filepath.Join(scriptDir, scriptMainFile)
+	// baseDir := "."
+	// if h != nil && h.config != nil && h.config.Storage != nil {
+	// 	if v := strings.TrimSpace(h.config.Storage.BaseDir); v != "" {
+	// 		baseDir = v
+	// 	}
+	// }
+	if !filepath.IsAbs(scriptPath) {
+		scriptPath = filepath.Join(p.storageBase, scriptPath)
+	}
+
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return err
+	}
+
+	scriptWorkspaceDir := filepath.Join(node.WorkspaceDir, scriptMainFile)
+	if _, err := os.Lstat(scriptWorkspaceDir); err != nil {
+		if os.IsNotExist(err) {
+			if err := os.Symlink(scriptPath, scriptWorkspaceDir); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+	// synlink io_schema.json
+	ioSchemaPath := filepath.Join(scriptDir, "io_schema.json")
+	scriptWorkspaceIoSchemaPath := filepath.Join(node.WorkspaceDir, "io_schema.json")
+	if _, err := os.Lstat(ioSchemaPath); err == nil {
+		if _, err := os.Lstat(scriptWorkspaceIoSchemaPath); err != nil {
+
+			if os.IsNotExist(err) {
+				if err := os.Symlink(ioSchemaPath, scriptWorkspaceIoSchemaPath); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	// node := &types.AnalysisNode{
+	// 	ID:           artifacts.ID,
+	// 	ParamsPath:   artifacts.ParamsPath,
+	// 	OutputDir:    artifacts.OutputDir,
+	// 	WorkspaceDir: artifacts.WorkspaceDir,
+	// 	CommandPath:  artifacts.CommandPath,
+	// 	LogPath:      artifacts.LogPath,
+	// }
+	// runScript, err := buildStandaloneRunScript(node, script.ScriptType, scriptPath, string(scriptContent), paramsPayload)
+
+	runScript, err := BuildRunScript(node, script.ScriptType, scriptPath, string(scriptContent), paramsPayload)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(node.CommandPath, []byte(runScript), 0o755); err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(node.LogPath); err != nil {
+		if os.IsNotExist(err) {
+			if err := os.WriteFile(node.LogPath, []byte(""), 0o644); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// func buildStandaloneRunScript(
+// 	node *types.AnalysisNode,
+// 	scriptType string,
+// 	scriptPath string,
+// 	scriptContent string,
+// 	params map[string]interface{},
+// ) (string, error) {
+
+// 	return BuildRunScript(node, scriptType, scriptPath, scriptContent, params)
+// }
 
 func (p *FileSystemNodeRuntimePreparer) resolveScriptPath(scriptID string, scriptType string) string {
 	mainFile := mainFileByScriptType(scriptType)

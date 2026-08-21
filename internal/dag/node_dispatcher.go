@@ -32,6 +32,7 @@ func NewNodeDispatcher(
 	factory *executor.ExecuterFactory,
 	workflowRepo interfaces.WorkflowRepository,
 	projectRepo interfaces.ProjectRepository,
+	workflowService interfaces.WorkflowService,
 	cfg *config.Config,
 	runScriptBuilders map[string]prepare.RunScriptBuilder,
 	// cleanup NodeFailureCleanupFunc,
@@ -46,6 +47,7 @@ func NewNodeDispatcher(
 		repo,
 		workflowRepo,
 		projectRepo,
+		workflowService,
 		storageBase,
 		runScriptBuilders)
 
