@@ -29,16 +29,16 @@ const (
 )
 
 type dagOrchestrator struct {
-	repo              interfaces.AnalysisRepository
-	workflowRepo      interfaces.WorkflowRepository
-	projectRepo       interfaces.ProjectRepository
-	containerRepo     interfaces.ContainerRepository
-	containerMgr      *manager.ContainerManager
-	runScriptBuilders map[string]dagruntime.RunScriptBuilder
-	dispatcher        *dagruntime.NodeDispatcher
-	cfg               *config.Config
-	bus               event.Bus
-	registry          *dagruntime.RunningRegistry
+	repo          interfaces.AnalysisRepository
+	workflowRepo  interfaces.WorkflowRepository
+	projectRepo   interfaces.ProjectRepository
+	containerRepo interfaces.ContainerRepository
+	containerMgr  *manager.ContainerManager
+	// runScriptBuilders map[string]prepare.RunScriptBuilder
+	dispatcher *dagruntime.NodeDispatcher
+	cfg        *config.Config
+	bus        event.Bus
+	registry   *dagruntime.RunningRegistry
 }
 
 func NewDagOrchestrator(
@@ -48,21 +48,21 @@ func NewDagOrchestrator(
 	containerRepo interfaces.ContainerRepository,
 	dispatcher *dagruntime.NodeDispatcher,
 	containerMgr *manager.ContainerManager,
-	runScriptBuilders map[string]dagruntime.RunScriptBuilder,
+	// runScriptBuilders map[string]prepare.RunScriptBuilder,
 	cfg *config.Config,
 	bus event.Bus,
 ) interfaces.DagOrchestrator {
 	o := &dagOrchestrator{
-		repo:              repo,
-		workflowRepo:      workflowRepo,
-		containerRepo:     containerRepo,
-		projectRepo:       projectRepo,
-		containerMgr:      containerMgr,
-		dispatcher:        dispatcher,
-		runScriptBuilders: runScriptBuilders,
-		cfg:               cfg,
-		bus:               bus,
-		registry:          dagruntime.NewRunningRegistry(),
+		repo:          repo,
+		workflowRepo:  workflowRepo,
+		containerRepo: containerRepo,
+		projectRepo:   projectRepo,
+		containerMgr:  containerMgr,
+		dispatcher:    dispatcher,
+		// runScriptBuilders: runScriptBuilders,
+		cfg:      cfg,
+		bus:      bus,
+		registry: dagruntime.NewRunningRegistry(),
 	}
 	return o
 }

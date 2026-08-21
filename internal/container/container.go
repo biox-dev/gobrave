@@ -23,6 +23,7 @@ import (
 	"github.com/gobravedev/gobrave/internal/dag"
 	dagruntime "github.com/gobravedev/gobrave/internal/dag"
 	"github.com/gobravedev/gobrave/internal/dag/executor"
+	"github.com/gobravedev/gobrave/internal/dag/prepare"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/handler"
 	"github.com/gobravedev/gobrave/internal/logger"
@@ -122,7 +123,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// must(container.Provide(repository.NewSystemSettingRepository))
 	must(container.Provide(repository.NewUserRepository))
 	must(container.Provide(repository.NewAuthTokenRepository))
-	must(container.Provide(dagruntime.NewRunScriptBuilders))
+	must(container.Provide(prepare.NewRunScriptBuilders))
 	must(container.Provide(repository.NewProjectRepository))
 	must(container.Provide(repository.NewDataRepository))
 	must(container.Provide(repository.NewStoreRepository))

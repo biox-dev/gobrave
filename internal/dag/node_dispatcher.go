@@ -8,6 +8,7 @@ import (
 
 	"github.com/gobravedev/gobrave/internal/config"
 	"github.com/gobravedev/gobrave/internal/dag/executor"
+	"github.com/gobravedev/gobrave/internal/dag/prepare"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/types"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
@@ -21,7 +22,7 @@ type NodeDispatcher struct {
 	bus      event.Bus
 	factory  *executor.ExecuterFactory
 	cleanup  NodeFailureCleanupFunc
-	preparer NodeRuntimePreparer
+	preparer prepare.NodeRuntimePreparer
 }
 
 func NewNodeDispatcher(
@@ -32,7 +33,7 @@ func NewNodeDispatcher(
 	workflowRepo interfaces.WorkflowRepository,
 	projectRepo interfaces.ProjectRepository,
 	cfg *config.Config,
-	runScriptBuilders map[string]RunScriptBuilder,
+	runScriptBuilders map[string]prepare.RunScriptBuilder,
 	// cleanup NodeFailureCleanupFunc,
 	// preparer NodeRuntimePreparer,
 ) *NodeDispatcher {
@@ -41,7 +42,7 @@ func NewNodeDispatcher(
 	// }
 	storageBase := strings.TrimSpace(cfg.Storage.BaseDir)
 	runtime := NewRuntimeEngine(repo)
-	preparer := NewFileSystemNodeRuntimePreparerWithBuilders(
+	preparer := prepare.NewFileSystemNodeRuntimePreparerWithBuilders(
 		repo,
 		workflowRepo,
 		projectRepo,

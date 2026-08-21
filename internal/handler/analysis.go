@@ -19,6 +19,7 @@ import (
 	"github.com/gobravedev/gobrave/internal/compiler"
 	"github.com/gobravedev/gobrave/internal/config"
 	dagruntime "github.com/gobravedev/gobrave/internal/dag"
+	"github.com/gobravedev/gobrave/internal/dag/prepare"
 	"github.com/gobravedev/gobrave/internal/errors"
 	"github.com/gobravedev/gobrave/internal/logger"
 	"github.com/gobravedev/gobrave/internal/types"
@@ -1541,7 +1542,7 @@ func buildStandaloneRunScript(
 	params map[string]interface{},
 ) (string, error) {
 
-	return dagruntime.BuildRunScript(node, scriptType, scriptPath, scriptContent, params)
+	return prepare.BuildRunScript(node, scriptType, scriptPath, scriptContent, params)
 }
 
 // regenerateNodeRunScript rebuilds the run script for an existing analysis node

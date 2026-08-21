@@ -32,15 +32,15 @@ import (
 // - Keep existing frontend payload, executor path, and analysis persistence untouched.
 // - Delegate runtime execution to V2 for safe rollout.
 type dataflowDagOrchestratorV3 struct {
-	bus               event.Bus
-	repo              interfaces.AnalysisRepository
-	workflowRepo      interfaces.WorkflowRepository
-	projectRepo       interfaces.ProjectRepository
-	analysisRepo      interfaces.AnalysisRepository
-	containerMgr      *manager.ContainerManager
-	dispatcher        *dagruntime.NodeDispatcher
-	runScriptBuilders map[string]dagruntime.RunScriptBuilder
-	cfg               *config.Config
+	bus          event.Bus
+	repo         interfaces.AnalysisRepository
+	workflowRepo interfaces.WorkflowRepository
+	projectRepo  interfaces.ProjectRepository
+	analysisRepo interfaces.AnalysisRepository
+	containerMgr *manager.ContainerManager
+	dispatcher   *dagruntime.NodeDispatcher
+	// runScriptBuilders map[string]prepare.RunScriptBuilder
+	cfg *config.Config
 }
 
 func NewDataflowDagOrchestratorV3(
@@ -50,19 +50,19 @@ func NewDataflowDagOrchestratorV3(
 	containerMgr *manager.ContainerManager,
 	projectRepo interfaces.ProjectRepository,
 	dispatcher *dagruntime.NodeDispatcher,
-	runScriptBuilders map[string]dagruntime.RunScriptBuilder,
+	// runScriptBuilders map[string]prepare.RunScriptBuilder,
 	cfg *config.Config,
 	bus event.Bus,
 ) interfaces.DataflowDagOrchestrator {
 	return &dataflowDagOrchestratorV3{
-		bus:               bus,
-		repo:              repo,
-		workflowRepo:      workflowRepo,
-		dispatcher:        dispatcher,
-		containerMgr:      containerMgr,
-		projectRepo:       projectRepo,
-		runScriptBuilders: runScriptBuilders,
-		cfg:               cfg,
+		bus:          bus,
+		repo:         repo,
+		workflowRepo: workflowRepo,
+		dispatcher:   dispatcher,
+		containerMgr: containerMgr,
+		projectRepo:  projectRepo,
+		// runScriptBuilders: runScriptBuilders,
+		cfg: cfg,
 	}
 }
 

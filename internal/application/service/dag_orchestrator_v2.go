@@ -17,6 +17,7 @@ import (
 	"github.com/gobravedev/gobrave/internal/compiler"
 	"github.com/gobravedev/gobrave/internal/config"
 	dagruntime "github.com/gobravedev/gobrave/internal/dag"
+	"github.com/gobravedev/gobrave/internal/dag/prepare"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/logger"
 	"github.com/gobravedev/gobrave/internal/manager"
@@ -59,7 +60,7 @@ type dynamicDagOrchestratorV2 struct {
 	dispatcher        *dagruntime.NodeDispatcher
 	projectRepo       interfaces.ProjectRepository
 	containerMgr      *manager.ContainerManager
-	runScriptBuilders map[string]dagruntime.RunScriptBuilder
+	runScriptBuilders map[string]prepare.RunScriptBuilder
 	// cfg provides storage roots and runtime options.
 	cfg *config.Config
 	// bus emits runtime events using the existing event pipeline.
@@ -81,22 +82,22 @@ func NewDynamicDagOrchestratorV2(
 	containerRepo interfaces.ContainerRepository,
 	containerMgr *manager.ContainerManager,
 	projectRepo interfaces.ProjectRepository,
-	// runScriptBuilders map[string]dagruntime.RunScriptBuilder,
+	runScriptBuilders map[string]prepare.RunScriptBuilder,
 	dispatcher *dagruntime.NodeDispatcher,
 	cfg *config.Config,
 	bus event.Bus,
 ) interfaces.DynamicDagOrchestrator {
 	return &dynamicDagOrchestratorV2{
-		repo:          repo,
-		workflowRepo:  workflowRepo,
-		containerRepo: containerRepo,
-		containerMgr:  containerMgr,
-		projectRepo:   projectRepo,
-		dispatcher:    dispatcher,
-		// runScriptBuilders: runScriptBuilders,
-		cfg:      cfg,
-		bus:      bus,
-		registry: dagruntime.NewRunningRegistry(),
+		repo:              repo,
+		workflowRepo:      workflowRepo,
+		containerRepo:     containerRepo,
+		containerMgr:      containerMgr,
+		projectRepo:       projectRepo,
+		dispatcher:        dispatcher,
+		runScriptBuilders: runScriptBuilders,
+		cfg:               cfg,
+		bus:               bus,
+		registry:          dagruntime.NewRunningRegistry(),
 	}
 }
 
@@ -370,7 +371,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 	if o.cfg != nil && o.cfg.Storage != nil {
 		storageBase = strings.TrimSpace(o.cfg.Storage.BaseDir)
 	}
-	preparer := dagruntime.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, storageBase, o.runScriptBuilders)
+	preparer := prepare.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, storageBase, o.runScriptBuilders)
 	// dispatcher := dagruntime.NewNodeDispatcher(
 	// 	runtime,
 	// 	o.repo,
@@ -564,7 +565,7 @@ func (o *dynamicDagOrchestratorV2) reconcileDynamicCandidates(
 	incoming map[string][]*types.AnalysisEdge,
 	candidates []string,
 	dep *dynamicDependencyManager,
-	preparer dagruntime.NodeRuntimePreparer,
+	preparer prepare.NodeRuntimePreparer,
 ) error {
 	if len(candidates) == 0 {
 		return nil
@@ -652,7 +653,7 @@ func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByCacheType(
 	incomingEdges []*types.AnalysisEdge,
 	existingByNodeID map[string]*types.AnalysisNode,
 	dep *dynamicDependencyManager,
-	preparer dagruntime.NodeRuntimePreparer,
+	preparer prepare.NodeRuntimePreparer,
 ) error {
 	if analysis == nil || existingNode == nil {
 		return nil
@@ -692,7 +693,7 @@ func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByMD5Policy(
 	incomingEdges []*types.AnalysisEdge,
 	existingByNodeID map[string]*types.AnalysisNode,
 	dep *dynamicDependencyManager,
-	preparer dagruntime.NodeRuntimePreparer,
+	preparer prepare.NodeRuntimePreparer,
 	requireParamsMD5 bool,
 ) error {
 	if existingNode == nil || row == nil {
@@ -788,7 +789,7 @@ func (o *dynamicDagOrchestratorV2) markExistingNodeReadyForRerun(ctx context.Con
 	})
 }
 
-func prepareNodeArtifactsAndFillMD5(ctx context.Context, preparer dagruntime.NodeRuntimePreparer, node *types.AnalysisNode) error {
+func prepareNodeArtifactsAndFillMD5(ctx context.Context, preparer prepare.NodeRuntimePreparer, node *types.AnalysisNode) error {
 	if node == nil {
 		return fmt.Errorf("analysis node is nil")
 	}
