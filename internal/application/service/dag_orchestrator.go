@@ -8,7 +8,6 @@ import (
 
 	"github.com/gobravedev/gobrave/internal/config"
 	dagruntime "github.com/gobravedev/gobrave/internal/dag"
-	"github.com/gobravedev/gobrave/internal/dag/executor"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/logger"
 	"github.com/gobravedev/gobrave/internal/manager"
@@ -36,6 +35,7 @@ type dagOrchestrator struct {
 	containerRepo     interfaces.ContainerRepository
 	containerMgr      *manager.ContainerManager
 	runScriptBuilders map[string]dagruntime.RunScriptBuilder
+	dispatcher        *dagruntime.NodeDispatcher
 	cfg               *config.Config
 	bus               event.Bus
 	registry          *dagruntime.RunningRegistry
@@ -46,6 +46,7 @@ func NewDagOrchestrator(
 	workflowRepo interfaces.WorkflowRepository,
 	projectRepo interfaces.ProjectRepository,
 	containerRepo interfaces.ContainerRepository,
+	dispatcher *dagruntime.NodeDispatcher,
 	containerMgr *manager.ContainerManager,
 	runScriptBuilders map[string]dagruntime.RunScriptBuilder,
 	cfg *config.Config,
@@ -57,6 +58,7 @@ func NewDagOrchestrator(
 		containerRepo:     containerRepo,
 		projectRepo:       projectRepo,
 		containerMgr:      containerMgr,
+		dispatcher:        dispatcher,
 		runScriptBuilders: runScriptBuilders,
 		cfg:               cfg,
 		bus:               bus,
@@ -101,23 +103,23 @@ func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64) erro
 	go o.renewAnalysisRunningLease(analysisID, heartbeatStop)
 
 	runtime := dagruntime.NewRuntimeEngine(o.repo)
-	onNodeFailedCleanupPolicy := o.cleanupPolicyOnNodeFailed()
+	// onNodeFailedCleanupPolicy := o.cleanupPolicyOnNodeFailed()
 	onDagFinishedCleanupPolicy := o.cleanupPolicyOnDagFinished()
-	storageBase := ""
-	if o.cfg != nil && o.cfg.Storage != nil {
-		storageBase = strings.TrimSpace(o.cfg.Storage.BaseDir)
-	}
-	preparer := dagruntime.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, storageBase, o.runScriptBuilders)
-	dispatcher := dagruntime.NewNodeDispatcher(runtime, o.repo, o.bus, executor.NewFactory(executor.FactoryDeps{
-		WorkflowRepository: o.workflowRepo,
-		ContainerManager:   o.containerMgr,
-	}), func(cleanupCtx context.Context, node *types.AnalysisNode) {
-		o.cleanupDagNodeContainer(cleanupCtx, node, onNodeFailedCleanupPolicy)
-	}, preparer)
+	// storageBase := ""
+	// if o.cfg != nil && o.cfg.Storage != nil {
+	// 	storageBase = strings.TrimSpace(o.cfg.Storage.BaseDir)
+	// }
+	// preparer := dagruntime.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, storageBase, o.runScriptBuilders)
+	// dispatcher := dagruntime.NewNodeDispatcher(runtime, o.repo, o.bus, executor.NewFactory(executor.FactoryDeps{
+	// 	WorkflowRepository: o.workflowRepo,
+	// 	ContainerManager:   o.containerMgr,
+	// }), func(cleanupCtx context.Context, node *types.AnalysisNode) {
+	// 	o.cleanupDagNodeContainer(cleanupCtx, node, onNodeFailedCleanupPolicy)
+	// }, preparer)
 	scheduler := dagruntime.NewDagScheduler(
 		analysisID,
 		runtime,
-		dispatcher,
+		o.dispatcher,
 		o.bus,
 		dagruntime.SchedulerConfig{
 			MaxSteps:       10000,

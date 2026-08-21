@@ -1,8 +1,6 @@
 package executor
 
 import (
-	"strings"
-
 	"github.com/gobravedev/gobrave/internal/manager"
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
 )
@@ -12,42 +10,42 @@ type FactoryDeps struct {
 	ContainerManager   *manager.ContainerManager
 }
 
-type Factory struct {
-	docker     Executor
-	nextflow   Executor
-	local      Executor
-	kubernetes Executor
+const (
+	executorContainer = "container"
+	executorNextflow  = "nextflow"
+	executorLocal     = "local"
+)
+
+// defaultExecutor is returned when the requested name is empty or unknown.
+const defaultExecutor = executorContainer
+
+type ExecuterFactory struct {
+	executors map[string]Executor
 }
 
-func NewFactory(deps FactoryDeps) *Factory {
+func NewFactory(workflowRepository interfaces.WorkflowRepository,
+	containerManager *manager.ContainerManager) *ExecuterFactory {
 	local := NewLocalExecutor()
-	return &Factory{
-		docker: NewDockerExecutor(
-			local,
-			deps.WorkflowRepository,
-			deps.ContainerManager,
-		),
-		nextflow: NewNextflowExecutor(local),
-		local:    local,
-		kubernetes: NewKubernetesExecutor(
-			local,
-			deps.WorkflowRepository,
-			deps.ContainerManager,
-		),
+	container := NewContainerExecutor(
+		workflowRepository,
+		containerManager,
+	)
+	return &ExecuterFactory{
+		executors: map[string]Executor{
+			executorContainer: container,
+			executorNextflow:  NewNextflowExecutor(),
+			executorLocal:     local,
+		},
 	}
 }
 
-func (f *Factory) Resolve(executorName string) Executor {
-	switch strings.TrimSpace(strings.ToLower(executorName)) {
-	case "docker":
-		return f.docker
-	case "nextflow":
-		return f.nextflow
-	case "kubernetes", "k8s":
-		return f.kubernetes
-	case "", "local":
-		fallthrough
-	default:
-		return f.docker
-	}
+func (f *ExecuterFactory) Resolve(executorName string) Executor {
+	// name := strings.TrimSpace(strings.ToLower(executorName))
+	// if name == "" {
+	// 	name = defaultExecutor
+	// }
+	// if ex, ok := f.executors[name]; ok {
+	// 	return ex
+	// }
+	return f.executors[defaultExecutor]
 }

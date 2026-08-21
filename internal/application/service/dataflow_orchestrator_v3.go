@@ -15,7 +15,6 @@ import (
 
 	"github.com/gobravedev/gobrave/internal/config"
 	dagruntime "github.com/gobravedev/gobrave/internal/dag"
-	"github.com/gobravedev/gobrave/internal/dag/executor"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/logger"
 	"github.com/gobravedev/gobrave/internal/manager"
@@ -39,6 +38,7 @@ type dataflowDagOrchestratorV3 struct {
 	projectRepo       interfaces.ProjectRepository
 	analysisRepo      interfaces.AnalysisRepository
 	containerMgr      *manager.ContainerManager
+	dispatcher        *dagruntime.NodeDispatcher
 	runScriptBuilders map[string]dagruntime.RunScriptBuilder
 	cfg               *config.Config
 }
@@ -49,6 +49,7 @@ func NewDataflowDagOrchestratorV3(
 	analysisRepo interfaces.AnalysisRepository,
 	containerMgr *manager.ContainerManager,
 	projectRepo interfaces.ProjectRepository,
+	dispatcher *dagruntime.NodeDispatcher,
 	runScriptBuilders map[string]dagruntime.RunScriptBuilder,
 	cfg *config.Config,
 	bus event.Bus,
@@ -57,6 +58,7 @@ func NewDataflowDagOrchestratorV3(
 		bus:               bus,
 		repo:              repo,
 		workflowRepo:      workflowRepo,
+		dispatcher:        dispatcher,
 		containerMgr:      containerMgr,
 		projectRepo:       projectRepo,
 		runScriptBuilders: runScriptBuilders,
@@ -1197,23 +1199,23 @@ func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, project
 	spec := o.buildGraphSpec(analysisID, dagDefinition)
 	o.logFrameworkPhase(ctx, spec)
 
-	runtimeEngine := dagruntime.NewRuntimeEngine(o.repo)
-	storageBase := ""
-	if o.cfg != nil && o.cfg.Storage != nil {
-		storageBase = strings.TrimSpace(o.cfg.Storage.BaseDir)
-	}
-	preparer := dagruntime.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, storageBase, o.runScriptBuilders)
-	dispatcher := dagruntime.NewNodeDispatcher(
-		runtimeEngine,
-		o.repo,
-		o.bus,
-		executor.NewFactory(executor.FactoryDeps{
-			WorkflowRepository: o.workflowRepo,
-			ContainerManager:   o.containerMgr,
-		}),
-		nil,
-		preparer,
-	)
+	// runtimeEngine := dagruntime.NewRuntimeEngine(o.repo)
+	// storageBase := ""
+	// if o.cfg != nil && o.cfg.Storage != nil {
+	// 	storageBase = strings.TrimSpace(o.cfg.Storage.BaseDir)
+	// }
+	// preparer := dagruntime.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, storageBase, o.runScriptBuilders)
+	// dispatcher := dagruntime.NewNodeDispatcher(
+	// 	runtimeEngine,
+	// 	o.repo,
+	// 	o.bus,
+	// 	executor.NewFactory(executor.FactoryDeps{
+	// 		WorkflowRepository: o.workflowRepo,
+	// 		ContainerManager:   o.containerMgr,
+	// 	}),
+	// 	nil,
+	// 	preparer,
+	// )
 
 	runtimeEvents := make(chan dagruntime.RuntimeEvent, 256)
 	if o.bus != nil {
@@ -1223,7 +1225,7 @@ func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, project
 	var kernel *dataflowKernel
 	runtime := &persistentDataflowRuntime{
 		repo:       o.repo,
-		dispatcher: dispatcher,
+		dispatcher: o.dispatcher,
 		onNodeSubmitChange: func(nodeID string, delta int) {
 			if kernel == nil {
 				return

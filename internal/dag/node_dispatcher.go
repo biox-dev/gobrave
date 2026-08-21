@@ -3,8 +3,10 @@ package dag
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/gobravedev/gobrave/internal/config"
 	"github.com/gobravedev/gobrave/internal/dag/executor"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/types"
@@ -17,23 +19,37 @@ type NodeDispatcher struct {
 	runtime  *RuntimeEngine
 	repo     interfaces.AnalysisRepository
 	bus      event.Bus
-	factory  *executor.Factory
+	factory  *executor.ExecuterFactory
 	cleanup  NodeFailureCleanupFunc
 	preparer NodeRuntimePreparer
 }
 
 func NewNodeDispatcher(
-	runtime *RuntimeEngine,
+	// runtime *RuntimeEngine,
 	repo interfaces.AnalysisRepository,
 	bus event.Bus,
-	factory *executor.Factory,
-	cleanup NodeFailureCleanupFunc,
-	preparer NodeRuntimePreparer,
+	factory *executor.ExecuterFactory,
+	workflowRepo interfaces.WorkflowRepository,
+	projectRepo interfaces.ProjectRepository,
+	cfg *config.Config,
+	runScriptBuilders map[string]RunScriptBuilder,
+	// cleanup NodeFailureCleanupFunc,
+	// preparer NodeRuntimePreparer,
 ) *NodeDispatcher {
-	if preparer == nil {
-		preparer = NoopNodeRuntimePreparer{}
-	}
-	return &NodeDispatcher{runtime: runtime, repo: repo, bus: bus, factory: factory, cleanup: cleanup, preparer: preparer}
+	// if preparer == nil {
+	// 	preparer = NoopNodeRuntimePreparer{}
+	// }
+	storageBase := strings.TrimSpace(cfg.Storage.BaseDir)
+	runtime := NewRuntimeEngine(repo)
+	preparer := NewFileSystemNodeRuntimePreparerWithBuilders(
+		repo,
+		workflowRepo,
+		projectRepo,
+		storageBase,
+		runScriptBuilders)
+
+	return &NodeDispatcher{runtime: runtime, repo: repo, bus: bus, factory: factory,
+		cleanup: nil, preparer: preparer}
 }
 
 func (d *NodeDispatcher) Dispatch(ctx context.Context, analysisNodeID int64) error {

@@ -57,7 +57,8 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		return fmt.Errorf("analysis node is nil")
 	}
 	if node.AnalysisID == 0 {
-		return fmt.Errorf("analysis_id is required")
+		// return fmt.Errorf("analysis_id is required")
+		return nil
 	}
 	if strings.TrimSpace(node.AnalysisNodeID) == "" {
 		return fmt.Errorf("analysis_node_id is required")

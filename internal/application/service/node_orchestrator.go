@@ -10,7 +10,6 @@ import (
 
 	"github.com/gobravedev/gobrave/internal/config"
 	dagruntime "github.com/gobravedev/gobrave/internal/dag"
-	"github.com/gobravedev/gobrave/internal/dag/executor"
 	"github.com/gobravedev/gobrave/internal/errors"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/logger"
@@ -24,6 +23,7 @@ type nodeOrchestrator struct {
 	workflowRepo     interfaces.WorkflowRepository
 	containerMgr     *manager.ContainerManager
 	containerService interfaces.ContainerService
+	dispatcher       *dagruntime.NodeDispatcher
 	bus              event.Bus
 	projectRepo      interfaces.ProjectRepository
 	cfg              *config.Config
@@ -34,6 +34,7 @@ func NewNodeOrchestrator(
 	workflowRepo interfaces.WorkflowRepository,
 	containerMgr *manager.ContainerManager,
 	projectRepo interfaces.ProjectRepository,
+	dispatcher *dagruntime.NodeDispatcher,
 	containerService interfaces.ContainerService,
 	bus event.Bus,
 	cfg *config.Config,
@@ -43,6 +44,7 @@ func NewNodeOrchestrator(
 		workflowRepo:     workflowRepo,
 		containerMgr:     containerMgr,
 		containerService: containerService,
+		dispatcher:       dispatcher,
 		projectRepo:      projectRepo,
 		bus:              bus,
 		cfg:              cfg,
@@ -140,22 +142,22 @@ func (o *nodeOrchestrator) StartAsync(ctx context.Context, analysisNodeID int64)
 		})
 	}
 
-	runtime := dagruntime.NewRuntimeEngine(o.repo)
-	preparer := dagruntime.NoopNodeRuntimePreparer{}
-	dispatcher := dagruntime.NewNodeDispatcher(
-		runtime,
-		o.repo,
-		o.bus,
-		executor.NewFactory(executor.FactoryDeps{
-			WorkflowRepository: o.workflowRepo,
-			ContainerManager:   o.containerMgr,
-		}),
-		nil,
-		preparer,
-	)
+	// runtime := dagruntime.NewRuntimeEngine(o.repo)
+	// preparer := dagruntime.NoopNodeRuntimePreparer{}
+	// dispatcher := dagruntime.NewNodeDispatcher(
+	// 	runtime,
+	// 	o.repo,
+	// 	o.bus,
+	// 	executor.NewFactory(executor.FactoryDeps{
+	// 		WorkflowRepository: o.workflowRepo,
+	// 		ContainerManager:   o.containerMgr,
+	// 	}),
+	// 	nil,
+	// 	preparer,
+	// )
 
 	go func(nodeID int64, runtimeNodeID string) {
-		if dispatchErr := dispatcher.Dispatch(context.Background(), nodeID); dispatchErr != nil {
+		if dispatchErr := o.dispatcher.Dispatch(context.Background(), nodeID); dispatchErr != nil {
 			logger.Warnf(context.Background(), "[NodeOrchestrator] dispatch failed, analysis_node_db_id=%d node_id=%s err=%v", analysisNodeID, runtimeNodeID, dispatchErr)
 		}
 	}(node.ID, node.NodeID)
@@ -213,21 +215,21 @@ func (o *nodeOrchestrator) StopAsync(ctx context.Context, analysisNodeID int64) 
 	// 	})
 	// }
 
-	runtime := dagruntime.NewRuntimeEngine(o.repo)
-	preparer := dagruntime.NoopNodeRuntimePreparer{}
-	dispatcher := dagruntime.NewNodeDispatcher(
-		runtime,
-		o.repo,
-		o.bus,
-		executor.NewFactory(executor.FactoryDeps{
-			WorkflowRepository: o.workflowRepo,
-			ContainerManager:   o.containerMgr,
-		}),
-		nil,
-		preparer,
-	)
+	// runtime := dagruntime.NewRuntimeEngine(o.repo)
+	// preparer := dagruntime.NoopNodeRuntimePreparer{}
+	// dispatcher := dagruntime.NewNodeDispatcher(
+	// 	runtime,
+	// 	o.repo,
+	// 	o.bus,
+	// 	executor.NewFactory(executor.FactoryDeps{
+	// 		WorkflowRepository: o.workflowRepo,
+	// 		ContainerManager:   o.containerMgr,
+	// 	}),
+	// 	nil,
+	// 	preparer,
+	// )
 
-	if _, execErr := dispatcher.Stop(ctx, node); execErr != nil {
+	if _, execErr := o.dispatcher.Stop(ctx, node); execErr != nil {
 		_ = o.repo.UpdateAnalysisNodeByAnalysisNodeID(context.Background(), node.AnalysisNodeID, map[string]any{
 			"status":        dagruntime.StatusFailed,
 			"server_status": "stopped",

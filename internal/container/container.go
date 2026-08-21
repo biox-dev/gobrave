@@ -22,6 +22,7 @@ import (
 	kubernetesruntime "github.com/gobravedev/gobrave/internal/container_runtime/kubernetes"
 	"github.com/gobravedev/gobrave/internal/dag"
 	dagruntime "github.com/gobravedev/gobrave/internal/dag"
+	"github.com/gobravedev/gobrave/internal/dag/executor"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/handler"
 	"github.com/gobravedev/gobrave/internal/logger"
@@ -135,6 +136,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(func(mgr *manager.ContainerManager) dagruntime.NodeContainerOperator {
 		return mgr
 	}))
+	// Register the DAG executor factory so all concrete executors
+	// (container, nextflow, local) are created once and resolved by name.
+	must(container.Provide(executor.NewFactory))
+
 	must(container.Provide(manager.NewOutboxDispatcher))
 	// Provide ContainerCreateWorker as its concrete type.
 	must(container.Provide(manager.NewContainerCreateWorker))
@@ -253,6 +258,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewDataService))
 	must(container.Provide(service.NewStoreService))
 	must(container.Provide(service.NewAnalysisService))
+
+	must(container.Provide(dag.NewNodeDispatcher))
+
 	must(container.Provide(service.NewDagOrchestrator))
 	must(container.Provide(service.NewNodeOrchestrator))
 	must(container.Provide(service.NewDynamicDagOrchestratorV2))

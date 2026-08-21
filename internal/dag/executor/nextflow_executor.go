@@ -7,13 +7,14 @@ import (
 )
 
 type NextflowExecutor struct {
-	fallback Executor
+	// fallback Executor
 }
 
-func NewNextflowExecutor(fallback Executor) *NextflowExecutor {
-	return &NextflowExecutor{fallback: fallback}
+func NewNextflowExecutor() *NextflowExecutor {
+	return &NextflowExecutor{}
 }
 
 func (e *NextflowExecutor) Execute(ctx context.Context, node *types.AnalysisNode) (*Result, error) {
-	return e.fallback.Execute(ctx, node)
+	// Implement Nextflow execution logic here
+	return nil, nil
 }

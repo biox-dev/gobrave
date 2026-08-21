@@ -9,31 +9,30 @@ import (
 	"github.com/gobravedev/gobrave/internal/types/interfaces"
 )
 
-type DockerExecutor struct {
-	fallback     Executor
+type ContainerExecutor struct {
+	// fallback     Executor
 	workflowRepo interfaces.WorkflowRepository
 	containerMgr *manager.ContainerManager
 }
 
-func NewDockerExecutor(
-	fallback Executor,
+func NewContainerExecutor(
 	workflowRepo interfaces.WorkflowRepository,
 	containerMgr *manager.ContainerManager,
-) *DockerExecutor {
-	return &DockerExecutor{
-		fallback:     fallback,
+) *ContainerExecutor {
+	return &ContainerExecutor{
+		// fallback:     fallback,
 		workflowRepo: workflowRepo,
 		containerMgr: containerMgr,
 	}
 }
 
-func (e *DockerExecutor) Execute(ctx context.Context, node *types.AnalysisNode) (*Result, error) {
+func (e *ContainerExecutor) Execute(ctx context.Context, node *types.AnalysisNode) (*Result, error) {
 	if ActionFromContext(ctx) == ActionStop {
 		if e.containerMgr == nil {
-			return nil, fmt.Errorf("docker executor stop requires container manager")
+			return nil, fmt.Errorf("Container executor stop requires container manager")
 		}
 		if node == nil || node.ID == 0 {
-			return nil, fmt.Errorf("docker executor stop requires persisted analysis node id")
+			return nil, fmt.Errorf("Container executor stop requires persisted analysis node id")
 		}
 		if err := e.containerMgr.StopByOwner(ctx, types.ContainerOwnerDagNode, int64(node.ID)); err != nil {
 			return nil, fmt.Errorf("stop dag node container failed: %w", err)
@@ -41,13 +40,13 @@ func (e *DockerExecutor) Execute(ctx context.Context, node *types.AnalysisNode) 
 		return &Result{Status: "stopping", ExitCode: 0}, nil
 	}
 
-	if e.containerMgr == nil || e.workflowRepo == nil {
-		return e.fallback.Execute(ctx, node)
-	}
+	// if e.containerMgr == nil || e.workflowRepo == nil {
+	// 	return e.fallback.Execute(ctx, node)
+	// }
 
 	scriptID := node.ScriptID
 	if scriptID == 0 {
-		return nil, fmt.Errorf("docker executor requires script_id")
+		return nil, fmt.Errorf("Container executor requires script_id")
 	}
 
 	scriptItem, err := e.workflowRepo.GetScriptByID(ctx, scriptID)
@@ -59,7 +58,7 @@ func (e *DockerExecutor) Execute(ctx context.Context, node *types.AnalysisNode) 
 	}
 
 	if node.ID == 0 {
-		return nil, fmt.Errorf("docker executor requires persisted analysis node id")
+		return nil, fmt.Errorf("Container executor requires persisted analysis node id")
 	}
 
 	instanceName := fmt.Sprintf("dag-node-%d-%d", node.AnalysisID, node.ID)

@@ -10,8 +10,8 @@ type NodeRuntimePreparer interface {
 	Prepare(ctx context.Context, node *types.AnalysisNode) error
 }
 
-type NoopNodeRuntimePreparer struct{}
+// type NoopNodeRuntimePreparer struct{}
 
-func (NoopNodeRuntimePreparer) Prepare(context.Context, *types.AnalysisNode) error {
-	return nil
-}
+// func (NoopNodeRuntimePreparer) Prepare(context.Context, *types.AnalysisNode) error {
+// 	return nil
+// }

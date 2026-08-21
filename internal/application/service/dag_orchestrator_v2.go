@@ -17,7 +17,6 @@ import (
 	"github.com/gobravedev/gobrave/internal/compiler"
 	"github.com/gobravedev/gobrave/internal/config"
 	dagruntime "github.com/gobravedev/gobrave/internal/dag"
-	"github.com/gobravedev/gobrave/internal/dag/executor"
 	"github.com/gobravedev/gobrave/internal/event"
 	"github.com/gobravedev/gobrave/internal/logger"
 	"github.com/gobravedev/gobrave/internal/manager"
@@ -57,7 +56,7 @@ type dynamicDagOrchestratorV2 struct {
 	// containerRepo is reserved for future V2 node/container lifecycle enhancements.
 	containerRepo interfaces.ContainerRepository
 	// containerMgr is passed into executor factory so container-backed executors are reused.
-
+	dispatcher        *dagruntime.NodeDispatcher
 	projectRepo       interfaces.ProjectRepository
 	containerMgr      *manager.ContainerManager
 	runScriptBuilders map[string]dagruntime.RunScriptBuilder
@@ -82,20 +81,22 @@ func NewDynamicDagOrchestratorV2(
 	containerRepo interfaces.ContainerRepository,
 	containerMgr *manager.ContainerManager,
 	projectRepo interfaces.ProjectRepository,
-	runScriptBuilders map[string]dagruntime.RunScriptBuilder,
+	// runScriptBuilders map[string]dagruntime.RunScriptBuilder,
+	dispatcher *dagruntime.NodeDispatcher,
 	cfg *config.Config,
 	bus event.Bus,
 ) interfaces.DynamicDagOrchestrator {
 	return &dynamicDagOrchestratorV2{
-		repo:              repo,
-		workflowRepo:      workflowRepo,
-		containerRepo:     containerRepo,
-		containerMgr:      containerMgr,
-		projectRepo:       projectRepo,
-		runScriptBuilders: runScriptBuilders,
-		cfg:               cfg,
-		bus:               bus,
-		registry:          dagruntime.NewRunningRegistry(),
+		repo:          repo,
+		workflowRepo:  workflowRepo,
+		containerRepo: containerRepo,
+		containerMgr:  containerMgr,
+		projectRepo:   projectRepo,
+		dispatcher:    dispatcher,
+		// runScriptBuilders: runScriptBuilders,
+		cfg:      cfg,
+		bus:      bus,
+		registry: dagruntime.NewRunningRegistry(),
 	}
 }
 
@@ -370,19 +371,19 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 		storageBase = strings.TrimSpace(o.cfg.Storage.BaseDir)
 	}
 	preparer := dagruntime.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, storageBase, o.runScriptBuilders)
-	dispatcher := dagruntime.NewNodeDispatcher(
-		runtime,
-		o.repo,
-		o.bus,
-		executor.NewFactory(executor.FactoryDeps{
-			WorkflowRepository: o.workflowRepo,
-			ContainerManager:   o.containerMgr,
-		}),
-		nil,
-		preparer,
-	)
+	// dispatcher := dagruntime.NewNodeDispatcher(
+	// 	runtime,
+	// 	o.repo,
+	// 	o.bus,
+	// 	executor.NewFactory(executor.FactoryDeps{
+	// 		WorkflowRepository: o.workflowRepo,
+	// 		ContainerManager:   o.containerMgr,
+	// 	}),
+	// 	nil,
+	// 	preparer,
+	// )
 
-	pool := dagruntime.NewWorkerPool(dispatcher, 1, dynamicV2ReadyQueueSize)
+	pool := dagruntime.NewWorkerPool(o.dispatcher, 1, dynamicV2ReadyQueueSize)
 	pool.Start(ctx)
 	defer pool.Stop()
 
