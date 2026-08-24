@@ -234,6 +234,7 @@ func (m *kubernetesMonitorV2) handleJobEvent(sub *monitorSubscription, job *batc
 			m.runtime.emitEvent("ContainerStarted", sub.runtimeID, "")
 		})
 	}
+	// Terminating 也会触发 update 事件
 	if job.Spec.Suspend != nil && *job.Spec.Suspend {
 		if sub.state.emitAndClose(func() {
 			m.runtime.emitEvent("ContainerExited", sub.runtimeID, "0")

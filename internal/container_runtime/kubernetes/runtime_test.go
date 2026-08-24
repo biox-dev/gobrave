@@ -6,6 +6,7 @@ import (
 	"time"
 
 	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
+	"github.com/gobravedev/gobrave/internal/types"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -266,5 +267,33 @@ func TestResumeJob_UnsuspendsAndMonitors(t *testing.T) {
 	}
 	if job.Spec.Suspend == nil || *job.Spec.Suspend {
 		t.Fatalf("expected job to be unsuspended after resume")
+	}
+}
+
+func TestCreateJob_DefaultsToSuspended(t *testing.T) {
+	k := &KubernetesRuntime{
+		name:      "k8s",
+		namespace: "default",
+		clientset: fake.NewSimpleClientset(),
+	}
+
+	runtimeID, err := k.Create(context.Background(), &types.ContainerSpec{
+		RuntimeName:  "create-job",
+		WorkloadKind: workloadKindJob,
+		Image:        "busybox:latest",
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+	if runtimeID == "" {
+		t.Fatalf("expected non-empty runtime id")
+	}
+
+	job, err := k.clientset.BatchV1().Jobs("default").Get(context.Background(), "create-job", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get created job failed: %v", err)
+	}
+	if job.Spec.Suspend == nil || !*job.Spec.Suspend {
+		t.Fatalf("expected created job to be suspended by default")
 	}
 }

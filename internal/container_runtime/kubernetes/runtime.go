@@ -466,6 +466,7 @@ func (k *KubernetesRuntime) createJob(ctx context.Context, namespace string, nam
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: int32Ptr(0),
+			Suspend:      boolPtr(true),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec:       buildPodSpecForJob(spec),
