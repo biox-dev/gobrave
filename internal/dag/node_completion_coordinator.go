@@ -127,52 +127,52 @@ func (c *NodeCompletionCoordinator) Handle(evt event.Event) {
 
 	eventName := strings.TrimSpace(ce.Event)
 	switch eventName {
-	case "ContainerStopped", "ContainerFailed":
+	case "ContainerStopped", "ContainerFailed", "ContainerDeleted":
 		c.reconcileContainerByID(context.Background(), ce.ContainerInstanceID, eventName)
 	default:
 	}
 }
 
-func (c *NodeCompletionCoordinator) Start(ctx context.Context) {
-	if c == nil || c.containerRepo == nil || c.runtime == nil {
-		return
-	}
+// func (c *NodeCompletionCoordinator) Start(ctx context.Context) {
+// 	if c == nil || c.containerRepo == nil || c.runtime == nil {
+// 		return
+// 	}
 
-	ticker := time.NewTicker(c.pollInterval)
-	defer ticker.Stop()
+// 	ticker := time.NewTicker(c.pollInterval)
+// 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			c.pollOnce(ctx)
-		}
-	}
-}
+// 	for {
+// 		select {
+// 		case <-ctx.Done():
+// 			return
+// 		case <-ticker.C:
+// 			c.pollOnce(ctx)
+// 		}
+// 	}
+// }
 
-func (c *NodeCompletionCoordinator) pollOnce(ctx context.Context) {
-	instances, err := c.containerRepo.ListContainerInstance(ctx)
-	if err != nil {
-		logger.Warnf(ctx, "[NodeCompletionCoordinator] list container instances failed: %v", err)
-		return
-	}
+// func (c *NodeCompletionCoordinator) pollOnce(ctx context.Context) {
+// 	instances, err := c.containerRepo.ListContainerInstance(ctx)
+// 	if err != nil {
+// 		logger.Warnf(ctx, "[NodeCompletionCoordinator] list container instances failed: %v", err)
+// 		return
+// 	}
 
-	processed := 0
-	for _, inst := range instances {
-		if inst == nil || inst.OwnerType != types.ContainerOwnerDagNode {
-			continue
-		}
-		if !c.isContainerTerminal(inst.Status) {
-			continue
-		}
-		if c.pollBatchLimit > 0 && processed >= c.pollBatchLimit {
-			break
-		}
-		processed++
-		c.reconcileContainerByID(ctx, inst.ID, "poll")
-	}
-}
+// 	processed := 0
+// 	for _, inst := range instances {
+// 		if inst == nil || inst.OwnerType != types.ContainerOwnerDagNode {
+// 			continue
+// 		}
+// 		if !c.isContainerTerminal(inst.Status) {
+// 			continue
+// 		}
+// 		if c.pollBatchLimit > 0 && processed >= c.pollBatchLimit {
+// 			break
+// 		}
+// 		processed++
+// 		c.reconcileContainerByID(ctx, inst.ID, "poll")
+// 	}
+// }
 
 func (c *NodeCompletionCoordinator) reconcileContainerByID(ctx context.Context, containerInstanceID int64, source string) {
 	if !c.beginReconcile(containerInstanceID) {

@@ -227,7 +227,7 @@ func (o *nodeOrchestrator) StopAsync(ctx context.Context, analysisNodeID int64) 
 	// 	preparer,
 	// )
 
-	if _, execErr := o.dispatcher.Stop(ctx, node); execErr != nil {
+	if _, execErr := o.dispatcher.Stop(context.Background(), node); execErr != nil {
 		_ = o.repo.UpdateAnalysisNodeByAnalysisNodeID(context.Background(), node.AnalysisNodeID, map[string]any{
 			"status":        dagruntime.StatusFailed,
 			"server_status": "stopped",

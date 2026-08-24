@@ -72,7 +72,7 @@ func (f *FSM) Transition(
 		}
 
 	case types.ContainerStopping:
-		if to == types.ContainerStopped || to == types.ContainerDeletePending || to == types.ContainerFailed {
+		if to == types.ContainerStopped || to == types.ContainerDeletePending || to == types.ContainerFailed || to == types.ContainerDeleted {
 			return nil
 		}
 
