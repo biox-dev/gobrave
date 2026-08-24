@@ -18,6 +18,18 @@ type testRuntimeEventHandler struct {
 	events []containerruntime.RuntimeEvent
 }
 
+type testRuntimeMonitor struct {
+	called        int
+	lastRuntimeID string
+	err           error
+}
+
+func (m *testRuntimeMonitor) Monitor(_ context.Context, runtimeID string) error {
+	m.called++
+	m.lastRuntimeID = runtimeID
+	return m.err
+}
+
 func (h *testRuntimeEventHandler) OnEvent(evt containerruntime.RuntimeEvent) {
 	h.events = append(h.events, evt)
 }
@@ -185,6 +197,7 @@ func TestStopJob_EmitsContainerExitedWhenNotMonitored(t *testing.T) {
 		namespace: "default",
 		clientset: fake.NewSimpleClientset(&batchv1.Job{
 			ObjectMeta: metav1.ObjectMeta{Name: "stop-job", Namespace: "default"},
+			Spec:       batchv1.JobSpec{Suspend: boolPtr(false)},
 		}),
 	}
 	k.SetEventHandler(handler)
@@ -208,8 +221,50 @@ func TestStopJob_EmitsContainerExitedWhenNotMonitored(t *testing.T) {
 		t.Fatalf("expected exit code message 0, got %s", handler.events[0].Message)
 	}
 
-	_, err := k.clientset.BatchV1().Jobs("default").Get(context.Background(), "stop-job", metav1.GetOptions{})
-	if !apierrors.IsNotFound(err) {
-		t.Fatalf("expected job to be deleted by stop, err=%v", err)
+	job, err := k.clientset.BatchV1().Jobs("default").Get(context.Background(), "stop-job", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected job to remain after stop(suspend), err=%v", err)
+	}
+	if job.Spec.Suspend == nil || !*job.Spec.Suspend {
+		t.Fatalf("expected job to be suspended after stop")
+	}
+}
+
+func TestResumeJob_UnsuspendsAndMonitors(t *testing.T) {
+	handler := &testRuntimeEventHandler{}
+	monitor := &testRuntimeMonitor{}
+	k := &KubernetesRuntime{
+		name:      "k8s",
+		namespace: "default",
+		clientset: fake.NewSimpleClientset(&batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{Name: "resume-job", Namespace: "default"},
+			Spec:       batchv1.JobSpec{Suspend: boolPtr(true)},
+		}),
+		monitor: monitor,
+	}
+	k.SetEventHandler(handler)
+
+	runtimeID := k.runtimeID("default", workloadKindJob, "resume-job")
+	for containerruntime.IsRuntimeMonitoring(runtimeID) {
+		containerruntime.UnmarkRuntimeMonitoring(runtimeID)
+	}
+
+	if err := k.Resume(context.Background(), runtimeID); err != nil {
+		t.Fatalf("resume job failed: %v", err)
+	}
+
+	if monitor.called != 1 {
+		t.Fatalf("expected monitor to be called once, got %d", monitor.called)
+	}
+	if monitor.lastRuntimeID != runtimeID {
+		t.Fatalf("unexpected runtime id in monitor call, got %s", monitor.lastRuntimeID)
+	}
+
+	job, err := k.clientset.BatchV1().Jobs("default").Get(context.Background(), "resume-job", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get resumed job failed: %v", err)
+	}
+	if job.Spec.Suspend == nil || *job.Spec.Suspend {
+		t.Fatalf("expected job to be unsuspended after resume")
 	}
 }

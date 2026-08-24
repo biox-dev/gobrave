@@ -183,12 +183,11 @@ func (k *KubernetesRuntime) Start(ctx context.Context, runtimeID string) error {
 		}
 		return k.Monitor(ctx, runtimeID)
 	case workloadKindJob:
-		_, err := k.clientset.BatchV1().Jobs(meta.Namespace).Get(ctx, meta.Name, metav1.GetOptions{})
-		if err != nil {
+		if err := k.setJobSuspended(ctx, meta.Namespace, meta.Name, false); err != nil {
 			if apierrors.IsNotFound(err) {
 				return fmt.Errorf("job workload is not restartable after delete: %s", runtimeID)
 			}
-			return fmt.Errorf("get job %s: %w", meta.Name, err)
+			return fmt.Errorf("resume job %s: %w", meta.Name, err)
 		}
 		return k.Monitor(ctx, runtimeID)
 	default:
@@ -216,14 +215,12 @@ func (k *KubernetesRuntime) Stop(ctx context.Context, runtimeID string) error {
 		}
 		return nil
 	case workloadKindJob:
-		policy := metav1.DeletePropagationForeground
-		err := k.clientset.BatchV1().Jobs(meta.Namespace).Delete(ctx, meta.Name, metav1.DeleteOptions{PropagationPolicy: &policy})
-		if err != nil {
+		if err := k.setJobSuspended(ctx, meta.Namespace, meta.Name, true); err != nil {
 			if apierrors.IsNotFound(err) {
 				k.emitEvent("ContainerExited", runtimeID, "job not found")
 				return nil
 			}
-			return fmt.Errorf("delete job %s: %w", meta.Name, err)
+			return fmt.Errorf("suspend job %s: %w", meta.Name, err)
 		}
 		if !containerruntime.IsRuntimeMonitoring(runtimeID) {
 			k.emitEvent("ContainerExited", runtimeID, "0")
@@ -737,6 +734,23 @@ func (k *KubernetesRuntime) scaleDeployment(ctx context.Context, namespace, name
 	return nil
 }
 
+func (k *KubernetesRuntime) setJobSuspended(ctx context.Context, namespace string, name string, suspended bool) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		job, err := k.clientset.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+
+		if job.Spec.Suspend != nil && *job.Spec.Suspend == suspended {
+			return nil
+		}
+
+		job.Spec.Suspend = boolPtr(suspended)
+		_, err = k.clientset.BatchV1().Jobs(namespace).Update(ctx, job, metav1.UpdateOptions{})
+		return err
+	})
+}
+
 func (k *KubernetesRuntime) resolveLatestPodName(ctx context.Context, namespace string, labels map[string]string) (string, error) {
 	selector := []string{}
 	for key, value := range labels {
@@ -831,6 +845,10 @@ func sanitizeName(raw string) string {
 }
 
 func int32Ptr(v int32) *int32 {
+	return &v
+}
+
+func boolPtr(v bool) *bool {
 	return &v
 }
 

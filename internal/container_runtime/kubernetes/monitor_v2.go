@@ -234,6 +234,14 @@ func (m *kubernetesMonitorV2) handleJobEvent(sub *monitorSubscription, job *batc
 			m.runtime.emitEvent("ContainerStarted", sub.runtimeID, "")
 		})
 	}
+	if job.Spec.Suspend != nil && *job.Spec.Suspend {
+		if sub.state.emitAndClose(func() {
+			m.runtime.emitEvent("ContainerExited", sub.runtimeID, "0")
+		}) {
+			m.completeAndCleanup(sub)
+		}
+		return
+	}
 	if job.Status.Succeeded > 0 {
 		if sub.state.emitAndClose(func() {
 			m.runtime.emitEvent("ContainerExited", sub.runtimeID, "0")
@@ -291,6 +299,11 @@ func (m *kubernetesMonitorV2) checkJobSnapshot(sub *monitorSubscription) bool {
 	if jobHasStarted(job) {
 		sub.state.emitStarted(func() {
 			m.runtime.emitEvent("ContainerStarted", sub.runtimeID, "")
+		})
+	}
+	if job.Spec.Suspend != nil && *job.Spec.Suspend {
+		return sub.state.emitAndClose(func() {
+			m.runtime.emitEvent("ContainerExited", sub.runtimeID, "0")
 		})
 	}
 	if job.Status.Succeeded > 0 {
