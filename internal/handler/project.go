@@ -165,6 +165,67 @@ func (h *ProjectHandler) AddUserProject(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "user project added successfully"})
 }
 
+// createProjectRequest is the request body for CreateProject.
+type createProjectRequest struct {
+	ProjectName  string `json:"project_name" binding:"required"`
+	MetadataForm string `json:"metadata_form"`
+	Research     string `json:"research"`
+	Parameter    string `json:"parameter"`
+	Description  string `json:"description"`
+}
+
+// CreateProject godoc
+// @Summary      为当前用户创建项目
+// @Description  创建一个新项目并将其关联到当前登录用户，同时将该用户其他项目置为非激活
+// @Tags         项目
+// @Accept       json
+// @Produce      json
+// @Param        request  body      createProjectRequest  true  "请求参数"
+// @Success      200      {object}  projectListItem       "创建成功"
+// @Failure      400      {object}  errors.AppError       "参数错误"
+// @Failure      401      {object}  errors.AppError       "未认证"
+// @Failure      500      {object}  errors.AppError       "服务器错误"
+// @Security     Bearer
+// @Router       /project/create-project [post]
+func (h *ProjectHandler) CreateProject(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req createProjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	project := &types.Project{
+		ProjectName:  strings.TrimSpace(req.ProjectName),
+		MetadataForm: req.MetadataForm,
+		Research:     req.Research,
+		Parameter:    req.Parameter,
+		Description:  req.Description,
+	}
+
+	created, err := h.projectService.CreateProjectForUser(ctx, userID, project)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to create project").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, projectListItem{
+		ID:           created.ID,
+		ProjectID:    created.ProjectID,
+		ProjectName:  created.ProjectName,
+		MetadataForm: parseMetadataForm(created.MetadataForm),
+		Research:     created.Research,
+		Parameter:    created.Parameter,
+		Description:  created.Description,
+	})
+}
+
 // updateProjectSharingRequest is the request body for UpdateProjectSharing.
 type updateProjectSharingRequest struct {
 	ProjectID string `json:"project_id" binding:"required"`

@@ -18,6 +18,7 @@ type ProjectService interface {
 	ActivateUserProject(ctx context.Context, userID, projectID string) error
 	DeleteUserProject(ctx context.Context, userID, projectID string) error
 	CreateDefaultProjectForUser(ctx context.Context, userID, username string) error
+	CreateProjectForUser(ctx context.Context, userID string, project *types.Project) (*types.Project, error)
 	AddProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error
 	UpdateProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error
 	DeleteProjectReport(ctx context.Context, userID string, reportID int64) error

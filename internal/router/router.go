@@ -136,6 +136,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, handler *handler.AuthHandler) {
 func RegisterProjectRoutes(r *gin.RouterGroup, handler *handler.ProjectHandler, uploadHandler *handler.UploadHandler) {
 	r.GET("/project/list-project", handler.ListProject)
 	r.GET("/project/active-project", handler.GetActiveProject)
+	r.POST("/project/create-project", handler.CreateProject)
 	r.POST("/project/add-user-project", handler.AddUserProject)
 	r.POST("/project/update-project-sharing", handler.UpdateProjectSharing)
 	r.POST("/project/add-project-to-user", handler.AddProjectToUser)

@@ -158,6 +158,42 @@ func (s *projectService) CreateDefaultProjectForUser(ctx context.Context, userID
 	return nil
 }
 
+func (s *projectService) CreateProjectForUser(ctx context.Context, userID string, project *types.Project) (*types.Project, error) {
+	if project == nil {
+		return nil, errors.New("project is nil")
+	}
+
+	if strings.TrimSpace(project.ProjectName) == "" {
+		return nil, errors.New("project name is empty")
+	}
+
+	if project.ProjectID == "" {
+		project.ProjectID = uuid.New().String()
+	}
+
+	now := time.Now()
+	project.CreatedAt = now
+	project.UpdatedAt = now
+
+	if err := s.projectRepo.CreateProject(ctx, project); err != nil {
+		return nil, fmt.Errorf("failed to create project: %w", err)
+	}
+
+	if err := s.projectRepo.AddUserProject(ctx, &types.UserProject{
+		UserID:    userID,
+		ProjectID: project.ProjectID,
+		CreatedAt: now,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to link user to project: %w", err)
+	}
+
+	// if err := s.projectRepo.ActivateUserProject(ctx, userID, project.ProjectID); err != nil {
+	// 	return nil, fmt.Errorf("failed to activate project: %w", err)
+	// }
+
+	return project, nil
+}
+
 func (s *projectService) AddProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error {
 	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, report.ProjectID)
 	if err != nil {
