@@ -263,10 +263,16 @@ func (h *LLMHandler) CreateLLMSession(c *gin.Context) {
 		return
 	}
 
-	if strings.TrimSpace(req.ProjectID) == "" {
-		c.Error(errors.NewValidationError("project_id is required"))
+	// if strings.TrimSpace(req.ProjectID) == "" {
+	// 	c.Error(errors.NewValidationError("project_id is required"))
+	// 	return
+	// }
+	project, err := h.projectSvc.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleLLMError(c, err, "failed to get active project")
 		return
 	}
+	req.ProjectID = project.ID
 
 	if err := h.llmSvc.CreateLLMSession(c.Request.Context(), userID, &req); err != nil {
 		handleLLMError(c, err, "failed to create llm session")
@@ -312,7 +318,7 @@ func (h *LLMHandler) UpdateLLMSession(c *gin.Context) {
 		c.Error(errors.NewValidationError("id is required"))
 		return
 	}
-	if strings.TrimSpace(req.ProjectID) == "" {
+	if req.ProjectID == 0 {
 		c.Error(errors.NewValidationError("project_id is required"))
 		return
 	}
@@ -802,7 +808,7 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 	}
 
 	client := copilot.NewClient(&copilot.ClientOptions{
-		Connection: copilot.URIConnection{URL: h.cliURL},
+		// Connection: copilot.URIConnection{URL: h.cliURL},
 	})
 
 	workingDir, err := h.resolveWorkingDirectory(ctx, session.userID, env)

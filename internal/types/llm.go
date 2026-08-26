@@ -12,7 +12,7 @@ import (
 type LLMSession struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	ProjectID string `json:"project_id" gorm:"type:varchar(36);index;not null"`
+	ProjectID int64 `json:"project_id" gorm:"type:bigint;index;not null"`
 
 	Title string `json:"title" gorm:"type:varchar(255)"`
 

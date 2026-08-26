@@ -129,10 +129,10 @@ func (s *llmService) ListLLMConversationBySessionID(ctx context.Context, userID 
 	return items, nil
 }
 
-func (s *llmService) resolveActiveProjectID(ctx context.Context, userID string) (string, error) {
+func (s *llmService) resolveActiveProjectID(ctx context.Context, userID string) (int64, error) {
 	project, err := s.projectSvc.GetActiveProjectByUserID(ctx, userID)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
-	return project.ProjectID, nil
+	return project.ID, nil
 }
