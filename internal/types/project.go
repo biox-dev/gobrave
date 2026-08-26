@@ -35,15 +35,29 @@ func (t *Project) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// ProjectListItem carries a Project together with the sharing settings of the
+// current user, taken from the user_project mapping table.
+type ProjectListItem struct {
+	Project
+	ShareCode    string `json:"share_code"`
+	ShareEnabled bool   `json:"share_enabled"`
+}
+
 // UserProject is a manual many-to-many mapping table between users and projects.
 // We intentionally do not use GORM association tags/relations.
 type UserProject struct {
 	ID     uint   `json:"id" gorm:"primaryKey;autoIncrement"`
 	UserID string `json:"user_id" gorm:"type:varchar(36);not null;index:idx_user_project_user;uniqueIndex:idx_user_project_unique,priority:1"`
 	// ProjectID int64  `json:"project_id,string" gorm:"column:project_id;type:bigint"`
-	ProjectID string    `json:"project_id" gorm:"type:varchar(255);not null;index:idx_user_project_project;uniqueIndex:idx_user_project_unique,priority:2"`
-	IsActive  bool      `json:"is_active" gorm:"default:false"`
-	CreatedAt time.Time `json:"created_at"`
+	ProjectID string `json:"project_id" gorm:"type:varchar(255);not null;index:idx_user_project_project;uniqueIndex:idx_user_project_unique,priority:2"`
+	IsActive  bool   `json:"is_active" gorm:"default:false"`
+
+	// ShareCode is generated when the owner enables project sharing. Other users
+	// can use it to look up the project and gain access.
+	ShareCode string `json:"share_code" gorm:"type:varchar(64);index"`
+	// ShareEnabled toggles whether the project can be shared via ShareCode.
+	ShareEnabled bool      `json:"share_enabled" gorm:"default:false"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func (UserProject) TableName() string {

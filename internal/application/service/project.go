@@ -14,6 +14,9 @@ import (
 	"gorm.io/gorm"
 )
 
+// ErrUserProjectActive indicates the user-project binding is still active and cannot be deleted.
+var ErrUserProjectActive = errors.New("user project is active")
+
 type projectService struct {
 	projectRepo interfaces.ProjectRepository
 }
@@ -22,7 +25,7 @@ func NewProjectService(projectRepo interfaces.ProjectRepository) interfaces.Proj
 	return &projectService{projectRepo: projectRepo}
 }
 
-func (s *projectService) ListProjectByUserID(ctx context.Context, userID string) ([]*types.Project, error) {
+func (s *projectService) ListProjectByUserID(ctx context.Context, userID string) ([]*types.ProjectListItem, error) {
 	return s.projectRepo.ListProjectByUserID(ctx, userID)
 }
 func (s *projectService) GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error) {
@@ -62,8 +65,69 @@ func (s *projectService) AddUserProject(ctx context.Context, userID, projectID s
 	})
 }
 
+func (s *projectService) AddUserProjectByShareCode(ctx context.Context, userID, shareCode string) error {
+	shareCode = strings.TrimSpace(shareCode)
+	if shareCode == "" {
+		return errors.New("share code is empty")
+	}
+
+	owner, err := s.projectRepo.GetUserProjectByShareCode(ctx, shareCode)
+	if err != nil {
+		return err
+	}
+	if !owner.ShareEnabled {
+		return errors.New("project sharing is disabled")
+	}
+
+	exists, err := s.projectRepo.ExistsUserProject(ctx, userID, owner.ProjectID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return errors.New("user already has access to this project")
+	}
+
+	return s.projectRepo.AddUserProject(ctx, &types.UserProject{
+		UserID:    userID,
+		ProjectID: owner.ProjectID,
+		CreatedAt: time.Now(),
+	})
+}
+
+func (s *projectService) UpdateProjectSharing(ctx context.Context, userID, projectID string, enabled bool) (string, error) {
+	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, projectID)
+	if err != nil {
+		return "", err
+	}
+	if !bound {
+		return "", gorm.ErrRecordNotFound
+	}
+
+	shareCode := ""
+	if enabled {
+		shareCode = uuid.New().String()
+	}
+
+	if err := s.projectRepo.UpdateProjectSharing(ctx, userID, projectID, enabled, shareCode); err != nil {
+		return "", err
+	}
+
+	return shareCode, nil
+}
+
 func (s *projectService) ActivateUserProject(ctx context.Context, userID, projectID string) error {
 	return s.projectRepo.ActivateUserProject(ctx, userID, projectID)
+}
+
+func (s *projectService) DeleteUserProject(ctx context.Context, userID, projectID string) error {
+	up, err := s.projectRepo.GetUserProject(ctx, userID, projectID)
+	if err != nil {
+		return err
+	}
+	if up.IsActive {
+		return ErrUserProjectActive
+	}
+	return s.projectRepo.DeleteUserProject(ctx, userID, projectID)
 }
 
 func (s *projectService) CreateDefaultProjectForUser(ctx context.Context, userID, username string) error {

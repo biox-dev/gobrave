@@ -32,6 +32,44 @@ func (r *projectRepository) ExistsUserProject(ctx context.Context, userID, proje
 	return count > 0, err
 }
 
+func (r *projectRepository) GetUserProject(ctx context.Context, userID, projectID string) (*types.UserProject, error) {
+	up := &types.UserProject{}
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND project_id = ?", userID, projectID).
+		Take(up).Error
+	if err != nil {
+		return nil, err
+	}
+	return up, nil
+}
+
+func (r *projectRepository) GetUserProjectByShareCode(ctx context.Context, shareCode string) (*types.UserProject, error) {
+	up := &types.UserProject{}
+	err := r.db.WithContext(ctx).
+		Where("share_code = ?", shareCode).
+		Take(up).Error
+	if err != nil {
+		return nil, err
+	}
+	return up, nil
+}
+
+func (r *projectRepository) UpdateProjectSharing(ctx context.Context, userID, projectID string, enabled bool, shareCode string) error {
+	return r.db.WithContext(ctx).
+		Model(&types.UserProject{}).
+		Where("user_id = ? AND project_id = ?", userID, projectID).
+		Updates(map[string]interface{}{
+			"share_enabled": enabled,
+			"share_code":    shareCode,
+		}).Error
+}
+
+func (r *projectRepository) DeleteUserProject(ctx context.Context, userID, projectID string) error {
+	return r.db.WithContext(ctx).
+		Where("user_id = ? AND project_id = ?", userID, projectID).
+		Delete(&types.UserProject{}).Error
+}
+
 func (r *projectRepository) GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error) {
 	project := &types.Project{}
 	err := r.db.WithContext(ctx).
@@ -80,11 +118,11 @@ func (r *projectRepository) ActivateUserProject(ctx context.Context, userID, pro
 	})
 }
 
-func (r *projectRepository) ListProjectByUserID(ctx context.Context, userID string) ([]*types.Project, error) {
-	projects := make([]*types.Project, 0)
+func (r *projectRepository) ListProjectByUserID(ctx context.Context, userID string) ([]*types.ProjectListItem, error) {
+	projects := make([]*types.ProjectListItem, 0)
 	err := r.db.WithContext(ctx).
 		Table("t_project AS p").
-		Select("p.*").
+		Select("p.*, up.share_code, up.share_enabled").
 		Joins("INNER JOIN user_project up ON up.project_id = p.project_id").
 		Where("up.user_id = ?", userID).
 		Order("p.id DESC").
