@@ -628,7 +628,7 @@ func (h *ProjectHandler) ListProjectReport(c *gin.Context) {
 		})
 	}
 
-	result = appendProjectReportMarkdownFiles(result, project.ProjectID)
+	// result = appendProjectReportMarkdownFiles(result, project.ProjectID)
 
 	c.JSON(http.StatusOK, result)
 }
