@@ -283,3 +283,7 @@ func (s *projectService) GetProjectReportDetailByID(ctx context.Context, userID 
 
 	return report, nil
 }
+
+func (s *projectService) GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error) {
+	return s.projectRepo.GetProjectReportByID(ctx, reportID)
+}

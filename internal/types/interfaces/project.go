@@ -25,6 +25,7 @@ type ProjectService interface {
 	ListProjectReportByProjectID(ctx context.Context, userID, projectID string) ([]*types.ProjectReport, error)
 	PageProjectReportByProjectID(ctx context.Context, userID, projectID string, pagination *types.Pagination) ([]*types.ProjectReport, int64, error)
 	GetProjectReportDetailByID(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, error)
+	GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error)
 }
 
 // ProjectRepository defines project data access methods.

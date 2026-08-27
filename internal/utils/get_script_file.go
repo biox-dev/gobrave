@@ -37,6 +37,12 @@ func GetProjectDir(baseDir, projectId string) string {
 	return filepath.Join(baseDir, "data", projectId)
 }
 
+func GetProjectReportDir(baseDir, projectId, reportID string) string {
+	projectDir := GetProjectDir(baseDir, projectId)
+	return filepath.Join(projectDir, "report", reportID)
+
+}
+
 func GetProjectDocDir(baseDir, projectId string) string {
 	return filepath.Join(baseDir, "data", projectId, "docs", "src")
 }
