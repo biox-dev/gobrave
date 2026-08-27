@@ -23,6 +23,7 @@ type ProjectService interface {
 	UpdateProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error
 	DeleteProjectReport(ctx context.Context, userID string, reportID int64) error
 	ListProjectReportByProjectID(ctx context.Context, userID, projectID string) ([]*types.ProjectReport, error)
+	PageProjectReportByProjectID(ctx context.Context, userID, projectID string, pagination *types.Pagination) ([]*types.ProjectReport, int64, error)
 	GetProjectReportDetailByID(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, error)
 }
 
@@ -44,4 +45,5 @@ type ProjectRepository interface {
 	UpdateProjectReport(ctx context.Context, report *types.ProjectReport) error
 	DeleteProjectReport(ctx context.Context, projectID string, reportID int64) error
 	ListProjectReportByProjectID(ctx context.Context, projectID string) ([]*types.ProjectReport, error)
+	PageProjectReportByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.ProjectReport, int64, error)
 }

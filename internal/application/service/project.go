@@ -255,6 +255,18 @@ func (s *projectService) ListProjectReportByProjectID(ctx context.Context, userI
 	return s.projectRepo.ListProjectReportByProjectID(ctx, projectID)
 }
 
+func (s *projectService) PageProjectReportByProjectID(ctx context.Context, userID, projectID string, pagination *types.Pagination) ([]*types.ProjectReport, int64, error) {
+	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, projectID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !bound {
+		return nil, 0, gorm.ErrRecordNotFound
+	}
+
+	return s.projectRepo.PageProjectReportByProjectID(ctx, pagination, projectID)
+}
+
 func (s *projectService) GetProjectReportDetailByID(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, error) {
 	report, err := s.projectRepo.GetProjectReportByID(ctx, reportID)
 	if err != nil {

@@ -195,6 +195,35 @@ func (r *projectRepository) ListProjectReportByProjectID(ctx context.Context, pr
 	return reports, nil
 }
 
+func (r *projectRepository) PageProjectReportByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.ProjectReport, int64, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	items := make([]*types.ProjectReport, 0)
+	base := r.db.WithContext(ctx).
+		Model(&types.ProjectReport{}).
+		Select("id, project_id, title, sort_order, created_at, updated_at").
+		Where("project_id = ?", projectID)
+
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := base.
+		Order("sort_order DESC").
+		Order("created_at ASC").
+		Offset(pagination.Offset()).
+		Limit(pagination.Limit()).
+		Find(&items).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return items, total, nil
+}
+
 func (r *projectRepository) ListProjectReportDetailByProjectID(ctx context.Context, projectID string) ([]*types.ProjectReport, error) {
 	reports := make([]*types.ProjectReport, 0)
 	err := r.db.WithContext(ctx).

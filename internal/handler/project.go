@@ -633,6 +633,80 @@ func (h *ProjectHandler) ListProjectReport(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+type projectReportPageRequest struct {
+	types.Pagination
+}
+
+// PageProjectReport godoc
+// @Summary      分页查询项目报告列表
+// @Description  按当前用户激活项目分页查询报告列表，不返回 content 字段，按 sort_order 降序、created_at 升序排序
+// @Tags         项目
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.projectReportPageRequest  true  "分页请求参数"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /project/list-project-report-page [post]
+func (h *ProjectHandler) PageProjectReport(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req projectReportPageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("active project not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get active project").WithDetails(err.Error()))
+		return
+	}
+
+	reports, total, err := h.projectService.PageProjectReportByProjectID(ctx, userID, project.ProjectID, &req.Pagination)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("active project is not bound to current user"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to page project report").WithDetails(err.Error()))
+		return
+	}
+
+	result := make([]projectReportListItem, 0, len(reports))
+	for _, report := range reports {
+		result = append(result, projectReportListItem{
+			ID:        strconv.FormatInt(report.ID, 10),
+			ProjectID: report.ProjectID,
+			Title:     report.Title,
+			Source:    "database",
+			SortOrder: report.SortOrder,
+			CreatedAt: report.CreatedAt.Format("2006-01-02 15:04:05"),
+			UpdatedAt: report.UpdatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":       result,
+		"total":      total,
+		"page":       req.GetPage(),
+		"page_size":  req.GetPageSize(),
+		"project_id": project.ProjectID,
+	})
+}
+
 func appendProjectReportMarkdownFiles(result []projectReportListItem, projectID string) []projectReportListItem {
 	cfg, err := config.LoadConfig()
 	if err != nil || cfg == nil || cfg.Storage == nil {
