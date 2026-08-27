@@ -134,6 +134,24 @@ cp config.example.yml config.yml
 go run ./cmd/server
 ```
 
+### Install via `go install`
+
+```bash
+# Install the latest version into $GOPATH/bin (or $GOBIN)
+go install github.com/biox-dev/gobrave/cmd/server@latest
+
+# Configure
+cp config.example.yml config.yml
+# Edit config.yml with your database & settings
+
+# Run
+gobrave
+```
+
+> **Note:** `go install` builds a plain binary without the embedded frontend.
+> For a single executable with the frontend bundled, see
+> [Build a Single Executable with Embedded Frontend](#build-a-single-executable-with-embedded-frontend).
+
 ### Build a Static Binary
 
 ```bash
