@@ -167,9 +167,11 @@ func (r *projectRepository) UpdateProjectReport(ctx context.Context, report *typ
 		Model(&types.ProjectReport{}).
 		Where("id = ? AND project_id = ?", report.ID, report.ProjectID).
 		Updates(map[string]interface{}{
-			"title":      report.Title,
-			"content":    report.Content,
-			"sort_order": report.SortOrder,
+			"title":          report.Title,
+			"content":        report.Content,
+			"sort_order":     report.SortOrder,
+			"content_source": report.ContentSource,
+			"filename":       report.Filename,
 		}).Error
 }
 

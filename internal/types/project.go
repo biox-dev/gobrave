@@ -64,12 +64,24 @@ func (UserProject) TableName() string {
 	return "user_project"
 }
 
+// ProjectReport content source values.
+const (
+	ProjectReportContentSourceFile     = "file"
+	ProjectReportContentSourceDatabase = "database"
+)
+
+const DefaultProjectReportFilename = "output.md"
+
 type ProjectReport struct {
-	ID        int64     `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-	ProjectID string    `json:"project_id" gorm:"type:varchar(255);not null;index"`
-	Title     string    `json:"title" gorm:"type:varchar(255)"`
-	Content   string    `json:"content" gorm:"type:longtext"`
-	SortOrder int       `json:"sort_order" gorm:"default:0"`
+	ID        int64  `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
+	ProjectID string `json:"project_id" gorm:"type:varchar(255);not null;index"`
+	Title     string `json:"title" gorm:"type:varchar(255)"`
+	Content   string `json:"content" gorm:"type:longtext"`
+	SortOrder int    `json:"sort_order" gorm:"default:0"`
+	// ContentSource indicates where Content is stored: "file" or "database".
+	ContentSource string `json:"content_source" gorm:"type:varchar(16);default:file"`
+	// Filename is the report file name under the project report directory.
+	Filename  string    `json:"filename" gorm:"type:varchar(255);default:output.md"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -77,6 +89,12 @@ type ProjectReport struct {
 func (t *ProjectReport) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()
+	}
+	if t.ContentSource == "" {
+		t.ContentSource = ProjectReportContentSourceFile
+	}
+	if t.Filename == "" {
+		t.Filename = DefaultProjectReportFilename
 	}
 	return nil
 }

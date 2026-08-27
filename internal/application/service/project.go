@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -19,10 +23,11 @@ var ErrUserProjectActive = errors.New("user project is active")
 
 type projectService struct {
 	projectRepo interfaces.ProjectRepository
+	cfg         *config.Config
 }
 
-func NewProjectService(projectRepo interfaces.ProjectRepository) interfaces.ProjectService {
-	return &projectService{projectRepo: projectRepo}
+func NewProjectService(projectRepo interfaces.ProjectRepository, cfg *config.Config) interfaces.ProjectService {
+	return &projectService{projectRepo: projectRepo, cfg: cfg}
 }
 
 func (s *projectService) ListProjectByUserID(ctx context.Context, userID string) ([]*types.ProjectListItem, error) {
@@ -203,7 +208,24 @@ func (s *projectService) AddProjectReport(ctx context.Context, userID string, re
 		return gorm.ErrRecordNotFound
 	}
 
-	return s.projectRepo.AddProjectReport(ctx, report)
+	s.ensureProjectReportDefaults(report)
+	if report.ID == 0 {
+		report.ID = utils.GenerateID()
+	}
+
+	if report.ContentSource == types.ProjectReportContentSourceFile {
+		report.Content = ""
+	}
+
+	if err := s.projectRepo.AddProjectReport(ctx, report); err != nil {
+		return err
+	}
+
+	if report.ContentSource == types.ProjectReportContentSourceFile {
+		return s.ensureProjectReportFile(report)
+	}
+
+	return nil
 }
 
 func (s *projectService) UpdateProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error {
@@ -223,6 +245,58 @@ func (s *projectService) UpdateProjectReport(ctx context.Context, userID string,
 		return gorm.ErrRecordNotFound
 	}
 
+	s.ensureProjectReportDefaults(stored)
+
+	// Resolve the target storage settings. Keep the stored values unless the
+	// caller explicitly switches the source or filename.
+	targetSource := strings.TrimSpace(report.ContentSource)
+	if targetSource == "" ||
+		(targetSource != types.ProjectReportContentSourceFile && targetSource != types.ProjectReportContentSourceDatabase) {
+		targetSource = stored.ContentSource
+	}
+
+	targetFilename := strings.TrimSpace(report.Filename)
+	if targetFilename == "" {
+		targetFilename = stored.Filename
+	}
+	if targetFilename == "" {
+		targetFilename = types.DefaultProjectReportFilename
+	}
+
+	report.ContentSource = targetSource
+	report.Filename = targetFilename
+
+	switch {
+	case stored.ContentSource == types.ProjectReportContentSourceFile && targetSource == types.ProjectReportContentSourceDatabase:
+		// file -> database: write the file content into the database.
+		content, err := s.readProjectReportFile(stored)
+		if err != nil {
+			if os.IsNotExist(err) {
+				content = report.Content
+			} else {
+				return err
+			}
+		}
+		report.Content = content
+
+	case stored.ContentSource == types.ProjectReportContentSourceDatabase && targetSource == types.ProjectReportContentSourceFile:
+		// database -> file: write the database content into the file.
+		report.Content = stored.Content
+		if err := s.writeProjectReportFile(report); err != nil {
+			return err
+		}
+		report.Content = ""
+
+	default:
+		// Same-source update.
+		if targetSource == types.ProjectReportContentSourceFile {
+			if err := s.writeProjectReportFile(report); err != nil {
+				return err
+			}
+			report.Content = ""
+		}
+	}
+
 	return s.projectRepo.UpdateProjectReport(ctx, report)
 }
 
@@ -238,6 +312,12 @@ func (s *projectService) DeleteProjectReport(ctx context.Context, userID string,
 	}
 	if !bound {
 		return gorm.ErrRecordNotFound
+	}
+
+	if report.ContentSource == types.ProjectReportContentSourceFile {
+		if err := s.deleteProjectReportFile(report); err != nil {
+			return err
+		}
 	}
 
 	return s.projectRepo.DeleteProjectReport(ctx, report.ProjectID, reportID)
@@ -281,9 +361,117 @@ func (s *projectService) GetProjectReportDetailByID(ctx context.Context, userID 
 		return nil, gorm.ErrRecordNotFound
 	}
 
+	s.ensureProjectReportDefaults(report)
+
+	if report.ContentSource == types.ProjectReportContentSourceFile {
+		content, err := s.readProjectReportFile(report)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// Fall back to the database content for legacy reports whose file
+				// has not been initialized yet.
+				return report, nil
+			}
+			return nil, err
+		}
+		report.Content = content
+	}
+
 	return report, nil
 }
 
 func (s *projectService) GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error) {
 	return s.projectRepo.GetProjectReportByID(ctx, reportID)
+}
+
+func (s *projectService) ensureProjectReportDefaults(report *types.ProjectReport) {
+	if report == nil {
+		return
+	}
+	if report.ContentSource != types.ProjectReportContentSourceDatabase &&
+		report.ContentSource != types.ProjectReportContentSourceFile {
+		report.ContentSource = types.ProjectReportContentSourceFile
+	}
+	if strings.TrimSpace(report.Filename) == "" {
+		report.Filename = types.DefaultProjectReportFilename
+	}
+}
+
+func (s *projectService) projectReportFilePath(report *types.ProjectReport) (string, error) {
+	if s.cfg == nil || s.cfg.Storage == nil {
+		return "", errors.New("storage config is missing")
+	}
+
+	baseDir := strings.TrimSpace(s.cfg.Storage.BaseDir)
+	if baseDir == "" {
+		return "", errors.New("storage base dir is empty")
+	}
+
+	filename := strings.TrimSpace(report.Filename)
+	if filename == "" {
+		filename = types.DefaultProjectReportFilename
+	}
+	if filepath.Base(filename) != filename {
+		return "", errors.New("invalid report filename")
+	}
+
+	dir := utils.GetProjectReportDir(baseDir, report.ProjectID, strconv.FormatInt(report.ID, 10))
+	return filepath.Join(dir, filename), nil
+}
+
+func (s *projectService) ensureProjectReportFile(report *types.ProjectReport) error {
+	filePath, err := s.projectReportFilePath(report)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+func (s *projectService) writeProjectReportFile(report *types.ProjectReport) error {
+	filePath, err := s.projectReportFilePath(report)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(filePath, []byte(report.Content), 0o644)
+}
+
+func (s *projectService) readProjectReportFile(report *types.ProjectReport) (string, error) {
+	filePath, err := s.projectReportFilePath(report)
+	if err != nil {
+		return "", err
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
+func (s *projectService) deleteProjectReportFile(report *types.ProjectReport) error {
+	filePath, err := s.projectReportFilePath(report)
+	if err != nil {
+		return err
+	}
+
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	// Best-effort cleanup of the now-empty per-report directory.
+	_ = os.Remove(filepath.Dir(filePath))
+	return nil
 }

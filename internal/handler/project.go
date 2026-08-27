@@ -1,23 +1,18 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	stderrs "errors"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	appservice "github.com/biox-dev/gobrave/internal/application/service"
-	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
-	"github.com/biox-dev/gobrave/internal/utils"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -401,10 +396,12 @@ func (h *ProjectHandler) DeleteUserProject(c *gin.Context) {
 }
 
 type addProjectReportRequest struct {
-	ProjectID string `json:"project_id" binding:"required"`
-	Title     string `json:"title" binding:"required"`
-	Content   string `json:"content"`
-	SortOrder int    `json:"sort_order"`
+	ProjectID     string `json:"project_id" binding:"required"`
+	Title         string `json:"title" binding:"required"`
+	Content       string `json:"content"`
+	ContentSource string `json:"content_source"`
+	Filename      string `json:"filename"`
+	SortOrder     int    `json:"sort_order"`
 }
 
 // AddProjectReport godoc
@@ -436,10 +433,12 @@ func (h *ProjectHandler) AddProjectReport(c *gin.Context) {
 	}
 
 	report := &types.ProjectReport{
-		ProjectID: req.ProjectID,
-		Title:     req.Title,
-		Content:   req.Content,
-		SortOrder: req.SortOrder,
+		ProjectID:     req.ProjectID,
+		Title:         req.Title,
+		Content:       req.Content,
+		ContentSource: req.ContentSource,
+		Filename:      req.Filename,
+		SortOrder:     req.SortOrder,
 	}
 
 	if err := h.projectService.AddProjectReport(ctx, userID, report); err != nil {
@@ -455,11 +454,13 @@ func (h *ProjectHandler) AddProjectReport(c *gin.Context) {
 }
 
 type updateProjectReportRequest struct {
-	ID        int64  `json:"id,string" binding:"required"`
-	ProjectID string `json:"project_id" binding:"required"`
-	Title     string `json:"title" binding:"required"`
-	Content   string `json:"content"`
-	SortOrder int    `json:"sort_order"`
+	ID            int64  `json:"id,string" binding:"required"`
+	ProjectID     string `json:"project_id" binding:"required"`
+	Title         string `json:"title" binding:"required"`
+	Content       string `json:"content"`
+	ContentSource string `json:"content_source"`
+	Filename      string `json:"filename"`
+	SortOrder     int    `json:"sort_order"`
 }
 
 // UpdateProjectReport godoc
@@ -491,11 +492,13 @@ func (h *ProjectHandler) UpdateProjectReport(c *gin.Context) {
 	}
 
 	if err := h.projectService.UpdateProjectReport(ctx, userID, &types.ProjectReport{
-		ID:        req.ID,
-		ProjectID: req.ProjectID,
-		Title:     req.Title,
-		Content:   req.Content,
-		SortOrder: req.SortOrder,
+		ID:            req.ID,
+		ProjectID:     req.ProjectID,
+		Title:         req.Title,
+		Content:       req.Content,
+		ContentSource: req.ContentSource,
+		Filename:      req.Filename,
+		SortOrder:     req.SortOrder,
 	}); err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("project report not found"))
@@ -553,7 +556,7 @@ func (h *ProjectHandler) DeleteProjectReport(c *gin.Context) {
 }
 
 type projectReportDetailRequest struct {
-	ID string `form:"id" binding:"required"`
+	ID int64 `form:"id" binding:"required"`
 }
 
 type projectReportListItem struct {
@@ -567,13 +570,15 @@ type projectReportListItem struct {
 }
 
 type projectReportDetailItem struct {
-	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id"`
-	Title     string    `json:"title"`
-	Content   string    `json:"content"`
-	SortOrder int       `json:"sort_order"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	ProjectID     string    `json:"project_id"`
+	Title         string    `json:"title"`
+	Content       string    `json:"content"`
+	ContentSource string    `json:"content_source"`
+	Filename      string    `json:"filename"`
+	SortOrder     int       `json:"sort_order"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // ListProjectReport godoc
@@ -621,14 +626,12 @@ func (h *ProjectHandler) ListProjectReport(c *gin.Context) {
 			ID:        strconv.FormatInt(report.ID, 10),
 			ProjectID: report.ProjectID,
 			Title:     report.Title,
-			Source:    "database",
+			Source:    report.ContentSource,
 			SortOrder: report.SortOrder,
 			CreatedAt: report.CreatedAt.Format("2006-01-02 15:04:05"),
 			UpdatedAt: report.UpdatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
-
-	// result = appendProjectReportMarkdownFiles(result, project.ProjectID)
 
 	c.JSON(http.StatusOK, result)
 }
@@ -691,7 +694,7 @@ func (h *ProjectHandler) PageProjectReport(c *gin.Context) {
 			ID:        strconv.FormatInt(report.ID, 10),
 			ProjectID: report.ProjectID,
 			Title:     report.Title,
-			Source:    "database",
+			Source:    report.ContentSource,
 			SortOrder: report.SortOrder,
 			CreatedAt: report.CreatedAt.Format("2006-01-02 15:04:05"),
 			UpdatedAt: report.UpdatedAt.Format("2006-01-02 15:04:05"),
@@ -707,63 +710,12 @@ func (h *ProjectHandler) PageProjectReport(c *gin.Context) {
 	})
 }
 
-func appendProjectReportMarkdownFiles(result []projectReportListItem, projectID string) []projectReportListItem {
-	cfg, err := config.LoadConfig()
-	if err != nil || cfg == nil || cfg.Storage == nil {
-		return result
-	}
-
-	baseDir := strings.TrimSpace(cfg.Storage.BaseDir)
-	if baseDir == "" {
-		return result
-	}
-
-	srcDir, err := utils.SafePathUnderBase(baseDir, filepath.Join(baseDir, "data", projectID, "docs", "src"))
-	if err != nil {
-		return result
-	}
-
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		return result
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		fileName := entry.Name()
-		if !strings.HasSuffix(strings.ToLower(fileName), ".md") {
-			continue
-		}
-
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		updatedAt := info.ModTime().Format("2006-01-02 15:04:05")
-		result = append(result, projectReportListItem{
-			ID:        "file:" + fileName,
-			ProjectID: projectID,
-			Title:     fileName,
-			Source:    "file",
-			SortOrder: 0,
-			CreatedAt: updatedAt,
-			UpdatedAt: updatedAt,
-		})
-	}
-
-	return result
-}
-
 // GetProjectReportDetail godoc
 // @Summary      查询项目报告详情
 // @Description  根据 id 查询报告详情（包含 content）
 // @Tags         项目
 // @Produce      json
-// @Param        id          query     string                  true  "报告ID或 file:文件名.md"
+// @Param        id          query     int64                   true  "报告ID"
 // @Success      200         {object}  projectReportDetailItem "报告详情"
 // @Failure      400         {object}  errors.AppError         "参数错误"
 // @Failure      401         {object}  errors.AppError         "未认证"
@@ -785,32 +737,7 @@ func (h *ProjectHandler) GetProjectReportDetail(c *gin.Context) {
 		return
 	}
 
-	if strings.HasPrefix(req.ID, "file:") {
-		report, err := h.getProjectReportDetailFromFile(ctx, userID, req.ID)
-		if err != nil {
-			if appErr, ok := errors.IsAppError(err); ok {
-				c.Error(appErr)
-				return
-			}
-			if stderrs.Is(err, gorm.ErrRecordNotFound) {
-				c.Error(errors.NewNotFoundError("project report is not bound to current user"))
-				return
-			}
-			c.Error(errors.NewInternalServerError("failed to get project report detail").WithDetails(err.Error()))
-			return
-		}
-
-		c.JSON(http.StatusOK, report)
-		return
-	}
-
-	reportID, err := strconv.ParseInt(strings.TrimSpace(req.ID), 10, 64)
-	if err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails("id must be an integer or file:filename.md"))
-		return
-	}
-
-	report, err := h.projectService.GetProjectReportDetailByID(ctx, userID, reportID)
+	report, err := h.projectService.GetProjectReportDetailByID(ctx, userID, req.ID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("project report is not bound to current user"))
@@ -823,73 +750,21 @@ func (h *ProjectHandler) GetProjectReportDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, newProjectReportDetailItem(strconv.FormatInt(report.ID, 10), report))
 }
 
-func (h *ProjectHandler) getProjectReportDetailFromFile(ctx context.Context, userID, fileID string) (*projectReportDetailItem, error) {
-	project, err := h.projectService.GetActiveProjectByUserID(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	fileName := strings.TrimSpace(strings.TrimPrefix(fileID, "file:"))
-	if fileName == "" || !strings.HasSuffix(strings.ToLower(fileName), ".md") {
-		return nil, errors.NewValidationError("invalid request parameters").WithDetails("invalid file report id")
-	}
-	if filepath.Base(fileName) != fileName {
-		return nil, errors.NewValidationError("invalid request parameters").WithDetails("invalid file report id")
-	}
-
-	cfg, err := config.LoadConfig()
-	if err != nil || cfg == nil || cfg.Storage == nil {
-		return nil, gorm.ErrRecordNotFound
-	}
-
-	baseDir := strings.TrimSpace(cfg.Storage.BaseDir)
-	if baseDir == "" {
-		return nil, gorm.ErrRecordNotFound
-	}
-
-	filePath, err := utils.SafePathUnderBase(baseDir, filepath.Join(baseDir, "data", project.ProjectID, "docs", "src", fileName))
-	if err != nil {
-		return nil, errors.NewValidationError("invalid request parameters").WithDetails("invalid file report id")
-	}
-
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, gorm.ErrRecordNotFound
-		}
-		return nil, err
-	}
-
-	info, err := os.Stat(filePath)
-	if err != nil {
-		return nil, err
-	}
-
-	report := &types.ProjectReport{
-		ProjectID: project.ProjectID,
-		Title:     fileName,
-		Content:   string(content),
-		SortOrder: 0,
-		CreatedAt: info.ModTime(),
-		UpdatedAt: info.ModTime(),
-	}
-
-	return newProjectReportDetailItem(fileID, report), nil
-}
-
 func newProjectReportDetailItem(id string, report *types.ProjectReport) *projectReportDetailItem {
 	if report == nil {
 		return nil
 	}
 
 	return &projectReportDetailItem{
-		ID:        id,
-		ProjectID: report.ProjectID,
-		Title:     report.Title,
-		Content:   report.Content,
-		SortOrder: report.SortOrder,
-		CreatedAt: report.CreatedAt,
-		UpdatedAt: report.UpdatedAt,
+		ID:            id,
+		ProjectID:     report.ProjectID,
+		Title:         report.Title,
+		Content:       report.Content,
+		ContentSource: report.ContentSource,
+		Filename:      report.Filename,
+		SortOrder:     report.SortOrder,
+		CreatedAt:     report.CreatedAt,
+		UpdatedAt:     report.UpdatedAt,
 	}
 }
 
