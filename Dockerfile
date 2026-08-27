@@ -32,7 +32,7 @@ RUN go mod download
 # 复制源码并构建
 COPY . .
 
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o gobrave ./cmd/server/
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o gobrave .
 
 # ============================
 # Stage 3: Final container

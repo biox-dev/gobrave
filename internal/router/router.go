@@ -115,7 +115,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 
 	// r.Any("/apps", params.ProxyHandler.AppSessionProxy)
 	// r.Any("/apps/*proxyPath", params.ProxyHandler.AppSessionProxy)
-	r.NoRoute(params.ProxyHandler.FallbackProxy)
+	// r.NoRoute(params.ProxyHandler.FallbackProxy)
 	return r
 }
 

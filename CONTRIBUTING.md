@@ -18,9 +18,9 @@ Workflow file:
 When triggered by a tag push, it will:
 1. Build frontend assets from `gobravedev/brave-ui` and copy them into `web/`.
 2. Build embedded single binary with frontend:
-   - `go build -tags embed_frontend -o gobrave ./cmd/server`
+   - `go build -tags embed_frontend -o gobrave .`
 3. Build normal backend binary:
-   - `go build -o gobrave ./cmd/server`
+   - `go build -o gobrave .`
 4. Package release artifacts and publish to GitHub Releases.
 
 Published artifacts (3 files):

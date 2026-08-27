@@ -131,14 +131,14 @@ cp config.example.yml config.yml
 # Edit config.yml with your database & settings
 
 # Run (it's that simple)
-go run ./cmd/server
+go run .
 ```
 
 ### Install via `go install`
 
 ```bash
 # Install the latest version into $GOPATH/bin (or $GOBIN)
-go install github.com/biox-dev/gobrave/cmd/server@latest
+go install github.com/biox-dev/gobrave@latest
 
 # Configure
 cp config.example.yml config.yml
@@ -156,7 +156,7 @@ gobrave
 
 ```bash
 # Build for your platform
-go build -o gobrave ./cmd/server
+go build -o gobrave .
 # Run the binary
 ./gobrave
 ```
@@ -166,7 +166,7 @@ go build -o gobrave ./cmd/server
 ```bash
 # 1) Build frontend artifacts into gobrave/frontend/web first (for example: copy brave-ui dist)
 # 2) Build server with embedded frontend assets
-go build -tags embed_frontend -o gobrave ./cmd/server
+go build -tags embed_frontend -o gobrave .
 
 # Run as a single executable (no external web directory required at runtime)
 ./gobrave

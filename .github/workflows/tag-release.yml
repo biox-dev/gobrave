@@ -51,13 +51,13 @@ jobs:
           set -euxo pipefail
           mkdir -p release
           TAG="${GITHUB_REF_NAME}"
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags embed_frontend -o "release/gobrave-${TAG}-linux-amd64-embed" ./cmd/server
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags embed_frontend -o "release/gobrave-${TAG}-linux-amd64-embed" .
 
       - name: Build standard binary
         run: |
           set -euxo pipefail
           TAG="${GITHUB_REF_NAME}"
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "release/gobrave-${TAG}-linux-amd64" ./cmd/server
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "release/gobrave-${TAG}-linux-amd64" .
 
       - name: Package standard binary with web directory
         run: |

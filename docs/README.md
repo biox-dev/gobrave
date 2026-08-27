@@ -3,7 +3,7 @@
 - sqlite driver migration notes: sqlite-driver-migration.md
 
 ```
-swag init -g ./cmd/server/main.go  -o ./docs --parseDependency --parseInternal
+swag init -g .  -o ./docs --parseDependency --parseInternal
 
 ```
 kubectl get node -L kubernetes.io/hostname

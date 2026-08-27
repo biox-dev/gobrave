@@ -28,12 +28,13 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	cmd "github.com/biox-dev/gobrave/cmd/server"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/container"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/runtime"
 	"github.com/biox-dev/gobrave/internal/utils"
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -66,7 +67,7 @@ func main() {
 		}
 
 		addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-		listener, err := listenWithRetry(addr, 10, 300*time.Millisecond)
+		listener, err := cmd.ListenWithRetry(addr, 10, 300*time.Millisecond)
 		if err != nil {
 			return fmt.Errorf("failed to start server: %v", err)
 		}
@@ -74,7 +75,7 @@ func main() {
 		ctx, done := context.WithCancel(context.Background())
 
 		signals := make(chan os.Signal, 1)
-		signal.Notify(signals, shutdownSignals...)
+		signal.Notify(signals, cmd.ShutdownSignals...)
 
 		go func() {
 			sig := <-signals

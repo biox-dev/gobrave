@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/logger"
 )
 
-func listenWithRetry(addr string, maxRetries int, baseDelay time.Duration) (net.Listener, error) {
+func ListenWithRetry(addr string, maxRetries int, baseDelay time.Duration) (net.Listener, error) {
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {
 		listener, err := net.Listen("tcp", addr)
