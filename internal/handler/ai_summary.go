@@ -1,0 +1,157 @@
+package handler
+
+import (
+	"net/http"
+
+	"github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/gin-gonic/gin"
+)
+
+// AISummaryHandler 处理 AI 摘要相关接口。
+type AISummaryHandler struct {
+	aiSummaryService interfaces.AISummaryService
+}
+
+func NewAISummaryHandler(aiSummaryService interfaces.AISummaryService) *AISummaryHandler {
+	return &AISummaryHandler{aiSummaryService: aiSummaryService}
+}
+
+type createAISummaryRequest struct {
+	OwnerID   int64                  `json:"owner_id,string" binding:"required"`
+	OwnerType types.SummaryOwnerType `json:"owner_type" binding:"required"`
+}
+
+// CreateAISummary godoc
+// @Summary      创建 AI 摘要
+// @Description  根据 OwnerID/OwnerType 创建摘要记录，并异步触发 LLM 生成摘要
+// @Tags         AI摘要
+// @Accept       json
+// @Produce      json
+// @Param        request  body      createAISummaryRequest  true  "请求参数"
+// @Success      200      {object}  types.AISummary
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /ai-summary/create [post]
+func (h *AISummaryHandler) CreateAISummary(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req createAISummaryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	summary, err := h.aiSummaryService.CreateAISummary(c.Request.Context(), req.OwnerType, req.OwnerID)
+	if err != nil {
+		handleDataError(c, err, "failed to create ai summary")
+		return
+	}
+
+	c.JSON(http.StatusOK, summary)
+}
+
+// RegenerateAISummary godoc
+// @Summary      重新生成 AI 摘要
+// @Description  按摘要 ID 重置状态并异步重新触发 LLM 生成摘要
+// @Tags         AI摘要
+// @Accept       json
+// @Produce      json
+// @Param        request  body      idBody  true  "请求参数"
+// @Success      200      {object}  types.AISummary
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /ai-summary/regenerate [post]
+func (h *AISummaryHandler) RegenerateAISummary(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req idBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	summary, err := h.aiSummaryService.RegenerateAISummary(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to regenerate ai summary")
+		return
+	}
+
+	c.JSON(http.StatusOK, summary)
+}
+
+// GetAISummary godoc
+// @Summary      获取 AI 摘要
+// @Description  按 ID 查询 AI 摘要详情
+// @Tags         AI摘要
+// @Produce      json
+// @Param        id       query     integer  true  "主键 ID"
+// @Success      200      {object}  types.AISummary
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /ai-summary/get [get]
+func (h *AISummaryHandler) GetAISummary(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req idQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	summary, err := h.aiSummaryService.GetAISummaryByID(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to get ai summary")
+		return
+	}
+
+	c.JSON(http.StatusOK, summary)
+}
+
+// DeleteAISummary godoc
+// @Summary      删除 AI 摘要
+// @Description  按摘要 ID 删除 AI 摘要记录
+// @Tags         AI摘要
+// @Accept       json
+// @Produce      json
+// @Param        request  body      idBody  true  "请求参数"
+// @Success      200      {object}  map[string]string
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /ai-summary/delete [post]
+func (h *AISummaryHandler) DeleteAISummary(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req idBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if err := h.aiSummaryService.DeleteAISummary(c.Request.Context(), req.ID); err != nil {
+		handleDataError(c, err, "failed to delete ai summary")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ai summary deleted successfully"})
+}

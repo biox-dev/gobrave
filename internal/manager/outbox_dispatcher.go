@@ -45,6 +45,13 @@ type OutboxStartRequestEvent struct {
 	RawPayload []byte
 }
 
+// AISummaryGenerateRequestEvent is published to the event bus when an
+// AISummaryGenerateRequest outbox event is picked up.
+type AISummaryGenerateRequestEvent struct {
+	OutboxID   int64
+	RawPayload []byte
+}
+
 type OutboxDispatcher struct {
 	repo         interfaces.ContainerRepository
 	bus          event.Bus
@@ -162,6 +169,20 @@ func (d *OutboxDispatcher) dispatchOnce(ctx context.Context) {
 				continue
 			}
 			d.bus.Publish(OutboxRecreateRequestEvent{
+				OutboxID:   item.ID,
+				RawPayload: []byte(item.Payload),
+			})
+			continue
+		}
+
+		// AISummaryGenerateRequest events are handled by AISummaryWorker
+		// via the event bus. Same pattern as other request events.
+		if item.Type == OutboxEventTypeAISummaryGenerateRequest {
+			if err := d.repo.MarkOutboxEventProcessing(ctx, item.ID); err != nil {
+				logger.Errorf(ctx, "[OutboxDispatcher] mark ai summary request processing failed, id=%d err=%v", item.ID, err)
+				continue
+			}
+			d.bus.Publish(AISummaryGenerateRequestEvent{
 				OutboxID:   item.ID,
 				RawPayload: []byte(item.Payload),
 			})

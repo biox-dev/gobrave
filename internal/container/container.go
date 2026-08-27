@@ -131,6 +131,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewWorkflowRepository))
 	must(container.Provide(repository.NewContainerRepository))
 	must(container.Provide(repository.NewLLMRepository))
+	must(container.Provide(repository.NewAISummaryRepository))
 	must(container.Provide(manager.NewDefaultContainerRuntimeResolver))
 	must(container.Provide(manager.NewImageManager))
 	must(container.Provide(manager.NewContainerManager))
@@ -146,6 +147,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(manager.NewContainerCreateWorker))
 	// Also register the same instance in the event_handlers group so it receives bus events.
 	must(container.Provide(func(w *manager.ContainerCreateWorker) event.Handler {
+		return w
+	}, dig.Group("event_handlers")))
+	// Provide AISummaryWorker as its concrete type and register it as an event handler.
+	must(container.Provide(manager.NewAISummaryWorker))
+	must(container.Provide(func(w *manager.AISummaryWorker) event.Handler {
 		return w
 	}, dig.Group("event_handlers")))
 	must(container.Provide(func(cfg *config.Config, db *gorm.DB) (route.RouteRegistry, error) {
@@ -269,6 +275,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewWorkflowService))
 	must(container.Provide(service.NewContainerService))
 	must(container.Provide(service.NewLLMService))
+	must(container.Provide(service.NewAISummaryService))
 	must(container.Provide(service.NewSheetFileService))
 	must(container.Provide(
 		dagruntime.NewNodeCompletionCoordinator,
@@ -307,6 +314,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(realtime.NewHub))
 	must(container.Provide(handler.NewRealtimeHandler))
 	must(container.Provide(handler.NewLLMHandler))
+	must(container.Provide(handler.NewAISummaryHandler))
 	// must(container.Provide(handler.NewTraceHandler))
 
 	// must(container.Provide(grpcserver.NewTraceServer))
@@ -553,6 +561,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.LLMConversation{},
 		&types.GatewayRoute{},
 		&types.OutboxEvent{},
+		&types.AISummary{},
 	// &types.Trace{},
 	// &types.RSSSource{},
 	); err != nil {

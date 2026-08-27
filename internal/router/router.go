@@ -43,6 +43,7 @@ type RouterParams struct {
 	ProxyHandler     *handler.ProxyHandler
 	RealtimeHandler  *handler.RealtimeHandler
 	LLMHandler       *handler.LLMHandler
+	AISummaryHandler *handler.AISummaryHandler
 }
 
 func NewRouter(params RouterParams) *gin.Engine {
@@ -101,6 +102,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterFileRoutes(v1, params.FileHandler)
 		RegisterRealtimeRoutes(v1, params.RealtimeHandler)
 		RegisterLLMRoutes(v1, params.LLMHandler)
+		RegisterAISummaryRoutes(v1, params.AISummaryHandler)
 	}
 
 	r.Any("/brave-api", params.ProxyHandler.BraveAPIProxy)
@@ -328,6 +330,13 @@ func RegisterRealtimeRoutes(r *gin.RouterGroup, handler *handler.RealtimeHandler
 	r.GET("/realtime/sse", handler.ConnectSSE)
 	r.POST("/realtime/push", handler.Push)
 	r.GET("/realtime/stats", handler.Stats)
+}
+
+func RegisterAISummaryRoutes(r *gin.RouterGroup, handler *handler.AISummaryHandler) {
+	r.POST("/ai-summary/create", handler.CreateAISummary)
+	r.POST("/ai-summary/regenerate", handler.RegenerateAISummary)
+	r.GET("/ai-summary/get", handler.GetAISummary)
+	r.POST("/ai-summary/delete", handler.DeleteAISummary)
 }
 
 func RegisterLLMRoutes(r *gin.RouterGroup, handler *handler.LLMHandler) {

@@ -40,6 +40,7 @@ type AnalysisHandler struct {
 	dynamicDagOrchestrator  interfaces.DynamicDagOrchestrator
 	dataflowDagOrchestrator interfaces.DataflowDagOrchestrator
 	nodeOrchestrator        interfaces.NodeOrchestrator
+	aiSummaryRepo           interfaces.AISummaryRepository
 	config                  *config.Config
 }
 
@@ -81,6 +82,7 @@ type VisualizationNodeFileResponse struct {
 	Status       string                      `json:"status"`
 	ServerStatus string                      `json:"server_status"`
 	UrlPrefix    string                      `json:"url_prefix"`
+	Summaries    []*types.AISummary          `json:"summaries"`
 }
 
 type VisualizationNodeTreeItem struct {
@@ -150,6 +152,7 @@ func NewAnalysisHandler(
 	dynamicDagOrchestrator interfaces.DynamicDagOrchestrator,
 	dataflowDagOrchestrator interfaces.DataflowDagOrchestrator,
 	nodeOrchestrator interfaces.NodeOrchestrator,
+	aiSummaryRepo interfaces.AISummaryRepository,
 	cfg *config.Config,
 ) *AnalysisHandler {
 	return &AnalysisHandler{
@@ -164,6 +167,7 @@ func NewAnalysisHandler(
 		dynamicDagOrchestrator:  dynamicDagOrchestrator,
 		dataflowDagOrchestrator: dataflowDagOrchestrator,
 		nodeOrchestrator:        nodeOrchestrator,
+		aiSummaryRepo:           aiSummaryRepo,
 		config:                  cfg,
 	}
 }
@@ -2369,12 +2373,19 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 	// 	return
 	// }
 
+	summaries, err := h.aiSummaryRepo.ListAISummariesByOwner(c.Request.Context(), types.SummaryOwnerAnalysisNode, analysisNode.ID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to list ai summaries").WithDetails(err.Error()))
+		return
+	}
+
 	c.JSON(http.StatusOK, VisualizationNodeFileResponse{
 		Node:         nodePayload,
 		Result:       result,
 		Status:       analysisNode.Status,
 		ServerStatus: analysisNode.ServerStatus,
 		UrlPrefix:    prefix,
+		Summaries:    summaries,
 	})
 }
 func (h *AnalysisHandler) GetAnalysisNode(c *gin.Context) *types.AnalysisNode {
