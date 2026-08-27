@@ -410,12 +410,16 @@ func serveFrontendStatic(r *gin.Engine, cfg *config.Config) {
 		}
 	}
 
-	absDir, err := utils.ResolveExternalPath(filepath.Join("frontend", "web"))
-	if err != nil {
-		return
+	// 优先使用外部的 web 目录，不存在时回退到 frontend/web。
+	for _, candidate := range []string{"web", filepath.Join("frontend", "web")} {
+		absDir, err := utils.ResolveExternalPath(candidate)
+		if err != nil {
+			continue
+		}
+		if mountFrontendStatic(r, cfg, os.DirFS(absDir), absDir) {
+			return
+		}
 	}
-
-	_ = mountFrontendStatic(r, cfg, os.DirFS(absDir), absDir)
 }
 
 func mountFrontendStatic(r *gin.Engine, cfg *config.Config, frontendFS fs.FS, source string) bool {
