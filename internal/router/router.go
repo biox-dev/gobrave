@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/biox-dev/gobrave/docs" // IGNORE
+	frontendassets "github.com/biox-dev/gobrave/frontend"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	gobraveassets "github.com/biox-dev/gobrave"
-	_ "github.com/biox-dev/gobrave/docs" // IGNORE
 
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/handler"
@@ -400,7 +400,7 @@ func serveStatic(r *gin.Engine, cfg *config.Config) {
 }
 
 func serveFrontendStatic(r *gin.Engine, cfg *config.Config) {
-	if embeddedRoot, ok := gobraveassets.EmbeddedFrontendFS(); ok {
+	if embeddedRoot, ok := frontendassets.EmbeddedFrontendFS(); ok {
 		webFS, err := fs.Sub(embeddedRoot, "web")
 		if err == nil && mountFrontendStatic(r, cfg, webFS, "embedded:web") {
 			return
@@ -410,7 +410,7 @@ func serveFrontendStatic(r *gin.Engine, cfg *config.Config) {
 		}
 	}
 
-	absDir, err := utils.ResolveExternalPath("web")
+	absDir, err := utils.ResolveExternalPath(filepath.Join("frontend", "web"))
 	if err != nil {
 		return
 	}

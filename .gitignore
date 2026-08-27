@@ -1,6 +1,6 @@
 logs/
 __debug*
-web/
+frontend/web/
 config.yml
 gobrave
 gobrave.log

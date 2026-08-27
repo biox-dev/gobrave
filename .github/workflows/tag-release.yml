@@ -42,9 +42,9 @@ jobs:
       - name: Prepare web assets
         run: |
           set -euxo pipefail
-          rm -rf web
-          mkdir -p web
-          cp -a .tmp/brave-ui/dist/. web/
+          rm -rf frontend/web
+          mkdir -p frontend/web
+          cp -a .tmp/brave-ui/dist/. frontend/web/
 
       - name: Build embedded single binary
         run: |
@@ -65,9 +65,9 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           PKG_DIR="release/pkg/gobrave-${TAG}-linux-amd64"
           rm -rf "$PKG_DIR"
-          mkdir -p "$PKG_DIR/web"
+          mkdir -p "$PKG_DIR/frontend/web"
           cp "release/gobrave-${TAG}-linux-amd64" "$PKG_DIR/gobrave"
-          cp -a web/. "$PKG_DIR/web/"
+          cp -a frontend/web/. "$PKG_DIR/frontend/web/"
           (cd release/pkg && zip -r "../gobrave-${TAG}-linux-amd64-with-web.zip" "gobrave-${TAG}-linux-amd64")
 
       - name: Package clean source

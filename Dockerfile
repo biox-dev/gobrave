@@ -49,8 +49,8 @@ WORKDIR /app
 # 复制 Go 二进制文件
 COPY --from=gobuilder /app/gobrave /app/gobrave
 
-# 复制前端构建产物到 web/ 目录（gobrave 从此目录提供静态文件服务）
-COPY --from=frontend /tmp/brave-ui/dist /app/web
+# 复制前端构建产物到 frontend/web/ 目录（gobrave 从此目录提供静态文件服务）
+COPY --from=frontend /tmp/brave-ui/dist /app/frontend/web
 
 # 复制 Docker 环境配置文件
 # COPY config.docker.yml /app/config.yml

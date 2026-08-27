@@ -1,6 +1,6 @@
 //go:build !embed_frontend
 
-package gobrave
+package frontend
 
 import "io/fs"
 

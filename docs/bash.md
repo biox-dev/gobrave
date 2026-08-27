@@ -1,7 +1,7 @@
 cp_web.sh
 ```
-rm -rf /ssd1/wy/workspace3/go-project/gobrave/web/*
-cp -r /ssd1/wy/workspace3/go-project/go-brave-ui/dist/* /ssd1/wy/workspace3/go-project/gobrave/web
+rm -rf /ssd1/wy/workspace3/go-project/gobrave/frontend/web/*
+cp -r /ssd1/wy/workspace3/go-project/go-brave-ui/dist/* /ssd1/wy/workspace3/go-project/gobrave/frontend/web
 ```
 
 run.sh

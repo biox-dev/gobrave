@@ -164,7 +164,7 @@ go build -o gobrave ./cmd/server
 ### Build a Single Executable with Embedded Frontend
 
 ```bash
-# 1) Build frontend artifacts into gobrave/web first (for example: copy brave-ui dist)
+# 1) Build frontend artifacts into gobrave/frontend/web first (for example: copy brave-ui dist)
 # 2) Build server with embedded frontend assets
 go build -tags embed_frontend -o gobrave ./cmd/server
 
