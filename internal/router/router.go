@@ -295,6 +295,7 @@ func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler
 	r.POST("/analysis/publish-to-doc/:analsyisId", handler.PublishToDocByAnalysisID)
 	r.POST("/analysis-node/:analysisNodeId/publish-to-doc", handler.PublishToDocByAnalysisNodeID)
 	r.POST("/script/:scriptId/publish-to-doc", handler.PublishScriptAnalysisNodeToDoc)
+	r.POST("/project-report/:reportId/publish-to-doc", handler.PublishProjectReportToDoc)
 	r.POST("/analysis/parse-params", handler.ParseParams)
 	r.GET("/analysis/:analysisNodeId/node-params", handler.AnalysisNodeParams)
 	r.GET("/analysis/:analysisNodeId/node-logs", handler.AnalysisNodeLogs)

@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/biox-dev/gobrave/internal/compiler"
 	"github.com/biox-dev/gobrave/internal/config"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
@@ -24,6 +23,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -999,6 +999,91 @@ func (h *AnalysisHandler) PublishToDocByAnalysisNodeID(c *gin.Context) {
 		"message": "analysis node output published to project doc dir successfully",
 	})
 
+}
+
+// PublishProjectReportToDoc copies a file-based project report into the project doc
+// directory and registers a link in SUMMARY.md.
+func (h *AnalysisHandler) PublishProjectReportToDoc(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	reportID, err := strconv.ParseInt(strings.TrimSpace(c.Param("reportId")), 10, 64)
+	if err != nil || reportID <= 0 {
+		c.Error(errors.NewValidationError("invalid report_id").WithDetails(err.Error()))
+		return
+	}
+
+	report, err := h.projectService.GetProjectReportDetailByID(c.Request.Context(), userID, reportID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("project report not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get project report").WithDetails(err.Error()))
+		return
+	}
+	if report.ContentSource != types.ProjectReportContentSourceFile {
+		c.Error(errors.NewValidationError("only file-based project report can be published to doc"))
+		return
+	}
+
+	reportIDStr := strconv.FormatInt(report.ID, 10)
+	filename := filepath.Base(strings.TrimSpace(report.Filename))
+	if filename == "" || filename == "." {
+		filename = types.DefaultProjectReportFilename
+	}
+	title := strings.TrimSpace(report.Title)
+	if title == "" {
+		title = filename
+	}
+
+	projectDocDir := utils.GetProjectDocDir(h.config.Storage.BaseDir, report.ProjectID)
+	reportDir := utils.GetProjectReportDir(h.config.Storage.BaseDir, report.ProjectID, reportIDStr)
+
+	if err := utils.CopyDir(reportDir, filepath.Join(projectDocDir, reportIDStr)); err != nil {
+		c.Error(errors.NewInternalServerError("failed to copy project report to project doc dir").WithDetails(err.Error()))
+		return
+	}
+
+	entry := fmt.Sprintf("./%s/%s", reportIDStr, filename)
+	line := fmt.Sprintf("- [%s](%s)\n", title, entry)
+	if err := appendProjectDocSummary(projectDocDir, entry, line); err != nil {
+		c.Error(errors.NewInternalServerError("failed to update SUMMARY.md").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "project report published to project doc dir successfully",
+	})
+}
+
+// appendProjectDocSummary ensures SUMMARY.md exists and appends line only when entry is absent.
+func appendProjectDocSummary(projectDocDir, entry, line string) error {
+	summaryPath := filepath.Join(projectDocDir, "SUMMARY.md")
+	if _, err := os.Stat(summaryPath); os.IsNotExist(err) {
+		if err := os.WriteFile(summaryPath, []byte("# Summary\n\n"), 0o644); err != nil {
+			return err
+		}
+	}
+
+	content, err := os.ReadFile(summaryPath)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(content), entry) {
+		return nil
+	}
+
+	f, err := os.OpenFile(summaryPath, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(line)
+	return err
 }
 
 func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
