@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gobravedev/gobrave/internal/config"
-	"github.com/gobravedev/gobrave/internal/route"
+	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/route"
 )
 
 const (

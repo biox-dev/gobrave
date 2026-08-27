@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/gobravedev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 type mockUserRepo struct {

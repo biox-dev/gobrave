@@ -3,7 +3,7 @@ package dag
 import (
 	"testing"
 
-	"github.com/gobravedev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 func TestIsTerminalNodeStatus_WithCacheHitReady(t *testing.T) {

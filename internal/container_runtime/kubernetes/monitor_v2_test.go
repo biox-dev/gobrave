@@ -3,7 +3,7 @@ package kubernetes
 import (
 	"testing"
 
-	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
+	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )

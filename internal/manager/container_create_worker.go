@@ -10,12 +10,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gobravedev/gobrave/internal/config"
-	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
-	"github.com/gobravedev/gobrave/internal/event"
-	"github.com/gobravedev/gobrave/internal/logger"
-	"github.com/gobravedev/gobrave/internal/types"
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/config"
+	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
+	"github.com/biox-dev/gobrave/internal/event"
+	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
 var (

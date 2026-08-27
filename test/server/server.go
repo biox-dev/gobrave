@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/gobravedev/gobrave/test/tasks"
+	"github.com/biox-dev/gobrave/test/tasks"
 	"github.com/hibiken/asynq"
 )
 

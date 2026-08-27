@@ -6,8 +6,8 @@ package service
 // 	"testing"
 // 	"time"
 
-// 	dagruntime "github.com/gobravedev/gobrave/internal/dag"
-// 	"github.com/gobravedev/gobrave/internal/types"
+// 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
+// 	"github.com/biox-dev/gobrave/internal/types"
 // )
 
 // func TestNodeOrchestratorStartAsyncSingleNodeLifecycle(t *testing.T) {

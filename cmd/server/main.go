@@ -29,11 +29,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gobravedev/gobrave/internal/config"
-	"github.com/gobravedev/gobrave/internal/container"
-	"github.com/gobravedev/gobrave/internal/logger"
-	"github.com/gobravedev/gobrave/internal/runtime"
-	"github.com/gobravedev/gobrave/internal/utils"
+	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/container"
+	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/runtime"
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 func main() {

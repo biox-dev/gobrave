@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gobravedev/gobrave/internal/logger"
-	"github.com/gobravedev/gobrave/internal/utils"
+	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 var nonFilenameChars = regexp.MustCompile(`[^a-zA-Z0-9._-]`)

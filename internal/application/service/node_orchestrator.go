@@ -6,14 +6,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gobravedev/gobrave/internal/config"
-	dagruntime "github.com/gobravedev/gobrave/internal/dag"
-	"github.com/gobravedev/gobrave/internal/errors"
-	"github.com/gobravedev/gobrave/internal/event"
-	"github.com/gobravedev/gobrave/internal/logger"
-	"github.com/gobravedev/gobrave/internal/manager"
-	"github.com/gobravedev/gobrave/internal/types"
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/config"
+	dagruntime "github.com/biox-dev/gobrave/internal/dag"
+	"github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/event"
+	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/manager"
+	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
 type nodeOrchestrator struct {

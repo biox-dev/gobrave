@@ -23,8 +23,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 
-	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
-	"github.com/gobravedev/gobrave/internal/types"
+	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 const (

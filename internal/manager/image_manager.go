@@ -1,8 +1,8 @@
 package manager
 
 import (
-	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
 type ImageManager struct {

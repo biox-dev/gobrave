@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gobravedev/gobrave/internal/config"
-	"github.com/gobravedev/gobrave/internal/errors"
-	"github.com/gobravedev/gobrave/internal/realtime"
+	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/realtime"
 )
 
 type RealtimeHandler struct {

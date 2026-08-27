@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gobravedev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/goccy/go-yaml"
 )
 

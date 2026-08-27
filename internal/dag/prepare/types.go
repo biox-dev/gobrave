@@ -3,7 +3,7 @@ package prepare
 import (
 	"context"
 
-	"github.com/gobravedev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 type NodeRuntimePreparer interface {

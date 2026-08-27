@@ -1,8 +1,8 @@
 package executor
 
 import (
-	"github.com/gobravedev/gobrave/internal/manager"
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/manager"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
 type FactoryDeps struct {

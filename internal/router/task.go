@@ -8,7 +8,7 @@ import (
 
 	// "github.com/Tencent/WeKnora/internal/tracing/langfuse"
 
-	// "github.com/gobravedev/gobrave/internal/tracing/langfuse"
+	// "github.com/biox-dev/gobrave/internal/tracing/langfuse"
 
 	"github.com/hibiken/asynq"
 	"go.uber.org/dig"

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gobravedev/gobrave/internal/config"
-	"github.com/gobravedev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )

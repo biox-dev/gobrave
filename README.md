@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="https://gobravedev.github.io/gobrave-doc/"><img src="https://img.shields.io/badge/docs-gobrave.dev-00ADD8?style=flat-square&logo=go" alt="docs"></a>
-  <a href="https://github.com/gobravedev/gobrave/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="license"></a>
+  <a href="https://github.com/biox-dev/gobrave/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="license"></a>
   <img src="https://img.shields.io/badge/go-%3E%3D1.25-00ADD8?style=flat-square&logo=go" alt="go version">
   <img src="https://img.shields.io/badge/status-active-success?style=flat-square" alt="status">
 </p>
@@ -123,7 +123,7 @@ Organize your research artifacts with project-scoped CRUD.
 
 ```bash
 # Clone
-git clone https://github.com/gobravedev/gobrave.git
+git clone https://github.com/biox-dev/gobrave.git
 cd gobrave
 
 # Configure
@@ -189,7 +189,7 @@ docker run -d --rm -p 53306:3306 \
 docker exec -it mysql mysql -uroot -p123456 -e "CREATE DATABASE brave CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
 # 3) Download the latest release (single binary with embedded frontend)
-wget https://github.com/gobravedev/gobrave/releases/download/v0.1.0/gobrave-v0.1.0-linux-amd64-embed -O gobrave
+wget https://github.com/biox-dev/gobrave/releases/download/v0.1.0/gobrave-v0.1.0-linux-amd64-embed -O gobrave
 chmod +x gobrave
 
 # 4) Run gobrave with CLI-specified database (no config.yml needed)

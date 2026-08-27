@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/gobravedev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 type AnalysisService interface {

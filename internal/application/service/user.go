@@ -18,11 +18,11 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	apprepo "github.com/gobravedev/gobrave/internal/application/repository"
-	"github.com/gobravedev/gobrave/internal/config"
-	"github.com/gobravedev/gobrave/internal/logger"
-	"github.com/gobravedev/gobrave/internal/types"
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	apprepo "github.com/biox-dev/gobrave/internal/application/repository"
+	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
 type oidcAuthorizationState struct {

@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	appservice "github.com/gobravedev/gobrave/internal/application/service"
-	"github.com/gobravedev/gobrave/internal/errors"
-	"github.com/gobravedev/gobrave/internal/types"
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	appservice "github.com/biox-dev/gobrave/internal/application/service"
+	"github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"gorm.io/gorm"
 )
 

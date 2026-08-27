@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gobravedev/gobrave/internal/config"
-	appErrors "github.com/gobravedev/gobrave/internal/errors"
-	"github.com/gobravedev/gobrave/internal/utils"
+	"github.com/biox-dev/gobrave/internal/config"
+	appErrors "github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 const (

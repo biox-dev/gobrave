@@ -4,7 +4,7 @@ import (
 	"context"
 	stderrs "errors"
 
-	"github.com/gobravedev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 var ErrInvalidDagDefinitionJSON = stderrs.New("dag_definition is not valid JSON format")

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gobravedev/gobrave/internal/utils"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )

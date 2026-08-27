@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gobravedev/gobrave/internal/logger"
-	"github.com/gobravedev/gobrave/internal/types"
-	secutils "github.com/gobravedev/gobrave/internal/utils"
+	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/types"
+	secutils "github.com/biox-dev/gobrave/internal/utils"
 	"github.com/google/uuid"
 )
 

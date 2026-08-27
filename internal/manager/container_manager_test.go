@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"testing"
 
-	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
-	"github.com/gobravedev/gobrave/internal/types"
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
+	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"gorm.io/datatypes"
 )
 

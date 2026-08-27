@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/gobravedev/gobrave/internal/event"
-	"github.com/gobravedev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/event"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 type mockBus struct {

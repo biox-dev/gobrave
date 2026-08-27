@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gobravedev/gobrave/internal/config"
-	"github.com/gobravedev/gobrave/internal/dag/executor"
-	"github.com/gobravedev/gobrave/internal/dag/prepare"
-	"github.com/gobravedev/gobrave/internal/event"
-	"github.com/gobravedev/gobrave/internal/types"
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/dag/executor"
+	"github.com/biox-dev/gobrave/internal/dag/prepare"
+	"github.com/biox-dev/gobrave/internal/event"
+	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
 type NodeFailureCleanupFunc func(ctx context.Context, node *types.AnalysisNode)

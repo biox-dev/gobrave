@@ -5,7 +5,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/gobravedev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/logger"
 )
 
 func listenWithRetry(addr string, maxRetries int, baseDelay time.Duration) (net.Listener, error) {

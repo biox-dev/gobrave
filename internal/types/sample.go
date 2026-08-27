@@ -3,7 +3,7 @@ package types
 import (
 	"time"
 
-	"github.com/gobravedev/gobrave/internal/utils"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
 

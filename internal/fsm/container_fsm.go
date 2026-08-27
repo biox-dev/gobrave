@@ -3,7 +3,7 @@ package fsm
 import (
 	"errors"
 
-	"github.com/gobravedev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 // type State string

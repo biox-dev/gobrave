@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gobravedev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"go.uber.org/dig"

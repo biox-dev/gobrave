@@ -3,7 +3,7 @@ package handler
 import (
 	"encoding/json"
 
-	"github.com/gobravedev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 func buildNodeFormJSON(dagDefinitionRaw string, script *types.Script, scriptID string) ([]interface{}, error) {

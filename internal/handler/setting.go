@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gobravedev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/config"
 )
 
 type SettingHandler struct {

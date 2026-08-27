@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/gobravedev/gobrave/internal/event"
+	"github.com/biox-dev/gobrave/internal/event"
 )
 
 type SchedulerConfig struct {

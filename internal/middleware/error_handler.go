@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/gobravedev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/errors"
 )
 
 // ErrorHandler 是一个处理应用错误的中间件

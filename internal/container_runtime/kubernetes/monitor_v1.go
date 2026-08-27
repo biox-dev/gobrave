@@ -12,7 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
+	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 )
 
 type kubernetesMonitorV1 struct {

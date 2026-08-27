@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gobravedev/gobrave/internal/logger"
-	"github.com/gobravedev/gobrave/internal/utils"
+	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/goccy/go-yaml"
 )
 

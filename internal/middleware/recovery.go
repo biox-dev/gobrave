@@ -5,7 +5,7 @@ import (
 	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gobravedev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/sirupsen/logrus"
 )
 

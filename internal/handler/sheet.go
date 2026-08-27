@@ -6,9 +6,9 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gobravedev/gobrave/internal/application/service"
-	apperrors "github.com/gobravedev/gobrave/internal/errors"
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/application/service"
+	apperrors "github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
 type SheetHandler struct {

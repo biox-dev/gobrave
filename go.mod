@@ -1,4 +1,4 @@
-module github.com/gobravedev/gobrave
+module github.com/biox-dev/gobrave
 
 go 1.25.6
 

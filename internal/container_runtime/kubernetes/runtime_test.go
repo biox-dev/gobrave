@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
-	"github.com/gobravedev/gobrave/internal/types"
+	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
+	"github.com/biox-dev/gobrave/internal/types"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"

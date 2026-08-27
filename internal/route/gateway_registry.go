@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gobravedev/gobrave/internal/logger"
-	"github.com/gobravedev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/types"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )

@@ -3,8 +3,8 @@ package repository
 import (
 	"context"
 
-	"github.com/gobravedev/gobrave/internal/types"
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"gorm.io/gorm"
 )
 

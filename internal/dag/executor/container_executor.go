@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gobravedev/gobrave/internal/manager"
-	"github.com/gobravedev/gobrave/internal/types"
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/manager"
+	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
 type ContainerExecutor struct {

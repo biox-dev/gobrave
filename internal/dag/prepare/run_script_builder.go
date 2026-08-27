@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/flosch/pongo2/v6"
-	"github.com/gobravedev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 type RunScriptBuilder interface {

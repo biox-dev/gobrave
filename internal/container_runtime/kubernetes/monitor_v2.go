@@ -13,7 +13,7 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
 
-	containerruntime "github.com/gobravedev/gobrave/internal/container_runtime"
+	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 )
 
 type kubernetesMonitorV2 struct {

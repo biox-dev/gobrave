@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gobravedev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 func TestAppSessionEventHandler_Handle_UpdatesToRunningOnContainerStarted(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sort"
 
-	"github.com/gobravedev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
 func buildScriptFormData(ctx context.Context,

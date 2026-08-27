@@ -3,8 +3,8 @@ package service
 import (
 	"testing"
 
-	"github.com/gobravedev/gobrave/internal/config"
-	dagruntime "github.com/gobravedev/gobrave/internal/dag"
+	"github.com/biox-dev/gobrave/internal/config"
+	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 )
 
 func TestResumeNodeStatusForRestart(t *testing.T) {
