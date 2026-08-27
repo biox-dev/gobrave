@@ -27,9 +27,9 @@ func (p *Pagination) GetPageSize() int {
 	if p.PageSize < 1 {
 		return 20
 	}
-	if p.PageSize > 10 {
-		return 10
-	}
+	// if p.PageSize > 10 {
+	// 	return 10
+	// }
 	return p.PageSize
 }
 

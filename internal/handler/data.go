@@ -50,13 +50,13 @@ type projectFileQuery struct {
 
 type projectFilePageRequest struct {
 	types.Pagination
-	ProjectID string   `json:"project_id" binding:"required"`
-	Roles     []string `json:"role"`
+	// ProjectID string   `json:"project_id" binding:"required"`
+	Roles []string `json:"role"`
 }
 
 type sampleByProjectPageRequest struct {
 	types.Pagination
-	ProjectID string `json:"project_id" binding:"required"`
+	// ProjectID string `json:"project_id" binding:"required"`
 }
 
 func handleDataError(c *gin.Context, err error, internalMsg string) {
@@ -341,7 +341,10 @@ func (h *DataHandler) PageDatasetByProjectID(c *gin.Context) {
 // @Security     Bearer
 // @Router       /data/file/list-by-project-page [post]
 func (h *DataHandler) PageFileByProjectID(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
+	userID, ok := getCurrentUserID(c)
+
+	if !ok {
+		c.Error(errors.NewUnauthorizedError("unauthorized"))
 		return
 	}
 
@@ -360,8 +363,9 @@ func (h *DataHandler) PageFileByProjectID(c *gin.Context) {
 			}
 		}
 	}
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
 
-	result, err := h.dataService.PageFileByProjectID(c.Request.Context(), &req.Pagination, req.ProjectID, roles)
+	result, err := h.dataService.PageFileByProjectID(c.Request.Context(), &req.Pagination, project.ProjectID, roles)
 	if err != nil {
 		handleDataError(c, err, "failed to page file by project id")
 		return
@@ -1209,7 +1213,8 @@ func (h *DataHandler) ListSampleByProjectID(c *gin.Context) {
 // @Security     Bearer
 // @Router       /data/sample/list-by-project-page [post]
 func (h *DataHandler) PageSampleByProjectID(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
 		return
 	}
 
@@ -1218,8 +1223,13 @@ func (h *DataHandler) PageSampleByProjectID(c *gin.Context) {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project by user id")
+		return
+	}
 
-	result, err := h.dataService.PageSampleByProjectID(c.Request.Context(), &req.Pagination, req.ProjectID)
+	result, err := h.dataService.PageSampleByProjectID(c.Request.Context(), &req.Pagination, project.ProjectID)
 	if err != nil {
 		handleDataError(c, err, "failed to page sample by project id")
 		return
