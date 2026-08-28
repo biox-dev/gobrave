@@ -15,6 +15,8 @@ type AISummaryContent struct {
 	Title string
 	// Text 是交给 Agent 生成摘要的原始内容。
 	Text string
+
+	WorkingDir string
 }
 
 // AISummaryContentProvider 根据摘要所属对象解析用于生成摘要的原始内容。
@@ -52,7 +54,8 @@ func (p *aiSummaryContentProvider) resolveAnalysis(ctx context.Context, analysis
 	}
 
 	return AISummaryContent{
-		Title: fmt.Sprintf("分析摘要：%s", a.AnalysisName),
+		Title:      fmt.Sprintf("分析摘要：%s", a.AnalysisName),
+		WorkingDir: a.OutputDir,
 		Text: strings.Join(filterNonEmpty([]string{
 			"分析名称: " + a.AnalysisName,
 			"分析方法: " + a.AnalysisMethod,
@@ -70,7 +73,8 @@ func (p *aiSummaryContentProvider) resolveAnalysisNode(ctx context.Context, node
 	}
 
 	return AISummaryContent{
-		Title: fmt.Sprintf("节点摘要：%s", n.NodeName),
+		Title:      fmt.Sprintf("节点摘要：%s", n.NodeName),
+		WorkingDir: n.OutputDir,
 		Text: strings.Join(filterNonEmpty([]string{
 			"节点名称: " + n.NodeName,
 			"节点 ID: " + n.NodeID,

@@ -66,7 +66,9 @@ func (w *AISummaryWorker) handleGenerateRequest(ctx context.Context, req AISumma
 
 	if err := w.process(ctx, payload.SummaryID); err != nil {
 		logger.Errorf(ctx, "[AISummaryWorker] process summary failed, summary_id=%d err=%v", payload.SummaryID, err)
-		_ = w.containerRepo.MarkOutboxEventPending(ctx, req.OutboxID)
+		w.markFailed(ctx, payload.SummaryID, err)
+
+		_ = w.containerRepo.MarkOutboxEventSent(ctx, req.OutboxID)
 		return
 	}
 
@@ -95,17 +97,18 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 
 	content, err := w.content.Resolve(ctx, summary.OwnerType, summary.OwnerID)
 	if err != nil {
-		return w.fail(ctx, summary, fmt.Errorf("resolve summary source: %w", err))
+		return fmt.Errorf("resolve summary source: %w", err)
 	}
 
 	result, err := w.agentClient.Invoke(ctx, agent.Request{
 		SystemPrompt: aiSummarySystemPrompt,
+		WorkingDir:   content.WorkingDir,
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: content.Text},
 		},
 	})
 	if err != nil {
-		return w.fail(ctx, summary, fmt.Errorf("agent invoke: %w", err))
+		return fmt.Errorf("agent invoke: %w", err)
 	}
 
 	summary.Content = result.Content
@@ -125,14 +128,20 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	return nil
 }
 
-// fail 将摘要置为失败状态并发布状态事件，随后返回原始错误。
-func (w *AISummaryWorker) fail(ctx context.Context, summary *types.AISummary, err error) error {
+// markFailed 将错误信息写入摘要内容，置为失败状态并发布状态事件。
+func (w *AISummaryWorker) markFailed(ctx context.Context, summaryID int64, err error) {
+	summary, gerr := w.summaryRepo.GetAISummaryByID(ctx, summaryID)
+	if gerr != nil {
+		logger.Errorf(ctx, "[AISummaryWorker] load summary for failure marking failed, summary_id=%d err=%v", summaryID, gerr)
+		return
+	}
+
+	summary.Content = err.Error()
 	summary.Status = types.SummaryStatusFailed
 	if uerr := w.summaryRepo.UpdateAISummary(ctx, summary); uerr != nil {
 		logger.Errorf(ctx, "[AISummaryWorker] update summary failed status failed, summary_id=%d err=%v", summary.ID, uerr)
 	}
 	w.publishStatus(ctx, summary)
-	return err
 }
 
 // publishStatus 发布摘要状态变更事件，供 AISummaryEventHandler 推送到前端。
