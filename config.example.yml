@@ -103,12 +103,12 @@ agent:
       working_dir: ""
       extra: {}
     copilot:
-      model: ""
-      base_url: ""
-      api_key: ""
+      model: "deepseek-v4-pro"
+      base_url: "https://api.deepseek.com/anthropic"
+      api_key: "sk-xxxxxxxxxxxxxxx"
       bearer_token: ""
       working_dir: ""
-      extra: {}
+      extra: { type: "anthropic"}
 
 container:
   # docker | k8s | k3s
