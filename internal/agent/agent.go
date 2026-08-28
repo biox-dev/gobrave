@@ -84,6 +84,7 @@ type StreamEventType string
 
 const (
 	StreamEventText       StreamEventType = "text"        // 文本增量
+	StreamEventReasoning  StreamEventType = "reasoning"   // 思维链/推理增量
 	StreamEventToolCall   StreamEventType = "tool_call"   // 发起工具调用
 	StreamEventToolResult StreamEventType = "tool_result" // 工具调用结果
 	StreamEventDone       StreamEventType = "done"        // 正常结束

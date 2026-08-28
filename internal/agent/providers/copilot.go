@@ -123,6 +123,12 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, handler ag
 			sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: fmt.Errorf("copilot: session error: %s", data.Message)})
 		case *copilot.SessionIdleData:
 			sendStreamResult(resultCh, copilotStreamResult{content: final.String()})
+		case *copilot.AssistantReasoningDeltaData:
+			if data.DeltaContent != "" {
+				if err := handler(ctx, agent.StreamEvent{Type: agent.StreamEventReasoning, Content: data.DeltaContent}); err != nil {
+					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
+				}
+			}
 		}
 	})
 	defer unsubscribe()

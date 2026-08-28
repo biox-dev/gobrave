@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/config"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/errors"
@@ -47,7 +46,6 @@ type LLMHandler struct {
 	workflowSvc      interfaces.WorkflowService
 	analsyisSvc      interfaces.AnalysisService
 	nodeOrchestrator interfaces.NodeOrchestrator
-	agentClient      *agent.Client
 
 	completionBroker *nodeCompletionBroker
 }
@@ -112,7 +110,6 @@ func NewLLMHandler(hub *realtime.Hub, cfg *config.Config, projectSvc interfaces.
 	workflowSvc interfaces.WorkflowService,
 	analsyisSvc interfaces.AnalysisService,
 	nodeOrchestrator interfaces.NodeOrchestrator,
-	agentClient *agent.Client,
 ) *LLMHandler {
 	cliURL := ""
 	if cfg != nil && cfg.LLM != nil {
@@ -148,7 +145,6 @@ func NewLLMHandler(hub *realtime.Hub, cfg *config.Config, projectSvc interfaces.
 		workflowSvc:      workflowSvc,
 		analsyisSvc:      analsyisSvc,
 		nodeOrchestrator: nodeOrchestrator,
-		agentClient:      agentClient,
 		completionBroker: newNodeCompletionBroker(),
 	}
 	h.hub.SubscribeInbound(h.onBridgeInboundMessage)
@@ -788,10 +784,12 @@ func (h *LLMHandler) startBridgeSession(parent context.Context,
 func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSession, prompt, model string, env map[string]any) {
 	defer h.removeBridgeSession(session.userID, session.sessionID)
 
-	if h.agentClient == nil {
-		h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "agent client is not configured"})
-		return
-	}
+	streamCtx, streamCancel := context.WithCancel(context.Background())
+	defer streamCancel()
+	go func() {
+		<-ctx.Done()
+		streamCancel()
+	}()
 
 	resolvedModel := strings.TrimSpace(model)
 	if resolvedModel == "" {
@@ -801,64 +799,189 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 		resolvedModel = "auto"
 	}
 
+	copilotSessionID := buildCopilotSessionID(session.userID, session.sessionID)
+
+	providerCfg := h.providerCfg
+	if providerCfg != nil && strings.TrimSpace(providerCfg.ModelID) == "" && resolvedModel != "" {
+		copied := *providerCfg
+		copied.ModelID = resolvedModel
+		providerCfg = &copied
+	}
+
+	client := copilot.NewClient(&copilot.ClientOptions{
+		// Connection: copilot.URIConnection{URL: h.cliURL},
+	})
+
 	systemMessage, workingDir, err := h.buildRuntimeSystemMessage(ctx, session.userID, env)
 	if err != nil {
 		h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "failed to resolve working directory", "detail": err.Error()})
 		return
 	}
 
-	h.pushBridgeEvent(session.userID, session.sessionID, "start", gin.H{
-		"model":       resolvedModel,
-		"working_dir": workingDir,
-	})
+	eventCh := make(chan llmStreamEvent, 256)
+	idleCh := make(chan struct{}, 1)
 
-	// Build a provider-agnostic request and stream through the unified Agent client.
-	req := agent.Request{
-		Model:        resolvedModel,
-		SystemPrompt: systemMessage.Content,
-		WorkingDir:   workingDir,
-		Messages: []agent.Message{
-			{Role: agent.RoleUser, Content: prompt},
-		},
+	if err := client.Start(ctx); err != nil {
+		h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "failed to connect copilot cli server", "detail": err.Error()})
+		return
+	}
+	defer func() {
+		if err := client.Stop(); err != nil {
+			logger.Warnf(ctx, "[LLM] failed to stop copilot client: %v", err)
+		}
+	}()
+
+	permissionHandler := func(request copilot.PermissionRequest, invocation copilot.PermissionInvocation) (copilotrpc.PermissionDecision, error) {
+		requiresWriteConfirm := requiresWriteApproval(request)
+		requestID := uuid.NewString()
+		// if request.Kind() == copilotrpc.PermissionRequestKindWrite {
+		// 	// fmt.Println("xxx")
+		// 	fmt.Printf("[Permission Check] invocation: %s, Kind: %v, Request: %+v\n", invocation.SessionID, request.Kind(), request)
+		// }
+		h.pushBridgeEvent(session.userID, session.sessionID, "permission.request", gin.H{
+			"request_id":             requestID,
+			"kind":                   string(request.Kind()),
+			"request":                request,
+			"copilot_session_id":     fmt.Sprintf("%v", invocation.SessionID),
+			"requires_write_confirm": requiresWriteConfirm,
+			"session_id":             strconv.FormatInt(session.sessionID, 10),
+		})
+
+		if !requiresWriteConfirm {
+			decision := copilotrpc.PermissionDecisionApproveOnce{}
+			h.pushBridgeEvent(session.userID, session.sessionID, "permission.decision", gin.H{
+				"request_id": requestID,
+				"kind":       string(request.Kind()),
+				"approved":   true,
+			})
+			return decision, nil
+		}
+
+		waiter := session.registerDecisionWaiter(requestID)
+		defer session.removeDecisionWaiter(requestID)
+
+		select {
+		case <-streamCtx.Done():
+			feedback := "request canceled while waiting for ui confirmation"
+			forceReject := true
+			return copilotrpc.PermissionDecisionDeniedInteractivelyByUser{Feedback: &feedback, ForceReject: &forceReject}, nil
+		case <-time.After(3 * time.Minute):
+			feedback := "ui confirmation timeout"
+			forceReject := true
+			h.pushBridgeEvent(session.userID, session.sessionID, "permission.decision", gin.H{
+				"request_id": requestID,
+				"kind":       string(request.Kind()),
+				"approved":   false,
+				"reason":     feedback,
+			})
+			return copilotrpc.PermissionDecisionDeniedInteractivelyByUser{Feedback: &feedback, ForceReject: &forceReject}, nil
+		case uiDecision := <-waiter:
+			if uiDecision.approved {
+				decision := copilotrpc.PermissionDecisionApproveOnce{}
+				h.pushBridgeEvent(session.userID, session.sessionID, "permission.decision", gin.H{
+					"request_id": requestID,
+					"kind":       string(request.Kind()),
+					"approved":   true,
+				})
+				return decision, nil
+			}
+
+			feedback := strings.TrimSpace(uiDecision.reason)
+			if feedback == "" {
+				feedback = "rejected by ui"
+			}
+			forceReject := true
+			h.pushBridgeEvent(session.userID, session.sessionID, "permission.decision", gin.H{
+				"request_id": requestID,
+				"kind":       string(request.Kind()),
+				"approved":   false,
+				"reason":     feedback,
+			})
+			return copilotrpc.PermissionDecisionDeniedInteractivelyByUser{Feedback: &feedback, ForceReject: &forceReject}, nil
+		}
 	}
 
-	var finalContent strings.Builder
-	_, err = h.agentClient.Stream(ctx, req, func(_ context.Context, event agent.StreamEvent) error {
-		switch event.Type {
-		case agent.StreamEventText:
-			finalContent.WriteString(event.Content)
-			h.pushBridgeEvent(session.userID, session.sessionID, "assistant.message_delta", gin.H{"deltaContent": event.Content})
-		case agent.StreamEventToolCall:
-			h.pushBridgeEvent(session.userID, session.sessionID, "tool_call", gin.H{"content": event.Content})
-		case agent.StreamEventToolResult:
-			h.pushBridgeEvent(session.userID, session.sessionID, "tool_result", gin.H{"content": event.Content})
-		case agent.StreamEventError:
-			h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "agent stream failed", "detail": event.Err.Error()})
-			return event.Err
-		}
-		return nil
-	})
+	copilotSession, resumed, err := h.openOrResumeCopilotSession(ctx, client, copilotSessionID, resolvedModel, workingDir, systemMessage, providerCfg, permissionHandler)
 	if err != nil {
-		if !stderrs.Is(err, context.Canceled) {
-			h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "agent stream failed", "detail": err.Error()})
+		h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "failed to initialize copilot session", "detail": err.Error()})
+		return
+	}
+	defer func() {
+		if err := copilotSession.Disconnect(); err != nil {
+			logger.Warnf(ctx, "[LLM] failed to disconnect copilot session: %v", err)
 		}
+	}()
+
+	h.pushBridgeEvent(session.userID, session.sessionID, "start", gin.H{
+		"model":              resolvedModel,
+		"cli_url":            h.cliURL,
+		"copilot_session_id": copilotSessionID,
+		"resumed":            resumed,
+	})
+
+	unsubscribe := copilotSession.On(func(event copilot.SessionEvent) {
+		eventType := string(event.Type())
+		if shouldForwardLLMEvent(eventType) && event.Data != nil {
+			select {
+			case eventCh <- llmStreamEvent{name: eventType, data: event.Data}:
+			default:
+			}
+		}
+
+		if eventType == "session.idle" {
+			select {
+			case idleCh <- struct{}{}:
+			default:
+			}
+		}
+	})
+	defer unsubscribe()
+
+	if _, err := copilotSession.Send(streamCtx, copilot.MessageOptions{Prompt: prompt}); err != nil {
+		h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "failed to send copilot prompt", "detail": err.Error()})
 		return
 	}
 
-	if finalContent.Len() > 0 {
-		if persistErr := h.llmSvc.CreateLLMConversation(ctx, session.userID, &types.LLMConversation{
-			LLMSessionID:   session.sessionID,
-			ConversationID: uuid.NewString(),
-			Role:           "assistant",
-			Content:        finalContent.String(),
-			Model:          resolvedModel,
-		}); persistErr != nil {
-			h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "failed to persist llm conversation", "detail": persistErr.Error()})
+	var finalContent strings.Builder
+	idleTimeout := time.NewTimer(5 * time.Minute)
+	defer idleTimeout.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-idleTimeout.C:
+			h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "waiting for session.idle timeout"})
+			return
+		case ev := <-eventCh:
+			switch ev.name {
+			case "assistant.message_delta":
+				if payload, ok := ev.data.(*copilot.AssistantMessageDeltaData); ok && payload.DeltaContent != "" {
+					finalContent.WriteString(payload.DeltaContent)
+				}
+			case "assistant.message":
+				if payload, ok := ev.data.(*copilot.AssistantMessageData); ok && payload.Content != "" && finalContent.Len() == 0 {
+					finalContent.WriteString(payload.Content)
+				}
+			}
+			h.pushBridgeEvent(session.userID, session.sessionID, ev.name, ev.data)
+		case <-idleCh:
+			if finalContent.Len() > 0 {
+				if err := h.llmSvc.CreateLLMConversation(ctx, session.userID, &types.LLMConversation{
+					LLMSessionID:   session.sessionID,
+					ConversationID: uuid.NewString(),
+					Role:           "assistant",
+					Content:        finalContent.String(),
+					Model:          resolvedModel,
+				}); err != nil {
+					h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "failed to persist llm conversation", "detail": err.Error()})
+					return
+				}
+			}
+			h.pushBridgeEvent(session.userID, session.sessionID, "completed", gin.H{"content": finalContent.String(), "model": resolvedModel})
 			return
 		}
 	}
-
-	h.pushBridgeEvent(session.userID, session.sessionID, "completed", gin.H{"content": finalContent.String(), "model": resolvedModel})
 }
 
 func (h *LLMHandler) pushBridgeEvent(userID string, sessionID int64, event string, data any) {
