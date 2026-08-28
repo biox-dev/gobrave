@@ -75,6 +75,11 @@ func (s *aiSummaryService) GetAISummaryByID(ctx context.Context, id int64) (*typ
 	return s.summaryRepo.GetAISummaryByID(ctx, id)
 }
 
+// ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表。
+func (s *aiSummaryService) ListAISummariesByOwner(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) ([]*types.AISummary, error) {
+	return s.summaryRepo.ListAISummariesByOwner(ctx, ownerType, ownerID)
+}
+
 // DeleteAISummary 按摘要 ID 删除摘要记录。
 func (s *aiSummaryService) DeleteAISummary(ctx context.Context, id int64) error {
 	return s.summaryRepo.DeleteAISummary(ctx, id)

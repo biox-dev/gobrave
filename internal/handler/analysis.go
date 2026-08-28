@@ -999,6 +999,30 @@ func (h *AnalysisHandler) PublishToDocByAnalysisNodeID(c *gin.Context) {
 			return
 		}
 	}
+
+	// 将 AnalysisNode 下的 AISummary 列表写入 projectDocNodeDir，文件名为 <summary_id>.md，
+	// 并在 SUMMARY.md 中添加对应链接，title 为 AISummary ID。
+	summaries, err := h.aiSummaryRepo.ListAISummariesByOwner(c.Request.Context(), types.SummaryOwnerAnalysisNode, analysisNode.ID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to list ai summaries").WithDetails(err.Error()))
+		return
+	}
+	for _, summary := range summaries {
+		summaryMdPath := filepath.Join(projectDocNodeDir, fmt.Sprintf("%d.md", summary.ID))
+		if err := os.WriteFile(summaryMdPath, []byte(summary.Content), 0o644); err != nil {
+			c.Error(errors.NewInternalServerError("failed to write ai summary to project doc dir").WithDetails(err.Error()))
+			return
+		}
+
+		summaryLink := fmt.Sprintf("./%d/%d.md", analysisNode.ID, summary.ID)
+		if !strings.Contains(string(content), summaryLink) {
+			line := fmt.Sprintf("- [%d](%s)\n", summary.ID, summaryLink)
+			if _, err := f.WriteString(line); err != nil {
+				c.Error(errors.NewInternalServerError("failed to write to SUMMARY.md").WithDetails(err.Error()))
+				return
+			}
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"message": "analysis node output published to project doc dir successfully",
 	})
@@ -2373,11 +2397,11 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 	// 	return
 	// }
 
-	summaries, err := h.aiSummaryRepo.ListAISummariesByOwner(c.Request.Context(), types.SummaryOwnerAnalysisNode, analysisNode.ID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to list ai summaries").WithDetails(err.Error()))
-		return
-	}
+	// summaries, err := h.aiSummaryRepo.ListAISummariesByOwner(c.Request.Context(), types.SummaryOwnerAnalysisNode, analysisNode.ID)
+	// if err != nil {
+	// 	c.Error(errors.NewInternalServerError("failed to list ai summaries").WithDetails(err.Error()))
+	// 	return
+	// }
 
 	c.JSON(http.StatusOK, VisualizationNodeFileResponse{
 		Node:         nodePayload,
@@ -2385,7 +2409,7 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 		Status:       analysisNode.Status,
 		ServerStatus: analysisNode.ServerStatus,
 		UrlPrefix:    prefix,
-		Summaries:    summaries,
+		// Summaries:    summaries,
 	})
 }
 func (h *AnalysisHandler) GetAnalysisNode(c *gin.Context) *types.AnalysisNode {

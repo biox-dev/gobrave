@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -69,7 +70,13 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	}
 
 	// TODO: 调用 LLM，根据 summary.OwnerType / summary.OwnerID 拉取 Analysis 或
-	// AnalysisNode 的 output 内容并生成摘要。成功后更新 summary.Content 并置
-	// Status=SummaryStatusSuccess，失败则置 Status=SummaryStatusFailed。
+	// AnalysisNode 的 output 内容并生成摘要。当前先模拟生成内容并更新状态。
+	summary.Content = fmt.Sprintf("模拟摘要：所属对象类型为 %s，ID 为 %d", summary.OwnerType, summary.OwnerID)
+	summary.Status = types.SummaryStatusSuccess
+	if err := w.summaryRepo.UpdateAISummary(ctx, summary); err != nil {
+		return err
+	}
+
+	logger.Infof(ctx, "[AISummaryWorker] summary generated, summary_id=%d owner_type=%s owner_id=%d", summary.ID, summary.OwnerType, summary.OwnerID)
 	return nil
 }

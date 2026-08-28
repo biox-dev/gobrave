@@ -336,6 +336,7 @@ func RegisterAISummaryRoutes(r *gin.RouterGroup, handler *handler.AISummaryHandl
 	r.POST("/ai-summary/create", handler.CreateAISummary)
 	r.POST("/ai-summary/regenerate", handler.RegenerateAISummary)
 	r.GET("/ai-summary/get", handler.GetAISummary)
+	r.GET("/ai-summary/list", handler.ListAISummary)
 	r.POST("/ai-summary/delete", handler.DeleteAISummary)
 }
 

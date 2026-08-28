@@ -23,6 +23,8 @@ type AISummaryService interface {
 	// RegenerateAISummary 按摘要 ID 重新投递异步生成事件。
 	RegenerateAISummary(ctx context.Context, id int64) (*types.AISummary, error)
 	GetAISummaryByID(ctx context.Context, id int64) (*types.AISummary, error)
+	// ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表。
+	ListAISummariesByOwner(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) ([]*types.AISummary, error)
 	// DeleteAISummary 按摘要 ID 删除摘要记录。
 	DeleteAISummary(ctx context.Context, id int64) error
 }
