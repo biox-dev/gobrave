@@ -80,6 +80,36 @@ llm:
     api_key: "sk-*****"
     bearer_token: ""
 
+# AI Agent 调用框架配置。用于灵活切换第三方 Agent 与后续自研 Agent。
+agent:
+  # 默认 Provider：mock | claude_code | codex | copilot | custom
+  default: mock
+  # 每个 Provider 的独立配置（key 为 Provider 名称）
+  providers:
+    mock:
+      model: "mock"
+    claude_code:
+      model: ""
+      base_url: ""
+      api_key: ""
+      bearer_token: ""
+      working_dir: ""
+      extra: {}
+    codex:
+      model: ""
+      base_url: ""
+      api_key: ""
+      bearer_token: ""
+      working_dir: ""
+      extra: {}
+    copilot:
+      model: ""
+      base_url: ""
+      api_key: ""
+      bearer_token: ""
+      working_dir: ""
+      extra: {}
+
 container:
   # docker | k8s | k3s
   runtime: docker

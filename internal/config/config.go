@@ -95,6 +95,7 @@ type Config struct {
 	Storage   *StorageConfig   `yaml:"storage"  json:"storage"`
 	Realtime  *RealtimeConfig  `yaml:"realtime" json:"realtime"`
 	LLM       *LLMConfig       `yaml:"llm" json:"llm"`
+	Agent     *AgentConfig     `yaml:"agent" json:"agent"`
 	Container *ContainerConfig `yaml:"container" json:"container"`
 	// Ingest   *IngestConfig   `yaml:"ingest"   json:"ingest"`
 	Tenant      *TenantConfig `yaml:"tenant"   json:"tenant"`
@@ -122,6 +123,25 @@ type LLMProviderConfig struct {
 	BaseURL     string `yaml:"base_url" json:"base_url"`
 	APIKey      string `yaml:"api_key" json:"api_key"`
 	BearerToken string `yaml:"bearer_token" json:"bearer_token"`
+}
+
+// AgentConfig 是 AI Agent 调用框架的配置。
+// 用于灵活切换第三方 Agent（claude_code / codex / copilot）以及后续自研 Agent。
+type AgentConfig struct {
+	// Default 默认使用的 Provider 名称（claude_code | codex | copilot | mock | custom）。
+	Default string `yaml:"default" json:"default"`
+	// Providers 每个 Provider 的独立配置，key 为 Provider 名称。
+	Providers map[string]AgentProviderConfig `yaml:"providers" json:"providers"`
+}
+
+// AgentProviderConfig 是单个 Provider 的配置；Extra 用于承载 Provider 特有配置。
+type AgentProviderConfig struct {
+	Model       string            `yaml:"model" json:"model"`
+	BaseURL     string            `yaml:"base_url" json:"base_url"`
+	APIKey      string            `yaml:"api_key" json:"api_key"`
+	BearerToken string            `yaml:"bearer_token" json:"bearer_token"`
+	WorkingDir  string            `yaml:"working_dir" json:"working_dir"`
+	Extra       map[string]string `yaml:"extra" json:"extra"`
 }
 
 type RealtimeConfig struct {
@@ -339,6 +359,10 @@ func LoadConfig() (*Config, error) {
 				APIKey:      "",
 				BearerToken: "",
 			},
+		},
+		Agent: &AgentConfig{
+			Default:   "mock",
+			Providers: map[string]AgentProviderConfig{},
 		},
 		Container: &ContainerConfig{
 			Runtime:                             "docker",

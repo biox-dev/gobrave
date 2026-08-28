@@ -14,6 +14,8 @@ import (
 	// "github.com/minebiome/ai-agent-go/internal/config"
 	// "github.com/minebiome/ai-agent-go/internal/grpcserver"
 	// "github.com/minebiome/ai-agent-go/internal/handler"
+	"github.com/biox-dev/gobrave/internal/agent"
+	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
 	"github.com/biox-dev/gobrave/internal/application/repository"
 	"github.com/biox-dev/gobrave/internal/application/service"
 	"github.com/biox-dev/gobrave/internal/config"
@@ -54,6 +56,31 @@ func must(err error) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+// buildAgentClient 根据配置构建 Agent 调用门面。
+// 默认 Provider 与 Options 从 config.agent 读取；未配置时兜底为 agent.DefaultProvider（mock）。
+func buildAgentClient(cfg *config.Config, registry *agent.Registry) *agent.Client {
+	defaultProvider := agent.DefaultProvider
+	opts := agent.Options{}
+
+	if cfg != nil && cfg.Agent != nil {
+		if p := strings.ToLower(strings.TrimSpace(cfg.Agent.Default)); p != "" {
+			defaultProvider = p
+		}
+		if pc, ok := cfg.Agent.Providers[defaultProvider]; ok {
+			opts = agent.Options{
+				Model:       pc.Model,
+				BaseURL:     pc.BaseURL,
+				APIKey:      pc.APIKey,
+				BearerToken: pc.BearerToken,
+				WorkingDir:  pc.WorkingDir,
+				Extra:       pc.Extra,
+			}
+		}
+	}
+
+	return agent.NewClient(registry, defaultProvider, opts)
 }
 
 type eventHandlerGroupIn struct {
@@ -150,6 +177,13 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		return w
 	}, dig.Group("event_handlers")))
 	// Provide AISummaryWorker as its concrete type and register it as an event handler.
+	must(container.Provide(func() *agent.Registry {
+		return agent.NewRegistry(agentproviders.All()...)
+	}))
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry) *agent.Client {
+		return buildAgentClient(cfg, registry)
+	}))
+	must(container.Provide(manager.NewAISummaryContentProvider))
 	must(container.Provide(manager.NewAISummaryWorker))
 	must(container.Provide(func(w *manager.AISummaryWorker) event.Handler {
 		return w

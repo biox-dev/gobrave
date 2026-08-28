@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -14,6 +15,9 @@ import (
 // OutboxEventTypeAISummaryGenerateRequest 是 AI 摘要生成请求的 outbox 事件类型。
 const OutboxEventTypeAISummaryGenerateRequest = "AISummaryGenerateRequest"
 
+// aiSummarySystemPrompt 是生成摘要时使用的系统提示词。
+const aiSummarySystemPrompt = "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。"
+
 // Ensure AISummaryWorker implements event.Handler.
 var _ event.Handler = (*AISummaryWorker)(nil)
 
@@ -22,12 +26,25 @@ type AISummaryWorker struct {
 	summaryRepo   interfaces.AISummaryRepository
 	containerRepo interfaces.ContainerRepository
 	bus           event.Bus
-	// TODO: 注入 LLM 调用能力，用于生成摘要内容。
+	agentClient   *agent.Client
+	content       AISummaryContentProvider
 }
 
 // NewAISummaryWorker 创建 AISummaryWorker。
-func NewAISummaryWorker(summaryRepo interfaces.AISummaryRepository, containerRepo interfaces.ContainerRepository, bus event.Bus) *AISummaryWorker {
-	return &AISummaryWorker{summaryRepo: summaryRepo, containerRepo: containerRepo, bus: bus}
+func NewAISummaryWorker(
+	summaryRepo interfaces.AISummaryRepository,
+	containerRepo interfaces.ContainerRepository,
+	bus event.Bus,
+	agentClient *agent.Client,
+	content AISummaryContentProvider,
+) *AISummaryWorker {
+	return &AISummaryWorker{
+		summaryRepo:   summaryRepo,
+		containerRepo: containerRepo,
+		bus:           bus,
+		agentClient:   agentClient,
+		content:       content,
+	}
 }
 
 // Handle 分发事件到对应的处理逻辑。
@@ -38,7 +55,7 @@ func (w *AISummaryWorker) Handle(evt event.Event) {
 	}
 }
 
-// handleCreateRequest 解析载荷并执行摘要生成，随后标记 outbox 事件状态。
+// handleGenerateRequest 解析载荷并执行摘要生成，随后标记 outbox 事件状态。
 func (w *AISummaryWorker) handleGenerateRequest(ctx context.Context, req AISummaryGenerateRequestEvent) {
 	var payload types.AISummaryGeneratePayload
 	if err := json.Unmarshal(req.RawPayload, &payload); err != nil {
@@ -58,7 +75,12 @@ func (w *AISummaryWorker) handleGenerateRequest(ctx context.Context, req AISumma
 	}
 }
 
-// process 执行摘要生成：加载记录 → 置为生成中 → 调用 LLM 生成内容 → 更新状态。
+// process 执行摘要生成，完整调用链路为：
+//
+//	加载记录 → 置为生成中 → 解析所属对象原始内容 → 调用 Agent 生成摘要 → 更新状态。
+//
+// 这里使用 Agent 框架的一次性任务调用（Invoke）；若后续摘要需要边生成边推送给前端，
+// 可切换为 agentClient.Stream 并在 StreamHandler 中逐块发布状态事件。
 func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	summary, err := w.summaryRepo.GetAISummaryByID(ctx, summaryID)
 	if err != nil {
@@ -71,11 +93,29 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	}
 	w.publishStatus(ctx, summary)
 
-	// TODO: 调用 LLM，根据 summary.OwnerType / summary.OwnerID 拉取 Analysis 或
-	// AnalysisNode 的 output 内容并生成摘要。当前先模拟生成内容并更新状态。
-	summary.Content = fmt.Sprintf("模拟摘要：所属对象类型为 %s，ID 为 %d", summary.OwnerType, summary.OwnerID)
+	content, err := w.content.Resolve(ctx, summary.OwnerType, summary.OwnerID)
+	if err != nil {
+		return w.fail(ctx, summary, fmt.Errorf("resolve summary source: %w", err))
+	}
+
+	result, err := w.agentClient.Invoke(ctx, agent.Request{
+		SystemPrompt: aiSummarySystemPrompt,
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: content.Text},
+		},
+	})
+	if err != nil {
+		return w.fail(ctx, summary, fmt.Errorf("agent invoke: %w", err))
+	}
+
+	summary.Content = result.Content
 	summary.Status = types.SummaryStatusSuccess
-	summary.Title = fmt.Sprintf("摘要标题：%s-%d", summary.OwnerType, summary.OwnerID)
+	if content.Title != "" {
+		summary.Title = content.Title
+	}
+	if summary.Title == "" {
+		summary.Title = fmt.Sprintf("摘要：%s-%d", summary.OwnerType, summary.OwnerID)
+	}
 	if err := w.summaryRepo.UpdateAISummary(ctx, summary); err != nil {
 		return err
 	}
@@ -83,6 +123,16 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 
 	logger.Infof(ctx, "[AISummaryWorker] summary generated, summary_id=%d owner_type=%s owner_id=%d", summary.ID, summary.OwnerType, summary.OwnerID)
 	return nil
+}
+
+// fail 将摘要置为失败状态并发布状态事件，随后返回原始错误。
+func (w *AISummaryWorker) fail(ctx context.Context, summary *types.AISummary, err error) error {
+	summary.Status = types.SummaryStatusFailed
+	if uerr := w.summaryRepo.UpdateAISummary(ctx, summary); uerr != nil {
+		logger.Errorf(ctx, "[AISummaryWorker] update summary failed status failed, summary_id=%d err=%v", summary.ID, uerr)
+	}
+	w.publishStatus(ctx, summary)
+	return err
 }
 
 // publishStatus 发布摘要状态变更事件，供 AISummaryEventHandler 推送到前端。
