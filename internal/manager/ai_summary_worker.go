@@ -21,12 +21,13 @@ var _ event.Handler = (*AISummaryWorker)(nil)
 type AISummaryWorker struct {
 	summaryRepo   interfaces.AISummaryRepository
 	containerRepo interfaces.ContainerRepository
+	bus           event.Bus
 	// TODO: 注入 LLM 调用能力，用于生成摘要内容。
 }
 
 // NewAISummaryWorker 创建 AISummaryWorker。
-func NewAISummaryWorker(summaryRepo interfaces.AISummaryRepository, containerRepo interfaces.ContainerRepository) *AISummaryWorker {
-	return &AISummaryWorker{summaryRepo: summaryRepo, containerRepo: containerRepo}
+func NewAISummaryWorker(summaryRepo interfaces.AISummaryRepository, containerRepo interfaces.ContainerRepository, bus event.Bus) *AISummaryWorker {
+	return &AISummaryWorker{summaryRepo: summaryRepo, containerRepo: containerRepo, bus: bus}
 }
 
 // Handle 分发事件到对应的处理逻辑。
@@ -68,15 +69,31 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	if err := w.summaryRepo.UpdateAISummary(ctx, summary); err != nil {
 		return err
 	}
+	w.publishStatus(ctx, summary)
 
 	// TODO: 调用 LLM，根据 summary.OwnerType / summary.OwnerID 拉取 Analysis 或
 	// AnalysisNode 的 output 内容并生成摘要。当前先模拟生成内容并更新状态。
 	summary.Content = fmt.Sprintf("模拟摘要：所属对象类型为 %s，ID 为 %d", summary.OwnerType, summary.OwnerID)
 	summary.Status = types.SummaryStatusSuccess
+	summary.Title = fmt.Sprintf("摘要标题：%s-%d", summary.OwnerType, summary.OwnerID)
 	if err := w.summaryRepo.UpdateAISummary(ctx, summary); err != nil {
 		return err
 	}
+	w.publishStatus(ctx, summary)
 
 	logger.Infof(ctx, "[AISummaryWorker] summary generated, summary_id=%d owner_type=%s owner_id=%d", summary.ID, summary.OwnerType, summary.OwnerID)
 	return nil
+}
+
+// publishStatus 发布摘要状态变更事件，供 AISummaryEventHandler 推送到前端。
+func (w *AISummaryWorker) publishStatus(ctx context.Context, summary *types.AISummary) {
+	if w.bus == nil || summary == nil {
+		return
+	}
+	w.bus.Publish(types.AISummaryStatusEvent{
+		SummaryID: summary.ID,
+		OwnerType: summary.OwnerType,
+		OwnerID:   summary.OwnerID,
+		Status:    summary.Status,
+	})
 }

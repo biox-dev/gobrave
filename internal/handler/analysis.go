@@ -1016,7 +1016,7 @@ func (h *AnalysisHandler) PublishToDocByAnalysisNodeID(c *gin.Context) {
 
 		summaryLink := fmt.Sprintf("./%d/%d.md", analysisNode.ID, summary.ID)
 		if !strings.Contains(string(content), summaryLink) {
-			line := fmt.Sprintf("- [%d](%s)\n", summary.ID, summaryLink)
+			line := fmt.Sprintf("- [%s](%s)\n", summary.Title, summaryLink)
 			if _, err := f.WriteString(line); err != nil {
 				c.Error(errors.NewInternalServerError("failed to write to SUMMARY.md").WithDetails(err.Error()))
 				return

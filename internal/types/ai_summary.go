@@ -38,6 +38,7 @@ type AISummary struct {
 	OwnerID int64 `json:"owner_id,string" gorm:"column:owner_id;type:bigint;index:idx_ai_summaries_owner"`
 	// OwnerType 摘要所属对象的类型：analysis 或 analysis_node。
 	OwnerType SummaryOwnerType `json:"owner_type" gorm:"column:owner_type;type:varchar(32);index:idx_ai_summaries_owner"`
+	Title     string           `json:"title" gorm:"column:title;type:varchar(255)"`
 	// Content AI 生成的摘要内容。
 	Content string `json:"content" gorm:"column:content;type:longtext"`
 	// Status 生成状态：生成中 / 生成成功 / 生成失败。
@@ -61,4 +62,12 @@ func (AISummary) TableName() string {
 // AISummaryGeneratePayload 是 AISummary 生成请求的 outbox 事件载荷。
 type AISummaryGeneratePayload struct {
 	SummaryID int64 `json:"summary_id,string"`
+}
+
+// AISummaryStatusEvent 在 AI 摘要状态发生变更时发布到事件总线。
+type AISummaryStatusEvent struct {
+	SummaryID int64            `json:"summary_id,string"`
+	OwnerType SummaryOwnerType `json:"owner_type"`
+	OwnerID   int64            `json:"owner_id,string"`
+	Status    SummaryStatus    `json:"status"`
 }

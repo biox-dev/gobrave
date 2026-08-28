@@ -235,6 +235,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		dig.Group("event_handlers"),
 	))
 	must(container.Provide(
+		manager.NewAISummaryEventHandler,
+		dig.As(new(event.Handler)),
+		dig.Group("event_handlers"),
+	))
+	must(container.Provide(
 		dag.NewDagRuntimeEventNotifier,
 		dig.As(new(event.Handler)),
 		dig.Group("event_handlers"),
