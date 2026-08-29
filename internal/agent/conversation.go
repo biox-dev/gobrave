@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,13 +28,16 @@ var (
 // Messages 保存完整历史（system 提示词之外的 user/assistant 消息），
 // 每一轮执行前把历史拼进 Request.Messages，执行结束后把 assistant 回复写回历史。
 type Conversation struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Provider  string    `json:"provider"`
-	Model     string    `json:"model"`
-	Messages  []Message `json:"messages"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID       string    `json:"id"`
+	UserID   string    `json:"user_id"`
+	Provider string    `json:"provider"`
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+	// CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；
+	// 轮次结束时置空。供前端刷新 / 切换会话时恢复实时流。
+	CurrentTaskID string    `json:"current_task_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // NewConversation 创建一个空的会话。
@@ -57,6 +61,8 @@ type ConversationRepository interface {
 	Get(ctx context.Context, id string) (*Conversation, error)
 	Create(ctx context.Context, conv *Conversation) error
 	Update(ctx context.Context, conv *Conversation) error
+	// Page 分页查询会话（按 UpdatedAt 降序）；userID 为空表示全部用户。
+	Page(ctx context.Context, userID string, offset, limit int) ([]*Conversation, int64, error)
 }
 
 // NewMemoryConversationRepository 创建会话的内存实现。
@@ -97,6 +103,24 @@ func (r *memoryConversationRepository) Update(_ context.Context, conv *Conversat
 	defer r.mu.Unlock()
 	r.convs[conv.ID] = cloneConversation(conv)
 	return nil
+}
+
+func (r *memoryConversationRepository) Page(_ context.Context, userID string, offset, limit int) ([]*Conversation, int64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	all := make([]*Conversation, 0)
+	for _, c := range r.convs {
+		if userID == "" || c.UserID == userID {
+			all = append(all, c)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.After(all[j].UpdatedAt) })
+	total := int64(len(all))
+	out := make([]*Conversation, 0, limit)
+	for _, c := range sliceRange(all, offset, limit) {
+		out = append(out, cloneConversation(c))
+	}
+	return out, total, nil
 }
 
 func cloneConversation(c *Conversation) *Conversation {
@@ -209,6 +233,14 @@ func (s *ConversationService) CreateTurn(ctx context.Context, in TurnInput) (*Ta
 		return nil, nil, err
 	}
 
+	// 记录当前活跃轮次，供前端刷新 / 切换会话时恢复实时流。
+	conv.CurrentTaskID = task.ID
+	conv.UpdatedAt = time.Now()
+	if err := s.repo.Update(ctx, conv); err != nil {
+		l.Unlock()
+		return nil, nil, err
+	}
+
 	s.mu.Lock()
 	s.turns[task.ID] = &turnState{conv: conv, unlock: l.Unlock}
 	s.mu.Unlock()
@@ -261,6 +293,7 @@ func (s *ConversationService) finishTurn(taskID string, ts *turnState, errMsg st
 	if content != "" {
 		ts.conv.Messages = append(ts.conv.Messages, Message{Role: RoleAssistant, Content: content})
 	}
+	ts.conv.CurrentTaskID = ""
 	ts.conv.UpdatedAt = time.Now()
 	_ = s.repo.Update(context.Background(), ts.conv)
 
@@ -268,6 +301,16 @@ func (s *ConversationService) finishTurn(taskID string, ts *turnState, errMsg st
 	delete(s.turns, taskID)
 	s.mu.Unlock()
 	ts.unlock()
+}
+
+// PageConversations 分页查询会话；userID 为空表示全部用户。
+func (s *ConversationService) PageConversations(ctx context.Context, userID string, offset, limit int) ([]*Conversation, int64, error) {
+	return s.repo.Page(ctx, userID, offset, limit)
+}
+
+// GetConversation 查询会话（含完整历史消息）。
+func (s *ConversationService) GetConversation(ctx context.Context, id string) (*Conversation, error) {
+	return s.repo.Get(ctx, id)
 }
 
 // getOrCreate 加载已有会话；ConversationID 为空时创建新会话。

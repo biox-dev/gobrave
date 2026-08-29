@@ -316,6 +316,83 @@ func (h *AgentHandler) PageTasks(c *gin.Context) {
 	})
 }
 
+type conversationPageRequest struct {
+	types.Pagination
+}
+
+// PageConversations godoc
+// @Summary      分页查询当前用户的会话
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.conversationPageRequest  true  "分页请求参数"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/conversation/page [post]
+func (h *AgentHandler) PageConversations(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req conversationPageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	items, total, err := h.conv.PageConversations(c.Request.Context(), userID, req.Offset(), req.Limit())
+	if err != nil {
+		handleAgentError(c, err, "failed to page conversations")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":      items,
+		"total":     total,
+		"page":      req.GetPage(),
+		"page_size": req.GetPageSize(),
+	})
+}
+
+// GetConversation godoc
+// @Summary      获取会话（含完整历史消息）
+// @Tags         Agent
+// @Produce      json
+// @Param        id   query     string  true  "会话 ID"
+// @Success      200  {object}  agent.Conversation
+// @Failure      400  {object}  errors.AppError
+// @Failure      401  {object}  errors.AppError
+// @Failure      404  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/conversation/get [get]
+func (h *AgentHandler) GetConversation(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var q taskIDQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	conv, err := h.conv.GetConversation(c.Request.Context(), q.ID)
+	if err != nil {
+		handleAgentError(c, err, "failed to get conversation")
+		return
+	}
+	// 校验归属，防止越权访问他人会话。
+	if conv.UserID != userID {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+	c.JSON(http.StatusOK, conv)
+}
+
 // PagePermissions godoc
 // @Summary      分页查询权限请求
 // @Tags         Agent
