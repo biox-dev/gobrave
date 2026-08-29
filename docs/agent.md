@@ -1,0 +1,9 @@
+export Authorization=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6Indhbmd5YW5nYmlvaW5mb0BnbWFpbC5jb20iLCJleHAiOjE3ODgwNjg5OTgsImlhdCI6MTc4Nzk4MjU5OCwidHlwZSI6ImFjY2VzcyIsInVzZXJfaWQiOiI3NGE3YzJlNC0yNTQ2LTQxNmMtOGUzMy1lMDc5ZDA5MDVjNjEifQ.zfvZoN9MVB96mb_XJflIzEoWdPeDPtK7DAKyET9qTzU
+
+
+curl -X POST localhost:8084/api/v1/agent/task/create \
+  -H 'Content-Type: application/json' -H 'authorization:Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6Indhbmd5YW5nYmlvaW5mb0BnbWFpbC5jb20iLCJleHAiOjE3ODgwNjg5OTgsImlhdCI6MTc4Nzk4MjU5OCwidHlwZSI6ImFjY2VzcyIsInVzZXJfaWQiOiI3NGE3YzJlNC0yNTQ2LTQxNmMtOGUzMy1lMDc5ZDA5MDVjNjEifQ.zfvZoN9MVB96mb_XJflIzEoWdPeDPtK7DAKyET9qTzU' \
+  -d '{"stream":true,"working_dir":"/tmp","env":{"MOCK_PERMISSION_DEMO":"true"},"messages":[{"role":"user","content":"hello"}]}'
+
+
+curl 'localhost:8084/api/v1/agent/task/permissions?task_id=task_0ac4c47dacc7453f85c68d0442fb0293' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6Indhbmd5YW5nYmlvaW5mb0BnbWFpbC5jb20iLCJleHAiOjE3ODgwNjg5OTgsImlhdCI6MTc4Nzk4MjU5OCwidHlwZSI6ImFjY2VzcyIsInVzZXJfaWQiOiI3NGE3YzJlNC0yNTQ2LTQxNmMtOGUzMy1lMDc5ZDA5MDVjNjEifQ.zfvZoN9MVB96mb_XJflIzEoWdPeDPtK7DAKyET9qTzU'

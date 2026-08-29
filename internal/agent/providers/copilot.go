@@ -41,7 +41,7 @@ type copilotStreamResult struct {
 }
 
 // Invoke 执行一次性任务：创建会话 → 发送 prompt → 等待 session.idle → 返回最终内容。
-func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request) (*agent.Result, error) {
+func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request, _ agent.Runtime) (*agent.Result, error) {
 	ctx, cancel := a.withTimeout(ctx, req.Timeout)
 	defer cancel()
 
@@ -76,10 +76,10 @@ func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request) (*agent.Re
 	return &agent.Result{Content: content}, nil
 }
 
-// Stream 执行流式请求：把 Copilot 的增量事件转换为 agent.StreamEvent 逐块交给 handler。
-func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, handler agent.StreamHandler) (*agent.Result, error) {
-	if handler == nil {
-		handler = func(context.Context, agent.StreamEvent) error { return nil }
+// Stream 执行流式请求：把 Copilot 的增量事件转换为 agent.StreamEvent，通过 Runtime.Emit 输出。
+func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+	if rt == nil {
+		rt = agent.NewStandaloneRuntime(nil)
 	}
 
 	ctx, cancel := a.withTimeout(ctx, req.Timeout)
@@ -110,7 +110,7 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, handler ag
 		case *copilot.AssistantMessageDeltaData:
 			if data.DeltaContent != "" {
 				final.WriteString(data.DeltaContent)
-				if err := handler(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: data.DeltaContent}); err != nil {
+				if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: data.DeltaContent}); err != nil {
 					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 				}
 			}
@@ -125,7 +125,7 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, handler ag
 			sendStreamResult(resultCh, copilotStreamResult{content: final.String()})
 		case *copilot.AssistantReasoningDeltaData:
 			if data.DeltaContent != "" {
-				if err := handler(ctx, agent.StreamEvent{Type: agent.StreamEventReasoning, Content: data.DeltaContent}); err != nil {
+				if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventReasoning, Content: data.DeltaContent}); err != nil {
 					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 				}
 			}
@@ -141,10 +141,10 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, handler ag
 	case res := <-resultCh:
 		if res.err != nil {
 			_ = session.Abort(context.Background())
-			_ = handler(ctx, agent.StreamEvent{Type: agent.StreamEventError, Err: res.err})
+			_ = rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventError, Err: res.err})
 			return nil, res.err
 		}
-		if err := handler(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
+		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
 			return nil, err
 		}
 		return &agent.Result{Content: res.content}, nil

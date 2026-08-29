@@ -183,6 +183,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(func(cfg *config.Config, registry *agent.Registry) *agent.Client {
 		return buildAgentClient(cfg, registry)
 	}))
+	// Provide AgentService：编排层（任务/权限/事件/恢复）。默认使用内存 Repository，
+	// 后续替换为 DB 实现时只需调整这里的 ServiceConfig。
+	must(container.Provide(func(client *agent.Client) *agent.AgentService {
+		return agent.NewService(agent.ServiceConfig{Client: client})
+	}))
 	must(container.Provide(manager.NewAISummaryContentProvider))
 	must(container.Provide(manager.NewAISummaryWorker))
 	must(container.Provide(func(w *manager.AISummaryWorker) event.Handler {
@@ -354,6 +359,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewRealtimeHandler))
 	must(container.Provide(handler.NewLLMHandler))
 	must(container.Provide(handler.NewAISummaryHandler))
+	must(container.Provide(handler.NewAgentHandler))
 	// must(container.Provide(handler.NewTraceHandler))
 
 	// must(container.Provide(grpcserver.NewTraceServer))
@@ -395,6 +401,13 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(func(bus event.Bus, in eventHandlerGroupIn) {
 		for _, h := range in.Handlers {
 			bus.Subscribe(h)
+		}
+	}))
+
+	// Startup agent task recovery：重启后重建运行态（见 design.md 第 6 / 19 节）。
+	must(container.Invoke(func(svc *agent.AgentService) {
+		if err := svc.Recover(context.Background()); err != nil {
+			logger.Warnf(context.Background(), "[Container] agent task recovery failed: %v", err)
 		}
 	}))
 

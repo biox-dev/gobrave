@@ -44,6 +44,7 @@ type RouterParams struct {
 	RealtimeHandler  *handler.RealtimeHandler
 	LLMHandler       *handler.LLMHandler
 	AISummaryHandler *handler.AISummaryHandler
+	AgentHandler     *handler.AgentHandler
 }
 
 func NewRouter(params RouterParams) *gin.Engine {
@@ -103,6 +104,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterRealtimeRoutes(v1, params.RealtimeHandler)
 		RegisterLLMRoutes(v1, params.LLMHandler)
 		RegisterAISummaryRoutes(v1, params.AISummaryHandler)
+		RegisterAgentRoutes(v1, params.AgentHandler)
 	}
 
 	r.Any("/brave-api", params.ProxyHandler.BraveAPIProxy)
@@ -354,6 +356,20 @@ func RegisterLLMRoutes(r *gin.RouterGroup, handler *handler.LLMHandler) {
 	r.GET("/llm/conversation/list", handler.ListLLMConversation)
 
 	// r.POST("/llm/copilot-cli/chat", handler.CopilotChat)
+}
+
+func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
+	r.POST("/agent/task/create", handler.CreateTask)
+	r.GET("/agent/task/get", handler.GetTask)
+	r.GET("/agent/task/events", handler.GetTaskEvents)
+	r.GET("/agent/task/permissions", handler.GetPendingPermissions)
+	r.POST("/agent/task/cancel", handler.CancelTask)
+	r.POST("/agent/permission/approve", handler.ApprovePermission)
+	r.POST("/agent/permission/deny", handler.DenyPermission)
+
+	r.POST("/agent/task/page", handler.PageTasks)
+	r.POST("/agent/permission/page", handler.PagePermissions)
+	r.POST("/agent/event/page", handler.PageEvents)
 }
 
 // serveStatic maps local image resources under /images.

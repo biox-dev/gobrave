@@ -4,7 +4,17 @@
 // 向上层业务（AISummaryWorker、LLMHandler 等）统一暴露两种调用语义：
 //
 //   - Invoke：一次性任务调用，同步等待最终结果。适合 AI 摘要、后台任务等场景。
-//   - Stream：流式调用，通过 StreamHandler 逐块消费输出。适合前端聊天等场景。
+//   - Stream：流式调用，通过 Runtime.Emit 逐块输出事件。适合前端聊天等场景。
+//
+// 除“调用”本身外，本包还实现了 design.md 中描述的“执行架构”：
+//
+//   - Agent：执行层，负责产生文本 / 推理 / 工具调用等事件，并在需要时请求权限。
+//   - Runtime：Agent 执行期的运行时环境（Emit / RequestPermission / WaitPermission）。
+//   - Operation / PermissionPolicy：描述“要做什么”以及“能不能做”。
+//   - PermissionManager / PermissionRequest：持久化的权限请求与批准 / 拒绝。
+//   - Task / TaskManager（AgentService）：任务状态机与编排。
+//   - EventBus / AgentEvent：实时通知层（带 sequence，可恢复）。
+//   - Repository：持久化抽象（默认提供内存实现，后续可替换为 DB）。
 //
 // 各 Provider 通过 Registry 注册，运行时按名称解析；Client 是统一门面，负责
 // 解析请求应使用的 Provider 并转发 Invoke / Stream。
@@ -52,16 +62,20 @@ type Request struct {
 	Provider string `json:"provider"`
 	// Model 可选：模型名称，为空时由 Provider 自行决定。
 	Model string `json:"model"`
+	// SessionID 可选：会话标识，用于把多次调用关联到同一会话（与权限 / 任务联动）。
+	SessionID string `json:"session_id"`
 	// SystemPrompt 系统提示词。
 	SystemPrompt string `json:"system_prompt"`
 	// Messages 对话上下文（不含 SystemPrompt）。
 	Messages []Message `json:"messages"`
 	// WorkingDir 可选：Agent 执行的工作目录。
 	WorkingDir string `json:"working_dir"`
-	// Env 可选：额外环境变量。
+	// Env 可选：额外环境变量（也可携带 Provider 特有开关）。
 	Env map[string]string `json:"env"`
 	// MaxTokens 可选：最大输出 token 数，0 表示不限制。
 	MaxTokens int `json:"max_tokens"`
+	// Stream 可选：任务模式下是否使用流式调用；默认 false 使用 Invoke。
+	Stream bool `json:"stream"`
 	// Timeout 可选：单次调用超时，0 表示不限制。
 	Timeout time.Duration `json:"-"`
 }
@@ -83,12 +97,14 @@ type Result struct {
 type StreamEventType string
 
 const (
-	StreamEventText       StreamEventType = "text"        // 文本增量
-	StreamEventReasoning  StreamEventType = "reasoning"   // 思维链/推理增量
-	StreamEventToolCall   StreamEventType = "tool_call"   // 发起工具调用
-	StreamEventToolResult StreamEventType = "tool_result" // 工具调用结果
-	StreamEventDone       StreamEventType = "done"        // 正常结束
-	StreamEventError      StreamEventType = "error"       // 出错结束
+	StreamEventText             StreamEventType = "text"              // 文本增量
+	StreamEventReasoning        StreamEventType = "reasoning"         // 思维链/推理增量
+	StreamEventToolCall         StreamEventType = "tool_call"         // 发起工具调用
+	StreamEventToolResult       StreamEventType = "tool_result"       // 工具调用结果
+	StreamEventPermission       StreamEventType = "permission"        // 权限请求通知（真正状态见 PermissionRequest）
+	StreamEventPermissionResult StreamEventType = "permission_result" // 权限决策结果通知
+	StreamEventDone             StreamEventType = "done"              // 正常结束
+	StreamEventError            StreamEventType = "error"             // 出错结束
 )
 
 // StreamEvent 是一次流式输出过程中的单个事件。
@@ -101,13 +117,31 @@ type StreamEvent struct {
 // StreamHandler 消费流式事件；返回非 nil 错误时中断流式调用。
 type StreamHandler func(ctx context.Context, event StreamEvent) error
 
+// Runtime 是 Agent 执行期间的运行时环境，由上层（Client 或 AgentService）注入。
+//
+// Agent 通过它完成三件事：
+//   - Emit：向外输出流式事件（文本 / 推理 / 工具调用 / 权限通知等）；
+//   - RequestPermission：创建一个权限请求并阻塞等待用户 / 策略决策；
+//   - WaitPermission：等待一个已存在的权限请求的决策（用于恢复场景）。
+//
+// 该接口把 Agent 与“持久化、通知、权限决策”等业务关注点解耦：
+// Agent 只描述“要做什么”，具体“能不能做”由 Runtime 背后的 PermissionManager / Policy 决定。
+type Runtime interface {
+	// Emit 输出一个流式事件。
+	Emit(ctx context.Context, event StreamEvent) error
+	// RequestPermission 创建权限请求并阻塞等待决策（allow / deny）。
+	RequestPermission(ctx context.Context, operation Operation) (PermissionDecision, error)
+	// WaitPermission 等待一个已存在权限请求（permissionID）的决策。
+	WaitPermission(ctx context.Context, permissionID string) (PermissionDecision, error)
+}
+
 // Agent 是统一 Agent 调用接口。
 // 每个 Provider（claude_code / codex / copilot / custom ...）都需要实现该接口。
 type Agent interface {
 	// Name 返回 Provider 唯一标识。
 	Name() string
 	// Invoke 执行一次性任务并同步返回最终结果。
-	Invoke(ctx context.Context, req Request) (*Result, error)
-	// Stream 执行流式请求，通过 handler 逐块消费输出，返回最终聚合结果。
-	Stream(ctx context.Context, req Request, handler StreamHandler) (*Result, error)
+	Invoke(ctx context.Context, req Request, rt Runtime) (*Result, error)
+	// Stream 执行流式请求，通过 rt.Emit 逐块输出事件，返回最终聚合结果。
+	Stream(ctx context.Context, req Request, rt Runtime) (*Result, error)
 }

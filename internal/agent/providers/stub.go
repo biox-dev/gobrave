@@ -26,10 +26,10 @@ type notImplementedAgent struct {
 
 func (a *notImplementedAgent) Name() string { return a.name }
 
-func (a *notImplementedAgent) Invoke(_ context.Context, _ agent.Request) (*agent.Result, error) {
+func (a *notImplementedAgent) Invoke(_ context.Context, _ agent.Request, _ agent.Runtime) (*agent.Result, error) {
 	return nil, fmt.Errorf("%w: provider=%s", agent.ErrNotImplemented, a.name)
 }
 
-func (a *notImplementedAgent) Stream(_ context.Context, _ agent.Request, _ agent.StreamHandler) (*agent.Result, error) {
+func (a *notImplementedAgent) Stream(_ context.Context, _ agent.Request, _ agent.Runtime) (*agent.Result, error) {
 	return nil, fmt.Errorf("%w: provider=%s", agent.ErrNotImplemented, a.name)
 }

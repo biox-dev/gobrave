@@ -40,21 +40,39 @@ func (c *Client) SetDefault(provider string, opts Options) {
 }
 
 // Invoke 执行一次性任务：解析 Provider → Agent.Invoke。
+// 内部使用 standalone Runtime（无任务上下文，事件丢弃、权限宽松放行）。
 func (c *Client) Invoke(ctx context.Context, req Request) (*Result, error) {
-	a, err := c.resolve(req.Provider)
-	if err != nil {
-		return nil, err
-	}
-	return a.Invoke(ctx, req)
+	return c.InvokeRuntime(ctx, req, NewStandaloneRuntime(nil))
 }
 
 // Stream 执行流式请求：解析 Provider → Agent.Stream。
+// 内部使用 standalone Runtime，其 Emit 直接把事件交给 handler。
 func (c *Client) Stream(ctx context.Context, req Request, handler StreamHandler) (*Result, error) {
+	return c.StreamRuntime(ctx, req, NewStandaloneRuntime(handler))
+}
+
+// InvokeRuntime 使用调用方提供的 Runtime 执行一次性任务（供 AgentService 任务模式使用）。
+func (c *Client) InvokeRuntime(ctx context.Context, req Request, rt Runtime) (*Result, error) {
 	a, err := c.resolve(req.Provider)
 	if err != nil {
 		return nil, err
 	}
-	return a.Stream(ctx, req, handler)
+	if rt == nil {
+		rt = NewStandaloneRuntime(nil)
+	}
+	return a.Invoke(ctx, req, rt)
+}
+
+// StreamRuntime 使用调用方提供的 Runtime 执行流式请求（供 AgentService 任务模式使用）。
+func (c *Client) StreamRuntime(ctx context.Context, req Request, rt Runtime) (*Result, error) {
+	a, err := c.resolve(req.Provider)
+	if err != nil {
+		return nil, err
+	}
+	if rt == nil {
+		rt = NewStandaloneRuntime(nil)
+	}
+	return a.Stream(ctx, req, rt)
 }
 
 // resolve 解析请求应使用的 Agent 实例。
