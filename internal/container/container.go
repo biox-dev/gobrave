@@ -188,6 +188,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(func(client *agent.Client) *agent.AgentService {
 		return agent.NewService(agent.ServiceConfig{Client: client})
 	}))
+	// Provide ConversationService：多轮对话编排层（复用 AgentService 的任务状态机）。
+	// 当前使用内存 Repository，后续替换为 DB 实现时只需调整这里。
+	must(container.Provide(func(svc *agent.AgentService) *agent.ConversationService {
+		return agent.NewConversationService(svc, agent.NewMemoryConversationRepository())
+	}))
 	must(container.Provide(manager.NewAISummaryContentProvider))
 	must(container.Provide(manager.NewAISummaryWorker))
 	must(container.Provide(func(w *manager.AISummaryWorker) event.Handler {

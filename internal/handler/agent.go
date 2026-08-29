@@ -20,17 +20,19 @@ import (
 //   - WS 是 notification（通过 AgentService.Subscribe 把事件推送给创建任务的用户）；
 //   - AgentService / Repository 是真正的 state。
 type AgentHandler struct {
-	svc *agent.AgentService
-	hub *realtime.Hub
+	svc  *agent.AgentService
+	conv *agent.ConversationService
+	hub  *realtime.Hub
 
 	mu   sync.Mutex
 	subs map[string]func() // taskID → 取消订阅函数
 }
 
 // NewAgentHandler 创建 AgentHandler。
-func NewAgentHandler(svc *agent.AgentService, hub *realtime.Hub) *AgentHandler {
+func NewAgentHandler(svc *agent.AgentService, conv *agent.ConversationService, hub *realtime.Hub) *AgentHandler {
 	return &AgentHandler{
 		svc:  svc,
+		conv: conv,
 		hub:  hub,
 		subs: make(map[string]func()),
 	}
@@ -60,6 +62,15 @@ type permissionIDBody struct {
 type agentEventsQuery struct {
 	TaskID string `form:"task_id" binding:"required"`
 	After  int64  `form:"after"`
+}
+
+type chatRequest struct {
+	ConversationID string `json:"conversation_id"`            // 为空则新建会话
+	Message        string `json:"message" binding:"required"` // 本轮用户输入
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	SystemPrompt   string `json:"system_prompt"`
+	WorkingDir     string `json:"working_dir"`
 }
 
 // ---- 分页请求结构（沿用 types.Pagination，与 Analysis 的分页接口保持一致） ----
@@ -122,6 +133,61 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, task)
+}
+
+// Chat godoc
+// @Summary      多轮对话
+// @Description  发送一条消息：新建会话或续接已有会话；返回本轮任务 ID，实时内容走 WS 推送
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.chatRequest  true  "请求参数"
+// @Success      200      {object}  gin.H
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/chat [post]
+func (h *AgentHandler) Chat(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req chatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	// 1) 准备一轮：追加 user 消息、组装历史、创建任务（复用 AgentService 状态机）。
+	task, conv, err := h.conv.CreateTurn(c.Request.Context(), agent.TurnInput{
+		UserID:         userID,
+		ConversationID: req.ConversationID,
+		Message:        req.Message,
+		Provider:       req.Provider,
+		Model:          req.Model,
+		SystemPrompt:   req.SystemPrompt,
+		WorkingDir:     req.WorkingDir,
+	})
+	if err != nil {
+		handleAgentError(c, err, "failed to create conversation turn")
+		return
+	}
+
+	// 2) 在启动执行前订阅该任务事件到 WS，避免错过早期事件。
+	h.attachTaskStream(userID, task.ID)
+
+	// 3) 启动执行（异步，assistant 回复在轮次结束时自动写回会话历史）。
+	if err := h.conv.StartTurn(c.Request.Context(), task.ID); err != nil {
+		handleAgentError(c, err, "failed to start conversation turn")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"task_id":         task.ID,
+		"conversation_id": conv.ID,
+	})
 }
 
 // GetTask godoc
@@ -462,7 +528,8 @@ func (h *AgentHandler) attachTaskStream(userID, taskID string) {
 // handleAgentError 把 Agent 域错误映射为对应的 HTTP 状态码。
 func handleAgentError(c *gin.Context, err error, internalMsg string) {
 	switch {
-	case stderrs.Is(err, agent.ErrTaskNotFound), stderrs.Is(err, agent.ErrPermissionNotFound):
+	case stderrs.Is(err, agent.ErrTaskNotFound), stderrs.Is(err, agent.ErrPermissionNotFound),
+		stderrs.Is(err, agent.ErrConversationNotFound):
 		c.Error(errors.NewNotFoundError("record not found"))
 	case stderrs.Is(err, agent.ErrPermissionNotPending),
 		stderrs.Is(err, agent.ErrInvalidPermissionTransition),
