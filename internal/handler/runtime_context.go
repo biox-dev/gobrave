@@ -48,6 +48,8 @@ func normalizeEnvType(typ string) string {
 
 // RuntimeContext 是解析后的运行时上下文。
 type RuntimeContext struct {
+	Type         string // 归一化后的业务类型（为空表示默认工作区）
+	Label        string // 人类可读的上下文名称（如节点名 / 报告标题），用于前端展示
 	SystemPrompt string // 注入给 Agent 的完整系统提示词
 	WorkingDir   string // Agent 执行工作目录
 }
@@ -92,15 +94,19 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 	}
 
 	var workingDir string
+	var label string
+	var rtcType string
 	if env != nil {
 		envType := normalizeEnvType(toString(env["type"]))
 		if envType == "" {
-			dir, err := r.resolveDefaultWorkingDirectory(ctx, userID)
+			dir, lbl, err := r.resolveDefaultWorkingDirectory(ctx, userID)
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve working directory: %w", err)
 			}
 			workingDir = dir
+			label = lbl
 		} else {
+			rtcType = envType
 			id, err := parseEnvID(env["id"])
 			if err != nil {
 				return nil, err
@@ -113,6 +119,9 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 				if err != nil {
 					return nil, fmt.Errorf("failed to get script file by script id: %w", err)
 				}
+				if s, sErr := r.workflowSvc.GetScriptByID(ctx, id); sErr == nil {
+					label = s.ComponentName
+				}
 				lines = append(lines,
 					"When you need to run a script-based task, resolve the script workspace from env.id through the runtime context.",
 				)
@@ -123,6 +132,7 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 					return nil, nodeErr
 				}
 				dir = node.WorkspaceDir
+				label = node.NodeName
 				lines = append(lines,
 					"When you need to run or inspect the current analysis node, use env.id as the analysis_node_id and do not guess a different ID.",
 					"For executing workflow scripts in this analysis node context (for example main.R, main.py, or similar entry scripts), you must call the tool run_analysis_node with analysis_node_id=env.id.",
@@ -136,6 +146,7 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 					return nil, analysisErr
 				}
 				dir = analysis.WorkDir
+				label = analysis.AnalysisName
 
 			case EnvTypeProjectReport:
 				report, reportErr := r.projectSvc.GetProjectReportByID(ctx, id)
@@ -146,6 +157,7 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					return nil, fmt.Errorf("failed to create project report working directory: %w", err)
 				}
+				label = report.Title
 
 			default:
 				return nil, fmt.Errorf("unsupported runtime env type: %s", envType)
@@ -155,41 +167,71 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 	}
 
 	if strings.TrimSpace(workingDir) == "" {
-		dir, err := r.resolveDefaultWorkingDirectory(ctx, userID)
+		dir, lbl, err := r.resolveDefaultWorkingDirectory(ctx, userID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve working directory: %w", err)
 		}
 		workingDir = dir
+		if label == "" {
+			label = lbl
+		}
+	}
+
+	if label == "" {
+		label = "Default workspace"
 	}
 
 	lines = append(lines, fmt.Sprintf("working_directory: %s", strings.TrimSpace(workingDir)))
 
 	return &RuntimeContext{
+		Type:         rtcType,
+		Label:        label,
 		SystemPrompt: strings.Join(lines, "\n"),
 		WorkingDir:   workingDir,
 	}, nil
 }
 
-// resolveDefaultWorkingDirectory 返回当前用户激活项目的默认工作目录。
-func (r *RuntimeContextResolver) resolveDefaultWorkingDirectory(ctx context.Context, userID string) (string, error) {
+// RuntimeContextInfo 是用于前端展示的轻量上下文描述（不含 SystemPrompt）。
+type RuntimeContextInfo struct {
+	Type       string `json:"type"`        // 归一化后的业务类型（空表示默认工作区）
+	Label      string `json:"label"`       // 人类可读的名称
+	WorkingDir string `json:"working_dir"` // 工作目录
+}
+
+// Describe 解析 env 并返回用于前端展示的上下文描述。
+// 与 Resolve 共享同一套解析逻辑，仅裁剪掉仅供 Agent 使用的 SystemPrompt。
+func (r *RuntimeContextResolver) Describe(ctx context.Context, userID string, env map[string]any) (*RuntimeContextInfo, error) {
+	rc, err := r.Resolve(ctx, userID, env)
+	if err != nil {
+		return nil, err
+	}
+	return &RuntimeContextInfo{
+		Type:       rc.Type,
+		Label:      rc.Label,
+		WorkingDir: rc.WorkingDir,
+	}, nil
+}
+
+// resolveDefaultWorkingDirectory 返回当前用户激活项目的默认工作目录及其项目名（作为展示标签）。
+func (r *RuntimeContextResolver) resolveDefaultWorkingDirectory(ctx context.Context, userID string) (string, string, error) {
 	project, err := r.projectSvc.GetActiveProjectByUserID(ctx, strings.TrimSpace(userID))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if project == nil || strings.TrimSpace(project.ProjectID) == "" {
-		return "", fmt.Errorf("active project is empty")
+		return "", "", fmt.Errorf("active project is empty")
 	}
 
 	baseDir := r.storageBaseDir()
 	if baseDir == "" {
-		return "", fmt.Errorf("storage.base_dir is empty")
+		return "", "", fmt.Errorf("storage.base_dir is empty")
 	}
 
 	workingDir := filepath.Join(baseDir, "data", strings.TrimSpace(project.ProjectID))
 	if err := os.MkdirAll(workingDir, 0o755); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return workingDir, nil
+	return workingDir, strings.TrimSpace(project.ProjectName), nil
 }
 
 // storageBaseDir 返回存储根目录（容忍 cfg/Storage 为空）。

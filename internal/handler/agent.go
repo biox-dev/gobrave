@@ -78,6 +78,10 @@ type chatRequest struct {
 	Env            map[string]any `json:"env"` // 业务上下文 {id,type}，用于解析系统提示词与工作目录
 }
 
+type describeEnvRequest struct {
+	Env map[string]any `json:"env"` // 业务上下文 {id,type}
+}
+
 // ---- 分页请求结构（沿用 types.Pagination，与 Analysis 的分页接口保持一致） ----
 
 type agentTaskPageRequest struct {
@@ -211,6 +215,45 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		"task_id":         task.ID,
 		"conversation_id": conv.ID,
 	})
+}
+
+// DescribeEnv godoc
+// @Summary      解析当前对话的业务上下文
+// @Description  根据 env{id,type} 返回人类可读的上下文名称与工作目录，供前端展示当前对话环境
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.describeEnvRequest  true  "业务上下文"
+// @Success      200      {object}  RuntimeContextInfo
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/env/describe [post]
+func (h *AgentHandler) DescribeEnv(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req describeEnvRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	if h.runtimeCtx == nil {
+		c.Error(errors.NewInternalServerError("runtime context resolver is not configured"))
+		return
+	}
+
+	info, err := h.runtimeCtx.Describe(c.Request.Context(), userID, req.Env)
+	if err != nil {
+		handleAgentError(c, err, "failed to describe runtime env")
+		return
+	}
+
+	c.JSON(http.StatusOK, info)
 }
 
 // GetTask godoc

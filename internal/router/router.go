@@ -360,6 +360,7 @@ func RegisterLLMRoutes(r *gin.RouterGroup, handler *handler.LLMHandler) {
 
 func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 	r.POST("/agent/chat", handler.Chat)
+	r.POST("/agent/env/describe", handler.DescribeEnv)
 	r.POST("/agent/task/create", handler.CreateTask)
 	r.GET("/agent/task/get", handler.GetTask)
 	r.GET("/agent/task/events", handler.GetTaskEvents)
