@@ -271,8 +271,18 @@ func (s *AgentService) Subscribe(taskID string, handler EventHandler) func() {
 	return s.bus.Subscribe(taskID, handler)
 }
 
-// emitEvent 是事件的单一出口：先持久化（分配 sequence），再广播给订阅者。
+// emitEvent 持久化（分配 sequence）并广播一个事件。
 func (s *AgentService) emitEvent(ctx context.Context, taskID string, typ AgentEventType, payload any) {
+	s.publish(ctx, taskID, typ, payload, true)
+}
+
+// broadcastEvent 仅广播一个事件，不持久化（用于 delta 等临时事件）。
+func (s *AgentService) broadcastEvent(ctx context.Context, taskID string, typ AgentEventType, payload any) {
+	s.publish(ctx, taskID, typ, payload, false)
+}
+
+// publish 是事件的单一出口：构造 AgentEvent，按需持久化，再广播给订阅者。
+func (s *AgentService) publish(ctx context.Context, taskID string, typ AgentEventType, payload any, persist bool) {
 	e := &AgentEvent{
 		ID:        newID("evt"),
 		TaskID:    taskID,
@@ -280,7 +290,7 @@ func (s *AgentService) emitEvent(ctx context.Context, taskID string, typ AgentEv
 		Payload:   payload,
 		CreatedAt: time.Now(),
 	}
-	if s.events != nil {
+	if persist && s.events != nil {
 		_ = s.events.Append(ctx, e)
 	}
 	if s.bus != nil {
@@ -351,7 +361,16 @@ func (s *AgentService) newTaskRuntime(taskID string, handler StreamHandler) Runt
 }
 
 func (r *taskRuntime) Emit(ctx context.Context, event StreamEvent) error {
-	r.svc.emitEvent(ctx, r.taskID, EventStream, event)
+	// delta / block 分流：
+	//   - 完整块与生命周期事件：持久化 + 广播，作为时间线数据源；
+	//   - 纯增量（text / reasoning_delta）：仅广播，用于前端实时渲染，不落库。
+	//
+	// 判断留在 Emit（只有这里能拿到 StreamEvent.Type），但两条分支都走同一个 publish 出口。
+	if isBlockEvent(event.Type) {
+		r.svc.emitEvent(ctx, r.taskID, EventStream, event)
+	} else {
+		r.svc.broadcastEvent(ctx, r.taskID, EventStream, event)
+	}
 	if r.handler != nil {
 		return r.handler(ctx, event)
 	}
@@ -360,7 +379,7 @@ func (r *taskRuntime) Emit(ctx context.Context, event StreamEvent) error {
 
 func (r *taskRuntime) RequestPermission(ctx context.Context, operation Operation) (PermissionDecision, error) {
 	// 1) 通知 UI：Agent 请求了对某个操作的权限确认。
-	_ = r.Emit(ctx, StreamEvent{Type: StreamEventPermission, Content: marshalOperation(operation)})
+	// _ = r.Emit(ctx, StreamEvent{Type: StreamEventPermission, Content: marshalOperation(operation)})
 
 	// 2) 策略先行：直接放行 / 直接拒绝。
 	if decision := r.svc.policy.Check(ctx, operation); decision != DecisionAsk {

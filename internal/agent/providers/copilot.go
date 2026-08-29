@@ -77,15 +77,18 @@ func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request, rt agent.R
 	}
 
 	content := ""
+	var messageData *copilot.AssistantMessageData
 	if event != nil {
 		if data, ok := event.Data.(*copilot.AssistantMessageData); ok {
+			messageData = data
 			content = data.Content
 		}
 	}
 
 	// 将最终结果也通过 Runtime.Emit 输出，保证调用方无论走 Invoke 还是 Stream 都能收到统一事件流。
-	if content != "" {
-		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: content}); err != nil {
+	// 这里输出“完整消息块”（而非 text 增量），使其可作为时间线数据源落库。
+	if messageData != nil {
+		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventMessage, Data: toMessageBlock(messageData)}); err != nil {
 			return nil, err
 		}
 	}
@@ -126,6 +129,29 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.R
 
 	unsubscribe := session.On(func(event copilot.SessionEvent) {
 		switch data := event.Data.(type) {
+		// —— 完整块：时间线数据源，落库 ——
+		case *copilot.AssistantTurnStartData:
+			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventTurnStart, Data: turnBlock(data.TurnID, data.Model)}); err != nil {
+				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
+			}
+		case *copilot.AssistantReasoningData:
+			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventReasoning, Data: agent.ReasoningBlock{ID: data.ReasoningID, Content: data.Content}}); err != nil {
+				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
+			}
+		case *copilot.AssistantMessageData:
+			// 非流式兜底：若没有收到任何 delta，则用最终消息补齐内容。
+			if final.Len() == 0 && data.Content != "" {
+				final.WriteString(data.Content)
+			}
+			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventMessage, Data: toMessageBlock(data)}); err != nil {
+				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
+			}
+		case *copilot.AssistantTurnEndData:
+			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventTurnEnd, Data: turnBlock(data.TurnID, data.Model)}); err != nil {
+				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
+			}
+
+		// —— 增量：仅实时渲染，默认不落库 ——
 		case *copilot.AssistantMessageDeltaData:
 			if data.DeltaContent != "" {
 				final.WriteString(data.DeltaContent)
@@ -133,21 +159,18 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.R
 					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 				}
 			}
-		case *copilot.AssistantMessageData:
-			// 非流式兜底：若没有收到任何 delta，则用最终消息补齐内容。
-			if final.Len() == 0 && data.Content != "" {
-				final.WriteString(data.Content)
+		case *copilot.AssistantReasoningDeltaData:
+			if data.DeltaContent != "" {
+				if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventReasoningDelta, Content: data.DeltaContent}); err != nil {
+					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
+				}
 			}
+
+		// —— 终态 ——
 		case *copilot.SessionErrorData:
 			sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: fmt.Errorf("copilot: session error: %s", data.Message)})
 		case *copilot.SessionIdleData:
 			sendStreamResult(resultCh, copilotStreamResult{content: final.String()})
-		case *copilot.AssistantReasoningDeltaData:
-			if data.DeltaContent != "" {
-				if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventReasoning, Content: data.DeltaContent}); err != nil {
-					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
-				}
-			}
 		}
 	})
 	defer unsubscribe()
@@ -380,4 +403,32 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// toMessageBlock 将 Copilot 的完整 assistant 消息转换为框架内的完整消息块。
+func toMessageBlock(data *copilot.AssistantMessageData) agent.MessageBlock {
+	mb := agent.MessageBlock{
+		ID:      data.MessageID,
+		Content: data.Content,
+	}
+	if data.TurnID != nil {
+		mb.TurnID = *data.TurnID
+	}
+	for _, tr := range data.ToolRequests {
+		mb.ToolCalls = append(mb.ToolCalls, agent.ToolCall{
+			ID:        tr.ToolCallID,
+			Name:      tr.Name,
+			Arguments: tr.Arguments,
+		})
+	}
+	return mb
+}
+
+// turnBlock 构造一轮边界块；model 可能为 nil。
+func turnBlock(turnID string, model *string) agent.TurnBlock {
+	tb := agent.TurnBlock{TurnID: turnID}
+	if model != nil {
+		tb.Model = *model
+	}
+	return tb
 }
