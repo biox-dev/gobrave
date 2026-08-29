@@ -8,6 +8,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent"
 	copilot "github.com/github/copilot-sdk/go"
+	copilotrpc "github.com/github/copilot-sdk/go/rpc"
 )
 
 // copilotProvider 通过 GitHub Copilot SDK 实现真实的 Copilot 调用。
@@ -41,7 +42,11 @@ type copilotStreamResult struct {
 }
 
 // Invoke 执行一次性任务：创建会话 → 发送 prompt → 等待 session.idle → 返回最终内容。
-func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request, _ agent.Runtime) (*agent.Result, error) {
+func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+	if rt == nil {
+		rt = agent.NewStandaloneRuntime(nil)
+	}
+
 	ctx, cancel := a.withTimeout(ctx, req.Timeout)
 	defer cancel()
 
@@ -56,7 +61,7 @@ func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request, _ agent.Ru
 	}
 	defer func() { _ = client.Stop() }()
 
-	session, err := client.CreateSession(ctx, a.sessionConfig(req, model))
+	session, err := client.CreateSession(ctx, a.sessionConfig(ctx, req, model, rt))
 	if err != nil {
 		return nil, fmt.Errorf("copilot: create session: %w", err)
 	}
@@ -96,7 +101,7 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.R
 	}
 	defer func() { _ = client.Stop() }()
 
-	session, err := client.CreateSession(ctx, a.sessionConfig(req, model))
+	session, err := client.CreateSession(ctx, a.sessionConfig(ctx, req, model, rt))
 	if err != nil {
 		return nil, fmt.Errorf("copilot: create session: %w", err)
 	}
@@ -182,12 +187,12 @@ func (a *copilotAgent) clientOptions() *copilot.ClientOptions {
 }
 
 // sessionConfig 根据 Options 与单次请求构建 Copilot Session 配置。
-func (a *copilotAgent) sessionConfig(req agent.Request, model string) *copilot.SessionConfig {
+func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, model string, rt agent.Runtime) *copilot.SessionConfig {
 	cfg := &copilot.SessionConfig{
 		Model:               model,
 		WorkingDirectory:    firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
 		Streaming:           copilot.Bool(true),
-		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		OnPermissionRequest: a.permissionHandler(ctx, rt),
 	}
 
 	if system := strings.TrimSpace(req.SystemPrompt); system != "" {
@@ -203,6 +208,73 @@ func (a *copilotAgent) sessionConfig(req agent.Request, model string) *copilot.S
 	}
 
 	return cfg
+}
+
+// permissionHandler 将 Copilot 的权限请求映射为 agent.Operation，并通过 Runtime 请求权限，
+// 阻塞等待策略 / UI 决策后再把结果翻译回 Copilot 的 PermissionDecision。
+func (a *copilotAgent) permissionHandler(ctx context.Context, rt agent.Runtime) copilot.PermissionHandlerFunc {
+	return func(request copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilotrpc.PermissionDecision, error) {
+		op := toOperation(request)
+
+		decision, err := rt.RequestPermission(ctx, op)
+		if err != nil {
+			// 权限等待失败（例如无解析器 / 被取消），交给 SDK 决定如何降级。
+			return nil, err
+		}
+
+		switch decision {
+		case agent.DecisionAllow:
+			return &copilotrpc.PermissionDecisionApproveOnce{}, nil
+		case agent.DecisionDeny:
+			feedback := fmt.Sprintf("permission denied: %s", op.Type)
+			return &copilotrpc.PermissionDecisionReject{Feedback: &feedback}, nil
+		default:
+			// DecisionAsk 不应在此出现（RequestPermission 阻塞直到 allow/deny），保守拒绝。
+			feedback := "permission decision unresolved"
+			return &copilotrpc.PermissionDecisionReject{Feedback: &feedback}, nil
+		}
+	}
+}
+
+// toOperation 将 Copilot 的权限请求映射为框架内的 Operation 描述。
+func toOperation(request copilot.PermissionRequest) agent.Operation {
+	switch request.Kind() {
+	case copilot.PermissionRequestKindRead:
+		if r, ok := request.(copilot.PermissionRequestRead); ok {
+			return agent.Operation{Type: agent.OperationRead, Path: r.Path}
+		}
+	case copilot.PermissionRequestKindWrite:
+		if w, ok := request.(copilot.PermissionRequestWrite); ok {
+			return agent.Operation{Type: agent.OperationWrite, Path: w.FileName, Content: w.Diff}
+		}
+	case copilot.PermissionRequestKindShell:
+		if s, ok := request.(copilot.PermissionRequestShell); ok {
+			typ := agent.OperationExecute
+			if s.HasWriteFileRedirection {
+				typ = agent.OperationWrite
+			}
+			return agent.Operation{
+				Type:    typ,
+				Command: s.FullCommandText,
+				Metadata: map[string]any{
+					"paths":        s.PossiblePaths,
+					"intention":    s.Intention,
+					"has_redirect": s.HasWriteFileRedirection,
+				},
+			}
+		}
+	case copilot.PermissionRequestKindURL:
+		if u, ok := request.(copilot.PermissionRequestURL); ok {
+			return agent.Operation{
+				Type:     agent.OperationNetwork,
+				Metadata: map[string]any{"url": u.URL, "intention": u.Intention},
+			}
+		}
+	}
+	return agent.Operation{
+		Type:     agent.OperationExecute,
+		Metadata: map[string]any{"kind": string(request.Kind())},
+	}
 }
 
 // providerConfig 构建 BYOK Provider 配置；未配置 BaseURL 时返回 nil，走官方 Copilot API。

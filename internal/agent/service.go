@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -334,15 +336,19 @@ func (r *taskRuntime) Emit(ctx context.Context, event StreamEvent) error {
 }
 
 func (r *taskRuntime) RequestPermission(ctx context.Context, operation Operation) (PermissionDecision, error) {
-	// 1) 策略先行：直接放行 / 直接拒绝。
+	// 1) 通知 UI：Agent 请求了对某个操作的权限确认。
+	_ = r.Emit(ctx, StreamEvent{Type: StreamEventPermission, Content: marshalOperation(operation)})
+
+	// 2) 策略先行：直接放行 / 直接拒绝。
 	if decision := r.svc.policy.Check(ctx, operation); decision != DecisionAsk {
+		// r.emitPermissionResult(ctx, string(decision))
 		if decision == DecisionDeny {
 			return DecisionDeny, ErrPermissionDenied
 		}
 		return DecisionAllow, nil
 	}
 
-	// 2) 持久化 pending 权限请求。
+	// 3) 持久化 pending 权限请求。
 	task, err := r.svc.tasks.Get(ctx, r.taskID)
 	if err != nil {
 		return "", err
@@ -352,21 +358,37 @@ func (r *taskRuntime) RequestPermission(ctx context.Context, operation Operation
 		return "", err
 	}
 
-	// 3) 任务进入等待权限状态，并广播事件。
+	// 4) 任务进入等待权限状态，并广播事件。
 	if err := r.svc.transitionTask(ctx, r.taskID, TaskWaitingPermission, ""); err != nil {
 		return "", err
 	}
 	r.svc.emitEvent(ctx, r.taskID, EventPermissionCreated, perm)
 
-	// 4) 阻塞等待 UI 决策。
+	// 5) 阻塞等待 UI 决策。
 	decision, err := r.svc.perms.Wait(ctx, perm.ID)
 	if err != nil {
+		r.emitPermissionResult(ctx, fmt.Sprintf("error: %v", err))
 		return "", err
 	}
 
-	// 5) 恢复任务为 running（deny 时 Agent 会返回错误，由 execute 置为 failed）。
+	// 6) 恢复任务为 running（deny 时 Agent 会返回错误，由 execute 置为 failed）。
 	_ = r.svc.transitionTask(ctx, r.taskID, TaskRunning, "")
+	// r.emitPermissionResult(ctx, string(decision))
 	return decision, nil
+}
+
+// emitPermissionResult 把权限决策结果透传给 UI（StreamEventPermissionResult）。
+func (r *taskRuntime) emitPermissionResult(ctx context.Context, content string) {
+	_ = r.Emit(ctx, StreamEvent{Type: StreamEventPermissionResult, Content: content})
+}
+
+// marshalOperation 把 Operation 序列化为 JSON 字符串，作为权限通知事件的 content。
+func marshalOperation(op Operation) string {
+	data, err := json.Marshal(op)
+	if err != nil {
+		return fmt.Sprintf("type=%s", op.Type)
+	}
+	return string(data)
 }
 
 func (r *taskRuntime) WaitPermission(ctx context.Context, permissionID string) (PermissionDecision, error) {
