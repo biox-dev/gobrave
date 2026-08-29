@@ -277,15 +277,18 @@ func (a *copilotAgent) permissionHandler(ctx context.Context, rt agent.Runtime) 
 func toOperation(request copilot.PermissionRequest) agent.Operation {
 	switch request.Kind() {
 	case copilot.PermissionRequestKindRead:
-		if r, ok := request.(copilot.PermissionRequestRead); ok {
-			return agent.Operation{Type: agent.OperationRead, Path: r.Path}
+		if r, ok := request.(*copilot.PermissionRequestRead); ok {
+			return agent.Operation{Type: agent.OperationRead, Path: r.Path,
+				Metadata: map[string]any{"intention": r.Intention},
+			}
 		}
 	case copilot.PermissionRequestKindWrite:
-		if w, ok := request.(copilot.PermissionRequestWrite); ok {
-			return agent.Operation{Type: agent.OperationWrite, Path: w.FileName, Content: w.Diff}
+		if w, ok := request.(*copilot.PermissionRequestWrite); ok {
+			return agent.Operation{Type: agent.OperationWrite, Path: w.FileName,
+				Content: w.Diff}
 		}
 	case copilot.PermissionRequestKindShell:
-		if s, ok := request.(copilot.PermissionRequestShell); ok {
+		if s, ok := request.(*copilot.PermissionRequestShell); ok {
 			typ := agent.OperationExecute
 			if s.HasWriteFileRedirection {
 				typ = agent.OperationWrite
@@ -301,7 +304,7 @@ func toOperation(request copilot.PermissionRequest) agent.Operation {
 			}
 		}
 	case copilot.PermissionRequestKindURL:
-		if u, ok := request.(copilot.PermissionRequestURL); ok {
+		if u, ok := request.(*copilot.PermissionRequestURL); ok {
 			return agent.Operation{
 				Type:     agent.OperationNetwork,
 				Metadata: map[string]any{"url": u.URL, "intention": u.Intention},
