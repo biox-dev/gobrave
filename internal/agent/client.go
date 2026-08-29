@@ -41,9 +41,9 @@ func (c *Client) SetDefault(provider string, opts Options) {
 
 // Invoke 执行一次性任务：解析 Provider → Agent.Invoke。
 // 内部使用 standalone Runtime（无任务上下文，事件丢弃、权限宽松放行）。
-func (c *Client) Invoke(ctx context.Context, req Request) (*Result, error) {
-	return c.InvokeRuntime(ctx, req, NewStandaloneRuntime(nil))
-}
+// func (c *Client) Invoke(ctx context.Context, req Request) (*Result, error) {
+// 	return c.InvokeRuntime(ctx, req, NewStandaloneRuntime(nil))
+// }
 
 // Stream 执行流式请求：解析 Provider → Agent.Stream。
 // 内部使用 standalone Runtime，其 Emit 直接把事件交给 handler。
