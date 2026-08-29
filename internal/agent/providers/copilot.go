@@ -42,6 +42,10 @@ type copilotStreamResult struct {
 }
 
 // Invoke 执行一次性任务：创建会话 → 发送 prompt → 等待 session.idle → 返回最终内容。
+//
+// 通过 SDK 的 SendAndWait 等待 session.idle。由于 SendAndWait 在 ctx 无 deadline 时
+// 会强加 60s 硬超时，这里通过 withTimeout 为 ctx 附加默认 10 分钟超时（req.Timeout > 0
+// 时优先使用 req.Timeout），避免推理类模型或耗时较长的 Copilot 调用被误判为超时。
 func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
 	if rt == nil {
 		rt = agent.NewStandaloneRuntime(nil)
@@ -77,6 +81,16 @@ func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request, rt agent.R
 		if data, ok := event.Data.(*copilot.AssistantMessageData); ok {
 			content = data.Content
 		}
+	}
+
+	// 将最终结果也通过 Runtime.Emit 输出，保证调用方无论走 Invoke 还是 Stream 都能收到统一事件流。
+	if content != "" {
+		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: content}); err != nil {
+			return nil, err
+		}
+	}
+	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
+		return nil, err
 	}
 	return &agent.Result{Content: content}, nil
 }
@@ -311,12 +325,18 @@ func (a *copilotAgent) resolveModel(req agent.Request) (string, error) {
 	return model, nil
 }
 
-// withTimeout 在 req.Timeout > 0 时为 ctx 附加超时。
+// defaultTimeout 是未显式设置超时时的默认值。
+//
+// SDK 的 SendAndWait 在 ctx 无 deadline 时会强加 60s 硬超时，对推理类模型或耗时较长
+// 的调用过短；这里统一用 10 分钟作为默认，req.Timeout > 0 时仍以请求值为准。
+const defaultTimeout = 10 * time.Minute
+
+// withTimeout 为 ctx 附加超时：timeout > 0 时使用其值，否则使用 defaultTimeout。
 func (a *copilotAgent) withTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout > 0 {
-		return context.WithTimeout(ctx, timeout)
+	if timeout <= 0 {
+		timeout = defaultTimeout
 	}
-	return ctx, func() {}
+	return context.WithTimeout(ctx, timeout)
 }
 
 // buildPrompt 将 Request 中的对话上下文转换为 Copilot 单次 Send 所需的 prompt。

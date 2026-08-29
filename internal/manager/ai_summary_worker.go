@@ -26,7 +26,7 @@ type AISummaryWorker struct {
 	summaryRepo   interfaces.AISummaryRepository
 	containerRepo interfaces.ContainerRepository
 	bus           event.Bus
-	agentClient   *agent.Client
+	agentService  *agent.AgentService
 	content       AISummaryContentProvider
 }
 
@@ -35,14 +35,14 @@ func NewAISummaryWorker(
 	summaryRepo interfaces.AISummaryRepository,
 	containerRepo interfaces.ContainerRepository,
 	bus event.Bus,
-	agentClient *agent.Client,
+	agentService *agent.AgentService,
 	content AISummaryContentProvider,
 ) *AISummaryWorker {
 	return &AISummaryWorker{
 		summaryRepo:   summaryRepo,
 		containerRepo: containerRepo,
 		bus:           bus,
-		agentClient:   agentClient,
+		agentService:  agentService,
 		content:       content,
 	}
 }
@@ -81,8 +81,8 @@ func (w *AISummaryWorker) handleGenerateRequest(ctx context.Context, req AISumma
 //
 //	加载记录 → 置为生成中 → 解析所属对象原始内容 → 调用 Agent 生成摘要 → 更新状态。
 //
-// 这里使用 Agent 框架的一次性任务调用（Invoke）；若后续摘要需要边生成边推送给前端，
-// 可切换为 agentClient.Stream 并在 StreamHandler 中逐块发布状态事件。
+// 这里通过 AgentService.RunTaskSync 同步执行一次性任务；若后续摘要需要边生成边推送给
+// 前端，可切换为任务流式模式并在 StreamHandler 中逐块发布状态事件。
 func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	summary, err := w.summaryRepo.GetAISummaryByID(ctx, summaryID)
 	if err != nil {
@@ -100,7 +100,7 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 		return fmt.Errorf("resolve summary source: %w", err)
 	}
 
-	result, err := w.agentClient.Invoke(ctx, agent.Request{
+	result, err := w.agentService.RunTaskSync(ctx, agent.Request{
 		SystemPrompt: aiSummarySystemPrompt,
 		WorkingDir:   content.WorkingDir,
 		Messages: []agent.Message{
@@ -108,7 +108,7 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("agent invoke: %w", err)
+		return fmt.Errorf("agent run task: %w", err)
 	}
 
 	summary.Content = result.Content

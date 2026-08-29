@@ -117,43 +117,66 @@ func (s *AgentService) StartTask(ctx context.Context, taskID string, handler Str
 	s.active[taskID] = cancel
 	s.mu.Unlock()
 
-	go s.execute(execCtx, task.ID, task.Request, rt)
+	go s.execute(execCtx, task, rt)
 	return nil
 }
 
-// execute 是任务的实际执行体：解析 Provider → Agent.Stream → 更新终态。
-func (s *AgentService) execute(ctx context.Context, taskID string, req Request, rt Runtime) {
+// RunTaskSync 同步执行一次性任务：创建 → 运行 → 返回聚合结果。
+//
+// 供需要一次性拿到结果的业务（如 AISummaryWorker）使用，替代直接调用 agent.Client.Invoke。
+// 与 RunTask / StartTask 不同，它不启动 goroutine，直接在调用方同步执行。
+func (s *AgentService) RunTaskSync(ctx context.Context, req Request) (*Result, error) {
+	task := NewTask(req)
+	if err := s.tasks.Create(ctx, task); err != nil {
+		return nil, err
+	}
+	s.emitEvent(ctx, task.ID, EventTaskCreated, task)
+
+	return s.run(ctx, task, s.newTaskRuntime(task.ID, nil))
+}
+
+// execute 是异步任务的执行体：清理 active 注册后复用 run 执行任务主体。
+func (s *AgentService) execute(ctx context.Context, task *Task, rt Runtime) {
 	defer func() {
 		s.mu.Lock()
-		delete(s.active, taskID)
+		delete(s.active, task.ID)
 		s.mu.Unlock()
 	}()
 
-	// created → running
-	if err := s.transitionTask(ctx, taskID, TaskRunning, ""); err != nil {
-		return
+	_, _ = s.run(ctx, task, rt)
+}
+
+// run 执行任务主体：置为 running → 解析 Provider → 调用 Agent → 更新终态并返回结果。
+//
+// 异步（execute）与同步（RunTaskSync）共享这一执行路径。
+func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result, error) {
+	if err := s.transitionTask(ctx, task.ID, TaskRunning, ""); err != nil {
+		return nil, err
 	}
 
 	if s.client == nil {
-		_ = s.transitionTask(ctx, taskID, TaskFailed, "no agent client configured")
-		return
+		_ = s.transitionTask(ctx, task.ID, TaskFailed, "no agent client configured")
+		return nil, fmt.Errorf("agent: no client configured")
 	}
 
 	var result *Result
 	var err error
-	if req.Stream {
-		result, err = s.client.StreamRuntime(ctx, req, rt)
+	if task.Request.Stream {
+		result, err = s.client.StreamRuntime(ctx, task.Request, rt)
 	} else {
-		result, err = s.client.InvokeRuntime(ctx, req, rt)
+		result, err = s.client.InvokeRuntime(ctx, task.Request, rt)
 	}
 
 	switch {
 	case err != nil:
-		_ = s.transitionTask(ctx, taskID, TaskFailed, err.Error())
+		_ = s.transitionTask(ctx, task.ID, TaskFailed, err.Error())
+		return nil, err
 	case result == nil:
-		_ = s.transitionTask(ctx, taskID, TaskFailed, "agent returned empty result")
+		_ = s.transitionTask(ctx, task.ID, TaskFailed, "agent returned empty result")
+		return nil, fmt.Errorf("agent: empty result")
 	default:
-		_ = s.transitionTask(ctx, taskID, TaskCompleted, "")
+		_ = s.transitionTask(ctx, task.ID, TaskCompleted, "")
+		return result, nil
 	}
 }
 
