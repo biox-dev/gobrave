@@ -8,7 +8,6 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,7 +21,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/realtime"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
-	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/gin-gonic/gin"
 	copilot "github.com/github/copilot-sdk/go"
 	copilotrpc "github.com/github/copilot-sdk/go/rpc"
@@ -48,6 +46,7 @@ type LLMHandler struct {
 	analsyisSvc      interfaces.AnalysisService
 	nodeOrchestrator interfaces.NodeOrchestrator
 	agentClient      *agent.Client
+	runtimeCtx       *RuntimeContextResolver
 
 	completionBroker *nodeCompletionBroker
 }
@@ -113,6 +112,7 @@ func NewLLMHandler(hub *realtime.Hub, cfg *config.Config, projectSvc interfaces.
 	analsyisSvc interfaces.AnalysisService,
 	nodeOrchestrator interfaces.NodeOrchestrator,
 	agentClient *agent.Client,
+	runtimeCtx *RuntimeContextResolver,
 ) *LLMHandler {
 	cliURL := ""
 	if cfg != nil && cfg.LLM != nil {
@@ -149,6 +149,7 @@ func NewLLMHandler(hub *realtime.Hub, cfg *config.Config, projectSvc interfaces.
 		analsyisSvc:      analsyisSvc,
 		nodeOrchestrator: nodeOrchestrator,
 		agentClient:      agentClient,
+		runtimeCtx:       runtimeCtx,
 		completionBroker: newNodeCompletionBroker(),
 	}
 	h.hub.SubscribeInbound(h.onBridgeInboundMessage)
@@ -801,7 +802,7 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 		resolvedModel = "auto"
 	}
 
-	systemMessage, workingDir, err := h.buildRuntimeSystemMessage(ctx, session.userID, env)
+	runtimeCtx, err := h.runtimeCtx.Resolve(ctx, session.userID, env)
 	if err != nil {
 		h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "failed to resolve working directory", "detail": err.Error()})
 		return
@@ -809,14 +810,14 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 
 	h.pushBridgeEvent(session.userID, session.sessionID, "start", gin.H{
 		"model":       resolvedModel,
-		"working_dir": workingDir,
+		"working_dir": runtimeCtx.WorkingDir,
 	})
 
 	// Build a provider-agnostic request and stream through the unified Agent client.
 	req := agent.Request{
 		Model:        resolvedModel,
-		SystemPrompt: systemMessage.Content,
-		WorkingDir:   workingDir,
+		SystemPrompt: runtimeCtx.SystemPrompt,
+		WorkingDir:   runtimeCtx.WorkingDir,
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: prompt},
 		},
@@ -896,132 +897,6 @@ func (h *LLMHandler) stopBridgeSession(userID string, sessionID int64) {
 		return
 	}
 	session.cancel()
-}
-
-func (h *LLMHandler) resolveDefaultWorkingDirectory(ctx context.Context, userID string) (string, error) {
-	project, err := h.projectSvc.GetActiveProjectByUserID(ctx, strings.TrimSpace(userID))
-	if err != nil {
-		return "", err
-	}
-
-	if project == nil || strings.TrimSpace(project.ProjectID) == "" {
-		return "", fmt.Errorf("active project is empty")
-	}
-
-	baseDir := ""
-	if h.cfg != nil && h.cfg.Storage != nil {
-		baseDir = strings.TrimSpace(h.cfg.Storage.BaseDir)
-	}
-	if baseDir == "" {
-		return "", fmt.Errorf("storage.base_dir is empty")
-	}
-
-	workingDir := filepath.Join(baseDir, "data", strings.TrimSpace(project.ProjectID))
-	if err := os.MkdirAll(workingDir, 0o755); err != nil {
-		return "", err
-	}
-
-	return workingDir, nil
-}
-
-func (h *LLMHandler) buildRuntimeSystemMessage(ctx context.Context, userID string, env map[string]any) (*copilot.SystemMessageConfig, string, error) {
-	if h.projectSvc == nil {
-		return nil, "", fmt.Errorf("project service is not initialized")
-	}
-	lines := []string{
-		"You are operating inside Gobrave's LLM runtime.",
-		"Follow the runtime context below when choosing tools or file locations.",
-		fmt.Sprintf("current_user_id: %s", strings.TrimSpace(userID)),
-	}
-
-	var workingDir string
-	var err error
-	if env != nil {
-		envType, ok := env["type"].(string)
-		if !ok || strings.TrimSpace(envType) == "" {
-			workingDir, err = h.resolveDefaultWorkingDirectory(ctx, userID)
-			if err != nil {
-				return nil, "", fmt.Errorf("failed to resolve working directory: %w", err)
-			}
-		} else {
-			idStr, ok := env["id"]
-			if !ok {
-				return nil, "", fmt.Errorf("env.id is required for script type")
-			}
-			id, parseErr := strconv.ParseInt(fmt.Sprintf("%v", idStr), 10, 64)
-			if parseErr != nil {
-				return nil, "", fmt.Errorf("invalid env.script_id: %w", parseErr)
-			}
-			switch strings.TrimSpace(envType) {
-			case "script":
-				scriptDir, _, scriptErr := h.workflowSvc.GetScriptFileByScriptID(ctx, id)
-				if scriptErr != nil {
-					return nil, "", fmt.Errorf("failed to get script file by script id: %w", scriptErr)
-				}
-				workingDir = scriptDir
-				lines = append(lines, fmt.Sprintf("working_directory: %s", strings.TrimSpace(workingDir)))
-				lines = append(lines, "When you need to run a script-based task, resolve the script workspace from env.id through the runtime context.")
-
-			case "analsyisNode":
-				analsyisNode, nodeErr := h.analsyisSvc.GetAnalysisNodeByID(ctx, id)
-				if nodeErr != nil {
-					return nil, "", nodeErr
-				}
-				workingDir = analsyisNode.WorkspaceDir
-				lines = append(lines, fmt.Sprintf("working_directory: %s", strings.TrimSpace(workingDir)))
-				lines = append(lines,
-					"When you need to run or inspect the current analysis node, use env.id as the analysis_node_id and do not guess a different ID.",
-					"For executing workflow scripts in this analysis node context (for example main.R, main.py, or similar entry scripts), you must call the tool run_analysis_node with analysis_node_id=env.id.",
-					"Do not execute scripts directly via shell/system calls such as Rscript, python, python3, bash, sh, or equivalent runtime commands.",
-					"The runtime will execute the node in the correct container automatically through run_analysis_node.",
-				)
-			case "projectReport":
-				projectReport, err := h.projectSvc.GetProjectReportByID(ctx, id)
-				if err != nil {
-					return nil, "", err
-				}
-				baseDir := h.cfg.Storage.BaseDir
-				workingDir = utils.GetProjectReportDir(baseDir, projectReport.ProjectID, fmt.Sprintf("%d", projectReport.ID))
-				// 确保目录存在
-				if err := os.MkdirAll(workingDir, 0o755); err != nil {
-					return nil, "", fmt.Errorf("failed to create project report working directory: %w", err)
-				}
-				lines = append(lines, fmt.Sprintf("working_directory: %s", strings.TrimSpace(workingDir)))
-			}
-		}
-	}
-
-	// if env == nil {
-	// 	lines = append(lines, "env: <nil>")
-	// } else {
-	// 	envType := strings.TrimSpace(toString(env["type"]))
-	// 	envID := strings.TrimSpace(fmt.Sprintf("%v", env["id"]))
-	// 	if envType == "" {
-	// 		envType = "<empty>"
-	// 	}
-	// 	if envID == "" || envID == "<nil>" {
-	// 		envID = "<empty>"
-	// 	}
-	// 	lines = append(lines,
-	// 		fmt.Sprintf("env.type: %s", envType),
-	// 		fmt.Sprintf("env.id: %s", envID),
-	// 	)
-	// 	if strings.EqualFold(envType, "analysisNode") {
-
-	// 	} else if strings.EqualFold(envType, "script") {
-	// 	} else if strings.EqualFold(envType, "projectReport") {
-
-	// 	}
-	// }
-
-	if workingDir == "" {
-		workingDir, err = h.resolveDefaultWorkingDirectory(ctx, userID)
-		lines = append(lines, fmt.Sprintf("working_directory: %s", strings.TrimSpace(workingDir)))
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to resolve working directory: %w", err)
-		}
-	}
-	return &copilot.SystemMessageConfig{Content: strings.Join(lines, "\n")}, workingDir, nil
 }
 
 func (h *LLMHandler) removeBridgeSession(userID string, sessionID int64) {

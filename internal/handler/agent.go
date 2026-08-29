@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrs "errors"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/biox-dev/gobrave/internal/agent"
@@ -24,17 +25,20 @@ type AgentHandler struct {
 	conv *agent.ConversationService
 	hub  *realtime.Hub
 
+	runtimeCtx *RuntimeContextResolver
+
 	mu   sync.Mutex
 	subs map[string]func() // taskID → 取消订阅函数
 }
 
 // NewAgentHandler 创建 AgentHandler。
-func NewAgentHandler(svc *agent.AgentService, conv *agent.ConversationService, hub *realtime.Hub) *AgentHandler {
+func NewAgentHandler(svc *agent.AgentService, conv *agent.ConversationService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver) *AgentHandler {
 	return &AgentHandler{
-		svc:  svc,
-		conv: conv,
-		hub:  hub,
-		subs: make(map[string]func()),
+		svc:        svc,
+		conv:       conv,
+		hub:        hub,
+		runtimeCtx: runtimeCtx,
+		subs:       make(map[string]func()),
 	}
 }
 
@@ -65,12 +69,13 @@ type agentEventsQuery struct {
 }
 
 type chatRequest struct {
-	ConversationID string `json:"conversation_id"`            // 为空则新建会话
-	Message        string `json:"message" binding:"required"` // 本轮用户输入
-	Provider       string `json:"provider"`
-	Model          string `json:"model"`
-	SystemPrompt   string `json:"system_prompt"`
-	WorkingDir     string `json:"working_dir"`
+	ConversationID string         `json:"conversation_id"`            // 为空则新建会话
+	Message        string         `json:"message" binding:"required"` // 本轮用户输入
+	Provider       string         `json:"provider"`
+	Model          string         `json:"model"`
+	SystemPrompt   string         `json:"system_prompt"`
+	WorkingDir     string         `json:"working_dir"`
+	Env            map[string]any `json:"env"` // 业务上下文 {id,type}，用于解析系统提示词与工作目录
 }
 
 // ---- 分页请求结构（沿用 types.Pagination，与 Analysis 的分页接口保持一致） ----
@@ -160,6 +165,24 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		return
 	}
 
+	// 解析业务上下文（llmEnv）→ 系统提示词 + 工作目录。
+	// 显式传入的 system_prompt / working_dir 优先；未提供时回退到运行时解析结果。
+	systemPrompt := strings.TrimSpace(req.SystemPrompt)
+	workingDir := strings.TrimSpace(req.WorkingDir)
+	if req.Env != nil && h.runtimeCtx != nil {
+		rc, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), userID, req.Env)
+		if rcErr != nil {
+			handleAgentError(c, rcErr, "failed to resolve runtime context")
+			return
+		}
+		if systemPrompt == "" {
+			systemPrompt = rc.SystemPrompt
+		}
+		if workingDir == "" {
+			workingDir = rc.WorkingDir
+		}
+	}
+
 	// 1) 准备一轮：追加 user 消息、组装历史、创建任务（复用 AgentService 状态机）。
 	task, conv, err := h.conv.CreateTurn(c.Request.Context(), agent.TurnInput{
 		UserID:         userID,
@@ -167,8 +190,8 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		Message:        req.Message,
 		Provider:       req.Provider,
 		Model:          req.Model,
-		SystemPrompt:   req.SystemPrompt,
-		WorkingDir:     req.WorkingDir,
+		SystemPrompt:   systemPrompt,
+		WorkingDir:     workingDir,
 	})
 	if err != nil {
 		handleAgentError(c, err, "failed to create conversation turn")
