@@ -98,6 +98,35 @@ func (r *Registry) Instructions() []Manifest {
 	return out
 }
 
+// Manifests 返回全部技能的完整 Manifest（含版本号与指令正文），按名称升序。
+//
+// 与 Instructions 不同，这里会尽量回填 Version 字段，适合用于观测 / 查看技能详情。
+func (r *Registry) Manifests() []Manifest {
+	r.mu.RLock()
+	skills := make([]Skill, 0, len(r.skills))
+	for _, s := range r.skills {
+		skills = append(skills, s)
+	}
+	r.mu.RUnlock()
+
+	sort.Slice(skills, func(i, j int) bool {
+		return skills[i].Definition().Name < skills[j].Definition().Name
+	})
+	out := make([]Manifest, 0, len(skills))
+	for _, s := range skills {
+		m := Manifest{
+			Definition:   s.Definition(),
+			Instructions: s.Instructions(),
+		}
+		// 若技能暴露版本号则回填（Func / Static 均实现了 Version()）。
+		if v, ok := s.(interface{ Version() string }); ok {
+			m.Version = v.Version()
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // Names 返回全部技能名（升序），便于调试 / 校验。
 func (r *Registry) Names() []string {
 	defs := r.List()

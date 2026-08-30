@@ -375,6 +375,8 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 
 	r.POST("/agent/conversation/page", handler.PageConversations)
 	r.GET("/agent/conversation/get", handler.GetConversation)
+
+	r.GET("/agent/skill/list", handler.ListSkills)
 }
 
 // serveStatic maps local image resources under /images.

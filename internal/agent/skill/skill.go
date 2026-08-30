@@ -85,6 +85,9 @@ func (f *Func[In, Out]) Definition() Definition { return f.manifest.Definition }
 // Instructions 实现 Skill。
 func (f *Func[In, Out]) Instructions() string { return f.manifest.Instructions }
 
+// Version 返回技能版本号（可为空）。
+func (f *Func[In, Out]) Version() string { return f.manifest.Version }
+
 // Invoke 实现 Skill：解析入参 → 调用函数。
 func (f *Func[In, Out]) Invoke(ctx context.Context, args json.RawMessage) (Result, error) {
 	if len(args) == 0 {
@@ -118,6 +121,9 @@ func (s *Static) Definition() Definition { return s.manifest.Definition }
 
 // Instructions 实现 Skill。
 func (s *Static) Instructions() string { return s.manifest.Instructions }
+
+// Version 返回技能版本号（可为空）。
+func (s *Static) Version() string { return s.manifest.Version }
 
 // Invoke 实现 Skill：直接返回指令正文。
 func (s *Static) Invoke(_ context.Context, _ json.RawMessage) (Result, error) {

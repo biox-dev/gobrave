@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/realtime"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -25,6 +26,8 @@ type AgentHandler struct {
 	conv *agent.ConversationService
 	hub  *realtime.Hub
 
+	skills *skill.Registry
+
 	runtimeCtx *RuntimeContextResolver
 
 	mu   sync.Mutex
@@ -32,11 +35,12 @@ type AgentHandler struct {
 }
 
 // NewAgentHandler 创建 AgentHandler。
-func NewAgentHandler(svc *agent.AgentService, conv *agent.ConversationService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver) *AgentHandler {
+func NewAgentHandler(svc *agent.AgentService, conv *agent.ConversationService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry) *AgentHandler {
 	return &AgentHandler{
 		svc:        svc,
 		conv:       conv,
 		hub:        hub,
+		skills:     skills,
 		runtimeCtx: runtimeCtx,
 		subs:       make(map[string]func()),
 	}
@@ -254,6 +258,27 @@ func (h *AgentHandler) DescribeEnv(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, info)
+}
+
+// ListSkills godoc
+// @Summary      查看 Agent 技能
+// @Description  返回当前可用的全部技能（内置 + 用户自定义），包含名称、描述、入参 schema、版本与指令正文
+// @Tags         Agent
+// @Produce      json
+// @Success      200  {array}   skill.Manifest
+// @Failure      401  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/skill/list [get]
+func (h *AgentHandler) ListSkills(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	if h.skills == nil {
+		c.JSON(http.StatusOK, []skill.Manifest{})
+		return
+	}
+	c.JSON(http.StatusOK, h.skills.Manifests())
 }
 
 // GetTask godoc

@@ -62,9 +62,29 @@ func must(err error) {
 	}
 }
 
+// buildSkillRegistry 构建 Agent 技能注册表。
+//
+// 注册框架内置技能（echo / get_weather 等），并从 $BaseDir/.skills 目录加载用户
+// 自定义技能（SKILL.md）合并进注册表；目录不存在或加载失败时静默跳过。
+// 独立为 Provider 后，可供 Agent Client 与技能查看 API 共用同一份注册表。
+func buildSkillRegistry(cfg *config.Config) *skill.Registry {
+	reg := skill.NewRegistryWith(skillbuiltin.All()...)
+
+	if cfg != nil && cfg.Storage != nil && strings.TrimSpace(cfg.Storage.BaseDir) != "" {
+		skillsDir := filepath.Join(cfg.Storage.BaseDir, ".skills")
+		if loaded, err := skill.NewLoader().LoadDir(skillsDir); err == nil {
+			for _, s := range loaded {
+				reg.Register(s)
+			}
+		}
+	}
+
+	return reg
+}
+
 // buildAgentClient 根据配置构建 Agent 调用门面。
 // 默认 Provider 与 Options 从 config.agent 读取；未配置时兜底为 agent.DefaultProvider（mock）。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry) *agent.Client {
+func buildAgentClient(cfg *config.Config, registry *agent.Registry, skills *skill.Registry) *agent.Client {
 	defaultProvider := agent.DefaultProvider
 	opts := agent.Options{}
 
@@ -88,20 +108,9 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry) *agent.Clien
 	// 后续新增内置工具时在 builtin.All() 中追加即可，无需改动此处。
 	opts.Tools = tool.NewRegistryWith(builtin.All()...)
 
-	// 注册框架内置技能（echo / get_weather 等），供 Provider 的 skill-call 链路使用。
-	// 后续新增内置技能时在 skillbuiltin.All() 中追加即可，无需改动此处。
-	opts.Skills = skill.NewRegistryWith(skillbuiltin.All()...)
-
-	// 从 $BaseDir/.skills 目录加载用户自定义技能（SKILL.md），合并进技能注册表。
-	// 目录不存在或加载失败时静默跳过，不影响内置技能与整体启动。
-	if cfg != nil && cfg.Storage != nil && strings.TrimSpace(cfg.Storage.BaseDir) != "" {
-		skillsDir := filepath.Join(cfg.Storage.BaseDir, ".skills")
-		if loaded, err := skill.NewLoader().LoadDir(skillsDir); err == nil {
-			for _, s := range loaded {
-				opts.Skills.Register(s)
-			}
-		}
-	}
+	// 技能注册表由 buildSkillRegistry 统一构建（内置 + 用户自定义），
+	// 供 Provider 的 skill-call 链路使用。
+	opts.Skills = skills
 
 	return agent.NewClient(registry, defaultProvider, opts)
 }
@@ -203,8 +212,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(func() *agent.Registry {
 		return agent.NewRegistry(agentproviders.All()...)
 	}))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry) *agent.Client {
-		return buildAgentClient(cfg, registry)
+	must(container.Provide(buildSkillRegistry))
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, skills *skill.Registry) *agent.Client {
+		return buildAgentClient(cfg, registry, skills)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。
