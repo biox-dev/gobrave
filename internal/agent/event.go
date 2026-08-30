@@ -29,13 +29,16 @@ const (
 // sequence 使事件可被“增量拉取”（如 GET /tasks/{id}/events?after=3），
 // 因此浏览器刷新后无需依赖 WS 历史即可恢复。
 type AgentEvent struct {
-	ID        string         `json:"id"`
-	TaskID    string         `json:"task_id"`
-	Sequence  int64          `json:"sequence"`
-	Type      AgentEventType `json:"type"`
-	Payload   any            `json:"payload,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
+	ID        string         `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	TaskID    string         `json:"task_id" gorm:"column:task_id;type:varchar(64);index:idx_agent_events_task_seq,priority:1"`
+	Sequence  int64          `json:"sequence" gorm:"column:sequence;index:idx_agent_events_task_seq,priority:2"`
+	Type      AgentEventType `json:"type" gorm:"column:type;type:varchar(32)"`
+	Payload   any            `json:"payload,omitempty" gorm:"serializer:json"`
+	CreatedAt time.Time      `json:"created_at" gorm:"column:created_at"`
 }
+
+// TableName 返回任务事件表的表名。
+func (AgentEvent) TableName() string { return "agent_events" }
 
 // EventHandler 是事件订阅回调。
 // 返回 error 表示处理失败；EventBus 目前采用同步分发，回调应避免阻塞。

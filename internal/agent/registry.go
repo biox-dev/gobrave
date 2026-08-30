@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
 // Provider 是 Agent 的工厂接口：根据 Options 构建一个 Agent 实例。
@@ -25,6 +27,12 @@ type Options struct {
 	BearerToken string            `json:"bearer_token"`
 	WorkingDir  string            `json:"working_dir"`
 	Extra       map[string]string `json:"extra"`
+
+	// Tools 是本次调用可用的工具注册表。
+	//
+	// Provider 据此向模型暴露工具定义（tool.List()），并通过 ToolRunner /
+	// tool.Executor 执行模型发起的工具调用。为 nil 表示本次调用不启用工具。
+	Tools *tool.Registry `json:"-"`
 }
 
 // Registry 负责注册与解析 Provider。

@@ -16,6 +16,8 @@ import (
 	// "github.com/minebiome/ai-agent-go/internal/handler"
 	"github.com/biox-dev/gobrave/internal/agent"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
+	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
 	"github.com/biox-dev/gobrave/internal/application/repository"
 	"github.com/biox-dev/gobrave/internal/application/service"
 	"github.com/biox-dev/gobrave/internal/config"
@@ -79,6 +81,10 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry) *agent.Clien
 			}
 		}
 	}
+
+	// 注册框架内置工具（get_weather 等），供 Provider 的 tool-call 链路使用。
+	// 后续新增内置工具时在 builtin.All() 中追加即可，无需改动此处。
+	opts.Tools = tool.NewRegistryWith(builtin.All()...)
 
 	return agent.NewClient(registry, defaultProvider, opts)
 }
@@ -183,15 +189,34 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(func(cfg *config.Config, registry *agent.Registry) *agent.Client {
 		return buildAgentClient(cfg, registry)
 	}))
-	// Provide AgentService：编排层（任务/权限/事件/恢复）。默认使用内存 Repository，
-	// 后续替换为 DB 实现时只需调整这里的 ServiceConfig。
-	must(container.Provide(func(client *agent.Client) *agent.AgentService {
-		return agent.NewService(agent.ServiceConfig{Client: client})
+	// Provide AgentService：编排层（任务/权限/事件/恢复）。
+	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。
+	must(container.Provide(func(db *gorm.DB) agent.TaskRepository {
+		return agent.NewGormTaskRepository(db)
+	}))
+	must(container.Provide(func(db *gorm.DB) agent.PermissionRepository {
+		return agent.NewGormPermissionRepository(db)
+	}))
+	must(container.Provide(func(db *gorm.DB) agent.EventRepository {
+		return agent.NewGormEventRepository(db)
+	}))
+	must(container.Provide(func(
+		client *agent.Client,
+		tasks agent.TaskRepository,
+		perms agent.PermissionRepository,
+		events agent.EventRepository,
+	) *agent.AgentService {
+		return agent.NewService(agent.ServiceConfig{
+			Client: client,
+			Tasks:  tasks,
+			Perms:  agent.NewPermissionManager(perms),
+			Events: events,
+		})
 	}))
 	// Provide ConversationService：多轮对话编排层（复用 AgentService 的任务状态机）。
-	// 当前使用内存 Repository，后续替换为 DB 实现时只需调整这里。
-	must(container.Provide(func(svc *agent.AgentService) *agent.ConversationService {
-		return agent.NewConversationService(svc, agent.NewMemoryConversationRepository())
+	// 使用数据库 Repository，使会话历史跨进程重启持久化。
+	must(container.Provide(func(svc *agent.AgentService, db *gorm.DB) *agent.ConversationService {
+		return agent.NewConversationService(svc, agent.NewGormConversationRepository(db))
 	}))
 	must(container.Provide(manager.NewAISummaryContentProvider))
 	must(container.Provide(manager.NewAISummaryWorker))
@@ -622,6 +647,11 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.GatewayRoute{},
 		&types.OutboxEvent{},
 		&types.AISummary{},
+		&agent.Task{},
+		&agent.PermissionRequest{},
+		&agent.AgentEvent{},
+		&agent.Conversation{},
+		&agent.ConversationMessage{},
 	// &types.Trace{},
 	// &types.RSSSource{},
 	); err != nil {

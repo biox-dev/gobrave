@@ -64,9 +64,9 @@ func DefaultPermissionPolicy() PermissionPolicy { return defaultPermissionPolicy
 
 func (defaultPermissionPolicy) Check(_ context.Context, operation Operation) PermissionDecision {
 	switch operation.Type {
-	case OperationRead:
+	case OperationRead, OperationExecute, OperationNetwork:
 		return DecisionAllow
-	case OperationWrite, OperationDelete, OperationMove, OperationExecute, OperationNetwork:
+	case OperationWrite, OperationDelete, OperationMove:
 		return DecisionAsk
 	default:
 		return DecisionAsk

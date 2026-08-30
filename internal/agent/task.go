@@ -39,23 +39,26 @@ var (
 // PermissionRequest 记录“某个具体操作是否被允许”。后端重启后，可根据 Task.Status
 // 与 pending 的 PermissionRequest 重建运行态（见 Recovery）。
 type Task struct {
-	ID         string     `json:"id"`
-	SessionID  string     `json:"session_id,omitempty"`
-	Provider   string     `json:"provider"`
-	Model      string     `json:"model,omitempty"`
-	Status     TaskStatus `json:"status"`
-	WorkingDir string     `json:"working_dir,omitempty"`
+	ID         string     `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	SessionID  string     `json:"session_id,omitempty" gorm:"column:session_id;type:varchar(64);index"`
+	Provider   string     `json:"provider" gorm:"column:provider;type:varchar(64)"`
+	Model      string     `json:"model,omitempty" gorm:"column:model;type:varchar(128)"`
+	Status     TaskStatus `json:"status" gorm:"column:status;type:varchar(32);index"`
+	WorkingDir string     `json:"working_dir,omitempty" gorm:"column:working_dir;type:text"`
 
 	// Request 保存原始请求，用于恢复时重建上下文。
-	Request Request `json:"request,omitempty"`
+	Request Request `json:"request,omitempty" gorm:"serializer:json"`
 	// Error 保存最近一次错误信息（Status == failed 时有效）。
-	Error string `json:"error,omitempty"`
+	Error string `json:"error,omitempty" gorm:"column:error;type:text"`
 
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt  time.Time  `json:"updated_at" gorm:"column:updated_at"`
+	StartedAt  *time.Time `json:"started_at,omitempty" gorm:"column:started_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty" gorm:"column:finished_at"`
 }
+
+// TableName 返回任务表的表名。
+func (Task) TableName() string { return "agent_tasks" }
 
 // NewTask 基于请求构建一个 created 状态的任务。
 func NewTask(req Request) *Task {

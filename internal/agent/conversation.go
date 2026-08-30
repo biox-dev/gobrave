@@ -28,17 +28,39 @@ var (
 // Messages 保存完整历史（system 提示词之外的 user/assistant 消息），
 // 每一轮执行前把历史拼进 Request.Messages，执行结束后把 assistant 回复写回历史。
 type Conversation struct {
-	ID       string    `json:"id"`
-	UserID   string    `json:"user_id"`
-	Provider string    `json:"provider"`
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
+	ID       string `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	UserID   string `json:"user_id" gorm:"column:user_id;type:varchar(64);index"`
+	Provider string `json:"provider" gorm:"column:provider;type:varchar(64)"`
+	Model    string `json:"model" gorm:"column:model;type:varchar(128)"`
+	// Messages 保存完整历史（system 提示词之外的 user/assistant 消息）。
+	// 关系由 Repository 自行维护（独立表 agent_conversation_messages），
+	// 不使用 GORM 的 HasMany 关联，因此标记为 gorm:"-"。
+	Messages []Message `json:"messages" gorm:"-"`
 	// CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；
 	// 轮次结束时置空。供前端刷新 / 切换会话时恢复实时流。
-	CurrentTaskID string    `json:"current_task_id,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	CurrentTaskID string    `json:"current_task_id,omitempty" gorm:"column:current_task_id;type:varchar(64)"`
+	CreatedAt     time.Time `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt     time.Time `json:"updated_at" gorm:"column:updated_at"`
 }
+
+// TableName 返回会话表的表名。
+func (Conversation) TableName() string { return "agent_conversations" }
+
+// ConversationMessage 是会话中的一条消息，以独立表持久化。
+//
+// 与 Conversation 的关系（ConversationID 外键）由 Repository 自行维护，
+// 不使用 GORM 的 HasMany / Preload 关联机制。
+type ConversationMessage struct {
+	ID             string    `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	ConversationID string    `json:"conversation_id" gorm:"column:conversation_id;type:varchar(64);index"`
+	Seq            int       `json:"seq" gorm:"column:seq;index"`
+	Role           string    `json:"role" gorm:"column:role;type:varchar(32)"`
+	Content        string    `json:"content" gorm:"column:content;type:text"`
+	CreatedAt      time.Time `json:"created_at" gorm:"column:created_at"`
+}
+
+// TableName 返回会话消息表的表名。
+func (ConversationMessage) TableName() string { return "agent_conversation_messages" }
 
 // NewConversation 创建一个空的会话。
 func NewConversation(userID, provider, model string) *Conversation {

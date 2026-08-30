@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 	copilot "github.com/github/copilot-sdk/go"
 	copilotrpc "github.com/github/copilot-sdk/go/rpc"
 )
@@ -230,6 +231,7 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 		WorkingDirectory:    firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
 		Streaming:           copilot.Bool(true),
 		OnPermissionRequest: a.permissionHandler(ctx, rt),
+		Tools:               a.buildTools(rt),
 	}
 
 	if system := strings.TrimSpace(req.SystemPrompt); system != "" {
@@ -245,6 +247,63 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 	}
 
 	return cfg
+}
+
+// buildTools 把 opts.Tools（tool.Registry）转换为 Copilot 的 Tool 列表，每个 Tool 附带一个
+// Handler，桥接到框架的 ToolRunner 执行工具并把结果回传给 Copilot。
+//
+// Copilot SDK 采用「handler 自动执行」模型：模型发起工具调用时，SDK 会广播
+// ExternalToolRequested 事件并在独立 goroutine 中调用对应 Handler，再把返回的 ToolResult
+// 通过 RPC 回填给模型，多轮 tool-call 循环由 SDK 内部完成，Provider 无需自己驱动循环。
+//
+// 桥接过程（见 agent.ToolRunner.Run）：
+//
+//	ToolInvocation → agent.ToolCall → 输出 tool_call 事件 → 执行 → tool.Result
+//	  → 输出 tool_result 事件 → copilot.ToolResult → 回传给模型
+func (a *copilotAgent) buildTools(rt agent.Runtime) []copilot.Tool {
+	if a.opts.Tools == nil {
+		return nil
+	}
+
+	runner := agent.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt)
+	defs := a.opts.Tools.List()
+
+	out := make([]copilot.Tool, 0, len(defs))
+	for _, def := range defs {
+		name := def.Name
+		out = append(out, copilot.Tool{
+			Name:        def.Name,
+			Description: def.Description,
+			Parameters:  def.InputSchema,
+			Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
+				res := runner.Run(inv.TraceContext, agent.ToolCall{
+					ID:        inv.ToolCallID,
+					Name:      name,
+					Arguments: inv.Arguments,
+				})
+				return toCopilotToolResult(res), nil
+			},
+		})
+	}
+	return out
+}
+
+// toCopilotToolResult 把框架的 tool.Result 转换为 Copilot 的 ToolResult。
+//
+// 工具执行失败（IsError=true）映射为 failure 结果，错误信息写入 Error 字段，
+// 使模型能看到错误并尝试纠正；成功映射为 success 结果。
+func toCopilotToolResult(res tool.Result) copilot.ToolResult {
+	if res.IsError {
+		return copilot.ToolResult{
+			TextResultForLLM: res.Content,
+			ResultType:       "failure",
+			Error:            res.Content,
+		}
+	}
+	return copilot.ToolResult{
+		TextResultForLLM: res.Content,
+		ResultType:       "success",
+	}
 }
 
 // permissionHandler 将 Copilot 的权限请求映射为 agent.Operation，并通过 Runtime 请求权限，

@@ -43,17 +43,20 @@ var (
 // 它是“数据库才是状态源”这一原则的载体：Agent 阻塞等待的只是内存中的 channel，
 // 真正的状态始终保存在 Repository 中，因此浏览器刷新 / 后端重启后仍可恢复。
 type PermissionRequest struct {
-	ID        string           `json:"id"`
-	TaskID    string           `json:"task_id"`
-	SessionID string           `json:"session_id,omitempty"`
-	Operation Operation        `json:"operation"`
-	Status    PermissionStatus `json:"status"`
+	ID        string           `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	TaskID    string           `json:"task_id" gorm:"column:task_id;type:varchar(64);index"`
+	SessionID string           `json:"session_id,omitempty" gorm:"column:session_id;type:varchar(64)"`
+	Operation Operation        `json:"operation" gorm:"serializer:json"`
+	Status    PermissionStatus `json:"status" gorm:"column:status;type:varchar(32);index"`
 
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
-	ResolvedBy *string    `json:"resolved_by,omitempty"`
+	CreatedAt  time.Time  `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt  time.Time  `json:"updated_at" gorm:"column:updated_at"`
+	ResolvedAt *time.Time `json:"resolved_at,omitempty" gorm:"column:resolved_at"`
+	ResolvedBy *string    `json:"resolved_by,omitempty" gorm:"column:resolved_by;type:varchar(64)"`
 }
+
+// TableName 返回权限请求表的表名。
+func (PermissionRequest) TableName() string { return "agent_permission_requests" }
 
 // NewPermissionRequest 构建一个 pending 状态的权限请求。
 func NewPermissionRequest(taskID, sessionID string, operation Operation) *PermissionRequest {
