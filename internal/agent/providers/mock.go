@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -18,7 +19,9 @@ import (
 //   - 权限链路：当请求的 Env 携带 MOCK_PERMISSION_DEMO=true 时，mock Agent 会通过
 //     Runtime.RequestPermission 请求一次“写文件”权限，并阻塞等待 UI 决策；
 //   - 工具调用链路：当请求的 Env 携带 MOCK_TOOL_DEMO=true 时，mock Agent 会模拟模型
-//     发起一次工具调用，通过 ToolRunner 执行并输出 tool_call / tool_result 事件。
+//     发起一次工具调用，通过 ToolRunner 执行并输出 tool_call / tool_result 事件；
+//   - 技能调用链路：当请求的 Env 携带 MOCK_SKILL_DEMO=true 时，mock Agent 会模拟模型
+//     发起一次技能调用，通过 SkillRunner 执行并输出 skill_call / skill_result 事件。
 type mockProvider struct{}
 
 // NewMock 创建 mock Provider。
@@ -50,6 +53,11 @@ func (a *mockAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runt
 	// 演示工具调用链路：模拟模型发起一次工具调用并执行。
 	if demoToolCall(req) {
 		content = fmt.Sprintf("%s\n%s", content, a.runMockToolCall(ctx, req, rt))
+	}
+
+	// 演示技能调用链路：模拟模型发起一次技能调用并执行。
+	if demoSkillCall(req) {
+		content = fmt.Sprintf("%s\n%s", content, a.runMockSkillCall(ctx, req, rt))
 	}
 	return &agent.Result{Content: content}, nil
 }
@@ -90,6 +98,16 @@ func (a *mockAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runt
 	// 这里再把结果以文本增量拼进输出，便于观察。
 	if demoToolCall(req) {
 		note := "\n" + a.runMockToolCall(ctx, req, rt)
+		sb.WriteString(note)
+		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: note}); err != nil {
+			return nil, err
+		}
+	}
+
+	// 演示技能调用链路：SkillRunner 会输出 skill_call / skill_result 事件，
+	// 这里再把结果以文本增量拼进输出，便于观察。
+	if demoSkillCall(req) {
+		note := "\n" + a.runMockSkillCall(ctx, req, rt)
 		sb.WriteString(note)
 		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: note}); err != nil {
 			return nil, err
@@ -138,6 +156,11 @@ func lastUserPrompt(req agent.Request) string {
 // demoToolCall 判断本次请求是否触发 tool-call 演示。
 func demoToolCall(req agent.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(req.Env["MOCK_TOOL_DEMO"]), "true")
+}
+
+// demoSkillCall 判断本次请求是否触发 skill-call 演示。
+func demoSkillCall(req agent.Request) bool {
+	return strings.EqualFold(strings.TrimSpace(req.Env["MOCK_SKILL_DEMO"]), "true")
 }
 
 // mockEchoInput 是 echo 演示工具的入参。
@@ -193,4 +216,65 @@ func (a *mockAgent) runMockToolCall(ctx context.Context, req agent.Request, rt a
 		Arguments: map[string]any{"text": lastUserPrompt(req)},
 	})
 	return fmt.Sprintf("[tool=%s] %s", name, res.Content)
+}
+
+// defaultMockSkills 返回 mock Provider 内置的演示技能集（Options.Skills 为空时兜底）。
+//
+// 提供两个技能用于演示 skill-call 链路：
+//   - echo：原样回显文本；
+//   - now：返回当前 Unix 时间戳（秒）。
+func defaultMockSkills() *skill.Registry {
+	return skill.NewRegistryWith(
+		skill.NewFunc(skill.Manifest{
+			Definition: skill.Definition{
+				Name:        "echo",
+				Description: "echo the input text back",
+				InputSchema: skill.Schema("echo input", map[string]any{
+					"text": skill.StringProperty("text to echo"),
+				}, "text"),
+			},
+			Version:      "1.0.0",
+			Instructions: "echo the input text back to the caller.",
+		}, func(_ context.Context, in mockEchoInput) (mockEchoOutput, error) {
+			return mockEchoOutput{Echoed: in.Text}, nil
+		}),
+		skill.NewFunc(skill.Manifest{
+			Definition: skill.Definition{
+				Name:        "now",
+				Description: "return the current unix timestamp in seconds",
+				InputSchema: skill.Schema("", map[string]any{}),
+			},
+			Version:      "1.0.0",
+			Instructions: "return the current unix timestamp in seconds.",
+		}, func(_ context.Context, _ struct{}) (map[string]any, error) {
+			return map[string]any{"unix": time.Now().Unix()}, nil
+		}),
+	)
+}
+
+// runMockSkillCall 模拟模型发起一次技能调用并执行，返回展示用文本。
+//
+// 流程：
+//  1. 技能名优先取 Env["MOCK_SKILL_NAME"]，默认 "echo"；
+//  2. 技能注册表优先取 Options.Skills，为空时回退到内置演示技能集；
+//  3. 通过 SkillRunner 执行（Stream 场景会输出 skill_call / skill_result 事件）；
+//  4. 返回形如 "[skill=echo] {...}" 的文本，拼进最终结果。
+func (a *mockAgent) runMockSkillCall(ctx context.Context, req agent.Request, rt agent.Runtime) string {
+	name := strings.TrimSpace(req.Env["MOCK_SKILL_NAME"])
+	if name == "" {
+		name = "echo"
+	}
+
+	reg := a.opts.Skills
+	if reg == nil {
+		reg = defaultMockSkills()
+	}
+
+	runner := agent.NewSkillRunner(skill.NewInvoker(reg), rt)
+	res := runner.Run(ctx, agent.SkillCall{
+		ID:        "mock_skill_1",
+		Name:      name,
+		Arguments: map[string]any{"text": lastUserPrompt(req)},
+	})
+	return fmt.Sprintf("[skill=%s] %s", name, res.Content)
 }

@@ -107,12 +107,14 @@ const (
 	StreamEventReasoningDelta StreamEventType = "reasoning_delta" // 思维链/推理增量
 
 	// —— 完整块（block）——
-	StreamEventTurnStart  StreamEventType = "turn_start"  // 一轮开始（Data 为 TurnBlock）
-	StreamEventTurnEnd    StreamEventType = "turn_end"    // 一轮结束（Data 为 TurnBlock）
-	StreamEventReasoning  StreamEventType = "reasoning"   // 完整思考块（Data 为 ReasoningBlock）
-	StreamEventMessage    StreamEventType = "message"     // 完整 assistant 消息（Data 为 MessageBlock）
-	StreamEventToolCall   StreamEventType = "tool_call"   // 完整工具调用（Data 为 ToolCall）
-	StreamEventToolResult StreamEventType = "tool_result" // 工具调用结果
+	StreamEventTurnStart   StreamEventType = "turn_start"   // 一轮开始（Data 为 TurnBlock）
+	StreamEventTurnEnd     StreamEventType = "turn_end"     // 一轮结束（Data 为 TurnBlock）
+	StreamEventReasoning   StreamEventType = "reasoning"    // 完整思考块（Data 为 ReasoningBlock）
+	StreamEventMessage     StreamEventType = "message"      // 完整 assistant 消息（Data 为 MessageBlock）
+	StreamEventToolCall    StreamEventType = "tool_call"    // 完整工具调用（Data 为 ToolCall）
+	StreamEventToolResult  StreamEventType = "tool_result"  // 工具调用结果
+	StreamEventSkillCall   StreamEventType = "skill_call"   // 完整技能调用（Data 为 SkillCall）
+	StreamEventSkillResult StreamEventType = "skill_result" // 技能调用结果
 
 	StreamEventPermission       StreamEventType = "permission"        // 权限请求通知（真正状态见 PermissionRequest）
 	StreamEventPermissionResult StreamEventType = "permission_result" // 权限决策结果通知

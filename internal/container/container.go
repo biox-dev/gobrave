@@ -16,6 +16,8 @@ import (
 	// "github.com/minebiome/ai-agent-go/internal/handler"
 	"github.com/biox-dev/gobrave/internal/agent"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
+	"github.com/biox-dev/gobrave/internal/agent/skill"
+	skillbuiltin "github.com/biox-dev/gobrave/internal/agent/skill/builtin"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
 	"github.com/biox-dev/gobrave/internal/application/repository"
@@ -85,6 +87,10 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry) *agent.Clien
 	// 注册框架内置工具（get_weather 等），供 Provider 的 tool-call 链路使用。
 	// 后续新增内置工具时在 builtin.All() 中追加即可，无需改动此处。
 	opts.Tools = tool.NewRegistryWith(builtin.All()...)
+
+	// 注册框架内置技能（echo / get_weather 等），供 Provider 的 skill-call 链路使用。
+	// 后续新增内置技能时在 skillbuiltin.All() 中追加即可，无需改动此处。
+	opts.Skills = skill.NewRegistryWith(skillbuiltin.All()...)
 
 	return agent.NewClient(registry, defaultProvider, opts)
 }

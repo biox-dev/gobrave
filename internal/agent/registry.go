@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -33,6 +34,13 @@ type Options struct {
 	// Provider 据此向模型暴露工具定义（tool.List()），并通过 ToolRunner /
 	// tool.Executor 执行模型发起的工具调用。为 nil 表示本次调用不启用工具。
 	Tools *tool.Registry `json:"-"`
+
+	// Skills 是本次调用可用的技能注册表。
+	//
+	// Provider 据此向模型暴露技能定义（skill.List()）与指令正文（skill.Instructions()），
+	// 并通过 SkillRunner / skill.Invoker 执行模型发起的技能调用。为 nil 表示本次
+	// 调用不启用技能。
+	Skills *skill.Registry `json:"-"`
 }
 
 // Registry 负责注册与解析 Provider。

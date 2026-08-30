@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	copilot "github.com/github/copilot-sdk/go"
 	copilotrpc "github.com/github/copilot-sdk/go/rpc"
@@ -231,10 +232,18 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 		WorkingDirectory:    firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
 		Streaming:           copilot.Bool(true),
 		OnPermissionRequest: a.permissionHandler(ctx, rt),
-		Tools:               a.buildTools(rt),
+		Tools:               append(a.buildTools(rt), a.buildSkills(rt)...),
 	}
 
-	if system := strings.TrimSpace(req.SystemPrompt); system != "" {
+	system := strings.TrimSpace(req.SystemPrompt)
+	if instr := a.buildSkillInstructions(); instr != "" {
+		if system != "" {
+			system += "\n\n" + instr
+		} else {
+			system = instr
+		}
+	}
+	if system != "" {
 		cfg.SystemMessage = &copilot.SystemMessageConfig{Content: system}
 	}
 
@@ -304,6 +313,94 @@ func toCopilotToolResult(res tool.Result) copilot.ToolResult {
 		TextResultForLLM: res.Content,
 		ResultType:       "success",
 	}
+}
+
+// buildSkills 把 opts.Skills（skill.Registry）转换为 Copilot 的 Tool 列表，每个 Skill 附带一个
+// Handler，桥接到框架的 SkillRunner 执行技能并把结果回传给 Copilot。
+//
+// 技能在 Copilot 侧与工具共用同一套 function-calling 通道：模型发起技能调用时，SDK 会广播
+// 事件并在独立 goroutine 中调用对应 Handler，再把返回的 ToolResult 通过 RPC 回填给模型。
+// 此外，技能的指令正文（Instructions）会由 buildSkillInstructions 注入系统提示词，使模型
+// 在函数调用之外也能感知技能语义。
+//
+// 桥接过程（见 agent.SkillRunner.Run）：
+//
+//	SkillInvocation → agent.SkillCall → 输出 skill_call 事件 → 执行 → skill.Result
+//	  → 输出 skill_result 事件 → copilot.ToolResult → 回传给模型
+func (a *copilotAgent) buildSkills(rt agent.Runtime) []copilot.Tool {
+	if a.opts.Skills == nil {
+		return nil
+	}
+
+	runner := agent.NewSkillRunner(skill.NewInvoker(a.opts.Skills), rt)
+	defs := a.opts.Skills.List()
+
+	out := make([]copilot.Tool, 0, len(defs))
+	for _, def := range defs {
+		name := def.Name
+		out = append(out, copilot.Tool{
+			Name:        def.Name,
+			Description: def.Description,
+			Parameters:  def.InputSchema,
+			Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
+				res := runner.Run(inv.TraceContext, agent.SkillCall{
+					ID:        inv.ToolCallID,
+					Name:      name,
+					Arguments: inv.Arguments,
+				})
+				return toCopilotSkillResult(res), nil
+			},
+		})
+	}
+	return out
+}
+
+// toCopilotSkillResult 把框架的 skill.Result 转换为 Copilot 的 ToolResult。
+//
+// 语义与 toCopilotToolResult 一致：失败映射为 failure，成功映射为 success。
+func toCopilotSkillResult(res skill.Result) copilot.ToolResult {
+	if res.IsError {
+		return copilot.ToolResult{
+			TextResultForLLM: res.Content,
+			ResultType:       "failure",
+			Error:            res.Content,
+		}
+	}
+	return copilot.ToolResult{
+		TextResultForLLM: res.Content,
+		ResultType:       "success",
+	}
+}
+
+// buildSkillInstructions 把所有技能的指令正文拼接为一个 markdown 块，用于注入系统提示词，
+// 让模型能感知可用技能及其用法（技能区别于工具的关键：携带上下文指令）。
+//
+// 无技能注册或全部技能均无指令正文时返回空字符串。
+func (a *copilotAgent) buildSkillInstructions() string {
+	if a.opts.Skills == nil {
+		return ""
+	}
+	manifests := a.opts.Skills.Instructions()
+	if len(manifests) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("## Available skills\n\n")
+	for _, m := range manifests {
+		b.WriteString("### ")
+		b.WriteString(m.Name)
+		if desc := strings.TrimSpace(m.Description); desc != "" {
+			b.WriteString(": ")
+			b.WriteString(desc)
+		}
+		b.WriteString("\n\n")
+		if instr := strings.TrimSpace(m.Instructions); instr != "" {
+			b.WriteString(instr)
+			b.WriteString("\n\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // permissionHandler 将 Copilot 的权限请求映射为 agent.Operation，并通过 Runtime 请求权限，
