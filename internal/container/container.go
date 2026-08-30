@@ -92,6 +92,17 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry) *agent.Clien
 	// 后续新增内置技能时在 skillbuiltin.All() 中追加即可，无需改动此处。
 	opts.Skills = skill.NewRegistryWith(skillbuiltin.All()...)
 
+	// 从 $BaseDir/.skills 目录加载用户自定义技能（SKILL.md），合并进技能注册表。
+	// 目录不存在或加载失败时静默跳过，不影响内置技能与整体启动。
+	if cfg != nil && cfg.Storage != nil && strings.TrimSpace(cfg.Storage.BaseDir) != "" {
+		skillsDir := filepath.Join(cfg.Storage.BaseDir, ".skills")
+		if loaded, err := skill.NewLoader().LoadDir(skillsDir); err == nil {
+			for _, s := range loaded {
+				opts.Skills.Register(s)
+			}
+		}
+	}
+
 	return agent.NewClient(registry, defaultProvider, opts)
 }
 
