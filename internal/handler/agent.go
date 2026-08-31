@@ -176,20 +176,18 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	// 解析业务上下文（llmEnv）→ 系统提示词 + 工作目录。
 	// 显式传入的 system_prompt / working_dir 优先；未提供时回退到运行时解析结果。
 	systemPrompt := strings.TrimSpace(req.SystemPrompt)
-	workingDir := strings.TrimSpace(req.WorkingDir)
-	if req.Env != nil && h.runtimeCtx != nil {
-		rc, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), userID, req.Env)
-		if rcErr != nil {
-			handleAgentError(c, rcErr, "failed to resolve runtime context")
-			return
-		}
-		if systemPrompt == "" {
-			systemPrompt = rc.SystemPrompt
-		}
-		if workingDir == "" {
-			workingDir = rc.WorkingDir
-		}
+	// workingDir := strings.TrimSpace(req.WorkingDir)
+	// if h.runtimeCtx != nil {
+	rc, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), userID, req.Env)
+	if rcErr != nil {
+		handleAgentError(c, rcErr, "failed to resolve runtime context")
+		return
 	}
+	if systemPrompt == "" {
+		systemPrompt = rc.SystemPrompt
+	}
+	workingDir := rc.WorkingDir
+	// }
 
 	// 1) 准备一轮：追加 user 消息、组装历史、创建任务（复用 AgentService 状态机）。
 	task, conv, err := h.conv.CreateTurn(c.Request.Context(), agent.TurnInput{

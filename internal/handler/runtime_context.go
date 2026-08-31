@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
@@ -157,7 +158,12 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					return nil, fmt.Errorf("failed to create project report working directory: %w", err)
 				}
+				outputFile := filepath.Join(dir, types.DefaultProjectReportFilename)
 				label = report.Title
+				lines = append(lines,
+					"When you need to generate a project report, write the report content to a file named 'output.md' under the project report directory.",
+					fmt.Sprintf("The output file should be written to: %s", outputFile),
+				)
 
 			default:
 				return nil, fmt.Errorf("unsupported runtime env type: %s", envType)
@@ -193,9 +199,10 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 
 // RuntimeContextInfo 是用于前端展示的轻量上下文描述（不含 SystemPrompt）。
 type RuntimeContextInfo struct {
-	Type       string `json:"type"`        // 归一化后的业务类型（空表示默认工作区）
-	Label      string `json:"label"`       // 人类可读的名称
-	WorkingDir string `json:"working_dir"` // 工作目录
+	Type         string `json:"type"`                    // 归一化后的业务类型（空表示默认工作区）
+	Label        string `json:"label"`                   // 人类可读的名称
+	WorkingDir   string `json:"working_dir"`             // 工作目录
+	SystemPrompt string `json:"system_prompt,omitempty"` // 系统提示词（仅在需要时返回）
 }
 
 // Describe 解析 env 并返回用于前端展示的上下文描述。
@@ -206,9 +213,10 @@ func (r *RuntimeContextResolver) Describe(ctx context.Context, userID string, en
 		return nil, err
 	}
 	return &RuntimeContextInfo{
-		Type:       rc.Type,
-		Label:      rc.Label,
-		WorkingDir: rc.WorkingDir,
+		Type:         rc.Type,
+		Label:        rc.Label,
+		WorkingDir:   rc.WorkingDir,
+		SystemPrompt: rc.SystemPrompt,
 	}, nil
 }
 
