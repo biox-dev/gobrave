@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/utils"
+	"gorm.io/gorm"
 )
 
 // 本文件定义「多轮对话」层：把一次会话(Conversation)与一轮执行(Task)拆成两层。
@@ -28,7 +32,7 @@ var (
 // Messages 保存完整历史（system 提示词之外的 user/assistant 消息），
 // 每一轮执行前把历史拼进 Request.Messages，执行结束后把 assistant 回复写回历史。
 type Conversation struct {
-	ID       string `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	ID       int64  `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
 	UserID   string `json:"user_id" gorm:"column:user_id;type:varchar(64);index"`
 	Provider string `json:"provider" gorm:"column:provider;type:varchar(64)"`
 	Model    string `json:"model" gorm:"column:model;type:varchar(128)"`
@@ -38,7 +42,7 @@ type Conversation struct {
 	Messages []Message `json:"messages" gorm:"-"`
 	// CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；
 	// 轮次结束时置空。供前端刷新 / 切换会话时恢复实时流。
-	CurrentTaskID string    `json:"current_task_id,omitempty" gorm:"column:current_task_id;type:varchar(64)"`
+	CurrentTaskID int64     `json:"current_task_id,string" gorm:"column:current_task_id;type:bigint"`
 	CreatedAt     time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt     time.Time `json:"updated_at" gorm:"column:updated_at"`
 }
@@ -46,13 +50,21 @@ type Conversation struct {
 // TableName 返回会话表的表名。
 func (Conversation) TableName() string { return "agent_conversations" }
 
+// BeforeCreate 在写入数据库前用雪花 ID 初始化主键。
+func (c *Conversation) BeforeCreate(_ *gorm.DB) error {
+	if c.ID == 0 {
+		c.ID = utils.GenerateID()
+	}
+	return nil
+}
+
 // ConversationMessage 是会话中的一条消息，以独立表持久化。
 //
 // 与 Conversation 的关系（ConversationID 外键）由 Repository 自行维护，
 // 不使用 GORM 的 HasMany / Preload 关联机制。
 type ConversationMessage struct {
-	ID             string    `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
-	ConversationID string    `json:"conversation_id" gorm:"column:conversation_id;type:varchar(64);index"`
+	ID             int64     `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
+	ConversationID int64     `json:"conversation_id,string" gorm:"column:conversation_id;type:bigint;index"`
 	Seq            int       `json:"seq" gorm:"column:seq;index"`
 	Role           string    `json:"role" gorm:"column:role;type:varchar(32)"`
 	Content        string    `json:"content" gorm:"column:content;type:text"`
@@ -62,11 +74,18 @@ type ConversationMessage struct {
 // TableName 返回会话消息表的表名。
 func (ConversationMessage) TableName() string { return "agent_conversation_messages" }
 
+// BeforeCreate 在写入数据库前用雪花 ID 初始化主键。
+func (m *ConversationMessage) BeforeCreate(_ *gorm.DB) error {
+	if m.ID == 0 {
+		m.ID = utils.GenerateID()
+	}
+	return nil
+}
+
 // NewConversation 创建一个空的会话。
 func NewConversation(userID, provider, model string) *Conversation {
 	now := time.Now()
 	return &Conversation{
-		ID:        newID("conv"),
 		UserID:    userID,
 		Provider:  provider,
 		Model:     model,
@@ -80,7 +99,7 @@ func NewConversation(userID, provider, model string) *Conversation {
 //
 // 与 TaskRepository 一致：当前提供内存实现保证链路可跑通，后续可替换为 DB 实现。
 type ConversationRepository interface {
-	Get(ctx context.Context, id string) (*Conversation, error)
+	Get(ctx context.Context, id int64) (*Conversation, error)
 	Create(ctx context.Context, conv *Conversation) error
 	Update(ctx context.Context, conv *Conversation) error
 	// Page 分页查询会话（按 UpdatedAt 降序）；userID 为空表示全部用户。
@@ -89,15 +108,15 @@ type ConversationRepository interface {
 
 // NewMemoryConversationRepository 创建会话的内存实现。
 func NewMemoryConversationRepository() ConversationRepository {
-	return &memoryConversationRepository{convs: make(map[string]*Conversation)}
+	return &memoryConversationRepository{convs: make(map[int64]*Conversation)}
 }
 
 type memoryConversationRepository struct {
 	mu    sync.RWMutex
-	convs map[string]*Conversation
+	convs map[int64]*Conversation
 }
 
-func (r *memoryConversationRepository) Get(_ context.Context, id string) (*Conversation, error) {
+func (r *memoryConversationRepository) Get(_ context.Context, id int64) (*Conversation, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.convs[id]
@@ -157,7 +176,7 @@ func cloneConversation(c *Conversation) *Conversation {
 // TurnInput 是一次「轮次」的输入，由 HTTP 层构造。
 type TurnInput struct {
 	UserID         string
-	ConversationID string // 为空则创建新会话
+	ConversationID int64  // 为 0 则创建新会话
 	Message        string // 本轮用户输入
 	Provider       string
 	Model          string
@@ -185,8 +204,8 @@ type ConversationService struct {
 	repo  ConversationRepository
 
 	mu    sync.Mutex
-	locks map[string]*sync.Mutex // conversationID → 会话级轮次锁
-	turns map[string]*turnState  // taskID → 本轮中间态
+	locks map[int64]*sync.Mutex // conversationID → 会话级轮次锁
+	turns map[int64]*turnState  // taskID → 本轮中间态
 }
 
 // NewConversationService 创建 ConversationService；repo 为空时使用内存实现。
@@ -197,13 +216,13 @@ func NewConversationService(agent *AgentService, repo ConversationRepository) *C
 	return &ConversationService{
 		agent: agent,
 		repo:  repo,
-		locks: make(map[string]*sync.Mutex),
-		turns: make(map[string]*turnState),
+		locks: make(map[int64]*sync.Mutex),
+		turns: make(map[int64]*turnState),
 	}
 }
 
 // lockFor 返回会话级锁（惰性创建）。
-func (s *ConversationService) lockFor(conversationID string) *sync.Mutex {
+func (s *ConversationService) lockFor(conversationID int64) *sync.Mutex {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l, ok := s.locks[conversationID]
@@ -243,7 +262,7 @@ func (s *ConversationService) CreateTurn(ctx context.Context, in TurnInput) (*Ta
 	req := Request{
 		Provider:     in.Provider,
 		Model:        in.Model,
-		SessionID:    conv.ID,
+		SessionID:    strconv.FormatInt(conv.ID, 10),
 		UserID:       in.UserID,
 		SystemPrompt: in.SystemPrompt,
 		Profile:      in.Profile,
@@ -275,7 +294,7 @@ func (s *ConversationService) CreateTurn(ctx context.Context, in TurnInput) (*Ta
 
 // StartTurn 启动本轮执行，并注册捕获回调：累积 assistant 文本，在本轮终态时
 // 写回历史并释放会话锁。
-func (s *ConversationService) StartTurn(ctx context.Context, taskID string) error {
+func (s *ConversationService) StartTurn(ctx context.Context, taskID int64) error {
 	s.mu.Lock()
 	ts, ok := s.turns[taskID]
 	s.mu.Unlock()
@@ -310,7 +329,7 @@ func (s *ConversationService) StartTurn(ctx context.Context, taskID string) erro
 // finishTurn 在本轮结束时收尾：把 assistant 回复写回历史，释放会话锁并清理中间态。
 //
 // 幂等（基于 turns 中的登记），可安全处理 done / error / 启动失败任一终态。
-func (s *ConversationService) finishTurn(taskID string, ts *turnState, errMsg string) {
+func (s *ConversationService) finishTurn(taskID int64, ts *turnState, errMsg string) {
 	content := ts.text.String()
 	if content == "" {
 		content = ts.messageContent
@@ -318,7 +337,7 @@ func (s *ConversationService) finishTurn(taskID string, ts *turnState, errMsg st
 	if content != "" {
 		ts.conv.Messages = append(ts.conv.Messages, Message{Role: RoleAssistant, Content: content})
 	}
-	ts.conv.CurrentTaskID = ""
+	ts.conv.CurrentTaskID = 0
 	ts.conv.UpdatedAt = time.Now()
 	_ = s.repo.Update(context.Background(), ts.conv)
 
@@ -334,13 +353,13 @@ func (s *ConversationService) PageConversations(ctx context.Context, userID stri
 }
 
 // GetConversation 查询会话（含完整历史消息）。
-func (s *ConversationService) GetConversation(ctx context.Context, id string) (*Conversation, error) {
+func (s *ConversationService) GetConversation(ctx context.Context, id int64) (*Conversation, error) {
 	return s.repo.Get(ctx, id)
 }
 
-// getOrCreate 加载已有会话；ConversationID 为空时创建新会话。
+// getOrCreate 加载已有会话；ConversationID 为 0 时创建新会话。
 func (s *ConversationService) getOrCreate(ctx context.Context, in TurnInput) (*Conversation, error) {
-	if strings.TrimSpace(in.ConversationID) == "" {
+	if in.ConversationID == 0 {
 		conv := NewConversation(in.UserID, in.Provider, in.Model)
 		if err := s.repo.Create(ctx, conv); err != nil {
 			return nil, err

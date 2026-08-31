@@ -3,6 +3,9 @@ package agent
 import (
 	"errors"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/utils"
+	"gorm.io/gorm"
 )
 
 // TaskStatus 是 Agent 任务的生命周期状态。
@@ -39,7 +42,7 @@ var (
 // PermissionRequest 记录“某个具体操作是否被允许”。后端重启后，可根据 Task.Status
 // 与 pending 的 PermissionRequest 重建运行态（见 Recovery）。
 type Task struct {
-	ID         string     `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	ID         int64      `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
 	SessionID  string     `json:"session_id,omitempty" gorm:"column:session_id;type:varchar(64);index"`
 	Provider   string     `json:"provider" gorm:"column:provider;type:varchar(64)"`
 	Model      string     `json:"model,omitempty" gorm:"column:model;type:varchar(128)"`
@@ -60,11 +63,18 @@ type Task struct {
 // TableName 返回任务表的表名。
 func (Task) TableName() string { return "agent_tasks" }
 
+// BeforeCreate 在写入数据库前用雪花 ID 初始化主键。
+func (t *Task) BeforeCreate(_ *gorm.DB) error {
+	if t.ID == 0 {
+		t.ID = utils.GenerateID()
+	}
+	return nil
+}
+
 // NewTask 基于请求构建一个 created 状态的任务。
 func NewTask(req Request) *Task {
 	now := time.Now()
 	return &Task{
-		ID:         newID("task"),
 		SessionID:  req.SessionID,
 		Provider:   req.Provider,
 		Model:      req.Model,

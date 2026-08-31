@@ -24,7 +24,7 @@ func TestServiceFullPermissionFlow(t *testing.T) {
 	defer cancel()
 
 	events := make(chan agent.AgentEvent, 128)
-	unsub := svc.Subscribe("", func(_ context.Context, ev agent.AgentEvent) error {
+	unsub := svc.Subscribe(0, func(_ context.Context, ev agent.AgentEvent) error {
 		events <- ev
 		return nil
 	})
@@ -44,7 +44,7 @@ func TestServiceFullPermissionFlow(t *testing.T) {
 	}
 
 	// 等待 permission.created 事件。
-	var permID string
+	var permID int64
 	for {
 		ev := readEvent(t, ctx, events)
 		if ev.Type == agent.EventPermissionCreated {
@@ -129,7 +129,7 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 	defer cancel()
 
 	events := make(chan agent.AgentEvent, 128)
-	unsub := svc.Subscribe("", func(_ context.Context, ev agent.AgentEvent) error {
+	unsub := svc.Subscribe(0, func(_ context.Context, ev agent.AgentEvent) error {
 		events <- ev
 		return nil
 	})
@@ -148,7 +148,7 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 		t.Fatalf("RunTask: %v", err)
 	}
 
-	var permID string
+	var permID int64
 	for {
 		ev := readEvent(t, ctx, events)
 		if ev.Type == agent.EventPermissionCreated {

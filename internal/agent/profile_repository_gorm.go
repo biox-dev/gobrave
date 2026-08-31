@@ -24,7 +24,7 @@ func (r *gormProfileRepository) Create(ctx context.Context, p *Profile) error {
 	return r.db.WithContext(ctx).Create(p).Error
 }
 
-func (r *gormProfileRepository) Get(ctx context.Context, id string) (*Profile, error) {
+func (r *gormProfileRepository) Get(ctx context.Context, id int64) (*Profile, error) {
 	var p Profile
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&p).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -42,7 +42,7 @@ func (r *gormProfileRepository) Update(ctx context.Context, p *Profile) error {
 	return r.db.WithContext(ctx).Save(p).Error
 }
 
-func (r *gormProfileRepository) Delete(ctx context.Context, id string) error {
+func (r *gormProfileRepository) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&Profile{}).Error
 }
 
@@ -83,7 +83,7 @@ func (r *gormProfileRepository) GetDefault(ctx context.Context, userID string) (
 	return &p, nil
 }
 
-func (r *gormProfileRepository) ClearDefault(ctx context.Context, userID, exceptID string) error {
+func (r *gormProfileRepository) ClearDefault(ctx context.Context, userID string, exceptID int64) error {
 	return r.db.WithContext(ctx).Model(&Profile{}).
 		Where("user_id = ? AND is_default = ? AND id <> ?", strings.TrimSpace(userID), true, exceptID).
 		Update("is_default", false).Error

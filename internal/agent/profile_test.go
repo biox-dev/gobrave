@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"testing"
+
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 func TestProfileManagerResolveBuiltin(t *testing.T) {
@@ -32,6 +34,7 @@ func TestProfileManagerResolveBuiltin(t *testing.T) {
 }
 
 func TestProfileManagerUserDefault(t *testing.T) {
+	_ = utils.InitSnowflake(1)
 	m := NewProfileManager(nil)
 	ctx := context.Background()
 
@@ -75,7 +78,7 @@ func TestProfileManagerDeleteBuiltin(t *testing.T) {
 	m := NewProfileManager(nil)
 	ctx := context.Background()
 
-	if err := m.Delete(ctx, "", "builtin_default"); err == nil {
+	if err := m.Delete(ctx, "", BuiltinDefaultProfileID); err == nil {
 		t.Fatalf("delete builtin should fail")
 	}
 }

@@ -55,7 +55,7 @@ func (r *gormTaskRepository) Create(ctx context.Context, task *Task) error {
 	return r.db.WithContext(ctx).Create(task).Error
 }
 
-func (r *gormTaskRepository) Get(ctx context.Context, id string) (*Task, error) {
+func (r *gormTaskRepository) Get(ctx context.Context, id int64) (*Task, error) {
 	var task Task
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&task).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -116,7 +116,7 @@ func (r *gormPermissionRepository) Create(ctx context.Context, p *PermissionRequ
 	return r.db.WithContext(ctx).Create(p).Error
 }
 
-func (r *gormPermissionRepository) Get(ctx context.Context, id string) (*PermissionRequest, error) {
+func (r *gormPermissionRepository) Get(ctx context.Context, id int64) (*PermissionRequest, error) {
 	var p PermissionRequest
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&p).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -134,7 +134,7 @@ func (r *gormPermissionRepository) Update(ctx context.Context, p *PermissionRequ
 	return r.db.WithContext(ctx).Save(p).Error
 }
 
-func (r *gormPermissionRepository) ListPendingByTask(ctx context.Context, taskID string) ([]*PermissionRequest, error) {
+func (r *gormPermissionRepository) ListPendingByTask(ctx context.Context, taskID int64) ([]*PermissionRequest, error) {
 	var perms []*PermissionRequest
 	if err := r.db.WithContext(ctx).
 		Where("task_id = ? AND status = ?", taskID, PermissionPending).
@@ -145,9 +145,9 @@ func (r *gormPermissionRepository) ListPendingByTask(ctx context.Context, taskID
 	return perms, nil
 }
 
-func (r *gormPermissionRepository) Page(ctx context.Context, offset, limit int, taskID string, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error) {
+func (r *gormPermissionRepository) Page(ctx context.Context, offset, limit int, taskID int64, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error) {
 	q := r.db.WithContext(ctx).Model(&PermissionRequest{})
-	if taskID != "" {
+	if taskID != 0 {
 		q = q.Where("task_id = ?", taskID)
 	}
 	if len(statuses) > 0 {
@@ -191,7 +191,7 @@ func (r *gormEventRepository) Append(ctx context.Context, event *AgentEvent) err
 	})
 }
 
-func (r *gormEventRepository) ListByTask(ctx context.Context, taskID string, after int64) ([]*AgentEvent, error) {
+func (r *gormEventRepository) ListByTask(ctx context.Context, taskID int64, after int64) ([]*AgentEvent, error) {
 	var events []*AgentEvent
 	if err := r.db.WithContext(ctx).
 		Where("task_id = ? AND sequence > ?", taskID, after).
@@ -202,9 +202,9 @@ func (r *gormEventRepository) ListByTask(ctx context.Context, taskID string, aft
 	return events, nil
 }
 
-func (r *gormEventRepository) Page(ctx context.Context, taskID string, offset, limit int) ([]*AgentEvent, int64, error) {
+func (r *gormEventRepository) Page(ctx context.Context, taskID int64, offset, limit int) ([]*AgentEvent, int64, error) {
 	q := r.db.WithContext(ctx).Model(&AgentEvent{})
-	if taskID != "" {
+	if taskID != 0 {
 		q = q.Where("task_id = ?", taskID)
 	}
 
@@ -233,7 +233,7 @@ type gormConversationRepository struct {
 	db *gorm.DB
 }
 
-func (r *gormConversationRepository) Get(ctx context.Context, id string) (*Conversation, error) {
+func (r *gormConversationRepository) Get(ctx context.Context, id int64) (*Conversation, error) {
 	var conv Conversation
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&conv).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -299,7 +299,7 @@ func (r *gormConversationRepository) Page(ctx context.Context, userID string, of
 }
 
 // listMessages 按顺序加载会话的消息。
-func (r *gormConversationRepository) listMessages(ctx context.Context, conversationID string) ([]Message, error) {
+func (r *gormConversationRepository) listMessages(ctx context.Context, conversationID int64) ([]Message, error) {
 	var rows []*ConversationMessage
 	if err := r.db.WithContext(ctx).
 		Where("conversation_id = ?", conversationID).
@@ -325,7 +325,6 @@ func replaceMessages(tx *gorm.DB, conv *Conversation) error {
 	now := time.Now()
 	for i, m := range conv.Messages {
 		row := &ConversationMessage{
-			ID:             newID("msg"),
 			ConversationID: conv.ID,
 			Seq:            i,
 			Role:           m.Role,

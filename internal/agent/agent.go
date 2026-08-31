@@ -195,7 +195,7 @@ type Runtime interface {
 	// RequestPermission 创建权限请求并阻塞等待决策（allow / deny）。
 	RequestPermission(ctx context.Context, operation Operation) (PermissionDecision, error)
 	// WaitPermission 等待一个已存在权限请求（permissionID）的决策。
-	WaitPermission(ctx context.Context, permissionID string) (PermissionDecision, error)
+	WaitPermission(ctx context.Context, permissionID int64) (PermissionDecision, error)
 }
 
 // Agent 是统一 Agent 调用接口。

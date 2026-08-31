@@ -12,9 +12,9 @@ import (
 // 仅用户自定义 Profile 通过该接口持久化。
 type ProfileRepository interface {
 	Create(ctx context.Context, profile *Profile) error
-	Get(ctx context.Context, id string) (*Profile, error)
+	Get(ctx context.Context, id int64) (*Profile, error)
 	Update(ctx context.Context, profile *Profile) error
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, id int64) error
 	// ListByUser 返回某用户全部自定义 Profile（按名称升序）。
 	ListByUser(ctx context.Context, userID string) ([]*Profile, error)
 	// GetByName 按名称返回某用户的自定义 Profile。
@@ -22,17 +22,17 @@ type ProfileRepository interface {
 	// GetDefault 返回某用户的默认自定义 Profile；不存在时返回 (nil, nil)。
 	GetDefault(ctx context.Context, userID string) (*Profile, error)
 	// ClearDefault 清除某用户除 exceptID 外的默认标记。
-	ClearDefault(ctx context.Context, userID, exceptID string) error
+	ClearDefault(ctx context.Context, userID string, exceptID int64) error
 }
 
 // NewMemoryProfileRepository 创建 Profile 的内存实现。
 func NewMemoryProfileRepository() ProfileRepository {
-	return &memoryProfileRepository{profiles: make(map[string]*Profile)}
+	return &memoryProfileRepository{profiles: make(map[int64]*Profile)}
 }
 
 type memoryProfileRepository struct {
 	mu       sync.RWMutex
-	profiles map[string]*Profile
+	profiles map[int64]*Profile
 }
 
 func cloneProfile(p *Profile) *Profile {
@@ -54,7 +54,7 @@ func (r *memoryProfileRepository) Create(_ context.Context, p *Profile) error {
 	return nil
 }
 
-func (r *memoryProfileRepository) Get(_ context.Context, id string) (*Profile, error) {
+func (r *memoryProfileRepository) Get(_ context.Context, id int64) (*Profile, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	p, ok := r.profiles[id]
@@ -74,7 +74,7 @@ func (r *memoryProfileRepository) Update(_ context.Context, p *Profile) error {
 	return nil
 }
 
-func (r *memoryProfileRepository) Delete(_ context.Context, id string) error {
+func (r *memoryProfileRepository) Delete(_ context.Context, id int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.profiles, id)
@@ -116,7 +116,7 @@ func (r *memoryProfileRepository) GetDefault(_ context.Context, userID string) (
 	return nil, nil
 }
 
-func (r *memoryProfileRepository) ClearDefault(_ context.Context, userID, exceptID string) error {
+func (r *memoryProfileRepository) ClearDefault(_ context.Context, userID string, exceptID int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, p := range r.profiles {

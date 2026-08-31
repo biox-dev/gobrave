@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 // AgentService 是 Agent 执行架构的编排层（即 design.md 中的 AgentTaskManager）。
@@ -33,7 +35,7 @@ type AgentService struct {
 	profiles *ProfileManager
 
 	mu     sync.Mutex
-	active map[string]context.CancelFunc // taskID → 取消函数
+	active map[int64]context.CancelFunc // taskID → 取消函数
 }
 
 // ServiceConfig 是 AgentService 的依赖配置。
@@ -82,7 +84,7 @@ func NewService(cfg ServiceConfig) *AgentService {
 		memory:   cfg.Memory,
 		project:  cfg.Project,
 		profiles: cfg.Profiles,
-		active:   make(map[string]context.CancelFunc),
+		active:   make(map[int64]context.CancelFunc),
 	}
 }
 
@@ -115,7 +117,7 @@ func (s *AgentService) CreateTask(ctx context.Context, req Request) (*Task, erro
 }
 
 // StartTask 启动已创建任务的异步执行。
-func (s *AgentService) StartTask(ctx context.Context, taskID string, handler StreamHandler) error {
+func (s *AgentService) StartTask(ctx context.Context, taskID int64, handler StreamHandler) error {
 	task, err := s.tasks.Get(ctx, taskID)
 	if err != nil {
 		return err
@@ -202,7 +204,7 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 }
 
 // transitionTask 加载任务 → 校验状态迁移 → 保存 → 广播状态事件。
-func (s *AgentService) transitionTask(ctx context.Context, taskID string, next TaskStatus, errMsg string) error {
+func (s *AgentService) transitionTask(ctx context.Context, taskID int64, next TaskStatus, errMsg string) error {
 	task, err := s.tasks.Get(ctx, taskID)
 	if err != nil {
 		return err
@@ -234,7 +236,7 @@ func (s *AgentService) transitionTask(ctx context.Context, taskID string, next T
 }
 
 // ApprovePermission 批准权限请求（供 UI / HTTP 层调用）。
-func (s *AgentService) ApprovePermission(ctx context.Context, id, by string) error {
+func (s *AgentService) ApprovePermission(ctx context.Context, id int64, by string) error {
 	p, err := s.perms.Approve(ctx, id, by)
 	if err != nil {
 		return err
@@ -244,7 +246,7 @@ func (s *AgentService) ApprovePermission(ctx context.Context, id, by string) err
 }
 
 // DenyPermission 拒绝权限请求（供 UI / HTTP 层调用）。
-func (s *AgentService) DenyPermission(ctx context.Context, id, by string) error {
+func (s *AgentService) DenyPermission(ctx context.Context, id int64, by string) error {
 	p, err := s.perms.Deny(ctx, id, by)
 	if err != nil {
 		return err
@@ -254,7 +256,7 @@ func (s *AgentService) DenyPermission(ctx context.Context, id, by string) error 
 }
 
 // GetTask 查询任务。
-func (s *AgentService) GetTask(ctx context.Context, id string) (*Task, error) {
+func (s *AgentService) GetTask(ctx context.Context, id int64) (*Task, error) {
 	return s.tasks.Get(ctx, id)
 }
 
@@ -270,12 +272,12 @@ func (s *AgentService) ProjectContext(ctx context.Context, userID string) (strin
 }
 
 // GetPendingPermissions 查询任务当前待确认的权限请求。
-func (s *AgentService) GetPendingPermissions(ctx context.Context, taskID string) ([]*PermissionRequest, error) {
+func (s *AgentService) GetPendingPermissions(ctx context.Context, taskID int64) ([]*PermissionRequest, error) {
 	return s.perms.GetPending(ctx, taskID)
 }
 
 // GetEvents 增量拉取任务事件（after 为上次收到的最大 sequence）。
-func (s *AgentService) GetEvents(ctx context.Context, taskID string, after int64) ([]*AgentEvent, error) {
+func (s *AgentService) GetEvents(ctx context.Context, taskID int64, after int64) ([]*AgentEvent, error) {
 	return s.events.ListByTask(ctx, taskID, after)
 }
 
@@ -284,19 +286,19 @@ func (s *AgentService) PageTasks(ctx context.Context, offset, limit int, statuse
 	return s.tasks.Page(ctx, offset, limit, statuses...)
 }
 
-// PagePermissions 分页查询权限请求；taskID 为空表示全部任务，statuses 为空表示全部状态。
-func (s *AgentService) PagePermissions(ctx context.Context, offset, limit int, taskID string, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error) {
+// PagePermissions 分页查询权限请求；taskID 为 0 表示全部任务，statuses 为空表示全部状态。
+func (s *AgentService) PagePermissions(ctx context.Context, offset, limit int, taskID int64, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error) {
 	return s.perms.Page(ctx, offset, limit, taskID, statuses...)
 }
 
-// PageEvents 分页查询事件；taskID 为空表示全部任务。
-func (s *AgentService) PageEvents(ctx context.Context, offset, limit int, taskID string) ([]*AgentEvent, int64, error) {
+// PageEvents 分页查询事件；taskID 为 0 表示全部任务。
+func (s *AgentService) PageEvents(ctx context.Context, offset, limit int, taskID int64) ([]*AgentEvent, int64, error) {
 	return s.events.Page(ctx, taskID, offset, limit)
 }
 
-// Subscribe 订阅任务事件（taskID 为空表示订阅全部任务），返回取消订阅函数。
+// Subscribe 订阅任务事件（taskID 为 0 表示订阅全部任务），返回取消订阅函数。
 // 供 WS / SSE 实时推送层使用；刷新恢复历史请使用 GetEvents。
-func (s *AgentService) Subscribe(taskID string, handler EventHandler) func() {
+func (s *AgentService) Subscribe(taskID int64, handler EventHandler) func() {
 	if s.bus == nil {
 		return func() {}
 	}
@@ -304,19 +306,22 @@ func (s *AgentService) Subscribe(taskID string, handler EventHandler) func() {
 }
 
 // emitEvent 持久化（分配 sequence）并广播一个事件。
-func (s *AgentService) emitEvent(ctx context.Context, taskID string, typ AgentEventType, payload any) {
+func (s *AgentService) emitEvent(ctx context.Context, taskID int64, typ AgentEventType, payload any) {
 	s.publish(ctx, taskID, typ, payload, true)
 }
 
 // broadcastEvent 仅广播一个事件，不持久化（用于 delta 等临时事件）。
-func (s *AgentService) broadcastEvent(ctx context.Context, taskID string, typ AgentEventType, payload any) {
+func (s *AgentService) broadcastEvent(ctx context.Context, taskID int64, typ AgentEventType, payload any) {
 	s.publish(ctx, taskID, typ, payload, false)
 }
 
 // publish 是事件的单一出口：构造 AgentEvent，按需持久化，再广播给订阅者。
-func (s *AgentService) publish(ctx context.Context, taskID string, typ AgentEventType, payload any, persist bool) {
+func (s *AgentService) publish(ctx context.Context, taskID int64, typ AgentEventType, payload any, persist bool) {
+	// 每个事件都分配唯一 ID：持久化事件由 BeforeCreate 兜底，但广播（不落库）的
+	// 流式增量事件不走 Append，若不在此分配，ID 恒为 0，前端按 id:sequence 去重
+	// 会把同一任务的所有 stream 增量判为重复而丢弃，导致实时流只显示首个增量。
 	e := &AgentEvent{
-		ID:        newID("evt"),
+		ID:        utils.GenerateID(),
 		TaskID:    taskID,
 		Type:      typ,
 		Payload:   payload,
@@ -341,7 +346,7 @@ func (s *AgentService) SaveMemory(ctx context.Context, memory *Memory) error {
 		return err
 	}
 	// 记忆是用户级（跨任务）对象，不归属某个任务的时间线，因此仅实时广播、不落事件流。
-	s.broadcastEvent(ctx, "", EventMemorySaved, memory)
+	s.broadcastEvent(ctx, 0, EventMemorySaved, memory)
 	return nil
 }
 
@@ -365,7 +370,7 @@ func (s *AgentService) DeleteMemory(ctx context.Context, id string) error {
 	if err := s.memory.Delete(ctx, id); err != nil {
 		return err
 	}
-	s.broadcastEvent(ctx, "", EventMemoryDeleted, mem)
+	s.broadcastEvent(ctx, 0, EventMemoryDeleted, mem)
 	return nil
 }
 
@@ -396,7 +401,7 @@ func (s *AgentService) ListProfiles(ctx context.Context, userID string) ([]*Prof
 }
 
 // GetProfile 按 ID 返回当前用户的自定义 Profile（内置 Profile 按 ID 不可取）。
-func (s *AgentService) GetProfile(ctx context.Context, userID, id string) (*Profile, error) {
+func (s *AgentService) GetProfile(ctx context.Context, userID string, id int64) (*Profile, error) {
 	if s.profiles == nil {
 		return nil, ErrProfileNotFound
 	}
@@ -412,7 +417,7 @@ func (s *AgentService) SaveProfile(ctx context.Context, profile *Profile) error 
 }
 
 // DeleteProfile 删除用户自定义 Profile（内置 Profile 不可删除）。
-func (s *AgentService) DeleteProfile(ctx context.Context, userID, id string) error {
+func (s *AgentService) DeleteProfile(ctx context.Context, userID string, id int64) error {
 	if s.profiles == nil {
 		return ErrProfileNotFound
 	}
@@ -529,7 +534,7 @@ func (s *AgentService) extractMemory(ctx context.Context, task *Task, req Reques
 }
 
 // CancelTask 取消任务：取消执行上下文并置为 canceled。
-func (s *AgentService) CancelTask(ctx context.Context, taskID string) error {
+func (s *AgentService) CancelTask(ctx context.Context, taskID int64) error {
 	s.mu.Lock()
 	cancel, ok := s.active[taskID]
 	s.mu.Unlock()
@@ -572,7 +577,7 @@ func (s *AgentService) Recover(ctx context.Context) error {
 	return nil
 }
 
-func (s *AgentService) isActive(taskID string) bool {
+func (s *AgentService) isActive(taskID int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, ok := s.active[taskID]
@@ -582,11 +587,11 @@ func (s *AgentService) isActive(taskID string) bool {
 // taskRuntime 是绑定到具体任务的 Runtime：事件持久化 + 广播，权限持久化 + 阻塞等待。
 type taskRuntime struct {
 	svc     *AgentService
-	taskID  string
+	taskID  int64
 	handler StreamHandler
 }
 
-func (s *AgentService) newTaskRuntime(taskID string, handler StreamHandler) Runtime {
+func (s *AgentService) newTaskRuntime(taskID int64, handler StreamHandler) Runtime {
 	return &taskRuntime{svc: s, taskID: taskID, handler: handler}
 }
 
@@ -663,7 +668,7 @@ func marshalOperation(op Operation) string {
 	return string(data)
 }
 
-func (r *taskRuntime) WaitPermission(ctx context.Context, permissionID string) (PermissionDecision, error) {
+func (r *taskRuntime) WaitPermission(ctx context.Context, permissionID int64) (PermissionDecision, error) {
 	return r.svc.perms.Wait(ctx, permissionID)
 }
 

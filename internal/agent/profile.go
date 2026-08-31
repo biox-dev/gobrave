@@ -6,6 +6,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/utils"
+	"gorm.io/gorm"
 )
 
 // 内置 AgentProfile 名称常量。新增内置 Profile 时在此登记唯一名称。
@@ -13,6 +16,13 @@ const (
 	DefaultProfileName   = "default"        // 系统默认 Profile
 	ProfileAnalysisCoder = "analysis_coder" // 撰写分析代码
 	ProfileArticleWriter = "article_writer" // 撰写科研文章 / 报告
+)
+
+// 内置 Profile 使用固定的负数 ID，避免与雪花算法生成的正整数主键冲突。
+const (
+	BuiltinDefaultProfileID int64 = -1 // 内置默认 Profile
+	BuiltinAnalysisCoderID  int64 = -2 // 内置「分析代码编写」Profile
+	BuiltinArticleWriterID  int64 = -3 // 内置「科研文章撰写」Profile
 )
 
 // Profile 相关错误。
@@ -41,7 +51,7 @@ type ContextConfig struct {
 //
 // UserID 为空表示系统级（内置）Profile；非空表示某用户的自定义 Profile。
 type Profile struct {
-	ID           string        `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	ID           int64         `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
 	Name         string        `json:"name" gorm:"column:name;type:varchar(64);index:idx_agent_profiles_user_name,priority:2"`
 	DisplayName  string        `json:"display_name" gorm:"column:display_name;type:varchar(128)"`
 	Description  string        `json:"description" gorm:"column:description;type:text"`
@@ -59,6 +69,14 @@ type Profile struct {
 // TableName 返回 Profile 表的表名。
 func (Profile) TableName() string { return "agent_profiles" }
 
+// BeforeCreate 在写入数据库前用雪花 ID 初始化主键（仅 ID 为 0 时）。
+func (p *Profile) BeforeCreate(_ *gorm.DB) error {
+	if p.ID == 0 {
+		p.ID = utils.GenerateID()
+	}
+	return nil
+}
+
 // BuiltinProfiles 返回框架内置的 Profile。新增内置 Profile 时在此追加。
 //
 // 内置 Profile 由代码定义（不落库、不可删除），与用户自定义 Profile（落库）合并后
@@ -67,7 +85,7 @@ func BuiltinProfiles() []*Profile {
 	now := time.Now()
 	return []*Profile{
 		{
-			ID:           "builtin_default",
+			ID:           BuiltinDefaultProfileID,
 			Name:         DefaultProfileName,
 			DisplayName:  "通用助手",
 			Description:  "默认配置：不附加领域提示词；注入记忆、不注入项目上下文。",
@@ -79,7 +97,7 @@ func BuiltinProfiles() []*Profile {
 			UpdatedAt:    now,
 		},
 		{
-			ID:           "builtin_analysis_coder",
+			ID:           BuiltinAnalysisCoderID,
 			Name:         ProfileAnalysisCoder,
 			DisplayName:  "分析代码编写",
 			Description:  "用于撰写生物信息学分析代码：强调代码规范、可复现性与执行约束。",
@@ -90,7 +108,7 @@ func BuiltinProfiles() []*Profile {
 			UpdatedAt:    now,
 		},
 		{
-			ID:           "builtin_article_writer",
+			ID:           BuiltinArticleWriterID,
 			Name:         ProfileArticleWriter,
 			DisplayName:  "科研文章撰写",
 			Description:  "用于撰写科研报告 / 文章：注入项目上下文（已完成的分析节点等），按学术规范写作。",
@@ -188,7 +206,7 @@ func (m *ProfileManager) List(ctx context.Context, userID string) ([]*Profile, e
 }
 
 // Get 按 ID 返回某用户的自定义 Profile（内置 Profile 不按 ID 取，列表已含其完整信息）。
-func (m *ProfileManager) Get(ctx context.Context, userID, id string) (*Profile, error) {
+func (m *ProfileManager) Get(ctx context.Context, userID string, id int64) (*Profile, error) {
 	p, err := m.repo.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -212,8 +230,8 @@ func (m *ProfileManager) Save(ctx context.Context, p *Profile) error {
 	p.IsBuiltin = false
 
 	now := time.Now()
-	if p.ID == "" {
-		p.ID = newID("prof")
+	if p.ID == 0 {
+		p.ID = utils.GenerateID()
 		p.CreatedAt = now
 		p.UpdatedAt = now
 		if p.IsDefault {
@@ -234,7 +252,7 @@ func (m *ProfileManager) Save(ctx context.Context, p *Profile) error {
 }
 
 // Delete 删除某用户的自定义 Profile；内置 Profile 不可删除。
-func (m *ProfileManager) Delete(ctx context.Context, userID, id string) error {
+func (m *ProfileManager) Delete(ctx context.Context, userID string, id int64) error {
 	p, err := m.repo.Get(ctx, id)
 	if err != nil {
 		return err

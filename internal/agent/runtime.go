@@ -41,6 +41,6 @@ func (r *standaloneRuntime) RequestPermission(ctx context.Context, operation Ope
 	return decision, nil
 }
 
-func (r *standaloneRuntime) WaitPermission(context.Context, string) (PermissionDecision, error) {
+func (r *standaloneRuntime) WaitPermission(context.Context, int64) (PermissionDecision, error) {
 	return "", ErrNoPermissionResolver
 }

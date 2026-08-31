@@ -34,7 +34,7 @@ func (r *collectRuntime) RequestPermission(_ context.Context, _ agent.Operation)
 	return agent.DecisionAllow, nil
 }
 
-func (r *collectRuntime) WaitPermission(context.Context, string) (agent.PermissionDecision, error) {
+func (r *collectRuntime) WaitPermission(context.Context, int64) (agent.PermissionDecision, error) {
 	return agent.DecisionAllow, nil
 }
 
@@ -45,7 +45,7 @@ func (denyRuntime) Emit(context.Context, agent.StreamEvent) error { return nil }
 func (denyRuntime) RequestPermission(context.Context, agent.Operation) (agent.PermissionDecision, error) {
 	return agent.DecisionDeny, nil
 }
-func (denyRuntime) WaitPermission(context.Context, string) (agent.PermissionDecision, error) {
+func (denyRuntime) WaitPermission(context.Context, int64) (agent.PermissionDecision, error) {
 	return agent.DecisionDeny, nil
 }
 

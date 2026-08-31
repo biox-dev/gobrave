@@ -7,12 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/ncruces/go-sqlite3/gormlite"
 	"gorm.io/gorm"
 )
 
 func newGormTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	_ = utils.InitSnowflake(1)
 	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
 	db, err := gorm.Open(gormlite.Open(dsn), &gorm.Config{})
 	if err != nil {
@@ -79,7 +81,7 @@ func TestGormPermissionRepositoryRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	repo := NewGormPermissionRepository(newGormTestDB(t))
 
-	p := NewPermissionRequest("task-1", "sess-1", Operation{
+	p := NewPermissionRequest(1, "sess-1", Operation{
 		Type:    OperationWrite,
 		Path:    "/a/b",
 		Content: "x",
@@ -102,7 +104,7 @@ func TestGormPermissionRepositoryRoundTrip(t *testing.T) {
 		t.Fatalf("metadata not preserved: %+v", got.Operation.Metadata)
 	}
 
-	pending, err := repo.ListPendingByTask(ctx, "task-1")
+	pending, err := repo.ListPendingByTask(ctx, 1)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("ListPendingByTask: len=%d err=%v", len(pending), err)
 	}
@@ -112,7 +114,7 @@ func TestGormPermissionRepositoryRoundTrip(t *testing.T) {
 	if err := repo.Update(ctx, got); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	pending, _ = repo.ListPendingByTask(ctx, "task-1")
+	pending, _ = repo.ListPendingByTask(ctx, 1)
 	if len(pending) != 0 {
 		t.Fatalf("expected no pending after approve, got %d", len(pending))
 	}
@@ -124,19 +126,19 @@ func TestGormEventRepositorySequence(t *testing.T) {
 
 	// 交错追加两个任务的事件，sequence 应按任务独立递增。
 	for i := 0; i < 3; i++ {
-		if err := repo.Append(ctx, &AgentEvent{ID: newID("evt"), TaskID: "task-A", Type: EventTaskStarted, CreatedAt: time.Now()}); err != nil {
+		if err := repo.Append(ctx, &AgentEvent{TaskID: 1, Type: EventTaskStarted, CreatedAt: time.Now()}); err != nil {
 			t.Fatalf("Append A%d: %v", i, err)
 		}
-		if err := repo.Append(ctx, &AgentEvent{ID: newID("evt"), TaskID: "task-B", Type: EventTaskStarted, CreatedAt: time.Now()}); err != nil {
+		if err := repo.Append(ctx, &AgentEvent{TaskID: 2, Type: EventTaskStarted, CreatedAt: time.Now()}); err != nil {
 			t.Fatalf("Append B%d: %v", i, err)
 		}
 	}
 
-	evsA, err := repo.ListByTask(ctx, "task-A", 0)
+	evsA, err := repo.ListByTask(ctx, 1, 0)
 	if err != nil {
 		t.Fatalf("ListByTask A: %v", err)
 	}
-	evsB, err := repo.ListByTask(ctx, "task-B", 0)
+	evsB, err := repo.ListByTask(ctx, 2, 0)
 	if err != nil {
 		t.Fatalf("ListByTask B: %v", err)
 	}
@@ -150,13 +152,13 @@ func TestGormEventRepositorySequence(t *testing.T) {
 	}
 
 	// after 语义：只返回 sequence > after。
-	tail, err := repo.ListByTask(ctx, "task-A", 1)
+	tail, err := repo.ListByTask(ctx, 1, 1)
 	if err != nil || len(tail) != 2 || tail[0].Sequence != 2 {
 		t.Fatalf("ListByTask after=1: len=%d err=%v firstSeq=%d", len(tail), err, tail[0].Sequence)
 	}
 
 	// Page 全量。
-	page, total, err := repo.Page(ctx, "", 0, 100)
+	page, total, err := repo.Page(ctx, 0, 0, 100)
 	if err != nil || total != 6 || len(page) != 6 {
 		t.Fatalf("Page all: total=%d len=%d err=%v", total, len(page), err)
 	}
@@ -200,7 +202,7 @@ func TestGormConversationRepositoryRoundTrip(t *testing.T) {
 	}
 
 	// 不存在返回 ErrConversationNotFound。
-	if _, err := repo.Get(ctx, "conv_missing"); !errors.Is(err, ErrConversationNotFound) {
+	if _, err := repo.Get(ctx, 0); !errors.Is(err, ErrConversationNotFound) {
 		t.Fatalf("expected ErrConversationNotFound, got %v", err)
 	}
 

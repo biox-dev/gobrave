@@ -15,7 +15,7 @@ import (
 // TaskRepository 持久化 Agent 任务。
 type TaskRepository interface {
 	Create(ctx context.Context, task *Task) error
-	Get(ctx context.Context, id string) (*Task, error)
+	Get(ctx context.Context, id int64) (*Task, error)
 	Update(ctx context.Context, task *Task) error
 	ListByStatus(ctx context.Context, statuses ...TaskStatus) ([]*Task, error)
 	// Page 分页查询任务（按 CreatedAt 升序）；statuses 为空表示全部状态。
@@ -25,11 +25,11 @@ type TaskRepository interface {
 // PermissionRepository 持久化权限请求。
 type PermissionRepository interface {
 	Create(ctx context.Context, permission *PermissionRequest) error
-	Get(ctx context.Context, id string) (*PermissionRequest, error)
+	Get(ctx context.Context, id int64) (*PermissionRequest, error)
 	Update(ctx context.Context, permission *PermissionRequest) error
-	ListPendingByTask(ctx context.Context, taskID string) ([]*PermissionRequest, error)
-	// Page 分页查询权限请求（按 CreatedAt 升序）；taskID 为空表示全部任务，statuses 为空表示全部状态。
-	Page(ctx context.Context, offset, limit int, taskID string, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error)
+	ListPendingByTask(ctx context.Context, taskID int64) ([]*PermissionRequest, error)
+	// Page 分页查询权限请求（按 CreatedAt 升序）；taskID 为 0 表示全部任务，statuses 为空表示全部状态。
+	Page(ctx context.Context, offset, limit int, taskID int64, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error)
 }
 
 // EventRepository 持久化任务事件（带 per-task 单调递增 sequence）。
@@ -37,31 +37,31 @@ type EventRepository interface {
 	// Append 为事件分配 sequence 并追加到任务事件流。
 	Append(ctx context.Context, event *AgentEvent) error
 	// ListByTask 返回任务中 sequence 大于 after 的事件（升序）。
-	ListByTask(ctx context.Context, taskID string, after int64) ([]*AgentEvent, error)
-	// Page 分页查询事件（按 CreatedAt 升序）；taskID 为空表示全部任务。
-	Page(ctx context.Context, taskID string, offset, limit int) ([]*AgentEvent, int64, error)
+	ListByTask(ctx context.Context, taskID int64, after int64) ([]*AgentEvent, error)
+	// Page 分页查询事件（按 CreatedAt 升序）；taskID 为 0 表示全部任务。
+	Page(ctx context.Context, taskID int64, offset, limit int) ([]*AgentEvent, int64, error)
 }
 
 // NewMemoryTaskRepository 创建任务的内存实现。
 func NewMemoryTaskRepository() TaskRepository {
-	return &memoryTaskRepository{tasks: make(map[string]*Task)}
+	return &memoryTaskRepository{tasks: make(map[int64]*Task)}
 }
 
 // NewMemoryPermissionRepository 创建权限请求的内存实现。
 func NewMemoryPermissionRepository() PermissionRepository {
-	return &memoryPermissionRepository{perms: make(map[string]*PermissionRequest)}
+	return &memoryPermissionRepository{perms: make(map[int64]*PermissionRequest)}
 }
 
 // NewMemoryEventRepository 创建事件流的内存实现。
 func NewMemoryEventRepository() EventRepository {
-	return &memoryEventRepository{events: make(map[string][]*AgentEvent)}
+	return &memoryEventRepository{events: make(map[int64][]*AgentEvent)}
 }
 
 // ---- Task ----
 
 type memoryTaskRepository struct {
 	mu    sync.RWMutex
-	tasks map[string]*Task
+	tasks map[int64]*Task
 }
 
 func (r *memoryTaskRepository) Create(_ context.Context, task *Task) error {
@@ -74,7 +74,7 @@ func (r *memoryTaskRepository) Create(_ context.Context, task *Task) error {
 	return nil
 }
 
-func (r *memoryTaskRepository) Get(_ context.Context, id string) (*Task, error) {
+func (r *memoryTaskRepository) Get(_ context.Context, id int64) (*Task, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	t, ok := r.tasks[id]
@@ -137,7 +137,7 @@ func (r *memoryTaskRepository) Page(_ context.Context, offset, limit int, status
 
 type memoryPermissionRepository struct {
 	mu    sync.RWMutex
-	perms map[string]*PermissionRequest
+	perms map[int64]*PermissionRequest
 }
 
 func (r *memoryPermissionRepository) Create(_ context.Context, p *PermissionRequest) error {
@@ -150,7 +150,7 @@ func (r *memoryPermissionRepository) Create(_ context.Context, p *PermissionRequ
 	return nil
 }
 
-func (r *memoryPermissionRepository) Get(_ context.Context, id string) (*PermissionRequest, error) {
+func (r *memoryPermissionRepository) Get(_ context.Context, id int64) (*PermissionRequest, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	p, ok := r.perms[id]
@@ -170,7 +170,7 @@ func (r *memoryPermissionRepository) Update(_ context.Context, p *PermissionRequ
 	return nil
 }
 
-func (r *memoryPermissionRepository) ListPendingByTask(_ context.Context, taskID string) ([]*PermissionRequest, error) {
+func (r *memoryPermissionRepository) ListPendingByTask(_ context.Context, taskID int64) ([]*PermissionRequest, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]*PermissionRequest, 0)
@@ -183,7 +183,7 @@ func (r *memoryPermissionRepository) ListPendingByTask(_ context.Context, taskID
 	return out, nil
 }
 
-func (r *memoryPermissionRepository) Page(_ context.Context, offset, limit int, taskID string, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error) {
+func (r *memoryPermissionRepository) Page(_ context.Context, offset, limit int, taskID int64, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error) {
 	want := make(map[PermissionStatus]bool, len(statuses))
 	for _, s := range statuses {
 		want[s] = true
@@ -192,7 +192,7 @@ func (r *memoryPermissionRepository) Page(_ context.Context, offset, limit int, 
 	defer r.mu.RUnlock()
 	all := make([]*PermissionRequest, 0)
 	for _, p := range r.perms {
-		if taskID != "" && p.TaskID != taskID {
+		if taskID != 0 && p.TaskID != taskID {
 			continue
 		}
 		if len(want) > 0 && !want[p.Status] {
@@ -213,7 +213,7 @@ func (r *memoryPermissionRepository) Page(_ context.Context, offset, limit int, 
 
 type memoryEventRepository struct {
 	mu     sync.RWMutex
-	events map[string][]*AgentEvent // taskID → 事件流（升序）
+	events map[int64][]*AgentEvent // taskID → 事件流（升序）
 }
 
 func (r *memoryEventRepository) Append(_ context.Context, event *AgentEvent) error {
@@ -232,7 +232,7 @@ func (r *memoryEventRepository) Append(_ context.Context, event *AgentEvent) err
 	return nil
 }
 
-func (r *memoryEventRepository) ListByTask(_ context.Context, taskID string, after int64) ([]*AgentEvent, error) {
+func (r *memoryEventRepository) ListByTask(_ context.Context, taskID int64, after int64) ([]*AgentEvent, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	stream := r.events[taskID]
@@ -245,11 +245,11 @@ func (r *memoryEventRepository) ListByTask(_ context.Context, taskID string, aft
 	return out, nil
 }
 
-func (r *memoryEventRepository) Page(_ context.Context, taskID string, offset, limit int) ([]*AgentEvent, int64, error) {
+func (r *memoryEventRepository) Page(_ context.Context, taskID int64, offset, limit int) ([]*AgentEvent, int64, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	all := make([]*AgentEvent, 0)
-	if taskID != "" {
+	if taskID != 0 {
 		all = append(all, r.events[taskID]...)
 	} else {
 		for _, stream := range r.events {

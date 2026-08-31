@@ -3,6 +3,9 @@ package agent
 import (
 	"errors"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/utils"
+	"gorm.io/gorm"
 )
 
 // PermissionStatus 是权限请求的生命周期状态。
@@ -43,8 +46,8 @@ var (
 // 它是“数据库才是状态源”这一原则的载体：Agent 阻塞等待的只是内存中的 channel，
 // 真正的状态始终保存在 Repository 中，因此浏览器刷新 / 后端重启后仍可恢复。
 type PermissionRequest struct {
-	ID        string           `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
-	TaskID    string           `json:"task_id" gorm:"column:task_id;type:varchar(64);index"`
+	ID        int64            `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
+	TaskID    int64            `json:"task_id,string" gorm:"column:task_id;type:bigint;index"`
 	SessionID string           `json:"session_id,omitempty" gorm:"column:session_id;type:varchar(64)"`
 	Operation Operation        `json:"operation" gorm:"serializer:json"`
 	Status    PermissionStatus `json:"status" gorm:"column:status;type:varchar(32);index"`
@@ -58,11 +61,18 @@ type PermissionRequest struct {
 // TableName 返回权限请求表的表名。
 func (PermissionRequest) TableName() string { return "agent_permission_requests" }
 
+// BeforeCreate 在写入数据库前用雪花 ID 初始化主键。
+func (p *PermissionRequest) BeforeCreate(_ *gorm.DB) error {
+	if p.ID == 0 {
+		p.ID = utils.GenerateID()
+	}
+	return nil
+}
+
 // NewPermissionRequest 构建一个 pending 状态的权限请求。
-func NewPermissionRequest(taskID, sessionID string, operation Operation) *PermissionRequest {
+func NewPermissionRequest(taskID int64, sessionID string, operation Operation) *PermissionRequest {
 	now := time.Now()
 	return &PermissionRequest{
-		ID:        newID("perm"),
 		TaskID:    taskID,
 		SessionID: sessionID,
 		Operation: operation,

@@ -19,19 +19,19 @@ type PermissionManager struct {
 	repo PermissionRepository
 
 	mu      sync.Mutex
-	waiters map[string]chan PermissionDecision // permissionID → 决策通道
+	waiters map[int64]chan PermissionDecision // permissionID → 决策通道
 }
 
 // NewPermissionManager 创建权限管理器。
 func NewPermissionManager(repo PermissionRepository) *PermissionManager {
 	return &PermissionManager{
 		repo:    repo,
-		waiters: make(map[string]chan PermissionDecision),
+		waiters: make(map[int64]chan PermissionDecision),
 	}
 }
 
 // Create 创建一个 pending 状态的权限请求并返回。
-func (m *PermissionManager) Create(ctx context.Context, taskID, sessionID string, operation Operation) (*PermissionRequest, error) {
+func (m *PermissionManager) Create(ctx context.Context, taskID int64, sessionID string, operation Operation) (*PermissionRequest, error) {
 	p := NewPermissionRequest(taskID, sessionID, operation)
 	if err := m.repo.Create(ctx, p); err != nil {
 		return nil, err
@@ -40,27 +40,27 @@ func (m *PermissionManager) Create(ctx context.Context, taskID, sessionID string
 }
 
 // Get 按 ID 查询权限请求。
-func (m *PermissionManager) Get(ctx context.Context, id string) (*PermissionRequest, error) {
+func (m *PermissionManager) Get(ctx context.Context, id int64) (*PermissionRequest, error) {
 	return m.repo.Get(ctx, id)
 }
 
 // GetPending 返回某任务当前全部待确认的权限请求。
-func (m *PermissionManager) GetPending(ctx context.Context, taskID string) ([]*PermissionRequest, error) {
+func (m *PermissionManager) GetPending(ctx context.Context, taskID int64) ([]*PermissionRequest, error) {
 	return m.repo.ListPendingByTask(ctx, taskID)
 }
 
-// Page 分页查询权限请求；taskID 为空表示全部任务，statuses 为空表示全部状态。
-func (m *PermissionManager) Page(ctx context.Context, offset, limit int, taskID string, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error) {
+// Page 分页查询权限请求；taskID 为 0 表示全部任务，statuses 为空表示全部状态。
+func (m *PermissionManager) Page(ctx context.Context, offset, limit int, taskID int64, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error) {
 	return m.repo.Page(ctx, offset, limit, taskID, statuses...)
 }
 
 // Approve 批准权限请求，返回更新后的权限请求；并唤醒正在等待的 Agent。
-func (m *PermissionManager) Approve(ctx context.Context, id, by string) (*PermissionRequest, error) {
+func (m *PermissionManager) Approve(ctx context.Context, id int64, by string) (*PermissionRequest, error) {
 	return m.resolve(ctx, id, PermissionApproved, DecisionAllow, by)
 }
 
 // Deny 拒绝权限请求，返回更新后的权限请求；并唤醒正在等待的 Agent。
-func (m *PermissionManager) Deny(ctx context.Context, id, by string) (*PermissionRequest, error) {
+func (m *PermissionManager) Deny(ctx context.Context, id int64, by string) (*PermissionRequest, error) {
 	return m.resolve(ctx, id, PermissionDenied, DecisionDeny, by)
 }
 
@@ -70,7 +70,7 @@ func (m *PermissionManager) Deny(ctx context.Context, id, by string) (*Permissio
 //   - DecisionAllow：已批准（批准后立即把请求标记为 consumed）；
 //   - DecisionDeny：已拒绝 / 过期 / 取消；
 //   - error：ctx 取消等。
-func (m *PermissionManager) Wait(ctx context.Context, id string) (PermissionDecision, error) {
+func (m *PermissionManager) Wait(ctx context.Context, id int64) (PermissionDecision, error) {
 	m.mu.Lock()
 	p, err := m.repo.Get(ctx, id)
 	if err != nil {
@@ -116,7 +116,7 @@ func (m *PermissionManager) Wait(ctx context.Context, id string) (PermissionDeci
 
 // resolve 是 Approve / Deny 的公共实现：校验状态 → 持久化 → 唤醒 waiter。
 // 返回更新后的权限请求，供上层广播“权限已决策”事件。
-func (m *PermissionManager) resolve(ctx context.Context, id string, status PermissionStatus, decision PermissionDecision, by string) (*PermissionRequest, error) {
+func (m *PermissionManager) resolve(ctx context.Context, id int64, status PermissionStatus, decision PermissionDecision, by string) (*PermissionRequest, error) {
 	m.mu.Lock()
 	p, err := m.repo.Get(ctx, id)
 	if err != nil {
@@ -153,7 +153,7 @@ func (m *PermissionManager) resolve(ctx context.Context, id string, status Permi
 }
 
 // consume 把已批准的权限请求标记为 consumed（Agent 已恢复执行）。
-func (m *PermissionManager) consume(ctx context.Context, id string) error {
+func (m *PermissionManager) consume(ctx context.Context, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

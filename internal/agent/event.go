@@ -4,6 +4,9 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/utils"
+	"gorm.io/gorm"
 )
 
 // AgentEventType 枚举任务生命周期与实时通知事件。
@@ -31,8 +34,8 @@ const (
 // sequence 使事件可被“增量拉取”（如 GET /tasks/{id}/events?after=3），
 // 因此浏览器刷新后无需依赖 WS 历史即可恢复。
 type AgentEvent struct {
-	ID        string         `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
-	TaskID    string         `json:"task_id" gorm:"column:task_id;type:varchar(64);index:idx_agent_events_task_seq,priority:1"`
+	ID        int64          `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
+	TaskID    int64          `json:"task_id,string" gorm:"column:task_id;type:bigint;index:idx_agent_events_task_seq,priority:1"`
 	Sequence  int64          `json:"sequence" gorm:"column:sequence;index:idx_agent_events_task_seq,priority:2"`
 	Type      AgentEventType `json:"type" gorm:"column:type;type:varchar(32)"`
 	Payload   any            `json:"payload,omitempty" gorm:"serializer:json"`
@@ -41,6 +44,14 @@ type AgentEvent struct {
 
 // TableName 返回任务事件表的表名。
 func (AgentEvent) TableName() string { return "agent_events" }
+
+// BeforeCreate 在写入数据库前用雪花 ID 初始化主键。
+func (e *AgentEvent) BeforeCreate(_ *gorm.DB) error {
+	if e.ID == 0 {
+		e.ID = utils.GenerateID()
+	}
+	return nil
+}
 
 // EventHandler 是事件订阅回调。
 // 返回 error 表示处理失败；EventBus 目前采用同步分发，回调应避免阻塞。
@@ -54,7 +65,7 @@ type EventBus interface {
 	Publish(ctx context.Context, event AgentEvent)
 	// Subscribe 订阅某任务的事件；taskID 为空表示订阅全部任务。
 	// 返回的 unsubscribe 用于取消订阅。
-	Subscribe(taskID string, handler EventHandler) (unsubscribe func())
+	Subscribe(taskID int64, handler EventHandler) (unsubscribe func())
 }
 
 // memoryEventBus 是 EventBus 的内存实现（同步分发）。
@@ -62,11 +73,11 @@ type memoryEventBus struct {
 	mu     sync.RWMutex
 	nextID uint64
 	subs   map[uint64]subscription
-	byTask map[string]map[uint64]struct{} // taskID → 订阅 ID 集合
+	byTask map[int64]map[uint64]struct{} // taskID → 订阅 ID 集合
 }
 
 type subscription struct {
-	taskID  string
+	taskID  int64
 	handler EventHandler
 }
 
@@ -74,7 +85,7 @@ type subscription struct {
 func NewEventBus() EventBus {
 	return &memoryEventBus{
 		subs:   make(map[uint64]subscription),
-		byTask: make(map[string]map[uint64]struct{}),
+		byTask: make(map[int64]map[uint64]struct{}),
 	}
 }
 
@@ -82,7 +93,7 @@ func (b *memoryEventBus) Publish(ctx context.Context, event AgentEvent) {
 	b.mu.RLock()
 	handlers := make([]EventHandler, 0, len(b.subs))
 	for _, sub := range b.subs {
-		if sub.taskID == "" || sub.taskID == event.TaskID {
+		if sub.taskID == 0 || sub.taskID == event.TaskID {
 			handlers = append(handlers, sub.handler)
 		}
 	}
@@ -93,7 +104,7 @@ func (b *memoryEventBus) Publish(ctx context.Context, event AgentEvent) {
 	}
 }
 
-func (b *memoryEventBus) Subscribe(taskID string, handler EventHandler) func() {
+func (b *memoryEventBus) Subscribe(taskID int64, handler EventHandler) func() {
 	if handler == nil {
 		return func() {}
 	}

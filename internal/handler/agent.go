@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrs "errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -31,7 +32,7 @@ type AgentHandler struct {
 	runtimeCtx *RuntimeContextResolver
 
 	mu   sync.Mutex
-	subs map[string]func() // taskID → 取消订阅函数
+	subs map[int64]func() // taskID → 取消订阅函数
 }
 
 // NewAgentHandler 创建 AgentHandler。
@@ -42,14 +43,14 @@ func NewAgentHandler(svc *agent.AgentService, conv *agent.ConversationService, h
 		hub:        hub,
 		skills:     skills,
 		runtimeCtx: runtimeCtx,
-		subs:       make(map[string]func()),
+		subs:       make(map[int64]func()),
 	}
 }
 
 // agentWSEvent 是推送到前端 WS 的事件信封。
 type agentWSEvent struct {
 	Type   string           `json:"type"` // 固定 "agent.event"
-	TaskID string           `json:"task_id"`
+	TaskID int64            `json:"task_id,string"`
 	Event  agent.AgentEvent `json:"event"`
 }
 
@@ -137,6 +138,19 @@ type profileSaveRequest struct {
 	Skills       []string            `json:"skills"`
 	Context      agent.ContextConfig `json:"context"`
 	IsDefault    bool                `json:"is_default"`
+}
+
+// parseAgentID 把字符串 ID 解析为 int64（任务 / 会话 / 权限 ID 统一为雪花 ID）。
+func parseAgentID(s string) (int64, error) {
+	return strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+}
+
+// parseOptionalAgentID 解析可选的字符串 ID；为空时返回 0（表示“全部 / 不限定”）。
+func parseOptionalAgentID(s string) (int64, error) {
+	if strings.TrimSpace(s) == "" {
+		return 0, nil
+	}
+	return parseAgentID(s)
 }
 
 // CreateTask godoc
@@ -229,9 +243,19 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	// }
 
 	// 1) 准备一轮：追加 user 消息、组装历史、创建任务（复用 AgentService 状态机）。
+	// 新的对话 ConversationID 可能为空字符串，表示新建会话（TurnInput.ConversationID == 0）。
+	var conversationID int64
+	if strings.TrimSpace(req.ConversationID) != "" {
+		var err error
+		conversationID, err = parseAgentID(req.ConversationID)
+		if err != nil {
+			c.Error(errors.NewValidationError("invalid conversation_id").WithDetails(err.Error()))
+			return
+		}
+	}
 	task, conv, err := h.conv.CreateTurn(c.Request.Context(), agent.TurnInput{
 		UserID:         userID,
-		ConversationID: req.ConversationID,
+		ConversationID: conversationID,
 		Message:        req.Message,
 		Provider:       req.Provider,
 		Model:          req.Model,
@@ -254,8 +278,8 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"task_id":         task.ID,
-		"conversation_id": conv.ID,
+		"task_id":         strconv.FormatInt(task.ID, 10),
+		"conversation_id": strconv.FormatInt(conv.ID, 10),
 	})
 }
 
@@ -369,8 +393,13 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 
 	var profile *agent.Profile
 	if req.ID != "" {
+		id, err := parseAgentID(req.ID)
+		if err != nil {
+			c.Error(errors.NewValidationError("invalid profile id").WithDetails(err.Error()))
+			return
+		}
 		// 更新：先加载既有记录，校验归属并保留只读字段。
-		existing, err := h.svc.GetProfile(c.Request.Context(), userID, req.ID)
+		existing, err := h.svc.GetProfile(c.Request.Context(), userID, id)
 		if err != nil {
 			handleAgentError(c, err, "failed to get agent profile")
 			return
@@ -428,7 +457,12 @@ func (h *AgentHandler) DeleteProfile(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.DeleteProfile(c.Request.Context(), userID, body.ID); err != nil {
+	id, err := parseAgentID(body.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid profile id").WithDetails(err.Error()))
+		return
+	}
+	if err := h.svc.DeleteProfile(c.Request.Context(), userID, id); err != nil {
 		handleAgentError(c, err, "failed to delete agent profile")
 		return
 	}
@@ -481,7 +515,12 @@ func (h *AgentHandler) GetTask(c *gin.Context) {
 		return
 	}
 
-	task, err := h.svc.GetTask(c.Request.Context(), q.ID)
+	id, err := parseAgentID(q.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
+	task, err := h.svc.GetTask(c.Request.Context(), id)
 	if err != nil {
 		handleAgentError(c, err, "failed to get agent task")
 		return
@@ -512,7 +551,12 @@ func (h *AgentHandler) GetTaskEvents(c *gin.Context) {
 		return
 	}
 
-	events, err := h.svc.GetEvents(c.Request.Context(), q.TaskID, q.After)
+	taskID, err := parseAgentID(q.TaskID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid task_id").WithDetails(err.Error()))
+		return
+	}
+	events, err := h.svc.GetEvents(c.Request.Context(), taskID, q.After)
 	if err != nil {
 		handleAgentError(c, err, "failed to get agent task events")
 		return
@@ -541,7 +585,12 @@ func (h *AgentHandler) GetPendingPermissions(c *gin.Context) {
 		return
 	}
 
-	perms, err := h.svc.GetPendingPermissions(c.Request.Context(), q.TaskID)
+	taskID, err := parseAgentID(q.TaskID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid task_id").WithDetails(err.Error()))
+		return
+	}
+	perms, err := h.svc.GetPendingPermissions(c.Request.Context(), taskID)
 	if err != nil {
 		handleAgentError(c, err, "failed to get pending permissions")
 		return
@@ -649,7 +698,12 @@ func (h *AgentHandler) GetConversation(c *gin.Context) {
 		return
 	}
 
-	conv, err := h.conv.GetConversation(c.Request.Context(), q.ID)
+	id, err := parseAgentID(q.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
+	conv, err := h.conv.GetConversation(c.Request.Context(), id)
 	if err != nil {
 		handleAgentError(c, err, "failed to get conversation")
 		return
@@ -684,7 +738,13 @@ func (h *AgentHandler) PagePermissions(c *gin.Context) {
 		return
 	}
 
-	items, total, err := h.svc.PagePermissions(c.Request.Context(), req.Offset(), req.Limit(), req.TaskID, req.Statuses...)
+	// task_id 可选：为空表示查询全部任务（taskID == 0）。
+	taskID, err := parseOptionalAgentID(req.TaskID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid task_id").WithDetails(err.Error()))
+		return
+	}
+	items, total, err := h.svc.PagePermissions(c.Request.Context(), req.Offset(), req.Limit(), taskID, req.Statuses...)
 	if err != nil {
 		handleAgentError(c, err, "failed to page agent permissions")
 		return
@@ -720,7 +780,13 @@ func (h *AgentHandler) PageEvents(c *gin.Context) {
 		return
 	}
 
-	items, total, err := h.svc.PageEvents(c.Request.Context(), req.Offset(), req.Limit(), req.TaskID)
+	// task_id 可选：为空表示查询全部任务（taskID == 0）。
+	taskID, err := parseOptionalAgentID(req.TaskID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid task_id").WithDetails(err.Error()))
+		return
+	}
+	items, total, err := h.svc.PageEvents(c.Request.Context(), req.Offset(), req.Limit(), taskID)
 	if err != nil {
 		handleAgentError(c, err, "failed to page agent events")
 		return
@@ -987,11 +1053,15 @@ func (h *AgentHandler) resolvePermission(c *gin.Context, approve bool) {
 		return
 	}
 
-	var err error
+	id, err := parseAgentID(body.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
 	if approve {
-		err = h.svc.ApprovePermission(c.Request.Context(), body.ID, userID)
+		err = h.svc.ApprovePermission(c.Request.Context(), id, userID)
 	} else {
-		err = h.svc.DenyPermission(c.Request.Context(), body.ID, userID)
+		err = h.svc.DenyPermission(c.Request.Context(), id, userID)
 	}
 	if err != nil {
 		handleAgentError(c, err, "failed to resolve permission")
@@ -1022,7 +1092,12 @@ func (h *AgentHandler) CancelTask(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.CancelTask(c.Request.Context(), body.ID); err != nil {
+	id, err := parseAgentID(body.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
+	if err := h.svc.CancelTask(c.Request.Context(), id); err != nil {
 		handleAgentError(c, err, "failed to cancel agent task")
 		return
 	}
@@ -1033,7 +1108,7 @@ func (h *AgentHandler) CancelTask(c *gin.Context) {
 //
 // 事件通过 AgentService.Subscribe（EventBus）分发，WS 只是通知层；
 // 历史恢复请使用 GetTaskEvents。任务到达终态时自动取消订阅，避免泄漏。
-func (h *AgentHandler) attachTaskStream(userID, taskID string) {
+func (h *AgentHandler) attachTaskStream(userID string, taskID int64) {
 	if h.svc == nil || h.hub == nil {
 		return
 	}
