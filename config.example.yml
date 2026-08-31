@@ -110,6 +110,10 @@ agent:
       working_dir: ""
       extra: { type: "anthropic"}
 
+# AI 摘要生成配置。未配置 system_prompt 时使用内置默认值。
+ai_summary:
+  system_prompt: "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。"
+
 container:
   # docker | k8s | k3s
   runtime: docker

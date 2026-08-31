@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
-
-// aiSummarySystemPrompt 是生成摘要时使用的系统提示词。
-const aiSummarySystemPrompt = "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。"
 
 // AISummaryContent 是生成摘要所需的原始内容。
 type AISummaryContent struct {
@@ -33,11 +31,17 @@ type AISummaryContentProvider interface {
 
 type aiSummaryContentProvider struct {
 	analysisRepo interfaces.AnalysisRepository
+	systemPrompt string
 }
 
 // NewAISummaryContentProvider 创建 AISummaryContentProvider。
-func NewAISummaryContentProvider(analysisRepo interfaces.AnalysisRepository) AISummaryContentProvider {
-	return &aiSummaryContentProvider{analysisRepo: analysisRepo}
+// 系统提示词优先读取配置 cfg.AISummary.SystemPrompt，未配置时回退到默认值。
+func NewAISummaryContentProvider(analysisRepo interfaces.AnalysisRepository, cfg *config.Config) AISummaryContentProvider {
+	prompt := config.DefaultAISummarySystemPrompt
+	if cfg != nil && cfg.AISummary != nil && strings.TrimSpace(cfg.AISummary.SystemPrompt) != "" {
+		prompt = cfg.AISummary.SystemPrompt
+	}
+	return &aiSummaryContentProvider{analysisRepo: analysisRepo, systemPrompt: prompt}
 }
 
 // Resolve 按所属对象类型分发解析逻辑。
@@ -60,7 +64,7 @@ func (p *aiSummaryContentProvider) resolveAnalysis(ctx context.Context, analysis
 
 	return AISummaryContent{
 		Title:        fmt.Sprintf("分析摘要：%s", a.AnalysisName),
-		SystemPrompt: aiSummarySystemPrompt,
+		SystemPrompt: p.systemPrompt,
 		WorkingDir:   a.OutputDir,
 		Text: strings.Join(filterNonEmpty([]string{
 			"分析名称: " + a.AnalysisName,
@@ -80,7 +84,7 @@ func (p *aiSummaryContentProvider) resolveAnalysisNode(ctx context.Context, node
 
 	return AISummaryContent{
 		Title:        fmt.Sprintf("节点摘要：%s", n.NodeName),
-		SystemPrompt: aiSummarySystemPrompt,
+		SystemPrompt: p.systemPrompt,
 		WorkingDir:   n.OutputDir,
 		Text: strings.Join(filterNonEmpty([]string{
 			"节点名称: " + n.NodeName,
