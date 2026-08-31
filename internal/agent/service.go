@@ -341,6 +341,14 @@ func (s *AgentService) SaveMemory(ctx context.Context, memory *Memory) error {
 	return nil
 }
 
+// GetMemory 按 ID 查询单条记忆。
+func (s *AgentService) GetMemory(ctx context.Context, id string) (*Memory, error) {
+	if s.memory == nil {
+		return nil, ErrMemoryNotConfigured
+	}
+	return s.memory.Get(ctx, id)
+}
+
 // DeleteMemory 删除记忆，并广播记忆事件。
 func (s *AgentService) DeleteMemory(ctx context.Context, id string) error {
 	if s.memory == nil {

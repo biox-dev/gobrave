@@ -104,6 +104,28 @@ type agentEventPageRequest struct {
 	TaskID string `json:"task_id"`
 }
 
+// agentMemoryPageRequest 是记忆分页查询请求；kinds 为空表示全部类别。
+type agentMemoryPageRequest struct {
+	types.Pagination
+	Kinds []agent.MemoryKind `json:"kinds"`
+}
+
+// memorySaveRequest 是创建 / 更新记忆的请求体；UserID 由当前登录用户注入。
+type memorySaveRequest struct {
+	ID         string           `json:"id"`         // 为空则新建，否则更新
+	SessionID  string           `json:"session_id"` // 可选：关联会话
+	Kind       agent.MemoryKind `json:"kind" binding:"required"`
+	Content    string           `json:"content" binding:"required"`
+	Importance int              `json:"importance"`
+	Metadata   map[string]any   `json:"metadata"`
+}
+
+// memoryRetrieveRequest 是记忆检索请求体。
+type memoryRetrieveRequest struct {
+	Query string `json:"query" binding:"required"`
+	Limit int    `json:"limit"`
+}
+
 // CreateTask godoc
 // @Summary      创建 Agent 任务
 // @Description  创建任务、订阅事件流到 WS，并异步启动执行
@@ -578,6 +600,215 @@ func (h *AgentHandler) PageEvents(c *gin.Context) {
 	})
 }
 
+// SaveMemory godoc
+// @Summary      创建或更新记忆
+// @Description  ID 为空时新建，否则更新；UserID 由当前登录用户注入
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.memorySaveRequest  true  "记忆内容"
+// @Success      200      {object}  agent.Memory
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/memory/save [post]
+func (h *AgentHandler) SaveMemory(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req memorySaveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	var memory *agent.Memory
+	if req.ID != "" {
+		// 更新：先加载既有记录，保留 CreatedAt / LastAccessedAt 等只读字段。
+		existing, err := h.svc.GetMemory(c.Request.Context(), req.ID)
+		if err != nil {
+			handleAgentError(c, err, "failed to get agent memory")
+			return
+		}
+		if existing.UserID != userID {
+			c.Error(errors.NewNotFoundError("record not found"))
+			return
+		}
+		existing.SessionID = req.SessionID
+		existing.Kind = req.Kind
+		existing.Content = req.Content
+		existing.Importance = req.Importance
+		existing.Metadata = req.Metadata
+		memory = existing
+	} else {
+		memory = &agent.Memory{
+			UserID:     userID,
+			SessionID:  req.SessionID,
+			Kind:       req.Kind,
+			Content:    req.Content,
+			Importance: req.Importance,
+			Metadata:   req.Metadata,
+		}
+	}
+	if err := h.svc.SaveMemory(c.Request.Context(), memory); err != nil {
+		handleAgentError(c, err, "failed to save agent memory")
+		return
+	}
+	c.JSON(http.StatusOK, memory)
+}
+
+// GetMemory godoc
+// @Summary      获取单条记忆
+// @Tags         Agent
+// @Produce      json
+// @Param        id   query     string  true  "记忆 ID"
+// @Success      200  {object}  agent.Memory
+// @Failure      400  {object}  errors.AppError
+// @Failure      401  {object}  errors.AppError
+// @Failure      404  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/memory/get [get]
+func (h *AgentHandler) GetMemory(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var q taskIDQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	mem, err := h.svc.GetMemory(c.Request.Context(), q.ID)
+	if err != nil {
+		handleAgentError(c, err, "failed to get agent memory")
+		return
+	}
+	// 校验归属，防止越权访问他人记忆。
+	if mem.UserID != userID {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+	c.JSON(http.StatusOK, mem)
+}
+
+// DeleteMemory godoc
+// @Summary      删除记忆
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      taskIDBody  true  "记忆 ID"
+// @Success      200      {object}  gin.H
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/memory/delete [post]
+func (h *AgentHandler) DeleteMemory(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body taskIDBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	// 先校验归属，防止越权删除他人记忆。
+	mem, err := h.svc.GetMemory(c.Request.Context(), body.ID)
+	if err != nil {
+		handleAgentError(c, err, "failed to get agent memory")
+		return
+	}
+	if mem.UserID != userID {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+
+	if err := h.svc.DeleteMemory(c.Request.Context(), body.ID); err != nil {
+		handleAgentError(c, err, "failed to delete agent memory")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
+}
+
+// PageMemory godoc
+// @Summary      分页查询当前用户的记忆
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.agentMemoryPageRequest  true  "分页请求参数"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/memory/page [post]
+func (h *AgentHandler) PageMemory(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req agentMemoryPageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	items, total, err := h.svc.ListMemory(c.Request.Context(), userID, req.Offset(), req.Limit(), req.Kinds...)
+	if err != nil {
+		handleAgentError(c, err, "failed to page agent memories")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":      items,
+		"total":     total,
+		"page":      req.GetPage(),
+		"page_size": req.GetPageSize(),
+	})
+}
+
+// RetrieveMemory godoc
+// @Summary      检索当前用户的相关记忆
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.memoryRetrieveRequest  true  "检索参数"
+// @Success      200      {array}   agent.Memory
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/memory/retrieve [post]
+func (h *AgentHandler) RetrieveMemory(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req memoryRetrieveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+	if req.Limit <= 0 {
+		req.Limit = 5
+	}
+	// TODO
+	items, err := h.svc.RetrieveMemory(c.Request.Context(), userID, req.Query, req.Limit)
+	if err != nil {
+		handleAgentError(c, err, "failed to retrieve agent memories")
+		return
+	}
+	c.JSON(http.StatusOK, items)
+}
+
 // ApprovePermission godoc
 // @Summary      批准权限请求
 // @Tags         Agent
@@ -719,7 +950,7 @@ func (h *AgentHandler) attachTaskStream(userID, taskID string) {
 func handleAgentError(c *gin.Context, err error, internalMsg string) {
 	switch {
 	case stderrs.Is(err, agent.ErrTaskNotFound), stderrs.Is(err, agent.ErrPermissionNotFound),
-		stderrs.Is(err, agent.ErrConversationNotFound):
+		stderrs.Is(err, agent.ErrConversationNotFound), stderrs.Is(err, agent.ErrMemoryNotFound):
 		c.Error(errors.NewNotFoundError("record not found"))
 	case stderrs.Is(err, agent.ErrPermissionNotPending),
 		stderrs.Is(err, agent.ErrInvalidPermissionTransition),

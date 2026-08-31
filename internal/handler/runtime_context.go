@@ -161,31 +161,10 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 				outputFile := filepath.Join(dir, types.DefaultProjectReportFilename)
 				label = report.Title
 				// 科研文章撰写提示词：以科研报告/科研文章的规范撰写内容，并输出到 output.md 文件。
-				lines = append(lines, fmt.Sprintf(`你正在撰写一篇科研项目报告（科研文章），请严格遵循以下要求：
-
-1. 输出文件：必须将完整报告正文写入指定输出文件，不得在其他位置生成正文。
-   输出文件路径：%s
-
-2. 报告标题：%s
-
-3. 报告结构（使用 Markdown 排版，按以下章节组织）：
-   - 标题与作者信息
-   - 摘要：概述研究背景、目的、方法、主要结果与结论（约 200-300 字）
-   - 关键词：3-5 个
-   - 引言：阐述研究背景、科学问题与研究意义
-   - 材料与方法：客观描述数据来源、分析流程、工具与关键参数
-   - 结果：围绕实际分析数据客观呈现结果，可用表格、列表或图表说明
-   - 讨论：结合已有知识解读结果并指出局限性
-   - 结论：凝练主要发现与结论
-   - 参考文献：如引用他人工作，按学术规范列出
-
-4. 撰写要求：
-   - 语言客观、严谨、符合学术规范，避免主观臆断与夸大；
-   - 所有数据与结论必须基于给定分析结果与工作目录中的实际文件，不得编造；
-   - 对不确定的内容应明确说明，不得虚构数据、图表或参考文献；
-   - 使用 Markdown 语法，层级清晰、格式规范。
-
-5. 完成后请确认报告已完整写入输出文件。`, outputFile, report.Title))
+				lines = append(lines, fmt.Sprintf(`
+				当前上下文是科研报告/科研文章撰写环境，请严格按照科研报告/科研文章的规范撰写内容，并将撰写的内容输出到指定的文件路径：%s，确保文件名为 output.md。
+				请不要在其他地方输出科研报告/科研文章的内容，必须严格遵守输出到指定文件的要求。
+				`, outputFile))
 
 			default:
 				return nil, fmt.Errorf("unsupported runtime env type: %s", envType)

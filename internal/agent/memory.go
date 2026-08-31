@@ -102,7 +102,9 @@ type keywordMemoryRetriever struct {
 }
 
 func (r keywordMemoryRetriever) Retrieve(ctx context.Context, userID, query string, limit int) ([]*Memory, error) {
-	return r.repo.Search(ctx, userID, query, limit)
+	// return r.repo.Search(ctx, userID, query, limit)
+	memories, _, err := r.repo.ListByUser(ctx, userID, 0, limit)
+	return memories, err
 }
 
 // MemoryTurn 描述一轮已完成执行的上下文，供 MemoryExtractor 提取记忆。

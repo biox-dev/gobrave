@@ -389,6 +389,12 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 
 	r.GET("/agent/skill/list", handler.ListSkills)
 	r.GET("/agent/project-context", handler.ProjectContext)
+
+	r.POST("/agent/memory/save", handler.SaveMemory)
+	r.GET("/agent/memory/get", handler.GetMemory)
+	r.POST("/agent/memory/delete", handler.DeleteMemory)
+	r.POST("/agent/memory/page", handler.PageMemory)
+	r.POST("/agent/memory/retrieve", handler.RetrieveMemory)
 }
 
 // serveStatic maps local image resources under /images.
