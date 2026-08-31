@@ -162,6 +162,7 @@ type TurnInput struct {
 	Provider       string
 	Model          string
 	SystemPrompt   string
+	Profile        string // AgentProfile 名称（为空取默认）
 	WorkingDir     string
 }
 
@@ -245,6 +246,7 @@ func (s *ConversationService) CreateTurn(ctx context.Context, in TurnInput) (*Ta
 		SessionID:    conv.ID,
 		UserID:       in.UserID,
 		SystemPrompt: in.SystemPrompt,
+		Profile:      in.Profile,
 		Messages:     append([]Message(nil), conv.Messages...),
 		WorkingDir:   in.WorkingDir,
 		Stream:       true, // 会话轮次统一走流式，便于捕获 assistant 文本

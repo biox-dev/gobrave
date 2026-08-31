@@ -66,6 +66,10 @@ type Request struct {
 	SessionID string `json:"session_id"`
 	// UserID 可选：发起调用的用户，用于记忆（memory）的归属隔离与检索。
 	UserID string `json:"user_id,omitempty"`
+	// Profile 可选：AgentProfile 名称，AgentService 据此解析系统提示词、技能与上下文注入开关。
+	Profile string `json:"profile,omitempty"`
+	// Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。
+	Skills []string `json:"skills,omitempty"`
 	// SystemPrompt 系统提示词。
 	SystemPrompt string `json:"system_prompt"`
 	// Messages 对话上下文（不含 SystemPrompt）。

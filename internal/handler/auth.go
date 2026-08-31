@@ -5,13 +5,13 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	secutils "github.com/biox-dev/gobrave/internal/utils"
+	"github.com/gin-gonic/gin"
 )
 
 // AuthHandler implements HTTP request handlers for user authentication
@@ -291,6 +291,54 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 			"user": userInfo,
 			// "tenant": tenant,
 		},
+	})
+}
+
+// UpdateProfile godoc
+// @Summary      更新当前用户的 Agent Profile
+// @Description  修改当前登录用户选中的 AgentProfile（仅允许修改自己的 Profile 选择）
+// @Tags         认证
+// @Accept       json
+// @Produce      json
+// @Param        request  body      object{profile=string}  true  "Agent Profile 名称"
+// @Success      200      {object}  map[string]interface{}  "更新成功"
+// @Failure      400      {object}  errors.AppError         "请求参数错误"
+// @Security     Bearer
+// @Router       /auth/profile [post]
+func (h *AuthHandler) UpdateProfile(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	user, err := h.userService.GetCurrentUser(ctx)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to get current user: %v", err)
+		appErr := errors.NewUnauthorizedError("Failed to get user information").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	var req struct {
+		Profile string `json:"profile"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Error(ctx, "Failed to parse profile update request", err)
+		appErr := errors.NewValidationError("Invalid profile update request").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	user.Profile = req.Profile
+	if err := h.userService.UpdateUser(ctx, user); err != nil {
+		logger.Errorf(ctx, "Failed to update user profile: %v", err)
+		appErr := errors.NewInternalServerError("Failed to update profile").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	logger.Infof(ctx, "User profile updated: %s", user.ID)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Profile updated",
+		"user":    user.ToUserInfo(),
 	})
 }
 

@@ -78,6 +78,7 @@ type chatRequest struct {
 	Provider       string         `json:"provider"`
 	Model          string         `json:"model"`
 	SystemPrompt   string         `json:"system_prompt"`
+	Profile        string         `json:"profile"` // AgentProfile 名称（为空取默认）
 	WorkingDir     string         `json:"working_dir"`
 	Env            map[string]any `json:"env"` // 业务上下文 {id,type}，用于解析系统提示词与工作目录
 }
@@ -124,6 +125,18 @@ type memorySaveRequest struct {
 type memoryRetrieveRequest struct {
 	Query string `json:"query" binding:"required"`
 	Limit int    `json:"limit"`
+}
+
+// profileSaveRequest 是创建 / 更新 AgentProfile 的请求体；UserID 由当前登录用户注入。
+type profileSaveRequest struct {
+	ID           string              `json:"id"` // 为空则新建，否则更新
+	Name         string              `json:"name" binding:"required"`
+	DisplayName  string              `json:"display_name"`
+	Description  string              `json:"description"`
+	SystemPrompt string              `json:"system_prompt"`
+	Skills       []string            `json:"skills"`
+	Context      agent.ContextConfig `json:"context"`
+	IsDefault    bool                `json:"is_default"`
 }
 
 // CreateTask godoc
@@ -184,16 +197,20 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 // @Security     Bearer
 // @Router       /agent/chat [post]
 func (h *AgentHandler) Chat(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
+	user, ok := getCurrentUser(c)
 	if !ok {
 		return
 	}
+	userID := user.ID
 
 	var req chatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
 		return
 	}
+
+	// Profile 只能来自当前登录用户，忽略请求体中的 profile。
+	profile := user.Profile
 
 	// 解析业务上下文（llmEnv）→ 系统提示词 + 工作目录。
 	// 显式传入的 system_prompt / working_dir 优先；未提供时回退到运行时解析结果。
@@ -219,6 +236,7 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		Provider:       req.Provider,
 		Model:          req.Model,
 		SystemPrompt:   systemPrompt,
+		Profile:        profile,
 		WorkingDir:     workingDir,
 	})
 	if err != nil {
@@ -299,6 +317,122 @@ func (h *AgentHandler) ListSkills(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, h.skills.Manifests())
+}
+
+// ListProfiles godoc
+// @Summary      查看 Agent Profile
+// @Description  返回内置与当前用户自定义的全部 Profile（合并视图），包含系统提示词、技能与上下文注入开关
+// @Tags         Agent
+// @Produce      json
+// @Success      200  {array}   agent.Profile
+// @Failure      401  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/profile/list [get]
+func (h *AgentHandler) ListProfiles(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	profiles, err := h.svc.ListProfiles(c.Request.Context(), userID)
+	if err != nil {
+		handleAgentError(c, err, "failed to list agent profiles")
+		return
+	}
+	c.JSON(http.StatusOK, profiles)
+}
+
+// SaveProfile godoc
+// @Summary      创建或更新 Agent Profile
+// @Description  ID 为空时新建，否则更新；UserID 由当前登录用户注入，仅能管理自己的自定义 Profile
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.profileSaveRequest  true  "Profile 内容"
+// @Success      200      {object}  agent.Profile
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/profile/save [post]
+func (h *AgentHandler) SaveProfile(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req profileSaveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	var profile *agent.Profile
+	if req.ID != "" {
+		// 更新：先加载既有记录，校验归属并保留只读字段。
+		existing, err := h.svc.GetProfile(c.Request.Context(), userID, req.ID)
+		if err != nil {
+			handleAgentError(c, err, "failed to get agent profile")
+			return
+		}
+		existing.Name = req.Name
+		existing.DisplayName = req.DisplayName
+		existing.Description = req.Description
+		existing.SystemPrompt = req.SystemPrompt
+		existing.Skills = req.Skills
+		existing.Context = req.Context
+		existing.IsDefault = req.IsDefault
+		profile = existing
+	} else {
+		profile = &agent.Profile{
+			UserID:       userID,
+			Name:         req.Name,
+			DisplayName:  req.DisplayName,
+			Description:  req.Description,
+			SystemPrompt: req.SystemPrompt,
+			Skills:       req.Skills,
+			Context:      req.Context,
+			IsDefault:    req.IsDefault,
+		}
+	}
+
+	if err := h.svc.SaveProfile(c.Request.Context(), profile); err != nil {
+		handleAgentError(c, err, "failed to save agent profile")
+		return
+	}
+	c.JSON(http.StatusOK, profile)
+}
+
+// DeleteProfile godoc
+// @Summary      删除 Agent Profile
+// @Description  仅能删除当前用户的自定义 Profile；内置 Profile 不可删除
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      taskIDBody  true  "Profile ID"
+// @Success      200      {object}  gin.H
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/profile/delete [post]
+func (h *AgentHandler) DeleteProfile(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body taskIDBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	if err := h.svc.DeleteProfile(c.Request.Context(), userID, body.ID); err != nil {
+		handleAgentError(c, err, "failed to delete agent profile")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
 }
 
 // ProjectContext godoc
@@ -944,6 +1078,21 @@ func (h *AgentHandler) attachTaskStream(userID, taskID string) {
 	}
 	h.subs[taskID] = unsub
 	h.mu.Unlock()
+}
+
+// getCurrentUser 从 gin 上下文读取当前登录用户（由认证中间件注入）。
+func getCurrentUser(c *gin.Context) (*types.User, bool) {
+	userVal, exists := c.Get(types.UserContextKey.String())
+	if !exists {
+		c.Error(errors.NewUnauthorizedError("missing user identity"))
+		return nil, false
+	}
+	user, ok := userVal.(*types.User)
+	if !ok || user == nil {
+		c.Error(errors.NewUnauthorizedError("invalid user identity"))
+		return nil, false
+	}
+	return user, true
 }
 
 // handleAgentError 把 Agent 域错误映射为对应的 HTTP 状态码。

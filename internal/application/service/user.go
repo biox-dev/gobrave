@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/biox-dev/gobrave/internal/agent"
 	apprepo "github.com/biox-dev/gobrave/internal/application/repository"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -125,6 +126,7 @@ func (s *userService) Register(ctx context.Context, req *types.RegisterRequest) 
 		Username:     req.Username,
 		Email:        req.Email,
 		PasswordHash: string(hashedPassword),
+		Profile:      agent.DefaultProfileName,
 		// TenantID:     createdTenant.ID,
 		IsActive:  true,
 		CreatedAt: time.Now(),

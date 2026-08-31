@@ -18,6 +18,8 @@ type User struct {
 	PasswordHash string `json:"-"          gorm:"type:varchar(255);not null"`
 	// Avatar URL of the user
 	Avatar string `json:"avatar"     gorm:"type:varchar(500)"`
+	// Agent profile name selected by the user (AgentProfile name)
+	Profile string `json:"profile"    gorm:"type:varchar(64)"`
 	// Tenant ID that the user belongs to
 	// TenantID uint64 `json:"tenant_id"  gorm:"index"`
 	// Whether the user is active
@@ -119,6 +121,7 @@ type UserInfo struct {
 	Username            string    `json:"username"`
 	Email               string    `json:"email"`
 	Avatar              string    `json:"avatar"`
+	Profile             string    `json:"profile"`
 	TenantID            uint64    `json:"tenant_id"`
 	IsActive            bool      `json:"is_active"`
 	CanAccessAllTenants bool      `json:"can_access_all_tenants"`
@@ -133,6 +136,7 @@ func (u *User) ToUserInfo() *UserInfo {
 		Username: u.Username,
 		Email:    u.Email,
 		Avatar:   u.Avatar,
+		Profile:  u.Profile,
 		// TenantID:            u.TenantID,
 		IsActive:            u.IsActive,
 		CanAccessAllTenants: u.CanAccessAllTenants,

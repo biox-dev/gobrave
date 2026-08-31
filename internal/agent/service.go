@@ -22,14 +22,15 @@ import (
 //
 // Recover 用于后端重启后重建运行态。
 type AgentService struct {
-	client  *Client
-	tasks   TaskRepository
-	perms   *PermissionManager
-	events  EventRepository
-	bus     EventBus
-	policy  PermissionPolicy
-	memory  *MemoryManager
-	project ProjectContextProvider
+	client   *Client
+	tasks    TaskRepository
+	perms    *PermissionManager
+	events   EventRepository
+	bus      EventBus
+	policy   PermissionPolicy
+	memory   *MemoryManager
+	project  ProjectContextProvider
+	profiles *ProfileManager
 
 	mu     sync.Mutex
 	active map[string]context.CancelFunc // taskID → 取消函数
@@ -37,14 +38,15 @@ type AgentService struct {
 
 // ServiceConfig 是 AgentService 的依赖配置。
 type ServiceConfig struct {
-	Client  *Client
-	Tasks   TaskRepository
-	Perms   *PermissionManager
-	Events  EventRepository
-	Bus     EventBus
-	Policy  PermissionPolicy
-	Memory  *MemoryManager
-	Project ProjectContextProvider
+	Client   *Client
+	Tasks    TaskRepository
+	Perms    *PermissionManager
+	Events   EventRepository
+	Bus      EventBus
+	Policy   PermissionPolicy
+	Memory   *MemoryManager
+	Project  ProjectContextProvider
+	Profiles *ProfileManager
 }
 
 // NewService 创建 AgentService，未提供的依赖使用安全的默认值。
@@ -67,16 +69,20 @@ func NewService(cfg ServiceConfig) *AgentService {
 	if cfg.Memory == nil {
 		cfg.Memory = NewMemoryManager(MemoryConfig{})
 	}
+	if cfg.Profiles == nil {
+		cfg.Profiles = NewProfileManager(NewMemoryProfileRepository())
+	}
 	return &AgentService{
-		client:  cfg.Client,
-		tasks:   cfg.Tasks,
-		perms:   cfg.Perms,
-		events:  cfg.Events,
-		bus:     cfg.Bus,
-		policy:  cfg.Policy,
-		memory:  cfg.Memory,
-		project: cfg.Project,
-		active:  make(map[string]context.CancelFunc),
+		client:   cfg.Client,
+		tasks:    cfg.Tasks,
+		perms:    cfg.Perms,
+		events:   cfg.Events,
+		bus:      cfg.Bus,
+		policy:   cfg.Policy,
+		memory:   cfg.Memory,
+		project:  cfg.Project,
+		profiles: cfg.Profiles,
+		active:   make(map[string]context.CancelFunc),
 	}
 }
 
@@ -169,10 +175,8 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 		return nil, fmt.Errorf("agent: no client configured")
 	}
 
-	// 注入相关记忆：把检索到的长期记忆拼进 SystemPrompt，让 Agent「记得」相关背景。
-	req := s.injectMemory(ctx, task.Request)
-	// 注入项目上下文：把当前项目已完成的分析节点等背景拼进 SystemPrompt。
-	req = s.injectProjectContext(ctx, req)
+	// 应用 Agent Profile：解析 → 合并系统提示词 → 选择技能 → 按开关注入背景。
+	req := s.applyProfile(ctx, task.Request)
 
 	var result *Result
 	var err error
@@ -379,6 +383,81 @@ func (s *AgentService) RetrieveMemory(ctx context.Context, userID, query string,
 		return nil, ErrMemoryNotConfigured
 	}
 	return s.memory.Retrieve(ctx, userID, query, limit)
+}
+
+// ---- Profile 调用面（供 HTTP / 上层业务管理 Agent Profile） ----
+
+// ListProfiles 返回内置与当前用户自定义的 Profile 列表（合并视图）。
+func (s *AgentService) ListProfiles(ctx context.Context, userID string) ([]*Profile, error) {
+	if s.profiles == nil {
+		return nil, ErrProfileNotFound
+	}
+	return s.profiles.List(ctx, userID)
+}
+
+// GetProfile 按 ID 返回当前用户的自定义 Profile（内置 Profile 按 ID 不可取）。
+func (s *AgentService) GetProfile(ctx context.Context, userID, id string) (*Profile, error) {
+	if s.profiles == nil {
+		return nil, ErrProfileNotFound
+	}
+	return s.profiles.Get(ctx, userID, id)
+}
+
+// SaveProfile 创建或更新用户自定义 Profile。
+func (s *AgentService) SaveProfile(ctx context.Context, profile *Profile) error {
+	if s.profiles == nil {
+		return ErrProfileNotFound
+	}
+	return s.profiles.Save(ctx, profile)
+}
+
+// DeleteProfile 删除用户自定义 Profile（内置 Profile 不可删除）。
+func (s *AgentService) DeleteProfile(ctx context.Context, userID, id string) error {
+	if s.profiles == nil {
+		return ErrProfileNotFound
+	}
+	return s.profiles.Delete(ctx, userID, id)
+}
+
+// applyProfile 在调用前应用 Agent Profile：
+//
+//  1. 解析 Profile（未指定名称时取默认；解析失败回退内置默认）；
+//  2. 把 Profile 的系统提示词作为基础合并进请求；
+//  3. Profile 指定了技能时，限制本次调用可见的技能集合；
+//  4. 按 Profile 的上下文开关决定是否注入记忆 / 项目上下文。
+func (s *AgentService) applyProfile(ctx context.Context, req Request) Request {
+	var profile *Profile
+	if s.profiles != nil {
+		if p, err := s.profiles.Resolve(ctx, req.UserID, req.Profile); err == nil {
+			profile = p
+		}
+	}
+	if profile == nil {
+		profile = DefaultBuiltinProfile()
+	}
+
+	// 1) 系统提示词：Profile 基础提示词在前，请求已有提示词（运行时上下文等）在后。
+	if strings.TrimSpace(profile.SystemPrompt) != "" {
+		if strings.TrimSpace(req.SystemPrompt) == "" {
+			req.SystemPrompt = profile.SystemPrompt
+		} else {
+			req.SystemPrompt = profile.SystemPrompt + "\n\n" + req.SystemPrompt
+		}
+	}
+
+	// 2) 技能选择：Profile.Skills 非空时限制本次调用可见的技能集合。
+	if len(profile.Skills) > 0 {
+		req.Skills = profile.Skills
+	}
+
+	// 3) 背景注入：按 Profile 声明的开关执行。
+	if profile.Context.InjectMemory {
+		req = s.injectMemory(ctx, req)
+	}
+	if profile.Context.InjectProject {
+		req = s.injectProjectContext(ctx, req)
+	}
+	return req
 }
 
 // injectMemory 在调用前检索相关记忆并注入 SystemPrompt。

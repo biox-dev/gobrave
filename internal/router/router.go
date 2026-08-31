@@ -134,6 +134,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, handler *handler.AuthHandler) {
 	// r.GET("/auth/validate", handler.ValidateToken)
 	r.POST("/auth/logout", handler.Logout)
 	r.GET("/auth/me", handler.GetCurrentUser)
+	r.POST("/auth/profile", handler.UpdateProfile)
 	// r.POST("/auth/change-password", handler.ChangePassword)
 }
 
@@ -389,6 +390,10 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 
 	r.GET("/agent/skill/list", handler.ListSkills)
 	r.GET("/agent/project-context", handler.ProjectContext)
+
+	r.GET("/agent/profile/list", handler.ListProfiles)
+	r.POST("/agent/profile/save", handler.SaveProfile)
+	r.POST("/agent/profile/delete", handler.DeleteProfile)
 
 	r.POST("/agent/memory/save", handler.SaveMemory)
 	r.GET("/agent/memory/get", handler.GetMemory)
