@@ -239,3 +239,137 @@ func (r *projectRepository) ListProjectReportDetailByProjectID(ctx context.Conte
 
 	return reports, nil
 }
+
+// ---------- Literature ----------
+
+func (r *projectRepository) CreateLiterature(ctx context.Context, literature *types.Literature) error {
+	return r.db.WithContext(ctx).Create(literature).Error
+}
+
+func (r *projectRepository) GetLiteratureByID(ctx context.Context, literatureID int64) (*types.Literature, error) {
+	literature := &types.Literature{}
+	err := r.db.WithContext(ctx).
+		Where("id = ?", literatureID).
+		Take(literature).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return literature, nil
+}
+
+func (r *projectRepository) UpdateLiterature(ctx context.Context, literature *types.Literature) error {
+	return r.db.WithContext(ctx).
+		Model(&types.Literature{}).
+		Where("id = ?", literature.ID).
+		Updates(map[string]interface{}{
+			"title":            literature.Title,
+			"content":          literature.Content,
+			"content_source":   literature.ContentSource,
+			"filename":         literature.Filename,
+			"owner_project_id": literature.OwnerProjectID,
+		}).Error
+}
+
+func (r *projectRepository) DeleteLiterature(ctx context.Context, literatureID int64) error {
+	return r.db.WithContext(ctx).
+		Where("id = ?", literatureID).
+		Delete(&types.Literature{}).Error
+}
+
+func (r *projectRepository) ListLiteratureByProjectID(ctx context.Context, projectID string) ([]*types.Literature, error) {
+	items := make([]*types.Literature, 0)
+	err := r.db.WithContext(ctx).
+		Table("t_literature AS l").
+		Select("l.*").
+		Joins("INNER JOIN project_literature pl ON pl.literature_id = l.id").
+		Where("pl.project_id = ?", projectID).
+		Order("l.updated_at DESC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+func (r *projectRepository) PageLiteratureByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.Literature, int64, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	items := make([]*types.Literature, 0)
+	base := r.db.WithContext(ctx).
+		Table("t_literature AS l").
+		Joins("INNER JOIN project_literature pl ON pl.literature_id = l.id").
+		Where("pl.project_id = ?", projectID)
+
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := base.
+		Select("l.*").
+		Order("l.updated_at DESC").
+		Offset(pagination.Offset()).
+		Limit(pagination.Limit()).
+		Find(&items).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return items, total, nil
+}
+
+func (r *projectRepository) AddProjectLiterature(ctx context.Context, pl *types.ProjectLiterature) error {
+	return r.db.WithContext(ctx).Create(pl).Error
+}
+
+func (r *projectRepository) ExistsProjectLiterature(ctx context.Context, projectID string, literatureID int64) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&types.ProjectLiterature{}).
+		Where("project_id = ? AND literature_id = ?", projectID, literatureID).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (r *projectRepository) DeleteProjectLiterature(ctx context.Context, projectID string, literatureID int64) error {
+	return r.db.WithContext(ctx).
+		Where("project_id = ? AND literature_id = ?", projectID, literatureID).
+		Delete(&types.ProjectLiterature{}).Error
+}
+
+func (r *projectRepository) DeleteProjectLiteratureByLiteratureID(ctx context.Context, literatureID int64) error {
+	return r.db.WithContext(ctx).
+		Where("literature_id = ?", literatureID).
+		Delete(&types.ProjectLiterature{}).Error
+}
+
+func (r *projectRepository) PageLiteraturePool(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.LiteraturePoolItem, int64, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	items := make([]*types.LiteraturePoolItem, 0)
+	base := r.db.WithContext(ctx).
+		Table("t_literature AS l").
+		Select("l.*, (pl.id IS NOT NULL) AS bound").
+		Joins("LEFT JOIN project_literature pl ON pl.literature_id = l.id AND pl.project_id = ?", projectID)
+
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := base.
+		Order("l.updated_at DESC").
+		Offset(pagination.Offset()).
+		Limit(pagination.Limit()).
+		Scan(&items).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return items, total, nil
+}

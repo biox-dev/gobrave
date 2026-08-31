@@ -660,6 +660,8 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.Project{},
 		&types.UserProject{},
 		&types.ProjectReport{},
+		&types.Literature{},
+		&types.ProjectLiterature{},
 		&types.Dataset{},
 		&types.ProjectDataset{},
 		&types.File{},

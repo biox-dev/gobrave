@@ -15,7 +15,7 @@ import (
 func All() []skill.Skill {
 	return []skill.Skill{
 		Echo(),
-		GetWeather(),
+		// GetWeather(),
 		ReviewGuide(),
 	}
 }

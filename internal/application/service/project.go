@@ -475,3 +475,335 @@ func (s *projectService) deleteProjectReportFile(report *types.ProjectReport) er
 	_ = os.Remove(filepath.Dir(filePath))
 	return nil
 }
+
+// ---------- Literature ----------
+
+func (s *projectService) AddLiterature(ctx context.Context, userID string, literature *types.Literature) (*types.Literature, error) {
+	if literature == nil {
+		return nil, errors.New("literature is nil")
+	}
+
+	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.ensureLiteratureDefaults(literature)
+	if literature.ID == 0 {
+		literature.ID = utils.GenerateID()
+	}
+	if strings.TrimSpace(literature.OwnerProjectID) == "" {
+		literature.OwnerProjectID = project.ProjectID
+	}
+
+	now := time.Now()
+	literature.CreatedAt = now
+	literature.UpdatedAt = now
+
+	// For file-backed literature the database column stays empty; the full text
+	// is written to the project literature directory instead.
+	var fileContent string
+	if literature.ContentSource == types.LiteratureContentSourceFile {
+		fileContent = literature.Content
+		literature.Content = ""
+	}
+
+	if err := s.projectRepo.CreateLiterature(ctx, literature); err != nil {
+		return nil, err
+	}
+
+	if err := s.projectRepo.AddProjectLiterature(ctx, &types.ProjectLiterature{
+		ProjectID:    project.ProjectID,
+		LiteratureID: literature.ID,
+		CreatedAt:    now,
+	}); err != nil {
+		return nil, err
+	}
+
+	if literature.ContentSource == types.LiteratureContentSourceFile {
+		literature.Content = fileContent
+		if err := s.writeLiteratureFile(literature); err != nil {
+			return nil, err
+		}
+		literature.Content = ""
+	}
+
+	return literature, nil
+}
+
+func (s *projectService) UpdateLiterature(ctx context.Context, userID string, literature *types.Literature) error {
+	if literature == nil {
+		return errors.New("literature is nil")
+	}
+
+	if err := s.requireLiteratureAccess(ctx, userID, literature.ID); err != nil {
+		return err
+	}
+
+	stored, err := s.projectRepo.GetLiteratureByID(ctx, literature.ID)
+	if err != nil {
+		return err
+	}
+
+	s.ensureLiteratureDefaults(stored)
+
+	// Owner project and filename are stable unless explicitly switched.
+	literature.OwnerProjectID = stored.OwnerProjectID
+	if strings.TrimSpace(literature.Filename) == "" {
+		literature.Filename = stored.Filename
+	}
+	if literature.ContentSource != types.LiteratureContentSourceDatabase &&
+		literature.ContentSource != types.LiteratureContentSourceFile {
+		literature.ContentSource = stored.ContentSource
+	}
+	if filepath.Base(literature.Filename) != literature.Filename {
+		literature.Filename = stored.Filename
+	}
+
+	switch {
+	case stored.ContentSource == types.LiteratureContentSourceDatabase &&
+		literature.ContentSource == types.LiteratureContentSourceFile:
+		// database -> file: persist the database content into the file.
+		if strings.TrimSpace(literature.Content) == "" {
+			literature.Content = stored.Content
+		}
+		if err := s.writeLiteratureFile(literature); err != nil {
+			return err
+		}
+		literature.Content = ""
+
+	case literature.ContentSource == types.LiteratureContentSourceFile:
+		// file -> file: rewrite the full text file.
+		if err := s.writeLiteratureFile(literature); err != nil {
+			return err
+		}
+		literature.Content = ""
+
+	default:
+		// database -> database: content stays in the database column.
+	}
+
+	return s.projectRepo.UpdateLiterature(ctx, literature)
+}
+
+func (s *projectService) DeleteLiterature(ctx context.Context, userID string, literatureID int64) error {
+	literature, err := s.projectRepo.GetLiteratureByID(ctx, literatureID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.requireLiteratureAccess(ctx, userID, literatureID); err != nil {
+		return err
+	}
+
+	// Best-effort removal of the full-text file and its directory.
+	if err := s.deleteLiteratureFile(literature); err != nil {
+		return err
+	}
+
+	// Remove the association for every project that references this literature.
+	if err := s.projectRepo.DeleteProjectLiteratureByLiteratureID(ctx, literatureID); err != nil {
+		return err
+	}
+
+	return s.projectRepo.DeleteLiterature(ctx, literatureID)
+}
+
+func (s *projectService) GetLiteratureDetailByID(ctx context.Context, userID string, literatureID int64) (*types.Literature, error) {
+	literature, err := s.projectRepo.GetLiteratureByID(ctx, literatureID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.requireLiteratureAccess(ctx, userID, literatureID); err != nil {
+		return nil, err
+	}
+
+	s.ensureLiteratureDefaults(literature)
+
+	if literature.ContentSource == types.LiteratureContentSourceFile {
+		content, err := s.readLiteratureFile(literature)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return literature, nil
+			}
+			return nil, err
+		}
+		literature.Content = content
+	}
+
+	return literature, nil
+}
+
+func (s *projectService) ListLiteratureByProjectID(ctx context.Context, userID string) ([]*types.Literature, error) {
+	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.projectRepo.ListLiteratureByProjectID(ctx, project.ProjectID)
+}
+
+func (s *projectService) PageLiteratureByProjectID(ctx context.Context, userID string, pagination *types.Pagination) ([]*types.Literature, int64, error) {
+	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return s.projectRepo.PageLiteratureByProjectID(ctx, pagination, project.ProjectID)
+}
+
+func (s *projectService) BindLiteratureToProject(ctx context.Context, userID string, literatureID int64) error {
+	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	literature, err := s.projectRepo.GetLiteratureByID(ctx, literatureID)
+	if err != nil {
+		return err
+	}
+
+	exists, err := s.projectRepo.ExistsProjectLiterature(ctx, project.ProjectID, literatureID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return errors.New("literature is already bound to the active project")
+	}
+
+	return s.projectRepo.AddProjectLiterature(ctx, &types.ProjectLiterature{
+		ProjectID:    project.ProjectID,
+		LiteratureID: literature.ID,
+		CreatedAt:    time.Now(),
+	})
+}
+
+func (s *projectService) UnbindLiteratureFromProject(ctx context.Context, userID string, literatureID int64) error {
+	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	exists, err := s.projectRepo.ExistsProjectLiterature(ctx, project.ProjectID, literatureID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return gorm.ErrRecordNotFound
+	}
+
+	return s.projectRepo.DeleteProjectLiterature(ctx, project.ProjectID, literatureID)
+}
+
+func (s *projectService) PageLiteraturePool(ctx context.Context, userID string, pagination *types.Pagination) ([]*types.LiteraturePoolItem, int64, error) {
+	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return s.projectRepo.PageLiteraturePool(ctx, pagination, project.ProjectID)
+}
+
+// requireLiteratureAccess verifies the literature is bound to the current user's
+// active project. It returns gorm.ErrRecordNotFound when there is no active
+// project or the binding does not exist.
+func (s *projectService) requireLiteratureAccess(ctx context.Context, userID string, literatureID int64) error {
+	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	bound, err := s.projectRepo.ExistsProjectLiterature(ctx, project.ProjectID, literatureID)
+	if err != nil {
+		return err
+	}
+	if !bound {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
+}
+
+func (s *projectService) ensureLiteratureDefaults(literature *types.Literature) {
+	if literature == nil {
+		return
+	}
+	if literature.ContentSource != types.LiteratureContentSourceDatabase &&
+		literature.ContentSource != types.LiteratureContentSourceFile {
+		literature.ContentSource = types.LiteratureContentSourceFile
+	}
+	if strings.TrimSpace(literature.Filename) == "" {
+		literature.Filename = types.DefaultLiteratureFilename
+	}
+}
+
+func (s *projectService) literatureFilePath(literature *types.Literature) (string, error) {
+	if literature == nil {
+		return "", errors.New("literature is nil")
+	}
+	if strings.TrimSpace(literature.OwnerProjectID) == "" {
+		return "", errors.New("literature owner project id is empty")
+	}
+
+	if s.cfg == nil || s.cfg.Storage == nil {
+		return "", errors.New("storage config is missing")
+	}
+
+	baseDir := strings.TrimSpace(s.cfg.Storage.BaseDir)
+	if baseDir == "" {
+		return "", errors.New("storage base dir is empty")
+	}
+
+	filename := strings.TrimSpace(literature.Filename)
+	if filename == "" {
+		filename = types.DefaultLiteratureFilename
+	}
+	if filepath.Base(filename) != filename {
+		return "", errors.New("invalid literature filename")
+	}
+
+	dir := utils.GetProjectLiteratureDir(baseDir, literature.OwnerProjectID, strconv.FormatInt(literature.ID, 10))
+	return filepath.Join(dir, filename), nil
+}
+
+func (s *projectService) writeLiteratureFile(literature *types.Literature) error {
+	filePath, err := s.literatureFilePath(literature)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(filePath, []byte(literature.Content), 0o644)
+}
+
+func (s *projectService) readLiteratureFile(literature *types.Literature) (string, error) {
+	filePath, err := s.literatureFilePath(literature)
+	if err != nil {
+		return "", err
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
+func (s *projectService) deleteLiteratureFile(literature *types.Literature) error {
+	filePath, err := s.literatureFilePath(literature)
+	if err != nil {
+		return err
+	}
+
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	// Best-effort cleanup of the now-empty per-literature directory.
+	_ = os.Remove(filepath.Dir(filePath))
+	return nil
+}

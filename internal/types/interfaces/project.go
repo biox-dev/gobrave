@@ -26,6 +26,17 @@ type ProjectService interface {
 	PageProjectReportByProjectID(ctx context.Context, userID, projectID string, pagination *types.Pagination) ([]*types.ProjectReport, int64, error)
 	GetProjectReportDetailByID(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, error)
 	GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error)
+
+	// Literature (参考文献) business capabilities.
+	AddLiterature(ctx context.Context, userID string, literature *types.Literature) (*types.Literature, error)
+	UpdateLiterature(ctx context.Context, userID string, literature *types.Literature) error
+	DeleteLiterature(ctx context.Context, userID string, literatureID int64) error
+	GetLiteratureDetailByID(ctx context.Context, userID string, literatureID int64) (*types.Literature, error)
+	ListLiteratureByProjectID(ctx context.Context, userID string) ([]*types.Literature, error)
+	PageLiteratureByProjectID(ctx context.Context, userID string, pagination *types.Pagination) ([]*types.Literature, int64, error)
+	BindLiteratureToProject(ctx context.Context, userID string, literatureID int64) error
+	UnbindLiteratureFromProject(ctx context.Context, userID string, literatureID int64) error
+	PageLiteraturePool(ctx context.Context, userID string, pagination *types.Pagination) ([]*types.LiteraturePoolItem, int64, error)
 }
 
 // ProjectRepository defines project data access methods.
@@ -47,4 +58,17 @@ type ProjectRepository interface {
 	DeleteProjectReport(ctx context.Context, projectID string, reportID int64) error
 	ListProjectReportByProjectID(ctx context.Context, projectID string) ([]*types.ProjectReport, error)
 	PageProjectReportByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.ProjectReport, int64, error)
+
+	// Literature data access methods.
+	CreateLiterature(ctx context.Context, literature *types.Literature) error
+	GetLiteratureByID(ctx context.Context, literatureID int64) (*types.Literature, error)
+	UpdateLiterature(ctx context.Context, literature *types.Literature) error
+	DeleteLiterature(ctx context.Context, literatureID int64) error
+	ListLiteratureByProjectID(ctx context.Context, projectID string) ([]*types.Literature, error)
+	PageLiteratureByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.Literature, int64, error)
+	AddProjectLiterature(ctx context.Context, pl *types.ProjectLiterature) error
+	ExistsProjectLiterature(ctx context.Context, projectID string, literatureID int64) (bool, error)
+	DeleteProjectLiterature(ctx context.Context, projectID string, literatureID int64) error
+	DeleteProjectLiteratureByLiteratureID(ctx context.Context, literatureID int64) error
+	PageLiteraturePool(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.LiteraturePoolItem, int64, error)
 }

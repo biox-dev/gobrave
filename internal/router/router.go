@@ -153,6 +153,16 @@ func RegisterProjectRoutes(r *gin.RouterGroup, handler *handler.ProjectHandler, 
 	r.POST("/project/list-project-report-page", handler.PageProjectReport)
 	r.GET("/project/project-report-detail", handler.GetProjectReportDetail)
 	r.POST("/project/upload-image", uploadHandler.UploadImage)
+
+	r.POST("/project/add-literature", handler.AddLiterature)
+	r.POST("/project/update-literature", handler.UpdateLiterature)
+	r.POST("/project/delete-literature", handler.DeleteLiterature)
+	r.GET("/project/literature-detail", handler.GetLiteratureDetail)
+	r.GET("/project/list-literature", handler.ListLiterature)
+	r.POST("/project/list-literature-page", handler.PageLiterature)
+	r.POST("/project/bind-literature", handler.BindLiterature)
+	r.POST("/project/unbind-literature", handler.UnbindLiterature)
+	r.POST("/project/list-literature-pool-page", handler.PageLiteraturePool)
 }
 
 func RegisterSheetRoutes(r *gin.RouterGroup, handler *handler.SheetHandler) {
@@ -378,6 +388,7 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 	r.GET("/agent/conversation/get", handler.GetConversation)
 
 	r.GET("/agent/skill/list", handler.ListSkills)
+	r.GET("/agent/project-context", handler.ProjectContext)
 }
 
 // serveStatic maps local image resources under /images.

@@ -254,6 +254,17 @@ func (s *AgentService) GetTask(ctx context.Context, id string) (*Task, error) {
 	return s.tasks.Get(ctx, id)
 }
 
+// ProjectContext 返回当前用户激活项目下的上下文文本块（例如已完成的分析节点）。
+//
+// 未配置项目上下文提供者或用户为空时返回空串；查询失败时返回错误。
+// 供 HTTP 层直接向用户展示注入 Agent 系统提示词的项目背景。
+func (s *AgentService) ProjectContext(ctx context.Context, userID string) (string, error) {
+	if s.project == nil || strings.TrimSpace(userID) == "" {
+		return "", nil
+	}
+	return s.project.ProjectContext(ctx, userID)
+}
+
 // GetPendingPermissions 查询任务当前待确认的权限请求。
 func (s *AgentService) GetPendingPermissions(ctx context.Context, taskID string) ([]*PermissionRequest, error) {
 	return s.perms.GetPending(ctx, taskID)

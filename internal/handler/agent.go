@@ -279,6 +279,30 @@ func (h *AgentHandler) ListSkills(c *gin.Context) {
 	c.JSON(http.StatusOK, h.skills.Manifests())
 }
 
+// ProjectContext godoc
+// @Summary      查看当前用户的项目上下文
+// @Description  返回当前用户激活项目下已注入 Agent 系统提示词的项目上下文文本块（如已完成的分析节点）
+// @Tags         Agent
+// @Produce      json
+// @Success      200  {object}  gin.H
+// @Failure      401  {object}  errors.AppError
+// @Failure      500  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/project-context [get]
+func (h *AgentHandler) ProjectContext(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	text, err := h.svc.ProjectContext(c.Request.Context(), userID)
+	if err != nil {
+		handleAgentError(c, err, "failed to get agent project context")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"project_context": text})
+}
+
 // GetTask godoc
 // @Summary      获取 Agent 任务
 // @Tags         Agent
