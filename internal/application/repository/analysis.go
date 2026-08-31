@@ -257,6 +257,19 @@ func (r *analysisRepository) ListAnalysisNodesByProjectIDAndScriptID(ctx context
 	return items, nil
 }
 
+func (r *analysisRepository) ListAnalysisNodesByProjectIDAndStatus(ctx context.Context, projectID int64, status string) ([]*types.AnalysisNode, error) {
+	items := make([]*types.AnalysisNode, 0)
+	err := r.db.WithContext(ctx).
+		Where("project_id = ? AND status = ?", projectID, status).
+		Order("updated_at DESC").
+		Limit(100).
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *analysisRepository) PageAnalysisNodesByProjectID(ctx context.Context, pagination *types.Pagination, projectID, scriptID int64) ([]*types.AnalysisNode, int64, error) {
 	items := make([]*types.AnalysisNode, 0)
 	query := r.db.WithContext(ctx).Model(&types.AnalysisNode{}).Where("project_id = ?", projectID)

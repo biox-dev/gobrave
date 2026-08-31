@@ -230,21 +230,24 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(func(db *gorm.DB) agent.MemoryRepository {
 		return agent.NewGormMemoryRepository(db)
 	}))
+	// 项目上下文提供者：把当前项目已完成的分析节点注入 Agent 的 SystemPrompt。
+	must(container.Provide(manager.NewAgentProjectContextProvider))
 	must(container.Provide(func(
 		client *agent.Client,
 		tasks agent.TaskRepository,
 		perms agent.PermissionRepository,
 		events agent.EventRepository,
 		mems agent.MemoryRepository,
+		projCtx *manager.AgentProjectContextProvider,
 	) *agent.AgentService {
 
 		return agent.NewService(agent.ServiceConfig{
-			Client: client,
-			Tasks:  tasks,
-			Perms:  agent.NewPermissionManager(perms),
-			Events: events,
-			Memory: agent.NewMemoryManager(agent.MemoryConfig{Repo: mems}), // Extractor: agent.MockMemoryExtractor(),
-
+			Client:  client,
+			Tasks:   tasks,
+			Perms:   agent.NewPermissionManager(perms),
+			Events:  events,
+			Memory:  agent.NewMemoryManager(agent.MemoryConfig{Repo: mems}), // Extractor: agent.MockMemoryExtractor(),
+			Project: projCtx,
 		})
 	}))
 	// Provide ConversationService：多轮对话编排层（复用 AgentService 的任务状态机）。

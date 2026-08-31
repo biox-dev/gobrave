@@ -22,13 +22,14 @@ import (
 //
 // Recover 用于后端重启后重建运行态。
 type AgentService struct {
-	client *Client
-	tasks  TaskRepository
-	perms  *PermissionManager
-	events EventRepository
-	bus    EventBus
-	policy PermissionPolicy
-	memory *MemoryManager
+	client  *Client
+	tasks   TaskRepository
+	perms   *PermissionManager
+	events  EventRepository
+	bus     EventBus
+	policy  PermissionPolicy
+	memory  *MemoryManager
+	project ProjectContextProvider
 
 	mu     sync.Mutex
 	active map[string]context.CancelFunc // taskID → 取消函数
@@ -36,13 +37,14 @@ type AgentService struct {
 
 // ServiceConfig 是 AgentService 的依赖配置。
 type ServiceConfig struct {
-	Client *Client
-	Tasks  TaskRepository
-	Perms  *PermissionManager
-	Events EventRepository
-	Bus    EventBus
-	Policy PermissionPolicy
-	Memory *MemoryManager
+	Client  *Client
+	Tasks   TaskRepository
+	Perms   *PermissionManager
+	Events  EventRepository
+	Bus     EventBus
+	Policy  PermissionPolicy
+	Memory  *MemoryManager
+	Project ProjectContextProvider
 }
 
 // NewService 创建 AgentService，未提供的依赖使用安全的默认值。
@@ -66,14 +68,15 @@ func NewService(cfg ServiceConfig) *AgentService {
 		cfg.Memory = NewMemoryManager(MemoryConfig{})
 	}
 	return &AgentService{
-		client: cfg.Client,
-		tasks:  cfg.Tasks,
-		perms:  cfg.Perms,
-		events: cfg.Events,
-		bus:    cfg.Bus,
-		policy: cfg.Policy,
-		memory: cfg.Memory,
-		active: make(map[string]context.CancelFunc),
+		client:  cfg.Client,
+		tasks:   cfg.Tasks,
+		perms:   cfg.Perms,
+		events:  cfg.Events,
+		bus:     cfg.Bus,
+		policy:  cfg.Policy,
+		memory:  cfg.Memory,
+		project: cfg.Project,
+		active:  make(map[string]context.CancelFunc),
 	}
 }
 
@@ -168,6 +171,8 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 
 	// 注入相关记忆：把检索到的长期记忆拼进 SystemPrompt，让 Agent「记得」相关背景。
 	req := s.injectMemory(ctx, task.Request)
+	// 注入项目上下文：把当前项目已完成的分析节点等背景拼进 SystemPrompt。
+	req = s.injectProjectContext(ctx, req)
 
 	var result *Result
 	var err error
@@ -371,6 +376,26 @@ func (s *AgentService) injectMemory(ctx context.Context, req Request) Request {
 	}
 	block := BuildMemoryContext(mems)
 	if block == "" {
+		return req
+	}
+	if req.SystemPrompt == "" {
+		req.SystemPrompt = block
+	} else {
+		req.SystemPrompt = req.SystemPrompt + "\n\n" + block
+	}
+	return req
+}
+
+// injectProjectContext 在调用前把当前项目已完成的分析节点等背景注入 SystemPrompt。
+//
+// 未配置项目上下文提供者、请求未携带 UserID、或查询不到上下文时，原样返回请求。
+// 与 injectMemory 不同，项目上下文是实时查询的领域状态（而非持久化记忆），因此不落库。
+func (s *AgentService) injectProjectContext(ctx context.Context, req Request) Request {
+	if s.project == nil || strings.TrimSpace(req.UserID) == "" {
+		return req
+	}
+	block, err := s.project.ProjectContext(ctx, req.UserID)
+	if err != nil || block == "" {
 		return req
 	}
 	if req.SystemPrompt == "" {
