@@ -21,6 +21,8 @@ const (
 	EventTaskCanceled       AgentEventType = "task.canceled"       // 任务取消
 	EventPermissionCreated  AgentEventType = "permission.created"  // 新增待确认权限
 	EventPermissionResolved AgentEventType = "permission.resolved" // 权限已被批准 / 拒绝
+	EventMemorySaved        AgentEventType = "memory.saved"        // 记忆已保存（Payload 为 Memory）
+	EventMemoryDeleted      AgentEventType = "memory.deleted"      // 记忆已删除（Payload 为 Memory）
 	EventStream             AgentEventType = "stream"              // 透传的流式事件（Payload 为 StreamEvent）
 )
 

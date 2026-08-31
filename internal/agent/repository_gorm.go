@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -34,6 +35,11 @@ func NewGormEventRepository(db *gorm.DB) EventRepository {
 // 不使用 GORM 的 HasMany 关联。
 func NewGormConversationRepository(db *gorm.DB) ConversationRepository {
 	return &gormConversationRepository{db: db}
+}
+
+// NewGormMemoryRepository 创建基于数据库的记忆 Repository。
+func NewGormMemoryRepository(db *gorm.DB) MemoryRepository {
+	return &gormMemoryRepository{db: db}
 }
 
 // ---- Task ----
@@ -331,4 +337,70 @@ func replaceMessages(tx *gorm.DB, conv *Conversation) error {
 		}
 	}
 	return nil
+}
+
+// ---- Memory ----
+
+type gormMemoryRepository struct {
+	db *gorm.DB
+}
+
+func (r *gormMemoryRepository) Create(ctx context.Context, m *Memory) error {
+	if m == nil {
+		return nil
+	}
+	return r.db.WithContext(ctx).Create(m).Error
+}
+
+func (r *gormMemoryRepository) Get(ctx context.Context, id string) (*Memory, error) {
+	var m Memory
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&m).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrMemoryNotFound
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
+func (r *gormMemoryRepository) Update(ctx context.Context, m *Memory) error {
+	if m == nil {
+		return nil
+	}
+	return r.db.WithContext(ctx).Save(m).Error
+}
+
+func (r *gormMemoryRepository) Delete(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&Memory{}).Error
+}
+
+func (r *gormMemoryRepository) ListByUser(ctx context.Context, userID string, offset, limit int, kinds ...MemoryKind) ([]*Memory, int64, error) {
+	q := r.db.WithContext(ctx).Model(&Memory{}).Where("user_id = ?", userID)
+	if len(kinds) > 0 {
+		q = q.Where("kind IN ?", kinds)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var mems []*Memory
+	if err := q.Order("updated_at DESC").Offset(offset).Limit(limit).Find(&mems).Error; err != nil {
+		return nil, 0, err
+	}
+	return mems, total, nil
+}
+
+func (r *gormMemoryRepository) Search(ctx context.Context, userID, query string, limit int) ([]*Memory, error) {
+	q := r.db.WithContext(ctx).Model(&Memory{}).Where("user_id = ?", userID)
+	if strings.TrimSpace(query) != "" {
+		q = q.Where("content LIKE ?", "%"+query+"%")
+	}
+
+	var mems []*Memory
+	if err := q.Order("importance DESC").Order("updated_at DESC").Limit(limit).Find(&mems).Error; err != nil {
+		return nil, err
+	}
+	return mems, nil
 }

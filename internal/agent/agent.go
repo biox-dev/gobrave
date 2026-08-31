@@ -64,6 +64,8 @@ type Request struct {
 	Model string `json:"model"`
 	// SessionID 可选：会话标识，用于把多次调用关联到同一会话（与权限 / 任务联动）。
 	SessionID string `json:"session_id"`
+	// UserID 可选：发起调用的用户，用于记忆（memory）的归属隔离与检索。
+	UserID string `json:"user_id,omitempty"`
 	// SystemPrompt 系统提示词。
 	SystemPrompt string `json:"system_prompt"`
 	// Messages 对话上下文（不含 SystemPrompt）。

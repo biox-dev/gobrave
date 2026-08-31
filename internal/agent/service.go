@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,6 +28,7 @@ type AgentService struct {
 	events EventRepository
 	bus    EventBus
 	policy PermissionPolicy
+	memory *MemoryManager
 
 	mu     sync.Mutex
 	active map[string]context.CancelFunc // taskID → 取消函数
@@ -40,6 +42,7 @@ type ServiceConfig struct {
 	Events EventRepository
 	Bus    EventBus
 	Policy PermissionPolicy
+	Memory *MemoryManager
 }
 
 // NewService 创建 AgentService，未提供的依赖使用安全的默认值。
@@ -59,6 +62,9 @@ func NewService(cfg ServiceConfig) *AgentService {
 	if cfg.Perms == nil {
 		cfg.Perms = NewPermissionManager(NewMemoryPermissionRepository())
 	}
+	if cfg.Memory == nil {
+		cfg.Memory = NewMemoryManager(MemoryConfig{})
+	}
 	return &AgentService{
 		client: cfg.Client,
 		tasks:  cfg.Tasks,
@@ -66,6 +72,7 @@ func NewService(cfg ServiceConfig) *AgentService {
 		events: cfg.Events,
 		bus:    cfg.Bus,
 		policy: cfg.Policy,
+		memory: cfg.Memory,
 		active: make(map[string]context.CancelFunc),
 	}
 }
@@ -159,12 +166,15 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 		return nil, fmt.Errorf("agent: no client configured")
 	}
 
+	// 注入相关记忆：把检索到的长期记忆拼进 SystemPrompt，让 Agent「记得」相关背景。
+	req := s.injectMemory(ctx, task.Request)
+
 	var result *Result
 	var err error
-	if task.Request.Stream {
-		result, err = s.client.StreamRuntime(ctx, task.Request, rt)
+	if req.Stream {
+		result, err = s.client.StreamRuntime(ctx, req, rt)
 	} else {
-		result, err = s.client.InvokeRuntime(ctx, task.Request, rt)
+		result, err = s.client.InvokeRuntime(ctx, req, rt)
 	}
 
 	switch {
@@ -176,6 +186,8 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 		return nil, fmt.Errorf("agent: empty result")
 	default:
 		_ = s.transitionTask(ctx, task.ID, TaskCompleted, "")
+		// 任务成功完成后，从本轮执行中提取值得长期记住的记忆。
+		s.extractMemory(ctx, task, req, result)
 		return result, nil
 	}
 }
@@ -295,6 +307,101 @@ func (s *AgentService) publish(ctx context.Context, taskID string, typ AgentEven
 	}
 	if s.bus != nil {
 		s.bus.Publish(ctx, *e)
+	}
+}
+
+// ---- Memory 调用面（供 HTTP / 上层业务操作记忆） ----
+
+// SaveMemory 创建或更新一条记忆，并广播记忆事件（实时通知层）。
+func (s *AgentService) SaveMemory(ctx context.Context, memory *Memory) error {
+	if s.memory == nil {
+		return ErrMemoryNotConfigured
+	}
+	if err := s.memory.Save(ctx, memory); err != nil {
+		return err
+	}
+	// 记忆是用户级（跨任务）对象，不归属某个任务的时间线，因此仅实时广播、不落事件流。
+	s.broadcastEvent(ctx, "", EventMemorySaved, memory)
+	return nil
+}
+
+// DeleteMemory 删除记忆，并广播记忆事件。
+func (s *AgentService) DeleteMemory(ctx context.Context, id string) error {
+	if s.memory == nil {
+		return ErrMemoryNotConfigured
+	}
+	mem, err := s.memory.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.memory.Delete(ctx, id); err != nil {
+		return err
+	}
+	s.broadcastEvent(ctx, "", EventMemoryDeleted, mem)
+	return nil
+}
+
+// ListMemory 分页查询某用户的记忆；kinds 为空表示全部类别。
+func (s *AgentService) ListMemory(ctx context.Context, userID string, offset, limit int, kinds ...MemoryKind) ([]*Memory, int64, error) {
+	if s.memory == nil {
+		return nil, 0, ErrMemoryNotConfigured
+	}
+	return s.memory.List(ctx, userID, offset, limit, kinds...)
+}
+
+// RetrieveMemory 检索与 query 相关的记忆。
+func (s *AgentService) RetrieveMemory(ctx context.Context, userID, query string, limit int) ([]*Memory, error) {
+	if s.memory == nil {
+		return nil, ErrMemoryNotConfigured
+	}
+	return s.memory.Retrieve(ctx, userID, query, limit)
+}
+
+// injectMemory 在调用前检索相关记忆并注入 SystemPrompt。
+//
+// 未配置记忆、请求未携带 UserID、或检索不到相关记忆时，原样返回请求。
+func (s *AgentService) injectMemory(ctx context.Context, req Request) Request {
+	if s.memory == nil || strings.TrimSpace(req.UserID) == "" {
+		return req
+	}
+	query := lastUserMessage(req.Messages)
+	mems, err := s.memory.Retrieve(ctx, req.UserID, query, defaultMemoryRetrieveLimit)
+	if err != nil || len(mems) == 0 {
+		return req
+	}
+	block := BuildMemoryContext(mems)
+	if block == "" {
+		return req
+	}
+	if req.SystemPrompt == "" {
+		req.SystemPrompt = block
+	} else {
+		req.SystemPrompt = req.SystemPrompt + "\n\n" + block
+	}
+	return req
+}
+
+// extractMemory 在任务成功完成后调用记忆提取器，把提取出的记忆写入 Repository 并广播。
+//
+// 提取器未配置或提取失败时静默跳过（记忆提取是尽力而为的旁路，不应影响任务结果）。
+func (s *AgentService) extractMemory(ctx context.Context, task *Task, req Request, result *Result) {
+	if s.memory == nil || strings.TrimSpace(req.UserID) == "" {
+		return
+	}
+	mems, err := s.memory.Extract(ctx, MemoryTurn{
+		UserID:    req.UserID,
+		SessionID: req.SessionID,
+		Request:   req,
+		Result:    result,
+	})
+	if err != nil {
+		return
+	}
+	for _, mem := range mems {
+		if err := s.memory.Save(ctx, mem); err != nil {
+			continue
+		}
+		s.broadcastEvent(ctx, task.ID, EventMemorySaved, mem)
 	}
 }
 

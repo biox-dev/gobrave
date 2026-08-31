@@ -243,6 +243,7 @@ func (s *ConversationService) CreateTurn(ctx context.Context, in TurnInput) (*Ta
 		Provider:     in.Provider,
 		Model:        in.Model,
 		SessionID:    conv.ID,
+		UserID:       in.UserID,
 		SystemPrompt: in.SystemPrompt,
 		Messages:     append([]Message(nil), conv.Messages...),
 		WorkingDir:   in.WorkingDir,
