@@ -15,9 +15,6 @@ import (
 // OutboxEventTypeAISummaryGenerateRequest 是 AI 摘要生成请求的 outbox 事件类型。
 const OutboxEventTypeAISummaryGenerateRequest = "AISummaryGenerateRequest"
 
-// aiSummarySystemPrompt 是生成摘要时使用的系统提示词。
-const aiSummarySystemPrompt = "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。"
-
 // Ensure AISummaryWorker implements event.Handler.
 var _ event.Handler = (*AISummaryWorker)(nil)
 
@@ -101,7 +98,7 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	}
 
 	result, err := w.agentService.RunTaskSync(ctx, agent.Request{
-		SystemPrompt: aiSummarySystemPrompt,
+		SystemPrompt: content.SystemPrompt,
 		WorkingDir:   content.WorkingDir,
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: content.Text},

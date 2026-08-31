@@ -9,11 +9,16 @@ import (
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
+// aiSummarySystemPrompt 是生成摘要时使用的系统提示词。
+const aiSummarySystemPrompt = "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。"
+
 // AISummaryContent 是生成摘要所需的原始内容。
 type AISummaryContent struct {
 	// Title 是摘要标题的候选值。
 	Title string
-	// Text 是交给 Agent 生成摘要的原始内容。
+	// SystemPrompt 是交给 Agent 生成摘要时的系统提示词。
+	SystemPrompt string
+	// Text 是交给 Agent 生成摘要的原始内容（用户输入）。
 	Text string
 
 	WorkingDir string
@@ -54,8 +59,9 @@ func (p *aiSummaryContentProvider) resolveAnalysis(ctx context.Context, analysis
 	}
 
 	return AISummaryContent{
-		Title:      fmt.Sprintf("分析摘要：%s", a.AnalysisName),
-		WorkingDir: a.OutputDir,
+		Title:        fmt.Sprintf("分析摘要：%s", a.AnalysisName),
+		SystemPrompt: aiSummarySystemPrompt,
+		WorkingDir:   a.OutputDir,
 		Text: strings.Join(filterNonEmpty([]string{
 			"分析名称: " + a.AnalysisName,
 			"分析方法: " + a.AnalysisMethod,
@@ -73,8 +79,9 @@ func (p *aiSummaryContentProvider) resolveAnalysisNode(ctx context.Context, node
 	}
 
 	return AISummaryContent{
-		Title:      fmt.Sprintf("节点摘要：%s", n.NodeName),
-		WorkingDir: n.OutputDir,
+		Title:        fmt.Sprintf("节点摘要：%s", n.NodeName),
+		SystemPrompt: aiSummarySystemPrompt,
+		WorkingDir:   n.OutputDir,
 		Text: strings.Join(filterNonEmpty([]string{
 			"节点名称: " + n.NodeName,
 			"节点 ID: " + n.NodeID,

@@ -28,6 +28,11 @@ type listAISummaryRequest struct {
 	OwnerType types.SummaryOwnerType `form:"owner_type" binding:"required"`
 }
 
+type aiSummaryInputRequest struct {
+	OwnerID   int64                  `form:"owner_id" binding:"required"`
+	OwnerType types.SummaryOwnerType `form:"owner_type" binding:"required"`
+}
+
 // CreateAISummary godoc
 // @Summary      创建 AI 摘要
 // @Description  根据 OwnerID/OwnerType 创建摘要记录，并异步触发 LLM 生成摘要
@@ -192,4 +197,37 @@ func (h *AISummaryHandler) DeleteAISummary(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "ai summary deleted successfully"})
+}
+
+// GetAISummaryInput godoc
+// @Summary      获取 AI 摘要的 LLM 输入信息
+// @Description  根据 OwnerID/OwnerType 解析生成摘要时交给 LLM 的系统提示词、工作目录与原始内容
+// @Tags         AI摘要
+// @Produce      json
+// @Param        owner_id    query     integer  true  "所属对象 ID"
+// @Param        owner_type  query     string   true  "所属对象类型：analysis 或 analysis_node"
+// @Success      200         {object}  types.AISummaryInput
+// @Failure      400         {object}  errors.AppError
+// @Failure      401         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
+// @Security     Bearer
+// @Router       /ai-summary/input [get]
+func (h *AISummaryHandler) GetAISummaryInput(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req aiSummaryInputRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	input, err := h.aiSummaryService.GetAISummaryInput(c.Request.Context(), req.OwnerType, req.OwnerID)
+	if err != nil {
+		handleDataError(c, err, "failed to get ai summary input")
+		return
+	}
+
+	c.JSON(http.StatusOK, input)
 }

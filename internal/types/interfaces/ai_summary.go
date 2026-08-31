@@ -27,4 +27,6 @@ type AISummaryService interface {
 	ListAISummariesByOwner(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) ([]*types.AISummary, error)
 	// DeleteAISummary 按摘要 ID 删除摘要记录。
 	DeleteAISummary(ctx context.Context, id int64) error
+	// GetAISummaryInput 按所属对象类型与 ID 解析生成摘要时交给 LLM 的输入信息。
+	GetAISummaryInput(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) (*types.AISummaryInput, error)
 }

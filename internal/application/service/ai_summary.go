@@ -12,10 +12,15 @@ import (
 type aiSummaryService struct {
 	summaryRepo   interfaces.AISummaryRepository
 	containerRepo interfaces.ContainerRepository
+	content       manager.AISummaryContentProvider
 }
 
-func NewAISummaryService(summaryRepo interfaces.AISummaryRepository, containerRepo interfaces.ContainerRepository) interfaces.AISummaryService {
-	return &aiSummaryService{summaryRepo: summaryRepo, containerRepo: containerRepo}
+func NewAISummaryService(
+	summaryRepo interfaces.AISummaryRepository,
+	containerRepo interfaces.ContainerRepository,
+	content manager.AISummaryContentProvider,
+) interfaces.AISummaryService {
+	return &aiSummaryService{summaryRepo: summaryRepo, containerRepo: containerRepo, content: content}
 }
 
 // CreateAISummary 创建摘要记录（pending 状态）并投递 outbox 事件，由
@@ -83,4 +88,19 @@ func (s *aiSummaryService) ListAISummariesByOwner(ctx context.Context, ownerType
 // DeleteAISummary 按摘要 ID 删除摘要记录。
 func (s *aiSummaryService) DeleteAISummary(ctx context.Context, id int64) error {
 	return s.summaryRepo.DeleteAISummary(ctx, id)
+}
+
+// GetAISummaryInput 按所属对象类型与 ID 解析生成摘要时交给 LLM 的输入信息。
+func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) (*types.AISummaryInput, error) {
+	content, err := s.content.Resolve(ctx, ownerType, ownerID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.AISummaryInput{
+		Title:        content.Title,
+		SystemPrompt: content.SystemPrompt,
+		WorkingDir:   content.WorkingDir,
+		Text:         content.Text,
+	}, nil
 }
