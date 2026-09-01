@@ -4,10 +4,11 @@ import "context"
 
 // Registration describes one app-session route bound to a concrete backend.
 type Registration struct {
-	RouteKey   string
-	PathPrefix string
-	Backend    Backend
-	Metadata   map[string]string
+	RouteKey            string
+	ContainerInstanceID int64
+	PathPrefix          string
+	Backend             Backend
+	Metadata            map[string]string
 }
 
 type Backend struct {
@@ -20,6 +21,7 @@ type Backend struct {
 type RouteRegistry interface {
 	UpsertRoute(ctx context.Context, route Registration) error
 	DeleteRoute(ctx context.Context, routeKey string) error
+	DeleteRouteByContainerInstanceID(ctx context.Context, containerInstanceID int64) error
 }
 
 // PathRouteResolver resolves an incoming request path to a registered route.

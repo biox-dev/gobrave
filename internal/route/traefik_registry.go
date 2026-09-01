@@ -37,6 +37,9 @@ type TraefikRegistry struct {
 	filePath   string
 	fileMu     sync.Mutex
 	client     *http.Client
+
+	instanceMu         sync.Mutex
+	instanceToRouteKey map[int64]string
 }
 
 type traefikRoutePayload struct {
@@ -181,6 +184,8 @@ func NewTraefikRegistry(cfg TraefikRegistryConfig) (*TraefikRegistry, error) {
 		authToken:  strings.TrimSpace(cfg.AuthToken),
 		filePath:   filePath,
 		client:     &http.Client{Timeout: timeout},
+
+		instanceToRouteKey: make(map[int64]string),
 	}, nil
 }
 
@@ -192,6 +197,7 @@ func (r *TraefikRegistry) UpsertRoute(ctx context.Context, route Registration) e
 		if err := r.upsertRouteToFile(route); err != nil {
 			return err
 		}
+		r.recordInstanceMapping(route)
 		logger.Infof(ctx, "[TraefikRegistry] upsert route(file) key=%s prefix=%s backend=%s:%d", route.RouteKey, route.PathPrefix, route.Backend.Host, route.Backend.Port)
 		return nil
 	}
@@ -224,6 +230,7 @@ func (r *TraefikRegistry) UpsertRoute(ctx context.Context, route Registration) e
 		return fmt.Errorf("traefik upsert route failed: method=%s url=%s status=%d body=%s%s", req.Method, req.URL.String(), resp.StatusCode, strings.TrimSpace(string(respBody)), hint)
 	}
 
+	r.recordInstanceMapping(route)
 	logger.Infof(ctx, "[TraefikRegistry] upsert route key=%s prefix=%s backend=%s:%d", route.RouteKey, route.PathPrefix, route.Backend.Host, route.Backend.Port)
 	return nil
 }
@@ -232,6 +239,7 @@ func (r *TraefikRegistry) DeleteRoute(ctx context.Context, routeKey string) erro
 	if strings.TrimSpace(routeKey) == "" {
 		return fmt.Errorf("route key is required")
 	}
+	r.removeInstanceMappingByRouteKey(routeKey)
 	if r.provider == "file" {
 		if err := r.deleteRouteFromFile(routeKey); err != nil {
 			return err
@@ -263,6 +271,41 @@ func (r *TraefikRegistry) DeleteRoute(ctx context.Context, routeKey string) erro
 
 	logger.Infof(ctx, "[TraefikRegistry] delete route key=%s", routeKey)
 	return nil
+}
+
+func (r *TraefikRegistry) DeleteRouteByContainerInstanceID(ctx context.Context, containerInstanceID int64) error {
+	if containerInstanceID <= 0 {
+		return fmt.Errorf("container instance id is required")
+	}
+
+	r.instanceMu.Lock()
+	routeKey := r.instanceToRouteKey[containerInstanceID]
+	r.instanceMu.Unlock()
+
+	if routeKey == "" {
+		return nil
+	}
+
+	return r.DeleteRoute(ctx, routeKey)
+}
+
+func (r *TraefikRegistry) recordInstanceMapping(route Registration) {
+	if route.ContainerInstanceID <= 0 {
+		return
+	}
+	r.instanceMu.Lock()
+	defer r.instanceMu.Unlock()
+	r.instanceToRouteKey[route.ContainerInstanceID] = route.RouteKey
+}
+
+func (r *TraefikRegistry) removeInstanceMappingByRouteKey(routeKey string) {
+	r.instanceMu.Lock()
+	defer r.instanceMu.Unlock()
+	for id, key := range r.instanceToRouteKey {
+		if key == routeKey {
+			delete(r.instanceToRouteKey, id)
+		}
+	}
 }
 
 func (r *TraefikRegistry) resolvePath(pathTemplate string, routeKey string) string {

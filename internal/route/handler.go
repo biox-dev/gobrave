@@ -32,14 +32,15 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 	}
 
 	ctx := context.Background()
-	routeKey, inst, appSession, tpl, err := h.loadContext(ctx, ce.ContainerInstanceID)
-	if err != nil {
-		logger.Warnf(ctx, "[RouteRegistryHandler] skip event=%s instance_id=%d: %v", ce.Event, ce.ContainerInstanceID, err)
-		return
-	}
 
 	switch ce.Event {
 	case "ContainerStarted", "ContainerResumed":
+		routeKey, inst, appSession, tpl, err := h.loadContext(ctx, ce.ContainerInstanceID)
+		if err != nil {
+			logger.Warnf(ctx, "[RouteRegistryHandler] skip event=%s instance_id=%d: %v", ce.Event, ce.ContainerInstanceID, err)
+			return
+		}
+
 		port := tpl.Port
 		if port == 0 {
 			logger.Warnf(ctx, "[RouteRegistryHandler] skip register route key=%s: unresolved backend port", routeKey)
@@ -51,8 +52,9 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 		}
 
 		reg := Registration{
-			RouteKey:   routeKey,
-			PathPrefix: fmt.Sprintf("%s/%s/%d", config.ResolveAppsPathPrefix(h.cfg), appSession.AppType, appSession.ID),
+			RouteKey:            routeKey,
+			ContainerInstanceID: inst.ID,
+			PathPrefix:          fmt.Sprintf("%s/%s/%d", config.ResolveAppsPathPrefix(h.cfg), appSession.AppType, appSession.ID),
 			Backend: Backend{
 				Host: strings.TrimSpace(inst.IPAddress),
 				Port: port,
@@ -74,11 +76,11 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 		logger.Infof(ctx, "[RouteRegistryHandler] route upserted key=%s event=%s", reg.RouteKey, ce.Event)
 
 	case "ContainerStopped", "ContainerDeleted", "ContainerFailed":
-		if err := h.registry.DeleteRoute(ctx, routeKey); err != nil {
-			logger.Errorf(ctx, "[RouteRegistryHandler] delete route failed key=%s err=%v", routeKey, err)
+		if err := h.registry.DeleteRouteByContainerInstanceID(ctx, ce.ContainerInstanceID); err != nil {
+			logger.Errorf(ctx, "[RouteRegistryHandler] delete route failed instance_id=%d err=%v", ce.ContainerInstanceID, err)
 			return
 		}
-		logger.Infof(ctx, "[RouteRegistryHandler] route deleted key=%s event=%s", routeKey, ce.Event)
+		logger.Infof(ctx, "[RouteRegistryHandler] route deleted instance_id=%d event=%s", ce.ContainerInstanceID, ce.Event)
 	}
 }
 

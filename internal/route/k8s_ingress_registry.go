@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -113,11 +114,15 @@ func (r *K8sIngressRegistry) UpsertRoute(ctx context.Context, route Registration
 	if len(middlewareRefs) > 0 {
 		annotations[traefikRouterMiddlewaresAnnotation] = strings.Join(middlewareRefs, ",")
 	}
+	labels := map[string]string{"gobrave-route-key": cleaned.RouteKey}
+	if cleaned.ContainerInstanceID > 0 {
+		labels["gobrave-container-instance-id"] = strconv.FormatInt(cleaned.ContainerInstanceID, 10)
+	}
 	ing := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
 			Namespace:   svcNS,
-			Labels:      map[string]string{"gobrave-route-key": cleaned.RouteKey},
+			Labels:      labels,
 			Annotations: annotations,
 		},
 		Spec: networkingv1.IngressSpec{
@@ -196,6 +201,30 @@ func (r *K8sIngressRegistry) DeleteRoute(ctx context.Context, routeKey string) e
 
 	if len(list.Items) == 0 {
 		if err := r.deleteProfileMiddlewares(ctx, r.namespace, routeKey); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *K8sIngressRegistry) DeleteRouteByContainerInstanceID(ctx context.Context, containerInstanceID int64) error {
+	if containerInstanceID <= 0 {
+		return fmt.Errorf("container instance id is required")
+	}
+
+	selector := "gobrave-container-instance-id=" + strconv.FormatInt(containerInstanceID, 10)
+	list, err := r.clientset.NetworkingV1().Ingresses(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return fmt.Errorf("list ingress by container instance id %d: %w", containerInstanceID, err)
+	}
+
+	for _, item := range list.Items {
+		routeKey := item.Labels["gobrave-route-key"]
+		if routeKey == "" {
+			continue
+		}
+		if err := r.DeleteRoute(ctx, routeKey); err != nil {
 			return err
 		}
 	}

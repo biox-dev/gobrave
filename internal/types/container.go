@@ -313,6 +313,8 @@ func (t *ContainerEvent) BeforeCreate(_ *gorm.DB) error {
 type GatewayRoute struct {
 	RouteKey string `json:"route_key" gorm:"primaryKey;type:varchar(255)"`
 
+	ContainerInstanceID int64 `json:"container_instance_id,string" gorm:"index"`
+
 	PathPrefix string `json:"path_prefix" gorm:"type:varchar(512);not null;uniqueIndex"`
 
 	BackendHost string `json:"backend_host" gorm:"type:varchar(255);not null"`

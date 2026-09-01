@@ -121,6 +121,31 @@ func (r *GatewayRegistry) DeleteRoute(ctx context.Context, routeKey string) erro
 	return nil
 }
 
+func (r *GatewayRegistry) DeleteRouteByContainerInstanceID(ctx context.Context, containerInstanceID int64) error {
+	if containerInstanceID <= 0 {
+		return fmt.Errorf("container instance id is required")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for key, reg := range r.routesByKey {
+		if reg.ContainerInstanceID == containerInstanceID {
+			delete(r.routesByKey, key)
+			delete(r.keyByPrefix, reg.PathPrefix)
+		}
+	}
+	r.rebuildPrefixIndex()
+
+	if err := r.deleteRouteLockedByContainerInstanceID(ctx, containerInstanceID); err != nil {
+		r.rebuildFromDBLocked(ctx)
+		return err
+	}
+
+	logger.Infof(ctx, "[GatewayRegistry] delete route container_instance_id=%d", containerInstanceID)
+	return nil
+}
+
 func (r *GatewayRegistry) loadFromDB() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -140,8 +165,9 @@ func (r *GatewayRegistry) rebuildFromDBLocked(ctx context.Context) error {
 
 	for _, row := range rows {
 		reg := Registration{
-			RouteKey:   row.RouteKey,
-			PathPrefix: row.PathPrefix,
+			RouteKey:            row.RouteKey,
+			ContainerInstanceID: row.ContainerInstanceID,
+			PathPrefix:          row.PathPrefix,
 			Backend: Backend{
 				Host: row.BackendHost,
 				Port: row.BackendPort,
@@ -180,11 +206,12 @@ func (r *GatewayRegistry) upsertRouteLocked(ctx context.Context, route Registrat
 	}
 
 	entity := &types.GatewayRoute{
-		RouteKey:    route.RouteKey,
-		PathPrefix:  route.PathPrefix,
-		BackendHost: route.Backend.Host,
-		BackendPort: route.Backend.Port,
-		Metadata:    metadata,
+		RouteKey:            route.RouteKey,
+		ContainerInstanceID: route.ContainerInstanceID,
+		PathPrefix:          route.PathPrefix,
+		BackendHost:         route.Backend.Host,
+		BackendPort:         route.Backend.Port,
+		Metadata:            metadata,
 	}
 
 	if err := r.db.WithContext(ctx).Save(entity).Error; err != nil {
@@ -196,6 +223,10 @@ func (r *GatewayRegistry) upsertRouteLocked(ctx context.Context, route Registrat
 
 func (r *GatewayRegistry) deleteRouteLocked(ctx context.Context, routeKey string) error {
 	return r.db.WithContext(ctx).Where("route_key = ?", routeKey).Delete(&types.GatewayRoute{}).Error
+}
+
+func (r *GatewayRegistry) deleteRouteLockedByContainerInstanceID(ctx context.Context, containerInstanceID int64) error {
+	return r.db.WithContext(ctx).Where("container_instance_id = ?", containerInstanceID).Delete(&types.GatewayRoute{}).Error
 }
 
 func (r *GatewayRegistry) rebuildPrefixIndex() {
