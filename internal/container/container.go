@@ -141,31 +141,33 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	// Register container runtimes based on configuration
 	must(container.Invoke(func(cfg *config.Config, reg *containerruntime.Registry) error {
-		switch config.ResolveContainerRuntime(cfg) {
-		case "docker":
-			rt := dockerruntime.NewDockerRuntime()
-			reg.Register(rt.Name(), rt)
-			return nil
-		case "k8s", "k3s":
-			kcfg := &config.KubernetesRuntimeConfig{Namespace: "default"}
-			if cfg != nil && cfg.Container != nil && cfg.Container.Kubernetes != nil {
-				kcfg = cfg.Container.Kubernetes
-			}
+		runtimes := config.ResolveContainerRuntimes(cfg)
+		for _, name := range runtimes {
+			switch name {
+			case "docker":
+				rt := dockerruntime.NewDockerRuntime()
+				reg.Register(rt.Name(), rt)
+			case "k8s", "k3s":
+				kcfg := &config.KubernetesRuntimeConfig{Namespace: "default"}
+				if cfg != nil && cfg.Container != nil && cfg.Container.Kubernetes != nil {
+					kcfg = cfg.Container.Kubernetes
+				}
 
-			rt, err := kubernetesruntime.NewKubernetesRuntime(kubernetesruntime.KubernetesRuntimeConfig{
-				RuntimeName: config.ResolveContainerRuntime(cfg),
-				Namespace:   kcfg.Namespace,
-				Kubeconfig:  kcfg.Kubeconfig,
-				InCluster:   kcfg.InCluster,
-			})
-			if err != nil {
-				return err
+				rt, err := kubernetesruntime.NewKubernetesRuntime(kubernetesruntime.KubernetesRuntimeConfig{
+					RuntimeName: name,
+					Namespace:   kcfg.Namespace,
+					Kubeconfig:  kcfg.Kubeconfig,
+					InCluster:   kcfg.InCluster,
+				})
+				if err != nil {
+					return err
+				}
+				reg.Register(rt.Name(), rt)
+			default:
+				return fmt.Errorf("unsupported container runtime: %s", name)
 			}
-			reg.Register(rt.Name(), rt)
-			return nil
-		default:
-			return fmt.Errorf("unsupported container runtime: %s", config.ResolveContainerRuntime(cfg))
 		}
+		return nil
 	}))
 
 	logger.Debugf(ctx, "[Container] Registering timeline repository...")

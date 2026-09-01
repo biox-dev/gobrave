@@ -62,8 +62,10 @@ realtime:
 
 
 container:
-  # docker | k8s | k3s
-  runtime: docker
+  # 启动时注册的运行时列表
+  runtimes: [docker]
+  # 默认使用的运行时
+  default_runtime: docker
   kubernetes:
     namespace: default
     kubeconfig: ""

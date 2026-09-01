@@ -182,17 +182,18 @@ func (m *ContainerManager) CreateByTemplate(
 		return nil, err
 	}
 
-	_, err = m.getRuntime()
+	rt, err := m.getRuntime()
 	if err != nil {
 		return nil, err
 	}
 
 	inst := &types.ContainerInstance{
-		TemplateID: templateID,
-		OwnerType:  ownerType,
-		OwnerID:    ownerID,
-		Name:       name,
-		Status:     types.ContainerCreatePending,
+		RuntimeName: rt.Name(),
+		TemplateID:  templateID,
+		OwnerType:   ownerType,
+		OwnerID:     ownerID,
+		Name:        name,
+		Status:      types.ContainerCreatePending,
 	}
 
 	// Always enqueue the create request through the worker.
@@ -735,24 +736,48 @@ func (m *ContainerManager) resolveRuntimeName() string {
 	return "docker"
 }
 
-func (m *ContainerManager) getRuntimeByInstance(inst *types.ContainerInstance) (containerruntime.Runtime, error) {
+// getRuntimeByInstance resolves a runtime from a container instance's RuntimeID.
+func (w *ContainerManager) getRuntimeByInstance(inst *types.ContainerInstance) (containerruntime.Runtime, error) {
 	if inst == nil {
 		return nil, errors.New("container instance is nil")
 	}
 
-	for _, item := range m.reg.List() {
-		if strings.HasPrefix(inst.RuntimeID, item.Name()+"-") {
+	for _, item := range w.reg.List() {
+		// 判断字符串相等
+		if inst.RuntimeName == item.Name() {
 			return item, nil
 		}
 	}
 
-	items := m.reg.List()
-	if len(items) == 1 {
-		return items[0], nil
+	// items := w.reg.List()
+	// if len(items) == 1 {
+	// 	return items[0], nil
+	// }
+	rt, err := w.getRuntime()
+	if err != nil {
+		return nil, err
 	}
-
-	return nil, fmt.Errorf("failed to resolve runtime for instance %d", inst.ID)
+	return rt, nil
 }
+
+// func (m *ContainerManager) getRuntimeByInstance(inst *types.ContainerInstance) (containerruntime.Runtime, error) {
+// 	if inst == nil {
+// 		return nil, errors.New("container instance is nil")
+// 	}
+
+// 	for _, item := range m.reg.List() {
+// 		if strings.HasPrefix(inst.RuntimeID, item.Name()+"-") {
+// 			return item, nil
+// 		}
+// 	}
+
+// 	items := m.reg.List()
+// 	if len(items) == 1 {
+// 		return items[0], nil
+// 	}
+
+// 	return nil, fmt.Errorf("failed to resolve runtime for instance %d", inst.ID)
+// }
 
 // func (m *ContainerManager) getInstanceAndRuntime(ctx context.Context, id int64) (*types.ContainerInstance, containerruntime.Runtime, error) {
 // inst, err := m.repo.GetContainerInstanceByID(ctx, id)

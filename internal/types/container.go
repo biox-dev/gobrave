@@ -253,6 +253,8 @@ type ContainerInstance struct {
 
 	OwnerID int64 `json:"owner_id,string" gorm:"index;not null"`
 
+	RuntimeName string `json:"runtime_name" gorm:"type:varchar(255);index;not null"`
+
 	// NodeID *uint64 `gorm:"index"`
 
 	RuntimeID string `json:"runtime_id" gorm:"type:varchar(255);index"`

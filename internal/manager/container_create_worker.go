@@ -350,8 +350,8 @@ func (w *ContainerCreateWorker) executeCreate(
 		return err
 	}
 
-	// rt, err := w.getRuntimeByName(runtimeName)
-	rt, err := w.containerManager.getRuntime()
+	rt, err := w.getRuntimeByInstance(inst)
+	// rt, err := w.containerManager.getRuntime()
 	if err != nil {
 		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerRuntimeNotFound")
 		return err
@@ -630,25 +630,9 @@ func (w *ContainerCreateWorker) executeDelete(ctx context.Context, instanceID in
 
 	return nil
 }
-
-// getRuntimeByInstance resolves a runtime from a container instance's RuntimeID.
 func (w *ContainerCreateWorker) getRuntimeByInstance(inst *types.ContainerInstance) (containerruntime.Runtime, error) {
-	if inst == nil {
-		return nil, errors.New("container instance is nil")
-	}
+	return w.containerManager.getRuntimeByInstance(inst)
 
-	for _, item := range w.reg.List() {
-		if strings.HasPrefix(inst.RuntimeID, item.Name()+"-") {
-			return item, nil
-		}
-	}
-
-	items := w.reg.List()
-	if len(items) == 1 {
-		return items[0], nil
-	}
-
-	return nil, fmt.Errorf("failed to resolve runtime for instance %d", inst.ID)
 }
 
 // func (w *ContainerCreateWorker) acquireCapacityAndTransition(

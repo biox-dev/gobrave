@@ -18,20 +18,20 @@ import (
 
 // CLIFlags holds command-line arguments that can override config.yml values.
 type CLIFlags struct {
-	ConfigPath string // --config, config file path
-	Port       int    // --port, server port
-	Host       string // --host, server host
-	LogPath    string // --log-path, server log path
-	DBDriver   string // --db-driver, database driver (sqlite/postgres)
-	DBHost     string // --db-host, database host
-	DBPort     string // --db-port, database port
-	DBUser     string // --db-user, database user
-	DBPassword string // --db-password, database password
-	DBName     string // --db-name, database name
-	DBPath     string // --db-path, sqlite database file path
-	DBSSLMode  string // --db-ssl-mode, database ssl mode
-	Runtime    string // --runtime, container runtime (docker/k8s/k3s)
-	BaseDir    string // --base-dir, storage base directory
+	ConfigPath     string // --config, config file path
+	Port           int    // --port, server port
+	Host           string // --host, server host
+	LogPath        string // --log-path, server log path
+	DBDriver       string // --db-driver, database driver (sqlite/postgres)
+	DBHost         string // --db-host, database host
+	DBPort         string // --db-port, database port
+	DBUser         string // --db-user, database user
+	DBPassword     string // --db-password, database password
+	DBName         string // --db-name, database name
+	DBPath         string // --db-path, sqlite database file path
+	DBSSLMode      string // --db-ssl-mode, database ssl mode
+	DefaultRuntime string // --default-runtime, default container runtime (docker/k8s/k3s)
+	BaseDir        string // --base-dir, storage base directory
 
 	// disableRegistration points to a bool set by --disable-registration.
 	// nil means the flag was not provided on the command line.
@@ -73,7 +73,7 @@ func ParseCLIFlags() *CLIFlags {
 	flag.StringVar(&f.DBName, "db-name", "", "Database name")
 	flag.StringVar(&f.DBPath, "db-path", "", "SQLite database file path")
 	flag.StringVar(&f.DBSSLMode, "db-ssl-mode", "", "Database SSL mode")
-	flag.StringVar(&f.Runtime, "runtime", "", "Container runtime: docker, k8s, k3s")
+	flag.StringVar(&f.DefaultRuntime, "default-runtime", "", "Default container runtime: docker, k8s, k3s")
 	flag.StringVar(&f.BaseDir, "base-dir", "", "Storage base directory (overrides config.yml)")
 	flag.Func("disable-registration", "Disable user registration (true/false)", func(s string) error {
 		v, err := strconv.ParseBool(s)
@@ -163,14 +163,19 @@ type RealtimeConfig struct {
 }
 
 type ContainerConfig struct {
-	Runtime                             string                   `yaml:"runtime" json:"runtime"`
-	Kubernetes                          *KubernetesRuntimeConfig `yaml:"kubernetes" json:"kubernetes"`
-	RefreshImageStatusOnStart           bool                     `yaml:"refresh_image_status_on_start" json:"refresh_image_status_on_start"`
-	RecoverRunningDagOnStart            bool                     `yaml:"recover_running_dag_on_start" json:"recover_running_dag_on_start"`
-	CleanupDagNodeContainersBeforeStart bool                     `yaml:"cleanup_dag_node_containers_before_start" json:"cleanup_dag_node_containers_before_start"`
-	DeleteContainerOnNodeSuccess        bool                     `yaml:"delete_container_on_node_success" json:"delete_container_on_node_success"`
-	DagNodeCleanupOnFailed              string                   `yaml:"dag_node_cleanup_on_failed" json:"dag_node_cleanup_on_failed"`
-	DagNodeCleanupOnDagFinished         string                   `yaml:"dag_node_cleanup_on_dag_finished" json:"dag_node_cleanup_on_dag_finished"`
+	Kubernetes *KubernetesRuntimeConfig `yaml:"kubernetes" json:"kubernetes"`
+	// Runtimes is the list of container runtimes to register at startup.
+	// e.g. [docker, k8s]. Each entry is normalized via normalizeContainerRuntime.
+	Runtimes []string `yaml:"runtimes" json:"runtimes"`
+	// DefaultRuntime is the runtime used when no specific runtime is selected.
+	// Falls back to the first entry in Runtimes, then "docker".
+	DefaultRuntime                      string `yaml:"default_runtime" json:"default_runtime"`
+	RefreshImageStatusOnStart           bool   `yaml:"refresh_image_status_on_start" json:"refresh_image_status_on_start"`
+	RecoverRunningDagOnStart            bool   `yaml:"recover_running_dag_on_start" json:"recover_running_dag_on_start"`
+	CleanupDagNodeContainersBeforeStart bool   `yaml:"cleanup_dag_node_containers_before_start" json:"cleanup_dag_node_containers_before_start"`
+	DeleteContainerOnNodeSuccess        bool   `yaml:"delete_container_on_node_success" json:"delete_container_on_node_success"`
+	DagNodeCleanupOnFailed              string `yaml:"dag_node_cleanup_on_failed" json:"dag_node_cleanup_on_failed"`
+	DagNodeCleanupOnDagFinished         string `yaml:"dag_node_cleanup_on_dag_finished" json:"dag_node_cleanup_on_dag_finished"`
 	// CreateQueueMaxConcurrency limits how many containers can be created concurrently.
 	CreateQueueMaxConcurrency int `yaml:"create_queue_max_concurrency" json:"create_queue_max_concurrency"`
 	// CreateQueueMaxPending limits how many creation requests can wait in the queue.
@@ -376,7 +381,7 @@ func LoadConfig() (*Config, error) {
 			Providers: map[string]AgentProviderConfig{},
 		},
 		Container: &ContainerConfig{
-			Runtime:                             "docker",
+			DefaultRuntime:                      "docker",
 			Kubernetes:                          &KubernetesRuntimeConfig{Namespace: "default"},
 			RefreshImageStatusOnStart:           true,
 			RecoverRunningDagOnStart:            true,
@@ -447,7 +452,7 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.Container == nil {
 		cfg.Container = &ContainerConfig{
-			Runtime:                             "docker",
+			DefaultRuntime:                      "docker",
 			Kubernetes:                          &KubernetesRuntimeConfig{Namespace: "default"},
 			RefreshImageStatusOnStart:           true,
 			RecoverRunningDagOnStart:            true,
@@ -457,7 +462,7 @@ func LoadConfig() (*Config, error) {
 			DagNodeCleanupOnDagFinished:         "delete",
 		}
 	}
-	cfg.Container.Runtime = normalizeContainerRuntime(cfg.Container.Runtime)
+	cfg.Container.DefaultRuntime = normalizeContainerRuntime(cfg.Container.DefaultRuntime)
 	if cfg.Container.Kubernetes == nil {
 		cfg.Container.Kubernetes = &KubernetesRuntimeConfig{Namespace: "default"}
 	}
@@ -569,7 +574,42 @@ func ResolveContainerRuntime(cfg *Config) string {
 	if cfg == nil || cfg.Container == nil {
 		return "docker"
 	}
-	return normalizeContainerRuntime(cfg.Container.Runtime)
+	// Prefer the explicit default runtime.
+	if name := strings.TrimSpace(cfg.Container.DefaultRuntime); name != "" {
+		return normalizeContainerRuntime(name)
+	}
+	// Fall back to the first entry in the runtimes list.
+	for _, name := range cfg.Container.Runtimes {
+		if n := strings.TrimSpace(name); n != "" {
+			return normalizeContainerRuntime(n)
+		}
+	}
+	return "docker"
+}
+
+// ResolveContainerRuntimes returns the normalized list of container runtimes
+// to register at startup. It prefers the explicit `runtimes` list and falls
+// back to the single resolved default runtime.
+func ResolveContainerRuntimes(cfg *Config) []string {
+	if cfg == nil || cfg.Container == nil {
+		return []string{"docker"}
+	}
+	if len(cfg.Container.Runtimes) > 0 {
+		seen := make(map[string]struct{}, len(cfg.Container.Runtimes))
+		out := make([]string, 0, len(cfg.Container.Runtimes))
+		for _, name := range cfg.Container.Runtimes {
+			n := normalizeContainerRuntime(strings.TrimSpace(name))
+			if _, ok := seen[n]; ok {
+				continue
+			}
+			seen[n] = struct{}{}
+			out = append(out, n)
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return []string{ResolveContainerRuntime(cfg)}
 }
 
 func normalizePathPrefix(value, fallback string) string {
@@ -684,12 +724,12 @@ func applyCLIOverrides(cfg *Config) {
 		cfg.Database.SSLMode = f.DBSSLMode
 	}
 
-	// Container runtime
-	if f.Runtime != "" {
+	// Default container runtime
+	if f.DefaultRuntime != "" {
 		if cfg.Container == nil {
 			cfg.Container = &ContainerConfig{}
 		}
-		cfg.Container.Runtime = f.Runtime
+		cfg.Container.DefaultRuntime = f.DefaultRuntime
 	}
 
 	// Storage

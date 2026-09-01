@@ -115,8 +115,12 @@ ai_summary:
   system_prompt: "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。"
 
 container:
-  # docker | k8s | k3s
-  runtime: docker
+  # 启动时注册的容器运行时列表（可同时注册多个，例如 [docker, k8s]）。
+  # 留空时回退到 default_runtime 指定的单一运行时。
+  runtimes: [docker]
+  # 默认使用的运行时（运行时未显式指定时优先使用）。
+  # 留空时回退到 runtimes 第一个，最后回退到 docker。
+  default_runtime: docker
   kubernetes:
     namespace: default
     # 留空时使用 KUBECONFIG 或 ~/.kube/config
