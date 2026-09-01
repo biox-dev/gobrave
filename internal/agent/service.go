@@ -143,14 +143,31 @@ func (s *AgentService) StartTask(ctx context.Context, taskID int64, handler Stre
 //
 // 供需要一次性拿到结果的业务（如 AISummaryWorker）使用，替代直接调用 agent.Client.Invoke。
 // 与 RunTask / StartTask 不同，它不启动 goroutine，直接在调用方同步执行。
+//
+// 若调用方需要在任务创建后、执行前拿到 taskID（例如把摘要记录立即关联到任务），
+// 请改用 CreateTask + RunTaskSyncByID 的两步形式。
 func (s *AgentService) RunTaskSync(ctx context.Context, req Request) (*Result, error) {
-	task := NewTask(req)
-	if err := s.tasks.Create(ctx, task); err != nil {
+	task, err := s.CreateTask(ctx, req)
+	if err != nil {
 		return nil, err
 	}
-	s.emitEvent(ctx, task.ID, EventTaskCreated, task)
+	return s.RunTaskSyncByID(ctx, task.ID)
+}
 
-	return s.run(ctx, task, s.newTaskRuntime(task.ID, nil))
+// RunTaskSyncByID 同步执行已创建的任务，返回聚合结果。
+//
+// 与 RunTaskSync 的区别在于任务创建被前置：调用方可以先 CreateTask 拿到 taskID 并完成
+// 关联（例如 AISummaryWorker 在生成前把摘要与任务绑定），再调用本方法执行。
+func (s *AgentService) RunTaskSyncByID(ctx context.Context, taskID int64) (*Result, error) {
+	task, err := s.tasks.Get(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.run(ctx, task, s.newTaskRuntime(taskID, nil))
+	if result != nil {
+		result.TaskID = taskID
+	}
+	return result, err
 }
 
 // execute 是异步任务的执行体：清理 active 注册后复用 run 执行任务主体。

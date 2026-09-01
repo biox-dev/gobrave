@@ -94,6 +94,8 @@ type Usage struct {
 
 // Result 是一次 Invoke / Stream 调用的最终聚合结果。
 type Result struct {
+	// TaskID 本次调用对应的 Agent 任务 ID（agent_tasks 表），仅任务模式（RunTaskSync）下返回。
+	TaskID  int64           `json:"task_id,string,omitempty"`
 	Content string          `json:"content"`
 	Usage   Usage           `json:"usage"`
 	Raw     json.RawMessage `json:"raw,omitempty"` // Provider 原始返回，便于调试与扩展

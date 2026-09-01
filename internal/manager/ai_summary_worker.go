@@ -76,10 +76,12 @@ func (w *AISummaryWorker) handleGenerateRequest(ctx context.Context, req AISumma
 
 // process 执行摘要生成，完整调用链路为：
 //
-//	加载记录 → 置为生成中 → 解析所属对象原始内容 → 调用 Agent 生成摘要 → 更新状态。
+//	加载记录 → 置为生成中 → 解析所属对象原始内容 → 创建 Agent 任务并绑定摘要 →
+//	同步执行生成摘要 → 更新状态。
 //
-// 这里通过 AgentService.RunTaskSync 同步执行一次性任务；若后续摘要需要边生成边推送给
-// 前端，可切换为任务流式模式并在 StreamHandler 中逐块发布状态事件。
+// 这里先通过 AgentService.CreateTask 创建一次性任务、立即把 taskID 写入摘要记录，
+// 再通过 RunTaskSyncByID 同步执行，确保生成期间即使进程崩溃，摘要与任务也不脱钩；
+// 若后续摘要需要边生成边推送给前端，可切换为任务流式模式并在 StreamHandler 中逐块发布状态事件。
 func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	summary, err := w.summaryRepo.GetAISummaryByID(ctx, summaryID)
 	if err != nil {
@@ -97,13 +99,24 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 		return fmt.Errorf("resolve summary source: %w", err)
 	}
 
-	result, err := w.agentService.RunTaskSync(ctx, agent.Request{
+	task, err := w.agentService.CreateTask(ctx, agent.Request{
 		SystemPrompt: content.SystemPrompt,
 		WorkingDir:   content.WorkingDir,
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: content.Text},
 		},
 	})
+	if err != nil {
+		return fmt.Errorf("create agent task: %w", err)
+	}
+
+	// 任务创建后立即把 task 关联到摘要记录，避免执行期间进程崩溃 / 失败时摘要与任务脱钩。
+	summary.TaskID = task.ID
+	if err := w.summaryRepo.UpdateAISummary(ctx, summary); err != nil {
+		return fmt.Errorf("bind agent task to summary: %w", err)
+	}
+
+	result, err := w.agentService.RunTaskSyncByID(ctx, task.ID)
 	if err != nil {
 		return fmt.Errorf("agent run task: %w", err)
 	}
