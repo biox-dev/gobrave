@@ -260,6 +260,19 @@ func (s *AgentService) GetTask(ctx context.Context, id int64) (*Task, error) {
 	return s.tasks.Get(ctx, id)
 }
 
+// GetTaskRequest 按任务 ID 加载任务，应用 Agent Profile 后返回实际发送给 LLM 的请求内容。
+//
+// 供 UI 调试 / 审计使用：它复用了 run 路径上的 applyProfile（系统提示词合并、技能选择、
+// 记忆 / 项目上下文注入），因此结果与任务实际执行时发给 Provider 的 Request 一致。
+func (s *AgentService) GetTaskRequest(ctx context.Context, taskID int64) (*Request, error) {
+	task, err := s.tasks.Get(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	req := s.applyProfile(ctx, task.Request)
+	return &req, nil
+}
+
 // ProjectContext 返回当前用户激活项目下的上下文文本块（例如已完成的分析节点）。
 //
 // 未配置项目上下文提供者或用户为空时返回空串；查询失败时返回错误。

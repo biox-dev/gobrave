@@ -528,6 +528,42 @@ func (h *AgentHandler) GetTask(c *gin.Context) {
 	c.JSON(http.StatusOK, task)
 }
 
+// GetTaskRequest godoc
+// @Summary      获取任务实际发送给 LLM 的请求内容
+// @Description  按任务 ID 加载任务，应用 Agent Profile（系统提示词合并、技能选择、记忆/项目上下文注入），返回最终 Request
+// @Tags         Agent
+// @Produce      json
+// @Param        id   query     string  true  "任务 ID"
+// @Success      200  {object}  agent.Request
+// @Failure      400  {object}  errors.AppError
+// @Failure      401  {object}  errors.AppError
+// @Failure      404  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/task/request [get]
+func (h *AgentHandler) GetTaskRequest(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var q taskIDQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	id, err := parseAgentID(q.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
+	req, err := h.svc.GetTaskRequest(c.Request.Context(), id)
+	if err != nil {
+		handleAgentError(c, err, "failed to get agent task request")
+		return
+	}
+	c.JSON(http.StatusOK, req)
+}
+
 // GetTaskEvents godoc
 // @Summary      增量拉取任务事件
 // @Description  返回 sequence 大于 after 的事件；浏览器刷新后用此接口恢复历史

@@ -89,9 +89,9 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 	}
 
 	lines := []string{
-		"You are operating inside Gobrave's LLM runtime.",
-		"Follow the runtime context below when choosing tools or file locations.",
-		fmt.Sprintf("current_user_id: %s", strings.TrimSpace(userID)),
+		// "You are operating inside Gobrave's LLM runtime.",
+		// "Follow the runtime context below when choosing tools or file locations.",
+		// fmt.Sprintf("current_user_id: %s", strings.TrimSpace(userID)),
 	}
 
 	var workingDir string
