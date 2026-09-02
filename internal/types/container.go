@@ -317,12 +317,14 @@ type GatewayRoute struct {
 
 	ContainerInstanceID int64 `json:"container_instance_id,string" gorm:"index"`
 
-	PathPrefix string `json:"path_prefix" gorm:"type:varchar(512);not null;uniqueIndex"`
-
-	BackendHost string `json:"backend_host" gorm:"type:varchar(255);not null"`
-	BackendPort int    `json:"backend_port" gorm:"not null"`
+	PathPrefix   string `json:"path_prefix" gorm:"type:varchar(512);not null;uniqueIndex"`
+	IsTrimPrefix bool   `json:"is_trim_prefix" gorm:"not null;default:true"`
+	BackendHost  string `json:"backend_host" gorm:"type:varchar(255);not null"`
+	BackendPort  int    `json:"backend_port" gorm:"not null"`
 
 	Metadata datatypes.JSON `json:"metadata" gorm:"type:json"`
+
+	// RuntimeName string `json:"runtime_name" gorm:"type:varchar(255);index"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

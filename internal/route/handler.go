@@ -65,7 +65,7 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 		reg := Registration{
 			RouteKey:            routeKey,
 			ContainerInstanceID: inst.ID,
-			RuntimeName:         runtimeName,
+			IsTrimPrefix:        true,
 			PathPrefix:          fmt.Sprintf("%s/%s/%d", config.ResolveAppsPathPrefix(h.cfg), appSession.AppType, appSession.ID),
 			Backend: Backend{
 				Host: strings.TrimSpace(inst.IPAddress),
@@ -81,7 +81,7 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 		if profile := normalizeTraefikProfile(tpl.AppType); profile != "" {
 			reg.Metadata["traefik_profile"] = profile
 		}
-
+		extReg := reg
 		// UpsertRoute 仅针对外部注册中心（traefik / k8s-ingress）调用，
 		// 其 Backend 指向容器代理（ProxyConfig.Container）。
 		if registryName, ok := runtimeMap[runtimeName]; ok {
@@ -91,13 +91,14 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 					logger.Errorf(ctx, "[RouteRegistryHandler] upsert route failed key=%s err=%v", reg.RouteKey, err)
 					return
 				}
-				// extReg := reg
-				// extReg.Backend = resolveContainerProxyBackend(h.cfg)
+
+				extReg.Backend = resolveContainerProxyBackend(h.cfg)
+				extReg.IsTrimPrefix = false
 			}
 		}
 
 		// 进程内网关：记录始终加入网关，Backend 使用容器 IP，供 AppSessionProxy 解析。
-		if err := h.gateway.UpsertRoute(ctx, reg); err != nil {
+		if err := h.gateway.UpsertRoute(ctx, extReg); err != nil {
 			logger.Errorf(ctx, "[RouteRegistryHandler] gateway upsert route failed key=%s err=%v", reg.RouteKey, err)
 			return
 		}

@@ -305,14 +305,16 @@ func (h *ProxyHandler) AppSessionProxy(c *gin.Context) {
 	}
 
 	target := fmt.Sprintf("http://%s:%d", strings.TrimSpace(reg.Backend.Host), reg.Backend.Port)
+	// proxy, err := buildReverseProxy(target)
 	proxy, err := buildReverseProxy(target)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "invalid app backend target"})
 		c.Abort()
 		return
 	}
-
-	trimProxyPrefix(c.Request, matchedPrefix)
+	if reg.IsTrimPrefix {
+		trimProxyPrefix(c.Request, matchedPrefix)
+	}
 	c.Request.Header.Set("X-Gateway-Route-Key", reg.RouteKey)
 	c.Request.Header.Set("X-Gateway-Backend", net.JoinHostPort(reg.Backend.Host, strconv.Itoa(reg.Backend.Port)))
 

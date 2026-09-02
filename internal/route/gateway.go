@@ -168,6 +168,8 @@ func (r *Gateway) rebuildFromDBLocked(ctx context.Context) error {
 			RouteKey:            row.RouteKey,
 			ContainerInstanceID: row.ContainerInstanceID,
 			PathPrefix:          row.PathPrefix,
+			IsTrimPrefix:        row.IsTrimPrefix,
+
 			Backend: Backend{
 				Host: row.BackendHost,
 				Port: row.BackendPort,
@@ -211,6 +213,7 @@ func (r *Gateway) upsertRouteLocked(ctx context.Context, route Registration) err
 		PathPrefix:          route.PathPrefix,
 		BackendHost:         route.Backend.Host,
 		BackendPort:         route.Backend.Port,
+		IsTrimPrefix:        route.IsTrimPrefix,
 		Metadata:            metadata,
 	}
 
@@ -226,11 +229,12 @@ func (r *Gateway) upsertRouteLocked(ctx context.Context, route Registration) err
 		if err := r.db.WithContext(ctx).Model(&types.GatewayRoute{}).
 			Where("route_key = ?", route.RouteKey).
 			Updates(map[string]interface{}{
-				"container_instance_id": route.ContainerInstanceID,
-				"path_prefix":           route.PathPrefix,
-				"backend_host":          route.Backend.Host,
-				"backend_port":          route.Backend.Port,
-				"metadata":              metadata,
+				"container_instance_id": entity.ContainerInstanceID,
+				"path_prefix":           entity.PathPrefix,
+				"backend_host":          entity.BackendHost,
+				"backend_port":          entity.BackendPort,
+				"is_trim_prefix":        entity.IsTrimPrefix,
+				"metadata":              entity.Metadata,
 			}).Error; err != nil {
 			return err
 		}
