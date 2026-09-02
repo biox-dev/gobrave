@@ -82,6 +82,10 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 			reg.Metadata["traefik_profile"] = profile
 		}
 		extReg := reg
+		if appSession.AppType == "notebook" {
+			extReg.IsTrimPrefix = false
+		}
+
 		// UpsertRoute 仅针对外部注册中心（traefik / k8s-ingress）调用，
 		// 其 Backend 指向容器代理（ProxyConfig.Container）。
 		if registryName, ok := runtimeMap[runtimeName]; ok {
