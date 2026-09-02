@@ -3,6 +3,7 @@ package route
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -17,12 +18,13 @@ var _ event.Handler = (*RouteRegistryHandler)(nil)
 
 type RouteRegistryHandler struct {
 	repo     interfaces.ContainerRepository
-	registry RouteRegistry
+	registry *Registry
+	gateway  *Gateway
 	cfg      *config.Config
 }
 
-func NewRouteRegistryHandler(repo interfaces.ContainerRepository, registry RouteRegistry, cfg *config.Config) *RouteRegistryHandler {
-	return &RouteRegistryHandler{repo: repo, registry: registry, cfg: cfg}
+func NewRouteRegistryHandler(repo interfaces.ContainerRepository, registry *Registry, gateway *Gateway, cfg *config.Config) *RouteRegistryHandler {
+	return &RouteRegistryHandler{repo: repo, registry: registry, gateway: gateway, cfg: cfg}
 }
 
 func (h *RouteRegistryHandler) Handle(evt event.Event) {
@@ -32,6 +34,14 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 	}
 
 	ctx := context.Background()
+
+	// runtime 到外部 route registry 映射（进程内 gateway 单独处理）：
+	//  docker  -> gateway（进程内网关，Backend 使用容器 IP）
+	//  k8s/k3s -> k8s-ingress（外部注册中心，Backend 使用容器代理地址）
+	runtimeMap := map[string]string{
+		"k8s": "k8s-ingress",
+		"k3s": "k8s-ingress",
+	}
 
 	switch ce.Event {
 	case "ContainerStarted", "ContainerResumed":
@@ -51,9 +61,11 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 			return
 		}
 
+		runtimeName := inst.RuntimeName
 		reg := Registration{
 			RouteKey:            routeKey,
 			ContainerInstanceID: inst.ID,
+			RuntimeName:         runtimeName,
 			PathPrefix:          fmt.Sprintf("%s/%s/%d", config.ResolveAppsPathPrefix(h.cfg), appSession.AppType, appSession.ID),
 			Backend: Backend{
 				Host: strings.TrimSpace(inst.IPAddress),
@@ -69,19 +81,64 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 		if profile := normalizeTraefikProfile(tpl.AppType); profile != "" {
 			reg.Metadata["traefik_profile"] = profile
 		}
-		if err := h.registry.UpsertRoute(ctx, reg); err != nil {
-			logger.Errorf(ctx, "[RouteRegistryHandler] upsert route failed key=%s err=%v", reg.RouteKey, err)
+
+		// UpsertRoute 仅针对外部注册中心（traefik / k8s-ingress）调用，
+		// 其 Backend 指向容器代理（ProxyConfig.Container）。
+		if registryName, ok := runtimeMap[runtimeName]; ok {
+			if registry := h.registry.Get(registryName); registry != nil {
+				extReg := reg
+				extReg.Backend = resolveContainerProxyBackend(h.cfg)
+				if err := registry.UpsertRoute(ctx, extReg); err != nil {
+					logger.Errorf(ctx, "[RouteRegistryHandler] upsert route failed key=%s err=%v", extReg.RouteKey, err)
+					return
+				}
+			}
+		}
+
+		// 进程内网关：记录始终加入网关，Backend 使用容器 IP，供 AppSessionProxy 解析。
+		if err := h.gateway.UpsertRoute(ctx, reg); err != nil {
+			logger.Errorf(ctx, "[RouteRegistryHandler] gateway upsert route failed key=%s err=%v", reg.RouteKey, err)
 			return
 		}
-		logger.Infof(ctx, "[RouteRegistryHandler] route upserted key=%s event=%s", reg.RouteKey, ce.Event)
+		logger.Infof(ctx, "[RouteRegistryHandler] route upserted key=%s event=%s runtime=%s", reg.RouteKey, ce.Event, runtimeName)
 
 	case "ContainerStopped", "ContainerDeleted", "ContainerFailed":
-		if err := h.registry.DeleteRouteByContainerInstanceID(ctx, ce.ContainerInstanceID); err != nil {
-			logger.Errorf(ctx, "[RouteRegistryHandler] delete route failed instance_id=%d err=%v", ce.ContainerInstanceID, err)
-			return
+		if err := h.gateway.DeleteRouteByContainerInstanceID(ctx, ce.ContainerInstanceID); err != nil {
+			logger.Errorf(ctx, "[RouteRegistryHandler] gateway delete route failed instance_id=%d err=%v", ce.ContainerInstanceID, err)
+		}
+		for _, reg := range h.registry.List() {
+			if err := reg.DeleteRouteByContainerInstanceID(ctx, ce.ContainerInstanceID); err != nil {
+				logger.Errorf(ctx, "[RouteRegistryHandler] delete route failed instance_id=%d err=%v", ce.ContainerInstanceID, err)
+			}
 		}
 		logger.Infof(ctx, "[RouteRegistryHandler] route deleted instance_id=%d event=%s", ce.ContainerInstanceID, ce.Event)
 	}
+}
+
+// resolveContainerProxyBackend 将 ProxyConfig.Container 解析为路由 Backend。
+// 供外部注册中心（traefik / k8s-ingress）转发到容器代理使用。
+func resolveContainerProxyBackend(cfg *config.Config) Backend {
+	target := "http://localhost:8089"
+	if cfg != nil && cfg.Proxy != nil && strings.TrimSpace(cfg.Proxy.Container) != "" {
+		target = strings.TrimSpace(cfg.Proxy.Container)
+	}
+
+	u, err := url.Parse(target)
+	if err != nil || u.Hostname() == "" {
+		return Backend{}
+	}
+
+	port := 80
+	if strings.EqualFold(u.Scheme, "https") {
+		port = 443
+	}
+	if p := u.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			port = n
+		}
+	}
+
+	return Backend{Host: u.Hostname(), Port: port}
 }
 
 func normalizeTraefikProfile(profile string) string {

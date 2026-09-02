@@ -200,7 +200,10 @@ type ProxyConfig struct {
 }
 
 type RouteConfig struct {
-	Registry   string                 `yaml:"registry"     json:"registry"`
+	// Registrys is the list of route registries to register at startup.
+	// e.g. [gateway, traefik, k8s-ingress]. Each entry is normalized via
+	// normalizeRouteRegistry.
+	Registrys  []string               `yaml:"registrys"    json:"registrys"`
 	AppsPrefix string                 `yaml:"apps_prefix"  json:"apps_prefix"`
 	Traefik    *TraefikRouteConfig    `yaml:"traefik"      json:"traefik"`
 	K8sIngress *K8sIngressRouteConfig `yaml:"k8s_ingress"  json:"k8s_ingress"`
@@ -334,7 +337,7 @@ func LoadConfig() (*Config, error) {
 			OnlyOffice: "http://localhost:8080",
 		},
 		Route: &RouteConfig{
-			Registry:   "gateway",
+			Registrys:  []string{},
 			AppsPrefix: defaultAppsPrefix,
 			Traefik: &TraefikRouteConfig{
 				Provider:      "api",
@@ -522,10 +525,7 @@ func LoadConfig() (*Config, error) {
 	cfg.Container.DagNodeCleanupOnDagFinished = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnDagFinished, "delete")
 
 	if cfg.Route == nil {
-		cfg.Route = &RouteConfig{Registry: "gateway"}
-	}
-	if strings.TrimSpace(cfg.Route.Registry) == "" {
-		cfg.Route.Registry = "gateway"
+		cfg.Route = &RouteConfig{Registrys: []string{}}
 	}
 	cfg.Route.AppsPrefix = normalizePathPrefix(cfg.Route.AppsPrefix, defaultAppsPrefix)
 	if cfg.Route.Traefik == nil {

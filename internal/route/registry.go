@@ -6,6 +6,7 @@ import "context"
 type Registration struct {
 	RouteKey            string
 	ContainerInstanceID int64
+	RuntimeName         string
 	PathPrefix          string
 	Backend             Backend
 	Metadata            map[string]string

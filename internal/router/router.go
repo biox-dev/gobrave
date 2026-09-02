@@ -114,13 +114,15 @@ func NewRouter(params RouterParams) *gin.Engine {
 
 	// r.Any("/apps", params.ProxyHandler.ContainerProxy)
 	// r.Any("/apps/*proxyPath", params.ProxyHandler.ContainerProxy)
-	if params.Config.Route.Registry == "gateway" {
-		r.Any(analysisAppsPrefix, params.ProxyHandler.AppSessionProxy)
-		r.Any(analysisAppsPrefix+"/*proxyPath", params.ProxyHandler.AppSessionProxy)
-	} else {
-		r.Any(analysisAppsPrefix, params.ProxyHandler.ContainerProxy)
-		r.Any(analysisAppsPrefix+"/*proxyPath", params.ProxyHandler.ContainerProxy)
-	}
+	r.Any(analysisAppsPrefix, params.ProxyHandler.AppSessionProxy)
+	r.Any(analysisAppsPrefix+"/*proxyPath", params.ProxyHandler.AppSessionProxy)
+	// if params.Config.Route.Registry == "gateway" {
+	// 	r.Any(analysisAppsPrefix, params.ProxyHandler.AppSessionProxy)
+	// 	r.Any(analysisAppsPrefix+"/*proxyPath", params.ProxyHandler.AppSessionProxy)
+	// } else {
+	// 	r.Any(analysisAppsPrefix, params.ProxyHandler.ContainerProxy)
+	// 	r.Any(analysisAppsPrefix+"/*proxyPath", params.ProxyHandler.ContainerProxy)
+	// }
 
 	// r.Any("/apps", params.ProxyHandler.AppSessionProxy)
 	// r.Any("/apps/*proxyPath", params.ProxyHandler.AppSessionProxy)

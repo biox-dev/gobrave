@@ -244,7 +244,7 @@ func (k *KubernetesRuntime) Delete(ctx context.Context, runtimeID string) error 
 	if err != nil {
 		return err
 	}
-
+	isMonitor := containerruntime.IsRuntimeMonitoring(runtimeID)
 	switch meta.Kind {
 	case workloadKindDeployment:
 		svcName := serviceNameForWorkload(meta.Name)
@@ -258,7 +258,7 @@ func (k *KubernetesRuntime) Delete(ctx context.Context, runtimeID string) error 
 			}
 			return fmt.Errorf("delete deployment %s: %w", meta.Name, err)
 		}
-		if !containerruntime.IsRuntimeMonitoring(runtimeID) {
+		if !isMonitor {
 			k.emitEvent("ContainerDeleted", runtimeID, "deployment deleted")
 		}
 		return nil
@@ -271,7 +271,7 @@ func (k *KubernetesRuntime) Delete(ctx context.Context, runtimeID string) error 
 			}
 			return fmt.Errorf("delete job %s: %w", meta.Name, err)
 		}
-		if !containerruntime.IsRuntimeMonitoring(runtimeID) {
+		if !isMonitor {
 			k.emitEvent("ContainerDeleted", runtimeID, "job deleted")
 		}
 		return nil

@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/route"
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -27,7 +27,7 @@ type ProxyHandler struct {
 	pathResolver    route.PathRouteResolver
 }
 
-func NewProxyHandler(cfg *config.Config, registry route.RouteRegistry) (*ProxyHandler, error) {
+func NewProxyHandler(cfg *config.Config, resolver route.PathRouteResolver) (*ProxyHandler, error) {
 	braveAPITarget := defaultBraveAPITarget
 	containerTarget := defaultContainerTarget
 	onlyOfficeTarget := defaultOnlyOfficeTarget
@@ -54,11 +54,6 @@ func NewProxyHandler(cfg *config.Config, registry route.RouteRegistry) (*ProxyHa
 	onlyOfficeProxy, err := buildReverseProxy(onlyOfficeTarget)
 	if err != nil {
 		return nil, err
-	}
-
-	var resolver route.PathRouteResolver
-	if v, ok := registry.(route.PathRouteResolver); ok {
-		resolver = v
 	}
 
 	return &ProxyHandler{

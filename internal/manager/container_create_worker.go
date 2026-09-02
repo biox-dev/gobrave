@@ -158,7 +158,7 @@ func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req Out
 	inst, err := w.repo.GetContainerInstanceByID(ctx, payload.ContainerInstanceID)
 	if err != nil {
 		logger.Errorf(ctx, "[ContainerCreateWorker] get container instance failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
-		_ = w.repo.MarkOutboxEventPending(ctx, req.OutboxID)
+		_ = w.repo.MarkOutboxEventFailed(ctx, req.OutboxID)
 		return
 	}
 	if err := w.executeCreate(

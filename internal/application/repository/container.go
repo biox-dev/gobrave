@@ -450,7 +450,12 @@ func (r *containerRepository) MarkOutboxEventPending(ctx context.Context, id int
 		Where("id = ?", id).
 		Update("status", "pending").Error
 }
-
+func (r *containerRepository) MarkOutboxEventFailed(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).
+		Model(&types.OutboxEvent{}).
+		Where("id = ?", id).
+		Update("status", "failed").Error
+}
 func (r *containerRepository) MarkOutboxEventSent(ctx context.Context, id int64) error {
 	now := time.Now()
 	return r.db.WithContext(ctx).

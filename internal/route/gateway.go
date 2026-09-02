@@ -14,9 +14,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// GatewayRegistry keeps route-to-backend mapping for the in-process gateway.
+// Gateway keeps route-to-backend mapping for the in-process gateway.
 // It is database-backed so mappings survive process restarts.
-type GatewayRegistry struct {
+type Gateway struct {
 	mu          sync.RWMutex
 	db          *gorm.DB
 	routesByKey map[string]Registration
@@ -24,12 +24,12 @@ type GatewayRegistry struct {
 	prefixes    []string
 }
 
-func NewGatewayRegistry(db *gorm.DB) (*GatewayRegistry, error) {
+func NewGateway(db *gorm.DB) (*Gateway, error) {
 	if db == nil {
 		return nil, fmt.Errorf("db is required")
 	}
 
-	r := &GatewayRegistry{
+	r := &Gateway{
 		db:          db,
 		routesByKey: make(map[string]Registration),
 		keyByPrefix: make(map[string]string),
@@ -47,7 +47,7 @@ func NewGatewayRegistry(db *gorm.DB) (*GatewayRegistry, error) {
 	return r, nil
 }
 
-func (r *GatewayRegistry) ResolveByPath(path string) (Registration, string, bool) {
+func (r *Gateway) ResolveByPath(path string) (Registration, string, bool) {
 	normalizedPath := normalizePath(path)
 
 	r.mu.RLock()
@@ -66,7 +66,7 @@ func (r *GatewayRegistry) ResolveByPath(path string) (Registration, string, bool
 	return Registration{}, "", false
 }
 
-func (r *GatewayRegistry) UpsertRoute(ctx context.Context, route Registration) error {
+func (r *Gateway) UpsertRoute(ctx context.Context, route Registration) error {
 	cleaned, err := sanitizeRegistration(route)
 	if err != nil {
 		return err
@@ -93,11 +93,11 @@ func (r *GatewayRegistry) UpsertRoute(ctx context.Context, route Registration) e
 		return err
 	}
 
-	logger.Infof(ctx, "[GatewayRegistry] upsert route key=%s prefix=%s backend=%s:%d", cleaned.RouteKey, cleaned.PathPrefix, cleaned.Backend.Host, cleaned.Backend.Port)
+	logger.Infof(ctx, "[Gateway] upsert route key=%s prefix=%s backend=%s:%d", cleaned.RouteKey, cleaned.PathPrefix, cleaned.Backend.Host, cleaned.Backend.Port)
 	return nil
 }
 
-func (r *GatewayRegistry) DeleteRoute(ctx context.Context, routeKey string) error {
+func (r *Gateway) DeleteRoute(ctx context.Context, routeKey string) error {
 	routeKey = strings.TrimSpace(routeKey)
 	if routeKey == "" {
 		return fmt.Errorf("route key is required")
@@ -117,11 +117,11 @@ func (r *GatewayRegistry) DeleteRoute(ctx context.Context, routeKey string) erro
 		return err
 	}
 
-	logger.Infof(ctx, "[GatewayRegistry] delete route key=%s", routeKey)
+	logger.Infof(ctx, "[Gateway] delete route key=%s", routeKey)
 	return nil
 }
 
-func (r *GatewayRegistry) DeleteRouteByContainerInstanceID(ctx context.Context, containerInstanceID int64) error {
+func (r *Gateway) DeleteRouteByContainerInstanceID(ctx context.Context, containerInstanceID int64) error {
 	if containerInstanceID <= 0 {
 		return fmt.Errorf("container instance id is required")
 	}
@@ -142,18 +142,18 @@ func (r *GatewayRegistry) DeleteRouteByContainerInstanceID(ctx context.Context, 
 		return err
 	}
 
-	logger.Infof(ctx, "[GatewayRegistry] delete route container_instance_id=%d", containerInstanceID)
+	logger.Infof(ctx, "[Gateway] delete route container_instance_id=%d", containerInstanceID)
 	return nil
 }
 
-func (r *GatewayRegistry) loadFromDB() error {
+func (r *Gateway) loadFromDB() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	return r.rebuildFromDBLocked(context.Background())
 }
 
-func (r *GatewayRegistry) rebuildFromDBLocked(ctx context.Context) error {
+func (r *Gateway) rebuildFromDBLocked(ctx context.Context) error {
 	var rows []types.GatewayRoute
 	if err := r.db.WithContext(ctx).Find(&rows).Error; err != nil {
 		return err
@@ -179,7 +179,7 @@ func (r *GatewayRegistry) rebuildFromDBLocked(ctx context.Context) error {
 
 		cleaned, err := sanitizeRegistration(reg)
 		if err != nil {
-			logger.Warnf(ctx, "[GatewayRegistry] skip invalid db route route_key=%s err=%v", row.RouteKey, err)
+			logger.Warnf(ctx, "[Gateway] skip invalid db route route_key=%s err=%v", row.RouteKey, err)
 			continue
 		}
 
@@ -191,7 +191,7 @@ func (r *GatewayRegistry) rebuildFromDBLocked(ctx context.Context) error {
 	return nil
 }
 
-func (r *GatewayRegistry) upsertRouteLocked(ctx context.Context, route Registration) error {
+func (r *Gateway) upsertRouteLocked(ctx context.Context, route Registration) error {
 	if owner, exists := r.keyByPrefix[route.PathPrefix]; exists && owner != route.RouteKey {
 		return fmt.Errorf("path prefix already registered: %s (owned by %s)", route.PathPrefix, owner)
 	}
@@ -221,15 +221,15 @@ func (r *GatewayRegistry) upsertRouteLocked(ctx context.Context, route Registrat
 	return nil
 }
 
-func (r *GatewayRegistry) deleteRouteLocked(ctx context.Context, routeKey string) error {
+func (r *Gateway) deleteRouteLocked(ctx context.Context, routeKey string) error {
 	return r.db.WithContext(ctx).Where("route_key = ?", routeKey).Delete(&types.GatewayRoute{}).Error
 }
 
-func (r *GatewayRegistry) deleteRouteLockedByContainerInstanceID(ctx context.Context, containerInstanceID int64) error {
+func (r *Gateway) deleteRouteLockedByContainerInstanceID(ctx context.Context, containerInstanceID int64) error {
 	return r.db.WithContext(ctx).Where("container_instance_id = ?", containerInstanceID).Delete(&types.GatewayRoute{}).Error
 }
 
-func (r *GatewayRegistry) rebuildPrefixIndex() {
+func (r *Gateway) rebuildPrefixIndex() {
 	r.prefixes = r.prefixes[:0]
 	for prefix := range r.keyByPrefix {
 		r.prefixes = append(r.prefixes, prefix)

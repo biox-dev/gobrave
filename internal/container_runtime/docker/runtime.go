@@ -11,14 +11,14 @@ import (
 	"strings"
 	"sync"
 
+	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
+	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
-	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
-	"github.com/biox-dev/gobrave/internal/logger"
-	"github.com/biox-dev/gobrave/internal/types"
 )
 
 type DockerRuntime struct {
@@ -275,11 +275,17 @@ func (d *DockerRuntime) Delete(ctx context.Context, id string) error {
 		return err
 	}
 
+	isMonitor := containerruntime.IsRuntimeMonitoring(id)
 	if err := cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {
 		// return fmt.Errorf("delete container %s: %w", containerID, err)
 		logger.Errorf(context.Background(), "delete container %s: %v", containerID, err)
+		d.emitEvent("ContainerDeleted", id, err.Error())
+		return nil
 	}
-
+	if !isMonitor {
+		d.emitEvent("ContainerDeleted", id, "container deleted")
+	}
+	// d.emitEvent("ContainerDeleted", id, "")
 	return nil
 }
 

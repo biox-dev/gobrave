@@ -589,8 +589,12 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 			inst.ExitCode = &code
 		}
 		// _ = m.transition(ctx, inst, fsm.Failed, "ContainerFailed")
-		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerFailed")
+		if inst.Status == types.ContainerReCreating {
+			_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerCreatePending, OutboxEventTypeCreateRequest)
 
+		} else {
+			_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerFailed")
+		}
 	case "ContainerDeleted":
 		now := time.Now()
 		inst.FinishedAt = &now

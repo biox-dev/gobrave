@@ -91,5 +91,6 @@ type ContainerRepository interface {
 	MarkOutboxEventProcessing(ctx context.Context, id int64) error
 	MarkOutboxEventPending(ctx context.Context, id int64) error
 	MarkOutboxEventSent(ctx context.Context, id int64) error
+	MarkOutboxEventFailed(ctx context.Context, id int64) error
 	PageOutboxEvent(ctx context.Context, pagination *types.Pagination) ([]*types.OutboxEvent, int64, error)
 }

@@ -267,75 +267,17 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(func(w *manager.AISummaryWorker) event.Handler {
 		return w
 	}, dig.Group("event_handlers")))
-	must(container.Provide(func(cfg *config.Config, db *gorm.DB) (route.RouteRegistry, error) {
-		if cfg == nil || cfg.Route == nil {
-			return route.NewGatewayRegistry(db)
-		}
-
-		registryName := strings.ToLower(strings.TrimSpace(cfg.Route.Registry))
-		switch registryName {
-		case "", "gateway":
-			return route.NewGatewayRegistry(db)
-		case "traefik":
-			traefikCfg := cfg.Route.Traefik
-			if traefikCfg == nil {
-				return nil, fmt.Errorf("route.traefik config is required when route.registry=traefik")
-			}
-
-			reg, err := route.NewTraefikRegistry(route.TraefikRegistryConfig{
-				Provider:   traefikCfg.Provider,
-				BaseURL:    traefikCfg.BaseURL,
-				UpsertPath: traefikCfg.UpsertPath,
-				DeletePath: traefikCfg.DeletePath,
-				AuthToken:  traefikCfg.AuthToken,
-				Timeout:    time.Duration(traefikCfg.TimeoutSecond) * time.Second,
-				FilePath:   traefikCfg.FilePath,
-			})
-			if err != nil {
-				return nil, err
-			}
-			return reg, nil
-		case "k8s-ingress", "k8s_ingress", "k8singress":
-			ingressCfg := cfg.Route.K8sIngress
-			if ingressCfg == nil {
-				ingressCfg = &config.K8sIngressRouteConfig{}
-			}
-
-			namespace := strings.TrimSpace(ingressCfg.Namespace)
-			if namespace == "" && cfg.Container != nil && cfg.Container.Kubernetes != nil {
-				namespace = strings.TrimSpace(cfg.Container.Kubernetes.Namespace)
-			}
-			if namespace == "" {
-				namespace = "default"
-			}
-
-			kubeconfig := strings.TrimSpace(ingressCfg.Kubeconfig)
-			inCluster := ingressCfg.InCluster
-			if cfg.Container != nil && cfg.Container.Kubernetes != nil {
-				if kubeconfig == "" {
-					kubeconfig = strings.TrimSpace(cfg.Container.Kubernetes.Kubeconfig)
-				}
-				if !inCluster {
-					inCluster = cfg.Container.Kubernetes.InCluster
-				}
-			}
-
-			reg, err := route.NewK8sIngressRegistry(route.K8sIngressRegistryConfig{
-				Namespace:        namespace,
-				Kubeconfig:       kubeconfig,
-				InCluster:        inCluster,
-				IngressClassName: ingressCfg.IngressClassName,
-				Host:             ingressCfg.Host,
-				PathType:         ingressCfg.PathType,
-				Annotations:      ingressCfg.Annotations,
-			})
-			if err != nil {
-				return nil, err
-			}
-			return reg, nil
-		default:
-			return nil, fmt.Errorf("unsupported route registry: %s", cfg.Route.Registry)
-		}
+	must(container.Provide(func(cfg *config.Config) (*route.Registry, error) {
+		return route.NewRegistryFromConfig(cfg)
+	}))
+	// In-process gateway: database-backed path->backend resolver used by
+	// AppSessionProxy. It is injected both as its concrete type (for the route
+	// handler to add/remove records) and as route.PathRouteResolver.
+	must(container.Provide(func(db *gorm.DB) (*route.Gateway, error) {
+		return route.NewGateway(db)
+	}))
+	must(container.Provide(func(g *route.Gateway) route.PathRouteResolver {
+		return g
 	}))
 	must(container.Provide(
 		route.NewRouteRegistryHandler,

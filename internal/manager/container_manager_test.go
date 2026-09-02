@@ -416,6 +416,16 @@ func (m *mockContainerRepo) MarkOutboxEventProcessing(ctx context.Context, id in
 	return errors.New("outbox event not found")
 }
 
+func (m *mockContainerRepo) MarkOutboxEventFailed(ctx context.Context, id int64) error {
+	for _, v := range m.outbox {
+		if v.ID == id {
+			v.Status = "failed"
+			// v.Reason = datatypes.JSON([]byte(fmt.Sprintf(`{"reason": %q}`, reason)))
+			return nil
+		}
+	}
+	return errors.New("outbox event not found")
+}
 func (m *mockContainerRepo) MarkOutboxEventPending(ctx context.Context, id int64) error {
 	for _, v := range m.outbox {
 		if v.ID == id {

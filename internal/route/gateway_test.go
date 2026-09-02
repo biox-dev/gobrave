@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func newTestGatewayRegistry(t *testing.T) *GatewayRegistry {
+func newTestGateway(t *testing.T) *Gateway {
 	t.Helper()
 
 	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
@@ -18,15 +18,15 @@ func newTestGatewayRegistry(t *testing.T) *GatewayRegistry {
 		t.Fatalf("open db: %v", err)
 	}
 
-	r, err := NewGatewayRegistry(db)
+	r, err := NewGateway(db)
 	if err != nil {
-		t.Fatalf("create registry: %v", err)
+		t.Fatalf("create gateway: %v", err)
 	}
 
 	return r
 }
 
-func newTestGatewayRegistryWithDB(t *testing.T, dsn string) *GatewayRegistry {
+func newTestGatewayWithDB(t *testing.T, dsn string) *Gateway {
 	t.Helper()
 
 	db, err := gorm.Open(gormlite.Open(dsn), &gorm.Config{})
@@ -34,19 +34,19 @@ func newTestGatewayRegistryWithDB(t *testing.T, dsn string) *GatewayRegistry {
 		t.Fatalf("open db: %v", err)
 	}
 
-	r, err := NewGatewayRegistry(db)
+	r, err := NewGateway(db)
 	if err != nil {
-		t.Fatalf("create registry: %v", err)
+		t.Fatalf("create gateway: %v", err)
 	}
 
 	return r
 }
 
-func TestGatewayRegistryPersistAndReload(t *testing.T) {
+func TestGatewayPersistAndReload(t *testing.T) {
 	t.Parallel()
 
 	dsn := "file:" + t.TempDir() + "/gateway_route.db?_journal_mode=WAL"
-	r := newTestGatewayRegistryWithDB(t, dsn)
+	r := newTestGatewayWithDB(t, dsn)
 
 	err := r.UpsertRoute(context.Background(), Registration{
 		RouteKey:   "app-session-1",
@@ -60,7 +60,7 @@ func TestGatewayRegistryPersistAndReload(t *testing.T) {
 		t.Fatalf("upsert route: %v", err)
 	}
 
-	r2 := newTestGatewayRegistryWithDB(t, dsn)
+	r2 := newTestGatewayWithDB(t, dsn)
 
 	got, prefix, ok := r2.ResolveByPath("/apps/1/lab")
 	if !ok {
@@ -74,10 +74,10 @@ func TestGatewayRegistryPersistAndReload(t *testing.T) {
 	}
 }
 
-func TestGatewayRegistryLongestPrefixMatch(t *testing.T) {
+func TestGatewayLongestPrefixMatch(t *testing.T) {
 	t.Parallel()
 
-	r := newTestGatewayRegistry(t)
+	r := newTestGateway(t)
 
 	if err := r.UpsertRoute(context.Background(), Registration{
 		RouteKey:   "apps-root",
