@@ -214,8 +214,30 @@ func (r *Gateway) upsertRouteLocked(ctx context.Context, route Registration) err
 		Metadata:            metadata,
 	}
 
-	if err := r.db.WithContext(ctx).Save(entity).Error; err != nil {
+	// 先查询是否存在，存在则更新，否则插入。
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&types.GatewayRoute{}).
+		Where("route_key = ?", route.RouteKey).
+		Count(&count).Error; err != nil {
 		return err
+	}
+
+	if count > 0 {
+		if err := r.db.WithContext(ctx).Model(&types.GatewayRoute{}).
+			Where("route_key = ?", route.RouteKey).
+			Updates(map[string]interface{}{
+				"container_instance_id": route.ContainerInstanceID,
+				"path_prefix":           route.PathPrefix,
+				"backend_host":          route.Backend.Host,
+				"backend_port":          route.Backend.Port,
+				"metadata":              metadata,
+			}).Error; err != nil {
+			return err
+		}
+	} else {
+		if err := r.db.Debug().WithContext(ctx).Create(entity).Error; err != nil {
+			return err
+		}
 	}
 
 	return nil

@@ -86,12 +86,13 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 		// 其 Backend 指向容器代理（ProxyConfig.Container）。
 		if registryName, ok := runtimeMap[runtimeName]; ok {
 			if registry := h.registry.Get(registryName); registry != nil {
-				extReg := reg
-				extReg.Backend = resolveContainerProxyBackend(h.cfg)
-				if err := registry.UpsertRoute(ctx, extReg); err != nil {
-					logger.Errorf(ctx, "[RouteRegistryHandler] upsert route failed key=%s err=%v", extReg.RouteKey, err)
+
+				if err := registry.UpsertRoute(ctx, reg); err != nil {
+					logger.Errorf(ctx, "[RouteRegistryHandler] upsert route failed key=%s err=%v", reg.RouteKey, err)
 					return
 				}
+				// extReg := reg
+				// extReg.Backend = resolveContainerProxyBackend(h.cfg)
 			}
 		}
 
