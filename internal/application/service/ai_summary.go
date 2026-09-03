@@ -85,6 +85,27 @@ func (s *aiSummaryService) ListAISummariesByOwner(ctx context.Context, ownerType
 	return s.summaryRepo.ListAISummariesByOwner(ctx, ownerType, ownerID)
 }
 
+// UpdateAISummary 按摘要 ID 更新标题与内容，nil 表示不修改对应字段。
+func (s *aiSummaryService) UpdateAISummary(ctx context.Context, id int64, title, content *string) (*types.AISummary, error) {
+	summary, err := s.summaryRepo.GetAISummaryByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if title != nil {
+		summary.Title = *title
+	}
+	if content != nil {
+		summary.Content = *content
+	}
+
+	if err := s.summaryRepo.UpdateAISummary(ctx, summary); err != nil {
+		return nil, err
+	}
+
+	return summary, nil
+}
+
 // DeleteAISummary 按摘要 ID 删除摘要记录。
 func (s *aiSummaryService) DeleteAISummary(ctx context.Context, id int64) error {
 	return s.summaryRepo.DeleteAISummary(ctx, id)

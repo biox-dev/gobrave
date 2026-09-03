@@ -33,6 +33,12 @@ type aiSummaryInputRequest struct {
 	OwnerType types.SummaryOwnerType `form:"owner_type" binding:"required"`
 }
 
+type updateAISummaryRequest struct {
+	ID      int64   `json:"id,string" binding:"required"`
+	Title   *string `json:"title"`
+	Content *string `json:"content"`
+}
+
 // CreateAISummary godoc
 // @Summary      创建 AI 摘要
 // @Description  根据 OwnerID/OwnerType 创建摘要记录，并异步触发 LLM 生成摘要
@@ -164,6 +170,40 @@ func (h *AISummaryHandler) ListAISummary(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, summaries)
+}
+
+// UpdateAISummary godoc
+// @Summary      更新 AI 摘要
+// @Description  按摘要 ID 更新标题与内容，title/content 不传则保持原值
+// @Tags         AI摘要
+// @Accept       json
+// @Produce      json
+// @Param        request  body      updateAISummaryRequest  true  "请求参数"
+// @Success      200      {object}  types.AISummary
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /ai-summary/update [post]
+func (h *AISummaryHandler) UpdateAISummary(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req updateAISummaryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	summary, err := h.aiSummaryService.UpdateAISummary(c.Request.Context(), req.ID, req.Title, req.Content)
+	if err != nil {
+		handleDataError(c, err, "failed to update ai summary")
+		return
+	}
+
+	c.JSON(http.StatusOK, summary)
 }
 
 // DeleteAISummary godoc
