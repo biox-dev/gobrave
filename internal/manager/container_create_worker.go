@@ -365,7 +365,7 @@ func (w *ContainerCreateWorker) executeCreate(
 	// 	}
 	// }
 	ownerCtx := w.loadOwnerRuntimeContext(ctx, inst.OwnerType, inst.OwnerID)
-	resolveVars := w.buildRuntimeResolveVariables(ctx, tpl, w.cfg, inst.TemplateID, inst.OwnerType, inst.OwnerID, inst.Name, ownerCtx)
+	resolveVars := w.buildRuntimeResolveVariables(ctx, tpl, inst.OwnerType, ownerCtx)
 
 	volumes := parseVolumes(tpl.Volumes, inst.OwnerType)
 	projectVolumes := parseVolumes(ownerCtx.project.Volumes, inst.OwnerType)
@@ -786,25 +786,26 @@ func (w *ContainerCreateWorker) loadOwnerRuntimeContext(ctx context.Context, own
 func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 	ctx context.Context,
 	tpl *types.ContainerTemplate,
-	cfg *config.Config,
+	// cfg *config.Config,
 	// img *types.ContainerImage,
-	templateID int64,
+	// templateID int64,
 	ownerType types.ContainerOwnerType,
-	ownerID int64,
-	name string,
+	// ownerID int64,
+	// name string,
 	ownerCtx *ownerRuntimeContext,
 ) map[string]string {
 	vars := map[string]string{}
 	baseDir := ""
+	cfg := w.cfg
 	if cfg != nil && cfg.Storage != nil {
 		baseDir = strings.TrimSpace(cfg.Storage.BaseDir)
 	}
 
-	setRuntimeVar(vars, "CONTAINER_TEMPLATE_ID", strconv.FormatInt(templateID, 10))
-	setRuntimeVar(vars, "TEMPLATE_ID", strconv.FormatInt(templateID, 10))
-	setRuntimeVar(vars, "OWNER_TYPE", string(ownerType))
-	setRuntimeVar(vars, "OWNER_ID", strconv.FormatInt(ownerID, 10))
-	setRuntimeVar(vars, "CONTAINER_NAME", name)
+	// setRuntimeVar(vars, "CONTAINER_TEMPLATE_ID", strconv.FormatInt(templateID, 10))
+	// setRuntimeVar(vars, "TEMPLATE_ID", strconv.FormatInt(templateID, 10))
+	// setRuntimeVar(vars, "OWNER_TYPE", string(ownerType))
+	// setRuntimeVar(vars, "OWNER_ID", strconv.FormatInt(ownerID, 10))
+	// setRuntimeVar(vars, "CONTAINER_NAME", name)
 
 	packageDir := fmt.Sprintf("%s/package", baseDir)
 	profilePath := fmt.Sprintf("%s/Rprofile", packageDir)
