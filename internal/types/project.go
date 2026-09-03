@@ -17,7 +17,7 @@ type Project struct {
 	MetadataForm string         `json:"metadata_form" gorm:"type:text"`
 	Research     string         `json:"research" gorm:"type:text"`
 	Parameter    string         `json:"parameter" gorm:"type:text"`
-	Volumes      datatypes.JSON `json:"volumes" gorm:"type:json"`
+	Mounts       datatypes.JSON `json:"mounts" gorm:"type:json"`
 	Env          datatypes.JSON `json:"env" gorm:"type:json"`
 
 	Description string    `json:"description" gorm:"type:text"`

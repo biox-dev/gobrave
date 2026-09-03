@@ -670,7 +670,7 @@ func TestContainerManager_CreateByTemplate_ResolvesEnvAndVolumes(t *testing.T) {
 		ImageID: 1,
 		Command: "bash -lc echo ok",
 		Env:     datatypes.JSON([]byte(`{"USERID":"$USERID","GROUPID":"$GROUPID","R_SCRIPT":"$SCRIPT_FILE","R_LIBS_USER":"$R_PACKAGE_DIR","DISABLE_AUTH":true,"R_USER_WORKDIR":"$OUTPUT_DIR"}`)),
-		Volumes: datatypes.JSON([]byte(`{"$R_PROFILE":{"bind":"/home/rstudio/.Rprofile","mode":"rw"}}`)),
+		Mounts:  datatypes.JSON([]byte(`{"$R_PROFILE":{"bind":"/home/rstudio/.Rprofile","mode":"rw"}}`)),
 	}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-9"}
@@ -760,12 +760,12 @@ func TestContainerManager_CreateByTemplate_AppSessionMergesProjectVolumes(t *tes
 		ID:      10,
 		ImageID: 1,
 		Command: "bash -lc echo ok",
-		Volumes: datatypes.JSON([]byte(`[{"source":"/template/src","target":"/template/dst","mode":"ro"}]`)),
+		Mounts:  datatypes.JSON([]byte(`[{"source":"/template/src","target":"/template/dst","mode":"ro"}]`)),
 	}
 	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: "session-user", ProjectID: 002}
 	repo.projects["session-project"] = &types.Project{
 		ProjectID: "session-project",
-		Volumes:   datatypes.JSON([]byte(`[{"source":"/project/src","target":"/project/dst","mode":"rw"}]`)),
+		Mounts:    datatypes.JSON([]byte(`[{"source":"/project/src","target":"/project/dst","mode":"rw"}]`)),
 	}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-11"}

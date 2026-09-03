@@ -103,9 +103,9 @@ type ContainerTemplate struct {
 	Port    int    `json:"port" gorm:"not null;default:8787"`
 	AppType string `json:"app_type" gorm:"type:varchar(32);index"`
 
-	Env                  datatypes.JSON `json:"env" gorm:"type:json"`
-	Mounts               datatypes.JSON `json:"mounts" gorm:"type:json"`
-	Volumes              datatypes.JSON `json:"volumes" gorm:"type:json"`
+	Env    datatypes.JSON `json:"env" gorm:"type:json"`
+	Mounts datatypes.JSON `json:"mounts" gorm:"type:json"`
+	// Volumes              datatypes.JSON `json:"volumes" gorm:"type:json"`
 	SchedulingConstraint datatypes.JSON `json:"scheduling_constraint" gorm:"type:json"`
 	Labels               datatypes.JSON `json:"labels" gorm:"type:json"`
 	ChangeUID            bool           `json:"change_uid" gorm:"default:false"`
@@ -200,18 +200,18 @@ func (t *ContainerTemplate) ToExport(image *ContainerImage) *ContainerTemplateEx
 		return nil
 	}
 	export := &ContainerTemplateExport{
-		ID:                   t.ID,
-		Name:                 t.Name,
-		Description:          t.Description,
-		Command:              t.Command,
-		CPU:                  t.CPU,
-		Memory:               t.Memory,
-		WorkDir:              t.WorkDir,
-		Port:                 t.Port,
-		AppType:              t.AppType,
-		Env:                  t.Env,
-		Mounts:               t.Mounts,
-		Volumes:              t.Volumes,
+		ID:          t.ID,
+		Name:        t.Name,
+		Description: t.Description,
+		Command:     t.Command,
+		CPU:         t.CPU,
+		Memory:      t.Memory,
+		WorkDir:     t.WorkDir,
+		Port:        t.Port,
+		AppType:     t.AppType,
+		Env:         t.Env,
+		Mounts:      t.Mounts,
+		// Volumes:              t.Volumes,
 		SchedulingConstraint: t.SchedulingConstraint,
 		Labels:               t.Labels,
 		ChangeUID:            t.ChangeUID,

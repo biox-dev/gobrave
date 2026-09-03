@@ -367,8 +367,8 @@ func (w *ContainerCreateWorker) executeCreate(
 	ownerCtx := w.loadOwnerRuntimeContext(ctx, inst.OwnerType, inst.OwnerID)
 	resolveVars := w.buildRuntimeResolveVariables(ctx, tpl, inst.OwnerType, ownerCtx)
 
-	volumes := parseVolumes(tpl.Volumes, inst.OwnerType)
-	projectVolumes := parseVolumes(ownerCtx.project.Volumes, inst.OwnerType)
+	volumes := parseVolumes(tpl.Mounts, inst.OwnerType)
+	projectVolumes := parseVolumes(ownerCtx.project.Mounts, inst.OwnerType)
 	volumes = append(volumes, projectVolumes...)
 
 	envs := parseEnv(tpl.Env)
