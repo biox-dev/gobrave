@@ -115,6 +115,115 @@ func (s *containerService) PageContainerTemplate(ctx context.Context, pagination
 	return types.NewPageResult(total, pagination, items), nil
 }
 
+// ImportContainerTemplate 按导出结构导入容器模板。
+// 模板：有 id 则存在更新、不存在新增；无 id 则直接新增。
+// 内嵌镜像：有 id 则存在更新、不存在新增；无 id 则直接新增。
+func (s *containerService) ImportContainerTemplate(ctx context.Context, item *types.ContainerTemplateExport) (*types.ContainerTemplateExport, error) {
+	if item == nil {
+		return nil, fmt.Errorf("container template is required")
+	}
+	if item.Image == nil {
+		return nil, fmt.Errorf("container image is required")
+	}
+
+	imageID, err := s.upsertContainerImage(ctx, item.Image)
+	if err != nil {
+		return nil, err
+	}
+	if imageID == 0 {
+		return nil, fmt.Errorf("container image id is required")
+	}
+
+	tpl := &types.ContainerTemplate{
+		ID:                   item.ID,
+		Name:                 item.Name,
+		Description:          item.Description,
+		ImageID:              imageID,
+		Command:              item.Command,
+		CPU:                  item.CPU,
+		Memory:               item.Memory,
+		WorkDir:              item.WorkDir,
+		Port:                 item.Port,
+		AppType:              item.AppType,
+		Env:                  item.Env,
+		Mounts:               item.Mounts,
+		Volumes:              item.Volumes,
+		SchedulingConstraint: item.SchedulingConstraint,
+		Labels:               item.Labels,
+		ChangeUID:            item.ChangeUID,
+		RLibraryPath:         item.RLibraryPath,
+		PythonLibraryPath:    item.PythonLibraryPath,
+		CondaLibraryPath:     item.CondaLibraryPath,
+	}
+
+	if item.ID != 0 {
+		_, err := s.containerRepo.GetContainerTemplateByID(ctx, item.ID)
+		switch {
+		case err == nil:
+			if err := s.containerRepo.UpdateContainerTemplate(ctx, tpl); err != nil {
+				return nil, err
+			}
+		case stderrs.Is(err, gorm.ErrRecordNotFound):
+			if err := s.containerRepo.CreateContainerTemplate(ctx, tpl); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, err
+		}
+	} else {
+		if err := s.containerRepo.CreateContainerTemplate(ctx, tpl); err != nil {
+			return nil, err
+		}
+	}
+
+	image, err := s.containerRepo.GetContainerImageByID(ctx, imageID)
+	if err != nil {
+		return nil, err
+	}
+
+	return tpl.ToExport(image), nil
+}
+
+func (s *containerService) upsertContainerImage(ctx context.Context, export *types.ContainerImageExport) (int64, error) {
+	if export == nil {
+		return 0, nil
+	}
+
+	pullPolicy := export.PullPolicy
+	if strings.TrimSpace(pullPolicy) == "" {
+		pullPolicy = types.PullPolicyIfNotPresent
+	}
+
+	img := &types.ContainerImage{
+		ID:          export.ID,
+		Name:        export.Name,
+		FullName:    export.FullName,
+		Description: export.Description,
+		Size:        export.Size,
+		PullPolicy:  pullPolicy,
+	}
+
+	if export.ID != 0 {
+		_, err := s.containerRepo.GetContainerImageByID(ctx, export.ID)
+		switch {
+		case err == nil:
+			if err := s.containerRepo.UpdateContainerImage(ctx, img); err != nil {
+				return 0, err
+			}
+			return img.ID, nil
+		case stderrs.Is(err, gorm.ErrRecordNotFound):
+			// 不存在，继续走新增
+		default:
+			return 0, err
+		}
+	}
+
+	if err := s.containerRepo.CreateContainerImage(ctx, img); err != nil {
+		return 0, err
+	}
+	return img.ID, nil
+}
+
 func (s *containerService) CreateAppSessionByTemplate(ctx context.Context, userID string, projectID int64, containerTemplateID int64, name string) (*types.AppSession, error) {
 	return s.createAppSessionByTemplate(ctx, userID, projectID, containerTemplateID, name, 0, "")
 }

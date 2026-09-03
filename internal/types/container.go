@@ -147,6 +147,84 @@ func (t *ContainerTemplate) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// ContainerImageExport 是 ContainerImage 的导出结构，包含 ID，不含时间字段。
+type ContainerImageExport struct {
+	ID          int64  `json:"id,string"`
+	Name        string `json:"name"`
+	FullName    string `json:"full_name"`
+	Description string `json:"description"`
+	Size        int64  `json:"size"`
+	PullPolicy  string `json:"pull_policy"`
+}
+
+func (t *ContainerImage) ToExport() *ContainerImageExport {
+	if t == nil {
+		return nil
+	}
+	return &ContainerImageExport{
+		ID:          t.ID,
+		Name:        t.Name,
+		FullName:    t.FullName,
+		Description: t.Description,
+		Size:        t.Size,
+		PullPolicy:  t.PullPolicy,
+	}
+}
+
+// ContainerTemplateExport 是 ContainerTemplate 的导出结构，包含 ID，不含时间字段；
+// ImageID 被转换为内嵌的 ContainerImageExport 对象。
+type ContainerTemplateExport struct {
+	ID                   int64                 `json:"id,string"`
+	Name                 string                `json:"name"`
+	Description          string                `json:"description"`
+	Image                *ContainerImageExport `json:"image"`
+	Command              string                `json:"command"`
+	CPU                  float64               `json:"cpu"`
+	Memory               int64                 `json:"memory"`
+	WorkDir              string                `json:"work_dir"`
+	Port                 int                   `json:"port"`
+	AppType              string                `json:"app_type"`
+	Env                  datatypes.JSON        `json:"env"`
+	Mounts               datatypes.JSON        `json:"mounts"`
+	Volumes              datatypes.JSON        `json:"volumes"`
+	SchedulingConstraint datatypes.JSON        `json:"scheduling_constraint"`
+	Labels               datatypes.JSON        `json:"labels"`
+	ChangeUID            bool                  `json:"change_uid"`
+	RLibraryPath         string                `json:"r_library_path"`
+	PythonLibraryPath    string                `json:"python_library_path"`
+	CondaLibraryPath     string                `json:"conda_library_path"`
+}
+
+func (t *ContainerTemplate) ToExport(image *ContainerImage) *ContainerTemplateExport {
+	if t == nil {
+		return nil
+	}
+	export := &ContainerTemplateExport{
+		ID:                   t.ID,
+		Name:                 t.Name,
+		Description:          t.Description,
+		Command:              t.Command,
+		CPU:                  t.CPU,
+		Memory:               t.Memory,
+		WorkDir:              t.WorkDir,
+		Port:                 t.Port,
+		AppType:              t.AppType,
+		Env:                  t.Env,
+		Mounts:               t.Mounts,
+		Volumes:              t.Volumes,
+		SchedulingConstraint: t.SchedulingConstraint,
+		Labels:               t.Labels,
+		ChangeUID:            t.ChangeUID,
+		RLibraryPath:         t.RLibraryPath,
+		PythonLibraryPath:    t.PythonLibraryPath,
+		CondaLibraryPath:     t.CondaLibraryPath,
+	}
+	if image != nil {
+		export.Image = image.ToExport()
+	}
+	return export
+}
+
 // AppSession 的状态机
 // PENDING
 //

@@ -23,6 +23,7 @@ type ContainerService interface {
 	DeleteContainerTemplate(ctx context.Context, id int64) error
 	ListContainerTemplate(ctx context.Context) ([]*types.ContainerTemplate, error)
 	PageContainerTemplate(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
+	ImportContainerTemplate(ctx context.Context, item *types.ContainerTemplateExport) (*types.ContainerTemplateExport, error)
 
 	CreateAppSessionByTemplate(ctx context.Context, userID string, projectID int64, containerTemplateID int64, name string) (*types.AppSession, error)
 	CreateAppSessionByTemplateForAnalysisNode(ctx context.Context, userID string, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error)

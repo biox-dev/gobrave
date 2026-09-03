@@ -257,6 +257,8 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	r.POST("/container/template/delete", handler.DeleteContainerTemplate)
 	r.GET("/container/template/list", handler.ListContainerTemplate)
 	r.POST("/container/template/list-by-page", handler.PageContainerTemplate)
+	r.POST("/container/template/export", handler.ExportContainerTemplate)
+	r.POST("/container/template/import", handler.ImportContainerTemplate)
 
 	r.POST("/container/app-session/create", handler.CreateAppSession)
 	r.POST("/container/app-session/create-by-analysis-node", handler.CreateAppSessionByAnalysisNode)

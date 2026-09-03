@@ -506,6 +506,86 @@ func (h *ContainerHandler) PageContainerTemplate(c *gin.Context) {
 	})
 }
 
+// ExportContainerTemplate godoc
+// @Summary      导出容器模板
+// @Description  按 ContainerTemplate 导出为 JSON 字符串，ImageID 转为内嵌 ContainerImage 对象，均不含时间字段
+// @Tags         容器管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      types.ContainerTemplate  true  "请求参数"
+// @Success      200      {object}  map[string]string
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/template/export [post]
+func (h *ContainerHandler) ExportContainerTemplate(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req types.ContainerTemplate
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+	if req.ID == 0 {
+		c.Error(errors.NewValidationError("id is required"))
+		return
+	}
+
+	tpl, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to get container template")
+		return
+	}
+
+	image, err := h.containerService.GetContainerImageByID(c.Request.Context(), tpl.ImageID)
+	if err != nil {
+		handleDataError(c, err, "failed to get container image")
+		return
+	}
+
+	export := tpl.ToExport(image)
+
+	c.JSON(http.StatusOK, export)
+}
+
+// ImportContainerTemplate godoc
+// @Summary      导入容器模板
+// @Description  按导出结构导入 ContainerTemplate，ImageID 转为内嵌 ContainerImage 对象，均不含时间字段
+// @Tags         容器管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      types.ContainerTemplateExport  true  "请求参数"
+// @Success      200      {object}  types.ContainerTemplateExport
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/template/import [post]
+func (h *ContainerHandler) ImportContainerTemplate(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req types.ContainerTemplateExport
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	item, err := h.containerService.ImportContainerTemplate(c.Request.Context(), &req)
+	if err != nil {
+		handleDataError(c, err, "failed to import container template")
+		return
+	}
+
+	c.JSON(http.StatusOK, item)
+}
+
 // CreateAppSession godoc
 // @Summary      创建应用会话
 // @Description  输入 ContainerTemplateID + 当前用户 + ProjectID 创建 AppSession，并通过 ContainerManager 创建并绑定容器
