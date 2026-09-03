@@ -43,7 +43,7 @@ type ContainerImage struct {
 	// Namespace string `json:"namespace" gorm:"type:varchar(255)"`
 	// rocker
 
-	FullName string `json:"full_name" gorm:"type:varchar(512);uniqueIndex;not null"`
+	FullName string `json:"full_name" gorm:"type:varchar(512);not null"`
 	// docker.io/rocker/rstudio:4.4
 
 	// Digest string `json:"digest" gorm:"type:varchar(255);index"`
