@@ -58,9 +58,7 @@ func (h *AppSessionEventHandler) Handle(evt event.Event) {
 	switch normalizedEvent {
 	case "running":
 		session.Status = "RUNNING"
-		if session.StartedAt == nil {
-			session.StartedAt = &now
-		}
+		session.StartedAt = &now
 		session.StoppedAt = nil
 	case "creating":
 		session.Status = "CREATING"
@@ -71,6 +69,7 @@ func (h *AppSessionEventHandler) Handle(evt event.Event) {
 	case "stopped":
 		session.Status = "STOPPED"
 		session.StoppedAt = &now
+		session.StartedAt = nil
 	case "failed":
 		session.Status = "FAILED"
 		session.StoppedAt = &now

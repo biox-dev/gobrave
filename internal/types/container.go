@@ -31,34 +31,34 @@ type ContainerImage struct {
 	Name string `json:"name" gorm:"type:varchar(255);not null;index"`
 	// rocker/rstudio
 
-	Tag string `json:"tag" gorm:"type:varchar(128);not null;index"`
+	// Tag string `json:"tag" gorm:"type:varchar(128);not null;index"`
 	// 4.4
 
 	// LibraryVersion string `json:"library_version" gorm:"type:varchar(128);index"`
 	// R 4.4 / Python 3.11
 
-	Registry string `json:"registry" gorm:"type:varchar(255);not null"`
+	// Registry string `json:"registry" gorm:"type:varchar(255);not null"`
 	// docker.io
 
-	Namespace string `json:"namespace" gorm:"type:varchar(255)"`
+	// Namespace string `json:"namespace" gorm:"type:varchar(255)"`
 	// rocker
 
 	FullName string `json:"full_name" gorm:"type:varchar(512);uniqueIndex;not null"`
 	// docker.io/rocker/rstudio:4.4
 
-	Digest string `json:"digest" gorm:"type:varchar(255);index"`
+	// Digest string `json:"digest" gorm:"type:varchar(255);index"`
 
 	Description string `json:"description" gorm:"type:text"`
 
 	Size int64 `json:"size"`
 
-	Status ImageStatus `json:"status" gorm:"type:varchar(32);index;not null;default:pending"`
+	// Status ImageStatus `json:"status" gorm:"type:varchar(32);index;not null;default:pending"`
 
 	PullPolicy string `json:"pull_policy" gorm:"type:varchar(32);index;not null;default:IfNotPresent"`
 
-	LastPullTime *time.Time `json:"last_pull_time"`
+	// LastPullTime *time.Time `json:"last_pull_time"`
 
-	LastError string `json:"last_error" gorm:"type:text"`
+	// LastError string `json:"last_error" gorm:"type:text"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -75,13 +75,13 @@ func (t *ContainerImage) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
-type ContainerTemplateType string
+// type ContainerTemplateType string
 
-const (
-	ContainerTemplateWorkflow ContainerTemplateType = "workflow"
-	ContainerTemplateApp      ContainerTemplateType = "app"
-	ContainerTemplateService  ContainerTemplateType = "service"
-)
+// const (
+// 	ContainerTemplateWorkflow ContainerTemplateType = "workflow"
+// 	ContainerTemplateApp      ContainerTemplateType = "app"
+// 	ContainerTemplateService  ContainerTemplateType = "service"
+// )
 
 type ContainerTemplate struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
@@ -89,7 +89,7 @@ type ContainerTemplate struct {
 	Name        string `json:"name" gorm:"type:varchar(255);not null;index"`
 	Description string `json:"description" gorm:"type:text"`
 
-	Type ContainerTemplateType `json:"type" gorm:"type:varchar(20);index;not null"`
+	// Type ContainerTemplateType `json:"type" gorm:"type:varchar(20);index;not null"`
 
 	// Image string // rocker/rstudio:4.4
 	ImageID int64 `json:"image_id,string" gorm:"index;not null"`

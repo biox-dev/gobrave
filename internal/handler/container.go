@@ -7,13 +7,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/biox-dev/gobrave/internal/config"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/gin-gonic/gin"
 )
 
 type ContainerHandler struct {
@@ -84,8 +84,10 @@ type outboxEventPageRequest struct {
 
 type appSessionPageItem struct {
 	*types.AppSession
-	PathPrefix string `json:"path_prefix"`
-	NodeName   string `json:"node_name"`
+	PathPrefix            string `json:"path_prefix"`
+	NodeName              string `json:"node_name"`
+	ContainerInstanceID   int64  `json:"container_instance_id,string"`
+	ContainerInstanceName string `json:"container_instance_name"`
 }
 
 type runtimeMonitoringSnapshotItem struct {
@@ -851,7 +853,7 @@ func (h *ContainerHandler) PageAppSession(c *gin.Context) {
 	}
 
 	if items, ok := result.Data.([]*types.AppSession); ok {
-		nodeNameBySessionID := map[int64]string{}
+		nodeNameBySessionID := map[int64]*types.ContainerInstance{}
 		ownerIDs := make([]int64, 0, len(items))
 		for _, item := range items {
 			if item == nil || item.ID == 0 {
@@ -868,7 +870,7 @@ func (h *ContainerHandler) PageAppSession(c *gin.Context) {
 				if _, exists := nodeNameBySessionID[inst.OwnerID]; exists {
 					continue
 				}
-				nodeNameBySessionID[inst.OwnerID] = strings.TrimSpace(inst.RuntimeNodeName)
+				nodeNameBySessionID[inst.OwnerID] = inst
 			}
 		}
 
@@ -877,11 +879,22 @@ func (h *ContainerHandler) PageAppSession(c *gin.Context) {
 			if item == nil {
 				continue
 			}
-			pageItems = append(pageItems, &appSessionPageItem{
-				AppSession: item,
-				PathPrefix: fmt.Sprintf("%s/%s/%d", config.ResolveAppsPathPrefix(h.cfg), item.AppType, item.ID),
-				NodeName:   nodeNameBySessionID[item.ID],
-			})
+			inst := nodeNameBySessionID[item.ID]
+			if inst != nil {
+				pageItems = append(pageItems, &appSessionPageItem{
+					AppSession:            item,
+					PathPrefix:            fmt.Sprintf("%s/%s/%d", config.ResolveAppsPathPrefix(h.cfg), item.AppType, item.ID),
+					NodeName:              inst.RuntimeNodeName,
+					ContainerInstanceID:   inst.ID,
+					ContainerInstanceName: inst.Name,
+				})
+			} else {
+				pageItems = append(pageItems, &appSessionPageItem{
+					AppSession: item,
+					PathPrefix: fmt.Sprintf("%s/%s/%d", config.ResolveAppsPathPrefix(h.cfg), item.AppType, item.ID),
+				})
+			}
+
 		}
 		result.Data = pageItems
 	}
