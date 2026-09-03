@@ -963,7 +963,7 @@ func (h *ContainerHandler) PageAppSession(c *gin.Context) {
 			if inst != nil {
 				pageItems = append(pageItems, &appSessionPageItem{
 					AppSession:            item,
-					PathPrefix:            fmt.Sprintf("%s/%s/%d", config.ResolveAppsPathPrefix(h.cfg), item.AppType, item.ID),
+					PathPrefix:            fmt.Sprintf("%s/%d", config.ResolveAppsPathPrefix(h.cfg), item.ID),
 					NodeName:              inst.RuntimeNodeName,
 					ContainerInstanceID:   inst.ID,
 					ContainerInstanceName: inst.Name,
@@ -971,7 +971,7 @@ func (h *ContainerHandler) PageAppSession(c *gin.Context) {
 			} else {
 				pageItems = append(pageItems, &appSessionPageItem{
 					AppSession: item,
-					PathPrefix: fmt.Sprintf("%s/%s/%d", config.ResolveAppsPathPrefix(h.cfg), item.AppType, item.ID),
+					PathPrefix: fmt.Sprintf("%s/%d", config.ResolveAppsPathPrefix(h.cfg), item.ID),
 				})
 			}
 

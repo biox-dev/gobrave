@@ -261,9 +261,9 @@ func (s *containerService) createAppSessionByTemplate(ctx context.Context, userI
 		AnalysisNodeID:      analysisNodeID,
 		ContainerTemplateID: containerTemplateID,
 		Name:                name,
-		AppType:             tpl.AppType,
-		Status:              "CREATE_PENDING", //create_pending PENDING_CREATION
-		WorkspacePath:       strings.TrimSpace(workspacePath),
+		// AppType:             tpl.AppType,
+		Status:        "CREATE_PENDING", //create_pending PENDING_CREATION
+		WorkspacePath: strings.TrimSpace(workspacePath),
 	}
 	if err := s.containerRepo.CreateAppSession(ctx, session); err != nil {
 		return nil, err

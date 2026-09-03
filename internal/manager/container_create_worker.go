@@ -897,7 +897,7 @@ func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
 			}
 		}
 
-		setRuntimeVar(vars, "APP_TYPE", session.AppType)
+		// setRuntimeVar(vars, "APP_TYPE", session.AppType)
 		ensureDirs(ctx, []string{session.WorkspacePath, userDir, userConfigDir})
 
 	}

@@ -257,7 +257,7 @@ type AppSession struct {
 
 	AnalysisNodeID int64 `json:"analysis_node_id,string" gorm:"index"`
 
-	AppType string `json:"app_type" gorm:"type:varchar(32);index"`
+	// AppType string `json:"app_type" gorm:"type:varchar(32);index"`
 
 	ContainerTemplateID int64 `json:"container_template_id,string" gorm:"index;not null"`
 

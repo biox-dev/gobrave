@@ -66,7 +66,7 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 			RouteKey:            routeKey,
 			ContainerInstanceID: inst.ID,
 			IsTrimPrefix:        true,
-			PathPrefix:          fmt.Sprintf("%s/%s/%d", config.ResolveAppsPathPrefix(h.cfg), appSession.AppType, appSession.ID),
+			PathPrefix:          fmt.Sprintf("%s/%d", config.ResolveAppsPathPrefix(h.cfg), appSession.ID),
 			Backend: Backend{
 				Host: strings.TrimSpace(inst.IPAddress),
 				Port: port,
@@ -82,7 +82,7 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 			reg.Metadata["traefik_profile"] = profile
 		}
 		extReg := reg
-		if appSession.AppType == "notebook" {
+		if tpl.AppType == "notebook" {
 			extReg.IsTrimPrefix = false
 		}
 
