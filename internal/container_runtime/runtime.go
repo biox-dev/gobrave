@@ -52,6 +52,24 @@ type RuntimeInspector interface {
 	Inspect(ctx context.Context, runtimeID string) (*RuntimeInspection, error)
 }
 
+// RuntimeDescription 描述一个运行时的详情信息（对应 docker inspect / kubectl describe）。
+type RuntimeDescription struct {
+	// Kind 标识资源类型，例如 container / deployment / job / service。
+	Kind string `json:"kind"`
+	// Name 资源名称（docker 容器名，或 k8s workload/service 名）。
+	Name string `json:"name"`
+	// Format 描述 Raw 的格式，便于前端渲染，例如 json / yaml / text。
+	Format string `json:"format"`
+	// Raw 原始 inspect/describe 输出，保持后端运行时的原生格式。
+	Raw string `json:"raw"`
+}
+
+// RuntimeDescriber 是可选扩展接口。实现该接口的运行时可通过 runtimeID 返回
+// 资源的详情（docker inspect / kubectl describe）。
+type RuntimeDescriber interface {
+	Describe(ctx context.Context, runtimeID string) (*RuntimeDescription, error)
+}
+
 type RuntimeEvent struct {
 	Type      string
 	RuntimeID string

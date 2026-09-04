@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -400,6 +401,35 @@ func (d *DockerRuntime) Inspect(ctx context.Context, id string) (*containerrunti
 	}
 
 	return &containerruntime.RuntimeInspection{IPAddress: ip}, nil
+}
+
+func (d *DockerRuntime) Describe(ctx context.Context, id string) (*containerruntime.RuntimeDescription, error) {
+	containerID, err := d.toContainerID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	cli, err := d.getClient()
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("inspect container %s: %w", containerID, err)
+	}
+
+	raw, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal container %s: %w", containerID, err)
+	}
+
+	return &containerruntime.RuntimeDescription{
+		Kind:   "container",
+		Name:   strings.TrimPrefix(info.Name, "/"),
+		Format: "json",
+		Raw:    string(raw),
+	}, nil
 }
 
 func (d *DockerRuntime) SetEventHandler(h containerruntime.RuntimeEventHandler) {

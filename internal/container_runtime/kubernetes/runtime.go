@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -363,6 +364,56 @@ func (k *KubernetesRuntime) Inspect(ctx context.Context, runtimeID string) (*con
 	default:
 		return nil, fmt.Errorf("unsupported workload kind: %s", meta.Kind)
 	}
+}
+
+func (k *KubernetesRuntime) Describe(ctx context.Context, runtimeID string) (*containerruntime.RuntimeDescription, error) {
+	meta, err := k.parseRuntimeID(runtimeID)
+	if err != nil {
+		return nil, err
+	}
+
+	switch meta.Kind {
+	case workloadKindDeployment:
+		obj, err := k.clientset.AppsV1().Deployments(meta.Namespace).Get(ctx, meta.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("describe deployment %s: %w", meta.Name, err)
+		}
+		desc, err := marshalRuntimeDescription("deployment", meta.Name, obj)
+		if err != nil {
+			return nil, err
+		}
+		// 附带关联 Service（若存在）
+		if svcName := serviceNameForWorkload(meta.Name); svcName != "" {
+			svc, svcErr := k.clientset.CoreV1().Services(meta.Namespace).Get(ctx, svcName, metav1.GetOptions{})
+			if svcErr == nil {
+				if svcDesc, e := marshalRuntimeDescription("service", svcName, svc); e == nil {
+					desc.Raw += "\n\n" + svcDesc.Raw
+				}
+			}
+		}
+		return desc, nil
+	case workloadKindJob:
+		obj, err := k.clientset.BatchV1().Jobs(meta.Namespace).Get(ctx, meta.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("describe job %s: %w", meta.Name, err)
+		}
+		return marshalRuntimeDescription("job", meta.Name, obj)
+	default:
+		return nil, fmt.Errorf("unsupported workload kind: %s", meta.Kind)
+	}
+}
+
+func marshalRuntimeDescription(kind, name string, obj any) (*containerruntime.RuntimeDescription, error) {
+	raw, err := json.MarshalIndent(obj, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal %s %s: %w", kind, name, err)
+	}
+	return &containerruntime.RuntimeDescription{
+		Kind:   kind,
+		Name:   name,
+		Format: "json",
+		Raw:    string(raw),
+	}, nil
 }
 
 // 监控 deployment 和 job 的生命周期（启动与退出）。

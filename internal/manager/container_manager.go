@@ -486,6 +486,26 @@ func (m *ContainerManager) GetLogs(ctx context.Context, id int64, tail int) (str
 	return rt.Logs(ctx, inst.RuntimeID, tail)
 }
 
+// Describe 按 ContainerInstance ID 从运行时获取详情（docker inspect / kubectl describe）。
+func (m *ContainerManager) Describe(ctx context.Context, id int64) (*containerruntime.RuntimeDescription, error) {
+	inst, err := m.containerRepo.GetContainerInstanceByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	rt, err := m.getRuntimeByInstance(inst)
+	if err != nil {
+		return nil, err
+	}
+
+	describer, ok := rt.(containerruntime.RuntimeDescriber)
+	if !ok {
+		return nil, fmt.Errorf("runtime %s does not support describe", inst.RuntimeName)
+	}
+
+	return describer.Describe(ctx, inst.RuntimeID)
+}
+
 // func (m *ContainerManager) OnRuntimeEvent(e RuntimeEvent) {
 
 // 	inst := m.repo.FindByRuntimeID(e.RuntimeID)

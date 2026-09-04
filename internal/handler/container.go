@@ -1155,6 +1155,42 @@ func (h *ContainerHandler) PageOutboxEvent(c *gin.Context) {
 	})
 }
 
+// DescribeContainerInstance godoc
+// @Summary      容器实例详情
+// @Description  按 ContainerInstance ID 从运行时获取 inspect/describe 详情（兼容 docker 与 k8s）
+// @Tags         容器管理
+// @Produce      json
+// @Param        id  query  int64  true  "容器实例 ID"
+// @Success      200  {object}  containerruntime.RuntimeDescription
+// @Failure      401  {object}  errors.AppError
+// @Failure      500  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/instance/describe [get]
+func (h *ContainerHandler) DescribeContainerInstance(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	id, err := strconv.ParseInt(c.Query("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.Error(errors.NewValidationError("invalid container instance id").WithDetails(err.Error()))
+		return
+	}
+
+	if h.containerManager == nil {
+		c.Error(errors.NewInternalServerError("container manager is not available"))
+		return
+	}
+
+	desc, err := h.containerManager.Describe(c.Request.Context(), id)
+	if err != nil {
+		handleDataError(c, err, "failed to describe container instance")
+		return
+	}
+
+	c.JSON(http.StatusOK, desc)
+}
+
 // ListRuntimeMonitoringSnapshot godoc
 // @Summary      运行时监控快照
 // @Description  返回全局运行时监控表快照（runtime_id 与引用计数）
