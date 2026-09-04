@@ -22,6 +22,7 @@ type ToolRunner struct {
 	exec     *tool.Executor
 	rt       Runtime
 	resolver ToolPermissionResolver
+	userID   string
 }
 
 // ToolPermissionResolver 把一次工具调用映射为需要授权的 Operation。
@@ -41,6 +42,12 @@ func NewToolRunner(exec *tool.Executor, rt Runtime) *ToolRunner {
 // SetPermissionResolver 设置权限映射（可选），返回自身便于链式调用。
 func (r *ToolRunner) SetPermissionResolver(resolver ToolPermissionResolver) *ToolRunner {
 	r.resolver = resolver
+	return r
+}
+
+// SetUserID 设置权限决策所使用的用户标识（用于按用户读取许可策略）。
+func (r *ToolRunner) SetUserID(userID string) *ToolRunner {
+	r.userID = userID
 	return r
 }
 
@@ -89,7 +96,7 @@ func (r *ToolRunner) requestPermission(ctx context.Context, op Operation) tool.R
 	if r.rt == nil {
 		return tool.Failure(ErrNoPermissionResolver)
 	}
-	decision, err := r.rt.RequestPermission(ctx, op)
+	decision, err := r.rt.RequestPermission(ctx, r.userID, op)
 	if err != nil {
 		return tool.Failure(err)
 	}

@@ -45,6 +45,7 @@ type SkillRunner struct {
 	inv      *skill.Invoker
 	rt       Runtime
 	resolver SkillPermissionResolver
+	userID   string
 }
 
 // NewSkillRunner 创建技能执行器；inv 为 nil 时使用空注册表的执行器。
@@ -58,6 +59,12 @@ func NewSkillRunner(inv *skill.Invoker, rt Runtime) *SkillRunner {
 // SetPermissionResolver 设置权限映射（可选），返回自身便于链式调用。
 func (r *SkillRunner) SetPermissionResolver(resolver SkillPermissionResolver) *SkillRunner {
 	r.resolver = resolver
+	return r
+}
+
+// SetUserID 设置权限决策所使用的用户标识（用于按用户读取许可策略）。
+func (r *SkillRunner) SetUserID(userID string) *SkillRunner {
+	r.userID = userID
 	return r
 }
 
@@ -106,7 +113,7 @@ func (r *SkillRunner) requestPermission(ctx context.Context, op Operation) skill
 	if r.rt == nil {
 		return skill.Failure(ErrNoPermissionResolver)
 	}
-	decision, err := r.rt.RequestPermission(ctx, op)
+	decision, err := r.rt.RequestPermission(ctx, r.userID, op)
 	if err != nil {
 		return skill.Failure(err)
 	}

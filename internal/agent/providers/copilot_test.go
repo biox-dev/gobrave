@@ -26,7 +26,7 @@ func TestBuildTools(t *testing.T) {
 	reg := tool.NewRegistryWith(newEchoTool())
 	a := &copilotAgent{opts: agent.Options{Tools: reg}}
 
-	tools := a.buildTools(nil)
+	tools := a.buildTools(nil, "")
 	if len(tools) != 1 {
 		t.Fatalf("tools = %d, want 1", len(tools))
 	}
@@ -60,7 +60,7 @@ func TestBuildTools(t *testing.T) {
 
 func TestBuildToolsNilRegistry(t *testing.T) {
 	a := &copilotAgent{opts: agent.Options{}}
-	if tools := a.buildTools(nil); tools != nil {
+	if tools := a.buildTools(nil, ""); tools != nil {
 		t.Fatalf("tools = %v, want nil", tools)
 	}
 }
@@ -100,7 +100,7 @@ func TestBuildSkills(t *testing.T) {
 	reg := skill.NewRegistryWith(newEchoSkill())
 	a := &copilotAgent{opts: agent.Options{Skills: reg}}
 
-	skills := a.buildSkills(nil)
+	skills := a.buildSkills(nil, "")
 	if len(skills) != 1 {
 		t.Fatalf("skills = %d, want 1", len(skills))
 	}
@@ -134,7 +134,7 @@ func TestBuildSkills(t *testing.T) {
 
 func TestBuildSkillsNilRegistry(t *testing.T) {
 	a := &copilotAgent{opts: agent.Options{}}
-	if skills := a.buildSkills(nil); skills != nil {
+	if skills := a.buildSkills(nil, ""); skills != nil {
 		t.Fatalf("skills = %v, want nil", skills)
 	}
 }

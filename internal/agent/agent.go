@@ -210,7 +210,8 @@ type Runtime interface {
 	// Emit 输出一个流式事件。
 	Emit(ctx context.Context, event StreamEvent) error
 	// RequestPermission 创建权限请求并阻塞等待决策（allow / deny）。
-	RequestPermission(ctx context.Context, operation Operation) (PermissionDecision, error)
+	// userID 用于按用户读取其自定义的许可策略（空表示无用户，走默认策略）。
+	RequestPermission(ctx context.Context, userID string, operation Operation) (PermissionDecision, error)
 	// WaitPermission 等待一个已存在权限请求（permissionID）的决策。
 	WaitPermission(ctx context.Context, permissionID int64) (PermissionDecision, error)
 }

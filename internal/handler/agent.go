@@ -178,6 +178,9 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 		return
 	}
 
+	// UserID 以当前登录用户为准，供权限策略按用户读取许可配置。
+	req.UserID = userID
+
 	// 1) 先创建任务拿到 taskID（此时仅发布 task.created）。
 	task, err := h.svc.CreateTask(c.Request.Context(), req)
 	if err != nil {
@@ -224,7 +227,7 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	}
 
 	// Profile 只能来自当前登录用户，忽略请求体中的 profile。
-	profile := user.Profile
+	profile := user.AgentConfig.Profile
 
 	// 解析业务上下文（llmEnv）→ 系统提示词 + 工作目录。
 	// 显式传入的 system_prompt / working_dir 优先；未提供时回退到运行时解析结果。

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -326,7 +327,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	user.Profile = req.Profile
+	user.AgentConfig.Profile = req.Profile
 	if err := h.userService.UpdateUser(ctx, user); err != nil {
 		logger.Errorf(ctx, "Failed to update user profile: %v", err)
 		appErr := errors.NewInternalServerError("Failed to update profile").WithDetails(err.Error())
@@ -338,6 +339,58 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Profile updated",
+		"user":    user.ToUserInfo(),
+	})
+}
+
+// UpdateAgentConfig godoc
+// @Summary      更新当前用户的 Agent 配置
+// @Description  修改当前登录用户的 Agent 配置（Profile + 权限策略）
+// @Tags         认证
+// @Accept       json
+// @Produce      json
+// @Param        request  body      object{profile=string,permissions=object}  true  "Agent 配置"
+// @Success      200      {object}  map[string]interface{}                     "更新成功"
+// @Failure      400      {object}  errors.AppError                            "请求参数错误"
+// @Security     Bearer
+// @Router       /auth/agent-config [post]
+func (h *AuthHandler) UpdateAgentConfig(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	user, err := h.userService.GetCurrentUser(ctx)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to get current user: %v", err)
+		appErr := errors.NewUnauthorizedError("Failed to get user information").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	var req struct {
+		Profile     string                                           `json:"profile"`
+		Permissions map[agent.OperationType]agent.PermissionDecision `json:"permissions"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Error(ctx, "Failed to parse agent config update request", err)
+		appErr := errors.NewValidationError("Invalid agent config update request").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	user.AgentConfig.Profile = req.Profile
+	if req.Permissions != nil {
+		user.AgentConfig.Permissions = req.Permissions
+	}
+	if err := h.userService.UpdateUser(ctx, user); err != nil {
+		logger.Errorf(ctx, "Failed to update user agent config: %v", err)
+		appErr := errors.NewInternalServerError("Failed to update agent config").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	logger.Infof(ctx, "User agent config updated: %s", user.ID)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Agent config updated",
 		"user":    user.ToUserInfo(),
 	})
 }

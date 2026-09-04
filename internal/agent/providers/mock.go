@@ -133,7 +133,7 @@ func requestDemoPermission(ctx context.Context, rt agent.Runtime, req agent.Requ
 		Content: "[mock] demo write content",
 	}
 
-	decision, err := rt.RequestPermission(ctx, op)
+	decision, err := rt.RequestPermission(ctx, req.UserID, op)
 	if err != nil {
 		return "", err
 	}

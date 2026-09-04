@@ -126,7 +126,7 @@ func (s *userService) Register(ctx context.Context, req *types.RegisterRequest) 
 		Username:     req.Username,
 		Email:        req.Email,
 		PasswordHash: string(hashedPassword),
-		Profile:      agent.DefaultProfileName,
+		AgentConfig:  agent.DefaultUserAgentConfig(),
 		// TenantID:     createdTenant.ID,
 		IsActive:  true,
 		CreatedAt: time.Now(),

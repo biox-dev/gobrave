@@ -3,6 +3,7 @@ package types
 import (
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/agent"
 	"gorm.io/gorm"
 )
 
@@ -18,8 +19,8 @@ type User struct {
 	PasswordHash string `json:"-"          gorm:"type:varchar(255);not null"`
 	// Avatar URL of the user
 	Avatar string `json:"avatar"     gorm:"type:varchar(500)"`
-	// Agent profile name selected by the user (AgentProfile name)
-	Profile string `json:"profile"    gorm:"type:varchar(64)"`
+	// AgentConfig 用户的 Agent 配置（Profile + 权限策略），以 JSON 形式落库。
+	AgentConfig agent.UserAgentConfig `json:"agent_config" gorm:"serializer:json"`
 	// Tenant ID that the user belongs to
 	// TenantID uint64 `json:"tenant_id"  gorm:"index"`
 	// Whether the user is active
@@ -117,26 +118,26 @@ type RegisterResponse struct {
 
 // UserInfo represents user information for API responses
 type UserInfo struct {
-	ID                  string    `json:"id"`
-	Username            string    `json:"username"`
-	Email               string    `json:"email"`
-	Avatar              string    `json:"avatar"`
-	Profile             string    `json:"profile"`
-	TenantID            uint64    `json:"tenant_id"`
-	IsActive            bool      `json:"is_active"`
-	CanAccessAllTenants bool      `json:"can_access_all_tenants"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	ID                  string                `json:"id"`
+	Username            string                `json:"username"`
+	Email               string                `json:"email"`
+	Avatar              string                `json:"avatar"`
+	AgentConfig         agent.UserAgentConfig `json:"agent_config"`
+	TenantID            uint64                `json:"tenant_id"`
+	IsActive            bool                  `json:"is_active"`
+	CanAccessAllTenants bool                  `json:"can_access_all_tenants"`
+	CreatedAt           time.Time             `json:"created_at"`
+	UpdatedAt           time.Time             `json:"updated_at"`
 }
 
 // ToUserInfo converts User to UserInfo (without sensitive data)
 func (u *User) ToUserInfo() *UserInfo {
 	return &UserInfo{
-		ID:       u.ID,
-		Username: u.Username,
-		Email:    u.Email,
-		Avatar:   u.Avatar,
-		Profile:  u.Profile,
+		ID:          u.ID,
+		Username:    u.Username,
+		Email:       u.Email,
+		Avatar:      u.Avatar,
+		AgentConfig: u.AgentConfig,
 		// TenantID:            u.TenantID,
 		IsActive:            u.IsActive,
 		CanAccessAllTenants: u.CanAccessAllTenants,

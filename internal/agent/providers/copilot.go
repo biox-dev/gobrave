@@ -254,8 +254,8 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 		Model:               model,
 		WorkingDirectory:    firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
 		Streaming:           copilot.Bool(true),
-		OnPermissionRequest: a.permissionHandler(ctx, rt),
-		Tools:               append(a.buildTools(rt), a.buildSkills(rt)...),
+		OnPermissionRequest: a.permissionHandler(ctx, rt, req.UserID),
+		Tools:               append(a.buildTools(rt, req.UserID), a.buildSkills(rt, req.UserID)...),
 	}
 
 	system := strings.TrimSpace(req.SystemPrompt)
@@ -292,12 +292,12 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 //
 //	ToolInvocation → agent.ToolCall → 输出 tool_call 事件 → 执行 → tool.Result
 //	  → 输出 tool_result 事件 → copilot.ToolResult → 回传给模型
-func (a *copilotAgent) buildTools(rt agent.Runtime) []copilot.Tool {
+func (a *copilotAgent) buildTools(rt agent.Runtime, userID string) []copilot.Tool {
 	if a.opts.Tools == nil {
 		return nil
 	}
 
-	runner := agent.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt)
+	runner := agent.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt).SetUserID(userID)
 	defs := a.opts.Tools.List()
 
 	out := make([]copilot.Tool, 0, len(defs))
@@ -350,12 +350,12 @@ func toCopilotToolResult(res tool.Result) copilot.ToolResult {
 //
 //	SkillInvocation → agent.SkillCall → 输出 skill_call 事件 → 执行 → skill.Result
 //	  → 输出 skill_result 事件 → copilot.ToolResult → 回传给模型
-func (a *copilotAgent) buildSkills(rt agent.Runtime) []copilot.Tool {
+func (a *copilotAgent) buildSkills(rt agent.Runtime, userID string) []copilot.Tool {
 	if a.opts.Skills == nil {
 		return nil
 	}
 
-	runner := agent.NewSkillRunner(skill.NewInvoker(a.opts.Skills), rt)
+	runner := agent.NewSkillRunner(skill.NewInvoker(a.opts.Skills), rt).SetUserID(userID)
 	defs := a.opts.Skills.List()
 
 	out := make([]copilot.Tool, 0, len(defs))
@@ -428,11 +428,11 @@ func (a *copilotAgent) buildSkillInstructions() string {
 
 // permissionHandler 将 Copilot 的权限请求映射为 agent.Operation，并通过 Runtime 请求权限，
 // 阻塞等待策略 / UI 决策后再把结果翻译回 Copilot 的 PermissionDecision。
-func (a *copilotAgent) permissionHandler(ctx context.Context, rt agent.Runtime) copilot.PermissionHandlerFunc {
+func (a *copilotAgent) permissionHandler(ctx context.Context, rt agent.Runtime, userID string) copilot.PermissionHandlerFunc {
 	return func(request copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilotrpc.PermissionDecision, error) {
 		op := toOperation(request)
 
-		decision, err := rt.RequestPermission(ctx, op)
+		decision, err := rt.RequestPermission(ctx, userID, op)
 		if err != nil {
 			// 权限等待失败（例如无解析器 / 被取消），交给 SDK 决定如何降级。
 			return nil, err

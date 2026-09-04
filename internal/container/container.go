@@ -126,6 +126,23 @@ type eventHandlerGroupIn struct {
 	Handlers []event.Handler `group:"event_handlers"`
 }
 
+// userAgentConfigProvider 把用户的 Agent 配置读取适配为 agent.UserAgentConfigProvider，
+// 使权限策略能按 userID 读取存储在 User.AgentConfig 中的许可配置。
+type userAgentConfigProvider struct {
+	repo interfaces.UserRepository
+}
+
+func (p userAgentConfigProvider) GetAgentConfig(ctx context.Context, userID string) (agent.UserAgentConfig, error) {
+	if strings.TrimSpace(userID) == "" {
+		return agent.UserAgentConfig{}, nil
+	}
+	user, err := p.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return agent.UserAgentConfig{}, err
+	}
+	return user.AgentConfig, nil
+}
+
 func BuildContainer(container *dig.Container) *dig.Container {
 	ctx := context.Background()
 	logger.Debugf(ctx, "[Container] Starting container initialization...")
@@ -243,6 +260,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	// 项目上下文提供者：把当前项目已完成的分析节点注入 Agent 的 SystemPrompt。
 	must(container.Provide(manager.NewAgentProjectContextProvider))
+
 	must(container.Provide(func(
 		client *agent.Client,
 		tasks agent.TaskRepository,
@@ -251,6 +269,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		mems agent.MemoryRepository,
 		profiles agent.ProfileRepository,
 		projCtx *manager.AgentProjectContextProvider,
+		userRepo interfaces.UserRepository,
 	) *agent.AgentService {
 
 		return agent.NewService(agent.ServiceConfig{
@@ -261,6 +280,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 			Memory:   agent.NewMemoryManager(agent.MemoryConfig{Repo: mems}), // Extractor: agent.MockMemoryExtractor(),
 			Profiles: agent.NewProfileManager(profiles),
 			Project:  projCtx,
+			Policy:   agent.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
 		})
 	}))
 	// Provide ConversationService：多轮对话编排层（复用 AgentService 的任务状态机）。
