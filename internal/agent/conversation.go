@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,7 +69,10 @@ type ConversationMessage struct {
 	ConversationID int64     `json:"conversation_id,string" gorm:"column:conversation_id;type:bigint;index"`
 	Seq            int       `json:"seq" gorm:"column:seq;index"`
 	Role           string    `json:"role" gorm:"column:role;type:varchar(32)"`
+	Kind           string    `json:"kind,omitempty" gorm:"column:kind;type:varchar(32);index"`
+	TaskID         int64     `json:"task_id,string,omitempty" gorm:"column:task_id;type:bigint;index"`
 	Content        string    `json:"content" gorm:"column:content;type:text"`
+	Data           any       `json:"data,omitempty" gorm:"serializer:json"`
 	CreatedAt      time.Time `json:"created_at" gorm:"column:created_at"`
 }
 
@@ -195,7 +200,6 @@ type turnState struct {
 
 	text           strings.Builder // 累积的 assistant 文本增量
 	messageContent string          // 完整 assistant 消息（text 为空时回退）
-	hasText        bool
 }
 
 // ConversationService 编排多轮对话：负责历史拼接 + 复用 AgentService 执行每一轮。
@@ -251,7 +255,7 @@ func (s *ConversationService) CreateTurn(ctx context.Context, in TurnInput) (*Ta
 	l.Lock()
 
 	// 追加 user 消息。
-	conv.Messages = append(conv.Messages, Message{Role: RoleUser, Content: in.Message})
+	conv.Messages = append(conv.Messages, Message{Role: RoleUser, Kind: MessageKindUser, Content: in.Message})
 	conv.UpdatedAt = time.Now()
 	if err := s.repo.Update(ctx, conv); err != nil {
 		l.Unlock()
@@ -266,7 +270,7 @@ func (s *ConversationService) CreateTurn(ctx context.Context, in TurnInput) (*Ta
 		UserID:       in.UserID,
 		SystemPrompt: in.SystemPrompt,
 		Profile:      in.Profile,
-		Messages:     append([]Message(nil), conv.Messages...),
+		Messages:     promptMessagesForRequest(conv.Messages),
 		WorkingDir:   in.WorkingDir,
 		Stream:       true, // 会话轮次统一走流式，便于捕获 assistant 文本
 	}
@@ -306,7 +310,6 @@ func (s *ConversationService) StartTurn(ctx context.Context, taskID int64) error
 		switch ev.Type {
 		case StreamEventText:
 			ts.text.WriteString(ev.Content)
-			ts.hasText = true
 		case StreamEventMessage:
 			if mb, ok := messageBlockContent(ev.Data); ok {
 				ts.messageContent = mb
@@ -330,12 +333,21 @@ func (s *ConversationService) StartTurn(ctx context.Context, taskID int64) error
 //
 // 幂等（基于 turns 中的登记），可安全处理 done / error / 启动失败任一终态。
 func (s *ConversationService) finishTurn(taskID int64, ts *turnState, errMsg string) {
-	content := ts.text.String()
-	if content == "" {
-		content = ts.messageContent
+	_ = errMsg
+	final := s.appendTimelineMessages(context.Background(), ts.conv, taskID)
+	if strings.TrimSpace(final) == "" {
+		final = ts.text.String()
 	}
-	if content != "" {
-		ts.conv.Messages = append(ts.conv.Messages, Message{Role: RoleAssistant, Content: content})
+	if strings.TrimSpace(final) == "" {
+		final = ts.messageContent
+	}
+	if strings.TrimSpace(final) != "" {
+		ts.conv.Messages = append(ts.conv.Messages, Message{
+			Role:    RoleAssistant,
+			Kind:    MessageKindAssistantFinal,
+			TaskID:  taskID,
+			Content: final,
+		})
 	}
 	ts.conv.CurrentTaskID = 0
 	ts.conv.UpdatedAt = time.Now()
@@ -345,6 +357,155 @@ func (s *ConversationService) finishTurn(taskID int64, ts *turnState, errMsg str
 	delete(s.turns, taskID)
 	s.mu.Unlock()
 	ts.unlock()
+}
+
+// promptMessagesForRequest 仅挑选可用于下一轮 prompt 的语义消息。
+func promptMessagesForRequest(history []Message) []Message {
+	out := make([]Message, 0, len(history))
+	for _, m := range history {
+		if !shouldIncludeInPrompt(m) {
+			continue
+		}
+		out = append(out, Message{Role: m.Role, Content: m.Content})
+	}
+	return out
+}
+
+func shouldIncludeInPrompt(m Message) bool {
+	switch m.Role {
+	case RoleUser:
+		return true
+	case RoleAssistant:
+		switch m.Kind {
+		case "", MessageKindAssistant, MessageKindAssistantFinal:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+// appendTimelineMessages 从任务事件流投影会话历史，并返回最终 assistant 文本。
+func (s *ConversationService) appendTimelineMessages(ctx context.Context, conv *Conversation, taskID int64) string {
+	if conv == nil || s.agent == nil || taskID == 0 {
+		return ""
+	}
+	events, err := s.agent.GetEvents(ctx, taskID, 0)
+	if err != nil {
+		return ""
+	}
+
+	var final string
+	for _, ev := range events {
+		if ev == nil || ev.Type != EventStream {
+			continue
+		}
+		se, ok := streamEventFromPayload(ev.Payload)
+		if !ok {
+			continue
+		}
+		switch se.Type {
+		case StreamEventReasoning:
+			if content, ok := reasoningBlockContent(se.Data); ok && strings.TrimSpace(content) != "" {
+				conv.Messages = append(conv.Messages, Message{
+					Role:    RoleAssistant,
+					Kind:    MessageKindReasoning,
+					TaskID:  taskID,
+					Content: content,
+					Data:    se.Data,
+				})
+			}
+		case StreamEventToolCall:
+			conv.Messages = append(conv.Messages, Message{
+				Role:    RoleAssistant,
+				Kind:    MessageKindToolCall,
+				TaskID:  taskID,
+				Content: timelineEventSummary("tool", se.Data),
+				Data:    se.Data,
+			})
+		case StreamEventToolResult:
+			conv.Messages = append(conv.Messages, Message{
+				Role:    RoleAssistant,
+				Kind:    MessageKindToolResult,
+				TaskID:  taskID,
+				Content: timelineEventSummary("tool_result", se.Data),
+				Data:    se.Data,
+			})
+		case StreamEventSkillCall:
+			conv.Messages = append(conv.Messages, Message{
+				Role:    RoleAssistant,
+				Kind:    MessageKindSkillCall,
+				TaskID:  taskID,
+				Content: timelineEventSummary("skill", se.Data),
+				Data:    se.Data,
+			})
+		case StreamEventSkillResult:
+			conv.Messages = append(conv.Messages, Message{
+				Role:    RoleAssistant,
+				Kind:    MessageKindSkillResult,
+				TaskID:  taskID,
+				Content: timelineEventSummary("skill_result", se.Data),
+				Data:    se.Data,
+			})
+		case StreamEventMessage:
+			if content, ok := messageBlockContent(se.Data); ok && strings.TrimSpace(content) != "" {
+				final = content
+			}
+		}
+	}
+	return final
+}
+
+func streamEventFromPayload(payload any) (StreamEvent, bool) {
+	switch p := payload.(type) {
+	case StreamEvent:
+		return p, true
+	case *StreamEvent:
+		if p == nil {
+			return StreamEvent{}, false
+		}
+		return *p, true
+	case map[string]any:
+		t, ok := p["type"].(string)
+		if !ok || strings.TrimSpace(t) == "" {
+			return StreamEvent{}, false
+		}
+		e := StreamEvent{Type: StreamEventType(t)}
+		if content, ok := p["content"].(string); ok {
+			e.Content = content
+		}
+		e.Data = p["data"]
+		return e, true
+	default:
+		return StreamEvent{}, false
+	}
+}
+
+func reasoningBlockContent(data any) (string, bool) {
+	switch v := data.(type) {
+	case ReasoningBlock:
+		return v.Content, true
+	case *ReasoningBlock:
+		if v == nil {
+			return "", false
+		}
+		return v.Content, true
+	case map[string]any:
+		content, ok := v["content"].(string)
+		return content, ok
+	default:
+		return "", false
+	}
+}
+
+func timelineEventSummary(prefix string, data any) string {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Sprintf("%s event", prefix)
+	}
+	return string(b)
 }
 
 // PageConversations 分页查询会话；userID 为空表示全部用户。
@@ -379,6 +540,9 @@ func messageBlockContent(data any) (string, bool) {
 			return "", false
 		}
 		return mb.Content, true
+	case map[string]any:
+		content, ok := mb["content"].(string)
+		return content, ok
 	default:
 		return "", false
 	}

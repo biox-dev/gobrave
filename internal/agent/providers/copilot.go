@@ -90,8 +90,19 @@ func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request, rt agent.R
 	// 将最终结果也通过 Runtime.Emit 输出，保证调用方无论走 Invoke 还是 Stream 都能收到统一事件流。
 	// 这里输出“完整消息块”（而非 text 增量），使其可作为时间线数据源落库。
 	if messageData != nil {
-		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventMessage, Data: toMessageBlock(messageData)}); err != nil {
-			return nil, err
+		for _, tr := range messageData.ToolRequests {
+			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventToolCall, Data: agent.ToolCall{
+				ID:        tr.ToolCallID,
+				Name:      tr.Name,
+				Arguments: tr.Arguments,
+			}}); err != nil {
+				return nil, err
+			}
+		}
+		if len(messageData.ToolRequests) == 0 {
+			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventMessage, Data: toMessageBlock(messageData)}); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
@@ -136,18 +147,7 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.R
 			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventTurnStart, Data: turnBlock(data.TurnID, data.Model)}); err != nil {
 				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 			}
-		case *copilot.AssistantReasoningData:
-			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventReasoning, Data: agent.ReasoningBlock{ID: data.ReasoningID, Content: data.Content}}); err != nil {
-				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
-			}
-		case *copilot.AssistantMessageData:
-			// 非流式兜底：若没有收到任何 delta，则用最终消息补齐内容。
-			if final.Len() == 0 && data.Content != "" {
-				final.WriteString(data.Content)
-			}
-			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventMessage, Data: toMessageBlock(data)}); err != nil {
-				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
-			}
+
 		case *copilot.AssistantTurnEndData:
 			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventTurnEnd, Data: turnBlock(data.TurnID, data.Model)}); err != nil {
 				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
@@ -161,11 +161,34 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.R
 					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 				}
 			}
+		case *copilot.AssistantMessageData:
+			for _, tr := range data.ToolRequests {
+				if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventToolCall, Data: agent.ToolCall{
+					ID:        tr.ToolCallID,
+					Name:      tr.Name,
+					Arguments: tr.Arguments,
+				}}); err != nil {
+					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
+				}
+			}
+			// 非流式兜底：若没有收到任何 delta，则用最终消息补齐内容。
+			// if final.Len() == 0 && data.Content != "" {
+			// 	final.WriteString(data.Content)
+			// }
+			if len(data.ToolRequests) == 0 {
+				if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventMessage, Data: toMessageBlock(data)}); err != nil {
+					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
+				}
+			}
 		case *copilot.AssistantReasoningDeltaData:
 			if data.DeltaContent != "" {
 				if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventReasoningDelta, Content: data.DeltaContent}); err != nil {
 					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 				}
+			}
+		case *copilot.AssistantReasoningData:
+			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventReasoning, Data: agent.ReasoningBlock{ID: data.ReasoningID, Content: data.Content}}); err != nil {
+				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 			}
 
 		// —— 终态 ——

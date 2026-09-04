@@ -47,6 +47,18 @@ const (
 	RoleTool      = "tool"
 )
 
+// MessageKind 定义会话层可回放的消息类型。
+const (
+	MessageKindUser           = "user"
+	MessageKindAssistant      = "assistant"
+	MessageKindAssistantFinal = "assistant_final"
+	MessageKindReasoning      = "reasoning"
+	MessageKindToolCall       = "tool_call"
+	MessageKindToolResult     = "tool_result"
+	MessageKindSkillCall      = "skill_call"
+	MessageKindSkillResult    = "skill_result"
+)
+
 // ErrNotImplemented 表示某个 Provider 尚未实现真实调用。
 var ErrNotImplemented = errors.New("agent: provider not implemented yet")
 
@@ -54,6 +66,9 @@ var ErrNotImplemented = errors.New("agent: provider not implemented yet")
 type Message struct {
 	Role    string `json:"role"`    // system / user / assistant / tool
 	Content string `json:"content"` // 文本内容
+	Kind    string `json:"kind,omitempty"`
+	TaskID  int64  `json:"task_id,string,omitempty"`
+	Data    any    `json:"data,omitempty"`
 }
 
 // Request 描述一次 Agent 调用请求，与具体 Provider 无关。

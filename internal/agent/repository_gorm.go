@@ -309,7 +309,13 @@ func (r *gormConversationRepository) listMessages(ctx context.Context, conversat
 	}
 	msgs := make([]Message, 0, len(rows))
 	for _, row := range rows {
-		msgs = append(msgs, Message{Role: row.Role, Content: row.Content})
+		msgs = append(msgs, Message{
+			Role:    row.Role,
+			Kind:    row.Kind,
+			TaskID:  row.TaskID,
+			Content: row.Content,
+			Data:    row.Data,
+		})
 	}
 	return msgs, nil
 }
@@ -328,7 +334,10 @@ func replaceMessages(tx *gorm.DB, conv *Conversation) error {
 			ConversationID: conv.ID,
 			Seq:            i,
 			Role:           m.Role,
+			Kind:           m.Kind,
+			TaskID:         m.TaskID,
 			Content:        m.Content,
+			Data:           m.Data,
 			CreatedAt:      now,
 		}
 		if err := tx.Create(row).Error; err != nil {
