@@ -315,15 +315,15 @@ func (s *ConversationService) StartTurn(ctx context.Context, taskID int64) error
 				ts.messageContent = mb
 			}
 		case StreamEventDone:
-			s.finishTurn(taskID, ts, "")
+			s.finishTurn(taskID, "")
 		case StreamEventError:
-			s.finishTurn(taskID, ts, "stream error")
+			s.finishTurn(taskID, "stream error")
 		}
 		return nil
 	}
 
 	if err := s.agent.StartTask(ctx, taskID, handler); err != nil {
-		s.finishTurn(taskID, ts, err.Error())
+		s.finishTurn(taskID, err.Error())
 		return err
 	}
 	return nil
@@ -332,8 +332,22 @@ func (s *ConversationService) StartTurn(ctx context.Context, taskID int64) error
 // finishTurn 在本轮结束时收尾：把 assistant 回复写回历史，释放会话锁并清理中间态。
 //
 // 幂等（基于 turns 中的登记），可安全处理 done / error / 启动失败任一终态。
-func (s *ConversationService) finishTurn(taskID int64, ts *turnState, errMsg string) {
+func (s *ConversationService) finishTurn(taskID int64, errMsg string) {
 	_ = errMsg
+
+	// 幂等：先从登记表中“领取”本轮状态，保证 done / error / 启动失败 任一终态只收尾一次。
+	// Provider 可能已自行补发 error 事件、run 又补发一次，若重复收尾会导致 assistant 消息
+	// 重复追加、并对同一 sync.Mutex 二次 Unlock（panic）。
+	s.mu.Lock()
+	ts, ok := s.turns[taskID]
+	if ok {
+		delete(s.turns, taskID)
+	}
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+
 	final := s.appendTimelineMessages(context.Background(), ts.conv, taskID)
 	if strings.TrimSpace(final) == "" {
 		final = ts.text.String()
@@ -353,9 +367,6 @@ func (s *ConversationService) finishTurn(taskID int64, ts *turnState, errMsg str
 	ts.conv.UpdatedAt = time.Now()
 	_ = s.repo.Update(context.Background(), ts.conv)
 
-	s.mu.Lock()
-	delete(s.turns, taskID)
-	s.mu.Unlock()
 	ts.unlock()
 }
 

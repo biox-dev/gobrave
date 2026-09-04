@@ -206,6 +206,12 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 
 	switch {
 	case err != nil:
+		// 流式调用异常结束（含 CancelTask 触发的 context 取消）时补发一个 error 流事件：
+		// 会话轮次（ConversationService）依赖 done/error 流事件在 finishTurn 中释放会话级锁，
+		// 若不补发，取消会导致该会话锁永久泄漏，后续轮次将永久阻塞。
+		if rt != nil {
+			_ = rt.Emit(ctx, StreamEvent{Type: StreamEventError, Err: err})
+		}
 		_ = s.transitionTask(ctx, task, TaskFailed, err.Error())
 		return nil, err
 	case result == nil:
