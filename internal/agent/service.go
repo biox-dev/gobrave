@@ -185,46 +185,44 @@ func (s *AgentService) execute(ctx context.Context, task *Task, rt Runtime) {
 //
 // 异步（execute）与同步（RunTaskSync）共享这一执行路径。
 func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result, error) {
-	if err := s.transitionTask(ctx, task.ID, TaskRunning, ""); err != nil {
+	// 应用 Agent Profile：解析 → 合并系统提示词 → 选择技能 → 按开关注入背景。
+	task.Request = s.applyProfile(ctx, task.Request)
+	if err := s.transitionTask(ctx, task, TaskRunning, ""); err != nil {
 		return nil, err
 	}
 
 	if s.client == nil {
-		_ = s.transitionTask(ctx, task.ID, TaskFailed, "no agent client configured")
+		_ = s.transitionTask(ctx, task, TaskFailed, "no agent client configured")
 		return nil, fmt.Errorf("agent: no client configured")
 	}
 
-	// 应用 Agent Profile：解析 → 合并系统提示词 → 选择技能 → 按开关注入背景。
-	req := s.applyProfile(ctx, task.Request)
-
 	var result *Result
 	var err error
-	if req.Stream {
-		result, err = s.client.StreamRuntime(ctx, req, rt)
+	if task.Request.Stream {
+		result, err = s.client.StreamRuntime(ctx, task.Request, rt)
 	} else {
-		result, err = s.client.InvokeRuntime(ctx, req, rt)
+		result, err = s.client.InvokeRuntime(ctx, task.Request, rt)
 	}
 
 	switch {
 	case err != nil:
-		_ = s.transitionTask(ctx, task.ID, TaskFailed, err.Error())
+		_ = s.transitionTask(ctx, task, TaskFailed, err.Error())
 		return nil, err
 	case result == nil:
-		_ = s.transitionTask(ctx, task.ID, TaskFailed, "agent returned empty result")
+		_ = s.transitionTask(ctx, task, TaskFailed, "agent returned empty result")
 		return nil, fmt.Errorf("agent: empty result")
 	default:
-		_ = s.transitionTask(ctx, task.ID, TaskCompleted, "")
+		_ = s.transitionTask(ctx, task, TaskCompleted, "")
 		// 任务成功完成后，从本轮执行中提取值得长期记住的记忆。
-		s.extractMemory(ctx, task, req, result)
+		s.extractMemory(ctx, task, task.Request, result)
 		return result, nil
 	}
 }
 
 // transitionTask 加载任务 → 校验状态迁移 → 保存 → 广播状态事件。
-func (s *AgentService) transitionTask(ctx context.Context, taskID int64, next TaskStatus, errMsg string) error {
-	task, err := s.tasks.Get(ctx, taskID)
-	if err != nil {
-		return err
+func (s *AgentService) transitionTask(ctx context.Context, task *Task, next TaskStatus, errMsg string) error {
+	if task == nil {
+		return fmt.Errorf("task is nil")
 	}
 
 	switch next {
@@ -248,7 +246,7 @@ func (s *AgentService) transitionTask(ctx context.Context, taskID int64, next Ta
 		return err
 	}
 
-	s.emitEvent(ctx, taskID, taskEventType(next), task)
+	s.emitEvent(ctx, task.ID, taskEventType(next), task)
 	return nil
 }
 
@@ -492,6 +490,7 @@ func (s *AgentService) applyProfile(ctx context.Context, req Request) Request {
 	if profile.Context.InjectProject {
 		req = s.injectProjectContext(ctx, req)
 	}
+
 	return req
 }
 
@@ -571,7 +570,11 @@ func (s *AgentService) CancelTask(ctx context.Context, taskID int64) error {
 	if ok {
 		cancel()
 	}
-	return s.transitionTask(ctx, taskID, TaskCanceled, "canceled by user")
+	task, err := s.tasks.Get(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	return s.transitionTask(ctx, task, TaskCanceled, "canceled by user")
 }
 
 // Recover 在后端重启后重建运行态（见 design.md 第 6 / 19 节）。
@@ -588,7 +591,7 @@ func (s *AgentService) Recover(ctx context.Context) error {
 	}
 	for _, t := range running {
 		if !s.isActive(t.ID) {
-			_ = s.transitionTask(ctx, t.ID, TaskFailed, "backend restarted: task interrupted")
+			_ = s.transitionTask(ctx, t, TaskFailed, "backend restarted: task interrupted")
 		}
 	}
 
@@ -666,7 +669,7 @@ func (r *taskRuntime) RequestPermission(ctx context.Context, operation Operation
 	}
 
 	// 4) 任务进入等待权限状态，并广播事件。
-	if err := r.svc.transitionTask(ctx, r.taskID, TaskWaitingPermission, ""); err != nil {
+	if err := r.svc.transitionTask(ctx, task, TaskWaitingPermission, ""); err != nil {
 		return "", err
 	}
 	r.svc.emitEvent(ctx, r.taskID, EventPermissionCreated, perm)
@@ -679,7 +682,7 @@ func (r *taskRuntime) RequestPermission(ctx context.Context, operation Operation
 	}
 
 	// 6) 恢复任务为 running（deny 时 Agent 会返回错误，由 execute 置为 failed）。
-	_ = r.svc.transitionTask(ctx, r.taskID, TaskRunning, "")
+	_ = r.svc.transitionTask(ctx, task, TaskRunning, "")
 	// r.emitPermissionResult(ctx, string(decision))
 	return decision, nil
 }

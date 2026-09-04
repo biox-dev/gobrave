@@ -72,6 +72,12 @@ func buildSkillRegistry(cfg *config.Config) *skill.Registry {
 
 	if cfg != nil && cfg.Storage != nil && strings.TrimSpace(cfg.Storage.BaseDir) != "" {
 		skillsDir := filepath.Join(cfg.Storage.BaseDir, ".skills")
+		// 目录不存在，则创建
+		if _, err := os.Stat(skillsDir); os.IsNotExist(err) {
+			if err := os.MkdirAll(skillsDir, 0755); err != nil {
+				logger.Warnf(context.Background(), "[Container] Failed to create skills directory: %v", err)
+			}
+		}
 		if loaded, err := skill.NewLoader().LoadDir(skillsDir); err == nil {
 			for _, s := range loaded {
 				reg.Register(s)

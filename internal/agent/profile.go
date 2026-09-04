@@ -168,23 +168,23 @@ func (m *ProfileManager) Resolve(ctx context.Context, userID, name string) (*Pro
 	name = normalizeProfileName(name)
 	uid := strings.TrimSpace(userID)
 
-	if name == "" {
-		if uid != "" {
-			if p, err := m.repo.GetDefault(ctx, uid); err == nil && p != nil {
-				return p, nil
-			}
-		}
-		return DefaultBuiltinProfile(), nil
+	// if name == "" {
+	// 	if uid != "" {
+	// 		if p, err := m.repo.GetDefault(ctx, uid); err == nil && p != nil {
+	// 			return p, nil
+	// 		}
+	// 	}
+	// 	return DefaultBuiltinProfile(), nil
+	// }
+	if p, ok := m.builtins[name]; ok {
+		return p, nil
 	}
-
 	if uid != "" {
 		if p, err := m.repo.GetByName(ctx, uid, name); err == nil && p != nil {
 			return p, nil
 		}
 	}
-	if p, ok := m.builtins[name]; ok {
-		return p, nil
-	}
+
 	return nil, ErrProfileNotFound
 }
 
