@@ -365,7 +365,8 @@ func (w *ContainerCreateWorker) executeCreate(
 	// 	}
 	// }
 	ownerCtx := w.loadOwnerRuntimeContext(ctx, inst.OwnerType, inst.OwnerID)
-	resolveVars := w.buildRuntimeResolveVariables(ctx, tpl, inst.OwnerType, ownerCtx)
+	// resolveVars := w.buildRuntimeResolveVariables(ctx, tpl, inst.OwnerType, ownerCtx)
+	resolveVars := w.buildRuntimeVariables(ctx, tpl, inst.OwnerType, ownerCtx).ToMap()
 
 	volumes := parseVolumes(tpl.Mounts, inst.OwnerType)
 	projectVolumes := parseVolumes(ownerCtx.project.Mounts, inst.OwnerType)
@@ -782,149 +783,16 @@ func (w *ContainerCreateWorker) loadOwnerRuntimeContext(ctx context.Context, own
 // 	return parseVolumes(ownerCtx.project.Volumes)
 // }
 
-// buildRuntimeResolveVariables builds the variable map used by the runtime resolver.
-func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
-	ctx context.Context,
-	tpl *types.ContainerTemplate,
-	// cfg *config.Config,
-	// img *types.ContainerImage,
-	// templateID int64,
-	ownerType types.ContainerOwnerType,
-	// ownerID int64,
-	// name string,
-	ownerCtx *ownerRuntimeContext,
-) map[string]string {
-	vars := map[string]string{}
-	baseDir := ""
-	cfg := w.cfg
-	if cfg != nil && cfg.Storage != nil {
-		baseDir = strings.TrimSpace(cfg.Storage.BaseDir)
-	}
-
-	// setRuntimeVar(vars, "CONTAINER_TEMPLATE_ID", strconv.FormatInt(templateID, 10))
-	// setRuntimeVar(vars, "TEMPLATE_ID", strconv.FormatInt(templateID, 10))
-	// setRuntimeVar(vars, "OWNER_TYPE", string(ownerType))
-	// setRuntimeVar(vars, "OWNER_ID", strconv.FormatInt(ownerID, 10))
-	// setRuntimeVar(vars, "CONTAINER_NAME", name)
-
-	packageDir := fmt.Sprintf("%s/package", baseDir)
-	profilePath := fmt.Sprintf("%s/Rprofile", packageDir)
-	ensureEmptyFileIfNotExists(ctx, profilePath)
-	setRuntimeVar(vars, "R_PROFILE", profilePath)
-	setRuntimeVar(vars, "PACKAGE_DIR", packageDir)
-
-	rPackageDir := fmt.Sprintf("%s/package/R/%s", baseDir, tpl.GetRLibraryPath())
-	setRuntimeVar(vars, "R_PACKAGE_DIR", rPackageDir)
-	pythonPackageDir := fmt.Sprintf("%s/package/python/%s", baseDir, tpl.GetPythonLibraryPath())
-	setRuntimeVar(vars, "PYTHON_PACKAGE_DIR", pythonPackageDir)
-	condaPackageDir := fmt.Sprintf("%s/package/conda/%s", baseDir, tpl.GetCondaLibraryPath())
-	setRuntimeVar(vars, "CONDA_PACKAGE_DIR", condaPackageDir)
-
-	if userID, ok := os.LookupEnv("USERID"); ok {
-		setRuntimeVar(vars, "USERID", userID)
-	} else {
-		setRuntimeVar(vars, "USERID", strconv.Itoa(os.Getuid()))
-	}
-	if groupID, ok := os.LookupEnv("GROUPID"); ok {
-		setRuntimeVar(vars, "GROUPID", groupID)
-	} else {
-		setRuntimeVar(vars, "GROUPID", strconv.Itoa(os.Getgid()))
-	}
-
-	if dockerGID, ok := os.LookupEnv("DOCKER_GID"); ok {
-		setRuntimeVar(vars, "DOCKER_GID", dockerGID)
-		setRuntimeVar(vars, "DOCKER_GROUPID", dockerGID)
-	} else if gid, ok := resolvePathGID("/var/run/docker.sock"); ok {
-		setRuntimeVar(vars, "DOCKER_GID", gid)
-		setRuntimeVar(vars, "DOCKER_GROUPID", gid)
-	} else {
-		setRuntimeVar(vars, "DOCKER_GID", vars["GROUPID"])
-		setRuntimeVar(vars, "DOCKER_GROUPID", vars["GROUPID"])
-	}
-
-	// if ctx != nil {
-	// 	// if userID, ok := ctx.Value(types.UserIDContextKey).(string); ok {
-	// 	// 	setRuntimeVar(vars, "SYS_USER_ID", userID)
-	// 	// }
-	// 	// if userID, ok := ctx.Value(types.UserIDContextKey.String()).(string); ok {
-	// 	// 	setRuntimeVar(vars, "SYS_USER_ID", userID)
-	// 	// }
-
-	// }
-	projectDir := fmt.Sprintf("%s/data/%s", baseDir, ownerCtx.project.ProjectID)
-	setRuntimeVar(vars, "PROJECT_DIR", projectDir)
-	projectConfigDir := fmt.Sprintf("%s/data/%s/.config", baseDir, ownerCtx.project.ProjectID)
-	setRuntimeVar(vars, "PROJECT_CONFIG_DIR", projectConfigDir)
-
-	// if ownerCtx != nil {
-	// 	if ownerCtx.projectID != 0 {
-	// 		setRuntimeVar(vars, "PROJECT_ID", strconv.FormatInt(ownerCtx.projectID, 10))
-	// 		// setRuntimeVar(vars, "PROJECTID", strconv.FormatInt(ownerCtx.projectID, 10))
-
-	// 		if baseDir != "" {
-	// 			setRuntimeVar(vars, "USER_PROJECT_DIR", fmt.Sprintf("%s/data/%d", baseDir, ownerCtx.projectID))
-	// 		}
-	// 	}
-
-	// 	if ownerCtx.project != nil {
-	// 		setRuntimeVar(vars, "PROJECT_NAME", ownerCtx.project.ProjectName)
-	// 	}
-	// }
-	ensureEmptyFileIfNotExists(ctx, profilePath)
-	ensureDirs(ctx, []string{rPackageDir, pythonPackageDir, condaPackageDir, projectDir, projectConfigDir})
-
-	if ownerType == types.ContainerOwnerAppSession && ownerCtx != nil && ownerCtx.session != nil {
-		session := ownerCtx.session
-		setRuntimeVar(vars, "APP_SESSION_ID", strconv.FormatInt(session.ID, 10))
-		setRuntimeVar(vars, "APPSESSION_ID", strconv.FormatInt(session.ID, 10))
-		setRuntimeVar(vars, "SYS_USER_ID", session.UserID)
-		setRuntimeVar(vars, "WORKSPACE_PATH", session.WorkspacePath)
-		userDir := fmt.Sprintf("%s/user/%s", baseDir, session.UserID)
-		setRuntimeVar(vars, "USER_DIR", userDir)
-		userConfigDir := fmt.Sprintf("%s/user/%s/.config", baseDir, session.UserID)
-		setRuntimeVar(vars, "USER_CONFIG_DIR", userConfigDir)
-
-		if session.WorkspacePath == "" && ownerCtx.projectID != 0 && baseDir != "" {
-			session.WorkspacePath = fmt.Sprintf("%s/data/%s", baseDir, ownerCtx.project.ProjectID)
-
-			setRuntimeVar(vars, "WORKSPACE_PATH", session.WorkspacePath)
-		}
-
-		if ownerCtx.node != nil && w.workflowService != nil {
-			scriptDir, mainFile, err := w.workflowService.GetScriptFileByScriptID(ctx, ownerCtx.node.ScriptID)
-			if err == nil && strings.TrimSpace(mainFile) != "" && strings.TrimSpace(scriptDir) != "" {
-				scriptFile := filepath.Join(scriptDir, mainFile)
-				setRuntimeVar(vars, "SCRIPT_FILE", scriptFile)
-			}
-		}
-
-		// setRuntimeVar(vars, "APP_TYPE", session.AppType)
-		ensureDirs(ctx, []string{session.WorkspacePath, userDir, userConfigDir})
-
-	}
-
-	if ownerType == types.ContainerOwnerDagNode && ownerCtx != nil && ownerCtx.node != nil {
-		node := ownerCtx.node
-		setRuntimeVar(vars, "ANALYSIS_NODE_ID", strconv.FormatUint(uint64(node.ID), 10))
-		setRuntimeVar(vars, "ANALYSIS_ID", strconv.FormatInt(node.AnalysisID, 10))
-		setRuntimeVar(vars, "NODE_ID", node.NodeID)
-		setRuntimeVar(vars, "WORKSPACE_PATH", node.WorkspaceDir)
-		setRuntimeVar(vars, "WORKSPACE_DIR", node.WorkspaceDir)
-		setRuntimeVar(vars, "OUTPUT_DIR", node.OutputDir)
-		setRuntimeVar(vars, "COMMAND_PATH", node.CommandPath)
-		setRuntimeVar(vars, "LOG_PATH", node.LogPath)
-
-		if strings.TrimSpace(node.LogPath) == "" {
-			if outputDir := strings.TrimSpace(node.OutputDir); outputDir != "" {
-				setRuntimeVar(vars, "LOG_PATH", filepath.Join(outputDir, "run.log"))
-			}
-		}
-		ensureDirs(ctx, []string{node.WorkspaceDir, node.OutputDir})
-
-	}
-
-	return vars
-}
+// buildRuntimeResolveVariables 保留为薄封装：组装带元数据的变量集后派生扁平 map，供 resolver 使用。
+// 变量的分类/描述等元数据见 runtime_variable.go 中的 runtimeVariableDefinitions。
+// func (w *ContainerCreateWorker) buildRuntimeResolveVariables(
+// 	ctx context.Context,
+// 	tpl *types.ContainerTemplate,
+// 	ownerType types.ContainerOwnerType,
+// 	ownerCtx *ownerRuntimeContext,
+// ) map[string]string {
+// 	return w.buildRuntimeVariables(ctx, tpl, ownerType, ownerCtx).ToMap()
+// }
 
 // ensureRuntimeFilesAndDirs creates necessary directories and files for the runtime.
 func ensureDirs(ctx context.Context, dirs []string) {
