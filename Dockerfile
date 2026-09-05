@@ -1,9 +1,9 @@
 # ============================
 # Stage 1: Build frontend (brave-ui)
 # ============================
-FROM node:22-bullseye-slim AS frontend
+FROM node:22-bookworm-slim AS frontend
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         git \
         curl \
         ca-certificates \
@@ -39,7 +39,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o gobrave .
 # ============================
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         ca-certificates \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
