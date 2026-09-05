@@ -65,3 +65,12 @@ git push origin :refs/tags/v0.1.0
 ```
 
 Then create the correct tag and push again.
+
+
+## go cmd
+```
+go list -m -json github.com/biox-dev/opencode
+go mod edit -dropreplace github.com/biox-dev/opencode
+go get github.com/biox-dev/opencode@latest
+go list -deps  | grep tui
+```

@@ -60,6 +60,8 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 
 	seenToolCalls := map[string]map[string]bool{}
 	seenToolResults := map[string]map[string]bool{}
+	seenAssistantMessages := map[string]bool{}
+	// assistantMessageEmittedWithoutID := false
 
 	result, err := sdkClient.SendMessageStream(ctx, opencodesdk.RunRequest{
 		SessionTitle: firstNonEmpty(strings.TrimSpace(req.SessionID), "gobrave-opencode"),
@@ -70,10 +72,16 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 			ensureSeenMaps(seenToolCalls, seenToolResults, event.Message.ID)
 			emitToolEvents(ctx, rt, event.Message, seenToolCalls, seenToolResults)
 			if event.Message.Role == opencodesdk.RoleAssistant && event.Message.Finished {
-				_ = rt.Emit(ctx, agent.StreamEvent{
-					Type: agent.StreamEventMessage,
-					Data: toAssistantMessageBlock(*event.Message),
-				})
+				messageID := strings.TrimSpace(event.Message.ID)
+				if messageID != "" {
+					if !seenAssistantMessages[messageID] {
+						_ = rt.Emit(ctx, agent.StreamEvent{
+							Type: agent.StreamEventMessage,
+							Data: toAssistantMessageBlock(*event.Message),
+						})
+						seenAssistantMessages[messageID] = true
+					}
+				}
 			}
 		}
 
@@ -165,17 +173,10 @@ func emitToolEvents(
 }
 
 func toAssistantMessageBlock(msg opencodesdk.MessageSnapshot) agent.MessageBlock {
-	toolCalls := make([]agent.ToolCall, 0, len(msg.ToolCalls))
-	for _, call := range msg.ToolCalls {
-		toolCalls = append(toolCalls, agent.ToolCall{
-			ID:        call.ID,
-			Name:      call.Name,
-			Arguments: call.Input,
-		})
-	}
+	// Tool calls/results are emitted as dedicated stream events by emitToolEvents.
+	// Keep message block text-only to avoid downstream duplicate tool timeline records.
 	return agent.MessageBlock{
-		ID:        msg.ID,
-		Content:   msg.Text,
-		ToolCalls: toolCalls,
+		ID:      msg.ID,
+		Content: msg.Text,
 	}
 }
