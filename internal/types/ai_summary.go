@@ -79,7 +79,7 @@ type AISummaryInput struct {
 	// Title 是摘要标题的候选值。
 	Title string `json:"title"`
 	// SystemPrompt 是生成摘要时使用的系统提示词。
-	SystemPrompt string `json:"system_prompt"`
+	// SystemPrompt string `json:"system_prompt"`
 	// WorkingDir 是 Agent 执行任务时的工作目录。
 	WorkingDir string `json:"working_dir"`
 	// Text 是交给 Agent 的原始内容（用户输入）。

@@ -100,13 +100,13 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	}
 
 	task, err := w.agentService.CreateTask(ctx, agent.Request{
-		SystemPrompt: content.SystemPrompt,
-		WorkingDir:   content.WorkingDir,
+		// SystemPrompt: content.SystemPrompt,
+		WorkingDir: content.WorkingDir,
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: content.Text},
 		},
 		Provider: agent.ProviderCustom,
-		Profile:  agent.ProfileArticleWriter,
+		Profile:  agent.ProfileSummary,
 	})
 	if err != nil {
 		return fmt.Errorf("create agent task: %w", err)

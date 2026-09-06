@@ -119,9 +119,9 @@ func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, ownerType type
 	}
 
 	return &types.AISummaryInput{
-		Title:        content.Title,
-		SystemPrompt: content.SystemPrompt,
-		WorkingDir:   content.WorkingDir,
-		Text:         content.Text,
+		Title: content.Title,
+		// SystemPrompt: content.SystemPrompt,
+		WorkingDir: content.WorkingDir,
+		Text:       content.Text,
 	}, nil
 }

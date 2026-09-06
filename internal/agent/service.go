@@ -292,8 +292,8 @@ func (s *AgentService) GetTaskRequest(ctx context.Context, taskID int64) (*Reque
 	if err != nil {
 		return nil, err
 	}
-	req := s.applyProfile(ctx, task.Request)
-	return &req, nil
+	// req := s.applyProfile(ctx, task.Request)
+	return &task.Request, nil
 }
 
 // ProjectContext 返回当前用户激活项目下的上下文文本块（例如已完成的分析节点）。

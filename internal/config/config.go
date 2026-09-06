@@ -87,7 +87,7 @@ func ParseCLIFlags() *CLIFlags {
 }
 
 // DefaultAISummarySystemPrompt 是生成 AI 摘要时使用的默认系统提示词。
-const DefaultAISummarySystemPrompt = "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。"
+// const DefaultAISummarySystemPrompt = "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。"
 
 type Config struct {
 	Server    *ServerConfig    `yaml:"server"   json:"server"`
@@ -120,7 +120,7 @@ type UserConfig struct {
 // AISummaryConfig AI 摘要生成配置。
 type AISummaryConfig struct {
 	// SystemPrompt 生成摘要时使用的系统提示词。
-	SystemPrompt string `yaml:"system_prompt" json:"system_prompt"`
+	// SystemPrompt string `yaml:"system_prompt" json:"system_prompt"`
 }
 type LLMConfig struct {
 	CLIURL      string             `yaml:"cli_url" json:"cli_url"`
@@ -414,7 +414,7 @@ func LoadConfig() (*Config, error) {
 			DisableRegistration: false,
 		},
 		AISummary: &AISummaryConfig{
-			SystemPrompt: DefaultAISummarySystemPrompt,
+			// SystemPrompt: DefaultAISummarySystemPrompt,
 		},
 	}
 
@@ -513,12 +513,12 @@ func LoadConfig() (*Config, error) {
 	if cfg.User == nil {
 		cfg.User = &UserConfig{}
 	}
-	if cfg.AISummary == nil {
-		cfg.AISummary = &AISummaryConfig{SystemPrompt: DefaultAISummarySystemPrompt}
-	}
-	if strings.TrimSpace(cfg.AISummary.SystemPrompt) == "" {
-		cfg.AISummary.SystemPrompt = DefaultAISummarySystemPrompt
-	}
+	// if cfg.AISummary == nil {
+	// 	cfg.AISummary = &AISummaryConfig{SystemPrompt: DefaultAISummarySystemPrompt}
+	// }
+	// if strings.TrimSpace(cfg.AISummary.SystemPrompt) == "" {
+	// 	cfg.AISummary.SystemPrompt = DefaultAISummarySystemPrompt
+	// }
 
 	cfg.Container.DagNodeCleanupOnFailed = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnFailed, "stop")
 	cfg.Container.DagNodeCleanupOnDagFinished = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnDagFinished, "delete")

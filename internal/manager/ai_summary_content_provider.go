@@ -15,7 +15,7 @@ type AISummaryContent struct {
 	// Title 是摘要标题的候选值。
 	Title string
 	// SystemPrompt 是交给 Agent 生成摘要时的系统提示词。
-	SystemPrompt string
+	// SystemPrompt string
 	// Text 是交给 Agent 生成摘要的原始内容（用户输入）。
 	Text string
 
@@ -31,17 +31,17 @@ type AISummaryContentProvider interface {
 
 type aiSummaryContentProvider struct {
 	analysisRepo interfaces.AnalysisRepository
-	systemPrompt string
+	// systemPrompt string
 }
 
 // NewAISummaryContentProvider 创建 AISummaryContentProvider。
 // 系统提示词优先读取配置 cfg.AISummary.SystemPrompt，未配置时回退到默认值。
 func NewAISummaryContentProvider(analysisRepo interfaces.AnalysisRepository, cfg *config.Config) AISummaryContentProvider {
-	prompt := config.DefaultAISummarySystemPrompt
-	if cfg != nil && cfg.AISummary != nil && strings.TrimSpace(cfg.AISummary.SystemPrompt) != "" {
-		prompt = cfg.AISummary.SystemPrompt
-	}
-	return &aiSummaryContentProvider{analysisRepo: analysisRepo, systemPrompt: prompt}
+	// prompt := config.DefaultAISummarySystemPrompt
+	// if cfg != nil && cfg.AISummary != nil && strings.TrimSpace(cfg.AISummary.SystemPrompt) != "" {
+	// 	prompt = cfg.AISummary.SystemPrompt
+	// }
+	return &aiSummaryContentProvider{analysisRepo: analysisRepo}
 }
 
 // Resolve 按所属对象类型分发解析逻辑。
@@ -63,9 +63,9 @@ func (p *aiSummaryContentProvider) resolveAnalysis(ctx context.Context, analysis
 	}
 
 	return AISummaryContent{
-		Title:        fmt.Sprintf("分析摘要：%s", a.AnalysisName),
-		SystemPrompt: p.systemPrompt,
-		WorkingDir:   a.OutputDir,
+		Title: fmt.Sprintf("分析摘要：%s", a.AnalysisName),
+		// SystemPrompt: p.systemPrompt,
+		WorkingDir: a.OutputDir,
 		Text: strings.Join(filterNonEmpty([]string{
 			"分析名称: " + a.AnalysisName,
 			"分析方法: " + a.AnalysisMethod,
@@ -83,9 +83,9 @@ func (p *aiSummaryContentProvider) resolveAnalysisNode(ctx context.Context, node
 	}
 
 	return AISummaryContent{
-		Title:        fmt.Sprintf("节点摘要：%s", n.NodeName),
-		SystemPrompt: p.systemPrompt,
-		WorkingDir:   n.OutputDir,
+		Title: fmt.Sprintf("节点摘要：%s", n.NodeName),
+		// SystemPrompt: p.systemPrompt,
+		WorkingDir: n.OutputDir,
 		Text: strings.Join(filterNonEmpty([]string{
 			"节点名称: " + n.NodeName,
 			"节点 ID: " + n.NodeID,

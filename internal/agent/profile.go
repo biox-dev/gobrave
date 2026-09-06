@@ -16,6 +16,7 @@ const (
 	DefaultProfileName   = "default"        // 系统默认 Profile
 	ProfileAnalysisCoder = "analysis_coder" // 撰写分析代码
 	ProfileArticleWriter = "article_writer" // 撰写科研文章 / 报告
+	ProfileSummary       = "summary"        // 摘要总结
 )
 
 // 内置 Profile 使用固定的负数 ID，避免与雪花算法生成的正整数主键冲突。
@@ -23,6 +24,8 @@ const (
 	BuiltinDefaultProfileID int64 = -1 // 内置默认 Profile
 	BuiltinAnalysisCoderID  int64 = -2 // 内置「分析代码编写」Profile
 	BuiltinArticleWriterID  int64 = -3 // 内置「科研文章撰写」Profile
+	// 摘要总结
+	BuiltinSummaryProfileID int64 = -4 // 内置「摘要总结」Profile
 )
 
 // Profile 相关错误。
@@ -125,6 +128,18 @@ func BuiltinProfiles() []*Profile {
 			Description:  "用于撰写科研报告 / 文章：注入项目上下文（已完成的分析节点等），按学术规范写作。",
 			IsBuiltin:    true,
 			SystemPrompt: "你是一名科研写作助手。请严格遵循科研报告 / 科研文章的学术规范撰写内容，语言严谨、结构完整，并确保结论与项目中的分析结果保持一致。",
+			Context:      ContextConfig{InjectMemory: true, InjectProject: true},
+			CreatedAt:    now,
+			Model:        "deepseek-v4-flash",
+			Provider:     ProviderCustom,
+			UpdatedAt:    now,
+		}, {
+			ID:           BuiltinSummaryProfileID,
+			Name:         ProfileSummary,
+			DisplayName:  "摘要总结",
+			Description:  "用于生成分析 / 节点的摘要：注入项目上下文（已完成的分析节点等），按学术规范写作。",
+			IsBuiltin:    true,
+			SystemPrompt: "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。",
 			Context:      ContextConfig{InjectMemory: true, InjectProject: true},
 			CreatedAt:    now,
 			Model:        "deepseek-v4-flash",
