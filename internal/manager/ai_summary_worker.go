@@ -105,6 +105,8 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: content.Text},
 		},
+		Provider: agent.ProviderCustom,
+		Profile:  agent.ProfileArticleWriter,
 	})
 	if err != nil {
 		return fmt.Errorf("create agent task: %w", err)
