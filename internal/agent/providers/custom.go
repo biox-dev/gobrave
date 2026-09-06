@@ -76,7 +76,9 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 			emitToolEvents(ctx, rt, event.Message, seenToolCalls, seenToolResults)
 			if event.Message.Role == opencodesdk.RoleAssistant && event.Message.Finished {
 				messageID := strings.TrimSpace(event.Message.ID)
-				if messageID != "" {
+				// 文本内容已通过 text delta 实时下发，这里只补发“完整消息块”作为时间线锚点。
+				// 对纯工具调用消息（无文本）则不重复发 message 块，避免下游出现空文本重复记录。
+				if messageID != "" && strings.TrimSpace(event.Message.Text) != "" {
 					if !seenAssistantMessages[messageID] {
 						_ = rt.Emit(ctx, agent.StreamEvent{
 							Type: agent.StreamEventMessage,
