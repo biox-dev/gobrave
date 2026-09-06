@@ -17,8 +17,10 @@ type ProfileRepository interface {
 	Delete(ctx context.Context, id int64) error
 	// ListByUser 返回某用户全部自定义 Profile（按名称升序）。
 	ListByUser(ctx context.Context, userID string) ([]*Profile, error)
-	// GetByName 按名称返回某用户的自定义 Profile。
-	GetByName(ctx context.Context, userID, name string) (*Profile, error)
+	// ListBuiltin 返回全部内置 Profile（按名称升序）。
+	ListBuiltin(ctx context.Context) ([]*Profile, error)
+	// GetByName 按名称查询 Profile。
+	GetByName(ctx context.Context, name string) (*Profile, error)
 	// GetDefault 返回某用户的默认自定义 Profile；不存在时返回 (nil, nil)。
 	GetDefault(ctx context.Context, userID string) (*Profile, error)
 	// ClearDefault 清除某用户除 exceptID 外的默认标记。
@@ -94,11 +96,24 @@ func (r *memoryProfileRepository) ListByUser(_ context.Context, userID string) (
 	return out, nil
 }
 
-func (r *memoryProfileRepository) GetByName(_ context.Context, userID, name string) (*Profile, error) {
+func (r *memoryProfileRepository) ListBuiltin(_ context.Context) ([]*Profile, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*Profile, 0)
+	for _, p := range r.profiles {
+		if p.IsBuiltin {
+			out = append(out, cloneProfile(p))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (r *memoryProfileRepository) GetByName(_ context.Context, name string) (*Profile, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, p := range r.profiles {
-		if p.UserID == userID && p.Name == name {
+		if p.Name == name {
 			return cloneProfile(p), nil
 		}
 	}

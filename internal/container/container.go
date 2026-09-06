@@ -258,6 +258,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(func(db *gorm.DB) agent.ProfileRepository {
 		return agent.NewGormProfileRepository(db)
 	}))
+	// 系统启动时同步内置 Profile 到数据库（按 ID 判断：不存在则新增、已存在则更新）。
+	must(container.Invoke(func(repo agent.ProfileRepository) error {
+		return agent.EnsureBuiltinProfiles(ctx, repo)
+	}))
 	// 项目上下文提供者：把当前项目已完成的分析节点注入 Agent 的 SystemPrompt。
 	must(container.Provide(manager.NewAgentProjectContextProvider))
 

@@ -96,6 +96,8 @@ github.com/biox-dev/opencode v0.0.0-20260905143345-8ae2446d6070 h1:oGd8grVlwCfjV
 github.com/biox-dev/opencode v0.0.0-20260905143345-8ae2446d6070/go.mod h1:PXmwKJZwBbl9IENpi2QJ4gYZ/4x19ah5qzXrA5RqZc4=
 github.com/biox-dev/opencode v0.0.0-20260905164149-6c6fb2e083a7 h1:t3Uye/0vRRmMczuyin6/g6cP/pLvywWeAh/8AYVSKV8=
 github.com/biox-dev/opencode v0.0.0-20260905164149-6c6fb2e083a7/go.mod h1:PXmwKJZwBbl9IENpi2QJ4gYZ/4x19ah5qzXrA5RqZc4=
+github.com/biox-dev/opencode v0.0.0-20260906065341-d6f4529c6718 h1:5cdtOnycfa96CKlmU8ADisETEoHeYtbNkBn+j28npwQ=
+github.com/biox-dev/opencode v0.0.0-20260906065341-d6f4529c6718/go.mod h1:PXmwKJZwBbl9IENpi2QJ4gYZ/4x19ah5qzXrA5RqZc4=
 github.com/bmatcuk/doublestar/v4 v4.8.1 h1:54Bopc5c2cAvhLRAzqOGCYHYyhcDHsFF4wWIR5wKP38=
 github.com/bmatcuk/doublestar/v4 v4.8.1/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=

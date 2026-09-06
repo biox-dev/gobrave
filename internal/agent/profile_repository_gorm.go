@@ -57,10 +57,21 @@ func (r *gormProfileRepository) ListByUser(ctx context.Context, userID string) (
 	return profiles, nil
 }
 
-func (r *gormProfileRepository) GetByName(ctx context.Context, userID, name string) (*Profile, error) {
+func (r *gormProfileRepository) ListBuiltin(ctx context.Context) ([]*Profile, error) {
+	var profiles []*Profile
+	if err := r.db.WithContext(ctx).
+		Where("is_builtin = ?", true).
+		Order("name ASC").
+		Find(&profiles).Error; err != nil {
+		return nil, err
+	}
+	return profiles, nil
+}
+
+func (r *gormProfileRepository) GetByName(ctx context.Context, name string) (*Profile, error) {
 	var p Profile
 	if err := r.db.WithContext(ctx).
-		Where("user_id = ? AND name = ?", strings.TrimSpace(userID), name).
+		Where("name = ?", name).
 		First(&p).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrProfileNotFound

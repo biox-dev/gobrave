@@ -372,7 +372,7 @@ func (h *AgentHandler) ListProfiles(c *gin.Context) {
 
 // SaveProfile godoc
 // @Summary      创建或更新 Agent Profile
-// @Description  ID 为空时新建，否则更新；UserID 由当前登录用户注入，仅能管理自己的自定义 Profile
+// @Description  ID 为空时新建，否则更新；UserID 由当前登录用户注入，自定义 Profile 仅能管理自己的，内置 Profile 可编辑（不可删除）
 // @Tags         Agent
 // @Accept       json
 // @Produce      json

@@ -436,7 +436,7 @@ func (s *AgentService) ListProfiles(ctx context.Context, userID string) ([]*Prof
 	return s.profiles.List(ctx, userID)
 }
 
-// GetProfile 按 ID 返回当前用户的自定义 Profile（内置 Profile 按 ID 不可取）。
+// GetProfile 按 ID 返回 Profile（内置 Profile 全局共享、任意用户可读）。
 func (s *AgentService) GetProfile(ctx context.Context, userID string, id int64) (*Profile, error) {
 	if s.profiles == nil {
 		return nil, ErrProfileNotFound
@@ -444,7 +444,7 @@ func (s *AgentService) GetProfile(ctx context.Context, userID string, id int64) 
 	return s.profiles.Get(ctx, userID, id)
 }
 
-// SaveProfile 创建或更新用户自定义 Profile。
+// SaveProfile 创建或更新 Profile（内置 Profile 也允许更新）。
 func (s *AgentService) SaveProfile(ctx context.Context, profile *Profile) error {
 	if s.profiles == nil {
 		return ErrProfileNotFound
@@ -462,19 +462,17 @@ func (s *AgentService) DeleteProfile(ctx context.Context, userID string, id int6
 
 // applyProfile 在调用前应用 Agent Profile：
 //
-//  1. 解析 Profile（未指定名称时取默认；解析失败回退内置默认）；
+//  1. 解析 Profile（未指定名称时取默认；解析失败则不应用）；
 //  2. 把 Profile 的系统提示词作为基础合并进请求；
 //  3. Profile 指定了技能时，限制本次调用可见的技能集合；
 //  4. 按 Profile 的上下文开关决定是否注入记忆 / 项目上下文。
 func (s *AgentService) applyProfile(ctx context.Context, req Request) Request {
 	var profile *Profile
 	if s.profiles != nil {
-		if p, err := s.profiles.Resolve(ctx, req.UserID, req.Profile); err == nil {
-			profile = p
-		}
+		profile, _ = s.profiles.Resolve(ctx, req.UserID, req.Profile)
 	}
 	if profile == nil {
-		profile = DefaultBuiltinProfile()
+		return req
 	}
 
 	// 0) 模型选择：Profile 指定了模型时，以 Profile 为准（req.Model 作为兜底）。
