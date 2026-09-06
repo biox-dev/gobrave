@@ -51,16 +51,19 @@ type ContextConfig struct {
 //
 // UserID 为空表示系统级（内置）Profile；非空表示某用户的自定义 Profile。
 type Profile struct {
-	ID           int64         `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	Name         string        `json:"name" gorm:"column:name;type:varchar(64);index:idx_agent_profiles_user_name,priority:2"`
-	DisplayName  string        `json:"display_name" gorm:"column:display_name;type:varchar(128)"`
-	Description  string        `json:"description" gorm:"column:description;type:text"`
-	UserID       string        `json:"user_id" gorm:"column:user_id;type:varchar(64);index:idx_agent_profiles_user_name,priority:1"`
-	IsDefault    bool          `json:"is_default" gorm:"column:is_default"`
-	IsBuiltin    bool          `json:"is_builtin" gorm:"column:is_builtin"`
-	SystemPrompt string        `json:"system_prompt" gorm:"column:system_prompt;type:text"`
-	Skills       []string      `json:"skills" gorm:"column:skills;serializer:json"`
-	Context      ContextConfig `json:"context" gorm:"column:context;serializer:json"`
+	ID           int64  `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
+	Name         string `json:"name" gorm:"column:name;type:varchar(64);index:idx_agent_profiles_user_name,priority:2"`
+	DisplayName  string `json:"display_name" gorm:"column:display_name;type:varchar(128)"`
+	Description  string `json:"description" gorm:"column:description;type:text"`
+	UserID       string `json:"user_id" gorm:"column:user_id;type:varchar(64);index:idx_agent_profiles_user_name,priority:1"`
+	IsDefault    bool   `json:"is_default" gorm:"column:is_default"`
+	IsBuiltin    bool   `json:"is_builtin" gorm:"column:is_builtin"`
+	SystemPrompt string `json:"system_prompt" gorm:"column:system_prompt;type:text"`
+	// Model 指定本 Profile 使用的模型名（对应 config.agent.providers 的 key）。
+	// 为空时回退到请求级 req.Model（若仍未指定则由 Provider 兜底）。
+	Model   string        `json:"model" gorm:"column:model;type:varchar(128)"`
+	Skills  []string      `json:"skills" gorm:"column:skills;serializer:json"`
+	Context ContextConfig `json:"context" gorm:"column:context;serializer:json"`
 
 	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt time.Time `json:"updated_at" gorm:"column:updated_at"`
@@ -92,6 +95,7 @@ func BuiltinProfiles() []*Profile {
 			IsDefault:    true,
 			IsBuiltin:    true,
 			SystemPrompt: "",
+			Model:        "deepseek-v4-flash",
 			Context:      ContextConfig{InjectMemory: true, InjectProject: false},
 			CreatedAt:    now,
 			UpdatedAt:    now,
@@ -105,6 +109,7 @@ func BuiltinProfiles() []*Profile {
 			SystemPrompt: "你是一名生物信息学数据分析工程师。请输出规范、可复现的分析代码，明确依赖与输入输出；如需执行，优先使用运行时提供的工具，而不是直接调用 shell / Rscript / python 等命令。",
 			Context:      ContextConfig{InjectMemory: true, InjectProject: false},
 			CreatedAt:    now,
+			Model:        "deepseek-v4-flash",
 			UpdatedAt:    now,
 		},
 		{
@@ -116,6 +121,7 @@ func BuiltinProfiles() []*Profile {
 			SystemPrompt: "你是一名科研写作助手。请严格遵循科研报告 / 科研文章的学术规范撰写内容，语言严谨、结构完整，并确保结论与项目中的分析结果保持一致。",
 			Context:      ContextConfig{InjectMemory: true, InjectProject: true},
 			CreatedAt:    now,
+			Model:        "deepseek-v4-flash",
 			UpdatedAt:    now,
 		},
 	}

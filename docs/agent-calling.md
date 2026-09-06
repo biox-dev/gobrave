@@ -127,22 +127,30 @@ sequenceDiagram
 1. 在 `internal/agent/agent.go` 登记 Provider 名称常量（如 `ProviderXxx`）。
 2. 在 `internal/agent/providers/` 新建文件，实现 `agent.Provider` 与 `agent.Agent` 接口。
 3. 在 `providers/providers.go` 的 `All()` 中注册。
-4. 在 `config.agent.providers` 增加对应配置（可选）。
-5. 将 `config.agent.default` 指向新 Provider，或请求时通过 `Request.Provider` 覆盖。
+4. 在 `config.agent.providers` 增加对应「模型提供商」配置（key 为模型名）。
+5. 将 `config.agent.default` 指向新 Agent（Provider），或请求时通过 `Request.Provider` 覆盖。
 
 ## 7. 配置示例
 
 ```yaml
 agent:
-  default: mock          # 默认 Provider
-  providers:
-    copilot:
-      model: "deepseek-v4-pro"
-      base_url: ""
+  default: custom        # 使用哪个 Agent（Provider），与模型解耦
+  providers:             # 模型提供商配置表（key 为模型名，与 Profile.model 对应）
+    deepseek-v4-flash:
+      model: "deepseek-v4-flash"
+      base_url: "https://api.deepseek.com/anthropic"
       api_key: "sk-***"
-      working_dir: ""
-      extra: {}
+      extra: { type: "anthropic" }
+    deepseek-v4-pro:
+      model: "deepseek-v4-pro"
+      base_url: "https://api.deepseek.com/anthropic"
+      api_key: "sk-***"
+      extra: { type: "anthropic" }
 ```
+
+一次请求实际使用的模型由 `Profile.model` 决定：`AgentService.applyProfile` 会把它写入
+`Request.Model`，各 Provider 再据此从 `Options.Providers`（模型名 → 配置）解析出
+`base_url` / `api_key` / 类型等 LLM 配置，用于构建 session / provider 配置。
 
 ## 8. 后续待办
 

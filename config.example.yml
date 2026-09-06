@@ -82,33 +82,24 @@ llm:
 
 # AI Agent 调用框架配置。用于灵活切换第三方 Agent 与后续自研 Agent。
 agent:
-  # 默认 Provider：mock | claude_code | codex | copilot | custom
-  default: mock
-  # 每个 Provider 的独立配置（key 为 Provider 名称）
+  # 默认使用的 Agent（Provider）：mock | claude_code | codex | copilot | custom
+  # 它只决定「用哪个 Agent 执行」，与具体模型解耦；不同 Agent 可共享同一模型。
+  default: custom
+  # 模型提供商配置表（key 为模型名，与 Profile.model 对应）。
+  # 一次请求使用的模型由 Profile.model 指定，据此在此表中查找 base_url / api_key 等 LLM 配置。
   providers:
-    mock:
-      model: "mock"
-    claude_code:
-      model: ""
-      base_url: ""
-      api_key: ""
+    deepseek-v4-flash:
+      model: "deepseek-v4-flash"
+      base_url: "https://api.deepseek.com/anthropic"
+      api_key: "sk-xxxxxxxxxxxxxxx"
       bearer_token: ""
-      working_dir: ""
-      extra: {}
-    codex:
-      model: ""
-      base_url: ""
-      api_key: ""
-      bearer_token: ""
-      working_dir: ""
-      extra: {}
-    copilot:
+      extra: { type: "anthropic" }
+    deepseek-v4-pro:
       model: "deepseek-v4-pro"
       base_url: "https://api.deepseek.com/anthropic"
       api_key: "sk-xxxxxxxxxxxxxxx"
       bearer_token: ""
-      working_dir: ""
-      extra: { type: "anthropic"}
+      extra: { type: "anthropic" }
 
 # AI 摘要生成配置。未配置 system_prompt 时使用内置默认值。
 ai_summary:

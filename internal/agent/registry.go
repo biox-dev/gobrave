@@ -19,15 +19,33 @@ type Provider interface {
 	New(opts Options) (Agent, error)
 }
 
-// Options 是构建 Agent 实例所需的通用配置；具体 Provider 按需读取。
-// Extra 用于承载 Provider 特有配置，避免为每个 Provider 单独定义结构。
-type Options struct {
+// ModelProviderConfig 描述一个「模型提供商」的连接配置（base_url / api_key / 类型等）。
+//
+// 与 config.ModelProviderConfig 一一对应，由容器启动时从配置映射而来。Provider 在每次
+// 调用时按 Profile 指定的模型名（req.Model）从此表解析出本次调用所需的 LLM 配置。
+type ModelProviderConfig struct {
 	Model       string            `json:"model"`
 	BaseURL     string            `json:"base_url"`
 	APIKey      string            `json:"api_key"`
 	BearerToken string            `json:"bearer_token"`
 	WorkingDir  string            `json:"working_dir"`
 	Extra       map[string]string `json:"extra"`
+}
+
+// Options 是构建 Agent 实例所需的通用配置；具体 Provider 按需读取。
+//
+// 模型相关的连接配置（base_url / api_key / 类型等）不再作为单值字段存在，而是由
+// Providers（模型名 → 配置）承载：一次请求使用的模型由 Profile.Model 决定，Provider
+// 据此按模型名解析出本次调用所需的 LLM 配置。
+type Options struct {
+	WorkingDir string            `json:"working_dir"`
+	Extra      map[string]string `json:"extra"`
+
+	// Providers 是模型提供商配置表（key 为模型名，与 Profile.Model 对应）。
+	//
+	// Provider 据此按请求解析出的模型名查找 base_url / api_key / 类型等 LLM 配置，
+	// 用于构建 session / provider 配置。为 nil 表示无自定义模型提供商。
+	Providers map[string]ModelProviderConfig `json:"-"`
 
 	// Tools 是本次调用可用的工具注册表。
 	//

@@ -22,7 +22,7 @@ func resolveMock(t *testing.T, opts agent.Options) agent.Agent {
 }
 
 func TestMockToolCallDefault(t *testing.T) {
-	a := resolveMock(t, agent.Options{Model: "demo"})
+	a := resolveMock(t, agent.Options{})
 
 	var events []agent.StreamEvent
 	rt := agent.NewStandaloneRuntime(func(_ context.Context, ev agent.StreamEvent) error {
@@ -71,7 +71,7 @@ func TestMockToolCallCustomTool(t *testing.T) {
 			return "hi " + in.Text, nil
 		}),
 	)
-	a := resolveMock(t, agent.Options{Model: "demo", Tools: reg})
+	a := resolveMock(t, agent.Options{Tools: reg})
 
 	var events []agent.StreamEvent
 	rt := agent.NewStandaloneRuntime(func(_ context.Context, ev agent.StreamEvent) error {
@@ -98,7 +98,7 @@ func TestMockToolCallCustomTool(t *testing.T) {
 }
 
 func TestMockSkillCallDefault(t *testing.T) {
-	a := resolveMock(t, agent.Options{Model: "demo"})
+	a := resolveMock(t, agent.Options{})
 
 	var events []agent.StreamEvent
 	rt := agent.NewStandaloneRuntime(func(_ context.Context, ev agent.StreamEvent) error {
@@ -155,7 +155,7 @@ func TestMockSkillCallCustomSkill(t *testing.T) {
 			return "hi " + in.Text, nil
 		}),
 	)
-	a := resolveMock(t, agent.Options{Model: "demo", Skills: reg})
+	a := resolveMock(t, agent.Options{Skills: reg})
 
 	var events []agent.StreamEvent
 	rt := agent.NewStandaloneRuntime(func(_ context.Context, ev agent.StreamEvent) error {

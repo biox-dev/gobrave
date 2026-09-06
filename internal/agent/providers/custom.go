@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent"
@@ -43,11 +44,12 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 		rt = agent.NewStandaloneRuntime(nil)
 	}
 
-	sdkClient, err := opencodesdk.NewClient(ctx, opencodesdk.Options{
-		WorkingDir:  firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
-		Debug:       strings.EqualFold(strings.TrimSpace(a.opts.Extra["opencode_debug"]), "true"),
-		AutoApprove: true,
-	})
+	sdkOpts, err := a.buildSDKOptions(req)
+	if err != nil {
+		return nil, err
+	}
+
+	sdkClient, err := opencodesdk.NewClient(ctx, sdkOpts)
 	if err != nil {
 		return nil, fmt.Errorf("custom provider: init opencode sdk: %w", err)
 	}
@@ -64,7 +66,8 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 	// assistantMessageEmittedWithoutID := false
 
 	result, err := sdkClient.SendMessageStream(ctx, opencodesdk.RunRequest{
-		SessionTitle: firstNonEmpty(strings.TrimSpace(req.SessionID), "gobrave-opencode"),
+		SessionID:    strings.TrimSpace(req.SessionID),
+		SessionTitle: "gobrave-opencode",
 		Prompt:       prompt,
 		AutoApprove:  true,
 	}, func(event opencodesdk.Event) {
@@ -107,6 +110,67 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 	}
 
 	return &agent.Result{Content: result.Message.Text}, nil
+}
+
+func (a *customAgent) buildSDKOptions(req agent.Request) (opencodesdk.Options, error) {
+	workingDir := firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
+	if workingDir == "" {
+		return opencodesdk.Options{}, fmt.Errorf("custom provider: working dir is required")
+	}
+
+	model := firstNonEmpty(
+		strings.TrimSpace(req.Model),
+		strings.TrimSpace(a.opts.Extra["opencode_model"]),
+	)
+	if model == "" {
+		return opencodesdk.Options{}, fmt.Errorf("custom provider: model is required")
+	}
+
+	apiKey := firstNonEmpty(a.modelAPIKey(model), strings.TrimSpace(a.opts.Extra["opencode_api_key"]))
+
+	maxTokens := int64(req.MaxTokens)
+	if maxTokens <= 0 {
+		maxTokens = parseInt64(strings.TrimSpace(a.opts.Extra["opencode_max_tokens"]))
+	}
+
+	return opencodesdk.Options{
+		WorkingDir:      workingDir,
+		Debug:           isTrue(a.opts.Extra["opencode_debug"]),
+		AutoApprove:     true,
+		Provider:        strings.TrimSpace(a.opts.Extra["opencode_provider"]),
+		APIKey:          apiKey,
+		Model:           model,
+		MaxTokens:       maxTokens,
+		ReasoningEffort: strings.TrimSpace(a.opts.Extra["opencode_reasoning_effort"]),
+	}, nil
+}
+
+// modelAPIKey 按模型 key 从模型提供商配置表解析 api_key。
+func (a *customAgent) modelAPIKey(modelKey string) string {
+	pc, ok := a.opts.Providers[strings.ToLower(strings.TrimSpace(modelKey))]
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(pc.APIKey)
+}
+
+func isTrue(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	return strings.EqualFold(trimmed, "1") || strings.EqualFold(trimmed, "true") || strings.EqualFold(trimmed, "yes")
+}
+
+func parseInt64(value string) int64 {
+	if value == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 func buildOpenCodePrompt(req agent.Request) string {

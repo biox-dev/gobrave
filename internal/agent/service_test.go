@@ -12,7 +12,7 @@ import (
 // newTestService 构建一个使用 mock Provider 的 AgentService。
 func newTestService() *agent.AgentService {
 	registry := agent.NewRegistry(agentproviders.All()...)
-	client := agent.NewClient(registry, agent.ProviderMock, agent.Options{Model: "demo"})
+	client := agent.NewClient(registry, agent.ProviderMock, agent.Options{})
 	return agent.NewService(agent.ServiceConfig{Client: client})
 }
 
@@ -180,7 +180,7 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 // TestStandaloneInvoke 验证 Client.Invoke 的一次性调用语义（AI 摘要等场景）不受影响。
 // func TestStandaloneInvoke(t *testing.T) {
 // 	registry := agent.NewRegistry(agentproviders.All()...)
-// 	client := agent.NewClient(registry, agent.ProviderMock, agent.Options{Model: "demo"})
+// 	client := agent.NewClient(registry, agent.ProviderMock, agent.Options{})
 
 // 	result, err := client.Invoke(context.Background(), agent.Request{
 // 		Messages: []agent.Message{{Role: agent.RoleUser, Content: "hi"}},

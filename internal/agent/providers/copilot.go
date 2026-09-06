@@ -272,6 +272,10 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 
 	if provider := a.providerConfig(model); provider != nil {
 		cfg.Provider = provider
+		// BYOK 场景下，实际模型 ID 来自模型提供商配置（ModelID），覆盖作为 key 的 model。
+		if provider.ModelID != "" {
+			cfg.Model = provider.ModelID
+		}
 	}
 
 	if token := strings.TrimSpace(a.opts.Extra["github_token"]); token != "" {
@@ -496,36 +500,47 @@ func toOperation(request copilot.PermissionRequest) agent.Operation {
 	}
 }
 
-// providerConfig 构建 BYOK Provider 配置；未配置 BaseURL 时返回 nil，走官方 Copilot API。
-func (a *copilotAgent) providerConfig(model string) *copilot.ProviderConfig {
-	baseURL := strings.TrimSpace(a.opts.BaseURL)
+// providerConfig 按模型 key 从模型提供商配置表解析 BYOK Provider 配置；
+// 未命中或未配置 BaseURL 时返回 nil，走官方 Copilot API。
+func (a *copilotAgent) providerConfig(modelKey string) *copilot.ProviderConfig {
+	pc, ok := a.opts.Providers[strings.ToLower(strings.TrimSpace(modelKey))]
+	if !ok {
+		return nil
+	}
+	baseURL := strings.TrimSpace(pc.BaseURL)
 	if baseURL == "" {
 		return nil
 	}
 
-	providerType := strings.TrimSpace(a.opts.Extra["type"])
+	providerType := strings.TrimSpace(pc.Extra["type"])
 	if providerType == "" {
 		providerType = "openai"
+	}
+
+	// 实际发给 BYOK 服务的模型 ID：优先取配置里的 model，回退到模型 key。
+	modelID := strings.TrimSpace(pc.Model)
+	if modelID == "" {
+		modelID = strings.TrimSpace(modelKey)
 	}
 
 	cfg := &copilot.ProviderConfig{
 		Type:        providerType,
 		BaseURL:     baseURL,
-		APIKey:      strings.TrimSpace(a.opts.APIKey),
-		BearerToken: strings.TrimSpace(a.opts.BearerToken),
-		ModelID:     model,
+		APIKey:      strings.TrimSpace(pc.APIKey),
+		BearerToken: strings.TrimSpace(pc.BearerToken),
+		ModelID:     modelID,
 	}
-	if wireAPI := strings.TrimSpace(a.opts.Extra["wire_api"]); wireAPI != "" {
+	if wireAPI := strings.TrimSpace(pc.Extra["wire_api"]); wireAPI != "" {
 		cfg.WireAPI = wireAPI
 	}
 	return cfg
 }
 
-// resolveModel 解析本次调用使用的模型：请求级 Model 优先，其次为 Provider 配置的 Model。
+// resolveModel 解析本次调用使用的模型名（Profile 指定的模型 key）。
 func (a *copilotAgent) resolveModel(req agent.Request) (string, error) {
-	model := firstNonEmpty(strings.TrimSpace(req.Model), strings.TrimSpace(a.opts.Model))
-	if model == "" && strings.TrimSpace(a.opts.BaseURL) != "" {
-		return "", fmt.Errorf("copilot: model is required when using a custom provider")
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		return "", fmt.Errorf("copilot: model is required (set it via Profile.Model)")
 	}
 	return model, nil
 }

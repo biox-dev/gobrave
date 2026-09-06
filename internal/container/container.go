@@ -89,7 +89,9 @@ func buildSkillRegistry(cfg *config.Config) *skill.Registry {
 }
 
 // buildAgentClient 根据配置构建 Agent 调用门面。
-// 默认 Provider 与 Options 从 config.agent 读取；未配置时兜底为 agent.DefaultProvider（mock）。
+// 默认 Provider（Agent）从 config.agent.default 读取；模型提供商配置表（按模型名索引）
+// 从 config.agent.providers 映射进 Options.Providers，供 Provider 在每次调用时按
+// Profile.Model 解析出 base_url / api_key 等 LLM 配置。
 func buildAgentClient(cfg *config.Config, registry *agent.Registry, skills *skill.Registry) *agent.Client {
 	defaultProvider := agent.DefaultProvider
 	opts := agent.Options{}
@@ -98,8 +100,9 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, skills *skil
 		if p := strings.ToLower(strings.TrimSpace(cfg.Agent.Default)); p != "" {
 			defaultProvider = p
 		}
-		if pc, ok := cfg.Agent.Providers[defaultProvider]; ok {
-			opts = agent.Options{
+		providers := make(map[string]agent.ModelProviderConfig, len(cfg.Agent.Providers))
+		for name, pc := range cfg.Agent.Providers {
+			providers[strings.ToLower(strings.TrimSpace(name))] = agent.ModelProviderConfig{
 				Model:       pc.Model,
 				BaseURL:     pc.BaseURL,
 				APIKey:      pc.APIKey,
@@ -108,6 +111,7 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, skills *skil
 				Extra:       pc.Extra,
 			}
 		}
+		opts.Providers = providers
 	}
 
 	// 注册框架内置工具（get_weather 等），供 Provider 的 tool-call 链路使用。

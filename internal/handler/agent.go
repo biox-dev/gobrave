@@ -135,6 +135,7 @@ type profileSaveRequest struct {
 	DisplayName  string              `json:"display_name"`
 	Description  string              `json:"description"`
 	SystemPrompt string              `json:"system_prompt"`
+	Model        string              `json:"model"`
 	Skills       []string            `json:"skills"`
 	Context      agent.ContextConfig `json:"context"`
 	IsDefault    bool                `json:"is_default"`
@@ -411,6 +412,7 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 		existing.DisplayName = req.DisplayName
 		existing.Description = req.Description
 		existing.SystemPrompt = req.SystemPrompt
+		existing.Model = req.Model
 		existing.Skills = req.Skills
 		existing.Context = req.Context
 		existing.IsDefault = req.IsDefault
@@ -422,6 +424,7 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 			DisplayName:  req.DisplayName,
 			Description:  req.Description,
 			SystemPrompt: req.SystemPrompt,
+			Model:        req.Model,
 			Skills:       req.Skills,
 			Context:      req.Context,
 			IsDefault:    req.IsDefault,

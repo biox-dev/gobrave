@@ -187,6 +187,8 @@ func (s *AgentService) execute(ctx context.Context, task *Task, rt Runtime) {
 func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result, error) {
 	// 应用 Agent Profile：解析 → 合并系统提示词 → 选择技能 → 按开关注入背景。
 	task.Request = s.applyProfile(ctx, task.Request)
+	// applyProfile 可能依据 Profile.Model 覆盖请求级模型，同步回任务持久化字段。
+	task.Model = task.Request.Model
 	if err := s.transitionTask(ctx, task, TaskRunning, ""); err != nil {
 		return nil, err
 	}
@@ -473,6 +475,11 @@ func (s *AgentService) applyProfile(ctx context.Context, req Request) Request {
 	}
 	if profile == nil {
 		profile = DefaultBuiltinProfile()
+	}
+
+	// 0) 模型选择：Profile 指定了模型时，以 Profile 为准（req.Model 作为兜底）。
+	if model := strings.TrimSpace(profile.Model); model != "" {
+		req.Model = model
 	}
 
 	// 1) 系统提示词：Profile 基础提示词在前，请求已有提示词（运行时上下文等）在后。

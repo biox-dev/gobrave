@@ -139,14 +139,17 @@ type LLMProviderConfig struct {
 // AgentConfig 是 AI Agent 调用框架的配置。
 // 用于灵活切换第三方 Agent（claude_code / codex / copilot）以及后续自研 Agent。
 type AgentConfig struct {
-	// Default 默认使用的 Provider 名称（claude_code | codex | copilot | mock | custom）。
+	// Default 默认使用的 Agent（Provider）名称（mock | claude_code | codex | copilot | custom）。
+	// 它只决定「用哪个 Agent 执行」，与具体模型解耦；不同 Agent 可共享同一模型。
 	Default string `yaml:"default" json:"default"`
-	// Providers 每个 Provider 的独立配置，key 为 Provider 名称。
-	Providers map[string]AgentProviderConfig `yaml:"providers" json:"providers"`
+	// Providers 是「模型提供商」配置表，key 为模型名（与 Profile.Model 对应）。
+	// 一次请求使用的模型由 Profile.Model 指定，据此在此表中查找 base_url / api_key 等 LLM 配置。
+	Providers map[string]ModelProviderConfig `yaml:"providers" json:"providers"`
 }
 
-// AgentProviderConfig 是单个 Provider 的配置；Extra 用于承载 Provider 特有配置。
-type AgentProviderConfig struct {
+// ModelProviderConfig 描述一个「模型提供商」的连接配置（base_url / api_key / 类型等）。
+// 与具体 Agent 无关，可被多个 Agent 共享。
+type ModelProviderConfig struct {
 	Model       string            `yaml:"model" json:"model"`
 	BaseURL     string            `yaml:"base_url" json:"base_url"`
 	APIKey      string            `yaml:"api_key" json:"api_key"`
@@ -381,7 +384,7 @@ func LoadConfig() (*Config, error) {
 		},
 		Agent: &AgentConfig{
 			Default:   "mock",
-			Providers: map[string]AgentProviderConfig{},
+			Providers: map[string]ModelProviderConfig{},
 		},
 		Container: &ContainerConfig{
 			DefaultRuntime:                      "docker",
