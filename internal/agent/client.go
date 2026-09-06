@@ -15,30 +15,16 @@ import (
 type Client struct {
 	registry *Registry
 
-	mu              sync.RWMutex
-	defaultProvider string
-	defaultOptions  Options
+	mu             sync.RWMutex
+	defaultOptions Options
 }
 
 // NewClient 创建 Client。
-// defaultProvider 为空时使用 DefaultProvider（mock）。
-func NewClient(registry *Registry, defaultProvider string, opts Options) *Client {
-	if strings.TrimSpace(defaultProvider) == "" {
-		defaultProvider = DefaultProvider
-	}
+func NewClient(registry *Registry, opts Options) *Client {
 	return &Client{
-		registry:        registry,
-		defaultProvider: defaultProvider,
-		defaultOptions:  opts,
+		registry:       registry,
+		defaultOptions: opts,
 	}
-}
-
-// SetDefault 动态切换默认 Provider 与默认 Options（用于后续运行时切换能力）。
-func (c *Client) SetDefault(provider string, opts Options) {
-	c.mu.Lock()
-	c.defaultProvider = provider
-	c.defaultOptions = opts
-	c.mu.Unlock()
 }
 
 // Invoke 执行一次性任务：解析 Provider → Agent.Invoke。
@@ -103,14 +89,7 @@ func (c *Client) optionsFor(req Request) Options {
 
 // resolve 解析请求应使用的 Agent 实例。
 func (c *Client) resolve(provider string, opts Options) (Agent, error) {
-	c.mu.RLock()
-	def := c.defaultProvider
-	c.mu.RUnlock()
-
 	name := strings.TrimSpace(provider)
-	if name == "" {
-		name = def
-	}
 	if name == "" {
 		name = DefaultProvider
 	}

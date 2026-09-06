@@ -61,9 +61,12 @@ type Profile struct {
 	SystemPrompt string `json:"system_prompt" gorm:"column:system_prompt;type:text"`
 	// Model 指定本 Profile 使用的模型名（对应 config.agent.providers 的 key）。
 	// 为空时回退到请求级 req.Model（若仍未指定则由 Provider 兜底）。
-	Model   string        `json:"model" gorm:"column:model;type:varchar(128)"`
-	Skills  []string      `json:"skills" gorm:"column:skills;serializer:json"`
-	Context ContextConfig `json:"context" gorm:"column:context;serializer:json"`
+	Model string `json:"model" gorm:"column:model;type:varchar(128)"`
+	// Provider 指定本 Profile 使用的 Agent（Provider）名称（mock | claude_code | codex | copilot | custom）。
+	// 为空时回退到请求级 req.Provider（若仍未指定则由 Client 的默认 Provider 兜底）。
+	Provider string        `json:"provider" gorm:"column:provider;type:varchar(64)"`
+	Skills   []string      `json:"skills" gorm:"column:skills;serializer:json"`
+	Context  ContextConfig `json:"context" gorm:"column:context;serializer:json"`
 
 	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt time.Time `json:"updated_at" gorm:"column:updated_at"`
@@ -96,6 +99,7 @@ func BuiltinProfiles() []*Profile {
 			IsBuiltin:    true,
 			SystemPrompt: "",
 			Model:        "deepseek-v4-flash",
+			Provider:     ProviderCopilot,
 			Context:      ContextConfig{InjectMemory: true, InjectProject: false},
 			CreatedAt:    now,
 			UpdatedAt:    now,
@@ -110,6 +114,7 @@ func BuiltinProfiles() []*Profile {
 			Context:      ContextConfig{InjectMemory: true, InjectProject: false},
 			CreatedAt:    now,
 			Model:        "deepseek-v4-flash",
+			Provider:     ProviderCustom,
 			UpdatedAt:    now,
 		},
 		{
@@ -122,6 +127,7 @@ func BuiltinProfiles() []*Profile {
 			Context:      ContextConfig{InjectMemory: true, InjectProject: true},
 			CreatedAt:    now,
 			Model:        "deepseek-v4-flash",
+			Provider:     ProviderCustom,
 			UpdatedAt:    now,
 		},
 	}
@@ -134,7 +140,7 @@ func DefaultBuiltinProfile() *Profile {
 			return p
 		}
 	}
-	return &Profile{Name: DefaultProfileName, Context: ContextConfig{InjectMemory: true}}
+	return &Profile{Name: DefaultProfileName, Provider: ProviderCustom, Context: ContextConfig{InjectMemory: true}}
 }
 
 // normalizeProfileName 规整 Profile 名称：小写、去首尾空白、空格转下划线。

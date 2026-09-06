@@ -89,17 +89,13 @@ func buildSkillRegistry(cfg *config.Config) *skill.Registry {
 }
 
 // buildAgentClient 根据配置构建 Agent 调用门面。
-// 默认 Provider（Agent）从 config.agent.default 读取；模型提供商配置表（按模型名索引）
-// 从 config.agent.providers 映射进 Options.Providers，供 Provider 在每次调用时按
-// Profile.Model 解析出 base_url / api_key 等 LLM 配置。
+// 模型提供商配置表（按模型名索引）从 config.agent.providers 映射进 Options.Providers，
+// 供 Provider 在每次调用时按 Profile.Model 解析出 base_url / api_key 等 LLM 配置。
+// 使用哪个 Agent（Provider）由 Profile.Provider 决定。
 func buildAgentClient(cfg *config.Config, registry *agent.Registry, skills *skill.Registry) *agent.Client {
-	defaultProvider := agent.DefaultProvider
 	opts := agent.Options{}
 
 	if cfg != nil && cfg.Agent != nil {
-		if p := strings.ToLower(strings.TrimSpace(cfg.Agent.Default)); p != "" {
-			defaultProvider = p
-		}
 		providers := make(map[string]agent.ModelProviderConfig, len(cfg.Agent.Providers))
 		for name, pc := range cfg.Agent.Providers {
 			providers[strings.ToLower(strings.TrimSpace(name))] = agent.ModelProviderConfig{
@@ -122,7 +118,7 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, skills *skil
 	// 供 Provider 的 skill-call 链路使用。
 	opts.Skills = skills
 
-	return agent.NewClient(registry, defaultProvider, opts)
+	return agent.NewClient(registry, opts)
 }
 
 type eventHandlerGroupIn struct {

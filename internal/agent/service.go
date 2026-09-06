@@ -482,6 +482,11 @@ func (s *AgentService) applyProfile(ctx context.Context, req Request) Request {
 		req.Model = model
 	}
 
+	// 0.5) Agent（Provider）选择：Profile 指定了 Agent 时，以 Profile 为准。
+	if provider := strings.TrimSpace(profile.Provider); provider != "" {
+		req.Provider = provider
+	}
+
 	// 1) 系统提示词：Profile 基础提示词在前，请求已有提示词（运行时上下文等）在后。
 	if strings.TrimSpace(profile.SystemPrompt) != "" {
 		if strings.TrimSpace(req.SystemPrompt) == "" {

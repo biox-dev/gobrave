@@ -82,9 +82,6 @@ llm:
 
 # AI Agent 调用框架配置。用于灵活切换第三方 Agent 与后续自研 Agent。
 agent:
-  # 默认使用的 Agent（Provider）：mock | claude_code | codex | copilot | custom
-  # 它只决定「用哪个 Agent 执行」，与具体模型解耦；不同 Agent 可共享同一模型。
-  default: custom
   # 模型提供商配置表（key 为模型名，与 Profile.model 对应）。
   # 一次请求使用的模型由 Profile.model 指定，据此在此表中查找 base_url / api_key 等 LLM 配置。
   providers:

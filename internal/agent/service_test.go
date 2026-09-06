@@ -12,7 +12,7 @@ import (
 // newTestService 构建一个使用 mock Provider 的 AgentService。
 func newTestService() *agent.AgentService {
 	registry := agent.NewRegistry(agentproviders.All()...)
-	client := agent.NewClient(registry, agent.ProviderMock, agent.Options{})
+	client := agent.NewClient(registry, agent.Options{})
 	return agent.NewService(agent.ServiceConfig{Client: client})
 }
 
