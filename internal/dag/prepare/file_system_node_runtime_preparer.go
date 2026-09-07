@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -19,42 +20,34 @@ type FileSystemNodeRuntimePreparer struct {
 	workflowService interfaces.WorkflowService
 	workflowRepo    interfaces.WorkflowRepository
 	projectRepo     interfaces.ProjectRepository
-	storageBase     string
-	builders        map[string]RunScriptBuilder
+	cfg             *config.Config
+	builders        *RunScriptBuilderRegistry
 }
 
-// func NewFileSystemNodeRuntimePreparer(
-// 	analysisRepo interfaces.AnalysisRepository,
-// 	workflowRepo interfaces.WorkflowRepository,
-// 	projectRepo interfaces.ProjectRepository,
-// 	workflowService interfaces.WorkflowService,
-// 	storageBase string,
-// ) *FileSystemNodeRuntimePreparer {
-// 	return NewFileSystemNodeRuntimePreparerWithBuilders(
-// 		analysisRepo,
-// 		workflowRepo,
-// 		projectRepo,
-// 		storageBase,
-// 		nil,
-// 	)
-// }
-
-func NewFileSystemNodeRuntimePreparerWithBuilders(
+func NewFileSystemNodeRuntimePreparer(
 	analysisRepo interfaces.AnalysisRepository,
 	workflowRepo interfaces.WorkflowRepository,
 	projectRepo interfaces.ProjectRepository,
 	workflowService interfaces.WorkflowService,
-	storageBase string,
-	builders map[string]RunScriptBuilder,
+	cfg *config.Config,
+	builders *RunScriptBuilderRegistry,
 ) *FileSystemNodeRuntimePreparer {
 	return &FileSystemNodeRuntimePreparer{
 		analysisRepo:    analysisRepo,
 		workflowService: workflowService,
 		workflowRepo:    workflowRepo,
 		projectRepo:     projectRepo,
-		storageBase:     strings.TrimSpace(storageBase),
-		builders:        cloneRunScriptBuilders(builders),
+		cfg:             cfg,
+		builders:        builders,
 	}
+}
+
+// baseDir 返回存储根目录（源自注入的 Config，而非直接注入字符串）。
+func (p *FileSystemNodeRuntimePreparer) baseDir() string {
+	if p.cfg == nil || p.cfg.Storage == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.cfg.Storage.BaseDir)
 }
 
 func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types.AnalysisNode) error {
@@ -79,7 +72,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if err := os.MkdirAll(nodeCachedDir, 0o755); err != nil {
 		return err
 	}
-	prefix := filepath.Join(p.storageBase, "data", project.ProjectID)
+	prefix := filepath.Join(p.baseDir(), "data", project.ProjectID)
 
 	projectCachedDir := filepath.Join(prefix, "cached")
 	if err := os.MkdirAll(projectCachedDir, 0o755); err != nil {
@@ -89,7 +82,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if node.AnalysisID == 0 {
 		// p.initializeStandaloneNodeArtifacts(ctx, node)
 
-		projectDir := utils.GetProjectDir(p.storageBase, project.ProjectID)
+		projectDir := utils.GetProjectDir(p.baseDir(), project.ProjectID)
 
 		paramsPayload := cloneAnyMapForNode(map[string]interface{}(node.Params))
 		paramsPayload["output_dir"] = node.OutputDir
@@ -110,7 +103,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		scriptPath := filepath.Join(scriptDir, scriptMainFile)
 
 		if !filepath.IsAbs(scriptPath) {
-			scriptPath = filepath.Join(p.storageBase, scriptPath)
+			scriptPath = filepath.Join(p.baseDir(), scriptPath)
 		}
 
 		// scriptContent, err := os.ReadFile(scriptPath)
@@ -194,7 +187,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		if err := writeJSONAtomic(node.ParamsPath, params, 0o644); err != nil {
 			return fmt.Errorf("write params json failed: %w", err)
 		}
-		scriptDir, scriptFile, _ := utils.GetScriptFile(p.storageBase, project.ProjectID, script.ScriptType, script.ScriptID)
+		scriptDir, scriptFile, _ := utils.GetScriptFile(p.baseDir(), project.ProjectID, script.ScriptType, script.ScriptID)
 		scriptPath := filepath.Join(scriptDir, scriptFile)
 		if err := p.WriteCommand(node, script.ScriptType, scriptPath, params); err != nil {
 			return fmt.Errorf("write command failed: %w", err)
@@ -214,10 +207,9 @@ func (p *FileSystemNodeRuntimePreparer) WriteCommand(node *types.AnalysisNode, s
 	if err != nil {
 		return fmt.Errorf("read script file failed: %w", err)
 	}
-	scriptType = normalizeScriptType(scriptType)
-	builder := p.builders[scriptType]
+	builder := p.builders.Resolve(scriptType)
 	if builder == nil {
-		builder = p.builders["shell"]
+		return fmt.Errorf("no run script builder registered for script type %q", scriptType)
 	}
 	runScript, err := builder.Build(node, scriptPath, string(scriptContent), params)
 	if err != nil {
@@ -538,16 +530,4 @@ func writeBytesAtomic(path string, content []byte, mode os.FileMode) error {
 		return err
 	}
 	return nil
-}
-
-func cloneRunScriptBuilders(builders map[string]RunScriptBuilder) map[string]RunScriptBuilder {
-	if len(builders) == 0 {
-		return NewRunScriptBuilders()
-	}
-
-	cloned := make(map[string]RunScriptBuilder, len(builders))
-	for scriptType, builder := range builders {
-		cloned[scriptType] = builder
-	}
-	return cloned
 }

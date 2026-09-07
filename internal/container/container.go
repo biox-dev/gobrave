@@ -207,7 +207,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// must(container.Provide(repository.NewSystemSettingRepository))
 	must(container.Provide(repository.NewUserRepository))
 	must(container.Provide(repository.NewAuthTokenRepository))
-	must(container.Provide(prepare.NewRunScriptBuilders))
+	// RunScriptBuilder 注册表：注册框架内置构建器（r / python / shell / qmd / jupyter），
+	// 运行时按脚本类型解析，供 NodeRuntimePreparer 生成 run.sh 使用。
+	must(container.Provide(func() *prepare.RunScriptBuilderRegistry {
+		return prepare.NewRunScriptBuilderRegistry(prepare.DefaultRunScriptBuilders()...)
+	}))
 	must(container.Provide(repository.NewProjectRepository))
 	must(container.Provide(repository.NewDataRepository))
 	must(container.Provide(repository.NewStoreRepository))
@@ -356,6 +360,12 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewStoreService))
 	must(container.Provide(service.NewAnalysisService))
 
+	// NodeRuntimePreparer：文件系统实现，负责在节点执行前准备脚本 / 参数 / 工作目录。
+	// 通过 dig.As 将其以 NodeRuntimePreparer 接口暴露，供 NewNodeDispatcher 注入。
+	must(container.Provide(
+		prepare.NewFileSystemNodeRuntimePreparer,
+		dig.As(new(prepare.NodeRuntimePreparer)),
+	))
 	must(container.Provide(dag.NewNodeDispatcher))
 
 	must(container.Provide(service.NewDagOrchestrator))

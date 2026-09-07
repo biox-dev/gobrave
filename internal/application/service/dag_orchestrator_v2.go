@@ -61,7 +61,7 @@ type dynamicDagOrchestratorV2 struct {
 	dispatcher        *dagruntime.NodeDispatcher
 	projectRepo       interfaces.ProjectRepository
 	containerMgr      *manager.ContainerManager
-	runScriptBuilders map[string]prepare.RunScriptBuilder
+	runScriptBuilders *prepare.RunScriptBuilderRegistry
 	// cfg provides storage roots and runtime options.
 	cfg *config.Config
 	// bus emits runtime events using the existing event pipeline.
@@ -84,7 +84,7 @@ func NewDynamicDagOrchestratorV2(
 	containerRepo interfaces.ContainerRepository,
 	containerMgr *manager.ContainerManager,
 	projectRepo interfaces.ProjectRepository,
-	runScriptBuilders map[string]prepare.RunScriptBuilder,
+	runScriptBuilders *prepare.RunScriptBuilderRegistry,
 	dispatcher *dagruntime.NodeDispatcher,
 	cfg *config.Config,
 	bus event.Bus,
@@ -370,11 +370,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 	}
 
 	runtime := dagruntime.NewRuntimeEngine(o.repo)
-	storageBase := ""
-	if o.cfg != nil && o.cfg.Storage != nil {
-		storageBase = strings.TrimSpace(o.cfg.Storage.BaseDir)
-	}
-	preparer := prepare.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, o.workflowService, storageBase, o.runScriptBuilders)
+	preparer := prepare.NewFileSystemNodeRuntimePreparer(o.repo, o.workflowRepo, o.projectRepo, o.workflowService, o.cfg, o.runScriptBuilders)
 	// dispatcher := dagruntime.NewNodeDispatcher(
 	// 	runtime,
 	// 	o.repo,

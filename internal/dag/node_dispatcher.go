@@ -3,10 +3,8 @@ package dag
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/dag/executor"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/event"
@@ -26,30 +24,13 @@ type NodeDispatcher struct {
 }
 
 func NewNodeDispatcher(
-	// runtime *RuntimeEngine,
 	repo interfaces.AnalysisRepository,
 	bus event.Bus,
 	factory *executor.ExecuterFactory,
-	workflowRepo interfaces.WorkflowRepository,
-	projectRepo interfaces.ProjectRepository,
-	workflowService interfaces.WorkflowService,
-	cfg *config.Config,
-	runScriptBuilders map[string]prepare.RunScriptBuilder,
+	preparer prepare.NodeRuntimePreparer,
 	// cleanup NodeFailureCleanupFunc,
-	// preparer NodeRuntimePreparer,
 ) *NodeDispatcher {
-	// if preparer == nil {
-	// 	preparer = NoopNodeRuntimePreparer{}
-	// }
-	storageBase := strings.TrimSpace(cfg.Storage.BaseDir)
 	runtime := NewRuntimeEngine(repo)
-	preparer := prepare.NewFileSystemNodeRuntimePreparerWithBuilders(
-		repo,
-		workflowRepo,
-		projectRepo,
-		workflowService,
-		storageBase,
-		runScriptBuilders)
 
 	return &NodeDispatcher{runtime: runtime, repo: repo, bus: bus, factory: factory,
 		cleanup: nil, preparer: preparer}
