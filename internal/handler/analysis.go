@@ -18,6 +18,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/compiler"
 	"github.com/biox-dev/gobrave/internal/config"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
+	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -41,6 +42,7 @@ type AnalysisHandler struct {
 	dataflowDagOrchestrator interfaces.DataflowDagOrchestrator
 	nodeOrchestrator        interfaces.NodeOrchestrator
 	aiSummaryRepo           interfaces.AISummaryRepository
+	preparer                prepare.NodeRuntimePreparer
 	config                  *config.Config
 }
 
@@ -152,6 +154,7 @@ func NewAnalysisHandler(
 	dynamicDagOrchestrator interfaces.DynamicDagOrchestrator,
 	dataflowDagOrchestrator interfaces.DataflowDagOrchestrator,
 	nodeOrchestrator interfaces.NodeOrchestrator,
+	preparer prepare.NodeRuntimePreparer,
 	aiSummaryRepo interfaces.AISummaryRepository,
 	cfg *config.Config,
 ) *AnalysisHandler {
@@ -168,6 +171,7 @@ func NewAnalysisHandler(
 		dataflowDagOrchestrator: dataflowDagOrchestrator,
 		nodeOrchestrator:        nodeOrchestrator,
 		aiSummaryRepo:           aiSummaryRepo,
+		preparer:                preparer,
 		config:                  cfg,
 	}
 }
@@ -1352,6 +1356,8 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("failed to submit analysis node").WithDetails(err.Error()))
 			return
 		}
+	} else {
+		h.preparer.Prepare(c.Request.Context(), node)
 	}
 	c.JSON(http.StatusOK, response)
 }
