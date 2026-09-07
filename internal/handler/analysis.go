@@ -1357,7 +1357,7 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 			return
 		}
 	} else {
-		h.preparer.Prepare(c.Request.Context(), node)
+		h.preparer.Prepare(prepare.WithSkipCleanOutput(c.Request.Context()), node)
 	}
 	c.JSON(http.StatusOK, response)
 }

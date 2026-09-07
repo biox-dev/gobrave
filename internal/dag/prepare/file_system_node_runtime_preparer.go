@@ -50,6 +50,23 @@ func (p *FileSystemNodeRuntimePreparer) baseDir() string {
 	return strings.TrimSpace(p.cfg.Storage.BaseDir)
 }
 
+// skipCleanOutputContextKey 使用私有空结构体类型作为 context key，避免与其它包冲突。
+type skipCleanOutputContextKey struct{}
+
+// WithSkipCleanOutput 返回一个携带“跳过清理输出目录”标识的 context。
+// Prepare 检测到该标识后，将不再调用 cleanDirContents。
+func WithSkipCleanOutput(ctx context.Context) context.Context {
+	return context.WithValue(ctx, skipCleanOutputContextKey{}, true)
+}
+
+func shouldSkipCleanOutput(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(skipCleanOutputContextKey{}).(bool)
+	return v
+}
+
 func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types.AnalysisNode) error {
 	if node == nil {
 		return fmt.Errorf("analysis node is nil")
@@ -87,6 +104,9 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		paramsPayload := cloneAnyMapForNode(map[string]interface{}(node.Params))
 		paramsPayload["output_dir"] = node.OutputDir
 		paramsPayload["project_dir"] = projectDir
+		paramsPayload["node_cached_dir"] = nodeCachedDir
+		paramsPayload["project_cached_dir"] = projectCachedDir
+
 		paramsBytes, err := json.MarshalIndent(paramsPayload, "", "  ")
 		if err != nil {
 			return err
@@ -184,6 +204,8 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		if err != nil {
 			return err
 		}
+		params["node_cached_dir"] = nodeCachedDir
+		params["project_cached_dir"] = projectCachedDir
 		if err := writeJSONAtomic(node.ParamsPath, params, 0o644); err != nil {
 			return fmt.Errorf("write params json failed: %w", err)
 		}
@@ -194,8 +216,10 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		}
 	}
 
-	if err := cleanDirContents(node.OutputDir, prefix); err != nil {
-		return fmt.Errorf("clean output dir failed: %w", err)
+	if !shouldSkipCleanOutput(ctx) {
+		if err := cleanDirContents(node.OutputDir, prefix); err != nil {
+			return fmt.Errorf("clean output dir failed: %w", err)
+		}
 	}
 
 	return nil

@@ -234,11 +234,11 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 		return nil, fmt.Errorf("request is required")
 	}
 
-	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, req.DatasetID)
+	dataset, err := s.dataRepo.GetDatasetByID(ctx, req.DatasetID)
 	if err != nil {
 		return nil, err
 	}
-	if !datasetExists {
+	if dataset == nil {
 		return nil, gorm.ErrRecordNotFound
 	}
 
@@ -287,7 +287,7 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 
 	// If copy is requested, copy file to analysis_result dir with timestamp prefix
 	if req.IsCopy {
-		destDir := filepath.Join(absBaseDir, req.ProjectID, "analysis_result")
+		destDir := filepath.Join(absBaseDir, req.ProjectID, "dataset", fmt.Sprintf("%d", dataset.ID))
 		if err := os.MkdirAll(destDir, 0755); err != nil {
 			return nil, fmt.Errorf("failed to create destination directory: %w", err)
 		}
