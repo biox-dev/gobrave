@@ -333,25 +333,26 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 	err = s.dataRepo.WithTransaction(ctx, func(tx interfaces.DataRepository) error {
 		if file == nil {
 			file = &types.File{
-				FileID:   strconv.FormatInt(utils.GenerateID(), 10),
-				FileName: displayName,
-				Path:     resolvedPath,
-				Format:   strings.TrimPrefix(strings.ToLower(filepath.Ext(resolvedPath)), "."),
-				Size:     size,
-				Storage:  "LOCAL",
+				FileID:         strconv.FormatInt(utils.GenerateID(), 10),
+				FileName:       displayName,
+				Path:           resolvedPath,
+				AnalysisNodeID: req.AnalysisNodeID,
+				Format:         strings.TrimPrefix(strings.ToLower(filepath.Ext(resolvedPath)), "."),
+				Size:           size,
+				Storage:        "LOCAL",
 			}
 			if err := tx.CreateFile(ctx, file); err != nil {
 				return err
 			}
 		}
 
-		exists, err := tx.ExistsDatasetFile(ctx, req.DatasetID, file.ID)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return ErrDatasetFileAlreadyAdded
-		}
+		// exists, err := tx.ExistsDatasetFile(ctx, req.DatasetID, file.ID)
+		// if err != nil {
+		// 	return err
+		// }
+		// if exists {
+		// 	return ErrDatasetFileAlreadyAdded
+		// }
 
 		datasetFile := &types.DatasetFile{
 			DatasetID: req.DatasetID,

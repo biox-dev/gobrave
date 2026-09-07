@@ -244,6 +244,7 @@ func (r *dataRepository) PageFileByProjectID(ctx context.Context, pagination *ty
 			Select(`
 				file.id,
 				file.file_id,
+				file.analysis_node_id,
 				file.file_name,
 				file.path,
 				file.format,

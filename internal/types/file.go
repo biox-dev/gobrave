@@ -18,6 +18,8 @@ type File struct {
 
 	Format string `json:"format" gorm:"type:varchar(64)"`
 
+	AnalysisNodeID int64 `json:"analysis_node_id" gorm:"type:bigint;index"`
+
 	Size int64 `json:"size"`
 
 	MD5 string `json:"md5" gorm:"type:varchar(64);index"`
@@ -72,13 +74,14 @@ type UpdateDatasetFileRequest struct {
 }
 
 type AddFileToDatasetRequest struct {
-	DatasetID int64  `json:"dataset_id,string" binding:"required"`
-	ProjectID string `json:"-"`
-	Path      string `json:"path" binding:"required"`
-	Role      string `json:"role"`
-	FileName  string `json:"file_name" gorm:"type:varchar(255)"`
-	IsCopy    bool   `json:"is_copy"`   // if true, copy the file to the dataset, otherwise just link it
-	IsPrefix  bool   `json:"is_prefix"` // if true, the path is a prefix, and all files under the prefix will be added to the dataset
+	DatasetID      int64  `json:"dataset_id,string" binding:"required"`
+	ProjectID      string `json:"-"`
+	AnalysisNodeID int64  `json:"analysis_node_id,string,omitempty"` // optional, if provided, the file will be linked to the analysis node
+	Path           string `json:"path" binding:"required"`
+	Role           string `json:"role"`
+	FileName       string `json:"file_name" gorm:"type:varchar(255)"`
+	IsCopy         bool   `json:"is_copy"`   // if true, copy the file to the dataset, otherwise just link it
+	IsPrefix       bool   `json:"is_prefix"` // if true, the path is a prefix, and all files under the prefix will be added to the dataset
 	// data analysis external
 	Source string `json:"source"`
 }
@@ -98,6 +101,8 @@ type FileWithDatasetInfo struct {
 	Path string `json:"path"`
 
 	Format string `json:"format"`
+
+	AnalysisNodeID int64 `json:"analysis_node_id,string,omitempty"`
 
 	Size int64 `json:"size"`
 

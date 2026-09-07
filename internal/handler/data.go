@@ -8,11 +8,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	appservice "github.com/biox-dev/gobrave/internal/application/service"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 

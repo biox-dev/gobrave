@@ -86,9 +86,13 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	}
 	// create cached dir
 	// nodeCachedDir := filepath.Join(node.WorkspaceDir, "cached")
-	// if err := os.MkdirAll(nodeCachedDir, 0o755); err != nil {
-	// 	return err
-	// }
+	if strings.TrimSpace(node.CacheDir) == "" {
+		node.CacheDir = utils.GetAnalysisNodeCacheDir(node.WorkspaceDir) //filepath.Join(node.WorkspaceDir, "cached")
+	}
+	if err := os.MkdirAll(node.CacheDir, 0o755); err != nil {
+		return err
+	}
+
 	prefix := filepath.Join(p.baseDir(), "data", project.ProjectID)
 
 	projectCachedDir := filepath.Join(prefix, "cached")
