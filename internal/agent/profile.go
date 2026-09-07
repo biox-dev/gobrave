@@ -139,7 +139,7 @@ func BuiltinProfiles() []*Profile {
 			DisplayName:  "摘要总结",
 			Description:  "用于生成分析 / 节点的摘要：注入项目上下文（已完成的分析节点等），按学术规范写作。",
 			IsBuiltin:    true,
-			SystemPrompt: "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。",
+			SystemPrompt: "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要; 检查分析中存在的问题，并提出改进建议。",
 			Context:      ContextConfig{InjectMemory: true, InjectProject: true},
 			CreatedAt:    now,
 			Model:        "deepseek-v4-flash",
