@@ -849,7 +849,8 @@ func (o *dynamicDagOrchestratorV2) buildDynamicAnalysisNode(
 	}
 	indexID := utils.GenerateID()
 	workspaceDir := filepath.Join(analysis.OutputDir, fmt.Sprintf("%d", indexID))
-	outputDir := filepath.Join(workspaceDir, "output")
+	outputDir := utils.GetAnalysisNodeOutputDir(workspaceDir) //filepath.Join(workspaceDir, "output")
+	cacheDir := utils.GetAnalysisNodeCacheDir(workspaceDir)   //filepath.Join(workspaceDir, "cache")
 	paramsPath := filepath.Join(workspaceDir, "params.json")
 	commandPath := filepath.Join(workspaceDir, "run.sh")
 	logPath := filepath.Join(workspaceDir, "command.log")
@@ -888,6 +889,7 @@ func (o *dynamicDagOrchestratorV2) buildDynamicAnalysisNode(
 		LogPath:                logPath,
 		WorkspaceDir:           workspaceDir,
 		OutputDir:              outputDir,
+		CacheDir:               cacheDir,
 		CommandPath:            commandPath,
 		ParamsPath:             paramsPath,
 		ErrorMessage:           errorMessage,

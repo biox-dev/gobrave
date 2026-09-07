@@ -85,10 +85,10 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		return err
 	}
 	// create cached dir
-	nodeCachedDir := filepath.Join(node.WorkspaceDir, "cached")
-	if err := os.MkdirAll(nodeCachedDir, 0o755); err != nil {
-		return err
-	}
+	// nodeCachedDir := filepath.Join(node.WorkspaceDir, "cached")
+	// if err := os.MkdirAll(nodeCachedDir, 0o755); err != nil {
+	// 	return err
+	// }
 	prefix := filepath.Join(p.baseDir(), "data", project.ProjectID)
 
 	projectCachedDir := filepath.Join(prefix, "cached")
@@ -104,7 +104,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		paramsPayload := cloneAnyMapForNode(map[string]interface{}(node.Params))
 		paramsPayload["output_dir"] = node.OutputDir
 		paramsPayload["project_dir"] = projectDir
-		paramsPayload["node_cached_dir"] = nodeCachedDir
+		paramsPayload["node_cached_dir"] = node.CacheDir
 		paramsPayload["project_cached_dir"] = projectCachedDir
 
 		paramsBytes, err := json.MarshalIndent(paramsPayload, "", "  ")
@@ -204,7 +204,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		if err != nil {
 			return err
 		}
-		params["node_cached_dir"] = nodeCachedDir
+		params["node_cached_dir"] = node.CacheDir
 		params["project_cached_dir"] = projectCachedDir
 		if err := writeJSONAtomic(node.ParamsPath, params, 0o644); err != nil {
 			return fmt.Errorf("write params json failed: %w", err)
@@ -260,7 +260,10 @@ func (p *FileSystemNodeRuntimePreparer) ensureNodePaths(node *types.AnalysisNode
 	}
 
 	if strings.TrimSpace(node.OutputDir) == "" {
-		node.OutputDir = filepath.Join(baseWorkspace, "output")
+		node.OutputDir = utils.GetAnalysisNodeOutputDir(baseWorkspace) //filepath.Join(baseWorkspace, "output")
+	}
+	if strings.TrimSpace(node.CacheDir) == "" {
+		node.CacheDir = utils.GetAnalysisNodeCacheDir(baseWorkspace) //filepath.Join(baseWorkspace, "cache")
 	}
 	if strings.TrimSpace(node.ParamsPath) == "" {
 		node.ParamsPath = filepath.Join(baseWorkspace, "params.json")

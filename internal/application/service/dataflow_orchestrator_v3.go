@@ -145,6 +145,7 @@ type DataflowAnalysisNodePersistParams struct {
 	CommandPath     string
 	ParamsPath      string
 	LogPath         string
+	CacheDir        string
 }
 
 // DataflowChannelSpec represents a logical edge/channel in the dataflow graph.
@@ -434,7 +435,10 @@ func (r *persistentDataflowRuntime) populateNodePathDefaults(ctx context.Context
 		node.WorkspaceDir = baseWorkspace
 	}
 	if strings.TrimSpace(node.OutputDir) == "" && baseWorkspace != "" {
-		node.OutputDir = filepath.Join(baseWorkspace, "output")
+		node.OutputDir = utils.GetAnalysisNodeOutputDir(baseWorkspace) //filepath.Join(baseWorkspace, "output")
+	}
+	if strings.TrimSpace(node.CacheDir) == "" && baseWorkspace != "" {
+		node.CacheDir = utils.GetAnalysisNodeCacheDir(baseWorkspace) //filepath.Join(baseWorkspace, "cache")
 	}
 	if strings.TrimSpace(node.ParamsPath) == "" && baseWorkspace != "" {
 		node.ParamsPath = filepath.Join(baseWorkspace, "params.json")
@@ -580,6 +584,7 @@ func buildAnalysisNodeFromPersistPayload(script *types.Script, payload *Dataflow
 		RerunReason:            strings.TrimSpace(payload.RerunReason),
 		WorkspaceDir:           strings.TrimSpace(payload.WorkspaceDir),
 		OutputDir:              strings.TrimSpace(payload.OutputDir),
+		CacheDir:               strings.TrimSpace(payload.CacheDir),
 		CommandPath:            strings.TrimSpace(payload.CommandPath),
 		ParamsPath:             strings.TrimSpace(payload.ParamsPath),
 		LogPath:                strings.TrimSpace(payload.LogPath),

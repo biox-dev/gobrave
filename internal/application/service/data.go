@@ -273,42 +273,44 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 	if err != nil {
 		return nil, err
 	}
-
-	info, err := os.Stat(resolvedPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, gorm.ErrRecordNotFound
-		}
-		return nil, err
-	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("file path is a directory: %s", resolvedPath)
-	}
-
-	// If copy is requested, copy file to analysis_result dir with timestamp prefix
-	if req.IsCopy {
-		destDir := filepath.Join(absBaseDir, req.ProjectID, "dataset", fmt.Sprintf("%d", dataset.ID))
-		if err := os.MkdirAll(destDir, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create destination directory: %w", err)
-		}
-
-		origName := strings.TrimSpace(req.FileName)
-		if origName == "" {
-			origName = filepath.Base(resolvedPath)
-		}
-		timestamp := time.Now().Format("20060102150405")
-		destName := timestamp + "_" + origName
-		destPath := filepath.Join(destDir, destName)
-
-		if err := copyFile(resolvedPath, destPath); err != nil {
-			return nil, fmt.Errorf("failed to copy file: %w", err)
-		}
-		// Refresh stat on the new file
-		info, err = os.Stat(destPath)
+	var size int64 = 0
+	if !req.IsPrefix {
+		info, err := os.Stat(resolvedPath)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, gorm.ErrRecordNotFound
+			}
 			return nil, err
 		}
-		resolvedPath = destPath
+		if info.IsDir() {
+			return nil, fmt.Errorf("file path is a directory: %s", resolvedPath)
+		}
+		size = info.Size()
+		// If copy is requested, copy file to analysis_result dir with timestamp prefix
+		if req.IsCopy {
+			destDir := filepath.Join(absBaseDir, req.ProjectID, "dataset", fmt.Sprintf("%d", dataset.ID))
+			if err := os.MkdirAll(destDir, 0755); err != nil {
+				return nil, fmt.Errorf("failed to create destination directory: %w", err)
+			}
+
+			origName := strings.TrimSpace(req.FileName)
+			if origName == "" {
+				origName = filepath.Base(resolvedPath)
+			}
+			timestamp := time.Now().Format("20060102150405")
+			destName := timestamp + "_" + origName
+			destPath := filepath.Join(destDir, destName)
+
+			if err := copyFile(resolvedPath, destPath); err != nil {
+				return nil, fmt.Errorf("failed to copy file: %w", err)
+			}
+			// Refresh stat on the new file
+			info, err = os.Stat(destPath)
+			if err != nil {
+				return nil, err
+			}
+			resolvedPath = destPath
+		}
 	}
 
 	role := strings.TrimSpace(req.Role)
@@ -335,7 +337,7 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 				FileName: displayName,
 				Path:     resolvedPath,
 				Format:   strings.TrimPrefix(strings.ToLower(filepath.Ext(resolvedPath)), "."),
-				Size:     info.Size(),
+				Size:     size,
 				Storage:  "LOCAL",
 			}
 			if err := tx.CreateFile(ctx, file); err != nil {

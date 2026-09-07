@@ -77,7 +77,8 @@ type AddFileToDatasetRequest struct {
 	Path      string `json:"path" binding:"required"`
 	Role      string `json:"role"`
 	FileName  string `json:"file_name" gorm:"type:varchar(255)"`
-	IsCopy    bool   `json:"is_copy"` // if true, copy the file to the dataset, otherwise just link it
+	IsCopy    bool   `json:"is_copy"`   // if true, copy the file to the dataset, otherwise just link it
+	IsPrefix  bool   `json:"is_prefix"` // if true, the path is a prefix, and all files under the prefix will be added to the dataset
 	// data analysis external
 	Source string `json:"source"`
 }

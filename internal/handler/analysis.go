@@ -72,10 +72,11 @@ type EditNodeParamsResponse struct {
 }
 
 type VisualizationResultResponse struct {
-	Images []map[string]interface{} `json:"images"`
-	Tables []map[string]interface{} `json:"tables"`
-	HTMLs  []map[string]interface{} `json:"htmls"`
-	Files  []map[string]interface{} `json:"files"`
+	Images      []map[string]interface{} `json:"images"`
+	Tables      []map[string]interface{} `json:"tables"`
+	HTMLs       []map[string]interface{} `json:"htmls"`
+	OutputFiles []map[string]interface{} `json:"output_files"`
+	CacheFiles  []map[string]interface{} `json:"cache_files"`
 }
 
 type VisualizationNodeFileResponse struct {
@@ -1263,6 +1264,7 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		LogPath:                artifacts.LogPath,
 		WorkspaceDir:           artifacts.WorkspaceDir,
 		OutputDir:              artifacts.OutputDir,
+		CacheDir:               artifacts.CacheDir,
 		CommandPath:            artifacts.CommandPath,
 		ParamsPath:             artifacts.ParamsPath,
 		CreationSource:         "standalone",
@@ -1287,6 +1289,7 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 			"request_param":            node.RequestParam,
 			"status":                   node.Status,
 			"executor":                 node.Executor,
+			"cache_dir":                node.CacheDir,
 			"retry":                    node.Retry,
 			"max_retry":                node.MaxRetry,
 			"cache_hit":                node.CacheHit,
@@ -1526,6 +1529,7 @@ type standaloneNodeArtifacts struct {
 	ID           int64
 	WorkspaceDir string
 	OutputDir    string
+	CacheDir     string
 	ParamsPath   string
 	CommandPath  string
 	projectDir   string
@@ -1546,7 +1550,8 @@ func (h *AnalysisHandler) buildStandaloneNodeArtifactPaths(
 	analsyisNodeDir := utils.GetAnalysisNodeDir(baseDir, projectID, fmt.Sprint(scriptID))
 	projectDir := utils.GetProjectDir(baseDir, projectID)
 	workspaceDir := filepath.Join(analsyisNodeDir, strconv.FormatInt(analysisNodeID, 10))
-	outputDir := filepath.Join(workspaceDir, "output")
+	outputDir := utils.GetAnalysisNodeOutputDir(workspaceDir) //filepath.Join(workspaceDir, "output")
+	cacheDir := utils.GetAnalysisNodeCacheDir(workspaceDir)   //filepath.Join(workspaceDir, "cache")
 	paramsPath := filepath.Join(workspaceDir, "params.json")
 	commandPath := filepath.Join(workspaceDir, "run.sh")
 	logPath := filepath.Join(workspaceDir, "command.log")
@@ -1555,6 +1560,7 @@ func (h *AnalysisHandler) buildStandaloneNodeArtifactPaths(
 		ID:           analysisNodeID,
 		WorkspaceDir: workspaceDir,
 		OutputDir:    outputDir,
+		CacheDir:     cacheDir,
 		projectDir:   projectDir,
 		ParamsPath:   paramsPath,
 		CommandPath:  commandPath,
@@ -2381,7 +2387,7 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 
 	prefix := fmt.Sprintf("/data-analysis%s/", outputDir)
 
-	result, err := visualizationResultsPath(analysisNode.OutputDir, prefix, scriptType, h.config)
+	result, err := visualizationResultsPath(analysisNode.OutputDir, analysisNode.CacheDir, prefix, scriptType, h.config)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to list visualization files").WithDetails(err.Error()))
 		return
@@ -2857,16 +2863,17 @@ func (h *AnalysisHandler) attachContainerInfoToNode(c *gin.Context, node map[str
 	return node, nil
 }
 
-func visualizationResultsPath(path, prefix string, scriptType string, cfg *config.Config) (VisualizationResultResponse, error) {
+func visualizationResultsPath(outputDir, cacheDir, prefix string, scriptType string, cfg *config.Config) (VisualizationResultResponse, error) {
 	result := VisualizationResultResponse{
-		Images: make([]map[string]interface{}, 0),
-		Tables: make([]map[string]interface{}, 0),
-		HTMLs:  make([]map[string]interface{}, 0),
-		Files:  make([]map[string]interface{}, 0),
+		Images:      make([]map[string]interface{}, 0),
+		Tables:      make([]map[string]interface{}, 0),
+		HTMLs:       make([]map[string]interface{}, 0),
+		OutputFiles: make([]map[string]interface{}, 0),
+		CacheFiles:  make([]map[string]interface{}, 0),
 	}
 
-	path = strings.TrimSpace(path)
-	if path == "" {
+	outputDir = strings.TrimSpace(outputDir)
+	if outputDir == "" {
 		return result, nil
 	}
 	// if scriptType == "qmd" {
@@ -2882,7 +2889,7 @@ func visualizationResultsPath(path, prefix string, scriptType string, cfg *confi
 	// 	return result, nil
 	// }
 
-	entries, err := os.ReadDir(path)
+	outputEntries, err := os.ReadDir(outputDir)
 
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -2892,28 +2899,49 @@ func visualizationResultsPath(path, prefix string, scriptType string, cfg *confi
 	}
 
 	// add  filename and filepath in result.Files
-	for _, entry := range entries {
+	for _, entry := range outputEntries {
 		if entry.IsDir() {
 			continue
 		}
 		filename := entry.Name()
-		fullPath := filepath.Join(path, filename)
+		fullPath := filepath.Join(outputDir, filename)
 
-		result.Files = append(result.Files, map[string]interface{}{
+		result.OutputFiles = append(result.OutputFiles, map[string]interface{}{
 			"filename": filename,
 			"filepath": fullPath,
 			"url":      filepath.Join(prefix, filename),
 		})
 	}
 
+	// 如果cacheDir存在才读取
+	if cacheDir != "" {
+
+		cacheEntries, err := os.ReadDir(cacheDir)
+		if err == nil {
+			for _, entry := range cacheEntries {
+				if entry.IsDir() {
+					continue
+				}
+				filename := entry.Name()
+				fullPath := filepath.Join(cacheDir, filename)
+
+				result.CacheFiles = append(result.CacheFiles, map[string]interface{}{
+					"filename": filename,
+					"filepath": fullPath,
+					// "url":      filepath.Join(prefix, filename),
+				})
+			}
+		}
+	}
+
 	imageGroups := make(map[string][]map[string]interface{})
-	for _, entry := range entries {
+	for _, entry := range outputEntries {
 		if entry.IsDir() {
 			continue
 		}
 
 		filename := entry.Name()
-		fullPath := filepath.Join(path, filename)
+		fullPath := filepath.Join(outputDir, filename)
 		lowerName := strings.ToLower(filename)
 
 		switch {

@@ -224,6 +224,7 @@ type AnalysisNode struct {
 	LogPath                string     `json:"log_path" gorm:"column:log_path;type:varchar(255)"`
 	WorkspaceDir           string     `json:"workspace_dir" gorm:"column:workspace_dir;type:varchar(255)"`
 	OutputDir              string     `json:"output_dir" gorm:"column:output_dir;type:varchar(255)"`
+	CacheDir               string     `json:"cache_dir" gorm:"column:cache_dir;type:varchar(255)"`
 	CommandPath            string     `json:"command_path" gorm:"column:command_path;type:varchar(255)"`
 	CommandMD5             string     `json:"command_md5" gorm:"column:command_md5;type:varchar(64)"`
 	ParamsPath             string     `json:"params_path" gorm:"column:params_path;type:varchar(255)"`

@@ -440,7 +440,8 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 		}
 
 		workspaceDir := filepath.Join(analysis.OutputDir, fmt.Sprintf("%d", id))
-		outputDir := filepath.Join(workspaceDir, "output")
+		outputDir := utils.GetAnalysisNodeOutputDir(workspaceDir) //filepath.Join(workspaceDir, "output")
+		cacheDir := utils.GetAnalysisNodeCacheDir(workspaceDir)   //filepath.Join(workspaceDir, "cache")
 		paramsPath := filepath.Join(workspaceDir, "params.json")
 		commandPath := filepath.Join(workspaceDir, "run.sh")
 		logPath := filepath.Join(workspaceDir, "command.log")
@@ -517,6 +518,7 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 			WorkspaceDir:           workspaceDir,
 			OutputDir:              outputDir,
 			CommandPath:            commandPath,
+			CacheDir:               cacheDir,
 			ParamsPath:             paramsPath,
 			CreationSource:         "scheduler",
 		}

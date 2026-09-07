@@ -53,6 +53,13 @@ func GetProjectDocDir(baseDir, projectId string) string {
 func GetAnalysisDebugDir(baseDir, analysisID, version string) string {
 	return filepath.Join(baseDir, "debug", analysisID, version)
 }
+
+func GetAnalysisNodeCacheDir(workspaceDir string) string {
+	return filepath.Join(workspaceDir, "cached")
+}
+func GetAnalysisNodeOutputDir(workspaceDir string) string {
+	return filepath.Join(workspaceDir, "output")
+}
 func mainFileByScriptType(scriptType string) string {
 	switch strings.ToLower(strings.TrimSpace(scriptType)) {
 	case "r":
