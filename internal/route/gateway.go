@@ -168,7 +168,7 @@ func (r *Gateway) rebuildFromDBLocked(ctx context.Context) error {
 			RouteKey:            row.RouteKey,
 			ContainerInstanceID: row.ContainerInstanceID,
 			PathPrefix:          row.PathPrefix,
-			IsTrimPrefix:        row.IsTrimPrefix,
+			IsTrimPrefix:        *row.IsTrimPrefix,
 
 			Backend: Backend{
 				Host: row.BackendHost,
@@ -213,7 +213,7 @@ func (r *Gateway) upsertRouteLocked(ctx context.Context, route Registration) err
 		PathPrefix:          route.PathPrefix,
 		BackendHost:         route.Backend.Host,
 		BackendPort:         route.Backend.Port,
-		IsTrimPrefix:        route.IsTrimPrefix,
+		IsTrimPrefix:        &route.IsTrimPrefix,
 		Metadata:            metadata,
 	}
 
@@ -239,7 +239,7 @@ func (r *Gateway) upsertRouteLocked(ctx context.Context, route Registration) err
 			return err
 		}
 	} else {
-		if err := r.db.Debug().WithContext(ctx).Create(entity).Error; err != nil {
+		if err := r.db.WithContext(ctx).Create(entity).Error; err != nil {
 			return err
 		}
 	}

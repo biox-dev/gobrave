@@ -396,7 +396,7 @@ type GatewayRoute struct {
 	ContainerInstanceID int64 `json:"container_instance_id,string" gorm:"index"`
 
 	PathPrefix   string `json:"path_prefix" gorm:"type:varchar(512);not null;uniqueIndex"`
-	IsTrimPrefix bool   `json:"is_trim_prefix" gorm:"not null;default:true"`
+	IsTrimPrefix *bool  `json:"is_trim_prefix" gorm:"not null;default:true"`
 	BackendHost  string `json:"backend_host" gorm:"type:varchar(255);not null"`
 	BackendPort  int    `json:"backend_port" gorm:"not null"`
 
