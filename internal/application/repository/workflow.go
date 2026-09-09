@@ -275,12 +275,12 @@ func (r *workflowRepository) GetScriptByScriptID(ctx context.Context, projectID 
 	return item, nil
 }
 
-func (r *workflowRepository) FindScriptsByScriptIDs(ctx context.Context, scriptIDs []string) ([]*types.Script, error) {
+func (r *workflowRepository) FindScriptsByScriptIDs(ctx context.Context, projectID int64, scriptIDs []string) ([]*types.Script, error) {
 	items := make([]*types.Script, 0)
 	if len(scriptIDs) == 0 {
 		return items, nil
 	}
-	err := r.db.WithContext(ctx).Where("component_id IN ?", scriptIDs).Find(&items).Error
+	err := r.db.WithContext(ctx).Where("project_id = ? AND component_id IN ?", projectID, scriptIDs).Find(&items).Error
 	if err != nil {
 		return nil, err
 	}

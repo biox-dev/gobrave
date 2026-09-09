@@ -106,7 +106,7 @@ func (s *workflowService) GetWorkflowVisByWorkflowID(ctx context.Context, workfl
 
 	scriptNodeMap := make(map[string]map[string]any)
 	if len(scriptIDs) > 0 {
-		scripts, err := s.workflowRepo.FindScriptsByScriptIDs(ctx, scriptIDs)
+		scripts, err := s.workflowRepo.FindScriptsByScriptIDs(ctx, findWorkflow.ProjectID, scriptIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -563,7 +563,7 @@ func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowI
 		return formJSONWrap, nil
 	}
 
-	scripts, err := s.workflowRepo.FindScriptsByScriptIDs(ctx, moduleIDs)
+	scripts, err := s.workflowRepo.FindScriptsByScriptIDs(ctx, findWorkflow.ProjectID, moduleIDs)
 	if err != nil {
 		return nil, err
 	}

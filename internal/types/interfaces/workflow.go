@@ -46,7 +46,7 @@ type WorkflowRepository interface {
 	GetScriptByID(ctx context.Context, id int64) (*types.Script, error)
 	GetScriptByScriptID(ctx context.Context, projectID int64, scriptID string) (*types.Script, error)
 	ExistsScriptInProjectByScriptID(ctx context.Context, projectID int64, scriptID string) (*types.Script, error)
-	FindScriptsByScriptIDs(ctx context.Context, scriptIDs []string) ([]*types.Script, error)
+	FindScriptsByScriptIDs(ctx context.Context, projectID int64, scriptIDs []string) ([]*types.Script, error)
 	GetScriptContainerSnapshotByScriptID(ctx context.Context, scriptID int64) (*types.ScriptContainerSnapshot, error)
 	CreateWorkflow(ctx context.Context, workflow *types.Workflow) error
 	UpdateWorkflow(ctx context.Context, workflow *types.Workflow) error
