@@ -194,8 +194,8 @@ func (o *Orchestrator) GetRunningInfo(_ context.Context, analysisID int64) (*int
 	}, nil
 }
 
-// RequestStop asks the in-process run to stop. It is not part of
-// interfaces.DynamicDagOrchestrator; the persisted job_status flag is the
+// RequestStop asks the in-process run to stop. It satisfies
+// interfaces.DynamicDagOrchestrator; the persisted job_status flag remains the
 // cross-instance stop mechanism.
 func (o *Orchestrator) RequestStop(analysisID int64) bool {
 	if o.registry == nil {

@@ -1,5 +1,4 @@
 package orchestratorv2
-package orchestratorv2
 
 import (
 	"sync"

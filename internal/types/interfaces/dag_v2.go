@@ -27,4 +27,9 @@ type DynamicDagOrchestrator interface {
 	StartAsyncV2(ctx context.Context, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error
 	// GetRunningInfo returns the in-memory running entry for analysisID, or nil when the DAG is not running.
 	GetRunningInfo(ctx context.Context, analysisID int64) (*DagRunningInfo, error)
+	// RequestStop asks the in-process run to stop and reports whether this process
+	// owned a live run for analysisID. When it returns false the caller must fall
+	// back to the persisted job_status stop path, which also covers runs owned by
+	// another instance.
+	RequestStop(analysisID int64) bool
 }

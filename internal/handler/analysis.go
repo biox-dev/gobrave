@@ -1822,6 +1822,20 @@ func (h *AnalysisHandler) StopAnalysis(c *gin.Context) {
 		return
 	}
 
+	// 优先走 V2 动态调度器的进程内停止：RequestStop 会落库 stopping 并取消该运行的
+	// 上下文，由 V2 调度器自行收敛终态，避免 legacy 与 V2 同时接管同一次分析。
+	if h.dynamicDagOrchestrator != nil && h.dynamicDagOrchestrator.RequestStop(analysisIDInt) {
+		c.JSON(http.StatusAccepted, gin.H{
+			"analysis_id":  analysisID,
+			"job_status":   "stopping",
+			"stop_started": true,
+		})
+		return
+	}
+
+	// 兜底：本进程未持有 V2 运行态（legacy 提交的分析，或 V2 运行在其它实例上）。
+	// legacy StopAsync 会把 job_status 写成 stopping，作为跨实例停止信号，
+	// V2 运行循环通过 shouldStopByJobStatus 轮询到该标志后优雅退出。
 	if err := h.dagOrchestrator.StopAsync(c.Request.Context(), analysisIDInt); err != nil {
 		c.Error(errors.NewInternalServerError("failed to stop dag scheduler").WithDetails(err.Error()))
 		return

@@ -37,6 +37,16 @@ const (
 	dynamicV2StopCheckInterval = 1 * time.Second
 	// dynamicV2WatchdogInterval is a safety net in case runtime events are dropped.
 	dynamicV2WatchdogInterval = 5 * time.Second
+
+	// dynamicV2StatusStopping is the persisted stop flag polled by the run loop.
+	// It doubles as the cross-instance stop signal when another instance owns the run.
+	dynamicV2StatusStopping = "stopping"
+	// dynamicV2StatusStopped is the terminal job status for a user-stopped run.
+	dynamicV2StatusStopped = "stopped"
+	// dynamicV2StatusFinished is the terminal job status for a fully completed run.
+	dynamicV2StatusFinished = "finished"
+	// dynamicV2StatusFailed is the terminal job status for a run that aborted.
+	dynamicV2StatusFailed = "failed"
 )
 
 // dynamicDagOrchestratorV2 provides a Nextflow-like dynamic materialization path
@@ -137,7 +147,7 @@ func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID 
 	if err := o.prepareAnalysisForCacheRerun(ctx, analysisID); err != nil {
 		o.router.unregister(analysisID)
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-			"job_status": "failed",
+			"job_status": dynamicV2StatusFailed,
 			"updated_at": time.Now().UTC(),
 		})
 		o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, map[string]any{"reason": err.Error()})
@@ -149,7 +159,7 @@ func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID 
 		// Compile failure is terminal for current submission; mark analysis failed.
 		o.router.unregister(analysisID)
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-			"job_status": "failed",
+			"job_status": dynamicV2StatusFailed,
 			"updated_at": time.Now().UTC(),
 		})
 		o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, map[string]any{"reason": err.Error()})
@@ -181,26 +191,29 @@ func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID 
 		defer o.router.unregister(analysisID)
 		defer close(heartbeatStop)
 		defer runCancel()
-		finalStatus := "finished"
+		finalStatus := dynamicV2StatusFinished
 		var finalErr error
 		if err := o.runDynamicLoop(runCtx, analysisID, sink, nodeTemplates, edgeRows); err != nil {
-			finalStatus = "failed"
+			finalStatus = dynamicV2StatusFailed
 			finalErr = err
 			logger.Warnf(context.Background(), "[DynamicDagOrchestratorV2] run failed, analysis_id=%d err=%v", analysisID, err)
 		}
-		if o.registry.IsStopping(analysisID) {
-			// External stop request wins over loop result.
-			finalStatus = "stopped"
+		if o.isStopRequested(analysisID) {
+			// A stop request wins over the loop result, whether it arrived through the
+			// in-process registry (RequestStop) or as a persisted job_status written by
+			// another instance that owns this analysis.
+			finalStatus = dynamicV2StatusStopped
+			finalErr = nil
 		}
 		o.registry.MarkFinished(analysisID, finalStatus)
-		if finalStatus == "finished" {
+		if finalStatus == dynamicV2StatusFinished {
 			o.publishDagRuntimeEvent(dagruntime.EventDagCompleted, analysisID, map[string]any{"status": finalStatus})
 		} else {
 			payload := map[string]any{"status": finalStatus}
 			if finalErr != nil {
 				payload["reason"] = finalErr.Error()
 			}
-			if finalStatus == "stopped" {
+			if finalStatus == dynamicV2StatusStopped {
 				payload["reason"] = "stopped"
 			}
 			o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, payload)
@@ -393,6 +406,50 @@ func (o *dynamicDagOrchestratorV2) GetRunningInfo(_ context.Context, analysisID 
 		TimeoutSeconds: entry.TimeoutSeconds,
 		StopRequested:  entry.StopRequested,
 	}, nil
+}
+
+// RequestStop asks the in-process run to stop and reports whether this process
+// owned a live run for analysisID.
+//
+// It satisfies interfaces.DynamicDagOrchestrator. Returning false means the run is
+// either already finished here or owned by another instance, in which case the
+// caller must fall back to the persisted job_status stop path.
+func (o *dynamicDagOrchestratorV2) RequestStop(analysisID int64) bool {
+	if analysisID <= 0 || o.registry == nil || !o.registry.IsRunning(analysisID) {
+		return false
+	}
+
+	// Persist "stopping" first: it is the cross-instance signal and keeps the
+	// runtime snapshot observable while the run winds down. Writing before the
+	// registry mutation guarantees the terminal status resolution below can only
+	// observe a stop that was already durable.
+	if o.repo != nil {
+		if err := o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
+			"job_status": dynamicV2StatusStopping,
+			"updated_at": time.Now().UTC(),
+		}); err != nil {
+			logger.Warnf(context.Background(), "[DynamicDagOrchestratorV2] mark analysis stopping failed, analysis_id=%d err=%v", analysisID, err)
+		}
+	}
+
+	// Cancels runCtx, which unblocks the run loop through its ctx.Done() arm.
+	return o.registry.RequestStop(analysisID)
+}
+
+// isStopRequested reports whether the run was stopped, either by an in-process
+// RequestStop or by a persisted stopping/stopped job status set by another
+// instance. It must be evaluated before registry.MarkFinished, which drops the
+// in-memory entry.
+func (o *dynamicDagOrchestratorV2) isStopRequested(analysisID int64) bool {
+	if o.registry != nil && o.registry.IsStopping(analysisID) {
+		return true
+	}
+	stopped, err := o.shouldStopByJobStatus(context.Background(), analysisID)
+	if err != nil {
+		logger.Warnf(context.Background(), "[DynamicDagOrchestratorV2] resolve stop flag failed, analysis_id=%d err=%v", analysisID, err)
+		return false
+	}
+	return stopped
 }
 
 // prepareAnalysisForCacheRerun resets persisted runtime graph for reruns when
@@ -932,7 +989,7 @@ func (o *dynamicDagOrchestratorV2) shouldStopByJobStatus(ctx context.Context, an
 		return false, err
 	}
 	status := strings.ToLower(strings.TrimSpace(analysis.JobStatus))
-	return status == "stopping" || status == "stopped", nil
+	return status == dynamicV2StatusStopping || status == dynamicV2StatusStopped, nil
 }
 
 // renewRunningLease periodically updates analysis.updated_at so stale lock recovery
