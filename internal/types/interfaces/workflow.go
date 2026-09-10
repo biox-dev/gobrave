@@ -15,6 +15,8 @@ type WorkflowService interface {
 	// 后续废除
 	// GetFormJSONByScriptID(ctx context.Context, scriptID string) ([]any, error)
 	GetWorkflowByID(ctx context.Context, id int64) (*types.Workflow, error)
+	// GetWorkflowVisByID(ctx context.Context, workflowID string) (map[string]any, error)
+	GetWorkflowVisByWorkflow(ctx context.Context, workflow *types.Workflow) (map[string]any, error)
 	GetWorkflowVisByWorkflowID(ctx context.Context, workflowID string) (map[string]any, error)
 	GetWorkflowByWorkflowID(ctx context.Context, workflowID string) (*types.Workflow, error)
 	PageWorkflow(ctx context.Context, pagination *types.Pagination, query *types.WorkflowPageQuery) ([]*types.Workflow, int64, error)
@@ -23,6 +25,8 @@ type WorkflowService interface {
 	GetScriptByID(ctx context.Context, id int64) (*types.Script, error)
 	GetScriptByScriptID(ctx context.Context, projectID int64, scriptID string) (*types.Script, error)
 	ExistsScriptInProjectByScriptID(ctx context.Context, projectID int64, scriptID string) (*types.Script, error)
+	// ScriptToNode 返回可直接添加到工作流 DAG 画布的 script 节点（含唯一 node_id）
+	ScriptToNode(ctx context.Context, workflowID int64, scriptID int64) (map[string]any, error)
 	// 后续废除
 	// GetScriptMainFileByScriptID(ctx context.Context, scriptID string) (string, string, error)
 	GetScriptFileByScriptID(ctx context.Context, scriptID int64) (string, string, error)
@@ -31,6 +35,8 @@ type WorkflowService interface {
 	GenerateScriptJSONByScriptID(ctx context.Context, scriptID int64) (*types.ScriptJSONExportResponse, error)
 	CreateWorkflow(ctx context.Context, workflow *types.Workflow) error
 	UpdateWorkflow(ctx context.Context, workflow *types.Workflow) error
+	// UpdateWorkflowDagDefinition 仅更新指定 workflow 的 dag_definition，避免整体替换把其他字段写成零值
+	UpdateWorkflowDagDefinition(ctx context.Context, workflowID int64, dagDefinition string) error
 	DeleteWorkflow(ctx context.Context, id int64) error
 	CreateScript(ctx context.Context, script *types.Script) error
 	UpdateScript(ctx context.Context, script *types.Script) error
@@ -50,6 +56,8 @@ type WorkflowRepository interface {
 	GetScriptContainerSnapshotByScriptID(ctx context.Context, scriptID int64) (*types.ScriptContainerSnapshot, error)
 	CreateWorkflow(ctx context.Context, workflow *types.Workflow) error
 	UpdateWorkflow(ctx context.Context, workflow *types.Workflow) error
+	// UpdateWorkflowDagDefinition 仅更新指定 workflow 的 dag_definition，避免整体替换把其他字段写成零值
+	UpdateWorkflowDagDefinition(ctx context.Context, workflowID int64, dagDefinition string) error
 	DeleteWorkflowByID(ctx context.Context, id int64) error
 	CreateScript(ctx context.Context, script *types.Script) error
 	UpdateScript(ctx context.Context, script *types.Script) error

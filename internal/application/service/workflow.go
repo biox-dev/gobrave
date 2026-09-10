@@ -66,12 +66,18 @@ func (s *workflowService) GetScriptByID(ctx context.Context, id int64) (*types.S
 func (s *workflowService) ExistsScriptInProjectByScriptID(ctx context.Context, projectID int64, scriptID string) (*types.Script, error) {
 	return s.workflowRepo.ExistsScriptInProjectByScriptID(ctx, projectID, scriptID)
 }
-
 func (s *workflowService) GetWorkflowVisByWorkflowID(ctx context.Context, workflowID string) (map[string]any, error) {
 	findWorkflow, err := s.workflowRepo.GetWorkflowByWorkflowID(ctx, workflowID)
 	if err != nil {
 		return nil, err
 	}
+	return s.GetWorkflowVisByWorkflow(ctx, findWorkflow)
+}
+func (s *workflowService) GetWorkflowVisByWorkflow(ctx context.Context, findWorkflow *types.Workflow) (map[string]any, error) {
+	// findWorkflow, err := s.workflowRepo.GetWorkflowByWorkflowID(ctx, workflowID)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	dagDefinition := make(map[string]any)
 	if findWorkflow.DagDefinition == "" {
@@ -150,6 +156,63 @@ func (s *workflowService) GetWorkflowVisByWorkflowID(ctx context.Context, workfl
 
 func (s *workflowService) GetScriptByScriptID(ctx context.Context, projectID int64, scriptID string) (*types.Script, error) {
 	return s.workflowRepo.GetScriptByScriptID(ctx, projectID, scriptID)
+}
+
+// ScriptToNode 对应 python 版 pipeline_service.script_to_node：
+// 按主键查询 script，并复用 buildScriptVisItem（即 GetWorkflowVisByWorkflow 中构造 script 可视化节点的逻辑），
+// 再结合已有 dag_definition 计算唯一 node_id，返回可直接被前端画布 addNode 使用的节点数据。
+func (s *workflowService) ScriptToNode(ctx context.Context, workflowID int64, scriptID int64) (map[string]any, error) {
+	if scriptID == 0 {
+		return nil, fmt.Errorf("invalid script id: %d", scriptID)
+	}
+
+	findWorkflow, err := s.workflowRepo.GetWorkflowByID(ctx, workflowID)
+	if err != nil {
+		return nil, err
+	}
+
+	script, err := s.workflowRepo.GetScriptByID(ctx, scriptID)
+	if err != nil {
+		return nil, err
+	}
+
+	// get_script_item: 复用 script 可视化节点构造逻辑
+	node := buildScriptVisItem(script)
+
+	// script_to_node: 统计 DAG 中引用同一 script 的节点数量，生成唯一 node_id（script_id_N）
+	suffix := countDagNodesByScriptID(findWorkflow.DagDefinition, script.ScriptID) + 1
+	node["node_id"] = fmt.Sprintf("%s_%d", script.ScriptID, suffix)
+
+	return node, nil
+}
+
+// countDagNodesByScriptID 统计 dag_definition.nodes 中 script_id 等于给定值的节点数量。
+func countDagNodesByScriptID(dagDefinition string, scriptID string) int {
+	if strings.TrimSpace(dagDefinition) == "" {
+		return 0
+	}
+
+	var dag map[string]any
+	if err := json.Unmarshal([]byte(dagDefinition), &dag); err != nil {
+		return 0
+	}
+
+	nodesRaw, ok := dag["nodes"].([]any)
+	if !ok {
+		return 0
+	}
+
+	count := 0
+	for _, nodeAny := range nodesRaw {
+		node, ok := nodeAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		if sid, _ := node["script_id"].(string); sid == scriptID {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *workflowService) GetScriptFileByScriptID(ctx context.Context, scriptID int64) (string, string, error) {
@@ -336,6 +399,14 @@ func (s *workflowService) CreateWorkflow(ctx context.Context, workflow *types.Wo
 
 func (s *workflowService) UpdateWorkflow(ctx context.Context, workflow *types.Workflow) error {
 	return s.workflowRepo.UpdateWorkflow(ctx, workflow)
+}
+
+// UpdateWorkflowDagDefinition 仅更新 workflow 的 dag_definition，不动其他字段。
+func (s *workflowService) UpdateWorkflowDagDefinition(ctx context.Context, workflowID int64, dagDefinition string) error {
+	if workflowID <= 0 {
+		return fmt.Errorf("invalid workflow id: %d", workflowID)
+	}
+	return s.workflowRepo.UpdateWorkflowDagDefinition(ctx, workflowID, dagDefinition)
 }
 
 func (s *workflowService) DeleteWorkflow(ctx context.Context, id int64) error {

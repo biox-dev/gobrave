@@ -9,12 +9,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -93,6 +93,36 @@ type createWorkflowRequest struct {
 	Version            string `json:"version"`
 	Message            string `json:"message"`
 }
+
+// saveWorkflowDagRequest 仅保存工作流 DAG 定义。
+// WorkflowID 是 workflow 表主键（int64），兼容 JSON 字符串（"123"）与数字（123）两种写法。
+type saveWorkflowDagRequest struct {
+	WorkflowID    int64ID `json:"workflow_id,string"`
+	DagDefinition string  `json:"dag_definition"`
+}
+
+// int64ID 解析 int64 主键，同时接受 JSON 字符串与数字，避免 `json:"x,string"`
+// 在收到数字时报 "invalid use of ,string struct tag"。
+type int64ID int64
+
+// func (v *int64ID) UnmarshalJSON(data []byte) error {
+// 	raw := strings.TrimSpace(string(data))
+// 	if raw == "" || raw == "null" {
+// 		*v = 0
+// 		return nil
+// 	}
+// 	raw = strings.Trim(raw, `"`)
+// 	if raw == "" || raw == "null" {
+// 		*v = 0
+// 		return nil
+// 	}
+// 	n, err := strconv.ParseInt(raw, 10, 64)
+// 	if err != nil {
+// 		return fmt.Errorf("workflow_id must be a valid integer, got %q", raw)
+// 	}
+// 	*v = int64ID(n)
+// 	return nil
+// }
 
 type pageScriptRequest struct {
 	types.Pagination
@@ -376,6 +406,56 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
+// SaveWorkflowDag godoc
+// @Summary      保存工作流 DAG 定义
+// @Description  按 id 仅更新 workflow 的 dag_definition 字段；workflow_id 为 workflow 表 int64 主键，name/tags/store_id 等其他字段保持不变
+// @Tags         工作流
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.saveWorkflowDagRequest  true  "请求参数"
+// @Success      200      {object}  map[string]string
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /workflow/save-workflow-dag [post]
+func (h *WorkflowHandler) SaveWorkflowDag(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req saveWorkflowDagRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	workflowID := int64(req.WorkflowID)
+	if workflowID <= 0 {
+		c.Error(errors.NewValidationError("workflow_id must be a valid integer"))
+		return
+	}
+	if req.DagDefinition != "" && !json.Valid([]byte(req.DagDefinition)) {
+		c.Error(errors.NewValidationError("dag_definition is not valid JSON format"))
+		return
+	}
+
+	if err := h.workflowService.UpdateWorkflowDagDefinition(c.Request.Context(), workflowID, req.DagDefinition); err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("workflow not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to update dag_definition").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"workflow_id": workflowID,
+		"message":     "dag_definition updated successfully",
+	})
+}
+
 // FindScript godoc
 // @Summary      查询组件
 // @Description  查询 script：按主键 ID 查询并附带容器模板名称
@@ -611,13 +691,21 @@ func (h *WorkflowHandler) GetWorkflowVis(c *gin.Context) {
 		return
 	}
 
-	workflowID := strings.TrimSpace(c.Param("workflowId"))
-	if workflowID == "" {
+	workflowIDStr := strings.TrimSpace(c.Param("workflowId"))
+	if workflowIDStr == "" {
 		c.Error(errors.NewValidationError("workflowId is required"))
 		return
 	}
 
-	dagDefinition, err := h.workflowService.GetWorkflowVisByWorkflowID(c.Request.Context(), workflowID)
+	workflowID, err := strconv.ParseInt(workflowIDStr, 10, 64)
+	if err != nil {
+		c.Error(errors.NewValidationError("workflowId must be a valid integer"))
+		return
+	}
+
+	findWorkflow, err := h.workflowService.GetWorkflowByID(c.Request.Context(), workflowID)
+
+	dagDefinition, err := h.workflowService.GetWorkflowVisByWorkflow(c.Request.Context(), findWorkflow)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("workflow not found"))
@@ -628,6 +716,50 @@ func (h *WorkflowHandler) GetWorkflowVis(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, dagDefinition)
+}
+
+// ScriptToNode godoc
+// @Summary      获取添加到节点的 script 数据
+// @Description  参考 python 版 /tools/script-to-node/{component_id}/{relation_id}：根据 scriptId 与 workflowId 生成带唯一 node_id 的 script 节点，供前端画布 addNode 使用
+// @Tags         工作流
+// @Produce      json
+// @Param        scriptId    query     int64   true  "Script 主键 ID"
+// @Param        workflowId  query     int64   true  "工作流主键 ID"
+// @Success      200         {object}  map[string]interface{}
+// @Failure      400         {object}  errors.AppError
+// @Failure      401         {object}  errors.AppError
+// @Failure      404         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
+// @Security     Bearer
+// @Router       /workflow/script-to-node [get]
+func (h *WorkflowHandler) ScriptToNode(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	workflowID, err := strconv.ParseInt(strings.TrimSpace(c.Query("workflowId")), 10, 64)
+	if err != nil || workflowID == 0 {
+		c.Error(errors.NewValidationError("workflowId must be a valid integer"))
+		return
+	}
+
+	scriptID, err := strconv.ParseInt(strings.TrimSpace(c.Query("scriptId")), 10, 64)
+	if err != nil || scriptID == 0 {
+		c.Error(errors.NewValidationError("scriptId must be a valid integer"))
+		return
+	}
+
+	node, err := h.workflowService.ScriptToNode(c.Request.Context(), workflowID, scriptID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("script or workflow not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get script node").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, node)
 }
 
 // GetWorkflowForm godoc
