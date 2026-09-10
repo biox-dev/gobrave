@@ -2,12 +2,17 @@ package dag
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/dag/executor"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/event"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
@@ -57,6 +62,13 @@ func (d *NodeDispatcher) Dispatch(ctx context.Context, analysisNodeID int64) err
 		})
 		return err
 	}
+
+	// Record the digests of the artifacts that are about to run. Execution-time
+	// preparation is the only place where the authoritative run.sh / params.json
+	// pair is produced (schedulers explicitly skip output cleanup when they probe),
+	// so it is also the only place where the digests can be captured without
+	// preparing the node a second time. Missing digests would only cost a rerun.
+	d.persistArtifactFingerprint(ctx, node)
 
 	node, err = d.runtime.MarkNodeRunning(ctx, node.ID)
 	if err != nil {
@@ -163,4 +175,50 @@ func (d *NodeDispatcher) runCleanup(ctx context.Context, node *types.AnalysisNod
 		return
 	}
 	d.cleanup(ctx, node)
+}
+
+// persistArtifactFingerprint stores the md5 digests of the artifacts a node is
+// about to execute with, giving the scheduler-side cache policies (cache_type 3/4)
+// a baseline to compare against on the next run.
+//
+// Failures are logged instead of returned: the digests only drive cache reuse, so
+// a missing baseline degrades to "run the node again" rather than to a wrong result.
+func (d *NodeDispatcher) persistArtifactFingerprint(ctx context.Context, node *types.AnalysisNode) {
+	commandMD5, err := fileMD5Hex(node.CommandPath)
+	if err != nil {
+		logger.Warnf(ctx, "[NodeDispatcher] hash run script failed, node_id=%s path=%s err=%v", node.NodeID, node.CommandPath, err)
+		return
+	}
+	paramsMD5, err := fileMD5Hex(node.ParamsPath)
+	if err != nil {
+		logger.Warnf(ctx, "[NodeDispatcher] hash params payload failed, node_id=%s path=%s err=%v", node.NodeID, node.ParamsPath, err)
+		return
+	}
+	if err := d.repo.UpdateAnalysisNodeByID(ctx, node.ID, map[string]any{
+		"command_md5": commandMD5,
+		"params_md5":  paramsMD5,
+	}); err != nil {
+		logger.Warnf(ctx, "[NodeDispatcher] persist artifact digests failed, node_id=%s err=%v", node.NodeID, err)
+		return
+	}
+	node.CommandMD5 = commandMD5
+	node.ParamsMD5 = paramsMD5
+}
+
+// fileMD5Hex streams a file through MD5 and returns the lowercase hex digest.
+func fileMD5Hex(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("file path is empty")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hasher := md5.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }

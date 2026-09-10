@@ -2,10 +2,7 @@ package orchestratorv2
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,7 +13,6 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/compiler"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
-	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -72,9 +68,15 @@ type dynamicDagOrchestratorV2 struct {
 	containerRepo interfaces.ContainerRepository
 	// dispatcher is the DI-injected node dispatcher that performs actual node execution.
 	dispatcher *dagruntime.NodeDispatcher
-	// preparer is the DI-injected node runtime preparer, shared with NodeDispatcher so
-	// params.json / run.sh are produced by the very same instance.
-	preparer prepare.NodeRuntimePreparer
+	// fingerprinter predicts the runtime artifacts (run.sh / params.json) of a
+	// persisted node so the md5 cache policies can decide whether it is reusable.
+	//
+	// The scheduler deliberately does not hold a runtime preparer: preparing a node
+	// for execution (including output cleanup) belongs to NodeDispatcher, and sharing
+	// that capability here made every node pay for two preparations per run - one to
+	// fingerprint, one to execute. Fingerprinting is now limited to the cache probe,
+	// which is the only place a digest is actually needed to make a decision.
+	fingerprinter NodeArtifactFingerprinter
 	// bus emits runtime events using the existing event pipeline.
 	bus event.Bus
 
@@ -101,13 +103,16 @@ type dynamicDagOrchestratorV2 struct {
 // Unsubscribe, so a per-orchestrator subscription would leak a subscriber), and
 // the shared registry keeps duplicate-run and stop lookups consistent across
 // schedulers.
+//
+// fingerprinter is the only artifact-producing dependency of the scheduler and is
+// used solely to probe cache candidates (see NodeArtifactFingerprinter).
 func NewDynamicDagOrchestratorV2(
 	repo interfaces.AnalysisRepository,
 	workflowRepo interfaces.WorkflowRepository,
 	workflowService interfaces.WorkflowService,
 	containerRepo interfaces.ContainerRepository,
 	dispatcher *dagruntime.NodeDispatcher,
-	preparer prepare.NodeRuntimePreparer,
+	fingerprinter NodeArtifactFingerprinter,
 	registry *dagruntime.RunningRegistry,
 	router *dagruntime.EventRouter,
 	bus event.Bus,
@@ -118,7 +123,7 @@ func NewDynamicDagOrchestratorV2(
 		workflowService: workflowService,
 		containerRepo:   containerRepo,
 		dispatcher:      dispatcher,
-		preparer:        preparer,
+		fingerprinter:   fingerprinter,
 		bus:             bus,
 		registry:        registry,
 		router:          router,
@@ -320,7 +325,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 		sink = dagruntime.NewAnalysisEventSink()
 	}
 
-	if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
+	if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep); err != nil {
 		return err
 	}
 	if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
@@ -350,7 +355,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 				return nil
 			}
 		case <-watchdogTicker.C:
-			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
+			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep); err != nil {
 				return err
 			}
 			if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
@@ -379,7 +384,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 			// 若已存在，会按 cache 策略判断是否需要重新置为 ready 重跑。
 
 			if len(candidates) > 0 {
-				if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, candidates, dep, o.preparer); err != nil {
+				if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, candidates, dep); err != nil {
 					return err
 				}
 			}
@@ -392,7 +397,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 		case <-sink.Wake():
 			// 事件溢出唤醒：不等 watchdog，立即做一次全量对账与派发。
 			_ = sink.ConsumeDirty()
-			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
+			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep); err != nil {
 				return err
 			}
 			if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
@@ -667,7 +672,6 @@ func (o *dynamicDagOrchestratorV2) reconcileDynamicCandidates(
 	incoming map[string][]*types.AnalysisEdge,
 	candidates []string,
 	dep *dynamicDependencyManager,
-	preparer prepare.NodeRuntimePreparer,
 ) error {
 	if len(candidates) == 0 {
 		return nil
@@ -698,7 +702,7 @@ func (o *dynamicDagOrchestratorV2) reconcileDynamicCandidates(
 
 		if existingNode, exists := existingByNodeID[nodeID]; exists {
 			row, _ := nodeTemplateByID[nodeID]
-			if existingErr := o.reconcileExistingNodeByCacheType(ctx, analysis, existingNode, row, incoming[nodeID], existingByNodeID, dep, preparer); existingErr != nil {
+			if existingErr := o.reconcileExistingNodeByCacheType(ctx, analysis, existingNode, row, incoming[nodeID], existingByNodeID, dep); existingErr != nil {
 				return existingErr
 			}
 			continue
@@ -728,9 +732,13 @@ func (o *dynamicDagOrchestratorV2) reconcileDynamicCandidates(
 		if buildErr != nil {
 			return buildErr
 		}
-		if prepErr := prepareNodeArtifactsAndFillMD5(ctx, preparer, node); prepErr != nil {
-			return prepErr
-		}
+		// No runtime artifacts are produced here on purpose. The node is about to be
+		// claimed and handed to NodeDispatcher, which prepares run.sh / params.json
+		// exactly once (and cleans the output directory right before executing).
+		// Preparing here as well would duplicate that work for every node, and for a
+		// skipped node - which never executes - it would be pure waste.
+		// The digests the cache policies compare against are captured by the
+		// dispatcher after it prepares the node for execution.
 		newItems = append(newItems, node)
 		existingByNodeID[nodeID] = node
 
@@ -745,8 +753,10 @@ func (o *dynamicDagOrchestratorV2) reconcileDynamicCandidates(
 	return o.repo.CreateAnalysisNodes(ctx, newItems)
 }
 
-// reconcileExistingNodeByCacheType is a skeleton entrypoint for existing-node
-// cache policy handling. MD5-based decisions are added in a follow-up step.
+// reconcileExistingNodeByCacheType applies the cache policy of the analysis to a
+// node persisted by a previous run. Only the two fingerprint policies need the
+// scheduler to produce artifacts, and they do so through the narrow
+// NodeArtifactFingerprinter, never through the execution-time preparer.
 func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByCacheType(
 	ctx context.Context,
 	analysis *types.Analysis,
@@ -755,7 +765,6 @@ func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByCacheType(
 	incomingEdges []*types.AnalysisEdge,
 	existingByNodeID map[string]*types.AnalysisNode,
 	dep *dynamicDependencyManager,
-	preparer prepare.NodeRuntimePreparer,
 ) error {
 	if analysis == nil || existingNode == nil {
 		return nil
@@ -769,20 +778,21 @@ func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByCacheType(
 	if dep != nil && dep.IsBlocked(nodeID) {
 		return nil
 	}
-	scriptId := dynamicToString(row["script_id"])
-	script, err := o.workflowRepo.GetScriptByScriptID(ctx, analysis.ProjectID, scriptId)
-	if err != nil {
-		return err
-	}
-
 	switch analysis.CacheType {
 	case types.CacheTypeReuseExistingNode:
+		// Nothing to compare: reuse whatever was persisted.
 		return nil
-	case types.CacheTypeReuseWhenScriptUnchanged:
-		return o.reconcileExistingNodeByMD5Policy(ctx, script, existingNode, row, incomingEdges, existingByNodeID, dep, preparer, false)
-	case types.CacheTypeReuseWhenScriptAndParamsUnchanged:
-		return o.reconcileExistingNodeByMD5Policy(ctx, script, existingNode, row, incomingEdges, existingByNodeID, dep, preparer, true)
+	case types.CacheTypeReuseWhenScriptUnchanged, types.CacheTypeReuseWhenScriptAndParamsUnchanged:
+		// The script is only loaded for the fingerprint policies: it is the input the
+		// probe needs, and loading it here keeps reuse_existing free of that query.
+		script, err := o.workflowRepo.GetScriptByScriptID(ctx, analysis.ProjectID, dynamicToString(row["script_id"]))
+		if err != nil {
+			return err
+		}
+		requireParamsMD5 := analysis.CacheType == types.CacheTypeReuseWhenScriptAndParamsUnchanged
+		return o.reconcileExistingNodeByMD5Policy(ctx, script, existingNode, row, incomingEdges, existingByNodeID, dep, requireParamsMD5)
 	default:
+		// Unknown cache types stay on the safe side: reuse the persisted node.
 		return nil
 	}
 }
@@ -795,7 +805,6 @@ func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByMD5Policy(
 	incomingEdges []*types.AnalysisEdge,
 	existingByNodeID map[string]*types.AnalysisNode,
 	dep *dynamicDependencyManager,
-	preparer prepare.NodeRuntimePreparer,
 	requireParamsMD5 bool,
 ) error {
 	if existingNode == nil || row == nil {
@@ -822,9 +831,6 @@ func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByMD5Policy(
 	probe.NodeName = dynamicToString(row["node_name"])
 	probe.SampleID = dynamicToString(row["sample_id"])
 	probe.Executor = dynamicToString(row["executor"])
-	// if scriptID := strings.TrimSpace(dynamicToString(row["script_id"])); scriptID != "" {
-	// 	probe.ScriptID = scriptID
-	// }
 	probe.ScriptID = script.ID
 	probe.InputsPatterns = dynamicToJSONMap(row["inputs_patterns"])
 	probe.OutputPatterns = dynamicToJSONMap(row["output_patterns"])
@@ -833,7 +839,7 @@ func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByMD5Policy(
 	probe.ResolvedOutputs = dynamicToJSONMap(row["resolved_outputs"])
 	bootstrapInputsFromUpstream(row, probe.Params, probe.ResolvedInputs, incomingEdges, existingByNodeID)
 
-	if err := prepareNodeArtifactsAndFillMD5(ctx, preparer, &probe); err != nil {
+	if err := o.fingerprintNodeArtifacts(ctx, &probe); err != nil {
 		return err
 	}
 
@@ -891,44 +897,18 @@ func (o *dynamicDagOrchestratorV2) markExistingNodeReadyForRerun(ctx context.Con
 	})
 }
 
-func prepareNodeArtifactsAndFillMD5(ctx context.Context, preparer prepare.NodeRuntimePreparer, node *types.AnalysisNode) error {
-	if node == nil {
-		return fmt.Errorf("analysis node is nil")
+// fingerprintNodeArtifacts fills a probe node's CommandMD5 / ParamsMD5 so the md5
+// cache policies can compare the artifacts that would run now against the ones
+// that ran last time.
+//
+// The probe never inherits the execution-time side effects of the preparer: the
+// fingerprinter prepares with output cleanup disabled, because a node that turns
+// out to be reusable must keep the results its downstream nodes already reference.
+func (o *dynamicDagOrchestratorV2) fingerprintNodeArtifacts(ctx context.Context, node *types.AnalysisNode) error {
+	if o.fingerprinter == nil {
+		return fmt.Errorf("node artifact fingerprinter is not configured")
 	}
-	if preparer == nil {
-		return fmt.Errorf("node runtime preparer is nil")
-	}
-	// TODO 这里的 preparer 与 NodeDispatcher 的 preparer 重复执行
-	if err := preparer.Prepare(ctx, node); err != nil {
-		return fmt.Errorf("prepare dynamic node runtime artifacts failed: %w", err)
-	}
-
-	commandMD5, err := fileMD5Hex(node.CommandPath)
-	if err != nil {
-		return fmt.Errorf("compute run.sh md5 failed: %w", err)
-	}
-	paramsMD5, err := fileMD5Hex(node.ParamsPath)
-	if err != nil {
-		return fmt.Errorf("compute params.json md5 failed: %w", err)
-	}
-
-	node.CommandMD5 = commandMD5
-	node.ParamsMD5 = paramsMD5
-	return nil
-}
-
-func fileMD5Hex(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	hasher := md5.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(hasher.Sum(nil)), nil
+	return o.fingerprinter.Fingerprint(ctx, node)
 }
 
 func (o *dynamicDagOrchestratorV2) buildDynamicAnalysisNode(

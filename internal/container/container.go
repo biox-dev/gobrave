@@ -372,6 +372,14 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	))
 	must(container.Provide(dag.NewNodeDispatcher))
 
+	// 调度层指纹器：复用同一份 preparer 预测 run.sh / params.json 的摘要，
+	// 只给缓存策略判断“已存在的节点能否复用”用。执行前的准备（含输出目录清理）
+	// 仍然只保留 NodeDispatcher 一处，避免每个节点被 prepare 两次。
+	must(container.Provide(
+		orchestratorv2.NewPreparerFingerprinter,
+		dig.As(new(orchestratorv2.NodeArtifactFingerprinter)),
+	))
+
 	// 进程级运行时事件路由器：整个进程只在下面的 event_handlers Invoke 里订阅 bus 一次，
 	// 由它按 analysis_id 把 RuntimeEvent 路由给每个 run 自己的 sink。
 	// 之所以不按 run 订阅：event.Bus 没有 Unsubscribe，每次 run Subscribe 都会永久留下
