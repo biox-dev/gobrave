@@ -31,8 +31,9 @@ const (
 	dynamicV2LeaseTTL = 90 * time.Second
 	// dynamicV2Heartbeat is the interval for lease renewal while a run is active.
 	dynamicV2Heartbeat = 15 * time.Second
-	// dynamicV2ReadyQueueSize is the in-memory ready queue capacity before worker dispatch.
-	dynamicV2ReadyQueueSize = 64
+	// dynamicV2DispatchQueueSize bounds both the worker pool queue and how many
+	// nodes a single dispatch round may claim ahead of the workers.
+	dynamicV2DispatchQueueSize = 64
 	// dynamicV2StopCheckInterval is a lightweight stop-flag probe cadence.
 	dynamicV2StopCheckInterval = 1 * time.Second
 	// dynamicV2WatchdogInterval is a safety net in case runtime events are dropped.
@@ -268,7 +269,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 // runDynamicLoop uses runtime events as the primary driver:
 // 1) NodeCompleted/NodeFailed events update dependency state.
 // 2) Only affected downstream templates are re-evaluated/materialized.
-// 3) Ready nodes are claimed and pushed into ReadyQueue for worker dispatch.
+// 3) Ready nodes are claimed and handed straight to the worker pool for dispatch.
 func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisID int64, sink *dagruntime.AnalysisEventSink, nodeTemplates []map[string]any, edgeRows []map[string]any) error {
 	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
 	if err != nil {
@@ -286,7 +287,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 
 	runtime := dagruntime.NewRuntimeEngine(o.repo)
 
-	pool := dagruntime.NewWorkerPool(o.dispatcher, 1, dynamicV2ReadyQueueSize)
+	pool := dagruntime.NewWorkerPool(o.dispatcher, 1, dynamicV2DispatchQueueSize)
 	pool.Start(ctx)
 	defer pool.Stop()
 
@@ -312,27 +313,6 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 	}
 	dep.SeedFromExisting(existingByNodeID)
 
-	readyQueue := make(chan int64, dynamicV2ReadyQueueSize)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case analysisNodeID := <-readyQueue:
-				for {
-					if ok := pool.Enqueue(analysisNodeID); ok {
-						break
-					}
-					select {
-					case <-ctx.Done():
-						return
-					case <-time.After(25 * time.Millisecond):
-					}
-				}
-			}
-		}
-	}()
-
 	// Runtime events reach this loop through the process-wide router via the
 	// analysis-scoped sink; no per-run bus subscription is created here.
 	if sink == nil {
@@ -343,7 +323,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 	if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
 		return err
 	}
-	if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
+	if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
 		return err
 	}
 
@@ -353,7 +333,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 	defer watchdogTicker.Stop()
 
 	for {
-		finished, finishedErr := o.checkDynamicCompletion(ctx, analysisID, len(nodeTemplateByID), runtime, pool, readyQueue)
+		finished, finishedErr := o.checkDynamicCompletion(ctx, analysisID, len(nodeTemplateByID), runtime, pool)
 		if finishedErr != nil {
 			return finishedErr
 		}
@@ -373,7 +353,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
 				return err
 			}
-			if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
+			if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
 				return err
 			}
 		case evt := <-sink.Events():
@@ -404,9 +384,9 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 				}
 			}
 			// 第二段负责“把可以跑的节点真正送去执行”。
-			// 作用：把数据库里当前可执行的 ready 节点“领取（claim）并推入内存 readyQueue”，交给 worker pool 实际执行。
+			// 作用：把数据库里当前可执行的 ready 节点“领取（claim）并直接推入 worker pool 队列”，交给 worker 实际执行。
 			// 特点：这一步每次事件后都会跑一次（不依赖 candidates 是否为空），确保新变成 ready 的节点尽快被派发，减少调度延迟。
-			if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
+			if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
 				return err
 			}
 		case <-sink.Wake():
@@ -415,7 +395,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
 				return err
 			}
-			if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
+			if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
 				return err
 			}
 		}
@@ -622,7 +602,6 @@ func (o *dynamicDagOrchestratorV2) checkDynamicCompletion(
 	templateCount int,
 	runtime *dagruntime.RuntimeEngine,
 	pool *dagruntime.WorkerPool,
-	readyQueue chan int64,
 ) (bool, error) {
 	snapshot, err := runtime.GetSnapshot(ctx, analysisID)
 	if err != nil {
@@ -632,7 +611,9 @@ func (o *dynamicDagOrchestratorV2) checkDynamicCompletion(
 	if err != nil {
 		return false, err
 	}
-	if allCreated && snapshot.IsFinished && pool.QueueLen() == 0 && len(readyQueue) == 0 {
+	// pool.QueueLen() covers every claimed node that is not running yet: dispatch is a
+	// direct handoff into the pool, so there is no second queue left to account for.
+	if allCreated && snapshot.IsFinished && pool.QueueLen() == 0 {
 		if snapshot.StatusCount[dagruntime.StatusFailed] > 0 {
 			return true, fmt.Errorf("one or more dynamic dag nodes failed")
 		}
@@ -641,8 +622,19 @@ func (o *dynamicDagOrchestratorV2) checkDynamicCompletion(
 	return false, nil
 }
 
-func (o *dynamicDagOrchestratorV2) pumpReadyQueue(ctx context.Context, runtime *dagruntime.RuntimeEngine, analysisID int64, readyQueue chan<- int64) error {
-	for len(readyQueue) < cap(readyQueue) {
+// pumpReadyQueue claims ready nodes and hands them straight to the worker pool.
+//
+// There is deliberately no intermediate ready-queue goroutine: a claim is a
+// persisted ready -> submitted transition, so a claimed node must land in the pool
+// in the same step. Dispatching from this goroutine, which is the one that owns
+// pool.Stop(), also means an enqueue can never race with the pool being closed.
+func (o *dynamicDagOrchestratorV2) pumpReadyQueue(ctx context.Context, runtime *dagruntime.RuntimeEngine, analysisID int64, pool *dagruntime.WorkerPool) error {
+	for claimed := 0; claimed < pool.Cap(); claimed++ {
+		// Queue saturation is the backpressure signal: stop claiming ahead and let the
+		// next node event or watchdog tick resume dispatch.
+		if pool.QueueLen() >= pool.Cap() {
+			return nil
+		}
 		node, err := runtime.ClaimNextReadyNode(ctx, analysisID)
 		if err != nil {
 			return err
@@ -659,9 +651,9 @@ func (o *dynamicDagOrchestratorV2) pumpReadyQueue(ctx context.Context, runtime *
 				OccurredAt:     time.Now().UTC(),
 			})
 		}
-		select {
-		case readyQueue <- node.ID:
-		case <-ctx.Done():
+		if !pool.EnqueueWait(ctx, node.ID) {
+			// ctx was cancelled while handing the node over. It stays claimed
+			// (submitted) and is rolled back by prepareNodesForResume on a later start.
 			return nil
 		}
 	}

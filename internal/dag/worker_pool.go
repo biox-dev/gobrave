@@ -50,6 +50,8 @@ func (p *WorkerPool) Start(ctx context.Context) {
 	}
 }
 
+// Enqueue is the non-blocking variant: it reports false when the queue has no room
+// left, leaving the retry/backpressure policy to the caller.
 func (p *WorkerPool) Enqueue(nodeID int64) bool {
 	select {
 	case p.jobs <- queuedNode{analysisNodeID: nodeID}:
@@ -59,8 +61,30 @@ func (p *WorkerPool) Enqueue(nodeID int64) bool {
 	}
 }
 
+// EnqueueWait blocks until nodeID is queued, ctx is cancelled, or the pool stops,
+// and reports whether the node made it into the queue.
+//
+// It must only be called from the goroutine that owns the pool lifecycle (the one
+// that calls Stop). Stop closes the job channel, and a send on a closed channel
+// panics in select even from the default branch, so a sender running on another
+// goroutine could always race with Stop.
+func (p *WorkerPool) EnqueueWait(ctx context.Context, nodeID int64) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case p.jobs <- queuedNode{analysisNodeID: nodeID}:
+		return true
+	}
+}
+
 func (p *WorkerPool) QueueLen() int {
 	return len(p.jobs)
+}
+
+// Cap reports the pool queue capacity, used by callers as their claim-ahead and
+// backpressure limit.
+func (p *WorkerPool) Cap() int {
+	return cap(p.jobs)
 }
 
 func (p *WorkerPool) Stop() {
