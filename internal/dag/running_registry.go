@@ -46,6 +46,21 @@ func (r *RunningRegistry) Register(entry *RunningEntry) {
 	r.mu.Unlock()
 }
 
+// Get returns a read-only copy of the running entry for the analysis.
+// The copy has its Cancel func cleared so callers can only inspect state.
+func (r *RunningRegistry) Get(analysisID int64) *RunningEntry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	entry, ok := r.running[analysisID]
+	if !ok || entry == nil {
+		return nil
+	}
+	copied := *entry
+	copied.Cancel = nil
+	return &copied
+}
+
 func (r *RunningRegistry) MarkFinished(analysisID int64, status string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -349,6 +349,8 @@ func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler
 	r.POST("/analysis/node/list-by-project-page", handler.PageAnalysisNodeByProject)
 	r.GET("/analysis/visualization-node-file/:analysisNodeId", handler.VisualizationNodeFile)
 	r.GET("/analysis/visualization-node-tree/:analysisId", handler.VisualizationNodeTree)
+	// 兼容 Python /analysis-runtime/snapshot
+	r.POST("/analysis-runtime/snapshot", handler.RuntimeSnapshot)
 }
 
 func RegisterRealtimeRoutes(r *gin.RouterGroup, handler *handler.RealtimeHandler) {

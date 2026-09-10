@@ -208,6 +208,30 @@ func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID 
 	return nil
 }
 
+// GetRunningInfo exposes the in-memory running entry for analysisID so that
+// the /analysis-runtime/snapshot endpoint can report running_info like Python.
+func (o *dynamicDagOrchestratorV2) GetRunningInfo(_ context.Context, analysisID int64) (*interfaces.DagRunningInfo, error) {
+	if analysisID <= 0 || o.registry == nil {
+		return nil, nil
+	}
+	entry := o.registry.Get(analysisID)
+	if entry == nil {
+		return nil, nil
+	}
+	return &interfaces.DagRunningInfo{
+		AnalysisID:     entry.AnalysisID,
+		TaskName:       entry.TaskName,
+		Status:         entry.Status,
+		StartedAt:      entry.StartedAt,
+		UpdatedAt:      entry.UpdatedAt,
+		MaxConcurrency: entry.MaxConcurrency,
+		QueueSize:      entry.QueueSize,
+		PollIntervalMs: entry.PollIntervalMs,
+		TimeoutSeconds: entry.TimeoutSeconds,
+		StopRequested:  entry.StopRequested,
+	}, nil
+}
+
 // prepareAnalysisForCacheRerun resets persisted runtime graph for reruns when
 // cache_type requires full rerun.
 func (o *dynamicDagOrchestratorV2) prepareAnalysisForCacheRerun(ctx context.Context, analysisID int64) error {

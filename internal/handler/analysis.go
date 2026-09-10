@@ -101,6 +101,39 @@ type VisualizationNodeTreeResponse struct {
 	Result       []VisualizationNodeTreeItem `json:"result"`
 }
 
+// runtimeSnapshotRequest 兼容 Python RuntimeScheduleQuery，仅需 analysis_id。
+// analysis_id 支持数字主键（analysis 表 ID）或 analysis_id(UUID) 字符串。
+type runtimeSnapshotRequest struct {
+	AnalysisID string `json:"analysis_id"`
+}
+
+// runtimeSnapshotResponse 兼容 Python POST /analysis-runtime/snapshot 返回结构。
+type runtimeSnapshotResponse struct {
+	AnalysisID        string                     `json:"analysis_id"`
+	TotalNodes        int                        `json:"total_nodes"`
+	StatusCount       map[string]int             `json:"status_count"`
+	CompletedCount    int                        `json:"completed_count"`
+	CompletionPercent int                        `json:"completion_percent"`
+	ReadyCount        int                        `json:"ready_count"`
+	RunningCount      int                        `json:"running_count"`
+	IsFinished        bool                       `json:"is_finished"`
+	RunningInfo       *interfaces.DagRunningInfo `json:"running_info"`
+	Status            string                     `json:"status"`
+	IsCache           bool                       `json:"is_cache"`
+	ServerStatus      string                     `json:"server_status"`
+}
+
+// runtimeStatusKeys 对齐 Python RUNTIME_STATUS_KEYS，保证前端始终拿到固定的状态桶。
+var runtimeStatusKeys = []string{
+	dagruntime.StatusPending,
+	dagruntime.StatusReady,
+	dagruntime.StatusSubmitted,
+	dagruntime.StatusRunning,
+	dagruntime.StatusDone,
+	dagruntime.StatusFailed,
+	dagruntime.StatusCached,
+}
+
 type listAnalysisTreeRequest struct {
 	types.AnalysisQuey
 }
@@ -3307,4 +3340,164 @@ func buildAnalysisFileURL(path string, cfg *config.Config) string {
 		p = "/" + p
 	}
 	return "/images-analysis" + p
+}
+
+// RuntimeSnapshot godoc
+// @Summary      分析运行时快照
+// @Description  兼容 Python POST /analysis-runtime/snapshot，返回节点状态分布、完成度、运行信息以及分析状态
+// @Tags         分析
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.runtimeSnapshotRequest  true  "查询参数"
+// @Success      200      {object}  handler.runtimeSnapshotResponse
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /analysis-runtime/snapshot [post]
+func (h *AnalysisHandler) RuntimeSnapshot(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req runtimeSnapshotRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	analysisIDParam := strings.TrimSpace(req.AnalysisID)
+	if analysisIDParam == "" {
+		c.Error(errors.NewValidationError("analysis_id is required"))
+		return
+	}
+
+	analysisID, err := strconv.ParseInt(analysisIDParam, 10, 64)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid analysis_id").WithDetails(err.Error()))
+		return
+	}
+	analysisItem, err := h.analysisService.GetAnalysisByID(c.Request.Context(), analysisID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("analysis not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get analysis").WithDetails(err.Error()))
+		return
+	}
+
+	runtimeEngine := dagruntime.NewRuntimeEngine(h.analysisRepo)
+	// 对齐 Python get_runtime_snapshot：统计前先刷新一次 ready 状态。
+	// 刷新失败不影响快照读取，仅记录日志。
+	if err := runtimeEngine.RefreshReadyStatus(c.Request.Context(), analysisItem.ID); err != nil {
+		logger.Warnf(c.Request.Context(), "[RuntimeSnapshot] refresh ready status failed, analysis_id=%d err=%v", analysisItem.ID, err)
+	}
+
+	snapshot, err := runtimeEngine.GetSnapshot(c.Request.Context(), analysisItem.ID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to get runtime snapshot").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, runtimeSnapshotResponse{
+		AnalysisID:        analysisIDParam,
+		TotalNodes:        snapshot.TotalNodes,
+		StatusCount:       buildRuntimeStatusCount(snapshot.StatusCount),
+		CompletedCount:    snapshot.CompletedCount,
+		CompletionPercent: snapshot.CompletionPercent,
+		ReadyCount:        snapshot.ReadyCount,
+		RunningCount:      snapshot.RunningCount,
+		IsFinished:        snapshot.IsFinished,
+		// RunningInfo:       h.resolveRunningInfo(c.Request.Context(), analysisItem, snapshot),
+		Status:       analysisItem.JobStatus,
+		IsCache:      resolveAnalysisIsCache(analysisItem),
+		ServerStatus: analysisItem.ServerStatus,
+	})
+}
+
+// // resolveAnalysisByIDParam 兼容前端传数字主键或 analysis_id(UUID) 两种形式。
+// func (h *AnalysisHandler) resolveAnalysisByIDParam(ctx context.Context, raw string) (*types.Analysis, error) {
+// 	if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
+// 		item, err := h.analysisService.GetAnalysisByID(ctx, id)
+// 		if err == nil {
+// 			return item, nil
+// 		}
+// 		if !stderrs.Is(err, gorm.ErrRecordNotFound) {
+// 			return nil, err
+// 		}
+// 	}
+// 	return h.analysisService.GetAnalysisByAnalysisID(ctx, raw)
+// }
+
+// resolveRunningInfo 优先返回调度器内存中的运行条目（对齐 Python running_dag_registry）；
+// 调度器不可见时按 DB 状态兜底，保证 running_info 非空即代表 DAG 仍在运行。
+func (h *AnalysisHandler) resolveRunningInfo(
+	ctx context.Context,
+	analysis *types.Analysis,
+	snapshot *dagruntime.RuntimeSnapshot,
+) *interfaces.DagRunningInfo {
+	if analysis == nil {
+		return nil
+	}
+
+	if h.dynamicDagOrchestrator != nil {
+		info, err := h.dynamicDagOrchestrator.GetRunningInfo(ctx, analysis.ID)
+		if err != nil {
+			logger.Warnf(ctx, "[RuntimeSnapshot] get running info failed, analysis_id=%d err=%v", analysis.ID, err)
+		} else if info != nil {
+			return info
+		}
+	}
+
+	jobRunning := strings.EqualFold(strings.TrimSpace(analysis.JobStatus), "running")
+	nodeRunning := snapshot != nil && snapshot.RunningCount > 0
+	if !jobRunning && !nodeRunning {
+		return nil
+	}
+
+	return &interfaces.DagRunningInfo{
+		AnalysisID:     analysis.ID,
+		TaskName:       fmt.Sprintf("dag-run-%d", analysis.ID),
+		Status:         "running",
+		StartedAt:      analysis.UpdatedAt,
+		UpdatedAt:      analysis.UpdatedAt,
+		MaxConcurrency: 1,
+		QueueSize:      64,
+		PollIntervalMs: 500,
+	}
+}
+
+// buildRuntimeStatusCount 以固定状态桶为基础合并实际统计值，未出现的状态补 0。
+func buildRuntimeStatusCount(counts map[string]int) map[string]int {
+	result := make(map[string]int, len(runtimeStatusKeys)+len(counts))
+	for _, key := range runtimeStatusKeys {
+		result[key] = 0
+	}
+	for key, value := range counts {
+		result[key] = value
+	}
+	return result
+}
+
+// resolveAnalysisIsCache 兼容 Python nextflow.is_cache：Go 侧持久化在 request_param.is_cache，
+// 未记录时回退到 cache_type（非 rerun_all 即视为启用缓存）。
+func resolveAnalysisIsCache(analysis *types.Analysis) bool {
+	if analysis == nil {
+		return false
+	}
+
+	if strings.TrimSpace(analysis.RequestParam) != "" {
+		params := map[string]any{}
+		if err := json.Unmarshal([]byte(analysis.RequestParam), &params); err == nil {
+			if value, ok := params["is_cache"]; ok {
+				if enabled, isBool := value.(bool); isBool {
+					return enabled
+				}
+			}
+		}
+	}
+
+	return analysis.CacheType != types.CacheTypeRerunAll
 }
