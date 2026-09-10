@@ -28,7 +28,11 @@ import (
 	kubernetesruntime "github.com/biox-dev/gobrave/internal/container_runtime/kubernetes"
 	"github.com/biox-dev/gobrave/internal/dag"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
+	orchestrator "github.com/biox-dev/gobrave/internal/dag/dag_orchestrator"
+	orchestratorv2 "github.com/biox-dev/gobrave/internal/dag/dag_orchestrator_v2"
+	orchestratorv3 "github.com/biox-dev/gobrave/internal/dag/dag_orchestrator_v3"
 	"github.com/biox-dev/gobrave/internal/dag/executor"
+	nodeorchestrator "github.com/biox-dev/gobrave/internal/dag/node_orchestrator"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/handler"
@@ -368,10 +372,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	))
 	must(container.Provide(dag.NewNodeDispatcher))
 
-	must(container.Provide(service.NewDagOrchestrator))
-	must(container.Provide(service.NewNodeOrchestrator))
-	must(container.Provide(service.NewDynamicDagOrchestratorV2))
-	must(container.Provide(service.NewDataflowDagOrchestratorV3))
+	must(container.Provide(orchestrator.NewDagOrchestrator))
+	must(container.Provide(nodeorchestrator.NewNodeOrchestrator))
+	must(container.Provide(orchestratorv2.NewDynamicDagOrchestratorV2))
+	// must(container.Provide(orchestratorv2.NewDynamicDagOrchestratorV2))
+	must(container.Provide(orchestratorv3.NewDataflowDagOrchestratorV3))
 	must(container.Provide(service.NewWorkflowService))
 	must(container.Provide(service.NewContainerService))
 	must(container.Provide(service.NewLLMService))
