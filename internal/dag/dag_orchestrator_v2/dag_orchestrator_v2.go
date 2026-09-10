@@ -77,13 +77,15 @@ type dynamicDagOrchestratorV2 struct {
 	// bus emits runtime events using the existing event pipeline.
 	bus event.Bus
 
-	// registry tracks in-memory running tasks for fast duplicate-run checks and stop state.
+	// registry is the process-wide running registry injected by the container and
+	// shared with the other schedulers, so "is this analysis running in this
+	// process?" has exactly one answer for duplicate-run checks and stop state.
 	registry *dagruntime.RunningRegistry
 
-	// router is the single process-wide runtime event subscriber for this
-	// orchestrator. Each run registers its own analysis-scoped sink instead of
+	// router is the process-wide runtime event subscriber injected by the
+	// container. Each run registers its own analysis-scoped sink instead of
 	// subscribing to the bus directly, so concurrent runs never add subscribers.
-	router *dagEventRouter
+	router *dagruntime.EventRouter
 
 	// projectID int64
 	// mu is reserved for future critical sections in V2 orchestration state transitions.
@@ -92,6 +94,12 @@ type dynamicDagOrchestratorV2 struct {
 
 // NewDynamicDagOrchestratorV2 wires a standalone dynamic scheduler entrypoint.
 // It is intentionally separate from the legacy orchestrator to keep rollout safe.
+//
+// registry and router are process-wide singletons owned by the DI container:
+// the router is subscribed to the bus exactly once there (event.Bus has no
+// Unsubscribe, so a per-orchestrator subscription would leak a subscriber), and
+// the shared registry keeps duplicate-run and stop lookups consistent across
+// schedulers.
 func NewDynamicDagOrchestratorV2(
 	repo interfaces.AnalysisRepository,
 	workflowRepo interfaces.WorkflowRepository,
@@ -99,16 +107,10 @@ func NewDynamicDagOrchestratorV2(
 	containerRepo interfaces.ContainerRepository,
 	dispatcher *dagruntime.NodeDispatcher,
 	preparer prepare.NodeRuntimePreparer,
+	registry *dagruntime.RunningRegistry,
+	router *dagruntime.EventRouter,
 	bus event.Bus,
 ) interfaces.DynamicDagOrchestrator {
-	// Subscribe exactly once for the whole process. Per-analysis routing happens
-	// inside the router, so starting N runs adds zero extra bus subscribers and
-	// zero extra subscriber goroutines.
-	router := newDagEventRouter()
-	if bus != nil {
-		bus.Subscribe(router)
-	}
-
 	return &dynamicDagOrchestratorV2{
 		repo:            repo,
 		workflowRepo:    workflowRepo,
@@ -117,7 +119,7 @@ func NewDynamicDagOrchestratorV2(
 		dispatcher:      dispatcher,
 		preparer:        preparer,
 		bus:             bus,
-		registry:        dagruntime.NewRunningRegistry(),
+		registry:        registry,
 		router:          router,
 	}
 }
@@ -164,7 +166,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 
 	// Register the analysis-scoped sink before the first event is published so no
 	// runtime event for this run can be observed without a sink.
-	sink := o.router.register(analysisID)
+	sink := o.router.Register(analysisID)
 
 	o.publishDagRuntimeEvent(dagruntime.EventDagStarted, analysisID, nil)
 
@@ -172,7 +174,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 		// In-flight nodes left by the crashed process are neither re-dispatchable nor
 		// terminal, so they would deadlock the graph. They must be rolled back first.
 		if err := o.prepareNodesForResume(ctx, analysisID); err != nil {
-			o.router.unregister(analysisID)
+			o.router.Unregister(analysisID)
 			_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
 				"job_status": dynamicV2StatusFailed,
 				"updated_at": time.Now().UTC(),
@@ -181,7 +183,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 			return fmt.Errorf("prepare nodes for resume failed: %w", err)
 		}
 	} else if err := o.prepareAnalysisForCacheRerun(ctx, analysisID); err != nil {
-		o.router.unregister(analysisID)
+		o.router.Unregister(analysisID)
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
 			"job_status": dynamicV2StatusFailed,
 			"updated_at": time.Now().UTC(),
@@ -193,7 +195,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 	compiled, err := compiler.BuildRuntimeTasks(analysisID, dynamicCloneAnyMap(parseAnalysisResult), dynamicCloneAnyMap(dagDefinition))
 	if err != nil {
 		// Compile failure is terminal for current submission; mark analysis failed.
-		o.router.unregister(analysisID)
+		o.router.Unregister(analysisID)
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
 			"job_status": dynamicV2StatusFailed,
 			"updated_at": time.Now().UTC(),
@@ -224,7 +226,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 		// Ensure heartbeat, sink and context are cleaned up no matter how run exits.
 		// The sink is retired last: late events (for example from deferred container
 		// completions) are then safely discarded instead of leaking a subscriber.
-		defer o.router.unregister(analysisID)
+		defer o.router.Unregister(analysisID)
 		defer close(heartbeatStop)
 		defer runCancel()
 		finalStatus := dynamicV2StatusFinished
@@ -267,7 +269,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 // 1) NodeCompleted/NodeFailed events update dependency state.
 // 2) Only affected downstream templates are re-evaluated/materialized.
 // 3) Ready nodes are claimed and pushed into ReadyQueue for worker dispatch.
-func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisID int64, sink *analysisEventSink, nodeTemplates []map[string]any, edgeRows []map[string]any) error {
+func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisID int64, sink *dagruntime.AnalysisEventSink, nodeTemplates []map[string]any, edgeRows []map[string]any) error {
 	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
 	if err != nil {
 		return err
@@ -335,7 +337,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 	// analysis-scoped sink; no per-run bus subscription is created here.
 	if sink == nil {
 		// Defensive: without a sink the loop still converges through the watchdog.
-		sink = newAnalysisEventSink()
+		sink = dagruntime.NewAnalysisEventSink()
 	}
 
 	if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
@@ -374,7 +376,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 			if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
 				return err
 			}
-		case evt := <-sink.events:
+		case evt := <-sink.Events():
 			var candidates []string
 			switch strings.TrimSpace(evt.Name) {
 			case dagruntime.EventNodeCompleted:
@@ -385,7 +387,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 				candidates = nil
 			}
 			// 事件缓冲区溢出意味着本批事件可能已丢失：退化为全量对账，保证正确性。
-			if sink.consumeDirty() {
+			if sink.ConsumeDirty() {
 				candidates = dep.InitialCandidates()
 			}
 			// 算出并落库哪些节点现在可以/不可以跑
@@ -407,9 +409,9 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 			if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
 				return err
 			}
-		case <-sink.wake:
+		case <-sink.Wake():
 			// 事件溢出唤醒：不等 watchdog，立即做一次全量对账与派发。
-			_ = sink.consumeDirty()
+			_ = sink.ConsumeDirty()
 			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
 				return err
 			}

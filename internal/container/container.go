@@ -372,6 +372,21 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	))
 	must(container.Provide(dag.NewNodeDispatcher))
 
+	// 进程级运行时事件路由器：整个进程只在下面的 event_handlers Invoke 里订阅 bus 一次，
+	// 由它按 analysis_id 把 RuntimeEvent 路由给每个 run 自己的 sink。
+	// 之所以不按 run 订阅：event.Bus 没有 Unsubscribe，每次 run Subscribe 都会永久留下
+	// 一个订阅者 goroutine，且 OrderedMemoryBus 对每个订阅者是阻塞发送，并发 run 越多
+	// 阻塞面越大、每个订阅者都会被其它 analysis 的事件唤醒。
+	must(container.Provide(dagruntime.NewEventRouter))
+	// 同一个 router 也注册为 event.Handler 进入 event_handlers 分组，
+	// 复用容器末尾那一次统一的 bus.Subscribe。
+	must(container.Provide(func(r *dagruntime.EventRouter) event.Handler {
+		return r
+	}, dig.Group("event_handlers")))
+	// 进程级运行态登记表：v1 / v2 调度器共享同一份，使"本进程是否已有该 analysis 在跑"
+	// 在重复提交判断、RequestStop、运行快照 / 恢复扫描上口径一致。
+	must(container.Provide(dagruntime.NewRunningRegistry))
+
 	must(container.Provide(orchestrator.NewDagOrchestrator))
 	must(container.Provide(nodeorchestrator.NewNodeOrchestrator))
 	must(container.Provide(orchestratorv2.NewDynamicDagOrchestratorV2))

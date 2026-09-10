@@ -41,6 +41,10 @@ type dataflowDagOrchestratorV3 struct {
 	dispatcher   *dagruntime.NodeDispatcher
 	// runScriptBuilders map[string]prepare.RunScriptBuilder
 	cfg *config.Config
+	// router is the process-wide runtime event subscriber injected by the
+	// container. Each run registers an analysis-scoped sink instead of
+	// subscribing to the bus directly, so concurrent runs never add subscribers.
+	router *dagruntime.EventRouter
 }
 
 func NewDataflowDagOrchestratorV3(
@@ -53,6 +57,7 @@ func NewDataflowDagOrchestratorV3(
 	// runScriptBuilders map[string]prepare.RunScriptBuilder,
 	cfg *config.Config,
 	bus event.Bus,
+	router *dagruntime.EventRouter,
 ) interfaces.DataflowDagOrchestrator {
 	return &dataflowDagOrchestratorV3{
 		bus:          bus,
@@ -62,23 +67,8 @@ func NewDataflowDagOrchestratorV3(
 		containerMgr: containerMgr,
 		projectRepo:  projectRepo,
 		// runScriptBuilders: runScriptBuilders,
-		cfg: cfg,
-	}
-}
-
-type dataflowRuntimeEventHandler struct {
-	analysisID int64
-	events     chan<- dagruntime.RuntimeEvent
-}
-
-func (h *dataflowRuntimeEventHandler) Handle(evt event.Event) {
-	runtimeEvt, ok := evt.(dagruntime.RuntimeEvent)
-	if !ok || runtimeEvt.AnalysisID != h.analysisID {
-		return
-	}
-	select {
-	case h.events <- runtimeEvt:
-	default:
+		cfg:    cfg,
+		router: router,
 	}
 }
 
@@ -1222,10 +1212,10 @@ func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, project
 	// 	preparer,
 	// )
 
-	runtimeEvents := make(chan dagruntime.RuntimeEvent, 256)
-	if o.bus != nil {
-		o.bus.Subscribe(&dataflowRuntimeEventHandler{analysisID: analysisID, events: runtimeEvents})
-	}
+	// Runtime events reach this loop through the process-wide router via the
+	// analysis-scoped sink; no per-run bus subscription is created here.
+	sink := o.router.Register(analysisID)
+	defer o.router.Unregister(analysisID)
 
 	var kernel *dataflowKernel
 	runtime := &persistentDataflowRuntime{
@@ -1262,7 +1252,7 @@ func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, project
 		select {
 		case <-ctx.Done():
 			return nil
-		case evt := <-runtimeEvents:
+		case evt := <-sink.Events():
 			runtime.onRuntimeEvent(evt)
 			eventName := strings.TrimSpace(evt.Name)
 			switch eventName {
@@ -1288,7 +1278,7 @@ func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, project
 			inflight := runtime.InflightDispatches()
 			if inflight == 0 {
 				select {
-				case evt := <-runtimeEvents:
+				case evt := <-sink.Events():
 					runtime.onRuntimeEvent(evt)
 					eventName := strings.TrimSpace(evt.Name)
 					if eventName == dagruntime.EventNodeCompleted {

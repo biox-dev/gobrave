@@ -11,7 +11,7 @@ import (
 )
 
 // dagRecoveryInterval is the periodic scan cadence for the unified DAG recovery.
-const dagRecoveryInterval = 30 * time.Second
+const dagRecoveryInterval = 300 * time.Second
 
 // RecoverDag 是 DAG 恢复的唯一入口（替代原先 legacy / dynamic V2 各自一个 Invoke）。
 //

@@ -41,7 +41,10 @@ type dagOrchestrator struct {
 	dispatcher *dagruntime.NodeDispatcher
 	cfg        *config.Config
 	bus        event.Bus
-	registry   *dagruntime.RunningRegistry
+	// registry is the process-wide running registry injected by the container and
+	// shared with the other schedulers, so duplicate-run and stop lookups agree
+	// across schedulers.
+	registry *dagruntime.RunningRegistry
 }
 
 func NewDagOrchestrator(
@@ -54,6 +57,7 @@ func NewDagOrchestrator(
 	// runScriptBuilders map[string]prepare.RunScriptBuilder,
 	cfg *config.Config,
 	bus event.Bus,
+	registry *dagruntime.RunningRegistry,
 ) interfaces.DagOrchestrator {
 	o := &dagOrchestrator{
 		repo:          repo,
@@ -65,7 +69,7 @@ func NewDagOrchestrator(
 		// runScriptBuilders: runScriptBuilders,
 		cfg:      cfg,
 		bus:      bus,
-		registry: dagruntime.NewRunningRegistry(),
+		registry: registry,
 	}
 	return o
 }

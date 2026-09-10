@@ -1,22 +1,20 @@
-package orchestratorv2
+package dag
 
 import (
 	"sync"
 	"testing"
 	"time"
-
-	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 )
 
-func TestDagEventRouterRoutesByAnalysisID(t *testing.T) {
-	router := newDagEventRouter()
-	sinkA := router.register(1)
-	sinkB := router.register(2)
+func TestEventRouterRoutesByAnalysisID(t *testing.T) {
+	router := NewEventRouter()
+	sinkA := router.Register(1)
+	sinkB := router.Register(2)
 
-	router.Handle(dagruntime.RuntimeEvent{Name: dagruntime.EventNodeCompleted, AnalysisID: 1, NodeID: "n1"})
-	router.Handle(dagruntime.RuntimeEvent{Name: dagruntime.EventNodeCompleted, AnalysisID: 2, NodeID: "n2"})
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 1, NodeID: "n1"})
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 2, NodeID: "n2"})
 	// Unknown analysis: must be dropped without panicking.
-	router.Handle(dagruntime.RuntimeEvent{Name: dagruntime.EventNodeCompleted, AnalysisID: 3, NodeID: "n3"})
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 3, NodeID: "n3"})
 
 	if got, want := len(sinkA.events), 1; got != want {
 		t.Fatalf("sink A event count = %d, want %d", got, want)
@@ -31,9 +29,9 @@ func TestDagEventRouterRoutesByAnalysisID(t *testing.T) {
 	}
 }
 
-func TestDagEventRouterIgnoresNonRuntimeEvents(t *testing.T) {
-	router := newDagEventRouter()
-	sink := router.register(7)
+func TestEventRouterIgnoresNonRuntimeEvents(t *testing.T) {
+	router := NewEventRouter()
+	sink := router.Register(7)
 
 	router.Handle("not-a-runtime-event")
 	router.Handle(struct{ Foo string }{Foo: "bar"})
@@ -43,49 +41,49 @@ func TestDagEventRouterIgnoresNonRuntimeEvents(t *testing.T) {
 	}
 }
 
-func TestDagEventRouterRegisterIsIdempotent(t *testing.T) {
-	router := newDagEventRouter()
-	first := router.register(42)
-	second := router.register(42)
+func TestEventRouterRegisterIsIdempotent(t *testing.T) {
+	router := NewEventRouter()
+	first := router.Register(42)
+	second := router.Register(42)
 
 	if first != second {
 		t.Fatal("register must return the existing sink for an already registered analysis")
 	}
 }
 
-func TestDagEventRouterUnregisterDropsEventsWithoutPanic(t *testing.T) {
-	router := newDagEventRouter()
-	sink := router.register(5)
+func TestEventRouterUnregisterDropsEventsWithoutPanic(t *testing.T) {
+	router := NewEventRouter()
+	sink := router.Register(5)
 
-	router.unregister(5)
+	router.Unregister(5)
 	// Late events (e.g. deferred container completions) must be discarded safely.
-	router.Handle(dagruntime.RuntimeEvent{Name: dagruntime.EventNodeCompleted, AnalysisID: 5})
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 5})
 
 	if got := len(sink.events); got != 0 {
 		t.Fatalf("retired sink received %d events, want 0", got)
 	}
 
 	// unregister must be idempotent and safe for unknown analyses.
-	router.unregister(5)
-	router.unregister(999)
+	router.Unregister(5)
+	router.Unregister(999)
 
 	// Re-registering the same analysis must yield a fresh, live sink.
-	fresh := router.register(5)
+	fresh := router.Register(5)
 	if fresh == sink {
 		t.Fatal("re-register after unregister must create a new sink")
 	}
-	router.Handle(dagruntime.RuntimeEvent{Name: dagruntime.EventNodeCompleted, AnalysisID: 5})
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 5})
 	if got := len(fresh.events); got != 1 {
 		t.Fatalf("fresh sink event count = %d, want 1", got)
 	}
 }
 
 func TestAnalysisEventSinkRetireDropsStaleWrites(t *testing.T) {
-	sink := newAnalysisEventSink()
+	sink := NewAnalysisEventSink()
 	sink.retire()
 
 	// A stale pointer held across teardown must never write after retirement.
-	sink.enqueue(dagruntime.RuntimeEvent{AnalysisID: 1})
+	sink.Enqueue(RuntimeEvent{AnalysisID: 1})
 
 	if got := len(sink.events); got != 0 {
 		t.Fatalf("retired sink accepted %d events, want 0", got)
@@ -93,47 +91,47 @@ func TestAnalysisEventSinkRetireDropsStaleWrites(t *testing.T) {
 }
 
 func TestAnalysisEventSinkOverflowMarksDirtyAndWakes(t *testing.T) {
-	router := newDagEventRouter()
-	sink := router.register(11)
+	router := NewEventRouter()
+	sink := router.Register(11)
 
-	for i := 0; i < dynamicV2EventBufferSize; i++ {
-		router.Handle(dagruntime.RuntimeEvent{Name: dagruntime.EventNodeCompleted, AnalysisID: 11})
+	for i := 0; i < eventSinkBufferSize; i++ {
+		router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 11})
 	}
-	if sink.consumeDirty() {
+	if sink.ConsumeDirty() {
 		t.Fatal("sink must not be dirty while the buffer still has room")
 	}
 
 	// One more event overflows the buffer and must degrade to a full reconcile.
-	router.Handle(dagruntime.RuntimeEvent{Name: dagruntime.EventNodeCompleted, AnalysisID: 11})
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 11})
 
-	if !sink.consumeDirty() {
+	if !sink.ConsumeDirty() {
 		t.Fatal("buffer overflow must mark the sink dirty")
 	}
-	if sink.consumeDirty() {
+	if sink.ConsumeDirty() {
 		t.Fatal("dirty flag must be cleared exactly once per consume")
 	}
 
 	select {
-	case <-sink.wake:
+	case <-sink.Wake():
 	default:
 		t.Fatal("buffer overflow must signal the wake channel")
 	}
 
-	if got := len(sink.events); got != dynamicV2EventBufferSize {
-		t.Fatalf("buffered event count = %d, want %d", got, dynamicV2EventBufferSize)
+	if got := len(sink.events); got != eventSinkBufferSize {
+		t.Fatalf("buffered event count = %d, want %d", got, eventSinkBufferSize)
 	}
 }
 
 func TestAnalysisEventSinkEnqueueNeverBlocks(t *testing.T) {
-	sink := newAnalysisEventSink()
+	sink := NewAnalysisEventSink()
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		// Far more events than the buffer holds: the router runs on the shared bus
 		// worker, so enqueue must never wait for a consumer.
-		for i := 0; i < dynamicV2EventBufferSize*4; i++ {
-			sink.enqueue(dagruntime.RuntimeEvent{AnalysisID: 1})
+		for i := 0; i < eventSinkBufferSize*4; i++ {
+			sink.Enqueue(RuntimeEvent{AnalysisID: 1})
 		}
 	}()
 
@@ -144,11 +142,11 @@ func TestAnalysisEventSinkEnqueueNeverBlocks(t *testing.T) {
 	}
 }
 
-// TestDagEventRouterConcurrentLifecycle exercises the register / Handle /
-// unregister interleavings that happen when runs start and finish while the bus
-// keeps publishing. Run with -race.
-func TestDagEventRouterConcurrentLifecycle(t *testing.T) {
-	router := newDagEventRouter()
+// TestEventRouterConcurrentLifecycle exercises the register / Handle / unregister
+// interleavings that happen when runs start and finish while the bus keeps
+// publishing. Run with -race.
+func TestEventRouterConcurrentLifecycle(t *testing.T) {
+	router := NewEventRouter()
 
 	const (
 		workers = 8
@@ -163,15 +161,15 @@ func TestDagEventRouterConcurrentLifecycle(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < iters; i++ {
 				id := int64(i % keys)
-				router.register(id)
-				router.Handle(dagruntime.RuntimeEvent{
-					Name:       dagruntime.EventNodeCompleted,
+				router.Register(id)
+				router.Handle(RuntimeEvent{
+					Name:       EventNodeCompleted,
 					AnalysisID: id,
 					NodeID:     "n",
 				})
 				router.Handle("ignored")
 				if i%3 == 0 {
-					router.unregister(id)
+					router.Unregister(id)
 				}
 			}
 		}()
