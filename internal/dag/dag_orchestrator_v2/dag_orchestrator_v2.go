@@ -63,6 +63,11 @@ type dynamicDagOrchestratorV2 struct {
 	// registry tracks in-memory running tasks for fast duplicate-run checks and stop state.
 	registry *dagruntime.RunningRegistry
 
+	// router is the single process-wide runtime event subscriber for this
+	// orchestrator. Each run registers its own analysis-scoped sink instead of
+	// subscribing to the bus directly, so concurrent runs never add subscribers.
+	router *dagEventRouter
+
 	// projectID int64
 	// mu is reserved for future critical sections in V2 orchestration state transitions.
 	mu sync.Mutex
@@ -77,6 +82,14 @@ func NewDynamicDagOrchestratorV2(
 	preparer prepare.NodeRuntimePreparer,
 	bus event.Bus,
 ) interfaces.DynamicDagOrchestrator {
+	// Subscribe exactly once for the whole process. Per-analysis routing happens
+	// inside the router, so starting N runs adds zero extra bus subscribers and
+	// zero extra subscriber goroutines.
+	router := newDagEventRouter()
+	if bus != nil {
+		bus.Subscribe(router)
+	}
+
 	return &dynamicDagOrchestratorV2{
 		repo:         repo,
 		workflowRepo: workflowRepo,
@@ -84,6 +97,7 @@ func NewDynamicDagOrchestratorV2(
 		preparer:     preparer,
 		bus:          bus,
 		registry:     dagruntime.NewRunningRegistry(),
+		router:       router,
 	}
 }
 
@@ -114,9 +128,14 @@ func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID 
 		return nil
 	}
 
+	// Register the analysis-scoped sink before the first event is published so no
+	// runtime event for this run can be observed without a sink.
+	sink := o.router.register(analysisID)
+
 	o.publishDagRuntimeEvent(dagruntime.EventDagStarted, analysisID, nil)
 
 	if err := o.prepareAnalysisForCacheRerun(ctx, analysisID); err != nil {
+		o.router.unregister(analysisID)
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
 			"job_status": "failed",
 			"updated_at": time.Now().UTC(),
@@ -128,6 +147,7 @@ func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID 
 	compiled, err := compiler.BuildRuntimeTasks(analysisID, dynamicCloneAnyMap(parseAnalysisResult), dynamicCloneAnyMap(dagDefinition))
 	if err != nil {
 		// Compile failure is terminal for current submission; mark analysis failed.
+		o.router.unregister(analysisID)
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
 			"job_status": "failed",
 			"updated_at": time.Now().UTC(),
@@ -155,12 +175,15 @@ func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID 
 	go o.renewRunningLease(analysisID, heartbeatStop)
 
 	go func() {
-		// Ensure heartbeat and context are cleaned up no matter how run exits.
+		// Ensure heartbeat, sink and context are cleaned up no matter how run exits.
+		// The sink is retired last: late events (for example from deferred container
+		// completions) are then safely discarded instead of leaking a subscriber.
+		defer o.router.unregister(analysisID)
 		defer close(heartbeatStop)
 		defer runCancel()
 		finalStatus := "finished"
 		var finalErr error
-		if err := o.runDynamicLoop(runCtx, analysisID, nodeTemplates, edgeRows); err != nil {
+		if err := o.runDynamicLoop(runCtx, analysisID, sink, nodeTemplates, edgeRows); err != nil {
 			finalStatus = "failed"
 			finalErr = err
 			logger.Warnf(context.Background(), "[DynamicDagOrchestratorV2] run failed, analysis_id=%d err=%v", analysisID, err)
@@ -189,6 +212,163 @@ func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID 
 	}()
 
 	return nil
+}
+
+// runDynamicLoop uses runtime events as the primary driver:
+// 1) NodeCompleted/NodeFailed events update dependency state.
+// 2) Only affected downstream templates are re-evaluated/materialized.
+// 3) Ready nodes are claimed and pushed into ReadyQueue for worker dispatch.
+func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisID int64, sink *analysisEventSink, nodeTemplates []map[string]any, edgeRows []map[string]any) error {
+	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
+	if err != nil {
+		return err
+	}
+
+	edges := buildAnalysisEdges(analysisID, edgeRows)
+	// Replace edges atomically for current run topology snapshot.
+	if err := o.repo.DeleteAnalysisEdgesByAnalysisID(ctx, analysisID); err != nil {
+		return err
+	}
+	if err := o.repo.CreateAnalysisEdges(ctx, edges); err != nil {
+		return err
+	}
+
+	runtime := dagruntime.NewRuntimeEngine(o.repo)
+
+	pool := dagruntime.NewWorkerPool(o.dispatcher, 1, dynamicV2ReadyQueueSize)
+	pool.Start(ctx)
+	defer pool.Stop()
+
+	incoming := buildIncomingEdgeMap(edges)
+	outgoing := buildOutgoingNodeMap(edges)
+	nodeTemplateByID := make(map[string]map[string]any, len(nodeTemplates))
+	for _, row := range nodeTemplates {
+		nid := strings.TrimSpace(dynamicToString(row["node_id"]))
+		if nid == "" {
+			continue
+		}
+		nodeTemplateByID[nid] = row
+	}
+
+	dep := newDynamicDependencyManager(nodeTemplateByID, outgoing)
+	existing, err := o.repo.ListAnalysisNodesByAnalysisID(ctx, analysisID)
+	if err != nil {
+		return err
+	}
+	existingByNodeID := make(map[string]*types.AnalysisNode, len(existing))
+	for _, n := range existing {
+		existingByNodeID[n.NodeID] = n
+	}
+	dep.SeedFromExisting(existingByNodeID)
+
+	readyQueue := make(chan int64, dynamicV2ReadyQueueSize)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case analysisNodeID := <-readyQueue:
+				for {
+					if ok := pool.Enqueue(analysisNodeID); ok {
+						break
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(25 * time.Millisecond):
+					}
+				}
+			}
+		}
+	}()
+
+	// Runtime events reach this loop through the process-wide router via the
+	// analysis-scoped sink; no per-run bus subscription is created here.
+	if sink == nil {
+		// Defensive: without a sink the loop still converges through the watchdog.
+		sink = newAnalysisEventSink()
+	}
+
+	if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
+		return err
+	}
+	if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
+		return err
+	}
+
+	stopTicker := time.NewTicker(dynamicV2StopCheckInterval)
+	defer stopTicker.Stop()
+	watchdogTicker := time.NewTicker(dynamicV2WatchdogInterval)
+	defer watchdogTicker.Stop()
+
+	for {
+		finished, finishedErr := o.checkDynamicCompletion(ctx, analysisID, len(nodeTemplateByID), runtime, pool, readyQueue)
+		if finishedErr != nil {
+			return finishedErr
+		}
+		if finished {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			// Context cancellation is treated as graceful exit; caller sets final status.
+			return nil
+		case <-stopTicker.C:
+			if shouldStop, stopErr := o.shouldStopByJobStatus(ctx, analysisID); stopErr == nil && shouldStop {
+				return nil
+			}
+		case <-watchdogTicker.C:
+			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
+				return err
+			}
+			if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
+				return err
+			}
+		case evt := <-sink.events:
+			var candidates []string
+			switch strings.TrimSpace(evt.Name) {
+			case dagruntime.EventNodeCompleted:
+				candidates = dep.OnNodeSuccess(strings.TrimSpace(evt.NodeID))
+			case dagruntime.EventNodeFailed:
+				candidates = dep.OnNodeFailure(strings.TrimSpace(evt.NodeID))
+			default:
+				candidates = nil
+			}
+			// 事件缓冲区溢出意味着本批事件可能已丢失：退化为全量对账，保证正确性。
+			if sink.consumeDirty() {
+				candidates = dep.InitialCandidates()
+			}
+			// 算出并落库哪些节点现在可以/不可以跑
+			// 作用：对本次事件影响到的候选节点做“对账/物化”。
+			// 具体会做的事：
+			// 看节点是否已存在于 analysis_node；
+			// 若不存在且依赖满足，创建新节点（ready）；
+			// 若被失败上游阻断，创建/标记为 skipped；
+			// 若已存在，会按 cache 策略判断是否需要重新置为 ready 重跑。
+
+			if len(candidates) > 0 {
+				if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, candidates, dep, o.preparer); err != nil {
+					return err
+				}
+			}
+			// 第二段负责“把可以跑的节点真正送去执行”。
+			// 作用：把数据库里当前可执行的 ready 节点“领取（claim）并推入内存 readyQueue”，交给 worker pool 实际执行。
+			// 特点：这一步每次事件后都会跑一次（不依赖 candidates 是否为空），确保新变成 ready 的节点尽快被派发，减少调度延迟。
+			if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
+				return err
+			}
+		case <-sink.wake:
+			// 事件溢出唤醒：不等 watchdog，立即做一次全量对账与派发。
+			_ = sink.consumeDirty()
+			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
+				return err
+			}
+			if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // GetRunningInfo exposes the in-memory running entry for analysisID so that
@@ -235,22 +415,6 @@ func (o *dynamicDagOrchestratorV2) prepareAnalysisForCacheRerun(ctx context.Cont
 		}
 		return nil
 	})
-}
-
-type dynamicRuntimeEventHandler struct {
-	analysisID int64
-	events     chan<- dagruntime.RuntimeEvent
-}
-
-func (h *dynamicRuntimeEventHandler) Handle(evt event.Event) {
-	runtimeEvt, ok := evt.(dagruntime.RuntimeEvent)
-	if !ok || runtimeEvt.AnalysisID != h.analysisID {
-		return
-	}
-	select {
-	case h.events <- runtimeEvt:
-	default:
-	}
 }
 
 type dynamicDependencyManager struct {
@@ -355,149 +519,6 @@ func (m *dynamicDependencyManager) IsReady(nodeID string) bool {
 
 func (m *dynamicDependencyManager) IsBlocked(nodeID string) bool {
 	return m.blocked[nodeID]
-}
-
-// runDynamicLoop uses runtime events as the primary driver:
-// 1) NodeCompleted/NodeFailed events update dependency state.
-// 2) Only affected downstream templates are re-evaluated/materialized.
-// 3) Ready nodes are claimed and pushed into ReadyQueue for worker dispatch.
-func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisID int64, nodeTemplates []map[string]any, edgeRows []map[string]any) error {
-	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
-	if err != nil {
-		return err
-	}
-
-	edges := buildAnalysisEdges(analysisID, edgeRows)
-	// Replace edges atomically for current run topology snapshot.
-	if err := o.repo.DeleteAnalysisEdgesByAnalysisID(ctx, analysisID); err != nil {
-		return err
-	}
-	if err := o.repo.CreateAnalysisEdges(ctx, edges); err != nil {
-		return err
-	}
-
-	runtime := dagruntime.NewRuntimeEngine(o.repo)
-
-	pool := dagruntime.NewWorkerPool(o.dispatcher, 1, dynamicV2ReadyQueueSize)
-	pool.Start(ctx)
-	defer pool.Stop()
-
-	incoming := buildIncomingEdgeMap(edges)
-	outgoing := buildOutgoingNodeMap(edges)
-	nodeTemplateByID := make(map[string]map[string]any, len(nodeTemplates))
-	for _, row := range nodeTemplates {
-		nid := strings.TrimSpace(dynamicToString(row["node_id"]))
-		if nid == "" {
-			continue
-		}
-		nodeTemplateByID[nid] = row
-	}
-
-	dep := newDynamicDependencyManager(nodeTemplateByID, outgoing)
-	existing, err := o.repo.ListAnalysisNodesByAnalysisID(ctx, analysisID)
-	if err != nil {
-		return err
-	}
-	existingByNodeID := make(map[string]*types.AnalysisNode, len(existing))
-	for _, n := range existing {
-		existingByNodeID[n.NodeID] = n
-	}
-	dep.SeedFromExisting(existingByNodeID)
-
-	readyQueue := make(chan int64, dynamicV2ReadyQueueSize)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case analysisNodeID := <-readyQueue:
-				for {
-					if ok := pool.Enqueue(analysisNodeID); ok {
-						break
-					}
-					select {
-					case <-ctx.Done():
-						return
-					case <-time.After(25 * time.Millisecond):
-					}
-				}
-			}
-		}
-	}()
-
-	runtimeEvents := make(chan dagruntime.RuntimeEvent, 256)
-	// Subscribe to runtime events for current analysis_id.
-	if o.bus != nil {
-		o.bus.Subscribe(&dynamicRuntimeEventHandler{analysisID: analysisID, events: runtimeEvents})
-	}
-
-	if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
-		return err
-	}
-	if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
-		return err
-	}
-
-	stopTicker := time.NewTicker(dynamicV2StopCheckInterval)
-	defer stopTicker.Stop()
-	watchdogTicker := time.NewTicker(dynamicV2WatchdogInterval)
-	defer watchdogTicker.Stop()
-
-	for {
-		finished, finishedErr := o.checkDynamicCompletion(ctx, analysisID, len(nodeTemplateByID), runtime, pool, readyQueue)
-		if finishedErr != nil {
-			return finishedErr
-		}
-		if finished {
-			return nil
-		}
-
-		select {
-		case <-ctx.Done():
-			// Context cancellation is treated as graceful exit; caller sets final status.
-			return nil
-		case <-stopTicker.C:
-			if shouldStop, stopErr := o.shouldStopByJobStatus(ctx, analysisID); stopErr == nil && shouldStop {
-				return nil
-			}
-		case <-watchdogTicker.C:
-			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
-				return err
-			}
-			if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
-				return err
-			}
-		case evt := <-runtimeEvents:
-			var candidates []string
-			switch strings.TrimSpace(evt.Name) {
-			case dagruntime.EventNodeCompleted:
-				candidates = dep.OnNodeSuccess(strings.TrimSpace(evt.NodeID))
-			case dagruntime.EventNodeFailed:
-				candidates = dep.OnNodeFailure(strings.TrimSpace(evt.NodeID))
-			default:
-				candidates = nil
-			}
-			// 算出并落库哪些节点现在可以/不可以跑
-			// 作用：对本次事件影响到的候选节点做“对账/物化”。
-			// 具体会做的事：
-			// 看节点是否已存在于 analysis_node；
-			// 若不存在且依赖满足，创建新节点（ready）；
-			// 若被失败上游阻断，创建/标记为 skipped；
-			// 若已存在，会按 cache 策略判断是否需要重新置为 ready 重跑。
-
-			if len(candidates) > 0 {
-				if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, candidates, dep, o.preparer); err != nil {
-					return err
-				}
-			}
-			// 第二段负责“把可以跑的节点真正送去执行”。
-			// 作用：把数据库里当前可执行的 ready 节点“领取（claim）并推入内存 readyQueue”，交给 worker pool 实际执行。
-			// 特点：这一步每次事件后都会跑一次（不依赖 candidates 是否为空），确保新变成 ready 的节点尽快被派发，减少调度延迟。
-			if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
-				return err
-			}
-		}
-	}
 }
 
 func (o *dynamicDagOrchestratorV2) checkDynamicCompletion(
