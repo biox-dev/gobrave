@@ -15,12 +15,10 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/compiler"
-	"github.com/biox-dev/gobrave/internal/config"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
-	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -53,17 +51,12 @@ type dynamicDagOrchestratorV2 struct {
 	// repo is the main persistence boundary for analysis, nodes, and edges.
 	repo interfaces.AnalysisRepository
 	// workflowRepo is used by runtime preparer/dispatcher for script/runtime metadata.
-	workflowRepo    interfaces.WorkflowRepository
-	workflowService interfaces.WorkflowService
-	// containerRepo is reserved for future V2 node/container lifecycle enhancements.
-	containerRepo interfaces.ContainerRepository
-	// containerMgr is passed into executor factory so container-backed executors are reused.
-	dispatcher        *dagruntime.NodeDispatcher
-	projectRepo       interfaces.ProjectRepository
-	containerMgr      *manager.ContainerManager
-	runScriptBuilders *prepare.RunScriptBuilderRegistry
-	// cfg provides storage roots and runtime options.
-	cfg *config.Config
+	workflowRepo interfaces.WorkflowRepository
+	// dispatcher is the DI-injected node dispatcher that performs actual node execution.
+	dispatcher *dagruntime.NodeDispatcher
+	// preparer is the DI-injected node runtime preparer, shared with NodeDispatcher so
+	// params.json / run.sh are produced by the very same instance.
+	preparer prepare.NodeRuntimePreparer
 	// bus emits runtime events using the existing event pipeline.
 	bus event.Bus
 
@@ -80,27 +73,17 @@ type dynamicDagOrchestratorV2 struct {
 func NewDynamicDagOrchestratorV2(
 	repo interfaces.AnalysisRepository,
 	workflowRepo interfaces.WorkflowRepository,
-	workflowService interfaces.WorkflowService,
-	containerRepo interfaces.ContainerRepository,
-	containerMgr *manager.ContainerManager,
-	projectRepo interfaces.ProjectRepository,
-	runScriptBuilders *prepare.RunScriptBuilderRegistry,
 	dispatcher *dagruntime.NodeDispatcher,
-	cfg *config.Config,
+	preparer prepare.NodeRuntimePreparer,
 	bus event.Bus,
 ) interfaces.DynamicDagOrchestrator {
 	return &dynamicDagOrchestratorV2{
-		repo:              repo,
-		workflowRepo:      workflowRepo,
-		containerRepo:     containerRepo,
-		containerMgr:      containerMgr,
-		projectRepo:       projectRepo,
-		dispatcher:        dispatcher,
-		workflowService:   workflowService,
-		runScriptBuilders: runScriptBuilders,
-		cfg:               cfg,
-		bus:               bus,
-		registry:          dagruntime.NewRunningRegistry(),
+		repo:         repo,
+		workflowRepo: workflowRepo,
+		dispatcher:   dispatcher,
+		preparer:     preparer,
+		bus:          bus,
+		registry:     dagruntime.NewRunningRegistry(),
 	}
 }
 
@@ -394,18 +377,6 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 	}
 
 	runtime := dagruntime.NewRuntimeEngine(o.repo)
-	preparer := prepare.NewFileSystemNodeRuntimePreparer(o.repo, o.workflowRepo, o.projectRepo, o.workflowService, o.cfg, o.runScriptBuilders)
-	// dispatcher := dagruntime.NewNodeDispatcher(
-	// 	runtime,
-	// 	o.repo,
-	// 	o.bus,
-	// 	executor.NewFactory(executor.FactoryDeps{
-	// 		WorkflowRepository: o.workflowRepo,
-	// 		ContainerManager:   o.containerMgr,
-	// 	}),
-	// 	nil,
-	// 	preparer,
-	// )
 
 	pool := dagruntime.NewWorkerPool(o.dispatcher, 1, dynamicV2ReadyQueueSize)
 	pool.Start(ctx)
@@ -460,7 +431,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 		o.bus.Subscribe(&dynamicRuntimeEventHandler{analysisID: analysisID, events: runtimeEvents})
 	}
 
-	if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, preparer); err != nil {
+	if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
 		return err
 	}
 	if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
@@ -490,7 +461,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 				return nil
 			}
 		case <-watchdogTicker.C:
-			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, preparer); err != nil {
+			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep, o.preparer); err != nil {
 				return err
 			}
 			if err := o.pumpReadyQueue(ctx, runtime, analysisID, readyQueue); err != nil {
@@ -515,7 +486,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 			// 若已存在，会按 cache 策略判断是否需要重新置为 ready 重跑。
 
 			if len(candidates) > 0 {
-				if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, candidates, dep, preparer); err != nil {
+				if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, candidates, dep, o.preparer); err != nil {
 					return err
 				}
 			}
