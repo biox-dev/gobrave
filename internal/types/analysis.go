@@ -131,35 +131,38 @@ type Analysis struct {
 	ComponentID string `json:"component_id" gorm:"column:component_id;type:varchar(255)"`
 	WorkflowID  string `json:"relation_id" gorm:"column:relation_id;type:varchar(255)"`
 	// AnalysisType        string    `json:"analysis_type" gorm:"column:analysis_type;type:varchar(255)"`
-	AnalysisName        string    `json:"analysis_name" gorm:"column:analysis_name;type:varchar(255)"`
-	InputFile           string    `json:"input_file" gorm:"column:input_file;type:varchar(255)"`
-	AnalysisMethod      string    `json:"analysis_method" gorm:"column:analysis_method;type:varchar(255)"`
-	WorkDir             string    `json:"work_dir" gorm:"column:work_dir;type:varchar(255)"`
-	ParamsPath          string    `json:"params_path" gorm:"column:params_path;type:varchar(255)"`
-	CommandPath         string    `json:"command_path" gorm:"column:command_path;type:varchar(255)"`
-	RequestParam        string    `json:"request_param" gorm:"column:request_param;type:longtext"`
-	OutputFormat        string    `json:"output_format" gorm:"column:output_format;type:longtext"`
-	OutputDir           string    `json:"output_dir" gorm:"column:output_dir;type:varchar(255)"`
-	PipelineScript      string    `json:"pipeline_script" gorm:"column:pipeline_script;type:varchar(255)"`
-	ParseAnalysisModule string    `json:"parse_analysis_module" gorm:"column:parse_analysis_module;type:varchar(255)"`
-	TraceFile           string    `json:"trace_file" gorm:"column:trace_file;type:varchar(255)"`
-	WorkflowLogFile     string    `json:"workflow_log_file" gorm:"column:workflow_log_file;type:varchar(255)"`
-	ExecutorLogFile     string    `json:"executor_log_file" gorm:"column:executor_log_file;type:varchar(255)"`
-	ProcessID           string    `json:"process_id" gorm:"column:process_id;type:varchar(255)"`
-	ScriptConfigFile    string    `json:"script_config_file" gorm:"column:script_config_file;type:varchar(255)"`
-	JobID               string    `json:"job_id" gorm:"column:job_id;type:varchar(255)"`
-	Ports               string    `json:"ports" gorm:"column:ports;type:varchar(255)"`
-	URL                 string    `json:"url" gorm:"column:url;type:varchar(255)"`
-	JobStatus           string    `json:"job_status" gorm:"column:job_status;type:varchar(255)"`
-	ServerStatus        string    `json:"server_status" gorm:"column:server_status;type:varchar(255)"`
-	CommandLogPath      string    `json:"command_log_path" gorm:"column:command_log_path;type:varchar(255)"`
-	IsReport            bool      `json:"is_report" gorm:"column:is_report;default:false"`
-	CacheType           int       `json:"cache_type" gorm:"column:cache_type;default:1"`
-	Used                bool      `json:"used" gorm:"column:used;default:true"`
-	DataComponentIDs    string    `json:"data_component_ids" gorm:"column:data_component_ids;type:text"`
-	ExtraProjectIDs     string    `json:"extra_project_ids" gorm:"column:extra_project_ids;type:longtext"`
-	CreatedAt           time.Time `json:"created_at" gorm:"column:created_at"`
-	UpdatedAt           time.Time `json:"updated_at" gorm:"column:updated_at"`
+	AnalysisName        string `json:"analysis_name" gorm:"column:analysis_name;type:varchar(255)"`
+	InputFile           string `json:"input_file" gorm:"column:input_file;type:varchar(255)"`
+	AnalysisMethod      string `json:"analysis_method" gorm:"column:analysis_method;type:varchar(255)"`
+	WorkDir             string `json:"work_dir" gorm:"column:work_dir;type:varchar(255)"`
+	ParamsPath          string `json:"params_path" gorm:"column:params_path;type:varchar(255)"`
+	CommandPath         string `json:"command_path" gorm:"column:command_path;type:varchar(255)"`
+	RequestParam        string `json:"request_param" gorm:"column:request_param;type:longtext"`
+	OutputFormat        string `json:"output_format" gorm:"column:output_format;type:longtext"`
+	OutputDir           string `json:"output_dir" gorm:"column:output_dir;type:varchar(255)"`
+	PipelineScript      string `json:"pipeline_script" gorm:"column:pipeline_script;type:varchar(255)"`
+	ParseAnalysisModule string `json:"parse_analysis_module" gorm:"column:parse_analysis_module;type:varchar(255)"`
+	TraceFile           string `json:"trace_file" gorm:"column:trace_file;type:varchar(255)"`
+	WorkflowLogFile     string `json:"workflow_log_file" gorm:"column:workflow_log_file;type:varchar(255)"`
+	ExecutorLogFile     string `json:"executor_log_file" gorm:"column:executor_log_file;type:varchar(255)"`
+	ProcessID           string `json:"process_id" gorm:"column:process_id;type:varchar(255)"`
+	ScriptConfigFile    string `json:"script_config_file" gorm:"column:script_config_file;type:varchar(255)"`
+	JobID               string `json:"job_id" gorm:"column:job_id;type:varchar(255)"`
+	Ports               string `json:"ports" gorm:"column:ports;type:varchar(255)"`
+	URL                 string `json:"url" gorm:"column:url;type:varchar(255)"`
+	JobStatus           string `json:"job_status" gorm:"column:job_status;type:varchar(255)"`
+	ServerStatus        string `json:"server_status" gorm:"column:server_status;type:varchar(255)"`
+	// SchedulerMode 记录推进本次分析的调度器，用于进程重启后把分析交回正确的调度器恢复。
+	// 历史数据该列为空，按 legacy DAG 调度器处理（见 NormalizeSchedulerMode）。
+	SchedulerMode    string    `json:"scheduler_mode" gorm:"column:scheduler_mode;type:varchar(64);default:''"`
+	CommandLogPath   string    `json:"command_log_path" gorm:"column:command_log_path;type:varchar(255)"`
+	IsReport         bool      `json:"is_report" gorm:"column:is_report;default:false"`
+	CacheType        int       `json:"cache_type" gorm:"column:cache_type;default:1"`
+	Used             bool      `json:"used" gorm:"column:used;default:true"`
+	DataComponentIDs string    `json:"data_component_ids" gorm:"column:data_component_ids;type:text"`
+	ExtraProjectIDs  string    `json:"extra_project_ids" gorm:"column:extra_project_ids;type:longtext"`
+	CreatedAt        time.Time `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt        time.Time `json:"updated_at" gorm:"column:updated_at"`
 }
 
 func (t *Analysis) BeforeCreate(_ *gorm.DB) error {
@@ -175,6 +178,58 @@ const (
 	CacheTypeReuseWhenScriptUnchanged          = 3
 	CacheTypeReuseWhenScriptAndParamsUnchanged = 4
 )
+
+// analysis.job_status 取值。所有调度器（legacy dag_v1 / node_v1 / dynamic_v2 /
+// dataflow_v3）共用同一套状态字符串，避免各 orchestrator 各自维护一份常量，
+// 导致统一恢复入口在判断 running / stopping 时出现不一致。
+const (
+	// AnalysisStatusRunning 表示分析已被某个调度器接管并正在推进，是恢复扫描的入口状态。
+	AnalysisStatusRunning = "running"
+	// AnalysisStatusStopping 表示已收到停止请求，等待所属调度器收敛到终态。
+	AnalysisStatusStopping = "stopping"
+	// AnalysisStatusStopped 是用户停止后的终态。
+	AnalysisStatusStopped = "stopped"
+	// AnalysisStatusFinished 是正常跑完的终态。
+	AnalysisStatusFinished = "finished"
+	// AnalysisStatusFailed 是异常终止的终态。
+	AnalysisStatusFailed = "failed"
+)
+
+// analysis.scheduler_mode 取值，标识推进该分析的调度器。
+// 空值与 SchedulerModeDagV1 均视为 legacy DAG 调度器（兼容历史数据）。
+const (
+	// SchedulerModeDagV1 是 legacy DAG 调度器（internal/dag/dag_orchestrator）。
+	SchedulerModeDagV1 = "dag_v1"
+	// SchedulerModeNodeV1 是单节点调度路径。
+	// SchedulerModeNodeV1 = "node_v1"
+	// SchedulerModeDynamicV2 是动态物化调度器（internal/dag/dag_orchestrator_v2）。
+	SchedulerModeDynamicV2 = "dynamic_v2"
+	// SchedulerModeDataflowV3 是数据流调度器（internal/dag/dag_orchestrator_v3）。
+	SchedulerModeDataflowV3 = "dataflow_v3"
+)
+
+// NormalizeSchedulerMode 归一化 scheduler_mode，空值按 legacy DAG 调度器处理。
+func NormalizeSchedulerMode(mode string) string {
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode == "" {
+		return SchedulerModeDagV1
+	}
+	return mode
+}
+
+// SchedulerModeHasDedicatedRecovery 报告该模式是否已有自己的恢复入口。
+//
+// 若返回 true，其它调度器的 RecoverRunningAnalyses 必须跳过该 analysis：
+// 否则同一个分析会被两个调度器同时接管（双跑），而其中一个用的是错误的调度器。
+func SchedulerModeHasDedicatedRecovery(mode string) bool {
+	switch NormalizeSchedulerMode(mode) {
+	case SchedulerModeDynamicV2:
+		return true
+	default:
+		// TODO: dataflow_v3 补上独立恢复入口后在此登记。
+		return false
+	}
+}
 
 func (Analysis) TableName() string {
 	return "nextflow"
@@ -272,4 +327,7 @@ type AnalysisControllerSaveInput struct {
 	Project             *Project
 	IsRunNode           bool
 	IsReport            bool
+	// SchedulerMode 由各控制入口显式声明，标识谁来推进这次分析。
+	// 为空时保持库中原值不变（更新路径）或按 legacy 处理（新建路径）。
+	SchedulerMode string
 }

@@ -3,6 +3,8 @@ package interfaces
 import (
 	"context"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 // DagRunningInfo describes an in-flight DAG run tracked by the orchestrator.
@@ -25,6 +27,16 @@ type DagRunningInfo struct {
 // without changing the existing DAG orchestrator behavior.
 type DynamicDagOrchestrator interface {
 	StartAsyncV2(ctx context.Context, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error
+	// RecoverRunningAnalyses adopts a single analysis owned by dynamic_v2.
+	//
+	// The container recovery loop fetches every running/stopping analysis and
+	// routes each one here (or to the legacy orchestrator) according to
+	// scheduler_mode, so this method no longer scans the tables itself:
+	//   - running:  a stale-lease run is restarted with resume semantics.
+	//   - stopping: a live run is cancelled, otherwise the analysis is finalized.
+	//
+	// It reports whether a live run is now tracked in this process.
+	RecoverRunningAnalyses(ctx context.Context, item *types.Analysis) (bool, error)
 	// GetRunningInfo returns the in-memory running entry for analysisID, or nil when the DAG is not running.
 	GetRunningInfo(ctx context.Context, analysisID int64) (*DagRunningInfo, error)
 	// RequestStop asks the in-process run to stop and reports whether this process

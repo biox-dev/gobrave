@@ -13,6 +13,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/manager"
+	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
@@ -202,6 +203,16 @@ func (o *Orchestrator) RequestStop(analysisID int64) bool {
 		return false
 	}
 	return o.registry.RequestStop(analysisID)
+}
+
+// RecoverRunningAnalyses satisfies interfaces.DynamicDagOrchestrator.
+//
+// This implementation is not registered in the DI container, so it never persists
+// scheduler_mode = dynamic_v2 and owns no analyses to recover. Recovery is served by
+// the wired orchestrator in internal/dag/dag_orchestrator_v2 (see its recovery_v2.go),
+// which the container recovery loop dispatches to by scheduler_mode.
+func (o *Orchestrator) RecoverRunningAnalyses(_ context.Context, _ *types.Analysis) (bool, error) {
+	return false, nil
 }
 
 // supervise owns the run lifecycle: lease heartbeat, terminal status

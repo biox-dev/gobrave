@@ -489,39 +489,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// 	manager.RunImageStatusRefreshOnStart(imageMgr)
 	// }))
 
-	// Startup DAG recovery
-	must(container.Invoke(func(cfg *config.Config, orchestrator interfaces.DagOrchestrator) {
-		enabled := true
-		if cfg != nil && cfg.Container != nil {
-			enabled = cfg.Container.RecoverRunningDagOnStart
-		}
-		if !enabled {
-			logger.Infof(context.Background(), "[Container] startup running DAG recovery disabled by config")
-			return
-		}
-
-		recovered, err := orchestrator.RecoverRunningAnalyses(context.Background())
-		if err != nil {
-			logger.Warnf(context.Background(), "[Container] startup running DAG recovery failed: %v", err)
-		} else {
-			logger.Infof(context.Background(), "[Container] startup running DAG recovery completed, recovered=%d", recovered)
-		}
-
-		go func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for range ticker.C {
-				recovered, err := orchestrator.RecoverRunningAnalyses(context.Background())
-				if err != nil {
-					logger.Warnf(context.Background(), "[Container] periodic running DAG recovery failed: %v", err)
-					continue
-				}
-				if recovered > 0 {
-					logger.Infof(context.Background(), "[Container] periodic running DAG recovery completed, recovered=%d", recovered)
-				}
-			}
-		}()
-	}))
+	// Startup DAG recovery: a single unified entry that fetches every
+	// running/stopping analysis and dispatches each to the scheduler that owns it
+	// (by scheduler_mode). See dag.RecoverDag for details.
+	must(container.Invoke(dag.RecoverDag))
 	must(container.Invoke(manager.RunOutboxDispatcher))
 
 	// The worker is subscribed to the event bus via dig.Group("event_handlers")

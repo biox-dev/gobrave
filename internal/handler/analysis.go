@@ -435,6 +435,7 @@ func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 		IsRunNode:           req.IsSubmit,
 		IsReport:            req.IsReport,
 		Project:             project,
+		SchedulerMode:       types.SchedulerModeDagV1,
 	})
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to save analysis").WithDetails(err.Error()))
@@ -537,6 +538,7 @@ func (h *AnalysisHandler) SaveAnalysisControllerV2(c *gin.Context) {
 		IsRunNode:           req.IsSubmit,
 		IsReport:            req.IsReport,
 		Project:             project,
+		SchedulerMode:       types.SchedulerModeDynamicV2,
 	})
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to save analysis").WithDetails(err.Error()))
@@ -1783,6 +1785,7 @@ func (h *AnalysisHandler) SaveAnalysisControllerV3(c *gin.Context) {
 		IsRunNode:           req.IsSubmit,
 		IsReport:            req.IsReport,
 		Project:             project,
+		SchedulerMode:       types.SchedulerModeDataflowV3,
 	})
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to save analysis").WithDetails(err.Error()))
@@ -1822,23 +1825,42 @@ func (h *AnalysisHandler) StopAnalysis(c *gin.Context) {
 		return
 	}
 
-	// 优先走 V2 动态调度器的进程内停止：RequestStop 会落库 stopping 并取消该运行的
-	// 上下文，由 V2 调度器自行收敛终态，避免 legacy 与 V2 同时接管同一次分析。
-	if h.dynamicDagOrchestrator != nil && h.dynamicDagOrchestrator.RequestStop(analysisIDInt) {
-		c.JSON(http.StatusAccepted, gin.H{
-			"analysis_id":  analysisID,
-			"job_status":   "stopping",
-			"stop_started": true,
-		})
+	// 停止请求必须交给当初推进该分析的调度器：各调度器的运行态只存在于自己的进程内，
+	// 交给错误的调度器会漏停（原调度器继续推进）或让两个调度器同时接管同一次分析。
+	// scheduler_mode 为空/未知时按 legacy DAG 调度器处理（见 types.NormalizeSchedulerMode）。
+	analysis, err := h.analysisRepo.GetAnalysisByID(c.Request.Context(), analysisIDInt)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("analysis not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get analysis").WithDetails(err.Error()))
 		return
 	}
 
-	// 兜底：本进程未持有 V2 运行态（legacy 提交的分析，或 V2 运行在其它实例上）。
-	// legacy StopAsync 会把 job_status 写成 stopping，作为跨实例停止信号，
-	// V2 运行循环通过 shouldStopByJobStatus 轮询到该标志后优雅退出。
-	if err := h.dagOrchestrator.StopAsync(c.Request.Context(), analysisIDInt); err != nil {
-		c.Error(errors.NewInternalServerError("failed to stop dag scheduler").WithDetails(err.Error()))
-		return
+	switch types.NormalizeSchedulerMode(analysis.SchedulerMode) {
+	case types.SchedulerModeDynamicV2:
+		// V2 运行在本进程：RequestStop 落库 stopping 并取消该运行的上下文，
+		// 由 V2 调度器自行收敛终态。
+		if h.dynamicDagOrchestrator.RequestStop(analysisIDInt) {
+			c.Error(errors.NewInternalServerError("failed to request stop for dynamic dag scheduler"))
+			return
+		}
+
+	case types.SchedulerModeDagV1:
+		// TODO: V3 还没有独立的停止入口（同 types.SchedulerModeHasDedicatedRecovery 的 TODO）。
+		// 在 h.dataflowDagOrchestrator 提供 RequestStop 之前，先按持久化停止信号处理，
+		// 由 legacy StopAsync 落库 stopping 并收尾；补齐后应改为调用 V3 自己的停止入口。
+		if err := h.dagOrchestrator.StopAsync(c.Request.Context(), analysisIDInt); err != nil {
+			c.Error(errors.NewInternalServerError("failed to stop dag scheduler").WithDetails(err.Error()))
+			return
+		}
+	default:
+		// legacy DAG 调度器（dag_v1，含历史空值）以及 node_v1 等无独立停止入口的模式。
+		if err := h.dagOrchestrator.StopAsync(c.Request.Context(), analysisIDInt); err != nil {
+			c.Error(errors.NewInternalServerError("failed to stop dag scheduler").WithDetails(err.Error()))
+			return
+		}
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{

@@ -38,15 +38,16 @@ const (
 	// dynamicV2WatchdogInterval is a safety net in case runtime events are dropped.
 	dynamicV2WatchdogInterval = 5 * time.Second
 
-	// dynamicV2StatusStopping is the persisted stop flag polled by the run loop.
-	// It doubles as the cross-instance stop signal when another instance owns the run.
-	dynamicV2StatusStopping = "stopping"
-	// dynamicV2StatusStopped is the terminal job status for a user-stopped run.
-	dynamicV2StatusStopped = "stopped"
-	// dynamicV2StatusFinished is the terminal job status for a fully completed run.
-	dynamicV2StatusFinished = "finished"
-	// dynamicV2StatusFailed is the terminal job status for a run that aborted.
-	dynamicV2StatusFailed = "failed"
+	// Analysis job statuses are shared with the other schedulers through types, so
+	// the unified recovery entry can reason about running/stopping uniformly.
+	// dynamicV2StatusStopping doubles as the cross-instance stop signal when
+	// another instance owns the run.
+	dynamicV2StatusStopping = types.AnalysisStatusStopping
+	dynamicV2StatusStopped  = types.AnalysisStatusStopped
+	dynamicV2StatusFinished = types.AnalysisStatusFinished
+	dynamicV2StatusFailed   = types.AnalysisStatusFailed
+	// dynamicV2StatusRunning is the job status while this scheduler owns the run.
+	dynamicV2StatusRunning = types.AnalysisStatusRunning
 )
 
 // dynamicDagOrchestratorV2 provides a Nextflow-like dynamic materialization path
@@ -62,6 +63,12 @@ type dynamicDagOrchestratorV2 struct {
 	repo interfaces.AnalysisRepository
 	// workflowRepo is used by runtime preparer/dispatcher for script/runtime metadata.
 	workflowRepo interfaces.WorkflowRepository
+	// workflowService rebuilds the DAG definition during recovery, using the same
+	// source as the submit handler so recovered templates match the original run.
+	workflowService interfaces.WorkflowService
+	// containerRepo lets recovery tell nodes whose container is still alive (and must
+	// therefore not be re-dispatched) apart from nodes abandoned by a crashed process.
+	containerRepo interfaces.ContainerRepository
 	// dispatcher is the DI-injected node dispatcher that performs actual node execution.
 	dispatcher *dagruntime.NodeDispatcher
 	// preparer is the DI-injected node runtime preparer, shared with NodeDispatcher so
@@ -88,6 +95,8 @@ type dynamicDagOrchestratorV2 struct {
 func NewDynamicDagOrchestratorV2(
 	repo interfaces.AnalysisRepository,
 	workflowRepo interfaces.WorkflowRepository,
+	workflowService interfaces.WorkflowService,
+	containerRepo interfaces.ContainerRepository,
 	dispatcher *dagruntime.NodeDispatcher,
 	preparer prepare.NodeRuntimePreparer,
 	bus event.Bus,
@@ -101,13 +110,15 @@ func NewDynamicDagOrchestratorV2(
 	}
 
 	return &dynamicDagOrchestratorV2{
-		repo:         repo,
-		workflowRepo: workflowRepo,
-		dispatcher:   dispatcher,
-		preparer:     preparer,
-		bus:          bus,
-		registry:     dagruntime.NewRunningRegistry(),
-		router:       router,
+		repo:            repo,
+		workflowRepo:    workflowRepo,
+		workflowService: workflowService,
+		containerRepo:   containerRepo,
+		dispatcher:      dispatcher,
+		preparer:        preparer,
+		bus:             bus,
+		registry:        dagruntime.NewRunningRegistry(),
+		router:          router,
 	}
 }
 
@@ -120,6 +131,18 @@ func NewDynamicDagOrchestratorV2(
 // 4) Register running state + heartbeat renewer.
 // 5) Spawn run loop goroutine that performs dynamic materialization and dispatch.
 func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
+	return o.startAsyncV2(ctx, analysisID, parseAnalysisResult, dagDefinition, false)
+}
+
+// startAsyncV2 is the single entry shared by fresh submissions (resume=false) and
+// crash recovery (resume=true), so both paths keep identical lease and sink semantics.
+//
+// resume=true means "adopt an analysis that already exists":
+//   - prepareAnalysisForCacheRerun is skipped. Otherwise CacheTypeRerunAll would delete
+//     every existing node and turn a restart into a full rerun from scratch.
+//   - After winning the lease, in-flight nodes abandoned by the crashed process are
+//     rolled back so they can be dispatched again.
+func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any, resume bool) error {
 	if analysisID <= 0 {
 		return fmt.Errorf("analysis_id is required")
 	}
@@ -135,6 +158,7 @@ func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID 
 	}
 	if !locked {
 		// Lease is already held by another active scheduler.
+		// Returning here is also what protects a live run's node states from being rewritten.
 		return nil
 	}
 
@@ -144,7 +168,19 @@ func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID 
 
 	o.publishDagRuntimeEvent(dagruntime.EventDagStarted, analysisID, nil)
 
-	if err := o.prepareAnalysisForCacheRerun(ctx, analysisID); err != nil {
+	if resume {
+		// In-flight nodes left by the crashed process are neither re-dispatchable nor
+		// terminal, so they would deadlock the graph. They must be rolled back first.
+		if err := o.prepareNodesForResume(ctx, analysisID); err != nil {
+			o.router.unregister(analysisID)
+			_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
+				"job_status": dynamicV2StatusFailed,
+				"updated_at": time.Now().UTC(),
+			})
+			o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, map[string]any{"reason": err.Error()})
+			return fmt.Errorf("prepare nodes for resume failed: %w", err)
+		}
+	} else if err := o.prepareAnalysisForCacheRerun(ctx, analysisID); err != nil {
 		o.router.unregister(analysisID)
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
 			"job_status": dynamicV2StatusFailed,
@@ -176,7 +212,7 @@ func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID 
 		MaxConcurrency: 1,
 		QueueSize:      64,
 		PollIntervalMs: 500,
-		Status:         "running",
+		Status:         dynamicV2StatusRunning,
 		Cancel:         runCancel,
 	})
 

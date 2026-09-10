@@ -16,16 +16,19 @@ import (
 )
 
 const (
-	cleanupPolicyNone      = "none"
-	cleanupPolicyStop      = "stop"
-	cleanupPolicyDelete    = "delete"
-	analysisRunLeaseTTL    = 90 * time.Second
-	analysisRunHeartbeat   = 15 * time.Second
-	analysisStatusRunning  = "running"
-	analysisStatusStopping = "stopping"
-	analysisStatusStopped  = "stopped"
-	analysisStatusFinished = "finished"
-	analysisStatusFailed   = "failed"
+	cleanupPolicyNone   = "none"
+	cleanupPolicyStop   = "stop"
+	cleanupPolicyDelete = "delete"
+	analysisRunLeaseTTL = 90 * time.Second
+	// analysisRunHeartbeat is the interval for lease renewal while a run is active.
+	analysisRunHeartbeat = 15 * time.Second
+	// Analysis statuses are shared with the other schedulers through types, so the
+	// unified recovery entry can reason about running/stopping uniformly.
+	analysisStatusRunning  = types.AnalysisStatusRunning
+	analysisStatusStopping = types.AnalysisStatusStopping
+	analysisStatusStopped  = types.AnalysisStatusStopped
+	analysisStatusFinished = types.AnalysisStatusFinished
+	analysisStatusFailed   = types.AnalysisStatusFailed
 )
 
 type dagOrchestrator struct {
@@ -152,7 +155,7 @@ func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64) erro
 				if cleanupErr := o.cleanupByAnalysisIDStrict(context.Background(), analysisID, cleanupPolicyDelete); cleanupErr == nil {
 					finalStatus = analysisStatusStopped
 				} else {
-					logger.Warnf(context.Background(), "[DagOrchestrator] stop cleanup failed after scheduler error, analysis_id=%s err=%v", analysisID, cleanupErr)
+					logger.Warnf(context.Background(), "[DagOrchestrator] stop cleanup failed after scheduler error, analysis_id=%d err=%v", analysisID, cleanupErr)
 				}
 			} else {
 				o.cleanupByAnalysisID(context.Background(), analysisID, onDagFinishedCleanupPolicy)
@@ -171,7 +174,7 @@ func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64) erro
 			_ = o.markActiveNodesStopped(context.Background(), analysisID, "dag stopped by user")
 			if cleanupErr := o.cleanupByAnalysisIDStrict(context.Background(), analysisID, cleanupPolicyDelete); cleanupErr != nil {
 				finalStatus = analysisStatusFailed
-				logger.Warnf(context.Background(), "[DagOrchestrator] stop cleanup failed, analysis_id=%s err=%v", analysisID, cleanupErr)
+				logger.Warnf(context.Background(), "[DagOrchestrator] stop cleanup failed, analysis_id=%d err=%v", analysisID, cleanupErr)
 			} else {
 				finalStatus = analysisStatusStopped
 			}
@@ -243,46 +246,35 @@ func (o *dagOrchestrator) StopAsync(ctx context.Context, analysisID int64) error
 	return nil
 }
 
-func (o *dagOrchestrator) RecoverRunningAnalyses(ctx context.Context) (int, error) {
-	if o == nil || o.repo == nil {
-		return 0, nil
+// RecoverRunningAnalyses adopts a single analysis owned by the legacy scheduler.
+//
+// The container recovery loop fetches all running/stopping analyses and routes
+// each one here (or to the dynamic V2 orchestrator) according to scheduler_mode,
+// so this method no longer scans the tables itself:
+//   - running:  restart the run so it can continue after a crash.
+//   - stopping: converge the stop request, cancelling a live run or finalizing.
+//
+// It reports whether a live run is now tracked in this process.
+func (o *dagOrchestrator) RecoverRunningAnalyses(ctx context.Context, item *types.Analysis) (bool, error) {
+	if o == nil || o.repo == nil || item == nil || item.ID <= 0 {
+		return false, nil
 	}
 
-	items, err := o.repo.ListAnalysisByJobStatus(ctx, "running")
-	if err != nil {
-		return 0, err
-	}
-
-	recovered := 0
-	for _, item := range items {
-		if item == nil || item.ID <= 0 {
-			continue
+	switch strings.ToLower(strings.TrimSpace(item.JobStatus)) {
+	case analysisStatusStopping:
+		// StopAsync persists "stopping" and either cancels the live run or, when no
+		// process owns it, converges the analysis to a terminal stopped state.
+		if err := o.StopAsync(ctx, item.ID); err != nil {
+			return false, fmt.Errorf("recover stopping analysis failed: %w", err)
 		}
+		return false, nil
+	default:
 		wasRunning := o.registry != nil && o.registry.IsRunning(item.ID)
 		if err := o.StartAsync(ctx, item.ID); err != nil {
-			logger.Warnf(ctx, "[DagOrchestrator] recover running analysis failed, analysis_id=%d err=%v", item.ID, err)
-			continue
+			return false, fmt.Errorf("recover running analysis failed: %w", err)
 		}
-		isRunning := o.registry != nil && o.registry.IsRunning(item.ID)
-		if !wasRunning && isRunning {
-			recovered++
-		}
+		return !wasRunning && o.registry != nil && o.registry.IsRunning(item.ID), nil
 	}
-
-	stoppingItems, err := o.repo.ListAnalysisByJobStatus(ctx, analysisStatusStopping)
-	if err != nil {
-		return recovered, err
-	}
-	for _, item := range stoppingItems {
-		if item == nil || item.ID <= 0 {
-			continue
-		}
-		if err := o.StopAsync(ctx, item.ID); err != nil {
-			logger.Warnf(ctx, "[DagOrchestrator] recover stopping analysis failed, analysis_id=%d err=%v", item.ID, err)
-		}
-	}
-
-	return recovered, nil
 }
 
 func (o *dagOrchestrator) finalizeStop(analysisID int64) {
@@ -375,7 +367,7 @@ func (o *dagOrchestrator) prepareNodesForResume(ctx context.Context, analysisID 
 
 		status := strings.TrimSpace(strings.ToLower(node.Status))
 		hasContainer := instancesByOwner[int64(node.ID)] != nil
-		targetStatus, shouldReset := resumeNodeStatusForRestart(status, hasContainer)
+		targetStatus, shouldReset := dagruntime.ResumeNodeStatusForRestart(status, hasContainer)
 		if !shouldReset {
 			continue
 		}
@@ -391,21 +383,6 @@ func (o *dagOrchestrator) prepareNodesForResume(ctx context.Context, analysisID 
 	}
 
 	return nil
-}
-
-func resumeNodeStatusForRestart(status string, hasContainer bool) (string, bool) {
-	status = strings.TrimSpace(strings.ToLower(status))
-	switch status {
-	case dagruntime.StatusSubmitted:
-		return dagruntime.StatusReady, true
-	case dagruntime.StatusRunning:
-		if hasContainer {
-			return "", false
-		}
-		return dagruntime.StatusReady, true
-	default:
-		return "", false
-	}
 }
 
 func (o *dagOrchestrator) renewAnalysisRunningLease(analysisID int64, stop <-chan struct{}) {

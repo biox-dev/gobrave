@@ -235,6 +235,10 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 			if strings.TrimSpace(existing.JobStatus) != "running" {
 				updateValues["job_status"] = "updated"
 			}
+			// 只有显式声明调度器时才覆写，避免普通保存把原调度器信息抹掉。
+			if mode := strings.TrimSpace(input.SchedulerMode); mode != "" {
+				updateValues["scheduler_mode"] = types.NormalizeSchedulerMode(mode)
+			}
 			if err := tx.UpdateAnalysisByID(ctx, analysisID, updateValues); err != nil {
 				return err
 			}
@@ -261,6 +265,8 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 				CacheType:        cacheType,
 				DataComponentIDs: dataComponentIDs,
 				Used:             true,
+				// 未显式声明时落为 legacy，保证恢复入口能确定归属。
+				SchedulerMode: types.NormalizeSchedulerMode(input.SchedulerMode),
 			}
 			if err := tx.CreateAnalysis(ctx, newAnalysis); err != nil {
 				return err
