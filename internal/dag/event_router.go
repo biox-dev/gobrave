@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -13,6 +14,33 @@ import (
 // signal instead of silently dropping completion events, so scheduling
 // correctness never depends on the buffer being large enough.
 const eventSinkBufferSize = 256
+
+// EventSinkFilter decides whether a runtime event is worth delivering to a sink.
+//
+// It runs on the shared bus worker goroutine, so it must stay cheap and must
+// never block.
+type EventSinkFilter func(RuntimeEvent) bool
+
+// SchedulerEventFilter is the delivery whitelist for dynamic scheduler sinks.
+//
+// Only node terminal transitions can change dependency state, so only they can
+// produce new schedulable work. Everything else the bus carries for the same
+// analysis - node.submitted (the scheduler's own echo from pumpReadyQueue),
+// node.running, node.state_changed, and the dag.* lifecycle events the scheduler
+// publishes to itself - would only wake the loop for a no-op iteration that
+// re-reads the runtime snapshot. Dropping them before the buffer also keeps the
+// 256-entry window free for the events that actually matter.
+//
+// This only narrows what a sink receives; the bus is untouched, so other
+// subscribers (for example the realtime notifier) still observe every event.
+func SchedulerEventFilter(evt RuntimeEvent) bool {
+	switch strings.TrimSpace(evt.Name) {
+	case EventNodeCompleted, EventNodeFailed:
+		return true
+	default:
+		return false
+	}
+}
 
 // AnalysisEventSink is the per-analysis runtime event mailbox owned by one
 // running scheduler.
@@ -39,17 +67,28 @@ type AnalysisEventSink struct {
 	// closed marks the sink as retired. Producers must never write after this flag
 	// is set.
 	closed atomic.Bool
+	// keep is the optional delivery whitelist. It is set once at construction and
+	// never mutated, so the bus goroutine can read it without synchronization.
+	// A nil keep accepts every event.
+	keep EventSinkFilter
 }
 
-// NewAnalysisEventSink builds a detached sink.
+// NewAnalysisEventSink builds a detached sink that accepts every runtime event.
 //
 // Schedulers normally obtain their sink from EventRouter.Register. This
 // constructor exists for tests and for schedulers that run without a registered
 // router.
 func NewAnalysisEventSink() *AnalysisEventSink {
+	return newAnalysisEventSink(nil)
+}
+
+// newAnalysisEventSink is the single constructor, so the keep predicate can never
+// be silently omitted by one of the entrypoints above.
+func newAnalysisEventSink(keep EventSinkFilter) *AnalysisEventSink {
 	return &AnalysisEventSink{
 		events: make(chan RuntimeEvent, eventSinkBufferSize),
 		wake:   make(chan struct{}, 1),
+		keep:   keep,
 	}
 }
 
@@ -74,8 +113,14 @@ func (s *AnalysisEventSink) Wake() <-chan struct{} {
 }
 
 // Enqueue delivers one runtime event without ever blocking the caller.
+//
+// Events rejected by the sink's keep predicate are dropped before they can take a
+// buffer slot, so they neither displace a real event nor trip the overflow path.
 func (s *AnalysisEventSink) Enqueue(evt RuntimeEvent) {
 	if s == nil || s.closed.Load() {
+		return
+	}
+	if s.keep != nil && !s.keep(evt) {
 		return
 	}
 	select {
@@ -163,12 +208,23 @@ func (r *EventRouter) Handle(evt event.Event) {
 }
 
 // Register creates the sink for analysisID, or returns the existing one when the
-// analysis is already registered.
+// analysis is already registered. The sink accepts every runtime event.
 func (r *EventRouter) Register(analysisID int64) *AnalysisEventSink {
+	return r.RegisterWithFilter(analysisID, nil)
+}
+
+// RegisterWithFilter is Register plus a delivery filter: the sink only ever
+// receives events for which keep returns true. A nil keep accepts everything,
+// which is exactly Register's behaviour.
+//
+// Filtering happens before the buffer, so filtered-out events never occupy a slot
+// and the scheduler loop is never woken for them. The bus itself is not touched,
+// so other subscribers still see every event.
+func (r *EventRouter) RegisterWithFilter(analysisID int64, keep EventSinkFilter) *AnalysisEventSink {
 	if r == nil {
 		// Defensive: without a router the caller still gets a usable sink, it just
 		// never receives events (same contract as an unregistered analysis).
-		return NewAnalysisEventSink()
+		return newAnalysisEventSink(keep)
 	}
 
 	r.mu.Lock()
@@ -177,7 +233,7 @@ func (r *EventRouter) Register(analysisID int64) *AnalysisEventSink {
 	if sink, ok := r.sinks[analysisID]; ok {
 		return sink
 	}
-	sink := NewAnalysisEventSink()
+	sink := newAnalysisEventSink(keep)
 	r.sinks[analysisID] = sink
 	return sink
 }

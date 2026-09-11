@@ -1842,7 +1842,7 @@ func (h *AnalysisHandler) StopAnalysis(c *gin.Context) {
 	case types.SchedulerModeDynamicV2:
 		// V2 运行在本进程：RequestStop 落库 stopping 并取消该运行的上下文，
 		// 由 V2 调度器自行收敛终态。
-		if h.dynamicDagOrchestrator.RequestStop(analysisIDInt) {
+		if !h.dynamicDagOrchestrator.RequestStop(analysisIDInt) {
 			c.Error(errors.NewInternalServerError("failed to request stop for dynamic dag scheduler"))
 			return
 		}

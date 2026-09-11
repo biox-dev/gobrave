@@ -1214,7 +1214,9 @@ func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, project
 
 	// Runtime events reach this loop through the process-wide router via the
 	// analysis-scoped sink; no per-run bus subscription is created here.
-	sink := o.router.Register(analysisID)
+	// The filter restricts the sink to node terminal transitions, which are the only
+	// events this loop acts on (see onRuntimeEvent), so noise never wakes it.
+	sink := o.router.RegisterWithFilter(analysisID, dagruntime.SchedulerEventFilter)
 	defer o.router.Unregister(analysisID)
 
 	var kernel *dataflowKernel

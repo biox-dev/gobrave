@@ -176,3 +176,58 @@ func TestEventRouterConcurrentLifecycle(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestAnalysisEventSinkFilterDropsNoiseBeforeBuffer pins the property the
+// scheduler relies on: filtered-out events never reach the buffer, so even a
+// flood of them cannot overflow it, mark it dirty, or wake the loop.
+func TestAnalysisEventSinkFilterDropsNoiseBeforeBuffer(t *testing.T) {
+	router := NewEventRouter()
+	sink := router.RegisterWithFilter(21, SchedulerEventFilter)
+
+	// Far more noise than the buffer holds.
+	for i := 0; i < eventSinkBufferSize*4; i++ {
+		router.Handle(RuntimeEvent{Name: EventNodeRunning, AnalysisID: 21})
+		router.Handle(RuntimeEvent{Name: EventNodeSubmitted, AnalysisID: 21})
+		router.Handle(RuntimeEvent{Name: EventDagStarted, AnalysisID: 21})
+		router.Handle(RuntimeEvent{Name: EventNodeStateChange, AnalysisID: 21})
+	}
+
+	if got := len(sink.events); got != 0 {
+		t.Fatalf("filtered sink buffered %d noise events, want 0", got)
+	}
+	if sink.ConsumeDirty() {
+		t.Fatal("noise must not overflow the buffer and mark the sink dirty")
+	}
+	select {
+	case <-sink.Wake():
+		t.Fatal("noise must not wake the scheduler loop")
+	default:
+	}
+
+	// Terminal transitions still pass through, in publish order.
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 21, NodeID: "n1"})
+	router.Handle(RuntimeEvent{Name: EventNodeFailed, AnalysisID: 21, NodeID: "n2"})
+
+	if got, want := len(sink.events), 2; got != want {
+		t.Fatalf("filtered sink buffered %d events, want %d", got, want)
+	}
+	if evt := <-sink.events; evt.NodeID != "n1" || evt.Name != EventNodeCompleted {
+		t.Fatalf("first delivered event = %+v, want completed/n1", evt)
+	}
+	if evt := <-sink.events; evt.NodeID != "n2" || evt.Name != EventNodeFailed {
+		t.Fatalf("second delivered event = %+v, want failed/n2", evt)
+	}
+}
+
+// TestEventRouterRegisterAcceptsEveryEvent guards the unfiltered default: a plain
+// Register must stay permissive so the filter is strictly opt-in.
+func TestEventRouterRegisterAcceptsEveryEvent(t *testing.T) {
+	router := NewEventRouter()
+	sink := router.Register(22)
+
+	router.Handle(RuntimeEvent{Name: EventNodeRunning, AnalysisID: 22, NodeID: "n"})
+
+	if got, want := len(sink.events), 1; got != want {
+		t.Fatalf("unfiltered sink buffered %d events, want %d", got, want)
+	}
+}
