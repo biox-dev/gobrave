@@ -1235,7 +1235,7 @@ func (h *AnalysisHandler) SaveAnalysisControllerV3(c *gin.Context) {
 	}
 
 	response := gin.H{
-		"analysis_id":           saved.AnalysisID,
+		"analysis_id":           fmt.Sprint(saved.ID),
 		"dag_definition":        dagDefinition,
 		"parse_analysis_result": parseAnalysisResult,
 		"params":                parseAnalysisResult,

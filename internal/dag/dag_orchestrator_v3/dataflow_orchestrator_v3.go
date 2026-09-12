@@ -2,9 +2,6 @@ package orchestratorv3
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -15,13 +12,30 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/config"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
+	"github.com/biox-dev/gobrave/internal/dag/nodebuild"
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
-	"github.com/google/uuid"
+)
+
+const (
+	// dataflowV3LeaseTTL is how long a run's lease is considered valid without a heartbeat.
+	dataflowV3LeaseTTL = 90 * time.Second
+	// dataflowV3Heartbeat renews analysis.updated_at while the run is active.
+	dataflowV3Heartbeat = 15 * time.Second
+	// dataflowV3StopCheckInterval is how often the persisted stop flag is polled.
+	dataflowV3StopCheckInterval = 1 * time.Second
+
+	// Analysis job statuses are shared with the other schedulers through types, so
+	// the unified recovery entry can reason about running/stopping uniformly.
+	dataflowV3StatusRunning  = types.AnalysisStatusRunning
+	dataflowV3StatusStopping = types.AnalysisStatusStopping
+	dataflowV3StatusStopped  = types.AnalysisStatusStopped
+	dataflowV3StatusFinished = types.AnalysisStatusFinished
+	dataflowV3StatusFailed   = types.AnalysisStatusFailed
 )
 
 // dataflowDagOrchestratorV3 is the framework entry for a Nextflow-like
@@ -70,6 +84,288 @@ func NewDataflowDagOrchestratorV3(
 		cfg:    cfg,
 		router: router,
 	}
+}
+
+func (o *dataflowDagOrchestratorV3) StartAsyncV3(ctx context.Context, projectID int64, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
+	if analysisID <= 0 {
+		return fmt.Errorf("analysis_id is required")
+	}
+
+	bgCtx := context.Background()
+
+	// Acquire the cross-instance running lease. This is also what transitions the
+	// analysis from created/updated to running, so a run that never reaches the
+	// loop is still observable as running until it finalizes below.
+	if o.repo != nil {
+		now := time.Now().UTC()
+		locked, err := o.repo.TryMarkAnalysisRunning(bgCtx, analysisID, now, now.Add(-dataflowV3LeaseTTL))
+		if err != nil {
+			return err
+		}
+		if !locked {
+			// Lease is already held by another active scheduler; do not double-run.
+			logger.Warnf(bgCtx, "[DataflowDagOrchestratorV3] analysis already running, skip start, analysis_id=%d", analysisID)
+			return nil
+		}
+	}
+
+	// Register the analysis-scoped sink before the first event is published so no
+	// runtime event for this run is observed without a sink.
+	sink := o.router.RegisterWithFilter(analysisID, dagruntime.SchedulerEventFilter)
+
+	o.publishDagRuntimeEvent(dagruntime.EventDagStarted, analysisID, nil)
+
+	heartbeatStop := make(chan struct{})
+	go o.renewRunningLease(analysisID, heartbeatStop)
+
+	go func() {
+		defer o.router.Unregister(analysisID)
+		defer close(heartbeatStop)
+
+		finalStatus := dataflowV3StatusFinished
+		var finalErr error
+		if err := o.runStartAsyncV3(bgCtx, projectID, analysisID, sink, parseAnalysisResult, dagDefinition); err != nil {
+			finalStatus = dataflowV3StatusFailed
+			finalErr = err
+			logger.Errorf(bgCtx, "[DataflowDagOrchestratorV3] async run failed, analysis_id=%d err=%v", analysisID, err)
+		}
+		if o.isStopRequested(bgCtx, analysisID) {
+			// A persisted stop request wins over the loop result.
+			finalStatus = dataflowV3StatusStopped
+			finalErr = nil
+		}
+
+		if finalStatus == dataflowV3StatusFinished {
+			o.publishDagRuntimeEvent(dagruntime.EventDagCompleted, analysisID, map[string]any{"status": finalStatus})
+		} else {
+			payload := map[string]any{"status": finalStatus}
+			if finalErr != nil {
+				payload["reason"] = finalErr.Error()
+			}
+			if finalStatus == dataflowV3StatusStopped {
+				payload["reason"] = "stopped"
+			}
+			o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, payload)
+		}
+
+		o.markAnalysisStatus(bgCtx, analysisID, finalStatus)
+	}()
+
+	return nil
+}
+
+func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, projectID int64, analysisID int64, sink *dagruntime.AnalysisEventSink, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
+	if err := o.prepareAnalysisByCacheTypeV3(ctx, analysisID); err != nil {
+		return fmt.Errorf("prepare analysis by cache_type failed: %w", err)
+	}
+
+	spec := o.buildGraphSpec(analysisID, dagDefinition)
+	o.logFrameworkPhase(ctx, spec)
+
+	// runtimeEngine := dagruntime.NewRuntimeEngine(o.repo)
+	// storageBase := ""
+	// if o.cfg != nil && o.cfg.Storage != nil {
+	// 	storageBase = strings.TrimSpace(o.cfg.Storage.BaseDir)
+	// }
+	// preparer := dagruntime.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, storageBase, o.runScriptBuilders)
+	// dispatcher := dagruntime.NewNodeDispatcher(
+	// 	runtimeEngine,
+	// 	o.repo,
+	// 	o.bus,
+	// 	executor.NewFactory(executor.FactoryDeps{
+	// 		WorkflowRepository: o.workflowRepo,
+	// 		ContainerManager:   o.containerMgr,
+	// 	}),
+	// 	nil,
+	// 	preparer,
+	// )
+
+	// Runtime events reach this loop through the process-wide router via the
+	// analysis-scoped sink registered by the caller; no per-run bus subscription is
+	// created here. The filter restricts the sink to node terminal transitions, which
+	// are the only events this loop acts on (see onRuntimeEvent), so noise never wakes it.
+	var kernel *dataflowKernel
+	runtime := &persistentDataflowRuntime{
+		repo:       o.repo,
+		dispatcher: o.dispatcher,
+		onNodeSubmitChange: func(nodeID string, delta int) {
+			if kernel == nil {
+				return
+			}
+			kernel.adjustSubmittedCount(nodeID, delta)
+		},
+		buildPersistParams: func(req DataflowProcessRunRequest) (*DataflowAnalysisNodePersistParams, bool) {
+			if kernel == nil {
+				return nil, false
+			}
+			return kernel.buildAnalysisNodePersistParams(req)
+		}, workflowRepo: o.workflowRepo,
+		projectID: projectID,
+	}
+	kernel = newDataflowKernel(spec, runtime, parseAnalysisResult)
+	kernel.repo = o.repo
+	if err := kernel.bootstrapSourceProcesses(ctx); err != nil {
+		return err
+	}
+	// if err := kernel.closeAll(ctx); err != nil {
+	// 	return err
+	// }
+
+	idleWindow := 200 * time.Millisecond
+	idleTimer := time.NewTimer(idleWindow)
+	defer idleTimer.Stop()
+
+	// Poll the persisted stop flag set by external control APIs so a stop request
+	// converges the run instead of being ignored until completion.
+	stopTicker := time.NewTicker(dataflowV3StopCheckInterval)
+	defer stopTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-stopTicker.C:
+			if o.isStopRequested(ctx, analysisID) {
+				return nil
+			}
+		case evt := <-sink.Events():
+			runtime.onRuntimeEvent(evt)
+			eventName := strings.TrimSpace(evt.Name)
+			switch eventName {
+			case dagruntime.EventNodeCompleted:
+				if err := kernel.onNodeCompleted(ctx, evt.AnalysisNodeID); err != nil {
+					return err
+				}
+			case dagruntime.EventNodeFailed:
+				if err := kernel.onNodeFailed(ctx, evt.AnalysisNodeID); err != nil {
+					return err
+				}
+			default:
+				continue
+			}
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C:
+				default:
+				}
+			}
+			idleTimer.Reset(idleWindow)
+		case <-idleTimer.C:
+			inflight := runtime.InflightDispatches()
+			if inflight == 0 {
+				select {
+				case evt := <-sink.Events():
+					runtime.onRuntimeEvent(evt)
+					eventName := strings.TrimSpace(evt.Name)
+					if eventName == dagruntime.EventNodeCompleted {
+						if err := kernel.onNodeCompleted(ctx, evt.AnalysisNodeID); err != nil {
+							return err
+						}
+					} else if eventName == dagruntime.EventNodeFailed {
+						if err := kernel.onNodeFailed(ctx, evt.AnalysisNodeID); err != nil {
+							return err
+						}
+					}
+					idleTimer.Reset(idleWindow)
+				default:
+					if kernel.checkFinished(inflight) {
+						return nil
+					}
+					idleTimer.Reset(idleWindow)
+				}
+				continue
+			}
+			idleTimer.Reset(idleWindow)
+		}
+	}
+}
+
+// markAnalysisStatus persists the analysis job_status together with updated_at.
+// Terminal statuses (finished/failed/stopped) flow through the same entry as
+// running, so every status change is observable in the nextflow table.
+func (o *dataflowDagOrchestratorV3) markAnalysisStatus(ctx context.Context, analysisID int64, status string) {
+	if o == nil || o.repo == nil || analysisID <= 0 || strings.TrimSpace(status) == "" {
+		return
+	}
+	if err := o.repo.UpdateAnalysisByID(ctx, analysisID, map[string]any{
+		"job_status": status,
+		"updated_at": time.Now().UTC(),
+	}); err != nil {
+		logger.Warnf(ctx,
+			"[DataflowDagOrchestratorV3] update analysis job_status failed, analysis_id=%d status=%s err=%v",
+			analysisID,
+			status,
+			err,
+		)
+	}
+}
+
+// shouldStopByJobStatus checks the persistent stop flags set by external control APIs.
+func (o *dataflowDagOrchestratorV3) shouldStopByJobStatus(ctx context.Context, analysisID int64) (bool, error) {
+	if o == nil || o.repo == nil || analysisID <= 0 {
+		return false, nil
+	}
+	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
+	if err != nil {
+		return false, err
+	}
+	if analysis == nil {
+		return false, nil
+	}
+	status := strings.ToLower(strings.TrimSpace(analysis.JobStatus))
+	return status == dataflowV3StatusStopping || status == dataflowV3StatusStopped, nil
+}
+
+// isStopRequested reports whether a persisted stopping/stopped flag was written
+// by an external control API (V3 has no in-process stop entry yet).
+func (o *dataflowDagOrchestratorV3) isStopRequested(ctx context.Context, analysisID int64) bool {
+	stopped, err := o.shouldStopByJobStatus(ctx, analysisID)
+	if err != nil {
+		logger.Warnf(ctx,
+			"[DataflowDagOrchestratorV3] resolve stop flag failed, analysis_id=%d err=%v",
+			analysisID,
+			err,
+		)
+		return false
+	}
+	return stopped
+}
+
+// renewRunningLease periodically updates analysis.updated_at so stale-lock
+// recovery can tell a live scheduler apart from an abandoned run.
+func (o *dataflowDagOrchestratorV3) renewRunningLease(analysisID int64, stop <-chan struct{}) {
+	ticker := time.NewTicker(dataflowV3Heartbeat)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			if o.repo == nil {
+				continue
+			}
+			_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
+				"updated_at": time.Now().UTC(),
+			})
+		}
+	}
+}
+
+// publishDagRuntimeEvent emits a DAG lifecycle event so the realtime notifier can
+// push started/completed/failed to the frontend, matching V2 and legacy behavior.
+func (o *dataflowDagOrchestratorV3) publishDagRuntimeEvent(name string, analysisID int64, payload map[string]any) {
+	if o == nil || o.bus == nil || analysisID <= 0 {
+		return
+	}
+	evt := dagruntime.RuntimeEvent{
+		Name:       name,
+		AnalysisID: analysisID,
+		OccurredAt: time.Now().UTC(),
+	}
+	if len(payload) > 0 {
+		evt.Payload = payload
+	}
+	o.bus.Publish(evt)
 }
 
 // DataflowGraphSpec is a V3 planning view converted from dag_definition.
@@ -253,7 +549,7 @@ type loggingDataflowRuntime struct {
 
 func (r *loggingDataflowRuntime) SubmitProcessInstance(ctx context.Context, req DataflowProcessRunRequest) error {
 	logger.Infof(ctx,
-		"[DataflowDagOrchestratorV3] submit process instance, analysis_id=%s node_id=%s reason=%s inputs=%d",
+		"[DataflowDagOrchestratorV3] submit process instance, analysis_id=%d node_id=%s reason=%s inputs=%d",
 		req.AnalysisID,
 		req.NodeID,
 		req.Reason,
@@ -280,7 +576,7 @@ type persistentDataflowRuntime struct {
 
 func (r *persistentDataflowRuntime) SubmitProcessInstance(ctx context.Context, req DataflowProcessRunRequest) error {
 	logger.Infof(ctx,
-		"[DataflowDagOrchestratorV3] submit process instance, analysis_id=%s node_id=%s reason=%s inputs=%d",
+		"[DataflowDagOrchestratorV3] submit process instance, analysis_id=%d node_id=%s reason=%s inputs=%d",
 		req.AnalysisID,
 		req.NodeID,
 		req.Reason,
@@ -316,7 +612,7 @@ func (r *persistentDataflowRuntime) SubmitProcessInstance(ctx context.Context, r
 					}
 					if rollbackErr := r.rollbackSubmittedNodeOnDispatchError(ctx, node.ID); rollbackErr != nil {
 						logger.Warnf(ctx,
-							"[DataflowDagOrchestratorV3] rollback submitted node failed, analysis_id=%s node_id=%s analysis_node_id=%s err=%v",
+							"[DataflowDagOrchestratorV3] rollback submitted node failed, analysis_id=%d node_id=%s analysis_node_id=%s err=%v",
 							req.AnalysisID,
 							req.NodeID,
 							node.AnalysisNodeID,
@@ -371,14 +667,17 @@ func (r *persistentDataflowRuntime) persistAnalysisNode(ctx context.Context, pay
 		return nil, false, nil
 	}
 	if payload.InputHash == "" {
-		payload.InputHash = buildDataflowInstanceInputHash(payload.NodeID, payload.ResolvedInputs, payload.Params)
+		payload.InputHash = nodebuild.InstanceInputHash(payload.NodeID, types.JSONMap(payload.ResolvedInputs), types.JSONMap(payload.Params))
 	}
 
 	existingNodes, err := r.repo.ListAnalysisNodesByAnalysisID(ctx, payload.AnalysisID)
 	if err != nil {
 		return nil, false, err
 	}
-	existing := findPersistedNodeInstance(existingNodes, payload.NodeID, payload.InputHash)
+	// MatchInstance is the shared identity lookup: an exact instance hash wins, and a
+	// legacy successful row with the same node id is still reusable. Because the hash
+	// algorithm lives in nodebuild, this also matches nodes materialized by V2.
+	existing := nodebuild.MatchInstance(existingNodes, payload.NodeID, payload.InputHash)
 	if existing != nil {
 		logger.Infof(ctx,
 			"[DataflowDagOrchestratorV3] skip persist duplicated analysis node instance, analysis_id=%d node_id=%s input_hash=%s",
@@ -393,8 +692,10 @@ func (r *persistentDataflowRuntime) persistAnalysisNode(ctx context.Context, pay
 	if err != nil {
 		return nil, false, err
 	}
-	item := buildAnalysisNodeFromPersistPayload(script, payload)
-	r.populateNodePathDefaults(ctx, item)
+	item, err := r.buildAnalysisNode(ctx, script, payload)
+	if err != nil {
+		return nil, false, err
+	}
 	if err := r.repo.CreateAnalysisNodes(ctx, []*types.AnalysisNode{item}); err != nil {
 		return nil, false, err
 	}
@@ -460,42 +761,6 @@ func (r *persistentDataflowRuntime) lookupAnalysisOutputDir(ctx context.Context,
 	return strings.TrimSpace(analysis.OutputDir)
 }
 
-func findPersistedNodeInstance(items []*types.AnalysisNode, nodeID string, inputHash string) *types.AnalysisNode {
-	nodeID = strings.TrimSpace(nodeID)
-	inputHash = strings.TrimSpace(inputHash)
-	if nodeID == "" || inputHash == "" {
-		return nil
-	}
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		if strings.TrimSpace(item.NodeID) != nodeID {
-			continue
-		}
-		if strings.TrimSpace(item.InputHash) != inputHash {
-			continue
-		}
-		return item
-	}
-	return nil
-}
-
-func buildDataflowInstanceInputHash(nodeID string, resolvedInputs map[string]any, params map[string]any) string {
-	payload := map[string]any{
-		"node_id":         strings.TrimSpace(nodeID),
-		"resolved_inputs": cloneInputs(resolvedInputs),
-		"params":          cloneInputs(params),
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		fallback := sha256.Sum256([]byte(strings.TrimSpace(nodeID)))
-		return hex.EncodeToString(fallback[:])
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
-}
-
 func (r *persistentDataflowRuntime) incrementInflight(analysisNodeID int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -542,44 +807,63 @@ func (r *persistentDataflowRuntime) InflightDispatches() int {
 	return r.inflightDispatches
 }
 
-func buildAnalysisNodeFromPersistPayload(script *types.Script, payload *DataflowAnalysisNodePersistParams) *types.AnalysisNode {
-	status := strings.ToLower(strings.TrimSpace(payload.Status))
-	if status == "" {
-		status = "ready"
+// buildAnalysisNode translates a normalized persist payload into an
+// analysis_node row through the shared nodebuild builder, so V3 nodes carry the
+// same workspace layout and instance identity as V2 nodes.
+func (r *persistentDataflowRuntime) buildAnalysisNode(ctx context.Context, script *types.Script, payload *DataflowAnalysisNodePersistParams) (*types.AnalysisNode, error) {
+	analysis, err := r.repo.GetAnalysisByID(ctx, payload.AnalysisID)
+	if err != nil {
+		return nil, err
+	}
+	if analysis == nil {
+		analysis = &types.Analysis{ID: payload.AnalysisID, ProjectID: r.projectID}
 	}
 
-	return &types.AnalysisNode{
-		ID:                     utils.GenerateID(),
-		AnalysisNodeID:         "node-" + uuid.NewString(),
-		AnalysisID:             payload.AnalysisID,
-		NodeID:                 strings.TrimSpace(payload.NodeID),
-		NodeName:               strings.TrimSpace(payload.NodeName),
-		SampleID:               strings.TrimSpace(payload.SampleID),
-		ScriptID:               script.ID,
-		InputsPatterns:         dynamicToJSONMap(payload.InputsPatterns),
-		ResolvedInputs:         dynamicToJSONMap(payload.ResolvedInputs),
-		OutputPatterns:         dynamicToJSONMap(payload.OutputPatterns),
-		ResolvedOutputs:        dynamicToJSONMap(payload.ResolvedOutputs),
-		Params:                 dynamicToJSONMap(payload.Params),
-		InputHash:              strings.TrimSpace(payload.InputHash),
-		Status:                 status,
-		Executor:               strings.TrimSpace(payload.Executor),
-		Retry:                  payload.Retry,
-		MaxRetry:               payload.MaxRetry,
-		CacheHit:               false,
-		UpstreamIDs:            types.JSONSlice(dynamicStringSliceToAny(payload.UpstreamIDs)),
-		DownstreamIDs:          types.JSONSlice(dynamicStringSliceToAny(payload.DownstreamIDs)),
-		InputValidationErrors:  types.JSONSlice{},
-		OutputValidationErrors: types.JSONSlice{},
-		RerunReason:            strings.TrimSpace(payload.RerunReason),
-		WorkspaceDir:           strings.TrimSpace(payload.WorkspaceDir),
-		OutputDir:              strings.TrimSpace(payload.OutputDir),
-		CacheDir:               strings.TrimSpace(payload.CacheDir),
-		CommandPath:            strings.TrimSpace(payload.CommandPath),
-		ParamsPath:             strings.TrimSpace(payload.ParamsPath),
-		LogPath:                strings.TrimSpace(payload.LogPath),
-		CreationSource:         "scheduler",
+	status := strings.ToLower(strings.TrimSpace(payload.Status))
+	if status == "" {
+		status = dagruntime.StatusReady
 	}
+
+	scriptID := int64(0)
+	if script != nil {
+		scriptID = script.ID
+	}
+
+	spec := &nodebuild.Spec{
+		NodeID:          strings.TrimSpace(payload.NodeID),
+		NodeName:        strings.TrimSpace(payload.NodeName),
+		SampleID:        strings.TrimSpace(payload.SampleID),
+		ScriptID:        scriptID,
+		Executor:        strings.TrimSpace(payload.Executor),
+		InputsPatterns:  nodebuild.ToJSONMap(payload.InputsPatterns),
+		ResolvedInputs:  nodebuild.ToJSONMap(payload.ResolvedInputs),
+		OutputPatterns:  nodebuild.ToJSONMap(payload.OutputPatterns),
+		ResolvedOutputs: nodebuild.ToJSONMap(payload.ResolvedOutputs),
+		Params:          nodebuild.ToJSONMap(payload.Params),
+		UpstreamIDs:     payload.UpstreamIDs,
+		DownstreamIDs:   payload.DownstreamIDs,
+		Retry:           payload.Retry,
+		MaxRetry:        payload.MaxRetry,
+		RerunReason:     strings.TrimSpace(payload.RerunReason),
+		// Keep the hash that was just used for deduplication so the persisted
+		// identity and the dedup identity can never diverge.
+		InputHash: strings.TrimSpace(payload.InputHash),
+	}
+
+	node, err := nodebuild.Materialize(nodebuild.MaterializeRequest{
+		Analysis:       analysis,
+		Spec:           spec,
+		Status:         status,
+		WorkspaceDir:   strings.TrimSpace(payload.WorkspaceDir),
+		CreationSource: nodebuild.CreationSourceScheduler,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Fallback for analyses without a configured output directory; normally the
+	// builder already derived every path.
+	r.populateNodePathDefaults(ctx, node)
+	return node, nil
 }
 
 type dataflowKernel struct {
@@ -908,7 +1192,7 @@ func (k *dataflowKernel) buildAnalysisNodePersistParams(req DataflowProcessRunRe
 	return &DataflowAnalysisNodePersistParams{
 		AnalysisID:      analysisID,
 		NodeID:          nodeID,
-		InputHash:       buildDataflowInstanceInputHash(nodeID, resolvedInputs, params),
+		InputHash:       nodebuild.InstanceInputHash(nodeID, types.JSONMap(resolvedInputs), types.JSONMap(params)),
 		NodeName:        strings.TrimSpace(proc.NodeName),
 		SampleID:        strings.TrimSpace(proc.SampleID),
 		ScriptID:        strings.TrimSpace(proc.ScriptID),
@@ -1170,142 +1454,6 @@ func (k *dataflowKernel) submitSourceProcessFallback(ctx context.Context, proc D
 	})
 }
 
-func (o *dataflowDagOrchestratorV3) StartAsyncV3(ctx context.Context, projectID int64, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
-	if analysisID <= 0 {
-		return fmt.Errorf("analysis_id is required")
-	}
-
-	bgCtx := context.Background()
-
-	go func() {
-		if err := o.runStartAsyncV3(bgCtx, projectID, analysisID, parseAnalysisResult, dagDefinition); err != nil {
-			logger.Errorf(bgCtx, "[DataflowDagOrchestratorV3] async run failed, analysis_id=%d err=%v", analysisID, err)
-		}
-	}()
-
-	return nil
-}
-
-func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, projectID int64, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
-	if err := o.prepareAnalysisByCacheTypeV3(ctx, analysisID); err != nil {
-		return fmt.Errorf("prepare analysis by cache_type failed: %w", err)
-	}
-
-	spec := o.buildGraphSpec(analysisID, dagDefinition)
-	o.logFrameworkPhase(ctx, spec)
-
-	// runtimeEngine := dagruntime.NewRuntimeEngine(o.repo)
-	// storageBase := ""
-	// if o.cfg != nil && o.cfg.Storage != nil {
-	// 	storageBase = strings.TrimSpace(o.cfg.Storage.BaseDir)
-	// }
-	// preparer := dagruntime.NewFileSystemNodeRuntimePreparerWithBuilders(o.repo, o.workflowRepo, o.projectRepo, storageBase, o.runScriptBuilders)
-	// dispatcher := dagruntime.NewNodeDispatcher(
-	// 	runtimeEngine,
-	// 	o.repo,
-	// 	o.bus,
-	// 	executor.NewFactory(executor.FactoryDeps{
-	// 		WorkflowRepository: o.workflowRepo,
-	// 		ContainerManager:   o.containerMgr,
-	// 	}),
-	// 	nil,
-	// 	preparer,
-	// )
-
-	// Runtime events reach this loop through the process-wide router via the
-	// analysis-scoped sink; no per-run bus subscription is created here.
-	// The filter restricts the sink to node terminal transitions, which are the only
-	// events this loop acts on (see onRuntimeEvent), so noise never wakes it.
-	sink := o.router.RegisterWithFilter(analysisID, dagruntime.SchedulerEventFilter)
-	defer o.router.Unregister(analysisID)
-
-	var kernel *dataflowKernel
-	runtime := &persistentDataflowRuntime{
-		repo:       o.repo,
-		dispatcher: o.dispatcher,
-		onNodeSubmitChange: func(nodeID string, delta int) {
-			if kernel == nil {
-				return
-			}
-			kernel.adjustSubmittedCount(nodeID, delta)
-		},
-		buildPersistParams: func(req DataflowProcessRunRequest) (*DataflowAnalysisNodePersistParams, bool) {
-			if kernel == nil {
-				return nil, false
-			}
-			return kernel.buildAnalysisNodePersistParams(req)
-		}, workflowRepo: o.workflowRepo,
-		projectID: projectID,
-	}
-	kernel = newDataflowKernel(spec, runtime, parseAnalysisResult)
-	kernel.repo = o.repo
-	if err := kernel.bootstrapSourceProcesses(ctx); err != nil {
-		return err
-	}
-	// if err := kernel.closeAll(ctx); err != nil {
-	// 	return err
-	// }
-
-	idleWindow := 200 * time.Millisecond
-	idleTimer := time.NewTimer(idleWindow)
-	defer idleTimer.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case evt := <-sink.Events():
-			runtime.onRuntimeEvent(evt)
-			eventName := strings.TrimSpace(evt.Name)
-			switch eventName {
-			case dagruntime.EventNodeCompleted:
-				if err := kernel.onNodeCompleted(ctx, evt.AnalysisNodeID); err != nil {
-					return err
-				}
-			case dagruntime.EventNodeFailed:
-				if err := kernel.onNodeFailed(ctx, evt.AnalysisNodeID); err != nil {
-					return err
-				}
-			default:
-				continue
-			}
-			if !idleTimer.Stop() {
-				select {
-				case <-idleTimer.C:
-				default:
-				}
-			}
-			idleTimer.Reset(idleWindow)
-		case <-idleTimer.C:
-			inflight := runtime.InflightDispatches()
-			if inflight == 0 {
-				select {
-				case evt := <-sink.Events():
-					runtime.onRuntimeEvent(evt)
-					eventName := strings.TrimSpace(evt.Name)
-					if eventName == dagruntime.EventNodeCompleted {
-						if err := kernel.onNodeCompleted(ctx, evt.AnalysisNodeID); err != nil {
-							return err
-						}
-					} else if eventName == dagruntime.EventNodeFailed {
-						if err := kernel.onNodeFailed(ctx, evt.AnalysisNodeID); err != nil {
-							return err
-						}
-					}
-					idleTimer.Reset(idleWindow)
-				default:
-					if kernel.checkFinished(inflight) {
-						return nil
-					}
-					idleTimer.Reset(idleWindow)
-				}
-				continue
-			}
-			idleTimer.Reset(idleWindow)
-		}
-	}
-}
-
 // prepareAnalysisByCacheTypeV3 handles cache-type driven pre-run behavior.
 //
 // Current V3 scope:
@@ -1431,7 +1579,7 @@ func (o *dataflowDagOrchestratorV3) buildGraphSpec(analysisID int64, dagDefiniti
 
 func (o *dataflowDagOrchestratorV3) logFrameworkPhase(ctx context.Context, spec DataflowGraphSpec) {
 	logger.Infof(ctx,
-		"[DataflowDagOrchestratorV3] framework bootstrap, analysis_id=%s processes=%d channels=%d",
+		"[DataflowDagOrchestratorV3] framework bootstrap, analysis_id=%d processes=%d channels=%d",
 		spec.AnalysisID,
 		len(spec.Processes),
 		len(spec.Channels),

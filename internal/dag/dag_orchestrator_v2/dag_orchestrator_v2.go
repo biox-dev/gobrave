@@ -3,8 +3,6 @@ package orchestratorv2
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -16,7 +14,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
-	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/google/uuid"
 )
 
@@ -728,7 +725,7 @@ func (o *dynamicDagOrchestratorV2) decideExistingNode(
 	if err != nil {
 		return nil, CacheDecision{}, err
 	}
-	probe := o.buildCacheProbe(script, existing, planned.template, planned.incoming, state.nodes)
+	probe := o.buildCacheProbe(script, existing, strings.TrimSpace(existing.NodeID), planned.template, planned.incoming, state.nodes)
 	if err := o.fingerprintNodeArtifacts(ctx, probe); err != nil {
 		return nil, CacheDecision{}, err
 	}
@@ -740,31 +737,6 @@ func (o *dynamicDagOrchestratorV2) decideExistingNode(
 		ProbeParamsMD5:  probe.ParamsMD5,
 	})
 	return probe, decision, nil
-}
-
-// buildCacheProbe rebuilds the node payload from the freshly compiled template so
-// the cache policies can compare what would run now against what ran last time.
-func (o *dynamicDagOrchestratorV2) buildCacheProbe(
-	script *types.Script,
-	existingNode *types.AnalysisNode,
-	row map[string]any,
-	incomingEdges []*types.AnalysisEdge,
-	existingByNodeID map[string]*types.AnalysisNode,
-) *types.AnalysisNode {
-	probe := *existingNode
-	probe.NodeName = dynamicToString(row["node_name"])
-	probe.SampleID = dynamicToString(row["sample_id"])
-	probe.Executor = dynamicToString(row["executor"])
-	if script != nil {
-		probe.ScriptID = script.ID
-	}
-	probe.InputsPatterns = dynamicToJSONMap(row["inputs_patterns"])
-	probe.OutputPatterns = dynamicToJSONMap(row["output_patterns"])
-	probe.Params = dynamicToJSONMap(row["params"])
-	probe.ResolvedInputs = dynamicToJSONMap(row["resolved_inputs"])
-	probe.ResolvedOutputs = dynamicToJSONMap(row["resolved_outputs"])
-	bootstrapInputsFromUpstream(row, probe.Params, probe.ResolvedInputs, incomingEdges, existingByNodeID)
-	return &probe
 }
 
 // markExistingNodeReadyForRerun resets a persisted node so the runtime can claim it
@@ -847,77 +819,6 @@ func (o *dynamicDagOrchestratorV2) fingerprintNodeArtifacts(ctx context.Context,
 		return fmt.Errorf("node artifact fingerprinter is not configured")
 	}
 	return o.fingerprinter.Fingerprint(ctx, node)
-}
-
-func (o *dynamicDagOrchestratorV2) buildDynamicAnalysisNode(
-	script *types.Script,
-	analysis *types.Analysis,
-	nodeID string,
-	row map[string]any,
-	incomingEdges []*types.AnalysisEdge,
-	existingByNodeID map[string]*types.AnalysisNode,
-	status string,
-	errorMessage string,
-) (*types.AnalysisNode, error) {
-	upstreamIDs := dynamicToStringSlice(row["upstream_ids"])
-	mergedParams := dynamicToJSONMap(row["params"])
-	mergedInputs := dynamicToJSONMap(row["resolved_inputs"])
-	bootstrapInputsFromUpstream(row, mergedParams, mergedInputs, incomingEdges, existingByNodeID)
-
-	analysisNodeID := strings.TrimSpace(dynamicToString(row["analysis_node_id"]))
-	if analysisNodeID == "" {
-		analysisNodeID = "node-" + uuid.NewString()
-	}
-	indexID := utils.GenerateID()
-	workspaceDir := filepath.Join(analysis.OutputDir, fmt.Sprintf("%d", indexID))
-	outputDir := utils.GetAnalysisNodeOutputDir(workspaceDir) //filepath.Join(workspaceDir, "output")
-	cacheDir := utils.GetAnalysisNodeCacheDir(workspaceDir)   //filepath.Join(workspaceDir, "cache")
-	paramsPath := filepath.Join(workspaceDir, "params.json")
-	commandPath := filepath.Join(workspaceDir, "run.sh")
-	logPath := filepath.Join(workspaceDir, "command.log")
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return nil, err
-	}
-
-	var finishedAt *time.Time
-	if status == dagruntime.StatusSkipped {
-		now := time.Now().UTC()
-		finishedAt = &now
-	}
-
-	return &types.AnalysisNode{
-		ID:                     indexID,
-		AnalysisNodeID:         analysisNodeID,
-		AnalysisID:             analysis.ID,
-		NodeID:                 nodeID,
-		NodeName:               dynamicToString(row["node_name"]),
-		SampleID:               dynamicToString(row["sample_id"]),
-		ScriptID:               script.ID,
-		InputsPatterns:         dynamicToJSONMap(row["inputs_patterns"]),
-		ResolvedInputs:         mergedInputs,
-		OutputPatterns:         dynamicToJSONMap(row["output_patterns"]),
-		ResolvedOutputs:        dynamicToJSONMap(row["resolved_outputs"]),
-		Params:                 mergedParams,
-		Status:                 status,
-		Executor:               dynamicToString(row["executor"]),
-		Retry:                  dynamicIntFromAny(row["retry"], 0),
-		MaxRetry:               dynamicIntFromAny(row["max_retry"], 3),
-		CacheHit:               false,
-		UpstreamIDs:            types.JSONSlice(dynamicStringSliceToAny(upstreamIDs)),
-		DownstreamIDs:          dynamicToJSONSlice(row["downstream_ids"]),
-		InputValidationErrors:  dynamicToJSONSlice(row["input_validation_errors"]),
-		OutputValidationErrors: types.JSONSlice{},
-		LogPath:                logPath,
-		WorkspaceDir:           workspaceDir,
-		OutputDir:              outputDir,
-		CacheDir:               cacheDir,
-		CommandPath:            commandPath,
-		ParamsPath:             paramsPath,
-		ErrorMessage:           errorMessage,
-		RerunReason:            dynamicToString(row["rerun_reason"]),
-		CreationSource:         "scheduler",
-		FinishedAt:             finishedAt,
-	}, nil
 }
 
 // allCandidateNodesCreated compares persisted nodes with compiled template count.
@@ -1015,52 +916,6 @@ func buildOutgoingNodeMap(edges []*types.AnalysisEdge) map[string][]string {
 		outgoing[source] = append(outgoing[source], target)
 	}
 	return outgoing
-}
-
-// bootstrapInputsFromUpstream merges upstream outputs into target params/resolved_inputs.
-// It respects list semantics when input is configured as multiple or already list-like.
-func bootstrapInputsFromUpstream(
-	row map[string]any,
-	params types.JSONMap,
-	resolvedInputs types.JSONMap,
-	edges []*types.AnalysisEdge,
-	existing map[string]*types.AnalysisNode,
-) {
-	patterns := dynamicToJSONMap(row["inputs_patterns"])
-	for _, edge := range edges {
-		if edge == nil {
-			continue
-		}
-		source := existing[edge.SourceNode]
-		if !isSuccessNode(source) {
-			continue
-		}
-		value, ok := source.ResolvedOutputs[edge.SourceHandle]
-		if !ok {
-			continue
-		}
-
-		cfg := dynamicAsMap(patterns[edge.TargetHandle])
-		multiple := dynamicAsBool(cfg["multiple"])
-		if multiple || dynamicIsListValue(params[edge.TargetHandle]) || dynamicIsListValue(resolvedInputs[edge.TargetHandle]) {
-			params[edge.TargetHandle] = dynamicAppendToList(params[edge.TargetHandle], value)
-			resolvedInputs[edge.TargetHandle] = dynamicAppendToList(resolvedInputs[edge.TargetHandle], value)
-			continue
-		}
-		params[edge.TargetHandle] = value
-		resolvedInputs[edge.TargetHandle] = value
-	}
-}
-
-// allUpstreamSuccess returns true only when every upstream node reached success state.
-func allUpstreamSuccess(upstream []string, existing map[string]*types.AnalysisNode) bool {
-	for _, id := range upstream {
-		node := existing[id]
-		if !isSuccessNode(node) {
-			return false
-		}
-	}
-	return true
 }
 
 // isSuccessNode normalizes success checks and preserves cache-hit behavior.
@@ -1214,77 +1069,6 @@ func dynamicToStringSlice(v any) []string {
 		return out
 	}
 	return []string{}
-}
-
-// dynamicStringSliceToAny converts []string to []any for JSONSlice compatibility.
-func dynamicStringSliceToAny(items []string) []any {
-	out := make([]any, 0, len(items))
-	for _, item := range items {
-		out = append(out, item)
-	}
-	return out
-}
-
-// dynamicAsMap performs best-effort map extraction.
-func dynamicAsMap(v any) map[string]any {
-	if v == nil {
-		return map[string]any{}
-	}
-	if m, ok := v.(map[string]any); ok {
-		return m
-	}
-	if m, ok := v.(types.JSONMap); ok {
-		return map[string]any(m)
-	}
-	return map[string]any{}
-}
-
-// dynamicAsBool performs tolerant bool parsing for config-like values.
-func dynamicAsBool(v any) bool {
-	switch val := v.(type) {
-	case bool:
-		return val
-	case string:
-		normalized := strings.TrimSpace(strings.ToLower(val))
-		return normalized == "true" || normalized == "1" || normalized == "yes" || normalized == "y"
-	case int:
-		return val != 0
-	case int64:
-		return val != 0
-	case float64:
-		return val != 0
-	default:
-		return false
-	}
-}
-
-// dynamicIsListValue checks whether payload is slice/array for append semantics.
-func dynamicIsListValue(v any) bool {
-	if v == nil {
-		return false
-	}
-	rv := reflect.ValueOf(v)
-	return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
-}
-
-// dynamicAppendToList appends value to existing list-like payload safely.
-func dynamicAppendToList(current any, value any) []any {
-	if current == nil {
-		return []any{value}
-	}
-	if arr, ok := current.([]any); ok {
-		return append(arr, value)
-	}
-	rv := reflect.ValueOf(current)
-	if rv.IsValid() && (rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array) {
-		out := make([]any, 0, rv.Len()+1)
-		for i := 0; i < rv.Len(); i++ {
-			out = append(out, rv.Index(i).Interface())
-		}
-		out = append(out, value)
-		return out
-	}
-	return []any{current, value}
 }
 
 // strconvAtoi is a small local parser to avoid extra import coupling in this file.
