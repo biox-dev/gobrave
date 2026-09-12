@@ -1,12 +1,8 @@
-package dynamic
+package dag
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"fmt"
-	"io"
-	"os"
 
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -15,11 +11,15 @@ import (
 // NodeArtifactFingerprinter predicts a node's runtime artifacts and records their
 // digests on the node.
 //
-// It is deliberately narrower than prepare.NodeRuntimePreparer: the scheduler only
+// It is deliberately narrower than prepare.NodeRuntimePreparer: a scheduler only
 // needs the digests to decide whether a persisted node can be reused, it must not
 // own execution-time preparation (output cleanup, script symlinks, ...) which stays
 // with the dispatcher. Depending on the full preparer here is what made every
 // materialized node look like it had to be prepared by the scheduler too.
+//
+// It is shared by every scheduler that runs the fingerprint cache policies
+// (dynamic V2 and dataflow V3), so a probe is always rendered the same way no
+// matter which scheduler evaluates the cache.
 type NodeArtifactFingerprinter interface {
 	// Fingerprint materializes the node artifacts and fills in CommandMD5 / ParamsMD5.
 	Fingerprint(ctx context.Context, node *types.AnalysisNode) error
@@ -29,7 +29,7 @@ type NodeArtifactFingerprinter interface {
 // fingerprinting contract.
 //
 // The preparer stays the single source of truth for run.sh / params.json
-// rendering, so the scheduler borrows it to predict the artifacts instead of
+// rendering, so a scheduler borrows it to predict the artifacts instead of
 // re-implementing the rendering rules (and drifting from the dispatcher).
 type PreparerFingerprinter struct {
 	preparer prepare.NodeRuntimePreparer
@@ -59,7 +59,7 @@ func (f *PreparerFingerprinter) Fingerprint(ctx context.Context, node *types.Ana
 	}
 
 	if err := f.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
-		return fmt.Errorf("prepare dynamic node runtime artifacts failed: %w", err)
+		return fmt.Errorf("prepare node runtime artifacts failed: %w", err)
 	}
 
 	commandMD5, err := fileMD5Hex(node.CommandPath)
@@ -74,22 +74,4 @@ func (f *PreparerFingerprinter) Fingerprint(ctx context.Context, node *types.Ana
 	node.CommandMD5 = commandMD5
 	node.ParamsMD5 = paramsMD5
 	return nil
-}
-
-// fileMD5Hex streams a file through MD5 and returns the lowercase hex digest.
-func fileMD5Hex(path string) (string, error) {
-	if path == "" {
-		return "", fmt.Errorf("file path is empty")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	hasher := md5.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(hasher.Sum(nil)), nil
 }

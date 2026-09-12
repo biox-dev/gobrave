@@ -61,11 +61,12 @@ type dynamicDagOrchestratorV2 struct {
 	// that capability here made every node pay for two preparations per run - one to
 	// fingerprint, one to execute. Fingerprinting is now limited to the cache probe,
 	// which is the only place a digest is actually needed to make a decision.
-	fingerprinter NodeArtifactFingerprinter
+	fingerprinter dagruntime.NodeArtifactFingerprinter
 	// cachePolicies resolves the analysis.cache_type strategy that decides whether
-	// a node persisted by a previous run must be rerun. The registry is stateless,
-	// so it is built here instead of being injected by the DI container.
-	cachePolicies *CachePolicyRegistry
+	// a node persisted by a previous run must be rerun. The registry is stateless
+	// and shared with the other schedulers (internal/dag), so it is built here
+	// instead of being injected by the DI container.
+	cachePolicies *dagruntime.CachePolicyRegistry
 	// bus emits runtime events using the existing event pipeline.
 	bus event.Bus
 
@@ -101,7 +102,7 @@ func NewDynamicDagOrchestratorV2(
 	workflowService interfaces.WorkflowService,
 	containerRepo interfaces.ContainerRepository,
 	dispatcher *dagruntime.NodeDispatcher,
-	fingerprinter NodeArtifactFingerprinter,
+	fingerprinter dagruntime.NodeArtifactFingerprinter,
 	registry *dagruntime.RunningRegistry,
 	router *dagruntime.EventRouter,
 	bus event.Bus,
@@ -113,7 +114,7 @@ func NewDynamicDagOrchestratorV2(
 		containerRepo:   containerRepo,
 		dispatcher:      dispatcher,
 		fingerprinter:   fingerprinter,
-		cachePolicies:   NewCachePolicyRegistry(),
+		cachePolicies:   dagruntime.NewCachePolicyRegistry(),
 		bus:             bus,
 		registry:        registry,
 		router:          router,
@@ -728,13 +729,13 @@ func (o *dynamicDagOrchestratorV2) decideExistingNode(
 	plan *dynamicExecutionPlan,
 	state *dynamicState,
 	existing *types.AnalysisNode,
-) (*types.AnalysisNode, CacheDecision, error) {
+) (*types.AnalysisNode, dagruntime.CacheDecision, error) {
 	if analysis == nil || existing == nil {
-		return nil, CacheDecision{}, nil
+		return nil, dagruntime.CacheDecision{}, nil
 	}
 	planned, ok := plan.nodes[strings.TrimSpace(existing.NodeID)]
 	if !ok {
-		return nil, CacheDecision{}, nil
+		return nil, dagruntime.CacheDecision{}, nil
 	}
 
 	policy := o.cachePolicies.Resolve(analysis.CacheType)
@@ -743,7 +744,7 @@ func (o *dynamicDagOrchestratorV2) decideExistingNode(
 	// so both the script query and the probe are skipped entirely. The node itself is
 	// reused as the probe: the rerun only resets its execution state.
 	if !policy.RequiresFingerprint() {
-		decision := policy.Decide(CacheFacts{CacheType: analysis.CacheType, Existing: existing})
+		decision := policy.Decide(dagruntime.CacheFacts{CacheType: analysis.CacheType, Existing: existing})
 		if !decision.Rerun {
 			return nil, decision, nil
 		}
@@ -754,14 +755,14 @@ func (o *dynamicDagOrchestratorV2) decideExistingNode(
 	// probe needs, and loading it here keeps reuse_existing free of that query.
 	script, err := o.workflowRepo.GetScriptByScriptID(ctx, analysis.ProjectID, dynamicToString(planned.template["script_id"]))
 	if err != nil {
-		return nil, CacheDecision{}, err
+		return nil, dagruntime.CacheDecision{}, err
 	}
 	probe := o.buildCacheProbe(script, existing, strings.TrimSpace(existing.NodeID), planned.template, planned.incoming, state.nodes)
 	if err := o.fingerprintNodeArtifacts(ctx, probe); err != nil {
-		return nil, CacheDecision{}, err
+		return nil, dagruntime.CacheDecision{}, err
 	}
 
-	decision := policy.Decide(CacheFacts{
+	decision := policy.Decide(dagruntime.CacheFacts{
 		CacheType:       analysis.CacheType,
 		Existing:        existing,
 		ProbeCommandMD5: probe.CommandMD5,
@@ -959,6 +960,14 @@ func isSuccessNode(node *types.AnalysisNode) bool {
 		return true
 	}
 	return dagruntime.IsSuccessStatus(status)
+}
+
+// normaliseNodeStatus lowercases and trims a persisted node status.
+func normaliseNodeStatus(node *types.AnalysisNode) string {
+	if node == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(node.Status))
 }
 
 // dynamicToMapSlice converts mixed JSON-decoded list values into []map[string]any.

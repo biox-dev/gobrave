@@ -1,12 +1,22 @@
-package dynamic
+package dag
 
 import (
 	"strings"
 	"sync"
 
-	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/types"
 )
+
+// This file holds the scheduler-agnostic cache policy behind analysis.cache_type.
+//
+// It is shared by every DAG scheduler (dynamic V2, dataflow V3, ...) so a change
+// to what a cache type means is made once. The policy only depends on the
+// persisted node plus optional artifact fingerprints; it performs no I/O and
+// holds no scheduler state, so the same registry can be reused across runs.
+//
+// A scheduler is responsible for the parts the policy deliberately does not own:
+// clearing a persisted graph for rerun_all, materializing fingerprints for the
+// fingerprint policies, and re-materializing a node the policy asked to rerun.
 
 // CacheFacts is the immutable input of a cache policy decision.
 type CacheFacts struct {
@@ -86,6 +96,16 @@ func (r *CachePolicyRegistry) Resolve(cacheType int) CachePolicy {
 		return policy
 	}
 	return r.fallback
+}
+
+// ShouldResetGraph reports whether cacheType invalidates the whole persisted
+// graph before a run.
+//
+// It is the analysis-level counterpart of the per-node policies: with no
+// materialized node in hand only rerun_all forces a reset, while every reuse
+// policy keeps the graph and defers its decision to per-node reuse time.
+func (r *CachePolicyRegistry) ShouldResetGraph(cacheType int) bool {
+	return r.Resolve(cacheType).Decide(CacheFacts{CacheType: cacheType}).Rerun
 }
 
 // ReuseExistingPolicy keeps whatever is persisted (types.CacheTypeReuseExistingNode).
@@ -186,10 +206,10 @@ func rerunWhenNotReusable(node *types.AnalysisNode) (CacheDecision, bool) {
 		return CacheDecision{}, false
 	}
 	status := normaliseNodeStatus(node)
-	if status == "" || status == dagruntime.StatusPending {
+	if status == "" || status == StatusPending {
 		return CacheDecision{Rerun: true, Reason: "node has no execution state"}, true
 	}
-	if dagruntime.IsTerminalStatus(status) && !isSuccessNode(node) {
+	if IsTerminalStatus(status) && !isSuccessNodeStatus(node) {
 		return CacheDecision{Rerun: true, Reason: "previous execution did not succeed"}, true
 	}
 	return CacheDecision{}, false

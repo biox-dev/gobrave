@@ -1,9 +1,8 @@
-package dynamic
+package dag
 
 import (
 	"testing"
 
-	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/types"
 )
 
@@ -27,10 +26,28 @@ func TestCachePolicyRegistryResolvesEveryCacheType(t *testing.T) {
 	}
 }
 
+func TestCachePolicyRegistryShouldResetGraph(t *testing.T) {
+	registry := NewCachePolicyRegistry()
+
+	if !registry.ShouldResetGraph(types.CacheTypeRerunAll) {
+		t.Fatal("rerun_all must reset the persisted graph")
+	}
+	for _, cacheType := range []int{
+		types.CacheTypeReuseExistingNode,
+		types.CacheTypeReuseWhenScriptUnchanged,
+		types.CacheTypeReuseWhenScriptAndParamsUnchanged,
+		9999,
+	} {
+		if registry.ShouldResetGraph(cacheType) {
+			t.Fatalf("cache type %d must keep the persisted graph", cacheType)
+		}
+	}
+}
+
 func TestScriptFingerprintPolicy(t *testing.T) {
 	existing := &types.AnalysisNode{
 		NodeID:     "a1",
-		Status:     dagruntime.StatusDone,
+		Status:     StatusDone,
 		CommandMD5: "aaa",
 		ParamsMD5:  "bbb",
 	}
@@ -53,7 +70,7 @@ func TestScriptFingerprintPolicy(t *testing.T) {
 }
 
 func TestScriptAndParamsFingerprintPolicy(t *testing.T) {
-	existing := &types.AnalysisNode{NodeID: "a1", Status: dagruntime.StatusDone, CommandMD5: "aaa", ParamsMD5: "bbb"}
+	existing := &types.AnalysisNode{NodeID: "a1", Status: StatusDone, CommandMD5: "aaa", ParamsMD5: "bbb"}
 	policy := ScriptAndParamsFingerprintPolicy{}
 
 	decision := policy.Decide(CacheFacts{Existing: existing, ProbeCommandMD5: "zzz", ProbeParamsMD5: "zzz"})
@@ -70,7 +87,7 @@ func TestScriptAndParamsFingerprintPolicy(t *testing.T) {
 }
 
 func TestPoliciesRerunNodesWithoutReusableResult(t *testing.T) {
-	statuses := []string{dagruntime.StatusFailed, dagruntime.StatusStopped, dagruntime.StatusSkipped, "", dagruntime.StatusPending}
+	statuses := []string{StatusFailed, StatusStopped, StatusSkipped, "", StatusPending}
 	for _, status := range statuses {
 		existing := &types.AnalysisNode{NodeID: "a1", Status: status, CommandMD5: "aaa", ParamsMD5: "bbb"}
 		facts := CacheFacts{Existing: existing, ProbeCommandMD5: "aaa", ProbeParamsMD5: "bbb"}
@@ -84,11 +101,11 @@ func TestPoliciesRerunNodesWithoutReusableResult(t *testing.T) {
 }
 
 func TestReusePolicyKeepsSuccessfulNodes(t *testing.T) {
-	existing := &types.AnalysisNode{NodeID: "a1", Status: dagruntime.StatusDone}
+	existing := &types.AnalysisNode{NodeID: "a1", Status: StatusDone}
 	if decision := (ReuseExistingPolicy{}).Decide(CacheFacts{Existing: existing}); decision.Rerun {
 		t.Fatalf("successful node must be reused, got %+v", decision)
 	}
-	existing = &types.AnalysisNode{NodeID: "a1", Status: dagruntime.StatusReady, CacheHit: true}
+	existing = &types.AnalysisNode{NodeID: "a1", Status: StatusReady, CacheHit: true}
 	if decision := (ReuseExistingPolicy{}).Decide(CacheFacts{Existing: existing}); decision.Rerun {
 		t.Fatalf("cache hit must be reused, got %+v", decision)
 	}

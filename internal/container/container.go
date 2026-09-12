@@ -377,8 +377,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// 只给缓存策略判断“已存在的节点能否复用”用。执行前的准备（含输出目录清理）
 	// 仍然只保留 NodeDispatcher 一处，避免每个节点被 prepare 两次。
 	must(container.Provide(
-		schedulerdynamic.NewPreparerFingerprinter,
-		dig.As(new(schedulerdynamic.NodeArtifactFingerprinter)),
+		dagruntime.NewPreparerFingerprinter,
+		dig.As(new(dagruntime.NodeArtifactFingerprinter)),
 	))
 
 	// 进程级运行时事件路由器：整个进程只在下面的 event_handlers Invoke 里订阅 bus 一次，
@@ -541,7 +541,7 @@ func newSchedulerRegistry(
 	containerRepo interfaces.ContainerRepository,
 	containerMgr *manager.ContainerManager,
 	dispatcher *dagruntime.NodeDispatcher,
-	fingerprinter schedulerdynamic.NodeArtifactFingerprinter,
+	fingerprinter dagruntime.NodeArtifactFingerprinter,
 	runningRegistry *dagruntime.RunningRegistry,
 	router *dagruntime.EventRouter,
 	bus event.Bus,
@@ -556,7 +556,7 @@ func newSchedulerRegistry(
 		repo, workflowRepo, workflowService, containerRepo, dispatcher, fingerprinter, runningRegistry, router, bus,
 	))
 	registry.Register(schedulerdataflow.NewDataflowDagOrchestratorV3(
-		repo, workflowRepo, workflowService, containerMgr, projectRepo, dispatcher, cfg, bus, router,
+		repo, workflowRepo, workflowService, containerMgr, projectRepo, dispatcher, fingerprinter, cfg, bus, router,
 	))
 
 	return registry

@@ -140,7 +140,7 @@ func newRerunOrderingFixture(t *testing.T, mutate func(nodes []*types.AnalysisNo
 		repo:          repo,
 		workflowRepo:  stubWorkflowRepo{},
 		fingerprinter: stubFingerprinter{},
-		cachePolicies: NewCachePolicyRegistry(),
+		cachePolicies: dagruntime.NewCachePolicyRegistry(),
 	}
 
 	return orchestrator, repo, newDynamicExecutionPlan(nodeTemplates, edges)

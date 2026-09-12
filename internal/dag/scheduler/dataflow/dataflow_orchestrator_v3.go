@@ -53,6 +53,14 @@ type dataflowDagOrchestratorV3 struct {
 	// container. Each run registers an analysis-scoped sink instead of
 	// subscribing to the bus directly, so concurrent runs never add subscribers.
 	router *dagruntime.EventRouter
+	// cachePolicies resolves analysis.cache_type to the shared cache policy used by
+	// every scheduler (internal/dag), so the dataflow and dynamic schedulers can
+	// never disagree on what a cache type means.
+	cachePolicies *dagruntime.CachePolicyRegistry
+	// fingerprinter renders the artifacts that would run now (run.sh / params.json)
+	// and records their digests, so the fingerprint cache types (3/4) can tell
+	// whether a persisted instance is still reusable.
+	fingerprinter dagruntime.NodeArtifactFingerprinter
 }
 
 func NewDataflowDagOrchestratorV3(
@@ -62,6 +70,7 @@ func NewDataflowDagOrchestratorV3(
 	containerMgr *manager.ContainerManager,
 	projectRepo interfaces.ProjectRepository,
 	dispatcher *dagruntime.NodeDispatcher,
+	fingerprinter dagruntime.NodeArtifactFingerprinter,
 	// runScriptBuilders map[string]prepare.RunScriptBuilder,
 	cfg *config.Config,
 	bus event.Bus,
@@ -76,8 +85,10 @@ func NewDataflowDagOrchestratorV3(
 		containerMgr:    containerMgr,
 		projectRepo:     projectRepo,
 		// runScriptBuilders: runScriptBuilders,
-		cfg:    cfg,
-		router: router,
+		cfg:           cfg,
+		router:        router,
+		cachePolicies: dagruntime.NewCachePolicyRegistry(),
+		fingerprinter: fingerprinter,
 	}
 }
 
@@ -215,13 +226,21 @@ func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, project
 			}
 			kernel.adjustSubmittedCount(nodeID, delta)
 		},
+		onInstanceReused: func(ctx context.Context, node *types.AnalysisNode) error {
+			if kernel == nil {
+				return nil
+			}
+			return kernel.onInstanceReused(ctx, node)
+		},
 		buildPersistParams: func(req DataflowProcessRunRequest) (*DataflowAnalysisNodePersistParams, bool) {
 			if kernel == nil {
 				return nil, false
 			}
 			return kernel.buildAnalysisNodePersistParams(req)
 		}, workflowRepo: o.workflowRepo,
-		projectID: projectID,
+		projectID:     projectID,
+		cachePolicies: o.cachePolicies,
+		fingerprinter: o.fingerprinter,
 	}
 	kernel = newDataflowKernel(spec, runtime, parseAnalysisResult)
 	kernel.repo = o.repo
@@ -278,17 +297,26 @@ func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, project
 				case evt := <-sink.Events():
 					runtime.onRuntimeEvent(evt)
 					eventName := strings.TrimSpace(evt.Name)
-					if eventName == dagruntime.EventNodeCompleted {
+					switch eventName {
+					case dagruntime.EventNodeCompleted:
 						if err := kernel.onNodeCompleted(ctx, evt.AnalysisNodeID); err != nil {
 							return err
 						}
-					} else if eventName == dagruntime.EventNodeFailed {
+					case dagruntime.EventNodeFailed:
 						if err := kernel.onNodeFailed(ctx, evt.AnalysisNodeID); err != nil {
 							return err
 						}
 					}
 					idleTimer.Reset(idleWindow)
 				default:
+					// Channel closure is normally driven by completion events, but a
+					// cache-reuse completion can resolve several nodes inside a single
+					// synchronous call and the loop never retries closure on its own.
+					// Reconcile here so closure always propagates and the run converges.
+					if err := kernel.reconcileOutputChannelClosures(ctx); err != nil {
+						return err
+					}
+					inflight = runtime.InflightDispatches()
 					if kernel.checkFinished(inflight) {
 						return nil
 					}
@@ -675,7 +703,12 @@ type persistentDataflowRuntime struct {
 	workflowRepo       interfaces.WorkflowRepository
 	dispatchFn         func(ctx context.Context, analysisNodeID int64) error
 	onNodeSubmitChange func(nodeID string, delta int)
+	onInstanceReused   func(ctx context.Context, node *types.AnalysisNode) error
 	buildPersistParams func(req DataflowProcessRunRequest) (*DataflowAnalysisNodePersistParams, bool)
+	// cachePolicies + fingerprinter drive the per-node reuse decision: what a cache
+	// type means and the artifacts that decide it are both shared with V2.
+	cachePolicies      *dagruntime.CachePolicyRegistry
+	fingerprinter      dagruntime.NodeArtifactFingerprinter
 	mu                 sync.Mutex
 	inflightDispatches int
 	inflightNodeIDs    map[int64]struct{}
@@ -697,7 +730,12 @@ func (r *persistentDataflowRuntime) SubmitProcessInstance(ctx context.Context, r
 			if err != nil {
 				return err
 			}
-			if created && node != nil {
+			if !created {
+				// The instance already has a persisted row, so it is not dispatched
+				// again. Reconcile it so a cache reuse can still converge the run.
+				return r.reconcileReusedInstance(ctx, req, node)
+			}
+			if node != nil {
 				dispatch := r.dispatchFn
 				if dispatch == nil {
 					dispatch = r.dispatcher.Dispatch
@@ -730,6 +768,44 @@ func (r *persistentDataflowRuntime) SubmitProcessInstance(ctx context.Context, r
 				}
 			}
 		}
+	}
+	return nil
+}
+
+// reconcileReusedInstance converges the kernel when a submitted instance already
+// has a persisted row and therefore is not dispatched again.
+//
+// A successful row (done/cached) is treated as already submitted and completed:
+// the instance is counted in and its persisted outputs are propagated downstream.
+// This is what lets a reuse_existing_node rerun advance and terminate instead of
+// waiting forever for a completion event that will never be published.
+//
+// A non-successful row keeps the previous no-op behavior: it is either a same-run
+// duplicate of an instance still in flight, or a failed row, and completing it
+// here would double-count and close channels prematurely.
+func (r *persistentDataflowRuntime) reconcileReusedInstance(ctx context.Context, req DataflowProcessRunRequest, node *types.AnalysisNode) error {
+	if r == nil || node == nil {
+		return nil
+	}
+	nodeID := strings.TrimSpace(node.NodeID)
+	if nodeID == "" {
+		return nil
+	}
+	status := strings.ToLower(strings.TrimSpace(node.Status))
+	if !dagruntime.IsSuccessStatus(status) {
+		logger.Infof(ctx,
+			"[DataflowDagOrchestratorV3] reused analysis node is not successful, keep as-is, analysis_id=%d node_id=%s status=%s",
+			req.AnalysisID,
+			nodeID,
+			status,
+		)
+		return nil
+	}
+	if r.onNodeSubmitChange != nil {
+		r.onNodeSubmitChange(nodeID, 1)
+	}
+	if r.onInstanceReused != nil {
+		return r.onInstanceReused(ctx, node)
 	}
 	return nil
 }
@@ -786,13 +862,30 @@ func (r *persistentDataflowRuntime) persistAnalysisNode(ctx context.Context, pay
 	// algorithm lives in nodebuild, this also matches nodes materialized by V2.
 	existing := nodebuild.MatchInstance(existingNodes, payload.NodeID, payload.InputHash)
 	if existing != nil {
+		rerun, decided, err := r.decideExistingInstance(ctx, payload, existing)
+		if err != nil {
+			return nil, false, err
+		}
+		if decided == nil {
+			decided = existing
+		}
+		if rerun {
+			logger.Infof(ctx,
+				"[DataflowDagOrchestratorV3] cache invalidated, rerun persisted analysis node, analysis_id=%d node_id=%s analysis_node_id=%s reason=%s",
+				payload.AnalysisID,
+				payload.NodeID,
+				decided.AnalysisNodeID,
+				decided.RerunReason,
+			)
+			return decided, true, nil
+		}
 		logger.Infof(ctx,
 			"[DataflowDagOrchestratorV3] skip persist duplicated analysis node instance, analysis_id=%d node_id=%s input_hash=%s",
 			payload.AnalysisID,
 			payload.NodeID,
 			payload.InputHash,
 		)
-		return existing, false, nil
+		return decided, false, nil
 	}
 	scriptID := strings.TrimSpace(payload.ScriptID)
 	script, err := r.workflowRepo.GetScriptByScriptID(ctx, r.projectID, scriptID)
@@ -931,12 +1024,34 @@ func (r *persistentDataflowRuntime) buildAnalysisNode(ctx context.Context, scrip
 		status = dagruntime.StatusReady
 	}
 
+	node, err := nodebuild.Materialize(nodebuild.MaterializeRequest{
+		Analysis:       analysis,
+		Spec:           buildNodeSpec(script, payload),
+		Status:         status,
+		WorkspaceDir:   strings.TrimSpace(payload.WorkspaceDir),
+		CreationSource: nodebuild.CreationSourceScheduler,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Fallback for analyses without a configured output directory; normally the
+	// builder already derived every path.
+	r.populateNodePathDefaults(ctx, node)
+	return node, nil
+}
+
+// buildNodeSpec is the single translation from the V3 persist payload to the
+// shared nodebuild spec, so the row the scheduler creates and the probe it
+// fingerprints for cache decisions can never describe different artifacts.
+func buildNodeSpec(script *types.Script, payload *DataflowAnalysisNodePersistParams) *nodebuild.Spec {
+	if payload == nil {
+		return nil
+	}
 	scriptID := int64(0)
 	if script != nil {
 		scriptID = script.ID
 	}
-
-	spec := &nodebuild.Spec{
+	return &nodebuild.Spec{
 		NodeID:          strings.TrimSpace(payload.NodeID),
 		NodeName:        strings.TrimSpace(payload.NodeName),
 		SampleID:        strings.TrimSpace(payload.SampleID),
@@ -956,21 +1071,189 @@ func (r *persistentDataflowRuntime) buildAnalysisNode(ctx context.Context, scrip
 		// identity and the dedup identity can never diverge.
 		InputHash: strings.TrimSpace(payload.InputHash),
 	}
+}
 
-	node, err := nodebuild.Materialize(nodebuild.MaterializeRequest{
-		Analysis:       analysis,
-		Spec:           spec,
-		Status:         status,
-		WorkspaceDir:   strings.TrimSpace(payload.WorkspaceDir),
-		CreationSource: nodebuild.CreationSourceScheduler,
+// decideExistingInstance applies the shared cache policy to a persisted instance
+// matched by identity.
+//
+// It turns V3 reuse from "same input hash therefore always reuse" into a
+// fingerprint-aware decision: with cache types 3/4 a node whose generated
+// run.sh / params.json changed is reset to ready and dispatched again instead of
+// silently serving a stale result. Policies that do not compare fingerprints
+// (reuse_existing / rerun_all) decide from the persisted row alone.
+//
+// The returned bool reports whether the instance must be dispatched (rerun); the
+// returned node is always the persisted row to use.
+func (r *persistentDataflowRuntime) decideExistingInstance(ctx context.Context, payload *DataflowAnalysisNodePersistParams, existing *types.AnalysisNode) (bool, *types.AnalysisNode, error) {
+	if r == nil || existing == nil || payload == nil {
+		return false, existing, nil
+	}
+	// A node still owned by an in-flight dispatch must never be reset: the submit is
+	// a duplicate of an instance this run is already executing.
+	if isDataflowInFlightStatus(existing.Status) {
+		return false, existing, nil
+	}
+
+	analysis, err := r.repo.GetAnalysisByID(ctx, payload.AnalysisID)
+	if err != nil {
+		return false, existing, err
+	}
+	cacheType := 0
+	if analysis != nil {
+		cacheType = analysis.CacheType
+	}
+
+	policy := r.cachePolicies.Resolve(cacheType)
+	if !policy.RequiresFingerprint() {
+		decision := policy.Decide(dagruntime.CacheFacts{CacheType: cacheType, Existing: existing})
+		if !decision.Rerun {
+			return false, existing, nil
+		}
+		return true, existing, r.resetExistingNodeForRerun(ctx, existing, existing, decision.Reason)
+	}
+
+	probe, err := r.buildReuseProbe(ctx, payload, existing)
+	if err != nil {
+		return false, existing, err
+	}
+	if probe == nil {
+		return false, existing, nil
+	}
+	if r.fingerprinter == nil {
+		// Without a fingerprinter the fingerprints cannot be trusted; fall back to
+		// reuse rather than rerunning on an unverifiable decision.
+		logger.Warnf(ctx,
+			"[DataflowDagOrchestratorV3] cache policy %s needs fingerprints but no fingerprinter is configured, keep persisted node, analysis_id=%d node_id=%s",
+			policy.Name(),
+			payload.AnalysisID,
+			payload.NodeID,
+		)
+		return false, existing, nil
+	}
+	if err := r.fingerprinter.Fingerprint(ctx, probe); err != nil {
+		return false, existing, err
+	}
+
+	decision := policy.Decide(dagruntime.CacheFacts{
+		CacheType:       cacheType,
+		Existing:        existing,
+		ProbeCommandMD5: probe.CommandMD5,
+		ProbeParamsMD5:  probe.ParamsMD5,
 	})
+	if !decision.Rerun {
+		return false, existing, nil
+	}
+	return true, existing, r.resetExistingNodeForRerun(ctx, existing, probe, decision.Reason)
+}
+
+// buildReuseProbe rebuilds the node payload from the current process definition so
+// the fingerprint policies can compare what would run now against what is
+// persisted.
+func (r *persistentDataflowRuntime) buildReuseProbe(ctx context.Context, payload *DataflowAnalysisNodePersistParams, existing *types.AnalysisNode) (*types.AnalysisNode, error) {
+	if existing == nil || payload == nil {
+		return nil, nil
+	}
+	script, err := r.workflowRepo.GetScriptByScriptID(ctx, r.projectID, strings.TrimSpace(payload.ScriptID))
 	if err != nil {
 		return nil, err
 	}
-	// Fallback for analyses without a configured output directory; normally the
-	// builder already derived every path.
-	r.populateNodePathDefaults(ctx, node)
-	return node, nil
+	analysis, err := r.repo.GetAnalysisByID(ctx, payload.AnalysisID)
+	if err != nil {
+		return nil, err
+	}
+	// Probe keeps the persisted identity and workspace while rewriting the volatile
+	// fields from the freshly compiled template, so the fingerprint describes the
+	// artifacts a rerun would actually produce.
+	probe, err := nodebuild.Probe(nodebuild.ProbeRequest{
+		Analysis: analysis,
+		Spec:     buildNodeSpec(script, payload),
+		Existing: existing,
+	})
+	if err != nil {
+		// Probing must never fail the run: fall back to the persisted node so the
+		// policy decides from the stored row alone.
+		logger.Warnf(ctx,
+			"[DataflowDagOrchestratorV3] build reuse probe failed, fall back to persisted node, analysis_id=%d node_id=%s err=%v",
+			payload.AnalysisID,
+			payload.NodeID,
+			err,
+		)
+		return existing, nil
+	}
+	probe.Status = dagruntime.StatusReady
+	r.populateNodePathDefaults(ctx, probe)
+	return probe, nil
+}
+
+// resetExistingNodeForRerun rewrites a persisted node with the probed artifacts and
+// puts it back to ready so the runtime can claim and dispatch it again. It mirrors
+// the reset onto the in-memory row so the caller dispatches the refreshed definition.
+func (r *persistentDataflowRuntime) resetExistingNodeForRerun(ctx context.Context, existing, probe *types.AnalysisNode, reason string) error {
+	if existing == nil || probe == nil {
+		return nil
+	}
+	if strings.TrimSpace(existing.AnalysisNodeID) == "" {
+		return nil
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "node cache invalidated"
+	}
+	if err := r.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, existing.AnalysisNodeID, map[string]any{
+		"node_name":                probe.NodeName,
+		"sample_id":                probe.SampleID,
+		"script_id":                probe.ScriptID,
+		"inputs_patterns":          probe.InputsPatterns,
+		"resolved_inputs":          probe.ResolvedInputs,
+		"output_patterns":          probe.OutputPatterns,
+		"resolved_outputs":         types.JSONMap{},
+		"params":                   probe.Params,
+		"status":                   dagruntime.StatusReady,
+		"executor":                 probe.Executor,
+		"cache_hit":                false,
+		"command_md5":              probe.CommandMD5,
+		"params_md5":               probe.ParamsMD5,
+		"rerun_reason":             reason,
+		"error_message":            "",
+		"exit_code":                0,
+		"started_at":               nil,
+		"finished_at":              nil,
+		"output_validation_errors": types.JSONSlice{},
+	}); err != nil {
+		return err
+	}
+
+	existing.NodeName = probe.NodeName
+	existing.SampleID = probe.SampleID
+	existing.ScriptID = probe.ScriptID
+	existing.InputsPatterns = probe.InputsPatterns
+	existing.ResolvedInputs = probe.ResolvedInputs
+	existing.OutputPatterns = probe.OutputPatterns
+	existing.ResolvedOutputs = types.JSONMap{}
+	existing.Params = probe.Params
+	existing.Executor = probe.Executor
+	existing.CommandMD5 = probe.CommandMD5
+	existing.ParamsMD5 = probe.ParamsMD5
+	existing.RerunReason = reason
+	existing.ErrorMessage = ""
+	existing.ExitCode = 0
+	existing.StartedAt = nil
+	existing.FinishedAt = nil
+	existing.OutputValidationErrors = types.JSONSlice{}
+	existing.CacheHit = false
+	existing.Status = dagruntime.StatusReady
+	return nil
+}
+
+// isDataflowInFlightStatus reports whether a persisted node is currently owned by
+// an active dispatch and therefore must not be reset for a rerun.
+func isDataflowInFlightStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case dagruntime.StatusSubmitted, dagruntime.StatusRunning, dagruntime.StatusStopping:
+		return true
+	default:
+		return false
+	}
 }
 
 type dataflowKernel struct {
@@ -1369,8 +1652,32 @@ func (k *dataflowKernel) onNodeCompleted(ctx context.Context, analysisNodeID int
 	if nodeID == "" {
 		return nil
 	}
+	return k.completeNode(ctx, nodeID, map[string]any(node.ResolvedOutputs))
+}
+
+// onInstanceReused advances the kernel when a submit resolved to an already
+// persisted successful node (cache reuse) instead of dispatching a new instance.
+// It mirrors the completion path using the persisted outputs so the instance is
+// counted as completed and its outputs still reach downstream operators.
+func (k *dataflowKernel) onInstanceReused(ctx context.Context, node *types.AnalysisNode) error {
+	if k == nil || node == nil {
+		return nil
+	}
+	if node.AnalysisID != k.analysisID {
+		return nil
+	}
+	nodeID := strings.TrimSpace(node.NodeID)
+	if nodeID == "" {
+		return nil
+	}
+	return k.completeNode(ctx, nodeID, map[string]any(node.ResolvedOutputs))
+}
+
+// completeNode marks one instance of nodeID as completed, propagates its outputs
+// downstream and then advances channel closure. It is shared by the real
+// completion-event path and the cache-reuse path so both converge identically.
+func (k *dataflowKernel) completeNode(ctx context.Context, nodeID string, outputs map[string]any) error {
 	k.markNodeCompleted(nodeID)
-	outputs := map[string]any(node.ResolvedOutputs)
 	k.beginNodeEmit(nodeID)
 	if err := k.emitToDownstream(ctx, nodeID, outputs); err != nil {
 		k.endNodeEmit(nodeID)
@@ -1563,9 +1870,11 @@ func (k *dataflowKernel) submitSourceProcessFallback(ctx context.Context, proc D
 
 // prepareAnalysisByCacheTypeV3 handles cache-type driven pre-run behavior.
 //
-// Current V3 scope:
-// - CacheTypeRerunAll: clear persisted runtime graph and rebuild from scratch.
-// - CacheTypeReuseExistingNode: keep persisted runtime graph for reuse.
+// The decision is delegated to the shared cache policy in internal/dag, which is
+// also what the dynamic scheduler uses:
+//   - CacheTypeRerunAll: clear the persisted runtime graph and rebuild from scratch.
+//   - Every reuse policy: keep the persisted runtime graph; the per-node decision
+//     (script / params fingerprints) is deferred to node reuse time.
 func (o *dataflowDagOrchestratorV3) prepareAnalysisByCacheTypeV3(ctx context.Context, analysisID int64) error {
 	if analysisID <= 0 {
 		return nil
@@ -1579,31 +1888,32 @@ func (o *dataflowDagOrchestratorV3) prepareAnalysisByCacheTypeV3(ctx context.Con
 		return nil
 	}
 
-	switch analysis.CacheType {
-	case types.CacheTypeRerunAll:
-		if err := o.repo.WithTransaction(ctx, func(tx interfaces.AnalysisRepository) error {
-			if err := tx.DeleteAnalysisNodesByAnalysisID(ctx, analysisID); err != nil {
-				return err
-			}
-			if err := tx.DeleteAnalysisEdgesByAnalysisID(ctx, analysisID); err != nil {
-				return err
-			}
-			return nil
-		}); err != nil {
+	// With no materialized node in hand only rerun_all reports a reset, so reuse
+	// cache types keep whatever the previous run persisted.
+	if !o.cachePolicies.ShouldResetGraph(analysis.CacheType) {
+		logger.Infof(ctx,
+			"[DataflowDagOrchestratorV3] cache_type %s, keep persisted graph, analysis_id=%d",
+			o.cachePolicies.Resolve(analysis.CacheType).Name(),
+			analysisID,
+		)
+		return nil
+	}
+
+	if err := o.repo.WithTransaction(ctx, func(tx interfaces.AnalysisRepository) error {
+		if err := tx.DeleteAnalysisNodesByAnalysisID(ctx, analysisID); err != nil {
 			return err
 		}
-		logger.Infof(ctx,
-			"[DataflowDagOrchestratorV3] cache_type rerun_all, cleared persisted graph, analysis_id=%d",
-			analysisID,
-		)
-	case types.CacheTypeReuseExistingNode:
-		logger.Infof(ctx,
-			"[DataflowDagOrchestratorV3] cache_type reuse_existing_node, keep persisted graph, analysis_id=%d",
-			analysisID,
-		)
-	default:
-		// Keep existing behavior for other cache types in this incremental step.
+		if err := tx.DeleteAnalysisEdgesByAnalysisID(ctx, analysisID); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
+	logger.Infof(ctx,
+		"[DataflowDagOrchestratorV3] cache_type rerun_all, cleared persisted graph, analysis_id=%d",
+		analysisID,
+	)
 
 	return nil
 }
