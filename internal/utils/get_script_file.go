@@ -23,6 +23,10 @@ func GetScriptFileDir(baseDir, projectId, scriptID string) string {
 func GetScriptDir(baseDir, projectId string) string {
 	return filepath.Join(baseDir, "data", projectId, "pipeline", "script")
 }
+func GetWorkflowFileDir(baseDir, projectId, workflowID string) string {
+	workflowDir := GetWorkflowDir(baseDir, projectId)
+	return filepath.Join(workflowDir, workflowID)
+}
 func GetWorkflowDir(baseDir, projectId string) string {
 	return filepath.Join(baseDir, "data", projectId, "pipeline", "workflow")
 }

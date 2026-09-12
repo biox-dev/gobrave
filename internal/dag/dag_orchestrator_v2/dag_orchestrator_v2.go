@@ -77,6 +77,10 @@ type dynamicDagOrchestratorV2 struct {
 	// fingerprint, one to execute. Fingerprinting is now limited to the cache probe,
 	// which is the only place a digest is actually needed to make a decision.
 	fingerprinter NodeArtifactFingerprinter
+	// cachePolicies resolves the analysis.cache_type strategy that decides whether
+	// a node persisted by a previous run must be rerun. The registry is stateless,
+	// so it is built here instead of being injected by the DI container.
+	cachePolicies *CachePolicyRegistry
 	// bus emits runtime events using the existing event pipeline.
 	bus event.Bus
 
@@ -124,6 +128,7 @@ func NewDynamicDagOrchestratorV2(
 		containerRepo:   containerRepo,
 		dispatcher:      dispatcher,
 		fingerprinter:   fingerprinter,
+		cachePolicies:   NewCachePolicyRegistry(),
 		bus:             bus,
 		registry:        registry,
 		router:          router,
@@ -502,110 +507,6 @@ func (o *dynamicDagOrchestratorV2) prepareAnalysisForCacheRerun(ctx context.Cont
 	})
 }
 
-type dynamicDependencyManager struct {
-	waiting  map[string]map[string]struct{}
-	blocked  map[string]bool
-	outgoing map[string][]string
-}
-
-func newDynamicDependencyManager(nodeTemplateByID map[string]map[string]any, outgoing map[string][]string) *dynamicDependencyManager {
-	waiting := make(map[string]map[string]struct{}, len(nodeTemplateByID))
-	blocked := make(map[string]bool, len(nodeTemplateByID))
-	for nodeID, row := range nodeTemplateByID {
-		upstream := dynamicToStringSlice(row["upstream_ids"])
-		deps := make(map[string]struct{}, len(upstream))
-		for _, id := range upstream {
-			deps[id] = struct{}{}
-		}
-		waiting[nodeID] = deps
-		blocked[nodeID] = false
-	}
-	return &dynamicDependencyManager{waiting: waiting, blocked: blocked, outgoing: outgoing}
-}
-
-func (m *dynamicDependencyManager) SeedFromExisting(existing map[string]*types.AnalysisNode) {
-	for nodeID, node := range existing {
-		if node == nil {
-			continue
-		}
-		status := strings.ToLower(strings.TrimSpace(node.Status))
-		if status == dagruntime.StatusReady && node.CacheHit {
-			_ = m.OnNodeSuccess(nodeID)
-			continue
-		}
-		if dagruntime.IsSuccessStatus(status) {
-			_ = m.OnNodeSuccess(nodeID)
-			continue
-		}
-		if dagruntime.IsTerminalStatus(status) {
-			_ = m.OnNodeFailure(nodeID)
-		}
-	}
-}
-
-func (m *dynamicDependencyManager) InitialCandidates() []string {
-	out := make([]string, 0)
-	for nodeID := range m.waiting {
-		if m.IsReady(nodeID) || m.IsBlocked(nodeID) {
-			out = append(out, nodeID)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (m *dynamicDependencyManager) OnNodeSuccess(nodeID string) []string {
-	touched := map[string]struct{}{}
-	for _, downstream := range m.outgoing[nodeID] {
-		deps, ok := m.waiting[downstream]
-		if !ok {
-			continue
-		}
-		if _, exists := deps[nodeID]; exists {
-			delete(deps, nodeID)
-			touched[downstream] = struct{}{}
-		}
-	}
-	return dynamicSortedKeys(touched)
-}
-
-func (m *dynamicDependencyManager) OnNodeFailure(nodeID string) []string {
-	queue := []string{nodeID}
-	visited := map[string]struct{}{nodeID: {}}
-	touched := map[string]struct{}{}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, downstream := range m.outgoing[current] {
-			touched[downstream] = struct{}{}
-			if !m.blocked[downstream] {
-				m.blocked[downstream] = true
-			}
-			if _, seen := visited[downstream]; seen {
-				continue
-			}
-			visited[downstream] = struct{}{}
-			queue = append(queue, downstream)
-		}
-	}
-	return dynamicSortedKeys(touched)
-}
-
-func (m *dynamicDependencyManager) IsReady(nodeID string) bool {
-	deps, ok := m.waiting[nodeID]
-	if !ok {
-		return false
-	}
-	if m.blocked[nodeID] {
-		return false
-	}
-	return len(deps) == 0
-}
-
-func (m *dynamicDependencyManager) IsBlocked(nodeID string) bool {
-	return m.blocked[nodeID]
-}
-
 func (o *dynamicDagOrchestratorV2) checkDynamicCompletion(
 	ctx context.Context,
 	analysisID int64,
@@ -691,7 +592,7 @@ func (o *dynamicDagOrchestratorV2) reconcileDynamicCandidates(
 		existingByNodeID[n.NodeID] = n
 	}
 
-	queue := append([]string(nil), candidates...)
+	queue := dep.OrderByTopology(candidates)
 	processed := map[string]struct{}{}
 	newItems := make([]*types.AnalysisNode, 0)
 	for len(queue) > 0 {
@@ -758,10 +659,12 @@ func (o *dynamicDagOrchestratorV2) reconcileDynamicCandidates(
 	return o.repo.CreateAnalysisNodes(ctx, newItems)
 }
 
-// reconcileExistingNodeByCacheType applies the cache policy of the analysis to a
-// node persisted by a previous run. Only the two fingerprint policies need the
-// scheduler to produce artifacts, and they do so through the narrow
-// NodeArtifactFingerprinter, never through the execution-time preparer.
+// reconcileExistingNodeByCacheType applies the analysis cache policy to a node
+// persisted by a previous run, deciding whether it must be rerun.
+//
+// Only the fingerprint policies need the scheduler to produce artifacts, and they
+// do so through the narrow NodeArtifactFingerprinter, never through the
+// execution-time preparer.
 func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByCacheType(
 	ctx context.Context,
 	analysis *types.Analysis,
@@ -780,51 +683,15 @@ func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByCacheType(
 		return nil
 	}
 
+	// Blocked nodes are settled by the dependency manager; waiting nodes still have
+	// upstream work in flight, and in-flight nodes belong to the runtime.
 	if dep != nil && dep.IsBlocked(nodeID) {
-		return nil
-	}
-	switch analysis.CacheType {
-	case types.CacheTypeReuseExistingNode:
-		// Nothing to compare: reuse whatever was persisted.
-		return nil
-	case types.CacheTypeReuseWhenScriptUnchanged, types.CacheTypeReuseWhenScriptAndParamsUnchanged:
-		// The script is only loaded for the fingerprint policies: it is the input the
-		// probe needs, and loading it here keeps reuse_existing free of that query.
-		script, err := o.workflowRepo.GetScriptByScriptID(ctx, analysis.ProjectID, dynamicToString(row["script_id"]))
-		if err != nil {
-			return err
-		}
-		requireParamsMD5 := analysis.CacheType == types.CacheTypeReuseWhenScriptAndParamsUnchanged
-		return o.reconcileExistingNodeByMD5Policy(ctx, script, existingNode, row, incomingEdges, existingByNodeID, dep, requireParamsMD5)
-	default:
-		// Unknown cache types stay on the safe side: reuse the persisted node.
-		return nil
-	}
-}
-
-func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByMD5Policy(
-	ctx context.Context,
-	script *types.Script,
-	existingNode *types.AnalysisNode,
-	row map[string]any,
-	incomingEdges []*types.AnalysisEdge,
-	existingByNodeID map[string]*types.AnalysisNode,
-	dep *dynamicDependencyManager,
-	requireParamsMD5 bool,
-) error {
-	if existingNode == nil || row == nil {
-		return nil
-	}
-
-	nodeID := strings.TrimSpace(existingNode.NodeID)
-	if nodeID == "" {
 		return nil
 	}
 	if dep != nil && !dep.IsReady(nodeID) {
 		return nil
 	}
-
-	status := strings.ToLower(strings.TrimSpace(existingNode.Status))
+	status := normaliseNodeStatus(existingNode)
 	if status == dagruntime.StatusRunning || status == dagruntime.StatusSubmitted {
 		return nil
 	}
@@ -832,43 +699,123 @@ func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByMD5Policy(
 		return nil
 	}
 
+	policy := o.cachePolicies.Resolve(analysis.CacheType)
+
+	// Policies that do not compare fingerprints decide from the persisted node
+	// alone, so both the script query and the probe are skipped entirely.
+	if !policy.RequiresFingerprint() {
+		decision := policy.Decide(CacheFacts{CacheType: analysis.CacheType, Existing: existingNode})
+		if !decision.Rerun {
+			return nil
+		}
+		return o.scheduleExistingNodeRerun(ctx, existingByNodeID, dep, nodeID, existingNode, decision.Reason)
+	}
+
+	// The script is only loaded for the fingerprint policies: it is the input the
+	// probe needs, and loading it here keeps reuse_existing free of that query.
+	script, err := o.workflowRepo.GetScriptByScriptID(ctx, analysis.ProjectID, dynamicToString(row["script_id"]))
+	if err != nil {
+		return err
+	}
+	probe := o.buildCacheProbe(script, existingNode, row, incomingEdges, existingByNodeID)
+	if err := o.fingerprintNodeArtifacts(ctx, probe); err != nil {
+		return err
+	}
+
+	decision := policy.Decide(CacheFacts{
+		CacheType:       analysis.CacheType,
+		Existing:        existingNode,
+		ProbeCommandMD5: probe.CommandMD5,
+		ProbeParamsMD5:  probe.ParamsMD5,
+	})
+	if !decision.Rerun {
+		return nil
+	}
+	return o.scheduleExistingNodeRerun(ctx, existingByNodeID, dep, nodeID, probe, decision.Reason)
+}
+
+// scheduleExistingNodeRerun puts a cache invalidated node back into the ready queue
+// while preserving the execution order of the graph around it.
+//
+// Marking the node ready is only half of the decision: the dependency manager had
+// seeded it as satisfied (a successful node from the previous run), so its dependants
+// no longer wait for it. Re-arming the subgraph restores those dependencies, and any
+// dependant a previous run had already left claimable is pushed back to pending,
+// because the dispatch pump claims purely by persisted status and would otherwise hand
+// it over before the upstream it consumes has produced anything.
+func (o *dynamicDagOrchestratorV2) scheduleExistingNodeRerun(
+	ctx context.Context,
+	existingByNodeID map[string]*types.AnalysisNode,
+	dep *dynamicDependencyManager,
+	nodeID string,
+	probe *types.AnalysisNode,
+	rerunReason string,
+) error {
+	if dep != nil {
+		affected := dep.ReArmTransitive(nodeID)
+		if err := o.holdBackClaimableDependants(ctx, existingByNodeID, affected); err != nil {
+			return err
+		}
+	}
+	return o.markExistingNodeReadyForRerun(ctx, probe.AnalysisNodeID, probe, rerunReason)
+}
+
+// holdBackClaimableDependants demotes dependants that are ready but not yet handed to
+// a worker, so a rerun upstream can never be overtaken by a downstream node.
+//
+// Only nodes a previous run left claimable need this: a cache hit is never claimed,
+// and anything terminal is settled. The node returns to ready through the normal
+// reconcile pass once its upstream has actually completed.
+func (o *dynamicDagOrchestratorV2) holdBackClaimableDependants(
+	ctx context.Context,
+	existingByNodeID map[string]*types.AnalysisNode,
+	nodeIDs []string,
+) error {
+	for _, nodeID := range nodeIDs {
+		node := existingByNodeID[nodeID]
+		if node == nil {
+			continue
+		}
+		if normaliseNodeStatus(node) != dagruntime.StatusReady || node.CacheHit {
+			continue
+		}
+		if err := o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
+			"status":        dagruntime.StatusPending,
+			"started_at":    nil,
+			"finished_at":   nil,
+			"error_message": "",
+			"exit_code":     0,
+		}); err != nil {
+			return err
+		}
+		node.Status = dagruntime.StatusPending
+	}
+	return nil
+}
+
+// buildCacheProbe rebuilds the node payload from the freshly compiled template so
+// the cache policies can compare what would run now against what ran last time.
+func (o *dynamicDagOrchestratorV2) buildCacheProbe(
+	script *types.Script,
+	existingNode *types.AnalysisNode,
+	row map[string]any,
+	incomingEdges []*types.AnalysisEdge,
+	existingByNodeID map[string]*types.AnalysisNode,
+) *types.AnalysisNode {
 	probe := *existingNode
 	probe.NodeName = dynamicToString(row["node_name"])
 	probe.SampleID = dynamicToString(row["sample_id"])
 	probe.Executor = dynamicToString(row["executor"])
-	probe.ScriptID = script.ID
+	if script != nil {
+		probe.ScriptID = script.ID
+	}
 	probe.InputsPatterns = dynamicToJSONMap(row["inputs_patterns"])
 	probe.OutputPatterns = dynamicToJSONMap(row["output_patterns"])
 	probe.Params = dynamicToJSONMap(row["params"])
 	probe.ResolvedInputs = dynamicToJSONMap(row["resolved_inputs"])
 	probe.ResolvedOutputs = dynamicToJSONMap(row["resolved_outputs"])
 	bootstrapInputsFromUpstream(row, probe.Params, probe.ResolvedInputs, incomingEdges, existingByNodeID)
-
-	if err := o.fingerprintNodeArtifacts(ctx, &probe); err != nil {
-		return err
-	}
-
-	commandMatched := strings.TrimSpace(probe.CommandMD5) == strings.TrimSpace(existingNode.CommandMD5)
-	paramsMatched := strings.TrimSpace(probe.ParamsMD5) == strings.TrimSpace(existingNode.ParamsMD5)
-	if commandMatched && (!requireParamsMD5 || paramsMatched) {
-		return nil
-	}
-
-	rerunReason := buildNodeRerunReason(commandMatched, paramsMatched, requireParamsMD5)
-	return o.markExistingNodeReadyForRerun(ctx, existingNode.AnalysisNodeID, &probe, rerunReason)
-}
-
-func buildNodeRerunReason(commandMatched bool, paramsMatched bool, requireParamsMD5 bool) string {
-	if !commandMatched && requireParamsMD5 && !paramsMatched {
-		return "command and params changed"
-	}
-	if !commandMatched {
-		return "command changed"
-	}
-	if requireParamsMD5 && !paramsMatched {
-		return "params changed"
-	}
-	return "node cache invalidated"
+	return &probe
 }
 
 func (o *dynamicDagOrchestratorV2) markExistingNodeReadyForRerun(ctx context.Context, analysisNodeID string, probe *types.AnalysisNode, rerunReason string) error {

@@ -11,11 +11,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -46,6 +46,11 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 			return
 		}
 		c.Error(errors.NewInternalServerError("failed to get workflow").WithDetails(err.Error()))
+		return
+	}
+	project, err := h.projectService.GetProjectByID(c.Request.Context(), workflow.ProjectID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to get project").WithDetails(err.Error()))
 		return
 	}
 
@@ -137,7 +142,8 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		return
 	}
 
-	workflowSourceDir := filepath.Join(h.cfg.Storage.BaseDir, "pipeline", "tools", workflow.WorkflowID)
+	// workflowSourceDir := filepath.Join(h.cfg.Storage.BaseDir, "pipeline", "tools", workflow.WorkflowID)
+	workflowSourceDir := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
 	workflowTargetDir := filepath.Join(storePath, "tools", workflow.WorkflowID)
 	if err := copyDirReplace(workflowSourceDir, workflowTargetDir); err != nil {
 		c.Error(errors.NewInternalServerError("failed to copy workflow files").WithDetails(err.Error()))
@@ -160,7 +166,9 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		if scriptID == "" {
 			continue
 		}
-		sourceScriptDir := filepath.Join(h.cfg.Storage.BaseDir, "pipeline", "script", scriptID)
+		sourceScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, scriptID)
+
+		// sourceScriptDir := filepath.Join(h.cfg.Storage.BaseDir, "pipeline", "script", scriptID)
 		targetScriptDir := filepath.Join(storePath, "script", scriptID)
 		if err := copyDirReplace(sourceScriptDir, targetScriptDir); err != nil {
 			c.Error(errors.NewInternalServerError("failed to copy script files").WithDetails(err.Error()))
