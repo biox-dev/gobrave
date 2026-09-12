@@ -2,6 +2,8 @@ package dataflow
 
 import (
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
@@ -147,4 +149,90 @@ func buildNodeRerunReason(commandMatched bool, paramsMatched bool, requireParams
 		return "params changed"
 	}
 	return "node cache invalidated"
+}
+
+func appendUniqueString(items []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return items
+	}
+	for _, item := range items {
+		if strings.TrimSpace(item) == value {
+			return items
+		}
+	}
+	return append(items, value)
+}
+
+func dynamicToMap(value any) map[string]any {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(m))
+	for key, item := range m {
+		cloned[key] = item
+	}
+	return cloned
+}
+
+func resolveNodeField(node map[string]any, key string) any {
+	if node == nil {
+		return nil
+	}
+	if value, ok := node[key]; ok {
+		return value
+	}
+	if data := dynamicToMap(node["data"]); len(data) > 0 {
+		if value, ok := data[key]; ok {
+			return value
+		}
+	}
+	return nil
+}
+
+func toAnySlice(value any) ([]any, bool) {
+	if value == nil {
+		return nil, false
+	}
+	if items, ok := value.([]any); ok {
+		copied := make([]any, len(items))
+		copy(copied, items)
+		return copied, true
+	}
+	rv := reflect.ValueOf(value)
+	if rv.Kind() != reflect.Array && rv.Kind() != reflect.Slice {
+		return nil, false
+	}
+	out := make([]any, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		out[i] = rv.Index(i).Interface()
+	}
+	return out, true
+}
+
+func cloneInputs(inputs map[string]any) map[string]any {
+	cloned := make(map[string]any, len(inputs))
+	for key, value := range inputs {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func extractNodeInputKeys(node map[string]any) []string {
+	inputs := dynamicToMap(node["inputs"])
+	keys := make([]string, 0, len(inputs))
+	for key := range inputs {
+		keys = appendUniqueString(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func dataflowChannelID(fromNodeID string, fromPort string, toNodeID string, toPort string) string {
+	return fmt.Sprintf("%s:%s->%s:%s", strings.TrimSpace(fromNodeID), strings.TrimSpace(fromPort), strings.TrimSpace(toNodeID), strings.TrimSpace(toPort))
+}
+
+func dataflowSourceChannelID(nodeID string, inputKey string) string {
+	return fmt.Sprintf("source:%s:%s", strings.TrimSpace(nodeID), strings.TrimSpace(inputKey))
 }
