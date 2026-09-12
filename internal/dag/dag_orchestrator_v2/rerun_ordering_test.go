@@ -3,7 +3,6 @@ package orchestratorv2
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
@@ -14,12 +13,11 @@ import (
 // These tests pin the execution-order guarantee of a cache-invalidated rerun.
 //
 // When cache_type is CacheTypeReuseWhenScriptAndParamsUnchanged and the params
-// change, every node of a previously finished analysis is a rerun candidate. The
-// reconcile pass used to evaluate them all and mark each one ready, so the whole
-// graph was submitted at once and downstream nodes ran before the upstream nodes
-// whose outputs they consume. The dependency manager now re-arms the rerun subgraph
-// and candidates are decided upstream-first, so only the nodes whose dependencies are
-// truly satisfied become ready.
+// change, every node of a previously finished analysis is a rerun candidate. Readiness
+// is derived from persisted state, so once the root is flipped back to ready it stops
+// being satisfied - transitively - and its dependants are simply not runnable. The
+// reconcile pass therefore never needs to re-arm a subgraph or write a hold-back: it
+// walks the compiled plan upstream-first and re-evaluates readiness on the fly.
 
 // stubAnalysisRepo is an in-memory AnalysisRepository holding the analysis nodes the
 // reconciler touches. Every other method is inherited from the embedded nil interface,
@@ -98,25 +96,25 @@ func (stubFingerprinter) Fingerprint(_ context.Context, node *types.AnalysisNode
 // newRerunOrderingFixture builds a finished a -> b -> c analysis where every persisted
 // node carries stale params digests, so the next run must rerun all three.
 //
-// mutate is applied to the persisted nodes before the dependency view is seeded; it
-// lets a test reproduce a partially dispatched previous run.
-func newRerunOrderingFixture(t *testing.T, mutate func(nodes []*types.AnalysisNode)) (*dynamicDagOrchestratorV2, *stubAnalysisRepo, map[string]map[string]any, map[string][]*types.AnalysisEdge, *dynamicDependencyManager) {
+// mutate is applied to the persisted nodes before the plan is built; it lets a test
+// reproduce a partially dispatched previous run.
+func newRerunOrderingFixture(t *testing.T, mutate func(nodes []*types.AnalysisNode)) (*dynamicDagOrchestratorV2, *stubAnalysisRepo, *dynamicExecutionPlan) {
 	t.Helper()
 
-	templates := map[string]map[string]any{
-		"a": {
+	nodeTemplates := []map[string]any{
+		{
 			"node_id":      "a",
 			"script_id":    "script-a",
 			"params":       types.JSONMap{"p": "new"},
 			"upstream_ids": []any{},
 		},
-		"b": {
+		{
 			"node_id":      "b",
 			"script_id":    "script-b",
 			"params":       types.JSONMap{"p": "new"},
 			"upstream_ids": []any{"a"},
 		},
-		"c": {
+		{
 			"node_id":      "c",
 			"script_id":    "script-c",
 			"params":       types.JSONMap{"p": "new"},
@@ -145,15 +143,18 @@ func newRerunOrderingFixture(t *testing.T, mutate func(nodes []*types.AnalysisNo
 		cachePolicies: NewCachePolicyRegistry(),
 	}
 
-	dep := newDynamicDependencyManager(templates, buildOutgoingNodeMap(edges))
+	return orchestrator, repo, newDynamicExecutionPlan(nodeTemplates, edges)
+}
 
-	existingByNodeID := make(map[string]*types.AnalysisNode, len(repo.nodes))
+// completeNode marks a persisted node as successfully finished, as the dispatcher
+// would after a real execution.
+func completeNode(repo *stubAnalysisRepo, nodeID string) {
 	for _, node := range repo.nodes {
-		existingByNodeID[node.NodeID] = node
+		if node.NodeID == nodeID {
+			node.Status = dagruntime.StatusDone
+			return
+		}
 	}
-	dep.SeedFromExisting(existingByNodeID)
-
-	return orchestrator, repo, templates, buildIncomingEdgeMap(edges), dep
 }
 
 func nodeStatuses(repo *stubAnalysisRepo) map[string]string {
@@ -168,10 +169,10 @@ func nodeStatuses(repo *stubAnalysisRepo) map[string]string {
 // param invalidates all three nodes, but only the root may become ready, because the
 // other two must wait for the rerun of the node they consume.
 func TestRerunHoldsBackDownstreamUntilUpstreamIsQueued(t *testing.T) {
-	orchestrator, repo, templates, incoming, dep := newRerunOrderingFixture(t, nil)
+	orchestrator, repo, plan := newRerunOrderingFixture(t, nil)
 	analysis := &types.Analysis{ID: 7, ProjectID: 1, CacheType: types.CacheTypeReuseWhenScriptAndParamsUnchanged}
 
-	if err := orchestrator.reconcileDynamicCandidates(context.Background(), analysis, templates, incoming, dep.InitialCandidates(), dep); err != nil {
+	if err := orchestrator.reconcilePlan(context.Background(), analysis, plan); err != nil {
 		t.Fatalf("reconcile failed: %v", err)
 	}
 
@@ -185,26 +186,29 @@ func TestRerunHoldsBackDownstreamUntilUpstreamIsQueued(t *testing.T) {
 	if statuses["c"] != dagruntime.StatusDone {
 		t.Fatalf("c must still wait for the rerun of b, got %q", statuses["c"])
 	}
-	if dep.IsReady("b") {
-		t.Fatal("dependency manager must not report b ready while a reruns")
+
+	state := newDynamicState(plan, repo.nodes)
+	if state.canRun("b") {
+		t.Fatal("derived readiness must not report b runnable while a reruns")
 	}
-	if dep.IsReady("c") {
-		t.Fatal("dependency manager must not report c ready while b is held back")
+	if state.canRun("c") {
+		t.Fatal("derived readiness must not report c runnable while its ancestor a reruns")
 	}
 }
 
 // TestRerunUnlocksOneLayerAtATime walks the graph forward and asserts that each
 // completion releases exactly the next layer.
 func TestRerunUnlocksOneLayerAtATime(t *testing.T) {
-	orchestrator, repo, templates, incoming, dep := newRerunOrderingFixture(t, nil)
+	orchestrator, repo, plan := newRerunOrderingFixture(t, nil)
 	analysis := &types.Analysis{ID: 7, ProjectID: 1, CacheType: types.CacheTypeReuseWhenScriptAndParamsUnchanged}
 	ctx := context.Background()
 
-	if err := orchestrator.reconcileDynamicCandidates(ctx, analysis, templates, incoming, dep.InitialCandidates(), dep); err != nil {
+	if err := orchestrator.reconcilePlan(ctx, analysis, plan); err != nil {
 		t.Fatalf("initial reconcile failed: %v", err)
 	}
 
-	if err := orchestrator.reconcileDynamicCandidates(ctx, analysis, templates, incoming, dep.OnNodeSuccess("a"), dep); err != nil {
+	completeNode(repo, "a")
+	if err := orchestrator.reconcilePlan(ctx, analysis, plan); err != nil {
 		t.Fatalf("reconcile after a completed failed: %v", err)
 	}
 	statuses := nodeStatuses(repo)
@@ -215,7 +219,8 @@ func TestRerunUnlocksOneLayerAtATime(t *testing.T) {
 		t.Fatalf("c must still wait for b, got %q", statuses["c"])
 	}
 
-	if err := orchestrator.reconcileDynamicCandidates(ctx, analysis, templates, incoming, dep.OnNodeSuccess("b"), dep); err != nil {
+	completeNode(repo, "b")
+	if err := orchestrator.reconcilePlan(ctx, analysis, plan); err != nil {
 		t.Fatalf("reconcile after b completed failed: %v", err)
 	}
 	if statuses = nodeStatuses(repo); statuses["c"] != dagruntime.StatusReady {
@@ -224,16 +229,16 @@ func TestRerunUnlocksOneLayerAtATime(t *testing.T) {
 }
 
 // TestRerunHoldsBackAlreadyClaimableDownstream covers a previous run that left a
-// dependant ready but never dispatched it: it must not be claimed ahead of the upstream
-// that is about to rerun.
+// dependant ready but never dispatched it: the derived-readiness invariant must demote
+// it to pending so it cannot be claimed ahead of the upstream that is about to rerun.
 func TestRerunHoldsBackAlreadyClaimableDownstream(t *testing.T) {
-	orchestrator, repo, templates, incoming, dep := newRerunOrderingFixture(t, func(nodes []*types.AnalysisNode) {
+	orchestrator, repo, plan := newRerunOrderingFixture(t, func(nodes []*types.AnalysisNode) {
 		nodes[1].Status = dagruntime.StatusReady
 		nodes[1].CacheHit = false
 	})
 	analysis := &types.Analysis{ID: 7, ProjectID: 1, CacheType: types.CacheTypeReuseWhenScriptAndParamsUnchanged}
 
-	if err := orchestrator.reconcileDynamicCandidates(context.Background(), analysis, templates, incoming, dep.InitialCandidates(), dep); err != nil {
+	if err := orchestrator.reconcilePlan(context.Background(), analysis, plan); err != nil {
 		t.Fatalf("reconcile failed: %v", err)
 	}
 
@@ -246,37 +251,30 @@ func TestRerunHoldsBackAlreadyClaimableDownstream(t *testing.T) {
 	}
 }
 
-// TestOrderByTopologySortsCandidatesUpstreamFirst documents the guard rail that makes a
-// single reconcile pass safe: ancestors are always decided before their dependants.
-func TestOrderByTopologySortsCandidatesUpstreamFirst(t *testing.T) {
-	_, _, _, _, dep := newRerunOrderingFixture(t, nil)
+// TestDerivedReadinessIsTransitive pins the property that replaced re-arming: a node is
+// satisfied only when it and every ancestor are reusable, so queueing an ancestor for a
+// rerun makes even a finished grandchild not runnable.
+func TestDerivedReadinessIsTransitive(t *testing.T) {
+	_, repo, plan := newRerunOrderingFixture(t, nil)
 
-	ordered := dep.OrderByTopology([]string{"c", "b", "a"})
-	if got, want := strings.Join(ordered, ","), "a,b,c"; got != want {
-		t.Fatalf("OrderByTopology = %q, want %q", got, want)
-	}
-}
-
-// TestReArmTransitiveHoldsEveryDescendant pins that re-arming is transitive: putting
-// the root back into the queue must hold back its grandchildren too, otherwise they
-// would still be dispatched before their own upstream runs.
-func TestReArmTransitiveHoldsEveryDescendant(t *testing.T) {
-	_, _, _, _, dep := newRerunOrderingFixture(t, nil)
-
-	// Precondition: seeding treated the finished nodes as satisfied, so every node is
-	// ready before any rerun decision.
-	if !dep.IsReady("c") {
-		t.Fatal("fixture precondition: c should be ready after seeding")
+	// Precondition: with every node finished, the whole chain is runnable.
+	state := newDynamicState(plan, repo.nodes)
+	if !state.canRun("c") {
+		t.Fatal("fixture precondition: c should be runnable while all ancestors are done")
 	}
 
-	affected := dep.ReArmTransitive("a")
-	if !dep.IsReady("a") {
-		t.Fatal("the re-armed node itself must stay ready")
+	// Queue the root for a rerun exactly as the reconcile pass would.
+	repo.nodes[0].Status = dagruntime.StatusReady
+	repo.nodes[0].CacheHit = false
+
+	state = newDynamicState(plan, repo.nodes)
+	if state.satisfied("b") {
+		t.Fatal("b must not stay satisfied once its ancestor a is queued for rerun")
 	}
-	if dep.IsReady("b") || dep.IsReady("c") {
-		t.Fatalf("re-arming a must hold back every descendant, affected=%v", affected)
+	if state.canRun("b") {
+		t.Fatal("b must not be runnable once its ancestor a is queued for rerun")
 	}
-	if got, want := strings.Join(affected, ","), "b,c"; got != want {
-		t.Fatalf("affected = %q, want %q", got, want)
+	if state.canRun("c") {
+		t.Fatal("c must not be runnable once its ancestor a is queued for rerun")
 	}
 }

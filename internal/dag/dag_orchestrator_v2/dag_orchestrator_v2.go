@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -303,27 +302,10 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 	pool.Start(ctx)
 	defer pool.Stop()
 
-	incoming := buildIncomingEdgeMap(edges)
-	outgoing := buildOutgoingNodeMap(edges)
-	nodeTemplateByID := make(map[string]map[string]any, len(nodeTemplates))
-	for _, row := range nodeTemplates {
-		nid := strings.TrimSpace(dynamicToString(row["node_id"]))
-		if nid == "" {
-			continue
-		}
-		nodeTemplateByID[nid] = row
-	}
-
-	dep := newDynamicDependencyManager(nodeTemplateByID, outgoing)
-	existing, err := o.repo.ListAnalysisNodesByAnalysisID(ctx, analysisID)
-	if err != nil {
-		return err
-	}
-	existingByNodeID := make(map[string]*types.AnalysisNode, len(existing))
-	for _, n := range existing {
-		existingByNodeID[n.NodeID] = n
-	}
-	dep.SeedFromExisting(existingByNodeID)
+	// The compiled node list is already in the compiler's topological order, so it
+	// doubles as the run schedule: one upstream-first pass over it reconciles the
+	// graph, and readiness is derived from persisted state rather than maintained.
+	plan := newDynamicExecutionPlan(nodeTemplates, edges)
 
 	// Runtime events reach this loop through the process-wide router via the
 	// analysis-scoped sink; no per-run bus subscription is created here.
@@ -332,7 +314,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 		sink = dagruntime.NewAnalysisEventSink()
 	}
 
-	if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep); err != nil {
+	if err := o.reconcilePlan(ctx, analysis, plan); err != nil {
 		return err
 	}
 	if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
@@ -345,7 +327,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 	defer watchdogTicker.Stop()
 
 	for {
-		finished, finishedErr := o.checkDynamicCompletion(ctx, analysisID, len(nodeTemplateByID), runtime, pool)
+		finished, finishedErr := o.checkDynamicCompletion(ctx, analysisID, len(plan.order), runtime, pool)
 		if finishedErr != nil {
 			return finishedErr
 		}
@@ -362,52 +344,31 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 				return nil
 			}
 		case <-watchdogTicker.C:
-			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep); err != nil {
+			if err := o.reconcilePlan(ctx, analysis, plan); err != nil {
 				return err
 			}
 			if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
 				return err
 			}
-		case evt := <-sink.Events():
-			// The sink is registered with SchedulerEventFilter, so in practice only
-			// Completed/Failed ever reach this arm. The default branch is kept only so
-			// a sink built without the filter still behaves as before.
-			var candidates []string
-			switch strings.TrimSpace(evt.Name) {
-			case dagruntime.EventNodeCompleted:
-				candidates = dep.OnNodeSuccess(strings.TrimSpace(evt.NodeID))
-			case dagruntime.EventNodeFailed:
-				candidates = dep.OnNodeFailure(strings.TrimSpace(evt.NodeID))
-			default:
-				candidates = nil
+		case <-sink.Events():
+			// The sink is registered with SchedulerEventFilter, so only a node
+			// Completed/Failed event ever reaches this arm. Readiness is derived, so the
+			// event is purely a wake signal: a full upstream-first pass observes the node's
+			// new persisted state and advances whichever dependants it unlocked.
+			// 事件缓冲区溢出意味着本批事件可能已丢失，但全量对账本身就是幂等的，无需特殊处理。
+			_ = sink.ConsumeDirty()
+			if err := o.reconcilePlan(ctx, analysis, plan); err != nil {
+				return err
 			}
-			// 事件缓冲区溢出意味着本批事件可能已丢失：退化为全量对账，保证正确性。
-			if sink.ConsumeDirty() {
-				candidates = dep.InitialCandidates()
-			}
-			// 算出并落库哪些节点现在可以/不可以跑
-			// 作用：对本次事件影响到的候选节点做“对账/物化”。
-			// 具体会做的事：
-			// 看节点是否已存在于 analysis_node；
-			// 若不存在且依赖满足，创建新节点（ready）；
-			// 若被失败上游阻断，创建/标记为 skipped；
-			// 若已存在，会按 cache 策略判断是否需要重新置为 ready 重跑。
-
-			if len(candidates) > 0 {
-				if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, candidates, dep); err != nil {
-					return err
-				}
-			}
-			// 第二段负责“把可以跑的节点真正送去执行”。
-			// 作用：把数据库里当前可执行的 ready 节点“领取（claim）并直接推入 worker pool 队列”，交给 worker 实际执行。
-			// 特点：这一步每次事件后都会跑一次（不依赖 candidates 是否为空），确保新变成 ready 的节点尽快被派发，减少调度延迟。
+			// 第二段负责“把可以跑的节点真正送去执行”：把数据库里当前可执行的 ready 节点
+			// “领取（claim）并直接推入 worker pool 队列”，交给 worker 实际执行。
 			if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
 				return err
 			}
 		case <-sink.Wake():
 			// 事件溢出唤醒：不等 watchdog，立即做一次全量对账与派发。
 			_ = sink.ConsumeDirty()
-			if err := o.reconcileDynamicCandidates(ctx, analysis, nodeTemplateByID, incoming, dep.InitialCandidates(), dep); err != nil {
+			if err := o.reconcilePlan(ctx, analysis, plan); err != nil {
 				return err
 			}
 			if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
@@ -571,85 +532,97 @@ func (o *dynamicDagOrchestratorV2) pumpReadyQueue(ctx context.Context, runtime *
 	return nil
 }
 
-func (o *dynamicDagOrchestratorV2) reconcileDynamicCandidates(
-	ctx context.Context,
-	analysis *types.Analysis,
-	nodeTemplateByID map[string]map[string]any,
-	incoming map[string][]*types.AnalysisEdge,
-	candidates []string,
-	dep *dynamicDependencyManager,
-) error {
-	if len(candidates) == 0 {
+// 给定 plan（静态模板）+ 数据库当前节点行，重新推导每个节点此刻应该是什么状态，并只对"不一致的节点"做最小修正。
+
+// reconcilePlan materializes and re-decides the compiled graph in a single
+// upstream-first pass.
+//
+// Readiness is derived from persisted state on every pass, so there is no mutable
+// waiting set to keep in sync: a cache-invalidated node that is flipped back to ready
+// is simply not "satisfied", and every dependant therefore stops being runnable in the
+// same pass - no re-arm, no hold-back. Iterating plan.order (the compiler's
+// topological order) guarantees ancestors are settled before their dependants are
+// queried, which is the only ordering requirement this relies on.
+func (o *dynamicDagOrchestratorV2) reconcilePlan(ctx context.Context, analysis *types.Analysis, plan *dynamicExecutionPlan) error {
+	if plan == nil || len(plan.order) == 0 {
 		return nil
 	}
 
-	existingNodes, err := o.repo.ListAnalysisNodesByAnalysisID(ctx, analysis.ID)
+	persisted, err := o.repo.ListAnalysisNodesByAnalysisID(ctx, analysis.ID)
 	if err != nil {
 		return err
 	}
-	existingByNodeID := make(map[string]*types.AnalysisNode, len(existingNodes))
-	for _, n := range existingNodes {
-		existingByNodeID[n.NodeID] = n
-	}
+	state := newDynamicState(plan, persisted)
 
-	queue := dep.OrderByTopology(candidates)
-	processed := map[string]struct{}{}
 	newItems := make([]*types.AnalysisNode, 0)
-	for len(queue) > 0 {
-		nodeID := strings.TrimSpace(queue[0])
-		queue = queue[1:]
-		if nodeID == "" {
-			continue
-		}
-		if _, seen := processed[nodeID]; seen {
-			continue
-		}
-		processed[nodeID] = struct{}{}
+	for _, nodeID := range plan.order {
+		current := state.nodes[nodeID]
 
-		if existingNode, exists := existingByNodeID[nodeID]; exists {
-			row, _ := nodeTemplateByID[nodeID]
-			if existingErr := o.reconcileExistingNodeByCacheType(ctx, analysis, existingNode, row, incoming[nodeID], existingByNodeID, dep); existingErr != nil {
-				return existingErr
+		// Derived-readiness invariant, replacing the old hold-back pass: a claimable
+		// node (ready, not a cache hit) whose upstream is not satisfied must not stay
+		// claimable. The dispatch pump claims purely by persisted status, so leaving it
+		// ready would let it overtake the upstream it consumes.
+		if current != nil &&
+			normaliseNodeStatus(current) == dagruntime.StatusReady &&
+			!current.CacheHit &&
+			!state.canRun(nodeID) {
+			if err := o.demoteNodeToPending(ctx, current); err != nil {
+				return err
 			}
 			continue
 		}
-		row, ok := nodeTemplateByID[nodeID]
-		if !ok {
+
+		if state.isBlocked(nodeID) {
+			// A blocked node is materialized once as skipped so completion converges; the
+			// skip then blocks its own dependants through the same derived query on the
+			// following iterations, without an explicit failure cascade.
+			if current != nil {
+				continue
+			}
+			node, err := o.materializePlannedNode(ctx, analysis, plan, state, nodeID, dagruntime.StatusSkipped, "blocked by failed upstream dependency")
+			if err != nil {
+				return err
+			}
+			newItems = append(newItems, node)
 			continue
 		}
 
-		status := ""
-		errorMessage := ""
-		if dep.IsBlocked(nodeID) {
-			status = dagruntime.StatusSkipped
-			errorMessage = "blocked by failed upstream dependency"
-		} else if dep.IsReady(nodeID) {
-			status = dagruntime.StatusReady
-		} else {
+		if !state.canRun(nodeID) {
+			// Upstream is still in flight or queued for a rerun: leave the node alone.
 			continue
 		}
-		scriptId := dynamicToString(row["script_id"])
-		script, err := o.workflowRepo.GetScriptByScriptID(ctx, analysis.ProjectID, scriptId)
+
+		if current == nil {
+			node, err := o.materializePlannedNode(ctx, analysis, plan, state, nodeID, dagruntime.StatusReady, "")
+			if err != nil {
+				return err
+			}
+			newItems = append(newItems, node)
+			continue
+		}
+
+		// The node exists and its upstream is satisfied: decide whether its persisted
+		// result is reusable, or whether it must be flipped back to ready.
+		switch normaliseNodeStatus(current) {
+		case dagruntime.StatusRunning, dagruntime.StatusSubmitted:
+			// Already executing; the runtime owns it.
+			continue
+		case dagruntime.StatusReady:
+			if !current.CacheHit {
+				// Already queued for execution.
+				continue
+			}
+		}
+
+		probe, decision, err := o.decideExistingNode(ctx, analysis, plan, state, current)
 		if err != nil {
 			return err
 		}
-
-		node, buildErr := o.buildDynamicAnalysisNode(script, analysis, nodeID, row, incoming[nodeID], existingByNodeID, status, errorMessage)
-		if buildErr != nil {
-			return buildErr
+		if !decision.Rerun {
+			continue
 		}
-		// No runtime artifacts are produced here on purpose. The node is about to be
-		// claimed and handed to NodeDispatcher, which prepares run.sh / params.json
-		// exactly once (and cleans the output directory right before executing).
-		// Preparing here as well would duplicate that work for every node, and for a
-		// skipped node - which never executes - it would be pure waste.
-		// The digests the cache policies compare against are captured by the
-		// dispatcher after it prepares the node for execution.
-		newItems = append(newItems, node)
-		existingByNodeID[nodeID] = node
-
-		if status == dagruntime.StatusSkipped {
-			queue = append(queue, dep.OnNodeFailure(nodeID)...)
+		if err := o.markExistingNodeReadyForRerun(ctx, current, probe, decision.Reason); err != nil {
+			return err
 		}
 	}
 
@@ -659,138 +632,114 @@ func (o *dynamicDagOrchestratorV2) reconcileDynamicCandidates(
 	return o.repo.CreateAnalysisNodes(ctx, newItems)
 }
 
-// reconcileExistingNodeByCacheType applies the analysis cache policy to a node
-// persisted by a previous run, deciding whether it must be rerun.
-//
-// Only the fingerprint policies need the scheduler to produce artifacts, and they
-// do so through the narrow NodeArtifactFingerprinter, never through the
-// execution-time preparer.
-func (o *dynamicDagOrchestratorV2) reconcileExistingNodeByCacheType(
+// materializePlannedNode creates the analysis_node row for one compiled template and
+// registers it in the pass state so its dependants observe it immediately.
+func (o *dynamicDagOrchestratorV2) materializePlannedNode(
 	ctx context.Context,
 	analysis *types.Analysis,
-	existingNode *types.AnalysisNode,
-	row map[string]any,
-	incomingEdges []*types.AnalysisEdge,
-	existingByNodeID map[string]*types.AnalysisNode,
-	dep *dynamicDependencyManager,
-) error {
-	if analysis == nil || existingNode == nil {
-		return nil
+	plan *dynamicExecutionPlan,
+	state *dynamicState,
+	nodeID string,
+	status string,
+	errorMessage string,
+) (*types.AnalysisNode, error) {
+	planned, ok := plan.nodes[nodeID]
+	if !ok {
+		return nil, fmt.Errorf("node %s is not part of the compiled plan", nodeID)
 	}
 
-	nodeID := strings.TrimSpace(existingNode.NodeID)
-	if nodeID == "" {
-		return nil
+	script, err := o.workflowRepo.GetScriptByScriptID(ctx, analysis.ProjectID, dynamicToString(planned.template["script_id"]))
+	if err != nil {
+		return nil, err
 	}
 
-	// Blocked nodes are settled by the dependency manager; waiting nodes still have
-	// upstream work in flight, and in-flight nodes belong to the runtime.
-	if dep != nil && dep.IsBlocked(nodeID) {
+	node, err := o.buildDynamicAnalysisNode(script, analysis, nodeID, planned.template, planned.incoming, state.nodes, status, errorMessage)
+	if err != nil {
+		return nil, err
+	}
+	// No runtime artifacts are produced here on purpose. The node is about to be
+	// claimed and handed to NodeDispatcher, which prepares run.sh / params.json
+	// exactly once (and cleans the output directory right before executing).
+	// Preparing here as well would duplicate that work for every node, and for a
+	// skipped node - which never executes - it would be pure waste.
+	// The digests the cache policies compare against are captured by the
+	// dispatcher after it prepares the node for execution.
+	state.nodes[nodeID] = node
+	return node, nil
+}
+
+// demoteNodeToPending rolls a claimable node back to pending so the dispatch pump
+// cannot hand it to a worker before the upstream it consumes has produced anything.
+func (o *dynamicDagOrchestratorV2) demoteNodeToPending(ctx context.Context, node *types.AnalysisNode) error {
+	if node == nil {
 		return nil
 	}
-	if dep != nil && !dep.IsReady(nodeID) {
-		return nil
+	if err := o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
+		"status":        dagruntime.StatusPending,
+		"started_at":    nil,
+		"finished_at":   nil,
+		"error_message": "",
+		"exit_code":     0,
+	}); err != nil {
+		return err
 	}
-	status := normaliseNodeStatus(existingNode)
-	if status == dagruntime.StatusRunning || status == dagruntime.StatusSubmitted {
-		return nil
+	node.Status = dagruntime.StatusPending
+	return nil
+}
+
+// decideExistingNode applies the analysis cache policy to a node persisted by a
+// previous run and reports whether it must be rerun, together with the probe payload
+// the rerun must be written with.
+//
+// Only the fingerprint policies need the scheduler to produce artifacts, and they do
+// so through the narrow NodeArtifactFingerprinter, never through the execution-time
+// preparer.
+func (o *dynamicDagOrchestratorV2) decideExistingNode(
+	ctx context.Context,
+	analysis *types.Analysis,
+	plan *dynamicExecutionPlan,
+	state *dynamicState,
+	existing *types.AnalysisNode,
+) (*types.AnalysisNode, CacheDecision, error) {
+	if analysis == nil || existing == nil {
+		return nil, CacheDecision{}, nil
 	}
-	if status == dagruntime.StatusReady && !existingNode.CacheHit {
-		return nil
+	planned, ok := plan.nodes[strings.TrimSpace(existing.NodeID)]
+	if !ok {
+		return nil, CacheDecision{}, nil
 	}
 
 	policy := o.cachePolicies.Resolve(analysis.CacheType)
 
-	// Policies that do not compare fingerprints decide from the persisted node
-	// alone, so both the script query and the probe are skipped entirely.
+	// Policies that do not compare fingerprints decide from the persisted node alone,
+	// so both the script query and the probe are skipped entirely. The node itself is
+	// reused as the probe: the rerun only resets its execution state.
 	if !policy.RequiresFingerprint() {
-		decision := policy.Decide(CacheFacts{CacheType: analysis.CacheType, Existing: existingNode})
+		decision := policy.Decide(CacheFacts{CacheType: analysis.CacheType, Existing: existing})
 		if !decision.Rerun {
-			return nil
+			return nil, decision, nil
 		}
-		return o.scheduleExistingNodeRerun(ctx, existingByNodeID, dep, nodeID, existingNode, decision.Reason)
+		return existing, decision, nil
 	}
 
 	// The script is only loaded for the fingerprint policies: it is the input the
 	// probe needs, and loading it here keeps reuse_existing free of that query.
-	script, err := o.workflowRepo.GetScriptByScriptID(ctx, analysis.ProjectID, dynamicToString(row["script_id"]))
+	script, err := o.workflowRepo.GetScriptByScriptID(ctx, analysis.ProjectID, dynamicToString(planned.template["script_id"]))
 	if err != nil {
-		return err
+		return nil, CacheDecision{}, err
 	}
-	probe := o.buildCacheProbe(script, existingNode, row, incomingEdges, existingByNodeID)
+	probe := o.buildCacheProbe(script, existing, planned.template, planned.incoming, state.nodes)
 	if err := o.fingerprintNodeArtifacts(ctx, probe); err != nil {
-		return err
+		return nil, CacheDecision{}, err
 	}
 
 	decision := policy.Decide(CacheFacts{
 		CacheType:       analysis.CacheType,
-		Existing:        existingNode,
+		Existing:        existing,
 		ProbeCommandMD5: probe.CommandMD5,
 		ProbeParamsMD5:  probe.ParamsMD5,
 	})
-	if !decision.Rerun {
-		return nil
-	}
-	return o.scheduleExistingNodeRerun(ctx, existingByNodeID, dep, nodeID, probe, decision.Reason)
-}
-
-// scheduleExistingNodeRerun puts a cache invalidated node back into the ready queue
-// while preserving the execution order of the graph around it.
-//
-// Marking the node ready is only half of the decision: the dependency manager had
-// seeded it as satisfied (a successful node from the previous run), so its dependants
-// no longer wait for it. Re-arming the subgraph restores those dependencies, and any
-// dependant a previous run had already left claimable is pushed back to pending,
-// because the dispatch pump claims purely by persisted status and would otherwise hand
-// it over before the upstream it consumes has produced anything.
-func (o *dynamicDagOrchestratorV2) scheduleExistingNodeRerun(
-	ctx context.Context,
-	existingByNodeID map[string]*types.AnalysisNode,
-	dep *dynamicDependencyManager,
-	nodeID string,
-	probe *types.AnalysisNode,
-	rerunReason string,
-) error {
-	if dep != nil {
-		affected := dep.ReArmTransitive(nodeID)
-		if err := o.holdBackClaimableDependants(ctx, existingByNodeID, affected); err != nil {
-			return err
-		}
-	}
-	return o.markExistingNodeReadyForRerun(ctx, probe.AnalysisNodeID, probe, rerunReason)
-}
-
-// holdBackClaimableDependants demotes dependants that are ready but not yet handed to
-// a worker, so a rerun upstream can never be overtaken by a downstream node.
-//
-// Only nodes a previous run left claimable need this: a cache hit is never claimed,
-// and anything terminal is settled. The node returns to ready through the normal
-// reconcile pass once its upstream has actually completed.
-func (o *dynamicDagOrchestratorV2) holdBackClaimableDependants(
-	ctx context.Context,
-	existingByNodeID map[string]*types.AnalysisNode,
-	nodeIDs []string,
-) error {
-	for _, nodeID := range nodeIDs {
-		node := existingByNodeID[nodeID]
-		if node == nil {
-			continue
-		}
-		if normaliseNodeStatus(node) != dagruntime.StatusReady || node.CacheHit {
-			continue
-		}
-		if err := o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
-			"status":        dagruntime.StatusPending,
-			"started_at":    nil,
-			"finished_at":   nil,
-			"error_message": "",
-			"exit_code":     0,
-		}); err != nil {
-			return err
-		}
-		node.Status = dagruntime.StatusPending
-	}
-	return nil
+	return probe, decision, nil
 }
 
 // buildCacheProbe rebuilds the node payload from the freshly compiled template so
@@ -818,15 +767,21 @@ func (o *dynamicDagOrchestratorV2) buildCacheProbe(
 	return &probe
 }
 
-func (o *dynamicDagOrchestratorV2) markExistingNodeReadyForRerun(ctx context.Context, analysisNodeID string, probe *types.AnalysisNode, rerunReason string) error {
-	if strings.TrimSpace(analysisNodeID) == "" || probe == nil {
+// markExistingNodeReadyForRerun resets a persisted node so the runtime can claim it
+// again, and mirrors the reset onto the in-pass state so its dependants stop seeing it
+// as satisfied immediately.
+func (o *dynamicDagOrchestratorV2) markExistingNodeReadyForRerun(ctx context.Context, existing *types.AnalysisNode, probe *types.AnalysisNode, rerunReason string) error {
+	if existing == nil || probe == nil {
+		return nil
+	}
+	if strings.TrimSpace(existing.AnalysisNodeID) == "" {
 		return nil
 	}
 	rerunReason = strings.TrimSpace(rerunReason)
 	if rerunReason == "" {
 		rerunReason = "node cache invalidated"
 	}
-	return o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, analysisNodeID, map[string]any{
+	if err := o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, existing.AnalysisNodeID, map[string]any{
 		"node_name":                probe.NodeName,
 		"sample_id":                probe.SampleID,
 		"script_id":                probe.ScriptID,
@@ -846,7 +801,38 @@ func (o *dynamicDagOrchestratorV2) markExistingNodeReadyForRerun(ctx context.Con
 		"started_at":               nil,
 		"finished_at":              nil,
 		"output_validation_errors": types.JSONSlice{},
-	})
+	}); err != nil {
+		return err
+	}
+	applyRerunToNode(existing, probe, rerunReason)
+	return nil
+}
+
+// applyRerunToNode mirrors a rerun reset onto the in-memory node. The probe may be the
+// node itself (non-fingerprint policies), in which case the field copies are no-ops.
+func applyRerunToNode(node *types.AnalysisNode, probe *types.AnalysisNode, reason string) {
+	if node == nil || probe == nil {
+		return
+	}
+	node.NodeName = probe.NodeName
+	node.SampleID = probe.SampleID
+	node.ScriptID = probe.ScriptID
+	node.InputsPatterns = probe.InputsPatterns
+	node.ResolvedInputs = probe.ResolvedInputs
+	node.OutputPatterns = probe.OutputPatterns
+	node.ResolvedOutputs = types.JSONMap{}
+	node.Params = probe.Params
+	node.Executor = probe.Executor
+	node.CommandMD5 = probe.CommandMD5
+	node.ParamsMD5 = probe.ParamsMD5
+	node.RerunReason = reason
+	node.ErrorMessage = ""
+	node.ExitCode = 0
+	node.StartedAt = nil
+	node.FinishedAt = nil
+	node.OutputValidationErrors = types.JSONSlice{}
+	node.CacheHit = false
+	node.Status = dagruntime.StatusReady
 }
 
 // fingerprintNodeArtifacts fills a probe node's CommandMD5 / ParamsMD5 so the md5
@@ -1029,18 +1015,6 @@ func buildOutgoingNodeMap(edges []*types.AnalysisEdge) map[string][]string {
 		outgoing[source] = append(outgoing[source], target)
 	}
 	return outgoing
-}
-
-func dynamicSortedKeys(items map[string]struct{}) []string {
-	out := make([]string, 0, len(items))
-	for key := range items {
-		if strings.TrimSpace(key) == "" {
-			continue
-		}
-		out = append(out, key)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // bootstrapInputsFromUpstream merges upstream outputs into target params/resolved_inputs.

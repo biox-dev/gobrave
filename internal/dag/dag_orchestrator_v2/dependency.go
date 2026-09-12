@@ -1,258 +1,197 @@
 package orchestratorv2
 
 import (
-	"sort"
 	"strings"
 
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/types"
 )
 
-type dynamicDependencyManager struct {
-	waiting  map[string]map[string]struct{}
-	blocked  map[string]bool
-	outgoing map[string][]string
-	// topoRank is the upstream-first position of every template, computed once from
-	// the compiled topology. It is the ordering guard rail of a single reconcile
-	// pass: a node must be decided only after its ancestors, otherwise a rerun
-	// decision could be taken too late to hold its dependants back (see
-	// OrderByTopology and ReArmTransitive).
-	topoRank map[string]int
+// dynamicExecutionPlan is the compiled, static schedule of one dynamic DAG run.
+//
+// It replaces the old mutable dependency manager. Readiness is no longer maintained
+// by pushing success/failure through the graph: it is *derived* from the single
+// source of truth - the persisted analysis_node rows plus the decisions this run has
+// already taken - so a cache-invalidated node that is flipped back to ready simply
+// stops being "satisfied", and every dependant stops being runnable in the same pass.
+// There is nothing to re-arm and nothing to hold back.
+//
+// order is the compiler's topological order (see runDynamicLoop). Walking it
+// upstream-first is the whole ordering guarantee: by the time a node is examined its
+// ancestors have already been settled and cannot change again within the pass.
+type dynamicExecutionPlan struct {
+	order []string
+	nodes map[string]dynamicPlanNode
 }
 
-func newDynamicDependencyManager(nodeTemplateByID map[string]map[string]any, outgoing map[string][]string) *dynamicDependencyManager {
-	waiting := make(map[string]map[string]struct{}, len(nodeTemplateByID))
-	blocked := make(map[string]bool, len(nodeTemplateByID))
-	upstream := make(map[string][]string, len(nodeTemplateByID))
-	for nodeID, row := range nodeTemplateByID {
-		upstreamIDs := dynamicToStringSlice(row["upstream_ids"])
-		deps := make(map[string]struct{}, len(upstreamIDs))
-		for _, id := range upstreamIDs {
-			deps[id] = struct{}{}
+// dynamicPlanNode is one compiled template plus its compiled relations.
+type dynamicPlanNode struct {
+	template   map[string]any
+	upstream   []string
+	downstream []string
+	incoming   []*types.AnalysisEdge
+}
+
+// newDynamicExecutionPlan indexes the compiled node templates and edges.
+//
+// upstream comes from the compiler emitted upstream_ids rather than from the edge
+// rows: it is the authoritative dependency list of the template, and the edges are
+// only needed to merge an upstream's outputs into a dependant's inputs.
+func newDynamicExecutionPlan(nodeTemplates []map[string]any, edges []*types.AnalysisEdge) *dynamicExecutionPlan {
+	outgoing := buildOutgoingNodeMap(edges)
+	incoming := buildIncomingEdgeMap(edges)
+
+	plan := &dynamicExecutionPlan{
+		order: make([]string, 0, len(nodeTemplates)),
+		nodes: make(map[string]dynamicPlanNode, len(nodeTemplates)),
+	}
+	for _, row := range nodeTemplates {
+		nodeID := strings.TrimSpace(dynamicToString(row["node_id"]))
+		if nodeID == "" {
+			continue
 		}
-		waiting[nodeID] = deps
-		blocked[nodeID] = false
-		upstream[nodeID] = upstreamIDs
+		if _, exists := plan.nodes[nodeID]; exists {
+			continue
+		}
+		plan.order = append(plan.order, nodeID)
+		plan.nodes[nodeID] = dynamicPlanNode{
+			template:   row,
+			upstream:   dynamicToStringSlice(row["upstream_ids"]),
+			downstream: outgoing[nodeID],
+			incoming:   incoming[nodeID],
+		}
 	}
-	return &dynamicDependencyManager{
-		waiting:  waiting,
-		blocked:  blocked,
-		outgoing: outgoing,
-		topoRank: dynamicTopologicalRank(upstream),
-	}
+	return plan
 }
 
-func (m *dynamicDependencyManager) SeedFromExisting(existing map[string]*types.AnalysisNode) {
-	for nodeID, node := range existing {
+// dynamicState is the derived readiness view over persisted nodes for one reconcile
+// pass. Every readiness question is a pure query over it, never a maintained set.
+type dynamicState struct {
+	plan  *dynamicExecutionPlan
+	nodes map[string]*types.AnalysisNode
+
+	// satisfiedCache and blocked memoise the derived queries. Memoisation is safe because
+	// a query only ever walks upstream and the reconcile pass visits nodes in topological
+	// order, so an ancestor is always final before a dependant asks.
+	satisfiedCache map[string]bool
+	blocked        map[string]bool
+	// satisfying and visiting are the recursion guards for the two derived queries.
+	satisfying map[string]bool
+	visiting   map[string]bool
+}
+
+// newDynamicState builds the view from the persisted node rows of one analysis.
+func newDynamicState(plan *dynamicExecutionPlan, existing []*types.AnalysisNode) *dynamicState {
+	nodes := make(map[string]*types.AnalysisNode, len(existing))
+	for _, node := range existing {
 		if node == nil {
 			continue
 		}
-		status := strings.ToLower(strings.TrimSpace(node.Status))
-		if status == dagruntime.StatusReady && node.CacheHit {
-			_ = m.OnNodeSuccess(nodeID)
-			continue
-		}
-		if dagruntime.IsSuccessStatus(status) {
-			_ = m.OnNodeSuccess(nodeID)
-			continue
-		}
-		if dagruntime.IsTerminalStatus(status) {
-			_ = m.OnNodeFailure(nodeID)
-		}
+		nodes[strings.TrimSpace(node.NodeID)] = node
+	}
+	return &dynamicState{
+		plan:           plan,
+		nodes:          nodes,
+		satisfiedCache: make(map[string]bool),
+		blocked:        make(map[string]bool),
+		satisfying:     make(map[string]bool),
+		visiting:       make(map[string]bool),
 	}
 }
 
-func (m *dynamicDependencyManager) InitialCandidates() []string {
-	out := make([]string, 0)
-	for nodeID := range m.waiting {
-		if m.IsReady(nodeID) || m.IsBlocked(nodeID) {
-			out = append(out, nodeID)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (m *dynamicDependencyManager) OnNodeSuccess(nodeID string) []string {
-	touched := map[string]struct{}{}
-	for _, downstream := range m.outgoing[nodeID] {
-		deps, ok := m.waiting[downstream]
-		if !ok {
-			continue
-		}
-		if _, exists := deps[nodeID]; exists {
-			delete(deps, nodeID)
-			touched[downstream] = struct{}{}
-		}
-	}
-	return dynamicSortedKeys(touched)
-}
-
-func (m *dynamicDependencyManager) OnNodeFailure(nodeID string) []string {
-	queue := []string{nodeID}
-	visited := map[string]struct{}{nodeID: {}}
-	touched := map[string]struct{}{}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, downstream := range m.outgoing[current] {
-			touched[downstream] = struct{}{}
-			if !m.blocked[downstream] {
-				m.blocked[downstream] = true
-			}
-			if _, seen := visited[downstream]; seen {
-				continue
-			}
-			visited[downstream] = struct{}{}
-			queue = append(queue, downstream)
-		}
-	}
-	return dynamicSortedKeys(touched)
-}
-
-func (m *dynamicDependencyManager) IsReady(nodeID string) bool {
-	deps, ok := m.waiting[nodeID]
-	if !ok {
-		return false
-	}
-	if m.blocked[nodeID] {
-		return false
-	}
-	return len(deps) == 0
-}
-
-func (m *dynamicDependencyManager) IsBlocked(nodeID string) bool {
-	return m.blocked[nodeID]
-}
-
-// OrderByTopology sorts candidate node ids upstream-first.
+// satisfied reports whether nodeID has a result a dependant may consume right now.
 //
-// A reconcile pass decides several nodes in a row, and a rerun decision taken for one
-// node changes the readiness of everything below it. Deciding a node before its
-// ancestors would therefore let a dependant be marked ready in the same pass that its
-// upstream is queued for a rerun - exactly the "every node is submitted at once"
-// failure. Nodes that are not part of the compiled graph keep the highest rank.
-func (m *dynamicDependencyManager) OrderByTopology(candidates []string) []string {
-	if m == nil || len(candidates) == 0 {
-		return candidates
-	}
-	ordered := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		ordered = append(ordered, strings.TrimSpace(candidate))
-	}
-	sort.SliceStable(ordered, func(i, j int) bool {
-		left := m.rankOf(ordered[i])
-		right := m.rankOf(ordered[j])
-		if left == right {
-			return ordered[i] < ordered[j]
-		}
-		return left < right
-	})
-	return ordered
-}
-
-// rankOf returns the topological position of nodeID, or the "unknown" rank (past
-// every known node) when the identity is not part of the compiled graph.
-func (m *dynamicDependencyManager) rankOf(nodeID string) int {
-	if rank, ok := m.topoRank[nodeID]; ok {
-		return rank
-	}
-	return len(m.topoRank)
-}
-
-// ReArmTransitive restores nodeID as a pending dependency for every transitive
-// downstream node and returns the affected node ids.
-//
-// Seeding a previously successful node as "satisfied" removed it from every
-// dependant's waiting set, so flipping that node back to ready must also put it back
-// into those waiting sets. Without this, a dependant that was already satisfied would
-// be dispatched before the upstream it consumes even started, and the input files it
-// expects would not exist yet. The operation is idempotent: it only ever adds pending
-// dependencies and never removes one.
-func (m *dynamicDependencyManager) ReArmTransitive(nodeID string) []string {
-	if m == nil {
-		return nil
-	}
+// Satisfaction is transitive on purpose: the node itself must be reusable (successful,
+// or a ready cache hit) AND every upstream must be satisfied too. When an ancestor is
+// queued for a rerun, its cached descendants are stale as well, so this one derived
+// query is what replaces the old re-arm: flipping a node back to ready invalidates the
+// whole transitive subtree automatically.
+func (s *dynamicState) satisfied(nodeID string) bool {
 	nodeID = strings.TrimSpace(nodeID)
-	if nodeID == "" {
-		return nil
+	if value, ok := s.satisfiedCache[nodeID]; ok {
+		return value
 	}
+	if !isSuccessNode(s.nodes[nodeID]) {
+		s.satisfiedCache[nodeID] = false
+		return false
+	}
+	if s.satisfying[nodeID] {
+		// Defensive: a malformed cyclic graph is treated as not satisfied.
+		return false
+	}
+	s.satisfying[nodeID] = true
+	defer delete(s.satisfying, nodeID)
 
-	affected := make([]string, 0)
-	visited := map[string]struct{}{nodeID: {}}
-	queue := []string{nodeID}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, downstream := range m.outgoing[current] {
-			downstream = strings.TrimSpace(downstream)
-			if downstream == "" {
-				continue
-			}
-			if deps, ok := m.waiting[downstream]; ok {
-				deps[current] = struct{}{}
-			}
-			if _, seen := visited[downstream]; seen {
-				continue
-			}
-			visited[downstream] = struct{}{}
-			affected = append(affected, downstream)
-			queue = append(queue, downstream)
+	for _, upstream := range s.plan.nodes[nodeID].upstream {
+		if !s.satisfied(upstream) {
+			s.satisfiedCache[nodeID] = false
+			return false
 		}
 	}
-	return affected
+	s.satisfiedCache[nodeID] = true
+	return true
 }
 
-// dynamicTopologicalRank assigns every node an upstream-first position with Kahn's
-// algorithm over the compiled upstream relations.
-//
-// A node left unranked belongs to a cycle; it is placed after every ranked node so it
-// is still reconciled, just last. Correctness does not depend on that fallback: the
-// dependency manager itself reports a node in a cycle as never ready.
-func dynamicTopologicalRank(upstream map[string][]string) map[string]int {
-	indegree := make(map[string]int, len(upstream))
-	children := make(map[string][]string, len(upstream))
-	for nodeID := range upstream {
-		indegree[nodeID] = 0
+// isBlocked reports whether any upstream of nodeID failed (directly or transitively),
+// in which case the node can never run and must be materialized as skipped.
+func (s *dynamicState) isBlocked(nodeID string) bool {
+	nodeID = strings.TrimSpace(nodeID)
+	if value, ok := s.blocked[nodeID]; ok {
+		return value
 	}
-	for nodeID, deps := range upstream {
-		for _, dep := range deps {
-			dep = strings.TrimSpace(dep)
-			if _, known := upstream[dep]; !known {
-				continue
-			}
-			children[dep] = append(children[dep], nodeID)
-			indegree[nodeID]++
-		}
+	if s.visiting[nodeID] {
+		// Defensive: a malformed cyclic graph is treated as not blocked.
+		return false
 	}
+	s.visiting[nodeID] = true
+	defer delete(s.visiting, nodeID)
 
-	roots := make([]string, 0, len(indegree))
-	for nodeID, degree := range indegree {
-		if degree == 0 {
-			roots = append(roots, nodeID)
+	blocked := false
+	for _, upstream := range s.plan.nodes[nodeID].upstream {
+		if s.failedOrBlocked(upstream) {
+			blocked = true
+			break
 		}
 	}
-	sort.Strings(roots)
+	s.blocked[nodeID] = blocked
+	return blocked
+}
 
-	rank := make(map[string]int, len(indegree))
-	next := 0
-	for len(roots) > 0 {
-		current := roots[0]
-		roots = roots[1:]
-		rank[current] = next
-		next++
-		for _, child := range children[current] {
-			indegree[child]--
-			if indegree[child] == 0 {
-				roots = append(roots, child)
-			}
-		}
+// failedOrBlocked reports whether nodeID itself failed or is blocked by an upstream.
+func (s *dynamicState) failedOrBlocked(nodeID string) bool {
+	nodeID = strings.TrimSpace(nodeID)
+	if isFailedNode(s.nodes[nodeID]) {
+		return true
 	}
+	return s.isBlocked(nodeID)
+}
 
-	for nodeID := range upstream {
-		if _, ranked := rank[nodeID]; !ranked {
-			rank[nodeID] = next
+// canRun reports whether every upstream of nodeID is satisfied and none is blocked.
+// This is the derived definition of "ready": nothing is stored, so a rerun decision
+// taken on an ancestor is visible here immediately.
+func (s *dynamicState) canRun(nodeID string) bool {
+	nodeID = strings.TrimSpace(nodeID)
+	if s.isBlocked(nodeID) {
+		return false
+	}
+	for _, upstream := range s.plan.nodes[nodeID].upstream {
+		if !s.satisfied(upstream) {
+			return false
 		}
 	}
-	return rank
+	return true
+}
+
+// isFailedNode reports whether a node ended without a reusable result. Terminal
+// non-success statuses (failed / skipped / stopped) are exactly the ones that must
+// block every transitive dependant.
+func isFailedNode(node *types.AnalysisNode) bool {
+	if node == nil {
+		return false
+	}
+	status := normaliseNodeStatus(node)
+	if status == "" || status == dagruntime.StatusPending {
+		return false
+	}
+	return dagruntime.IsTerminalStatus(status) && !dagruntime.IsSuccessStatus(status)
 }
