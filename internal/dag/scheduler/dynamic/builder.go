@@ -1,4 +1,4 @@
-package orchestratorv2
+package dynamic
 
 import (
 	"github.com/biox-dev/gobrave/internal/dag/nodebuild"

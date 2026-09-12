@@ -1,4 +1,4 @@
-package orchestratorv3
+package dataflow
 
 import (
 	"context"
@@ -102,8 +102,8 @@ func TestDataflowV3AnalysisStatusRunningThenFinished(t *testing.T) {
 
 	// Empty graph: the loop converges immediately, which isolates the status
 	// lifecycle from node execution.
-	if err := orch.StartAsyncV3(context.Background(), 1, 7, map[string]any{}, map[string]any{}); err != nil {
-		t.Fatalf("StartAsyncV3 failed: %v", err)
+	if err := orch.StartAsync(context.Background(), 7, map[string]any{}, map[string]any{}); err != nil {
+		t.Fatalf("StartAsync failed: %v", err)
 	}
 	if got := repo.currentStatus(); got != types.AnalysisStatusRunning {
 		t.Fatalf("status after start = %q, want %q", got, types.AnalysisStatusRunning)
@@ -134,8 +134,8 @@ func TestDataflowV3AnalysisStatusFailedOnPrepareError(t *testing.T) {
 		router: dagruntime.NewEventRouter(),
 	}
 
-	if err := orch.StartAsyncV3(context.Background(), 1, 7, map[string]any{}, map[string]any{}); err != nil {
-		t.Fatalf("StartAsyncV3 failed: %v", err)
+	if err := orch.StartAsync(context.Background(), 7, map[string]any{}, map[string]any{}); err != nil {
+		t.Fatalf("StartAsync failed: %v", err)
 	}
 
 	waitForStatusV3(t, repo, types.AnalysisStatusFailed)

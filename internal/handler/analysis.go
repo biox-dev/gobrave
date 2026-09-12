@@ -19,6 +19,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/config"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
+	scheduler "github.com/biox-dev/gobrave/internal/dag/scheduler"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -30,20 +31,21 @@ import (
 )
 
 type AnalysisHandler struct {
-	analysisService         interfaces.AnalysisService
-	projectService          interfaces.ProjectService
-	projectRepo             interfaces.ProjectRepository
-	workflowService         interfaces.WorkflowService
-	dataService             interfaces.DataService
-	containerService        interfaces.ContainerService
-	analysisRepo            interfaces.AnalysisRepository
-	dagOrchestrator         interfaces.DagOrchestrator
-	dynamicDagOrchestrator  interfaces.DynamicDagOrchestrator
-	dataflowDagOrchestrator interfaces.DataflowDagOrchestrator
-	nodeOrchestrator        interfaces.NodeOrchestrator
-	aiSummaryRepo           interfaces.AISummaryRepository
-	preparer                prepare.NodeRuntimePreparer
-	config                  *config.Config
+	analysisService  interfaces.AnalysisService
+	projectService   interfaces.ProjectService
+	projectRepo      interfaces.ProjectRepository
+	workflowService  interfaces.WorkflowService
+	dataService      interfaces.DataService
+	containerService interfaces.ContainerService
+	analysisRepo     interfaces.AnalysisRepository
+	// schedulers resolves the orchestrator that owns an analysis from its
+	// persisted analysis.scheduler_mode, so save / stop / snapshot never hardcode a
+	// specific scheduler.
+	schedulers       *scheduler.Registry
+	nodeOrchestrator interfaces.NodeOrchestrator
+	aiSummaryRepo    interfaces.AISummaryRepository
+	preparer         prepare.NodeRuntimePreparer
+	config           *config.Config
 }
 
 type EditParamsV2Response struct {
@@ -161,9 +163,13 @@ type listAnalysisTreeParent struct {
 type analysisControllerRequest struct {
 	RequestParam   map[string]interface{} `json:"request_param" binding:"required"`
 	AnalysisNodeID string                 `json:"analysis_node_id"`
-	Save           bool                   `json:"save"`
-	IsSubmit       bool                   `json:"is_submit"`
-	IsReport       bool                   `json:"is_report"`
+	// Scheduler selects which registered orchestrator advances this analysis. It
+	// is persisted as analysis.scheduler_mode; empty falls back to the default
+	// (static graph) scheduler.
+	Scheduler string `json:"scheduler"`
+	Save      bool   `json:"save"`
+	IsSubmit  bool   `json:"is_submit"`
+	IsReport  bool   `json:"is_report"`
 }
 
 type analysisNodeByProjectPageRequest struct {
@@ -184,29 +190,25 @@ func NewAnalysisHandler(
 	dataService interfaces.DataService,
 	containerService interfaces.ContainerService,
 	analysisRepo interfaces.AnalysisRepository,
-	dagOrchestrator interfaces.DagOrchestrator,
-	dynamicDagOrchestrator interfaces.DynamicDagOrchestrator,
-	dataflowDagOrchestrator interfaces.DataflowDagOrchestrator,
+	schedulers *scheduler.Registry,
 	nodeOrchestrator interfaces.NodeOrchestrator,
 	preparer prepare.NodeRuntimePreparer,
 	aiSummaryRepo interfaces.AISummaryRepository,
 	cfg *config.Config,
 ) *AnalysisHandler {
 	return &AnalysisHandler{
-		analysisService:         analysisService,
-		projectService:          projectService,
-		workflowService:         workflowService,
-		dataService:             dataService,
-		containerService:        containerService,
-		analysisRepo:            analysisRepo,
-		projectRepo:             projectRepo,
-		dagOrchestrator:         dagOrchestrator,
-		dynamicDagOrchestrator:  dynamicDagOrchestrator,
-		dataflowDagOrchestrator: dataflowDagOrchestrator,
-		nodeOrchestrator:        nodeOrchestrator,
-		aiSummaryRepo:           aiSummaryRepo,
-		preparer:                preparer,
-		config:                  cfg,
+		analysisService:  analysisService,
+		projectService:   projectService,
+		workflowService:  workflowService,
+		dataService:      dataService,
+		containerService: containerService,
+		analysisRepo:     analysisRepo,
+		projectRepo:      projectRepo,
+		schedulers:       schedulers,
+		nodeOrchestrator: nodeOrchestrator,
+		aiSummaryRepo:    aiSummaryRepo,
+		preparer:         preparer,
+		config:           cfg,
 	}
 }
 
@@ -340,6 +342,13 @@ func (h *AnalysisHandler) ParseParams(c *gin.Context) {
 	})
 }
 
+// SaveAnalysisController is the single submit/save entry for every DAG scheduler.
+//
+// The scheduler is chosen per request through the orchestration registry
+// (dag/scheduler.Registry) and persisted in analysis.scheduler_mode, so this one
+// endpoint replaces the former controller / controllerV2 / controllerV3 trio. The
+// resolved scheduler also decides whether the compiled graph is persisted at save
+// time (static graph) or materialized at runtime.
 func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 	userID, ok := getCurrentUserID(c)
 
@@ -355,6 +364,12 @@ func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 		return
 	}
 
+	orchestrator := h.schedulers.Resolve(req.Scheduler)
+	if orchestrator == nil {
+		c.Error(errors.NewValidationError("unknown scheduler").WithDetails(req.Scheduler))
+		return
+	}
+
 	workflowID, ok := req.RequestParam["relation_id"].(string)
 	if !ok || strings.TrimSpace(workflowID) == "" {
 		c.Error(errors.NewValidationError("request_param.relation_id is required and must be a string"))
@@ -379,134 +394,8 @@ func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 		return
 	}
 
-	// isRunNode := strings.TrimSpace(req.AnalysisNodeID) != ""
-	// dagRuntime := map[string]any{}
-	// if !isRunNode {
-	// 	analysisID, _ := req.RequestParam["analysis_id"].(string)
-	// 	if strings.TrimSpace(analysisID) == "" {
-	// 		analysisID = "preview"
-	// 	}
-	// 	dagRuntime, err = compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, dagDefinition)
-	// 	if err != nil {
-	// 		c.Error(errors.NewInternalServerError("failed to compile runtime dag").WithDetails(err.Error()))
-	// 		return
-	// 	}
-	// }
-	// analysisID := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_id"]))
-	// if analysisID == "" || analysisID == "<nil>" {
-	// 	if req.Save {
-	// 		analysisID = uuid.NewString()
-	// 		req.RequestParam["analysis_id"] = analysisID
-	// 	} else {
-	// 		analysisID = "preview"
-	// 	}
-	// }
-
 	analysisIDStr := strings.TrimSpace(toString(req.RequestParam["analysis_id"]))
-	// analysisIDStr 转 int64
 	analysisID, err := strconv.ParseInt(analysisIDStr, 10, 64)
-	// analysisID := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_id"]))
-	if analysisID == 0 {
-		if req.Save {
-			analysisID = utils.GenerateID()
-			req.RequestParam["analysis_id"] = analysisID
-		} else {
-			analysisID = 0
-		}
-	}
-
-	dagRuntime, err := compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, dagDefinition)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to compile runtime dag").WithDetails(err.Error()))
-		return
-	}
-	if !req.Save {
-		c.JSON(http.StatusOK, gin.H{
-			"params":      parseAnalysisResult,
-			"dag_runtime": dagRuntime,
-		})
-		return
-	}
-
-	saved, err := h.analysisService.SaveAnalysisController(c.Request.Context(), &types.AnalysisControllerSaveInput{
-		RequestParam:        req.RequestParam,
-		ParseAnalysisResult: parseAnalysisResult,
-		DagRuntime:          dagRuntime,
-		IsRunNode:           req.IsSubmit,
-		IsReport:            req.IsReport,
-		Project:             project,
-		SchedulerMode:       types.SchedulerModeDagV1,
-	})
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to save analysis").WithDetails(err.Error()))
-		return
-	}
-
-	if req.IsSubmit {
-		if err := h.dagOrchestrator.StartAsync(c.Request.Context(), saved.ID); err != nil {
-			c.Error(errors.NewInternalServerError("failed to start dag scheduler").WithDetails(err.Error()))
-			return
-		}
-	}
-
-	response := gin.H{
-		"analysis_id":           saved.AnalysisID,
-		"dag_definition":        dagDefinition,
-		"parse_analysis_result": parseAnalysisResult,
-		"params":                parseAnalysisResult,
-		"dag_runtime":           dagRuntime,
-	}
-
-	response["submit_started"] = req.IsSubmit
-
-	c.JSON(http.StatusOK, response)
-}
-
-// SaveAnalysisControllerV2 keeps the current JSON dag definition and analysis schema,
-// but starts a dynamic Nextflow-like scheduler path that materializes analysis nodes at runtime.
-func (h *AnalysisHandler) SaveAnalysisControllerV2(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
-
-	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
-	if err != nil {
-		c.Error(err)
-		return
-	}
-
-	var req analysisControllerRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
-		return
-	}
-
-	workflowID, ok := req.RequestParam["relation_id"].(string)
-	if !ok || strings.TrimSpace(workflowID) == "" {
-		c.Error(errors.NewValidationError("request_param.relation_id is required and must be a string"))
-		return
-	}
-
-	formJSONWrap, err := h.workflowService.GetFormJSONByWorkflowID(c.Request.Context(), workflowID)
-
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to get form JSON").WithDetails(err.Error()))
-		return
-	}
-
-	parseAnalysisResult, err := buildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
-		return
-	}
-
-	dagDefinition, err := h.workflowService.GetWorkflowVisByWorkflowID(c.Request.Context(), workflowID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to get workflow visualization").WithDetails(err.Error()))
-		return
-	}
-	analysisIDStr := strings.TrimSpace(toString(req.RequestParam["analysis_id"]))
-	// analysisIDStr 转 int64
-	analysisID, err := strconv.ParseInt(analysisIDStr, 10, 64)
-	// analysisID := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_id"]))
 	if analysisID == 0 {
 		if req.Save {
 			analysisID = utils.GenerateID()
@@ -526,20 +415,26 @@ func (h *AnalysisHandler) SaveAnalysisControllerV2(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"params":      parseAnalysisResult,
 			"dag_runtime": dagRuntime,
+			"scheduler":   orchestrator.Name(),
 		})
 		return
 	}
 
-	// Persist analysis metadata only; nodes are created dynamically during runtime by V2 orchestrator.
-	saved, err := h.analysisService.SaveAnalysisController(c.Request.Context(), &types.AnalysisControllerSaveInput{
+	input := &types.AnalysisControllerSaveInput{
 		RequestParam:        req.RequestParam,
 		ParseAnalysisResult: parseAnalysisResult,
-		DagRuntime:          nil,
 		IsRunNode:           req.IsSubmit,
 		IsReport:            req.IsReport,
 		Project:             project,
-		SchedulerMode:       types.SchedulerModeDynamicV2,
-	})
+		SchedulerMode:       orchestrator.Name(),
+	}
+	// Static-graph schedulers need analysis_nodes/analysis_edges persisted with the
+	// analysis; runtime-materializing schedulers ignore the graph.
+	if orchestrator.PersistsGraphOnSave() {
+		input.DagRuntime = dagRuntime
+	}
+
+	saved, err := h.analysisService.SaveAnalysisController(c.Request.Context(), input)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to save analysis").WithDetails(err.Error()))
 		return
@@ -547,8 +442,7 @@ func (h *AnalysisHandler) SaveAnalysisControllerV2(c *gin.Context) {
 
 	if req.IsSubmit {
 		if h.config.DebugConfig.EnableDagOrchestrator {
-			// 将参数  saved.ID, parseAnalysisResult, dagDefinition用json 写入到debug文件
-			debugDir := utils.GetAnalysisDebugDir(h.config.Storage.BaseDir, fmt.Sprint(saved.ID), "V2")
+			debugDir := utils.GetAnalysisDebugDir(h.config.Storage.BaseDir, fmt.Sprint(saved.ID), strings.ToUpper(orchestrator.Name()))
 			_ = os.MkdirAll(debugDir, os.ModePerm)
 			debugPath := filepath.Join(debugDir, "input.json")
 			f, err := os.Create(debugPath)
@@ -557,36 +451,32 @@ func (h *AnalysisHandler) SaveAnalysisControllerV2(c *gin.Context) {
 				return
 			}
 			defer f.Close()
-			// 构建一个map[string]interface{}，包含 saved.ID, parseAnalysisResult, dagDefinition
-			debugData := map[string]interface{}{
+			encoder := json.NewEncoder(f)
+			if err := encoder.Encode(map[string]interface{}{
 				"analysis_id":           fmt.Sprint(saved.ID),
 				"parse_analysis_result": parseAnalysisResult,
 				"dag_definition":        dagDefinition,
-			}
-			// 将 debugData 写入到文件
-			encoder := json.NewEncoder(f)
-			if err := encoder.Encode(debugData); err != nil {
+				"scheduler":             orchestrator.Name(),
+			}); err != nil {
 				c.Error(errors.NewInternalServerError("failed to write debug input file").WithDetails(err.Error()))
 				return
 			}
 		}
-		if err := h.dynamicDagOrchestrator.StartAsyncV2(c.Request.Context(), saved.ID, parseAnalysisResult, dagDefinition); err != nil {
-			c.Error(errors.NewInternalServerError("failed to start dynamic dag scheduler").WithDetails(err.Error()))
+		if err := orchestrator.StartAsync(c.Request.Context(), saved.ID, parseAnalysisResult, dagDefinition); err != nil {
+			c.Error(errors.NewInternalServerError("failed to start scheduler").WithDetails(err.Error()))
 			return
 		}
 	}
 
-	response := gin.H{
+	c.JSON(http.StatusOK, gin.H{
 		"analysis_id":           fmt.Sprint(saved.ID),
 		"dag_definition":        dagDefinition,
 		"parse_analysis_result": parseAnalysisResult,
 		"params":                parseAnalysisResult,
 		"dag_runtime":           dagRuntime,
 		"submit_started":        req.IsSubmit,
-		"scheduler_mode":        "dynamic_v2",
-	}
-
-	c.JSON(http.StatusOK, response)
+		"scheduler":             orchestrator.Name(),
+	})
 }
 
 func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
@@ -1135,118 +1025,6 @@ func parsePositiveInt64(v interface{}) int64 {
 	return 0
 }
 
-// SaveAnalysisControllerV3 keeps the current request payload and persistence schema,
-// while using the V3 dataflow orchestrator entry (Nextflow-like model).
-func (h *AnalysisHandler) SaveAnalysisControllerV3(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
-
-	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
-	if err != nil {
-		c.Error(err)
-		return
-	}
-
-	var req analysisControllerRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
-		return
-	}
-
-	workflowID, ok := req.RequestParam["relation_id"].(string)
-	if !ok || strings.TrimSpace(workflowID) == "" {
-		c.Error(errors.NewValidationError("request_param.relation_id is required and must be a string"))
-		return
-	}
-
-	formJSONWrap, err := h.workflowService.GetFormJSONByWorkflowID(c.Request.Context(), workflowID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to get form JSON").WithDetails(err.Error()))
-		return
-	}
-
-	parseAnalysisResult, err := buildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
-		return
-	}
-
-	dagDefinition, err := h.workflowService.GetWorkflowVisByWorkflowID(c.Request.Context(), workflowID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to get workflow visualization").WithDetails(err.Error()))
-		return
-	}
-
-	// analysisID := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_id"]))
-	// if analysisID == "" || analysisID == "<nil>" {
-	// 	if req.Save {
-	// 		analysisID = uuid.NewString()
-	// 		req.RequestParam["analysis_id"] = analysisID
-	// 	} else {
-	// 		analysisID = "preview"
-	// 	}
-	// }
-
-	analysisIDStr := strings.TrimSpace(toString(req.RequestParam["analysis_id"]))
-	// analysisIDStr 转 int64
-	analysisID, err := strconv.ParseInt(analysisIDStr, 10, 64)
-	// analysisID := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_id"]))
-	if analysisID == 0 {
-		if req.Save {
-			analysisID = utils.GenerateID()
-			req.RequestParam["analysis_id"] = analysisID
-		} else {
-			analysisID = 0
-		}
-	}
-
-	dagRuntime, err := compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, dagDefinition)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to compile runtime dag").WithDetails(err.Error()))
-		return
-	}
-
-	if !req.Save {
-		c.JSON(http.StatusOK, gin.H{
-			"params":      parseAnalysisResult,
-			"dag_runtime": dagRuntime,
-		})
-		return
-	}
-
-	saved, err := h.analysisService.SaveAnalysisController(c.Request.Context(), &types.AnalysisControllerSaveInput{
-		RequestParam:        req.RequestParam,
-		ParseAnalysisResult: parseAnalysisResult,
-		DagRuntime:          nil,
-		IsRunNode:           req.IsSubmit,
-		IsReport:            req.IsReport,
-		Project:             project,
-		SchedulerMode:       types.SchedulerModeDataflowV3,
-	})
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to save analysis").WithDetails(err.Error()))
-		return
-	}
-
-	if req.IsSubmit {
-		if err := h.dataflowDagOrchestrator.StartAsyncV3(c.Request.Context(), project.ID, saved.ID, parseAnalysisResult, dagDefinition); err != nil {
-			c.Error(errors.NewInternalServerError("failed to start dataflow dag scheduler").WithDetails(err.Error()))
-			return
-		}
-	}
-
-	response := gin.H{
-		"analysis_id":           fmt.Sprint(saved.ID),
-		"dag_definition":        dagDefinition,
-		"parse_analysis_result": parseAnalysisResult,
-		"params":                parseAnalysisResult,
-		"dag_runtime":           dagRuntime,
-		"submit_started":        req.IsSubmit,
-		"scheduler_mode":        "dataflow_v3",
-	}
-
-	c.JSON(http.StatusOK, response)
-}
-
 func (h *AnalysisHandler) StopAnalysis(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
@@ -1262,7 +1040,7 @@ func (h *AnalysisHandler) StopAnalysis(c *gin.Context) {
 
 	// 停止请求必须交给当初推进该分析的调度器：各调度器的运行态只存在于自己的进程内，
 	// 交给错误的调度器会漏停（原调度器继续推进）或让两个调度器同时接管同一次分析。
-	// scheduler_mode 为空/未知时按 legacy DAG 调度器处理（见 types.NormalizeSchedulerMode）。
+	// scheduler_mode 为空/未知时由 NormalizeSchedulerMode 回退到默认调度器。
 	analysis, err := h.analysisRepo.GetAnalysisByID(c.Request.Context(), analysisIDInt)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
@@ -1273,29 +1051,15 @@ func (h *AnalysisHandler) StopAnalysis(c *gin.Context) {
 		return
 	}
 
-	switch types.NormalizeSchedulerMode(analysis.SchedulerMode) {
-	case types.SchedulerModeDynamicV2:
-		// V2 运行在本进程：RequestStop 落库 stopping 并取消该运行的上下文，
-		// 由 V2 调度器自行收敛终态。
-		if !h.dynamicDagOrchestrator.RequestStop(analysisIDInt) {
-			c.Error(errors.NewInternalServerError("failed to request stop for dynamic dag scheduler"))
-			return
-		}
+	orchestrator := h.schedulers.Resolve(analysis.SchedulerMode)
+	if orchestrator == nil {
+		c.Error(errors.NewValidationError("unknown scheduler").WithDetails(analysis.SchedulerMode))
+		return
+	}
 
-	case types.SchedulerModeDagV1:
-		// TODO: V3 还没有独立的停止入口（同 types.SchedulerModeHasDedicatedRecovery 的 TODO）。
-		// 在 h.dataflowDagOrchestrator 提供 RequestStop 之前，先按持久化停止信号处理，
-		// 由 legacy StopAsync 落库 stopping 并收尾；补齐后应改为调用 V3 自己的停止入口。
-		if err := h.dagOrchestrator.StopAsync(c.Request.Context(), analysisIDInt); err != nil {
-			c.Error(errors.NewInternalServerError("failed to stop dag scheduler").WithDetails(err.Error()))
-			return
-		}
-	default:
-		// legacy DAG 调度器（dag_v1，含历史空值）以及 node_v1 等无独立停止入口的模式。
-		if err := h.dagOrchestrator.StopAsync(c.Request.Context(), analysisIDInt); err != nil {
-			c.Error(errors.NewInternalServerError("failed to stop dag scheduler").WithDetails(err.Error()))
-			return
-		}
+	if err := orchestrator.StopAsync(c.Request.Context(), analysisIDInt); err != nil {
+		c.Error(errors.NewInternalServerError("failed to stop analysis").WithDetails(err.Error()))
+		return
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{
@@ -2913,8 +2677,8 @@ func (h *AnalysisHandler) resolveRunningInfo(
 		return nil
 	}
 
-	if h.dynamicDagOrchestrator != nil {
-		info, err := h.dynamicDagOrchestrator.GetRunningInfo(ctx, analysis.ID)
+	if orchestrator := h.schedulers.Resolve(analysis.SchedulerMode); orchestrator != nil {
+		info, err := orchestrator.GetRunningInfo(ctx, analysis.ID)
 		if err != nil {
 			logger.Warnf(ctx, "[RuntimeSnapshot] get running info failed, analysis_id=%d err=%v", analysis.ID, err)
 		} else if info != nil {

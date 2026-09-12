@@ -1,4 +1,4 @@
-package orchestratorv2
+package dynamic
 
 import (
 	"testing"

@@ -7,7 +7,7 @@
 // internal/application/service/dag_orchestrator_v2.go file that mixed graph
 // compilation, persistence, cache policy, dispatch and lifecycle concerns.
 // This package keeps the exact same public contract
-// (interfaces.DynamicDagOrchestrator) and the exact same DI constructor
+// (the dynamic scheduler contract) and the exact same DI constructor
 // signature, but splits the scheduler into small, single-responsibility
 // collaborators that can be unit tested and replaced independently.
 //

@@ -1,4 +1,4 @@
-package orchestratorv2
+package dynamic
 
 import (
 	"testing"
@@ -19,12 +19,12 @@ func TestOwnsAnalysis(t *testing.T) {
 		want bool
 	}{
 		{name: "nil analysis", item: nil, want: false},
-		{name: "zero id", item: &types.Analysis{ID: 0, SchedulerMode: types.SchedulerModeDynamicV2}, want: false},
-		{name: "v2 is owned", item: &types.Analysis{ID: 1, SchedulerMode: types.SchedulerModeDynamicV2}, want: true},
+		{name: "zero id", item: &types.Analysis{ID: 0, SchedulerMode: types.SchedulerModeDynamic}, want: false},
+		{name: "v2 is owned", item: &types.Analysis{ID: 1, SchedulerMode: types.SchedulerModeDynamic}, want: true},
 		{name: "v2 ownership survives normalization", item: &types.Analysis{ID: 2, SchedulerMode: " Dynamic_V2 "}, want: true},
-		{name: "legacy is not owned", item: &types.Analysis{ID: 3, SchedulerMode: types.SchedulerModeDagV1}, want: false},
+		{name: "legacy is not owned", item: &types.Analysis{ID: 3, SchedulerMode: types.SchedulerModeDag}, want: false},
 		{name: "historical empty row is not owned", item: &types.Analysis{ID: 4}, want: false},
-		{name: "v3 is not owned", item: &types.Analysis{ID: 5, SchedulerMode: types.SchedulerModeDataflowV3}, want: false},
+		{name: "v3 is not owned", item: &types.Analysis{ID: 5, SchedulerMode: types.SchedulerModeDataflow}, want: false},
 		// {name: "node_v1 is not owned", item: &types.Analysis{ID: 6, SchedulerMode: types.SchedulerModeNodeV1}, want: false},
 	}
 	for _, tc := range cases {

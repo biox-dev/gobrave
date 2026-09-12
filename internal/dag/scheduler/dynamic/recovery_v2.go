@@ -1,4 +1,4 @@
-package orchestratorv2
+package dynamic
 
 import (
 	"context"
@@ -28,7 +28,7 @@ func (o *dynamicDagOrchestratorV2) RecoverRunningAnalyses(ctx context.Context, i
 	}
 
 	switch strings.ToLower(strings.TrimSpace(item.JobStatus)) {
-	case dynamicV2StatusStopping:
+	case types.AnalysisStatusStopping:
 		if o.registry != nil && o.registry.RequestStop(item.ID) {
 			// A live run in this process was cancelled; its run loop writes the
 			// terminal status, so nothing else to do here.
@@ -60,7 +60,7 @@ func (o *dynamicDagOrchestratorV2) ownsAnalysis(item *types.Analysis) bool {
 	if item == nil || item.ID <= 0 {
 		return false
 	}
-	return types.NormalizeSchedulerMode(item.SchedulerMode) == types.SchedulerModeDynamicV2
+	return types.NormalizeSchedulerMode(item.SchedulerMode) == types.SchedulerModeDynamic
 }
 
 // isLeaseStale reports whether the run's lease looks abandoned.
@@ -207,9 +207,9 @@ func (o *dynamicDagOrchestratorV2) latestContainerInstanceByNode(ctx context.Con
 // nodes are terminalized before the analysis status is written.
 func (o *dynamicDagOrchestratorV2) finalizeStop(analysisID int64) {
 	ctx := context.Background()
-	finalStatus := dynamicV2StatusStopped
+	finalStatus := types.AnalysisStatusStopped
 	if err := o.markActiveNodesStopped(ctx, analysisID, "dag stopped by user"); err != nil {
-		finalStatus = dynamicV2StatusFailed
+		finalStatus = types.AnalysisStatusFailed
 		logger.Warnf(ctx, "[DynamicDagOrchestratorV2] mark nodes stopped failed, analysis_id=%d err=%v", analysisID, err)
 	}
 	if o.registry != nil {

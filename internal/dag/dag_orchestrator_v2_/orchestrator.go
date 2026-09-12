@@ -47,7 +47,7 @@ type Dependencies struct {
 
 // Orchestrator is the dynamic DAG scheduler facade.
 //
-// It implements interfaces.DynamicDagOrchestrator and is safe for concurrent
+// It implements the dynamic scheduler contract and is safe for concurrent
 // use: every run owns its own execution state, while the lease, event bridge
 // and running registry are shared.
 type Orchestrator struct {
@@ -84,7 +84,7 @@ func NewDynamicDagOrchestratorV2(
 	dispatcher *dagruntime.NodeDispatcher,
 	cfg *config.Config,
 	bus event.Bus,
-) interfaces.DynamicDagOrchestrator {
+) *Orchestrator {
 	return New(Dependencies{
 		Analyses:          repo,
 		Workflows:         workflowRepo,
@@ -163,7 +163,7 @@ func (o *Orchestrator) StartAsyncV2(
 		MaxConcurrency: o.opts.Workers,
 		QueueSize:      o.opts.ReadyQueueSize,
 		PollIntervalMs: o.opts.StopCheckInterval.Milliseconds(),
-		Status:         statusRunning,
+		Status:         types.AnalysisStatusRunning,
 		Cancel:         cancel,
 	})
 
@@ -196,7 +196,7 @@ func (o *Orchestrator) GetRunningInfo(_ context.Context, analysisID int64) (*int
 }
 
 // RequestStop asks the in-process run to stop. It satisfies
-// interfaces.DynamicDagOrchestrator; the persisted job_status flag remains the
+// the dynamic scheduler contract; the persisted job_status flag remains the
 // cross-instance stop mechanism.
 func (o *Orchestrator) RequestStop(analysisID int64) bool {
 	if o.registry == nil {
@@ -205,7 +205,7 @@ func (o *Orchestrator) RequestStop(analysisID int64) bool {
 	return o.registry.RequestStop(analysisID)
 }
 
-// RecoverRunningAnalyses satisfies interfaces.DynamicDagOrchestrator.
+// RecoverRunningAnalyses satisfies the dynamic scheduler contract.
 //
 // This implementation is not registered in the DI container, so it never persists
 // scheduler_mode = dynamic_v2 and owns no analyses to recover. Recovery is served by
@@ -226,19 +226,19 @@ func (o *Orchestrator) supervise(runCtx context.Context, cancel context.CancelFu
 
 	o.publisher.PublishDag(dagruntime.EventDagStarted, analysisID, nil)
 
-	status := statusFinished
+	status := types.AnalysisStatusFinished
 	var runErr error
 	switch err := o.execute(runCtx, analysisID, graph); {
 	case errors.Is(err, errRunStopped):
-		status = statusStopped
+		status = types.AnalysisStatusStopped
 	case err != nil:
-		status = statusFailed
+		status = types.AnalysisStatusFailed
 		runErr = err
 		logger.Warnf(context.Background(), "[DagOrchestratorV2] run failed, analysis_id=%d err=%v", analysisID, err)
 	}
 	if o.registry.IsStopping(analysisID) {
 		// An explicit in-process stop request wins over the loop result.
-		status = statusStopped
+		status = types.AnalysisStatusStopped
 		runErr = nil
 	}
 
@@ -249,13 +249,13 @@ func (o *Orchestrator) supervise(runCtx context.Context, cancel context.CancelFu
 
 // publishTerminalStatus emits dag.completed or dag.failed and notifies users.
 func (o *Orchestrator) publishTerminalStatus(analysisID int64, status string, runErr error) {
-	if status == statusFinished {
+	if status == types.AnalysisStatusFinished {
 		o.publisher.PublishDag(dagruntime.EventDagCompleted, analysisID, map[string]any{"status": status})
 		return
 	}
 	payload := map[string]any{"status": status}
 	switch {
-	case status == statusStopped:
+	case status == types.AnalysisStatusStopped:
 		payload["reason"] = "stopped"
 	case runErr != nil:
 		payload["reason"] = runErr.Error()
@@ -276,7 +276,7 @@ func (o *Orchestrator) persistJobStatus(analysisID int64, status string) {
 // failSubmission marks a rejected submission as failed.
 func (o *Orchestrator) failSubmission(analysisID int64, cause error) {
 	if err := o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-		"job_status": statusFailed,
+		"job_status": types.AnalysisStatusFailed,
 		"updated_at": time.Now().UTC(),
 	}); err != nil {
 		logger.Warnf(context.Background(), "[DagOrchestratorV2] persist failed job status failed, analysis_id=%d err=%v", analysisID, err)

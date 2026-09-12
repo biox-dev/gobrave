@@ -28,12 +28,13 @@ import (
 	kubernetesruntime "github.com/biox-dev/gobrave/internal/container_runtime/kubernetes"
 	"github.com/biox-dev/gobrave/internal/dag"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
-	orchestrator "github.com/biox-dev/gobrave/internal/dag/dag_orchestrator"
-	orchestratorv2 "github.com/biox-dev/gobrave/internal/dag/dag_orchestrator_v2"
-	orchestratorv3 "github.com/biox-dev/gobrave/internal/dag/dag_orchestrator_v3"
 	"github.com/biox-dev/gobrave/internal/dag/executor"
 	nodeorchestrator "github.com/biox-dev/gobrave/internal/dag/node_orchestrator"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
+	scheduler "github.com/biox-dev/gobrave/internal/dag/scheduler"
+	schedulerdag "github.com/biox-dev/gobrave/internal/dag/scheduler/dag"
+	schedulerdataflow "github.com/biox-dev/gobrave/internal/dag/scheduler/dataflow"
+	schedulerdynamic "github.com/biox-dev/gobrave/internal/dag/scheduler/dynamic"
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/handler"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -376,8 +377,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// 只给缓存策略判断“已存在的节点能否复用”用。执行前的准备（含输出目录清理）
 	// 仍然只保留 NodeDispatcher 一处，避免每个节点被 prepare 两次。
 	must(container.Provide(
-		orchestratorv2.NewPreparerFingerprinter,
-		dig.As(new(orchestratorv2.NodeArtifactFingerprinter)),
+		schedulerdynamic.NewPreparerFingerprinter,
+		dig.As(new(schedulerdynamic.NodeArtifactFingerprinter)),
 	))
 
 	// 进程级运行时事件路由器：整个进程只在下面的 event_handlers Invoke 里订阅 bus 一次，
@@ -395,11 +396,12 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// 在重复提交判断、RequestStop、运行快照 / 恢复扫描上口径一致。
 	must(container.Provide(dagruntime.NewRunningRegistry))
 
-	must(container.Provide(orchestrator.NewDagOrchestrator))
 	must(container.Provide(nodeorchestrator.NewNodeOrchestrator))
-	must(container.Provide(orchestratorv2.NewDynamicDagOrchestratorV2))
-	// must(container.Provide(orchestratorv2.NewDynamicDagOrchestratorV2))
-	must(container.Provide(orchestratorv3.NewDataflowDagOrchestratorV3))
+	// All DAG schedulers are built once and registered under the stable name each
+	// one persists in analysis.scheduler_mode. Submit / stop / recovery resolve the
+	// owning scheduler through this single registry instead of hardcoding one per
+	// endpoint. See internal/dag/scheduler/registry.go.
+	must(container.Provide(newSchedulerRegistry))
 	must(container.Provide(service.NewWorkflowService))
 	must(container.Provide(service.NewContainerService))
 	must(container.Provide(service.NewLLMService))
@@ -522,6 +524,42 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// and acts as a pure consumer/executor for outbox request events.
 
 	return container
+}
+
+// newSchedulerRegistry builds every DAG scheduler exactly once and registers it
+// under the stable name the scheduler persists in analysis.scheduler_mode.
+//
+// Submit, stop and crash recovery all resolve the owning scheduler through this
+// single table, so the three code paths can never disagree about who advances an
+// analysis. Adding a scheduler is one Register call here plus a
+// types.NormalizeSchedulerMode entry.
+func newSchedulerRegistry(
+	repo interfaces.AnalysisRepository,
+	workflowRepo interfaces.WorkflowRepository,
+	workflowService interfaces.WorkflowService,
+	projectRepo interfaces.ProjectRepository,
+	containerRepo interfaces.ContainerRepository,
+	containerMgr *manager.ContainerManager,
+	dispatcher *dagruntime.NodeDispatcher,
+	fingerprinter schedulerdynamic.NodeArtifactFingerprinter,
+	runningRegistry *dagruntime.RunningRegistry,
+	router *dagruntime.EventRouter,
+	bus event.Bus,
+	cfg *config.Config,
+) *scheduler.Registry {
+	registry := scheduler.NewRegistry()
+
+	registry.Register(schedulerdag.NewDagOrchestrator(
+		repo, workflowRepo, projectRepo, containerRepo, dispatcher, containerMgr, cfg, bus, runningRegistry,
+	))
+	registry.Register(schedulerdynamic.NewDynamicDagOrchestratorV2(
+		repo, workflowRepo, workflowService, containerRepo, dispatcher, fingerprinter, runningRegistry, router, bus,
+	))
+	registry.Register(schedulerdataflow.NewDataflowDagOrchestratorV3(
+		repo, workflowRepo, workflowService, containerMgr, projectRepo, dispatcher, cfg, bus, router,
+	))
+
+	return registry
 }
 
 func initDatabase(cfg *config.Config) (*gorm.DB, error) {

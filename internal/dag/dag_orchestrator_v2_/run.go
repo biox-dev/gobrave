@@ -275,5 +275,5 @@ func (o *Orchestrator) stopRequested(ctx context.Context, analysisID int64) (boo
 		return false, nil
 	}
 	status := normaliseStatus(analysis.JobStatus)
-	return status == "stopping" || status == statusStopped, nil
+	return status == types.AnalysisStatusStopping || status == types.AnalysisStatusStopped, nil
 }

@@ -1,8 +1,10 @@
-package orchestratorv3
+package dataflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -28,14 +30,6 @@ const (
 	dataflowV3Heartbeat = 15 * time.Second
 	// dataflowV3StopCheckInterval is how often the persisted stop flag is polled.
 	dataflowV3StopCheckInterval = 1 * time.Second
-
-	// Analysis job statuses are shared with the other schedulers through types, so
-	// the unified recovery entry can reason about running/stopping uniformly.
-	dataflowV3StatusRunning  = types.AnalysisStatusRunning
-	dataflowV3StatusStopping = types.AnalysisStatusStopping
-	dataflowV3StatusStopped  = types.AnalysisStatusStopped
-	dataflowV3StatusFinished = types.AnalysisStatusFinished
-	dataflowV3StatusFailed   = types.AnalysisStatusFailed
 )
 
 // dataflowDagOrchestratorV3 is the framework entry for a Nextflow-like
@@ -46,13 +40,13 @@ const (
 // - Keep existing frontend payload, executor path, and analysis persistence untouched.
 // - Delegate runtime execution to V2 for safe rollout.
 type dataflowDagOrchestratorV3 struct {
-	bus          event.Bus
-	repo         interfaces.AnalysisRepository
-	workflowRepo interfaces.WorkflowRepository
-	projectRepo  interfaces.ProjectRepository
-	analysisRepo interfaces.AnalysisRepository
-	containerMgr *manager.ContainerManager
-	dispatcher   *dagruntime.NodeDispatcher
+	bus             event.Bus
+	repo            interfaces.AnalysisRepository
+	workflowRepo    interfaces.WorkflowRepository
+	workflowService interfaces.WorkflowService
+	projectRepo     interfaces.ProjectRepository
+	containerMgr    *manager.ContainerManager
+	dispatcher      *dagruntime.NodeDispatcher
 	// runScriptBuilders map[string]prepare.RunScriptBuilder
 	cfg *config.Config
 	// router is the process-wide runtime event subscriber injected by the
@@ -64,7 +58,7 @@ type dataflowDagOrchestratorV3 struct {
 func NewDataflowDagOrchestratorV3(
 	repo interfaces.AnalysisRepository,
 	workflowRepo interfaces.WorkflowRepository,
-	analysisRepo interfaces.AnalysisRepository,
+	workflowService interfaces.WorkflowService,
 	containerMgr *manager.ContainerManager,
 	projectRepo interfaces.ProjectRepository,
 	dispatcher *dagruntime.NodeDispatcher,
@@ -72,26 +66,53 @@ func NewDataflowDagOrchestratorV3(
 	cfg *config.Config,
 	bus event.Bus,
 	router *dagruntime.EventRouter,
-) interfaces.DataflowDagOrchestrator {
+) interfaces.DagOrchestrator {
 	return &dataflowDagOrchestratorV3{
-		bus:          bus,
-		repo:         repo,
-		workflowRepo: workflowRepo,
-		dispatcher:   dispatcher,
-		containerMgr: containerMgr,
-		projectRepo:  projectRepo,
+		bus:             bus,
+		repo:            repo,
+		workflowRepo:    workflowRepo,
+		workflowService: workflowService,
+		dispatcher:      dispatcher,
+		containerMgr:    containerMgr,
+		projectRepo:     projectRepo,
 		// runScriptBuilders: runScriptBuilders,
 		cfg:    cfg,
 		router: router,
 	}
 }
 
-func (o *dataflowDagOrchestratorV3) StartAsyncV3(ctx context.Context, projectID int64, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
+// Name implements interfaces.DagOrchestrator. It is the persisted
+// analysis.scheduler_mode value and the registry key for this scheduler.
+func (o *dataflowDagOrchestratorV3) Name() string { return types.SchedulerModeDataflow }
+
+// PersistsGraphOnSave implements interfaces.DagOrchestrator: the dataflow
+// scheduler materializes process instances at runtime, so no graph is persisted
+// at save time.
+func (o *dataflowDagOrchestratorV3) PersistsGraphOnSave() bool { return false }
+
+// resolveProjectID looks up the project that owns the analysis so the dataflow
+// runtime can resolve workspace paths. The unified scheduler entry point does not
+// receive a project id, so it is read from the persisted analysis record.
+func (o *dataflowDagOrchestratorV3) resolveProjectID(ctx context.Context, analysisID int64) int64 {
+	if o == nil || o.repo == nil || analysisID <= 0 {
+		return 0
+	}
+	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
+	if err != nil || analysis == nil {
+		return 0
+	}
+	return analysis.ProjectID
+}
+
+// StartAsync implements interfaces.DagOrchestrator and launches a dataflow run
+// in the background, returning immediately.
+func (o *dataflowDagOrchestratorV3) StartAsync(ctx context.Context, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
 	if analysisID <= 0 {
 		return fmt.Errorf("analysis_id is required")
 	}
 
 	bgCtx := context.Background()
+	projectID := o.resolveProjectID(bgCtx, analysisID)
 
 	// Acquire the cross-instance running lease. This is also what transitions the
 	// analysis from created/updated to running, so a run that never reaches the
@@ -122,27 +143,27 @@ func (o *dataflowDagOrchestratorV3) StartAsyncV3(ctx context.Context, projectID 
 		defer o.router.Unregister(analysisID)
 		defer close(heartbeatStop)
 
-		finalStatus := dataflowV3StatusFinished
+		finalStatus := types.AnalysisStatusFinished
 		var finalErr error
 		if err := o.runStartAsyncV3(bgCtx, projectID, analysisID, sink, parseAnalysisResult, dagDefinition); err != nil {
-			finalStatus = dataflowV3StatusFailed
+			finalStatus = types.AnalysisStatusFailed
 			finalErr = err
 			logger.Errorf(bgCtx, "[DataflowDagOrchestratorV3] async run failed, analysis_id=%d err=%v", analysisID, err)
 		}
 		if o.isStopRequested(bgCtx, analysisID) {
 			// A persisted stop request wins over the loop result.
-			finalStatus = dataflowV3StatusStopped
+			finalStatus = types.AnalysisStatusStopped
 			finalErr = nil
 		}
 
-		if finalStatus == dataflowV3StatusFinished {
+		if finalStatus == types.AnalysisStatusFinished {
 			o.publishDagRuntimeEvent(dagruntime.EventDagCompleted, analysisID, map[string]any{"status": finalStatus})
 		} else {
 			payload := map[string]any{"status": finalStatus}
 			if finalErr != nil {
 				payload["reason"] = finalErr.Error()
 			}
-			if finalStatus == dataflowV3StatusStopped {
+			if finalStatus == types.AnalysisStatusStopped {
 				payload["reason"] = "stopped"
 			}
 			o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, payload)
@@ -313,7 +334,7 @@ func (o *dataflowDagOrchestratorV3) shouldStopByJobStatus(ctx context.Context, a
 		return false, nil
 	}
 	status := strings.ToLower(strings.TrimSpace(analysis.JobStatus))
-	return status == dataflowV3StatusStopping || status == dataflowV3StatusStopped, nil
+	return status == types.AnalysisStatusStopping || status == types.AnalysisStatusStopped, nil
 }
 
 // isStopRequested reports whether a persisted stopping/stopped flag was written
@@ -329,6 +350,92 @@ func (o *dataflowDagOrchestratorV3) isStopRequested(ctx context.Context, analysi
 		return false
 	}
 	return stopped
+}
+
+// GetRunningInfo implements interfaces.DagOrchestrator. The dataflow scheduler
+// keeps no in-process running registry, so the caller falls back to the persisted
+// analysis state for the runtime snapshot.
+func (o *dataflowDagOrchestratorV3) GetRunningInfo(_ context.Context, _ int64) (*interfaces.DagRunningInfo, error) {
+	return nil, nil
+}
+
+// StopAsync implements interfaces.DagOrchestrator. The dataflow run loop polls
+// the persisted job_status, so writing "stopping" is enough to converge the run.
+func (o *dataflowDagOrchestratorV3) StopAsync(ctx context.Context, analysisID int64) error {
+	if analysisID <= 0 {
+		return fmt.Errorf("analysis_id is required")
+	}
+	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
+	if err != nil {
+		return err
+	}
+	if analysis != nil && strings.EqualFold(strings.TrimSpace(analysis.JobStatus), types.AnalysisStatusStopped) {
+		return nil
+	}
+	return o.repo.UpdateAnalysisByID(ctx, analysisID, map[string]any{
+		"job_status": types.AnalysisStatusStopping,
+		"updated_at": time.Now().UTC(),
+	})
+}
+
+// RecoverRunningAnalyses implements interfaces.DagOrchestrator. It adopts a
+// single analysis owned by the dataflow scheduler:
+//   - stopping: persist the stop signal and let the loop converge.
+//   - running:  rebuild the runtime inputs and restart with resume semantics; the
+//     cross-instance lease guard keeps a live run from being doubled.
+func (o *dataflowDagOrchestratorV3) RecoverRunningAnalyses(ctx context.Context, item *types.Analysis) (bool, error) {
+	if o == nil || o.repo == nil || item == nil || item.ID <= 0 {
+		return false, nil
+	}
+	if types.NormalizeSchedulerMode(item.SchedulerMode) != types.SchedulerModeDataflow {
+		return false, nil
+	}
+
+	switch strings.ToLower(strings.TrimSpace(item.JobStatus)) {
+	case types.AnalysisStatusStopping:
+		if err := o.StopAsync(ctx, item.ID); err != nil {
+			return false, fmt.Errorf("recover stopping analysis failed: %w", err)
+		}
+		return false, nil
+	default:
+		parseAnalysisResult, dagDefinition, err := o.loadRecoveryInputs(ctx, item)
+		if err != nil {
+			return false, err
+		}
+		return false, o.StartAsync(ctx, item.ID, parseAnalysisResult, dagDefinition)
+	}
+}
+
+// loadRecoveryInputs rebuilds the two inputs a resumed dataflow run needs: the
+// submitted params (written to analysis.ParamsPath at save time) and the workflow
+// dag definition referenced by analysis.relation_id.
+func (o *dataflowDagOrchestratorV3) loadRecoveryInputs(ctx context.Context, item *types.Analysis) (map[string]any, map[string]any, error) {
+	if o.workflowService == nil {
+		return nil, nil, fmt.Errorf("workflow service is not configured, cannot rebuild dag definition")
+	}
+
+	paramsPath := strings.TrimSpace(item.ParamsPath)
+	if paramsPath == "" {
+		return nil, nil, fmt.Errorf("analysis params_path is empty, cannot rebuild runtime inputs")
+	}
+	raw, err := os.ReadFile(paramsPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read analysis params file %q failed: %w", paramsPath, err)
+	}
+	parseAnalysisResult := map[string]any{}
+	if err := json.Unmarshal(raw, &parseAnalysisResult); err != nil {
+		return nil, nil, fmt.Errorf("decode analysis params file %q failed: %w", paramsPath, err)
+	}
+
+	workflowID := strings.TrimSpace(item.WorkflowID)
+	if workflowID == "" {
+		return nil, nil, fmt.Errorf("analysis relation_id is empty, cannot rebuild dag definition")
+	}
+	dagDefinition, err := o.workflowService.GetWorkflowVisByWorkflowID(ctx, workflowID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("rebuild dag definition for workflow_id=%s failed: %w", workflowID, err)
+	}
+	return parseAnalysisResult, dagDefinition, nil
 }
 
 // renewRunningLease periodically updates analysis.updated_at so stale-lock

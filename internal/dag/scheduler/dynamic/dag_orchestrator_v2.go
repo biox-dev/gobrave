@@ -1,4 +1,4 @@
-package orchestratorv2
+package dynamic
 
 import (
 	"context"
@@ -30,17 +30,6 @@ const (
 	dynamicV2StopCheckInterval = 1 * time.Second
 	// dynamicV2WatchdogInterval is a safety net in case runtime events are dropped.
 	dynamicV2WatchdogInterval = 5 * time.Second
-
-	// Analysis job statuses are shared with the other schedulers through types, so
-	// the unified recovery entry can reason about running/stopping uniformly.
-	// dynamicV2StatusStopping doubles as the cross-instance stop signal when
-	// another instance owns the run.
-	dynamicV2StatusStopping = types.AnalysisStatusStopping
-	dynamicV2StatusStopped  = types.AnalysisStatusStopped
-	dynamicV2StatusFinished = types.AnalysisStatusFinished
-	dynamicV2StatusFailed   = types.AnalysisStatusFailed
-	// dynamicV2StatusRunning is the job status while this scheduler owns the run.
-	dynamicV2StatusRunning = types.AnalysisStatusRunning
 )
 
 // dynamicDagOrchestratorV2 provides a Nextflow-like dynamic materialization path
@@ -116,7 +105,7 @@ func NewDynamicDagOrchestratorV2(
 	registry *dagruntime.RunningRegistry,
 	router *dagruntime.EventRouter,
 	bus event.Bus,
-) interfaces.DynamicDagOrchestrator {
+) interfaces.DagOrchestrator {
 	return &dynamicDagOrchestratorV2{
 		repo:            repo,
 		workflowRepo:    workflowRepo,
@@ -131,7 +120,17 @@ func NewDynamicDagOrchestratorV2(
 	}
 }
 
-// StartAsyncV2 starts a dynamic DAG run in background and returns immediately.
+// Name implements interfaces.DagOrchestrator. It is the persisted
+// analysis.scheduler_mode value and the registry key for this scheduler.
+func (o *dynamicDagOrchestratorV2) Name() string { return types.SchedulerModeDynamic }
+
+// PersistsGraphOnSave implements interfaces.DagOrchestrator: the dynamic
+// scheduler materializes analysis nodes at runtime, so no graph is persisted at
+// save time.
+func (o *dynamicDagOrchestratorV2) PersistsGraphOnSave() bool { return false }
+
+// StartAsync implements interfaces.DagOrchestrator and starts a dynamic DAG run
+// in the background, returning immediately.
 //
 // High-level flow:
 // 1) Validate analysis id and prevent duplicate local starts.
@@ -139,7 +138,7 @@ func NewDynamicDagOrchestratorV2(
 // 3) Compile templates from current JSON dag_definition.
 // 4) Register running state + heartbeat renewer.
 // 5) Spawn run loop goroutine that performs dynamic materialization and dispatch.
-func (o *dynamicDagOrchestratorV2) StartAsyncV2(ctx context.Context, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
+func (o *dynamicDagOrchestratorV2) StartAsync(ctx context.Context, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
 	return o.startAsyncV2(ctx, analysisID, parseAnalysisResult, dagDefinition, false)
 }
 
@@ -185,7 +184,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 		if err := o.prepareNodesForResume(ctx, analysisID); err != nil {
 			o.router.Unregister(analysisID)
 			_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-				"job_status": dynamicV2StatusFailed,
+				"job_status": types.AnalysisStatusFailed,
 				"updated_at": time.Now().UTC(),
 			})
 			o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, map[string]any{"reason": err.Error()})
@@ -194,7 +193,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 	} else if err := o.prepareAnalysisForCacheRerun(ctx, analysisID); err != nil {
 		o.router.Unregister(analysisID)
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-			"job_status": dynamicV2StatusFailed,
+			"job_status": types.AnalysisStatusFailed,
 			"updated_at": time.Now().UTC(),
 		})
 		o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, map[string]any{"reason": err.Error()})
@@ -206,7 +205,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 		// Compile failure is terminal for current submission; mark analysis failed.
 		o.router.Unregister(analysisID)
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-			"job_status": dynamicV2StatusFailed,
+			"job_status": types.AnalysisStatusFailed,
 			"updated_at": time.Now().UTC(),
 		})
 		o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, map[string]any{"reason": err.Error()})
@@ -223,7 +222,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 		MaxConcurrency: 1,
 		QueueSize:      64,
 		PollIntervalMs: 500,
-		Status:         dynamicV2StatusRunning,
+		Status:         types.AnalysisStatusRunning,
 		Cancel:         runCancel,
 	})
 
@@ -238,10 +237,10 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 		defer o.router.Unregister(analysisID)
 		defer close(heartbeatStop)
 		defer runCancel()
-		finalStatus := dynamicV2StatusFinished
+		finalStatus := types.AnalysisStatusFinished
 		var finalErr error
 		if err := o.runDynamicLoop(runCtx, analysisID, sink, nodeTemplates, edgeRows); err != nil {
-			finalStatus = dynamicV2StatusFailed
+			finalStatus = types.AnalysisStatusFailed
 			finalErr = err
 			logger.Warnf(context.Background(), "[DynamicDagOrchestratorV2] run failed, analysis_id=%d err=%v", analysisID, err)
 		}
@@ -249,18 +248,18 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 			// A stop request wins over the loop result, whether it arrived through the
 			// in-process registry (RequestStop) or as a persisted job_status written by
 			// another instance that owns this analysis.
-			finalStatus = dynamicV2StatusStopped
+			finalStatus = types.AnalysisStatusStopped
 			finalErr = nil
 		}
 		o.registry.MarkFinished(analysisID, finalStatus)
-		if finalStatus == dynamicV2StatusFinished {
+		if finalStatus == types.AnalysisStatusFinished {
 			o.publishDagRuntimeEvent(dagruntime.EventDagCompleted, analysisID, map[string]any{"status": finalStatus})
 		} else {
 			payload := map[string]any{"status": finalStatus}
 			if finalErr != nil {
 				payload["reason"] = finalErr.Error()
 			}
-			if finalStatus == dynamicV2StatusStopped {
+			if finalStatus == types.AnalysisStatusStopped {
 				payload["reason"] = "stopped"
 			}
 			o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, payload)
@@ -399,12 +398,44 @@ func (o *dynamicDagOrchestratorV2) GetRunningInfo(_ context.Context, analysisID 
 	}, nil
 }
 
+// StopAsync implements interfaces.DagOrchestrator. It persists the "stopping"
+// signal first (the cross-instance stop flag) and then either cancels the live
+// in-process run or converges the analysis to a terminal stopped state.
+func (o *dynamicDagOrchestratorV2) StopAsync(ctx context.Context, analysisID int64) error {
+	if analysisID <= 0 {
+		return fmt.Errorf("analysis_id is required")
+	}
+
+	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
+	if err != nil {
+		return err
+	}
+	if analysis != nil && strings.EqualFold(strings.TrimSpace(analysis.JobStatus), types.AnalysisStatusStopped) {
+		return nil
+	}
+
+	if err := o.repo.UpdateAnalysisByID(ctx, analysisID, map[string]any{
+		"job_status": types.AnalysisStatusStopping,
+		"updated_at": time.Now().UTC(),
+	}); err != nil {
+		return err
+	}
+
+	if o.registry != nil && o.registry.RequestStop(analysisID) {
+		// A live run in this process was cancelled; its loop writes the terminal status.
+		return nil
+	}
+
+	go o.finalizeStop(analysisID)
+	return nil
+}
+
 // RequestStop asks the in-process run to stop and reports whether this process
 // owned a live run for analysisID.
 //
-// It satisfies interfaces.DynamicDagOrchestrator. Returning false means the run is
-// either already finished here or owned by another instance, in which case the
-// caller must fall back to the persisted job_status stop path.
+// It is used internally by StopAsync and by recovery. Returning false means the
+// run is either already finished here or owned by another instance, in which
+// case the caller must fall back to the persisted job_status stop path.
 func (o *dynamicDagOrchestratorV2) RequestStop(analysisID int64) bool {
 	if analysisID <= 0 || o.registry == nil || !o.registry.IsRunning(analysisID) {
 		return false
@@ -416,7 +447,7 @@ func (o *dynamicDagOrchestratorV2) RequestStop(analysisID int64) bool {
 	// observe a stop that was already durable.
 	if o.repo != nil {
 		if err := o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-			"job_status": dynamicV2StatusStopping,
+			"job_status": types.AnalysisStatusStopping,
 			"updated_at": time.Now().UTC(),
 		}); err != nil {
 			logger.Warnf(context.Background(), "[DynamicDagOrchestratorV2] mark analysis stopping failed, analysis_id=%d err=%v", analysisID, err)
@@ -838,7 +869,7 @@ func (o *dynamicDagOrchestratorV2) shouldStopByJobStatus(ctx context.Context, an
 		return false, err
 	}
 	status := strings.ToLower(strings.TrimSpace(analysis.JobStatus))
-	return status == dynamicV2StatusStopping || status == dynamicV2StatusStopped, nil
+	return status == types.AnalysisStatusStopping || status == types.AnalysisStatusStopped, nil
 }
 
 // renewRunningLease periodically updates analysis.updated_at so stale lock recovery

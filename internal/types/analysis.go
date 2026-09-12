@@ -195,39 +195,31 @@ const (
 	AnalysisStatusFailed = "failed"
 )
 
-// analysis.scheduler_mode 取值，标识推进该分析的调度器。
-// 空值与 SchedulerModeDagV1 均视为 legacy DAG 调度器（兼容历史数据）。
+// analysis.scheduler_mode 取值，标识推进该分析的调度器，同时是
+// dag/scheduler.Registry 的查找键。名称直接对应具体实现，不再带 V1/V2/V3 后缀。
 const (
-	// SchedulerModeDagV1 是 legacy DAG 调度器（internal/dag/dag_orchestrator）。
-	SchedulerModeDagV1 = "dag_v1"
-	// SchedulerModeNodeV1 是单节点调度路径。
-	// SchedulerModeNodeV1 = "node_v1"
-	// SchedulerModeDynamicV2 是动态物化调度器（internal/dag/dag_orchestrator_v2）。
-	SchedulerModeDynamicV2 = "dynamic_v2"
-	// SchedulerModeDataflowV3 是数据流调度器（internal/dag/dag_orchestrator_v3）。
-	SchedulerModeDataflowV3 = "dataflow_v3"
+	// SchedulerModeDag 是静态图调度器（internal/dag/scheduler/dag）。
+	// 历史空值 / dag_v1 / node_v1 都归一到此。
+	SchedulerModeDag = "dag"
+	// SchedulerModeDynamic 是动态物化调度器（internal/dag/scheduler/dynamic）。
+	SchedulerModeDynamic = "dynamic"
+	// SchedulerModeDataflow 是数据流调度器（internal/dag/scheduler/dataflow）。
+	SchedulerModeDataflow = "dataflow"
 )
 
-// NormalizeSchedulerMode 归一化 scheduler_mode，空值按 legacy DAG 调度器处理。
-func NormalizeSchedulerMode(mode string) string {
-	mode = strings.TrimSpace(strings.ToLower(mode))
-	if mode == "" {
-		return SchedulerModeDagV1
-	}
-	return mode
-}
-
-// SchedulerModeHasDedicatedRecovery 报告该模式是否已有自己的恢复入口。
+// NormalizeSchedulerMode 把持久化的 scheduler_mode 归一化为当前规范名。
 //
-// 若返回 true，其它调度器的 RecoverRunningAnalyses 必须跳过该 analysis：
-// 否则同一个分析会被两个调度器同时接管（双跑），而其中一个用的是错误的调度器。
-func SchedulerModeHasDedicatedRecovery(mode string) bool {
-	switch NormalizeSchedulerMode(mode) {
-	case SchedulerModeDynamicV2:
-		return true
+// 历史值（空值 / dag_v1 / dynamic_v2 / dataflow_v3 / node_v1）会被折叠到当前
+// 名称，保证旧数据仍能解析到正确的调度器；未知值一律回退到默认的静态图调度器。
+func NormalizeSchedulerMode(mode string) string {
+	switch strings.TrimSpace(strings.ToLower(mode)) {
+	case SchedulerModeDynamic, "dynamic_v2":
+		return SchedulerModeDynamic
+	case SchedulerModeDataflow, "dataflow_v3":
+		return SchedulerModeDataflow
 	default:
-		// TODO: dataflow_v3 补上独立恢复入口后在此登记。
-		return false
+		// 空值、dag、dag_v1、node_v1 以及任何未知值都视为默认静态图调度器。
+		return SchedulerModeDag
 	}
 }
 

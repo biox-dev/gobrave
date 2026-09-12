@@ -1,4 +1,4 @@
-package orchestrator
+package dag
 
 import (
 	"context"
@@ -22,13 +22,6 @@ const (
 	analysisRunLeaseTTL = 90 * time.Second
 	// analysisRunHeartbeat is the interval for lease renewal while a run is active.
 	analysisRunHeartbeat = 15 * time.Second
-	// Analysis statuses are shared with the other schedulers through types, so the
-	// unified recovery entry can reason about running/stopping uniformly.
-	analysisStatusRunning  = types.AnalysisStatusRunning
-	analysisStatusStopping = types.AnalysisStatusStopping
-	analysisStatusStopped  = types.AnalysisStatusStopped
-	analysisStatusFinished = types.AnalysisStatusFinished
-	analysisStatusFailed   = types.AnalysisStatusFailed
 )
 
 type dagOrchestrator struct {
@@ -74,7 +67,40 @@ func NewDagOrchestrator(
 	return o
 }
 
-func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64) error {
+// Name implements interfaces.DagOrchestrator. It is the persisted
+// analysis.scheduler_mode value and the registry key for this scheduler.
+func (o *dagOrchestrator) Name() string { return types.SchedulerModeDag }
+
+// PersistsGraphOnSave implements interfaces.DagOrchestrator: the static graph
+// scheduler needs analysis_nodes/analysis_edges persisted at save time.
+func (o *dagOrchestrator) PersistsGraphOnSave() bool { return true }
+
+// GetRunningInfo implements interfaces.DagOrchestrator.
+func (o *dagOrchestrator) GetRunningInfo(_ context.Context, analysisID int64) (*interfaces.DagRunningInfo, error) {
+	if analysisID <= 0 || o.registry == nil {
+		return nil, nil
+	}
+	entry := o.registry.Get(analysisID)
+	if entry == nil {
+		return nil, nil
+	}
+	return &interfaces.DagRunningInfo{
+		AnalysisID:     entry.AnalysisID,
+		TaskName:       entry.TaskName,
+		Status:         entry.Status,
+		StartedAt:      entry.StartedAt,
+		UpdatedAt:      entry.UpdatedAt,
+		MaxConcurrency: entry.MaxConcurrency,
+		QueueSize:      entry.QueueSize,
+		PollIntervalMs: entry.PollIntervalMs,
+		TimeoutSeconds: entry.TimeoutSeconds,
+		StopRequested:  entry.StopRequested,
+	}, nil
+}
+
+// StartAsync implements interfaces.DagOrchestrator. The static graph scheduler
+// works from the graph persisted at save time, so the request payload is unused.
+func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64, _ map[string]any, _ map[string]any) error {
 	if analysisID == 0 {
 		return fmt.Errorf("analysis_id is required")
 	}
@@ -92,7 +118,7 @@ func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64) erro
 
 	if err := o.cleanupDagNodeContainersBeforeStart(ctx, analysisID); err != nil {
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-			"job_status": analysisStatusFailed,
+			"job_status": types.AnalysisStatusFailed,
 			"updated_at": time.Now().UTC(),
 		})
 		return fmt.Errorf("cleanup dag node containers before start failed: %w", err)
@@ -100,7 +126,7 @@ func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64) erro
 
 	if err := o.prepareNodesForResume(ctx, analysisID); err != nil {
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-			"job_status": analysisStatusFailed,
+			"job_status": types.AnalysisStatusFailed,
 			"updated_at": time.Now().UTC(),
 		})
 		return fmt.Errorf("prepare nodes for resume failed: %w", err)
@@ -143,7 +169,7 @@ func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64) erro
 		MaxConcurrency: 1,
 		QueueSize:      64,
 		PollIntervalMs: 500,
-		Status:         analysisStatusRunning,
+		Status:         types.AnalysisStatusRunning,
 		Cancel:         runCancel,
 	})
 
@@ -153,11 +179,11 @@ func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64) erro
 		stoppedByUser := o.registry != nil && o.registry.IsStopping(analysisID)
 
 		if err != nil {
-			finalStatus := analysisStatusFailed
+			finalStatus := types.AnalysisStatusFailed
 			if stoppedByUser {
 				_ = o.markActiveNodesStopped(context.Background(), analysisID, "dag stopped by user")
 				if cleanupErr := o.cleanupByAnalysisIDStrict(context.Background(), analysisID, cleanupPolicyDelete); cleanupErr == nil {
-					finalStatus = analysisStatusStopped
+					finalStatus = types.AnalysisStatusStopped
 				} else {
 					logger.Warnf(context.Background(), "[DagOrchestrator] stop cleanup failed after scheduler error, analysis_id=%d err=%v", analysisID, cleanupErr)
 				}
@@ -173,22 +199,22 @@ func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64) erro
 			return
 		}
 
-		finalStatus := analysisStatusFinished
+		finalStatus := types.AnalysisStatusFinished
 		if stoppedByUser {
 			_ = o.markActiveNodesStopped(context.Background(), analysisID, "dag stopped by user")
 			if cleanupErr := o.cleanupByAnalysisIDStrict(context.Background(), analysisID, cleanupPolicyDelete); cleanupErr != nil {
-				finalStatus = analysisStatusFailed
+				finalStatus = types.AnalysisStatusFailed
 				logger.Warnf(context.Background(), "[DagOrchestrator] stop cleanup failed, analysis_id=%d err=%v", analysisID, cleanupErr)
 			} else {
-				finalStatus = analysisStatusStopped
+				finalStatus = types.AnalysisStatusStopped
 			}
 		} else {
 			if result == nil || result.Snapshot == nil {
-				finalStatus = analysisStatusFailed
+				finalStatus = types.AnalysisStatusFailed
 			} else if failedCount := result.Snapshot.StatusCount[dagruntime.StatusFailed]; failedCount > 0 {
-				finalStatus = analysisStatusFailed
+				finalStatus = types.AnalysisStatusFailed
 			}
-			if finalStatus == analysisStatusFinished {
+			if finalStatus == types.AnalysisStatusFinished {
 				o.cleanupByAnalysisID(context.Background(), analysisID, onDagFinishedCleanupPolicy)
 			}
 		}
@@ -231,12 +257,12 @@ func (o *dagOrchestrator) StopAsync(ctx context.Context, analysisID int64) error
 	}
 
 	current := strings.TrimSpace(strings.ToLower(analysis.JobStatus))
-	if current == analysisStatusStopped {
+	if current == types.AnalysisStatusStopped {
 		return nil
 	}
 
 	if err := o.repo.UpdateAnalysisByID(ctx, analysisID, map[string]any{
-		"job_status": analysisStatusStopping,
+		"job_status": types.AnalysisStatusStopping,
 		"updated_at": time.Now().UTC(),
 	}); err != nil {
 		return err
@@ -265,7 +291,7 @@ func (o *dagOrchestrator) RecoverRunningAnalyses(ctx context.Context, item *type
 	}
 
 	switch strings.ToLower(strings.TrimSpace(item.JobStatus)) {
-	case analysisStatusStopping:
+	case types.AnalysisStatusStopping:
 		// StopAsync persists "stopping" and either cancels the live run or, when no
 		// process owns it, converges the analysis to a terminal stopped state.
 		if err := o.StopAsync(ctx, item.ID); err != nil {
@@ -274,7 +300,7 @@ func (o *dagOrchestrator) RecoverRunningAnalyses(ctx context.Context, item *type
 		return false, nil
 	default:
 		wasRunning := o.registry != nil && o.registry.IsRunning(item.ID)
-		if err := o.StartAsync(ctx, item.ID); err != nil {
+		if err := o.StartAsync(ctx, item.ID, nil, nil); err != nil {
 			return false, fmt.Errorf("recover running analysis failed: %w", err)
 		}
 		return !wasRunning && o.registry != nil && o.registry.IsRunning(item.ID), nil
@@ -283,13 +309,13 @@ func (o *dagOrchestrator) RecoverRunningAnalyses(ctx context.Context, item *type
 
 func (o *dagOrchestrator) finalizeStop(analysisID int64) {
 	ctx := context.Background()
-	finalStatus := analysisStatusStopped
+	finalStatus := types.AnalysisStatusStopped
 	if err := o.markActiveNodesStopped(ctx, analysisID, "dag stopped by user"); err != nil {
-		finalStatus = analysisStatusFailed
+		finalStatus = types.AnalysisStatusFailed
 		logger.Warnf(ctx, "[DagOrchestrator] mark nodes stopped failed, analysis_id=%d err=%v", analysisID, err)
 	}
 	if err := o.cleanupByAnalysisIDStrict(ctx, analysisID, cleanupPolicyDelete); err != nil {
-		finalStatus = analysisStatusFailed
+		finalStatus = types.AnalysisStatusFailed
 		logger.Warnf(ctx, "[DagOrchestrator] stop cleanup failed, analysis_id=%d err=%v", analysisID, err)
 	}
 	if o.registry != nil {

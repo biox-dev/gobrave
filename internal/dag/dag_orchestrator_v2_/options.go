@@ -22,14 +22,6 @@ const (
 	defaultEventBuffer = 256
 )
 
-// terminal run statuses persisted on the analysis row.
-const (
-	statusRunning  = "running"
-	statusFinished = "finished"
-	statusFailed   = "failed"
-	statusStopped  = "stopped"
-)
-
 // Options holds the resolved scheduler tunables.
 type Options struct {
 	// Workers is the number of concurrent node executions.
