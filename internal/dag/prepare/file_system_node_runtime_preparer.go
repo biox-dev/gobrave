@@ -99,97 +99,30 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if err := os.MkdirAll(projectCachedDir, 0o755); err != nil {
 		return err
 	}
+	// 脚本路径统一绝对化，供软链与 run script 构造共用。
 	scriptDir, scriptFile, _ := utils.GetScriptFile(p.baseDir(), project.ProjectID, script.ScriptType, script.ScriptID)
 	scriptPath := filepath.Join(scriptDir, scriptFile)
-	// scriptDir := utils.GetScriptFileDir(p.baseDir(), project.ProjectID, script.ScriptID)
-	var paramsPayload map[string]any
-	if node.AnalysisID == 0 {
-		// p.initializeStandaloneNodeArtifacts(ctx, node)
-
-		projectDir := utils.GetProjectDir(p.baseDir(), project.ProjectID)
-
-		paramsPayload = cloneAnyMapForNode(map[string]interface{}(node.Params))
-		paramsPayload["output_dir"] = node.OutputDir
-		paramsPayload["project_dir"] = projectDir
-		paramsPayload["node_cached_dir"] = node.CacheDir
-		paramsPayload["project_cached_dir"] = projectCachedDir
-
-		paramsBytes, err := json.MarshalIndent(paramsPayload, "", "  ")
-		if err != nil {
-			return err
-		}
-		paramsBytes = append(paramsBytes, '\n')
-		if err := os.WriteFile(node.ParamsPath, paramsBytes, 0o644); err != nil {
-			return err
-		}
-
-		// scriptDir, scriptMainFile, err := p.workflowService.GetScriptFileByScriptID(ctx, script.ID)
-		// if err != nil {
-		// 	return err
-		// }
-		paramsPayload["script_dir"] = scriptDir
-
-		// scriptPath := filepath.Join(scriptDir, scriptMainFile)
-
-		if !filepath.IsAbs(scriptPath) {
-			scriptPath = filepath.Join(p.baseDir(), scriptPath)
-		}
-
-		// scriptContent, err := os.ReadFile(scriptPath)
-		// if err != nil {
-		// 	return err
-		// }
-
-		// if _, err := os.Stat(node.LogPath); err != nil {
-		// 	if os.IsNotExist(err) {
-		// 		if err := os.WriteFile(node.LogPath, []byte(""), 0o644); err != nil {
-		// 			return err
-		// 		}
-		// 	} else {
-		// 		return err
-		// 	}
-		// }
-
-	} else {
-		if strings.TrimSpace(node.AnalysisNodeID) == "" {
-			return fmt.Errorf("analysis_node_id is required")
-		}
-		if node.ScriptID == 0 {
-			return fmt.Errorf("script_id is required")
-		}
-
-		analysis, err := p.analysisRepo.GetAnalysisByID(ctx, node.AnalysisID)
-		if err != nil {
-			return fmt.Errorf("load analysis failed: %w", err)
-		}
-
-		if err := p.ensureNodePaths(node, analysis); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(node.WorkspaceDir, 0o755); err != nil {
-			return fmt.Errorf("create workspace dir failed: %w", err)
-		}
-		if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
-			return fmt.Errorf("create output dir failed: %w", err)
-		}
-
-		// 构建参数
-		paramsPayload, err = p.buildNodeParams(node, analysis)
-		if err != nil {
-			return err
-		}
-		paramsPayload["node_cached_dir"] = node.CacheDir
-		paramsPayload["project_cached_dir"] = projectCachedDir
-		if err := writeJSONAtomic(node.ParamsPath, paramsPayload, 0o644); err != nil {
-			return fmt.Errorf("write params json failed: %w", err)
-		}
-
-		paramsPayload["script_dir"] = scriptDir
-
-		// if err := p.WriteCommand(node, script.ScriptType, scriptPath, params); err != nil {
-		// 	return fmt.Errorf("write command failed: %w", err)
-		// }
+	if !filepath.IsAbs(scriptPath) {
+		scriptPath = filepath.Join(p.baseDir(), scriptPath)
 	}
+
+	// 初始化 paramsPayload：先构建分支专属的基础参数，
+	// 再在条件外统一注入所有分支共享的公共参数。
+	paramsPayload, err := p.resolveBaseParams(ctx, node)
+	if err != nil {
+		return err
+	}
+	paramsPayload["project_dir"] = utils.GetProjectDir(p.baseDir(), project.ProjectID)
+	paramsPayload["output_dir"] = node.OutputDir
+	paramsPayload["node_cached_dir"] = node.CacheDir
+	paramsPayload["project_cached_dir"] = projectCachedDir
+
+	if err := writeJSONAtomic(node.ParamsPath, paramsPayload, 0o644); err != nil {
+		return fmt.Errorf("write params json failed: %w", err)
+	}
+
+	// script_dir 仅用于构造 run script，不写入 params.json。
+	paramsPayload["script_dir"] = scriptDir
 
 	scriptWorkspaceDir := filepath.Join(node.WorkspaceDir, scriptFile)
 	if _, err := os.Lstat(scriptWorkspaceDir); err != nil {
@@ -226,6 +159,39 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	}
 
 	return nil
+}
+
+// resolveBaseParams 构建节点的基础参数（不含公共参数）：
+//   - 独立节点（AnalysisID == 0）：使用节点自带的 Params；
+//   - 分析节点：合并分析级参数与节点已解析的输入参数。
+func (p *FileSystemNodeRuntimePreparer) resolveBaseParams(ctx context.Context, node *types.AnalysisNode) (map[string]any, error) {
+	if node.AnalysisID == 0 {
+		return cloneAnyMapForNode(map[string]interface{}(node.Params)), nil
+	}
+
+	if strings.TrimSpace(node.AnalysisNodeID) == "" {
+		return nil, fmt.Errorf("analysis_node_id is required")
+	}
+	if node.ScriptID == 0 {
+		return nil, fmt.Errorf("script_id is required")
+	}
+
+	analysis, err := p.analysisRepo.GetAnalysisByID(ctx, node.AnalysisID)
+	if err != nil {
+		return nil, fmt.Errorf("load analysis failed: %w", err)
+	}
+
+	if err := p.ensureNodePaths(node, analysis); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(node.WorkspaceDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create workspace dir failed: %w", err)
+	}
+	if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create output dir failed: %w", err)
+	}
+
+	return p.buildNodeParams(node, analysis)
 }
 
 func (p *FileSystemNodeRuntimePreparer) WriteCommand(node *types.AnalysisNode, scriptType, scriptPath string, params map[string]any) error {
