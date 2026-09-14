@@ -775,12 +775,13 @@ func buildInputScriptFormJSON(ioSchema map[string]any, formJSONWrap *[]any, inpu
 
 func buildScriptVisItem(script *types.Script) map[string]any {
 	node := map[string]any{
-		"name":      script.ComponentName,
-		"id":        script.ScriptID,
-		"script_id": script.ScriptID,
-		"node_id":   script.ScriptID + "_1",
-		"inputs":    map[string]any{},
-		"outputs":   map[string]any{},
+		"name":         script.ComponentName,
+		"id":           script.ScriptID,
+		"script_id":    script.ScriptID,
+		"node_id":      script.ScriptID + "_1",
+		"script_db_id": fmt.Sprintf("%d", script.ID),
+		"inputs":       map[string]any{},
+		"outputs":      map[string]any{},
 	}
 
 	if script.IOSchema == "" {
