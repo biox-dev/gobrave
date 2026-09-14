@@ -99,13 +99,16 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if err := os.MkdirAll(projectCachedDir, 0o755); err != nil {
 		return err
 	}
-
+	scriptDir, scriptFile, _ := utils.GetScriptFile(p.baseDir(), project.ProjectID, script.ScriptType, script.ScriptID)
+	scriptPath := filepath.Join(scriptDir, scriptFile)
+	// scriptDir := utils.GetScriptFileDir(p.baseDir(), project.ProjectID, script.ScriptID)
+	var paramsPayload map[string]any
 	if node.AnalysisID == 0 {
 		// p.initializeStandaloneNodeArtifacts(ctx, node)
 
 		projectDir := utils.GetProjectDir(p.baseDir(), project.ProjectID)
 
-		paramsPayload := cloneAnyMapForNode(map[string]interface{}(node.Params))
+		paramsPayload = cloneAnyMapForNode(map[string]interface{}(node.Params))
 		paramsPayload["output_dir"] = node.OutputDir
 		paramsPayload["project_dir"] = projectDir
 		paramsPayload["node_cached_dir"] = node.CacheDir
@@ -120,11 +123,13 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 			return err
 		}
 
-		scriptDir, scriptMainFile, err := p.workflowService.GetScriptFileByScriptID(ctx, script.ID)
-		if err != nil {
-			return err
-		}
-		scriptPath := filepath.Join(scriptDir, scriptMainFile)
+		// scriptDir, scriptMainFile, err := p.workflowService.GetScriptFileByScriptID(ctx, script.ID)
+		// if err != nil {
+		// 	return err
+		// }
+		paramsPayload["script_dir"] = scriptDir
+
+		// scriptPath := filepath.Join(scriptDir, scriptMainFile)
 
 		if !filepath.IsAbs(scriptPath) {
 			scriptPath = filepath.Join(p.baseDir(), scriptPath)
@@ -134,41 +139,6 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		// if err != nil {
 		// 	return err
 		// }
-
-		scriptWorkspaceDir := filepath.Join(node.WorkspaceDir, scriptMainFile)
-		if _, err := os.Lstat(scriptWorkspaceDir); err != nil {
-			if os.IsNotExist(err) {
-				if err := os.Symlink(scriptPath, scriptWorkspaceDir); err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
-		}
-		// synlink io_schema.json
-		ioSchemaPath := filepath.Join(scriptDir, "io_schema.json")
-		scriptWorkspaceIoSchemaPath := filepath.Join(node.WorkspaceDir, "io_schema.json")
-		if _, err := os.Lstat(ioSchemaPath); err == nil {
-			if _, err := os.Lstat(scriptWorkspaceIoSchemaPath); err != nil {
-
-				if os.IsNotExist(err) {
-					if err := os.Symlink(ioSchemaPath, scriptWorkspaceIoSchemaPath); err != nil {
-						return err
-					}
-				}
-			}
-		}
-
-		// runScript, err := BuildRunScript(node, script.ScriptType, scriptPath, string(scriptContent), paramsPayload)
-		// if err != nil {
-		// 	return err
-		// }
-		// if err := os.WriteFile(node.CommandPath, []byte(runScript), 0o755); err != nil {
-		// 	return err
-		// }
-		if err := p.WriteCommand(node, script.ScriptType, scriptPath, paramsPayload); err != nil {
-			return fmt.Errorf("write command failed: %w", err)
-		}
 
 		// if _, err := os.Stat(node.LogPath); err != nil {
 		// 	if os.IsNotExist(err) {
@@ -204,20 +174,49 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		}
 
 		// 构建参数
-		params, err := p.buildNodeParams(node, analysis)
+		paramsPayload, err = p.buildNodeParams(node, analysis)
 		if err != nil {
 			return err
 		}
-		params["node_cached_dir"] = node.CacheDir
-		params["project_cached_dir"] = projectCachedDir
-		if err := writeJSONAtomic(node.ParamsPath, params, 0o644); err != nil {
+		paramsPayload["node_cached_dir"] = node.CacheDir
+		paramsPayload["project_cached_dir"] = projectCachedDir
+		if err := writeJSONAtomic(node.ParamsPath, paramsPayload, 0o644); err != nil {
 			return fmt.Errorf("write params json failed: %w", err)
 		}
-		scriptDir, scriptFile, _ := utils.GetScriptFile(p.baseDir(), project.ProjectID, script.ScriptType, script.ScriptID)
-		scriptPath := filepath.Join(scriptDir, scriptFile)
-		if err := p.WriteCommand(node, script.ScriptType, scriptPath, params); err != nil {
-			return fmt.Errorf("write command failed: %w", err)
+
+		paramsPayload["script_dir"] = scriptDir
+
+		// if err := p.WriteCommand(node, script.ScriptType, scriptPath, params); err != nil {
+		// 	return fmt.Errorf("write command failed: %w", err)
+		// }
+	}
+
+	scriptWorkspaceDir := filepath.Join(node.WorkspaceDir, scriptFile)
+	if _, err := os.Lstat(scriptWorkspaceDir); err != nil {
+		if os.IsNotExist(err) {
+			if err := os.Symlink(scriptPath, scriptWorkspaceDir); err != nil {
+				return err
+			}
+		} else {
+			return err
 		}
+	}
+	// synlink io_schema.json
+	ioSchemaPath := filepath.Join(scriptDir, "io_schema.json")
+	scriptWorkspaceIoSchemaPath := filepath.Join(node.WorkspaceDir, "io_schema.json")
+	if _, err := os.Lstat(ioSchemaPath); err == nil {
+		if _, err := os.Lstat(scriptWorkspaceIoSchemaPath); err != nil {
+
+			if os.IsNotExist(err) {
+				if err := os.Symlink(ioSchemaPath, scriptWorkspaceIoSchemaPath); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	if err := p.WriteCommand(node, script.ScriptType, scriptPath, paramsPayload); err != nil {
+		return fmt.Errorf("write command failed: %w", err)
 	}
 
 	if !shouldSkipCleanOutput(ctx) {
