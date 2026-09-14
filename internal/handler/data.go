@@ -40,7 +40,6 @@ type projectIDQuery struct {
 type datasetByProjectPageRequest struct {
 	types.Pagination
 	types.QueryDataset
-	ProjectID string `json:"project_id" binding:"required"`
 }
 
 type projectFileQuery struct {
@@ -131,11 +130,11 @@ func buildCompatFileItem(item *types.FileWithDatasetInfo) (map[string]interface{
 
 // CreateDataset godoc
 // @Summary      创建数据集
-// @Description  创建 Dataset 记录
+// @Description  在当前用户激活的项目下创建 Dataset 记录，并自动建立 ProjectDataset 关联；主键由服务端生成
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
-// @Param        request  body      types.Dataset     true  "请求参数"
+// @Param        request  body      types.CreateDatasetRequest  true  "请求参数"
 // @Success      200      {object}  types.Dataset
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
@@ -144,22 +143,30 @@ func buildCompatFileItem(item *types.FileWithDatasetInfo) (map[string]interface{
 // @Security     Bearer
 // @Router       /data/dataset/create [post]
 func (h *DataHandler) CreateDataset(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
 		return
 	}
 
-	var req types.Dataset
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project")
+		return
+	}
+
+	var req types.CreateDatasetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
 
-	if err := h.dataService.CreateDataset(c.Request.Context(), &req); err != nil {
+	dataset := req.ToDataset()
+	if err := h.dataService.CreateDataset(c.Request.Context(), dataset, project.ProjectID); err != nil {
 		handleDataError(c, err, "failed to create dataset")
 		return
 	}
 
-	c.JSON(http.StatusOK, req)
+	c.JSON(http.StatusOK, dataset)
 }
 
 // GetDataset godoc
@@ -197,11 +204,11 @@ func (h *DataHandler) GetDataset(c *gin.Context) {
 
 // UpdateDataset godoc
 // @Summary      更新数据集
-// @Description  按 ID 更新 Dataset 记录
+// @Description  按 ID 更新 Dataset 记录，ID 由请求显式指定，其余字段为业务字段
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
-// @Param        request  body      types.Dataset     true  "请求参数"
+// @Param        request  body      types.UpdateDatasetRequest  true  "请求参数"
 // @Success      200      {object}  map[string]string
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
@@ -214,17 +221,13 @@ func (h *DataHandler) UpdateDataset(c *gin.Context) {
 		return
 	}
 
-	var req types.Dataset
+	var req types.UpdateDatasetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
-	if req.ID == 0 {
-		c.Error(errors.NewValidationError("id is required"))
-		return
-	}
 
-	if err := h.dataService.UpdateDataset(c.Request.Context(), &req); err != nil {
+	if err := h.dataService.UpdateDataset(c.Request.Context(), req.ToDataset()); err != nil {
 		handleDataError(c, err, "failed to update dataset")
 		return
 	}
@@ -291,7 +294,7 @@ func (h *DataHandler) ListDataset(c *gin.Context) {
 
 // PageDatasetByProjectID godoc
 // @Summary      按项目分页查询数据集
-// @Description  根据 project_id 分页查询关联的 Dataset 列表
+// @Description  根据当前用户激活的项目分页查询关联的 Dataset 列表
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -303,7 +306,8 @@ func (h *DataHandler) ListDataset(c *gin.Context) {
 // @Security     Bearer
 // @Router       /data/dataset/list-by-project-page [post]
 func (h *DataHandler) PageDatasetByProjectID(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
 		return
 	}
 
@@ -313,7 +317,13 @@ func (h *DataHandler) PageDatasetByProjectID(c *gin.Context) {
 		return
 	}
 
-	result, err := h.dataService.PageDatasetByProjectID(c.Request.Context(), &req.Pagination, &req.QueryDataset, req.ProjectID)
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project")
+		return
+	}
+
+	result, err := h.dataService.PageDatasetByProjectID(c.Request.Context(), &req.Pagination, &req.QueryDataset, project.ProjectID)
 	if err != nil {
 		handleDataError(c, err, "failed to page dataset by project id")
 		return

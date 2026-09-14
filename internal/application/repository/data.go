@@ -32,7 +32,6 @@ func (r *dataRepository) UpdateDataset(ctx context.Context, dataset *types.Datas
 	return r.db.WithContext(ctx).Model(&types.Dataset{}).
 		Where("id = ?", dataset.ID).
 		Updates(map[string]interface{}{
-			"dataset_id":   dataset.DatasetID,
 			"dataset_name": dataset.DatasetName,
 			"description":  dataset.Description,
 			"metadata":     dataset.Metadata,
@@ -76,10 +75,6 @@ func (r *dataRepository) PageDatasetByProjectID(ctx context.Context, pagination 
 			db = db.Where("dataset.id = ?", *query.ID)
 		}
 
-		if datasetID := query.GetDatasetID(); datasetID != "" {
-			db = db.Where("dataset.dataset_id = ?", datasetID)
-		}
-
 		if datasetName := query.GetDatasetName(); datasetName != "" {
 			db = db.Where("dataset.dataset_name LIKE ?", "%"+datasetName+"%")
 		}
@@ -104,7 +99,7 @@ func (r *dataRepository) PageDatasetByProjectID(ctx context.Context, pagination 
 	}
 
 	err := baseQuery.
-		Select("dataset.id, dataset.dataset_id, dataset.dataset_name, dataset.description, dataset.metadata, dataset.created_at, dataset.updated_at").
+		Select("dataset.id, dataset.dataset_name, dataset.description, dataset.metadata, dataset.created_at, dataset.updated_at").
 		Distinct().
 		Order("dataset.id DESC").
 		Offset(pagination.Offset()).
@@ -460,7 +455,7 @@ func (r *dataRepository) PageSampleByProjectID(ctx context.Context, pagination *
 	}
 
 	err := buildQuery().
-		Group("s.id, d.dataset_id, d.dataset_name").
+		Group("s.id, d.id, d.dataset_name").
 		Order("s.id DESC").
 		Offset(pagination.Offset()).
 		Limit(pagination.Limit()).
@@ -498,7 +493,7 @@ func (r *dataRepository) ListSampleByProjectID(ctx context.Context, projectID st
 		Joins("JOIN go_dataset AS d ON d.id = pd.dataset_id").
 		Joins("JOIN go_sample AS s ON s.id = ds.sample_id").
 		Where("pd.project_id = ?", projectID).
-		Group("s.id, d.dataset_id, d.dataset_name").
+		Group("s.id, d.id, d.dataset_name").
 		Order("s.id DESC").
 		Find(&items).Error
 	if err != nil {

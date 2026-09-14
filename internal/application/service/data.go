@@ -34,8 +34,32 @@ func NewDataService(cfg *config.Config, dataRepo interfaces.DataRepository) inte
 	return &dataService{dataRepo: dataRepo, baseDir: baseDir}
 }
 
-func (s *dataService) CreateDataset(ctx context.Context, dataset *types.Dataset) error {
-	return s.dataRepo.CreateDataset(ctx, dataset)
+func (s *dataService) CreateDataset(ctx context.Context, dataset *types.Dataset, projectID string) error {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return gorm.ErrRecordNotFound
+	}
+
+	projectExists, err := s.dataRepo.ExistsProjectByID(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if !projectExists {
+		return gorm.ErrRecordNotFound
+	}
+
+	// The dataset and its project binding must be created atomically so that a
+	// dataset never exists without being attached to the active project.
+	return s.dataRepo.WithTransaction(ctx, func(tx interfaces.DataRepository) error {
+		if err := tx.CreateDataset(ctx, dataset); err != nil {
+			return err
+		}
+
+		return tx.CreateProjectDataset(ctx, &types.ProjectDataset{
+			ProjectID: projectID,
+			DatasetID: dataset.ID,
+		})
+	})
 }
 
 func (s *dataService) GetDatasetByID(ctx context.Context, id int64) (*types.Dataset, error) {
