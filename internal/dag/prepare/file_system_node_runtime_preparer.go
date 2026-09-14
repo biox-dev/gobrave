@@ -134,6 +134,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 			return err
 		}
 	}
+
 	// synlink io_schema.json
 	ioSchemaPath := filepath.Join(scriptDir, "io_schema.json")
 	scriptWorkspaceIoSchemaPath := filepath.Join(node.WorkspaceDir, "io_schema.json")
@@ -147,7 +148,12 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 			}
 		}
 	}
-
+	// 在 node.WorkspaceDir/env.sh 中写入
+	//  export PATH={scriptDir}:$PATH
+	envFilePath := filepath.Join(node.WorkspaceDir, "env.sh")
+	if err := p.WriteEnvFile(ctx, envFilePath, node, scriptDir); err != nil {
+		return fmt.Errorf("write env.sh failed: %w", err)
+	}
 	if err := p.WriteCommand(node, script.ScriptType, scriptPath, paramsPayload); err != nil {
 		return fmt.Errorf("write command failed: %w", err)
 	}
@@ -158,6 +164,25 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		}
 	}
 
+	return nil
+}
+func (p *FileSystemNodeRuntimePreparer) WriteEnvFile(ctx context.Context, envFilePath string, node *types.AnalysisNode, scriptDir string) error {
+	content := fmt.Sprintf("export PATH=%s:$PATH\n", scriptDir)
+
+	// 如果 scriptDir/bin 目录存在，则将其加入 PATH
+	binDir := filepath.Join(scriptDir, "bin")
+	if stat, err := os.Stat(binDir); err == nil && stat.IsDir() {
+		content += fmt.Sprintf("export PATH=%s:$PATH\n", binDir)
+	}
+
+	// 如果 scriptDir/lib 目录存在，则将其加入 LD_LIBRARY_PATH
+	libDir := filepath.Join(scriptDir, "lib")
+	if stat, err := os.Stat(libDir); err == nil && stat.IsDir() {
+		content += fmt.Sprintf("export LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH\n", libDir)
+	}
+	if err := writeTextAtomic(envFilePath, content, 0o644); err != nil {
+		return fmt.Errorf("write env.sh failed: %w", err)
+	}
 	return nil
 }
 
