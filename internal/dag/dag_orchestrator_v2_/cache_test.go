@@ -75,7 +75,12 @@ func TestPoliciesRerunNodesWithoutReusableResult(t *testing.T) {
 		existing := &types.AnalysisNode{NodeID: "a1", Status: status, CommandMD5: "aaa", ParamsMD5: "bbb"}
 		facts := CacheFacts{Existing: existing, ProbeCommandMD5: "aaa", ProbeParamsMD5: "bbb"}
 
-		for _, policy := range []CachePolicy{ReuseExistingPolicy{}, ScriptFingerprintPolicy{}, ScriptAndParamsFingerprintPolicy{}} {
+		for _, policy := range []CachePolicy{
+			ReuseExistingPolicy{},
+			RerunAllPolicy{},
+			ScriptFingerprintPolicy{},
+			ScriptAndParamsFingerprintPolicy{},
+		} {
 			if decision := policy.Decide(facts); !decision.Rerun {
 				t.Fatalf("policy %s must rerun a %q node, got %+v", policy.Name(), status, decision)
 			}
@@ -91,6 +96,16 @@ func TestReusePolicyKeepsSuccessfulNodes(t *testing.T) {
 	existing = &types.AnalysisNode{NodeID: "a1", Status: dagruntime.StatusReady, CacheHit: true}
 	if decision := (ReuseExistingPolicy{}).Decide(CacheFacts{Existing: existing}); decision.Rerun {
 		t.Fatalf("cache hit must be reused, got %+v", decision)
+	}
+}
+
+// TestRerunAllPolicyKeepsSuccessfulNodes pins the graph-level nature of rerun_all: the
+// persisted graph reset happens in the run preparation step, so a node that is still
+// persisted (the resume path) is reused instead of being re-queued on every reconcile.
+func TestRerunAllPolicyKeepsSuccessfulNodes(t *testing.T) {
+	existing := &types.AnalysisNode{NodeID: "a1", Status: dagruntime.StatusDone}
+	if decision := (RerunAllPolicy{}).Decide(CacheFacts{Existing: existing}); decision.Rerun {
+		t.Fatalf("a successful node must be reused, got %+v", decision)
 	}
 }
 

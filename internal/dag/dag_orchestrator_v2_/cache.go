@@ -107,10 +107,21 @@ func (ReuseExistingPolicy) Decide(facts CacheFacts) CacheDecision {
 	return CacheDecision{}
 }
 
-// RerunAllPolicy always reruns (types.CacheTypeRerunAll).
+// RerunAllPolicy implements types.CacheTypeRerunAll.
 //
-// The run preparation step already deletes persisted nodes for this cache type,
-// so the policy is mostly a defensive fallback.
+// rerun_all is an analysis-level strategy: it is expressed by resetting the persisted
+// graph before the run (see the run preparation step in run.go), so every node is
+// materialized from scratch.
+//
+// Per node there is therefore nothing left to disable, and Decide keeps whatever result
+// is reusable - exactly like ReuseExistingPolicy. A node can only still be persisted
+// when that reset was deliberately skipped, which is precisely the resume path, where a
+// restart must not turn into a full rerun from scratch.
+//
+// Answering "rerun" unconditionally here livelocks a run: the reconciler re-decides
+// every persisted node on every pass, including the nodes this very run has just
+// completed, so each success is immediately flipped back to ready and the graph never
+// reaches a terminal state.
 type RerunAllPolicy struct{}
 
 // Name implements CachePolicy.
@@ -120,8 +131,8 @@ func (RerunAllPolicy) Name() string { return "rerun_all" }
 func (RerunAllPolicy) RequiresFingerprint() bool { return false }
 
 // Decide implements CachePolicy.
-func (RerunAllPolicy) Decide(CacheFacts) CacheDecision {
-	return CacheDecision{Rerun: true, Reason: "cache disabled for this analysis"}
+func (RerunAllPolicy) Decide(facts CacheFacts) CacheDecision {
+	return ReuseExistingPolicy{}.Decide(facts)
 }
 
 // ScriptFingerprintPolicy reruns when the generated run script changed

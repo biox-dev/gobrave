@@ -92,7 +92,12 @@ func TestPoliciesRerunNodesWithoutReusableResult(t *testing.T) {
 		existing := &types.AnalysisNode{NodeID: "a1", Status: status, CommandMD5: "aaa", ParamsMD5: "bbb"}
 		facts := CacheFacts{Existing: existing, ProbeCommandMD5: "aaa", ProbeParamsMD5: "bbb"}
 
-		for _, policy := range []CachePolicy{ReuseExistingPolicy{}, ScriptFingerprintPolicy{}, ScriptAndParamsFingerprintPolicy{}} {
+		for _, policy := range []CachePolicy{
+			ReuseExistingPolicy{},
+			RerunAllPolicy{},
+			ScriptFingerprintPolicy{},
+			ScriptAndParamsFingerprintPolicy{},
+		} {
 			if decision := policy.Decide(facts); !decision.Rerun {
 				t.Fatalf("policy %s must rerun a %q node, got %+v", policy.Name(), status, decision)
 			}
@@ -108,5 +113,37 @@ func TestReusePolicyKeepsSuccessfulNodes(t *testing.T) {
 	existing = &types.AnalysisNode{NodeID: "a1", Status: StatusReady, CacheHit: true}
 	if decision := (ReuseExistingPolicy{}).Decide(CacheFacts{Existing: existing}); decision.Rerun {
 		t.Fatalf("cache hit must be reused, got %+v", decision)
+	}
+}
+
+// TestRerunAllPolicyIsGraphLevelOnly pins what rerun_all means per node.
+//
+// The analysis-level answer stays "reset the persisted graph before the run". Per node -
+// which only happens for a node that survived that reset, i.e. the resume path - it keeps
+// whatever is reusable. The reconciler re-decides every persisted node on every pass, so
+// an unconditional rerun here would re-queue each successful node forever.
+func TestRerunAllPolicyIsGraphLevelOnly(t *testing.T) {
+	registry := NewCachePolicyRegistry()
+	if !registry.ShouldResetGraph(types.CacheTypeRerunAll) {
+		t.Fatal("rerun_all must still reset the persisted graph")
+	}
+
+	policy := RerunAllPolicy{}
+	if !policy.ResetsGraph() {
+		t.Fatal("rerun_all must declare its graph reset")
+	}
+	if decision := policy.Decide(CacheFacts{Existing: &types.AnalysisNode{NodeID: "a1", Status: StatusDone}}); decision.Rerun {
+		t.Fatalf("a successful node must be reused, got %+v", decision)
+	}
+	if decision := policy.Decide(CacheFacts{}); decision.Rerun {
+		t.Fatalf("a node-less decision must not ask for a rerun, got %+v", decision)
+	}
+	// A node without a result must still become runnable again: that is how a demoted or
+	// resumed node is re-dispatched.
+	if decision := policy.Decide(CacheFacts{Existing: &types.AnalysisNode{NodeID: "a1", Status: StatusPending}}); !decision.Rerun {
+		t.Fatalf("a pending node must be rerun, got %+v", decision)
+	}
+	if decision := policy.Decide(CacheFacts{Existing: &types.AnalysisNode{NodeID: "a1", Status: StatusFailed}}); !decision.Rerun {
+		t.Fatalf("a failed node must be rerun, got %+v", decision)
 	}
 }

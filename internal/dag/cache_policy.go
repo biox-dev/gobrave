@@ -46,6 +46,13 @@ type CacheDecision struct {
 type CachePolicy interface {
 	// Name is a stable identifier used in logs and diagnostics.
 	Name() string
+	// ResetsGraph reports whether this cache type invalidates the whole persisted
+	// graph before a run.
+	//
+	// It is the analysis-level half of a cache type, and the only place a reset may be
+	// requested from: Decide below is always called with a node that survived that
+	// reset, so a per-node rerun answer can never be mistaken for a graph-level one.
+	ResetsGraph() bool
 	// RequiresFingerprint reports whether Decide needs the probe fingerprints.
 	RequiresFingerprint() bool
 	// Decide returns the rerun decision for an already persisted node.
@@ -101,11 +108,11 @@ func (r *CachePolicyRegistry) Resolve(cacheType int) CachePolicy {
 // ShouldResetGraph reports whether cacheType invalidates the whole persisted
 // graph before a run.
 //
-// It is the analysis-level counterpart of the per-node policies: with no
-// materialized node in hand only rerun_all forces a reset, while every reuse
-// policy keeps the graph and defers its decision to per-node reuse time.
+// It is the analysis-level counterpart of the per-node policies: only rerun_all
+// resets the graph, while every reuse policy keeps it and defers its decision to
+// per-node reuse time.
 func (r *CachePolicyRegistry) ShouldResetGraph(cacheType int) bool {
-	return r.Resolve(cacheType).Decide(CacheFacts{CacheType: cacheType}).Rerun
+	return r.Resolve(cacheType).ResetsGraph()
 }
 
 // ReuseExistingPolicy keeps whatever is persisted (types.CacheTypeReuseExistingNode).
@@ -113,6 +120,9 @@ type ReuseExistingPolicy struct{}
 
 // Name implements CachePolicy.
 func (ReuseExistingPolicy) Name() string { return "reuse_existing" }
+
+// ResetsGraph implements CachePolicy.
+func (ReuseExistingPolicy) ResetsGraph() bool { return false }
 
 // RequiresFingerprint implements CachePolicy.
 func (ReuseExistingPolicy) RequiresFingerprint() bool { return false }
@@ -125,21 +135,34 @@ func (ReuseExistingPolicy) Decide(facts CacheFacts) CacheDecision {
 	return CacheDecision{}
 }
 
-// RerunAllPolicy always reruns (types.CacheTypeRerunAll).
+// RerunAllPolicy implements types.CacheTypeRerunAll.
 //
-// The run preparation step already deletes persisted nodes for this cache type,
-// so the policy is mostly a defensive fallback.
+// rerun_all is an analysis-level strategy: it is expressed by resetting the persisted
+// graph before the run (ResetsGraph), so every node is materialized from scratch.
+//
+// Per node there is therefore nothing left to disable, and Decide keeps whatever result
+// is reusable - exactly like ReuseExistingPolicy. A node can only still be persisted
+// when the reset was deliberately skipped, which is precisely the resume path, where a
+// restart must not turn into a full rerun from scratch.
+//
+// Answering "rerun" unconditionally here livelocks a run: the reconciler re-decides
+// every persisted node on every pass, including the nodes this very run has just
+// completed, so each success is immediately flipped back to ready and the graph never
+// reaches a terminal state.
 type RerunAllPolicy struct{}
 
 // Name implements CachePolicy.
 func (RerunAllPolicy) Name() string { return "rerun_all" }
 
+// ResetsGraph implements CachePolicy.
+func (RerunAllPolicy) ResetsGraph() bool { return true }
+
 // RequiresFingerprint implements CachePolicy.
 func (RerunAllPolicy) RequiresFingerprint() bool { return false }
 
 // Decide implements CachePolicy.
-func (RerunAllPolicy) Decide(CacheFacts) CacheDecision {
-	return CacheDecision{Rerun: true, Reason: "cache disabled for this analysis"}
+func (RerunAllPolicy) Decide(facts CacheFacts) CacheDecision {
+	return ReuseExistingPolicy{}.Decide(facts)
 }
 
 // ScriptFingerprintPolicy reruns when the generated run script changed
@@ -148,6 +171,9 @@ type ScriptFingerprintPolicy struct{}
 
 // Name implements CachePolicy.
 func (ScriptFingerprintPolicy) Name() string { return "reuse_when_script_unchanged" }
+
+// ResetsGraph implements CachePolicy.
+func (ScriptFingerprintPolicy) ResetsGraph() bool { return false }
 
 // RequiresFingerprint implements CachePolicy.
 func (ScriptFingerprintPolicy) RequiresFingerprint() bool { return true }
@@ -172,6 +198,9 @@ type ScriptAndParamsFingerprintPolicy struct{}
 func (ScriptAndParamsFingerprintPolicy) Name() string {
 	return "reuse_when_script_and_params_unchanged"
 }
+
+// ResetsGraph implements CachePolicy.
+func (ScriptAndParamsFingerprintPolicy) ResetsGraph() bool { return false }
 
 // RequiresFingerprint implements CachePolicy.
 func (ScriptAndParamsFingerprintPolicy) RequiresFingerprint() bool { return true }
