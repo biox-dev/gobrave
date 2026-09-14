@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/flosch/pongo2/v6"
 )
 
@@ -134,11 +135,13 @@ func (QmdScriptBuilder) Build(node *types.AnalysisNode, scriptPath string, _ str
 			return "", fmt.Errorf("failed to create symlink for main.qmd: %w", err)
 		}
 	}
+	envFile := utils.GetAnalysisNodeEnvFile(node.WorkspaceDir)
 
 	outputFileName := "output.md"
 	outputFile := filepath.Join(node.OutputDir, outputFileName)
 	return fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
+source %q
 export HOME=$PWD/.home
 export XDG_CACHE_HOME=$HOME/.cache
 export TMPDIR=$PWD/.tmp
@@ -146,7 +149,7 @@ mkdir -p "$TMPDIR"
 
 quarto render main.qmd --to md --output-dir %q --execute-dir %q --output - > output.md
 mv output.md %q
-`, node.OutputDir, node.WorkspaceDir, outputFile), nil
+`, envFile, node.OutputDir, node.WorkspaceDir, outputFile), nil
 
 }
 

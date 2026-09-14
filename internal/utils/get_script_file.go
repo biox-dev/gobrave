@@ -37,6 +37,10 @@ func GetAnalysisNodeDir(baseDir, projectId, scriptID string) string {
 	return filepath.Join(baseDir, "data", projectId, "analysis_node", scriptID)
 }
 
+func GetAnalysisNodeEnvFile(workspaceDir string) string {
+	return filepath.Join(workspaceDir, "env.sh")
+}
+
 func GetProjectDir(baseDir, projectId string) string {
 	return filepath.Join(baseDir, "data", projectId)
 }

@@ -150,7 +150,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	}
 	// 在 node.WorkspaceDir/env.sh 中写入
 	//  export PATH={scriptDir}:$PATH
-	envFilePath := filepath.Join(node.WorkspaceDir, "env.sh")
+	envFilePath := utils.GetAnalysisNodeEnvFile(node.WorkspaceDir)
 	if err := p.WriteEnvFile(ctx, envFilePath, node, scriptDir); err != nil {
 		return fmt.Errorf("write env.sh failed: %w", err)
 	}
