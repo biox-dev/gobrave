@@ -477,12 +477,17 @@ func (o *dynamicDagOrchestratorV2) isStopRequested(analysisID int64) bool {
 
 // prepareAnalysisForCacheRerun resets persisted runtime graph for reruns when
 // cache_type requires full rerun.
+//
+// Whether a cache type resets the graph is asked of the shared policy registry instead
+// of comparing analysis.CacheType here, so "what a cache type means" keeps exactly one
+// definition (internal/dag/cache_policy.go) across every scheduler. For the declared
+// cache types the answer is unchanged: only rerun_all resets.
 func (o *dynamicDagOrchestratorV2) prepareAnalysisForCacheRerun(ctx context.Context, analysisID int64) error {
 	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
 	if err != nil {
 		return err
 	}
-	if analysis == nil || analysis.CacheType != types.CacheTypeRerunAll {
+	if analysis == nil || !o.cachePolicies.ShouldResetGraph(analysis.CacheType) {
 		return nil
 	}
 
