@@ -168,6 +168,13 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 }
 func (p *FileSystemNodeRuntimePreparer) WriteEnvFile(ctx context.Context, envFilePath string, node *types.AnalysisNode, scriptDir string) error {
 	content := fmt.Sprintf("export PATH=%s:$PATH\n", scriptDir)
+	content += `
+	
+# BRAVE environment
+if [ -f /etc/profile.d/brave-env.sh ]; then
+    source /etc/profile.d/brave-env.sh
+fi
+`
 
 	// 如果 scriptDir/bin 目录存在，则将其加入 PATH
 	binDir := filepath.Join(scriptDir, "bin")
