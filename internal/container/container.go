@@ -437,6 +437,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewAnalysisHandler))
 	must(container.Provide(handler.NewWorkflowHandler))
 	must(container.Provide(handler.NewSettingHandler))
+	must(container.Provide(handler.NewConfigHandler))
 	must(container.Provide(handler.NewSheetHandler))
 	must(container.Provide(handler.NewUploadHandler))
 	must(container.Provide(handler.NewFileHandler))

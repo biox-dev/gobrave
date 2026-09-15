@@ -37,6 +37,7 @@ type RouterParams struct {
 	AnalysisHandler  *handler.AnalysisHandler
 	WorkflowHandler  *handler.WorkflowHandler
 	SettingHandler   *handler.SettingHandler
+	ConfigHandler    *handler.ConfigHandler
 	SheetHandler     *handler.SheetHandler
 	UploadHandler    *handler.UploadHandler
 	FileHandler      *handler.FileHandler
@@ -99,6 +100,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterAnalysisRoutes(v1, params.AnalysisHandler)
 		RegisterWorkflowRoutes(v1, params.WorkflowHandler)
 		RegisterSettingRoutes(v1, params.SettingHandler)
+		RegisterConfigRoutes(v1, params.ConfigHandler)
 		RegisterSheetRoutes(v1, params.SheetHandler)
 		RegisterFileRoutes(v1, params.FileHandler)
 		RegisterRealtimeRoutes(v1, params.RealtimeHandler)
@@ -317,6 +319,11 @@ func RegisterWorkflowRoutes(r *gin.RouterGroup, handler *handler.WorkflowHandler
 
 func RegisterSettingRoutes(r *gin.RouterGroup, handler *handler.SettingHandler) {
 	r.GET("/setting/get-setting", handler.GetSetting)
+}
+
+func RegisterConfigRoutes(r *gin.RouterGroup, handler *handler.ConfigHandler) {
+	r.GET("/config/file/get", handler.GetConfigFile)
+	r.POST("/config/file/section/update", handler.UpdateConfigSection)
 }
 
 func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler) {

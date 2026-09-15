@@ -7,12 +7,12 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/logger"
-	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/goccy/go-yaml"
 )
 
@@ -188,6 +188,28 @@ type KubernetesRuntimeConfig struct {
 	InCluster  bool   `yaml:"in_cluster" json:"in_cluster"`
 }
 
+// DefaultContainerConfig 返回 container 段在代码中的默认配置。
+// LoadConfig 与可视化配置共用它，保证 config.yml 缺失/缺段时的默认值一致。
+func DefaultContainerConfig() *ContainerConfig {
+	return &ContainerConfig{
+		DefaultRuntime:                      "docker",
+		Kubernetes:                          DefaultKubernetesRuntimeConfig(),
+		RefreshImageStatusOnStart:           true,
+		RecoverRunningDagOnStart:            true,
+		CleanupDagNodeContainersBeforeStart: true,
+		DeleteContainerOnNodeSuccess:        true,
+		DagNodeCleanupOnFailed:              "stop",
+		DagNodeCleanupOnDagFinished:         "delete",
+		CreateQueueMaxConcurrency:           3,
+		CreateQueueMaxPending:               50,
+	}
+}
+
+// DefaultKubernetesRuntimeConfig 返回 kubernetes 段的默认配置。
+func DefaultKubernetesRuntimeConfig() *KubernetesRuntimeConfig {
+	return &KubernetesRuntimeConfig{Namespace: "default"}
+}
+
 type StorageConfig struct {
 	// ImageDir string `yaml:"image_dir" json:"image_dir"`
 	BaseDir string `yaml:"base_dir" json:"base_dir"`
@@ -304,8 +326,11 @@ type TenantConfig struct {
 	AesKey string `yaml:"aes_key" json:"aes_key"`
 }
 
-func LoadConfig() (*Config, error) {
-	cfg := &Config{
+// defaultConfig 返回代码内置的默认配置：config.yml 不存在、缺少某个键，
+// 或某个键取值为空时都以它为准。
+// LoadConfig 先构造默认配置，再用 config.yml 覆盖其中显式声明的键。
+func defaultConfig() *Config {
+	return &Config{
 		Server: &ServerConfig{
 			Port: 8082,
 			// GRPCPort:        9092,
@@ -382,18 +407,7 @@ func LoadConfig() (*Config, error) {
 		Agent: &AgentConfig{
 			Providers: map[string]ModelProviderConfig{},
 		},
-		Container: &ContainerConfig{
-			DefaultRuntime:                      "docker",
-			Kubernetes:                          &KubernetesRuntimeConfig{Namespace: "default"},
-			RefreshImageStatusOnStart:           true,
-			RecoverRunningDagOnStart:            true,
-			CleanupDagNodeContainersBeforeStart: true,
-			DeleteContainerOnNodeSuccess:        true,
-			DagNodeCleanupOnFailed:              "stop",
-			DagNodeCleanupOnDagFinished:         "delete",
-			CreateQueueMaxConcurrency:           3,
-			CreateQueueMaxPending:               50,
-		},
+		Container: DefaultContainerConfig(),
 		// Ingest: &IngestConfig{
 		// 	Enabled:                 true,
 		// 	FetchIntervalSec:        300,
@@ -417,13 +431,15 @@ func LoadConfig() (*Config, error) {
 			// SystemPrompt: DefaultAISummarySystemPrompt,
 		},
 	}
+}
+
+// LoadConfig 加载配置：先取代码内置默认值，再用 config.yml 覆盖。
+// 文件中没有出现的键会保留默认值，具体语义见 applyConfigData。
+func LoadConfig() (*Config, error) {
+	cfg := defaultConfig()
 
 	// Resolve config file path: CLI --config > BRAVE_CONFIG_DIR > cwd/config.yml
-	defaultConfigFile := "config.yml"
-	if cliFlags != nil && strings.TrimSpace(cliFlags.ConfigPath) != "" {
-		defaultConfigFile = strings.TrimSpace(cliFlags.ConfigPath)
-	}
-	configPath, err := utils.ResolveExternalPath(defaultConfigFile)
+	configPath, err := ConfigFilePath()
 	logger.Infof(context.Background(), "Resolved config.yml path: %s", configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve config path: %w", err)
@@ -439,7 +455,7 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
 
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	if err := applyConfigData(cfg, data); err != nil {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
 
@@ -453,20 +469,11 @@ func LoadConfig() (*Config, error) {
 		cfg.Storage.BaseDir = resolveDefaultBaseDir()
 	}
 	if cfg.Container == nil {
-		cfg.Container = &ContainerConfig{
-			DefaultRuntime:                      "docker",
-			Kubernetes:                          &KubernetesRuntimeConfig{Namespace: "default"},
-			RefreshImageStatusOnStart:           true,
-			RecoverRunningDagOnStart:            true,
-			CleanupDagNodeContainersBeforeStart: true,
-			DeleteContainerOnNodeSuccess:        false,
-			DagNodeCleanupOnFailed:              "stop",
-			DagNodeCleanupOnDagFinished:         "delete",
-		}
+		cfg.Container = DefaultContainerConfig()
 	}
 	cfg.Container.DefaultRuntime = normalizeContainerRuntime(cfg.Container.DefaultRuntime)
 	if cfg.Container.Kubernetes == nil {
-		cfg.Container.Kubernetes = &KubernetesRuntimeConfig{Namespace: "default"}
+		cfg.Container.Kubernetes = DefaultKubernetesRuntimeConfig()
 	}
 	if strings.TrimSpace(cfg.Container.Kubernetes.Namespace) == "" {
 		cfg.Container.Kubernetes.Namespace = "default"
@@ -556,10 +563,44 @@ func LoadConfig() (*Config, error) {
 		cfg.Route.K8sIngress.Annotations = map[string]string{}
 	}
 
-	TENANT_AES_KEY := cfg.Tenant.AesKey
-	os.Setenv("TENANT_AES_KEY", TENANT_AES_KEY)
+	// TENANT_AES_KEY := cfg.Tenant.AesKey
+	// os.Setenv("TENANT_AES_KEY", TENANT_AES_KEY)
 
 	return cfg, nil
+}
+
+// applyConfigData 把 config.yml 的内容合并到 cfg 上，
+// 只有 data 中显式出现的键才会覆盖 cfg，未出现的键保持原值。
+//
+// 因此 cfg 必须先由 defaultConfig() 填好默认值再传入；
+// 空文件与纯空白文件按“没有任何键”处理，直接保留默认值。
+//
+// 注意：YAML 里的空段（如 `server:`）解码结果是 null，会把整个指针段置空，
+// 这里统一回退到默认值。另外 goccy/go-yaml 对结构体成员是逐字段覆盖的，
+// 但 map 与 slice 会被整体替换，所以不要给这两类字段设置非空默认值。
+func applyConfigData(cfg *Config, data []byte) error {
+	if strings.TrimSpace(string(data)) == "" {
+		return nil
+	}
+	defaults := defaultConfig()
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return err
+	}
+	restoreDefaultSections(cfg, defaults)
+	return nil
+}
+
+// restoreDefaultSections 把因空段而被解码为 nil 的配置段恢复为默认值，
+// 避免后续访问（如 cfg.Server.Port）出现空指针。
+func restoreDefaultSections(cfg, defaults *Config) {
+	dst := reflect.ValueOf(cfg).Elem()
+	src := reflect.ValueOf(defaults).Elem()
+	for i := 0; i < dst.NumField(); i++ {
+		field := dst.Field(i)
+		if field.Kind() == reflect.Ptr && field.IsNil() {
+			field.Set(src.Field(i))
+		}
+	}
 }
 
 func ResolveAppsPathPrefix(cfg *Config) string {
@@ -594,21 +635,26 @@ func ResolveContainerRuntimes(cfg *Config) []string {
 		return []string{"docker"}
 	}
 	if len(cfg.Container.Runtimes) > 0 {
-		seen := make(map[string]struct{}, len(cfg.Container.Runtimes))
-		out := make([]string, 0, len(cfg.Container.Runtimes))
-		for _, name := range cfg.Container.Runtimes {
-			n := normalizeContainerRuntime(strings.TrimSpace(name))
-			if _, ok := seen[n]; ok {
-				continue
-			}
-			seen[n] = struct{}{}
-			out = append(out, n)
-		}
-		if len(out) > 0 {
+		if out := normalizeContainerRuntimes(cfg.Container.Runtimes); len(out) > 0 {
 			return out
 		}
 	}
 	return []string{ResolveContainerRuntime(cfg)}
+}
+
+// normalizeContainerRuntimes 归一化运行时名称并去重，保持首次出现的顺序。
+func normalizeContainerRuntimes(names []string) []string {
+	seen := make(map[string]struct{}, len(names))
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		n := normalizeContainerRuntime(strings.TrimSpace(name))
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out
 }
 
 func normalizePathPrefix(value, fallback string) string {
