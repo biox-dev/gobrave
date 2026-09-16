@@ -207,6 +207,8 @@ func (o *dynamicDagOrchestratorV2) latestContainerInstanceByNode(ctx context.Con
 // nodes are terminalized before the analysis status is written.
 func (o *dynamicDagOrchestratorV2) finalizeStop(analysisID int64) {
 	ctx := context.Background()
+	// 与活 run 的停止路径共用同一段语义：先 stopping 闩锁 + 停容器，再收敛终态。
+	o.stopActiveNodes(ctx, analysisID)
 	finalStatus := types.AnalysisStatusStopped
 	if err := o.markActiveNodesStopped(ctx, analysisID, "dag stopped by user"); err != nil {
 		finalStatus = types.AnalysisStatusFailed
@@ -239,6 +241,7 @@ func (o *dynamicDagOrchestratorV2) markActiveNodesStopped(ctx context.Context, a
 		}
 		if err := o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
 			"status":        dagruntime.StatusStopped,
+			"server_status": "stopped",
 			"error_message": reason,
 			"finished_at":   now,
 		}); err != nil {
