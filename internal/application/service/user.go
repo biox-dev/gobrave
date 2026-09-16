@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -37,16 +36,20 @@ var (
 )
 
 // getJwtSecret retrieves the JWT secret from the environment, falling back to a securely generated random secret.
-func getJwtSecret() string {
+func getJwtSecret(config *config.Config) string {
 	jwtSecretOnce.Do(func() {
-		if envSecret := strings.TrimSpace(os.Getenv("JWT_SECRET")); envSecret != "" {
-			jwtSecret = envSecret
-			return
-		}
+		// if envSecret := strings.TrimSpace(os.Getenv("JWT_SECRET")); envSecret != "" {
+		// 	jwtSecret = envSecret
+		// 	return
+		// }
 
-		// Keep secret stable across restarts when JWT_SECRET is not configured.
-		if tenantKey := strings.TrimSpace(os.Getenv("TENANT_AES_KEY")); tenantKey != "" {
-			jwtSecret = tenantKey
+		// // Keep secret stable across restarts when JWT_SECRET is not configured.
+		// if tenantKey := strings.TrimSpace(os.Getenv("TENANT_AES_KEY")); tenantKey != "" {
+		// 	jwtSecret = tenantKey
+		// 	return
+		// }
+		if config != nil && config.User != nil && strings.TrimSpace(config.User.JWTSecret) != "" {
+			jwtSecret = config.User.JWTSecret
 			return
 		}
 
@@ -399,7 +402,7 @@ func (s *userService) GenerateTokens(
 	}
 
 	accessTokenObj := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
-	accessToken, err = accessTokenObj.SignedString([]byte(getJwtSecret()))
+	accessToken, err = accessTokenObj.SignedString([]byte(getJwtSecret(s.config)))
 	if err != nil {
 		return "", "", err
 	}
@@ -413,7 +416,7 @@ func (s *userService) GenerateTokens(
 	}
 
 	refreshTokenObj := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims)
-	refreshToken, err = refreshTokenObj.SignedString([]byte(getJwtSecret()))
+	refreshToken, err = refreshTokenObj.SignedString([]byte(getJwtSecret(s.config)))
 	if err != nil {
 		return "", "", err
 	}
@@ -455,7 +458,7 @@ func (s *userService) ValidateToken(ctx context.Context, tokenString string) (*t
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(getJwtSecret()), nil
+		return []byte(getJwtSecret(s.config)), nil
 	})
 
 	if err != nil || !token.Valid {
@@ -490,7 +493,7 @@ func (s *userService) RefreshToken(
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(getJwtSecret()), nil
+		return []byte(getJwtSecret(s.config)), nil
 	})
 
 	if err != nil || !token.Valid {

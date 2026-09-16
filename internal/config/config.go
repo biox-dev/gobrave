@@ -101,9 +101,9 @@ type Config struct {
 	Agent     *AgentConfig     `yaml:"agent" json:"agent"`
 	Container *ContainerConfig `yaml:"container" json:"container"`
 	// Ingest   *IngestConfig   `yaml:"ingest"   json:"ingest"`
-	Tenant      *TenantConfig `yaml:"tenant"   json:"tenant"`
-	DebugConfig *DebugConfig  `yaml:"debug"    json:"debug"`
-	User        *UserConfig   `yaml:"user"     json:"user"`
+	// Tenant      *TenantConfig `yaml:"tenant"   json:"tenant"`
+	DebugConfig *DebugConfig `yaml:"debug"    json:"debug"`
+	User        *UserConfig  `yaml:"user"     json:"user"`
 
 	AISummary *AISummaryConfig `yaml:"ai_summary" json:"ai_summary"`
 
@@ -114,7 +114,8 @@ type DebugConfig struct {
 }
 
 type UserConfig struct {
-	DisableRegistration bool `yaml:"disable_registration" json:"disable_registration"`
+	DisableRegistration bool   `yaml:"disable_registration" json:"disable_registration"`
+	JWTSecret           string `yaml:"jwt_secret" json:"jwt_secret"`
 }
 
 // AISummaryConfig AI 摘要生成配置。
@@ -418,9 +419,9 @@ func defaultConfig() *Config {
 		// 	ParserDispatchBatchSize: 100,
 		// 	ParserCallbackSecret:    "",
 		// },
-		Tenant: &TenantConfig{
-			AesKey: "your-aes-key-here",
-		},
+		// Tenant: &TenantConfig{
+		// 	AesKey: "your-aes-key-here",
+		// },
 		DebugConfig: &DebugConfig{
 			EnableDagOrchestrator: false,
 		},
