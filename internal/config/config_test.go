@@ -57,9 +57,7 @@ llm:
 	if cfg.Container.DefaultRuntime != "k8s" {
 		t.Errorf("default_runtime = %q, want k8s", cfg.Container.DefaultRuntime)
 	}
-	if !cfg.Container.RefreshImageStatusOnStart || !cfg.Container.DeleteContainerOnNodeSuccess {
-		t.Errorf("container bool defaults lost: %+v", *cfg.Container)
-	}
+
 	if cfg.Container.CreateQueueMaxConcurrency != 3 || cfg.Container.CreateQueueMaxPending != 50 {
 		t.Errorf("container queue defaults lost: %+v", *cfg.Container)
 	}

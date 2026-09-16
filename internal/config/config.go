@@ -170,8 +170,8 @@ type ContainerConfig struct {
 	Runtimes []string `yaml:"runtimes" json:"runtimes"`
 	// DefaultRuntime is the runtime used when no specific runtime is selected.
 	// Falls back to the first entry in Runtimes, then "docker".
-	DefaultRuntime                      string `yaml:"default_runtime" json:"default_runtime"`
-	RefreshImageStatusOnStart           bool   `yaml:"refresh_image_status_on_start" json:"refresh_image_status_on_start"`
+	DefaultRuntime string `yaml:"default_runtime" json:"default_runtime"`
+	// RefreshImageStatusOnStart           bool   `yaml:"refresh_image_status_on_start" json:"refresh_image_status_on_start"`
 	RecoverRunningDagOnStart            bool   `yaml:"recover_running_dag_on_start" json:"recover_running_dag_on_start"`
 	CleanupDagNodeContainersBeforeStart bool   `yaml:"cleanup_dag_node_containers_before_start" json:"cleanup_dag_node_containers_before_start"`
 	DeleteContainerOnNodeSuccess        bool   `yaml:"delete_container_on_node_success" json:"delete_container_on_node_success"`
@@ -193,9 +193,9 @@ type KubernetesRuntimeConfig struct {
 // LoadConfig 与可视化配置共用它，保证 config.yml 缺失/缺段时的默认值一致。
 func DefaultContainerConfig() *ContainerConfig {
 	return &ContainerConfig{
-		DefaultRuntime:                      "docker",
-		Kubernetes:                          DefaultKubernetesRuntimeConfig(),
-		RefreshImageStatusOnStart:           true,
+		DefaultRuntime: "docker",
+		Kubernetes:     DefaultKubernetesRuntimeConfig(),
+		// RefreshImageStatusOnStart:           true,
 		RecoverRunningDagOnStart:            true,
 		CleanupDagNodeContainersBeforeStart: true,
 		DeleteContainerOnNodeSuccess:        true,
