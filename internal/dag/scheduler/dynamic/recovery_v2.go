@@ -207,10 +207,11 @@ func (o *dynamicDagOrchestratorV2) latestContainerInstanceByNode(ctx context.Con
 // nodes are terminalized before the analysis status is written.
 func (o *dynamicDagOrchestratorV2) finalizeStop(analysisID int64) {
 	ctx := context.Background()
-	// 与活 run 的停止路径共用同一段语义：先 stopping 闩锁 + 停容器，再收敛终态。
-	o.stopActiveNodes(ctx, analysisID)
+	// 与活 run 的停止路径共用同一段语义（NodeStopSweeper）：先 stopping 闩锁 + 停容器，
+	// 再收敛终态。
+	o.nodeStopper.StopActiveNodes(ctx, analysisID, dagruntime.ReasonStoppedByUser)
 	finalStatus := types.AnalysisStatusStopped
-	if err := o.markActiveNodesStopped(ctx, analysisID, "dag stopped by user"); err != nil {
+	if err := o.nodeStopper.MarkNodesStopped(ctx, analysisID, dagruntime.ReasonStoppedByUser); err != nil {
 		finalStatus = types.AnalysisStatusFailed
 		logger.Warnf(ctx, "[DynamicDagOrchestratorV2] mark nodes stopped failed, analysis_id=%d err=%v", analysisID, err)
 	}
@@ -223,30 +224,4 @@ func (o *dynamicDagOrchestratorV2) finalizeStop(analysisID int64) {
 	}); err != nil {
 		logger.Warnf(ctx, "[DynamicDagOrchestratorV2] mark analysis stopped failed, analysis_id=%d err=%v", analysisID, err)
 	}
-}
-
-// markActiveNodesStopped terminalizes every non-terminal node of the analysis.
-func (o *dynamicDagOrchestratorV2) markActiveNodesStopped(ctx context.Context, analysisID int64, reason string) error {
-	nodes, err := o.repo.ListAnalysisNodesByAnalysisID(ctx, analysisID)
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	for _, node := range nodes {
-		if node == nil || strings.TrimSpace(node.AnalysisNodeID) == "" {
-			continue
-		}
-		if dagruntime.IsTerminalStatus(node.Status) {
-			continue
-		}
-		if err := o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
-			"status":        dagruntime.StatusStopped,
-			"server_status": "stopped",
-			"error_message": reason,
-			"finished_at":   now,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
 }

@@ -30,9 +30,6 @@ const (
 	dynamicV2StopCheckInterval = 1 * time.Second
 	// dynamicV2WatchdogInterval is a safety net in case runtime events are dropped.
 	dynamicV2WatchdogInterval = 5 * time.Second
-	// dynamicV2StopNodeTimeout bounds the post-exit node stop sweep so a wedged
-	// container runtime cannot block the caller that writes the terminal status.
-	dynamicV2StopNodeTimeout = 30 * time.Second
 )
 
 // dynamicDagOrchestratorV2 provides a Nextflow-like dynamic materialization path
@@ -56,6 +53,9 @@ type dynamicDagOrchestratorV2 struct {
 	containerRepo interfaces.ContainerRepository
 	// dispatcher is the DI-injected node dispatcher that performs actual node execution.
 	dispatcher *dagruntime.NodeDispatcher
+	// nodeStopper 是所有调度器共享的「停止节点」实现（闩锁 stopping + 停容器 + 兜底收敛），
+	// 避免每个调度器各写一遍停止语义。
+	nodeStopper *dagruntime.NodeStopSweeper
 	// fingerprinter predicts the runtime artifacts (run.sh / params.json) of a
 	// persisted node so the md5 cache policies can decide whether it is reusable.
 	//
@@ -116,6 +116,7 @@ func NewDynamicDagOrchestratorV2(
 		workflowService: workflowService,
 		containerRepo:   containerRepo,
 		dispatcher:      dispatcher,
+		nodeStopper:     dagruntime.NewNodeStopSweeper(repo, dispatcher),
 		fingerprinter:   fingerprinter,
 		cachePolicies:   dagruntime.NewCachePolicyRegistry(),
 		bus:             bus,
@@ -257,7 +258,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 			//   - runCtx 已被 cancel，所以这里用新的 context；
 			//   - 此刻 runDynamicLoop 的 defer pool.Stop() 已返回，不可能再有 Dispatch
 			//     在途中创建容器，因此不需要额外的闩锁/drain 顺序保护。
-			o.stopActiveNodes(context.Background(), analysisID)
+			o.nodeStopper.StopActiveNodes(context.Background(), analysisID, dagruntime.ReasonStoppedByUser)
 			finalStatus = types.AnalysisStatusStopped
 			finalErr = nil
 		}
@@ -275,10 +276,10 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 			o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, payload)
 		}
 		if finalStatus == types.AnalysisStatusStopped {
-			// 兜底：把剩下的非终态节点（含 stopActiveNodes 刚置成 stopping 的）收敛为
-			// stopped。这一步不能省：分析马上写成终态 stopped，恢复扫描不会再碰它，
-			// 少了它节点会永远停在 stopping 等一个可能永远不来的容器停止事件。
-			_ = o.markActiveNodesStopped(context.Background(), analysisID, "dag stopped by user")
+			// 兜底：把剩下的非终态节点（含刚置成 stopping 的）收敛为 stopped。这一步不能省：
+			// 分析马上写成终态 stopped，恢复扫描不会再碰它，少了它节点会永远停在 stopping
+			// 等一个可能永远不来的容器停止事件。
+			_ = o.nodeStopper.MarkNodesStopped(context.Background(), analysisID, dagruntime.ReasonStoppedByUser)
 		}
 		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
 			"job_status": finalStatus,
@@ -488,49 +489,6 @@ func (o *dynamicDagOrchestratorV2) isStopRequested(analysisID int64) bool {
 		return false
 	}
 	return stopped
-}
-
-// stopActiveNodes 停止本分析下仍在运行的节点：先把节点落库成 stopping（停止闩锁，
-// 保证任何后续派发都无法再 claim 它），再让 executor 停掉真正的进程/容器
-// （容器执行器会映射到 containerMgr.StopByOwner）。
-//
-// 只处理 running/submitted：ready/pending 从未进过 executor，没有东西可停，交给最终的
-// 非终态收敛统一处理。
-func (o *dynamicDagOrchestratorV2) stopActiveNodes(ctx context.Context, analysisID int64) {
-	if analysisID <= 0 || o.dispatcher == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(ctx, dynamicV2StopNodeTimeout)
-	defer cancel()
-
-	nodes, err := o.repo.ListAnalysisNodesByAnalysisID(ctx, analysisID)
-	if err != nil {
-		logger.Warnf(ctx, "[DynamicDagOrchestratorV2] list nodes for stop failed, analysis_id=%d err=%v", analysisID, err)
-		return
-	}
-	for _, node := range nodes {
-		if node == nil {
-			continue
-		}
-		status := normaliseNodeStatus(node)
-		if status != dagruntime.StatusRunning && status != dagruntime.StatusSubmitted {
-			continue
-		}
-		if err := o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
-			"status":        dagruntime.StatusStopping,
-			"server_status": "stopping",
-			"error_message": "dag stopped by user",
-			"updated_at":    time.Now().UTC(),
-		}); err != nil {
-			logger.Warnf(ctx, "[DynamicDagOrchestratorV2] mark node stopping failed, analysis_id=%d node_id=%s err=%v", analysisID, node.NodeID, err)
-			continue
-		}
-		// Stop 只依赖 node.ID，单个节点失败不阻断其它节点：节点已经是 stopping，
-		// 最坏情况由 markActiveNodesStopped 兜底成 stopped。
-		if _, err := o.dispatcher.Stop(ctx, node); err != nil {
-			logger.Warnf(ctx, "[DynamicDagOrchestratorV2] stop node failed, analysis_id=%d node_id=%s err=%v", analysisID, node.NodeID, err)
-		}
-	}
 }
 
 // prepareAnalysisForCacheRerun resets persisted runtime graph for reruns when

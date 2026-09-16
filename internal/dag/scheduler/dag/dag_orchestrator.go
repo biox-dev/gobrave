@@ -32,8 +32,10 @@ type dagOrchestrator struct {
 	containerMgr  *manager.ContainerManager
 	// runScriptBuilders map[string]prepare.RunScriptBuilder
 	dispatcher *dagruntime.NodeDispatcher
-	cfg        *config.Config
-	bus        event.Bus
+	// nodeStopper 是所有调度器共享的「停止节点」实现（闩锁 stopping + 停容器 + 兜底收敛）。
+	nodeStopper *dagruntime.NodeStopSweeper
+	cfg         *config.Config
+	bus         event.Bus
 	// registry is the process-wide running registry injected by the container and
 	// shared with the other schedulers, so duplicate-run and stop lookups agree
 	// across schedulers.
@@ -59,6 +61,7 @@ func NewDagOrchestrator(
 		projectRepo:   projectRepo,
 		containerMgr:  containerMgr,
 		dispatcher:    dispatcher,
+		nodeStopper:   dagruntime.NewNodeStopSweeper(repo, dispatcher),
 		// runScriptBuilders: runScriptBuilders,
 		cfg:      cfg,
 		bus:      bus,
@@ -181,7 +184,8 @@ func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64, _ ma
 		if err != nil {
 			finalStatus := types.AnalysisStatusFailed
 			if stoppedByUser {
-				_ = o.markActiveNodesStopped(context.Background(), analysisID, "dag stopped by user")
+				o.nodeStopper.StopActiveNodes(context.Background(), analysisID, dagruntime.ReasonStoppedByUser)
+				_ = o.nodeStopper.MarkNodesStopped(context.Background(), analysisID, dagruntime.ReasonStoppedByUser)
 				if cleanupErr := o.cleanupByAnalysisIDStrict(context.Background(), analysisID, cleanupPolicyDelete); cleanupErr == nil {
 					finalStatus = types.AnalysisStatusStopped
 				} else {
@@ -201,7 +205,8 @@ func (o *dagOrchestrator) StartAsync(ctx context.Context, analysisID int64, _ ma
 
 		finalStatus := types.AnalysisStatusFinished
 		if stoppedByUser {
-			_ = o.markActiveNodesStopped(context.Background(), analysisID, "dag stopped by user")
+			o.nodeStopper.StopActiveNodes(context.Background(), analysisID, dagruntime.ReasonStoppedByUser)
+			_ = o.nodeStopper.MarkNodesStopped(context.Background(), analysisID, dagruntime.ReasonStoppedByUser)
 			if cleanupErr := o.cleanupByAnalysisIDStrict(context.Background(), analysisID, cleanupPolicyDelete); cleanupErr != nil {
 				finalStatus = types.AnalysisStatusFailed
 				logger.Warnf(context.Background(), "[DagOrchestrator] stop cleanup failed, analysis_id=%d err=%v", analysisID, cleanupErr)
@@ -309,8 +314,11 @@ func (o *dagOrchestrator) RecoverRunningAnalyses(ctx context.Context, item *type
 
 func (o *dagOrchestrator) finalizeStop(analysisID int64) {
 	ctx := context.Background()
+	// 与活 run 的停止路径共用同一段语义（NodeStopSweeper）：先 stopping 闩锁 + 停容器，
+	// 再收敛终态。
+	o.nodeStopper.StopActiveNodes(ctx, analysisID, dagruntime.ReasonStoppedByUser)
 	finalStatus := types.AnalysisStatusStopped
-	if err := o.markActiveNodesStopped(ctx, analysisID, "dag stopped by user"); err != nil {
+	if err := o.nodeStopper.MarkNodesStopped(ctx, analysisID, dagruntime.ReasonStoppedByUser); err != nil {
 		finalStatus = types.AnalysisStatusFailed
 		logger.Warnf(ctx, "[DagOrchestrator] mark nodes stopped failed, analysis_id=%d err=%v", analysisID, err)
 	}
@@ -327,31 +335,6 @@ func (o *dagOrchestrator) finalizeStop(analysisID int64) {
 	}); err != nil {
 		logger.Warnf(ctx, "[DagOrchestrator] mark analysis stopped failed, analysis_id=%d err=%v", analysisID, err)
 	}
-}
-
-func (o *dagOrchestrator) markActiveNodesStopped(ctx context.Context, analysisID int64, reason string) error {
-	nodes, err := o.repo.ListAnalysisNodesByAnalysisID(ctx, analysisID)
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	for _, node := range nodes {
-		if node == nil || strings.TrimSpace(node.AnalysisNodeID) == "" {
-			continue
-		}
-		status := strings.TrimSpace(strings.ToLower(node.Status))
-		if dagruntime.IsTerminalStatus(status) {
-			continue
-		}
-		if err := o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
-			"status":        dagruntime.StatusFailed,
-			"error_message": reason,
-			"finished_at":   now,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (o *dagOrchestrator) prepareNodesForResume(ctx context.Context, analysisID int64) error {

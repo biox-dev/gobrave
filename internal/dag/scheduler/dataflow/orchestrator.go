@@ -39,6 +39,8 @@ type dataflowDagOrchestratorV3 struct {
 	projectRepo     interfaces.ProjectRepository
 	containerMgr    *manager.ContainerManager
 	dispatcher      *dagruntime.NodeDispatcher
+	// nodeStopper 是所有调度器共享的「停止节点」实现（闩锁 stopping + 停容器 + 兜底收敛）。
+	nodeStopper *dagruntime.NodeStopSweeper
 	// runScriptBuilders map[string]prepare.RunScriptBuilder
 	cfg *config.Config
 	// router is the process-wide runtime event subscriber injected by the
@@ -74,6 +76,7 @@ func NewDataflowDagOrchestratorV3(
 		workflowRepo:    workflowRepo,
 		workflowService: workflowService,
 		dispatcher:      dispatcher,
+		nodeStopper:     dagruntime.NewNodeStopSweeper(repo, dispatcher),
 		containerMgr:    containerMgr,
 		projectRepo:     projectRepo,
 		// runScriptBuilders: runScriptBuilders,
@@ -155,6 +158,11 @@ func (o *dataflowDagOrchestratorV3) StartAsync(ctx context.Context, analysisID i
 		}
 		if o.isStopRequested(bgCtx, analysisID) {
 			// A persisted stop request wins over the loop result.
+			//
+			// 与 dynamic V2 同一套停止语义：循环退出后先把仍在运行的节点落库成 stopping
+			// 并让 executor 停掉真正的容器（此刻 runStartAsyncV3 已返回，不可能再有派发在途
+			// 创建容器），再收敛分析状态。
+			o.nodeStopper.StopActiveNodes(bgCtx, analysisID, dagruntime.ReasonStoppedByUser)
 			finalStatus = types.AnalysisStatusStopped
 			finalErr = nil
 		}
@@ -170,6 +178,12 @@ func (o *dataflowDagOrchestratorV3) StartAsync(ctx context.Context, analysisID i
 				payload["reason"] = "stopped"
 			}
 			o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, payload)
+		}
+
+		if finalStatus == types.AnalysisStatusStopped {
+			// 兜底：把剩下的非终态节点（含刚置成 stopping 的）收敛为 stopped。分析随即写成终态，
+			// 恢复扫描不会再碰它，少了这一步节点会永远停在 stopping 等一个不会来的容器事件。
+			_ = o.nodeStopper.MarkNodesStopped(bgCtx, analysisID, dagruntime.ReasonStoppedByUser)
 		}
 
 		o.markAnalysisStatus(bgCtx, analysisID, finalStatus)
