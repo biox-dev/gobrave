@@ -136,6 +136,8 @@ type WorkflowVersion struct {
 	// CreatedAt          time.Time      `json:"created_at"`
 	// UpdatedAt          time.Time      `json:"updated_at"`
 	Workflow
+	StorePath    string `json:"store_path"`
+	WorkflowPath string `json:"workflow_path"`
 	StoreVersion string `json:"store_version"`
 }
 

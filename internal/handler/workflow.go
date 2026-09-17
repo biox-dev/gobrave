@@ -952,7 +952,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 	}
 
 	storeVersion := ""
-
+	storePath := ""
 	storeID := workflow.StoreID
 	if storeID != 0 {
 		store, err := h.storeService.GetStoreByID(c.Request.Context(), storeID)
@@ -962,36 +962,20 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		}
 		if store != nil {
 			storeVersion = store.Version
+			storePath = store.Path
 		}
 
 	}
+	project, err := h.projectService.GetProjectByID(c.Request.Context(), workflow.ProjectID)
+
+	workflowPath := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
+
 	workflowVersion := &types.WorkflowVersion{
-		// ID:                 workflow.ID,
-		// ProjectID:          workflow.ProjectID,
-		// StoreID:            workflow.StoreID,
-		// Name:               workflow.Name,
-		// Img:                workflow.Img,
-		// Tags:               workflow.Tags,
-		// URL:                workflow.URL,
-		// Category:           workflow.Category,
-		// Description:        workflow.Description,
-		// Prompt:             workflow.Prompt,
-		// DagDefinition:      workflow.DagDefinition,
-		// WorkflowID:         workflow.WorkflowID,
-		// RelationType:       workflow.RelationType,
-		// InstallKey:         workflow.InstallKey,
-		// ModuleID:           workflow.ModuleID,
-		// ContainerID:        workflow.ContainerID,
-		// ParentComponentID:  workflow.ParentComponentID,
-		// InputComponentIDs:  workflow.InputComponentIDs,
-		// OutputComponentIDs: workflow.OutputComponentIDs,
-		// OrderIndex:         workflow.OrderIndex,
-		// Version:            workflow.Version,
-		// UpdateInfo:         workflow.UpdateInfo,
-		// CreatedAt:          workflow.CreatedAt,
-		// UpdatedAt:          workflow.UpdatedAt,
+
 		Workflow:     *workflow,
+		StorePath:    storePath,
 		StoreVersion: storeVersion,
+		WorkflowPath: workflowPath,
 	}
 
 	c.JSON(http.StatusOK, workflowVersion)
