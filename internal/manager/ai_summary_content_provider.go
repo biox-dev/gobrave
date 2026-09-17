@@ -66,12 +66,12 @@ func (p *aiSummaryContentProvider) resolveAnalysis(ctx context.Context, analysis
 	return AISummaryContent{
 		Title: fmt.Sprintf("分析摘要：%s", a.AnalysisName),
 		// SystemPrompt: p.systemPrompt,
-		WorkingDir: a.OutputDir,
+		WorkingDir: a.WorkspaceDir,
 		Text: strings.Join(filterNonEmpty([]string{
 			"分析名称: " + a.AnalysisName,
 			"分析方法: " + a.AnalysisMethod,
 			"运行状态: " + a.JobStatus,
-			"输出目录: " + a.OutputDir,
+			"输出目录: " + a.WorkspaceDir,
 			"输出格式: " + a.OutputFormat,
 		}), "\n"),
 	}, nil

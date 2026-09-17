@@ -962,7 +962,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		}
 		if store != nil {
 			storeVersion = store.Version
-			storePath = store.Path
+			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
 		}
 
 	}
@@ -1026,7 +1026,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 		}
 		if store != nil {
 			storeVersion = store.Version
-			storePath = store.Path
+			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
 		}
 	}
 	project, err := h.projectService.GetProjectByID(c.Request.Context(), script.ProjectID)

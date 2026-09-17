@@ -38,14 +38,19 @@ func LayoutFor(analysisOutputDir string, nodeRecordID int64) WorkspaceLayout {
 }
 
 // LayoutFromWorkspaceDir derives the full layout from an already known root.
+//
+// The directory contract itself lives in utils.NodeLayoutFor so that the DB
+// layer (types.AnalysisNode) can derive the exact same paths without importing
+// this package.
 func LayoutFromWorkspaceDir(workspaceDir string) WorkspaceLayout {
+	l := utils.NodeLayoutFor(workspaceDir)
 	return WorkspaceLayout{
-		Dir:         workspaceDir,
-		OutputDir:   utils.GetAnalysisNodeOutputDir(workspaceDir),
-		CacheDir:    utils.GetAnalysisNodeCacheDir(workspaceDir),
-		ParamsPath:  filepath.Join(workspaceDir, "params.json"),
-		CommandPath: filepath.Join(workspaceDir, "run.sh"),
-		LogPath:     filepath.Join(workspaceDir, "command.log"),
+		Dir:         l.Dir,
+		OutputDir:   l.OutputDir,
+		CacheDir:    l.CacheDir,
+		ParamsPath:  l.ParamsPath,
+		CommandPath: l.CommandPath,
+		LogPath:     l.LogPath,
 	}
 }
 

@@ -450,12 +450,12 @@ func (h *WorkflowHandler) GetWorkflowImage(c *gin.Context) {
 
 // ---------- store 封面 ----------
 //
-// store（发布产物）的封面位置固定为：{store.Path}/{store.StoreType}/{store.Img}。
-// Img 只存纯文件名；Path/Img 为空、路径越界或文件不存在时一律返回内置占位图。
+// store（发布产物）的封面位置固定为：{base_dir}/store/{path_name}/{store_type}/{img}。
+// Img 只存纯文件名；path_name/Img 为空、路径越界或文件不存在时一律返回内置占位图。
 
 // GetStoreImage godoc
 // @Summary      获取商店封面图片流
-// @Description  根据 int64 主键读取商店封面，位置固定为 {path}/{store_type}/{img}；
+// @Description  根据 int64 主键读取商店封面，位置固定为 {base_dir}/store/{path_name}/{store_type}/{img}；
 // @Description  文件不存在或路径非法时返回内置占位图（200 + image/svg+xml）。
 // @Tags         商店
 // @Produce      image/svg+xml
@@ -488,9 +488,15 @@ func (h *StoreHandler) GetStoreImage(c *gin.Context) {
 		return
 	}
 
-	storePath := strings.TrimSpace(store.Path)
+	if h.cfg == nil || h.cfg.Storage == nil {
+		servePlaceholderImage(c)
+		return
+	}
+
+	// store 不落库绝对路径，目录由 PathName 相对 base_dir 推导。
+	storePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
 	img := strings.TrimSpace(store.Img)
-	if storePath == "" || img == "" {
+	if strings.TrimSpace(store.PathName) == "" || img == "" {
 		servePlaceholderImage(c)
 		return
 	}

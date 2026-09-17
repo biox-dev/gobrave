@@ -19,7 +19,9 @@ type Store struct {
 	Origin      string         `json:"origin" gorm:"type:varchar(255)"`
 	URL         string         `json:"url" gorm:"column:url;type:varchar(255)"`
 	Status      string         `json:"status" gorm:"type:varchar(255);index"`
-	Path        string         `json:"path" gorm:"type:varchar(255)"`
+	// PathName 是 store 目录在 storage.base_dir/store 下的相对标识：
+	// 发布产物为 workflow/script ID，下载产物为 "<owner>/<repo>"。
+	// 绝对路径一律不落库，需要时用 utils.GetWorkflowOrScriptStoreDir(baseDir, PathName) 解析。
 	PathName    string         `json:"path_name" gorm:"type:varchar(255)"`
 	Category    string         `json:"category" gorm:"type:varchar(255);index"`
 	Tags        datatypes.JSON `json:"tags" gorm:"type:json"`

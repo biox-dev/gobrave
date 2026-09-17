@@ -48,7 +48,7 @@ func newTestReconciler(t *testing.T, conn *fakeWorkflowRepo) *Reconciler {
 	initSnowflake(t)
 	graph := newTestGraph(t)
 	return NewReconciler(ReconcilerDeps{
-		Analysis:  &types.Analysis{ID: 1, ProjectID: 7, OutputDir: t.TempDir()},
+		Analysis:  &types.Analysis{ID: 1, ProjectID: 7, WorkspaceDir: t.TempDir()},
 		Graph:     graph,
 		Tracker:   NewDependencyTracker(graph),
 		Builder:   NewNodeBuilder(),

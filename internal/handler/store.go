@@ -151,13 +151,8 @@ func (h *StoreHandler) DeleteStore(c *gin.Context) {
 	}
 
 	if storeItem != nil {
-		storePath := strings.TrimSpace(storeItem.Path)
+		storePath := resolveStoreDir(h.cfg, storeItem)
 		if storePath != "" {
-			if h.cfg == nil || h.cfg.Storage == nil || strings.TrimSpace(h.cfg.Storage.BaseDir) == "" {
-				c.Error(errors.NewInternalServerError("storage base dir is not configured"))
-				return
-			}
-
 			storeRoot := utils.GetStoreDir(strings.TrimSpace(h.cfg.Storage.BaseDir))
 			safePath, pathErr := utils.SafePathUnderBase(storeRoot, storePath)
 			if pathErr != nil {
@@ -335,7 +330,6 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		Origin:      origin,
 		URL:         repoURL,
 		Status:      "running",
-		Path:        targetPath,
 		PathName:    pathName,
 		Category:    strings.TrimSpace(req.Category),
 		Tags:        tagsJSON,
@@ -366,7 +360,7 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		return
 	}
 
-	if metadataErr := hydrateStoreMetadataFromStoreFiles(item); metadataErr != nil {
+	if metadataErr := hydrateStoreMetadataFromStoreFiles(targetPath, item); metadataErr != nil {
 		item.Status = "failed"
 		item.Message = metadataErr.Error()
 		item.Log = metadataErr.Error()
@@ -388,7 +382,7 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"store_id":       item.ID,
 		"already_exists": false,
-		"path":           item.Path,
+		"path":           targetPath,
 		"path_name":      item.PathName,
 		"message":        "success",
 	})
@@ -411,7 +405,7 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 		return
 	}
 
-	targetPath := strings.TrimSpace(item.Path)
+	targetPath := resolveStoreDir(h.cfg, item)
 	if targetPath == "" {
 		c.Error(errors.NewValidationError("store path is empty"))
 		return
@@ -453,7 +447,7 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 		return
 	}
 
-	if metadataErr := hydrateStoreMetadataFromStoreFiles(item); metadataErr != nil {
+	if metadataErr := hydrateStoreMetadataFromStoreFiles(targetPath, item); metadataErr != nil {
 		item.Log = metadataErr.Error()
 		item.Message = metadataErr.Error()
 		if updateErr := h.storeService.UpdateStore(c.Request.Context(), item); updateErr != nil {
@@ -551,14 +545,34 @@ func buildStoreTagsJSON(v any) (datatypes.JSON, error) {
 	return datatypes.JSON(b), nil
 }
 
-func hydrateStoreMetadataFromStoreFiles(item *types.Store) error {
+// resolveStoreDir 推导 store 的绝对目录：storage.base_dir/store/<path_name>。
+//
+// store 表不再保存绝对路径（Path 字段已删除），所有需要目录的位置都必须
+// 经由这里从 PathName 解析，这样 base_dir 变更只需拷贝目录。
+func resolveStoreDir(cfg *config.Config, item *types.Store) string {
+	if item == nil || cfg == nil || cfg.Storage == nil {
+		return ""
+	}
+	baseDir := strings.TrimSpace(cfg.Storage.BaseDir)
+	pathName := strings.TrimSpace(item.PathName)
+	if baseDir == "" || pathName == "" {
+		return ""
+	}
+	return utils.GetWorkflowOrScriptStoreDir(baseDir, pathName)
+}
+
+func hydrateStoreMetadataFromStoreFiles(storeDir string, item *types.Store) error {
 	if item == nil {
 		return fmt.Errorf("store item is nil")
+	}
+	storeDir = strings.TrimSpace(storeDir)
+	if storeDir == "" {
+		return fmt.Errorf("store directory is empty")
 	}
 
 	switch strings.ToLower(strings.TrimSpace(item.StoreType)) {
 	case "workflow":
-		workflowJSONPath, err := resolveStoreWorkflowJSONPath(item.Path)
+		workflowJSONPath, err := resolveStoreWorkflowJSONPath(storeDir)
 		if err != nil {
 			return err
 		}
@@ -591,7 +605,7 @@ func hydrateStoreMetadataFromStoreFiles(item *types.Store) error {
 		return nil
 
 	case "script":
-		scriptJSONPath, err := resolveStoreScriptJSONPath(item.Path)
+		scriptJSONPath, err := resolveStoreScriptJSONPath(storeDir)
 		if err != nil {
 			return err
 		}

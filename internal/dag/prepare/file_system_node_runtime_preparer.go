@@ -251,7 +251,7 @@ func (p *FileSystemNodeRuntimePreparer) ensureNodePaths(node *types.AnalysisNode
 	if baseWorkspace == "" {
 		analysisOutputDir := ""
 		if analysis != nil {
-			analysisOutputDir = strings.TrimSpace(analysis.OutputDir)
+			analysisOutputDir = strings.TrimSpace(analysis.WorkspaceDir)
 		}
 		if analysisOutputDir == "" {
 			return fmt.Errorf("node workspace_dir is empty and analysis output_dir is empty")

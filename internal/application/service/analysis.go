@@ -177,33 +177,23 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 
 		analsyisDir := utils.GetAnalysisDir(baseDir, input.Project.ProjectID, workflow.ID)
 
-		outputDir := filepath.Join(analsyisDir, fmt.Sprintf("%d", analysisID))
-		workDir := filepath.Join(analsyisDir, fmt.Sprintf("%d", analysisID))
+		// workspaceDir 是本次分析的根目录。它会相对 base_dir 落库，
+		// 其余路径（params.json / run.sh / 各种 log）都由它派生，不再持久化。
+		workspaceDir := filepath.Join(analsyisDir, fmt.Sprintf("%d", analysisID))
 		if existing != nil && cacheType != types.CacheTypeRerunAll {
 			analysisID = existing.ID
-			if strings.TrimSpace(existing.OutputDir) != "" {
-				outputDir = existing.OutputDir
-			}
-			if strings.TrimSpace(existing.WorkDir) != "" {
-				workDir = existing.WorkDir
+			if strings.TrimSpace(existing.WorkspaceDir) != "" {
+				workspaceDir = existing.WorkspaceDir
 			}
 		}
 
-		if err := os.MkdirAll(outputDir, 0o755); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(workDir, 0o755); err != nil {
+		if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
 			return err
 		}
 
-		paramsPath := filepath.Join(outputDir, "params.json")
-		commandPath := filepath.Join(outputDir, "run.sh")
-		commandLogPath := filepath.Join(outputDir, "run.log")
-		traceFile := filepath.Join(outputDir, "trace.log")
-		workflowLogFile := filepath.Join(outputDir, "workflow.log")
-		executorLogFile := filepath.Join(outputDir, ".nextflow.log")
+		paramsPath := utils.AnalysisLayoutFor(workspaceDir).ParamsPath
 
-		parseResult["tools_output_dir"] = outputDir
+		parseResult["tools_output_dir"] = workspaceDir
 		input.RequestParam["analysis_id"] = fmt.Sprintf("%d", analysisID)
 
 		if err := writeJSONFile(paramsPath, parseResult); err != nil {
@@ -225,12 +215,9 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 				// "analysis_type": analysisType,
 				// "is_report":          input.IsReport,
 				"data_component_ids": dataComponentIDs,
-				"output_dir":         outputDir,
-				"work_dir":           workDir,
-				"params_path":        paramsPath,
-				"command_path":       commandPath,
-				"command_log_path":   commandLogPath,
-				"updated_at":         time.Now().UTC(),
+				// repository 会把绝对路径转成相对 base_dir 的形式再落库。
+				"workspace_dir": workspaceDir,
+				"updated_at":    time.Now().UTC(),
 			}
 			if strings.TrimSpace(existing.JobStatus) != "running" {
 				updateValues["job_status"] = "updated"
@@ -249,19 +236,11 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 				AnalysisID: uuid.NewString(),
 				WorkflowID: workflowID,
 				// AnalysisType:    analysisType,
-				AnalysisName:    analysisName,
-				WorkDir:         workDir,
-				ParamsPath:      paramsPath,
-				CommandPath:     commandPath,
-				RequestParam:    string(requestParamJSON),
-				OutputDir:       outputDir,
-				TraceFile:       traceFile,
-				WorkflowLogFile: workflowLogFile,
-				ExecutorLogFile: executorLogFile,
-				JobStatus:       "created",
-				ServerStatus:    "",
-				CommandLogPath:  commandLogPath,
-				// IsReport:         input.IsReport,
+				AnalysisName:     analysisName,
+				WorkspaceDir:     workspaceDir,
+				RequestParam:     string(requestParamJSON),
+				JobStatus:        "created",
+				ServerStatus:     "",
 				CacheType:        cacheType,
 				DataComponentIDs: dataComponentIDs,
 				Used:             true,
@@ -391,22 +370,14 @@ func (s *analysisService) DeleteAnalysis(ctx context.Context, id int64) error {
 		return err
 	}
 
-	// 7. Delete the analysis workspace/WorkDir
-	if strings.TrimSpace(analysis.WorkDir) != "" {
-		if strings.HasPrefix(analysis.WorkDir, projectDataDir) {
-			if err := os.RemoveAll(analysis.WorkDir); err != nil {
-				logger.Warnf(ctx, "[AnalysisService] failed to remove analysis work dir=%s, err=%v", analysis.WorkDir, err)
+	// 7. Delete the analysis workspace
+	if strings.TrimSpace(analysis.WorkspaceDir) != "" {
+		if strings.HasPrefix(analysis.WorkspaceDir, projectDataDir) {
+			if err := os.RemoveAll(analysis.WorkspaceDir); err != nil {
+				logger.Warnf(ctx, "[AnalysisService] failed to remove analysis workspace dir=%s, err=%v", analysis.WorkspaceDir, err)
 			}
 		} else {
-			logger.Warnf(ctx, "[AnalysisService] analysis work dir=%s is not under project data dir=%s, skip delete", analysis.WorkDir, projectDataDir)
-		}
-	}
-	// Also delete OutputDir if different from WorkDir
-	if strings.TrimSpace(analysis.OutputDir) != "" && analysis.OutputDir != analysis.WorkDir {
-		if strings.HasPrefix(analysis.OutputDir, projectDataDir) {
-			if err := os.RemoveAll(analysis.OutputDir); err != nil {
-				logger.Warnf(ctx, "[AnalysisService] failed to remove analysis output dir=%s, err=%v", analysis.OutputDir, err)
-			}
+			logger.Warnf(ctx, "[AnalysisService] analysis workspace dir=%s is not under project data dir=%s, skip delete", analysis.WorkspaceDir, projectDataDir)
 		}
 	}
 
@@ -445,28 +416,24 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 			analysisNodeID = "node-" + uuid.NewString()
 		}
 
-		workspaceDir := filepath.Join(analysis.OutputDir, fmt.Sprintf("%d", id))
-		outputDir := utils.GetAnalysisNodeOutputDir(workspaceDir) //filepath.Join(workspaceDir, "output")
-		cacheDir := utils.GetAnalysisNodeCacheDir(workspaceDir)   //filepath.Join(workspaceDir, "cache")
-		paramsPath := filepath.Join(workspaceDir, "params.json")
-		commandPath := filepath.Join(workspaceDir, "run.sh")
-		logPath := filepath.Join(workspaceDir, "command.log")
+		workspaceDir := filepath.Join(analysis.WorkspaceDir, fmt.Sprintf("%d", id))
+		layout := utils.NodeLayoutFor(workspaceDir)
+		outputDir := layout.OutputDir
+		cacheDir := layout.CacheDir
+		paramsPath := layout.ParamsPath
+		commandPath := layout.CommandPath
+		logPath := layout.LogPath
 
 		if existing != nil {
 			if strings.TrimSpace(existing.WorkspaceDir) != "" {
 				workspaceDir = existing.WorkspaceDir
-			}
-			if strings.TrimSpace(existing.OutputDir) != "" {
-				outputDir = existing.OutputDir
-			}
-			if strings.TrimSpace(existing.ParamsPath) != "" {
-				paramsPath = existing.ParamsPath
-			}
-			if strings.TrimSpace(existing.CommandPath) != "" {
-				commandPath = existing.CommandPath
-			}
-			if strings.TrimSpace(existing.LogPath) != "" {
-				logPath = existing.LogPath
+				// 派生路径跟随既有 workspace 重新推导，避免与磁盘布局脱节。
+				layout = utils.NodeLayoutFor(workspaceDir)
+				outputDir = layout.OutputDir
+				cacheDir = layout.CacheDir
+				paramsPath = layout.ParamsPath
+				commandPath = layout.CommandPath
+				logPath = layout.LogPath
 			}
 			if existing.ID != 0 {
 				id = existing.ID

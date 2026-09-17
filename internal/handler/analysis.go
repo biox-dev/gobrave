@@ -657,13 +657,11 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 			"downstream_ids":           node.DownstreamIDs,
 			"input_validation_errors":  node.InputValidationErrors,
 			"output_validation_errors": node.OutputValidationErrors,
-			"log_path":                 node.LogPath,
-			"workspace_dir":            node.WorkspaceDir,
-			"output_dir":               node.OutputDir,
-			"command_path":             node.CommandPath,
-			"params_path":              node.ParamsPath,
-			"creation_source":          node.CreationSource,
-			"updated_at":               time.Now().UTC(),
+			// 派生路径（log_path/cache_dir/output_dir/command_path/params_path）不落库，
+			// 只需保存节点根目录，读取时会自动重建。
+			"workspace_dir":   node.WorkspaceDir,
+			"creation_source": node.CreationSource,
+			"updated_at":      time.Now().UTC(),
 		}); err != nil {
 			c.Error(errors.NewInternalServerError("failed to update analysis node").WithDetails(err.Error()))
 			return

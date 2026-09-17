@@ -257,7 +257,7 @@ func (r *persistentDataflowRuntime) lookupAnalysisOutputDir(ctx context.Context,
 	if analysis == nil {
 		return ""
 	}
-	return strings.TrimSpace(analysis.OutputDir)
+	return strings.TrimSpace(analysis.WorkspaceDir)
 }
 
 func (r *persistentDataflowRuntime) incrementInflight(analysisNodeID int64) {

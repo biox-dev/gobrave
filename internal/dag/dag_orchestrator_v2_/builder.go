@@ -90,7 +90,7 @@ func (b *NodeBuilder) Materialize(req MaterializeRequest) (*types.AnalysisNode, 
 	}
 
 	nodeID := utils.GenerateID()
-	layout := newWorkspaceLayout(req.Analysis.OutputDir, nodeID)
+	layout := newWorkspaceLayout(req.Analysis.WorkspaceDir, nodeID)
 
 	params := cloneJSONMap(req.Spec.Params)
 	resolvedInputs := cloneJSONMap(req.Spec.ResolvedInputs)

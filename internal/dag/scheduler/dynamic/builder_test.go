@@ -26,7 +26,7 @@ func TestBuildDynamicAnalysisNodeUsesSharedLayoutAndIdentity(t *testing.T) {
 	requireSnowflake(t)
 
 	orchestrator := &dynamicDagOrchestratorV2{}
-	analysis := &types.Analysis{ID: 9, ProjectID: 2, OutputDir: t.TempDir()}
+	analysis := &types.Analysis{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
 	row := map[string]any{
 		"node_id":         "align",
 		"node_name":       "align",
@@ -42,7 +42,7 @@ func TestBuildDynamicAnalysisNodeUsesSharedLayoutAndIdentity(t *testing.T) {
 		t.Fatalf("buildDynamicAnalysisNode failed: %v", err)
 	}
 
-	wantWorkspace := filepath.Join(analysis.OutputDir, strconv.FormatInt(node.ID, 10))
+	wantWorkspace := filepath.Join(analysis.WorkspaceDir, strconv.FormatInt(node.ID, 10))
 	if node.WorkspaceDir != wantWorkspace {
 		t.Fatalf("workspace dir = %q, want %q", node.WorkspaceDir, wantWorkspace)
 	}

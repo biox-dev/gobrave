@@ -60,7 +60,7 @@ func requireSnowflakeV3(t *testing.T) {
 func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 	requireSnowflakeV3(t)
 
-	analysis := &types.Analysis{ID: 9, ProjectID: 2, OutputDir: t.TempDir()}
+	analysis := &types.Analysis{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
 	repo := &stubAnalysisRepoV3{analysis: analysis}
 	runtime := &persistentDataflowRuntime{
 		repo:         repo,
@@ -85,7 +85,7 @@ func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 		t.Fatalf("expected exactly one created row, got %d", repo.created)
 	}
 
-	wantWorkspace := filepath.Join(analysis.OutputDir, strconv.FormatInt(node.ID, 10))
+	wantWorkspace := filepath.Join(analysis.WorkspaceDir, strconv.FormatInt(node.ID, 10))
 	if node.WorkspaceDir != wantWorkspace {
 		t.Fatalf("workspace dir = %q, want %q", node.WorkspaceDir, wantWorkspace)
 	}
@@ -111,7 +111,7 @@ func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 func TestV3PersistReusesV2MaterializedNode(t *testing.T) {
 	requireSnowflakeV3(t)
 
-	analysis := &types.Analysis{ID: 9, ProjectID: 2, OutputDir: t.TempDir()}
+	analysis := &types.Analysis{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
 	params := types.JSONMap{"threads": 4}
 	resolved := types.JSONMap{"bam": "a.bam"}
 

@@ -146,7 +146,7 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 				if analysisErr != nil {
 					return nil, analysisErr
 				}
-				dir = analysis.WorkDir
+				dir = analysis.WorkspaceDir
 				label = analysis.AnalysisName
 
 			case EnvTypeProjectReport:

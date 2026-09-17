@@ -83,7 +83,6 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		Origin:      "local",
 		URL:         req.Url,
 		Status:      "done",
-		Path:        storePath,
 		PathName:    workflow.WorkflowID,
 		Category:    workflow.Category,
 		Tags:        workflow.Tags,
@@ -110,9 +109,12 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		}
 
 		if existingStore != nil {
-			if existingStore.Path != "" && existingStore.Path != storePath {
-				if stat, statErr := os.Stat(existingStore.Path); statErr == nil && stat.IsDir() {
-					if rmErr := os.RemoveAll(existingStore.Path); rmErr != nil {
+			// 旧目录由 PathName 推导；PathName 变化时清理遗留目录，
+			// 避免 base_dir/store 下残留旧产物。
+			if oldPathName := strings.TrimSpace(existingStore.PathName); oldPathName != "" && oldPathName != strings.TrimSpace(store.PathName) {
+				oldStorePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, oldPathName)
+				if stat, statErr := os.Stat(oldStorePath); statErr == nil && stat.IsDir() {
+					if rmErr := os.RemoveAll(oldStorePath); rmErr != nil {
 						c.Error(errors.NewInternalServerError("failed to clean old store path").WithDetails(rmErr.Error()))
 						return
 					}
@@ -237,7 +239,6 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		Origin:      "local",
 		URL:         req.Url,
 		Status:      "done",
-		Path:        storePath,
 		PathName:    script.ScriptID,
 		Category:    script.Category,
 		Tags:        nil,
@@ -270,9 +271,11 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		}
 
 		if existingStore != nil {
-			if existingStore.Path != "" && existingStore.Path != storePath {
-				if stat, statErr := os.Stat(existingStore.Path); statErr == nil && stat.IsDir() {
-					if rmErr := os.RemoveAll(existingStore.Path); rmErr != nil {
+			// 旧目录由 PathName 推导；PathName 变化时清理遗留目录。
+			if oldPathName := strings.TrimSpace(existingStore.PathName); oldPathName != "" && oldPathName != strings.TrimSpace(store.PathName) {
+				oldStorePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, oldPathName)
+				if stat, statErr := os.Stat(oldStorePath); statErr == nil && stat.IsDir() {
+					if rmErr := os.RemoveAll(oldStorePath); rmErr != nil {
 						c.Error(errors.NewInternalServerError("failed to clean old store path").WithDetails(rmErr.Error()))
 						return
 					}
@@ -371,12 +374,13 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to get store").WithDetails(err.Error()))
 		return
 	}
-	if store == nil || strings.TrimSpace(store.Path) == "" {
+	storeDir := resolveStoreDir(h.cfg, store)
+	if storeDir == "" {
 		c.Error(errors.NewValidationError("store path is empty"))
 		return
 	}
 
-	workflowJSONPath, err := resolveStoreWorkflowJSONPath(store.Path)
+	workflowJSONPath, err := resolveStoreWorkflowJSONPath(storeDir)
 	if err != nil {
 		c.Error(errors.NewNotFoundError("workflow.json not found in store"))
 		return
@@ -494,7 +498,7 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 		}
 		if scriptID != "" {
 			scriptDir := utils.GetScriptDir(h.cfg.Storage.BaseDir, project.ProjectID)
-			sourceScriptDir := filepath.Join(store.Path, "script", scriptID)
+			sourceScriptDir := filepath.Join(storeDir, "script", scriptID)
 			targetScriptDir := filepath.Join(scriptDir, scriptID)
 			if copyErr := copyDirReplace(sourceScriptDir, targetScriptDir); copyErr != nil {
 				c.Error(errors.NewInternalServerError("failed to install script files").WithDetails(copyErr.Error()))
@@ -560,12 +564,13 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to get store").WithDetails(err.Error()))
 		return
 	}
-	if store == nil || strings.TrimSpace(store.Path) == "" {
+	storeDir := resolveStoreDir(h.cfg, store)
+	if storeDir == "" {
 		c.Error(errors.NewValidationError("store path is empty"))
 		return
 	}
 
-	scriptJSONPath, err := resolveStoreScriptJSONPath(store.Path)
+	scriptJSONPath, err := resolveStoreScriptJSONPath(storeDir)
 	if err != nil {
 		c.Error(errors.NewNotFoundError("script.json not found in store"))
 		return
@@ -651,7 +656,7 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	}
 	if scriptID != "" {
 		targetScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, scriptID)
-		sourceScriptDir := filepath.Join(store.Path, "script")
+		sourceScriptDir := filepath.Join(storeDir, "script")
 		// targetScriptDir := filepath.Join(scriptDir, scriptID)
 		if copyErr := copyDirReplace(sourceScriptDir, targetScriptDir); copyErr != nil {
 			c.Error(errors.NewInternalServerError("failed to install script files").WithDetails(copyErr.Error()))

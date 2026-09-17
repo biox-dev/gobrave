@@ -72,7 +72,7 @@ func materializePersistedV3Node(t *testing.T, cacheType int, commandMD5, paramsM
 	t.Helper()
 	requireSnowflakeV3(t)
 
-	analysis := &types.Analysis{ID: 9, ProjectID: 2, OutputDir: t.TempDir(), CacheType: cacheType}
+	analysis := &types.Analysis{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir(), CacheType: cacheType}
 	params := types.JSONMap{"threads": 4}
 	resolved := types.JSONMap{"bam": "a.bam"}
 

@@ -121,7 +121,7 @@ func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 	if nodeRecordID == 0 {
 		nodeRecordID = utils.GenerateID()
 	}
-	layout := ResolveLayout(req.Analysis.OutputDir, req.WorkspaceDir, nodeRecordID)
+	layout := ResolveLayout(req.Analysis.WorkspaceDir, req.WorkspaceDir, nodeRecordID)
 
 	params := cloneJSONMap(req.Spec.Params)
 	resolvedInputs := cloneJSONMap(req.Spec.ResolvedInputs)

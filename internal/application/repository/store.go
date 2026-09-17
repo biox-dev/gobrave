@@ -53,7 +53,6 @@ func (r *storeRepository) UpdateStore(ctx context.Context, item *types.Store) er
 		"origin":       item.Origin,
 		"url":          item.URL,
 		"status":       item.Status,
-		"path":         item.Path,
 		"path_name":    item.PathName,
 		"category":     item.Category,
 		"tags":         item.Tags,

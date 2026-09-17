@@ -5,29 +5,146 @@ import (
 	"strings"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 type analysisRepository struct {
 	db *gorm.DB
+	// baseDir 是 storage.base_dir。落库的路径一律相对它存储，
+	// 读取时在这里还原成绝对路径，所以 base_dir 变更只需拷贝目录。
+	baseDir string
 }
 
-func NewAnalysisRepository(db *gorm.DB) interfaces.AnalysisRepository {
-	return &analysisRepository{db: db}
+func NewAnalysisRepository(db *gorm.DB, cfg *config.Config) interfaces.AnalysisRepository {
+	return &analysisRepository{db: db, baseDir: resolveStorageBaseDir(cfg)}
+}
+
+// resolveStorageBaseDir 与 analysisService.resolveStorageBaseDir 保持一致的兜底策略。
+func resolveStorageBaseDir(cfg *config.Config) string {
+	if cfg != nil && cfg.Storage != nil {
+		if base := strings.TrimSpace(cfg.Storage.BaseDir); base != "" {
+			return base
+		}
+	}
+	return "."
+}
+
+// --- 路径解析 --------------------------------------------------------------
+//
+// 数据库只保存相对 base_dir 的路径（唯一例外是历史行里遗留的绝对路径，
+// ResolvePath 会原样返回以保证兼容）。派生的子路径不落库，读取时统一重建。
+
+func (r *analysisRepository) resolveAnalysis(item *types.Analysis) *types.Analysis {
+	if item == nil {
+		return nil
+	}
+	item.WorkspaceDir = utils.ResolvePath(r.baseDir, item.WorkspaceDir)
+	item.HydrateDerivedPaths()
+	return item
+}
+
+func (r *analysisRepository) resolveAnalyses(items []*types.Analysis) []*types.Analysis {
+	for _, item := range items {
+		r.resolveAnalysis(item)
+	}
+	return items
+}
+
+func (r *analysisRepository) resolveNode(item *types.AnalysisNode) *types.AnalysisNode {
+	if item == nil {
+		return nil
+	}
+	item.WorkspaceDir = utils.ResolvePath(r.baseDir, item.WorkspaceDir)
+	item.HydrateDerivedPaths()
+	return item
+}
+
+func (r *analysisRepository) resolveNodes(items []*types.AnalysisNode) []*types.AnalysisNode {
+	for _, item := range items {
+		r.resolveNode(item)
+	}
+	return items
+}
+
+// analysisDerivedPathColumns 是 Analysis 上由 WorkspaceDir 派生的列。
+// 它们不再落库，任何试图写入的调用都应被丢弃而不是报 "unknown column"。
+var analysisDerivedPathColumns = map[string]struct{}{
+	"work_dir":          {},
+	"output_dir":        {},
+	"params_path":       {},
+	"command_path":      {},
+	"command_log_path":  {},
+	"trace_file":        {},
+	"workflow_log_file": {},
+	"executor_log_file": {},
+}
+
+// analysisNodeDerivedPathColumns 是 AnalysisNode 上由 WorkspaceDir 派生的列。
+var analysisNodeDerivedPathColumns = map[string]struct{}{
+	"output_dir":   {},
+	"cache_dir":    {},
+	"command_path": {},
+	"params_path":  {},
+	"log_path":     {},
+}
+
+// sanitizeAnalysisUpdate 把更新 map 收敛到仍然存在的列：
+// 派生路径列被丢弃，workspace_dir 被转成相对路径。
+func (r *analysisRepository) sanitizeAnalysisUpdate(values map[string]any) map[string]any {
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		if _, derived := analysisDerivedPathColumns[key]; derived {
+			continue
+		}
+		out[key] = value
+	}
+	if _, ok := out["workspace_dir"]; ok {
+		if path, isString := out["workspace_dir"].(string); isString {
+			out["workspace_dir"] = utils.RelPath(r.baseDir, path)
+		}
+	}
+	return out
+}
+
+// sanitizeNodeUpdate 同上，作用于 analysis_nodes。
+func (r *analysisRepository) sanitizeNodeUpdate(values map[string]any) map[string]any {
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		if _, derived := analysisNodeDerivedPathColumns[key]; derived {
+			continue
+		}
+		out[key] = value
+	}
+	if _, ok := out["workspace_dir"]; ok {
+		if path, isString := out["workspace_dir"].(string); isString {
+			out["workspace_dir"] = utils.RelPath(r.baseDir, path)
+		}
+	}
+	return out
 }
 
 func (r *analysisRepository) WithTransaction(ctx context.Context, fn func(interfaces.AnalysisRepository) error) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		txRepo := &analysisRepository{db: tx}
+		txRepo := &analysisRepository{db: tx, baseDir: r.baseDir}
 		return fn(txRepo)
 	})
 }
 
 func (r *analysisRepository) CreateAnalysis(ctx context.Context, item *types.Analysis) error {
-	return r.db.WithContext(ctx).Create(item).Error
+	if item == nil {
+		return nil
+	}
+	absolute := item.WorkspaceDir
+	item.WorkspaceDir = utils.RelPath(r.baseDir, absolute)
+	err := r.db.WithContext(ctx).Create(item).Error
+	// 还原调用方持有的绝对路径，避免 handler 直接把相对路径返回给前端。
+	item.WorkspaceDir = absolute
+	return err
 }
 
 func (r *analysisRepository) TryMarkAnalysisRunning(ctx context.Context, analysisID int64, now time.Time, staleBefore time.Time) (bool, error) {
@@ -45,12 +162,14 @@ func (r *analysisRepository) TryMarkAnalysisRunning(ctx context.Context, analysi
 }
 
 func (r *analysisRepository) UpdateAnalysisByAnalysisID(ctx context.Context, analysisID string, values map[string]any) error {
+	values = r.sanitizeAnalysisUpdate(values)
 	if len(values) == 0 {
 		return nil
 	}
 	return r.db.WithContext(ctx).Model(&types.Analysis{}).Where("analysis_id = ?", analysisID).Updates(values).Error
 }
 func (r *analysisRepository) UpdateAnalysisByID(ctx context.Context, analysisID int64, values map[string]any) error {
+	values = r.sanitizeAnalysisUpdate(values)
 	if len(values) == 0 {
 		return nil
 	}
@@ -61,14 +180,14 @@ func (r *analysisRepository) GetAnalysisByID(ctx context.Context, analysisID int
 	if err := r.db.WithContext(ctx).Where("id = ?", analysisID).Take(item).Error; err != nil {
 		return nil, err
 	}
-	return item, nil
+	return r.resolveAnalysis(item), nil
 }
 func (r *analysisRepository) GetAnalysisByAnalysisID(ctx context.Context, analysisID string) (*types.Analysis, error) {
 	item := &types.Analysis{}
 	if err := r.db.WithContext(ctx).Where("analysis_id = ?", analysisID).Take(item).Error; err != nil {
 		return nil, err
 	}
-	return item, nil
+	return r.resolveAnalysis(item), nil
 }
 
 func (r *analysisRepository) ListAnalysisByJobStatus(ctx context.Context, jobStatus string) ([]*types.Analysis, error) {
@@ -80,7 +199,7 @@ func (r *analysisRepository) ListAnalysisByJobStatus(ctx context.Context, jobSta
 	if err != nil {
 		return nil, err
 	}
-	return items, nil
+	return r.resolveAnalyses(items), nil
 }
 
 func (r *analysisRepository) ListAnalysisByProjectID(ctx context.Context, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, error) {
@@ -133,7 +252,7 @@ func (r *analysisRepository) ListAnalysisByProjectID(ctx context.Context, projec
 		return nil, err
 	}
 
-	return items, nil
+	return r.resolveAnalyses(items), nil
 }
 
 func (r *analysisRepository) PageAnalysisByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, int64, error) {
@@ -212,7 +331,7 @@ func (r *analysisRepository) PageAnalysisByProjectID(ctx context.Context, pagina
 		return nil, 0, err
 	}
 
-	return items, total, nil
+	return r.resolveAnalyses(items), total, nil
 }
 
 func (r *analysisRepository) GetAnalysisNodeByID(ctx context.Context, id int64) (*types.AnalysisNode, error) {
@@ -220,7 +339,7 @@ func (r *analysisRepository) GetAnalysisNodeByID(ctx context.Context, id int64) 
 	if err := r.db.WithContext(ctx).Where("id = ?", id).Take(item).Error; err != nil {
 		return nil, err
 	}
-	return item, nil
+	return r.resolveNode(item), nil
 }
 
 func (r *analysisRepository) GetAnalysisNodeByAnalysisNodeID(ctx context.Context, analysisNodeID string) (*types.AnalysisNode, error) {
@@ -228,7 +347,7 @@ func (r *analysisRepository) GetAnalysisNodeByAnalysisNodeID(ctx context.Context
 	if err := r.db.WithContext(ctx).Where("analysis_node_id = ?", analysisNodeID).Take(item).Error; err != nil {
 		return nil, err
 	}
-	return item, nil
+	return r.resolveNode(item), nil
 }
 
 func (r *analysisRepository) GetAnalysisNodeByNodeID(ctx context.Context, analysisID int64, nodeID string) (*types.AnalysisNode, error) {
@@ -236,7 +355,7 @@ func (r *analysisRepository) GetAnalysisNodeByNodeID(ctx context.Context, analys
 	if err := r.db.WithContext(ctx).Where("analysis_id = ? AND node_id = ?", analysisID, nodeID).Take(item).Error; err != nil {
 		return nil, err
 	}
-	return item, nil
+	return r.resolveNode(item), nil
 }
 
 func (r *analysisRepository) ListAnalysisNodesByAnalysisID(ctx context.Context, analysisID int64) ([]*types.AnalysisNode, error) {
@@ -245,7 +364,7 @@ func (r *analysisRepository) ListAnalysisNodesByAnalysisID(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	return items, nil
+	return r.resolveNodes(items), nil
 }
 
 func (r *analysisRepository) ListAnalysisNodesByProjectIDAndScriptID(ctx context.Context, projectID, scriptID int64) ([]*types.AnalysisNode, error) {
@@ -254,7 +373,7 @@ func (r *analysisRepository) ListAnalysisNodesByProjectIDAndScriptID(ctx context
 	if err != nil {
 		return nil, err
 	}
-	return items, nil
+	return r.resolveNodes(items), nil
 }
 
 func (r *analysisRepository) ListAnalysisNodesByProjectIDAndStatus(ctx context.Context, projectID int64, status string) ([]*types.AnalysisNode, error) {
@@ -267,7 +386,7 @@ func (r *analysisRepository) ListAnalysisNodesByProjectIDAndStatus(ctx context.C
 	if err != nil {
 		return nil, err
 	}
-	return items, nil
+	return r.resolveNodes(items), nil
 }
 
 func (r *analysisRepository) PageAnalysisNodesByProjectID(ctx context.Context, pagination *types.Pagination, projectID, scriptID int64) ([]*types.AnalysisNode, int64, error) {
@@ -294,7 +413,7 @@ func (r *analysisRepository) PageAnalysisNodesByProjectID(ctx context.Context, p
 		return nil, 0, err
 	}
 
-	return items, total, nil
+	return r.resolveNodes(items), total, nil
 }
 
 func (r *analysisRepository) ListAnalysisEdgesByAnalysisID(ctx context.Context, analysisID int64) ([]*types.AnalysisEdge, error) {
@@ -307,6 +426,7 @@ func (r *analysisRepository) ListAnalysisEdgesByAnalysisID(ctx context.Context, 
 }
 
 func (r *analysisRepository) UpdateAnalysisNodeByID(ctx context.Context, id int64, values map[string]any) error {
+	values = r.sanitizeNodeUpdate(values)
 	if len(values) == 0 {
 		return nil
 	}
@@ -314,6 +434,7 @@ func (r *analysisRepository) UpdateAnalysisNodeByID(ctx context.Context, id int6
 }
 
 func (r *analysisRepository) UpdateAnalysisNodeByAnalysisNodeID(ctx context.Context, analysisNodeID string, values map[string]any) error {
+	values = r.sanitizeNodeUpdate(values)
 	if len(values) == 0 {
 		return nil
 	}
@@ -354,7 +475,7 @@ func (r *analysisRepository) ClaimNextReadyNode(ctx context.Context, analysisID 
 	if err != nil {
 		return nil, err
 	}
-	return claimed, nil
+	return r.resolveNode(claimed), nil
 }
 
 func (r *analysisRepository) DeleteAnalysisNodesByAnalysisID(ctx context.Context, analysisID int64) error {
@@ -369,7 +490,24 @@ func (r *analysisRepository) CreateAnalysisNodes(ctx context.Context, items []*t
 	if len(items) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Create(&items).Error
+	// 落库前把绝对路径转成相对路径，写完后还原，避免调用方拿到相对路径。
+	absolute := make([]string, len(items))
+	for i, item := range items {
+		if item == nil {
+			continue
+		}
+		absolute[i] = item.WorkspaceDir
+		item.WorkspaceDir = utils.RelPath(r.baseDir, absolute[i])
+	}
+	err := r.db.WithContext(ctx).Create(&items).Error
+	for i, item := range items {
+		if item == nil {
+			continue
+		}
+		item.WorkspaceDir = absolute[i]
+		item.HydrateDerivedPaths()
+	}
+	return err
 }
 
 func (r *analysisRepository) DeleteAnalysisEdgesByAnalysisID(ctx context.Context, analysisID int64) error {
@@ -393,5 +531,5 @@ func (r *analysisRepository) ListAnalysisByWorkflowID(ctx context.Context, workf
 	if err != nil {
 		return nil, err
 	}
-	return items, nil
+	return r.resolveAnalyses(items), nil
 }

@@ -9,8 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/gin-gonic/gin"
 )
 
@@ -35,12 +37,16 @@ func mustWriteFile(t *testing.T, path string) {
 }
 
 // getStoreImage 直接挂载 handler（绕过认证中间件），返回响应记录器。
-func getStoreImage(t *testing.T, store *types.Store) *httptest.ResponseRecorder {
+// baseDir 为 storage.base_dir，store 目录统一为 <baseDir>/store/<path_name>。
+func getStoreImage(t *testing.T, baseDir string, store *types.Store) *httptest.ResponseRecorder {
 	t.Helper()
 
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	h := &StoreHandler{storeService: stubStoreService{store: store}}
+	h := &StoreHandler{
+		storeService: stubStoreService{store: store},
+		cfg:          &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}},
+	}
 	engine.GET("/api/v1/store/:storeId/image", func(c *gin.Context) {
 		c.Set(types.UserIDContextKey.String(), "test-user")
 		h.GetStoreImage(c)
@@ -51,12 +57,13 @@ func getStoreImage(t *testing.T, store *types.Store) *httptest.ResponseRecorder 
 	return recorder
 }
 
-// store 封面位置固定为 {path}/{store_type}/{img}。
+// store 封面位置固定为 {baseDir}/store/{path_name}/{store_type}/{img}。
 func TestGetStoreImageFixedPath(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "workflow", "image.png"))
+	baseDir := t.TempDir()
+	storeDir := utils.GetWorkflowOrScriptStoreDir(baseDir, "wf-1")
+	mustWriteFile(t, filepath.Join(storeDir, "workflow", "image.png"))
 
-	recorder := getStoreImage(t, &types.Store{ID: 1, Path: root, StoreType: "workflow", Img: "image.png"})
+	recorder := getStoreImage(t, baseDir, &types.Store{ID: 1, PathName: "wf-1", StoreType: "workflow", Img: "image.png"})
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", recorder.Code)
 	}
@@ -68,21 +75,22 @@ func TestGetStoreImageFixedPath(t *testing.T) {
 	}
 }
 
-// 文件不存在、Img/Path 为空、路径越界时都退化成占位图（200 + svg），而不是 404 或读到 base 外的文件。
+// 文件不存在、Img/PathName 为空、路径越界时都退化成占位图（200 + svg），而不是 404 或读到 base 外的文件。
 func TestGetStoreImageFallsBackToPlaceholder(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "workflow", "image.png"))
+	baseDir := t.TempDir()
+	storeDir := utils.GetWorkflowOrScriptStoreDir(baseDir, "wf-1")
+	mustWriteFile(t, filepath.Join(storeDir, "workflow", "image.png"))
 
 	cases := map[string]*types.Store{
-		"missing file": {ID: 1, Path: root, StoreType: "workflow", Img: "missing.png"},
-		"empty img":    {ID: 1, Path: root, StoreType: "workflow"},
+		"missing file": {ID: 1, PathName: "wf-1", StoreType: "workflow", Img: "missing.png"},
+		"empty img":    {ID: 1, PathName: "wf-1", StoreType: "workflow"},
 		"empty path":   {ID: 1, StoreType: "workflow", Img: "image.png"},
-		"traversal":    {ID: 1, Path: root, StoreType: "workflow", Img: "../../etc/passwd"},
+		"traversal":    {ID: 1, PathName: "wf-1", StoreType: "workflow", Img: "../../etc/passwd"},
 	}
 
 	for name, store := range cases {
 		t.Run(name, func(t *testing.T) {
-			recorder := getStoreImage(t, store)
+			recorder := getStoreImage(t, baseDir, store)
 			if recorder.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", recorder.Code)
 			}

@@ -19,7 +19,7 @@ func init() {
 
 func testAnalysis(t *testing.T) *types.Analysis {
 	t.Helper()
-	return &types.Analysis{ID: 100, ProjectID: 7, OutputDir: t.TempDir()}
+	return &types.Analysis{ID: 100, ProjectID: 7, WorkspaceDir: t.TempDir()}
 }
 
 func TestMaterializePersistsCanonicalLayout(t *testing.T) {
@@ -45,7 +45,7 @@ func TestMaterializePersistsCanonicalLayout(t *testing.T) {
 	if node.ID == 0 {
 		t.Fatal("expected a generated primary key")
 	}
-	wantDir := filepath.Join(analysis.OutputDir, itoa(node.ID))
+	wantDir := filepath.Join(analysis.WorkspaceDir, itoa(node.ID))
 	if node.WorkspaceDir != wantDir {
 		t.Fatalf("workspace dir = %q, want %q", node.WorkspaceDir, wantDir)
 	}

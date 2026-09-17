@@ -134,17 +134,14 @@ type Analysis struct {
 	AnalysisName        string `json:"analysis_name" gorm:"column:analysis_name;type:varchar(255)"`
 	InputFile           string `json:"input_file" gorm:"column:input_file;type:varchar(255)"`
 	AnalysisMethod      string `json:"analysis_method" gorm:"column:analysis_method;type:varchar(255)"`
-	WorkDir             string `json:"work_dir" gorm:"column:work_dir;type:varchar(255)"`
-	ParamsPath          string `json:"params_path" gorm:"column:params_path;type:varchar(255)"`
-	CommandPath         string `json:"command_path" gorm:"column:command_path;type:varchar(255)"`
+	// WorkspaceDir 是本次分析的根目录。落库时相对 storage.base_dir 存储，
+	// 读取时由 repository 还原成绝对路径，因此 base_dir 变更只需拷贝目录，
+	// 无需回写数据库。其余路径全部由它派生（见下方 gorm:"-" 字段）。
+	WorkspaceDir        string `json:"workspace_dir" gorm:"column:workspace_dir;type:varchar(255)"`
 	RequestParam        string `json:"request_param" gorm:"column:request_param;type:longtext"`
 	OutputFormat        string `json:"output_format" gorm:"column:output_format;type:longtext"`
-	OutputDir           string `json:"output_dir" gorm:"column:output_dir;type:varchar(255)"`
 	PipelineScript      string `json:"pipeline_script" gorm:"column:pipeline_script;type:varchar(255)"`
 	ParseAnalysisModule string `json:"parse_analysis_module" gorm:"column:parse_analysis_module;type:varchar(255)"`
-	TraceFile           string `json:"trace_file" gorm:"column:trace_file;type:varchar(255)"`
-	WorkflowLogFile     string `json:"workflow_log_file" gorm:"column:workflow_log_file;type:varchar(255)"`
-	ExecutorLogFile     string `json:"executor_log_file" gorm:"column:executor_log_file;type:varchar(255)"`
 	ProcessID           string `json:"process_id" gorm:"column:process_id;type:varchar(255)"`
 	ScriptConfigFile    string `json:"script_config_file" gorm:"column:script_config_file;type:varchar(255)"`
 	JobID               string `json:"job_id" gorm:"column:job_id;type:varchar(255)"`
@@ -155,7 +152,6 @@ type Analysis struct {
 	// SchedulerMode 记录推进本次分析的调度器，用于进程重启后把分析交回正确的调度器恢复。
 	// 历史数据该列为空，按 legacy DAG 调度器处理（见 NormalizeSchedulerMode）。
 	SchedulerMode    string    `json:"scheduler_mode" gorm:"column:scheduler_mode;type:varchar(64);default:''"`
-	CommandLogPath   string    `json:"command_log_path" gorm:"column:command_log_path;type:varchar(255)"`
 	IsReport         bool      `json:"is_report" gorm:"column:is_report;default:false"`
 	CacheType        int       `json:"cache_type" gorm:"column:cache_type;default:1"`
 	Used             bool      `json:"used" gorm:"column:used;default:true"`
@@ -163,6 +159,27 @@ type Analysis struct {
 	ExtraProjectIDs  string    `json:"extra_project_ids" gorm:"column:extra_project_ids;type:longtext"`
 	CreatedAt        time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt        time.Time `json:"updated_at" gorm:"column:updated_at"`
+
+	// 以下是 WorkspaceDir 的派生路径，一律不落库（gorm:"-"）。
+	// repository 在读取时通过 HydrateDerivedPaths 填充，保证磁盘布局只有一处定义。
+	ParamsPath      string `json:"params_path" gorm:"-"`
+	CommandPath     string `json:"command_path" gorm:"-"`
+	CommandLogPath  string `json:"command_log_path" gorm:"-"`
+	TraceFile       string `json:"trace_file" gorm:"-"`
+	WorkflowLogFile string `json:"workflow_log_file" gorm:"-"`
+	ExecutorLogFile string `json:"executor_log_file" gorm:"-"`
+}
+
+// HydrateDerivedPaths 从 WorkspaceDir 推导出全部派生路径。
+// WorkspaceDir 为空时派生路径全部为空，避免产生悬空的文件名。
+func (t *Analysis) HydrateDerivedPaths() {
+	l := utils.AnalysisLayoutFor(t.WorkspaceDir)
+	t.ParamsPath = l.ParamsPath
+	t.CommandPath = l.CommandPath
+	t.CommandLogPath = l.CommandLogPath
+	t.TraceFile = l.TraceFile
+	t.WorkflowLogFile = l.WorkflowLogFile
+	t.ExecutorLogFile = l.ExecutorLogFile
 }
 
 func (t *Analysis) BeforeCreate(_ *gorm.DB) error {
@@ -268,19 +285,35 @@ type AnalysisNode struct {
 	DownstreamIDs          JSONSlice  `json:"downstream_ids" gorm:"column:downstream_ids;type:json"`
 	InputValidationErrors  JSONSlice  `json:"input_validation_errors" gorm:"column:input_validation_errors;type:json"`
 	OutputValidationErrors JSONSlice  `json:"output_validation_errors" gorm:"column:output_validation_errors;type:json"`
-	LogPath                string     `json:"log_path" gorm:"column:log_path;type:varchar(255)"`
-	WorkspaceDir           string     `json:"workspace_dir" gorm:"column:workspace_dir;type:varchar(255)"`
-	OutputDir              string     `json:"output_dir" gorm:"column:output_dir;type:varchar(255)"`
-	CacheDir               string     `json:"cache_dir" gorm:"column:cache_dir;type:varchar(255)"`
-	CommandPath            string     `json:"command_path" gorm:"column:command_path;type:varchar(255)"`
-	CommandMD5             string     `json:"command_md5" gorm:"column:command_md5;type:varchar(64)"`
-	ParamsPath             string     `json:"params_path" gorm:"column:params_path;type:varchar(255)"`
-	ParamsMD5              string     `json:"params_md5" gorm:"column:params_md5;type:varchar(64)"`
-	CreationSource         string     `json:"creation_source" gorm:"column:creation_source;type:varchar(32)"`
-	StartedAt              *time.Time `json:"started_at" gorm:"column:started_at"`
-	FinishedAt             *time.Time `json:"finished_at" gorm:"column:finished_at"`
-	CreatedAt              time.Time  `json:"created_at" gorm:"column:created_at"`
-	UpdatedAt              time.Time  `json:"updated_at" gorm:"column:updated_at"`
+	// WorkspaceDir 是节点根目录。落库时相对 storage.base_dir 存储，
+	// 读取时由 repository 还原成绝对路径。其余路径全部由它派生。
+	WorkspaceDir   string     `json:"workspace_dir" gorm:"column:workspace_dir;type:varchar(255)"`
+	CommandMD5     string     `json:"command_md5" gorm:"column:command_md5;type:varchar(64)"`
+	ParamsMD5      string     `json:"params_md5" gorm:"column:params_md5;type:varchar(64)"`
+	CreationSource string     `json:"creation_source" gorm:"column:creation_source;type:varchar(32)"`
+	StartedAt      *time.Time `json:"started_at" gorm:"column:started_at"`
+	FinishedAt     *time.Time `json:"finished_at" gorm:"column:finished_at"`
+	CreatedAt      time.Time  `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt      time.Time  `json:"updated_at" gorm:"column:updated_at"`
+
+	// 以下是 WorkspaceDir 的派生路径，一律不落库（gorm:"-"）。
+	// repository 在读取时通过 HydrateDerivedPaths 填充。
+	LogPath     string `json:"log_path" gorm:"-"`
+	OutputDir   string `json:"output_dir" gorm:"-"`
+	CacheDir    string `json:"cache_dir" gorm:"-"`
+	CommandPath string `json:"command_path" gorm:"-"`
+	ParamsPath  string `json:"params_path" gorm:"-"`
+}
+
+// HydrateDerivedPaths 从 WorkspaceDir 推导出全部派生路径。
+// WorkspaceDir 为空时派生路径全部为空，避免产生悬空的文件名。
+func (t *AnalysisNode) HydrateDerivedPaths() {
+	l := utils.NodeLayoutFor(t.WorkspaceDir)
+	t.OutputDir = l.OutputDir
+	t.CacheDir = l.CacheDir
+	t.CommandPath = l.CommandPath
+	t.ParamsPath = l.ParamsPath
+	t.LogPath = l.LogPath
 }
 
 func (t *AnalysisNode) BeforeCreate(_ *gorm.DB) error {

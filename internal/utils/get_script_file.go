@@ -78,9 +78,14 @@ func GetStoreDir(baseDir string) string {
 	return filepath.Join(baseDir, "store")
 }
 
+// GetWorkflowOrScriptStoreDir resolves the absolute store directory of a
+// published workflow/script (or of a downloaded remote repo whose id is
+// "<owner>/<repo>").
+//
+// The single source of truth for the relative layout is RelStoreDir; keep both
+// in sync by always deriving one from the other.
 func GetWorkflowOrScriptStoreDir(baseDir, id string) string {
-	storeDir := GetStoreDir(baseDir)
-	return filepath.Join(storeDir, id)
+	return filepath.Join(baseDir, RelStoreDir(id))
 }
 
 func mainFileByScriptType(scriptType string) string {
