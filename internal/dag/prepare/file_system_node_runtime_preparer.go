@@ -95,10 +95,10 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 
 	prefix := filepath.Join(p.baseDir(), "data", project.ProjectID)
 
-	projectCachedDir := filepath.Join(prefix, "cached")
-	if err := os.MkdirAll(projectCachedDir, 0o755); err != nil {
-		return err
-	}
+	// projectCachedDir := filepath.Join(prefix, "cached")
+	// if err := os.MkdirAll(projectCachedDir, 0o755); err != nil {
+	// 	return err
+	// }
 	// 脚本路径统一绝对化，供软链与 run script 构造共用。
 	scriptDir, scriptFile, _ := utils.GetScriptFile(p.baseDir(), project.ProjectID, script.ScriptType, script.ScriptID)
 	scriptPath := filepath.Join(scriptDir, scriptFile)
@@ -115,7 +115,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	paramsPayload["project_dir"] = utils.GetProjectDir(p.baseDir(), project.ProjectID)
 	paramsPayload["output_dir"] = node.OutputDir
 	paramsPayload["node_cached_dir"] = node.CacheDir
-	paramsPayload["project_cached_dir"] = projectCachedDir
+	// paramsPayload["project_cached_dir"] = projectCachedDir
 
 	if err := writeJSONAtomic(node.ParamsPath, paramsPayload, 0o644); err != nil {
 		return fmt.Errorf("write params json failed: %w", err)
