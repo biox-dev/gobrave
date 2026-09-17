@@ -142,6 +142,8 @@ type WorkflowVersion struct {
 type ScriptVersion struct {
 	Script
 	StoreVersion string `json:"store_version"`
+	StorePath    string `json:"store_path"`
+	ScriptPath   string `json:"script_path"`
 }
 
 type ScriptJSONExportResponse struct {

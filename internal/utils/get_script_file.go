@@ -74,6 +74,15 @@ func GetDatasetDir(baseDir, projectId string, datasetID int64) string {
 	return filepath.Join(projectDir, "dataset", fmt.Sprintf("%d", datasetID))
 }
 
+func GetStoreDir(baseDir string) string {
+	return filepath.Join(baseDir, "store")
+}
+
+func GetWorkflowOrScriptStoreDir(baseDir, id string) string {
+	storeDir := GetStoreDir(baseDir)
+	return filepath.Join(storeDir, id)
+}
+
 func mainFileByScriptType(scriptType string) string {
 	switch strings.ToLower(strings.TrimSpace(scriptType)) {
 	case "r":

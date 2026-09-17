@@ -1033,6 +1033,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 
 	storeVersion := ""
 	storeID := script.StoreID
+	storePath := ""
 	if storeID != 0 {
 		store, err := h.storeService.GetStoreByID(c.Request.Context(), storeID)
 		if err != nil {
@@ -1041,12 +1042,18 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 		}
 		if store != nil {
 			storeVersion = store.Version
+			storePath = store.Path
 		}
 	}
+	project, err := h.projectService.GetProjectByID(c.Request.Context(), script.ProjectID)
+
+	scriptPath := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
 
 	scriptVersion := &types.ScriptVersion{
 		Script:       *script,
 		StoreVersion: storeVersion,
+		StorePath:    storePath,
+		ScriptPath:   scriptPath,
 	}
 
 	c.JSON(http.StatusOK, scriptVersion)

@@ -68,7 +68,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 	// if err != nil {
 	// 	pathName = workflow.WorkflowID
 	// }
-	storePath := filepath.Join(h.cfg.Storage.BaseDir, "store", workflow.WorkflowID)
+	storePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, workflow.WorkflowID) //filepath.Join(h.cfg.Storage.BaseDir, "store", workflow.WorkflowID)
 
 	publishURLsJSON, err := buildPublishURLsJSON(workflow.WorkflowID)
 	if err != nil {
@@ -223,7 +223,7 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 	// if err != nil {
 	// 	pathName = script.ScriptID
 	// }
-	storePath := filepath.Join(h.cfg.Storage.BaseDir, "store", script.ScriptID)
+	storePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, script.ScriptID) //filepath.Join(h.cfg.Storage.BaseDir, "store", script.ScriptID)
 
 	publishURLsJSON, err := buildPublishURLsJSON(script.ScriptID)
 	if err != nil {

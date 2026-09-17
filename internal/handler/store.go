@@ -10,13 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gin-gonic/gin"
-	git "github.com/go-git/go-git/v5"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
+	"github.com/gin-gonic/gin"
+	git "github.com/go-git/go-git/v5"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -158,7 +158,7 @@ func (h *StoreHandler) DeleteStore(c *gin.Context) {
 				return
 			}
 
-			storeRoot := filepath.Join(strings.TrimSpace(h.cfg.Storage.BaseDir), "store")
+			storeRoot := utils.GetStoreDir(strings.TrimSpace(h.cfg.Storage.BaseDir))
 			safePath, pathErr := utils.SafePathUnderBase(storeRoot, storePath)
 			if pathErr != nil {
 				c.Error(errors.NewValidationError("invalid store path").WithDetails(pathErr.Error()))
@@ -271,7 +271,7 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		return
 	}
 
-	storeRoot := filepath.Join(strings.TrimSpace(h.cfg.Storage.BaseDir), "store")
+	storeRoot := utils.GetStoreDir(strings.TrimSpace(h.cfg.Storage.BaseDir))
 	targetPath := filepath.Join(storeRoot, pathName)
 	targetPath, err = utils.SafePathUnderBase(storeRoot, targetPath)
 	if err != nil {

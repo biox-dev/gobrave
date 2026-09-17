@@ -292,6 +292,8 @@ func RegisterStoreRoutes(r *gin.RouterGroup, handler *handler.StoreHandler) {
 	r.POST("/store/delete", handler.DeleteStore)
 	r.GET("/store/list", handler.ListStore)
 	r.POST("/store/list-by-page", handler.PageStore)
+	// 商店封面：{store.path}/{store.store_type}/{store.img}，缺失时返回占位图
+	r.GET("/store/:storeId/image", handler.GetStoreImage)
 }
 
 func RegisterWorkflowRoutes(r *gin.RouterGroup, handler *handler.WorkflowHandler) {
@@ -308,6 +310,11 @@ func RegisterWorkflowRoutes(r *gin.RouterGroup, handler *handler.WorkflowHandler
 	r.GET("/find-script/:id", handler.FindScript)
 	r.GET("/script/:scriptId/get-script", handler.GetScriptById)
 	r.POST("/script/delete/:scriptId", handler.DeleteScript)
+	// 组件封面：ID 一律为 int64 主键；GET 返回图片流（缺失时返回占位图）
+	r.POST("/script/:scriptId/image", handler.UploadScriptImage)
+	r.GET("/script/:scriptId/image", handler.GetScriptImage)
+	r.POST("/workflow/:workflowId/image", handler.UploadWorkflowImage)
+	r.GET("/workflow/:workflowId/image", handler.GetWorkflowImage)
 	r.POST("/workflow/page-script", handler.PageScript)
 	r.POST("/workflow/page-workflow", handler.PageWorkflow)
 	r.GET("/tools/get-workflow-vis/:workflowId", handler.GetWorkflowVis)
@@ -476,6 +483,21 @@ func serveStatic(r *gin.Engine, cfg *config.Config) {
 
 	logger.Infof(context.Background(), "[Router] Serving analysis files from %s at /images-analysis", analysisDir)
 	r.StaticFS("/images-analysis", http.Dir(analysisDir))
+
+	// add store static route
+
+	// storeDir, err := utils.SafePathUnderBase(baseDir, utils.GetStoreDir(baseDir))
+	// if err != nil {
+	// 	logger.Warnf(context.Background(), "[Router] Skip serving /store: invalid base_dir/store path: base_dir=%s err=%v", baseDir, err)
+	// 	return
+	// }
+	// if err := os.MkdirAll(storeDir, 0o755); err != nil {
+	// 	logger.Warnf(context.Background(), "[Router] Skip serving /store: create dir failed: store_dir=%s err=%v", storeDir, err)
+	// 	return
+	// }
+
+	// logger.Infof(context.Background(), "[Router] Serving store files from %s at /store", storeDir)
+	// r.StaticFS("/data-store", http.Dir(storeDir))
 
 }
 
