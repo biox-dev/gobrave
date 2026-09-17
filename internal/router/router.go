@@ -202,6 +202,7 @@ func RegisterDataRoutes(r *gin.RouterGroup, handler *handler.DataHandler) {
 	r.POST("/data/dataset/delete", handler.DeleteDataset)
 	r.GET("/data/dataset/list", handler.ListDataset)
 	r.POST("/data/dataset/list-by-project-page", handler.PageDatasetByProjectID)
+	r.POST("/data/dataset/ensure-dir", handler.EnsureDatasetDir)
 
 	r.POST("/data/project-dataset/create", handler.CreateProjectDataset)
 	r.GET("/data/project-dataset/get", handler.GetProjectDataset)

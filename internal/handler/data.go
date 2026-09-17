@@ -169,6 +169,47 @@ func (h *DataHandler) CreateDataset(c *gin.Context) {
 	c.JSON(http.StatusOK, dataset)
 }
 
+// EnsureDatasetDir godoc
+// @Summary      创建数据集目录
+// @Description  校验 Dataset 存在后，基于当前用户激活的项目创建数据集目录（目录已存在则直接返回）
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      idBody            true  "请求参数"
+// @Success      200      {object}  map[string]string
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/dataset/ensure-dir [post]
+func (h *DataHandler) EnsureDatasetDir(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req idBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project")
+		return
+	}
+
+	dir, err := h.dataService.EnsureDatasetDir(c.Request.Context(), req.ID, project.ProjectID)
+	if err != nil {
+		handleDataError(c, err, "failed to ensure dataset dir")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"path": dir})
+}
+
 // GetDataset godoc
 // @Summary      获取数据集
 // @Description  按 ID 查询 Dataset 详情

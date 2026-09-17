@@ -9,6 +9,9 @@ import (
 type DataService interface {
 	// CreateDataset creates a dataset and binds it to the given project.
 	CreateDataset(ctx context.Context, dataset *types.Dataset, projectID string) error
+	// EnsureDatasetDir verifies the dataset exists and creates its workspace
+	// directory (utils.GetDatasetDir) when missing, returning the path.
+	EnsureDatasetDir(ctx context.Context, datasetID int64, projectID string) (string, error)
 	GetDatasetByID(ctx context.Context, id int64) (*types.Dataset, error)
 	UpdateDataset(ctx context.Context, dataset *types.Dataset) error
 	DeleteDataset(ctx context.Context, id int64) error

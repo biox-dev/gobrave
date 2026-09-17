@@ -68,6 +68,12 @@ func GetAnalysisNodeCacheDir(workspaceDir string) string {
 func GetAnalysisNodeOutputDir(workspaceDir string) string {
 	return filepath.Join(workspaceDir, "output")
 }
+
+func GetDatasetDir(baseDir, projectId string, datasetID int64) string {
+	projectDir := GetProjectDir(baseDir, projectId)
+	return filepath.Join(projectDir, "dataset", fmt.Sprintf("%d", datasetID))
+}
+
 func mainFileByScriptType(scriptType string) string {
 	switch strings.ToLower(strings.TrimSpace(scriptType)) {
 	case "r":

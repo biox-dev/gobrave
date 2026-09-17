@@ -64,13 +64,13 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		return
 	}
 
-	pathName, err := buildStorePathNameFromURL(req.Url)
-	if err != nil {
-		pathName = workflow.WorkflowID
-	}
-	storePath := filepath.Join(h.cfg.Storage.BaseDir, "store", pathName)
+	// pathName, err := buildStorePathNameFromURL(req.Url)
+	// if err != nil {
+	// 	pathName = workflow.WorkflowID
+	// }
+	storePath := filepath.Join(h.cfg.Storage.BaseDir, "store", workflow.WorkflowID)
 
-	publishURLsJSON, err := buildPublishURLsJSON(pathName)
+	publishURLsJSON, err := buildPublishURLsJSON(workflow.WorkflowID)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to build publish urls").WithDetails(err.Error()))
 		return
@@ -84,7 +84,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		URL:         req.Url,
 		Status:      "done",
 		Path:        storePath,
-		PathName:    pathName,
+		PathName:    workflow.WorkflowID,
 		Category:    workflow.Category,
 		Tags:        workflow.Tags,
 		Img:         workflow.Img,
@@ -219,13 +219,13 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		return
 	}
 
-	pathName, err := buildStorePathNameFromURL(req.Url)
-	if err != nil {
-		pathName = script.ScriptID
-	}
-	storePath := filepath.Join(h.cfg.Storage.BaseDir, "store", pathName)
+	// pathName, err := buildStorePathNameFromURL(req.Url)
+	// if err != nil {
+	// 	pathName = script.ScriptID
+	// }
+	storePath := filepath.Join(h.cfg.Storage.BaseDir, "store", script.ScriptID)
 
-	publishURLsJSON, err := buildPublishURLsJSON(pathName)
+	publishURLsJSON, err := buildPublishURLsJSON(script.ScriptID)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to build publish urls").WithDetails(err.Error()))
 		return
@@ -238,7 +238,7 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		URL:         req.Url,
 		Status:      "done",
 		Path:        storePath,
-		PathName:    pathName,
+		PathName:    script.ScriptID,
 		Category:    script.Category,
 		Tags:        nil,
 		Img:         script.Img,
@@ -734,33 +734,33 @@ func resolveStoreScriptJSONPath(storePath string) (string, error) {
 	return found, nil
 }
 
-func buildStorePathNameFromURL(rawURL string) (string, error) {
-	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		return "", fmt.Errorf("url is empty")
-	}
+// func buildStorePathNameFromURL(rawURL string) (string, error) {
+// 	rawURL = strings.TrimSpace(rawURL)
+// 	if rawURL == "" {
+// 		return "", fmt.Errorf("url is empty")
+// 	}
 
-	parts := strings.Split(rawURL, "/")
-	cleanParts := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" || strings.Contains(p, ":") {
-			continue
-		}
-		cleanParts = append(cleanParts, p)
-	}
-	if len(cleanParts) < 2 {
-		return "", fmt.Errorf("invalid url: %s", rawURL)
-	}
+// 	parts := strings.Split(rawURL, "/")
+// 	cleanParts := make([]string, 0, len(parts))
+// 	for _, p := range parts {
+// 		p = strings.TrimSpace(p)
+// 		if p == "" || strings.Contains(p, ":") {
+// 			continue
+// 		}
+// 		cleanParts = append(cleanParts, p)
+// 	}
+// 	if len(cleanParts) < 2 {
+// 		return "", fmt.Errorf("invalid url: %s", rawURL)
+// 	}
 
-	owner := cleanParts[len(cleanParts)-2]
-	repo := strings.TrimSuffix(cleanParts[len(cleanParts)-1], ".git")
-	if owner == "" || repo == "" {
-		return "", fmt.Errorf("invalid url: %s", rawURL)
-	}
+// 	owner := cleanParts[len(cleanParts)-2]
+// 	repo := strings.TrimSuffix(cleanParts[len(cleanParts)-1], ".git")
+// 	if owner == "" || repo == "" {
+// 		return "", fmt.Errorf("invalid url: %s", rawURL)
+// 	}
 
-	return filepath.Join(owner, repo), nil
-}
+// 	return filepath.Join(owner, repo), nil
+// }
 
 func buildPublishURLsJSON(pathName string) (datatypes.JSON, error) {
 	publishURLs := []map[string]string{

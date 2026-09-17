@@ -50,7 +50,7 @@ func (s *dataService) CreateDataset(ctx context.Context, dataset *types.Dataset,
 
 	// The dataset and its project binding must be created atomically so that a
 	// dataset never exists without being attached to the active project.
-	return s.dataRepo.WithTransaction(ctx, func(tx interfaces.DataRepository) error {
+	err = s.dataRepo.WithTransaction(ctx, func(tx interfaces.DataRepository) error {
 		if err := tx.CreateDataset(ctx, dataset); err != nil {
 			return err
 		}
@@ -60,6 +60,64 @@ func (s *dataService) CreateDataset(ctx context.Context, dataset *types.Dataset,
 			DatasetID: dataset.ID,
 		})
 	})
+	if err != nil {
+		return err
+	}
+
+	// Ensure the dataset workspace directory exists (created lazily on first
+	// use by downstream steps otherwise).
+	return s.ensureDatasetDir(projectID, dataset.ID)
+}
+
+// EnsureDatasetDir validates that the dataset exists and creates the dataset
+// workspace directory (utils.GetDatasetDir) when it is missing. It returns the
+// dataset directory path so callers can use it directly.
+func (s *dataService) EnsureDatasetDir(ctx context.Context, datasetID int64, projectID string) (string, error) {
+	projectID = strings.TrimSpace(projectID)
+	if datasetID == 0 || projectID == "" {
+		return "", gorm.ErrRecordNotFound
+	}
+
+	if _, err := s.dataRepo.GetDatasetByID(ctx, datasetID); err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			return "", gorm.ErrRecordNotFound
+		}
+		return "", err
+	}
+
+	if strings.TrimSpace(s.baseDir) == "" {
+		return "", fmt.Errorf("storage base dir is required")
+	}
+
+	if err := s.ensureDatasetDir(projectID, datasetID); err != nil {
+		return "", err
+	}
+
+	return utils.GetDatasetDir(s.baseDir, projectID, datasetID), nil
+}
+
+// ensureDatasetDir creates utils.GetDatasetDir(baseDir, projectID, datasetID)
+// when it is missing. A blank baseDir disables directory provisioning.
+func (s *dataService) ensureDatasetDir(projectID string, datasetID int64) error {
+	if strings.TrimSpace(s.baseDir) == "" {
+		return nil
+	}
+
+	dir := utils.GetDatasetDir(s.baseDir, projectID, datasetID)
+	info, err := os.Stat(dir)
+	switch {
+	case err == nil && info.IsDir():
+		return nil
+	case err == nil:
+		return fmt.Errorf("dataset path %q already exists and is not a directory", dir)
+	case !os.IsNotExist(err):
+		return err
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("failed to create dataset directory %q: %w", dir, err)
+	}
+	return nil
 }
 
 func (s *dataService) GetDatasetByID(ctx context.Context, id int64) (*types.Dataset, error) {
@@ -312,7 +370,7 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 		size = info.Size()
 		// If copy is requested, copy file to analysis_result dir with timestamp prefix
 		if req.IsCopy {
-			destDir := filepath.Join(absBaseDir, req.ProjectID, "dataset", fmt.Sprintf("%d", dataset.ID))
+			destDir := utils.GetDatasetDir(absBaseDir, req.ProjectID, dataset.ID) //filepath.Join(absBaseDir, req.ProjectID, "dataset", fmt.Sprintf("%d", dataset.ID))
 			if err := os.MkdirAll(destDir, 0755); err != nil {
 				return nil, fmt.Errorf("failed to create destination directory: %w", err)
 			}
