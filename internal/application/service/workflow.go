@@ -305,7 +305,9 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 
 	scripts := make([]map[string]any, 0, len(scriptIDs))
 	containerTemplates := make([]map[string]any, 0)
+	containerImages := make([]map[string]any, 0)
 	seenTemplateIDs := make(map[int64]struct{})
+	seenImageIDs := make(map[int64]struct{})
 	for _, scriptID := range scriptIDs {
 		script, scriptErr := s.workflowRepo.GetScriptByScriptID(ctx, workflow.ProjectID, scriptID)
 		if scriptErr != nil {
@@ -324,15 +326,19 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 		if script.ContainerTemplateID != 0 {
 			template, templateErr := s.containerRepo.GetContainerTemplateByID(ctx, script.ContainerTemplateID)
 			if templateErr == nil && template != nil {
-				templateMap, templateMapErr := structToMap(template)
-				if templateMapErr != nil {
-					return nil, templateMapErr
-				}
-				omitExportFields(templateMap, exportOmitFields)
-				scriptMap["container_template"] = templateMap
+				// 模板与镜像各自按主键去重：模板去重避免同一模板重复导出，
+				// 镜像去重避免多个模板引用同一镜像时镜像重复导出。
 				if _, exists := seenTemplateIDs[template.ID]; !exists {
 					seenTemplateIDs[template.ID] = struct{}{}
+					templateMap, templateMapErr := buildContainerTemplateExportMap(template)
+					if templateMapErr != nil {
+						return nil, templateMapErr
+					}
+					// scriptMap["container_template"] = templateMap
 					containerTemplates = append(containerTemplates, templateMap)
+				}
+				if imageMapErr := s.collectContainerImageExportMap(ctx, template.ImageID, &containerImages, seenImageIDs); imageMapErr != nil {
+					return nil, imageMapErr
 				}
 			}
 		}
@@ -345,6 +351,7 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 		Workflow:           workflowMap,
 		Scripts:            scripts,
 		ContainerTemplates: containerTemplates,
+		ContainerImages:    containerImages,
 	}
 
 	exportDir := filepath.Join(storageBaseDir, "pipeline", "tools", workflow.WorkflowID)
@@ -378,16 +385,21 @@ func (s *workflowService) GenerateScriptJSONByScriptID(ctx context.Context, scri
 	omitExportFields(scriptMap, exportOmitFields)
 
 	containerTemplates := make([]map[string]any, 0)
+	containerImages := make([]map[string]any, 0)
 	if script.ContainerTemplateID != 0 {
 		template, templateErr := s.containerRepo.GetContainerTemplateByID(ctx, script.ContainerTemplateID)
 		if templateErr == nil && template != nil {
-			templateMap, templateMapErr := structToMap(template)
+			templateMap, templateMapErr := buildContainerTemplateExportMap(template)
 			if templateMapErr != nil {
 				return nil, templateMapErr
 			}
-			omitExportFields(templateMap, exportOmitFields)
-			scriptMap["container_template"] = templateMap
+			// scriptMap["container_template"] = templateMap
 			containerTemplates = append(containerTemplates, templateMap)
+
+			seenImageIDs := make(map[int64]struct{})
+			if imageMapErr := s.collectContainerImageExportMap(ctx, template.ImageID, &containerImages, seenImageIDs); imageMapErr != nil {
+				return nil, imageMapErr
+			}
 		}
 	}
 
@@ -395,7 +407,63 @@ func (s *workflowService) GenerateScriptJSONByScriptID(ctx context.Context, scri
 		ScriptID:           script.ScriptID,
 		Script:             scriptMap,
 		ContainerTemplates: containerTemplates,
+		ContainerImages:    containerImages,
 	}, nil
+}
+
+// buildContainerTemplateExportMap 把容器模板转成导出用的 JSON map（剔除 updated_at 等易变字段）。
+// 模板只保留 image_id 引用，镜像本体由 container_images 独立字段承载（见 collectContainerImageExportMap）。
+func buildContainerTemplateExportMap(template *types.ContainerTemplate) (map[string]any, error) {
+	templateMap, err := structToMap(template)
+	if err != nil {
+		return nil, err
+	}
+	omitExportFields(templateMap, exportOmitFields)
+	return templateMap, nil
+}
+
+// buildContainerImageExportMap 把容器镜像转成导出用的 JSON map。
+//
+// 镜像使用 ContainerImageExport（本就不含 created_at / updated_at），
+// 这里仍统一走 exportOmitFields，与模板、脚本的导出口径保持一致：
+// 任何「每次保存都会变化」的字段（目前是 updated_at）都不进导出文件，
+// 避免无意义的 git diff；后续若 ContainerImageExport 加回时间字段也能自动被剔除。
+func buildContainerImageExportMap(image *types.ContainerImage) (map[string]any, error) {
+	if image == nil {
+		return nil, nil
+	}
+
+	imageMap, err := structToMap(image.ToExport())
+	if err != nil {
+		return nil, err
+	}
+	omitExportFields(imageMap, exportOmitFields)
+	return imageMap, nil
+}
+
+// collectContainerImageExportMap 按主键去重地收集导出用的容器镜像：
+// 首次遇到 imageID 时查询镜像并追加到 images，已收集过则直接返回（去重）。
+// 镜像已被删除等取不到镜像的情况只跳过，不阻断导出。
+func (s *workflowService) collectContainerImageExportMap(ctx context.Context, imageID int64, images *[]map[string]any, seen map[int64]struct{}) error {
+	if imageID == 0 {
+		return nil
+	}
+	if _, exists := seen[imageID]; exists {
+		return nil
+	}
+
+	image, err := s.containerRepo.GetContainerImageByID(ctx, imageID)
+	if err != nil || image == nil {
+		return nil
+	}
+
+	imageMap, err := buildContainerImageExportMap(image)
+	if err != nil {
+		return err
+	}
+	seen[imageID] = struct{}{}
+	*images = append(*images, imageMap)
+	return nil
 }
 
 func (s *workflowService) CreateWorkflow(ctx context.Context, workflow *types.Workflow) error {

@@ -108,10 +108,15 @@ type WorkflowJSONExportResponse struct {
 	// 历史产物没有该字段，反序列化后为空字符串。
 	Version string `json:"version"`
 	// Path               string           `json:"path"`
-	WorkflowID         string           `json:"workflow_id"`
-	Workflow           map[string]any   `json:"workflow"`
-	Scripts            []map[string]any `json:"scripts"`
+	WorkflowID string           `json:"workflow_id"`
+	Workflow   map[string]any   `json:"workflow"`
+	Scripts    []map[string]any `json:"scripts"`
+	// ContainerTemplates 是去重后的容器模板列表（按模板主键去重），模板只通过 image_id
+	// 引用镜像，镜像本体在 ContainerImages 里；两者都与导出内容去重，不重复出现。
 	ContainerTemplates []map[string]any `json:"container_templates"`
+	// ContainerImages 是去重后的容器镜像列表（按镜像主键去重），
+	// 结构见 types.ContainerImageExport，与 container_templates 的 image_id 一一对应。
+	ContainerImages []map[string]any `json:"container_images"`
 }
 
 type WorkflowVersion struct {
@@ -164,8 +169,13 @@ type ScriptJSONExportResponse struct {
 	// Version 是导出文件格式版本（取值见 internal/exportcodec，如 exportcodec.VersionV1），
 	// 写入 script.json 顶层；安装侧（InstallScript）据此路由到对应版本的 Codec。
 	// 历史产物没有该字段，反序列化后为空字符串。
-	Version            string           `json:"version"`
-	ScriptID           string           `json:"script_id"`
-	Script             map[string]any   `json:"script"`
+	Version  string         `json:"version"`
+	ScriptID string         `json:"script_id"`
+	Script   map[string]any `json:"script"`
+	// ContainerTemplates 是去重后的容器模板列表（按模板主键去重），模板只通过 image_id
+	// 引用镜像，镜像本体在 ContainerImages 里；两者都与导出内容去重，不重复出现。
 	ContainerTemplates []map[string]any `json:"container_templates,omitempty"`
+	// ContainerImages 是去重后的容器镜像列表（按镜像主键去重），
+	// 结构见 types.ContainerImageExport，与 container_templates 的 image_id 一一对应。
+	ContainerImages []map[string]any `json:"container_images,omitempty"`
 }

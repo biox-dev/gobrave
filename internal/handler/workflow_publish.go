@@ -416,6 +416,98 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 	})
 }
 
+// installContainerAssets 按导出内容创建/更新容器镜像与模板，返回处理的镜像数与模板数。
+//
+// 导出格式（GenerateScriptJSONByScriptID / GenerateWorkflowJSONByWorkflowID）把容器资产拆成
+// 两个独立列表：container_images 是镜像本体（按镜像主键去重），container_templates 是模板
+// （按模板主键去重，只通过 image_id 引用镜像）。安装时：
+//  1. 先按主键 upsert 镜像：模板要引用它，且 service 层创建/更新模板时会校验镜像存在；
+//  2. 再按主键 upsert 模板：脚本里的 container_template_id 引用因此仍然指向同一个模板主键。
+//
+// 「有 id 且已存在」→ 更新；「有 id 但不存在」→ 新增；id 为空视为导出文件损坏直接报错
+// （id 是模板/镜像/脚本之间唯一的引用键，随便补一个新 id 会让引用断链）。
+func (h *WorkflowHandler) installContainerAssets(ctx context.Context, imageMaps, templateMaps []map[string]any) (int, int, error) {
+	if len(imageMaps) == 0 && len(templateMaps) == 0 {
+		return 0, 0, nil
+	}
+	if h.containerService == nil {
+		return 0, 0, stderrs.New("container service is not configured")
+	}
+
+	for _, imageMap := range imageMaps {
+		imageExport := &types.ContainerImageExport{}
+		if err := decodeExportMap(imageMap, imageExport); err != nil {
+			return 0, 0, fmt.Errorf("invalid container image in export file: %w", err)
+		}
+		if imageExport.ID == 0 {
+			return 0, 0, stderrs.New("container image id is required in export file")
+		}
+		if err := h.upsertContainerImage(ctx, imageExport); err != nil {
+			return 0, 0, fmt.Errorf("failed to install container image %d: %w", imageExport.ID, err)
+		}
+	}
+
+	for _, templateMap := range templateMaps {
+		template := &types.ContainerTemplate{}
+		if err := decodeExportMap(templateMap, template); err != nil {
+			return 0, 0, fmt.Errorf("invalid container template in export file: %w", err)
+		}
+		if template.ID == 0 {
+			return 0, 0, stderrs.New("container template id is required in export file")
+		}
+		if err := h.upsertContainerTemplate(ctx, template); err != nil {
+			return 0, 0, fmt.Errorf("failed to install container template %d: %w", template.ID, err)
+		}
+	}
+
+	return len(imageMaps), len(templateMaps), nil
+}
+
+// decodeExportMap 把导出文件里的 map 还原成强类型结构（与安装 workflow/script 体同一套做法）。
+func decodeExportMap(item map[string]any, out any) error {
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, out)
+}
+
+// upsertContainerImage 按主键更新镜像，主键不存在则新增。
+// 导出结构（ContainerImageExport）不含时间字段，这里也不动镜像的 created_at。
+func (h *WorkflowHandler) upsertContainerImage(ctx context.Context, imageExport *types.ContainerImageExport) error {
+	item := &types.ContainerImage{
+		ID:          imageExport.ID,
+		Name:        imageExport.Name,
+		FullName:    imageExport.FullName,
+		Description: imageExport.Description,
+		Size:        imageExport.Size,
+		PullPolicy:  imageExport.PullPolicy,
+	}
+	if strings.TrimSpace(item.PullPolicy) == "" {
+		item.PullPolicy = types.PullPolicyIfNotPresent
+	}
+
+	if _, err := h.containerService.GetContainerImageByID(ctx, item.ID); err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			return h.containerService.CreateContainerImage(ctx, item)
+		}
+		return err
+	}
+	return h.containerService.UpdateContainerImage(ctx, item)
+}
+
+// upsertContainerTemplate 按主键更新模板，主键不存在则新增。
+// 模板的 image_id 指向导出文件里同一批 container_images 的主键，因此调用方必须先导入镜像。
+func (h *WorkflowHandler) upsertContainerTemplate(ctx context.Context, template *types.ContainerTemplate) error {
+	if _, err := h.containerService.GetContainerTemplateByID(ctx, template.ID); err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			return h.containerService.CreateContainerTemplate(ctx, template)
+		}
+		return err
+	}
+	return h.containerService.UpdateContainerTemplate(ctx, template)
+}
+
 func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	userID, ok := getCurrentUserID(c)
 	if !ok {
@@ -497,6 +589,14 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	}
 	if payload.WorkflowID == "" {
 		c.Error(errors.NewValidationError("workflow_id is required in workflow.json"))
+		return
+	}
+
+	// 先导入容器镜像与模板：脚本通过 container_template_id 引用模板、模板通过 image_id 引用镜像，
+	// 按主键 upsert 后这些引用在安装到当前 project 后依旧成立（见 installContainerAssets）。
+	installedImageCount, installedTemplateCount, assetErr := h.installContainerAssets(c.Request.Context(), payload.ContainerImages, payload.ContainerTemplates)
+	if assetErr != nil {
+		c.Error(errors.NewInternalServerError("failed to install container images or templates").WithDetails(assetErr.Error()))
 		return
 	}
 
@@ -605,10 +705,12 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":                "success",
-		"workflow_id":            installWorkflow.WorkflowID,
-		"installed_workflow_id":  installWorkflow.ID,
-		"installed_script_count": installedScriptCount,
+		"message":                            "success",
+		"workflow_id":                        installWorkflow.WorkflowID,
+		"installed_workflow_id":              installWorkflow.ID,
+		"installed_script_count":             installedScriptCount,
+		"installed_container_image_count":    installedImageCount,
+		"installed_container_template_count": installedTemplateCount,
 	})
 
 }
@@ -700,6 +802,14 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		return
 	}
 
+	// 先导入容器镜像与模板：脚本通过 container_template_id 引用模板、模板通过 image_id 引用镜像，
+	// 按主键 upsert 后这些引用在安装到当前 project 后依旧成立（见 installContainerAssets）。
+	installedImageCount, installedTemplateCount, assetErr := h.installContainerAssets(c.Request.Context(), payload.ContainerImages, payload.ContainerTemplates)
+	if assetErr != nil {
+		c.Error(errors.NewInternalServerError("failed to install container images or templates").WithDetails(assetErr.Error()))
+		return
+	}
+
 	scriptBytes, err := json.Marshal(payload.Script)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to decode script body").WithDetails(err.Error()))
@@ -759,9 +869,11 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":             "success",
-		"script_id":           installScript.ScriptID,
-		"installed_script_id": installScript.ID,
+		"message":                            "success",
+		"script_id":                          installScript.ScriptID,
+		"installed_script_id":                installScript.ID,
+		"installed_container_image_count":    installedImageCount,
+		"installed_container_template_count": installedTemplateCount,
 	})
 }
 

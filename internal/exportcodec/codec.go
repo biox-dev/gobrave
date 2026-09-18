@@ -29,8 +29,9 @@ import (
 // 导出文件格式版本（写入 script.json / workflow.json 顶层 version 字段的取值）。
 const (
 	// VersionV1 是第一版格式：
-	//   - script.json   = script_id + script + container_templates；
-	//   - workflow.json = workflow_id + workflow + scripts + container_templates；
+	//   - script.json   = script_id + script + container_templates + container_images；
+	//   - workflow.json = workflow_id + workflow + scripts + container_templates + container_images；
+	//     （container_templates / container_images 均为按主键去重后的列表，模板通过 image_id 引用镜像）
 	//   - workflow 目录同时把引用的脚本目录快照到 <workflowDir>/script/<scriptID>
 	//     （排除脚本目录自身的 .git）。
 	VersionV1 = "v1"

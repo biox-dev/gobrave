@@ -47,11 +47,13 @@ type WorkflowFormResponse struct {
 }
 
 type WorkflowJSONExportResponse struct {
-	Path               string           `json:"path"`
-	WorkflowID         string           `json:"workflow_id"`
-	Workflow           map[string]any   `json:"workflow"`
-	Scripts            []map[string]any `json:"scripts"`
+	Path       string           `json:"path"`
+	WorkflowID string           `json:"workflow_id"`
+	Workflow   map[string]any   `json:"workflow"`
+	Scripts    []map[string]any `json:"scripts"`
+	// ContainerTemplates / ContainerImages 都是按主键去重后的导出列表，模板通过 image_id 引用镜像。
 	ContainerTemplates []map[string]any `json:"container_templates"`
+	ContainerImages    []map[string]any `json:"container_images"`
 }
 
 type createScriptRequest struct {
