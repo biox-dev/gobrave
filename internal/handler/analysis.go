@@ -2106,21 +2106,16 @@ func (h *AnalysisHandler) attachContainerInfoToNode(c *gin.Context, node map[str
 		node["image_id"] = snapshot.ImageID
 	}
 
+	// go_container_image 已不再持久化 tag/status：镜像全名由 full_name 承载，
+	// 模板只要绑定了镜像即视为可用（"exist"），否则回落为 "pending"。
 	containerImage := strings.TrimSpace(snapshot.ContainerImage)
 	if containerImage == "" {
-		if strings.TrimSpace(snapshot.ImageTag) != "" {
-			containerImage = snapshot.ImageName + ":" + snapshot.ImageTag
-		} else {
-			containerImage = snapshot.ImageName
-		}
+		containerImage = strings.TrimSpace(snapshot.ImageName)
 	}
 
-	status := strings.TrimSpace(snapshot.ImageStatus)
-	if strings.EqualFold(status, "ready") {
+	status := "pending"
+	if snapshot.ImageID > 0 && containerImage != "" {
 		status = "exist"
-	}
-	if status == "" {
-		status = "pending"
 	}
 
 	node["container_image"] = containerImage

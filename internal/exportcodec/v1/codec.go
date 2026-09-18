@@ -2,14 +2,18 @@
 //
 // v1 的格式约定：
 //
-//   - script.json   = version + script_id + script + container_templates + container_images；
-//   - workflow.json = version + workflow_id + workflow + scripts + container_templates + container_images；
-//     （container_templates / container_images 均为按主键去重后的列表，模板通过 image_id 引用镜像）
+//   - script.json   = version + script_id + script + container_template_specs
+//   - container_template_definitions + container_images；
+//   - workflow.json = version + workflow_id + workflow + scripts + container_template_specs
+//   - container_template_definitions + container_images；
+//     （三个容器资产列表均按主键去重：绑定行通过 spec_id 引用运行配置、通过 image_id 引用镜像，
+//     绑定行主键就是脚本 container_template_id 引用的值）
 //   - workflow 目录同时把引用的脚本目录快照到 <workflowDir>/script/<scriptID>，
 //     且排除脚本目录自身的 .git（否则会把脚本仓库塞进 workflow 仓库）。
 //
-// 本包不做 git 提交：git 与格式版本无关，由调用方（handler）用一个通用 helper 完成。
-// Codec 自身无状态（只持有无状态的 service 依赖），可并发使用。
+// 本包同时负责落盘后的 git 提交：WriteXxxFiles 写完文件（以及 workflow 的脚本快照）后
+// 调 utils.CommitDirChanges 把目录改动提交为一个 commit，提交身份由装配时注入。
+// Codec 自身无状态（只持有无状态的 service 依赖与不变的提交身份），可并发使用。
 package v1
 
 import (
@@ -34,16 +38,18 @@ const ScriptSnapshotDirName = "script"
 // Codec 是 v1 格式的策略实现。
 //
 // 直接持有 WorkflowService：写侧用它按主键生成导出 payload（读侧不会用到，
-// 但仍由 DI 容器注入同一个实例，见 internal/container/container.go）。
+// 但仍由 DI 容器注入同一个实例，见 internal/container/container.go）；
+// gitIdentity 是落盘后提交使用的身份，装配时由 config.ResolveGitIdentity 解析后注入。
 type Codec struct {
 	workflowService interfaces.WorkflowService
+	gitIdentity     utils.GitIdentity
 }
 
 var _ exportcodec.Codec = (*Codec)(nil)
 
-// NewCodec 构造 v1 Codec。
-func NewCodec(workflowService interfaces.WorkflowService) *Codec {
-	return &Codec{workflowService: workflowService}
+// NewCodec 构造 v1 Codec。gitIdentity 用于 WriteXxxFiles 落盘后的 git 提交。
+func NewCodec(workflowService interfaces.WorkflowService, gitIdentity utils.GitIdentity) *Codec {
+	return &Codec{workflowService: workflowService, gitIdentity: gitIdentity}
 }
 
 // Version 返回 v1 的格式版本号。
@@ -82,7 +88,7 @@ func (c *Codec) ScriptIDFromExportScript(item map[string]any) string {
 	return ScriptIDFromExportScript(item)
 }
 
-// WriteScriptFiles 生成 v1 格式的 script.json 落盘到 req.ScriptDir。
+// WriteScriptFiles 生成 v1 格式的 script.json 落盘到 req.ScriptDir，并把目录改动提交为一个 commit。
 func (c *Codec) WriteScriptFiles(ctx context.Context, req exportcodec.ScriptWriteRequest) (*types.ScriptJSONExportResponse, error) {
 	if c.workflowService == nil {
 		return nil, fmt.Errorf("exportcodec/v1: workflow service is not configured")
@@ -97,11 +103,15 @@ func (c *Codec) WriteScriptFiles(ctx context.Context, req exportcodec.ScriptWrit
 	if err := writeJSONFile(req.ScriptDir, exportcodec.ScriptJSONFileName, payload); err != nil {
 		return nil, fmt.Errorf("failed to write script json: %w", err)
 	}
+	if err := utils.CommitDirChanges(req.ScriptDir, req.CommitMessage, c.gitIdentity); err != nil {
+		return nil, fmt.Errorf("failed to commit script files: %w", err)
+	}
 	return payload, nil
 }
 
 // WriteWorkflowFiles 生成 v1 格式的 workflow.json 落盘到 req.WorkflowDir，
-// 并把 workflow 引用的脚本目录快照到 <workflowDir>/script/<scriptID>（排除脚本自身的 .git）。
+// 把 workflow 引用的脚本目录快照到 <workflowDir>/script/<scriptID>（排除脚本自身的 .git），
+// 最后把目录改动提交为一个 commit。
 func (c *Codec) WriteWorkflowFiles(ctx context.Context, req exportcodec.WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error) {
 	if c.workflowService == nil {
 		return nil, fmt.Errorf("exportcodec/v1: workflow service is not configured")
@@ -134,6 +144,9 @@ func (c *Codec) WriteWorkflowFiles(ctx context.Context, req exportcodec.Workflow
 		}
 	}
 
+	if err := utils.CommitDirChanges(req.WorkflowDir, req.CommitMessage, c.gitIdentity); err != nil {
+		return nil, fmt.Errorf("failed to commit workflow files: %w", err)
+	}
 	return payload, nil
 }
 

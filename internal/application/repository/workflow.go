@@ -290,20 +290,22 @@ func (r *workflowRepository) FindScriptsByScriptIDs(ctx context.Context, project
 func (r *workflowRepository) GetScriptContainerSnapshotByScriptID(ctx context.Context, scriptID int64) (*types.ScriptContainerSnapshot, error) {
 	item := &types.ScriptContainerSnapshot{}
 
+	// 容器模板已拆成 spec（运行配置）+ definition（配置 × 镜像 绑定行）两张表：
+	// pc.container_template_id 指向 definition 主键，镜像由 definition.image_id 关联。
+	// go_container_image 已不再有 tag/status 列，镜像全名由 full_name 承载。
 	err := r.db.WithContext(ctx).
 		Table("pipeline_components AS pc").
 		Select(`
 			pc.component_id AS script_id,
-			pc.container_template_id AS container_template_id,
-			ct.name AS container_name,
-			ct.image_id AS image_id,
+			pc.container_template_id AS container_id,
+			COALESCE(NULLIF(ctd.display_name, ''), cts.name) AS container_name,
+			ctd.image_id AS image_id,
 			ci.full_name AS container_image,
-			ci.name AS image_name,
-			ci.tag AS image_tag,
-			ci.status AS image_status
+			ci.name AS image_name
 		`).
-		Joins("LEFT JOIN go_container_template AS ct ON pc.container_template_id = ct.id").
-		Joins("LEFT JOIN go_container_image AS ci ON ct.image_id = ci.id").
+		Joins("LEFT JOIN go_container_template_definition AS ctd ON pc.container_template_id = ctd.id").
+		Joins("LEFT JOIN go_container_template_spec AS cts ON ctd.spec_id = cts.id").
+		Joins("LEFT JOIN go_container_image AS ci ON ctd.image_id = ci.id").
 		Where("pc.id = ?", scriptID).
 		Limit(1).
 		Scan(item).Error

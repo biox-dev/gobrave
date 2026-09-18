@@ -90,7 +90,10 @@ func (Workflow) TableName() string {
 }
 
 // ScriptContainerSnapshot is a read model for analysis node visualization.
-// It flattens script -> container template -> container image fields via SQL join.
+// It flattens script -> container template definition/spec -> container image fields via SQL join.
+// ContainerID is the go_container_template_definition primary key (the id scripts bind to);
+// the image tag is already part of ContainerImage (go_container_image.full_name), and image
+// status is no longer persisted, so there is no separate tag/status column here.
 type ScriptContainerSnapshot struct {
 	ScriptID       string `json:"script_id" gorm:"column:script_id"`
 	ContainerID    int64  `json:"container_id,string" gorm:"column:container_id"`
@@ -98,8 +101,6 @@ type ScriptContainerSnapshot struct {
 	ImageID        int64  `json:"image_id,string" gorm:"column:image_id"`
 	ContainerImage string `json:"container_image" gorm:"column:container_image"`
 	ImageName      string `json:"image_name" gorm:"column:image_name"`
-	ImageTag       string `json:"image_tag" gorm:"column:image_tag"`
-	ImageStatus    string `json:"image_status" gorm:"column:image_status"`
 }
 
 type WorkflowJSONExportResponse struct {
@@ -111,11 +112,16 @@ type WorkflowJSONExportResponse struct {
 	WorkflowID string           `json:"workflow_id"`
 	Workflow   map[string]any   `json:"workflow"`
 	Scripts    []map[string]any `json:"scripts"`
-	// ContainerTemplates 是去重后的容器模板列表（按模板主键去重），模板只通过 image_id
-	// 引用镜像，镜像本体在 ContainerImages 里；两者都与导出内容去重，不重复出现。
-	ContainerTemplates []map[string]any `json:"container_templates"`
+	// ContainerTemplateSpecs 是去重后的容器运行配置列表（按 ContainerTemplateSpec 主键去重，
+	// 结构见 types.ContainerTemplateSpec）。脚本的 container_template_id 引用的是绑定行主键，
+	// 绑定行通过 SpecID 引用这里的配置，因此三个列表都按主键去重，不重复出现。
+	ContainerTemplateSpecs []map[string]any `json:"container_template_specs"`
+	// ContainerTemplateDefinitions 是去重后的「运行配置 × 镜像」绑定行列表（按主键去重，
+	// 结构见 types.ContainerTemplateDefinition）：SpecID 指向 ContainerTemplateSpecs，
+	// ImageID 指向 ContainerImages，主键就是脚本 container_template_id 引用的值。
+	ContainerTemplateDefinitions []map[string]any `json:"container_template_definitions"`
 	// ContainerImages 是去重后的容器镜像列表（按镜像主键去重），
-	// 结构见 types.ContainerImageExport，与 container_templates 的 image_id 一一对应。
+	// 结构见 types.ContainerImageExport，与 container_template_definitions 的 image_id 一一对应。
 	ContainerImages []map[string]any `json:"container_images"`
 }
 
@@ -172,10 +178,15 @@ type ScriptJSONExportResponse struct {
 	Version  string         `json:"version"`
 	ScriptID string         `json:"script_id"`
 	Script   map[string]any `json:"script"`
-	// ContainerTemplates 是去重后的容器模板列表（按模板主键去重），模板只通过 image_id
-	// 引用镜像，镜像本体在 ContainerImages 里；两者都与导出内容去重，不重复出现。
-	ContainerTemplates []map[string]any `json:"container_templates,omitempty"`
+	// ContainerTemplateSpecs 是去重后的容器运行配置列表（按 ContainerTemplateSpec 主键去重，
+	// 结构见 types.ContainerTemplateSpec）。脚本的 container_template_id 引用的是绑定行主键，
+	// 绑定行通过 SpecID 引用这里的配置，因此三个列表都按主键去重，不重复出现。
+	ContainerTemplateSpecs []map[string]any `json:"container_template_specs,omitempty"`
+	// ContainerTemplateDefinitions 是去重后的「运行配置 × 镜像」绑定行列表（按主键去重，
+	// 结构见 types.ContainerTemplateDefinition）：SpecID 指向 ContainerTemplateSpecs，
+	// ImageID 指向 ContainerImages，主键就是脚本 container_template_id 引用的值。
+	ContainerTemplateDefinitions []map[string]any `json:"container_template_definitions,omitempty"`
 	// ContainerImages 是去重后的容器镜像列表（按镜像主键去重），
-	// 结构见 types.ContainerImageExport，与 container_templates 的 image_id 一一对应。
+	// 结构见 types.ContainerImageExport，与 container_template_definitions 的 image_id 一一对应。
 	ContainerImages []map[string]any `json:"container_images,omitempty"`
 }

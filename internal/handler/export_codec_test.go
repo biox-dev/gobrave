@@ -8,14 +8,15 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/exportcodec"
 	exportcodecv1 "github.com/biox-dev/gobrave/internal/exportcodec/v1"
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 // newTestWorkflowHandler 构造只带导出格式注册表的 handler：
 // 读盘路径（readXxxJSONFromDir / exportCodec）不依赖其它 service，够用即可。
 func newTestWorkflowHandler() *WorkflowHandler {
 	reg := exportcodec.NewRegistry()
-	// 读侧不会用到 WorkflowService（只有写侧会），故这里传 nil。
-	reg.Register(exportcodecv1.NewCodec(nil))
+	// 读侧不会用到 WorkflowService（只有写侧会），故这里传 nil；写侧提交身份用默认值。
+	reg.Register(exportcodecv1.NewCodec(nil, utils.GitIdentity{Name: "test", Email: "test@example.com"}))
 	return &WorkflowHandler{exportCodecs: reg}
 }
 

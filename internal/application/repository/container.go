@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/types"
@@ -81,33 +82,145 @@ func (r *containerRepository) PageContainerImage(ctx context.Context, pagination
 	return items, total, nil
 }
 
-func (r *containerRepository) CreateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error {
+// ===== 容器模板：共享运行配置 =====
+
+func (r *containerRepository) CreateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error {
 	return r.db.WithContext(ctx).Create(item).Error
 }
 
-func (r *containerRepository) GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error) {
-	item := &types.ContainerTemplate{}
+func (r *containerRepository) GetContainerTemplateSpecByID(ctx context.Context, id int64) (*types.ContainerTemplateSpec, error) {
+	item := &types.ContainerTemplateSpec{}
 	if err := r.db.WithContext(ctx).Where("id = ?", id).Take(item).Error; err != nil {
 		return nil, err
 	}
 	return item, nil
 }
 
-func (r *containerRepository) UpdateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error {
-	return r.db.WithContext(ctx).Model(&types.ContainerTemplate{}).Where("id = ?", item.ID).Updates(item).Error
+func (r *containerRepository) UpdateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error {
+	return r.db.WithContext(ctx).Model(&types.ContainerTemplateSpec{}).Where("id = ?", item.ID).Updates(item).Error
 }
 
-func (r *containerRepository) DeleteContainerTemplate(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.ContainerTemplate{}).Error
+func (r *containerRepository) DeleteContainerTemplateSpec(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.ContainerTemplateSpec{}).Error
 }
 
-func (r *containerRepository) ListContainerTemplate(ctx context.Context) ([]*types.ContainerTemplate, error) {
-	items := make([]*types.ContainerTemplate, 0)
-	err := r.db.WithContext(ctx).Order("id DESC").Find(&items).Error
-	if err != nil {
+func (r *containerRepository) ListContainerTemplateSpec(ctx context.Context) ([]*types.ContainerTemplateSpec, error) {
+	items := make([]*types.ContainerTemplateSpec, 0)
+	if err := r.db.WithContext(ctx).Order("id DESC").Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
+}
+
+// ===== 容器模板：运行配置 × 镜像 绑定行 =====
+
+func (r *containerRepository) CreateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {
+	return r.db.WithContext(ctx).Create(item).Error
+}
+
+func (r *containerRepository) GetContainerTemplateDefinitionByID(ctx context.Context, id int64) (*types.ContainerTemplateDefinition, error) {
+	item := &types.ContainerTemplateDefinition{}
+	if err := r.db.WithContext(ctx).Where("id = ?", id).Take(item).Error; err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+func (r *containerRepository) UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {
+	return r.db.WithContext(ctx).Model(&types.ContainerTemplateDefinition{}).Where("id = ?", item.ID).Updates(item).Error
+}
+
+func (r *containerRepository) DeleteContainerTemplateDefinition(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.ContainerTemplateDefinition{}).Error
+}
+
+func (r *containerRepository) ListContainerTemplateDefinitionBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplateDefinition, error) {
+	items := make([]*types.ContainerTemplateDefinition, 0)
+	if err := r.db.WithContext(ctx).Where("spec_id = ?", specID).Order("id ASC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *containerRepository) ListContainerTemplateDefinitionByImageIDs(ctx context.Context, imageIDs []int64) ([]*types.ContainerTemplateDefinition, error) {
+	items := make([]*types.ContainerTemplateDefinition, 0)
+	if len(imageIDs) == 0 {
+		return items, nil
+	}
+	if err := r.db.WithContext(ctx).Where("image_id IN ?", imageIDs).Order("id ASC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// ===== 容器模板：对外读模型组装 =====
+
+// assembleContainerTemplates 批量补齐 spec 与 image 后组装读模型。
+// 不用 JOIN 的原因：三张表的列名有重叠，别名写错容易在不同数据库上踩坑；
+// 这里用两次 IN 查询批量补齐，既避免 N+1，也不需要额外维护一个投影结构体。
+func (r *containerRepository) assembleContainerTemplates(ctx context.Context, definitions []*types.ContainerTemplateDefinition) ([]*types.ContainerTemplate, error) {
+	if len(definitions) == 0 {
+		return []*types.ContainerTemplate{}, nil
+	}
+
+	specIDs := make([]int64, 0, len(definitions))
+	imageIDs := make([]int64, 0, len(definitions))
+	for _, definition := range definitions {
+		specIDs = append(specIDs, definition.SpecID)
+		imageIDs = append(imageIDs, definition.ImageID)
+	}
+
+	specs := make(map[int64]*types.ContainerTemplateSpec, len(specIDs))
+	specItems := make([]*types.ContainerTemplateSpec, 0, len(specIDs))
+	if err := r.db.WithContext(ctx).Where("id IN ?", specIDs).Find(&specItems).Error; err != nil {
+		return nil, err
+	}
+	for _, spec := range specItems {
+		specs[spec.ID] = spec
+	}
+
+	images := make(map[int64]*types.ContainerImage, len(imageIDs))
+	imageItems := make([]*types.ContainerImage, 0, len(imageIDs))
+	if err := r.db.WithContext(ctx).Where("id IN ?", imageIDs).Find(&imageItems).Error; err != nil {
+		return nil, err
+	}
+	for _, image := range imageItems {
+		images[image.ID] = image
+	}
+
+	items := make([]*types.ContainerTemplate, 0, len(definitions))
+	for _, definition := range definitions {
+		items = append(items, types.NewContainerTemplate(specs[definition.SpecID], definition, images[definition.ImageID]))
+	}
+	return items, nil
+}
+
+// GetContainerTemplateByID 返回对外容器模板：ID 为绑定行主键，spec/image 缺失时对应字段为 nil。
+func (r *containerRepository) GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error) {
+	definition, err := r.GetContainerTemplateDefinitionByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	spec, err := r.GetContainerTemplateSpecByID(ctx, definition.SpecID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	image, err := r.GetContainerImageByID(ctx, definition.ImageID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	return types.NewContainerTemplate(spec, definition, image), nil
+}
+
+func (r *containerRepository) ListContainerTemplate(ctx context.Context) ([]*types.ContainerTemplate, error) {
+	definitions := make([]*types.ContainerTemplateDefinition, 0)
+	if err := r.db.WithContext(ctx).Order("id DESC").Find(&definitions).Error; err != nil {
+		return nil, err
+	}
+	return r.assembleContainerTemplates(ctx, definitions)
 }
 
 func (r *containerRepository) PageContainerTemplate(ctx context.Context, pagination *types.Pagination) ([]*types.ContainerTemplate, int64, error) {
@@ -115,27 +228,35 @@ func (r *containerRepository) PageContainerTemplate(ctx context.Context, paginat
 		pagination = &types.Pagination{}
 	}
 
-	items := make([]*types.ContainerTemplate, 0)
 	var total int64
-
-	if err := r.db.WithContext(ctx).Model(&types.ContainerTemplate{}).Count(&total).Error; err != nil {
+	// 分页主体就是绑定行表，count 不需要任何 join。
+	if err := r.db.WithContext(ctx).Model(&types.ContainerTemplateDefinition{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	err := r.db.WithContext(ctx).
+	definitions := make([]*types.ContainerTemplateDefinition, 0)
+	if err := r.db.WithContext(ctx).
 		Order("id DESC").
 		Offset(pagination.Offset()).
 		Limit(pagination.Limit()).
-		Find(&items).Error
-	if err != nil {
+		Find(&definitions).Error; err != nil {
 		return nil, 0, err
 	}
 
-	if len(items) == 0 {
-		return []*types.ContainerTemplate{}, total, nil
+	items, err := r.assembleContainerTemplates(ctx, definitions)
+	if err != nil {
+		return nil, 0, err
 	}
-
 	return items, total, nil
+}
+
+// ListContainerTemplateBySpecID 返回同一套共享配置下绑定不同镜像的所有模板。
+func (r *containerRepository) ListContainerTemplateBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplate, error) {
+	definitions, err := r.ListContainerTemplateDefinitionBySpecID(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+	return r.assembleContainerTemplates(ctx, definitions)
 }
 
 func (r *containerRepository) CreateAppSession(ctx context.Context, item *types.AppSession) error {

@@ -121,6 +121,23 @@ func CommitAll(repo *git.Repository, message string, identity GitIdentity) (bool
 	return true, nil
 }
 
+// CommitDirChanges 确保 dir 是一个 git 仓库（不存在则初始化，默认分支 main），
+// 并把当前工作区改动提交为一个 commit（无变更时不会产生空提交）。
+//
+// 这是脚本/工作流导出目录共用的提交步骤：写侧（Codec 的 WriteScriptFiles /
+// WriteWorkflowFiles）落盘后调用它，保证目录内容始终有对应的 git 提交，
+// 供后续 PushDirToRepo 推送到 store。
+func CommitDirChanges(dir, commitMessage string, identity GitIdentity) error {
+	repo, err := EnsureGitRepo(dir)
+	if err != nil {
+		return fmt.Errorf("failed to init git repository %s: %w", dir, err)
+	}
+	if _, err := CommitAll(repo, commitMessage, identity); err != nil {
+		return fmt.Errorf("failed to commit changes in %s: %w", dir, err)
+	}
+	return nil
+}
+
 // EnsureBareGitRepo 保证 dir 是一个裸（bare）git 仓库并返回它，用作本地推送目标：
 //
 //   - dir 不存在：初始化裸仓库（默认分支 main）

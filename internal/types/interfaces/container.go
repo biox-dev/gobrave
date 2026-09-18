@@ -11,8 +11,10 @@ type ContainerService interface {
 	GetContainerImageByID(ctx context.Context, id int64) (*types.ContainerImage, error)
 	UpdateContainerImage(ctx context.Context, item *types.ContainerImage) error
 	DeleteContainerImage(ctx context.Context, id int64) error
-	ListContainerImage(ctx context.Context) ([]*types.ContainerImage, error)
+	ListContainerImage(ctx context.Context) ([]*types.ContainerImageItem, error)
 	PageContainerImage(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
+	// GetContainerImageUsage 返回镜像被哪些模板绑定行引用；删除前由 handler 用它拦 409。
+	GetContainerImageUsage(ctx context.Context, imageID int64) (*types.ContainerImageUsage, error)
 	// TransitionContainerAndEnqueueOutbox(ctx context.Context, instance *types.ContainerInstance, to types.ContainerStatus, eventType string) error
 	// GetMaxConcurrency() int
 	RecreateAppSessionContainer(ctx context.Context, userID string, appSessionID int64) error
@@ -22,8 +24,21 @@ type ContainerService interface {
 	UpdateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error
 	DeleteContainerTemplate(ctx context.Context, id int64) error
 	ListContainerTemplate(ctx context.Context) ([]*types.ContainerTemplate, error)
+	// ListContainerTemplateBySpecID 列出同一套共享运行配置下绑定不同镜像的所有对外模板。
+	ListContainerTemplateBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplate, error)
 	PageContainerTemplate(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
 	ImportContainerTemplate(ctx context.Context, item *types.ContainerTemplateExport) (*types.ContainerTemplateExport, error)
+
+	// ===== 容器模板：按主键直接 upsert 两层实体（安装 script.json / workflow.json 用）=====
+	// 安装侧拿到的导出内容已经是拆开的 ContainerTemplateSpec / ContainerTemplateDefinition
+	// （各自带主键），不能走 CreateContainerTemplate/UpdateContainerTemplate 那套读模型逻辑：
+	// 读模型会重新拼装 spec 与绑定行，无法保留导出文件里的 spec_id / 绑定行主键。
+	CreateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error
+	GetContainerTemplateSpecByID(ctx context.Context, id int64) (*types.ContainerTemplateSpec, error)
+	UpdateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error
+	CreateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
+	GetContainerTemplateDefinitionByID(ctx context.Context, id int64) (*types.ContainerTemplateDefinition, error)
+	UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
 
 	CreateAppSessionByTemplate(ctx context.Context, userID string, projectID int64, containerTemplateID int64, name string) (*types.AppSession, error)
 	CreateAppSessionByTemplateForAnalysisNode(ctx context.Context, userID string, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error)
@@ -51,12 +66,28 @@ type ContainerRepository interface {
 	ListContainerImage(ctx context.Context) ([]*types.ContainerImage, error)
 	PageContainerImage(ctx context.Context, pagination *types.Pagination) ([]*types.ContainerImage, int64, error)
 
-	CreateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error
+	// ===== 容器模板：共享运行配置（go_container_template_spec）=====
+	CreateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error
+	GetContainerTemplateSpecByID(ctx context.Context, id int64) (*types.ContainerTemplateSpec, error)
+	UpdateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error
+	DeleteContainerTemplateSpec(ctx context.Context, id int64) error
+	ListContainerTemplateSpec(ctx context.Context) ([]*types.ContainerTemplateSpec, error)
+
+	// ===== 容器模板：运行配置 × 镜像 绑定行（go_container_template_definition）=====
+	// 绑定行主键即对外 ContainerTemplate.ID，一行唯一确定一个可运行的容器配置。
+	CreateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
+	GetContainerTemplateDefinitionByID(ctx context.Context, id int64) (*types.ContainerTemplateDefinition, error)
+	UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
+	DeleteContainerTemplateDefinition(ctx context.Context, id int64) error
+	ListContainerTemplateDefinitionBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplateDefinition, error)
+	// ListContainerTemplateDefinitionByImageIDs 用于镜像目录的引用查询（引用数 / 引用模板）。
+	ListContainerTemplateDefinitionByImageIDs(ctx context.Context, imageIDs []int64) ([]*types.ContainerTemplateDefinition, error)
+
+	// ===== 容器模板：对外读模型（由 definition + spec + image 组装，非持久化）=====
 	GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error)
-	UpdateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error
-	DeleteContainerTemplate(ctx context.Context, id int64) error
 	ListContainerTemplate(ctx context.Context) ([]*types.ContainerTemplate, error)
 	PageContainerTemplate(ctx context.Context, pagination *types.Pagination) ([]*types.ContainerTemplate, int64, error)
+	ListContainerTemplateBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplate, error)
 
 	CreateAppSession(ctx context.Context, item *types.AppSession) error
 	GetAppSessionByID(ctx context.Context, id int64) (*types.AppSession, error)

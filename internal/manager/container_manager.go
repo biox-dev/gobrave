@@ -177,8 +177,8 @@ func (m *ContainerManager) CreateByTemplate(
 		return nil, err
 	}
 
-	_, err = m.containerRepo.GetContainerImageByID(ctx, tpl.ImageID)
-	if err != nil {
+	// 读模型已带出绑定的镜像（tpl.Image），这里只是确保镜像确实存在。
+	if _, err := resolveTemplateImage(ctx, m.containerRepo, tpl); err != nil {
 		return nil, err
 	}
 

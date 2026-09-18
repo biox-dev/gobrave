@@ -13,26 +13,30 @@ import (
 )
 
 type mockContainerRepo struct {
-	images    map[int64]*types.ContainerImage
-	templates map[int64]*types.ContainerTemplate
-	sessions  map[int64]*types.AppSession
-	projects  map[string]*types.Project
-	instances map[int64]*types.ContainerInstance
-	events    []*types.ContainerEvent
-	outbox    []*types.OutboxEvent
-	nextID    int64
+	images      map[int64]*types.ContainerImage
+	specs       map[int64]*types.ContainerTemplateSpec
+	definitions map[int64]*types.ContainerTemplateDefinition
+	templates   map[int64]*types.ContainerTemplate
+	sessions    map[int64]*types.AppSession
+	projects    map[string]*types.Project
+	instances   map[int64]*types.ContainerInstance
+	events      []*types.ContainerEvent
+	outbox      []*types.OutboxEvent
+	nextID      int64
 }
 
 func newMockContainerRepo() *mockContainerRepo {
 	return &mockContainerRepo{
-		images:    map[int64]*types.ContainerImage{},
-		templates: map[int64]*types.ContainerTemplate{},
-		sessions:  map[int64]*types.AppSession{},
-		projects:  map[string]*types.Project{},
-		instances: map[int64]*types.ContainerInstance{},
-		events:    make([]*types.ContainerEvent, 0),
-		outbox:    make([]*types.OutboxEvent, 0),
-		nextID:    100,
+		images:      map[int64]*types.ContainerImage{},
+		specs:       map[int64]*types.ContainerTemplateSpec{},
+		definitions: map[int64]*types.ContainerTemplateDefinition{},
+		templates:   map[int64]*types.ContainerTemplate{},
+		sessions:    map[int64]*types.AppSession{},
+		projects:    map[string]*types.Project{},
+		instances:   map[int64]*types.ContainerInstance{},
+		events:      make([]*types.ContainerEvent, 0),
+		outbox:      make([]*types.OutboxEvent, 0),
+		nextID:      100,
 	}
 }
 
@@ -87,30 +91,115 @@ func (m *mockContainerRepo) PageContainerImage(ctx context.Context, pagination *
 	return items, int64(len(items)), nil
 }
 
-func (m *mockContainerRepo) CreateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error {
+// ===== 容器模板：共享运行配置 =====
+
+func (m *mockContainerRepo) CreateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error {
 	if item.ID == 0 {
 		item.ID = m.next()
 	}
-	m.templates[item.ID] = item
+	m.specs[item.ID] = item
 	return nil
 }
 
-func (m *mockContainerRepo) GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error) {
-	item, ok := m.templates[id]
+func (m *mockContainerRepo) GetContainerTemplateSpecByID(ctx context.Context, id int64) (*types.ContainerTemplateSpec, error) {
+	item, ok := m.specs[id]
 	if !ok {
-		return nil, errors.New("container template not found")
+		return nil, errors.New("container template spec not found")
 	}
 	return item, nil
 }
 
-func (m *mockContainerRepo) UpdateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error {
-	m.templates[item.ID] = item
+func (m *mockContainerRepo) UpdateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error {
+	m.specs[item.ID] = item
 	return nil
 }
 
-func (m *mockContainerRepo) DeleteContainerTemplate(ctx context.Context, id int64) error {
+func (m *mockContainerRepo) DeleteContainerTemplateSpec(ctx context.Context, id int64) error {
+	delete(m.specs, id)
+	return nil
+}
+
+func (m *mockContainerRepo) ListContainerTemplateSpec(ctx context.Context) ([]*types.ContainerTemplateSpec, error) {
+	items := make([]*types.ContainerTemplateSpec, 0, len(m.specs))
+	for _, v := range m.specs {
+		items = append(items, v)
+	}
+	return items, nil
+}
+
+// ===== 容器模板：运行配置 × 镜像 绑定行 =====
+
+// refreshTemplateCache 在绑定行变动后同步维护读模型缓存，
+// 这样既有测试（直接写 repo.templates）与新链路（写 definition）都能被 GetContainerTemplateByID 读到。
+func (m *mockContainerRepo) refreshTemplateCache(item *types.ContainerTemplateDefinition) {
+	m.templates[item.ID] = types.NewContainerTemplate(m.specs[item.SpecID], item, m.images[item.ImageID])
+}
+
+func (m *mockContainerRepo) CreateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {
+	if item.ID == 0 {
+		item.ID = m.next()
+	}
+	m.definitions[item.ID] = item
+	m.refreshTemplateCache(item)
+	return nil
+}
+
+func (m *mockContainerRepo) GetContainerTemplateDefinitionByID(ctx context.Context, id int64) (*types.ContainerTemplateDefinition, error) {
+	item, ok := m.definitions[id]
+	if !ok {
+		return nil, errors.New("container template definition not found")
+	}
+	return item, nil
+}
+
+func (m *mockContainerRepo) UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {
+	m.definitions[item.ID] = item
+	m.refreshTemplateCache(item)
+	return nil
+}
+
+func (m *mockContainerRepo) DeleteContainerTemplateDefinition(ctx context.Context, id int64) error {
+	delete(m.definitions, id)
 	delete(m.templates, id)
 	return nil
+}
+
+func (m *mockContainerRepo) ListContainerTemplateDefinitionBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplateDefinition, error) {
+	items := make([]*types.ContainerTemplateDefinition, 0, len(m.definitions))
+	for _, v := range m.definitions {
+		if v.SpecID == specID {
+			items = append(items, v)
+		}
+	}
+	return items, nil
+}
+
+func (m *mockContainerRepo) ListContainerTemplateDefinitionByImageIDs(ctx context.Context, imageIDs []int64) ([]*types.ContainerTemplateDefinition, error) {
+	wanted := make(map[int64]struct{}, len(imageIDs))
+	for _, id := range imageIDs {
+		wanted[id] = struct{}{}
+	}
+
+	items := make([]*types.ContainerTemplateDefinition, 0, len(m.definitions))
+	for _, v := range m.definitions {
+		if _, ok := wanted[v.ImageID]; ok {
+			items = append(items, v)
+		}
+	}
+	return items, nil
+}
+
+// ===== 容器模板：对外读模型 =====
+
+func (m *mockContainerRepo) GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error) {
+	if item, ok := m.templates[id]; ok {
+		return item, nil
+	}
+	definition, ok := m.definitions[id]
+	if !ok {
+		return nil, errors.New("container template not found")
+	}
+	return types.NewContainerTemplate(m.specs[definition.SpecID], definition, m.images[definition.ImageID]), nil
 }
 
 func (m *mockContainerRepo) ListContainerTemplate(ctx context.Context) ([]*types.ContainerTemplate, error) {
@@ -127,6 +216,16 @@ func (m *mockContainerRepo) PageContainerTemplate(ctx context.Context, paginatio
 		return nil, 0, err
 	}
 	return items, int64(len(items)), nil
+}
+
+func (m *mockContainerRepo) ListContainerTemplateBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplate, error) {
+	items := make([]*types.ContainerTemplate, 0)
+	for _, v := range m.templates {
+		if v.SpecID == specID {
+			items = append(items, v)
+		}
+	}
+	return items, nil
 }
 
 func (m *mockContainerRepo) CreateAppSession(ctx context.Context, item *types.AppSession) error {

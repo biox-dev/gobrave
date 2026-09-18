@@ -344,7 +344,7 @@ func (w *ContainerCreateWorker) executeCreate(
 		return err
 	}
 
-	img, err := w.repo.GetContainerImageByID(ctx, tpl.ImageID)
+	img, err := resolveTemplateImage(ctx, w.repo, tpl)
 	if err != nil {
 		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerImageNotFound")
 		return err

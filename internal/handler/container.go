@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -50,6 +51,10 @@ type containerImagePageRequest struct {
 
 type containerTemplatePageRequest struct {
 	types.Pagination
+}
+
+type containerTemplateListBySpecRequest struct {
+	SpecID int64 `json:"spec_id,string" binding:"required"`
 }
 
 type appSessionPageRequest struct {
@@ -215,7 +220,7 @@ func (h *ContainerHandler) UpdateContainerImage(c *gin.Context) {
 
 // DeleteContainerImage godoc
 // @Summary      删除容器镜像
-// @Description  按 ID 删除 ContainerImage 记录
+// @Description  按 ID 删除 ContainerImage 记录；仍被容器模板（配置 × 镜像 绑定行）引用时返回 409 并给出引用清单。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
@@ -224,6 +229,7 @@ func (h *ContainerHandler) UpdateContainerImage(c *gin.Context) {
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
 // @Router       /container/image/delete [post]
@@ -238,6 +244,18 @@ func (h *ContainerHandler) DeleteContainerImage(c *gin.Context) {
 		return
 	}
 
+	// 镜像生命周期受绑定行约束：仍被模板引用时不允许删除。
+	usage, err := h.containerService.GetContainerImageUsage(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to get container image")
+		return
+	}
+	if usage != nil && usage.RefCount > 0 {
+		details, _ := json.Marshal(usage)
+		c.Error(errors.NewConflictError("container image is still referenced by container templates").WithDetails(string(details)))
+		return
+	}
+
 	if err := h.containerService.DeleteContainerImage(c.Request.Context(), req.ID); err != nil {
 		handleDataError(c, err, "failed to delete container image")
 		return
@@ -248,10 +266,10 @@ func (h *ContainerHandler) DeleteContainerImage(c *gin.Context) {
 
 // ListContainerImage godoc
 // @Summary      容器镜像列表
-// @Description  查询 ContainerImage 列表
+// @Description  查询 ContainerImage 列表，每项带 usage（引用数 + 引用的模板绑定行）
 // @Tags         容器管理
 // @Produce      json
-// @Success      200      {array}   types.ContainerImage
+// @Success      200      {array}   types.ContainerImageItem
 // @Failure      401      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
@@ -272,7 +290,7 @@ func (h *ContainerHandler) ListContainerImage(c *gin.Context) {
 
 // PageContainerImage godoc
 // @Summary      分页查询容器镜像
-// @Description  分页查询 ContainerImage 列表
+// @Description  分页查询 ContainerImage 列表，每项带 usage（引用数 + 引用的模板绑定行）
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
@@ -310,7 +328,10 @@ func (h *ContainerHandler) PageContainerImage(c *gin.Context) {
 
 // CreateContainerTemplate godoc
 // @Summary      创建容器模板
-// @Description  创建 ContainerTemplate 记录（手动校验 ImageID，不使用 GORM 关系维护）
+// @Description  创建对外容器模板（ContainerTemplate = 共享运行配置 ContainerTemplateSpec × 镜像绑定 ContainerTemplateDefinition）。
+// @Description  spec_id 为空：用请求体里的运行配置字段新建配置，再建第一条绑定；
+// @Description  spec_id 非空：复用该配置，只在它下面新增一个 image_id 绑定（同一套配置挂多个镜像）。
+// @Description  返回组装后的读模型，含 spec_id / image_id / image。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
@@ -338,7 +359,14 @@ func (h *ContainerHandler) CreateContainerTemplate(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, req)
+	// 重新读取组装后的读模型，让调用方直接看到生效的 spec_id / image_id / image。
+	item, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to get container template")
+		return
+	}
+
+	c.JSON(http.StatusOK, item)
 }
 
 // GetContainerTemplate godoc
@@ -376,12 +404,13 @@ func (h *ContainerHandler) GetContainerTemplate(c *gin.Context) {
 
 // UpdateContainerTemplate godoc
 // @Summary      更新容器模板
-// @Description  按 ID 更新 ContainerTemplate 记录（手动校验 ImageID，不使用 GORM 关系维护）
+// @Description  按绑定行 ID（ContainerTemplateDefinition.ID）更新：请求体里的运行配置字段写入绑行指向的 ContainerTemplateSpec，
+// @Description  image_id 与包目录字段写入绑定行本体。返回组装后的读模型。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
 // @Param        request  body      types.ContainerTemplate  true  "请求参数"
-// @Success      200      {object}  map[string]string
+// @Success      200      {object}  types.ContainerTemplate
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
@@ -408,12 +437,19 @@ func (h *ContainerHandler) UpdateContainerTemplate(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "container template updated successfully"})
+	item, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to get container template")
+		return
+	}
+
+	c.JSON(http.StatusOK, item)
 }
 
 // DeleteContainerTemplate godoc
 // @Summary      删除容器模板
-// @Description  按 ID 删除 ContainerTemplate 记录
+// @Description  按绑定行 ID（ContainerTemplateDefinition.ID）删除该镜像绑定；
+// @Description  当这张绑定所属的共享运行配置已无任何其他镜像绑定时，一并清理该配置。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
@@ -504,6 +540,44 @@ func (h *ContainerHandler) PageContainerTemplate(c *gin.Context) {
 		"page":      result.Page,
 		"page_size": result.PageSize,
 	})
+}
+
+// ListContainerTemplateBySpec godoc
+// @Summary      按共享配置列出容器模板
+// @Description  列出同一套 ContainerTemplateSpec 下绑定不同镜像的所有对外模板（一个配置 × 多个镜像）
+// @Tags         容器管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      containerTemplateListBySpecRequest  true  "请求参数"
+// @Success      200      {array}   types.ContainerTemplate
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/template/list-by-spec [post]
+func (h *ContainerHandler) ListContainerTemplateBySpec(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req containerTemplateListBySpecRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+	if req.SpecID == 0 {
+		c.Error(errors.NewValidationError("spec_id is required"))
+		return
+	}
+
+	items, err := h.containerService.ListContainerTemplateBySpecID(c.Request.Context(), req.SpecID)
+	if err != nil {
+		handleDataError(c, err, "failed to list container template by spec")
+		return
+	}
+
+	c.JSON(http.StatusOK, items)
 }
 
 // ExportContainerTemplate godoc

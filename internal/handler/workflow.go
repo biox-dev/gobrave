@@ -51,9 +51,11 @@ type WorkflowJSONExportResponse struct {
 	WorkflowID string           `json:"workflow_id"`
 	Workflow   map[string]any   `json:"workflow"`
 	Scripts    []map[string]any `json:"scripts"`
-	// ContainerTemplates / ContainerImages 都是按主键去重后的导出列表，模板通过 image_id 引用镜像。
-	ContainerTemplates []map[string]any `json:"container_templates"`
-	ContainerImages    []map[string]any `json:"container_images"`
+	// ContainerTemplateSpecs / ContainerTemplateDefinitions / ContainerImages 都是按主键去重后的
+	// 导出列表：绑定行通过 spec_id 引用运行配置、通过 image_id 引用镜像。
+	ContainerTemplateSpecs       []map[string]any `json:"container_template_specs"`
+	ContainerTemplateDefinitions []map[string]any `json:"container_template_definitions"`
+	ContainerImages              []map[string]any `json:"container_images"`
 }
 
 type createScriptRequest struct {
@@ -336,7 +338,16 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 	if commitMessage == "" {
 		commitMessage = fmt.Sprintf("save script %s", item.ScriptID)
 	}
-	if err := h.writeScriptJSONAndCommit(c.Request.Context(), item.ID, scriptDir, commitMessage); err != nil {
+	codec, err := h.exportCodecForWrite()
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
+		return
+	}
+	if _, err := codec.WriteScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
+		ScriptPK:      item.ID,
+		ScriptDir:     scriptDir,
+		CommitMessage: commitMessage,
+	}); err != nil {
 		c.Error(errors.NewInternalServerError("failed to persist script files").WithDetails(err.Error()))
 		return
 	}
@@ -490,7 +501,18 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 	// 发布（PublishWorkflow）时随 workflow 目录一起推送到 store，
 	// 安装（InstallWorkflow）时再从 store 同步回 workflow 目录并读取该文件导入数据库。
 	workflowDir := utils.GetWorkflowFileDir(h.storageBaseDir(), project.ProjectID, item.WorkflowID)
-	if err := h.writeWorkflowJSONAndCommit(c.Request.Context(), item.ID, project.ProjectID, workflowDir, fmt.Sprintf("save workflow %s", item.WorkflowID)); err != nil {
+	codec, err := h.exportCodecForWrite()
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
+		return
+	}
+	if _, err := codec.WriteWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
+		WorkflowPK:    item.ID,
+		ProjectID:     project.ProjectID,
+		BaseDir:       h.storageBaseDir(),
+		WorkflowDir:   workflowDir,
+		CommitMessage: fmt.Sprintf("save workflow %s", item.WorkflowID),
+	}); err != nil {
 		c.Error(errors.NewInternalServerError("failed to persist workflow files").WithDetails(err.Error()))
 		return
 	}

@@ -412,10 +412,12 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// 导出/安装文件格式版本注册表（script.json / workflow.json 顶层的 version）。
 	// 新增一个版本 = 新写一个 exportcodec 子包 + 这里多 Register 一行，
 	// handler 侧只做 exportCodecs.Get(version)，不需要任何 switch version。
-	// Codec 实现直接持有 WorkflowService（写侧按主键生成导出 payload）。
-	must(container.Provide(func(workflowService interfaces.WorkflowService) *exportcodec.Registry {
+	// Codec 实现直接持有 WorkflowService（写侧按主键生成导出 payload）与 git 提交身份
+	// （写侧落盘后自行提交目录改动，见 utils.CommitDirChanges）。
+	must(container.Provide(func(cfg *config.Config, workflowService interfaces.WorkflowService) *exportcodec.Registry {
 		reg := exportcodec.NewRegistry()
-		reg.Register(exportcodecv1.NewCodec(workflowService))
+		gitUser, gitEmail := config.ResolveGitIdentity(cfg)
+		reg.Register(exportcodecv1.NewCodec(workflowService, utils.GitIdentity{Name: gitUser, Email: gitEmail}))
 		return reg
 	}))
 	must(container.Provide(
@@ -715,7 +717,8 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.AnalysisEdge{},
 		&types.AuthToken{},
 		&types.ContainerImage{},
-		&types.ContainerTemplate{},
+		&types.ContainerTemplateSpec{},
+		&types.ContainerTemplateDefinition{},
 		&types.AppSession{},
 		&types.ContainerInstance{},
 		&types.ContainerEvent{},

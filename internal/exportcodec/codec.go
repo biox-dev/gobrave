@@ -55,9 +55,10 @@ const (
 // Codec 实现直接持有 interfaces.WorkflowService（写侧用它按主键生成导出 payload），
 // 由 DI 容器在装配 Registry 时注入（见 internal/container/container.go）。
 //
-// WriteXxxFiles / DecodeXxx / ScriptSnapshotDir 只负责「按该版本的格式读写文件与解释目录布局」，
-// 不负责 git 提交——git 提交与版本无关，由调用方（handler）用一个通用 helper 完成，
-// 这样每个版本的 Codec 都不必重复实现 git 逻辑。
+// WriteXxxFiles 负责「按该版本的格式生成文件、落盘，并把目录改动提交为一个 git commit」；
+// DecodeXxx / ScriptSnapshotDir 只负责解析内容与解释目录布局。
+// git 提交本身与格式版本无关，由 utils.CommitDirChanges 统一实现，各版本 Codec 直接复用，
+// 因此调用方（handler）落盘后无需再单独提交。
 //
 // 方法分成三组，分别对应两个方向的调用方与目录布局：
 //
@@ -75,17 +76,19 @@ type Codec interface {
 	// ===== 写侧 =====
 
 	// WriteScriptFiles 按该版本格式生成脚本导出内容并落盘到 req.ScriptDir
-	// （文件名、是否附带 container_templates 等由版本决定），返回写入的 payload，
-	// 其 Version 必须等于 Version()。
+	// （文件名、是否附带 container_templates 等由版本决定），把目录改动提交为一个
+	// git commit，返回写入的 payload，其 Version 必须等于 Version()。
 	//
-	// 实现需保证 req.ScriptDir 存在（不存在则创建）。
+	// 实现需保证 req.ScriptDir 存在（不存在则创建）并完成 git 提交
+	// （见 utils.CommitDirChanges，提交身份由装配时注入）。
 	WriteScriptFiles(ctx context.Context, req ScriptWriteRequest) (*types.ScriptJSONExportResponse, error)
 
 	// WriteWorkflowFiles 按该版本格式生成工作流导出内容并落盘到 req.WorkflowDir，
 	// 同时按该版本的目录布局把工作流引用的脚本快照到 req.WorkflowDir 下，
-	// 返回写入的 payload，其 Version 必须等于 Version()。
+	// 最后把目录改动提交为一个 git commit，返回写入的 payload，其 Version 必须等于 Version()。
 	//
-	// 实现需保证 req.WorkflowDir 存在（不存在则创建）。
+	// 实现需保证 req.WorkflowDir 存在（不存在则创建）并完成 git 提交
+	// （见 utils.CommitDirChanges，提交身份由装配时注入）。
 	WriteWorkflowFiles(ctx context.Context, req WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error)
 
 	// ===== 读侧 =====
@@ -121,22 +124,26 @@ type Codec interface {
 
 // ScriptWriteRequest 是写脚本导出文件的入参。
 //
-// ScriptPK 是 script 表主键（int64，不是 script_id），ScriptDir 是脚本目录绝对路径。
+// ScriptPK 是 script 表主键（int64，不是 script_id），ScriptDir 是脚本目录绝对路径；
+// CommitMessage 是落盘后 git 提交使用的 message（为空时使用默认文案）。
 type ScriptWriteRequest struct {
-	ScriptPK  int64
-	ScriptDir string
+	ScriptPK      int64
+	ScriptDir     string
+	CommitMessage string
 }
 
 // WorkflowWriteRequest 是写工作流导出文件的入参。
 //
 // WorkflowPK 是 workflow 表主键（int64，不是 relation_id）；
 // ProjectID 是 project.project_id（字符串，注意与 workflow.ProjectID int64 外键区分）；
-// BaseDir 是 storage.base_dir；WorkflowDir 是 workflow 目录绝对路径。
+// BaseDir 是 storage.base_dir；WorkflowDir 是 workflow 目录绝对路径；
+// CommitMessage 是落盘后 git 提交使用的 message（为空时使用默认文案）。
 type WorkflowWriteRequest struct {
-	WorkflowPK  int64
-	ProjectID   string
-	BaseDir     string
-	WorkflowDir string
+	WorkflowPK    int64
+	ProjectID     string
+	BaseDir       string
+	WorkflowDir   string
+	CommitMessage string
 }
 
 // ScriptMaterializeRequest 曾用于按版本布局还原脚本文件；经确认安装侧的脚本文件

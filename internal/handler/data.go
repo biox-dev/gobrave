@@ -63,6 +63,12 @@ func handleDataError(c *gin.Context, err error, internalMsg string) {
 		c.Error(errors.NewNotFoundError("record not found"))
 		return
 	}
+	// 服务层已经明确 HTTP 语义（例如 409 冲突）时直接透传，避免被降级成 500。
+	var appErr *errors.AppError
+	if stderrs.As(err, &appErr) {
+		c.Error(appErr)
+		return
+	}
 	c.Error(errors.NewInternalServerError(internalMsg).WithDetails(err.Error()))
 }
 

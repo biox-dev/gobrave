@@ -75,24 +75,36 @@ func (t *ContainerImage) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
-// type ContainerTemplateType string
+// ContainerImageRef 描述一个镜像被哪一个可运行模板（配置 × 镜像 绑定行）引用。
+type ContainerImageRef struct {
+	DefinitionID int64  `json:"definition_id,string"`
+	SpecID       int64  `json:"spec_id,string"`
+	TemplateName string `json:"template_name"`
+}
 
-// const (
-// 	ContainerTemplateWorkflow ContainerTemplateType = "workflow"
-// 	ContainerTemplateApp      ContainerTemplateType = "app"
-// 	ContainerTemplateService  ContainerTemplateType = "service"
-// )
+// ContainerImageUsage 是镜像的绑定引用情况。镜像目录仍可增删改，
+// 但只要还被绑定行引用就不允许删除，避免模板的 image_id 变成空引用。
+type ContainerImageUsage struct {
+	ImageID   int64               `json:"image_id,string"`
+	RefCount  int                 `json:"ref_count"`
+	Templates []ContainerImageRef `json:"templates"`
+}
 
-type ContainerTemplate struct {
+// ContainerImageItem 是镜像目录的对外读模型：嵌入镜像本体（JSON 平铺，字段不变）+ 绑定引用信息。
+type ContainerImageItem struct {
+	*ContainerImage
+	Usage *ContainerImageUsage `json:"usage,omitempty"`
+}
+
+// ===== 持久化实体：共享的容器运行配置 =====
+
+// ContainerTemplateSpec 只描述"怎么跑"：命令、资源、端口、环境变量、挂载、标签等，
+// 不包含镜像。镜像由 ContainerTemplateDefinition 关联，因此同一套运行配置可被多个镜像复用。
+type ContainerTemplateSpec struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
 	Name        string `json:"name" gorm:"type:varchar(255);not null;index"`
 	Description string `json:"description" gorm:"type:text"`
-
-	// Type ContainerTemplateType `json:"type" gorm:"type:varchar(20);index;not null"`
-
-	// Image string // rocker/rstudio:4.4
-	ImageID int64 `json:"image_id,string" gorm:"index;not null"`
 
 	Command string `json:"command" gorm:"type:text"`
 
@@ -103,18 +115,99 @@ type ContainerTemplate struct {
 	Port    int    `json:"port" gorm:"not null;default:8787"`
 	AppType string `json:"app_type" gorm:"type:varchar(32);index"`
 
-	Env    datatypes.JSON `json:"env" gorm:"type:json"`
-	Mounts datatypes.JSON `json:"mounts" gorm:"type:json"`
-	// Volumes              datatypes.JSON `json:"volumes" gorm:"type:json"`
+	Env                  datatypes.JSON `json:"env" gorm:"type:json"`
+	Mounts               datatypes.JSON `json:"mounts" gorm:"type:json"`
 	SchedulingConstraint datatypes.JSON `json:"scheduling_constraint" gorm:"type:json"`
 	Labels               datatypes.JSON `json:"labels" gorm:"type:json"`
 	ChangeUID            bool           `json:"change_uid" gorm:"default:false"`
 
-	RLibraryPath      string    `json:"r_library_path" gorm:"type:varchar(512)"`
-	PythonLibraryPath string    `json:"python_library_path" gorm:"type:varchar(512)"`
-	CondaLibraryPath  string    `json:"conda_library_path" gorm:"type:varchar(512)"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (ContainerTemplateSpec) TableName() string {
+	return "go_container_template_spec"
+}
+
+func (t *ContainerTemplateSpec) BeforeCreate(_ *gorm.DB) error {
+	if t.ID == 0 {
+		t.ID = utils.GenerateID()
+	}
+	return nil
+}
+
+// ===== 持久化实体：运行配置 × 镜像 绑定行 =====
+
+// ContainerTemplateDefinition 一行即"一个可直接运行的容器模板"：共享配置 + 一个具体镜像。
+// 由于每行本身就唯一确定了一个可运行配置，不需要 is_default / sort_order 之类的标记：
+// 同一 SpecID 可绑定多个镜像，同一 ImageID 也可被多个配置绑定（多对多），
+// 且同一 (SpecID, ImageID) 组合唯一。
+// 注意：该表主键 ID 就是对外暴露的 ContainerTemplate.ID。
+type ContainerTemplateDefinition struct {
+	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
+
+	SpecID  int64 `json:"spec_id,string" gorm:"uniqueIndex:uk_template_spec_image,priority:1;not null"`
+	ImageID int64 `json:"image_id,string" gorm:"uniqueIndex:uk_template_spec_image,priority:2;not null"`
+
+	// DisplayName 为空时，对外名称回退到 ContainerTemplateConfig.Name。
+	DisplayName string `json:"display_name" gorm:"type:varchar(255)"`
+
+	// R/Python/Conda 包目录与镜像版本强耦合（R 4.3 与 4.4 不能共用），故挂在绑定行而非配置上。
+	RLibraryPath      string `json:"r_library_path" gorm:"type:varchar(512)"`
+	PythonLibraryPath string `json:"python_library_path" gorm:"type:varchar(512)"`
+	CondaLibraryPath  string `json:"conda_library_path" gorm:"type:varchar(512)"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (ContainerTemplateDefinition) TableName() string {
+	return "go_container_template_definition"
+}
+
+func (t *ContainerTemplateDefinition) BeforeCreate(_ *gorm.DB) error {
+	if t.ID == 0 {
+		t.ID = utils.GenerateID()
+	}
+	return nil
+}
+
+// ===== 非持久化读模型：对外容器模板 =====
+
+// ContainerTemplate 不是持久化对象，由 repo 层 JOIN
+// go_container_template_definition + go_container_template_spec + go_container_image 组装返回。
+// ID == ContainerTemplateDefinition.ID：引用方（script.container_template_id /
+// app_session.container_template_id / container_instance.template_id）语义不变，
+// 同时天然锁定了该模板要使用的镜像。
+type ContainerTemplate struct {
+	ID      int64 `json:"id,string"`
+	SpecID  int64 `json:"spec_id,string"`
+	ImageID int64 `json:"image_id,string"`
+
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Image       *ContainerImage `json:"image,omitempty"`
+
+	Command string  `json:"command"`
+	CPU     float64 `json:"cpu"`
+	Memory  int64   `json:"memory"`
+
+	WorkDir string `json:"work_dir"`
+	Port    int    `json:"port"`
+	AppType string `json:"app_type"`
+
+	Env                  datatypes.JSON `json:"env"`
+	Mounts               datatypes.JSON `json:"mounts"`
+	SchedulingConstraint datatypes.JSON `json:"scheduling_constraint"`
+	Labels               datatypes.JSON `json:"labels"`
+	ChangeUID            bool           `json:"change_uid"`
+
+	RLibraryPath      string `json:"r_library_path"`
+	PythonLibraryPath string `json:"python_library_path"`
+	CondaLibraryPath  string `json:"conda_library_path"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (c *ContainerTemplate) GetRLibraryPath() string {
@@ -136,15 +229,50 @@ func (c *ContainerTemplate) GetCondaLibraryPath() string {
 	return c.CondaLibraryPath
 }
 
-func (ContainerTemplate) TableName() string {
-	return "go_container_template"
-}
-
-func (t *ContainerTemplate) BeforeCreate(_ *gorm.DB) error {
-	if t.ID == 0 {
-		t.ID = utils.GenerateID()
+// NewContainerTemplate 把共享配置、绑定行与镜像组装成对外读模型。spec/image 允许为 nil：
+// 分别表示只取绑定行字段 / 未加载镜像详情。binding 为 nil 时返回 nil。
+func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplateDefinition, image *ContainerImage) *ContainerTemplate {
+	if binding == nil {
+		return nil
 	}
-	return nil
+
+	tpl := &ContainerTemplate{
+		ID:                binding.ID,
+		SpecID:            binding.SpecID,
+		ImageID:           binding.ImageID,
+		Image:             image,
+		RLibraryPath:      binding.RLibraryPath,
+		PythonLibraryPath: binding.PythonLibraryPath,
+		CondaLibraryPath:  binding.CondaLibraryPath,
+		CreatedAt:         binding.CreatedAt,
+		UpdatedAt:         binding.UpdatedAt,
+	}
+
+	if spec != nil {
+		tpl.Name = spec.Name
+		tpl.Description = spec.Description
+		tpl.Command = spec.Command
+		tpl.CPU = spec.CPU
+		tpl.Memory = spec.Memory
+		tpl.WorkDir = spec.WorkDir
+		tpl.Port = spec.Port
+		tpl.AppType = spec.AppType
+		tpl.Env = spec.Env
+		tpl.Mounts = spec.Mounts
+		tpl.SchedulingConstraint = spec.SchedulingConstraint
+		tpl.Labels = spec.Labels
+		tpl.ChangeUID = spec.ChangeUID
+
+		if spec.UpdatedAt.After(tpl.UpdatedAt) {
+			tpl.UpdatedAt = spec.UpdatedAt
+		}
+	}
+
+	if binding.DisplayName != "" {
+		tpl.Name = binding.DisplayName
+	}
+
+	return tpl
 }
 
 // ContainerImageExport 是 ContainerImage 的导出结构，包含 ID，不含时间字段。
@@ -198,6 +326,9 @@ type ContainerTemplateExport struct {
 func (t *ContainerTemplate) ToExport(image *ContainerImage) *ContainerTemplateExport {
 	if t == nil {
 		return nil
+	}
+	if image == nil {
+		image = t.Image
 	}
 	export := &ContainerTemplateExport{
 		ID:          t.ID,

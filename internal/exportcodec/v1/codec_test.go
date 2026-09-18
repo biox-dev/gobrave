@@ -13,6 +13,9 @@ import (
 	"github.com/biox-dev/gobrave/internal/utils"
 )
 
+// testGitIdentity 是测试用的提交身份（NewCodec 需要它才能在 Write 后提交）。
+var testGitIdentity = utils.GitIdentity{Name: "test", Email: "test@example.com"}
+
 // fakeWorkflowService 只实现写侧用到的两个方法；其余方法由嵌入的（nil）接口提供，
 // 测试不会调用它们，这样避免为一个窄用途去实现 30+ 个方法。
 type fakeWorkflowService struct {
@@ -54,7 +57,7 @@ func TestWriteScriptFilesStampsVersion(t *testing.T) {
 			ScriptID: "s-1",
 			Script:   map[string]any{"name": "demo"},
 		},
-	})
+	}, testGitIdentity)
 
 	scriptDir := filepath.Join(t.TempDir(), "nested", "script")
 	if _, err := codec.WriteScriptFiles(context.Background(), exportcodec.ScriptWriteRequest{ScriptPK: 1, ScriptDir: scriptDir}); err != nil {
@@ -98,7 +101,7 @@ func TestWriteWorkflowFilesSnapshotsScripts(t *testing.T) {
 				{},
 			},
 		},
-	})
+	}, testGitIdentity)
 
 	workflowDir := filepath.Join(t.TempDir(), "workflow")
 	payload, err := codec.WriteWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{
@@ -147,7 +150,7 @@ func TestDecodeWorkflowRoundTrip(t *testing.T) {
 			WorkflowID: "wf-1",
 			Workflow:   map[string]any{"name": "demo", "dag_definition": map[string]any{"a": 1}},
 		},
-	})
+	}, testGitIdentity)
 	written, err := codec.WriteWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{
 		WorkflowDir: workflowDir,
 		BaseDir:     t.TempDir(),
@@ -185,7 +188,7 @@ func TestDecodeWorkflowRoundTrip(t *testing.T) {
 // TestWriteRequiresWorkflowService 校验未注入 WorkflowService 时给出明确错误，
 // 而不是在调用 service 时 nil panic。
 func TestWriteRequiresWorkflowService(t *testing.T) {
-	codec := NewCodec(nil)
+	codec := NewCodec(nil, testGitIdentity)
 	if _, err := codec.WriteScriptFiles(context.Background(), exportcodec.ScriptWriteRequest{ScriptDir: t.TempDir()}); err == nil {
 		t.Fatal("WriteScriptFiles without workflow service should fail")
 	}

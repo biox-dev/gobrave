@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/exportcodec"
 
@@ -58,76 +57,6 @@ func (h *WorkflowHandler) exportCodec(version string) (exportcodec.Codec, error)
 		return nil, fmt.Errorf("%w: %s", exportcodec.ErrUnsupportedVersion, version)
 	}
 	return codec, nil
-}
-
-// writeScriptJSONAndCommit 生成 script.json 写入脚本目录，并确保脚本目录是一个 git 仓库、
-// 把当前工作区改动提交为一个 commit（工作区无变更时不会产生空提交）。
-//
-// SaveScript 与 PublishScript 共用：保存时落盘并提交；发布时在 push 前再跑一次，
-// 保证 sourceScriptDir 仓库存在、工作区内容已提交且 script.json 一定存在。
-//
-// 文件名、内容与目录布局由导出格式 Codec 决定（见 exportCodecForWrite / exportcodec/v1）；
-// git 提交与格式版本无关，故留在 handler 这层复用。
-//
-// scriptPK 是 script 表主键（int64），scriptDir 是脚本目录绝对路径。
-func (h *WorkflowHandler) writeScriptJSONAndCommit(ctx context.Context, scriptPK int64, scriptDir, commitMessage string) error {
-	codec, err := h.exportCodecForWrite()
-	if err != nil {
-		return err
-	}
-	if _, err := codec.WriteScriptFiles(ctx, exportcodec.ScriptWriteRequest{
-		ScriptPK:  scriptPK,
-		ScriptDir: scriptDir,
-	}); err != nil {
-		return err
-	}
-	return h.commitDirChanges(scriptDir, commitMessage)
-}
-
-// writeWorkflowJSONAndCommit 按导出格式 Codec 生成 workflow.json 写入 workflow 目录，
-// 同时按该版本的目录布局把 workflow 引用的脚本快照到 workflow 目录内
-// （v1 为 <workflowDir>/script/<scriptID>，排除脚本目录自身的 .git），
-// 最后确保 workflow 目录是一个 git 仓库并把当前工作区改动提交为一个 commit。
-//
-// SaveWorkflow 与 PublishWorkflow 共用：保存时落盘并提交；发布时在 push 前再跑一次，
-// 保证 sourceWorkflowDir 仓库存在、工作区内容已提交且 workflow.json / 脚本文件都在。
-//
-// workflowPK 是 workflow 表主键（int64），projectID 是 project.project_id（字符串）。
-func (h *WorkflowHandler) writeWorkflowJSONAndCommit(ctx context.Context, workflowPK int64, projectID, workflowDir, commitMessage string) error {
-	baseDir := h.storageBaseDir()
-	if baseDir == "" {
-		return stderrs.New("storage base dir is not configured")
-	}
-
-	codec, err := h.exportCodecForWrite()
-	if err != nil {
-		return err
-	}
-	if _, err := codec.WriteWorkflowFiles(ctx, exportcodec.WorkflowWriteRequest{
-		WorkflowPK:  workflowPK,
-		ProjectID:   projectID,
-		BaseDir:     baseDir,
-		WorkflowDir: workflowDir,
-	}); err != nil {
-		return err
-	}
-	return h.commitDirChanges(workflowDir, commitMessage)
-}
-
-// commitDirChanges 确保 dir 是一个 git 仓库（不存在则初始化，默认分支 main），
-// 并把当前工作区改动提交为一个 commit（无变更时不会产生空提交）。
-//
-// 与导出格式版本无关（任何版本的产物都只是目录里的文件），故由两个 writeXxxAndCommit 共用。
-func (h *WorkflowHandler) commitDirChanges(dir, commitMessage string) error {
-	repo, err := utils.EnsureGitRepo(dir)
-	if err != nil {
-		return fmt.Errorf("failed to init git repository %s: %w", dir, err)
-	}
-	gitUser, gitEmail := config.ResolveGitIdentity(h.cfg)
-	if _, err := utils.CommitAll(repo, commitMessage, utils.GitIdentity{Name: gitUser, Email: gitEmail}); err != nil {
-		return fmt.Errorf("failed to commit changes in %s: %w", dir, err)
-	}
-	return nil
 }
 
 type PublishWorkflowRequest struct {
@@ -243,10 +172,21 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		return
 	}
 
-	// workflow 目录是发布的数据源：workflow.json 与脚本目录快照由 writeWorkflowJSONAndCommit
-	// 统一生成并提交，再 push 到 store 裸仓库。
+	// workflow 目录是发布的数据源：workflow.json 与脚本目录快照由 Codec.WriteWorkflowFiles
+	// 统一生成、落盘并提交，再 push 到 store 裸仓库。
 	workflowSourceDir := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
-	if err := h.writeWorkflowJSONAndCommit(c.Request.Context(), workflow.ID, project.ProjectID, workflowSourceDir, fmt.Sprintf("publish workflow %s", workflow.WorkflowID)); err != nil {
+	codec, err := h.exportCodecForWrite()
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
+		return
+	}
+	if _, err := codec.WriteWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
+		WorkflowPK:    workflow.ID,
+		ProjectID:     project.ProjectID,
+		BaseDir:       h.storageBaseDir(),
+		WorkflowDir:   workflowSourceDir,
+		CommitMessage: fmt.Sprintf("publish workflow %s", workflow.WorkflowID),
+	}); err != nil {
 		if stderrs.Is(err, interfaces.ErrInvalidDagDefinitionJSON) {
 			c.Error(errors.NewValidationError("dag_definition is not valid JSON format"))
 			return
@@ -308,7 +248,7 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		return
 	}
 
-	// 脚本目录是发布的数据源：script.json 与 git 提交由 writeScriptJSONAndCommit
+	// 脚本目录是发布的数据源：script.json 与 git 提交由 Codec.WriteScriptFiles
 	// 在 push 前统一生成，这里不再校验文件是否存在。
 	sourceScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
 
@@ -393,7 +333,16 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 
 	// 每次 push 前重新生成 script.json 并提交脚本目录改动，
 	// 确保 sourceScriptDir 仓库存在、工作区内容已提交且包含最新 script.json。
-	if err := h.writeScriptJSONAndCommit(c.Request.Context(), script.ID, sourceScriptDir, fmt.Sprintf("publish script %s", script.ScriptID)); err != nil {
+	codec, err := h.exportCodecForWrite()
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
+		return
+	}
+	if _, err := codec.WriteScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
+		ScriptPK:      script.ID,
+		ScriptDir:     sourceScriptDir,
+		CommitMessage: fmt.Sprintf("publish script %s", script.ScriptID),
+	}); err != nil {
 		c.Error(errors.NewInternalServerError("failed to prepare script files for publish").WithDetails(err.Error()))
 		return
 	}
@@ -416,51 +365,68 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 	})
 }
 
-// installContainerAssets 按导出内容创建/更新容器镜像与模板，返回处理的镜像数与模板数。
+// installContainerAssets 按导出内容创建/更新容器镜像、运行配置与绑定行，返回各自处理的数量。
 //
 // 导出格式（GenerateScriptJSONByScriptID / GenerateWorkflowJSONByWorkflowID）把容器资产拆成
-// 两个独立列表：container_images 是镜像本体（按镜像主键去重），container_templates 是模板
-// （按模板主键去重，只通过 image_id 引用镜像）。安装时：
-//  1. 先按主键 upsert 镜像：模板要引用它，且 service 层创建/更新模板时会校验镜像存在；
-//  2. 再按主键 upsert 模板：脚本里的 container_template_id 引用因此仍然指向同一个模板主键。
+// 三个独立列表：container_images 是镜像本体，container_template_specs 是共享运行配置
+// （ContainerTemplateSpec），container_template_definitions 是「运行配置 × 镜像」绑定行
+// （ContainerTemplateDefinition：spec_id 指向配置、image_id 指向镜像）。脚本的
+// container_template_id 引用的就是绑定行主键，因此安装顺序必须是：
+//  1. 先按主键 upsert 镜像：绑定行要引用它，且 service 层会校验镜像存在；
+//  2. 再按主键 upsert 运行配置：绑定行的 spec_id 引用它；
+//  3. 最后按主键 upsert 绑定行：主键原样保留，脚本的 container_template_id 引用因此仍然成立。
 //
-// 「有 id 且已存在」→ 更新；「有 id 但不存在」→ 新增；id 为空视为导出文件损坏直接报错
-// （id 是模板/镜像/脚本之间唯一的引用键，随便补一个新 id 会让引用断链）。
-func (h *WorkflowHandler) installContainerAssets(ctx context.Context, imageMaps, templateMaps []map[string]any) (int, int, error) {
-	if len(imageMaps) == 0 && len(templateMaps) == 0 {
-		return 0, 0, nil
+// 三个列表都只做「按主键 upsert」：「有 id 且已存在」→ 更新；「有 id 但不存在」→ 新增；
+// 导出文件里没有的本地行保持不动（安装不会删除本地已有数据）。
+// id 为空视为导出文件损坏直接报错（id 是这些实体之间唯一的引用键，随便补一个新 id 会让引用断链）。
+func (h *WorkflowHandler) installContainerAssets(ctx context.Context, imageMaps, specMaps, definitionMaps []map[string]any) (int, int, int, error) {
+	if len(imageMaps) == 0 && len(specMaps) == 0 && len(definitionMaps) == 0 {
+		return 0, 0, 0, nil
 	}
 	if h.containerService == nil {
-		return 0, 0, stderrs.New("container service is not configured")
+		return 0, 0, 0, stderrs.New("container service is not configured")
 	}
 
 	for _, imageMap := range imageMaps {
 		imageExport := &types.ContainerImageExport{}
 		if err := decodeExportMap(imageMap, imageExport); err != nil {
-			return 0, 0, fmt.Errorf("invalid container image in export file: %w", err)
+			return 0, 0, 0, fmt.Errorf("invalid container image in export file: %w", err)
 		}
 		if imageExport.ID == 0 {
-			return 0, 0, stderrs.New("container image id is required in export file")
+			return 0, 0, 0, stderrs.New("container image id is required in export file")
 		}
 		if err := h.upsertContainerImage(ctx, imageExport); err != nil {
-			return 0, 0, fmt.Errorf("failed to install container image %d: %w", imageExport.ID, err)
+			return 0, 0, 0, fmt.Errorf("failed to install container image %d: %w", imageExport.ID, err)
 		}
 	}
 
-	for _, templateMap := range templateMaps {
-		template := &types.ContainerTemplate{}
-		if err := decodeExportMap(templateMap, template); err != nil {
-			return 0, 0, fmt.Errorf("invalid container template in export file: %w", err)
+	for _, specMap := range specMaps {
+		spec := &types.ContainerTemplateSpec{}
+		if err := decodeExportMap(specMap, spec); err != nil {
+			return 0, 0, 0, fmt.Errorf("invalid container template spec in export file: %w", err)
 		}
-		if template.ID == 0 {
-			return 0, 0, stderrs.New("container template id is required in export file")
+		if spec.ID == 0 {
+			return 0, 0, 0, stderrs.New("container template spec id is required in export file")
 		}
-		if err := h.upsertContainerTemplate(ctx, template); err != nil {
-			return 0, 0, fmt.Errorf("failed to install container template %d: %w", template.ID, err)
+		if err := h.upsertContainerTemplateSpec(ctx, spec); err != nil {
+			return 0, 0, 0, fmt.Errorf("failed to install container template spec %d: %w", spec.ID, err)
 		}
 	}
 
-	return len(imageMaps), len(templateMaps), nil
+	for _, definitionMap := range definitionMaps {
+		definition := &types.ContainerTemplateDefinition{}
+		if err := decodeExportMap(definitionMap, definition); err != nil {
+			return 0, 0, 0, fmt.Errorf("invalid container template definition in export file: %w", err)
+		}
+		if definition.ID == 0 {
+			return 0, 0, 0, stderrs.New("container template definition id is required in export file")
+		}
+		if err := h.upsertContainerTemplateDefinition(ctx, definition); err != nil {
+			return 0, 0, 0, fmt.Errorf("failed to install container template definition %d: %w", definition.ID, err)
+		}
+	}
+
+	return len(imageMaps), len(specMaps), len(definitionMaps), nil
 }
 
 // decodeExportMap 把导出文件里的 map 还原成强类型结构（与安装 workflow/script 体同一套做法）。
@@ -496,16 +462,29 @@ func (h *WorkflowHandler) upsertContainerImage(ctx context.Context, imageExport 
 	return h.containerService.UpdateContainerImage(ctx, item)
 }
 
-// upsertContainerTemplate 按主键更新模板，主键不存在则新增。
-// 模板的 image_id 指向导出文件里同一批 container_images 的主键，因此调用方必须先导入镜像。
-func (h *WorkflowHandler) upsertContainerTemplate(ctx context.Context, template *types.ContainerTemplate) error {
-	if _, err := h.containerService.GetContainerTemplateByID(ctx, template.ID); err != nil {
+// upsertContainerTemplateSpec 按主键更新共享运行配置，主键不存在则新增。
+// 导出结构不含时间字段，这里不动该配置的 created_at。
+func (h *WorkflowHandler) upsertContainerTemplateSpec(ctx context.Context, spec *types.ContainerTemplateSpec) error {
+	if _, err := h.containerService.GetContainerTemplateSpecByID(ctx, spec.ID); err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			return h.containerService.CreateContainerTemplate(ctx, template)
+			return h.containerService.CreateContainerTemplateSpec(ctx, spec)
 		}
 		return err
 	}
-	return h.containerService.UpdateContainerTemplate(ctx, template)
+	return h.containerService.UpdateContainerTemplateSpec(ctx, spec)
+}
+
+// upsertContainerTemplateDefinition 按主键更新「运行配置 × 镜像」绑定行，主键不存在则新增。
+// 绑定行的 spec_id / image_id 指向同一批 container_template_specs / container_images 的主键，
+// 因此调用方必须先导入镜像与运行配置（见 installContainerAssets 的顺序约定）。
+func (h *WorkflowHandler) upsertContainerTemplateDefinition(ctx context.Context, definition *types.ContainerTemplateDefinition) error {
+	if _, err := h.containerService.GetContainerTemplateDefinitionByID(ctx, definition.ID); err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			return h.containerService.CreateContainerTemplateDefinition(ctx, definition)
+		}
+		return err
+	}
+	return h.containerService.UpdateContainerTemplateDefinition(ctx, definition)
 }
 
 func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
@@ -592,9 +571,11 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 		return
 	}
 
-	// 先导入容器镜像与模板：脚本通过 container_template_id 引用模板、模板通过 image_id 引用镜像，
-	// 按主键 upsert 后这些引用在安装到当前 project 后依旧成立（见 installContainerAssets）。
-	installedImageCount, installedTemplateCount, assetErr := h.installContainerAssets(c.Request.Context(), payload.ContainerImages, payload.ContainerTemplates)
+	// 先导入容器镜像、运行配置与绑定行：脚本通过 container_template_id 引用绑定行，
+	// 绑定行的 spec_id / image_id 分别引用运行配置与镜像，按主键 upsert 后这些引用在
+	// 安装到当前 project 后依旧成立（见 installContainerAssets）。
+	installedImageCount, installedSpecCount, installedDefinitionCount, assetErr := h.installContainerAssets(
+		c.Request.Context(), payload.ContainerImages, payload.ContainerTemplateSpecs, payload.ContainerTemplateDefinitions)
 	if assetErr != nil {
 		c.Error(errors.NewInternalServerError("failed to install container images or templates").WithDetails(assetErr.Error()))
 		return
@@ -705,14 +686,14 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":                            "success",
-		"workflow_id":                        installWorkflow.WorkflowID,
-		"installed_workflow_id":              installWorkflow.ID,
-		"installed_script_count":             installedScriptCount,
-		"installed_container_image_count":    installedImageCount,
-		"installed_container_template_count": installedTemplateCount,
+		"message":                                       "success",
+		"workflow_id":                                   installWorkflow.WorkflowID,
+		"installed_workflow_id":                         installWorkflow.ID,
+		"installed_script_count":                        installedScriptCount,
+		"installed_container_image_count":               installedImageCount,
+		"installed_container_template_spec_count":       installedSpecCount,
+		"installed_container_template_definition_count": installedDefinitionCount,
 	})
-
 }
 
 func (h *WorkflowHandler) InstallScript(c *gin.Context) {
@@ -802,9 +783,11 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		return
 	}
 
-	// 先导入容器镜像与模板：脚本通过 container_template_id 引用模板、模板通过 image_id 引用镜像，
-	// 按主键 upsert 后这些引用在安装到当前 project 后依旧成立（见 installContainerAssets）。
-	installedImageCount, installedTemplateCount, assetErr := h.installContainerAssets(c.Request.Context(), payload.ContainerImages, payload.ContainerTemplates)
+	// 先导入容器镜像、运行配置与绑定行：脚本通过 container_template_id 引用绑定行，
+	// 绑定行的 spec_id / image_id 分别引用运行配置与镜像，按主键 upsert 后这些引用在
+	// 安装到当前 project 后依旧成立（见 installContainerAssets）。
+	installedImageCount, installedSpecCount, installedDefinitionCount, assetErr := h.installContainerAssets(
+		c.Request.Context(), payload.ContainerImages, payload.ContainerTemplateSpecs, payload.ContainerTemplateDefinitions)
 	if assetErr != nil {
 		c.Error(errors.NewInternalServerError("failed to install container images or templates").WithDetails(assetErr.Error()))
 		return
@@ -869,11 +852,12 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":                            "success",
-		"script_id":                          installScript.ScriptID,
-		"installed_script_id":                installScript.ID,
-		"installed_container_image_count":    installedImageCount,
-		"installed_container_template_count": installedTemplateCount,
+		"message":                         "success",
+		"script_id":                       installScript.ScriptID,
+		"installed_script_id":             installScript.ID,
+		"installed_container_image_count": installedImageCount,
+		"installed_container_template_spec_count":       installedSpecCount,
+		"installed_container_template_definition_count": installedDefinitionCount,
 	})
 }
 
