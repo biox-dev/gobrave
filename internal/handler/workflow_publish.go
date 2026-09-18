@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
@@ -365,128 +364,6 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 	})
 }
 
-// installContainerAssets 按导出内容创建/更新容器镜像、运行配置与绑定行，返回各自处理的数量。
-//
-// 导出格式（GenerateScriptJSONByScriptID / GenerateWorkflowJSONByWorkflowID）把容器资产拆成
-// 三个独立列表：container_images 是镜像本体，container_template_specs 是共享运行配置
-// （ContainerTemplateSpec），container_template_definitions 是「运行配置 × 镜像」绑定行
-// （ContainerTemplateDefinition：spec_id 指向配置、image_id 指向镜像）。脚本的
-// container_template_id 引用的就是绑定行主键，因此安装顺序必须是：
-//  1. 先按主键 upsert 镜像：绑定行要引用它，且 service 层会校验镜像存在；
-//  2. 再按主键 upsert 运行配置：绑定行的 spec_id 引用它；
-//  3. 最后按主键 upsert 绑定行：主键原样保留，脚本的 container_template_id 引用因此仍然成立。
-//
-// 三个列表都只做「按主键 upsert」：「有 id 且已存在」→ 更新；「有 id 但不存在」→ 新增；
-// 导出文件里没有的本地行保持不动（安装不会删除本地已有数据）。
-// id 为空视为导出文件损坏直接报错（id 是这些实体之间唯一的引用键，随便补一个新 id 会让引用断链）。
-func (h *WorkflowHandler) installContainerAssets(ctx context.Context, imageMaps, specMaps, definitionMaps []map[string]any) (int, int, int, error) {
-	if len(imageMaps) == 0 && len(specMaps) == 0 && len(definitionMaps) == 0 {
-		return 0, 0, 0, nil
-	}
-	if h.containerService == nil {
-		return 0, 0, 0, stderrs.New("container service is not configured")
-	}
-
-	for _, imageMap := range imageMaps {
-		imageExport := &types.ContainerImageExport{}
-		if err := decodeExportMap(imageMap, imageExport); err != nil {
-			return 0, 0, 0, fmt.Errorf("invalid container image in export file: %w", err)
-		}
-		if imageExport.ID == 0 {
-			return 0, 0, 0, stderrs.New("container image id is required in export file")
-		}
-		if err := h.upsertContainerImage(ctx, imageExport); err != nil {
-			return 0, 0, 0, fmt.Errorf("failed to install container image %d: %w", imageExport.ID, err)
-		}
-	}
-
-	for _, specMap := range specMaps {
-		spec := &types.ContainerTemplateSpec{}
-		if err := decodeExportMap(specMap, spec); err != nil {
-			return 0, 0, 0, fmt.Errorf("invalid container template spec in export file: %w", err)
-		}
-		if spec.ID == 0 {
-			return 0, 0, 0, stderrs.New("container template spec id is required in export file")
-		}
-		if err := h.upsertContainerTemplateSpec(ctx, spec); err != nil {
-			return 0, 0, 0, fmt.Errorf("failed to install container template spec %d: %w", spec.ID, err)
-		}
-	}
-
-	for _, definitionMap := range definitionMaps {
-		definition := &types.ContainerTemplateDefinition{}
-		if err := decodeExportMap(definitionMap, definition); err != nil {
-			return 0, 0, 0, fmt.Errorf("invalid container template definition in export file: %w", err)
-		}
-		if definition.ID == 0 {
-			return 0, 0, 0, stderrs.New("container template definition id is required in export file")
-		}
-		if err := h.upsertContainerTemplateDefinition(ctx, definition); err != nil {
-			return 0, 0, 0, fmt.Errorf("failed to install container template definition %d: %w", definition.ID, err)
-		}
-	}
-
-	return len(imageMaps), len(specMaps), len(definitionMaps), nil
-}
-
-// decodeExportMap 把导出文件里的 map 还原成强类型结构（与安装 workflow/script 体同一套做法）。
-func decodeExportMap(item map[string]any, out any) error {
-	raw, err := json.Marshal(item)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(raw, out)
-}
-
-// upsertContainerImage 按主键更新镜像，主键不存在则新增。
-// 导出结构（ContainerImageExport）不含时间字段，这里也不动镜像的 created_at。
-func (h *WorkflowHandler) upsertContainerImage(ctx context.Context, imageExport *types.ContainerImageExport) error {
-	item := &types.ContainerImage{
-		ID:          imageExport.ID,
-		Name:        imageExport.Name,
-		FullName:    imageExport.FullName,
-		Description: imageExport.Description,
-		Size:        imageExport.Size,
-		PullPolicy:  imageExport.PullPolicy,
-	}
-	if strings.TrimSpace(item.PullPolicy) == "" {
-		item.PullPolicy = types.PullPolicyIfNotPresent
-	}
-
-	if _, err := h.containerService.GetContainerImageByID(ctx, item.ID); err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			return h.containerService.CreateContainerImage(ctx, item)
-		}
-		return err
-	}
-	return h.containerService.UpdateContainerImage(ctx, item)
-}
-
-// upsertContainerTemplateSpec 按主键更新共享运行配置，主键不存在则新增。
-// 导出结构不含时间字段，这里不动该配置的 created_at。
-func (h *WorkflowHandler) upsertContainerTemplateSpec(ctx context.Context, spec *types.ContainerTemplateSpec) error {
-	if _, err := h.containerService.GetContainerTemplateSpecByID(ctx, spec.ID); err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			return h.containerService.CreateContainerTemplateSpec(ctx, spec)
-		}
-		return err
-	}
-	return h.containerService.UpdateContainerTemplateSpec(ctx, spec)
-}
-
-// upsertContainerTemplateDefinition 按主键更新「运行配置 × 镜像」绑定行，主键不存在则新增。
-// 绑定行的 spec_id / image_id 指向同一批 container_template_specs / container_images 的主键，
-// 因此调用方必须先导入镜像与运行配置（见 installContainerAssets 的顺序约定）。
-func (h *WorkflowHandler) upsertContainerTemplateDefinition(ctx context.Context, definition *types.ContainerTemplateDefinition) error {
-	if _, err := h.containerService.GetContainerTemplateDefinitionByID(ctx, definition.ID); err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			return h.containerService.CreateContainerTemplateDefinition(ctx, definition)
-		}
-		return err
-	}
-	return h.containerService.UpdateContainerTemplateDefinition(ctx, definition)
-}
-
 func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	userID, ok := getCurrentUserID(c)
 	if !ok {
@@ -550,10 +427,10 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 		return
 	}
 
-	// 从同步后的 workflow 目录读取 workflow.json 导入数据库。
-	// 文件顶层 version 决定用哪套 Codec 解析（见 readWorkflowJSONFromDir）；
-	// 同一个 Codec 也用来解释该版本的目录布局（脚本快照目录）。
-	codec, payload, readErr := h.readWorkflowJSONFromDir(targetWorkflowDir)
+	// 从同步后的 workflow 目录读取 workflow.json 原始内容，按文件顶层 version 取读侧 Codec。
+	// 解析、容器资产与 workflow/script 落库、脚本快照还原都在 Codec.InstallWorkflow 内完成
+	// （它内部调用 DecodeWorkflow），这样安装逻辑与格式版本绑定在一起。
+	codec, raw, readErr := h.readWorkflowRawFromDir(targetWorkflowDir)
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
 			c.Error(errors.NewNotFoundError("workflow.json not found in store"))
@@ -566,133 +443,34 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to read workflow json").WithDetails(readErr.Error()))
 		return
 	}
-	if payload.WorkflowID == "" {
-		c.Error(errors.NewValidationError("workflow_id is required in workflow.json"))
-		return
-	}
 
-	// 先导入容器镜像、运行配置与绑定行：脚本通过 container_template_id 引用绑定行，
-	// 绑定行的 spec_id / image_id 分别引用运行配置与镜像，按主键 upsert 后这些引用在
-	// 安装到当前 project 后依旧成立（见 installContainerAssets）。
-	installedImageCount, installedSpecCount, installedDefinitionCount, assetErr := h.installContainerAssets(
-		c.Request.Context(), payload.ContainerImages, payload.ContainerTemplateSpecs, payload.ContainerTemplateDefinitions)
-	if assetErr != nil {
-		c.Error(errors.NewInternalServerError("failed to install container images or templates").WithDetails(assetErr.Error()))
-		return
-	}
-
-	wfBytes, err := json.Marshal(payload.Workflow)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to decode workflow body").WithDetails(err.Error()))
-		return
-	}
-	installWorkflow := &types.Workflow{}
-	if err := json.Unmarshal(wfBytes, installWorkflow); err != nil {
-		c.Error(errors.NewInternalServerError("failed to parse workflow body").WithDetails(err.Error()))
-		return
-	}
-
-	installWorkflow.ID = 0
-	installWorkflow.ProjectID = project.ID
-	installWorkflow.StoreID = store.ID
-	// installWorkflow.WorkflowID = payload.WorkflowID
-	if strings.TrimSpace(store.URL) != "" {
-		installWorkflow.URL = store.URL
-	}
-	// if strings.TrimSpace(store.Version) != "" {
-	// 	installWorkflow.Version = store.Version
-	// }
-	if strings.TrimSpace(store.Message) != "" {
-		installWorkflow.Message = store.Message
-	}
-	// 修改创建时间为当前时间，避免覆盖原有的创建时间
-	installWorkflow.CreatedAt = utils.GetCurrentTime()
-	installWorkflow.UpdatedAt = utils.GetCurrentTime()
-
-	existingWorkflow, err := h.workflowService.ExistsWorkflowInProjectByWorkflowID(c.Request.Context(), project.ID, payload.WorkflowID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to check existing workflow").WithDetails(err.Error()))
-		return
-	}
-	if existingWorkflow != nil {
-		installWorkflow.ID = existingWorkflow.ID
-		if err := h.workflowService.UpdateWorkflow(c.Request.Context(), installWorkflow); err != nil {
-			c.Error(errors.NewInternalServerError("failed to update installed workflow").WithDetails(err.Error()))
+	result, installErr := codec.InstallWorkflow(c.Request.Context(), exportcodec.WorkflowInstallRequest{
+		Raw:          raw,
+		ProjectID:    project.ID,
+		ProjectCode:  project.ProjectID,
+		StoreID:      store.ID,
+		StoreURL:     store.URL,
+		StoreMessage: store.Message,
+		BaseDir:      h.storageBaseDir(),
+		WorkflowDir:  targetWorkflowDir,
+	})
+	if installErr != nil {
+		if stderrs.Is(installErr, exportcodec.ErrWorkflowIDRequired) {
+			c.Error(errors.NewValidationError("workflow_id is required in workflow.json"))
 			return
 		}
-	} else {
-
-		if err := h.workflowService.CreateWorkflow(c.Request.Context(), installWorkflow); err != nil {
-			c.Error(errors.NewInternalServerError("failed to install workflow").WithDetails(err.Error()))
-			return
-		}
-	}
-
-	installedScriptCount := 0
-	for _, scriptMap := range payload.Scripts {
-		scriptBytes, marshalErr := json.Marshal(scriptMap)
-		if marshalErr != nil {
-			c.Error(errors.NewInternalServerError("failed to decode script body").WithDetails(marshalErr.Error()))
-			return
-		}
-		installScript := &types.Script{}
-		if unmarshalErr := json.Unmarshal(scriptBytes, installScript); unmarshalErr != nil {
-			c.Error(errors.NewInternalServerError("failed to parse script body").WithDetails(unmarshalErr.Error()))
-			return
-		}
-
-		installScript.ID = 0
-		installScript.ProjectID = project.ID
-		installScript.StoreID = store.ID
-		if installScript.ComponentType == "" {
-			installScript.ComponentType = "script"
-		}
-
-		existingScript, err := h.workflowService.ExistsScriptInProjectByScriptID(c.Request.Context(), project.ID, installScript.ScriptID)
-		if err != nil {
-			c.Error(errors.NewInternalServerError("failed to check existing script").WithDetails(err.Error()))
-			return
-		}
-
-		if existingScript != nil {
-			installScript.ID = existingScript.ID
-			if err := h.workflowService.UpdateScript(c.Request.Context(), installScript); err != nil {
-				c.Error(errors.NewInternalServerError("failed to update installed script").WithDetails(err.Error()))
-				return
-			}
-		} else {
-			if err := h.workflowService.CreateScript(c.Request.Context(), installScript); err != nil {
-				c.Error(errors.NewInternalServerError("failed to install script").WithDetails(err.Error()))
-				return
-			}
-		}
-
-		scriptID := strings.TrimSpace(installScript.ScriptID)
-		if scriptID == "" {
-			scriptID = codec.ScriptIDFromExportScript(scriptMap)
-		}
-		if scriptID != "" {
-			// 脚本文件随 workflow 目录一起从 store 同步到该版本约定的快照目录
-			// （v1 为 <workflowDir>/script/<scriptID>），这里再原样还原到脚本目录。
-			sourceScriptDir := codec.ScriptSnapshotDir(targetWorkflowDir, scriptID)
-			targetScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, scriptID)
-			if copyErr := utils.CopyDirReplace(sourceScriptDir, targetScriptDir); copyErr != nil {
-				c.Error(errors.NewInternalServerError("failed to install script files").WithDetails(copyErr.Error()))
-				return
-			}
-		}
-
-		installedScriptCount++
+		c.Error(errors.NewInternalServerError("failed to install workflow").WithDetails(installErr.Error()))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":                                       "success",
-		"workflow_id":                                   installWorkflow.WorkflowID,
-		"installed_workflow_id":                         installWorkflow.ID,
-		"installed_script_count":                        installedScriptCount,
-		"installed_container_image_count":               installedImageCount,
-		"installed_container_template_spec_count":       installedSpecCount,
-		"installed_container_template_definition_count": installedDefinitionCount,
+		"workflow_id":                                   result.WorkflowID,
+		"installed_workflow_id":                         result.InstalledWorkflowID,
+		"installed_script_count":                        result.InstalledScriptCount,
+		"installed_container_image_count":               result.ContainerImageCount,
+		"installed_container_template_spec_count":       result.ContainerTemplateSpecCount,
+		"installed_container_template_definition_count": result.ContainerTemplateDefinitionCount,
 	})
 }
 
@@ -763,9 +541,9 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		return
 	}
 
-	// 从同步后的脚本目录读取 script.json 导入数据库。
-	// 文件顶层 version 决定用哪套 Codec 解析（见 readScriptJSONFromDir）。
-	_, payload, readErr := h.readScriptJSONFromDir(targetScriptDir)
+	// 从同步后的脚本目录读取 script.json 原始内容，按文件顶层 version 取读侧 Codec。
+	// 解析与落库（容器资产 + script 行）都在 Codec.InstallScript 内完成（它内部调用 DecodeScript）。
+	codec, raw, readErr := h.readScriptRawFromDir(targetScriptDir)
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
 			c.Error(errors.NewNotFoundError("script.json not found in store"))
@@ -778,86 +556,32 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to read script json").WithDetails(readErr.Error()))
 		return
 	}
-	if payload.ScriptID == "" {
-		c.Error(errors.NewValidationError("script_id is required in script.json"))
-		return
-	}
 
-	// 先导入容器镜像、运行配置与绑定行：脚本通过 container_template_id 引用绑定行，
-	// 绑定行的 spec_id / image_id 分别引用运行配置与镜像，按主键 upsert 后这些引用在
-	// 安装到当前 project 后依旧成立（见 installContainerAssets）。
-	installedImageCount, installedSpecCount, installedDefinitionCount, assetErr := h.installContainerAssets(
-		c.Request.Context(), payload.ContainerImages, payload.ContainerTemplateSpecs, payload.ContainerTemplateDefinitions)
-	if assetErr != nil {
-		c.Error(errors.NewInternalServerError("failed to install container images or templates").WithDetails(assetErr.Error()))
-		return
-	}
-
-	scriptBytes, err := json.Marshal(payload.Script)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to decode script body").WithDetails(err.Error()))
-		return
-	}
-	installScript := &types.Script{}
-	if err := json.Unmarshal(scriptBytes, installScript); err != nil {
-		c.Error(errors.NewInternalServerError("failed to parse script body").WithDetails(err.Error()))
-		return
-	}
-
-	installScript.ID = 0
-	installScript.ScriptID = scriptID
-	installScript.ProjectID = project.ID
-	installScript.StoreID = store.ID
-	if installScript.ComponentType == "" {
-		installScript.ComponentType = "script"
-	}
-	if strings.TrimSpace(store.URL) != "" {
-		installScript.URL = store.URL
-	}
-	// if strings.TrimSpace(store.Version) != "" {
-	// 	installScript.Version = store.Version
-	// }
-	if strings.TrimSpace(store.Message) != "" {
-		installScript.Message = store.Message
-	}
-	installScript.CreatedAt = utils.GetCurrentTime()
-	installScript.UpdatedAt = utils.GetCurrentTime()
-
-	if createMode {
-		installScript.ComponentName = fmt.Sprintf("%s_Copy", installScript.ComponentName)
-		installScript.StoreID = 0
-		if err := h.workflowService.CreateScript(c.Request.Context(), installScript); err != nil {
-			c.Error(errors.NewInternalServerError("failed to install script").WithDetails(err.Error()))
+	result, installErr := codec.InstallScript(c.Request.Context(), exportcodec.ScriptInstallRequest{
+		Raw:          raw,
+		ProjectID:    project.ID,
+		StoreID:      store.ID,
+		StoreURL:     store.URL,
+		StoreMessage: store.Message,
+		ScriptID:     scriptID,
+		CreateMode:   createMode,
+	})
+	if installErr != nil {
+		if stderrs.Is(installErr, exportcodec.ErrScriptIDRequired) {
+			c.Error(errors.NewValidationError("script_id is required in script.json"))
 			return
 		}
-	} else {
-		existingScript, err := h.workflowService.ExistsScriptInProjectByScriptID(c.Request.Context(), project.ID, scriptID)
-		if err != nil {
-			c.Error(errors.NewInternalServerError("failed to check existing script").WithDetails(err.Error()))
-			return
-		}
-
-		if existingScript != nil {
-			installScript.ID = existingScript.ID
-			if err := h.workflowService.UpdateScript(c.Request.Context(), installScript); err != nil {
-				c.Error(errors.NewInternalServerError("failed to update installed script").WithDetails(err.Error()))
-				return
-			}
-		} else {
-			if err := h.workflowService.CreateScript(c.Request.Context(), installScript); err != nil {
-				c.Error(errors.NewInternalServerError("failed to install script").WithDetails(err.Error()))
-				return
-			}
-		}
+		c.Error(errors.NewInternalServerError("failed to install script").WithDetails(installErr.Error()))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":                         "success",
-		"script_id":                       installScript.ScriptID,
-		"installed_script_id":             installScript.ID,
-		"installed_container_image_count": installedImageCount,
-		"installed_container_template_spec_count":       installedSpecCount,
-		"installed_container_template_definition_count": installedDefinitionCount,
+		"script_id":                       result.ScriptID,
+		"installed_script_id":             result.InstalledScriptID,
+		"installed_container_image_count": result.ContainerImageCount,
+		"installed_container_template_spec_count":       result.ContainerTemplateSpecCount,
+		"installed_container_template_definition_count": result.ContainerTemplateDefinitionCount,
 	})
 }
 
@@ -881,10 +605,11 @@ func (h *WorkflowHandler) readScriptIDFromStoreDir(storeDir string) string {
 	return strings.TrimSpace(payload.ScriptID)
 }
 
-// readScriptJSONFromDir 读取脚本目录下的 script.json，按文件顶层 version 从 Registry 取 Codec 解析。
+// readScriptRawFromDir 读取脚本目录下的 script.json 原始内容，并按文件顶层 version 取读侧 Codec。
 //
-// 把命中的 Codec 一并返回：安装侧还要用它解释该版本的目录布局。
-func (h *WorkflowHandler) readScriptJSONFromDir(scriptDir string) (exportcodec.Codec, *types.ScriptJSONExportResponse, error) {
+// 只读取不解析：解析与落库由 Codec.InstallScript 完成（它内部调用 DecodeScript），
+// 避免同一次安装把文件解析两遍。
+func (h *WorkflowHandler) readScriptRawFromDir(scriptDir string) (exportcodec.Codec, []byte, error) {
 	content, err := os.ReadFile(filepath.Join(scriptDir, exportcodec.ScriptJSONFileName))
 	if err != nil {
 		return nil, nil, err
@@ -893,11 +618,7 @@ func (h *WorkflowHandler) readScriptJSONFromDir(scriptDir string) (exportcodec.C
 	if err != nil {
 		return nil, nil, err
 	}
-	payload, err := codec.DecodeScript(content)
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid %s: %w", exportcodec.ScriptJSONFileName, err)
-	}
-	return codec, payload, nil
+	return codec, content, nil
 }
 
 // readWorkflowIDFromStoreDir 读取 store 仓库内 workflow.json 的 workflow_id。
@@ -920,10 +641,10 @@ func (h *WorkflowHandler) readWorkflowIDFromStoreDir(storeDir string) string {
 	return strings.TrimSpace(payload.WorkflowID)
 }
 
-// readWorkflowJSONFromDir 读取 workflow 目录下的 workflow.json，按文件顶层 version 从 Registry 取 Codec 解析。
+// readWorkflowRawFromDir 读取 workflow 目录下的 workflow.json 原始内容，并按文件顶层 version 取读侧 Codec。
 //
-// 把命中的 Codec 一并返回：安装侧还要用它解释该版本的目录布局（脚本快照目录）。
-func (h *WorkflowHandler) readWorkflowJSONFromDir(workflowDir string) (exportcodec.Codec, *types.WorkflowJSONExportResponse, error) {
+// 只读取不解析：解析与落库由 Codec.InstallWorkflow 完成（它内部调用 DecodeWorkflow）。
+func (h *WorkflowHandler) readWorkflowRawFromDir(workflowDir string) (exportcodec.Codec, []byte, error) {
 	content, err := os.ReadFile(filepath.Join(workflowDir, exportcodec.WorkflowJSONFileName))
 	if err != nil {
 		return nil, nil, err
@@ -932,11 +653,7 @@ func (h *WorkflowHandler) readWorkflowJSONFromDir(workflowDir string) (exportcod
 	if err != nil {
 		return nil, nil, err
 	}
-	payload, err := codec.DecodeWorkflow(content)
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid %s: %w", exportcodec.WorkflowJSONFileName, err)
-	}
-	return codec, payload, nil
+	return codec, content, nil
 }
 
 // readStoreExportJSON 读取 store 仓库 HEAD 提交里的导出文件（workflow.json / script.json）内容。

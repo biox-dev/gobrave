@@ -1,4 +1,4 @@
-package handler
+package v1
 
 import (
 	"context"
@@ -110,7 +110,7 @@ func (f *fakeContainerService) UpdateContainerTemplateDefinition(_ context.Conte
 func TestInstallContainerAssetsUpsertsByID(t *testing.T) {
 	svc := newFakeContainerService()
 	svc.images[101] = &types.ContainerImage{ID: 101, Name: "old-101", PullPolicy: types.PullPolicyAlways}
-	h := &WorkflowHandler{containerService: svc}
+	c := &Codec{containerService: svc}
 
 	images := []map[string]any{
 		{"id": "101", "name": "new-101", "full_name": "docker.io/a/b:1", "pull_policy": types.PullPolicyNever},
@@ -123,7 +123,7 @@ func TestInstallContainerAssetsUpsertsByID(t *testing.T) {
 		{"id": "200", "spec_id": "300", "image_id": "100", "r_library_path": "/lib/R"},
 	}
 
-	imageCount, specCount, definitionCount, err := h.installContainerAssets(context.Background(), images, specs, definitions)
+	imageCount, specCount, definitionCount, err := c.installContainerAssets(context.Background(), images, specs, definitions)
 	if err != nil {
 		t.Fatalf("installContainerAssets() error = %v", err)
 	}
@@ -160,7 +160,7 @@ func TestInstallContainerAssetsUpsertsByID(t *testing.T) {
 
 	// 再跑一次：镜像、运行配置与绑定行都已存在，必须走更新而不是重复新增。
 	svc.calls = nil
-	if _, _, _, err := h.installContainerAssets(context.Background(), images, specs, definitions); err != nil {
+	if _, _, _, err := c.installContainerAssets(context.Background(), images, specs, definitions); err != nil {
 		t.Fatalf("second installContainerAssets() error = %v", err)
 	}
 	wantSecond := []string{"update-image:101", "update-image:100", "update-spec:300", "update-definition:200"}
@@ -179,24 +179,24 @@ func TestInstallContainerAssetsUpsertsByID(t *testing.T) {
 func TestInstallContainerAssetsRequiresID(t *testing.T) {
 	// 老产物没有 container_images / container_template_specs / container_template_definitions 字段：
 	// 空列表直接放行，即使 containerService 未装配也不报错。
-	if _, _, _, err := (&WorkflowHandler{}).installContainerAssets(context.Background(), nil, nil, nil); err != nil {
+	if _, _, _, err := (&Codec{}).installContainerAssets(context.Background(), nil, nil, nil); err != nil {
 		t.Fatalf("empty assets error = %v, want nil", err)
 	}
 
 	// 有内容但没有 containerService（DI 未装配）时不能静默跳过。
-	if _, _, _, err := (&WorkflowHandler{}).installContainerAssets(context.Background(), nil, nil, []map[string]any{{"id": "1"}}); err == nil {
+	if _, _, _, err := (&Codec{}).installContainerAssets(context.Background(), nil, nil, []map[string]any{{"id": "1"}}); err == nil {
 		t.Fatal("nil container service: want error, got nil")
 	}
 
 	svc := newFakeContainerService()
-	h := &WorkflowHandler{containerService: svc}
-	if _, _, _, err := h.installContainerAssets(context.Background(), nil, []map[string]any{{"name": "no-id"}}, nil); err == nil {
+	c := &Codec{containerService: svc}
+	if _, _, _, err := c.installContainerAssets(context.Background(), nil, []map[string]any{{"name": "no-id"}}, nil); err == nil {
 		t.Fatal("spec without id: want error, got nil")
 	}
-	if _, _, _, err := h.installContainerAssets(context.Background(), nil, nil, []map[string]any{{"name": "no-id"}}); err == nil {
+	if _, _, _, err := c.installContainerAssets(context.Background(), nil, nil, []map[string]any{{"name": "no-id"}}); err == nil {
 		t.Fatal("definition without id: want error, got nil")
 	}
-	if _, _, _, err := h.installContainerAssets(context.Background(), []map[string]any{{"name": "no-id"}}, nil, nil); err == nil {
+	if _, _, _, err := c.installContainerAssets(context.Background(), []map[string]any{{"name": "no-id"}}, nil, nil); err == nil {
 		t.Fatal("image without id: want error, got nil")
 	}
 	if len(svc.calls) != 0 {
@@ -207,9 +207,9 @@ func TestInstallContainerAssetsRequiresID(t *testing.T) {
 // TestInstallContainerAssetsFailsWhenImageMissing 覆盖「绑定行引用的镜像不在导出列表里」：
 // 镜像集合缺失时绑定行导入必须失败（保留 service 层不变量），而不是静默写入悬空引用。
 func TestInstallContainerAssetsFailsWhenImageMissing(t *testing.T) {
-	h := &WorkflowHandler{containerService: newFakeContainerService()}
+	c := &Codec{containerService: newFakeContainerService()}
 
-	_, _, _, err := h.installContainerAssets(context.Background(),
+	_, _, _, err := c.installContainerAssets(context.Background(),
 		nil,
 		[]map[string]any{{"id": "300", "name": "spec-300"}},
 		[]map[string]any{{"id": "200", "spec_id": "300", "image_id": "999"}},

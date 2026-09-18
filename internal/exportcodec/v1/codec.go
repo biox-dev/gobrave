@@ -37,19 +37,22 @@ const ScriptSnapshotDirName = "script"
 
 // Codec 是 v1 格式的策略实现。
 //
-// 直接持有 WorkflowService：写侧用它按主键生成导出 payload（读侧不会用到，
-// 但仍由 DI 容器注入同一个实例，见 internal/container/container.go）；
+// 直接持有 WorkflowService：写侧用它按主键生成导出 payload，安装侧用它 upsert
+// workflow / script 行（读侧的 DecodeXxx 不会用到）。
+// containerService 只在安装侧使用：按主键 upsert 容器镜像 / 运行配置 / 绑定行。
 // gitIdentity 是落盘后提交使用的身份，装配时由 config.ResolveGitIdentity 解析后注入。
 type Codec struct {
-	workflowService interfaces.WorkflowService
-	gitIdentity     utils.GitIdentity
+	workflowService  interfaces.WorkflowService
+	containerService interfaces.ContainerService
+	gitIdentity      utils.GitIdentity
 }
 
 var _ exportcodec.Codec = (*Codec)(nil)
 
-// NewCodec 构造 v1 Codec。gitIdentity 用于 WriteXxxFiles 落盘后的 git 提交。
-func NewCodec(workflowService interfaces.WorkflowService, gitIdentity utils.GitIdentity) *Codec {
-	return &Codec{workflowService: workflowService, gitIdentity: gitIdentity}
+// NewCodec 构造 v1 Codec。gitIdentity 用于 WriteXxxFiles 落盘后的 git 提交；
+// containerService 用于 InstallXxx 落库容器资产（不需要时可为 nil）。
+func NewCodec(workflowService interfaces.WorkflowService, containerService interfaces.ContainerService, gitIdentity utils.GitIdentity) *Codec {
+	return &Codec{workflowService: workflowService, containerService: containerService, gitIdentity: gitIdentity}
 }
 
 // Version 返回 v1 的格式版本号。

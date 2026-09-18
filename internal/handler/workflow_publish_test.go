@@ -83,9 +83,13 @@ func TestReadInstalledJSONFromDir(t *testing.T) {
 	workflowDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workflowDir, exportcodec.WorkflowJSONFileName), `{"workflow_id":"wf-1","workflow":{},"scripts":[]}`)
 
-	_, workflowPayload, err := h.readWorkflowJSONFromDir(workflowDir)
+	workflowCodec, workflowRaw, err := h.readWorkflowRawFromDir(workflowDir)
 	if err != nil {
-		t.Fatalf("readWorkflowJSONFromDir: %v", err)
+		t.Fatalf("readWorkflowRawFromDir: %v", err)
+	}
+	workflowPayload, err := workflowCodec.DecodeWorkflow(workflowRaw)
+	if err != nil {
+		t.Fatalf("DecodeWorkflow: %v", err)
 	}
 	if workflowPayload.WorkflowID != "wf-1" {
 		t.Fatalf("workflow_id = %q, want wf-1", workflowPayload.WorkflowID)
@@ -94,26 +98,30 @@ func TestReadInstalledJSONFromDir(t *testing.T) {
 	scriptDir := t.TempDir()
 	writeTestFile(t, filepath.Join(scriptDir, exportcodec.ScriptJSONFileName), `{"script_id":"s-1","script":{}}`)
 
-	_, scriptPayload, err := h.readScriptJSONFromDir(scriptDir)
+	scriptCodec, scriptRaw, err := h.readScriptRawFromDir(scriptDir)
 	if err != nil {
-		t.Fatalf("readScriptJSONFromDir: %v", err)
+		t.Fatalf("readScriptRawFromDir: %v", err)
+	}
+	scriptPayload, err := scriptCodec.DecodeScript(scriptRaw)
+	if err != nil {
+		t.Fatalf("DecodeScript: %v", err)
 	}
 	if scriptPayload.ScriptID != "s-1" {
 		t.Fatalf("script_id = %q, want s-1", scriptPayload.ScriptID)
 	}
 
 	emptyDir := t.TempDir()
-	if _, _, err := h.readWorkflowJSONFromDir(emptyDir); !os.IsNotExist(err) {
+	if _, _, err := h.readWorkflowRawFromDir(emptyDir); !os.IsNotExist(err) {
 		t.Fatalf("missing workflow.json err = %v, want os.IsNotExist", err)
 	}
-	if _, _, err := h.readScriptJSONFromDir(emptyDir); !os.IsNotExist(err) {
+	if _, _, err := h.readScriptRawFromDir(emptyDir); !os.IsNotExist(err) {
 		t.Fatalf("missing script.json err = %v, want os.IsNotExist", err)
 	}
 
 	// 非法 JSON 必须报错，而不是返回零值。
 	badDir := t.TempDir()
 	writeTestFile(t, filepath.Join(badDir, exportcodec.WorkflowJSONFileName), `{`)
-	if _, _, err := h.readWorkflowJSONFromDir(badDir); err == nil || os.IsNotExist(err) {
+	if _, _, err := h.readWorkflowRawFromDir(badDir); err == nil || os.IsNotExist(err) {
 		t.Fatalf("invalid workflow.json err = %v, want parse error", err)
 	}
 }

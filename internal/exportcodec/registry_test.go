@@ -37,6 +37,14 @@ func (c *stubCodec) ScriptSnapshotDir(workflowDir, scriptID string) string {
 
 func (c *stubCodec) ScriptIDFromExportScript(map[string]any) string { return "" }
 
+func (c *stubCodec) InstallScript(_ context.Context, _ ScriptInstallRequest) (*ScriptInstallResult, error) {
+	return &ScriptInstallResult{}, nil
+}
+
+func (c *stubCodec) InstallWorkflow(_ context.Context, _ WorkflowInstallRequest) (*WorkflowInstallResult, error) {
+	return &WorkflowInstallResult{}, nil
+}
+
 // TestRegistryRegisterAndGet 覆盖注册表的基本契约：
 // 键是 codec.Version()，version 前后空白可容忍，未注册返回 nil（调用方据此转 400）。
 func TestRegistryRegisterAndGet(t *testing.T) {

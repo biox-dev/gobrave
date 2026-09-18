@@ -21,6 +21,7 @@ package exportcodec
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/types"
@@ -48,6 +49,17 @@ const (
 	ScriptJSONFileName = "script.json"
 	// WorkflowJSONFileName 是工作流导出文件名。
 	WorkflowJSONFileName = "workflow.json"
+)
+
+// 安装侧（InstallScript / InstallWorkflow）在解析导出内容后发现关键引用键缺失时返回的错误。
+//
+// 调用方（handler）据此转 400：这类问题来自导出文件内容本身，属于请求错误，
+// 不是服务端故障（与 ErrUnsupportedVersion 同一处理路径）。
+var (
+	// ErrScriptIDRequired 表示 script.json 里缺少 script_id。
+	ErrScriptIDRequired = errors.New("script_id is required in script.json")
+	// ErrWorkflowIDRequired 表示 workflow.json 里缺少 workflow_id。
+	ErrWorkflowIDRequired = errors.New("workflow_id is required in workflow.json")
 )
 
 // Codec 是一套导出文件格式版本对应的策略实现。
@@ -107,6 +119,22 @@ type Codec interface {
 	// 因为 dag_definition 落库是字符串列。
 	DecodeWorkflow(raw []byte) (*types.WorkflowJSONExportResponse, error)
 
+	// ===== 安装侧 =====
+
+	// InstallScript 解析 req.Raw（内部调用本 Codec 的 DecodeScript）并把导出内容持久化：
+	// 先按主键 upsert 容器镜像 / 运行配置 / 绑定行，再按 script_id upsert script 行。
+	//
+	// 与 DecodeScript 的分工：DecodeScript 只负责解析，本方法负责落库与安装特有的校验
+	// （script.json 缺少 script_id 时返回 ErrScriptIDRequired，调用方据此转 400）。
+	InstallScript(ctx context.Context, req ScriptInstallRequest) (*ScriptInstallResult, error)
+
+	// InstallWorkflow 解析 req.Raw（内部调用本 Codec 的 DecodeWorkflow）并把导出内容持久化：
+	// 先按主键 upsert 容器资产，再 upsert workflow 行与它引用的 script 行，
+	// 最后把 workflow 目录里的脚本快照（见 ScriptSnapshotDir）还原到本地脚本目录。
+	//
+	// workflow.json 缺少 workflow_id 时返回 ErrWorkflowIDRequired，调用方据此转 400。
+	InstallWorkflow(ctx context.Context, req WorkflowInstallRequest) (*WorkflowInstallResult, error)
+
 	// ===== 目录布局 =====
 
 	// ScriptSnapshotDir 返回该版本布局下 workflow 目录内承载某个脚本快照的目录。
@@ -144,6 +172,95 @@ type WorkflowWriteRequest struct {
 	BaseDir       string
 	WorkflowDir   string
 	CommitMessage string
+}
+
+// ScriptInstallRequest 是安装脚本（InstallScript）的入参。
+//
+// Raw 是 script.json 的文件内容，与 DecodeScript 的入参一致；InstallScript 内部会调用
+// DecodeScript 解析它，因此调用方只需把文件原样读进来，不需要（也不应）再自行解析。
+//
+// 其余字段是「落库上下文」：导出文件只描述组件内容，安装到哪个 project、来自哪个 store
+// 以及安装成什么 script_id 由调用方（handler）决定。
+//
+// 字段语义与 handler 原实现保持一致：
+//   - ProjectID 是 project 表主键（写入 script.project_id），不是 project.project_id；
+//   - StoreURL / StoreMessage 非空时覆盖 script 行的 url / message；
+//   - CreateMode 为 true 时作为副本新增（component_name 追加 _Copy 后缀、store_id 置 0），
+//     否则按 ScriptID 在目标 project 内存在与否决定更新或新增。
+//
+// 目录相关说明：脚本安装不涉及文件系统还原（脚本文件已随 git 同步），故不含 BaseDir。
+//
+// 由导出文件内容推导的脚本文件仍由 handler 用 git 从 store 同步/还原（与格式版本无关）。
+type ScriptInstallRequest struct {
+	// Raw 是 script.json 文件内容（与 DecodeScript 的入参一致）。
+	Raw []byte
+	// ProjectID 是安装到的目标 project 主键（project.ID）。
+	ProjectID int64
+	// StoreID 是发布来源 store 主键（写入 script.store_id）。
+	StoreID int64
+	// StoreURL 非空时覆盖 script.url。
+	StoreURL string
+	// StoreMessage 非空时覆盖 script.message。
+	StoreMessage string
+	// ScriptID 是安装后的 script_id：create=true 时调用方已生成新 uuid，
+	// 否则沿用导出文件/发布方记录的 script_id。
+	ScriptID string
+	// CreateMode 为 true 时作为副本新增，而不是按 script_id upsert 原脚本。
+	CreateMode bool
+}
+
+// ScriptInstallResult 是 InstallScript 的结果。
+type ScriptInstallResult struct {
+	// ScriptID 是落库后的 script_id；InstalledScriptID 是 script 表主键。
+	ScriptID          string
+	InstalledScriptID int64
+	// ContainerImageCount / ContainerTemplateSpecCount / ContainerTemplateDefinitionCount
+	// 分别是本次按主键 upsert 的镜像、运行配置与绑定行数量（导出文件没有对应列表时为 0）。
+	ContainerImageCount              int
+	ContainerTemplateSpecCount       int
+	ContainerTemplateDefinitionCount int
+}
+
+// WorkflowInstallRequest 是安装工作流（InstallWorkflow）的入参。
+//
+// Raw 是 workflow.json 的文件内容，与 DecodeWorkflow 的入参一致；InstallWorkflow 内部会
+// 调用 DecodeWorkflow 解析它。其余字段语义与 ScriptInstallRequest 一致，额外多出：
+//   - ProjectCode 是 project.project_id（字符串），用于推导本地目录布局
+//     （utils.GetScriptFileDir），注意与 ProjectID（int64 主键）区分；
+//   - BaseDir 是 storage.base_dir；
+//   - WorkflowDir 是已从 store 同步出的 workflow 目录，脚本快照位于
+//     <WorkflowDir>/script/<scriptID>（ScriptSnapshotDir），安装时还原到脚本目录。
+type WorkflowInstallRequest struct {
+	// Raw 是 workflow.json 文件内容（与 DecodeWorkflow 的入参一致）。
+	Raw []byte
+	// ProjectID 是安装到的目标 project 主键（project.ID）。
+	ProjectID int64
+	// ProjectCode 是 project.project_id（字符串），仅用于推导本地目录。
+	ProjectCode string
+	// StoreID 是发布来源 store 主键。
+	StoreID int64
+	// StoreURL 非空时覆盖 workflow / script 行的 url。
+	StoreURL string
+	// StoreMessage 非空时覆盖 workflow / script 行的 message。
+	StoreMessage string
+	// BaseDir 是 storage.base_dir。
+	BaseDir string
+	// WorkflowDir 是已同步出的 workflow 目录（脚本快照的父目录）。
+	WorkflowDir string
+}
+
+// WorkflowInstallResult 是 InstallWorkflow 的结果。
+type WorkflowInstallResult struct {
+	// WorkflowID 是导出文件里的 workflow_id；InstalledWorkflowID 是 workflow 表主键。
+	WorkflowID          string
+	InstalledWorkflowID int64
+	// InstalledScriptCount 是本次安装（新增或更新）的 script 行数。
+	InstalledScriptCount int
+	// ContainerImageCount / ContainerTemplateSpecCount / ContainerTemplateDefinitionCount
+	// 分别是本次按主键 upsert 的镜像、运行配置与绑定行数量。
+	ContainerImageCount              int
+	ContainerTemplateSpecCount       int
+	ContainerTemplateDefinitionCount int
 }
 
 // ScriptMaterializeRequest 曾用于按版本布局还原脚本文件；经确认安装侧的脚本文件

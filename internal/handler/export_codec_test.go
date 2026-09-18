@@ -16,7 +16,7 @@ import (
 func newTestWorkflowHandler() *WorkflowHandler {
 	reg := exportcodec.NewRegistry()
 	// 读侧不会用到 WorkflowService（只有写侧会），故这里传 nil；写侧提交身份用默认值。
-	reg.Register(exportcodecv1.NewCodec(nil, utils.GitIdentity{Name: "test", Email: "test@example.com"}))
+	reg.Register(exportcodecv1.NewCodec(nil, nil, utils.GitIdentity{Name: "test", Email: "test@example.com"}))
 	return &WorkflowHandler{exportCodecs: reg}
 }
 
@@ -90,9 +90,13 @@ func TestReadJSONFromDirRoutesByVersion(t *testing.T) {
 
 	scriptDir := t.TempDir()
 	writeTestFile(t, filepath.Join(scriptDir, exportcodec.ScriptJSONFileName), `{"script_id":"s-1","script":{"name":"n"}}`)
-	codec, payload, err := h.readScriptJSONFromDir(scriptDir)
+	codec, scriptRaw, err := h.readScriptRawFromDir(scriptDir)
 	if err != nil {
-		t.Fatalf("readScriptJSONFromDir (no version): %v", err)
+		t.Fatalf("readScriptRawFromDir (no version): %v", err)
+	}
+	payload, err := codec.DecodeScript(scriptRaw)
+	if err != nil {
+		t.Fatalf("DecodeScript: %v", err)
 	}
 	if payload.ScriptID != "s-1" {
 		t.Fatalf("script_id = %q, want s-1", payload.ScriptID)
@@ -103,26 +107,30 @@ func TestReadJSONFromDirRoutesByVersion(t *testing.T) {
 
 	workflowDir := t.TempDir()
 	writeTestFile(t, filepath.Join(workflowDir, exportcodec.WorkflowJSONFileName), `{"version":"v1","workflow_id":"wf-1","workflow":{"name":"n"},"scripts":[]}`)
-	_, workflowPayload, err := h.readWorkflowJSONFromDir(workflowDir)
+	workflowCodec, workflowRaw, err := h.readWorkflowRawFromDir(workflowDir)
 	if err != nil {
-		t.Fatalf("readWorkflowJSONFromDir: %v", err)
+		t.Fatalf("readWorkflowRawFromDir: %v", err)
+	}
+	workflowPayload, err := workflowCodec.DecodeWorkflow(workflowRaw)
+	if err != nil {
+		t.Fatalf("DecodeWorkflow: %v", err)
 	}
 	if workflowPayload.WorkflowID != "wf-1" {
 		t.Fatalf("workflow_id = %q, want wf-1", workflowPayload.WorkflowID)
 	}
 
 	// 没有任何导出文件时仍要返回可被 os.IsNotExist 识别的错误（Install 映射为 404）。
-	if _, _, err := h.readScriptJSONFromDir(t.TempDir()); !os.IsNotExist(err) {
+	if _, _, err := h.readScriptRawFromDir(t.TempDir()); !os.IsNotExist(err) {
 		t.Fatalf("missing script.json err = %v, want os.IsNotExist", err)
 	}
-	if _, _, err := h.readWorkflowJSONFromDir(t.TempDir()); !os.IsNotExist(err) {
+	if _, _, err := h.readWorkflowRawFromDir(t.TempDir()); !os.IsNotExist(err) {
 		t.Fatalf("missing workflow.json err = %v, want os.IsNotExist", err)
 	}
 
-	// 非法 JSON 必须报错，而不是返回零值。
+	// 非法 JSON 在窥探 version 阶段就报错，而不是返回零值。
 	badDir := t.TempDir()
 	writeTestFile(t, filepath.Join(badDir, exportcodec.WorkflowJSONFileName), `{`)
-	if _, _, err := h.readWorkflowJSONFromDir(badDir); err == nil || os.IsNotExist(err) {
+	if _, _, err := h.readWorkflowRawFromDir(badDir); err == nil || os.IsNotExist(err) {
 		t.Fatalf("invalid workflow.json err = %v, want parse error", err)
 	}
 }
@@ -136,11 +144,11 @@ func TestRejectUnsupportedVersionFile(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, exportcodec.WorkflowJSONFileName), `{"version":"v99","workflow_id":"wf-1"}`)
 	writeTestFile(t, filepath.Join(dir, exportcodec.ScriptJSONFileName), `{"version":"v99","script_id":"s-1"}`)
 
-	if _, _, err := h.readWorkflowJSONFromDir(dir); !stderrs.Is(err, exportcodec.ErrUnsupportedVersion) {
-		t.Fatalf("readWorkflowJSONFromDir err = %v, want ErrUnsupportedVersion", err)
+	if _, _, err := h.readWorkflowRawFromDir(dir); !stderrs.Is(err, exportcodec.ErrUnsupportedVersion) {
+		t.Fatalf("readWorkflowRawFromDir err = %v, want ErrUnsupportedVersion", err)
 	}
-	if _, _, err := h.readScriptJSONFromDir(dir); !stderrs.Is(err, exportcodec.ErrUnsupportedVersion) {
-		t.Fatalf("readScriptJSONFromDir err = %v, want ErrUnsupportedVersion", err)
+	if _, _, err := h.readScriptRawFromDir(dir); !stderrs.Is(err, exportcodec.ErrUnsupportedVersion) {
+		t.Fatalf("readScriptRawFromDir err = %v, want ErrUnsupportedVersion", err)
 	}
 }
 
@@ -180,9 +188,13 @@ func TestReadWorkflowJSONNormalizesDagDefinition(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, exportcodec.WorkflowJSONFileName),
 		`{"version":"v1","workflow_id":"wf-1","workflow":{"dag_definition":{"nodes":[1,2]}}}`)
 
-	_, payload, err := h.readWorkflowJSONFromDir(dir)
+	codec, raw, err := h.readWorkflowRawFromDir(dir)
 	if err != nil {
-		t.Fatalf("readWorkflowJSONFromDir: %v", err)
+		t.Fatalf("readWorkflowRawFromDir: %v", err)
+	}
+	payload, err := codec.DecodeWorkflow(raw)
+	if err != nil {
+		t.Fatalf("DecodeWorkflow: %v", err)
 	}
 	got, ok := payload.Workflow["dag_definition"].(string)
 	if !ok {
