@@ -153,6 +153,15 @@ func NewWorkflowHandler(workflowService interfaces.WorkflowService,
 	}
 }
 
+// storageBaseDir 返回配置中的 storage.base_dir（cfg 可能为 nil），并与
+// PublishScript/PublishWorkflow 的校验保持一致（空字符串表示未配置）。
+func (h *WorkflowHandler) storageBaseDir() string {
+	if h.cfg == nil || h.cfg.Storage == nil {
+		return ""
+	}
+	return strings.TrimSpace(h.cfg.Storage.BaseDir)
+}
+
 // SaveScript godoc
 // @Summary      保存脚本组件
 // @Description  保存 script 组件：当请求包含 id 时更新记录，否则创建新记录；随后维护脚本目录的 git 版本仓库（不存在则初始化），有变更时提交 commit（commit_message 为空时默认 save script &lt;scriptID&gt;）
@@ -417,6 +426,15 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("failed to create workflow").WithDetails(err.Error()))
 			return
 		}
+	}
+
+	// 生成 workflow.json（含脚本目录快照）落盘并提交 workflow 目录改动（与 PublishWorkflow 共用）：
+	// 发布（PublishWorkflow）时随 workflow 目录一起推送到 store，
+	// 安装（InstallWorkflow）时再从 store 同步回 workflow 目录并读取该文件导入数据库。
+	workflowDir := utils.GetWorkflowFileDir(h.storageBaseDir(), project.ProjectID, workflowID)
+	if err := h.writeWorkflowJSONAndCommit(c.Request.Context(), item.ID, project.ProjectID, workflowDir, fmt.Sprintf("save workflow %s", workflowID)); err != nil {
+		c.Error(errors.NewInternalServerError("failed to persist workflow files").WithDetails(err.Error()))
+		return
 	}
 
 	c.JSON(http.StatusOK, item)
@@ -986,12 +1004,16 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 
 	workflowPath := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
 
+	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地。
+	gitState := utils.ReadGitSyncState(workflowPath, storePath)
+
 	workflowVersion := &types.WorkflowVersion{
 
 		Workflow:     *workflow,
 		StorePath:    storePath,
 		StoreVersion: storeVersion,
 		WorkflowPath: workflowPath,
+		GitState:     &gitState,
 	}
 
 	c.JSON(http.StatusOK, workflowVersion)
@@ -1049,11 +1071,15 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 
 	scriptPath := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
 
+	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地。
+	gitState := utils.ReadGitSyncState(scriptPath, storePath)
+
 	scriptVersion := &types.ScriptVersion{
 		Script:       *script,
 		StoreVersion: storeVersion,
 		StorePath:    storePath,
 		ScriptPath:   scriptPath,
+		GitState:     &gitState,
 	}
 
 	c.JSON(http.StatusOK, scriptVersion)

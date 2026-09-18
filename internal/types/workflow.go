@@ -139,6 +139,10 @@ type WorkflowVersion struct {
 	StorePath    string `json:"store_path"`
 	WorkflowPath string `json:"workflow_path"`
 	StoreVersion string `json:"store_version"`
+	// GitState 由磁盘上的 git 元数据实时推导（不落库）：
+	// has_local_changes=true 表示本地有未发布改动，
+	// has_store_changes=true 表示 store 有本地未同步的提交。
+	GitState *utils.GitSyncState `json:"git_state,omitempty"`
 }
 
 type ScriptVersion struct {
@@ -146,6 +150,10 @@ type ScriptVersion struct {
 	StoreVersion string `json:"store_version"`
 	StorePath    string `json:"store_path"`
 	ScriptPath   string `json:"script_path"`
+	// GitState 由磁盘上的 git 元数据实时推导（不落库）：
+	// has_local_changes=true 表示本地有未发布改动，
+	// has_store_changes=true 表示 store 有本地未同步的提交。
+	GitState *utils.GitSyncState `json:"git_state,omitempty"`
 }
 
 type ScriptJSONExportResponse struct {
