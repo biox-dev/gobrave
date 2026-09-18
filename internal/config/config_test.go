@@ -107,3 +107,48 @@ func TestApplyConfigDataBlankFileKeepsDefaults(t *testing.T) {
 		}
 	}
 }
+
+// TestGitConfigDefaultsAndResolve 校验 git 段的默认值与身份解析回退逻辑。
+func TestGitConfigDefaultsAndResolve(t *testing.T) {
+	// 默认配置应带上内置的 git 身份。
+	cfg := defaultConfig()
+	if cfg.Git == nil {
+		t.Fatal("defaultConfig().Git is nil")
+	}
+	if cfg.Git.User != DefaultGitUser || cfg.Git.Email != DefaultGitEmail {
+		t.Fatalf("default git = %+v, want %s <%s>", *cfg.Git, DefaultGitUser, DefaultGitEmail)
+	}
+
+	// 空 git 段（yaml 里的 `git:`）应回退到默认值而不是 nil。
+	cfg = defaultConfig()
+	if err := applyConfigData(cfg, []byte("git:\n")); err != nil {
+		t.Fatalf("applyConfigData: %v", err)
+	}
+	if cfg.Git == nil {
+		t.Fatal("empty git section produced nil")
+	}
+	if cfg.Git.User != DefaultGitUser || cfg.Git.Email != DefaultGitEmail {
+		t.Fatalf("empty git section = %+v, want defaults", *cfg.Git)
+	}
+
+	// 显式配置应按配置取值。
+	cfg = defaultConfig()
+	if err := applyConfigData(cfg, []byte("git:\n  user: alice\n  email: alice@example.com\n")); err != nil {
+		t.Fatalf("applyConfigData: %v", err)
+	}
+	if name, email := ResolveGitIdentity(cfg); name != "alice" || email != "alice@example.com" {
+		t.Fatalf("ResolveGitIdentity = %s <%s>, want alice <alice@example.com>", name, email)
+	}
+
+	// 部分字段缺失或仅含空白时逐项回退。
+	cfg = defaultConfig()
+	cfg.Git = &GitConfig{User: "  ", Email: ""}
+	if name, email := ResolveGitIdentity(cfg); name != DefaultGitUser || email != DefaultGitEmail {
+		t.Fatalf("ResolveGitIdentity fallback = %s <%s>, want defaults", name, email)
+	}
+
+	// nil 配置也要安全返回默认身份。
+	if name, email := ResolveGitIdentity(nil); name != DefaultGitUser || email != DefaultGitEmail {
+		t.Fatalf("ResolveGitIdentity(nil) = %s <%s>, want defaults", name, email)
+	}
+}

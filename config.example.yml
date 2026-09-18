@@ -58,6 +58,12 @@ storage:
   # 留空时默认使用“可执行文件所在目录/images”。
   image_dir: ""
 
+git:
+  # git 提交身份：保存 script 时初始化/提交脚本版本仓库（go-git）使用。
+  # 留空时回退到默认值 gobrave / gobrave@123.com
+  user: gobrave
+  email: gobrave@123.com
+
 realtime:
   # ws | sse
   transport: ws

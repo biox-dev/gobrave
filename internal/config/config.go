@@ -96,6 +96,7 @@ type Config struct {
 	Proxy     *ProxyConfig     `yaml:"proxy"    json:"proxy"`
 	Route     *RouteConfig     `yaml:"route"    json:"route"`
 	Storage   *StorageConfig   `yaml:"storage"  json:"storage"`
+	Git       *GitConfig       `yaml:"git"      json:"git"`
 	Realtime  *RealtimeConfig  `yaml:"realtime" json:"realtime"`
 	LLM       *LLMConfig       `yaml:"llm" json:"llm"`
 	Agent     *AgentConfig     `yaml:"agent" json:"agent"`
@@ -214,6 +215,42 @@ func DefaultKubernetesRuntimeConfig() *KubernetesRuntimeConfig {
 type StorageConfig struct {
 	// ImageDir string `yaml:"image_dir" json:"image_dir"`
 	BaseDir string `yaml:"base_dir" json:"base_dir"`
+}
+
+// GitConfig 是版本仓库（脚本/工作流目录）的提交身份配置。
+// SaveScript 等在初始化 git 仓库并提交变更时用它构造 commit 的 author/committer。
+type GitConfig struct {
+	User  string `yaml:"user"  json:"user"`
+	Email string `yaml:"email" json:"email"`
+}
+
+// 默认 git 提交身份：config.yml 未配置 git 段或字段为空时使用。
+const (
+	DefaultGitUser  = "gobrave"
+	DefaultGitEmail = "gobrave@123.com"
+)
+
+// DefaultGitConfig 返回 git 段在代码中的默认配置。
+// LoadConfig 与可视化配置共用它，保证 config.yml 缺失/缺段时的默认值一致。
+func DefaultGitConfig() *GitConfig {
+	return &GitConfig{User: DefaultGitUser, Email: DefaultGitEmail}
+}
+
+// ResolveGitIdentity 返回 git 提交使用的用户名与邮箱。
+// cfg 为 nil、git 段缺失或字段为空时，逐项回退到默认值。
+// 保证返回值始终非空（go-git 的 commit author 不允许为空）。
+func ResolveGitIdentity(cfg *Config) (string, string) {
+	name, email := DefaultGitUser, DefaultGitEmail
+	if cfg == nil || cfg.Git == nil {
+		return name, email
+	}
+	if v := strings.TrimSpace(cfg.Git.User); v != "" {
+		name = v
+	}
+	if v := strings.TrimSpace(cfg.Git.Email); v != "" {
+		email = v
+	}
+	return name, email
 }
 
 type ProxyConfig struct {
@@ -388,6 +425,7 @@ func defaultConfig() *Config {
 			// ImageDir: "",
 			BaseDir: resolveDefaultBaseDir(),
 		},
+		Git: DefaultGitConfig(),
 		Realtime: &RealtimeConfig{
 			Transport:             "ws",
 			MaxConnectionsPerUser: 2,
@@ -468,6 +506,15 @@ func LoadConfig() (*Config, error) {
 	}
 	if strings.TrimSpace(cfg.Storage.BaseDir) == "" {
 		cfg.Storage.BaseDir = resolveDefaultBaseDir()
+	}
+	if cfg.Git == nil {
+		cfg.Git = DefaultGitConfig()
+	}
+	if strings.TrimSpace(cfg.Git.User) == "" {
+		cfg.Git.User = DefaultGitUser
+	}
+	if strings.TrimSpace(cfg.Git.Email) == "" {
+		cfg.Git.Email = DefaultGitEmail
 	}
 	if cfg.Container == nil {
 		cfg.Container = DefaultContainerConfig()

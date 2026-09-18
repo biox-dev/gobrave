@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	stderrs "errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -69,6 +70,9 @@ type createScriptRequest struct {
 	OrderIndex          int    `json:"order_index"`
 	Position            string `json:"position"`
 	Edges               string `json:"edges"`
+	// CommitMessage 可选：本次保存产生的 git commit message。
+	// 为空时使用默认 message（save script <scriptID>）。
+	CommitMessage string `json:"commit_message"`
 }
 
 type createWorkflowRequest struct {
@@ -151,7 +155,7 @@ func NewWorkflowHandler(workflowService interfaces.WorkflowService,
 
 // SaveScript godoc
 // @Summary      保存脚本组件
-// @Description  保存 script 组件：当请求包含 id 时更新记录，否则创建新记录
+// @Description  保存 script 组件：当请求包含 id 时更新记录，否则创建新记录；随后维护脚本目录的 git 版本仓库（不存在则初始化），有变更时提交 commit（commit_message 为空时默认 save script &lt;scriptID&gt;）
 // @Tags         工作流
 // @Accept       json
 // @Produce      json
@@ -284,6 +288,23 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("failed to create script file").WithDetails(err.Error()))
 			return
 		}
+	}
+
+	// 维护脚本目录的 git 版本仓库：不存在则初始化（默认分支 main），
+	// 已存在则复用；有实际变更时提交一次 commit。
+	repo, gitErr := utils.EnsureGitRepo(scriptDir)
+	if gitErr != nil {
+		c.Error(errors.NewInternalServerError("failed to init script git repository").WithDetails(gitErr.Error()))
+		return
+	}
+	gitUser, gitEmail := config.ResolveGitIdentity(h.cfg)
+	commitMessage := strings.TrimSpace(req.CommitMessage)
+	if commitMessage == "" {
+		commitMessage = fmt.Sprintf("save script %s", scriptID)
+	}
+	if _, commitErr := utils.CommitAll(repo, commitMessage, utils.GitIdentity{Name: gitUser, Email: gitEmail}); commitErr != nil {
+		c.Error(errors.NewInternalServerError("failed to commit script changes").WithDetails(commitErr.Error()))
+		return
 	}
 
 	c.JSON(http.StatusOK, item)
