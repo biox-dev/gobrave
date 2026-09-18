@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/exportcodec"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -87,6 +89,8 @@ func (h *StoreHandler) GetStore(c *gin.Context) {
 		return
 	}
 
+	fillStorePath(h.cfg, item)
+
 	c.JSON(http.StatusOK, item)
 }
 
@@ -106,6 +110,8 @@ func (h *StoreHandler) GetStoreByStoreID(c *gin.Context) {
 		handleDataError(c, err, "failed to get store by store id")
 		return
 	}
+
+	fillStorePath(h.cfg, item)
 
 	c.JSON(http.StatusOK, item)
 }
@@ -191,6 +197,10 @@ func (h *StoreHandler) ListStore(c *gin.Context) {
 		return
 	}
 
+	for _, item := range items {
+		fillStorePath(h.cfg, item)
+	}
+
 	c.JSON(http.StatusOK, items)
 }
 
@@ -215,6 +225,8 @@ func (h *StoreHandler) PageStore(c *gin.Context) {
 		handleDataError(c, err, "failed to page store")
 		return
 	}
+
+	fillStorePathForPage(h.cfg, result)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":      result.Data,
@@ -266,9 +278,9 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		return
 	}
 
-	storeRoot := utils.GetStoreDir(strings.TrimSpace(h.cfg.Storage.BaseDir))
-	targetPath := filepath.Join(storeRoot, pathName)
-	targetPath, err = utils.SafePathUnderBase(storeRoot, targetPath)
+	// storeRoot := utils.GetStoreDir(strings.TrimSpace(h.cfg.Storage.BaseDir))
+	targetPath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, pathName)
+	targetPath, err = utils.SafePathUnderBase(h.cfg.Storage.BaseDir, targetPath)
 	if err != nil {
 		c.Error(errors.NewValidationError("invalid target path").WithDetails(err.Error()))
 		return
@@ -345,7 +357,9 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		return
 	}
 
-	_, cloneErr := git.PlainCloneContext(c.Request.Context(), targetPath, false, &git.CloneOptions{
+	// 远程 store 与本地 publish 的 store 保持同一种形态：裸仓库（没有工作区），
+	// 目录本身就是 git 目录，安装/取封面等统一从 git 对象里读。
+	_, cloneErr := git.PlainCloneContext(c.Request.Context(), targetPath, true, &git.CloneOptions{
 		URL: repoURL,
 	})
 	if cloneErr != nil {
@@ -428,13 +442,7 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 		return
 	}
 
-	wt, err := repo.Worktree()
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to open git worktree").WithDetails(err.Error()))
-		return
-	}
-
-	pullErr := wt.PullContext(c.Request.Context(), &git.PullOptions{RemoteName: "origin"})
+	pullErr := pullStoreRepo(c.Request.Context(), repo, targetPath)
 	if pullErr != nil && !stderrs.Is(pullErr, git.NoErrAlreadyUpToDate) {
 		item.Status = "done"
 		item.Log = pullErr.Error()
@@ -477,6 +485,26 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 		"up_to_date": stderrs.Is(pullErr, git.NoErrAlreadyUpToDate),
 		"message":    "success",
 	})
+}
+
+// pullStoreRepo 把 store 仓库更新到远端最新提交。
+//
+// store 是裸仓库（本地 publish 与远程 clone 都是裸仓库，没有工作区），
+// 裸仓库不能用 Worktree().Pull，改为 fetch origin 后把本地分支指向同名远端分支；
+// 历史遗留的普通仓库仍走 PullContext。两者都以 git.NoErrAlreadyUpToDate 表示无更新。
+func pullStoreRepo(ctx context.Context, repo *git.Repository, repoPath string) error {
+	if repo == nil {
+		return fmt.Errorf("git repository is nil")
+	}
+	if cfg, cfgErr := repo.Config(); cfgErr == nil && cfg.Core.IsBare {
+		return utils.FetchBareRepoFromOrigin(ctx, repoPath)
+	}
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		return err
+	}
+	return wt.PullContext(ctx, &git.PullOptions{RemoteName: "origin"})
 }
 
 func buildStorePathNameFromGitURL(rawURL string) (string, error) {
@@ -561,6 +589,39 @@ func resolveStoreDir(cfg *config.Config, item *types.Store) string {
 	return utils.GetWorkflowOrScriptStoreDir(baseDir, pathName)
 }
 
+// fillStorePath 把 store 的绝对目录写进响应用字段 store_path。
+//
+// 目录由 PathName 经 GetWorkflowOrScriptStoreDir 解析，不落库，
+// 因此 base_dir 变更后返回结果自动跟着变。
+func fillStorePath(cfg *config.Config, item *types.Store) {
+	if item == nil {
+		return
+	}
+	item.StorePath = resolveStoreDir(cfg, item)
+}
+
+// fillStorePathForPage 为分页结果里的每条 store 记录回填 store_path。
+func fillStorePathForPage(cfg *config.Config, result *types.PageResult) {
+	if result == nil {
+		return
+	}
+	dtos, ok := result.Data.([]*types.StoreDTO)
+	if !ok {
+		return
+	}
+	for _, dto := range dtos {
+		if dto == nil {
+			continue
+		}
+		fillStorePath(cfg, &dto.Store)
+	}
+}
+
+// hydrateStoreMetadataFromStoreFiles 用 store 仓库 HEAD 提交里的导出文件回填 store 元数据。
+//
+// store 是裸仓库（本地 publish 与远程 clone 都是裸仓库），没有工作区文件，
+// 因此 workflow.json / script.json 都从 git 对象里读（readStoreExportJSON），
+// 不能用 os.ReadFile。
 func hydrateStoreMetadataFromStoreFiles(storeDir string, item *types.Store) error {
 	if item == nil {
 		return fmt.Errorf("store item is nil")
@@ -572,11 +633,7 @@ func hydrateStoreMetadataFromStoreFiles(storeDir string, item *types.Store) erro
 
 	switch strings.ToLower(strings.TrimSpace(item.StoreType)) {
 	case "workflow":
-		workflowJSONPath, err := resolveStoreWorkflowJSONPath(storeDir)
-		if err != nil {
-			return err
-		}
-		content, err := os.ReadFile(workflowJSONPath)
+		content, err := readStoreExportJSON(storeDir, exportcodec.WorkflowJSONFileName)
 		if err != nil {
 			return err
 		}
@@ -598,6 +655,10 @@ func hydrateStoreMetadataFromStoreFiles(storeDir string, item *types.Store) erro
 		// 	stringValueFromMap(payload.Workflow, "version"),
 		// 	item.Version,
 		// )
+		item.Img = firstNonEmptyString(
+			stringValueFromMap(payload.Workflow, "img"),
+			item.Img,
+		)
 		item.Message = firstNonEmptyString(
 			stringValueFromMap(payload.Workflow, "message"),
 			item.Message,
@@ -605,11 +666,7 @@ func hydrateStoreMetadataFromStoreFiles(storeDir string, item *types.Store) erro
 		return nil
 
 	case "script":
-		scriptJSONPath, err := resolveStoreScriptJSONPath(storeDir)
-		if err != nil {
-			return err
-		}
-		content, err := os.ReadFile(scriptJSONPath)
+		content, err := readStoreExportJSON(storeDir, exportcodec.ScriptJSONFileName)
 		if err != nil {
 			return err
 		}
@@ -617,6 +674,10 @@ func hydrateStoreMetadataFromStoreFiles(storeDir string, item *types.Store) erro
 		if err := json.Unmarshal(content, payload); err != nil {
 			return err
 		}
+		item.Img = firstNonEmptyString(
+			stringValueFromMap(payload.Script, "img"),
+			item.Img,
+		)
 
 		item.Name = firstNonEmptyString(
 			stringValueFromMap(payload.Script, "component_name"),

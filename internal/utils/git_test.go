@@ -420,3 +420,145 @@ func repoHeadHash(t *testing.T, dir string) plumbing.Hash {
 	}
 	return head.Hash()
 }
+
+// TestFetchBareRepoFromOrigin 覆盖「裸仓库 pull」的语义（ReDownloadStore 用）：
+// 裸仓库没有工作区，不能 Worktree().Pull，fetch origin 后本地分支应跟到远端同名分支，
+// 且无更新时返回 git.NoErrAlreadyUpToDate（与 PullContext 一致）。
+func TestFetchBareRepoFromOrigin(t *testing.T) {
+	ctx := context.Background()
+	identity := GitIdentity{Name: "gobrave", Email: "gobrave@123.com"}
+	// 只用进程内 file 传输：裸仓库之间不需要外部 git 可执行文件。
+	t.Setenv("PATH", t.TempDir())
+
+	root := t.TempDir()
+	originDir := filepath.Join(root, "script", "script-1")
+	originRepo, err := EnsureGitRepo(originDir)
+	if err != nil {
+		t.Fatalf("EnsureGitRepo: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(originDir, "main.R"), []byte("print('v1')\n"), 0o644); err != nil {
+		t.Fatalf("write main.R: %v", err)
+	}
+	if _, err := CommitAll(originRepo, "v1", identity); err != nil {
+		t.Fatalf("CommitAll v1: %v", err)
+	}
+
+	// publish 产物：远端裸仓库。
+	storeDir := filepath.Join(root, "store", "script-1")
+	if _, err := EnsureBareGitRepo(storeDir); err != nil {
+		t.Fatalf("EnsureBareGitRepo: %v", err)
+	}
+	if err := PushDirToRepo(ctx, originDir, storeDir); err != nil {
+		t.Fatalf("PushDirToRepo v1: %v", err)
+	}
+
+	// DownloadStore 产物：从远端裸克隆出来的 store 裸仓库。
+	cloneDir := filepath.Join(root, "download", "script-1")
+	if _, err := git.PlainCloneContext(ctx, cloneDir, true, &git.CloneOptions{URL: storeDir}); err != nil {
+		t.Fatalf("bare clone: %v", err)
+	}
+	cloneRepo, err := git.PlainOpen(cloneDir)
+	if err != nil {
+		t.Fatalf("open cloned repo: %v", err)
+	}
+	if _, err := cloneRepo.Worktree(); err == nil {
+		t.Fatal("cloneDir should be a bare repository without worktree")
+	}
+	if got := repoHeadHash(t, cloneDir); got != repoHeadHash(t, storeDir) {
+		t.Fatalf("cloned head = %s, want %s", got, repoHeadHash(t, storeDir))
+	}
+
+	// 远端无新提交：报告“已是最新”，不报错。
+	if err := FetchBareRepoFromOrigin(ctx, cloneDir); !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		t.Fatalf("fetch without changes = %v, want NoErrAlreadyUpToDate", err)
+	}
+
+	// 源更新并再次 push 到远端后，fetch 应把本地分支前移，且文件内容随之更新。
+	if err := os.WriteFile(filepath.Join(originDir, "main.R"), []byte("print('v2')\n"), 0o644); err != nil {
+		t.Fatalf("rewrite main.R: %v", err)
+	}
+	if _, err := CommitAll(originRepo, "v2", identity); err != nil {
+		t.Fatalf("CommitAll v2: %v", err)
+	}
+	if err := PushDirToRepo(ctx, originDir, storeDir); err != nil {
+		t.Fatalf("PushDirToRepo v2: %v", err)
+	}
+
+	if err := FetchBareRepoFromOrigin(ctx, cloneDir); err != nil {
+		t.Fatalf("FetchBareRepoFromOrigin update: %v", err)
+	}
+	if got, want := repoHeadHash(t, cloneDir), repoHeadHash(t, storeDir); got != want {
+		t.Fatalf("cloned head after fetch = %s, want %s", got, want)
+	}
+	content, err := ReadFileFromGitRepo(cloneDir, "main.R")
+	if err != nil {
+		t.Fatalf("ReadFileFromGitRepo: %v", err)
+	}
+	if string(content) != "print('v2')\n" {
+		t.Fatalf("main.R after fetch = %q, want v2", string(content))
+	}
+
+	// 再次 fetch 已无更新。
+	if err := FetchBareRepoFromOrigin(ctx, cloneDir); !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		t.Fatalf("second fetch = %v, want NoErrAlreadyUpToDate", err)
+	}
+}
+
+// TestFindFileInGitRepo 覆盖裸仓库内的文件名查找：根目录优先，其次任意层级（忽略大小写）。
+func TestFindFileInGitRepo(t *testing.T) {
+	srcDir := filepath.Join(t.TempDir(), "src")
+	repo, err := EnsureGitRepo(srcDir)
+	if err != nil {
+		t.Fatalf("EnsureGitRepo: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(srcDir, "script", "s1"), 0o755); err != nil {
+		t.Fatalf("mkdir nested: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "Script.JSON"), []byte(`{"script_id":"root"}`), 0o644); err != nil {
+		t.Fatalf("write root file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "script", "s1", "script.json"), []byte(`{"script_id":"nested"}`), 0o644); err != nil {
+		t.Fatalf("write nested file: %v", err)
+	}
+	if _, err := CommitAll(repo, "init", GitIdentity{Name: "gobrave", Email: "gobrave@123.com"}); err != nil {
+		t.Fatalf("CommitAll: %v", err)
+	}
+
+	// 根目录（忽略大小写）命中，不会命中嵌套同名文件。
+	relPath, err := FindFileInGitRepo(srcDir, "script.json")
+	if err != nil {
+		t.Fatalf("FindFileInGitRepo root: %v", err)
+	}
+	if relPath != "Script.JSON" {
+		t.Fatalf("relPath = %s, want root Script.JSON", relPath)
+	}
+
+	// 只有嵌套文件时返回嵌套相对路径。
+	nestedDir := filepath.Join(t.TempDir(), "nested-src")
+	nestedRepo, err := EnsureGitRepo(nestedDir)
+	if err != nil {
+		t.Fatalf("EnsureGitRepo nested: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(nestedDir, "a", "b"), 0o755); err != nil {
+		t.Fatalf("mkdir a/b: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nestedDir, "a", "b", "workflow.json"), []byte(`{"workflow_id":"wf"}`), 0o644); err != nil {
+		t.Fatalf("write nested workflow.json: %v", err)
+	}
+	if _, err := CommitAll(nestedRepo, "init", GitIdentity{Name: "gobrave", Email: "gobrave@123.com"}); err != nil {
+		t.Fatalf("CommitAll nested: %v", err)
+	}
+	if relPath, err = FindFileInGitRepo(nestedDir, "workflow.json"); err != nil {
+		t.Fatalf("FindFileInGitRepo nested: %v", err)
+	} else if relPath != "a/b/workflow.json" {
+		t.Fatalf("relPath = %s, want a/b/workflow.json", relPath)
+	}
+
+	// 找不到 / 不是仓库：都要报错而不是返回空路径。
+	if _, err := FindFileInGitRepo(nestedDir, "missing.json"); err == nil {
+		t.Fatal("FindFileInGitRepo on missing file should fail")
+	}
+	if _, err := FindFileInGitRepo(filepath.Join(t.TempDir(), "not-a-repo"), "workflow.json"); err == nil {
+		t.Fatal("FindFileInGitRepo on non-repository should fail")
+	}
+}

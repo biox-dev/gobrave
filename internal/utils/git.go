@@ -4,7 +4,9 @@ import (
 	"context"
 	stderrs "errors"
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -344,4 +346,110 @@ func ReadFileFromGitRepo(repoPath, relPath string) ([]byte, error) {
 		return nil, err
 	}
 	return []byte(content), nil
+}
+
+// FindFileInGitRepo 在仓库 HEAD 提交的文件树里按文件名查找文件，返回仓库内的相对路径
+// （"/" 分隔），可直接交给 ReadFileFromGitRepo 读取。
+//
+// 查找口径与旧的文件系统查找保持一致：根目录优先，其次按路径顺序查找（忽略大小写）。
+// 同时支持裸仓库与普通仓库：store 是裸仓库，没有工作区文件，只能从 git 对象里找。
+func FindFileInGitRepo(repoPath, fileName string) (string, error) {
+	ensureLocalGitTransport()
+
+	repoPath = strings.TrimSpace(repoPath)
+	fileName = strings.TrimSpace(fileName)
+	if repoPath == "" || fileName == "" {
+		return "", stderrs.New("git repository path and file name must not be empty")
+	}
+
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		return "", err
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return "", err
+	}
+	commit, err := repo.CommitObject(head.Hash())
+	if err != nil {
+		return "", err
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return "", err
+	}
+
+	// 顶层文件优先命中。
+	if file, fileErr := tree.File(fileName); fileErr == nil && file != nil {
+		return fileName, nil
+	}
+
+	files := tree.Files()
+	defer files.Close()
+	for {
+		file, nextErr := files.Next()
+		if stderrs.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return "", nextErr
+		}
+		if strings.EqualFold(path.Base(file.Name), fileName) {
+			return file.Name, nil
+		}
+	}
+
+	return "", fmt.Errorf("%s not found in repository %s", fileName, repoPath)
+}
+
+// FetchBareRepoFromOrigin 把裸仓库更新到 origin 的最新提交。
+//
+// 裸仓库没有工作区，Worktree().Pull 不可用（会报 worktree not available），因此等价实现为：
+// force fetch origin（刷新 refs/remotes/origin/*）后，把 HEAD 指向的本地分支指向同名远端分支。
+//
+// 远端没有新提交时返回 git.NoErrAlreadyUpToDate，与 Worktree().Pull 的语义一致，
+// 调用方可用 stderrs.Is(err, git.NoErrAlreadyUpToDate) 判断“已是最新”。
+func FetchBareRepoFromOrigin(ctx context.Context, repoPath string) error {
+	ensureLocalGitTransport()
+
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return stderrs.New("git repository path is empty")
+	}
+
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		return err
+	}
+
+	head, err := repo.Head()
+	if err != nil {
+		return err
+	}
+	branch := plumbing.Main.Short()
+	if head.Name().IsBranch() {
+		branch = head.Name().Short()
+	}
+
+	if fetchErr := repo.FetchContext(ctx, &git.FetchOptions{
+		RemoteName: storeRemoteName,
+		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec("+refs/heads/*:refs/remotes/" + storeRemoteName + "/*")},
+		Force:      true,
+	}); fetchErr != nil && !stderrs.Is(fetchErr, git.NoErrAlreadyUpToDate) {
+		return fmt.Errorf("fetch %q: %w", repoPath, fetchErr)
+	}
+
+	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName(storeRemoteName, branch), true)
+	if err != nil {
+		return fmt.Errorf("resolve remote branch %q of %q: %w", branch, repoPath, err)
+	}
+	if remoteRef.Hash() == head.Hash() {
+		return git.NoErrAlreadyUpToDate
+	}
+
+	// 裸仓库没有工作区可以 reset，直接让本地分支指向远端提交（HEAD 是指向该分支的符号引用）。
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName(branch), remoteRef.Hash())); err != nil {
+		return err
+	}
+	return nil
 }

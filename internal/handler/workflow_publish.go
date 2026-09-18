@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -766,18 +765,12 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	})
 }
 
-// readScriptIDFromStoreDir 读取 store 目录内 script.json 的 script_id。
+// readScriptIDFromStoreDir 读取 store 仓库内 script.json 的 script_id。
 //
-// 仅用于远程下载的 store（普通工作区仓库）；本地发布的 store 是裸仓库，没有工作区文件，
-// 其 script_id 直接取自 store.PathName。
-// 该文件可能存在任意层级（resolveStoreScriptJSONPath 按根目录优先查找），
-// 与 InstallScript 直接读目标脚本目录不同，故单独实现。
+// 仅用于 PathName 不是 script_id 的 store（远程下载的 store，PathName 是 <owner>/<repo>）；
+// store 是裸仓库，没有工作区文件，内容从 git 对象里读（见 readStoreExportJSON）。
 func (h *WorkflowHandler) readScriptIDFromStoreDir(storeDir string) string {
-	scriptJSONPath, err := resolveStoreScriptJSONPath(storeDir)
-	if err != nil {
-		return ""
-	}
-	content, err := os.ReadFile(scriptJSONPath)
+	content, err := readStoreExportJSON(storeDir, exportcodec.ScriptJSONFileName)
 	if err != nil {
 		return ""
 	}
@@ -811,16 +804,12 @@ func (h *WorkflowHandler) readScriptJSONFromDir(scriptDir string) (exportcodec.C
 	return codec, payload, nil
 }
 
-// readWorkflowIDFromStoreDir 读取 store 目录内 workflow.json 的 workflow_id。
+// readWorkflowIDFromStoreDir 读取 store 仓库内 workflow.json 的 workflow_id。
 //
-// 仅用于远程下载的 store（普通工作区仓库）；本地发布的 store 是裸仓库，没有工作区文件，
-// 其 workflow_id 直接取自 store.PathName。
+// 仅用于 PathName 不是 workflow_id 的 store（远程下载的 store，PathName 是 <owner>/<repo>）；
+// store 是裸仓库，没有工作区文件，内容从 git 对象里读（见 readStoreExportJSON）。
 func (h *WorkflowHandler) readWorkflowIDFromStoreDir(storeDir string) string {
-	workflowJSONPath, err := resolveStoreWorkflowJSONPath(storeDir)
-	if err != nil {
-		return ""
-	}
-	content, err := os.ReadFile(workflowJSONPath)
+	content, err := readStoreExportJSON(storeDir, exportcodec.WorkflowJSONFileName)
 	if err != nil {
 		return ""
 	}
@@ -854,72 +843,17 @@ func (h *WorkflowHandler) readWorkflowJSONFromDir(workflowDir string) (exportcod
 	return codec, payload, nil
 }
 
-func resolveStoreWorkflowJSONPath(storePath string) (string, error) {
-	storePath = strings.TrimSpace(storePath)
-	if storePath == "" {
-		return "", fmt.Errorf("store path is empty")
+// readStoreExportJSON 读取 store 仓库 HEAD 提交里的导出文件（workflow.json / script.json）内容。
+//
+// store 是裸仓库（本地 publish 与远程 clone 都是裸仓库），没有工作区文件，
+// 只能从 git 对象里读（utils.ReadFileFromGitRepo）；文件在仓库内的位置不固定，
+// 由 utils.FindFileInGitRepo 按「根目录优先、其次任意层级（忽略大小写）」查找。
+func readStoreExportJSON(storeDir, fileName string) ([]byte, error) {
+	relPath, err := utils.FindFileInGitRepo(storeDir, fileName)
+	if err != nil {
+		return nil, err
 	}
-
-	directPath := filepath.Join(storePath, exportcodec.WorkflowJSONFileName)
-	if stat, err := os.Stat(directPath); err == nil && !stat.IsDir() {
-		return directPath, nil
-	}
-
-	var found string
-	err := filepath.Walk(storePath, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if info == nil || info.IsDir() {
-			return nil
-		}
-		if strings.EqualFold(info.Name(), exportcodec.WorkflowJSONFileName) {
-			found = path
-			return io.EOF
-		}
-		return nil
-	})
-	if err != nil && !stderrs.Is(err, io.EOF) {
-		return "", err
-	}
-	if found == "" {
-		return "", fmt.Errorf("workflow.json not found")
-	}
-	return found, nil
-}
-
-func resolveStoreScriptJSONPath(storePath string) (string, error) {
-	storePath = strings.TrimSpace(storePath)
-	if storePath == "" {
-		return "", fmt.Errorf("store path is empty")
-	}
-
-	directPath := filepath.Join(storePath, exportcodec.ScriptJSONFileName)
-	if stat, err := os.Stat(directPath); err == nil && !stat.IsDir() {
-		return directPath, nil
-	}
-
-	var found string
-	err := filepath.Walk(storePath, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if info == nil || info.IsDir() {
-			return nil
-		}
-		if strings.EqualFold(info.Name(), exportcodec.ScriptJSONFileName) {
-			found = path
-			return io.EOF
-		}
-		return nil
-	})
-	if err != nil && !stderrs.Is(err, io.EOF) {
-		return "", err
-	}
-	if found == "" {
-		return "", fmt.Errorf("script.json not found")
-	}
-	return found, nil
+	return utils.ReadFileFromGitRepo(storeDir, relPath)
 }
 
 // func buildStorePathNameFromURL(rawURL string) (string, error) {

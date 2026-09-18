@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/biox-dev/gobrave/internal/exportcodec"
 	"github.com/biox-dev/gobrave/internal/utils"
+	git "github.com/go-git/go-git/v5"
 )
 
 func writeTestFile(t *testing.T, path, content string) {
@@ -115,41 +118,94 @@ func TestReadInstalledJSONFromDir(t *testing.T) {
 	}
 }
 
-// TestResolveStoreJSONPathPrefersRootFile 校验 script/workflow 两种 store 都在根目录优先命中。
-func TestResolveStoreJSONPathPrefersRootFile(t *testing.T) {
-	storeDir := t.TempDir()
-	writeTestFile(t, filepath.Join(storeDir, exportcodec.ScriptJSONFileName), `{"script_id":"root"}`)
-	writeTestFile(t, filepath.Join(storeDir, "nested", exportcodec.ScriptJSONFileName), `{"script_id":"nested"}`)
-	writeTestFile(t, filepath.Join(storeDir, exportcodec.WorkflowJSONFileName), `{"workflow_id":"root"}`)
+// commitTestRepo 在 dir 下建仓库并把 files（仓库内相对路径 -> 内容）提交为一个 commit。
+func commitTestRepo(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
 
-	scriptPath, err := resolveStoreScriptJSONPath(storeDir)
+	repo, err := utils.EnsureGitRepo(dir)
 	if err != nil {
-		t.Fatalf("resolveStoreScriptJSONPath: %v", err)
+		t.Fatalf("utils.EnsureGitRepo: %v", err)
 	}
-	if scriptPath != filepath.Join(storeDir, exportcodec.ScriptJSONFileName) {
-		t.Fatalf("script.json path = %s, want root file", scriptPath)
+	for rel, content := range files {
+		writeTestFile(t, filepath.Join(dir, filepath.FromSlash(rel)), content)
+	}
+	if _, err := utils.CommitAll(repo, "test", utils.GitIdentity{Name: "test", Email: "test@example.com"}); err != nil {
+		t.Fatalf("utils.CommitAll: %v", err)
+	}
+	if _, err := repo.Head(); err != nil {
+		t.Fatalf("test repository has no commit: %v", err)
+	}
+}
+
+// TestReadStoreExportJSONFromBareRepo 校验 store 导出文件的读取口径：
+// store 是裸仓库（没有工作区文件），workflow.json / script.json 必须从 HEAD 提交里读；
+// 根目录优先，其次任意层级，两者都没有时报错。
+func TestReadStoreExportJSONFromBareRepo(t *testing.T) {
+	src := t.TempDir()
+	commitTestRepo(t, src, map[string]string{
+		exportcodec.WorkflowJSONFileName:                    `{"workflow_id":"wf-1","workflow":{"name":"wf","category":"cat","message":"msg"}}`,
+		exportcodec.ScriptJSONFileName:                      `{"script_id":"root"}`,
+		"script/s1/" + exportcodec.ScriptJSONFileName:       `{"script_id":"nested"}`,
+		"script/s1/sub/" + exportcodec.WorkflowJSONFileName: `{"workflow_id":"nested"}`,
+	})
+
+	// 把源仓库发布成裸仓库（与 publish 一致），再裸克隆成 store。
+	origin := filepath.Join(t.TempDir(), "origin")
+	if _, err := utils.EnsureBareGitRepo(origin); err != nil {
+		t.Fatalf("utils.EnsureBareGitRepo: %v", err)
+	}
+	if err := utils.PushDirToRepo(context.Background(), src, origin); err != nil {
+		t.Fatalf("utils.PushDirToRepo: %v", err)
+	}
+	// 裸克隆：与 DownloadStore 的产物完全一致（目录即 git 目录，没有工作区文件）。
+	// 源用裸仓库（publish 到 store 的产物形态）：进程内 file 传输只服务裸仓库。
+	bareStore := filepath.Join(t.TempDir(), "store")
+	if _, err := git.PlainCloneContext(context.Background(), bareStore, true, &git.CloneOptions{URL: origin}); err != nil {
+		t.Fatalf("bare clone: %v", err)
 	}
 
-	workflowPath, err := resolveStoreWorkflowJSONPath(storeDir)
+	workflowRaw, err := readStoreExportJSON(bareStore, exportcodec.WorkflowJSONFileName)
 	if err != nil {
-		t.Fatalf("resolveStoreWorkflowJSONPath: %v", err)
+		t.Fatalf("readStoreExportJSON workflow: %v", err)
 	}
-	if workflowPath != filepath.Join(storeDir, exportcodec.WorkflowJSONFileName) {
-		t.Fatalf("workflow.json path = %s, want root file", workflowPath)
+	if !strings.Contains(string(workflowRaw), `"wf-1"`) {
+		t.Fatalf("workflow.json = %s, want root file", workflowRaw)
 	}
 
-	// 只有嵌套文件时回退到 Walk 查找。
-	nestedOnly := t.TempDir()
-	writeTestFile(t, filepath.Join(nestedOnly, "nested", exportcodec.ScriptJSONFileName), `{"script_id":"nested"}`)
-	nestedPath, err := resolveStoreScriptJSONPath(nestedOnly)
+	// 根目录优先：即使嵌套目录里也有同名文件，也命中根目录那个。
+	scriptRaw, err := readStoreExportJSON(bareStore, exportcodec.ScriptJSONFileName)
 	if err != nil {
-		t.Fatalf("resolveStoreScriptJSONPath nested: %v", err)
+		t.Fatalf("readStoreExportJSON script: %v", err)
 	}
-	if nestedPath != filepath.Join(nestedOnly, "nested", exportcodec.ScriptJSONFileName) {
-		t.Fatalf("nested script.json path = %s", nestedPath)
+	if !strings.Contains(string(scriptRaw), `"root"`) {
+		t.Fatalf("script.json = %s, want root file", scriptRaw)
 	}
 
-	if _, err := resolveStoreScriptJSONPath(t.TempDir()); err == nil {
-		t.Fatal("resolveStoreScriptJSONPath on empty dir should fail")
+	// 只有嵌套文件时回退到目录查找。
+	nested := t.TempDir()
+	commitTestRepo(t, nested, map[string]string{
+		"a/b/" + exportcodec.ScriptJSONFileName: `{"script_id":"nested"}`,
+	})
+	nestedRaw, err := readStoreExportJSON(nested, exportcodec.ScriptJSONFileName)
+	if err != nil {
+		t.Fatalf("readStoreExportJSON nested: %v", err)
+	}
+	if !strings.Contains(string(nestedRaw), `"nested"`) {
+		t.Fatalf("nested script.json = %s", nestedRaw)
+	}
+
+	// 文件不存在、空仓库（没有任何提交）以及不是仓库的目录都要报错，而不是返回空内容。
+	if missing, err := readStoreExportJSON(nested, exportcodec.WorkflowJSONFileName); err == nil {
+		t.Fatalf("missing workflow.json should fail, got %s", missing)
+	}
+	emptyBare := filepath.Join(t.TempDir(), "empty")
+	if _, err := utils.EnsureBareGitRepo(emptyBare); err != nil {
+		t.Fatalf("utils.EnsureBareGitRepo: %v", err)
+	}
+	if _, err := readStoreExportJSON(emptyBare, exportcodec.ScriptJSONFileName); err == nil {
+		t.Fatal("readStoreExportJSON on commit-less bare repo should fail")
+	}
+	if _, err := readStoreExportJSON(filepath.Join(t.TempDir(), "not-exists"), exportcodec.ScriptJSONFileName); err == nil {
+		t.Fatal("readStoreExportJSON on non-repository should fail")
 	}
 }

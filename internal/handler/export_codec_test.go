@@ -144,13 +144,15 @@ func TestRejectUnsupportedVersionFile(t *testing.T) {
 }
 
 // TestReadIDsFromStoreDir 覆盖「远程 store 里脚本/工作流 ID 未知」的回退路径：
-// 从 store 内的导出文件读 ID（文件可能嵌套在任意层级），读不到时返回空字符串而不是报错。
+// 从 store 仓库 HEAD 提交里的导出文件读 ID（文件可能嵌套在任意层级），读不到时返回空字符串而不是报错。
 func TestReadIDsFromStoreDir(t *testing.T) {
 	h := newTestWorkflowHandler()
 
 	storeDir := t.TempDir()
-	writeTestFile(t, filepath.Join(storeDir, "nested", exportcodec.ScriptJSONFileName), `{"script_id":"s-remote"}`)
-	writeTestFile(t, filepath.Join(storeDir, "nested", exportcodec.WorkflowJSONFileName), `{"workflow_id":"wf-remote"}`)
+	commitTestRepo(t, storeDir, map[string]string{
+		"nested/" + exportcodec.ScriptJSONFileName:   `{"script_id":"s-remote"}`,
+		"nested/" + exportcodec.WorkflowJSONFileName: `{"workflow_id":"wf-remote"}`,
+	})
 
 	if got := h.readScriptIDFromStoreDir(storeDir); got != "s-remote" {
 		t.Fatalf("readScriptIDFromStoreDir = %q, want s-remote", got)
