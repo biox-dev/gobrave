@@ -14,6 +14,8 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/exportcodec"
+
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -23,15 +25,41 @@ import (
 	"gorm.io/gorm"
 )
 
-// scriptJSONFileName 是脚本导出文件名：SaveScript 写入脚本目录并纳入 git 提交，
-// PublishScript 随脚本目录一起推送到 store 裸仓库，InstallScript 同步回脚本目录后
-// 再读取该文件导入数据库。
-const scriptJSONFileName = "script.json"
+// exportCodecForWrite 返回写侧使用的 Codec：写侧总是写当前版本（exportcodec.CurrentVersion）。
+func (h *WorkflowHandler) exportCodecForWrite() (exportcodec.Codec, error) {
+	return h.exportCodec(exportcodec.CurrentVersion)
+}
 
-// workflowJSONFileName 是工作流导出文件名：SaveWorkflow 写入 workflow 目录并纳入 git 提交，
-// PublishWorkflow 随 workflow 目录一起推送到 store 裸仓库，InstallWorkflow 同步回 workflow
-// 目录后再读取该文件导入数据库。
-const workflowJSONFileName = "workflow.json"
+// exportCodecForFile 按导出文件（script.json / workflow.json）顶层的 version 取读侧 Codec。
+//
+// version 为空表示 v1 之前的历史产物（没有 version 字段），按当前版本读回，
+// 这样老 store 的内容不需重新发布也能安装；解析不出 JSON 或版本未注册都返回错误，
+// 由调用方决定转 400（未注册 → exportcodec.ErrUnsupportedVersion）还是 500。
+func (h *WorkflowHandler) exportCodecForFile(raw []byte) (exportcodec.Codec, error) {
+	version, err := exportcodec.PeekVersion(raw)
+	if err != nil {
+		return nil, err
+	}
+	if version == "" {
+		version = exportcodec.CurrentVersion
+	}
+	return h.exportCodec(version)
+}
+
+// exportCodec 从注入的 Registry 取版本对应的 Codec。
+//
+// 未注册（含 Registry 未装配、版本号不认识）一律视为「不支持该文件版本」，
+// 让调用方统一转 400 而不是把未知版本当成功解析。
+func (h *WorkflowHandler) exportCodec(version string) (exportcodec.Codec, error) {
+	if h.exportCodecs == nil {
+		return nil, fmt.Errorf("export codec registry is not configured")
+	}
+	codec := h.exportCodecs.Get(version)
+	if codec == nil {
+		return nil, fmt.Errorf("%w: %s", exportcodec.ErrUnsupportedVersion, version)
+	}
+	return codec, nil
+}
 
 // writeScriptJSONAndCommit 生成 script.json 写入脚本目录，并确保脚本目录是一个 git 仓库、
 // 把当前工作区改动提交为一个 commit（工作区无变更时不会产生空提交）。
@@ -39,37 +67,27 @@ const workflowJSONFileName = "workflow.json"
 // SaveScript 与 PublishScript 共用：保存时落盘并提交；发布时在 push 前再跑一次，
 // 保证 sourceScriptDir 仓库存在、工作区内容已提交且 script.json 一定存在。
 //
+// 文件名、内容与目录布局由导出格式 Codec 决定（见 exportCodecForWrite / exportcodec/v1）；
+// git 提交与格式版本无关，故留在 handler 这层复用。
+//
 // scriptPK 是 script 表主键（int64），scriptDir 是脚本目录绝对路径。
 func (h *WorkflowHandler) writeScriptJSONAndCommit(ctx context.Context, scriptPK int64, scriptDir, commitMessage string) error {
-	exportPayload, err := h.workflowService.GenerateScriptJSONByScriptID(ctx, scriptPK)
+	codec, err := h.exportCodecForWrite()
 	if err != nil {
-		return fmt.Errorf("failed to generate script json: %w", err)
+		return err
 	}
-	scriptJSONBytes, err := json.MarshalIndent(exportPayload, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to encode script json: %w", err)
+	if _, err := codec.WriteScriptFiles(ctx, exportcodec.ScriptWriteRequest{
+		ScriptPK:  scriptPK,
+		ScriptDir: scriptDir,
+	}); err != nil {
+		return err
 	}
-	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
-		return fmt.Errorf("failed to prepare script directory: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(scriptDir, scriptJSONFileName), scriptJSONBytes, 0o644); err != nil {
-		return fmt.Errorf("failed to write script json: %w", err)
-	}
-
-	// 维护脚本目录的 git 版本仓库：不存在则初始化（默认分支 main），已存在则复用。
-	repo, err := utils.EnsureGitRepo(scriptDir)
-	if err != nil {
-		return fmt.Errorf("failed to init script git repository: %w", err)
-	}
-	gitUser, gitEmail := config.ResolveGitIdentity(h.cfg)
-	if _, err := utils.CommitAll(repo, commitMessage, utils.GitIdentity{Name: gitUser, Email: gitEmail}); err != nil {
-		return fmt.Errorf("failed to commit script changes: %w", err)
-	}
-	return nil
+	return h.commitDirChanges(scriptDir, commitMessage)
 }
 
-// writeWorkflowJSONAndCommit 把工作流导出为 workflow.json 写入 workflow 目录，同时把 workflow
-// 引用的脚本目录快照到 <workflowDir>/script/<scriptID>（排除脚本目录自身的 .git），
+// writeWorkflowJSONAndCommit 按导出格式 Codec 生成 workflow.json 写入 workflow 目录，
+// 同时按该版本的目录布局把 workflow 引用的脚本快照到 workflow 目录内
+// （v1 为 <workflowDir>/script/<scriptID>，排除脚本目录自身的 .git），
 // 最后确保 workflow 目录是一个 git 仓库并把当前工作区改动提交为一个 commit。
 //
 // SaveWorkflow 与 PublishWorkflow 共用：保存时落盘并提交；发布时在 push 前再跑一次，
@@ -82,43 +100,33 @@ func (h *WorkflowHandler) writeWorkflowJSONAndCommit(ctx context.Context, workfl
 		return stderrs.New("storage base dir is not configured")
 	}
 
-	exportPayload, err := h.workflowService.GenerateWorkflowJSONByWorkflowID(ctx, workflowPK, baseDir)
+	codec, err := h.exportCodecForWrite()
 	if err != nil {
-		return fmt.Errorf("failed to generate workflow json: %w", err)
+		return err
 	}
-	workflowJSONBytes, err := json.MarshalIndent(exportPayload, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to encode workflow json: %w", err)
+	if _, err := codec.WriteWorkflowFiles(ctx, exportcodec.WorkflowWriteRequest{
+		WorkflowPK:  workflowPK,
+		ProjectID:   projectID,
+		BaseDir:     baseDir,
+		WorkflowDir: workflowDir,
+	}); err != nil {
+		return err
 	}
-	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
-		return fmt.Errorf("failed to prepare workflow directory: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(workflowDir, workflowJSONFileName), workflowJSONBytes, 0o644); err != nil {
-		return fmt.Errorf("failed to write workflow json: %w", err)
-	}
+	return h.commitDirChanges(workflowDir, commitMessage)
+}
 
-	// workflow.json 只描述脚本元数据，脚本文件本身快照到 script/<scriptID>，
-	// 这样 store 仓库同时携带 workflow 与它引用的脚本，安装时可直接还原。
-	for _, scriptItem := range exportPayload.Scripts {
-		scriptID := scriptIDFromExportScript(scriptItem)
-		if scriptID == "" {
-			continue
-		}
-		sourceScriptDir := utils.GetScriptFileDir(baseDir, projectID, scriptID)
-		targetScriptDir := filepath.Join(workflowDir, "script", scriptID)
-		if err := copyDirReplaceExcluding(sourceScriptDir, targetScriptDir, ".git"); err != nil {
-			return fmt.Errorf("failed to snapshot script %s: %w", scriptID, err)
-		}
-	}
-
-	// 维护 workflow 目录的 git 版本仓库：不存在则初始化（默认分支 main），已存在则复用。
-	repo, err := utils.EnsureGitRepo(workflowDir)
+// commitDirChanges 确保 dir 是一个 git 仓库（不存在则初始化，默认分支 main），
+// 并把当前工作区改动提交为一个 commit（无变更时不会产生空提交）。
+//
+// 与导出格式版本无关（任何版本的产物都只是目录里的文件），故由两个 writeXxxAndCommit 共用。
+func (h *WorkflowHandler) commitDirChanges(dir, commitMessage string) error {
+	repo, err := utils.EnsureGitRepo(dir)
 	if err != nil {
-		return fmt.Errorf("failed to init workflow git repository: %w", err)
+		return fmt.Errorf("failed to init git repository %s: %w", dir, err)
 	}
 	gitUser, gitEmail := config.ResolveGitIdentity(h.cfg)
 	if _, err := utils.CommitAll(repo, commitMessage, utils.GitIdentity{Name: gitUser, Email: gitEmail}); err != nil {
-		return fmt.Errorf("failed to commit workflow changes: %w", err)
+		return fmt.Errorf("failed to commit changes in %s: %w", dir, err)
 	}
 	return nil
 }
@@ -457,7 +465,7 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	workflowID := strings.TrimSpace(store.PathName)
 	if workflowID == "" || strings.Contains(workflowID, "/") {
 		// 远程下载的 store：PathName 是 <owner>/<repo>，真实 workflow_id 需要从 store 内的 workflow.json 读取。
-		workflowID = readWorkflowIDFromStoreDir(storeDir)
+		workflowID = h.readWorkflowIDFromStoreDir(storeDir)
 	}
 	if workflowID == "" {
 		c.Error(errors.NewValidationError("workflow_id is required in workflow.json"))
@@ -473,10 +481,16 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	}
 
 	// 从同步后的 workflow 目录读取 workflow.json 导入数据库。
-	payload, readErr := readWorkflowJSONFromDir(targetWorkflowDir)
+	// 文件顶层 version 决定用哪套 Codec 解析（见 readWorkflowJSONFromDir）；
+	// 同一个 Codec 也用来解释该版本的目录布局（脚本快照目录）。
+	codec, payload, readErr := h.readWorkflowJSONFromDir(targetWorkflowDir)
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
 			c.Error(errors.NewNotFoundError("workflow.json not found in store"))
+			return
+		}
+		if stderrs.Is(readErr, exportcodec.ErrUnsupportedVersion) {
+			c.Error(errors.NewValidationError("unsupported workflow.json version").WithDetails(readErr.Error()))
 			return
 		}
 		c.Error(errors.NewInternalServerError("failed to read workflow json").WithDetails(readErr.Error()))
@@ -484,10 +498,6 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	}
 	if payload.WorkflowID == "" {
 		c.Error(errors.NewValidationError("workflow_id is required in workflow.json"))
-		return
-	}
-	if err := normalizeInstalledWorkflowMap(payload.Workflow); err != nil {
-		c.Error(errors.NewValidationError("workflow.json contains invalid workflow fields").WithDetails(err.Error()))
 		return
 	}
 
@@ -579,14 +589,14 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 
 		scriptID := strings.TrimSpace(installScript.ScriptID)
 		if scriptID == "" {
-			scriptID = scriptIDFromExportScript(scriptMap)
+			scriptID = codec.ScriptIDFromExportScript(scriptMap)
 		}
 		if scriptID != "" {
-			// 脚本文件随 workflow 目录一起从 store 同步到 <workflowDir>/script/<scriptID>，
-			// 这里再原样还原到脚本目录。
-			sourceScriptDir := filepath.Join(targetWorkflowDir, "script", scriptID)
+			// 脚本文件随 workflow 目录一起从 store 同步到该版本约定的快照目录
+			// （v1 为 <workflowDir>/script/<scriptID>），这里再原样还原到脚本目录。
+			sourceScriptDir := codec.ScriptSnapshotDir(targetWorkflowDir, scriptID)
 			targetScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, scriptID)
-			if copyErr := copyDirReplace(sourceScriptDir, targetScriptDir); copyErr != nil {
+			if copyErr := utils.CopyDirReplace(sourceScriptDir, targetScriptDir); copyErr != nil {
 				c.Error(errors.NewInternalServerError("failed to install script files").WithDetails(copyErr.Error()))
 				return
 			}
@@ -656,7 +666,7 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		scriptID = uuid.NewString()
 	} else if scriptID == "" || strings.Contains(scriptID, "/") {
 		// 远程下载的 store：PathName 是 <owner>/<repo>，真实 script_id 需要从 store 内的 script.json 读取。
-		scriptID = readScriptIDFromStoreDir(storeDir)
+		scriptID = h.readScriptIDFromStoreDir(storeDir)
 	}
 	if scriptID == "" {
 		c.Error(errors.NewValidationError("script_id is required in script.json"))
@@ -672,10 +682,15 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	}
 
 	// 从同步后的脚本目录读取 script.json 导入数据库。
-	payload, readErr := readScriptJSONFromDir(targetScriptDir)
+	// 文件顶层 version 决定用哪套 Codec 解析（见 readScriptJSONFromDir）。
+	_, payload, readErr := h.readScriptJSONFromDir(targetScriptDir)
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
 			c.Error(errors.NewNotFoundError("script.json not found in store"))
+			return
+		}
+		if stderrs.Is(readErr, exportcodec.ErrUnsupportedVersion) {
+			c.Error(errors.NewValidationError("unsupported script.json version").WithDetails(readErr.Error()))
 			return
 		}
 		c.Error(errors.NewInternalServerError("failed to read script json").WithDetails(readErr.Error()))
@@ -755,7 +770,9 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 //
 // 仅用于远程下载的 store（普通工作区仓库）；本地发布的 store 是裸仓库，没有工作区文件，
 // 其 script_id 直接取自 store.PathName。
-func readScriptIDFromStoreDir(storeDir string) string {
+// 该文件可能存在任意层级（resolveStoreScriptJSONPath 按根目录优先查找），
+// 与 InstallScript 直接读目标脚本目录不同，故单独实现。
+func (h *WorkflowHandler) readScriptIDFromStoreDir(storeDir string) string {
 	scriptJSONPath, err := resolveStoreScriptJSONPath(storeDir)
 	if err != nil {
 		return ""
@@ -764,31 +781,41 @@ func readScriptIDFromStoreDir(storeDir string) string {
 	if err != nil {
 		return ""
 	}
-	payload := &types.ScriptJSONExportResponse{}
-	if err := json.Unmarshal(content, payload); err != nil {
+	codec, err := h.exportCodecForFile(content)
+	if err != nil {
+		return ""
+	}
+	payload, err := codec.DecodeScript(content)
+	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(payload.ScriptID)
 }
 
-// readScriptJSONFromDir 读取脚本目录下的 script.json 并解析为导出结构。
-func readScriptJSONFromDir(scriptDir string) (*types.ScriptJSONExportResponse, error) {
-	content, err := os.ReadFile(filepath.Join(scriptDir, scriptJSONFileName))
+// readScriptJSONFromDir 读取脚本目录下的 script.json，按文件顶层 version 从 Registry 取 Codec 解析。
+//
+// 把命中的 Codec 一并返回：安装侧还要用它解释该版本的目录布局。
+func (h *WorkflowHandler) readScriptJSONFromDir(scriptDir string) (exportcodec.Codec, *types.ScriptJSONExportResponse, error) {
+	content, err := os.ReadFile(filepath.Join(scriptDir, exportcodec.ScriptJSONFileName))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	payload := &types.ScriptJSONExportResponse{}
-	if err := json.Unmarshal(content, payload); err != nil {
-		return nil, err
+	codec, err := h.exportCodecForFile(content)
+	if err != nil {
+		return nil, nil, err
 	}
-	return payload, nil
+	payload, err := codec.DecodeScript(content)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid %s: %w", exportcodec.ScriptJSONFileName, err)
+	}
+	return codec, payload, nil
 }
 
 // readWorkflowIDFromStoreDir 读取 store 目录内 workflow.json 的 workflow_id。
 //
 // 仅用于远程下载的 store（普通工作区仓库）；本地发布的 store 是裸仓库，没有工作区文件，
 // 其 workflow_id 直接取自 store.PathName。
-func readWorkflowIDFromStoreDir(storeDir string) string {
+func (h *WorkflowHandler) readWorkflowIDFromStoreDir(storeDir string) string {
 	workflowJSONPath, err := resolveStoreWorkflowJSONPath(storeDir)
 	if err != nil {
 		return ""
@@ -797,24 +824,34 @@ func readWorkflowIDFromStoreDir(storeDir string) string {
 	if err != nil {
 		return ""
 	}
-	payload := &types.WorkflowJSONExportResponse{}
-	if err := json.Unmarshal(content, payload); err != nil {
+	codec, err := h.exportCodecForFile(content)
+	if err != nil {
+		return ""
+	}
+	payload, err := codec.DecodeWorkflow(content)
+	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(payload.WorkflowID)
 }
 
-// readWorkflowJSONFromDir 读取 workflow 目录下的 workflow.json 并解析为导出结构。
-func readWorkflowJSONFromDir(workflowDir string) (*types.WorkflowJSONExportResponse, error) {
-	content, err := os.ReadFile(filepath.Join(workflowDir, workflowJSONFileName))
+// readWorkflowJSONFromDir 读取 workflow 目录下的 workflow.json，按文件顶层 version 从 Registry 取 Codec 解析。
+//
+// 把命中的 Codec 一并返回：安装侧还要用它解释该版本的目录布局（脚本快照目录）。
+func (h *WorkflowHandler) readWorkflowJSONFromDir(workflowDir string) (exportcodec.Codec, *types.WorkflowJSONExportResponse, error) {
+	content, err := os.ReadFile(filepath.Join(workflowDir, exportcodec.WorkflowJSONFileName))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	payload := &types.WorkflowJSONExportResponse{}
-	if err := json.Unmarshal(content, payload); err != nil {
-		return nil, err
+	codec, err := h.exportCodecForFile(content)
+	if err != nil {
+		return nil, nil, err
 	}
-	return payload, nil
+	payload, err := codec.DecodeWorkflow(content)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid %s: %w", exportcodec.WorkflowJSONFileName, err)
+	}
+	return codec, payload, nil
 }
 
 func resolveStoreWorkflowJSONPath(storePath string) (string, error) {
@@ -823,7 +860,7 @@ func resolveStoreWorkflowJSONPath(storePath string) (string, error) {
 		return "", fmt.Errorf("store path is empty")
 	}
 
-	directPath := filepath.Join(storePath, workflowJSONFileName)
+	directPath := filepath.Join(storePath, exportcodec.WorkflowJSONFileName)
 	if stat, err := os.Stat(directPath); err == nil && !stat.IsDir() {
 		return directPath, nil
 	}
@@ -836,7 +873,7 @@ func resolveStoreWorkflowJSONPath(storePath string) (string, error) {
 		if info == nil || info.IsDir() {
 			return nil
 		}
-		if strings.EqualFold(info.Name(), workflowJSONFileName) {
+		if strings.EqualFold(info.Name(), exportcodec.WorkflowJSONFileName) {
 			found = path
 			return io.EOF
 		}
@@ -857,7 +894,7 @@ func resolveStoreScriptJSONPath(storePath string) (string, error) {
 		return "", fmt.Errorf("store path is empty")
 	}
 
-	directPath := filepath.Join(storePath, scriptJSONFileName)
+	directPath := filepath.Join(storePath, exportcodec.ScriptJSONFileName)
 	if stat, err := os.Stat(directPath); err == nil && !stat.IsDir() {
 		return directPath, nil
 	}
@@ -870,7 +907,7 @@ func resolveStoreScriptJSONPath(storePath string) (string, error) {
 		if info == nil || info.IsDir() {
 			return nil
 		}
-		if strings.EqualFold(info.Name(), scriptJSONFileName) {
+		if strings.EqualFold(info.Name(), exportcodec.ScriptJSONFileName) {
 			found = path
 			return io.EOF
 		}
@@ -932,117 +969,4 @@ func buildPublishURLsJSON(pathName string) (datatypes.JSON, error) {
 		return nil, err
 	}
 	return datatypes.JSON(b), nil
-}
-
-func copyDirReplace(srcDir string, dstDir string) error {
-	return copyDirReplaceExcluding(srcDir, dstDir)
-}
-
-// copyDirReplaceExcluding 与 copyDirReplace 一致（用 srcDir 的内容完全替换 dstDir），
-// 但跳过名称为 exclude 的条目（任意层级），例如脚本目录自身的 ".git"——把脚本快照进
-// workflow 目录时不能把脚本仓库一起塞进去。
-func copyDirReplaceExcluding(srcDir string, dstDir string, exclude ...string) error {
-	skipped := make(map[string]struct{}, len(exclude))
-	for _, name := range exclude {
-		if name = strings.TrimSpace(name); name != "" {
-			skipped[name] = struct{}{}
-		}
-	}
-
-	info, err := os.Stat(srcDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("source is not a directory: %s", srcDir)
-	}
-
-	if err := os.RemoveAll(dstDir); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dstDir, 0o755); err != nil {
-		return err
-	}
-
-	return filepath.Walk(srcDir, func(path string, fileInfo os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		relPath, err := filepath.Rel(srcDir, path)
-		if err != nil {
-			return err
-		}
-		if relPath == "." {
-			return nil
-		}
-		if _, ok := skipped[fileInfo.Name()]; ok {
-			if fileInfo.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		targetPath := filepath.Join(dstDir, relPath)
-		if fileInfo.IsDir() {
-			return os.MkdirAll(targetPath, 0o755)
-		}
-
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-			return err
-		}
-
-		srcFile, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer srcFile.Close()
-
-		dstFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileInfo.Mode())
-		if err != nil {
-			return err
-		}
-		defer dstFile.Close()
-
-		_, err = io.Copy(dstFile, srcFile)
-		return err
-	})
-}
-
-func scriptIDFromExportScript(item map[string]any) string {
-	if item == nil {
-		return ""
-	}
-	if v, ok := item["component_id"].(string); ok {
-		return strings.TrimSpace(v)
-	}
-	if v, ok := item["script_id"].(string); ok {
-		return strings.TrimSpace(v)
-	}
-	return ""
-}
-
-func normalizeInstalledWorkflowMap(workflow map[string]any) error {
-	if workflow == nil {
-		return nil
-	}
-
-	dagDefinition, exists := workflow["dag_definition"]
-	if !exists || dagDefinition == nil {
-		return nil
-	}
-
-	switch value := dagDefinition.(type) {
-	case string:
-		return nil
-	default:
-		b, err := json.Marshal(value)
-		if err != nil {
-			return err
-		}
-		workflow["dag_definition"] = string(b)
-		return nil
-	}
 }

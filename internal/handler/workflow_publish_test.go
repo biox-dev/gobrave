@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/biox-dev/gobrave/internal/exportcodec"
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 func writeTestFile(t *testing.T, path, content string) {
@@ -27,8 +30,8 @@ func TestCopyDirReplaceExcluding(t *testing.T) {
 	writeTestFile(t, filepath.Join(src, "sub", ".git", "HEAD"), "nested\n")
 
 	dst := filepath.Join(t.TempDir(), "dst")
-	if err := copyDirReplaceExcluding(src, dst, ".git"); err != nil {
-		t.Fatalf("copyDirReplaceExcluding: %v", err)
+	if err := utils.CopyDirReplace(src, dst, ".git"); err != nil {
+		t.Fatalf("utils.CopyDirReplace: %v", err)
 	}
 
 	for _, rel := range []string{"main.R", "script.json", "sub/keep.txt"} {
@@ -44,16 +47,16 @@ func TestCopyDirReplaceExcluding(t *testing.T) {
 
 	// dst 已有内容时必须被完全替换，而不是叠加。
 	writeTestFile(t, filepath.Join(dst, "stale.txt"), "stale\n")
-	if err := copyDirReplaceExcluding(src, dst, ".git"); err != nil {
-		t.Fatalf("copyDirReplaceExcluding second run: %v", err)
+	if err := utils.CopyDirReplace(src, dst, ".git"); err != nil {
+		t.Fatalf("utils.CopyDirReplace second run: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "stale.txt")); !os.IsNotExist(err) {
 		t.Fatalf("stale file should be removed, stat err = %v", err)
 	}
 
 	// 不传 exclude 时保持旧行为（.git 一并复制）。
-	if err := copyDirReplace(src, dst); err != nil {
-		t.Fatalf("copyDirReplace: %v", err)
+	if err := utils.CopyDirReplace(src, dst); err != nil {
+		t.Fatalf("utils.CopyDirReplace: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dst, ".git", "HEAD")); err != nil {
 		t.Fatalf(".git should be copied without exclusion: %v", err)
@@ -61,21 +64,23 @@ func TestCopyDirReplaceExcluding(t *testing.T) {
 
 	// 源目录不存在时按幂等处理（发布/安装时脚本目录可能还没建）。
 	missing := filepath.Join(t.TempDir(), "missing")
-	if err := copyDirReplace(missing, dst); err != nil {
-		t.Fatalf("copyDirReplace with missing source: %v", err)
+	if err := utils.CopyDirReplace(missing, dst); err != nil {
+		t.Fatalf("utils.CopyDirReplace with missing source: %v", err)
 	}
-	if err := copyDirReplaceExcluding(missing, dst, ".git"); err != nil {
-		t.Fatalf("copyDirReplaceExcluding with missing source: %v", err)
+	if err := utils.CopyDirReplace(missing, dst, ".git"); err != nil {
+		t.Fatalf("utils.CopyDirReplace with missing source and exclude: %v", err)
 	}
 }
 
 // TestReadInstalledJSONFromDir 校验发布/安装共用的读盘逻辑：
 // 命中时能解析出 id，缺失时返回可被 os.IsNotExist 识别的错误（安装时映射为 404）。
 func TestReadInstalledJSONFromDir(t *testing.T) {
-	workflowDir := t.TempDir()
-	writeTestFile(t, filepath.Join(workflowDir, workflowJSONFileName), `{"workflow_id":"wf-1","workflow":{},"scripts":[]}`)
+	h := newTestWorkflowHandler()
 
-	workflowPayload, err := readWorkflowJSONFromDir(workflowDir)
+	workflowDir := t.TempDir()
+	writeTestFile(t, filepath.Join(workflowDir, exportcodec.WorkflowJSONFileName), `{"workflow_id":"wf-1","workflow":{},"scripts":[]}`)
+
+	_, workflowPayload, err := h.readWorkflowJSONFromDir(workflowDir)
 	if err != nil {
 		t.Fatalf("readWorkflowJSONFromDir: %v", err)
 	}
@@ -84,9 +89,9 @@ func TestReadInstalledJSONFromDir(t *testing.T) {
 	}
 
 	scriptDir := t.TempDir()
-	writeTestFile(t, filepath.Join(scriptDir, scriptJSONFileName), `{"script_id":"s-1","script":{}}`)
+	writeTestFile(t, filepath.Join(scriptDir, exportcodec.ScriptJSONFileName), `{"script_id":"s-1","script":{}}`)
 
-	scriptPayload, err := readScriptJSONFromDir(scriptDir)
+	_, scriptPayload, err := h.readScriptJSONFromDir(scriptDir)
 	if err != nil {
 		t.Fatalf("readScriptJSONFromDir: %v", err)
 	}
@@ -95,17 +100,17 @@ func TestReadInstalledJSONFromDir(t *testing.T) {
 	}
 
 	emptyDir := t.TempDir()
-	if _, err := readWorkflowJSONFromDir(emptyDir); !os.IsNotExist(err) {
+	if _, _, err := h.readWorkflowJSONFromDir(emptyDir); !os.IsNotExist(err) {
 		t.Fatalf("missing workflow.json err = %v, want os.IsNotExist", err)
 	}
-	if _, err := readScriptJSONFromDir(emptyDir); !os.IsNotExist(err) {
+	if _, _, err := h.readScriptJSONFromDir(emptyDir); !os.IsNotExist(err) {
 		t.Fatalf("missing script.json err = %v, want os.IsNotExist", err)
 	}
 
 	// 非法 JSON 必须报错，而不是返回零值。
 	badDir := t.TempDir()
-	writeTestFile(t, filepath.Join(badDir, workflowJSONFileName), `{`)
-	if _, err := readWorkflowJSONFromDir(badDir); err == nil || os.IsNotExist(err) {
+	writeTestFile(t, filepath.Join(badDir, exportcodec.WorkflowJSONFileName), `{`)
+	if _, _, err := h.readWorkflowJSONFromDir(badDir); err == nil || os.IsNotExist(err) {
 		t.Fatalf("invalid workflow.json err = %v, want parse error", err)
 	}
 }
@@ -113,15 +118,15 @@ func TestReadInstalledJSONFromDir(t *testing.T) {
 // TestResolveStoreJSONPathPrefersRootFile 校验 script/workflow 两种 store 都在根目录优先命中。
 func TestResolveStoreJSONPathPrefersRootFile(t *testing.T) {
 	storeDir := t.TempDir()
-	writeTestFile(t, filepath.Join(storeDir, scriptJSONFileName), `{"script_id":"root"}`)
-	writeTestFile(t, filepath.Join(storeDir, "nested", scriptJSONFileName), `{"script_id":"nested"}`)
-	writeTestFile(t, filepath.Join(storeDir, workflowJSONFileName), `{"workflow_id":"root"}`)
+	writeTestFile(t, filepath.Join(storeDir, exportcodec.ScriptJSONFileName), `{"script_id":"root"}`)
+	writeTestFile(t, filepath.Join(storeDir, "nested", exportcodec.ScriptJSONFileName), `{"script_id":"nested"}`)
+	writeTestFile(t, filepath.Join(storeDir, exportcodec.WorkflowJSONFileName), `{"workflow_id":"root"}`)
 
 	scriptPath, err := resolveStoreScriptJSONPath(storeDir)
 	if err != nil {
 		t.Fatalf("resolveStoreScriptJSONPath: %v", err)
 	}
-	if scriptPath != filepath.Join(storeDir, scriptJSONFileName) {
+	if scriptPath != filepath.Join(storeDir, exportcodec.ScriptJSONFileName) {
 		t.Fatalf("script.json path = %s, want root file", scriptPath)
 	}
 
@@ -129,18 +134,18 @@ func TestResolveStoreJSONPathPrefersRootFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveStoreWorkflowJSONPath: %v", err)
 	}
-	if workflowPath != filepath.Join(storeDir, workflowJSONFileName) {
+	if workflowPath != filepath.Join(storeDir, exportcodec.WorkflowJSONFileName) {
 		t.Fatalf("workflow.json path = %s, want root file", workflowPath)
 	}
 
 	// 只有嵌套文件时回退到 Walk 查找。
 	nestedOnly := t.TempDir()
-	writeTestFile(t, filepath.Join(nestedOnly, "nested", scriptJSONFileName), `{"script_id":"nested"}`)
+	writeTestFile(t, filepath.Join(nestedOnly, "nested", exportcodec.ScriptJSONFileName), `{"script_id":"nested"}`)
 	nestedPath, err := resolveStoreScriptJSONPath(nestedOnly)
 	if err != nil {
 		t.Fatalf("resolveStoreScriptJSONPath nested: %v", err)
 	}
-	if nestedPath != filepath.Join(nestedOnly, "nested", scriptJSONFileName) {
+	if nestedPath != filepath.Join(nestedOnly, "nested", exportcodec.ScriptJSONFileName) {
 		t.Fatalf("nested script.json path = %s", nestedPath)
 	}
 

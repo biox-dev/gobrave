@@ -36,6 +36,8 @@ import (
 	schedulerdataflow "github.com/biox-dev/gobrave/internal/dag/scheduler/dataflow"
 	schedulerdynamic "github.com/biox-dev/gobrave/internal/dag/scheduler/dynamic"
 	"github.com/biox-dev/gobrave/internal/event"
+	"github.com/biox-dev/gobrave/internal/exportcodec"
+	exportcodecv1 "github.com/biox-dev/gobrave/internal/exportcodec/v1"
 	"github.com/biox-dev/gobrave/internal/handler"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/manager"
@@ -407,6 +409,15 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewLLMService))
 	must(container.Provide(service.NewAISummaryService))
 	must(container.Provide(service.NewSheetFileService))
+	// 导出/安装文件格式版本注册表（script.json / workflow.json 顶层的 version）。
+	// 新增一个版本 = 新写一个 exportcodec 子包 + 这里多 Register 一行，
+	// handler 侧只做 exportCodecs.Get(version)，不需要任何 switch version。
+	// Codec 实现直接持有 WorkflowService（写侧按主键生成导出 payload）。
+	must(container.Provide(func(workflowService interfaces.WorkflowService) *exportcodec.Registry {
+		reg := exportcodec.NewRegistry()
+		reg.Register(exportcodecv1.NewCodec(workflowService))
+		return reg
+	}))
 	must(container.Provide(
 		dagruntime.NewNodeCompletionCoordinator,
 		dig.As(new(event.Handler)),

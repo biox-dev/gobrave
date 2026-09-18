@@ -12,6 +12,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/exportcodec"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -27,7 +28,11 @@ type WorkflowHandler struct {
 	dataService      interfaces.DataService
 	projectService   interfaces.ProjectService
 	storeService     interfaces.StoreService
-	cfg              *config.Config
+	// exportCodecs 是导出/安装（script.json / workflow.json）格式版本注册表：
+	// 写侧取 CurrentVersion 的 Codec 落盘，读侧按文件里的 version 取 Codec 解析。
+	// 由 DI 容器装配（见 internal/container/container.go），本层不做任何 switch version。
+	exportCodecs *exportcodec.Registry
+	cfg          *config.Config
 }
 
 type WorkflowFormJSONResponse struct {
@@ -142,13 +147,16 @@ func NewWorkflowHandler(workflowService interfaces.WorkflowService,
 	containerService interfaces.ContainerService,
 	dataService interfaces.DataService,
 	projectService interfaces.ProjectService,
-	storeService interfaces.StoreService, cfg *config.Config) *WorkflowHandler {
+	storeService interfaces.StoreService,
+	exportCodecs *exportcodec.Registry,
+	cfg *config.Config) *WorkflowHandler {
 	return &WorkflowHandler{
 		workflowService:  workflowService,
 		containerService: containerService,
 		dataService:      dataService,
 		projectService:   projectService,
 		storeService:     storeService,
+		exportCodecs:     exportCodecs,
 		cfg:              cfg,
 	}
 }

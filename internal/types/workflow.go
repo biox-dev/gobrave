@@ -103,6 +103,10 @@ type ScriptContainerSnapshot struct {
 }
 
 type WorkflowJSONExportResponse struct {
+	// Version 是导出文件格式版本（取值见 internal/exportcodec，如 exportcodec.VersionV1），
+	// 写入 workflow.json 顶层；安装侧（InstallWorkflow）据此路由到对应版本的 Codec。
+	// 历史产物没有该字段，反序列化后为空字符串。
+	Version string `json:"version"`
 	// Path               string           `json:"path"`
 	WorkflowID         string           `json:"workflow_id"`
 	Workflow           map[string]any   `json:"workflow"`
@@ -157,6 +161,10 @@ type ScriptVersion struct {
 }
 
 type ScriptJSONExportResponse struct {
+	// Version 是导出文件格式版本（取值见 internal/exportcodec，如 exportcodec.VersionV1），
+	// 写入 script.json 顶层；安装侧（InstallScript）据此路由到对应版本的 Codec。
+	// 历史产物没有该字段，反序列化后为空字符串。
+	Version            string           `json:"version"`
 	ScriptID           string           `json:"script_id"`
 	Script             map[string]any   `json:"script"`
 	ContainerTemplates []map[string]any `json:"container_templates,omitempty"`
