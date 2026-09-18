@@ -290,20 +290,15 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 		}
 	}
 
-	// 维护脚本目录的 git 版本仓库：不存在则初始化（默认分支 main），
-	// 已存在则复用；有实际变更时提交一次 commit。
-	repo, gitErr := utils.EnsureGitRepo(scriptDir)
-	if gitErr != nil {
-		c.Error(errors.NewInternalServerError("failed to init script git repository").WithDetails(gitErr.Error()))
-		return
-	}
-	gitUser, gitEmail := config.ResolveGitIdentity(h.cfg)
+	// 生成 script.json 落盘并提交脚本目录改动（与 PublishScript 共用同一逻辑）：
+	// 发布（PublishScript）时随脚本目录一起推送到 store，
+	// 安装（InstallScript）时再从 store 同步回脚本目录并读取该文件导入数据库。
 	commitMessage := strings.TrimSpace(req.CommitMessage)
 	if commitMessage == "" {
 		commitMessage = fmt.Sprintf("save script %s", scriptID)
 	}
-	if _, commitErr := utils.CommitAll(repo, commitMessage, utils.GitIdentity{Name: gitUser, Email: gitEmail}); commitErr != nil {
-		c.Error(errors.NewInternalServerError("failed to commit script changes").WithDetails(commitErr.Error()))
+	if err := h.writeScriptJSONAndCommit(c.Request.Context(), item.ID, scriptDir, commitMessage); err != nil {
+		c.Error(errors.NewInternalServerError("failed to persist script files").WithDetails(err.Error()))
 		return
 	}
 

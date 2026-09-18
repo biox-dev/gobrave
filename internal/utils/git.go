@@ -1,18 +1,42 @@
 package utils
 
 import (
+	"context"
 	stderrs "errors"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	git "github.com/go-git/go-git/v5"
+	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport/client"
+	"github.com/go-git/go-git/v5/plumbing/transport/server"
 )
 
 // defaultGitCommitMessage 是调用方未提供 commit message 时的兜底文案。
 const defaultGitCommitMessage = "update repository"
+
+// storeRemoteName 是脚本目录推送到本地 store 仓库时使用的 remote 名称。
+const storeRemoteName = "origin"
+
+// localGitTransportOnce 保证 file 协议只被替换一次。
+var localGitTransportOnce sync.Once
+
+// ensureLocalGitTransport 把 go-git 的 file 协议替换为进程内的 git server 实现。
+//
+// go-git 自带的 file 传输会调用外部 git-upload-pack / git-receive-pack 可执行文件，
+// 而生产运行镜像（debian:bookworm-slim）默认不安装 git；换成 go-git 内置的 server
+// 后，本地仓库之间的 clone / push 完全在 Go 进程内完成，不再依赖外部 git。
+// 该注册是进程级且幂等的，只影响 file 协议（远端 http/ssh 行为不变）。
+func ensureLocalGitTransport() {
+	localGitTransportOnce.Do(func() {
+		client.InstallProtocol("file", server.NewClient(server.DefaultLoader))
+	})
+}
 
 // GitIdentity 是 git 提交时使用的身份信息，对应 config.GitConfig。
 type GitIdentity struct {
@@ -93,4 +117,231 @@ func CommitAll(repo *git.Repository, message string, identity GitIdentity) (bool
 		return false, err
 	}
 	return true, nil
+}
+
+// EnsureBareGitRepo 保证 dir 是一个裸（bare）git 仓库并返回它，用作本地推送目标：
+//
+//   - dir 不存在：初始化裸仓库（默认分支 main）
+//   - dir 已是裸仓库：直接复用，保留历史，便于多次 publish 增量推送
+//   - dir 存在但不是裸仓库（例如旧版本留下的普通文件产物）：清空后重新初始化
+//
+// DefaultBranch 固定为 main，避免受本机 git 默认分支配置影响。
+func EnsureBareGitRepo(dir string) (*git.Repository, error) {
+	ensureLocalGitTransport()
+
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil, stderrs.New("git repository directory is empty")
+	}
+
+	if repo, err := git.PlainOpen(dir); err == nil {
+		if cfg, cfgErr := repo.Config(); cfgErr == nil && cfg.Core.IsBare {
+			return repo, nil
+		}
+	} else if !stderrs.Is(err, git.ErrRepositoryNotExists) {
+		return nil, err
+	}
+
+	// 非裸仓库或残留的普通文件目录：整体重建，避免把工作区文件混进裸仓库。
+	if err := os.RemoveAll(dir); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+
+	return git.PlainInitWithOptions(dir, &git.PlainInitOptions{
+		InitOptions: git.InitOptions{DefaultBranch: plumbing.Main},
+		Bare:        true,
+	})
+}
+
+// PushDirToRepo 把 sourceDir 仓库的当前分支推送到 targetRepoPath 对应的本地仓库。
+//
+// 等价于 `git remote add/ set-url <origin> <targetRepoPath>` 后再 `git push`：
+// 每次调用都会把名为 origin 的 remote 指向最新的 targetRepoPath（base_dir 变更后
+// 无需手工改 remote 配置），并以 force 方式推送，使目标仓库与源分支内容完全一致。
+//
+// 源仓库没有 commit（HEAD 未出生）时返回错误，调用方应提示先保存。
+func PushDirToRepo(ctx context.Context, sourceDir, targetRepoPath string) error {
+	ensureLocalGitTransport()
+
+	sourceDir = strings.TrimSpace(sourceDir)
+	targetRepoPath = strings.TrimSpace(targetRepoPath)
+	if sourceDir == "" || targetRepoPath == "" {
+		return stderrs.New("git source directory and target repository path must not be empty")
+	}
+
+	repo, err := git.PlainOpen(sourceDir)
+	if err != nil {
+		return fmt.Errorf("open source git repository %q: %w", sourceDir, err)
+	}
+
+	head, err := repo.Head()
+	if err != nil {
+		if stderrs.Is(err, plumbing.ErrReferenceNotFound) {
+			return fmt.Errorf("source git repository %q has no commit yet", sourceDir)
+		}
+		return err
+	}
+
+	// remote 已存在时先删除再加回，等价于 git remote set-url，避免残留旧地址。
+	if delErr := repo.DeleteRemote(storeRemoteName); delErr != nil && !stderrs.Is(delErr, git.ErrRemoteNotFound) {
+		return delErr
+	}
+	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{
+		Name: storeRemoteName,
+		URLs: []string{targetRepoPath},
+	}); err != nil {
+		return err
+	}
+
+	// "+" 前缀表示允许非快进更新：store 是脚本目录的发布镜像，需要与源分支完全一致。
+	refSpec := gitconfig.RefSpec(fmt.Sprintf("+%s:%s", head.Name(), head.Name()))
+	if err := repo.PushContext(ctx, &git.PushOptions{
+		RemoteName: storeRemoteName,
+		RefSpecs:   []gitconfig.RefSpec{refSpec},
+	}); err != nil {
+		return fmt.Errorf("push %q to %q: %w", sourceDir, targetRepoPath, err)
+	}
+	return nil
+}
+
+// SyncWorktreeFromRepo 让 targetDir 的工作区与 srcRepoPath 仓库保持一致：
+//
+//   - targetDir 已是 git 仓库：从 srcRepoPath fetch 后 reset --hard，覆盖本地改动
+//   - targetDir 不存在或为空目录：从 srcRepoPath clone（非裸克隆，带工作区）
+//   - targetDir 存在已有内容但不是 git 仓库（旧版本安装留下的普通文件目录）：
+//     就地初始化仓库后再 reset --hard，语义同"覆盖本地"
+//
+// srcRepoPath 既可以是裸仓库（publish 产物），也可以是普通工作区仓库。
+func SyncWorktreeFromRepo(ctx context.Context, targetDir, srcRepoPath string) error {
+	ensureLocalGitTransport()
+
+	targetDir = strings.TrimSpace(targetDir)
+	srcRepoPath = strings.TrimSpace(srcRepoPath)
+	if targetDir == "" || srcRepoPath == "" {
+		return stderrs.New("git target directory and source repository path must not be empty")
+	}
+
+	repo, openErr := git.PlainOpen(targetDir)
+	if openErr == nil {
+		return resetWorktreeToRemote(ctx, repo, targetDir, srcRepoPath)
+	}
+	if !stderrs.Is(openErr, git.ErrRepositoryNotExists) {
+		return openErr
+	}
+
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(targetDir)
+	if err != nil {
+		return err
+	}
+
+	if len(entries) == 0 {
+		if _, err := git.PlainCloneContext(ctx, targetDir, false, &git.CloneOptions{URL: srcRepoPath}); err != nil {
+			return fmt.Errorf("clone %q to %q: %w", srcRepoPath, targetDir, err)
+		}
+		return nil
+	}
+
+	repo, err = EnsureGitRepo(targetDir)
+	if err != nil {
+		return err
+	}
+	return resetWorktreeToRemote(ctx, repo, targetDir, srcRepoPath)
+}
+
+// resetWorktreeToRemote 让已存在的仓库工作区与远端仓库 srcRepoPath 完全一致：
+// 重置 origin 地址 -> fetch -> reset --hard 到远端同名分支。
+func resetWorktreeToRemote(ctx context.Context, repo *git.Repository, targetDir, srcRepoPath string) error {
+	if delErr := repo.DeleteRemote(storeRemoteName); delErr != nil && !stderrs.Is(delErr, git.ErrRemoteNotFound) {
+		return delErr
+	}
+	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{
+		Name:  storeRemoteName,
+		URLs:  []string{srcRepoPath},
+		Fetch: []gitconfig.RefSpec{gitconfig.RefSpec("+refs/heads/*:refs/remotes/" + storeRemoteName + "/*")},
+	}); err != nil {
+		return err
+	}
+
+	branch := plumbing.Main.Short()
+	if head, err := repo.Head(); err == nil && head.Name().IsBranch() {
+		branch = head.Name().Short()
+	}
+
+	if err := repo.FetchContext(ctx, &git.FetchOptions{
+		RemoteName: storeRemoteName,
+		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec("+refs/heads/*:refs/remotes/" + storeRemoteName + "/*")},
+		Force:      true,
+	}); err != nil && !stderrs.Is(err, git.NoErrAlreadyUpToDate) {
+		return fmt.Errorf("fetch %q: %w", srcRepoPath, err)
+	}
+
+	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName(storeRemoteName, branch), true)
+	if err != nil {
+		return fmt.Errorf("resolve remote branch %q of %q: %w", branch, srcRepoPath, err)
+	}
+
+	// 就地初始化出来的空仓库 HEAD 处于未出生状态，先建出同名分支，
+	// 否则 Reset 无法定位当前分支（go-git 会报 reference not found）。
+	if _, refErr := repo.Reference(plumbing.NewBranchReferenceName(branch), false); stderrs.Is(refErr, plumbing.ErrReferenceNotFound) {
+		if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName(branch), remoteRef.Hash())); err != nil {
+			return err
+		}
+	} else if refErr != nil {
+		return refErr
+	}
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		return err
+	}
+	if err := wt.Reset(&git.ResetOptions{Commit: remoteRef.Hash(), Mode: git.HardReset}); err != nil {
+		return fmt.Errorf("reset worktree of %q to %s: %w", targetDir, remoteRef.Hash(), err)
+	}
+	return nil
+}
+
+// ReadFileFromGitRepo 读取仓库 HEAD 提交中指定相对路径（"/" 分隔）的文件内容。
+//
+// 同时支持裸仓库与普通仓库：本地发布的 store 是裸仓库，没有工作区文件，封面图等
+// 只能从 git 对象里读取。
+func ReadFileFromGitRepo(repoPath, relPath string) ([]byte, error) {
+	ensureLocalGitTransport()
+
+	repoPath = strings.TrimSpace(repoPath)
+	relPath = strings.Trim(strings.TrimSpace(relPath), "/")
+	if repoPath == "" || relPath == "" {
+		return nil, stderrs.New("git repository path and file path must not be empty")
+	}
+
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return nil, err
+	}
+	commit, err := repo.CommitObject(head.Hash())
+	if err != nil {
+		return nil, err
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, err
+	}
+	file, err := tree.File(relPath)
+	if err != nil {
+		return nil, err
+	}
+	content, err := file.Contents()
+	if err != nil {
+		return nil, err
+	}
+	return []byte(content), nil
 }

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -20,6 +22,46 @@ import (
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
+
+// scriptJSONFileName 是脚本导出文件名：SaveScript 写入脚本目录并纳入 git 提交，
+// PublishScript 随脚本目录一起推送到 store 裸仓库，InstallScript 同步回脚本目录后
+// 再读取该文件导入数据库。
+const scriptJSONFileName = "script.json"
+
+// writeScriptJSONAndCommit 生成 script.json 写入脚本目录，并确保脚本目录是一个 git 仓库、
+// 把当前工作区改动提交为一个 commit（工作区无变更时不会产生空提交）。
+//
+// SaveScript 与 PublishScript 共用：保存时落盘并提交；发布时在 push 前再跑一次，
+// 保证 sourceScriptDir 仓库存在、工作区内容已提交且 script.json 一定存在。
+//
+// scriptPK 是 script 表主键（int64），scriptDir 是脚本目录绝对路径。
+func (h *WorkflowHandler) writeScriptJSONAndCommit(ctx context.Context, scriptPK int64, scriptDir, commitMessage string) error {
+	exportPayload, err := h.workflowService.GenerateScriptJSONByScriptID(ctx, scriptPK)
+	if err != nil {
+		return fmt.Errorf("failed to generate script json: %w", err)
+	}
+	scriptJSONBytes, err := json.MarshalIndent(exportPayload, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to encode script json: %w", err)
+	}
+	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+		return fmt.Errorf("failed to prepare script directory: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(scriptDir, scriptJSONFileName), scriptJSONBytes, 0o644); err != nil {
+		return fmt.Errorf("failed to write script json: %w", err)
+	}
+
+	// 维护脚本目录的 git 版本仓库：不存在则初始化（默认分支 main），已存在则复用。
+	repo, err := utils.EnsureGitRepo(scriptDir)
+	if err != nil {
+		return fmt.Errorf("failed to init script git repository: %w", err)
+	}
+	gitUser, gitEmail := config.ResolveGitIdentity(h.cfg)
+	if _, err := utils.CommitAll(repo, commitMessage, utils.GitIdentity{Name: gitUser, Email: gitEmail}); err != nil {
+		return fmt.Errorf("failed to commit script changes: %w", err)
+	}
+	return nil
+}
 
 type PublishWorkflowRequest struct {
 	WorkflowID int64  `json:"workflow_id,string"`
@@ -215,16 +257,16 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		return
 	}
 
-	exportPayload, err := h.workflowService.GenerateScriptJSONByScriptID(c.Request.Context(), script.ID)
+	project, err := h.projectService.GetProjectByID(c.Request.Context(), script.ProjectID)
 	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to generate script export").WithDetails(err.Error()))
+		c.Error(errors.NewInternalServerError("failed to get project").WithDetails(err.Error()))
 		return
 	}
 
-	// pathName, err := buildStorePathNameFromURL(req.Url)
-	// if err != nil {
-	// 	pathName = script.ScriptID
-	// }
+	// 脚本目录是发布的数据源：script.json 与 git 提交由 writeScriptJSONAndCommit
+	// 在 push 前统一生成，这里不再校验文件是否存在。
+	sourceScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
+
 	storePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, script.ScriptID) //filepath.Join(h.cfg.Storage.BaseDir, "store", script.ScriptID)
 
 	publishURLsJSON, err := buildPublishURLsJSON(script.ScriptID)
@@ -304,27 +346,20 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		return
 	}
 
-	storeScriptJSONPath := filepath.Join(storePath, "script.json")
-	storeScriptBytes, err := json.MarshalIndent(exportPayload, "", "  ")
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to encode store script json").WithDetails(err.Error()))
-		return
-	}
-	if err := os.WriteFile(storeScriptJSONPath, storeScriptBytes, 0o644); err != nil {
-		c.Error(errors.NewInternalServerError("failed to write store script json").WithDetails(err.Error()))
-		return
-	}
-	project, err := h.projectService.GetProjectByID(c.Request.Context(), script.ProjectID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to get project").WithDetails(err.Error()))
+	// 每次 push 前重新生成 script.json 并提交脚本目录改动，
+	// 确保 sourceScriptDir 仓库存在、工作区内容已提交且包含最新 script.json。
+	if err := h.writeScriptJSONAndCommit(c.Request.Context(), script.ID, sourceScriptDir, fmt.Sprintf("publish script %s", script.ScriptID)); err != nil {
+		c.Error(errors.NewInternalServerError("failed to prepare script files for publish").WithDetails(err.Error()))
 		return
 	}
 
-	sourceScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
-	// sourceScriptDir := filepath.Join(h.cfg.Storage.BaseDir, "pipeline", "script", script.ScriptID)
-	targetScriptDir := filepath.Join(storePath, "script")
-	if err := copyDirReplace(sourceScriptDir, targetScriptDir); err != nil {
-		c.Error(errors.NewInternalServerError("failed to copy script files").WithDetails(err.Error()))
+	// store 目录是一个本地裸仓库，脚本目录作为 origin remote push 到它（等价 git push 到本地仓库）。
+	if _, repoErr := utils.EnsureBareGitRepo(storePath); repoErr != nil {
+		c.Error(errors.NewInternalServerError("failed to prepare store git repository").WithDetails(repoErr.Error()))
+		return
+	}
+	if pushErr := utils.PushDirToRepo(c.Request.Context(), sourceScriptDir, storePath); pushErr != nil {
+		c.Error(errors.NewInternalServerError("failed to push script to store").WithDetails(pushErr.Error()))
 		return
 	}
 
@@ -570,21 +605,36 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		return
 	}
 
-	scriptJSONPath, err := resolveStoreScriptJSONPath(storeDir)
-	if err != nil {
-		c.Error(errors.NewNotFoundError("script.json not found in store"))
+	// 目标 script_id：create=true 时安装为新脚本，使用新的 uuid；否则沿用 store 记录的
+	// script_id（本地发布时 store.PathName 即 script_id）。
+	scriptID := strings.TrimSpace(store.PathName)
+	if createMode {
+		scriptID = uuid.NewString()
+	} else if scriptID == "" || strings.Contains(scriptID, "/") {
+		// 远程下载的 store：PathName 是 <owner>/<repo>，真实 script_id 需要从 store 内的 script.json 读取。
+		scriptID = readScriptIDFromStoreDir(storeDir)
+	}
+	if scriptID == "" {
+		c.Error(errors.NewValidationError("script_id is required in script.json"))
 		return
 	}
 
-	content, err := os.ReadFile(scriptJSONPath)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to read script json").WithDetails(err.Error()))
+	targetScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, scriptID)
+
+	// store 是裸仓库：目标脚本目录已有仓库则 pull（fetch + reset --hard）覆盖本地，否则 clone 出工作区。
+	if syncErr := utils.SyncWorktreeFromRepo(c.Request.Context(), targetScriptDir, storeDir); syncErr != nil {
+		c.Error(errors.NewInternalServerError("failed to sync script files from store").WithDetails(syncErr.Error()))
 		return
 	}
 
-	payload := &types.ScriptJSONExportResponse{}
-	if err := json.Unmarshal(content, payload); err != nil {
-		c.Error(errors.NewInternalServerError("failed to parse script json").WithDetails(err.Error()))
+	// 从同步后的脚本目录读取 script.json 导入数据库。
+	payload, readErr := readScriptJSONFromDir(targetScriptDir)
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			c.Error(errors.NewNotFoundError("script.json not found in store"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to read script json").WithDetails(readErr.Error()))
 		return
 	}
 	if payload.ScriptID == "" {
@@ -604,6 +654,7 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	}
 
 	installScript.ID = 0
+	installScript.ScriptID = scriptID
 	installScript.ProjectID = project.ID
 	installScript.StoreID = store.ID
 	if installScript.ComponentType == "" {
@@ -622,7 +673,6 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	installScript.UpdatedAt = utils.GetCurrentTime()
 
 	if createMode {
-		installScript.ScriptID = uuid.NewString()
 		installScript.ComponentName = fmt.Sprintf("%s_Copy", installScript.ComponentName)
 		installScript.StoreID = 0
 		if err := h.workflowService.CreateScript(c.Request.Context(), installScript); err != nil {
@@ -630,7 +680,7 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 			return
 		}
 	} else {
-		existingScript, err := h.workflowService.ExistsScriptInProjectByScriptID(c.Request.Context(), project.ID, payload.ScriptID)
+		existingScript, err := h.workflowService.ExistsScriptInProjectByScriptID(c.Request.Context(), project.ID, scriptID)
 		if err != nil {
 			c.Error(errors.NewInternalServerError("failed to check existing script").WithDetails(err.Error()))
 			return
@@ -650,25 +700,44 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		}
 	}
 
-	scriptID := strings.TrimSpace(installScript.ScriptID)
-	if scriptID == "" {
-		scriptID = payload.ScriptID
-	}
-	if scriptID != "" {
-		targetScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, scriptID)
-		sourceScriptDir := filepath.Join(storeDir, "script")
-		// targetScriptDir := filepath.Join(scriptDir, scriptID)
-		if copyErr := copyDirReplace(sourceScriptDir, targetScriptDir); copyErr != nil {
-			c.Error(errors.NewInternalServerError("failed to install script files").WithDetails(copyErr.Error()))
-			return
-		}
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"message":             "success",
 		"script_id":           installScript.ScriptID,
 		"installed_script_id": installScript.ID,
 	})
+}
+
+// readScriptIDFromStoreDir 读取 store 目录内 script.json 的 script_id。
+//
+// 仅用于远程下载的 store（普通工作区仓库）；本地发布的 store 是裸仓库，没有工作区文件，
+// 其 script_id 直接取自 store.PathName。
+func readScriptIDFromStoreDir(storeDir string) string {
+	scriptJSONPath, err := resolveStoreScriptJSONPath(storeDir)
+	if err != nil {
+		return ""
+	}
+	content, err := os.ReadFile(scriptJSONPath)
+	if err != nil {
+		return ""
+	}
+	payload := &types.ScriptJSONExportResponse{}
+	if err := json.Unmarshal(content, payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.ScriptID)
+}
+
+// readScriptJSONFromDir 读取脚本目录下的 script.json 并解析为导出结构。
+func readScriptJSONFromDir(scriptDir string) (*types.ScriptJSONExportResponse, error) {
+	content, err := os.ReadFile(filepath.Join(scriptDir, scriptJSONFileName))
+	if err != nil {
+		return nil, err
+	}
+	payload := &types.ScriptJSONExportResponse{}
+	if err := json.Unmarshal(content, payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
 }
 
 func resolveStoreWorkflowJSONPath(storePath string) (string, error) {
@@ -711,7 +780,7 @@ func resolveStoreScriptJSONPath(storePath string) (string, error) {
 		return "", fmt.Errorf("store path is empty")
 	}
 
-	directPath := filepath.Join(storePath, "script.json")
+	directPath := filepath.Join(storePath, scriptJSONFileName)
 	if stat, err := os.Stat(directPath); err == nil && !stat.IsDir() {
 		return directPath, nil
 	}
@@ -724,7 +793,7 @@ func resolveStoreScriptJSONPath(storePath string) (string, error) {
 		if info == nil || info.IsDir() {
 			return nil
 		}
-		if strings.EqualFold(info.Name(), "script.json") {
+		if strings.EqualFold(info.Name(), scriptJSONFileName) {
 			found = path
 			return io.EOF
 		}

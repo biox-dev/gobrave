@@ -503,15 +503,26 @@ func (h *StoreHandler) GetStoreImage(c *gin.Context) {
 
 	// 固定位置 {path}/{store_type}/{img}；SafePathUnderBase 挡掉 img 里的 ../ 越界写法。
 	targetPath, err := utils.SafePathUnderBase(storePath, filepath.Join(storePath, strings.TrimSpace(store.StoreType), img))
-	if err != nil {
-		servePlaceholderImage(c)
-		return
+	if err == nil {
+		if info, statErr := os.Stat(targetPath); statErr == nil && !info.IsDir() {
+			c.Header("Cache-Control", "no-cache")
+			c.File(targetPath)
+			return
+		}
 	}
-	if info, statErr := os.Stat(targetPath); statErr != nil || info.IsDir() {
-		servePlaceholderImage(c)
+
+	// 本地发布的 store 是裸仓库（没有工作区文件），改为从 HEAD 提交里读取封面。
+	// 旧的 <store_type>/ 子目录布局与新的平铺布局都尝试一遍。
+	candidates := []string{strings.TrimSpace(store.StoreType) + "/" + img, img}
+	for _, relPath := range candidates {
+		content, readErr := utils.ReadFileFromGitRepo(storePath, relPath)
+		if readErr != nil {
+			continue
+		}
+		c.Header("Cache-Control", "no-cache")
+		c.Data(http.StatusOK, http.DetectContentType(content), content)
 		return
 	}
 
-	c.Header("Cache-Control", "no-cache")
-	c.File(targetPath)
+	servePlaceholderImage(c)
 }
