@@ -271,6 +271,7 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
+	omitExportFields(workflowMap, exportOmitFields)
 
 	var dagDefinition map[string]any
 	if workflow.DagDefinition != "" {
@@ -318,6 +319,7 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 		if scriptMapErr != nil {
 			return nil, scriptMapErr
 		}
+		omitExportFields(scriptMap, exportOmitFields)
 
 		if script.ContainerTemplateID != 0 {
 			template, templateErr := s.containerRepo.GetContainerTemplateByID(ctx, script.ContainerTemplateID)
@@ -326,6 +328,7 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 				if templateMapErr != nil {
 					return nil, templateMapErr
 				}
+				omitExportFields(templateMap, exportOmitFields)
 				scriptMap["container_template"] = templateMap
 				if _, exists := seenTemplateIDs[template.ID]; !exists {
 					seenTemplateIDs[template.ID] = struct{}{}
@@ -372,6 +375,7 @@ func (s *workflowService) GenerateScriptJSONByScriptID(ctx context.Context, scri
 	if err != nil {
 		return nil, err
 	}
+	omitExportFields(scriptMap, exportOmitFields)
 
 	containerTemplates := make([]map[string]any, 0)
 	if script.ContainerTemplateID != 0 {
@@ -381,6 +385,7 @@ func (s *workflowService) GenerateScriptJSONByScriptID(ctx context.Context, scri
 			if templateMapErr != nil {
 				return nil, templateMapErr
 			}
+			omitExportFields(templateMap, exportOmitFields)
 			scriptMap["container_template"] = templateMap
 			containerTemplates = append(containerTemplates, templateMap)
 		}
@@ -725,6 +730,18 @@ func structToMap(value any) (map[string]any, error) {
 	}
 
 	return result, nil
+}
+
+// exportOmitFields 是导出 JSON（script.json / workflow.json）时需要剔除的字段。
+// updated_at 由数据库自动维护，每次保存都会变化，保留它会产生无意义的 git diff；
+// 后续如需剔除其他字段，直接追加到该列表即可。
+var exportOmitFields = []string{"updated_at"}
+
+// omitExportFields 从导出 JSON 的顶层 map 中剔除指定字段（keys 为 nil 时不做任何处理）。
+func omitExportFields(m map[string]any, keys []string) {
+	for _, k := range keys {
+		delete(m, k)
+	}
 }
 
 func filterInputs(items []any, inputNames map[string]struct{}) []any {

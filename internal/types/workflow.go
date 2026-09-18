@@ -35,7 +35,7 @@ type Script struct {
 	Edges               string `json:"edges" gorm:"type:text"`
 	URL                 string `json:"url" gorm:"column:url;type:varchar(255)"`
 
-	Version   string    `json:"version" gorm:"type:varchar(255)"`
+	// Version   string    `json:"version" gorm:"type:varchar(255)"`
 	Message   string    `json:"message" gorm:"type:longtext"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -73,10 +73,10 @@ type Workflow struct {
 	InputComponentIDs  datatypes.JSON `json:"input_component_ids" gorm:"type:json"`
 	OutputComponentIDs datatypes.JSON `json:"output_component_ids" gorm:"type:json"`
 	OrderIndex         int            `json:"order_index"`
-	Version            string         `json:"version" gorm:"type:varchar(255)"`
-	Message            string         `json:"message" gorm:"type:longtext"`
-	CreatedAt          time.Time      `json:"created_at"`
-	UpdatedAt          time.Time      `json:"updated_at"`
+	// Version            string         `json:"version" gorm:"type:varchar(255)"`
+	Message   string    `json:"message" gorm:"type:longtext"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (t *Workflow) BeforeCreate(_ *gorm.DB) error {
@@ -138,7 +138,7 @@ type WorkflowVersion struct {
 	Workflow
 	StorePath    string `json:"store_path"`
 	WorkflowPath string `json:"workflow_path"`
-	StoreVersion string `json:"store_version"`
+	// StoreVersion string `json:"store_version"`
 	// GitState 由磁盘上的 git 元数据实时推导（不落库）：
 	// has_local_changes=true 表示本地有未发布改动，
 	// has_store_changes=true 表示 store 有本地未同步的提交。
@@ -147,9 +147,9 @@ type WorkflowVersion struct {
 
 type ScriptVersion struct {
 	Script
-	StoreVersion string `json:"store_version"`
-	StorePath    string `json:"store_path"`
-	ScriptPath   string `json:"script_path"`
+	// StoreVersion string `json:"store_version"`
+	StorePath  string `json:"store_path"`
+	ScriptPath string `json:"script_path"`
 	// GitState 由磁盘上的 git 元数据实时推导（不落库）：
 	// has_local_changes=true 表示本地有未发布改动，
 	// has_store_changes=true 表示 store 有本地未同步的提交。

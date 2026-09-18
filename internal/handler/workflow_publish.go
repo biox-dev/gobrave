@@ -126,8 +126,8 @@ func (h *WorkflowHandler) writeWorkflowJSONAndCommit(ctx context.Context, workfl
 type PublishWorkflowRequest struct {
 	WorkflowID int64  `json:"workflow_id,string"`
 	Url        string `json:"url"`
-	Version    string `json:"version"`
-	Message    string `json:"message"`
+	// Version    string `json:"version"`
+	Message string `json:"message"`
 }
 
 func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
@@ -180,8 +180,8 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		Tags:        workflow.Tags,
 		Img:         workflow.Img,
 		PublishURLs: publishURLsJSON,
-		Version:     req.Version,
-		Message:     req.Message,
+		// Version:     req.Version,
+		Message: req.Message,
 	}
 
 	if err := os.MkdirAll(storePath, 0o755); err != nil {
@@ -229,7 +229,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 	}
 
 	workflow.URL = req.Url
-	workflow.Version = req.Version
+	// workflow.Version = req.Version
 	workflow.Message = req.Message
 	if err := h.workflowService.UpdateWorkflow(c.Request.Context(), workflow); err != nil {
 		c.Error(errors.NewInternalServerError("failed to update workflow publish info").WithDetails(err.Error()))
@@ -270,8 +270,8 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 type PublishScriptRequest struct {
 	ScriptID int64  `json:"script_id,string"`
 	Url      string `json:"url"`
-	Version  string `json:"version"`
-	Message  string `json:"message"`
+	// Version  string `json:"version"`
+	Message string `json:"message"`
 }
 
 func (h *WorkflowHandler) PublishScript(c *gin.Context) {
@@ -324,8 +324,8 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		Tags:        nil,
 		Img:         script.Img,
 		PublishURLs: publishURLsJSON,
-		Version:     req.Version,
-		Message:     req.Message,
+		// Version:     req.Version,
+		Message: req.Message,
 	}
 
 	if script.Tags != "" {
@@ -377,7 +377,7 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 	}
 
 	script.URL = req.Url
-	script.Version = req.Version
+	// script.Version = req.Version
 	script.Message = req.Message
 	if err := h.workflowService.UpdateScript(c.Request.Context(), script); err != nil {
 		c.Error(errors.NewInternalServerError("failed to update script publish info").WithDetails(err.Error()))
@@ -509,9 +509,9 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	if strings.TrimSpace(store.URL) != "" {
 		installWorkflow.URL = store.URL
 	}
-	if strings.TrimSpace(store.Version) != "" {
-		installWorkflow.Version = store.Version
-	}
+	// if strings.TrimSpace(store.Version) != "" {
+	// 	installWorkflow.Version = store.Version
+	// }
 	if strings.TrimSpace(store.Message) != "" {
 		installWorkflow.Message = store.Message
 	}
@@ -707,9 +707,9 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	if strings.TrimSpace(store.URL) != "" {
 		installScript.URL = store.URL
 	}
-	if strings.TrimSpace(store.Version) != "" {
-		installScript.Version = store.Version
-	}
+	// if strings.TrimSpace(store.Version) != "" {
+	// 	installScript.Version = store.Version
+	// }
 	if strings.TrimSpace(store.Message) != "" {
 		installScript.Message = store.Message
 	}

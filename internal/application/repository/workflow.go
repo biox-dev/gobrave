@@ -347,8 +347,8 @@ func (r *workflowRepository) UpdateWorkflow(ctx context.Context, workflow *types
 		"input_component_ids":  workflow.InputComponentIDs,
 		"output_component_ids": workflow.OutputComponentIDs,
 		"order_index":          workflow.OrderIndex,
-		"version":              workflow.Version,
-		"message":              workflow.Message,
+		// "version":              workflow.Version,
+		"message": workflow.Message,
 	}
 
 	result := r.db.WithContext(ctx).Model(&types.Workflow{}).Where("id = ?", workflow.ID).Updates(updates)
@@ -356,7 +356,7 @@ func (r *workflowRepository) UpdateWorkflow(ctx context.Context, workflow *types
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
+		return r.notFoundIfMissing(ctx, &types.Workflow{}, workflow.ID)
 	}
 	return nil
 }
@@ -417,8 +417,8 @@ func (r *workflowRepository) UpdateScript(ctx context.Context, script *types.Scr
 		"edges":                 script.Edges,
 		"url":                   script.URL,
 		"store_id":              script.StoreID,
-		"version":               script.Version,
-		"message":               script.Message,
+		// "version":               script.Version,
+		"message": script.Message,
 	}
 
 	result := r.db.WithContext(ctx).Model(&types.Script{}).Where("id = ?", script.ID).Updates(updates)
@@ -426,6 +426,20 @@ func (r *workflowRepository) UpdateScript(ctx context.Context, script *types.Scr
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
+		return r.notFoundIfMissing(ctx, &types.Script{}, script.ID)
+	}
+	return nil
+}
+
+// notFoundIfMissing 在 Updates 影响 0 行时区分两种情况：
+// 记录不存在，或者（MySQL 默认不开启 CLIENT_FOUND_ROWS）写入值与数据库现有值完全一致。
+// 后者属于"更新时只提交了与现有值相同的字段"，记录仍存在，不能返回 gorm.ErrRecordNotFound。
+func (r *workflowRepository) notFoundIfMissing(ctx context.Context, model any, id int64) error {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(model).Where("id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
 		return gorm.ErrRecordNotFound
 	}
 	return nil

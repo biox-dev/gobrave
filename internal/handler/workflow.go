@@ -164,7 +164,7 @@ func (h *WorkflowHandler) storageBaseDir() string {
 
 // SaveScript godoc
 // @Summary      保存脚本组件
-// @Description  保存 script 组件：当请求包含 id 时更新记录，否则创建新记录；随后维护脚本目录的 git 版本仓库（不存在则初始化），有变更时提交 commit（commit_message 为空时默认 save script &lt;scriptID&gt;）
+// @Description  保存 script 组件：当请求包含 id 时更新记录，否则创建新记录；更新时以数据库已有记录为基准，只覆盖请求中有值的字段（未提交的 store_id/url/message 等保持原值）；随后维护脚本目录的 git 版本仓库（不存在则初始化），有变更时提交 commit（commit_message 为空时默认 save script &lt;scriptID&gt;）
 // @Tags         工作流
 // @Accept       json
 // @Produce      json
@@ -206,7 +206,14 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 		return
 	}
 
-	var scriptID string
+	if req.ID == 0 && strings.TrimSpace(req.IOSchema) == "" {
+		req.IOSchema = GetDefaultIOSchame()
+	}
+
+	// item 是最终落库的 script：
+	// 新建时直接使用请求字段；更新时以数据库中的已有记录为基准，只覆盖请求中有值的字段，
+	// 未提交的字段（如 store_id / url / message）保持原值，避免被零值覆盖。
+	var item *types.Script
 	if req.ID != 0 {
 		existing, err := h.workflowService.GetScriptByID(c.Request.Context(), req.ID)
 		if err != nil {
@@ -217,43 +224,56 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("failed to query script component").WithDetails(err.Error()))
 			return
 		}
-		scriptID = req.ScriptID
-		if scriptID == "" {
-			scriptID = existing.ScriptID
-		}
+
+		item = existing
+		item.ProjectID = projectID
+		item.ScriptID = firstNonEmpty(req.ScriptID, existing.ScriptID)
+		item.InstallKey = firstNonEmpty(req.InstallKey, existing.InstallKey)
+		item.ComponentName = firstNonEmpty(req.ComponentName, existing.ComponentName)
+		item.Description = firstNonEmpty(req.Description, existing.Description)
+		item.ComponentIDs = firstNonEmpty(req.ComponentIDs, existing.ComponentIDs)
+		item.Img = firstNonEmpty(req.Img, existing.Img)
+		item.ContainerTemplateID = firstNonZeroInt64(req.ContainerTemplateID, existing.ContainerTemplateID)
+		item.ToolsContainerID = firstNonEmpty(req.ToolsContainerID, existing.ToolsContainerID)
+		item.Prompt = firstNonEmpty(req.Prompt, existing.Prompt)
+		item.IOSchema = firstNonEmpty(req.IOSchema, existing.IOSchema)
+		item.SubContainerID = firstNonEmpty(req.SubContainerID, existing.SubContainerID)
+		item.Tags = firstNonEmpty(req.Tags, existing.Tags)
+		item.FileType = firstNonEmpty(req.FileType, existing.FileType)
+		item.ScriptType = firstNonEmpty(req.ScriptType, existing.ScriptType)
+		item.Category = firstNonEmpty(req.Category, existing.Category)
+		item.Content = firstNonEmpty(req.Content, existing.Content)
+		item.OrderIndex = firstNonZeroInt(req.OrderIndex, existing.OrderIndex)
+		item.Position = firstNonEmpty(req.Position, existing.Position)
+		item.Edges = firstNonEmpty(req.Edges, existing.Edges)
 	} else {
-		scriptID = req.ScriptID
+		scriptID := req.ScriptID
 		if scriptID == "" {
 			scriptID = uuid.NewString()
 		}
-	}
-
-	if req.IOSchema == "" {
-		req.IOSchema = GetDefaultIOSchame()
-	}
-	item := &types.Script{
-		ID:                  req.ID,
-		ScriptID:            scriptID,
-		ProjectID:           projectID,
-		InstallKey:          req.InstallKey,
-		ComponentType:       "script",
-		ComponentName:       req.ComponentName,
-		Description:         req.Description,
-		ComponentIDs:        req.ComponentIDs,
-		Img:                 req.Img,
-		ContainerTemplateID: req.ContainerTemplateID,
-		ToolsContainerID:    req.ToolsContainerID,
-		Prompt:              req.Prompt,
-		IOSchema:            req.IOSchema,
-		SubContainerID:      req.SubContainerID,
-		Tags:                req.Tags,
-		FileType:            req.FileType,
-		ScriptType:          req.ScriptType,
-		Category:            req.Category,
-		Content:             req.Content,
-		OrderIndex:          req.OrderIndex,
-		Position:            req.Position,
-		Edges:               req.Edges,
+		item = &types.Script{
+			ScriptID:            scriptID,
+			ProjectID:           projectID,
+			InstallKey:          req.InstallKey,
+			ComponentType:       "script",
+			ComponentName:       req.ComponentName,
+			Description:         req.Description,
+			ComponentIDs:        req.ComponentIDs,
+			Img:                 req.Img,
+			ContainerTemplateID: req.ContainerTemplateID,
+			ToolsContainerID:    req.ToolsContainerID,
+			Prompt:              req.Prompt,
+			IOSchema:            req.IOSchema,
+			SubContainerID:      req.SubContainerID,
+			Tags:                req.Tags,
+			FileType:            req.FileType,
+			ScriptType:          req.ScriptType,
+			Category:            req.Category,
+			Content:             req.Content,
+			OrderIndex:          req.OrderIndex,
+			Position:            req.Position,
+			Edges:               req.Edges,
+		}
 	}
 
 	if req.ID != 0 {
@@ -304,7 +324,7 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 	// 安装（InstallScript）时再从 store 同步回脚本目录并读取该文件导入数据库。
 	commitMessage := strings.TrimSpace(req.CommitMessage)
 	if commitMessage == "" {
-		commitMessage = fmt.Sprintf("save script %s", scriptID)
+		commitMessage = fmt.Sprintf("save script %s", item.ScriptID)
 	}
 	if err := h.writeScriptJSONAndCommit(c.Request.Context(), item.ID, scriptDir, commitMessage); err != nil {
 		c.Error(errors.NewInternalServerError("failed to persist script files").WithDetails(err.Error()))
@@ -316,7 +336,7 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 
 // SaveWorkflow godoc
 // @Summary      保存工作流
-// @Description  保存 workflow 组件：当请求包含 id 时更新记录，否则创建新记录
+// @Description  保存 workflow 组件：当请求包含 id 时更新记录，否则创建新记录；更新时以数据库已有记录为基准，只覆盖请求中有值的字段（未提交的 store_id/url/message 等保持原值）
 // @Tags         工作流
 // @Accept       json
 // @Produce      json
@@ -349,10 +369,6 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 		return
 	}
 
-	req.Tags = normalizeJSONOrDefault(req.Tags, "[]")
-	req.InputComponentIDs = normalizeJSONOrDefault(req.InputComponentIDs, "[]")
-	req.OutputComponentIDs = normalizeJSONOrDefault(req.OutputComponentIDs, "[]")
-
 	if req.DagDefinition != "" && !json.Valid([]byte(req.DagDefinition)) {
 		c.Error(errors.NewValidationError("dag_definition is not valid JSON format"))
 		return
@@ -370,7 +386,11 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 		return
 	}
 
-	workflowID := req.WorkflowID
+	// item 是最终落库的 workflow：
+	// 新建时直接使用请求字段（tags/input_component_ids/output_component_ids 缺省为 []）；
+	// 更新时以数据库中的已有记录为基准，只覆盖请求中有值的字段，
+	// 未提交的字段（如 store_id / url / message）保持原值，避免被零值覆盖。
+	var item *types.Workflow
 	if req.ID != 0 {
 		existing, err := h.workflowService.GetWorkflowByID(c.Request.Context(), req.ID)
 		if err != nil {
@@ -381,35 +401,63 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("failed to query workflow").WithDetails(err.Error()))
 			return
 		}
-		if workflowID == "" {
-			workflowID = existing.WorkflowID
-		}
-	} else if workflowID == "" {
-		workflowID = uuid.NewString()
-	}
 
-	item := &types.Workflow{
-		ID:                 req.ID,
-		ProjectID:          projectID,
-		Name:               req.Name,
-		Img:                req.Img,
-		Tags:               datatypes.JSON([]byte(req.Tags)),
-		URL:                req.URL,
-		Category:           req.Category,
-		Description:        req.Description,
-		Prompt:             req.Prompt,
-		DagDefinition:      req.DagDefinition,
-		WorkflowID:         workflowID,
-		RelationType:       req.RelationType,
-		InstallKey:         req.InstallKey,
-		ModuleID:           req.ModuleID,
-		ContainerID:        req.ContainerID,
-		ParentComponentID:  req.ParentComponentID,
-		InputComponentIDs:  datatypes.JSON([]byte(req.InputComponentIDs)),
-		OutputComponentIDs: datatypes.JSON([]byte(req.OutputComponentIDs)),
-		OrderIndex:         req.OrderIndex,
-		Version:            req.Version,
-		Message:            req.Message,
+		item = existing
+		item.ProjectID = projectID
+		item.Name = firstNonEmpty(req.Name, existing.Name)
+		item.Img = firstNonEmpty(req.Img, existing.Img)
+		if strings.TrimSpace(req.Tags) != "" {
+			item.Tags = datatypes.JSON([]byte(req.Tags))
+		}
+		item.URL = firstNonEmpty(req.URL, existing.URL)
+		item.Category = firstNonEmpty(req.Category, existing.Category)
+		item.Description = firstNonEmpty(req.Description, existing.Description)
+		item.Prompt = firstNonEmpty(req.Prompt, existing.Prompt)
+		item.DagDefinition = firstNonEmpty(req.DagDefinition, existing.DagDefinition)
+		item.WorkflowID = firstNonEmpty(req.WorkflowID, existing.WorkflowID)
+		item.RelationType = firstNonEmpty(req.RelationType, existing.RelationType)
+		item.InstallKey = firstNonEmpty(req.InstallKey, existing.InstallKey)
+		item.ModuleID = firstNonEmpty(req.ModuleID, existing.ModuleID)
+		item.ContainerID = firstNonEmpty(req.ContainerID, existing.ContainerID)
+		item.ParentComponentID = firstNonEmpty(req.ParentComponentID, existing.ParentComponentID)
+		if strings.TrimSpace(req.InputComponentIDs) != "" {
+			item.InputComponentIDs = datatypes.JSON([]byte(req.InputComponentIDs))
+		}
+		if strings.TrimSpace(req.OutputComponentIDs) != "" {
+			item.OutputComponentIDs = datatypes.JSON([]byte(req.OutputComponentIDs))
+		}
+		item.OrderIndex = firstNonZeroInt(req.OrderIndex, existing.OrderIndex)
+		item.Message = firstNonEmpty(req.Message, existing.Message)
+	} else {
+		workflowID := req.WorkflowID
+		if workflowID == "" {
+			workflowID = uuid.NewString()
+		}
+		req.Tags = normalizeJSONOrDefault(req.Tags, "[]")
+		req.InputComponentIDs = normalizeJSONOrDefault(req.InputComponentIDs, "[]")
+		req.OutputComponentIDs = normalizeJSONOrDefault(req.OutputComponentIDs, "[]")
+		item = &types.Workflow{
+			ProjectID:          projectID,
+			Name:               req.Name,
+			Img:                req.Img,
+			Tags:               datatypes.JSON([]byte(req.Tags)),
+			URL:                req.URL,
+			Category:           req.Category,
+			Description:        req.Description,
+			Prompt:             req.Prompt,
+			DagDefinition:      req.DagDefinition,
+			WorkflowID:         workflowID,
+			RelationType:       req.RelationType,
+			InstallKey:         req.InstallKey,
+			ModuleID:           req.ModuleID,
+			ContainerID:        req.ContainerID,
+			ParentComponentID:  req.ParentComponentID,
+			InputComponentIDs:  datatypes.JSON([]byte(req.InputComponentIDs)),
+			OutputComponentIDs: datatypes.JSON([]byte(req.OutputComponentIDs)),
+			OrderIndex:         req.OrderIndex,
+			// Version:            req.Version,
+			Message: req.Message,
+		}
 	}
 
 	if req.ID != 0 {
@@ -431,8 +479,8 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 	// 生成 workflow.json（含脚本目录快照）落盘并提交 workflow 目录改动（与 PublishWorkflow 共用）：
 	// 发布（PublishWorkflow）时随 workflow 目录一起推送到 store，
 	// 安装（InstallWorkflow）时再从 store 同步回 workflow 目录并读取该文件导入数据库。
-	workflowDir := utils.GetWorkflowFileDir(h.storageBaseDir(), project.ProjectID, workflowID)
-	if err := h.writeWorkflowJSONAndCommit(c.Request.Context(), item.ID, project.ProjectID, workflowDir, fmt.Sprintf("save workflow %s", workflowID)); err != nil {
+	workflowDir := utils.GetWorkflowFileDir(h.storageBaseDir(), project.ProjectID, item.WorkflowID)
+	if err := h.writeWorkflowJSONAndCommit(c.Request.Context(), item.ID, project.ProjectID, workflowDir, fmt.Sprintf("save workflow %s", item.WorkflowID)); err != nil {
 		c.Error(errors.NewInternalServerError("failed to persist workflow files").WithDetails(err.Error()))
 		return
 	}
@@ -985,7 +1033,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		return
 	}
 
-	storeVersion := ""
+	// storeVersion := ""
 	storePath := ""
 	storeID := workflow.StoreID
 	if storeID != 0 {
@@ -995,7 +1043,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 			return
 		}
 		if store != nil {
-			storeVersion = store.Version
+			// storeVersion = store.Version
 			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
 		}
 
@@ -1009,9 +1057,9 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 
 	workflowVersion := &types.WorkflowVersion{
 
-		Workflow:     *workflow,
-		StorePath:    storePath,
-		StoreVersion: storeVersion,
+		Workflow:  *workflow,
+		StorePath: storePath,
+		// StoreVersion: storeVersion,
 		WorkflowPath: workflowPath,
 		GitState:     &gitState,
 	}
@@ -1053,7 +1101,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 		return
 	}
 
-	storeVersion := ""
+	// storeVersion := ""
 	storeID := script.StoreID
 	storePath := ""
 	if storeID != 0 {
@@ -1063,7 +1111,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 			return
 		}
 		if store != nil {
-			storeVersion = store.Version
+			// storeVersion = store.Version
 			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
 		}
 	}
@@ -1075,11 +1123,11 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 	gitState := utils.ReadGitSyncState(scriptPath, storePath)
 
 	scriptVersion := &types.ScriptVersion{
-		Script:       *script,
-		StoreVersion: storeVersion,
-		StorePath:    storePath,
-		ScriptPath:   scriptPath,
-		GitState:     &gitState,
+		Script: *script,
+		// StoreVersion: storeVersion,
+		StorePath:  storePath,
+		ScriptPath: scriptPath,
+		GitState:   &gitState,
 	}
 
 	c.JSON(http.StatusOK, scriptVersion)
@@ -1272,4 +1320,25 @@ func normalizeJSONOrDefault(raw string, defaultJSON string) string {
 		return defaultJSON
 	}
 	return raw
+}
+
+// firstNonZeroInt 返回第一个非零 int。
+// 用于"更新时只覆盖有值字段"的字段合并：请求未提供值（零值）时保留数据库中的原值。
+func firstNonZeroInt(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+// firstNonZeroInt64 返回第一个非零 int64，语义同 firstNonEmpty。
+func firstNonZeroInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }

@@ -335,9 +335,9 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		Tags:        tagsJSON,
 		Img:         strings.TrimSpace(req.Img),
 		PublishURLs: publishURLs,
-		Version:     strings.TrimSpace(req.Version),
-		Message:     strings.TrimSpace(req.Message),
-		Log:         fmt.Sprintf("clone %s %s", repoURL, targetPath),
+		// Version:     strings.TrimSpace(req.Version),
+		Message: strings.TrimSpace(req.Message),
+		Log:     fmt.Sprintf("clone %s %s", repoURL, targetPath),
 	}
 
 	if err := h.storeService.CreateStore(c.Request.Context(), item); err != nil {
@@ -594,10 +594,10 @@ func hydrateStoreMetadataFromStoreFiles(storeDir string, item *types.Store) erro
 			stringValueFromMap(payload.Workflow, "category"),
 			item.Category,
 		)
-		item.Version = firstNonEmptyString(
-			stringValueFromMap(payload.Workflow, "version"),
-			item.Version,
-		)
+		// item.Version = firstNonEmptyString(
+		// 	stringValueFromMap(payload.Workflow, "version"),
+		// 	item.Version,
+		// )
 		item.Message = firstNonEmptyString(
 			stringValueFromMap(payload.Workflow, "message"),
 			item.Message,
@@ -627,10 +627,10 @@ func hydrateStoreMetadataFromStoreFiles(storeDir string, item *types.Store) erro
 			stringValueFromMap(payload.Script, "category"),
 			item.Category,
 		)
-		item.Version = firstNonEmptyString(
-			stringValueFromMap(payload.Script, "version"),
-			item.Version,
-		)
+		// item.Version = firstNonEmptyString(
+		// 	stringValueFromMap(payload.Script, "version"),
+		// 	item.Version,
+		// )
 		item.Message = firstNonEmptyString(
 			stringValueFromMap(payload.Script, "message"),
 			item.Message,

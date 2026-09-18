@@ -14,11 +14,11 @@ type Store struct {
 	// StoreID string `json:"store_id" gorm:"type:varchar(255);index"`
 	// AppID       string         `json:"app_id" gorm:"type:varchar(255);index"`
 	// workflow script
-	StoreType   string         `json:"store_type" gorm:"type:varchar(255);index"`
-	Name        string         `json:"name" gorm:"type:varchar(255)"`
-	Origin      string         `json:"origin" gorm:"type:varchar(255)"`
-	URL         string         `json:"url" gorm:"column:url;type:varchar(255)"`
-	Status      string         `json:"status" gorm:"type:varchar(255);index"`
+	StoreType string `json:"store_type" gorm:"type:varchar(255);index"`
+	Name      string `json:"name" gorm:"type:varchar(255)"`
+	Origin    string `json:"origin" gorm:"type:varchar(255)"`
+	URL       string `json:"url" gorm:"column:url;type:varchar(255)"`
+	Status    string `json:"status" gorm:"type:varchar(255);index"`
 	// PathName 是 store 目录在 storage.base_dir/store 下的相对标识：
 	// 发布产物为 workflow/script ID，下载产物为 "<owner>/<repo>"。
 	// 绝对路径一律不落库，需要时用 utils.GetWorkflowOrScriptStoreDir(baseDir, PathName) 解析。
@@ -29,7 +29,7 @@ type Store struct {
 	PublishURLs datatypes.JSON `json:"publish_urls" gorm:"column:publish_urls;type:json"`
 	Log         string         `json:"log" gorm:"type:longtext"`
 
-	Version string `json:"version" gorm:"type:varchar(255)"`
+	// Version string `json:"version" gorm:"type:varchar(255)"`
 	Message string `json:"message" gorm:"type:longtext"`
 
 	CreatedAt time.Time `json:"created_at"`

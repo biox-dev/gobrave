@@ -59,8 +59,8 @@ func (r *storeRepository) UpdateStore(ctx context.Context, item *types.Store) er
 		"img":          item.Img,
 		"publish_urls": item.PublishURLs,
 		"log":          item.Log,
-		"version":      item.Version,
-		"message":      item.Message,
+		// "version":      item.Version,
+		"message": item.Message,
 	}).Error
 }
 
