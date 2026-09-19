@@ -37,7 +37,7 @@ llm:
 		t.Errorf("port = %d, want 9099", cfg.Server.Port)
 	}
 	// server 段只声明了 port，其余字段应保持默认值。
-	if cfg.Server.Host != "0.0.0.0" || cfg.Server.LogPath != "logs/server.log" {
+	if cfg.Server.Host != "0.0.0.0" {
 		t.Errorf("server not merged: %+v", *cfg.Server)
 	}
 	if cfg.Server.ShutdownTimeout != 30*time.Second {

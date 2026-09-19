@@ -44,15 +44,23 @@ func main() {
 	config.SetCLIFlags(cliFlags)
 
 	utils.InitSnowflake(1)
-	if os.Getenv("GIN_MODE") == "release" {
-		gin.SetMode(gin.ReleaseMode)
-	} else {
-		gin.SetMode(gin.DebugMode)
-	}
-	c := container.BuildContainer(runtime.GetContainer())
 
-	err := c.Invoke(func(
-		cfg *config.Config,
+	// 只加载一次配置：Gin 模式需要在构建路由之前生效，
+	// 之后把同一个 cfg 注入 DI 容器，避免重复解析 config.yml。
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		logger.Fatalf(context.Background(), "Failed to load config: %v", err)
+	}
+
+	// Gin 运行模式（debug/release/test）直接取自 config.yml 的 server.mode
+	// （--gin-mode 已在 applyCLIOverrides 中合并进 cfg）。
+	// 留空时不设置，交给 gin 自身的 GIN_MODE 环境变量 / 默认值处理。
+	if cfg.Server != nil && cfg.Server.Mode != "" {
+		gin.SetMode(cfg.Server.Mode)
+	}
+	c := container.BuildContainer(runtime.GetContainer(), cfg)
+
+	err = c.Invoke(func(
 		router *gin.Engine,
 		// grpcServer *grpc.Server,
 

@@ -150,12 +150,15 @@ func (p userAgentConfigProvider) GetAgentConfig(ctx context.Context, userID stri
 	return user.AgentConfig, nil
 }
 
-func BuildContainer(container *dig.Container) *dig.Container {
+// BuildContainer 注册依赖并返回容器。
+// cfg 由调用方（main）提前加载，因此 Gin 模式等需要在容器构建前生效的配置
+// 可以直接从 cfg 读取，避免重复解析 config.yml。
+func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container {
 	ctx := context.Background()
 	logger.Debugf(ctx, "[Container] Starting container initialization...")
 
 	logger.Debugf(ctx, "[Container] Registering core infrastructure...")
-	must(container.Provide(config.LoadConfig))
+	must(container.Provide(func() *config.Config { return cfg }))
 	must(container.Provide(initDatabase))
 	must(container.Provide(func() event.Bus { return event.NewOrderedMemoryBus() }))
 	must(container.Provide(containerruntime.NewRegistry))

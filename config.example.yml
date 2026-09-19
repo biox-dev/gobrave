@@ -1,5 +1,8 @@
 server:
   port: 8083
+  # Gin 运行模式：debug / release / test。
+  # release 关闭 Gin 调试输出与 Swagger 文档；留空时回退到 GIN_MODE 环境变量，默认 debug。
+  mode: debug
 database:
   driver: mysql
   # driver: sqlite
@@ -74,6 +77,15 @@ realtime:
   # websocket ACK 超时后的重试次数
   ack_max_retries: 3
 
+log:
+  # 日志级别：trace / debug / info / warn / error / fatal / panic，默认 info。
+  # 需要调试时改为 debug。
+  level: info
+  # 日志文件路径，留空使用默认路径 logs/app.log。
+  path: ""
+  # 颜色模式：auto（仅终端着色）/ always / never。
+  color: auto
+
 llm:
   cli_url: "localhost:4321"
   # gpt-5.5 | deepseek-v4-pro
@@ -103,10 +115,6 @@ agent:
       api_key: "sk-xxxxxxxxxxxxxxx"
       bearer_token: ""
       extra: { type: "anthropic" }
-
-# AI 摘要生成配置。未配置 system_prompt 时使用内置默认值。
-ai_summary:
-  system_prompt: "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。"
 
 container:
   # 启动时注册的容器运行时列表（可同时注册多个，例如 [docker, k8s]）。
@@ -146,11 +154,3 @@ container:
   create_queue_max_concurrency: 3
   # 容器创建队列的最大排队数（超出后新请求直接返回错误）。
   create_queue_max_pending: 50
-
-tenant:
-  # default_tenant_id: "default"
-  # default_tenant_name: "Default Tenant"
-  # default_tenant_description: "This is the default tenant."
-  # api_key_prefix: "sk-"
-  # 16、24 或 32
-  aes_key: "xxxxxxxxxxxxx"

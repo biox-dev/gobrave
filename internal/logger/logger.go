@@ -205,12 +205,20 @@ func init() {
 	ConfigureFromEnv()
 }
 
-// getLogLevelFromEnv 从环境变量读取日志级别配置
-func getLogLevelFromEnv() logrus.Level {
-	// 从环境变量读取LOG_LEVEL配置
-	logLevelStr := strings.ToLower(os.Getenv("LOG_LEVEL"))
+// 默认日志级别：未配置 log.level / LOG_LEVEL 时生效。
+// 默认 info，因此 debug 日志需要显式开启（log.level: debug）。
+const defaultLogLevel = logrus.InfoLevel
 
-	switch logLevelStr {
+// 默认日志颜色模式：仅在 stdout 为终端时着色。
+const defaultColorMode = "auto"
+
+// LevelFromString 把字符串解析为 logrus.Level。
+// 支持 trace/debug/info/warn(warning)/error/fatal/panic；
+// 空值或未识别的取值返回默认级别。
+func LevelFromString(s string) logrus.Level {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "trace":
+		return logrus.TraceLevel
 	case "debug":
 		return logrus.DebugLevel
 	case "info":
@@ -221,8 +229,10 @@ func getLogLevelFromEnv() logrus.Level {
 		return logrus.ErrorLevel
 	case "fatal":
 		return logrus.FatalLevel
+	case "panic":
+		return logrus.PanicLevel
 	default:
-		return logrus.DebugLevel // 无效配置时使用默认值
+		return defaultLogLevel
 	}
 }
 
@@ -258,12 +268,6 @@ func defaultLogPath() string {
 
 }
 
-func resolveLogPathFromEnv() string {
-	if logPath := strings.TrimSpace(os.Getenv("LOG_PATH")); logPath != "" {
-		return filepath.Clean(logPath)
-	}
-	return defaultLogPath()
-}
 func openLogFile(logPath string) (io.WriteCloser, error) {
 	dir := filepath.Dir(logPath)
 	if dir != "." {
@@ -280,9 +284,50 @@ func openLogFile(logPath string) (io.WriteCloser, error) {
 	}, nil
 }
 
-// ConfigureFromEnv 重新从环境变量应用日志配置。
-// 这允许在 main() 中加载 .env 后，让 LOG_LEVEL / LOG_PATH 立即生效。
-func ConfigureFromEnv() {
+// Options 描述一次日志重新配置所需的参数。
+// 它由 config.yml 的 log 段映射而来，所有字段都可省略。
+type Options struct {
+	// Level 日志级别：trace/debug/info/warn/error/fatal/panic。
+	Level string
+	// Path 日志文件路径；为空时回退到默认路径（logs/app.log）。
+	Path string
+	// Color 颜色模式：auto（默认，仅终端着色）/always/never。
+	Color string
+}
+
+// resolveLevel 计算最终生效的日志级别。
+// LOG_LEVEL 环境变量优先于 log.level 配置；两者都未配置时使用默认级别。
+func resolveLevel(opts Options) logrus.Level {
+	if env := strings.TrimSpace(os.Getenv("LOG_LEVEL")); env != "" {
+		return LevelFromString(env)
+	}
+	return LevelFromString(opts.Level)
+}
+
+// resolveColorMode 计算是否强制输出 ANSI 颜色。
+// auto：仅在 stdout 为终端时着色（Docker 日志采集等非终端场景自动禁用）。
+func resolveColorMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "always", "force", "true", "on":
+		return true
+	case "never", "false", "off":
+		return false
+	default:
+		if fi, err := os.Stdout.Stat(); err == nil {
+			return (fi.Mode() & os.ModeCharDevice) != 0
+		}
+		return false
+	}
+}
+
+// Configure 使用给定参数重新配置全局日志。
+//
+// 优先级（低 → 高）：
+//  1. Options 传入的取值（通常来自 config.yml 的 log 段）
+//  2. LOG_LEVEL / LOG_PATH 环境变量
+//
+// 可重复调用（例如加载 config.yml 之后），每次都会关闭旧的日志文件句柄。
+func Configure(opts Options) {
 	loggerMu.Lock()
 	defer loggerMu.Unlock()
 
@@ -291,12 +336,16 @@ func ConfigureFromEnv() {
 		activeLogFile = nil
 	}
 
-	// 根据环境变量设置全局日志级别
-	logLevel := getLogLevelFromEnv()
-	appLogger.SetLevel(logLevel)
+	appLogger.SetLevel(resolveLevel(opts))
 
 	writer := io.Writer(os.Stdout)
-	logPath := resolveLogPathFromEnv()
+	logPath := strings.TrimSpace(opts.Path)
+	if envPath := strings.TrimSpace(os.Getenv("LOG_PATH")); envPath != "" {
+		logPath = filepath.Clean(envPath)
+	}
+	if logPath == "" {
+		logPath = defaultLogPath()
+	}
 	if logPath != "" {
 		file, err := openLogFile(logPath)
 		if err != nil {
@@ -310,13 +359,13 @@ func ConfigureFromEnv() {
 	// 默认继续输出到 stdout，同时在可用时落盘到文件
 	appLogger.SetOutput(writer)
 
-	// 非终端（如 Docker 日志采集）禁用 ANSI 颜色，避免日志聚合/检索异常
-	forceColor := false
-	if fi, err := os.Stdout.Stat(); err == nil {
-		forceColor = (fi.Mode() & os.ModeCharDevice) != 0
-	}
-
 	// 设置日志格式而不修改全局时区
-	appLogger.SetFormatter(&CustomFormatter{ForceColor: forceColor})
+	appLogger.SetFormatter(&CustomFormatter{ForceColor: resolveColorMode(opts.Color)})
 	appLogger.SetReportCaller(false)
+}
+
+// ConfigureFromEnv 使用环境变量重新配置日志（向后兼容入口）。
+// 这允许在 main() 中加载 .env 后，让 LOG_LEVEL / LOG_PATH 立即生效。
+func ConfigureFromEnv() {
+	Configure(Options{Color: defaultColorMode})
 }

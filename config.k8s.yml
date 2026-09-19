@@ -88,11 +88,3 @@ container:
   # DAG 流程结束（finished/failed/timeout）时，是否自动回收 owner_type=dag_node 的容器实例。
   # 可选: none | stop | delete
   dag_node_cleanup_on_dag_finished: delete
-  
-tenant:
-  # default_tenant_id: "default"
-  # default_tenant_name: "Default Tenant"
-  # default_tenant_description: "This is the default tenant."
-  # api_key_prefix: "sk-"
-  # 16、24 或 32
-  aes_key: "xxxxxxxxxxxxxxxx"

@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -22,6 +21,8 @@ type CLIFlags struct {
 	Port           int    // --port, server port
 	Host           string // --host, server host
 	LogPath        string // --log-path, server log path
+	LogLevel       string // --log-level, log level (debug/info/warn/error/fatal)
+	GinMode        string // --gin-mode, gin run mode (debug/release/test)
 	DBDriver       string // --db-driver, database driver (sqlite/postgres)
 	DBHost         string // --db-host, database host
 	DBPort         string // --db-port, database port
@@ -65,6 +66,8 @@ func ParseCLIFlags() *CLIFlags {
 	flag.IntVar(&f.Port, "port", 0, "Server port (overrides config.yml)")
 	flag.StringVar(&f.Host, "host", "", "Server host (overrides config.yml)")
 	flag.StringVar(&f.LogPath, "log-path", "", "Server log path (overrides config.yml)")
+	flag.StringVar(&f.LogLevel, "log-level", "", "Log level: debug, info, warn, error, fatal (overrides config.yml)")
+	flag.StringVar(&f.GinMode, "gin-mode", "", "Gin run mode: debug, release, test (overrides config.yml)")
 	flag.StringVar(&f.DBDriver, "db-driver", "", "Database driver: sqlite or postgres")
 	flag.StringVar(&f.DBHost, "db-host", "", "Database host")
 	flag.StringVar(&f.DBPort, "db-port", "", "Database port")
@@ -86,32 +89,43 @@ func ParseCLIFlags() *CLIFlags {
 	return f
 }
 
-// DefaultAISummarySystemPrompt 是生成 AI 摘要时使用的默认系统提示词。
-// const DefaultAISummarySystemPrompt = "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要。"
-
 type Config struct {
-	Server    *ServerConfig    `yaml:"server"   json:"server"`
-	Database  *DatabaseConfig  `yaml:"database" json:"database"`
-	Feed      *FeedConfig      `yaml:"feed"     json:"feed"`
-	Proxy     *ProxyConfig     `yaml:"proxy"    json:"proxy"`
-	Route     *RouteConfig     `yaml:"route"    json:"route"`
-	Storage   *StorageConfig   `yaml:"storage"  json:"storage"`
-	Git       *GitConfig       `yaml:"git"      json:"git"`
-	Realtime  *RealtimeConfig  `yaml:"realtime" json:"realtime"`
-	LLM       *LLMConfig       `yaml:"llm" json:"llm"`
-	Agent     *AgentConfig     `yaml:"agent" json:"agent"`
-	Container *ContainerConfig `yaml:"container" json:"container"`
-	// Ingest   *IngestConfig   `yaml:"ingest"   json:"ingest"`
-	// Tenant      *TenantConfig `yaml:"tenant"   json:"tenant"`
-	DebugConfig *DebugConfig `yaml:"debug"    json:"debug"`
-	User        *UserConfig  `yaml:"user"     json:"user"`
-
-	AISummary *AISummaryConfig `yaml:"ai_summary" json:"ai_summary"`
-
-	// Audio  *AudioConfig  `yaml`
+	Server      *ServerConfig    `yaml:"server"   json:"server"`
+	Database    *DatabaseConfig  `yaml:"database" json:"database"`
+	Proxy       *ProxyConfig     `yaml:"proxy"    json:"proxy"`
+	Route       *RouteConfig     `yaml:"route"    json:"route"`
+	Storage     *StorageConfig   `yaml:"storage"  json:"storage"`
+	Git         *GitConfig       `yaml:"git"      json:"git"`
+	Realtime    *RealtimeConfig  `yaml:"realtime" json:"realtime"`
+	LLM         *LLMConfig       `yaml:"llm" json:"llm"`
+	Agent       *AgentConfig     `yaml:"agent" json:"agent"`
+	Container   *ContainerConfig `yaml:"container" json:"container"`
+	DebugConfig *DebugConfig     `yaml:"debug" json:"debug"`
+	User        *UserConfig      `yaml:"user"  json:"user"`
+	Log         *LogConfig       `yaml:"log"   json:"log"`
 }
+
+// DebugConfig 调试开关。
 type DebugConfig struct {
+	// EnableDagOrchestrator 为 true 时，提交分析会把编排器入参写入调试目录。
 	EnableDagOrchestrator bool `yaml:"enable_dag_orchestrator" json:"enable_dag_orchestrator"`
+}
+
+// LogConfig 控制进程日志的级别与输出方式。
+// 它的取值最终由 logger.Configure 应用，因此修改后无需改动日志代码。
+type LogConfig struct {
+	// Level 日志级别：trace/debug/info/warn/error/fatal/panic。默认 info。
+	// 需要开启 debug 模式时将其设为 debug 即可。
+	Level string `yaml:"level" json:"level"`
+	// Path 日志文件路径；为空时使用默认路径 logs/app.log。
+	Path string `yaml:"path" json:"path"`
+	// Color 颜色模式：auto（默认，仅终端着色）/always/never。
+	Color string `yaml:"color" json:"color"`
+}
+
+// DefaultLogConfig 返回 log 段在代码中的默认配置。
+func DefaultLogConfig() *LogConfig {
+	return &LogConfig{Level: "info", Color: "auto"}
 }
 
 type UserConfig struct {
@@ -119,11 +133,6 @@ type UserConfig struct {
 	JWTSecret           string `yaml:"jwt_secret" json:"jwt_secret"`
 }
 
-// AISummaryConfig AI 摘要生成配置。
-type AISummaryConfig struct {
-	// SystemPrompt 生成摘要时使用的系统提示词。
-	// SystemPrompt string `yaml:"system_prompt" json:"system_prompt"`
-}
 type LLMConfig struct {
 	CLIURL      string             `yaml:"cli_url" json:"cli_url"`
 	Model       string             `yaml:"model" json:"model"`
@@ -272,24 +281,16 @@ type RouteConfig struct {
 const defaultAppsPrefix = "/apps"
 
 // resolveDefaultBaseDir returns the default storage base directory.
-// Priority: GOBRAVE_BASE_DIR env > $HOME/.gobrave
+// Priority: GOBRAVE_BASE_DIR env > abs(".gobrave") under the current working
+// directory.
 func resolveDefaultBaseDir() string {
 	if dir := strings.TrimSpace(os.Getenv("GOBRAVE_BASE_DIR")); dir != "" {
 		return dir
 	}
-	homeDir := ""
-	if u, err := user.Current(); err == nil {
-		homeDir = u.HomeDir
+	if abs, err := filepath.Abs(".gobrave"); err == nil {
+		return abs
 	}
-	if homeDir == "" {
-		if d, err := os.UserHomeDir(); err == nil {
-			homeDir = d
-		}
-	}
-	if homeDir == "" {
-		return ".gobrave"
-	}
-	return filepath.Join(homeDir, ".gobrave")
+	return ".gobrave"
 }
 
 type TraefikRouteConfig struct {
@@ -317,8 +318,10 @@ type ServerConfig struct {
 	Port int `yaml:"port"             json:"port"`
 	// GRPCPort        int           `yaml:"grpc_port"        json:"grpc_port"`
 	Host            string        `yaml:"host"             json:"host"`
-	LogPath         string        `yaml:"log_path"         json:"log_path"`
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout" json:"shutdown_timeout" default:"30s"`
+	// Mode 是 Gin 运行模式：debug / release / test。
+	// 留空时回退到 GIN_MODE 环境变量，最后回退到默认值（debug）。
+	Mode string `yaml:"mode" json:"mode"`
 }
 
 // DatabaseConfig 数据库配置
@@ -333,21 +336,6 @@ type DatabaseConfig struct {
 	Path     string `yaml:"path"     json:"path"`
 }
 
-type AudioConfig struct {
-	Dir string
-}
-
-// FeedConfig feed 异步构建配置
-type FeedConfig struct {
-	WorkerCount      int  `yaml:"worker_count"      json:"worker_count"`
-	QueueSize        int  `yaml:"queue_size"        json:"queue_size"`
-	BackfillEnabled  bool `yaml:"backfill_enabled"  json:"backfill_enabled"`
-	BackfillBatch    int  `yaml:"backfill_batch"    json:"backfill_batch"`
-	RetryMaxAttempts int  `yaml:"retry_max_attempts" json:"retry_max_attempts"`
-	RetryBaseDelayMs int  `yaml:"retry_base_delay_ms" json:"retry_base_delay_ms"`
-	RetryMaxDelayMs  int  `yaml:"retry_max_delay_ms"  json:"retry_max_delay_ms"`
-}
-
 // type IngestConfig struct {
 // 	Enabled                 bool   `yaml:"enabled" json:"enabled"`
 // 	FetchIntervalSec        int    `yaml:"fetch_interval_sec" json:"fetch_interval_sec"`
@@ -360,10 +348,6 @@ type FeedConfig struct {
 // 	ParserCallbackSecret    string `yaml:"parser_callback_secret" json:"parser_callback_secret"`
 // }
 
-type TenantConfig struct {
-	AesKey string `yaml:"aes_key" json:"aes_key"`
-}
-
 // defaultConfig 返回代码内置的默认配置：config.yml 不存在、缺少某个键，
 // 或某个键取值为空时都以它为准。
 // LoadConfig 先构造默认配置，再用 config.yml 覆盖其中显式声明的键。
@@ -372,8 +356,8 @@ func defaultConfig() *Config {
 		Server: &ServerConfig{
 			Port: 8082,
 			// GRPCPort:        9092,
+			Mode:            "release",
 			Host:            "0.0.0.0",
-			LogPath:         "logs/server.log",
 			ShutdownTimeout: 30 * time.Second,
 		},
 		Database: &DatabaseConfig{
@@ -384,15 +368,6 @@ func defaultConfig() *Config {
 			Name:    "postgres",
 			SSLMode: "disable",
 			Path:    "",
-		},
-		Feed: &FeedConfig{
-			WorkerCount:      4,
-			QueueSize:        2048,
-			BackfillEnabled:  false,
-			BackfillBatch:    500,
-			RetryMaxAttempts: 5,
-			RetryBaseDelayMs: 100,
-			RetryMaxDelayMs:  5000,
 		},
 		Proxy: &ProxyConfig{
 			BraveAPI:   "http://localhost:5000",
@@ -447,28 +422,13 @@ func defaultConfig() *Config {
 			Providers: map[string]ModelProviderConfig{},
 		},
 		Container: DefaultContainerConfig(),
-		// Ingest: &IngestConfig{
-		// 	Enabled:                 true,
-		// 	FetchIntervalSec:        300,
-		// 	HTTPTimeoutSec:          15,
-		// 	FetchWorkers:            1,
-		// 	ParserGRPCAddr:          "127.0.0.1:50051",
-		// 	ParserGRPCTimeoutSec:    8,
-		// 	ParserDispatchBatchSize: 100,
-		// 	ParserCallbackSecret:    "",
-		// },
-		// Tenant: &TenantConfig{
-		// 	AesKey: "your-aes-key-here",
-		// },
 		DebugConfig: &DebugConfig{
 			EnableDagOrchestrator: false,
 		},
 		User: &UserConfig{
 			DisableRegistration: false,
 		},
-		AISummary: &AISummaryConfig{
-			// SystemPrompt: DefaultAISummarySystemPrompt,
-		},
+		Log: DefaultLogConfig(),
 	}
 }
 
@@ -489,6 +449,7 @@ func LoadConfig() (*Config, error) {
 		if os.IsNotExist(err) {
 			// Apply CLI overrides even when config file is missing
 			applyCLIOverrides(cfg)
+			applyLogConfig(cfg)
 			return cfg, nil
 		}
 		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
@@ -568,12 +529,9 @@ func LoadConfig() (*Config, error) {
 	if cfg.User == nil {
 		cfg.User = &UserConfig{}
 	}
-	// if cfg.AISummary == nil {
-	// 	cfg.AISummary = &AISummaryConfig{SystemPrompt: DefaultAISummarySystemPrompt}
-	// }
-	// if strings.TrimSpace(cfg.AISummary.SystemPrompt) == "" {
-	// 	cfg.AISummary.SystemPrompt = DefaultAISummarySystemPrompt
-	// }
+	if cfg.Log == nil {
+		cfg.Log = DefaultLogConfig()
+	}
 
 	cfg.Container.DagNodeCleanupOnFailed = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnFailed, "stop")
 	cfg.Container.DagNodeCleanupOnDagFinished = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnDagFinished, "delete")
@@ -611,10 +569,28 @@ func LoadConfig() (*Config, error) {
 		cfg.Route.K8sIngress.Annotations = map[string]string{}
 	}
 
-	// TENANT_AES_KEY := cfg.Tenant.AesKey
-	// os.Setenv("TENANT_AES_KEY", TENANT_AES_KEY)
+	// 日志配置立即生效，使 config.yml 的 log.level 控制后续所有日志输出。
+	applyLogConfig(cfg)
 
 	return cfg, nil
+}
+
+// applyLogConfig 把 log 段配置应用到全局 logger。
+// config.yml 缺少 log 段时回退到 DefaultLogConfig。
+func applyLogConfig(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	logCfg := cfg.Log
+	if logCfg == nil {
+		logCfg = DefaultLogConfig()
+		cfg.Log = logCfg
+	}
+	logger.Configure(logger.Options{
+		Level: logCfg.Level,
+		Path:  logCfg.Path,
+		Color: logCfg.Color,
+	})
 }
 
 // applyConfigData 把 config.yml 的内容合并到 cfg 上，
@@ -784,8 +760,21 @@ func applyCLIOverrides(cfg *Config) {
 	if f.Host != "" {
 		cfg.Server.Host = f.Host
 	}
+	if f.GinMode != "" {
+		cfg.Server.Mode = f.GinMode
+	}
+	// Log level / path 统一作用于 logger 配置。
+	if f.LogLevel != "" {
+		if cfg.Log == nil {
+			cfg.Log = DefaultLogConfig()
+		}
+		cfg.Log.Level = f.LogLevel
+	}
 	if f.LogPath != "" {
-		cfg.Server.LogPath = f.LogPath
+		if cfg.Log == nil {
+			cfg.Log = DefaultLogConfig()
+		}
+		cfg.Log.Path = f.LogPath
 	}
 
 	// Database
