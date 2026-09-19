@@ -165,7 +165,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 
 	// workflow.URL = req.Url
 	// workflow.Version = req.Version
-	workflow.Message = req.Message
+	// workflow.Message = req.Message
 	if err := h.workflowService.UpdateWorkflow(c.Request.Context(), workflow); err != nil {
 		c.Error(errors.NewInternalServerError("failed to update workflow publish info").WithDetails(err.Error()))
 		return
@@ -324,7 +324,7 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 
 	// script.URL = req.Url
 	// script.Version = req.Version
-	script.Message = req.Message
+	// script.Message = req.Message
 	if err := h.workflowService.UpdateScript(c.Request.Context(), script); err != nil {
 		c.Error(errors.NewInternalServerError("failed to update script publish info").WithDetails(err.Error()))
 		return

@@ -350,7 +350,7 @@ func (r *workflowRepository) UpdateWorkflow(ctx context.Context, workflow *types
 		"output_component_ids": workflow.OutputComponentIDs,
 		"order_index":          workflow.OrderIndex,
 		// "version":              workflow.Version,
-		"message": workflow.Message,
+		// "message": workflow.Message,
 	}
 
 	result := r.db.WithContext(ctx).Model(&types.Workflow{}).Where("id = ?", workflow.ID).Updates(updates)
@@ -420,7 +420,7 @@ func (r *workflowRepository) UpdateScript(ctx context.Context, script *types.Scr
 		// "url":                   script.URL,
 		"store_id": script.StoreID,
 		// "version":               script.Version,
-		"message": script.Message,
+		// "message": script.Message,
 	}
 
 	result := r.db.WithContext(ctx).Model(&types.Script{}).Where("id = ?", script.ID).Updates(updates)

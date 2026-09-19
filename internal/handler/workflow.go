@@ -448,7 +448,7 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 			item.OutputComponentIDs = datatypes.JSON([]byte(req.OutputComponentIDs))
 		}
 		item.OrderIndex = firstNonZeroInt(req.OrderIndex, existing.OrderIndex)
-		item.Message = firstNonEmpty(req.Message, existing.Message)
+		// item.Message = firstNonEmpty(req.Message, existing.Message)
 	} else {
 		workflowID := req.WorkflowID
 		if workflowID == "" {
@@ -477,7 +477,7 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 			OutputComponentIDs: datatypes.JSON([]byte(req.OutputComponentIDs)),
 			OrderIndex:         req.OrderIndex,
 			// Version:            req.Version,
-			Message: req.Message,
+			// Message: req.Message,
 		}
 	}
 
@@ -1069,6 +1069,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 	storePath := ""
 	storeID := workflow.StoreID
 	StoreURL := ""
+	StoreMessage := ""
 	if storeID != 0 {
 		store, err := h.storeService.GetStoreByID(c.Request.Context(), storeID)
 		if err != nil {
@@ -1079,6 +1080,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 			// storeVersion = store.Version
 			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
 			StoreURL = store.URL
+			StoreMessage = store.Message
 		}
 
 	}
@@ -1097,6 +1099,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		WorkflowPath: workflowPath,
 		GitState:     &gitState,
 		StoreURL:     StoreURL,
+		StoreMessage: StoreMessage,
 	}
 
 	c.JSON(http.StatusOK, workflowVersion)
@@ -1140,6 +1143,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 	storeID := script.StoreID
 	storePath := ""
 	storeUrl := ""
+	storeMessage := ""
 	if storeID != 0 {
 		store, err := h.storeService.GetStoreByID(c.Request.Context(), storeID)
 		if err != nil {
@@ -1150,6 +1154,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 			// storeVersion = store.Version
 			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
 			storeUrl = store.URL
+			storeMessage = store.Message
 		}
 	}
 	project, err := h.projectService.GetProjectByID(c.Request.Context(), script.ProjectID)
@@ -1162,10 +1167,11 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 	scriptVersion := &types.ScriptVersion{
 		Script: *script,
 		// StoreVersion: storeVersion,
-		StorePath:  storePath,
-		ScriptPath: scriptPath,
-		GitState:   &gitState,
-		StoreURL:   storeUrl,
+		StorePath:    storePath,
+		ScriptPath:   scriptPath,
+		GitState:     &gitState,
+		StoreURL:     storeUrl,
+		StoreMessage: storeMessage,
 	}
 
 	c.JSON(http.StatusOK, scriptVersion)

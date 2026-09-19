@@ -36,7 +36,7 @@ type Script struct {
 	// URL                 string `json:"url" gorm:"column:url;type:varchar(255)"`
 
 	// Version   string    `json:"version" gorm:"type:varchar(255)"`
-	Message   string    `json:"message" gorm:"type:longtext"`
+	// Message   string    `json:"message" gorm:"type:longtext"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -74,7 +74,7 @@ type Workflow struct {
 	OutputComponentIDs datatypes.JSON `json:"output_component_ids" gorm:"type:json"`
 	OrderIndex         int            `json:"order_index"`
 	// Version            string         `json:"version" gorm:"type:varchar(255)"`
-	Message   string    `json:"message" gorm:"type:longtext"`
+	// Message   string    `json:"message" gorm:"type:longtext"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -154,6 +154,7 @@ type WorkflowVersion struct {
 	StorePath    string `json:"store_path"`
 	WorkflowPath string `json:"workflow_path"`
 	StoreURL     string `json:"store_url"`
+	StoreMessage string `json:"store_message"`
 	// StoreVersion string `json:"store_version"`
 	// GitState 由磁盘上的 git 元数据实时推导（不落库）：
 	// has_local_changes=true 表示本地有未发布改动，
@@ -164,9 +165,10 @@ type WorkflowVersion struct {
 type ScriptVersion struct {
 	Script
 	// StoreVersion string `json:"store_version"`
-	StorePath  string `json:"store_path"`
-	ScriptPath string `json:"script_path"`
-	StoreURL   string `json:"store_url"`
+	StorePath    string `json:"store_path"`
+	ScriptPath   string `json:"script_path"`
+	StoreURL     string `json:"store_url"`
+	StoreMessage string `json:"store_message"`
 	// GitState 由磁盘上的 git 元数据实时推导（不落库）：
 	// has_local_changes=true 表示本地有未发布改动，
 	// has_store_changes=true 表示 store 有本地未同步的提交。

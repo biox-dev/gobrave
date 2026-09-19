@@ -59,9 +59,9 @@ func (c *Codec) InstallScript(ctx context.Context, req exportcodec.ScriptInstall
 	// if strings.TrimSpace(req.StoreURL) != "" {
 	// 	installScript.URL = req.StoreURL
 	// }
-	if strings.TrimSpace(req.StoreMessage) != "" {
-		installScript.Message = req.StoreMessage
-	}
+	// if strings.TrimSpace(req.StoreMessage) != "" {
+	// 	installScript.Message = req.StoreMessage
+	// }
 	installScript.CreatedAt = utils.GetCurrentTime()
 	installScript.UpdatedAt = utils.GetCurrentTime()
 
@@ -144,9 +144,9 @@ func (c *Codec) InstallWorkflow(ctx context.Context, req exportcodec.WorkflowIns
 	// if strings.TrimSpace(req.StoreURL) != "" {
 	// 	installWorkflow.URL = req.StoreURL
 	// }
-	if strings.TrimSpace(req.StoreMessage) != "" {
-		installWorkflow.Message = req.StoreMessage
-	}
+	// if strings.TrimSpace(req.StoreMessage) != "" {
+	// 	installWorkflow.Message = req.StoreMessage
+	// }
 	// 修改创建时间为当前时间，避免覆盖原有的创建时间
 	installWorkflow.CreatedAt = utils.GetCurrentTime()
 	installWorkflow.UpdatedAt = utils.GetCurrentTime()
