@@ -168,12 +168,33 @@ func (w *ContainerCreateWorker) buildPackageVariables(ctx context.Context, set *
 	ensureEmptyFileIfNotExists(ctx, profilePath)
 	set.add("R_PROFILE", profilePath)
 	set.add("PACKAGE_DIR", packageDir)
+	projectDir := fmt.Sprintf("%s/data/%s", in.baseDir, in.ownerCtx.project.ProjectID)
 
-	rPackageDir := fmt.Sprintf("%s/package/R/%s", baseDir, in.tpl.GetRLibraryPath())
+	libraryRPath := in.tpl.GetRLibraryPath()
+	var rPackageDir string
+	if libraryRPath == "__PROJECT__" {
+		rPackageDir = fmt.Sprintf("%s/package/R", projectDir)
+	} else {
+		rPackageDir = fmt.Sprintf("%s/package/R/%s", baseDir, libraryRPath)
+	}
 	set.add("R_PACKAGE_DIR", rPackageDir)
-	pythonPackageDir := fmt.Sprintf("%s/package/python/%s", baseDir, in.tpl.GetPythonLibraryPath())
+
+	libraryPythonPath := in.tpl.GetPythonLibraryPath()
+	var pythonPackageDir string
+	if libraryPythonPath == "__PROJECT__" {
+		pythonPackageDir = fmt.Sprintf("%s/package/python", projectDir)
+	} else {
+		pythonPackageDir = fmt.Sprintf("%s/package/python/%s", baseDir, libraryPythonPath)
+	}
 	set.add("PYTHON_PACKAGE_DIR", pythonPackageDir)
-	condaPackageDir := fmt.Sprintf("%s/package/conda/%s", baseDir, in.tpl.GetCondaLibraryPath())
+
+	libraryCondaPath := in.tpl.GetCondaLibraryPath()
+	var condaPackageDir string
+	if libraryCondaPath == "__PROJECT__" {
+		condaPackageDir = fmt.Sprintf("%s/package/conda", projectDir)
+	} else {
+		condaPackageDir = fmt.Sprintf("%s/package/conda/%s", baseDir, libraryCondaPath)
+	}
 	set.add("CONDA_PACKAGE_DIR", condaPackageDir)
 
 	ensureDirs(ctx, []string{rPackageDir, pythonPackageDir, condaPackageDir})
