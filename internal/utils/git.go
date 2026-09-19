@@ -273,6 +273,85 @@ func SyncWorktreeFromRepo(ctx context.Context, targetDir, srcRepoPath string) er
 	return resetWorktreeToRemote(ctx, repo, targetDir, srcRepoPath)
 }
 
+// fetchFromLocalRepo 从本地源仓库 fetch；若因“本地独有的提交”导致协商失败
+// （plumbing.ErrObjectNotFound，对外表现为 "object not found"），清理源仓库不认识的
+// 本地 ref 后重试一次。
+//
+// 背景：go-git 的 fetch 协商（Remote.fetch -> getHaves）会把本地仓库里每个 ref 的可达提交
+// （每个 ref 最多 100 个祖先提交）当作 haves 发给对端。源仓库是本地路径时，对端就是
+// ensureLocalGitTransport 注册的进程内 go-git server，它的 upload-pack 用
+// revlist.Objects(storer, haves, nil) 展开 haves，且不允许对象缺失：只要有一个 have
+// 在源仓库里不存在，整次 fetch 就会以 plumbing.ErrObjectNotFound 失败。
+// 真实的 git 服务端会忽略自己不认识 have，go-git 的进程内服务端不会，这就是同一份仓库
+// 用 git 命令行能同步、走 go-git 却报 "object not found" 的原因。
+//
+// 触发场景：目标目录里存在本地提交（编辑脚本/工作流后提交但尚未 publish，或 store 之后被
+// 上游强制改写），而该提交在 store 里并不存在。这类提交在随后的 reset --hard / 分支重指里
+// 本来就会被丢弃，所以这里先删掉对应 ref 再重试，避免同步被这种“本地独有提交”卡死。
+func fetchFromLocalRepo(ctx context.Context, repo *git.Repository, opts *git.FetchOptions) error {
+	err := repo.FetchContext(ctx, opts)
+	if err == nil || !stderrs.Is(err, plumbing.ErrObjectNotFound) {
+		return err
+	}
+
+	// 源仓库地址取自 remote 配置；远端 URL 或未配置 remote 时 PlainOpen 会失败，
+	// 此时保留原始错误。
+	source, openErr := git.PlainOpen(remoteURL(repo, opts.RemoteName))
+	if openErr != nil {
+		return err
+	}
+	if pruneErr := pruneLocalRefsUnknownToSource(repo, source); pruneErr != nil {
+		return err
+	}
+	return repo.FetchContext(ctx, opts)
+}
+
+// pruneLocalRefsUnknownToSource 删除 repo 中那些提交对象在 source 仓库里不存在的 ref，
+// 避免它们被 getHaves 当成 haves 发给对端（见 fetchFromLocalRepo 的说明）。
+// 只有 source 明确返回 ErrObjectNotFound 的 ref 才会被删除，其它错误一律不动。
+func pruneLocalRefsUnknownToSource(repo, source *git.Repository) error {
+	iter, err := repo.References()
+	if err != nil {
+		return err
+	}
+
+	var stale []plumbing.ReferenceName
+	iterErr := iter.ForEach(func(ref *plumbing.Reference) error {
+		if ref.Type() != plumbing.HashReference {
+			return nil
+		}
+		if objErr := source.Storer.HasEncodedObject(ref.Hash()); stderrs.Is(objErr, plumbing.ErrObjectNotFound) {
+			stale = append(stale, ref.Name())
+		}
+		return nil
+	})
+	// 先把迭代器关掉再改 refs，避免边遍历边删除。
+	iter.Close()
+	if iterErr != nil {
+		return iterErr
+	}
+
+	for _, name := range stale {
+		if err := repo.Storer.RemoveReference(name); err != nil {
+			return fmt.Errorf("remove local reference %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// remoteURL 返回 repo 中指定 remote 的第一个地址，取不到时返回空串。
+func remoteURL(repo *git.Repository, remoteName string) string {
+	cfg, err := repo.Config()
+	if err != nil {
+		return ""
+	}
+	rc, ok := cfg.Remotes[remoteName]
+	if !ok || len(rc.URLs) == 0 {
+		return ""
+	}
+	return rc.URLs[0]
+}
+
 // resetWorktreeToRemote 让已存在的仓库工作区与远端仓库 srcRepoPath 完全一致：
 // 重置 origin 地址 -> fetch -> reset --hard 到远端同名分支。
 func resetWorktreeToRemote(ctx context.Context, repo *git.Repository, targetDir, srcRepoPath string) error {
@@ -292,7 +371,7 @@ func resetWorktreeToRemote(ctx context.Context, repo *git.Repository, targetDir,
 		branch = head.Name().Short()
 	}
 
-	if err := repo.FetchContext(ctx, &git.FetchOptions{
+	if err := fetchFromLocalRepo(ctx, repo, &git.FetchOptions{
 		RemoteName: storeRemoteName,
 		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec("+refs/heads/*:refs/remotes/" + storeRemoteName + "/*")},
 		Force:      true,
@@ -448,7 +527,7 @@ func FetchBareRepoFromOrigin(ctx context.Context, repoPath string) error {
 		branch = head.Name().Short()
 	}
 
-	if fetchErr := repo.FetchContext(ctx, &git.FetchOptions{
+	if fetchErr := fetchFromLocalRepo(ctx, repo, &git.FetchOptions{
 		RemoteName: storeRemoteName,
 		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec("+refs/heads/*:refs/remotes/" + storeRemoteName + "/*")},
 		Force:      true,
