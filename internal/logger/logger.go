@@ -260,7 +260,7 @@ func LevelFromString(s string) logrus.Level {
 //
 // defaultLogPath 使用统一外部路径规则定位 logs/app.log
 func defaultLogPath() string {
-	logPath, err := utils.ResolveExternalPath(filepath.Join("logs", "app.log"))
+	logPath, err := utils.ResolveExternalPath(filepath.Join("gobrave.log"))
 	if err != nil {
 		return ""
 	}
