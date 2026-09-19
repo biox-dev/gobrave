@@ -248,7 +248,6 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 		item.ContainerTemplateID = firstNonZeroInt64(req.ContainerTemplateID, existing.ContainerTemplateID)
 		item.ToolsContainerID = firstNonEmpty(req.ToolsContainerID, existing.ToolsContainerID)
 		item.Prompt = firstNonEmpty(req.Prompt, existing.Prompt)
-		item.IOSchema = firstNonEmpty(req.IOSchema, existing.IOSchema)
 		item.SubContainerID = firstNonEmpty(req.SubContainerID, existing.SubContainerID)
 		item.Tags = firstNonEmpty(req.Tags, existing.Tags)
 		item.FileType = firstNonEmpty(req.FileType, existing.FileType)
@@ -275,7 +274,6 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 			ContainerTemplateID: req.ContainerTemplateID,
 			ToolsContainerID:    req.ToolsContainerID,
 			Prompt:              req.Prompt,
-			IOSchema:            req.IOSchema,
 			SubContainerID:      req.SubContainerID,
 			Tags:                req.Tags,
 			FileType:            req.FileType,
@@ -305,17 +303,11 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 	}
 
 	scriptDir, scriptFile, _ := utils.GetScriptFile(h.cfg.Storage.BaseDir, project.ProjectID, item.ScriptType, item.ScriptID)
-	ioSchemaFile := filepath.Join(scriptDir, "io_schema.json")
-	// Write io_schema.json file if IOSchema is provided
-	if item.IOSchema != "" {
-		if err := os.MkdirAll(filepath.Dir(ioSchemaFile), 0o755); err != nil {
-			c.Error(errors.NewInternalServerError("failed to prepare script directory").WithDetails(err.Error()))
-			return
-		}
-		if err := os.WriteFile(ioSchemaFile, []byte(item.IOSchema), 0o644); err != nil {
-			c.Error(errors.NewInternalServerError("failed to write io_schema file").WithDetails(err.Error()))
-			return
-		}
+	// io_schema 落盘到脚本目录的 io_schema.json；该文件是 IOSchema 的唯一数据源，
+	// 读取侧统一通过 utils.ReadScriptIOSchema 从该文件获取。
+	if err := utils.WriteScriptIOSchema(h.cfg.Storage.BaseDir, project.ProjectID, item.ScriptID, req.IOSchema); err != nil {
+		c.Error(errors.NewInternalServerError("failed to write io_schema file").WithDetails(err.Error()))
+		return
 	}
 	scriptFilePath := filepath.Join(scriptDir, scriptFile)
 	// 如果不存在脚本文件，则创建一个空的脚本文件

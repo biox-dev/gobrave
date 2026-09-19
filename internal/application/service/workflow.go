@@ -39,6 +39,18 @@ func NewWorkflowService(
 	}
 }
 
+// projectStringID 把 project 的 int64 主键解析为磁盘目录使用的 project_id 字符串。
+func (s *workflowService) projectStringID(ctx context.Context, projectPK int64) (string, error) {
+	project, err := s.projectRepo.GetProjectByID(ctx, projectPK)
+	if err != nil {
+		return "", err
+	}
+	if project == nil {
+		return "", nil
+	}
+	return project.ProjectID, nil
+}
+
 func (s *workflowService) GetWorkflowByID(ctx context.Context, id int64) (*types.Workflow, error) {
 	return s.workflowRepo.GetWorkflowByID(ctx, id)
 }
@@ -116,8 +128,10 @@ func (s *workflowService) GetWorkflowVisByWorkflow(ctx context.Context, findWork
 		if err != nil {
 			return nil, err
 		}
+		// io_schema 以脚本目录下的 io_schema.json 为准，这里只需解析一次项目目录字符串。
+		projectID, _ := s.projectStringID(ctx, findWorkflow.ProjectID)
 		for _, script := range scripts {
-			scriptNodeMap[script.ScriptID] = buildScriptVisItem(script)
+			scriptNodeMap[script.ScriptID] = buildScriptVisItem(s.cfg.Storage.BaseDir, projectID, script)
 		}
 	}
 
@@ -177,7 +191,8 @@ func (s *workflowService) ScriptToNode(ctx context.Context, workflowID int64, sc
 	}
 
 	// get_script_item: 复用 script 可视化节点构造逻辑
-	node := buildScriptVisItem(script)
+	projectID, _ := s.projectStringID(ctx, script.ProjectID)
+	node := buildScriptVisItem(s.cfg.Storage.BaseDir, projectID, script)
 
 	// script_to_node: 统计 DAG 中引用同一 script 的节点数量，生成唯一 node_id（script_id_N）
 	suffix := countDagNodesByScriptID(findWorkflow.DagDefinition, script.ScriptID) + 1
@@ -645,18 +660,20 @@ func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID in
 
 	formJSONWrap := make([]interface{}, 0)
 
-	if script.IOSchema != "" {
-		ioSchema := make(map[string]interface{})
-		if err := json.Unmarshal([]byte(script.IOSchema), &ioSchema); err != nil {
-			return nil, err
-		}
-		if inputs, ok := ioSchema["inputs"].([]interface{}); ok {
-			formJSONWrap = append(formJSONWrap, inputs...)
-		}
-		if params, ok := ioSchema["params"].([]interface{}); ok {
-			formJSONWrap = append(formJSONWrap, params...)
-		}
-
+	// io_schema 不再是 script 的数据库字段，统一从脚本目录的 io_schema.json 读取。
+	projectID, err := s.projectStringID(ctx, script.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	ioSchema, err := utils.ReadScriptIOSchema(s.cfg.Storage.BaseDir, projectID, script.ScriptID)
+	if err != nil {
+		return nil, err
+	}
+	if inputs, ok := ioSchema["inputs"].([]interface{}); ok {
+		formJSONWrap = append(formJSONWrap, inputs...)
+	}
+	if params, ok := ioSchema["params"].([]interface{}); ok {
+		formJSONWrap = append(formJSONWrap, params...)
 	}
 
 	if script.Content != "" {
@@ -670,41 +687,6 @@ func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID in
 	}
 	return formJSONWrap, err
 }
-
-// 后续废除
-// func (s *workflowService) GetFormJSONByScriptID(ctx context.Context, scriptID int64) ([]any, error) {
-// 	script, err := s.workflowRepo.GetScriptByID(ctx, scriptID)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	formJSONWrap := make([]interface{}, 0)
-
-// 	if script.IOSchema != "" {
-// 		ioSchema := make(map[string]interface{})
-// 		if err := json.Unmarshal([]byte(script.IOSchema), &ioSchema); err != nil {
-// 			return nil, err
-// 		}
-// 		if inputs, ok := ioSchema["inputs"].([]interface{}); ok {
-// 			formJSONWrap = append(formJSONWrap, inputs...)
-// 		}
-// 		if params, ok := ioSchema["params"].([]interface{}); ok {
-// 			formJSONWrap = append(formJSONWrap, params...)
-// 		}
-
-// 	}
-
-// 	if script.Content != "" {
-// 		content := make(map[string]interface{})
-// 		if err := json.Unmarshal([]byte(script.Content), &content); err != nil {
-// 			return nil, err
-// 		}
-// 		if contentFormJSON, ok := content["formJson"].([]interface{}); ok {
-// 			formJSONWrap = append(formJSONWrap, contentFormJSON...)
-// 		}
-// 	}
-// 	return formJSONWrap, err
-// }
 
 func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowID string) ([]any, error) {
 	findWorkflow, err := s.workflowRepo.GetWorkflowByWorkflowID(ctx, workflowID)
@@ -777,12 +759,11 @@ func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowI
 		return nil, err
 	}
 
+	// io_schema 以脚本目录下的 io_schema.json 为准，解析一次项目目录字符串复用。
+	projectID, _ := s.projectStringID(ctx, findWorkflow.ProjectID)
 	for _, script := range scripts {
 		scriptID := script.ScriptID
-		ioSchema := make(map[string]any)
-		if script.IOSchema != "" {
-			_ = json.Unmarshal([]byte(script.IOSchema), &ioSchema)
-		}
+		ioSchema, _ := utils.ReadScriptIOSchema(s.cfg.Storage.BaseDir, projectID, script.ScriptID)
 
 		inputNames := getInputNames(ioSchema)
 		nodeIDs := nodeIDsByModuleID[scriptID]
@@ -799,7 +780,7 @@ func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowI
 			inputScriptIDs[scriptID] = struct{}{}
 		}
 
-		if _, isInputScript := inputScriptIDs[scriptID]; isInputScript && script.IOSchema != "" {
+		if _, isInputScript := inputScriptIDs[scriptID]; isInputScript && len(ioSchema) > 0 {
 			merged := make(map[string]any, len(ioSchema)+4)
 			for k, v := range ioSchema {
 				merged[k] = v
@@ -923,7 +904,7 @@ func buildInputScriptFormJSON(ioSchema map[string]any, formJSONWrap *[]any, inpu
 	}
 }
 
-func buildScriptVisItem(script *types.Script) map[string]any {
+func buildScriptVisItem(baseDir, projectID string, script *types.Script) map[string]any {
 	node := map[string]any{
 		"name":         script.ComponentName,
 		"id":           script.ScriptID,
@@ -934,12 +915,9 @@ func buildScriptVisItem(script *types.Script) map[string]any {
 		"outputs":      map[string]any{},
 	}
 
-	if script.IOSchema == "" {
-		return node
-	}
-
-	ioSchema := make(map[string]any)
-	if err := json.Unmarshal([]byte(script.IOSchema), &ioSchema); err != nil {
+	// io_schema 以脚本目录下的 io_schema.json 为准，读取/解析失败时退化为空节点。
+	ioSchema, err := utils.ReadScriptIOSchema(baseDir, projectID, script.ScriptID)
+	if err != nil || len(ioSchema) == 0 {
 		return node
 	}
 

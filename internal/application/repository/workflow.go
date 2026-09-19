@@ -407,7 +407,6 @@ func (r *workflowRepository) UpdateScript(ctx context.Context, script *types.Scr
 		"container_template_id": script.ContainerTemplateID,
 		"tools_container_id":    script.ToolsContainerID,
 		"prompt":                script.Prompt,
-		"io_schema":             script.IOSchema,
 		"sub_container_id":      script.SubContainerID,
 		"tags":                  script.Tags,
 		"file_type":             script.FileType,

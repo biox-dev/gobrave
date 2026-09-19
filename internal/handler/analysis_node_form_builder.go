@@ -6,7 +6,9 @@ import (
 	"github.com/biox-dev/gobrave/internal/types"
 )
 
-func buildNodeFormJSON(dagDefinitionRaw string, script *types.Script, scriptID string) ([]interface{}, error) {
+// buildNodeFormJSON 根据 DAG 节点定义与 io_schema 构造节点表单。
+// io_schema 由调用方从脚本目录的 io_schema.json 读取后传入（不再来自 script 字段）。
+func buildNodeFormJSON(dagDefinitionRaw string, ioSchema map[string]interface{}, script *types.Script, scriptID string) ([]interface{}, error) {
 	formJSON := make([]interface{}, 0)
 
 	nodeInDag := make(map[string]interface{})
@@ -30,14 +32,13 @@ func buildNodeFormJSON(dagDefinitionRaw string, script *types.Script, scriptID s
 		}
 	}
 
-	ioSchema := make(map[string]interface{})
-	if script.IOSchema != "" {
-		if err := json.Unmarshal([]byte(script.IOSchema), &ioSchema); err != nil {
-			return nil, err
-		}
+	// 合并 DAG 节点字段到 io_schema（不修改调用方传入的 map）。
+	mergedSchema := make(map[string]interface{}, len(ioSchema)+len(nodeInDag))
+	for k, v := range ioSchema {
+		mergedSchema[k] = v
 	}
 	for k, v := range nodeInDag {
-		ioSchema[k] = v
+		mergedSchema[k] = v
 	}
 
 	if script.Content != "" {
@@ -50,7 +51,7 @@ func buildNodeFormJSON(dagDefinitionRaw string, script *types.Script, scriptID s
 		}
 	}
 
-	if params, ok := ioSchema["params"].([]interface{}); ok {
+	if params, ok := mergedSchema["params"].([]interface{}); ok {
 		formJSON = append(formJSON, params...)
 	}
 
