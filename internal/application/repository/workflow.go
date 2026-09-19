@@ -330,12 +330,12 @@ func (r *workflowRepository) UpdateWorkflow(ctx context.Context, workflow *types
 	}
 
 	updates := map[string]any{
-		"project_id":           workflow.ProjectID,
-		"store_id":             workflow.StoreID,
-		"name":                 workflow.Name,
-		"img":                  workflow.Img,
-		"tags":                 workflow.Tags,
-		"url":                  workflow.URL,
+		"project_id": workflow.ProjectID,
+		"store_id":   workflow.StoreID,
+		"name":       workflow.Name,
+		"img":        workflow.Img,
+		"tags":       workflow.Tags,
+		// "url":                  workflow.URL,
 		"category":             workflow.Category,
 		"description":          workflow.Description,
 		"prompt":               workflow.Prompt,
@@ -417,8 +417,8 @@ func (r *workflowRepository) UpdateScript(ctx context.Context, script *types.Scr
 		"order_index":           script.OrderIndex,
 		"position":              script.Position,
 		"edges":                 script.Edges,
-		"url":                   script.URL,
-		"store_id":              script.StoreID,
+		// "url":                   script.URL,
+		"store_id": script.StoreID,
 		// "version":               script.Version,
 		"message": script.Message,
 	}

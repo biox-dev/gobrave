@@ -53,6 +53,10 @@ type containerTemplatePageRequest struct {
 	types.Pagination
 }
 
+type containerTemplateSpecPageRequest struct {
+	types.Pagination
+}
+
 type containerTemplateListBySpecRequest struct {
 	SpecID int64 `json:"spec_id,string" binding:"required"`
 }
@@ -444,6 +448,220 @@ func (h *ContainerHandler) UpdateContainerTemplate(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, item)
+}
+
+// CreateContainerTemplateSpec godoc
+// @Summary      创建容器运行配置
+// @Description  新增一条共享运行配置（ContainerTemplateSpec，表 go_container_template_spec）。
+// @Tags         容器管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      types.ContainerTemplateSpec  true  "请求参数"
+// @Success      200      {object}  types.ContainerTemplateSpec
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/template-spec/create [post]
+func (h *ContainerHandler) CreateContainerTemplateSpec(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req types.ContainerTemplateSpec
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		c.Error(errors.NewValidationError("name is required"))
+		return
+	}
+
+	if err := h.containerService.CreateContainerTemplateSpec(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to create container template spec")
+		return
+	}
+
+	item, err := h.containerService.GetContainerTemplateSpecByID(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to get container template spec")
+		return
+	}
+
+	c.JSON(http.StatusOK, item)
+}
+
+// GetContainerTemplateSpec godoc
+// @Summary      获取容器运行配置
+// @Description  按 ID 查询 ContainerTemplateSpec 详情
+// @Tags         容器管理
+// @Produce      json
+// @Param        id       query     integer  true  "主键 ID"
+// @Success      200      {object}  types.ContainerTemplateSpec
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/template-spec/get [get]
+func (h *ContainerHandler) GetContainerTemplateSpec(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req idQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	item, err := h.containerService.GetContainerTemplateSpecByID(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to get container template spec")
+		return
+	}
+
+	c.JSON(http.StatusOK, item)
+}
+
+// UpdateContainerTemplateSpec godoc
+// @Summary      更新容器运行配置
+// @Description  按主键更新 ContainerTemplateSpec（不影响绑定行）。
+// @Tags         容器管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      types.ContainerTemplateSpec  true  "请求参数"
+// @Success      200      {object}  types.ContainerTemplateSpec
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/template-spec/update [post]
+func (h *ContainerHandler) UpdateContainerTemplateSpec(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req types.ContainerTemplateSpec
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+	if req.ID == 0 {
+		c.Error(errors.NewValidationError("id is required"))
+		return
+	}
+
+	if err := h.containerService.UpdateContainerTemplateSpec(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to update container template spec")
+		return
+	}
+
+	item, err := h.containerService.GetContainerTemplateSpecByID(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to get container template spec")
+		return
+	}
+
+	c.JSON(http.StatusOK, item)
+}
+
+// DeleteContainerTemplateSpec godoc
+// @Summary      删除容器运行配置
+// @Description  按主键删除 ContainerTemplateSpec；仍被绑定行引用时返回 409。
+// @Tags         容器管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      idBody  true  "请求参数"
+// @Success      200      {object}  map[string]string
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/template-spec/delete [post]
+func (h *ContainerHandler) DeleteContainerTemplateSpec(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req idBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if err := h.containerService.DeleteContainerTemplateSpec(c.Request.Context(), req.ID); err != nil {
+		handleDataError(c, err, "failed to delete container template spec")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "container template spec deleted successfully"})
+}
+
+// ListContainerTemplateSpec godoc
+// @Summary      容器运行配置列表
+// @Description  查询全部 ContainerTemplateSpec
+// @Tags         容器管理
+// @Produce      json
+// @Success      200      {array}   types.ContainerTemplateSpec
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/template-spec/list [get]
+func (h *ContainerHandler) ListContainerTemplateSpec(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	items, err := h.containerService.ListContainerTemplateSpec(c.Request.Context())
+	if err != nil {
+		handleDataError(c, err, "failed to list container template spec")
+		return
+	}
+
+	c.JSON(http.StatusOK, items)
+}
+
+// PageContainerTemplateSpec godoc
+// @Summary      分页查询容器运行配置
+// @Description  分页查询 ContainerTemplateSpec 列表
+// @Tags         容器管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      containerTemplateSpecPageRequest  true  "分页请求参数"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/template-spec/list-by-page [post]
+func (h *ContainerHandler) PageContainerTemplateSpec(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req containerTemplateSpecPageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	result, err := h.containerService.PageContainerTemplateSpec(c.Request.Context(), &req.Pagination)
+	if err != nil {
+		handleDataError(c, err, "failed to page container template spec")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":      result.Data,
+		"total":     result.Total,
+		"page":      result.Page,
+		"page_size": result.PageSize,
+	})
 }
 
 // DeleteContainerTemplate godoc

@@ -338,13 +338,13 @@ func (s *containerService) DeleteContainerTemplate(ctx context.Context, id int64
 			return err
 		}
 		// 该套配置已无任何镜像绑定时顺带清理，避免留下孤儿配置行。
-		remain, err := tx.ListContainerTemplateDefinitionBySpecID(ctx, binding.SpecID)
-		if err != nil {
-			return err
-		}
-		if len(remain) == 0 {
-			return tx.DeleteContainerTemplateSpec(ctx, binding.SpecID)
-		}
+		// remain, err := tx.ListContainerTemplateDefinitionBySpecID(ctx, binding.SpecID)
+		// if err != nil {
+		// 	return err
+		// }
+		// if len(remain) == 0 {
+		// 	return tx.DeleteContainerTemplateSpec(ctx, binding.SpecID)
+		// }
 		return nil
 	})
 }
@@ -466,6 +466,40 @@ func (s *containerService) UpdateContainerTemplateSpec(ctx context.Context, item
 		return fmt.Errorf("container template spec id is required")
 	}
 	return s.containerRepo.UpdateContainerTemplateSpec(ctx, item)
+}
+
+// DeleteContainerTemplateSpec 删除共享运行配置。
+// 仍被绑定行引用时拒绝删除（返回 409），避免绑定行的 spec_id 变成空引用；
+// 需要强制删除时先删掉这些绑定行（DeleteContainerTemplate 会在最后一行绑定删除后顺带清理配置）。
+func (s *containerService) DeleteContainerTemplateSpec(ctx context.Context, id int64) error {
+	bindings, err := s.containerRepo.ListContainerTemplateDefinitionBySpecID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if len(bindings) > 0 {
+		return apperrors.NewConflictError(
+			fmt.Sprintf("container template spec %d is referenced by %d definition(s)", id, len(bindings)),
+		)
+	}
+	return s.containerRepo.DeleteContainerTemplateSpec(ctx, id)
+}
+
+// ListContainerTemplateSpec 列出全部共享运行配置。
+func (s *containerService) ListContainerTemplateSpec(ctx context.Context) ([]*types.ContainerTemplateSpec, error) {
+	return s.containerRepo.ListContainerTemplateSpec(ctx)
+}
+
+// PageContainerTemplateSpec 分页查询共享运行配置。
+func (s *containerService) PageContainerTemplateSpec(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	items, total, err := s.containerRepo.PageContainerTemplateSpec(ctx, pagination)
+	if err != nil {
+		return nil, err
+	}
+	return types.NewPageResult(total, pagination, items), nil
 }
 
 // CreateContainerTemplateDefinition 新增一条「运行配置 × 镜像」绑定行。

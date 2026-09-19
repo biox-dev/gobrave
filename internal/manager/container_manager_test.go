@@ -127,6 +127,14 @@ func (m *mockContainerRepo) ListContainerTemplateSpec(ctx context.Context) ([]*t
 	return items, nil
 }
 
+func (m *mockContainerRepo) PageContainerTemplateSpec(ctx context.Context, pagination *types.Pagination) ([]*types.ContainerTemplateSpec, int64, error) {
+	items, err := m.ListContainerTemplateSpec(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, int64(len(items)), nil
+}
+
 // ===== 容器模板：运行配置 × 镜像 绑定行 =====
 
 // refreshTemplateCache 在绑定行变动后同步维护读模型缓存，

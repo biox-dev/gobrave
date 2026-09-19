@@ -33,7 +33,7 @@ type Script struct {
 	OrderIndex          int    `json:"order_index"`
 	Position            string `json:"position" gorm:"type:text"`
 	Edges               string `json:"edges" gorm:"type:text"`
-	URL                 string `json:"url" gorm:"column:url;type:varchar(255)"`
+	// URL                 string `json:"url" gorm:"column:url;type:varchar(255)"`
 
 	// Version   string    `json:"version" gorm:"type:varchar(255)"`
 	Message   string    `json:"message" gorm:"type:longtext"`
@@ -53,13 +53,13 @@ func (t *Script) BeforeCreate(_ *gorm.DB) error {
 
 type Workflow struct {
 	// ID                 uint           `json:"id" gorm:"primaryKey;autoIncrement"`
-	ID                 int64          `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-	ProjectID          int64          `json:"project_id,string" gorm:"column:project_id;type:bigint"`
-	StoreID            int64          `json:"store_id,string" gorm:"column:store_id;type:bigint"`
-	Name               string         `json:"name" gorm:"type:varchar(255)"`
-	Img                string         `json:"img" gorm:"type:varchar(255)"`
-	Tags               datatypes.JSON `json:"tags" gorm:"type:json"`
-	URL                string         `json:"url" gorm:"column:url;type:varchar(255)"`
+	ID        int64          `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
+	ProjectID int64          `json:"project_id,string" gorm:"column:project_id;type:bigint"`
+	StoreID   int64          `json:"store_id,string" gorm:"column:store_id;type:bigint"`
+	Name      string         `json:"name" gorm:"type:varchar(255)"`
+	Img       string         `json:"img" gorm:"type:varchar(255)"`
+	Tags      datatypes.JSON `json:"tags" gorm:"type:json"`
+	// URL                string         `json:"url" gorm:"column:url;type:varchar(255)"`
 	Category           string         `json:"category" gorm:"type:varchar(255);default:default"`
 	Description        string         `json:"description" gorm:"type:longtext"`
 	Prompt             string         `json:"prompt" gorm:"type:longtext"`
@@ -153,6 +153,7 @@ type WorkflowVersion struct {
 	Workflow
 	StorePath    string `json:"store_path"`
 	WorkflowPath string `json:"workflow_path"`
+	StoreURL     string `json:"store_url"`
 	// StoreVersion string `json:"store_version"`
 	// GitState 由磁盘上的 git 元数据实时推导（不落库）：
 	// has_local_changes=true 表示本地有未发布改动，
@@ -165,6 +166,7 @@ type ScriptVersion struct {
 	// StoreVersion string `json:"store_version"`
 	StorePath  string `json:"store_path"`
 	ScriptPath string `json:"script_path"`
+	StoreURL   string `json:"store_url"`
 	// GitState 由磁盘上的 git 元数据实时推导（不落库）：
 	// has_local_changes=true 表示本地有未发布改动，
 	// has_store_changes=true 表示 store 有本地未同步的提交。

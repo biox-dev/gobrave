@@ -430,7 +430,7 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 		if strings.TrimSpace(req.Tags) != "" {
 			item.Tags = datatypes.JSON([]byte(req.Tags))
 		}
-		item.URL = firstNonEmpty(req.URL, existing.URL)
+		// item.URL = firstNonEmpty(req.URL, existing.URL)
 		item.Category = firstNonEmpty(req.Category, existing.Category)
 		item.Description = firstNonEmpty(req.Description, existing.Description)
 		item.Prompt = firstNonEmpty(req.Prompt, existing.Prompt)
@@ -458,11 +458,11 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 		req.InputComponentIDs = normalizeJSONOrDefault(req.InputComponentIDs, "[]")
 		req.OutputComponentIDs = normalizeJSONOrDefault(req.OutputComponentIDs, "[]")
 		item = &types.Workflow{
-			ProjectID:          projectID,
-			Name:               req.Name,
-			Img:                req.Img,
-			Tags:               datatypes.JSON([]byte(req.Tags)),
-			URL:                req.URL,
+			ProjectID: projectID,
+			Name:      req.Name,
+			Img:       req.Img,
+			Tags:      datatypes.JSON([]byte(req.Tags)),
+			// URL:                req.URL,
 			Category:           req.Category,
 			Description:        req.Description,
 			Prompt:             req.Prompt,
@@ -1068,6 +1068,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 	// storeVersion := ""
 	storePath := ""
 	storeID := workflow.StoreID
+	StoreURL := ""
 	if storeID != 0 {
 		store, err := h.storeService.GetStoreByID(c.Request.Context(), storeID)
 		if err != nil {
@@ -1077,6 +1078,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		if store != nil {
 			// storeVersion = store.Version
 			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
+			StoreURL = store.URL
 		}
 
 	}
@@ -1094,6 +1096,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		// StoreVersion: storeVersion,
 		WorkflowPath: workflowPath,
 		GitState:     &gitState,
+		StoreURL:     StoreURL,
 	}
 
 	c.JSON(http.StatusOK, workflowVersion)
@@ -1136,6 +1139,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 	// storeVersion := ""
 	storeID := script.StoreID
 	storePath := ""
+	storeUrl := ""
 	if storeID != 0 {
 		store, err := h.storeService.GetStoreByID(c.Request.Context(), storeID)
 		if err != nil {
@@ -1145,6 +1149,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 		if store != nil {
 			// storeVersion = store.Version
 			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
+			storeUrl = store.URL
 		}
 	}
 	project, err := h.projectService.GetProjectByID(c.Request.Context(), script.ProjectID)
@@ -1160,6 +1165,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 		StorePath:  storePath,
 		ScriptPath: scriptPath,
 		GitState:   &gitState,
+		StoreURL:   storeUrl,
 	}
 
 	c.JSON(http.StatusOK, scriptVersion)

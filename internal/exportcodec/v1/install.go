@@ -56,9 +56,9 @@ func (c *Codec) InstallScript(ctx context.Context, req exportcodec.ScriptInstall
 	if installScript.ComponentType == "" {
 		installScript.ComponentType = "script"
 	}
-	if strings.TrimSpace(req.StoreURL) != "" {
-		installScript.URL = req.StoreURL
-	}
+	// if strings.TrimSpace(req.StoreURL) != "" {
+	// 	installScript.URL = req.StoreURL
+	// }
 	if strings.TrimSpace(req.StoreMessage) != "" {
 		installScript.Message = req.StoreMessage
 	}
@@ -141,9 +141,9 @@ func (c *Codec) InstallWorkflow(ctx context.Context, req exportcodec.WorkflowIns
 	installWorkflow.ID = 0
 	installWorkflow.ProjectID = req.ProjectID
 	installWorkflow.StoreID = req.StoreID
-	if strings.TrimSpace(req.StoreURL) != "" {
-		installWorkflow.URL = req.StoreURL
-	}
+	// if strings.TrimSpace(req.StoreURL) != "" {
+	// 	installWorkflow.URL = req.StoreURL
+	// }
 	if strings.TrimSpace(req.StoreMessage) != "" {
 		installWorkflow.Message = req.StoreMessage
 	}

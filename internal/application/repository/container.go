@@ -112,6 +112,28 @@ func (r *containerRepository) ListContainerTemplateSpec(ctx context.Context) ([]
 	return items, nil
 }
 
+func (r *containerRepository) PageContainerTemplateSpec(ctx context.Context, pagination *types.Pagination) ([]*types.ContainerTemplateSpec, int64, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&types.ContainerTemplateSpec{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]*types.ContainerTemplateSpec, 0)
+	if err := r.db.WithContext(ctx).
+		Order("id DESC").
+		Offset(pagination.Offset()).
+		Limit(pagination.Limit()).
+		Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return items, total, nil
+}
+
 // ===== 容器模板：运行配置 × 镜像 绑定行 =====
 
 func (r *containerRepository) CreateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {

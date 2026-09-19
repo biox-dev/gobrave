@@ -163,7 +163,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		workflow.StoreID = store.ID
 	}
 
-	workflow.URL = req.Url
+	// workflow.URL = req.Url
 	// workflow.Version = req.Version
 	workflow.Message = req.Message
 	if err := h.workflowService.UpdateWorkflow(c.Request.Context(), workflow); err != nil {
@@ -322,7 +322,7 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		script.StoreID = store.ID
 	}
 
-	script.URL = req.Url
+	// script.URL = req.Url
 	// script.Version = req.Version
 	script.Message = req.Message
 	if err := h.workflowService.UpdateScript(c.Request.Context(), script); err != nil {

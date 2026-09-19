@@ -36,6 +36,10 @@ type ContainerService interface {
 	CreateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error
 	GetContainerTemplateSpecByID(ctx context.Context, id int64) (*types.ContainerTemplateSpec, error)
 	UpdateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error
+	// DeleteContainerTemplateSpec 删除共享运行配置；仍被绑定行引用时返回冲突错误。
+	DeleteContainerTemplateSpec(ctx context.Context, id int64) error
+	ListContainerTemplateSpec(ctx context.Context) ([]*types.ContainerTemplateSpec, error)
+	PageContainerTemplateSpec(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
 	CreateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
 	GetContainerTemplateDefinitionByID(ctx context.Context, id int64) (*types.ContainerTemplateDefinition, error)
 	UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
@@ -72,6 +76,7 @@ type ContainerRepository interface {
 	UpdateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error
 	DeleteContainerTemplateSpec(ctx context.Context, id int64) error
 	ListContainerTemplateSpec(ctx context.Context) ([]*types.ContainerTemplateSpec, error)
+	PageContainerTemplateSpec(ctx context.Context, pagination *types.Pagination) ([]*types.ContainerTemplateSpec, int64, error)
 
 	// ===== 容器模板：运行配置 × 镜像 绑定行（go_container_template_definition）=====
 	// 绑定行主键即对外 ContainerTemplate.ID，一行唯一确定一个可运行的容器配置。
