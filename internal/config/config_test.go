@@ -152,3 +152,68 @@ func TestGitConfigDefaultsAndResolve(t *testing.T) {
 		t.Fatalf("ResolveGitIdentity(nil) = %s <%s>, want defaults", name, email)
 	}
 }
+
+// TestResolveDatabaseLogLevel 校验 database.log_level 的默认值与归一化规则：
+// 未配置 / 空值 / 非法值都收敛到 warn，别名 warning 视作 warn，大小写与空白被忽略。
+func TestResolveDatabaseLogLevel(t *testing.T) {
+	// 默认配置应为 warn。
+	if got := ResolveDatabaseLogLevel(defaultConfig()); got != DatabaseLogLevelWarn {
+		t.Fatalf("default level = %q, want %q", got, DatabaseLogLevelWarn)
+	}
+
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{"", DatabaseLogLevelWarn},
+		{"  ", DatabaseLogLevelWarn},
+		{"warn", DatabaseLogLevelWarn},
+		{"WARN", DatabaseLogLevelWarn},
+		{" warning ", DatabaseLogLevelWarn},
+		{"info", DatabaseLogLevelInfo},
+		{"Info", DatabaseLogLevelInfo},
+		{"error", DatabaseLogLevelError},
+		{"silent", DatabaseLogLevelSilent},
+		{"verbose", DatabaseLogLevelWarn}, // 非法值回退
+		{"trace", DatabaseLogLevelWarn},   // 非法值回退（GORM 无 trace 级别）
+	}
+	for _, tc := range cases {
+		cfg := defaultConfig()
+		cfg.Database.LogLevel = tc.raw
+		if got := ResolveDatabaseLogLevel(cfg); got != tc.want {
+			t.Errorf("ResolveDatabaseLogLevel(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+
+	// nil / 缺段必须安全返回默认级别。
+	if got := ResolveDatabaseLogLevel(nil); got != DefaultDatabaseLogLevel {
+		t.Errorf("ResolveDatabaseLogLevel(nil) = %q, want %q", got, DefaultDatabaseLogLevel)
+	}
+	if got := ResolveDatabaseLogLevel(&Config{}); got != DefaultDatabaseLogLevel {
+		t.Errorf("ResolveDatabaseLogLevel(no database) = %q, want %q", got, DefaultDatabaseLogLevel)
+	}
+}
+
+// TestLoadConfigDatabaseLogLevel 校验 database.log_level 的 YAML 合并语义：
+// 未声明时保留默认值，显式声明时按文件取值。
+func TestLoadConfigDatabaseLogLevel(t *testing.T) {
+	// 只声明 driver，log_level 应保持默认 warn。
+	writeConfig(t, "database:\n  driver: sqlite\n")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Database.LogLevel != DefaultDatabaseLogLevel {
+		t.Errorf("log_level = %q, want %q", cfg.Database.LogLevel, DefaultDatabaseLogLevel)
+	}
+
+	// 显式声明时按文件取值。
+	writeConfig(t, "database:\n  driver: sqlite\n  log_level: info\n")
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := ResolveDatabaseLogLevel(cfg); got != DatabaseLogLevelInfo {
+		t.Errorf("log_level = %q, want %q", got, DatabaseLogLevelInfo)
+	}
+}

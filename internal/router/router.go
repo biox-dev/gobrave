@@ -450,13 +450,13 @@ func serveStatic(r *gin.Engine, cfg *config.Config) {
 	// }
 
 	// imageDir, err := utils.ResolveConfiguredPath(configuredDir, "images")
-	imageDir := utils.ResolveImageDir(cfg.Storage.BaseDir)
-	if err := os.MkdirAll(imageDir, 0o755); err != nil {
-		return
-	}
+	// imageDir := utils.ResolveImageDir(cfg.Storage.BaseDir)
+	// if err := os.MkdirAll(imageDir, 0o755); err != nil {
+	// 	return
+	// }
 
-	logger.Infof(context.Background(), "[Router] Serving image files from %s at /images", imageDir)
-	r.StaticFS("/images", http.Dir(imageDir))
+	// logger.Infof(context.Background(), "[Router] Serving image files from %s at /images", imageDir)
+	// r.StaticFS("/images", http.Dir(imageDir))
 
 	baseDir := strings.TrimSpace(cfg.Storage.BaseDir)
 	if baseDir == "" {
@@ -479,18 +479,18 @@ func serveStatic(r *gin.Engine, cfg *config.Config) {
 	r.StaticFS("/data-analysis", http.Dir(dataDir))
 	r.StaticFS("/data-project", http.Dir(dataDir))
 
-	analysisDir, err := utils.SafePathUnderBase(baseDir, filepath.Join(baseDir, "analysis"))
-	if err != nil {
-		logger.Warnf(context.Background(), "[Router] Skip serving /images-analysis: invalid base_dir/analysis path: base_dir=%s err=%v", baseDir, err)
-		return
-	}
-	if err := os.MkdirAll(analysisDir, 0o755); err != nil {
-		logger.Warnf(context.Background(), "[Router] Skip serving /images-analysis: create dir failed: analysis_dir=%s err=%v", analysisDir, err)
-		return
-	}
+	// analysisDir, err := utils.SafePathUnderBase(baseDir, filepath.Join(baseDir, "analysis"))
+	// if err != nil {
+	// 	logger.Warnf(context.Background(), "[Router] Skip serving /images-analysis: invalid base_dir/analysis path: base_dir=%s err=%v", baseDir, err)
+	// 	return
+	// }
+	// if err := os.MkdirAll(analysisDir, 0o755); err != nil {
+	// 	logger.Warnf(context.Background(), "[Router] Skip serving /images-analysis: create dir failed: analysis_dir=%s err=%v", analysisDir, err)
+	// 	return
+	// }
 
-	logger.Infof(context.Background(), "[Router] Serving analysis files from %s at /images-analysis", analysisDir)
-	r.StaticFS("/images-analysis", http.Dir(analysisDir))
+	// logger.Infof(context.Background(), "[Router] Serving analysis files from %s at /images-analysis", analysisDir)
+	// r.StaticFS("/images-analysis", http.Dir(analysisDir))
 
 	// add store static route
 

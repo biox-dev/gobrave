@@ -11,6 +11,10 @@ database:
   user: root
   password: "123456"
   name: ai_agent_go
+  # GORM SQL 日志级别：silent / error / warn / info。留空或非法值按 warn。
+  # warn 只打印慢查询与报错的 SQL（默认）；info 打印每条 SQL，仅排查问题时开启；
+  # silent 完全关闭。与 log.level（进程日志级别）互不影响。
+  log_level: warn
 
 # ingest:
 #   enabled: true

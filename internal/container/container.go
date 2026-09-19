@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,7 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // must is a helper function for error handling
@@ -580,6 +582,39 @@ func newSchedulerRegistry(
 	return registry
 }
 
+// gormLogLevelFromString 把 database.log_level 映射为 GORM 的日志级别。
+// 取值已在 config.ResolveDatabaseLogLevel 归一化，这里只做枚举映射，
+// 未覆盖的取值兜底为 Warn，避免误开 Info 刷屏。
+func gormLogLevelFromString(level string) gormlogger.LogLevel {
+	switch level {
+	case config.DatabaseLogLevelSilent:
+		return gormlogger.Silent
+	case config.DatabaseLogLevelError:
+		return gormlogger.Error
+	case config.DatabaseLogLevelInfo:
+		return gormlogger.Info
+	default:
+		return gormlogger.Warn
+	}
+}
+
+// newGormLogger 构建 GORM 日志器。
+// 级别来自 database.log_level（silent/error/warn/info，默认 warn）；
+// 慢查询阈值与输出目标保持 GORM 默认（200ms，stdout）；
+// 同时忽略 ErrRecordNotFound，避免内置 Profile 等“按约定查不到”的查询
+// 刷出 record not found 噪音，因为调用方已经把该错误转成领域错误处理。
+func newGormLogger(cfg *config.Config) gormlogger.Interface {
+	return gormlogger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags),
+		gormlogger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  gormLogLevelFromString(config.ResolveDatabaseLogLevel(cfg)),
+			IgnoreRecordNotFoundError: true,
+			Colorful:                  true,
+		},
+	)
+}
+
 func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 	dbCfg := cfg.Database
 	if dbCfg == nil {
@@ -668,10 +703,13 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 	default:
 		return nil, fmt.Errorf("unsupported database driver: %s", driver)
 	}
+	logger.Infof(context.Background(), "DB Config: sql_log_level=%s", config.ResolveDatabaseLogLevel(cfg))
 	db, err := gorm.Open(dialector, &gorm.Config{
 		NowFunc: func() time.Time {
 			return time.Now().UTC()
 		},
+		// SQL 日志级别由 database.log_level 控制（silent/error/warn/info，默认 warn）。
+		Logger: newGormLogger(cfg),
 	})
 	if err != nil {
 		return nil, err

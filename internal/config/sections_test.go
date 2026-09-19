@@ -27,6 +27,39 @@ func TestRegisteredSectionsExposeEffectiveValues(t *testing.T) {
 	}
 }
 
+// TestSectionDecodeNormalizesDatabaseLogLevel 校验可视化配置保存 database 段时，
+// log_level 会被归一化，非法值不会落盘。
+func TestSectionDecodeNormalizesDatabaseLogLevel(t *testing.T) {
+	section, ok := FindSection("database")
+	if !ok {
+		t.Fatal("database section is not registered")
+	}
+
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{`{"driver": "mysql", "host": "db", "port": "3306", "user": "root", "name": "brave"}`, DefaultDatabaseLogLevel},
+		{`{"driver": "mysql", "host": "db", "port": "3306", "user": "root", "name": "brave", "log_level": ""}`, DefaultDatabaseLogLevel},
+		{`{"driver": "mysql", "host": "db", "port": "3306", "user": "root", "name": "brave", "log_level": "INFO"}`, DatabaseLogLevelInfo},
+		{`{"driver": "mysql", "host": "db", "port": "3306", "user": "root", "name": "brave", "log_level": "warning"}`, DatabaseLogLevelWarn},
+		{`{"driver": "mysql", "host": "db", "port": "3306", "user": "root", "name": "brave", "log_level": "nonsense"}`, DefaultDatabaseLogLevel},
+	}
+	for _, tc := range cases {
+		value, err := section.Decode(json.RawMessage(tc.raw))
+		if err != nil {
+			t.Fatalf("Decode(%s): %v", tc.raw, err)
+		}
+		db, ok := value.(*DatabaseConfig)
+		if !ok {
+			t.Fatalf("unexpected decode type %T", value)
+		}
+		if db.LogLevel != tc.want {
+			t.Errorf("Decode(%s).LogLevel = %q, want %q", tc.raw, db.LogLevel, tc.want)
+		}
+	}
+}
+
 func TestSectionDecodeAndApplyContainer(t *testing.T) {
 	section, ok := FindSection("container")
 	if !ok {

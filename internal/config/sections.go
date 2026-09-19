@@ -112,6 +112,8 @@ func normalizeDatabaseConfig(db *DatabaseConfig) error {
 	db.Name = strings.TrimSpace(db.Name)
 	db.SSLMode = strings.TrimSpace(db.SSLMode)
 	db.Path = strings.TrimSpace(db.Path)
+	// 非法/空取值统一收敛到默认级别，避免把无效值写回 config.yml。
+	db.LogLevel = normalizeDatabaseLogLevel(db.LogLevel)
 
 	switch db.Driver {
 	case "sqlite":

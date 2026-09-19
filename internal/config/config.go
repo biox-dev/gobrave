@@ -334,6 +334,53 @@ type DatabaseConfig struct {
 	Name     string `yaml:"name"     json:"name"`
 	SSLMode  string `yaml:"ssl_mode" json:"ssl_mode"`
 	Path     string `yaml:"path"     json:"path"`
+	// LogLevel 控制 GORM 的 SQL 日志级别，取值 silent / error / warn / info。
+	// 默认 warn（只打印慢查询与报错的 SQL）；设为 info 可打印每条 SQL，
+	// 仅在排查问题时开启；设为 silent 完全关闭。
+	// 该级别只影响 SQL 日志，与 log.level（进程日志级别）互不影响。
+	LogLevel string `yaml:"log_level" json:"log_level"`
+}
+
+// 数据库 SQL 日志级别取值，与 GORM logger.LogLevel 一一对应。
+const (
+	// DatabaseLogLevelSilent 完全关闭 SQL 日志。
+	DatabaseLogLevelSilent = "silent"
+	// DatabaseLogLevelError 只打印执行报错的 SQL。
+	DatabaseLogLevelError = "error"
+	// DatabaseLogLevelWarn 打印慢查询与报错的 SQL。
+	DatabaseLogLevelWarn = "warn"
+	// DatabaseLogLevelInfo 打印每一条 SQL，仅用于排查问题。
+	DatabaseLogLevelInfo = "info"
+)
+
+// DefaultDatabaseLogLevel 是 database.log_level 未配置或取值非法时的默认级别。
+const DefaultDatabaseLogLevel = DatabaseLogLevelWarn
+
+// normalizeDatabaseLogLevel 把 database.log_level 归一化为规范取值。
+// 大小写与首尾空白会被忽略，warning 视作 warn；
+// 空值与未识别的取值回退到 DefaultDatabaseLogLevel。
+func normalizeDatabaseLogLevel(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case DatabaseLogLevelSilent:
+		return DatabaseLogLevelSilent
+	case DatabaseLogLevelError:
+		return DatabaseLogLevelError
+	case DatabaseLogLevelWarn, "warning":
+		return DatabaseLogLevelWarn
+	case DatabaseLogLevelInfo:
+		return DatabaseLogLevelInfo
+	default:
+		return DefaultDatabaseLogLevel
+	}
+}
+
+// ResolveDatabaseLogLevel 返回当前生效的数据库 SQL 日志级别。
+// cfg 或其 database 段为空时返回默认级别。
+func ResolveDatabaseLogLevel(cfg *Config) string {
+	if cfg == nil || cfg.Database == nil {
+		return DefaultDatabaseLogLevel
+	}
+	return normalizeDatabaseLogLevel(cfg.Database.LogLevel)
 }
 
 // type IngestConfig struct {
@@ -361,13 +408,14 @@ func defaultConfig() *Config {
 			ShutdownTimeout: 30 * time.Second,
 		},
 		Database: &DatabaseConfig{
-			Driver:  "sqlite",
-			Host:    "127.0.0.1",
-			Port:    "5432",
-			User:    "postgres",
-			Name:    "postgres",
-			SSLMode: "disable",
-			Path:    "",
+			Driver:   "sqlite",
+			Host:     "127.0.0.1",
+			Port:     "5432",
+			User:     "postgres",
+			Name:     "postgres",
+			SSLMode:  "disable",
+			Path:     "",
+			LogLevel: DefaultDatabaseLogLevel,
 		},
 		Proxy: &ProxyConfig{
 			BraveAPI:   "http://localhost:5000",
