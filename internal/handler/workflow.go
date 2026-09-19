@@ -973,12 +973,47 @@ func (h *WorkflowHandler) GetScriptForm(c *gin.Context) {
 	})
 }
 
+// scriptWithProject 按主键读取 script，并解析其所属项目。
+// 脚本目录用的是 project.project_id（字符串）而非 script.ProjectID（int64 外键），
+// 因此读取脚本文件（主文件内容 / io_schema.json）前都需要这一步。
+func (h *WorkflowHandler) scriptWithProject(c *gin.Context, scriptID int64) (*types.Script, *types.Project, error) {
+	script, err := h.workflowService.GetScriptByID(c.Request.Context(), scriptID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, errors.NewNotFoundError("script not found")
+		}
+		return nil, nil, errors.NewInternalServerError("failed to get script").WithDetails(err.Error())
+	}
+
+	project, err := h.projectService.GetProjectByID(c.Request.Context(), script.ProjectID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, errors.NewNotFoundError("project not found")
+		}
+		return nil, nil, errors.NewInternalServerError("failed to get project").WithDetails(err.Error())
+	}
+	return script, project, nil
+}
+
+// parseScriptIDParam 解析路径参数 scriptId 为 int64 主键。
+func parseScriptIDParam(c *gin.Context) (int64, error) {
+	raw := strings.TrimSpace(c.Param("scriptId"))
+	if raw == "" {
+		return 0, fmt.Errorf("scriptId is required")
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("scriptId must be a valid integer")
+	}
+	return id, nil
+}
+
 // GetScriptContent godoc
 // @Summary      获取脚本文件内容
-// @Description  基于 scriptId 查询脚本主文件，返回绝对路径 path 与文件内容 content
+// @Description  基于 scriptId 查询脚本主文件，返回绝对路径 path 与文件内容 content（内容从脚本目录磁盘文件读取）
 // @Tags         工作流
 // @Produce      json
-// @Param        scriptId  path      string                 true  "脚本 ID"
+// @Param        scriptId  path      string                 true  "脚本主键 ID"
 // @Success      200       {object}  map[string]interface{}
 // @Failure      400       {object}  errors.AppError
 // @Failure      401       {object}  errors.AppError
@@ -991,47 +1026,108 @@ func (h *WorkflowHandler) GetScriptContent(c *gin.Context) {
 		return
 	}
 
-	scriptID := c.Param("scriptId")
-	if scriptID == "" {
-		c.Error(errors.NewValidationError("scriptId is required"))
+	scriptID, err := parseScriptIDParam(c)
+	if err != nil {
+		c.Error(errors.NewValidationError(err.Error()))
 		return
 	}
 
-	// 使用 int64 类型的 scriptID 进行查询
-	scriptIDInt, err := strconv.ParseInt(scriptID, 10, 64)
+	script, project, err := h.scriptWithProject(c, scriptID)
 	if err != nil {
-		c.Error(errors.NewValidationError("scriptId must be a valid integer"))
+		c.Error(err)
 		return
 	}
 
-	scriptDir, scriptMainFile, err := h.workflowService.GetScriptFileByScriptID(c.Request.Context(), scriptIDInt)
+	baseDir := h.cfg.Storage.BaseDir
+	content, err := utils.ReadScriptFileContent(baseDir, project.ProjectID, script.ScriptType, script.ScriptID)
 	if err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			c.Error(errors.NewNotFoundError("script not found"))
-			return
-		}
-		c.Error(errors.NewInternalServerError("failed to get script main file").WithDetails(err.Error()))
-		return
-	}
-
-	path := filepath.Join(scriptDir, scriptMainFile)
-	// if !filepath.IsAbs(path) {
-	// 	path = filepath.Join(h.cfg.Storage.BaseDir, path)
-	// }
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			c.Error(errors.NewNotFoundError("script file not found"))
-			return
-		}
 		c.Error(errors.NewInternalServerError("failed to read script file").WithDetails(err.Error()))
+		return
+	}
+	if content == nil {
+		c.Error(errors.NewNotFoundError("script file not found"))
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"path":    path,
+		"path":    utils.ScriptMainFilePath(baseDir, project.ProjectID, script.ScriptType, script.ScriptID),
 		"content": string(content),
+	})
+}
+
+// saveScriptContentRequest 是保存脚本主文件内容的入参。
+type saveScriptContentRequest struct {
+	Content string `json:"content"`
+	// CommitMessage 可选：覆盖文件后 git 提交使用的 message（为空时默认 save script content <scriptID>）。
+	CommitMessage string `json:"commit_message"`
+}
+
+// SaveScriptContent godoc
+// @Summary      保存脚本文件内容
+// @Description  按 scriptId 覆盖写入脚本主文件（文件名由 script_type 决定），随后重新生成 script.json 并提交脚本目录改动（与 SaveScript 共用导出 Codec）
+// @Tags         工作流
+// @Accept       json
+// @Produce      json
+// @Param        scriptId  path      string                          true  "脚本主键 ID"
+// @Param        request   body      handler.saveScriptContentRequest true  "请求参数"
+// @Success      200       {object}  map[string]interface{}
+// @Failure      400       {object}  errors.AppError
+// @Failure      401       {object}  errors.AppError
+// @Failure      404       {object}  errors.AppError
+// @Failure      500       {object}  errors.AppError
+// @Security     Bearer
+// @Router       /script/{scriptId}/content [post]
+func (h *WorkflowHandler) SaveScriptContent(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	scriptID, err := parseScriptIDParam(c)
+	if err != nil {
+		c.Error(errors.NewValidationError(err.Error()))
+		return
+	}
+
+	var req saveScriptContentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	script, project, err := h.scriptWithProject(c, scriptID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	baseDir := h.cfg.Storage.BaseDir
+	if err := utils.WriteScriptFileContent(baseDir, project.ProjectID, script.ScriptType, script.ScriptID, req.Content); err != nil {
+		c.Error(errors.NewInternalServerError("failed to write script file").WithDetails(err.Error()))
+		return
+	}
+
+	// 复用导出 Codec 重新生成 script.json 并提交脚本目录改动，避免工作区长期处于 dirty 状态。
+	commitMessage := strings.TrimSpace(req.CommitMessage)
+	if commitMessage == "" {
+		commitMessage = fmt.Sprintf("save script content %s", script.ScriptID)
+	}
+	codec, err := h.exportCodecForWrite()
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
+		return
+	}
+	if _, err := codec.WriteScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
+		ScriptPK:      script.ID,
+		ScriptDir:     utils.GetScriptFileDir(baseDir, project.ProjectID, script.ScriptID),
+		CommitMessage: commitMessage,
+	}); err != nil {
+		c.Error(errors.NewInternalServerError("failed to persist script files").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"path":    utils.ScriptMainFilePath(baseDir, project.ProjectID, script.ScriptType, script.ScriptID),
+		"message": "script content saved successfully",
 	})
 }
 

@@ -331,6 +331,7 @@ func RegisterWorkflowRoutes(r *gin.RouterGroup, handler *handler.WorkflowHandler
 	r.GET("/workflow/:workflowId/form", handler.GetWorkflowForm)
 	r.GET("/script/:scriptId/form", handler.GetScriptForm)
 	r.GET("/script/:scriptId/content", handler.GetScriptContent)
+	r.POST("/script/:scriptId/content", handler.SaveScriptContent)
 }
 
 func RegisterSettingRoutes(r *gin.RouterGroup, handler *handler.SettingHandler) {
