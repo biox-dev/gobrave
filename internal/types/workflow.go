@@ -29,10 +29,10 @@ type Script struct {
 	FileType       string `json:"file_type" gorm:"type:varchar(255)"`
 	ScriptType     string `json:"script_type" gorm:"type:varchar(255)"`
 	Category       string `json:"category" gorm:"type:varchar(255);default:default"`
-	Content        string `json:"content" gorm:"type:text"`
-	OrderIndex     int    `json:"order_index"`
-	Position       string `json:"position" gorm:"type:text"`
-	Edges          string `json:"edges" gorm:"type:text"`
+	// Content        string `json:"content" gorm:"type:text"`
+	OrderIndex int    `json:"order_index"`
+	Position   string `json:"position" gorm:"type:text"`
+	Edges      string `json:"edges" gorm:"type:text"`
 	// URL                 string `json:"url" gorm:"column:url;type:varchar(255)"`
 
 	// Version   string    `json:"version" gorm:"type:varchar(255)"`

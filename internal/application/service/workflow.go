@@ -676,15 +676,15 @@ func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID in
 		formJSONWrap = append(formJSONWrap, params...)
 	}
 
-	if script.Content != "" {
-		content := make(map[string]interface{})
-		if err := json.Unmarshal([]byte(script.Content), &content); err != nil {
-			return nil, err
-		}
-		if contentFormJSON, ok := content["formJson"].([]interface{}); ok {
-			formJSONWrap = append(formJSONWrap, contentFormJSON...)
-		}
-	}
+	// if script.Content != "" {
+	// 	content := make(map[string]interface{})
+	// 	if err := json.Unmarshal([]byte(script.Content), &content); err != nil {
+	// 		return nil, err
+	// 	}
+	// 	if contentFormJSON, ok := content["formJson"].([]interface{}); ok {
+	// 		formJSONWrap = append(formJSONWrap, contentFormJSON...)
+	// 	}
+	// }
 	return formJSONWrap, err
 }
 
@@ -797,14 +797,14 @@ func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowI
 			formJSONWrap = append(formJSONWrap, params...)
 		}
 
-		if script.Content != "" {
-			var content map[string]any
-			if err := json.Unmarshal([]byte(script.Content), &content); err == nil {
-				if contentFormJSON, ok := content["formJson"].([]any); ok {
-					formJSONWrap = append(formJSONWrap, contentFormJSON...)
-				}
-			}
-		}
+		// if script.Content != "" {
+		// 	var content map[string]any
+		// 	if err := json.Unmarshal([]byte(script.Content), &content); err == nil {
+		// 		if contentFormJSON, ok := content["formJson"].([]any); ok {
+		// 			formJSONWrap = append(formJSONWrap, contentFormJSON...)
+		// 		}
+		// 	}
+		// }
 	}
 
 	return formJSONWrap, nil

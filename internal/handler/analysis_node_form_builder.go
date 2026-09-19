@@ -41,15 +41,15 @@ func buildNodeFormJSON(dagDefinitionRaw string, ioSchema map[string]interface{},
 		mergedSchema[k] = v
 	}
 
-	if script.Content != "" {
-		content := make(map[string]interface{})
-		if err := json.Unmarshal([]byte(script.Content), &content); err != nil {
-			return nil, err
-		}
-		if contentFormJSON, ok := content["formJson"].([]interface{}); ok {
-			formJSON = append(formJSON, contentFormJSON...)
-		}
-	}
+	// if script.Content != "" {
+	// 	content := make(map[string]interface{})
+	// 	if err := json.Unmarshal([]byte(script.Content), &content); err != nil {
+	// 		return nil, err
+	// 	}
+	// 	if contentFormJSON, ok := content["formJson"].([]interface{}); ok {
+	// 		formJSON = append(formJSON, contentFormJSON...)
+	// 	}
+	// }
 
 	if params, ok := mergedSchema["params"].([]interface{}); ok {
 		formJSON = append(formJSON, params...)

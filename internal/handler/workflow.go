@@ -253,7 +253,7 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 		item.FileType = firstNonEmpty(req.FileType, existing.FileType)
 		item.ScriptType = firstNonEmpty(req.ScriptType, existing.ScriptType)
 		item.Category = firstNonEmpty(req.Category, existing.Category)
-		item.Content = firstNonEmpty(req.Content, existing.Content)
+		// item.Content = firstNonEmpty(req.Content, existing.Content)
 		item.OrderIndex = firstNonZeroInt(req.OrderIndex, existing.OrderIndex)
 		item.Position = firstNonEmpty(req.Position, existing.Position)
 		item.Edges = firstNonEmpty(req.Edges, existing.Edges)
@@ -279,10 +279,10 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 			FileType:            req.FileType,
 			ScriptType:          req.ScriptType,
 			Category:            req.Category,
-			Content:             req.Content,
-			OrderIndex:          req.OrderIndex,
-			Position:            req.Position,
-			Edges:               req.Edges,
+			// Content:             req.Content,
+			OrderIndex: req.OrderIndex,
+			Position:   req.Position,
+			Edges:      req.Edges,
 		}
 	}
 
