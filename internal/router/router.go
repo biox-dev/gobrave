@@ -332,6 +332,11 @@ func RegisterWorkflowRoutes(r *gin.RouterGroup, handler *handler.WorkflowHandler
 	r.GET("/script/:scriptId/form", handler.GetScriptForm)
 	r.GET("/script/:scriptId/content", handler.GetScriptContent)
 	r.POST("/script/:scriptId/content", handler.SaveScriptContent)
+	// README.md：脚本目录 GetScriptFileDir / 工作流目录 GetWorkflowFileDir 下的说明文档
+	r.GET("/script/:scriptId/readme", handler.GetScriptReadme)
+	r.POST("/script/:scriptId/readme", handler.SaveScriptReadme)
+	r.GET("/workflow/:workflowId/readme", handler.GetWorkflowReadme)
+	r.POST("/workflow/:workflowId/readme", handler.SaveWorkflowReadme)
 }
 
 func RegisterSettingRoutes(r *gin.RouterGroup, handler *handler.SettingHandler) {
