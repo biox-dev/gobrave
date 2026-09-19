@@ -1153,6 +1153,9 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 
 	scriptPath := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
 
+	// io_schema 从脚本目录的 io_schema.json 实时读取（不再是数据库字段）。
+	ioSchema, _ := utils.ReadScriptIOSchemaFile(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
+
 	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地。
 	gitState := utils.ReadGitSyncState(scriptPath, storePath)
 
@@ -1161,6 +1164,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 		// StoreVersion: storeVersion,
 		StorePath:    storePath,
 		ScriptPath:   scriptPath,
+		IOSchema:     string(ioSchema),
 		GitState:     &gitState,
 		StoreURL:     storeUrl,
 		StoreMessage: storeMessage,

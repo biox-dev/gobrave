@@ -165,8 +165,10 @@ type WorkflowVersion struct {
 type ScriptVersion struct {
 	Script
 	// StoreVersion string `json:"store_version"`
-	StorePath    string `json:"store_path"`
-	ScriptPath   string `json:"script_path"`
+	StorePath  string `json:"store_path"`
+	ScriptPath string `json:"script_path"`
+	// IOSchema 实时读取自脚本目录的 io_schema.json（不再是数据库字段）。
+	IOSchema     string `json:"io_schema"`
 	StoreURL     string `json:"store_url"`
 	StoreMessage string `json:"store_message"`
 	// GitState 由磁盘上的 git 元数据实时推导（不落库）：
