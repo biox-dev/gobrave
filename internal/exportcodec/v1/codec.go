@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -103,7 +102,7 @@ func (c *Codec) WriteScriptFiles(ctx context.Context, req exportcodec.ScriptWrit
 	}
 	payload.Version = c.Version()
 
-	if err := writeJSONFile(req.ScriptDir, exportcodec.ScriptJSONFileName, payload); err != nil {
+	if err := utils.WriteJSONFile(filepath.Join(req.ScriptDir, exportcodec.ScriptJSONFileName), payload); err != nil {
 		return nil, fmt.Errorf("failed to write script json: %w", err)
 	}
 	if err := utils.CommitDirChanges(req.ScriptDir, req.CommitMessage, c.gitIdentity); err != nil {
@@ -129,7 +128,7 @@ func (c *Codec) WriteWorkflowFiles(ctx context.Context, req exportcodec.Workflow
 	}
 	payload.Version = c.Version()
 
-	if err := writeJSONFile(req.WorkflowDir, exportcodec.WorkflowJSONFileName, payload); err != nil {
+	if err := utils.WriteJSONFile(filepath.Join(req.WorkflowDir, exportcodec.WorkflowJSONFileName), payload); err != nil {
 		return nil, fmt.Errorf("failed to write workflow json: %w", err)
 	}
 
@@ -175,18 +174,6 @@ func (c *Codec) DecodeWorkflow(raw []byte) (*types.WorkflowJSONExportResponse, e
 		return nil, err
 	}
 	return payload, nil
-}
-
-// writeJSONFile 把 payload 以缩进 JSON 写入 dir/fileName，目录不存在时创建。
-func writeJSONFile(dir, fileName string, payload any) error {
-	data, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, fileName), data, 0o644)
 }
 
 // normalizeWorkflowDagDefinition 把 workflow map 里的 dag_definition 规整为字符串。

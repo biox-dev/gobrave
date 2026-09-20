@@ -63,6 +63,9 @@ func applyNodeUpdates(node *types.AnalysisNode, values map[string]any) {
 	if value, ok := values["rerun_reason"]; ok {
 		node.RerunReason, _ = value.(string)
 	}
+	if value, ok := values["error_message"]; ok {
+		node.ErrorMessage, _ = value.(string)
+	}
 	if value, ok := values["params"]; ok {
 		if params, ok := value.(types.JSONMap); ok {
 			node.Params = params

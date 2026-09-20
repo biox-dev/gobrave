@@ -22,6 +22,23 @@ import (
 type dynamicExecutionPlan struct {
 	order []string
 	nodes map[string]dynamicPlanNode
+
+	// attempted records the node ids this run has claimed and handed to the dispatcher.
+	//
+	// It exists to tell a failure produced by this run apart from one inherited from a
+	// previous run, because the two must be treated differently: an inherited failure is
+	// still the cache policy's business (decideExistingNode may legitimately rerun it),
+	// while a failure produced by this run freezes the run (see aborted).
+	//
+	// It is written by pumpReadyQueue and read by reconcilePlan. Both run on the run loop
+	// goroutine, so the map needs no synchronisation.
+	attempted map[string]bool
+
+	// aborted latches the failure freeze: once a node this run dispatched has failed, no
+	// further node is claimed and every node that has not started yet is converged to
+	// skipped, so the run reaches a terminal state instead of waiting for work that will
+	// never be launched.
+	aborted bool
 }
 
 // dynamicPlanNode is one compiled template plus its compiled relations.
@@ -42,8 +59,9 @@ func newDynamicExecutionPlan(nodeTemplates []map[string]any, edges []*types.Anal
 	incoming := buildIncomingEdgeMap(edges)
 
 	plan := &dynamicExecutionPlan{
-		order: make([]string, 0, len(nodeTemplates)),
-		nodes: make(map[string]dynamicPlanNode, len(nodeTemplates)),
+		order:     make([]string, 0, len(nodeTemplates)),
+		nodes:     make(map[string]dynamicPlanNode, len(nodeTemplates)),
+		attempted: make(map[string]bool, len(nodeTemplates)),
 	}
 	for _, row := range nodeTemplates {
 		nodeID := strings.TrimSpace(dynamicToString(row["node_id"]))
@@ -194,4 +212,47 @@ func isFailedNode(node *types.AnalysisNode) bool {
 		return false
 	}
 	return dagruntime.IsTerminalStatus(status) && !dagruntime.IsSuccessStatus(status)
+}
+
+// hasFailedStatus reports a hard execution failure of one node.
+//
+// It is deliberately narrower than isFailedNode: stopped and skipped are also
+// "terminal without a reusable result" and must block dependants, but they must not
+// freeze a run - a node stopped by the user belongs to the stop path, which owns its
+// own convergence, and a skipped node is already a consequence of a freeze or of a
+// failed upstream.
+func hasFailedStatus(node *types.AnalysisNode) bool {
+	return normaliseNodeStatus(node) == dagruntime.StatusFailed
+}
+
+// markAttempted records that this run has taken ownership of nodeID.
+//
+// It is called at claim time, which is the latest moment that is still guaranteed to
+// precede any execution of that node: the run loop is single-threaded, so no dispatch
+// of the node can complete before the claim that produced it has been recorded.
+func (p *dynamicExecutionPlan) markAttempted(nodeID string) {
+	if p == nil {
+		return
+	}
+	if p.attempted == nil {
+		p.attempted = make(map[string]bool)
+	}
+	p.attempted[strings.TrimSpace(nodeID)] = true
+}
+
+// hasAttemptedFailure reports whether a node this run dispatched came back failed.
+//
+// Failures inherited from a previous run are excluded on purpose: the cache policy
+// still has to decide about them, and answering "rerun" for one of them is exactly how
+// a retry of a previously failed analysis is supposed to start.
+func (p *dynamicExecutionPlan) hasAttemptedFailure(state *dynamicState) bool {
+	if p == nil || state == nil {
+		return false
+	}
+	for nodeID := range p.attempted {
+		if hasFailedStatus(state.nodes[nodeID]) {
+			return true
+		}
+	}
+	return false
 }

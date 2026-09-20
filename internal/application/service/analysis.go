@@ -196,7 +196,7 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 		parseResult["tools_output_dir"] = workspaceDir
 		input.RequestParam["analysis_id"] = fmt.Sprintf("%d", analysisID)
 
-		if err := writeJSONFile(paramsPath, parseResult); err != nil {
+		if err := utils.WriteJSONFile(paramsPath, parseResult); err != nil {
 			return err
 		}
 
@@ -540,14 +540,6 @@ func (s *analysisService) resolveStorageBaseDir() string {
 		}
 	}
 	return "."
-}
-
-func writeJSONFile(path string, value any) error {
-	content, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, content, 0o644)
 }
 
 func toMapSlice(value any) []map[string]any {

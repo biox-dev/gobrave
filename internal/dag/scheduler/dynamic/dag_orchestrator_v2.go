@@ -30,6 +30,10 @@ const (
 	dynamicV2StopCheckInterval = 1 * time.Second
 	// dynamicV2WatchdogInterval is a safety net in case runtime events are dropped.
 	dynamicV2WatchdogInterval = 5 * time.Second
+	// dynamicAbortReason is written on every node the failure freeze converges
+	// without running, so a skipped node is traceable to the failure freeze and not
+	// mistaken for a user stop or an unsatisfied dependency.
+	dynamicAbortReason = "aborted after node failure"
 )
 
 // dynamicDagOrchestratorV2 provides a Nextflow-like dynamic materialization path
@@ -330,7 +334,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 	if err := o.reconcilePlan(ctx, analysis, plan); err != nil {
 		return err
 	}
-	if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
+	if err := o.pumpReadyQueue(ctx, runtime, analysisID, plan, pool); err != nil {
 		return err
 	}
 
@@ -360,7 +364,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 			if err := o.reconcilePlan(ctx, analysis, plan); err != nil {
 				return err
 			}
-			if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
+			if err := o.pumpReadyQueue(ctx, runtime, analysisID, plan, pool); err != nil {
 				return err
 			}
 		case <-sink.Events():
@@ -375,7 +379,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 			}
 			// 第二段负责“把可以跑的节点真正送去执行”：把数据库里当前可执行的 ready 节点
 			// “领取（claim）并直接推入 worker pool 队列”，交给 worker 实际执行。
-			if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
+			if err := o.pumpReadyQueue(ctx, runtime, analysisID, plan, pool); err != nil {
 				return err
 			}
 		case <-sink.Wake():
@@ -384,7 +388,7 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 			if err := o.reconcilePlan(ctx, analysis, plan); err != nil {
 				return err
 			}
-			if err := o.pumpReadyQueue(ctx, runtime, analysisID, pool); err != nil {
+			if err := o.pumpReadyQueue(ctx, runtime, analysisID, plan, pool); err != nil {
 				return err
 			}
 		}
@@ -550,7 +554,18 @@ func (o *dynamicDagOrchestratorV2) checkDynamicCompletion(
 // persisted ready -> submitted transition, so a claimed node must land in the pool
 // in the same step. Dispatching from this goroutine, which is the one that owns
 // pool.Stop(), also means an enqueue can never race with the pool being closed.
-func (o *dynamicDagOrchestratorV2) pumpReadyQueue(ctx context.Context, runtime *dagruntime.RuntimeEngine, analysisID int64, pool *dagruntime.WorkerPool) error {
+//
+// Every claim is recorded on the plan as attempted. That record is the only thing that
+// distinguishes a failure this run produced (which freezes the run) from one inherited
+// from a previous run (which the cache policy may legitimately rerun).
+//
+// plan.aborted is checked before the first claim: after the failure freeze the run
+// launches nothing else, so nodes already claimed stay in flight and everything that has
+// not started is converged by reconcilePlan instead of being handed to a worker.
+func (o *dynamicDagOrchestratorV2) pumpReadyQueue(ctx context.Context, runtime *dagruntime.RuntimeEngine, analysisID int64, plan *dynamicExecutionPlan, pool *dagruntime.WorkerPool) error {
+	if plan != nil && plan.aborted {
+		return nil
+	}
 	for claimed := 0; claimed < pool.Cap(); claimed++ {
 		// Queue saturation is the backpressure signal: stop claiming ahead and let the
 		// next node event or watchdog tick resume dispatch.
@@ -564,6 +579,10 @@ func (o *dynamicDagOrchestratorV2) pumpReadyQueue(ctx context.Context, runtime *
 		if node == nil {
 			return nil
 		}
+		// The claim is what makes this node "this run's work": recording it here, before
+		// the handoff, is what lets the next reconcile pass tell a failure produced by this
+		// run apart from one inherited from a previous run.
+		plan.markAttempted(node.NodeID)
 		if o.bus != nil {
 			o.bus.Publish(dagruntime.RuntimeEvent{
 				Name:           dagruntime.EventNodeSubmitted,
@@ -603,6 +622,18 @@ func (o *dynamicDagOrchestratorV2) reconcilePlan(ctx context.Context, analysis *
 		return err
 	}
 	state := newDynamicState(plan, persisted)
+
+	// Failure freeze comes first, before any other decision can be taken.
+	//
+	// A failure this run produced outranks everything else in this pass, and evaluating
+	// it here is what keeps the run from livelocking: the cache policy answers "rerun"
+	// for every terminal non-success node (that is how a retry of a previous run starts),
+	// so without this check the failed node would be flipped back to ready on every pass
+	// and re-dispatched forever instead of letting the run converge to failed.
+	if plan.aborted || plan.hasAttemptedFailure(state) {
+		plan.aborted = true
+		return o.abortRemainingNodes(ctx, analysis, plan, state)
+	}
 
 	newItems := make([]*types.AnalysisNode, 0)
 	for _, nodeID := range plan.order {
@@ -680,6 +711,81 @@ func (o *dynamicDagOrchestratorV2) reconcilePlan(ctx context.Context, analysis *
 		return nil
 	}
 	return o.repo.CreateAnalysisNodes(ctx, newItems)
+}
+
+// abortRemainingNodes converges a frozen run without launching anything else.
+//
+// It is the whole of the frozen pass, and it is deliberately the same shape as the
+// normal pass: one upstream-first walk that only writes what is still inconsistent
+// with "this run is over". Two kinds of node need work:
+//
+//   - A template that was never materialized becomes skipped. Topological order is what
+//     makes this safe: every ancestor is registered in state.nodes before its dependant
+//     is built, so the skipped row resolves its inputs from the same rows it would have
+//     seen had the run continued.
+//   - A node that was materialized but has not started (pending, or ready without a
+//     cache hit) is moved to the same skipped state. It cannot be left alone: neither
+//     status is terminal, and completion requires every node to be terminal, so leaving
+//     one behind would turn a failure into a permanently running analysis.
+//
+// In-flight nodes (submitted / running) are not touched: the runtime owns them, their
+// containers are already paid for, and rewriting them here would both lose the failure
+// evidence and risk orphaning a live container. Ready cache hits are preserved as well:
+// they are reusable results, not pending work, and already count as finished.
+func (o *dynamicDagOrchestratorV2) abortRemainingNodes(ctx context.Context, analysis *types.Analysis, plan *dynamicExecutionPlan, state *dynamicState) error {
+	newItems := make([]*types.AnalysisNode, 0)
+	for _, nodeID := range plan.order {
+		current := state.nodes[nodeID]
+		if current == nil {
+			node, err := o.materializePlannedNode(ctx, analysis, plan, state, nodeID, dagruntime.StatusSkipped, dynamicAbortReason)
+			if err != nil {
+				return err
+			}
+			newItems = append(newItems, node)
+			continue
+		}
+
+		switch normaliseNodeStatus(current) {
+		case dagruntime.StatusPending:
+			if err := o.markNodeAborted(ctx, current); err != nil {
+				return err
+			}
+		case dagruntime.StatusReady:
+			if current.CacheHit {
+				// A cache hit is a reusable result: it is satisfied, never claimed, and
+				// already terminal for the completion gate.
+				continue
+			}
+			if err := o.markNodeAborted(ctx, current); err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(newItems) == 0 {
+		return nil
+	}
+	return o.repo.CreateAnalysisNodes(ctx, newItems)
+}
+
+// markNodeAborted converges one not-yet-started node to skipped so the frozen run can
+// reach a terminal state, and mirrors the write onto the in-pass node.
+func (o *dynamicDagOrchestratorV2) markNodeAborted(ctx context.Context, node *types.AnalysisNode) error {
+	if node == nil || strings.TrimSpace(node.AnalysisNodeID) == "" {
+		return nil
+	}
+	if err := o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
+		"status":        dagruntime.StatusSkipped,
+		"error_message": dynamicAbortReason,
+		"started_at":    nil,
+		"finished_at":   time.Now().UTC(),
+		"exit_code":     0,
+	}); err != nil {
+		return err
+	}
+	node.Status = dagruntime.StatusSkipped
+	node.ErrorMessage = dynamicAbortReason
+	return nil
 }
 
 // materializePlannedNode creates the analysis_node row for one compiled template and
