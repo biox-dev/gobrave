@@ -16,7 +16,15 @@ const nodeOutputsFileName = "outputs.json"
 
 // nodeOutputResolver resolves the outputs produced by a finished node.
 type nodeOutputResolver interface {
-	Resolve(node *types.AnalysisNode, candidateOutputs map[string]any) (map[string]any, []string)
+	// Resolve merges candidateOutputs with the contents of
+	// <output_dir>/outputs.json (the file wins).
+	//
+	// The second return value reports whether outputs.json was absent. A missing
+	// file is NOT an error: a node without declared output_patterns legitimately
+	// produces no outputs.json, and a container process may flush the file a
+	// moment after its exit was observed. Callers decide how to react; only a
+	// read or parse failure is returned through the error list.
+	Resolve(node *types.AnalysisNode, candidateOutputs map[string]any) (map[string]any, bool, []string)
 }
 
 // fileSystemNodeOutputResolver reads node outputs from the node output
@@ -29,32 +37,32 @@ func newFileSystemNodeOutputResolver() nodeOutputResolver {
 
 // Resolve returns the container-produced outputs (candidateOutputs) merged with
 // the contents of <output_dir>/outputs.json, which takes precedence. A missing
-// outputs.json is not an error; a malformed one is reported through the returned
-// error list.
-func (r *fileSystemNodeOutputResolver) Resolve(node *types.AnalysisNode, candidateOutputs map[string]any) (map[string]any, []string) {
+// outputs.json is not an error (it is signalled through the boolean result);
+// only a malformed or unreadable one is reported through the returned error list.
+func (r *fileSystemNodeOutputResolver) Resolve(node *types.AnalysisNode, candidateOutputs map[string]any) (map[string]any, bool, []string) {
 	outputs := cloneMap(candidateOutputs)
 
 	path, ok := nodeOutputsPath(node)
 	if !ok {
-		return outputs, nil
+		return outputs, false, nil
 	}
 
 	buf, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return outputs, []string{fmt.Sprintf("%s not found", path)}
+			return outputs, true, nil
 		}
-		return outputs, []string{fmt.Sprintf("read %s failed: %v", nodeOutputsFileName, err)}
+		return outputs, false, []string{fmt.Sprintf("read %s failed: %v", nodeOutputsFileName, err)}
 	}
 
 	payload := map[string]any{}
 	if err := json.Unmarshal(buf, &payload); err != nil {
-		return outputs, []string{fmt.Sprintf("invalid %s: %v", nodeOutputsFileName, err)}
+		return outputs, false, []string{fmt.Sprintf("invalid %s: %v", nodeOutputsFileName, err)}
 	}
 	for handle, value := range payload {
 		outputs[handle] = value
 	}
-	return outputs, nil
+	return outputs, false, nil
 }
 
 // nodeOutputsPath locates the outputs.json file for a node, preferring the

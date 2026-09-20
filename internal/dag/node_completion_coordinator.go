@@ -276,9 +276,38 @@ func (c *NodeCompletionCoordinator) buildResolvedOutputs(node *types.AnalysisNod
 	if resolver == nil {
 		resolver = newFileSystemNodeOutputResolver()
 	}
-	resolved, errs := resolver.Resolve(node, map[string]any{})
-	errs = append(errs, validateOutputPatterns(node, resolved)...)
+	resolved := c.resolveOutputsWithGrace(resolver, node)
+	errs := validateOutputPatterns(node, resolved)
 	return resolved, errs
+}
+
+// nodeOutputsGraceWait bounds how long a node's completion waits for its
+// outputs.json to become visible after the container reached a terminal state.
+//
+// The container writes the file as its last action, but the component that
+// reports the exit (runtime/informer) and the process that reads the file do not
+// always share the exact same filesystem view, and the write may not be visible
+// at the very instant the exit event is handled. Waiting a short, bounded window
+// prevents a file that lands a moment later from being reported as a missing
+// output and flipping the node from done to failed.
+const (
+	nodeOutputsGraceWait     = 5 * time.Second
+	nodeOutputsGraceInterval = 250 * time.Millisecond
+)
+
+// resolveOutputsWithGrace retries output resolution while outputs.json is
+// reported missing, up to nodeOutputsGraceWait. Read/parse errors (hard
+// failures) return immediately, and the final attempt is always returned as-is
+// so a genuinely absent file still surfaces through validateOutputPatterns.
+func (c *NodeCompletionCoordinator) resolveOutputsWithGrace(resolver nodeOutputResolver, node *types.AnalysisNode) map[string]any {
+	deadline := time.Now().Add(nodeOutputsGraceWait)
+	for {
+		resolved, missing, errs := resolver.Resolve(node, map[string]any{})
+		if !missing || len(errs) > 0 || !time.Now().Before(deadline) {
+			return resolved
+		}
+		time.Sleep(nodeOutputsGraceInterval)
+	}
 }
 
 func defaultContainerOutputs(inst *types.ContainerInstance) map[string]any {
