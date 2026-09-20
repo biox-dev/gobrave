@@ -1069,24 +1069,24 @@ func (h *WorkflowHandler) SaveScriptContent(c *gin.Context) {
 		return
 	}
 
-	// 复用导出 Codec 重新生成 script.json 并提交脚本目录改动，避免工作区长期处于 dirty 状态。
-	commitMessage := strings.TrimSpace(req.CommitMessage)
-	if commitMessage == "" {
-		commitMessage = fmt.Sprintf("save script content %s", script.ScriptID)
-	}
-	codec, err := h.exportCodecForWrite()
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
-		return
-	}
-	if _, err := codec.WriteScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
-		ScriptPK:      script.ID,
-		ScriptDir:     utils.GetScriptFileDir(baseDir, project.ProjectID, script.ScriptID),
-		CommitMessage: commitMessage,
-	}); err != nil {
-		c.Error(errors.NewInternalServerError("failed to persist script files").WithDetails(err.Error()))
-		return
-	}
+	// // 复用导出 Codec 重新生成 script.json 并提交脚本目录改动，避免工作区长期处于 dirty 状态。
+	// commitMessage := strings.TrimSpace(req.CommitMessage)
+	// if commitMessage == "" {
+	// 	commitMessage = fmt.Sprintf("save script content %s", script.ScriptID)
+	// }
+	// codec, err := h.exportCodecForWrite()
+	// if err != nil {
+	// 	c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
+	// 	return
+	// }
+	// if _, err := codec.WriteScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
+	// 	ScriptPK:      script.ID,
+	// 	ScriptDir:     utils.GetScriptFileDir(baseDir, project.ProjectID, script.ScriptID),
+	// 	CommitMessage: commitMessage,
+	// }); err != nil {
+	// 	c.Error(errors.NewInternalServerError("failed to persist script files").WithDetails(err.Error()))
+	// 	return
+	// }
 
 	c.JSON(http.StatusOK, gin.H{
 		"path":    utils.ScriptMainFilePath(baseDir, project.ProjectID, script.ScriptType, script.ScriptID),
