@@ -307,6 +307,10 @@ func RegisterStoreRoutes(r *gin.RouterGroup, handler *handler.StoreHandler) {
 func RegisterWorkflowRoutes(r *gin.RouterGroup, handler *handler.WorkflowHandler) {
 	r.POST("/workflow/save-script", handler.SaveScript)
 	r.POST("/workflow/save-workflow", handler.SaveWorkflow)
+	// 生成导出文件（script.json / workflow.json）并把目录改动提交为一个 commit：
+	// 与「保存组件」解耦，commit_message 可选，前端在本地有变化时才展示入口。
+	r.POST("/workflow/save-script-files", handler.SaveScriptFiles)
+	r.POST("/workflow/save-workflow-files", handler.SaveWorkflowFiles)
 	r.POST("/workflow/save-workflow-dag", handler.SaveWorkflowDag)
 	r.POST("/workflow/delete/:workflowId", handler.DeleteWorkflow)
 	r.POST("/workflow/publish-workflow", handler.PublishWorkflow)
