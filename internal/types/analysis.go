@@ -131,9 +131,9 @@ type Analysis struct {
 	ComponentID string `json:"component_id" gorm:"column:component_id;type:varchar(255)"`
 	WorkflowID  string `json:"relation_id" gorm:"column:relation_id;type:varchar(255)"`
 	// AnalysisType        string    `json:"analysis_type" gorm:"column:analysis_type;type:varchar(255)"`
-	AnalysisName        string `json:"analysis_name" gorm:"column:analysis_name;type:varchar(255)"`
-	InputFile           string `json:"input_file" gorm:"column:input_file;type:varchar(255)"`
-	AnalysisMethod      string `json:"analysis_method" gorm:"column:analysis_method;type:varchar(255)"`
+	AnalysisName   string `json:"analysis_name" gorm:"column:analysis_name;type:varchar(255)"`
+	InputFile      string `json:"input_file" gorm:"column:input_file;type:varchar(255)"`
+	AnalysisMethod string `json:"analysis_method" gorm:"column:analysis_method;type:varchar(255)"`
 	// WorkspaceDir 是本次分析的根目录。落库时相对 storage.base_dir 存储，
 	// 读取时由 repository 还原成绝对路径，因此 base_dir 变更只需拷贝目录，
 	// 无需回写数据库。其余路径全部由它派生（见下方 gorm:"-" 字段）。
@@ -148,7 +148,7 @@ type Analysis struct {
 	Ports               string `json:"ports" gorm:"column:ports;type:varchar(255)"`
 	URL                 string `json:"url" gorm:"column:url;type:varchar(255)"`
 	JobStatus           string `json:"job_status" gorm:"column:job_status;type:varchar(255)"`
-	ServerStatus        string `json:"server_status" gorm:"column:server_status;type:varchar(255)"`
+	// ServerStatus        string `json:"server_status" gorm:"column:server_status;type:varchar(255)"`
 	// SchedulerMode 记录推进本次分析的调度器，用于进程重启后把分析交回正确的调度器恢复。
 	// 历史数据该列为空，按 legacy DAG 调度器处理（见 NormalizeSchedulerMode）。
 	SchedulerMode    string    `json:"scheduler_mode" gorm:"column:scheduler_mode;type:varchar(64);default:''"`
@@ -258,33 +258,33 @@ type AnalysisNode struct {
 	NodeName   string `json:"node_name" gorm:"column:node_name;type:varchar(255)"`
 	SampleID   string `json:"sample_id" gorm:"column:sample_id;type:varchar(255)"`
 	// ScriptID       string `json:"script_id" gorm:"column:script_id;type:varchar(255)"`
-	ScriptID               int64      `json:"script_id,string" gorm:"column:script_id;type:bigint"`
-	InputsPatterns         JSONMap    `json:"inputs_patterns" gorm:"column:inputs_patterns;type:json"`
-	ResolvedInputs         JSONMap    `json:"resolved_inputs" gorm:"column:resolved_inputs;type:json"`
-	OutputPatterns         JSONMap    `json:"output_patterns" gorm:"column:output_patterns;type:json"`
-	ResolvedOutputs        JSONMap    `json:"resolved_outputs" gorm:"column:resolved_outputs;type:json"`
-	Params                 JSONMap    `json:"params" gorm:"column:params;type:json"`
-	RequestParam           string     `json:"request_param" gorm:"column:request_param;type:longtext"`
-	CPU                    int        `json:"cpu" gorm:"column:cpu"`
-	Memory                 string     `json:"memory" gorm:"column:memory;type:varchar(64)"`
-	Disk                   string     `json:"disk" gorm:"column:disk;type:varchar(64)"`
-	GPU                    int        `json:"gpu" gorm:"column:gpu"`
-	Status                 string     `json:"status" gorm:"column:status;type:varchar(64);index:idx_analysis_nodes_analysis_id_status,priority:2"`
-	ServerStatus           string     `json:"server_status" gorm:"column:server_status;type:varchar(64)"`
-	PID                    int        `json:"pid" gorm:"column:pid"`
-	JobID                  string     `json:"job_id" gorm:"column:job_id;type:varchar(255)"`
-	Executor               string     `json:"executor" gorm:"column:executor;type:varchar(64)"`
-	Retry                  int        `json:"retry" gorm:"column:retry;default:0"`
-	MaxRetry               int        `json:"max_retry" gorm:"column:max_retry;default:3"`
-	ExitCode               int        `json:"exit_code" gorm:"column:exit_code"`
-	ErrorMessage           string     `json:"error_message" gorm:"column:error_message;type:text"`
-	RerunReason            string     `json:"rerun_reason" gorm:"column:rerun_reason;type:text"`
-	InputHash              string     `json:"input_hash" gorm:"column:input_hash;type:varchar(255)"`
-	CacheHit               bool       `json:"cache_hit" gorm:"column:cache_hit"`
-	UpstreamIDs            JSONSlice  `json:"upstream_ids" gorm:"column:upstream_ids;type:json"`
-	DownstreamIDs          JSONSlice  `json:"downstream_ids" gorm:"column:downstream_ids;type:json"`
-	InputValidationErrors  JSONSlice  `json:"input_validation_errors" gorm:"column:input_validation_errors;type:json"`
-	OutputValidationErrors JSONSlice  `json:"output_validation_errors" gorm:"column:output_validation_errors;type:json"`
+	ScriptID               int64     `json:"script_id,string" gorm:"column:script_id;type:bigint"`
+	InputsPatterns         JSONMap   `json:"inputs_patterns" gorm:"column:inputs_patterns;type:json"`
+	ResolvedInputs         JSONMap   `json:"resolved_inputs" gorm:"column:resolved_inputs;type:json"`
+	OutputPatterns         JSONMap   `json:"output_patterns" gorm:"column:output_patterns;type:json"`
+	ResolvedOutputs        JSONMap   `json:"resolved_outputs" gorm:"column:resolved_outputs;type:json"`
+	Params                 JSONMap   `json:"params" gorm:"column:params;type:json"`
+	RequestParam           string    `json:"request_param" gorm:"column:request_param;type:longtext"`
+	CPU                    int       `json:"cpu" gorm:"column:cpu"`
+	Memory                 string    `json:"memory" gorm:"column:memory;type:varchar(64)"`
+	Disk                   string    `json:"disk" gorm:"column:disk;type:varchar(64)"`
+	GPU                    int       `json:"gpu" gorm:"column:gpu"`
+	Status                 string    `json:"status" gorm:"column:status;type:varchar(64);index:idx_analysis_nodes_analysis_id_status,priority:2"`
+	ServerStatus           string    `json:"server_status" gorm:"column:server_status;type:varchar(64)"`
+	PID                    int       `json:"pid" gorm:"column:pid"`
+	JobID                  string    `json:"job_id" gorm:"column:job_id;type:varchar(255)"`
+	Executor               string    `json:"executor" gorm:"column:executor;type:varchar(64)"`
+	Retry                  int       `json:"retry" gorm:"column:retry;default:0"`
+	MaxRetry               int       `json:"max_retry" gorm:"column:max_retry;default:3"`
+	ExitCode               int       `json:"exit_code" gorm:"column:exit_code"`
+	ErrorMessage           string    `json:"error_message" gorm:"column:error_message;type:text"`
+	RerunReason            string    `json:"rerun_reason" gorm:"column:rerun_reason;type:text"`
+	InputHash              string    `json:"input_hash" gorm:"column:input_hash;type:varchar(255)"`
+	CacheHit               bool      `json:"cache_hit" gorm:"column:cache_hit"`
+	UpstreamIDs            JSONSlice `json:"upstream_ids" gorm:"column:upstream_ids;type:json"`
+	DownstreamIDs          JSONSlice `json:"downstream_ids" gorm:"column:downstream_ids;type:json"`
+	InputValidationErrors  JSONSlice `json:"input_validation_errors" gorm:"column:input_validation_errors;type:json"`
+	OutputValidationErrors JSONSlice `json:"output_validation_errors" gorm:"column:output_validation_errors;type:json"`
 	// WorkspaceDir 是节点根目录。落库时相对 storage.base_dir 存储，
 	// 读取时由 repository 还原成绝对路径。其余路径全部由它派生。
 	WorkspaceDir   string     `json:"workspace_dir" gorm:"column:workspace_dir;type:varchar(255)"`

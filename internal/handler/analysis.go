@@ -1425,12 +1425,12 @@ func (h *AnalysisHandler) EditParamsV2(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, EditParamsV2Response{
-		AnalysisName:   analysisItem.AnalysisName,
-		IsReport:       analysisItem.IsReport,
-		CacheType:      analysisItem.CacheType,
-		AnalysisID:     analysisItem.AnalysisID,
-		Status:         analysisItem.JobStatus,
-		ServerStatus:   analysisItem.ServerStatus,
+		AnalysisName: analysisItem.AnalysisName,
+		IsReport:     analysisItem.IsReport,
+		CacheType:    analysisItem.CacheType,
+		AnalysisID:   analysisItem.AnalysisID,
+		Status:       analysisItem.JobStatus,
+		// ServerStatus:   analysisItem.ServerStatus,
 		RequestParam:   requestParam,
 		AnalysisResult: analysisResult,
 		FormJSON:       formJSONWrap,
@@ -1516,9 +1516,9 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 		isReport = analysisItem.IsReport
 		cacheType = analysisItem.CacheType
 		analysisIDValue = analysisItem.ID
-		if strings.TrimSpace(analysisItem.ServerStatus) != "" {
-			serverStatus = analysisItem.ServerStatus
-		}
+		// if strings.TrimSpace(analysisItem.ServerStatus) != "" {
+		// 	serverStatus = analysisItem.ServerStatus
+		// }
 		if len(requestParam) == 0 && strings.TrimSpace(analysisItem.RequestParam) != "" {
 			if err := json.Unmarshal([]byte(analysisItem.RequestParam), &requestParam); err != nil {
 				c.Error(errors.NewInternalServerError("failed to parse request_param").WithDetails(err.Error()))
@@ -1907,15 +1907,15 @@ func (h *AnalysisHandler) ListAnalysisTree(c *gin.Context) {
 
 		analysisKey := fmt.Sprintf("%d", item.ID)
 		parent.Children = append(parent.Children, listAnalysisTreeChild{
-			Title:              item.AnalysisName,
-			Type:               "analysis",
-			Key:                analysisKey,
-			AnalysisID:         analysisKey,
-			RelationID:         relationID,
-			RelationName:       meta.Name,
-			RelationType:       meta.Type,
-			JobStatus:          item.JobStatus,
-			ServerStatus:       item.ServerStatus,
+			Title:        item.AnalysisName,
+			Type:         "analysis",
+			Key:          analysisKey,
+			AnalysisID:   analysisKey,
+			RelationID:   relationID,
+			RelationName: meta.Name,
+			RelationType: meta.Type,
+			JobStatus:    item.JobStatus,
+			// ServerStatus:       item.ServerStatus,
 			RelationOrderIndex: meta.OrderIndex,
 		})
 	}
@@ -2646,9 +2646,9 @@ func (h *AnalysisHandler) RuntimeSnapshot(c *gin.Context) {
 		RunningCount:      snapshot.RunningCount,
 		IsFinished:        snapshot.IsFinished,
 		// RunningInfo:       h.resolveRunningInfo(c.Request.Context(), analysisItem, snapshot),
-		Status:       analysisItem.JobStatus,
-		IsCache:      resolveAnalysisIsCache(analysisItem),
-		ServerStatus: analysisItem.ServerStatus,
+		Status:  analysisItem.JobStatus,
+		IsCache: resolveAnalysisIsCache(analysisItem),
+		// ServerStatus: analysisItem.ServerStatus,
 	})
 }
 
