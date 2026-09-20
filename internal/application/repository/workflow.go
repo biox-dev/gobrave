@@ -26,14 +26,6 @@ func (r *workflowRepository) GetWorkflowByID(ctx context.Context, id int64) (*ty
 	return item, nil
 }
 
-func (r *workflowRepository) GetWorkflowByWorkflowID(ctx context.Context, workflowID string) (*types.Workflow, error) {
-	item := &types.Workflow{}
-	if err := r.db.WithContext(ctx).Where("relation_id = ?", workflowID).Take(item).Error; err != nil {
-		return nil, err
-	}
-	return item, nil
-}
-
 func (r *workflowRepository) PageWorkflow(ctx context.Context, pagination *types.Pagination, query *types.WorkflowPageQuery) ([]*types.Workflow, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}

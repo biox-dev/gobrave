@@ -68,7 +68,7 @@ func (o *dataflowDagOrchestratorV3) RecoverRunningAnalyses(ctx context.Context, 
 
 // loadRecoveryInputs rebuilds the two inputs a resumed dataflow run needs: the
 // submitted params (written to analysis.ParamsPath at save time) and the workflow
-// dag definition referenced by analysis.relation_id.
+// dag definition referenced by analysis.workflow_id.
 func (o *dataflowDagOrchestratorV3) loadRecoveryInputs(ctx context.Context, item *types.Analysis) (map[string]any, map[string]any, error) {
 	if o.workflowService == nil {
 		return nil, nil, fmt.Errorf("workflow service is not configured, cannot rebuild dag definition")
@@ -87,13 +87,13 @@ func (o *dataflowDagOrchestratorV3) loadRecoveryInputs(ctx context.Context, item
 		return nil, nil, fmt.Errorf("decode analysis params file %q failed: %w", paramsPath, err)
 	}
 
-	workflowID := strings.TrimSpace(item.WorkflowID)
-	if workflowID == "" {
-		return nil, nil, fmt.Errorf("analysis relation_id is empty, cannot rebuild dag definition")
+	workflowID := item.WorkflowID
+	if workflowID <= 0 {
+		return nil, nil, fmt.Errorf("analysis workflow_id is empty or invalid, cannot rebuild dag definition")
 	}
 	dagDefinition, err := o.workflowService.GetWorkflowVisByWorkflowID(ctx, workflowID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("rebuild dag definition for workflow_id=%s failed: %w", workflowID, err)
+		return nil, nil, fmt.Errorf("rebuild dag definition for workflow_id=%d failed: %w", workflowID, err)
 	}
 	return parseAnalysisResult, dagDefinition, nil
 }

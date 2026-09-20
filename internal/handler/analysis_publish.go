@@ -156,13 +156,12 @@ func (h *AnalysisHandler) writeScriptToDoc(script *types.Script, projectID, proj
 }
 
 func (h *AnalysisHandler) PublishToDocByWorkflowID(c *gin.Context) {
-	workflowIDStr := strings.TrimSpace(c.Param("workflowId"))
-	// workflowID, err := strconv.ParseInt(workflowIDStr, 10, 64)
-	// if err != nil || workflowID <= 0 {
-	// 	c.Error(errors.NewValidationError("invalid workflow_id").WithDetails(err.Error()))
-	// 	return
-	// }
-	workflow, err := h.workflowService.GetWorkflowByWorkflowID(c.Request.Context(), workflowIDStr)
+	workflowID, err := strconv.ParseInt(strings.TrimSpace(c.Param("workflowId")), 10, 64)
+	if err != nil || workflowID <= 0 {
+		c.Error(errors.NewValidationError("invalid workflow_id").WithDetails(err.Error()))
+		return
+	}
+	workflow, err := h.workflowService.GetWorkflowByID(c.Request.Context(), workflowID)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to get workflow").WithDetails(err.Error()))
 		return
@@ -204,7 +203,7 @@ func (h *AnalysisHandler) PublishToDocByWorkflowID(c *gin.Context) {
 		}
 	}
 
-	analysisList, err := h.analysisService.ListAnalysisByWorkflowID(c.Request.Context(), workflow.WorkflowID)
+	analysisList, err := h.analysisService.ListAnalysisByWorkflowID(c.Request.Context(), workflow.ID)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to list analysis by workflow ID").WithDetails(err.Error()))
 		return

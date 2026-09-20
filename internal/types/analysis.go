@@ -129,7 +129,9 @@ type Analysis struct {
 	ProjectID   int64  `json:"project_id,string" gorm:"column:project_id;type:bigint"`
 	AnalysisID  string `json:"analysis_id" gorm:"column:analysis_id;type:varchar(255)"`
 	ComponentID string `json:"component_id" gorm:"column:component_id;type:varchar(255)"`
-	WorkflowID  string `json:"relation_id" gorm:"column:relation_id;type:varchar(255)"`
+	// WorkflowID 是工作流主键（pipeline_components_relation.id），不再是 relation_id UUID。
+	// 列名 workflow_id（历史列名为 relation_id，迁移见 migrations/2026-09-21-analysis-workflow-id）。
+	WorkflowID int64 `json:"workflow_id,string" gorm:"column:workflow_id;type:bigint;index:idx_nextflow_workflow_id"`
 	// AnalysisType        string    `json:"analysis_type" gorm:"column:analysis_type;type:varchar(255)"`
 	AnalysisName   string `json:"analysis_name" gorm:"column:analysis_name;type:varchar(255)"`
 	InputFile      string `json:"input_file" gorm:"column:input_file;type:varchar(255)"`

@@ -91,7 +91,7 @@ type createWorkflowRequest struct {
 	Description        string `json:"description"`
 	Prompt             string `json:"prompt"`
 	DagDefinition      string `json:"dag_definition"`
-	WorkflowID         string `json:"relation_id"`
+	WorkflowID         string `json:"workflow_id"`
 	RelationType       string `json:"relation_type"`
 	InstallKey         string `json:"install_key"`
 	ModuleID           string `json:"component_id"`
@@ -583,6 +583,14 @@ func (h *WorkflowHandler) FindScript(c *gin.Context) {
 		}
 	}
 
+	// io_schema 从脚本目录的 io_schema.json 实时读取（不再是数据库字段）。
+	// 脚本目录用的是 project.project_id（字符串）而非 script.ProjectID（int64 外键），
+	// 因此需要先按外键解析出项目。
+	if project, projectErr := h.projectService.GetProjectByID(c.Request.Context(), item.ProjectID); projectErr == nil && project != nil {
+		ioSchema, _ := utils.ReadScriptIOSchemaFile(h.cfg.Storage.BaseDir, project.ProjectID, item.ScriptID)
+		result["io_schema"] = string(ioSchema)
+	}
+
 	c.JSON(http.StatusOK, result)
 }
 
@@ -720,9 +728,9 @@ func (h *WorkflowHandler) GetFromJSONByWorlflow(c *gin.Context) {
 		return
 	}
 
-	workflowID := c.Param("workflowId")
-	if workflowID == "" {
-		c.Error(errors.NewValidationError("workflowId is required"))
+	workflowID, err := parseWorkflowIDParam(c)
+	if err != nil {
+		c.Error(errors.NewValidationError(err.Error()))
 		return
 	}
 
@@ -849,9 +857,9 @@ func (h *WorkflowHandler) GetWorkflowForm(c *gin.Context) {
 		return
 	}
 
-	workflowID := c.Param("workflowId")
-	if workflowID == "" {
-		c.Error(errors.NewValidationError("workflowId is required"))
+	workflowID, err := parseWorkflowIDParam(c)
+	if err != nil {
+		c.Error(errors.NewValidationError(err.Error()))
 		return
 	}
 

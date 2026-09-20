@@ -102,7 +102,7 @@ func buildScriptFormData(ctx context.Context,
 func buildWorkflowFormData(ctx context.Context,
 	workflowService interfaces.WorkflowService,
 	dataService interfaces.DataService,
-	workflowID string,
+	workflowID int64,
 	projectID string) ([]interface{}, map[string]interface{}, error) {
 	formJSONWrap, err := workflowService.GetFormJSONByWorkflowID(ctx, workflowID)
 	if err != nil {

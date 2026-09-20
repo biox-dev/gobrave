@@ -177,6 +177,7 @@ func (e *RuntimeEngine) CompleteNode(
 	resolvedOutputs map[string]any,
 	exitCode int,
 	errorMessage string,
+	outputValidationErrors []string,
 ) (*types.AnalysisNode, error) {
 	node, err := e.repo.GetAnalysisNodeByID(ctx, analysisNodeID)
 	if err != nil {
@@ -211,6 +212,12 @@ func (e *RuntimeEngine) CompleteNode(
 	if IsSuccessStatus(status) {
 		updates["resolved_outputs"] = types.JSONMap(resolvedOutputs)
 		updates["output_validation_errors"] = types.JSONSlice{}
+	} else if len(outputValidationErrors) > 0 {
+		errs := make(types.JSONSlice, 0, len(outputValidationErrors))
+		for _, item := range outputValidationErrors {
+			errs = append(errs, item)
+		}
+		updates["output_validation_errors"] = errs
 	}
 
 	if err := e.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, updates); err != nil {

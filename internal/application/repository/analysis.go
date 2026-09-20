@@ -223,8 +223,8 @@ func (r *analysisRepository) ListAnalysisByProjectID(ctx context.Context, projec
 			base = base.Where("analysis_name LIKE ?", "%"+analysisName+"%")
 		}
 
-		if workflowID := query.GetWorkflowID(); workflowID != "" {
-			base = base.Where("relation_id = ?", workflowID)
+		if workflowID := query.GetWorkflowID(); workflowID > 0 {
+			base = base.Where("workflow_id = ?", workflowID)
 		}
 
 		if jobStatus := query.GetJobStatus(); jobStatus != "" {
@@ -284,8 +284,8 @@ func (r *analysisRepository) PageAnalysisByProjectID(ctx context.Context, pagina
 			db = db.Where("analysis_name LIKE ?", "%"+analysisName+"%")
 		}
 
-		if workflowID := query.GetWorkflowID(); workflowID != "" {
-			db = db.Where("relation_id = ?", workflowID)
+		if workflowID := query.GetWorkflowID(); workflowID > 0 {
+			db = db.Where("workflow_id = ?", workflowID)
 		}
 
 		if jobStatus := query.GetJobStatus(); jobStatus != "" {
@@ -525,9 +525,12 @@ func (r *analysisRepository) DeleteAnalysisByID(ctx context.Context, id int64) e
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.Analysis{}).Error
 }
 
-func (r *analysisRepository) ListAnalysisByWorkflowID(ctx context.Context, workflowID string) ([]*types.Analysis, error) {
+func (r *analysisRepository) ListAnalysisByWorkflowID(ctx context.Context, workflowID int64) ([]*types.Analysis, error) {
 	items := make([]*types.Analysis, 0)
-	err := r.db.WithContext(ctx).Where("relation_id = ?", workflowID).Find(&items).Error
+	if workflowID <= 0 {
+		return items, nil
+	}
+	err := r.db.WithContext(ctx).Where("workflow_id = ?", workflowID).Find(&items).Error
 	if err != nil {
 		return nil, err
 	}

@@ -94,16 +94,17 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 	if analysisType == "" {
 		return nil, fmt.Errorf("request_param.analysis_type is required")
 	}
-	workflowID := strings.TrimSpace(toString(input.RequestParam["relation_id"]))
-	if workflowID == "" {
-		return nil, fmt.Errorf("request_param.relation_id is required")
+	// workflow_id 是工作流 int64 主键（pipeline_components_relation.id）。
+	workflowID := parseWorkflowID(input.RequestParam["workflow_id"])
+	if workflowID <= 0 {
+		return nil, fmt.Errorf("request_param.workflow_id is required")
 	}
-	workflow, err := s.workflowRepo.GetWorkflowByWorkflowID(ctx, workflowID)
+	workflow, err := s.workflowRepo.GetWorkflowByID(ctx, workflowID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get workflow by workflow_id: %v", err)
+		return nil, fmt.Errorf("failed to get workflow by id: %v", err)
 	}
 	if workflow == nil {
-		return nil, fmt.Errorf("workflow not found for workflow_id: %s", workflowID)
+		return nil, fmt.Errorf("workflow not found for id: %d", workflowID)
 	}
 	// var workflowID string
 	// switch analysisType {
@@ -211,7 +212,7 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 				"analysis_name": analysisName,
 				"request_param": string(requestParamJSON),
 				"cache_type":    cacheType,
-				"relation_id":   workflowID,
+				"workflow_id":   workflowID,
 				// "analysis_type": analysisType,
 				// "is_report":          input.IsReport,
 				"data_component_ids": dataComponentIDs,
@@ -530,7 +531,7 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 	return nil
 }
 
-func (s *analysisService) ListAnalysisByWorkflowID(ctx context.Context, workflowID string) ([]*types.Analysis, error) {
+func (s *analysisService) ListAnalysisByWorkflowID(ctx context.Context, workflowID int64) ([]*types.Analysis, error) {
 	return s.analysisRepo.ListAnalysisByWorkflowID(ctx, workflowID)
 }
 func (s *analysisService) resolveStorageBaseDir() string {
@@ -570,6 +571,20 @@ func toString(v any) string {
 		return s
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// parseWorkflowID 解析 request_param 里的 workflow_id（工作流 int64 主键）。
+// 非法或缺省返回 0。
+func parseWorkflowID(v any) int64 {
+	s := strings.TrimSpace(toString(v))
+	if s == "" {
+		return 0
+	}
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
 }
 
 func fallbackString(value string, fallback string) string {

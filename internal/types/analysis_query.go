@@ -15,7 +15,8 @@ type AnalysisQuey struct {
 
 	AnalysisName string `json:"analysis_name,omitempty"`
 
-	WorkflowID string `json:"relation_id,omitempty"`
+	// WorkflowID 过滤条件，取值是工作流主键（pipeline_components_relation.id）。
+	WorkflowID int64 `json:"workflow_id,string,omitempty"`
 
 	JobStatus string `json:"job_status,omitempty"`
 
@@ -47,11 +48,11 @@ func (q *AnalysisQuey) GetAnalysisName() string {
 	return strings.TrimSpace(q.AnalysisName)
 }
 
-func (q *AnalysisQuey) GetWorkflowID() string {
+func (q *AnalysisQuey) GetWorkflowID() int64 {
 	if q == nil {
-		return ""
+		return 0
 	}
-	return strings.TrimSpace(q.WorkflowID)
+	return q.WorkflowID
 }
 
 func (q *AnalysisQuey) GetJobStatus() string {

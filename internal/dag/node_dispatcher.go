@@ -48,7 +48,7 @@ func (d *NodeDispatcher) Dispatch(ctx context.Context, analysisNodeID int64) err
 	}
 	analysisID := node.AnalysisID
 	if err := d.preparer.Prepare(ctx, node); err != nil {
-		_, _ = d.runtime.CompleteNode(ctx, node.ID, StatusFailed, nil, 1, fmt.Sprintf("prepare runtime failed: %v", err))
+		_, _ = d.runtime.CompleteNode(ctx, node.ID, StatusFailed, nil, 1, fmt.Sprintf("prepare runtime failed: %v", err), nil)
 		d.runCleanup(ctx, node)
 		d.publish(RuntimeEvent{
 			Name:           EventNodeFailed,
@@ -85,7 +85,7 @@ func (d *NodeDispatcher) Dispatch(ctx context.Context, analysisNodeID int64) err
 	ex := d.factory.Resolve(node.Executor)
 	result, execErr := ex.Execute(ctx, node)
 	if execErr != nil {
-		_, _ = d.runtime.CompleteNode(ctx, node.ID, StatusFailed, nil, 1, execErr.Error())
+		_, _ = d.runtime.CompleteNode(ctx, node.ID, StatusFailed, nil, 1, execErr.Error(), nil)
 		d.runCleanup(ctx, node)
 		d.publish(RuntimeEvent{
 			Name:           EventNodeFailed,
@@ -128,6 +128,7 @@ func (d *NodeDispatcher) Dispatch(ctx context.Context, analysisNodeID int64) err
 		result.ResolvedOutputs,
 		result.ExitCode,
 		result.ErrorMessage,
+		nil,
 	)
 	if err != nil {
 		return fmt.Errorf("complete node failed: %w", err)

@@ -99,7 +99,7 @@ type VisualizationNodeTreeItem struct {
 type VisualizationNodeTreeResponse struct {
 	AnalysisID   string                      `json:"analysis_id"`
 	AnalysisName string                      `json:"analysis_name"`
-	RelationID   string                      `json:"relation_id"`
+	RelationID   string                      `json:"workflow_id"`
 	Result       []VisualizationNodeTreeItem `json:"result"`
 }
 
@@ -145,7 +145,7 @@ type listAnalysisTreeChild struct {
 	Type               string `json:"type"`
 	Key                string `json:"key"`
 	AnalysisID         string `json:"analysis_id"`
-	RelationID         string `json:"relation_id"`
+	RelationID         string `json:"workflow_id"`
 	RelationName       string `json:"relation_name"`
 	RelationType       string `json:"relation_type"`
 	JobStatus          string `json:"job_status"`
@@ -235,9 +235,10 @@ func (h *AnalysisHandler) ParseParams(c *gin.Context) {
 		c.Error(errors.NewValidationError("request_param is required and must be an object"))
 		return
 	}
-	workflowID, ok := requestParam["relation_id"].(string)
-	if !ok || strings.TrimSpace(workflowID) == "" {
-		c.Error(errors.NewValidationError("request_param.relation_id is required and must be a string"))
+	// workflow_id 是工作流 int64 主键（pipeline_components_relation.id）。
+	workflowID := parsePositiveInt64(requestParam["workflow_id"])
+	if workflowID <= 0 {
+		c.Error(errors.NewValidationError("request_param.workflow_id is required and must be a positive integer"))
 		return
 	}
 	formJSONWrap, err := h.workflowService.GetFormJSONByWorkflowID(c.Request.Context(), workflowID)
@@ -350,7 +351,7 @@ func (h *AnalysisHandler) ParseParams(c *gin.Context) {
 // resolved scheduler also decides whether the compiled graph is persisted at save
 // time (static graph) or materialized at runtime.
 func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
+	userID, _ := getCurrentUserID(c)
 
 	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
 	if err != nil {
@@ -370,9 +371,10 @@ func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 		return
 	}
 
-	workflowID, ok := req.RequestParam["relation_id"].(string)
-	if !ok || strings.TrimSpace(workflowID) == "" {
-		c.Error(errors.NewValidationError("request_param.relation_id is required and must be a string"))
+	// workflow_id 是工作流 int64 主键（pipeline_components_relation.id）。
+	workflowID := parsePositiveInt64(req.RequestParam["workflow_id"])
+	if workflowID <= 0 {
+		c.Error(errors.NewValidationError("request_param.workflow_id is required and must be a positive integer"))
 		return
 	}
 
@@ -1528,8 +1530,12 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 	}
 
 	// formJSON := make([]interface{}, 0)
-	if analysisItem != nil && strings.TrimSpace(analysisItem.WorkflowID) != "" {
-		workflowItem, err := h.workflowService.GetWorkflowByWorkflowID(c.Request.Context(), analysisItem.WorkflowID)
+	analysisWorkflowID := int64(0)
+	if analysisItem != nil {
+		analysisWorkflowID = analysisItem.WorkflowID
+	}
+	if analysisWorkflowID > 0 {
+		workflowItem, err := h.workflowService.GetWorkflowByID(c.Request.Context(), analysisWorkflowID)
 		if err != nil {
 			if stderrs.Is(err, gorm.ErrRecordNotFound) {
 				c.Error(errors.NewNotFoundError("workflow not found"))
@@ -1833,15 +1839,15 @@ func (h *AnalysisHandler) ListAnalysisTree(c *gin.Context) {
 		if item == nil {
 			continue
 		}
-		relationID := strings.TrimSpace(item.WorkflowID)
-		if relationID == "" {
+		if item.WorkflowID <= 0 {
 			continue
 		}
+		relationID := strconv.FormatInt(item.WorkflowID, 10)
 		if _, exists := relationMetaMap[relationID]; exists {
 			continue
 		}
 
-		workflow, err := h.workflowService.GetWorkflowByWorkflowID(c.Request.Context(), relationID)
+		workflow, err := h.workflowService.GetWorkflowByID(c.Request.Context(), item.WorkflowID)
 		if err != nil {
 			if stderrs.Is(err, gorm.ErrRecordNotFound) {
 				relationMetaMap[relationID] = relationMeta{Name: relationID, Type: "", OrderIndex: 0}
@@ -1866,8 +1872,8 @@ func (h *AnalysisHandler) ListAnalysisTree(c *gin.Context) {
 	}
 
 	sort.SliceStable(analysisList, func(i, j int) bool {
-		left := relationMetaMap[strings.TrimSpace(analysisList[i].WorkflowID)].OrderIndex
-		right := relationMetaMap[strings.TrimSpace(analysisList[j].WorkflowID)].OrderIndex
+		left := relationMetaMap[strconv.FormatInt(analysisList[i].WorkflowID, 10)].OrderIndex
+		right := relationMetaMap[strconv.FormatInt(analysisList[j].WorkflowID, 10)].OrderIndex
 
 		leftHas := left > 0
 		rightHas := right > 0
@@ -1887,10 +1893,10 @@ func (h *AnalysisHandler) ListAnalysisTree(c *gin.Context) {
 		if item == nil {
 			continue
 		}
-		relationID := strings.TrimSpace(item.WorkflowID)
-		if relationID == "" {
+		if item.WorkflowID <= 0 {
 			continue
 		}
+		relationID := strconv.FormatInt(item.WorkflowID, 10)
 
 		meta := relationMetaMap[relationID]
 		parent, exists := parentByRelation[relationID]
@@ -2054,7 +2060,7 @@ func (h *AnalysisHandler) VisualizationNodeTree(c *gin.Context) {
 	c.JSON(http.StatusOK, VisualizationNodeTreeResponse{
 		AnalysisID:   analysisItem.AnalysisID,
 		AnalysisName: analysisItem.AnalysisName,
-		RelationID:   analysisItem.WorkflowID,
+		RelationID:   strconv.FormatInt(analysisItem.WorkflowID, 10),
 		Result:       result,
 	})
 }
@@ -2072,7 +2078,8 @@ func (h *AnalysisHandler) buildVisualizationNodePayload(c *gin.Context, analysis
 
 	nodeMap["status"] = analysisNode.Status
 	nodeMap["server_status"] = analysisNode.ServerStatus
-	nodeMap["analysis_id"] = analysisNode.AnalysisID
+	// int64 主键统一转字符串，避免前端 JS 精度丢失。
+	nodeMap["analysis_id"] = strconv.FormatInt(analysisNode.AnalysisID, 10)
 
 	// TODO
 	script, err := h.workflowService.GetScriptByID(c.Request.Context(), analysisNode.ScriptID)
@@ -2082,13 +2089,12 @@ func (h *AnalysisHandler) buildVisualizationNodePayload(c *gin.Context, analysis
 		}
 		return nil, errors.NewInternalServerError("failed to get script").WithDetails(err.Error())
 	}
-	nodeMap["script_id"] = script.ID
+	nodeMap["script_id"] = strconv.FormatInt(script.ID, 10)
 
-	return h.attachContainerInfoToNode(c, nodeMap)
+	return h.attachContainerInfoToNode(c, script.ID, nodeMap)
 }
 
-func (h *AnalysisHandler) attachContainerInfoToNode(c *gin.Context, node map[string]interface{}) (map[string]interface{}, error) {
-	scriptID, _ := node["script_id"].(int64)
+func (h *AnalysisHandler) attachContainerInfoToNode(c *gin.Context, scriptID int64, node map[string]interface{}) (map[string]interface{}, error) {
 	if scriptID == 0 {
 		return node, nil
 	}
@@ -2110,7 +2116,8 @@ func (h *AnalysisHandler) attachContainerInfoToNode(c *gin.Context, node map[str
 
 	node["container_name"] = strings.TrimSpace(snapshot.ContainerName)
 	if snapshot.ImageID > 0 {
-		node["image_id"] = snapshot.ImageID
+		// int64 主键转字符串，避免前端 JS 精度丢失。
+		node["image_id"] = strconv.FormatInt(snapshot.ImageID, 10)
 	}
 
 	// go_container_image 已不再持久化 tag/status：镜像全名由 full_name 承载，

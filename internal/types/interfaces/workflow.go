@@ -10,15 +10,16 @@ import (
 var ErrInvalidDagDefinitionJSON = stderrs.New("dag_definition is not valid JSON format")
 
 type WorkflowService interface {
-	GetFormJSONByWorkflowID(ctx context.Context, workflowID string) ([]any, error)
+	// GetFormJSONByWorkflowID 按工作流主键（int64）返回表单配置。
+	GetFormJSONByWorkflowID(ctx context.Context, workflowID int64) ([]any, error)
 	GetScriptFormJSONByID(ctx context.Context, scriptID int64) ([]any, error)
 	// 后续废除
 	// GetFormJSONByScriptID(ctx context.Context, scriptID string) ([]any, error)
 	GetWorkflowByID(ctx context.Context, id int64) (*types.Workflow, error)
 	// GetWorkflowVisByID(ctx context.Context, workflowID string) (map[string]any, error)
 	GetWorkflowVisByWorkflow(ctx context.Context, workflow *types.Workflow) (map[string]any, error)
-	GetWorkflowVisByWorkflowID(ctx context.Context, workflowID string) (map[string]any, error)
-	GetWorkflowByWorkflowID(ctx context.Context, workflowID string) (*types.Workflow, error)
+	// GetWorkflowVisByWorkflowID 按工作流主键（int64）返回可视化 DAG。
+	GetWorkflowVisByWorkflowID(ctx context.Context, workflowID int64) (map[string]any, error)
 	PageWorkflow(ctx context.Context, pagination *types.Pagination, query *types.WorkflowPageQuery) ([]*types.Workflow, int64, error)
 	ExistsWorkflowInProjectByWorkflowID(ctx context.Context, projectID int64, workflowID string) (*types.Workflow, error)
 	PageScript(ctx context.Context, pagination *types.Pagination, query *types.ScriptPageQuery) ([]*types.Script, int64, error)
@@ -45,7 +46,6 @@ type WorkflowService interface {
 
 type WorkflowRepository interface {
 	GetWorkflowByID(ctx context.Context, id int64) (*types.Workflow, error)
-	GetWorkflowByWorkflowID(ctx context.Context, workflowID string) (*types.Workflow, error)
 	PageWorkflow(ctx context.Context, pagination *types.Pagination, query *types.WorkflowPageQuery) ([]*types.Workflow, int64, error)
 	ExistsWorkflowInProjectByWorkflowID(ctx context.Context, projectID int64, workflowID string) (*types.Workflow, error)
 	PageScript(ctx context.Context, pagination *types.Pagination, query *types.ScriptPageQuery) ([]*types.Script, int64, error)

@@ -55,10 +55,6 @@ func (s *workflowService) GetWorkflowByID(ctx context.Context, id int64) (*types
 	return s.workflowRepo.GetWorkflowByID(ctx, id)
 }
 
-func (s *workflowService) GetWorkflowByWorkflowID(ctx context.Context, workflowID string) (*types.Workflow, error) {
-	return s.workflowRepo.GetWorkflowByWorkflowID(ctx, workflowID)
-}
-
 func (s *workflowService) PageWorkflow(ctx context.Context, pagination *types.Pagination, query *types.WorkflowPageQuery) ([]*types.Workflow, int64, error) {
 	return s.workflowRepo.PageWorkflow(ctx, pagination, query)
 }
@@ -78,8 +74,8 @@ func (s *workflowService) GetScriptByID(ctx context.Context, id int64) (*types.S
 func (s *workflowService) ExistsScriptInProjectByScriptID(ctx context.Context, projectID int64, scriptID string) (*types.Script, error) {
 	return s.workflowRepo.ExistsScriptInProjectByScriptID(ctx, projectID, scriptID)
 }
-func (s *workflowService) GetWorkflowVisByWorkflowID(ctx context.Context, workflowID string) (map[string]any, error) {
-	findWorkflow, err := s.workflowRepo.GetWorkflowByWorkflowID(ctx, workflowID)
+func (s *workflowService) GetWorkflowVisByWorkflowID(ctx context.Context, workflowID int64) (map[string]any, error) {
+	findWorkflow, err := s.workflowRepo.GetWorkflowByID(ctx, workflowID)
 	if err != nil {
 		return nil, err
 	}
@@ -572,7 +568,7 @@ func (s *workflowService) DeleteWorkflow(ctx context.Context, id int64) error {
 		return err
 	}
 
-	analyses, err := s.analysisRepo.ListAnalysisByWorkflowID(ctx, workflow.WorkflowID)
+	analyses, err := s.analysisRepo.ListAnalysisByWorkflowID(ctx, workflow.ID)
 	if err != nil {
 		return fmt.Errorf("failed to check existing analyses: %w", err)
 	}
@@ -688,8 +684,8 @@ func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID in
 	return formJSONWrap, err
 }
 
-func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowID string) ([]any, error) {
-	findWorkflow, err := s.workflowRepo.GetWorkflowByWorkflowID(ctx, workflowID)
+func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowID int64) ([]any, error) {
+	findWorkflow, err := s.workflowRepo.GetWorkflowByID(ctx, workflowID)
 	if err != nil {
 		return nil, err
 	}

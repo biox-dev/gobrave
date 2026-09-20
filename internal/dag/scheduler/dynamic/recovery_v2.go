@@ -93,7 +93,7 @@ func (o *dynamicDagOrchestratorV2) recoverRunningAnalysis(ctx context.Context, i
 // Neither is stored in a directly reusable column, but both are recoverable:
 //   - parseAnalysisResult: SaveAnalysisController writes it to the analysis params
 //     file (analysis.ParamsPath), so the exact submitted params are on disk.
-//   - dagDefinition: re-read from the workflow referenced by analysis.relation_id,
+//   - dagDefinition: re-read from the workflow referenced by analysis.workflow_id,
 //     the same call the submit handler makes.
 func (o *dynamicDagOrchestratorV2) loadRecoveryInputs(ctx context.Context, item *types.Analysis) (map[string]any, map[string]any, error) {
 	if o.workflowService == nil {
@@ -113,13 +113,13 @@ func (o *dynamicDagOrchestratorV2) loadRecoveryInputs(ctx context.Context, item 
 		return nil, nil, fmt.Errorf("decode analysis params file %q failed: %w", paramsPath, err)
 	}
 
-	workflowID := strings.TrimSpace(item.WorkflowID)
-	if workflowID == "" {
-		return nil, nil, fmt.Errorf("analysis relation_id is empty, cannot rebuild dag definition")
+	workflowID := item.WorkflowID
+	if workflowID <= 0 {
+		return nil, nil, fmt.Errorf("analysis workflow_id is empty or invalid, cannot rebuild dag definition")
 	}
 	dagDefinition, err := o.workflowService.GetWorkflowVisByWorkflowID(ctx, workflowID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("rebuild dag definition for workflow_id=%s failed: %w", workflowID, err)
+		return nil, nil, fmt.Errorf("rebuild dag definition for workflow_id=%d failed: %w", workflowID, err)
 	}
 
 	return parseAnalysisResult, dagDefinition, nil

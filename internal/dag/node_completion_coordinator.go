@@ -2,12 +2,8 @@ package dag
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,16 +31,6 @@ type NodeCompletionCoordinator struct {
 	pollBatchLimit  int
 	reconcileMu     sync.Mutex
 	inFlight        map[int64]struct{}
-}
-
-type nodeOutputResolver interface {
-	Resolve(node *types.AnalysisNode, candidateOutputs map[string]any) (map[string]any, []string)
-}
-
-type fileSystemNodeOutputResolver struct{}
-
-func newFileSystemNodeOutputResolver() nodeOutputResolver {
-	return &fileSystemNodeOutputResolver{}
 }
 
 type NodeContainerOperator interface {
@@ -251,7 +237,7 @@ func (c *NodeCompletionCoordinator) reconcileContainer(ctx context.Context, inst
 		}
 		errorMessage = fmt.Sprintf("output validation failed: %s", strings.Join(outputErrors, "; "))
 	}
-	if _, err := c.runtime.CompleteNode(ctx, node.ID, finalStatus, outputs, exitCode, errorMessage); err != nil {
+	if _, err := c.runtime.CompleteNode(ctx, node.ID, finalStatus, outputs, exitCode, errorMessage, outputErrors); err != nil {
 		latest, latestErr := c.analysisRepo.GetAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID)
 		if latestErr == nil && latest != nil && IsTerminalStatus(latest.Status) {
 			return
@@ -290,8 +276,8 @@ func (c *NodeCompletionCoordinator) buildResolvedOutputs(node *types.AnalysisNod
 	if resolver == nil {
 		resolver = newFileSystemNodeOutputResolver()
 	}
-	// 传入空函数
 	resolved, errs := resolver.Resolve(node, map[string]any{})
+	errs = append(errs, validateOutputPatterns(node, resolved)...)
 	return resolved, errs
 }
 
@@ -310,243 +296,6 @@ func defaultContainerOutputs(inst *types.ContainerInstance) map[string]any {
 		outputs["container_exit_code"] = *inst.ExitCode
 	}
 	return outputs
-}
-
-func (r *fileSystemNodeOutputResolver) Resolve(node *types.AnalysisNode, candidateOutputs map[string]any) (map[string]any, []string) {
-	verified := map[string]any{}
-	errorsList := make([]string, 0)
-	if node == nil {
-		return cloneMap(candidateOutputs), errorsList
-	}
-
-	outputPatterns := map[string]any(node.OutputPatterns)
-	if len(outputPatterns) == 0 {
-		return cloneMap(candidateOutputs), errorsList
-	}
-
-	outputsPayload := loadOutputsJSON(node.OutputDir)
-	outputDir, hasOutputDir := resolveNodeOutputDir(node)
-
-	for handle, rawCfg := range outputPatterns {
-		cfg, isConfigMap := rawCfg.(map[string]any)
-		if !isConfigMap {
-			if value, ok := candidateOutputs[handle]; ok {
-				verified[handle] = value
-			}
-			continue
-		}
-
-		outType := strings.ToLower(strings.TrimSpace(asString(cfg["type"])))
-		pattern := strings.TrimSpace(asString(cfg["pattern"]))
-		multiple := asBool(cfg["multiple"])
-		required := asBoolWithDefault(cfg["required"], true)
-
-		if outType != "file" {
-			if value, ok := candidateOutputs[handle]; ok {
-				verified[handle] = value
-				continue
-			}
-			if named, ok := resolveOutputValueByName(outputsPayload, handle, multiple); ok {
-				verified[handle] = named
-			}
-			continue
-		}
-
-		if pattern == "" {
-			if named, ok := resolveOutputValueByName(outputsPayload, handle, multiple); ok {
-				verified[handle] = named
-			} else if value, ok := candidateOutputs[handle]; ok {
-				verified[handle] = value
-			} else if required {
-				errorsList = append(errorsList, fmt.Sprintf("missing output pattern or named output: %s", handle))
-			}
-			continue
-		}
-
-		renderedPattern := renderPattern(pattern, node)
-		if !hasOutputDir {
-			errorsList = append(errorsList, fmt.Sprintf("missing output_dir for handle: %s", handle))
-			continue
-		}
-
-		stat, err := os.Stat(outputDir)
-		if err != nil || !stat.IsDir() {
-			errorsList = append(errorsList, fmt.Sprintf("output_dir not found: %s", outputDir))
-			continue
-		}
-
-		matches, err := globFiles(outputDir, renderedPattern)
-		if err != nil {
-			if required {
-				errorsList = append(errorsList, fmt.Sprintf("invalid output pattern: %s pattern=%s", handle, renderedPattern))
-			}
-			continue
-		}
-		if len(matches) == 0 {
-			if required {
-				errorsList = append(errorsList, fmt.Sprintf("missing output file: %s pattern=%s", handle, renderedPattern))
-			}
-			continue
-		}
-
-		if multiple {
-			arr := make([]any, 0, len(matches))
-			for _, match := range matches {
-				arr = append(arr, match)
-			}
-			verified[handle] = arr
-		} else {
-			verified[handle] = matches[0]
-		}
-	}
-
-	for handle, value := range candidateOutputs {
-		if _, exists := verified[handle]; exists {
-			continue
-		}
-		if _, declared := outputPatterns[handle]; declared {
-			continue
-		}
-		verified[handle] = value
-	}
-
-	return verified, errorsList
-}
-
-func renderPattern(pattern string, node *types.AnalysisNode) string {
-	if node == nil {
-		return pattern
-	}
-	sampleToken := strings.TrimSpace(node.SampleID)
-	if sampleToken == "" {
-		sampleToken = strings.TrimSpace(node.NodeID)
-	}
-	if sampleToken == "" {
-		sampleToken = "sample"
-	}
-	return strings.ReplaceAll(pattern, "{sample}", sampleToken)
-}
-
-func resolveNodeOutputDir(node *types.AnalysisNode) (string, bool) {
-	if node == nil {
-		return "", false
-	}
-	if outputDir := strings.TrimSpace(node.OutputDir); outputDir != "" {
-		return outputDir, true
-	}
-	if workspaceDir := strings.TrimSpace(node.WorkspaceDir); workspaceDir != "" {
-		return filepath.Join(workspaceDir, "output"), true
-	}
-	return "", false
-}
-
-func globFiles(outputDir string, pattern string) ([]string, error) {
-	searchPattern := pattern
-	if !filepath.IsAbs(pattern) {
-		searchPattern = filepath.Join(outputDir, pattern)
-	}
-
-	matches, err := filepath.Glob(searchPattern)
-	if err != nil {
-		return nil, err
-	}
-
-	set := map[string]struct{}{}
-	resolved := make([]string, 0, len(matches))
-	for _, item := range matches {
-		stat, statErr := os.Stat(item)
-		if statErr != nil || !stat.Mode().IsRegular() {
-			continue
-		}
-		absPath, absErr := filepath.Abs(item)
-		if absErr != nil {
-			continue
-		}
-		if _, exists := set[absPath]; exists {
-			continue
-		}
-		set[absPath] = struct{}{}
-		resolved = append(resolved, absPath)
-	}
-	sort.Strings(resolved)
-	return resolved, nil
-}
-
-func loadOutputsJSON(outputDir string) map[string]any {
-	cleanDir := strings.TrimSpace(outputDir)
-	if cleanDir == "" {
-		return map[string]any{}
-	}
-
-	path := filepath.Join(cleanDir, "outputs.json")
-	buf, err := os.ReadFile(path)
-	if err != nil {
-		return map[string]any{}
-	}
-
-	payload := map[string]any{}
-	if err := json.Unmarshal(buf, &payload); err != nil {
-		return map[string]any{}
-	}
-	return payload
-}
-
-func resolveOutputValueByName(outputsPayload map[string]any, handle string, multiple bool) (any, bool) {
-	value, ok := outputsPayload[handle]
-	if !ok {
-		return nil, false
-	}
-	if !multiple {
-		return value, true
-	}
-	if arr, ok := value.([]any); ok {
-		return arr, true
-	}
-	if arr, ok := value.([]interface{}); ok {
-		return arr, true
-	}
-	return []any{value}, true
-}
-
-func asString(v any) string {
-	s, ok := v.(string)
-	if !ok {
-		return ""
-	}
-	return s
-}
-
-func asBoolWithDefault(v any, defaultValue bool) bool {
-	if v == nil {
-		return defaultValue
-	}
-	b, ok := v.(bool)
-	if ok {
-		return b
-	}
-	s, ok := v.(string)
-	if !ok {
-		return defaultValue
-	}
-	normalized := strings.TrimSpace(strings.ToLower(s))
-	if normalized == "true" {
-		return true
-	}
-	if normalized == "false" {
-		return false
-	}
-	return defaultValue
-}
-
-func cloneMap(src map[string]any) map[string]any {
-	if len(src) == 0 {
-		return map[string]any{}
-	}
-	cloned := make(map[string]any, len(src))
-	for k, v := range src {
-		cloned[k] = v
-	}
-	return cloned
 }
 
 func (c *NodeCompletionCoordinator) resolveNodeStatus(node *types.AnalysisNode, inst *types.ContainerInstance) (string, int, string, bool) {

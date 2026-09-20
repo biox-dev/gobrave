@@ -64,7 +64,7 @@ type Workflow struct {
 	Description        string         `json:"description" gorm:"type:longtext"`
 	Prompt             string         `json:"prompt" gorm:"type:longtext"`
 	DagDefinition      string         `json:"dag_definition" gorm:"column:dag_definition;type:longtext"`
-	WorkflowID         string         `json:"relation_id" gorm:"column:relation_id;type:varchar(255)"`
+	WorkflowID         string         `json:"workflow_id" gorm:"column:relation_id;type:varchar(255)"`
 	RelationType       string         `json:"relation_type" gorm:"type:varchar(255)"`
 	InstallKey         string         `json:"install_key" gorm:"type:varchar(255)"`
 	ModuleID           string         `json:"component_id" gorm:"column:component_id;type:varchar(255)"`
