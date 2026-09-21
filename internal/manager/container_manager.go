@@ -540,13 +540,27 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		return
 	}
 
+	// Every runtime event is logged with the instance state it is about to be
+	// applied to. This is the only place that shows whether a terminal event
+	// arrived for a container that had actually been running: an exit reported while
+	// the instance is still creating (or with no started_at) cannot have come from
+	// the container finishing its work, and is the fingerprint of a premature or
+	// stale runtime event.
+	logger.Debugf(ctx, "[ContainerManager] runtime event received, runtime_id=%s event=%s message=%q owner_type=%s owner_id=%d instance_id=%d status=%s started_at=%v finished_at=%v exit_code=%s created_at=%v",
+		e.RuntimeID, e.Type, e.Message, inst.OwnerType, inst.OwnerID, inst.ID, inst.Status, inst.StartedAt, inst.FinishedAt, formatExitCode(inst.ExitCode), inst.CreatedAt)
+
 	// 防御性检查：如果收到终端事件但容器状态仍为 Creating，
 	// 说明 ContainerStarted 事件可能丢失，先补偿 started 时间戳再处理。
 	currentStatus := strings.ToLower(strings.TrimSpace(string(inst.Status)))
 	isCreating := currentStatus == string(types.ContainerCreating)
 	isTerminalEvent := e.Type == "ContainerExited" || e.Type == "ContainerFailed"
 	if isCreating && isTerminalEvent {
-		logger.Warnf(ctx, "[ContainerManager] received terminal event while container still creating, runtime_id=%s event=%s status=%s, compensating started_at", e.RuntimeID, e.Type, inst.Status)
+		age := "unknown"
+		if !inst.CreatedAt.IsZero() {
+			age = time.Since(inst.CreatedAt).Round(time.Millisecond).String()
+		}
+		logger.Warnf(ctx, "[ContainerManager] received terminal event while container still creating, runtime_id=%s event=%s status=%s message=%q instance_age=%s started_at=%v exit_code=%s, compensating started_at",
+			e.RuntimeID, e.Type, inst.Status, e.Message, age, inst.StartedAt, formatExitCode(inst.ExitCode))
 		now := time.Now()
 		inst.StartedAt = &now
 		inst.FinishedAt = nil
@@ -642,6 +656,12 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		// default:
 		// _ = m.createContainerEvent(context.Background(), inst.ID, e.Type, e.Message)
 	}
+
+	// Summary of what the event did to the instance. The status written here is what
+	// the DAG completion coordinator later reads, so it has to be traceable back to
+	// the runtime event that produced it.
+	logger.Debugf(ctx, "[ContainerManager] runtime event applied, runtime_id=%s event=%s instance_id=%d status=%s exit_code=%s finished_at=%v",
+		e.RuntimeID, e.Type, inst.ID, inst.Status, formatExitCode(inst.ExitCode), inst.FinishedAt)
 }
 
 func parseRuntimeExitCode(raw string) (int, bool) {
@@ -654,6 +674,16 @@ func parseRuntimeExitCode(raw string) (int, bool) {
 		return 0, false
 	}
 	return code, true
+}
+
+// formatExitCode renders an instance exit code for logs. "none" means no runtime
+// event ever carried one, which distinguishes a reported process exit from a
+// container that was only stopped or deleted.
+func formatExitCode(code *int) string {
+	if code == nil {
+		return "none"
+	}
+	return strconv.Itoa(*code)
 }
 
 // func (m *ContainerManager) transition(

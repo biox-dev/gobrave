@@ -230,6 +230,23 @@ func (c *NodeCompletionCoordinator) reconcileContainer(ctx context.Context, inst
 		return
 	}
 
+	// The completion decision is logged with the container facts that decide whether
+	// the terminal event could have come from the container finishing its work.
+	// container_ran_for is the strongest signal available at this point: a terminal
+	// event with start_observed=false, or with a run time of (almost) zero, cannot
+	// come from a container that ran its script and wrote its outputs. Combined with
+	// the runtime-side evidence line, this separates "the container really finished"
+	// from "the exit event was premature and the node is being failed for a file the
+	// container never got the chance to write".
+	//
+	// Kept at info on purpose: it is one line per node and is this side's only record
+	// of why the node was completed the way it was, so it must survive a log level of
+	// info. Purely mechanical steps around it are logged at debug.
+	logger.Infof(ctx, "[NodeCompletionCoordinator] completing node from container terminal event, source=%s analysis_id=%d node_id=%s node_status=%s instance_id=%d runtime_id=%s container_status=%s container_exit_code=%s container_started_at=%v container_finished_at=%v container_ran_for=%s start_observed=%t resolved_status=%s",
+		source, node.AnalysisID, node.NodeID, nodeStatus, inst.ID, inst.RuntimeID, inst.Status,
+		formatContainerExitCode(inst), inst.StartedAt, inst.FinishedAt, containerRanFor(inst),
+		inst.StartedAt != nil, finalStatus)
+
 	outputs, outputErrors := c.buildResolvedOutputs(node, inst)
 	if finalStatus == StatusDone && len(outputErrors) > 0 {
 		// One line per affected node, carrying the container facts that decide
@@ -269,6 +286,11 @@ func (c *NodeCompletionCoordinator) cleanupSuccessfulContainer(ctx context.Conte
 	if !c.deleteOnSuccess || inst == nil || c.containerOps == nil {
 		return
 	}
+	// Logged before the call: the deletion is what makes a late or premature exit
+	// event unrecoverable, so the log has to show whether the container was deleted
+	// from the completion path and at what time.
+	logger.Debugf(ctx, "[NodeCompletionCoordinator] deleting container after node completion, source=%s instance_id=%d runtime_id=%s owner_id=%d container_status=%s container_exit_code=%s",
+		source, inst.ID, inst.RuntimeID, inst.OwnerID, inst.Status, formatContainerExitCode(inst))
 	if err := c.containerOps.Delete(ctx, inst.ID); err != nil {
 		logger.Warnf(ctx, "[NodeCompletionCoordinator] cleanup successful container failed, source=%s instance_id=%d runtime_id=%s owner_id=%d err=%v", source, inst.ID, inst.RuntimeID, inst.OwnerID, err)
 		return
@@ -325,6 +347,23 @@ func (c *NodeCompletionCoordinator) resolveOutputsWithGrace(resolver nodeOutputR
 		}
 		time.Sleep(nodeOutputsGraceInterval)
 	}
+}
+
+// containerRanFor renders how long the container was observed running, for logs.
+//
+// "unobserved" (no started_at) and a near-zero duration are the fingerprints of a
+// terminal event that cannot have come from the container executing its script: the
+// instance either never reached running state, or the exit was reported at the same
+// instant its start was compensated. Both point at the runtime event, not at the
+// node's outputs.
+func containerRanFor(inst *types.ContainerInstance) string {
+	if inst == nil || inst.StartedAt == nil {
+		return "unobserved"
+	}
+	if inst.FinishedAt == nil {
+		return "unknown(finished_at not set)"
+	}
+	return inst.FinishedAt.Sub(*inst.StartedAt).Round(time.Millisecond).String()
 }
 
 // formatContainerExitCode renders a container instance's exit code for logs.

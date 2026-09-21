@@ -157,7 +157,7 @@ func (n *DagRuntimeEventNotifier) buildRealtimeMessage(ctx context.Context, runt
 	case EventNodeSubmitted, EventNodeRunning, EventNodeStateChange, EventNodeCompleted, EventNodeFailed:
 		analysisNodeID, err := n.resolveAnalysisNodeID(ctx, runtimeEvent)
 		if err != nil {
-				logger.Warnf(ctx, "[Realtime] resolve analysis node id failed analysis_id=%d node_id=%s event=%s err=%v", runtimeEvent.AnalysisID, runtimeEvent.NodeID, runtimeEvent.Name, err)
+			logger.Warnf(ctx, "[Realtime] resolve analysis node id failed analysis_id=%d node_id=%s event=%s err=%v", runtimeEvent.AnalysisID, runtimeEvent.NodeID, runtimeEvent.Name, err)
 			return nil, false
 		}
 
