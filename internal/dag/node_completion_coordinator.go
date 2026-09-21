@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,8 +31,15 @@ type NodeCompletionCoordinator struct {
 	deleteOnSuccess bool
 	pollInterval    time.Duration
 	pollBatchLimit  int
-	reconcileMu     sync.Mutex
-	inFlight        map[int64]struct{}
+
+	// graceWait/graceInterval bound the wait for a node's declared outputs to
+	// become visible after its container exited; see resolveOutputsWithGrace.
+	// Kept as fields so the policy is exercised in tests at a scale of milliseconds.
+	graceWait     time.Duration
+	graceInterval time.Duration
+
+	reconcileMu sync.Mutex
+	inFlight    map[int64]struct{}
 }
 
 type NodeContainerOperator interface {
@@ -67,6 +75,8 @@ func NewNodeCompletionCoordinator(
 		deleteOnSuccess: deleteOnSuccess,
 		pollInterval:    pollInterval,
 		pollBatchLimit:  0,
+		graceWait:       nodeOutputsGraceWait,
+		graceInterval:   nodeOutputsGraceInterval,
 		inFlight:        make(map[int64]struct{}),
 	}
 }
@@ -247,15 +257,17 @@ func (c *NodeCompletionCoordinator) reconcileContainer(ctx context.Context, inst
 		formatContainerExitCode(inst), inst.StartedAt, inst.FinishedAt, containerRanFor(inst),
 		inst.StartedAt != nil, finalStatus)
 
-	outputs, outputErrors := c.buildResolvedOutputs(node, inst)
+	outputs, outputErrors := c.buildResolvedOutputs(ctx, node, inst)
+	outputValidationFailed := false
 	if finalStatus == StatusDone && len(outputErrors) > 0 {
-		// One line per affected node, carrying the container facts that decide
-		// whether this is a real failure (the container exited and produced
-		// nothing) or a visibility problem (it wrote its outputs somewhere this
-		// process cannot read - the node workspace is a hostPath bind, so a pod
-		// scheduled on another cluster node writes to that node's disk). The
-		// per-retry reads are logged at debug level, so this warning is the only
-		// place the outcome is stated.
+		// One line per affected node, carrying the container facts and the outcome.
+		// The container facts cannot decide on their own whether this is a real
+		// failure (the container exited and produced nothing) or a visibility problem
+		// (the outputs are on the shared mount but this process could not read them
+		// yet): the exit code is 0 in both cases. What separates them is logged
+		// immediately after, by logOutputValidationDiagnosis, from the one pair of
+		// reads that disagree. The per-retry reads are logged at debug level, so this
+		// warning is the only place the outcome is stated.
 		logger.Warnf(ctx, "[NodeCompletionCoordinator] declared outputs missing after grace wait, source=%s analysis_id=%d node_id=%s instance_id=%d runtime_id=%s container_status=%s container_exit_code=%s container_started_at=%v container_finished_at=%v output_dir=%s missing=%s",
 			source, node.AnalysisID, node.NodeID, inst.ID, inst.RuntimeID, inst.Status, formatContainerExitCode(inst), inst.StartedAt, inst.FinishedAt, node.OutputDir, strings.Join(outputErrors, "; "))
 		finalStatus = StatusFailed
@@ -263,6 +275,16 @@ func (c *NodeCompletionCoordinator) reconcileContainer(ctx context.Context, inst
 			exitCode = 1
 		}
 		errorMessage = fmt.Sprintf("output validation failed: %s", strings.Join(outputErrors, "; "))
+		outputValidationFailed = true
+	}
+	if outputValidationFailed {
+		// One complete statement of what this process could see while it decided the
+		// outputs were missing, plus a bounded re-check of the same path afterwards.
+		// Together they separate "the container wrote nothing" from "the file is on
+		// the server and we could not read it in time", which is the only way to tell
+		// a real node failure from a read-visibility race on the shared workspace.
+		c.logOutputValidationDiagnosis(ctx, node, inst, outputErrors)
+		c.scheduleOutputVisibilityPostMortem(node, inst)
 	}
 	if _, err := c.runtime.CompleteNode(ctx, node.ID, finalStatus, outputs, exitCode, errorMessage, outputErrors); err != nil {
 		latest, latestErr := c.analysisRepo.GetAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID)
@@ -298,7 +320,7 @@ func (c *NodeCompletionCoordinator) cleanupSuccessfulContainer(ctx context.Conte
 	logger.Infof(ctx, "[NodeCompletionCoordinator] cleaned successful container, source=%s instance_id=%d runtime_id=%s owner_id=%d", source, inst.ID, inst.RuntimeID, inst.OwnerID)
 }
 
-func (c *NodeCompletionCoordinator) buildResolvedOutputs(node *types.AnalysisNode, inst *types.ContainerInstance) (map[string]any, []string) {
+func (c *NodeCompletionCoordinator) buildResolvedOutputs(ctx context.Context, node *types.AnalysisNode, inst *types.ContainerInstance) (map[string]any, []string) {
 	outputs := defaultContainerOutputs(inst)
 	if node == nil {
 		return outputs, nil
@@ -308,7 +330,7 @@ func (c *NodeCompletionCoordinator) buildResolvedOutputs(node *types.AnalysisNod
 	if resolver == nil {
 		resolver = newFileSystemNodeOutputResolver()
 	}
-	resolved, hardErrs := c.resolveOutputsWithGrace(resolver, node)
+	resolved, hardErrs := c.resolveOutputsWithGrace(ctx, resolver, node)
 	errs := append(hardErrs, validateOutputPatterns(node, resolved)...)
 	return resolved, errs
 }
@@ -316,37 +338,190 @@ func (c *NodeCompletionCoordinator) buildResolvedOutputs(node *types.AnalysisNod
 // nodeOutputsGraceWait bounds how long a node's completion waits for its
 // outputs.json to become visible after the container reached a terminal state.
 //
-// The container writes the file as its last action, but the component that
-// reports the exit (runtime/informer) and the process that reads the file do not
-// always share the exact same filesystem view, and the write may not be visible
-// at the very instant the exit event is handled. Waiting a short, bounded window
-// prevents a file that lands a moment later from being reported as a missing
-// output and flipping the node from done to failed.
+// The container writes the file as its last action, but neither the component
+// that reports the exit (runtime/informer) nor this process's view of the
+// workspace observes that write at the same instant, and the file can stay
+// invisible here well after it exists on the shared mount (see refreshDirView).
+// Waiting a bounded window is what keeps a file that lands late from being
+// reported as a missing output and flipping the node from done to failed.
+//
+// The window is deliberately several times the observed lag (about one second
+// between the container's last write and its exit being reported): the cost of
+// waiting is one node staying running a little longer, while the cost of giving up
+// early is a node that succeeded being recorded as failed and taking the whole run
+// down with it.
 const (
-	nodeOutputsGraceWait     = 5 * time.Second
+	nodeOutputsGraceWait     = 15 * time.Second
 	nodeOutputsGraceInterval = 1 * time.Second
 )
 
-// resolveOutputsWithGrace retries output resolution while a declared output is
-// still missing, up to nodeOutputsGraceWait. Read/parse errors (hard failures)
-// return immediately, and the final attempt is always returned as-is so a
+// resolveOutputsWithGrace resolves a node's outputs, refreshing this process's
+// view of the output directory before each read so a stale cached lookup cannot
+// hide a file the container has already written. Read/parse errors (hard failures)
+// are returned immediately, and the final attempt is always returned as-is so a
 // genuinely absent file still surfaces through validateOutputPatterns.
 //
-// Waiting is limited to nodes that declare output_patterns and are still missing
-// a handle, so a node that legitimately produces no outputs.json does not pay
-// the grace window.
-func (c *NodeCompletionCoordinator) resolveOutputsWithGrace(resolver nodeOutputResolver, node *types.AnalysisNode) (map[string]any, []string) {
-	deadline := time.Now().Add(nodeOutputsGraceWait)
-	for {
-		resolved, missing, errs := resolver.Resolve(node, map[string]any{})
-		if len(errs) > 0 || !missing || !time.Now().Before(deadline) {
+// The refresh runs before the first read as well as before every retry. The first
+// read is the common case and the one that matters most: it decides both the node's
+// verdict and the outputs recorded for its downstream nodes, and on a failing run
+// three of fourteen first reads reported a missing file that had been on the shared
+// mount for seconds. It is also the cheap case - the first read is still the only
+// read on the happy path, and the retry loop below runs only for nodes whose
+// declared outputs are not visible yet.
+//
+// Waiting is limited to nodes that declare output_patterns and are still missing a
+// handle, so a node that legitimately produces no outputs.json does not pay the
+// grace window.
+func (c *NodeCompletionCoordinator) resolveOutputsWithGrace(ctx context.Context, resolver nodeOutputResolver, node *types.AnalysisNode) (map[string]any, []string) {
+	dir, hasDir := nodeOutputDir(node)
+	if hasDir {
+		refreshDirView(ctx, dir)
+	}
+
+	resolved, missing, errs := resolver.Resolve(node, map[string]any{})
+	if len(errs) > 0 || !missing || len(missingOutputHandles(node, resolved)) == 0 {
+		return resolved, errs
+	}
+
+	started := time.Now()
+	deadline := started.Add(c.graceWait)
+	attempt := 1
+	for time.Now().Before(deadline) {
+		// A declared handle is still missing. Record what this process can see before
+		// waiting, so the run keeps a per-attempt trace even when the final warning is
+		// the only line an operator sees: it is what shows whether the file was never
+		// produced, or was produced but not yet visible from here.
+		if hasDir {
+			detail, hidden := outputProbeDetail(dir, nodeOutputsFileName)
+			logger.Debugf(ctx, "[NodeCompletionCoordinator] output probe attempt=%d elapsed=%s node_id=%s missing_handles=%s stat_vs_readdir_disagree_on=%v %s",
+				attempt, time.Since(started).Round(time.Millisecond), node.NodeID,
+				strings.Join(missingOutputHandles(node, resolved), ","), hidden, detail)
+		}
+
+		time.Sleep(c.graceInterval)
+		if hasDir {
+			// Only the probe above is a diagnosis; this refresh is the fix, so it is
+			// called explicitly rather than relied on as a side effect of logging.
+			refreshDirView(ctx, dir)
+		}
+		resolved, missing, errs = resolver.Resolve(node, map[string]any{})
+		if len(errs) > 0 || !missing || len(missingOutputHandles(node, resolved)) == 0 {
+			logger.Debugf(ctx, "[NodeCompletionCoordinator] declared outputs became readable after retry node_id=%s attempts=%d elapsed=%s",
+				node.NodeID, attempt+1, time.Since(started).Round(time.Millisecond))
 			return resolved, errs
 		}
-		if len(missingOutputHandles(node, resolved)) == 0 {
-			return resolved, nil
-		}
-		time.Sleep(nodeOutputsGraceInterval)
+		attempt++
 	}
+	return resolved, errs
+}
+
+// refreshDirView re-reads a directory before the next attempt to read a file
+// inside it, so that attempt is not answered from a stale cached lookup.
+//
+// This is not an optimisation, it is the fix for the failure the retry loop around
+// it exists for. The analysis workspace is an NFS mount shared by this process and
+// by the DAG node containers, and Prepare deletes a node's previous outputs just
+// before it runs. That delete leaves this process holding a cached "does not
+// exist" for outputs.json, and it keeps answering ENOENT from it after the
+// container has recreated the file: the failing runs show six reads in a row
+// reporting a file that had been on the server for seconds. Listing the directory
+// refreshes the directory's attributes, which is what invalidates that cached
+// answer, so the following open() reaches the server.
+//
+// A failure to list is only logged: the caller is already in the retry path and
+// the resolution result is what it acts on.
+func refreshDirView(ctx context.Context, dir string) {
+	if _, err := os.ReadDir(dir); err != nil {
+		logger.Debugf(ctx, "[NodeCompletionCoordinator] refresh output dir view failed, dir=%s err=%v", dir, err)
+	}
+}
+
+// logOutputValidationDiagnosis states, once and in full, what the process could
+// see when it decided that a node's declared outputs were missing.
+//
+// The verdict is drawn from the one fact that cannot be explained by a slow
+// write: a name that readdir returns while stat answers ENOENT is present on the
+// shared mount, and this process is answering from a cached negative lookup for
+// it. Because Prepare deletes the previous outputs just before a node runs, that
+// cache entry is created by this very process, which is why the failure is
+// intermittent - it depends on whether the container's write is visible before
+// the first probe caches the miss.
+func (c *NodeCompletionCoordinator) logOutputValidationDiagnosis(ctx context.Context, node *types.AnalysisNode, inst *types.ContainerInstance, outputErrors []string) {
+	if node == nil {
+		return
+	}
+	dir, ok := nodeOutputDir(node)
+	if !ok {
+		logger.Warnf(ctx, "[NodeCompletionCoordinator] output validation diagnosis: node has no output dir analysis_id=%d node_id=%s missing=%s",
+			node.AnalysisID, node.NodeID, strings.Join(outputErrors, "; "))
+		return
+	}
+
+	detail, hidden := outputProbeDetail(dir, nodeOutputsFileName)
+	logger.Warnf(ctx, "[NodeCompletionCoordinator] output validation diagnosis: analysis_id=%d node_id=%s instance_id=%d output_dir=%s missing=%s %s %s",
+		node.AnalysisID, node.NodeID, containerInstanceID(inst), dir, strings.Join(outputErrors, "; "), detail, outputDirMountInfo(dir))
+	if len(hidden) > 0 {
+		logger.Warnf(ctx, "[NodeCompletionCoordinator] output validation diagnosis verdict: %v exist on the shared mount but were served from a cached negative lookup on this host (stat fails before the directory listing and succeeds after it); the container did produce them and the node was failed by a read-visibility race, not by a missing output", hidden)
+	}
+}
+
+// outputVisibilityPostMortemOffsets are the moments after a failed completion at
+// which outputs.json is re-checked. They straddle the default Linux NFS
+// readdir/attribute cache windows (acdirmin 30s, acdirmax 60s), so a file that
+// shows up in this range was on the server all along and only became visible to
+// this process once its cached "does not exist" expired.
+var outputVisibilityPostMortemOffsets = []time.Duration{
+	1 * time.Second,
+	5 * time.Second,
+	15 * time.Second,
+	30 * time.Second,
+	45 * time.Second,
+	60 * time.Second,
+}
+
+// scheduleOutputVisibilityPostMortem re-checks a failed node's outputs.json for a
+// bounded window and logs the first moment it becomes readable, so the delay is
+// measured instead of inferred. A file that appears here was never missing, which
+// is the difference between a retry that works and a node that has to be fixed.
+func (c *NodeCompletionCoordinator) scheduleOutputVisibilityPostMortem(node *types.AnalysisNode, inst *types.ContainerInstance) {
+	if node == nil {
+		return
+	}
+	path, ok := nodeOutputsPath(node)
+	if !ok {
+		return
+	}
+	finishedAt := "unknown"
+	if inst != nil && inst.FinishedAt != nil {
+		finishedAt = inst.FinishedAt.Format(time.RFC3339Nano)
+	}
+
+	go func() {
+		ctx := context.Background()
+		base := time.Now()
+		for _, offset := range outputVisibilityPostMortemOffsets {
+			time.Sleep(time.Until(base.Add(offset)))
+			info, err := os.Stat(path)
+			if err != nil {
+				logger.Debugf(ctx, "[NodeCompletionCoordinator] output visibility post-mortem: still not readable analysis_id=%d node_id=%s path=%s after=%s err=%v",
+					node.AnalysisID, node.NodeID, path, offset, err)
+				continue
+			}
+			logger.Infof(ctx, "[NodeCompletionCoordinator] output visibility post-mortem: outputs became readable after the node was failed analysis_id=%d node_id=%s instance_id=%d path=%s container_finished_at=%s after_failure=%s size=%d mtime=%s mtime_vs_local_clock=%s",
+				node.AnalysisID, node.NodeID, containerInstanceID(inst), path, finishedAt, offset,
+				info.Size(), info.ModTime().Format(time.RFC3339Nano), time.Since(info.ModTime()).Round(time.Millisecond))
+			return
+		}
+		logger.Warnf(ctx, "[NodeCompletionCoordinator] output visibility post-mortem: outputs never became readable analysis_id=%d node_id=%s path=%s container_finished_at=%s waited=%s",
+			node.AnalysisID, node.NodeID, path, finishedAt, outputVisibilityPostMortemOffsets[len(outputVisibilityPostMortemOffsets)-1])
+	}()
+}
+
+func containerInstanceID(inst *types.ContainerInstance) int64 {
+	if inst == nil {
+		return 0
+	}
+	return inst.ID
 }
 
 // containerRanFor renders how long the container was observed running, for logs.
