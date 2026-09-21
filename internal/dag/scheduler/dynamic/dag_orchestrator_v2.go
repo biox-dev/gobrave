@@ -10,6 +10,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/compiler"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
+	"github.com/biox-dev/gobrave/internal/dag/trace"
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -87,8 +88,14 @@ type dynamicDagOrchestratorV2 struct {
 	// subscribing to the bus directly, so concurrent runs never add subscribers.
 	router *dagruntime.EventRouter
 
-	// projectID int64
-	// mu is reserved for future critical sections in V2 orchestration state transitions.
+	// traces holds the append-only run trace of every live run, keyed by analysis
+	// id (see trace.go). It is created lazily through traceRegistry so an
+	// orchestrator assembled directly - as the tests do - still works.
+	traces *trace.Registry[int64]
+
+	// mu guards the lazily initialised state above. It is deliberately not a run
+	// lock: run state lives in the database, so this mutex only has to make the
+	// trace registry visible to concurrent runs.
 	mu sync.Mutex
 }
 
@@ -126,6 +133,7 @@ func NewDynamicDagOrchestratorV2(
 		bus:             bus,
 		registry:        registry,
 		router:          router,
+		traces:          trace.NewRegistry[int64](),
 	}
 }
 
@@ -179,6 +187,18 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 		return nil
 	}
 
+	// The analysis row is the source of both the trace destination (TraceFile is
+	// hydrated from the workspace directory) and the cache policy inputs, so it is
+	// read once here - before anything that can fail - and reused below.
+	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
+	if err != nil {
+		return o.failStart(analysisID, "load analysis failed", err)
+	}
+
+	// The trace opens before the first scheduling decision is taken, so a run that
+	// never reaches its loop (cache preparation, compile) still explains itself.
+	o.openRunTrace(analysis, resume)
+
 	// Register the analysis-scoped sink before the first event is published so no
 	// runtime event for this run can be observed without a sink. The filter keeps
 	// this loop's own echoes (node.submitted, dag.*) and the node.running noise out
@@ -191,34 +211,16 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 		// In-flight nodes left by the crashed process are neither re-dispatchable nor
 		// terminal, so they would deadlock the graph. They must be rolled back first.
 		if err := o.prepareNodesForResume(ctx, analysisID); err != nil {
-			o.router.Unregister(analysisID)
-			_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-				"job_status": types.AnalysisStatusFailed,
-				"updated_at": time.Now().UTC(),
-			})
-			o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, map[string]any{"reason": err.Error()})
-			return fmt.Errorf("prepare nodes for resume failed: %w", err)
+			return o.failStart(analysisID, "prepare nodes for resume failed", err)
 		}
-	} else if err := o.prepareAnalysisForCacheRerun(ctx, analysisID); err != nil {
-		o.router.Unregister(analysisID)
-		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-			"job_status": types.AnalysisStatusFailed,
-			"updated_at": time.Now().UTC(),
-		})
-		o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, map[string]any{"reason": err.Error()})
-		return fmt.Errorf("prepare cached analysis rerun failed: %w", err)
+	} else if err := o.prepareAnalysisForCacheRerun(ctx, analysis); err != nil {
+		return o.failStart(analysisID, "prepare cached analysis rerun failed", err)
 	}
 
 	compiled, err := compiler.BuildRuntimeTasks(analysisID, dynamicCloneAnyMap(parseAnalysisResult), dynamicCloneAnyMap(dagDefinition))
 	if err != nil {
 		// Compile failure is terminal for current submission; mark analysis failed.
-		o.router.Unregister(analysisID)
-		_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
-			"job_status": types.AnalysisStatusFailed,
-			"updated_at": time.Now().UTC(),
-		})
-		o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, map[string]any{"reason": err.Error()})
-		return fmt.Errorf("compile runtime dag for dynamic v2 failed: %w", err)
+		return o.failStart(analysisID, "compile runtime dag for dynamic v2 failed", err)
 	}
 
 	nodeTemplates := dynamicToMapSlice(compiled["analysis_nodes"])
@@ -240,9 +242,13 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 	go o.renewRunningLease(analysisID, heartbeatStop)
 
 	go func() {
-		// Ensure heartbeat, sink and context are cleaned up no matter how run exits.
-		// The sink is retired last: late events (for example from deferred container
-		// completions) are then safely discarded instead of leaking a subscriber.
+		// Ensure the trace, heartbeat, sink and context are cleaned up no matter how
+		// the run exits. Defers run in reverse order, so registering the trace close
+		// first makes it run last and guarantees the file is still open while the rest
+		// of the cleanup reports its outcome. Among the others the sink is retired
+		// last: late events (for example from deferred container completions) are then
+		// safely discarded instead of leaking a subscriber.
+		defer o.closeRunTrace(analysisID)
 		defer o.router.Unregister(analysisID)
 		defer close(heartbeatStop)
 		defer runCancel()
@@ -289,9 +295,32 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 			"job_status": finalStatus,
 			"updated_at": time.Now().UTC(),
 		})
+		o.trace(analysisID, trace.New(trace.LevelInfo, traceEventRunEnd).
+			Set(trace.ColumnStatus, finalStatus).
+			SetError(finalErr))
 	}()
 
 	return nil
+}
+
+// failStart converges a run that could not be started.
+//
+// It exists so the start-time failure paths cannot drift apart: retiring the sink,
+// persisting the failure, announcing it and recording it in the trace are all
+// required, and missing one is easy to overlook - a missed status write would
+// leave the analysis claimed as running with no scheduler owning it.
+func (o *dynamicDagOrchestratorV2) failStart(analysisID int64, wrap string, cause error) error {
+	o.router.Unregister(analysisID)
+	_ = o.repo.UpdateAnalysisByID(context.Background(), analysisID, map[string]any{
+		"job_status": types.AnalysisStatusFailed,
+		"updated_at": time.Now().UTC(),
+	})
+	o.publishDagRuntimeEvent(dagruntime.EventDagFailed, analysisID, map[string]any{"reason": cause.Error()})
+	o.trace(analysisID, trace.New(trace.LevelError, traceEventRunEnd).
+		Set(trace.ColumnStatus, types.AnalysisStatusFailed).
+		SetError(cause))
+	o.closeRunTrace(analysisID)
+	return fmt.Errorf("%s: %w", wrap, cause)
 }
 
 // runDynamicLoop uses runtime events as the primary driver:
@@ -502,20 +531,21 @@ func (o *dynamicDagOrchestratorV2) isStopRequested(analysisID int64) bool {
 // of comparing analysis.CacheType here, so "what a cache type means" keeps exactly one
 // definition (internal/dag/cache_policy.go) across every scheduler. For the declared
 // cache types the answer is unchanged: only rerun_all resets.
-func (o *dynamicDagOrchestratorV2) prepareAnalysisForCacheRerun(ctx context.Context, analysisID int64) error {
-	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
-	if err != nil {
-		return err
-	}
+func (o *dynamicDagOrchestratorV2) prepareAnalysisForCacheRerun(ctx context.Context, analysis *types.Analysis) error {
 	if analysis == nil || !o.cachePolicies.ShouldResetGraph(analysis.CacheType) {
 		return nil
 	}
 
+	// Recorded before the delete: a trace that only showed the nodes reappearing
+	// would not explain why the previous results were thrown away.
+	o.trace(analysis.ID, trace.New(trace.LevelWarn, traceEventCacheReset).
+		Set(trace.ColumnRerunReason, fmt.Sprintf("cache_type=%d resets the persisted graph", analysis.CacheType)))
+
 	return o.repo.WithTransaction(ctx, func(tx interfaces.AnalysisRepository) error {
-		if err := tx.DeleteAnalysisNodesByAnalysisID(ctx, analysisID); err != nil {
+		if err := tx.DeleteAnalysisNodesByAnalysisID(ctx, analysis.ID); err != nil {
 			return err
 		}
-		if err := tx.DeleteAnalysisEdgesByAnalysisID(ctx, analysisID); err != nil {
+		if err := tx.DeleteAnalysisEdgesByAnalysisID(ctx, analysis.ID); err != nil {
 			return err
 		}
 		return nil
@@ -583,6 +613,8 @@ func (o *dynamicDagOrchestratorV2) pumpReadyQueue(ctx context.Context, runtime *
 		// the handoff, is what lets the next reconcile pass tell a failure produced by this
 		// run apart from one inherited from a previous run.
 		plan.markAttempted(node.NodeID)
+		o.trace(analysisID, nodeRecord(trace.LevelInfo, traceEventNodeSubmit, node).
+			Set(trace.ColumnStatus, dagruntime.StatusSubmitted))
 		if o.bus != nil {
 			o.bus.Publish(dagruntime.RuntimeEvent{
 				Name:           dagruntime.EventNodeSubmitted,
@@ -595,6 +627,9 @@ func (o *dynamicDagOrchestratorV2) pumpReadyQueue(ctx context.Context, runtime *
 		if !pool.EnqueueWait(ctx, node.ID) {
 			// ctx was cancelled while handing the node over. It stays claimed
 			// (submitted) and is rolled back by prepareNodesForResume on a later start.
+			o.trace(analysisID, nodeRecord(trace.LevelWarn, traceEventSubmitCancelled, node).
+				Set(trace.ColumnStatus, dagruntime.StatusSubmitted).
+				Set(trace.ColumnError, "cancelled before the node reached a worker"))
 			return nil
 		}
 	}
@@ -783,6 +818,9 @@ func (o *dynamicDagOrchestratorV2) markNodeAborted(ctx context.Context, node *ty
 	}); err != nil {
 		return err
 	}
+	o.trace(node.AnalysisID, nodeRecord(trace.LevelWarn, traceEventNodeAbort, node).
+		Set(trace.ColumnStatus, dagruntime.StatusSkipped).
+		Set(trace.ColumnError, dynamicAbortReason))
 	node.Status = dagruntime.StatusSkipped
 	node.ErrorMessage = dynamicAbortReason
 	return nil
@@ -821,6 +859,11 @@ func (o *dynamicDagOrchestratorV2) materializePlannedNode(
 	// The digests the cache policies compare against are captured by the
 	// dispatcher after it prepares the node for execution.
 	state.nodes[nodeID] = node
+	// Traced after the row is built: a node created straight into a non-runnable
+	// state (skipped) never reaches a claim, so this row is the only evidence it
+	// was ever considered.
+	o.trace(analysis.ID, nodeRecord(nodeEventLevel(status), traceEventNodeCreate, node).
+		Set(trace.ColumnStatus, status))
 	return node, nil
 }
 
@@ -839,6 +882,9 @@ func (o *dynamicDagOrchestratorV2) demoteNodeToPending(ctx context.Context, node
 	}); err != nil {
 		return err
 	}
+	o.trace(node.AnalysisID, nodeRecord(trace.LevelInfo, traceEventNodeDemote, node).
+		Set(trace.ColumnStatus, dagruntime.StatusPending).
+		Set(trace.ColumnRerunReason, "upstream not satisfied"))
 	node.Status = dagruntime.StatusPending
 	return nil
 }
@@ -935,6 +981,9 @@ func (o *dynamicDagOrchestratorV2) markExistingNodeReadyForRerun(ctx context.Con
 	}); err != nil {
 		return err
 	}
+	o.trace(existing.AnalysisID, nodeRecord(trace.LevelWarn, traceEventNodeRerun, existing).
+		Set(trace.ColumnStatus, dagruntime.StatusReady).
+		Set(trace.ColumnRerunReason, rerunReason))
 	applyRerunToNode(existing, probe, rerunReason)
 	return nil
 }

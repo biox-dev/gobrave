@@ -66,7 +66,7 @@ func TestPrepareAnalysisForCacheRerunFollowsThePolicyRegistry(t *testing.T) {
 			repo := &graphResetRepoStub{analysis: &types.Analysis{ID: 7, CacheType: testCase.cacheType}}
 			orchestrator := newGraphResetOrchestrator(repo)
 
-			if err := orchestrator.prepareAnalysisForCacheRerun(context.Background(), 7); err != nil {
+			if err := orchestrator.prepareAnalysisForCacheRerun(context.Background(), repo.analysis); err != nil {
 				t.Fatalf("prepare failed: %v", err)
 			}
 			if repo.clearedNodes != testCase.wantReset {
@@ -87,7 +87,7 @@ func TestPrepareAnalysisForCacheRerunWithoutAnalysis(t *testing.T) {
 	repo := &graphResetRepoStub{}
 	orchestrator := newGraphResetOrchestrator(repo)
 
-	if err := orchestrator.prepareAnalysisForCacheRerun(context.Background(), 7); err != nil {
+	if err := orchestrator.prepareAnalysisForCacheRerun(context.Background(), nil); err != nil {
 		t.Fatalf("prepare failed: %v", err)
 	}
 	if repo.clearedNodes || repo.clearedEdges {

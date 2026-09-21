@@ -9,6 +9,7 @@ import (
 	"time"
 
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
+	"github.com/biox-dev/gobrave/internal/dag/trace"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 )
@@ -155,6 +156,7 @@ func (o *dynamicDagOrchestratorV2) prepareNodesForResume(ctx context.Context, an
 		if !shouldReset {
 			continue
 		}
+		fromStatus := node.Status
 		if err := o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
 			"status":        targetStatus,
 			"started_at":    nil,
@@ -164,6 +166,9 @@ func (o *dynamicDagOrchestratorV2) prepareNodesForResume(ctx context.Context, an
 		}); err != nil {
 			return err
 		}
+		o.trace(node.AnalysisID, nodeRecord(trace.LevelWarn, traceEventNodeResumeReset, node).
+			Set(trace.ColumnStatus, targetStatus).
+			Set(trace.ColumnRerunReason, fmt.Sprintf("reset from %s after crash recovery", strings.TrimSpace(fromStatus))))
 	}
 	return nil
 }
