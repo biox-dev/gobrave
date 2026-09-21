@@ -52,7 +52,14 @@ func (r *fileSystemNodeOutputResolver) Resolve(node *types.AnalysisNode, candida
 	buf, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			logger.Errorf(context.Background(), "output resolve read %s failed: %v", path, err)
+			// Missing is the documented non-error case: a node may legitimately
+			// produce no outputs.json, and the completion path retries this read
+			// while the container's last write becomes visible. It is therefore
+			// logged at debug level - an ERROR here printed one line per retry and
+			// buried the real completion outcome. The outcome is stated once, by
+			// the coordinator, when declared outputs are still missing when the
+			// grace window expires.
+			logger.Debugf(context.Background(), "output resolve: %s not present yet", path)
 			return outputs, true, nil
 		}
 		return outputs, false, []string{fmt.Sprintf("read %s failed: %v", path, err)}

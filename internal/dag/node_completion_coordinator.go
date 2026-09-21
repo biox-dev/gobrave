@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -231,6 +232,15 @@ func (c *NodeCompletionCoordinator) reconcileContainer(ctx context.Context, inst
 
 	outputs, outputErrors := c.buildResolvedOutputs(node, inst)
 	if finalStatus == StatusDone && len(outputErrors) > 0 {
+		// One line per affected node, carrying the container facts that decide
+		// whether this is a real failure (the container exited and produced
+		// nothing) or a visibility problem (it wrote its outputs somewhere this
+		// process cannot read - the node workspace is a hostPath bind, so a pod
+		// scheduled on another cluster node writes to that node's disk). The
+		// per-retry reads are logged at debug level, so this warning is the only
+		// place the outcome is stated.
+		logger.Warnf(ctx, "[NodeCompletionCoordinator] declared outputs missing after grace wait, source=%s analysis_id=%d node_id=%s instance_id=%d runtime_id=%s container_status=%s container_exit_code=%s container_started_at=%v container_finished_at=%v output_dir=%s missing=%s",
+			source, node.AnalysisID, node.NodeID, inst.ID, inst.RuntimeID, inst.Status, formatContainerExitCode(inst), inst.StartedAt, inst.FinishedAt, node.OutputDir, strings.Join(outputErrors, "; "))
 		finalStatus = StatusFailed
 		if exitCode == 0 {
 			exitCode = 1
@@ -291,8 +301,8 @@ func (c *NodeCompletionCoordinator) buildResolvedOutputs(node *types.AnalysisNod
 // prevents a file that lands a moment later from being reported as a missing
 // output and flipping the node from done to failed.
 const (
-	nodeOutputsGraceWait     = 2 * time.Second
-	nodeOutputsGraceInterval = 250 * time.Millisecond
+	nodeOutputsGraceWait     = 5 * time.Second
+	nodeOutputsGraceInterval = 1 * time.Second
 )
 
 // resolveOutputsWithGrace retries output resolution while a declared output is
@@ -315,6 +325,17 @@ func (c *NodeCompletionCoordinator) resolveOutputsWithGrace(resolver nodeOutputR
 		}
 		time.Sleep(nodeOutputsGraceInterval)
 	}
+}
+
+// formatContainerExitCode renders a container instance's exit code for logs.
+// "none" means the runtime never reported one, which is itself a useful fact: a
+// terminal event that arrived without an exit code (for example a stop request or
+// a workload that was deleted) looks very different from a real process exit.
+func formatContainerExitCode(inst *types.ContainerInstance) string {
+	if inst == nil || inst.ExitCode == nil {
+		return "none"
+	}
+	return strconv.Itoa(*inst.ExitCode)
 }
 
 func defaultContainerOutputs(inst *types.ContainerInstance) map[string]any {
