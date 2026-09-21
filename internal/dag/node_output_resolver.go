@@ -1,12 +1,14 @@
 package dag
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 )
 
@@ -50,6 +52,7 @@ func (r *fileSystemNodeOutputResolver) Resolve(node *types.AnalysisNode, candida
 	buf, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			logger.Errorf(context.Background(), "output resolve read %s failed: %v", path, err)
 			return outputs, true, nil
 		}
 		return outputs, false, []string{fmt.Sprintf("read %s failed: %v", path, err)}
