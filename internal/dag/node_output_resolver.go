@@ -44,7 +44,7 @@ func (r *fileSystemNodeOutputResolver) Resolve(node *types.AnalysisNode, candida
 
 	path, ok := nodeOutputsPath(node)
 	if !ok {
-		return outputs, false, nil
+		return outputs, true, nil
 	}
 
 	buf, err := os.ReadFile(path)
@@ -52,7 +52,7 @@ func (r *fileSystemNodeOutputResolver) Resolve(node *types.AnalysisNode, candida
 		if os.IsNotExist(err) {
 			return outputs, true, nil
 		}
-		return outputs, false, []string{fmt.Sprintf("read %s failed: %v", nodeOutputsFileName, err)}
+		return outputs, false, []string{fmt.Sprintf("read %s failed: %v", path, err)}
 	}
 
 	payload := map[string]any{}

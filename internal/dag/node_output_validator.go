@@ -16,6 +16,22 @@ import (
 // is built from external io_schema JSON and travels through the map-based node
 // payloads shared by every scheduler, so no typed struct is needed here.
 func validateOutputPatterns(node *types.AnalysisNode, resolved map[string]any) []string {
+	handles := missingOutputHandles(node, resolved)
+	if len(handles) == 0 {
+		return nil
+	}
+
+	validationErrors := make([]string, 0, len(handles))
+	for _, handle := range handles {
+		validationErrors = append(validationErrors, fmt.Sprintf("missing output: %s", handle))
+	}
+	return validationErrors
+}
+
+// missingOutputHandles returns the declared output_patterns handles that have no
+// value in resolved, sorted so the result is stable. A node without declared
+// patterns has nothing to be missing, so it returns nil.
+func missingOutputHandles(node *types.AnalysisNode, resolved map[string]any) []string {
 	if node == nil || len(node.OutputPatterns) == 0 {
 		return nil
 	}
@@ -26,12 +42,11 @@ func validateOutputPatterns(node *types.AnalysisNode, resolved map[string]any) [
 	}
 	sort.Strings(handles)
 
-	validationErrors := make([]string, 0)
+	missing := handles[:0]
 	for _, handle := range handles {
-		if _, ok := resolved[handle]; ok {
-			continue
+		if _, ok := resolved[handle]; !ok {
+			missing = append(missing, handle)
 		}
-		validationErrors = append(validationErrors, fmt.Sprintf("missing output: %s", handle))
 	}
-	return validationErrors
+	return missing
 }

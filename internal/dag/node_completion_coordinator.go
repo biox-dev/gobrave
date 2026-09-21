@@ -276,8 +276,8 @@ func (c *NodeCompletionCoordinator) buildResolvedOutputs(node *types.AnalysisNod
 	if resolver == nil {
 		resolver = newFileSystemNodeOutputResolver()
 	}
-	resolved := c.resolveOutputsWithGrace(resolver, node)
-	errs := validateOutputPatterns(node, resolved)
+	resolved, hardErrs := c.resolveOutputsWithGrace(resolver, node)
+	errs := append(hardErrs, validateOutputPatterns(node, resolved)...)
 	return resolved, errs
 }
 
@@ -291,20 +291,27 @@ func (c *NodeCompletionCoordinator) buildResolvedOutputs(node *types.AnalysisNod
 // prevents a file that lands a moment later from being reported as a missing
 // output and flipping the node from done to failed.
 const (
-	nodeOutputsGraceWait     = 5 * time.Second
+	nodeOutputsGraceWait     = 2 * time.Second
 	nodeOutputsGraceInterval = 250 * time.Millisecond
 )
 
-// resolveOutputsWithGrace retries output resolution while outputs.json is
-// reported missing, up to nodeOutputsGraceWait. Read/parse errors (hard
-// failures) return immediately, and the final attempt is always returned as-is
-// so a genuinely absent file still surfaces through validateOutputPatterns.
-func (c *NodeCompletionCoordinator) resolveOutputsWithGrace(resolver nodeOutputResolver, node *types.AnalysisNode) map[string]any {
+// resolveOutputsWithGrace retries output resolution while a declared output is
+// still missing, up to nodeOutputsGraceWait. Read/parse errors (hard failures)
+// return immediately, and the final attempt is always returned as-is so a
+// genuinely absent file still surfaces through validateOutputPatterns.
+//
+// Waiting is limited to nodes that declare output_patterns and are still missing
+// a handle, so a node that legitimately produces no outputs.json does not pay
+// the grace window.
+func (c *NodeCompletionCoordinator) resolveOutputsWithGrace(resolver nodeOutputResolver, node *types.AnalysisNode) (map[string]any, []string) {
 	deadline := time.Now().Add(nodeOutputsGraceWait)
 	for {
 		resolved, missing, errs := resolver.Resolve(node, map[string]any{})
-		if !missing || len(errs) > 0 || !time.Now().Before(deadline) {
-			return resolved
+		if len(errs) > 0 || !missing || !time.Now().Before(deadline) {
+			return resolved, errs
+		}
+		if len(missingOutputHandles(node, resolved)) == 0 {
+			return resolved, nil
 		}
 		time.Sleep(nodeOutputsGraceInterval)
 	}
