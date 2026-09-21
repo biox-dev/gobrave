@@ -29,6 +29,12 @@ import (
 // run) keeps the call sites in dag_orchestrator_v2.go to
 // `o.trace(analysisID, record)`, so instrumenting another step stays a one-line
 // change rather than a signature change through the call chain.
+//
+// Rows come from two sources, both on the run goroutine: the scheduler's own
+// decisions (node.create / node.demote / node.rerun / node.abort / node.submit,
+// plus cache.reset), and the runtime node events delivered to the run's sink
+// (node.running / node.completed / node.failed), which are the only notice the
+// scheduler gets that a node actually started or reached a terminal state.
 const (
 	traceEventRunBegin        = "run.begin"
 	traceEventRunResume       = "run.resume"
@@ -38,6 +44,9 @@ const (
 	traceEventNodeRerun       = "node.rerun"
 	traceEventNodeAbort       = "node.abort"
 	traceEventNodeSubmit      = "node.submit"
+	traceEventNodeRunning     = "node.running"
+	traceEventNodeCompleted   = "node.completed"
+	traceEventNodeFailed      = "node.failed"
 	traceEventSubmitCancelled = "node.submit_cancelled"
 	traceEventNodeResumeReset = "node.resume_reset"
 	traceEventCacheReset      = "cache.reset"
@@ -139,4 +148,92 @@ func nodeEventLevel(status string) string {
 		return trace.LevelWarn
 	}
 	return trace.LevelInfo
+}
+
+// nodeTraceFilter is the dynamic scheduler's sink whitelist.
+//
+// It is the shared scheduling filter plus the running transition. Scheduling only
+// needs the terminal transitions - they are the only ones that can change derived
+// readiness - but the trace also wants to show that a node actually started, and
+// that event is dropped before it would ever reach the sink.
+//
+// Only this scheduler's sink is widened, so the dataflow scheduler keeps the
+// original, narrower delivery set.
+func nodeTraceFilter(evt dagruntime.RuntimeEvent) bool {
+	if dagruntime.SchedulerEventFilter(evt) {
+		return true
+	}
+	return isNodeRunningEvent(evt)
+}
+
+// isNodeRunningEvent reports whether evt is the running transition: the one
+// delivered event that cannot change derived readiness.
+func isNodeRunningEvent(evt dagruntime.RuntimeEvent) bool {
+	return strings.TrimSpace(evt.Name) == dagruntime.EventNodeRunning
+}
+
+// runtimeEventToTraceEvent maps a bus event to its trace event name and level.
+//
+// The two vocabularies are kept apart on purpose: trace rows are read by people
+// and grepped by scripts, so their names stay stable even if bus event names are
+// renamed.
+func runtimeEventToTraceEvent(name string) (string, string) {
+	switch strings.TrimSpace(name) {
+	case dagruntime.EventNodeRunning:
+		return traceEventNodeRunning, trace.LevelInfo
+	case dagruntime.EventNodeFailed:
+		return traceEventNodeFailed, trace.LevelError
+	default:
+		return traceEventNodeCompleted, trace.LevelInfo
+	}
+}
+
+// traceNodeEvent records one runtime node transition: the node started running, or
+// it reached a terminal state.
+//
+// The event is the only notice the scheduler gets of those states - the node
+// dispatcher and the completion coordinator are the ones that drive them - so the
+// row is written here, in the run loop, where the event is already delivered,
+// instead of being polled out of the node table.
+//
+// The node row is re-read rather than trusting the event payload so a traced row
+// carries the same identity columns (analysis_node_id, node_name, sample_id,
+// script_id) as every other node row in the file, and so the status is the one
+// that was actually persisted.
+func (o *dynamicDagOrchestratorV2) traceNodeEvent(ctx context.Context, analysisID int64, evt dagruntime.RuntimeEvent) {
+	tracer := o.tracer(analysisID)
+	if tracer == nil {
+		// Untraced run: skip the lookup rather than pay for a row nobody keeps.
+		return
+	}
+
+	event, level := runtimeEventToTraceEvent(evt.Name)
+	node, err := o.repo.GetAnalysisNodeByID(ctx, evt.AnalysisNodeID)
+	if err != nil || node == nil {
+		// Degrade instead of dropping the row: node_id still identifies the node, and
+		// the payload still carries the status and the reason.
+		logger.Debugf(ctx,
+			"[DynamicDagOrchestratorV2] resolve traced node failed, analysis_id=%d analysis_node_pk=%d err=%v",
+			analysisID, evt.AnalysisNodeID, err)
+		tracer.Log(trace.New(level, event).
+			Set(trace.ColumnNodeID, evt.NodeID).
+			Set(trace.ColumnStatus, dynamicToString(evt.Payload["status"])).
+			Set(trace.ColumnError, dynamicToString(evt.Payload["error"])))
+		return
+	}
+
+	status := strings.TrimSpace(dynamicToString(evt.Payload["status"]))
+	if status == "" {
+		// A running transition and the dispatcher's failure path carry no status in
+		// the payload; the persisted row is the authoritative value.
+		status = node.Status
+	}
+	errorMessage := strings.TrimSpace(dynamicToString(evt.Payload["error"]))
+	if errorMessage == "" {
+		errorMessage = strings.TrimSpace(node.ErrorMessage)
+	}
+
+	tracer.Log(nodeRecord(level, event, node).
+		Set(trace.ColumnStatus, status).
+		Set(trace.ColumnError, errorMessage))
 }

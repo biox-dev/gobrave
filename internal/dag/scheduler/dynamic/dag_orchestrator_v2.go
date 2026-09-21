@@ -201,9 +201,10 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 
 	// Register the analysis-scoped sink before the first event is published so no
 	// runtime event for this run can be observed without a sink. The filter keeps
-	// this loop's own echoes (node.submitted, dag.*) and the node.running noise out
-	// of the sink, so it only wakes for events that can advance dependencies.
-	sink := o.router.RegisterWithFilter(analysisID, dagruntime.SchedulerEventFilter)
+	// this loop's own echoes (node.submitted, dag.*) and the node.state_changed
+	// noise out of the sink, while still delivering the node lifecycle events the
+	// trace records - see nodeTraceFilter.
+	sink := o.router.RegisterWithFilter(analysisID, nodeTraceFilter)
 
 	o.publishDagRuntimeEvent(dagruntime.EventDagStarted, analysisID, nil)
 
@@ -396,13 +397,23 @@ func (o *dynamicDagOrchestratorV2) runDynamicLoop(ctx context.Context, analysisI
 			if err := o.pumpReadyQueue(ctx, runtime, analysisID, plan, pool); err != nil {
 				return err
 			}
-		case <-sink.Events():
-			// The sink is registered with SchedulerEventFilter, so only a node
-			// Completed/Failed event ever reaches this arm. Readiness is derived, so the
-			// event is purely a wake signal: a full upstream-first pass observes the node's
-			// new persisted state and advances whichever dependants it unlocked.
+		case evt := <-sink.Events():
+			// The sink is registered with nodeTraceFilter, so this arm only sees node
+			// lifecycle events. Tracing here is what puts a node's running / done / failed
+			// status in the run table: the dispatcher and the completion coordinator drive
+			// those states, and this event is the only notice the scheduler gets of them.
+			o.traceNodeEvent(ctx, analysisID, evt)
 			// 事件缓冲区溢出意味着本批事件可能已丢失，但全量对账本身就是幂等的，无需特殊处理。
-			_ = sink.ConsumeDirty()
+			dirty := sink.ConsumeDirty()
+			// Readiness is derived from persisted state, so the event is also the wake signal
+			// for a full upstream-first pass that advances whichever dependants the node
+			// unlocked. A running transition cannot change that readiness - every readiness
+			// query treats running and submitted alike - so it skips the pass, which is what
+			// keeps the extra delivery the trace asked for almost free. A dirty buffer still
+			// forces the pass, because events may have been lost.
+			if isNodeRunningEvent(evt) && !dirty {
+				continue
+			}
 			if err := o.reconcilePlan(ctx, analysis, plan); err != nil {
 				return err
 			}
