@@ -291,7 +291,7 @@ func (c *NodeCompletionCoordinator) buildResolvedOutputs(node *types.AnalysisNod
 // prevents a file that lands a moment later from being reported as a missing
 // output and flipping the node from done to failed.
 const (
-	nodeOutputsGraceWait     = 3 * time.Second
+	nodeOutputsGraceWait     = 2 * time.Second
 	nodeOutputsGraceInterval = 250 * time.Millisecond
 )
 
