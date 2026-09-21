@@ -146,7 +146,7 @@ func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req Out
 		return
 	}
 
-	logger.Infof(ctx, "[ContainerCreateWorker] handling create request, outbox_id=%d instance_id=%d name=%s",
+	logger.Infof(ctx, "[ContainerCreateWorker] handling create request, outbox_id=%d instance_id=%d",
 		req.OutboxID, payload.ContainerInstanceID)
 
 	execCtx := ctx
@@ -729,7 +729,11 @@ type ownerRuntimeContext struct {
 }
 
 func (w *ContainerCreateWorker) loadOwnerRuntimeContext(ctx context.Context, ownerType types.ContainerOwnerType, ownerID int64) *ownerRuntimeContext {
-	ownerCtx := &ownerRuntimeContext{}
+	// project starts non-nil so callers can read mounts/envs without a nil check.
+	// It is only ever replaced by a successful lookup: a failed or skipped lookup
+	// (no project id, no repository) must not turn into a nil dereference when the
+	// create path unconditionally reads ownerCtx.project.
+	ownerCtx := &ownerRuntimeContext{project: &types.Project{}}
 
 	switch ownerType {
 	case types.ContainerOwnerAppSession:

@@ -632,7 +632,9 @@ func newTestManagerWithWorker(repo *mockContainerRepo, rt *dockerMockRuntime) (*
 	reg.Register("docker", rt)
 	// imgMgr := NewImageManager(repo, reg)
 	mgr := NewContainerManager(repo, nil, nil, nil, reg, nil, NewDefaultContainerRuntimeResolver(), nil, nil)
-	worker := NewContainerCreateWorker(repo, nil, nil, nil, reg, NewDefaultContainerRuntimeResolver(), nil, nil)
+	// The worker performs the create transition through the manager, so it must be
+	// given the same one instead of a nil dependency.
+	worker := NewContainerCreateWorker(repo, nil, nil, nil, reg, NewDefaultContainerRuntimeResolver(), mgr, nil)
 	return mgr, worker
 }
 

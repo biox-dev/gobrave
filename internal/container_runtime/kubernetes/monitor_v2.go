@@ -236,6 +236,19 @@ func (m *kubernetesMonitorV2) handleJobEvent(sub *monitorSubscription, job *batc
 	}
 	// Terminating 也会触发 update 事件
 	if job.Spec.Suspend != nil && *job.Spec.Suspend {
+		if !jobHasStarted(job) {
+			// A suspended job that never started is not an exit: jobs are created
+			// suspended (see createJob) and unsuspended by Start, so this is the
+			// pre-start object an informer delta or snapshot can still carry after
+			// the subscription was registered. Reporting it as ContainerExited
+			// (exit 0) told the owner the container had finished successfully
+			// within milliseconds of being created, while the real container was
+			// still running - which surfaced as an intermittent "output validation
+			// failed: missing output" node failure. Wait for the actual outcome
+			// instead; a stop requested before the job ever started is converged by
+			// the stop sweep, not by an exit event.
+			return
+		}
 		if sub.state.emitAndClose(func() {
 			m.runtime.emitEvent("ContainerExited", sub.runtimeID, "0")
 		}) {
@@ -303,6 +316,11 @@ func (m *kubernetesMonitorV2) checkJobSnapshot(sub *monitorSubscription) bool {
 		})
 	}
 	if job.Spec.Suspend != nil && *job.Spec.Suspend {
+		// Same guard as handleJobEvent: a job that is suspended because it has not
+		// started yet is not a finished run.
+		if !jobHasStarted(job) {
+			return false
+		}
 		return sub.state.emitAndClose(func() {
 			m.runtime.emitEvent("ContainerExited", sub.runtimeID, "0")
 		})

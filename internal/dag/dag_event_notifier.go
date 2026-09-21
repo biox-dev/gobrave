@@ -95,7 +95,7 @@ func (n *DagRuntimeEventNotifier) Handle(evt event.Event) {
 			if strings.Contains(err.Error(), "no_client_for_user:") {
 				continue
 			}
-			logger.Warnf(ctx, "[Realtime] push dag event failed user_id=%s analysis_id=%s event=%s err=%v", userID, runtimeEvent.AnalysisID, runtimeEvent.Name, err)
+			logger.Warnf(ctx, "[Realtime] push dag event failed user_id=%s analysis_id=%d event=%s err=%v", userID, runtimeEvent.AnalysisID, runtimeEvent.Name, err)
 		}
 	}
 }
@@ -157,7 +157,7 @@ func (n *DagRuntimeEventNotifier) buildRealtimeMessage(ctx context.Context, runt
 	case EventNodeSubmitted, EventNodeRunning, EventNodeStateChange, EventNodeCompleted, EventNodeFailed:
 		analysisNodeID, err := n.resolveAnalysisNodeID(ctx, runtimeEvent)
 		if err != nil {
-			logger.Warnf(ctx, "[Realtime] resolve analysis node id failed analysis_id=%s node_id=%s event=%s err=%v", runtimeEvent.AnalysisID, runtimeEvent.NodeID, runtimeEvent.Name, err)
+				logger.Warnf(ctx, "[Realtime] resolve analysis node id failed analysis_id=%d node_id=%s event=%s err=%v", runtimeEvent.AnalysisID, runtimeEvent.NodeID, runtimeEvent.Name, err)
 			return nil, false
 		}
 
