@@ -2,6 +2,9 @@ package utils
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +14,8 @@ import (
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 func TestEnsureGitRepo(t *testing.T) {
@@ -883,33 +888,119 @@ func TestRedactGitURLCredentials(t *testing.T) {
 	}
 }
 
-// resolveGitPushAuth 只在能拿到真正可用的凭据时才返回 AuthMethod，其余情况一律匿名：
-// 本地路径绝不能带认证，未带凭据的 https 也不带（否则 go-git 会发出空的 BasicAuth）。
-func TestResolveGitPushAuth(t *testing.T) {
+// ResolveGitAuth 的契约：
+//   - 本地路径 / file:// / 不带凭据的 https 一律返回 nil（匿名），绝不能带空 BasicAuth；
+//   - 带凭据的 https 返回 BasicAuth；
+//   - ssh **永远不返回 nil**：nil 会让 go-git 回落到 ssh-agent 并报出
+//     “error creating SSH agent: SSH_AUTH_SOCK not-specified”，而 ssh 取不到凭据时
+//     必须给出可操作的错误。
+func TestResolveGitAuth(t *testing.T) {
+	// 隔离环境：默认私钥不存在、没有 ssh-agent、没有显式私钥。
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(envSSHAuthSock, "")
+	t.Setenv(envGitSSHKey, "")
+	t.Setenv(envGitSSHKeyPassphrase, "")
+
 	for _, raw := range []string{
 		"",
 		"https://github.com/owner/repo.git",
 		"/tmp/store/remote.git",
 		"file:///tmp/store/remote.git",
 	} {
-		auth, err := resolveGitPushAuth(raw)
+		auth, err := ResolveGitAuth(raw)
 		if err != nil {
-			t.Fatalf("resolveGitPushAuth(%q) error = %v", raw, err)
+			t.Fatalf("ResolveGitAuth(%q) error = %v", raw, err)
 		}
 		if auth != nil {
-			t.Fatalf("resolveGitPushAuth(%q) = %v, want nil (anonymous)", raw, auth)
+			t.Fatalf("ResolveGitAuth(%q) = %v, want nil (anonymous)", raw, auth)
 		}
 	}
 
-	auth, err := resolveGitPushAuth("https://alice:ghp_secret@github.com/owner/repo.git")
+	auth, err := ResolveGitAuth("https://alice:ghp_secret@github.com/owner/repo.git")
 	if err != nil {
-		t.Fatalf("resolveGitPushAuth(https with creds) error = %v", err)
+		t.Fatalf("ResolveGitAuth(https with creds) error = %v", err)
 	}
 	basic, ok := auth.(*githttp.BasicAuth)
 	if !ok {
-		t.Fatalf("resolveGitPushAuth(https with creds) = %T, want *http.BasicAuth", auth)
+		t.Fatalf("ResolveGitAuth(https with creds) = %T, want *http.BasicAuth", auth)
 	}
 	if basic.Username != "alice" || basic.Password != "ghp_secret" {
 		t.Fatalf("basic auth = %s/%s, want alice/ghp_secret", basic.Username, basic.Password)
 	}
+
+	// ssh 且完全没有可用凭据：必须报错，不能返回 nil（nil 会触发 go-git 的 agent 回落）。
+	if _, err := ResolveGitAuth("git@github.com:owner/repo.git"); err == nil {
+		t.Fatal("ResolveGitAuth(ssh without credentials) = nil error, want actionable error")
+	}
+}
+
+// TestResolveGitAuthSSHKeyFile 覆盖 ssh 的三种取密钥方式：显式 $GIT_SSH_KEY、
+// ~/.ssh 下的默认私钥、地址里的用户名。
+func TestResolveGitAuthSSHKeyFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(envSSHAuthSock, "")
+	t.Setenv(envGitSSHKeyPassphrase, "")
+
+	// 1) $GIT_SSH_KEY 指定的私钥优先，用户名取 ssh 地址里的用户。
+	explicitKey := writeTestSSHKey(t, t.TempDir(), "id_ed25519")
+	t.Setenv(envGitSSHKey, explicitKey)
+	keys := mustSSHKeyAuth(t, "alice@github.com:owner/repo.git")
+	if keys.User != "alice" {
+		t.Fatalf("ssh user = %q, want alice (from address)", keys.User)
+	}
+	if keys.HostKeyCallback == nil {
+		t.Fatal("HostKeyCallback is nil: go-git would fail when known_hosts is missing")
+	}
+
+	// 2) 地址没写用户名时用默认 ssh 用户（GitHub / Gitee 都是 git）。
+	if keys := mustSSHKeyAuth(t, "git@github.com:owner/repo.git"); keys.User != defaultSSHUser {
+		t.Fatalf("default ssh user = %q, want %q", keys.User, defaultSSHUser)
+	}
+
+	// 3) 未配置 $GIT_SSH_KEY 时回退 ~/.ssh 默认私钥（bash 里能直接 push 靠的就是它）。
+	t.Setenv(envGitSSHKey, "")
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("create ~/.ssh: %v", err)
+	}
+	writeTestSSHKey(t, sshDir, "id_ed25519")
+	mustSSHKeyAuth(t, "git@github.com:owner/repo.git")
+
+	// 4) 显式配置的私钥读不到时必须报错，而不是悄悄换用别的凭据。
+	t.Setenv(envGitSSHKey, filepath.Join(t.TempDir(), "missing_key"))
+	if _, err := ResolveGitAuth("git@github.com:owner/repo.git"); err == nil {
+		t.Fatalf("ResolveGitAuth(%s=missing) = nil error, want error", envGitSSHKey)
+	}
+}
+
+func mustSSHKeyAuth(t *testing.T, rawURL string) *gitssh.PublicKeys {
+	t.Helper()
+	auth, err := ResolveGitAuth(rawURL)
+	if err != nil {
+		t.Fatalf("ResolveGitAuth(%q) error = %v", rawURL, err)
+	}
+	keys, ok := auth.(*gitssh.PublicKeys)
+	if !ok {
+		t.Fatalf("ResolveGitAuth(%q) = %T, want *ssh.PublicKeys", rawURL, auth)
+	}
+	return keys
+}
+
+// writeTestSSHKey 生成一个未加密的 ed25519 私钥文件（OpenSSH 格式）。
+func writeTestSSHKey(t *testing.T, dir, name string) string {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ed25519 key: %v", err)
+	}
+	block, err := gossh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatalf("marshal private key: %v", err)
+	}
+	keyPath := filepath.Join(dir, name)
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatalf("write private key: %v", err)
+	}
+	return keyPath
 }

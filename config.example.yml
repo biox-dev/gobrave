@@ -70,6 +70,11 @@ git:
   # 留空时回退到默认值 gobrave / gobrave@123.com
   user: gobrave
   email: gobrave@123.com
+  # ssh 远端（git@gitee.com:owner/repo.git）的凭据由进程环境提供，不在这里配置：
+  #   GIT_SSH_KEY             私钥文件路径；留空时依次尝试 ssh-agent（SSH_AUTH_SOCK）
+  #                           与 ~/.ssh/id_ed25519 / id_ecdsa / id_rsa
+  #   GIT_SSH_KEY_PASSPHRASE  私钥口令，私钥未加密时留空
+  # https 远端可把 token 写进地址（https://<user>:<token>@gitee.com/owner/repo.git）。
 
 realtime:
   # ws | sse

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 // defaultGitCommitMessage 是调用方未提供 commit message 时的兜底文案。
@@ -346,7 +348,7 @@ func fetchFromLocalRepo(ctx context.Context, repo *git.Repository, opts *git.Fet
 
 	// 源仓库地址取自 remote 配置；远端 URL 或未配置 remote 时 PlainOpen 会失败，
 	// 此时保留原始错误。
-	source, openErr := git.PlainOpen(remoteURL(repo, opts.RemoteName))
+	source, openErr := git.PlainOpen(RemoteURL(repo, opts.RemoteName))
 	if openErr != nil {
 		return err
 	}
@@ -389,8 +391,9 @@ func pruneLocalRefsUnknownToSource(repo, source *git.Repository) error {
 	return nil
 }
 
-// remoteURL 返回 repo 中指定 remote 的第一个地址，取不到时返回空串。
-func remoteURL(repo *git.Repository, remoteName string) string {
+// RemoteURL 返回 repo 中指定 remote 的第一个地址，取不到时返回空串。
+// 调用方（handler 的 clone / pull 路径）用它把地址交给 ResolveGitAuth 推导凭据。
+func RemoteURL(repo *git.Repository, remoteName string) string {
 	cfg, err := repo.Config()
 	if err != nil {
 		return ""
@@ -765,10 +768,18 @@ func FetchBareRepoFromRemote(ctx context.Context, repoPath, remoteName string) e
 	// 还没有任何提交的 store（headErr != nil）也允许 fetch 建分支，只是无法判断“已是最新”。
 	headHash, headErr := headCommitHash(repo)
 
+	// 远端是 ssh 地址时必须显式带凭据，否则 go-git 会回落到 ssh-agent 并报出
+	// “error creating SSH agent”（见 resolveSSHAuth 的说明）。本地路径返回 nil，匿名即可。
+	auth, err := ResolveGitAuth(RemoteURL(repo, remoteName))
+	if err != nil {
+		return fmt.Errorf("resolve credentials for remote %q of %q: %w", remoteName, repoPath, err)
+	}
+
 	if fetchErr := fetchFromLocalRepo(ctx, repo, &git.FetchOptions{
 		RemoteName: remoteName,
 		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec("+refs/heads/*:refs/remotes/" + remoteName + "/*")},
 		Force:      true,
+		Auth:       auth,
 	}); fetchErr != nil && !stderrs.Is(fetchErr, git.NoErrAlreadyUpToDate) {
 		return fmt.Errorf("fetch %q: %w", repoPath, fetchErr)
 	}
@@ -990,8 +1001,9 @@ var ErrGitRepoHasNoCommit = stderrs.New("git repository has no commit to push")
 //     （允许非快进更新）覆盖远端历史 —— GitHub 建仓时自动生成的 README 提交会被顶掉；
 //   - 远端分支已经是同一个提交时 go-git 返回 git.NoErrAlreadyUpToDate，这里转成
 //     (false, nil)：没有新内容可推送属于幂等成功，调用方据此提示「已是最新」而不是报错；
-//   - 认证方式由 remote 地址推导（见 resolveGitPushAuth），本地路径 / file:// 走匿名，
-//     因此单测可以直接把临时裸仓库当远端。
+//   - 认证方式由 remote 地址推导（见 ResolveGitAuth），本地路径 / file:// 走匿名，
+//     因此单测可以直接把临时裸仓库当远端；ssh 地址取不到凭据时返回明确错误而不是
+//     交给 go-git 匿名（匿名 ssh 不存在，见 resolveSSHAuth）。
 //
 // 仓库还没有提交（组件尚未发布到 store）时返回 ErrGitRepoHasNoCommit。
 func PushBareRepoToRemote(ctx context.Context, repoPath, remoteName string) (branch string, pushed bool, err error) {
@@ -1026,9 +1038,9 @@ func PushBareRepoToRemote(ctx context.Context, repoPath, remoteName string) (bra
 		return branch, false, err
 	}
 
-	auth, err := resolveGitPushAuth(remoteURL)
+	auth, err := ResolveGitAuth(remoteURL)
 	if err != nil {
-		return branch, false, err
+		return branch, false, fmt.Errorf("resolve credentials for remote %q (%s): %w", remoteName, redactGitURLCredentials(remoteURL), err)
 	}
 
 	// "+" 前缀 = 允许非快进更新；分支名原样写入远端（store 分支跟随本地工作目录）。
@@ -1046,19 +1058,37 @@ func PushBareRepoToRemote(ctx context.Context, repoPath, remoteName string) (bra
 	return branch, true, nil
 }
 
-// resolveGitPushAuth 根据 remote 地址推导推送用的认证方式，取不到可用凭据时返回 nil（匿名）。
+// ssh 凭据相关的环境变量。go-git 的 ssh 传输只会用「显式传入的 AuthMethod」或
+// ssh-agent，不会像 OpenSSH 客户端那样自动读 ~/.ssh/config 与默认私钥，
+// 所以这里按 OpenSSH 的使用习惯补齐，保持「零配置」：没有专门的凭据配置段。
+const (
+	// envGitSSHKey 是推送/拉取使用的 ssh 私钥文件路径（OpenSSH 格式）。
+	envGitSSHKey = "GIT_SSH_KEY"
+	// envGitSSHKeyPassphrase 是私钥口令，私钥未加密时留空。
+	envGitSSHKeyPassphrase = "GIT_SSH_KEY_PASSPHRASE"
+	// envSSHAuthSock 是 ssh-agent 的 socket 路径，由 ssh-agent 自身导出。
+	envSSHAuthSock = "SSH_AUTH_SOCK"
+)
+
+// defaultSSHUser 是 ssh 地址没有写用户名时的兜底（GitHub / Gitee 约定都是 git）。
+const defaultSSHUser = "git"
+
+// defaultSSHKeyFiles 是未显式配置私钥时按顺序尝试的默认私钥文件名（相对 $HOME/.ssh），
+// 顺序与 OpenSSH 客户端一致：ed25519 → ecdsa → rsa。
+var defaultSSHKeyFiles = []string{"id_ed25519", "id_ecdsa", "id_rsa"}
+
+// ResolveGitAuth 根据 git 地址推导传输层认证方式，push / fetch / clone 共用。
 //
 // 认证配置有意保持「零配置」：没有专门的凭据配置段，凭据要么写在 remote 地址里，要么
-// 交给进程环境（ssh-agent）。
+// 交给进程环境。
 //
 //   - http(s) 地址里带用户名（https://<user>:<token>@github.com/owner/repo.git）：
 //     用 BasicAuth 把 token 当密码提交。github / gitee / gitlab 的 personal access token
-//     都是这种用法，也是本服务无需额外配置即可带上凭据的唯一方式；
-//   - ssh 地址（git@host:owner/repo.git、ssh://git@host/owner/repo.git）：
-//     进程设置了 SSH_AUTH_SOCK 且本机能读到 known_hosts 时用 ssh-agent 的密钥；
+//     都是这种用法，也是本服务无需额外配置即可带上凭据的方式；
+//   - ssh 地址（git@host:owner/repo.git、ssh://git@host/owner/repo.git）：见 resolveSSHAuth；
 //   - 其余（本地路径 / file:// / 不带凭据的 https 公共仓库）：返回 nil，由 go-git 匿名访问，
 //     认证失败时 go-git 会返回 ErrAuthenticationRequired / ErrAuthorizationFailed。
-func resolveGitPushAuth(remoteURL string) (transport.AuthMethod, error) {
+func ResolveGitAuth(remoteURL string) (transport.AuthMethod, error) {
 	if strings.TrimSpace(remoteURL) == "" {
 		return nil, nil
 	}
@@ -1076,19 +1106,104 @@ func resolveGitPushAuth(remoteURL string) (transport.AuthMethod, error) {
 		}
 		return &githttp.BasicAuth{Username: endpoint.User, Password: endpoint.Password}, nil
 	case "ssh":
-		if strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK")) == "" {
-			return nil, nil
-		}
-		agentAuth, agentErr := gitssh.NewSSHAgentAuth(endpoint.User)
-		if agentErr != nil {
-			return nil, nil
-		}
-		// ClientConfig 会校验 ssh-agent 与 known_hosts 两者是否可用（缺 known_hosts 时会报错）：
-		// 任一不可用就退回匿名，让 go-git 报出原始错误而不是在这里吞掉。
-		if _, cfgErr := agentAuth.ClientConfig(); cfgErr != nil {
-			return nil, nil
-		}
-		return agentAuth, nil
+		return resolveSSHAuth(endpoint)
 	}
 	return nil, nil
+}
+
+// resolveSSHAuth 为 ssh 地址构造认证方式，取密钥的顺序：
+//
+//  1. $GIT_SSH_KEY 指定的私钥（显式配置优先级最高，解析失败直接报错 —— 通常是口令配错）；
+//  2. ssh-agent（$SSH_AUTH_SOCK 存在时，与 git 命令行一致，agent 里加载好的密钥优先）；
+//  3. $HOME/.ssh 下的默认私钥 id_ed25519 / id_ecdsa / id_rsa（OpenSSH 客户端的默认行为，
+//     bash 里能直接 push 靠的就是它们）。
+//
+// 三者都取不到时**必须返回错误、不能返回 nil**：go-git 对 ssh 传输的 Auth == nil 会回落到
+// DefaultAuthBuilder（即 ssh-agent），agent 不可用时抛出的是
+// `error creating SSH agent: "SSH agent requested but SSH_AUTH_SOCK not-specified"`，
+// 与真实原因（进程里没有任何可用私钥）相去甚远，用户完全无从下手 —— 这正是
+// 「bash 能 push、服务里 push 报 SSH agent 错」的根因。
+func resolveSSHAuth(endpoint *transport.Endpoint) (transport.AuthMethod, error) {
+	user := strings.TrimSpace(endpoint.User)
+	if user == "" {
+		user = defaultSSHUser
+	}
+
+	if keyPath := strings.TrimSpace(os.Getenv(envGitSSHKey)); keyPath != "" {
+		auth, err := newSSHKeyAuth(user, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load ssh key %q from %s: %w", keyPath, envGitSSHKey, err)
+		}
+		return auth, nil
+	}
+
+	if strings.TrimSpace(os.Getenv(envSSHAuthSock)) != "" {
+		// agent 可用性由 NewSSHAgentAuth 自己判断；失败（socket 存在但连不上等）时继续
+		// 尝试默认私钥，而不是立刻放弃。
+		if agentAuth, err := gitssh.NewSSHAgentAuth(user); err == nil {
+			return applySSHHostKeyCallback(agentAuth), nil
+		}
+	}
+
+	for _, name := range defaultSSHKeyFiles {
+		keyPath, err := defaultSSHKeyPath(name)
+		if err != nil {
+			continue
+		}
+		if auth, err := newSSHKeyAuth(user, keyPath); err == nil {
+			return auth, nil
+		}
+	}
+
+	return nil, fmt.Errorf(
+		"no ssh credential available for %s: set %s to a private key file, or start ssh-agent so that %s is exported",
+		endpoint.Host, envGitSSHKey, envSSHAuthSock,
+	)
+}
+
+// newSSHKeyAuth 用私钥文件构造 ssh 认证方式，口令取自 $GIT_SSH_KEY_PASSPHRASE。
+func newSSHKeyAuth(user, keyPath string) (transport.AuthMethod, error) {
+	auth, err := gitssh.NewPublicKeysFromFile(user, keyPath, os.Getenv(envGitSSHKeyPassphrase))
+	if err != nil {
+		return nil, err
+	}
+	return applySSHHostKeyCallback(auth), nil
+}
+
+// defaultSSHKeyPath 返回 $HOME/.ssh/<name>，文件不存在时返回错误。
+func defaultSSHKeyPath(name string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	home = strings.TrimSpace(home)
+	if home == "" {
+		return "", stderrs.New("home directory is not available")
+	}
+	keyPath := filepath.Join(home, ".ssh", name)
+	if _, err := os.Stat(keyPath); err != nil {
+		return "", err
+	}
+	return keyPath, nil
+}
+
+// applySSHHostKeyCallback 给 ssh 认证方式显式装上主机指纹校验回调。
+//
+// HostKeyCallback 留空时 go-git 会去读 ~/.ssh/known_hosts，容器/CI 里通常没有这个文件，
+// 于是 ClientConfig 报 `unable to find any valid known_hosts file` —— 又是一个与真实原因
+// 无关的错误。这里显式处理：本机能读到 known_hosts 就严格校验；读不到就退化为不校验
+// （本服务只推送/拉取用户自己配置的远端地址，保证「能同步」优先）。
+func applySSHHostKeyCallback(auth transport.AuthMethod) transport.AuthMethod {
+	callback, err := gitssh.NewKnownHostsCallback()
+	if err != nil {
+		callback = gossh.InsecureIgnoreHostKey()
+	}
+
+	switch a := auth.(type) {
+	case *gitssh.PublicKeys:
+		a.HostKeyCallback = callback
+	case *gitssh.PublicKeysCallback:
+		a.HostKeyCallback = callback
+	}
+	return auth
 }

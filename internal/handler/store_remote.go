@@ -35,7 +35,8 @@ type publishStoreRemoteRequest struct {
 // 数据库副本极易与实际仓库状态漂移；store 表已删除 url 列。
 //
 // 已配置过的 url（added=false）也会继续执行 push —— 「改了组件再发布一次」正是主路径。
-// 推送凭据走 resolveGitPushAuth 的零配置约定（https 地址里的用户名密码 / ssh-agent），
+// 推送凭据走 utils.ResolveGitAuth 的零配置约定（https 地址里的用户名密码、ssh-agent、
+// $GIT_SSH_KEY 指定的私钥或 ~/.ssh 下的默认私钥），
 // 认证失败等底层错误以 500 + details 返回。
 func (h *StoreHandler) PublishStoreRemote(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {

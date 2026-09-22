@@ -331,6 +331,15 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		return
 	}
 
+	// ssh 地址必须显式带凭据（go-git 不会像 OpenSSH 那样自动读默认私钥，
+	// 不带凭据时会报 “error creating SSH agent”）：在写库之前先解析，
+	// 避免链接失败却在库里留下一条无意义的 store 记录。
+	auth, authErr := utils.ResolveGitAuth(repoURL)
+	if authErr != nil {
+		c.Error(errors.NewInternalServerError("failed to resolve git credentials").WithDetails(authErr.Error()))
+		return
+	}
+
 	// publishURLs, err := buildPublishURLsJSON(repoPath)
 	// if err != nil {
 	// 	c.Error(errors.NewInternalServerError("failed to build publish urls").WithDetails(err.Error()))
@@ -384,7 +393,8 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 	// 远程 store 与本地 publish 的 store 保持同一种形态：裸仓库（没有工作区），
 	// 目录本身就是 git 目录，安装/取封面等统一从 git 对象里读。
 	_, cloneErr := git.PlainCloneContext(c.Request.Context(), targetPath, true, &git.CloneOptions{
-		URL: repoURL,
+		URL:  repoURL,
+		Auth: auth,
 	})
 	if cloneErr != nil {
 		// item.Status = "failed"
@@ -562,7 +572,14 @@ func pullStoreRepo(ctx context.Context, repo *git.Repository, repoPath, remoteNa
 	if err != nil {
 		return err
 	}
-	return wt.PullContext(ctx, &git.PullOptions{RemoteName: remoteName})
+
+	// 远端是 ssh 地址时需要显式带凭据，否则 go-git 会回落到 ssh-agent 并报出
+	// “error creating SSH agent”（见 utils.ResolveGitAuth 的说明）。
+	auth, err := utils.ResolveGitAuth(utils.RemoteURL(repo, remoteName))
+	if err != nil {
+		return err
+	}
+	return wt.PullContext(ctx, &git.PullOptions{RemoteName: remoteName, Auth: auth})
 }
 
 // repoPathFromGitURL 从 git 地址（ssh 或 http(s)）里取出 "<owner>/<repo>"。
