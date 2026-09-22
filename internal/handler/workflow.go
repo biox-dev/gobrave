@@ -1164,7 +1164,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 	storePath := ""
 	storeID := workflow.StoreID
 	StoreURL := ""
-	StoreMessage := ""
+	// StoreMessage := ""
 	if storeID != 0 {
 		store, err := h.storeService.GetStoreByID(c.Request.Context(), storeID)
 		if err != nil {
@@ -1175,7 +1175,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 			// storeVersion = store.Version
 			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
 			StoreURL = store.URL
-			StoreMessage = store.Message
+			// StoreMessage = store.Message
 		}
 
 	}
@@ -1194,7 +1194,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		WorkflowPath: workflowPath,
 		GitState:     &gitState,
 		StoreURL:     StoreURL,
-		StoreMessage: StoreMessage,
+		// StoreMessage: StoreMessage,
 	}
 
 	c.JSON(http.StatusOK, workflowVersion)
@@ -1238,7 +1238,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 	storeID := script.StoreID
 	storePath := ""
 	storeUrl := ""
-	storeMessage := ""
+	// storeMessage := ""
 	if storeID != 0 {
 		store, err := h.storeService.GetStoreByID(c.Request.Context(), storeID)
 		if err != nil {
@@ -1249,7 +1249,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 			// storeVersion = store.Version
 			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
 			storeUrl = store.URL
-			storeMessage = store.Message
+			// storeMessage = store.Message
 		}
 	}
 	project, err := h.projectService.GetProjectByID(c.Request.Context(), script.ProjectID)
@@ -1265,12 +1265,12 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 	scriptVersion := &types.ScriptVersion{
 		Script: *script,
 		// StoreVersion: storeVersion,
-		StorePath:    storePath,
-		ScriptPath:   scriptPath,
-		IOSchema:     string(ioSchema),
-		GitState:     &gitState,
-		StoreURL:     storeUrl,
-		StoreMessage: storeMessage,
+		StorePath:  storePath,
+		ScriptPath: scriptPath,
+		IOSchema:   string(ioSchema),
+		GitState:   &gitState,
+		StoreURL:   storeUrl,
+		// StoreMessage: storeMessage,
 	}
 
 	c.JSON(http.StatusOK, scriptVersion)

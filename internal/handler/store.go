@@ -359,8 +359,8 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		Img:      strings.TrimSpace(req.Img),
 		// PublishURLs: publishURLs,
 		// Version:     strings.TrimSpace(req.Version),
-		Message: strings.TrimSpace(req.Message),
-		Log:     fmt.Sprintf("clone %s %s", repoURL, targetPath),
+		// Message: strings.TrimSpace(req.Message),
+		Log: fmt.Sprintf("clone %s %s", repoURL, targetPath),
 	}
 
 	if err := h.storeService.CreateStore(c.Request.Context(), item); err != nil {
@@ -375,7 +375,7 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 	})
 	if cloneErr != nil {
 		// item.Status = "failed"
-		item.Message = cloneErr.Error()
+		// item.Message = cloneErr.Error()
 		item.Log = cloneErr.Error()
 		if updateErr := h.storeService.UpdateStore(c.Request.Context(), item); updateErr != nil {
 			c.Error(errors.NewInternalServerError("git clone failed and failed to update store status").WithDetails(fmt.Sprintf("clone err: %v; update err: %v", cloneErr, updateErr)))
@@ -387,7 +387,7 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 
 	if metadataErr := hydrateStoreMetadataFromStoreFiles(targetPath, item); metadataErr != nil {
 		// item.Status = "failed"
-		item.Message = metadataErr.Error()
+		// item.Message = metadataErr.Error()
 		item.Log = metadataErr.Error()
 		if updateErr := h.storeService.UpdateStore(c.Request.Context(), item); updateErr != nil {
 			c.Error(errors.NewInternalServerError("failed to parse store metadata and failed to update store status").WithDetails(fmt.Sprintf("metadata err: %v; update err: %v", metadataErr, updateErr)))
@@ -457,7 +457,7 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 	if pullErr != nil && !stderrs.Is(pullErr, git.NoErrAlreadyUpToDate) {
 		// item.Status = "done"
 		item.Log = pullErr.Error()
-		item.Message = pullErr.Error()
+		// item.Message = pullErr.Error()
 		if updateErr := h.storeService.UpdateStore(c.Request.Context(), item); updateErr != nil {
 			c.Error(errors.NewInternalServerError("git pull failed and failed to update store info").WithDetails(fmt.Sprintf("pull err: %v; update err: %v", pullErr, updateErr)))
 			return
@@ -468,7 +468,7 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 
 	if metadataErr := hydrateStoreMetadataFromStoreFiles(targetPath, item); metadataErr != nil {
 		item.Log = metadataErr.Error()
-		item.Message = metadataErr.Error()
+		// item.Message = metadataErr.Error()
 		if updateErr := h.storeService.UpdateStore(c.Request.Context(), item); updateErr != nil {
 			c.Error(errors.NewInternalServerError("failed to parse store metadata and failed to update store info").WithDetails(fmt.Sprintf("metadata err: %v; update err: %v", metadataErr, updateErr)))
 			return
@@ -480,10 +480,10 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 	// item.Status = "done"
 	if stderrs.Is(pullErr, git.NoErrAlreadyUpToDate) {
 		item.Log = "already up to date"
-		item.Message = "already up to date"
+		// item.Message = "already up to date"
 	} else {
 		item.Log = "pull completed"
-		item.Message = "pull completed"
+		// item.Message = "pull completed"
 	}
 
 	if err := h.storeService.UpdateStore(c.Request.Context(), item); err != nil {
@@ -675,10 +675,10 @@ func hydrateStoreMetadataFromStoreFiles(storeDir string, item *types.Store) erro
 			stringValueFromMap(payload.Workflow, "img"),
 			item.Img,
 		)
-		item.Message = firstNonEmptyString(
-			stringValueFromMap(payload.Workflow, "message"),
-			item.Message,
-		)
+		// item.Message = firstNonEmptyString(
+		// 	stringValueFromMap(payload.Workflow, "message"),
+		// 	item.Message,
+		// )
 		return nil
 
 	case "script":
@@ -708,10 +708,10 @@ func hydrateStoreMetadataFromStoreFiles(storeDir string, item *types.Store) erro
 		// 	stringValueFromMap(payload.Script, "version"),
 		// 	item.Version,
 		// )
-		item.Message = firstNonEmptyString(
-			stringValueFromMap(payload.Script, "message"),
-			item.Message,
-		)
+		// item.Message = firstNonEmptyString(
+		// 	stringValueFromMap(payload.Script, "message"),
+		// 	item.Message,
+		// )
 		return nil
 	}
 

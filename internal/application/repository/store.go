@@ -60,7 +60,7 @@ func (r *storeRepository) UpdateStore(ctx context.Context, item *types.Store) er
 		// "publish_urls": item.PublishURLs,
 		"log": item.Log,
 		// "version":      item.Version,
-		"message": item.Message,
+		// "message": item.Message,
 	}).Error
 }
 

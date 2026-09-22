@@ -34,7 +34,7 @@ type Store struct {
 	Log string `json:"log" gorm:"type:longtext"`
 
 	// Version string `json:"version" gorm:"type:varchar(255)"`
-	Message string `json:"message" gorm:"type:longtext"`
+	// Message string `json:"message" gorm:"type:longtext"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

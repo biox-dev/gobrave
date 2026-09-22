@@ -160,7 +160,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		Img:      workflow.Img,
 		// PublishURLs: publishURLsJSON,
 		// Version:     req.Version,
-		Message: req.Message,
+		// Message: req.Message,
 	}
 
 	if err := os.MkdirAll(storePath, 0o755); err != nil {
@@ -211,12 +211,15 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
 		return
 	}
+	if req.Message == "" {
+		req.Message = fmt.Sprintf("publish workflow %s", workflow.WorkflowID)
+	}
 	if _, err := codec.WriteCommitWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
 		WorkflowPK:    workflow.ID,
 		ProjectID:     project.ProjectID,
 		BaseDir:       h.storageBaseDir(),
 		WorkflowDir:   workflowSourceDir,
-		CommitMessage: fmt.Sprintf("publish workflow %s", workflow.WorkflowID),
+		CommitMessage: req.Message,
 	}); err != nil {
 		if stderrs.Is(err, interfaces.ErrInvalidDagDefinitionJSON) {
 			c.Error(errors.NewValidationError("dag_definition is not valid JSON format"))
@@ -314,7 +317,7 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		Img:      script.Img,
 		// PublishURLs: publishURLsJSON,
 		// Version:     req.Version,
-		Message: req.Message,
+		// Message: req.Message,
 	}
 
 	if script.Tags != "" {
@@ -368,10 +371,13 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
 		return
 	}
+	if req.Message == "" {
+		req.Message = fmt.Sprintf("publish script %s", script.ScriptID)
+	}
 	if _, err := codec.WriteCommitScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
 		ScriptPK:      script.ID,
 		ScriptDir:     sourceScriptDir,
-		CommitMessage: fmt.Sprintf("publish script %s", script.ScriptID),
+		CommitMessage: req.Message,
 	}); err != nil {
 		c.Error(errors.NewInternalServerError("failed to prepare script files for publish").WithDetails(err.Error()))
 		return
@@ -473,14 +479,14 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	}
 
 	result, installErr := codec.InstallWorkflow(c.Request.Context(), exportcodec.WorkflowInstallRequest{
-		Raw:          raw,
-		ProjectID:    project.ID,
-		ProjectCode:  project.ProjectID,
-		StoreID:      store.ID,
-		StoreURL:     store.URL,
-		StoreMessage: store.Message,
-		BaseDir:      h.storageBaseDir(),
-		WorkflowDir:  targetWorkflowDir,
+		Raw:         raw,
+		ProjectID:   project.ID,
+		ProjectCode: project.ProjectID,
+		StoreID:     store.ID,
+		StoreURL:    store.URL,
+		// StoreMessage: store.Message,
+		BaseDir:     h.storageBaseDir(),
+		WorkflowDir: targetWorkflowDir,
 	})
 	if installErr != nil {
 		if stderrs.Is(installErr, exportcodec.ErrWorkflowIDRequired) {
@@ -585,13 +591,13 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	}
 
 	result, installErr := codec.InstallScript(c.Request.Context(), exportcodec.ScriptInstallRequest{
-		Raw:          raw,
-		ProjectID:    project.ID,
-		StoreID:      store.ID,
-		StoreURL:     store.URL,
-		StoreMessage: store.Message,
-		ScriptID:     scriptID,
-		CreateMode:   createMode,
+		Raw:       raw,
+		ProjectID: project.ID,
+		StoreID:   store.ID,
+		StoreURL:  store.URL,
+		// StoreMessage: store.Message,
+		ScriptID:   scriptID,
+		CreateMode: createMode,
 	})
 	if installErr != nil {
 		if stderrs.Is(installErr, exportcodec.ErrScriptIDRequired) {
