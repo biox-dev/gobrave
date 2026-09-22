@@ -93,7 +93,7 @@ type Codec interface {
 	//
 	// 实现需保证 req.ScriptDir 存在（不存在则创建）并完成 git 提交
 	// （见 utils.CommitDirChanges，提交身份由装配时注入）。
-	WriteScriptFiles(ctx context.Context, req ScriptWriteRequest) (*types.ScriptJSONExportResponse, error)
+	WriteCommitScriptFiles(ctx context.Context, req ScriptWriteRequest) (*types.ScriptJSONExportResponse, error)
 
 	// WriteWorkflowFiles 按该版本格式生成工作流导出内容并落盘到 req.WorkflowDir，
 	// 同时按该版本的目录布局把工作流引用的脚本快照到 req.WorkflowDir 下，
@@ -101,7 +101,7 @@ type Codec interface {
 	//
 	// 实现需保证 req.WorkflowDir 存在（不存在则创建）并完成 git 提交
 	// （见 utils.CommitDirChanges，提交身份由装配时注入）。
-	WriteWorkflowFiles(ctx context.Context, req WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error)
+	WriteCommmitWorkflowFiles(ctx context.Context, req WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error)
 
 	// ===== 读侧 =====
 

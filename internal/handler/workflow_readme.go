@@ -161,10 +161,10 @@ func (h *WorkflowHandler) SaveScriptReadme(c *gin.Context) {
 	}
 
 	scriptDir := utils.GetScriptFileDir(baseDir, project.ProjectID, script.ScriptID)
-	if err := h.commitDirReadme(scriptDir, readmeCommitMessage(req.CommitMessage, "script", script.ScriptID)); err != nil {
-		c.Error(errors.NewInternalServerError("failed to commit script readme").WithDetails(err.Error()))
-		return
-	}
+	// if err := h.commitDirReadme(scriptDir, readmeCommitMessage(req.CommitMessage, "script", script.ScriptID)); err != nil {
+	// 	c.Error(errors.NewInternalServerError("failed to commit script readme").WithDetails(err.Error()))
+	// 	return
+	// }
 
 	c.JSON(http.StatusOK, readmeResponse{
 		Path:    filepath.Join(scriptDir, utils.ReadmeFileName),
@@ -260,10 +260,10 @@ func (h *WorkflowHandler) SaveWorkflowReadme(c *gin.Context) {
 	}
 
 	workflowDir := utils.GetWorkflowFileDir(baseDir, project.ProjectID, workflow.WorkflowID)
-	if err := h.commitDirReadme(workflowDir, readmeCommitMessage(req.CommitMessage, "workflow", workflow.WorkflowID)); err != nil {
-		c.Error(errors.NewInternalServerError("failed to commit workflow readme").WithDetails(err.Error()))
-		return
-	}
+	// if err := h.commitDirReadme(workflowDir, readmeCommitMessage(req.CommitMessage, "workflow", workflow.WorkflowID)); err != nil {
+	// 	c.Error(errors.NewInternalServerError("failed to commit workflow readme").WithDetails(err.Error()))
+	// 	return
+	// }
 
 	c.JSON(http.StatusOK, readmeResponse{
 		Path:    filepath.Join(workflowDir, utils.ReadmeFileName),

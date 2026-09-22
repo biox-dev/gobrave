@@ -110,7 +110,7 @@ func (h *WorkflowHandler) SaveScriptFiles(c *gin.Context) {
 	}
 
 	scriptDir := utils.GetScriptFileDir(baseDir, project.ProjectID, script.ScriptID)
-	if _, err := codec.WriteScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
+	if _, err := codec.WriteCommitScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
 		ScriptPK:      script.ID,
 		ScriptDir:     scriptDir,
 		CommitMessage: commitMessage,
@@ -203,7 +203,7 @@ func (h *WorkflowHandler) SaveWorkflowFiles(c *gin.Context) {
 	}
 
 	workflowDir := utils.GetWorkflowFileDir(baseDir, project.ProjectID, workflow.WorkflowID)
-	if _, err := codec.WriteWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
+	if _, err := codec.WriteCommmitWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
 		WorkflowPK:    workflow.ID,
 		ProjectID:     project.ProjectID,
 		BaseDir:       baseDir,

@@ -60,7 +60,7 @@ func TestWriteScriptFilesStampsVersion(t *testing.T) {
 	}, nil, testGitIdentity)
 
 	scriptDir := filepath.Join(t.TempDir(), "nested", "script")
-	if _, err := codec.WriteScriptFiles(context.Background(), exportcodec.ScriptWriteRequest{ScriptPK: 1, ScriptDir: scriptDir}); err != nil {
+	if _, err := codec.WriteCommitScriptFiles(context.Background(), exportcodec.ScriptWriteRequest{ScriptPK: 1, ScriptDir: scriptDir}); err != nil {
 		t.Fatalf("WriteScriptFiles: %v", err)
 	}
 
@@ -104,7 +104,7 @@ func TestWriteWorkflowFilesSnapshotsScripts(t *testing.T) {
 	}, nil, testGitIdentity)
 
 	workflowDir := filepath.Join(t.TempDir(), "workflow")
-	payload, err := codec.WriteWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{
+	payload, err := codec.WriteCommmitWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{
 		WorkflowPK:  1,
 		ProjectID:   projectID,
 		BaseDir:     baseDir,
@@ -151,7 +151,7 @@ func TestDecodeWorkflowRoundTrip(t *testing.T) {
 			Workflow:   map[string]any{"name": "demo", "dag_definition": map[string]any{"a": 1}},
 		},
 	}, nil, testGitIdentity)
-	written, err := codec.WriteWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{
+	written, err := codec.WriteCommmitWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{
 		WorkflowDir: workflowDir,
 		BaseDir:     t.TempDir(),
 	})
@@ -189,10 +189,10 @@ func TestDecodeWorkflowRoundTrip(t *testing.T) {
 // 而不是在调用 service 时 nil panic。
 func TestWriteRequiresWorkflowService(t *testing.T) {
 	codec := NewCodec(nil, nil, testGitIdentity)
-	if _, err := codec.WriteScriptFiles(context.Background(), exportcodec.ScriptWriteRequest{ScriptDir: t.TempDir()}); err == nil {
+	if _, err := codec.WriteCommitScriptFiles(context.Background(), exportcodec.ScriptWriteRequest{ScriptDir: t.TempDir()}); err == nil {
 		t.Fatal("WriteScriptFiles without workflow service should fail")
 	}
-	if _, err := codec.WriteWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{WorkflowDir: t.TempDir(), BaseDir: t.TempDir()}); err == nil {
+	if _, err := codec.WriteCommmitWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{WorkflowDir: t.TempDir(), BaseDir: t.TempDir()}); err == nil {
 		t.Fatal("WriteWorkflowFiles without workflow service should fail")
 	}
 }

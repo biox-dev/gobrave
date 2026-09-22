@@ -179,7 +179,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
 		return
 	}
-	if _, err := codec.WriteWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
+	if _, err := codec.WriteCommmitWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
 		WorkflowPK:    workflow.ID,
 		ProjectID:     project.ProjectID,
 		BaseDir:       h.storageBaseDir(),
@@ -337,7 +337,7 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
 		return
 	}
-	if _, err := codec.WriteScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
+	if _, err := codec.WriteCommitScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
 		ScriptPK:      script.ID,
 		ScriptDir:     sourceScriptDir,
 		CommitMessage: fmt.Sprintf("publish script %s", script.ScriptID),

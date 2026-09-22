@@ -91,7 +91,7 @@ func (c *Codec) ScriptIDFromExportScript(item map[string]any) string {
 }
 
 // WriteScriptFiles 生成 v1 格式的 script.json 落盘到 req.ScriptDir，并把目录改动提交为一个 commit。
-func (c *Codec) WriteScriptFiles(ctx context.Context, req exportcodec.ScriptWriteRequest) (*types.ScriptJSONExportResponse, error) {
+func (c *Codec) WriteCommitScriptFiles(ctx context.Context, req exportcodec.ScriptWriteRequest) (*types.ScriptJSONExportResponse, error) {
 	if c.workflowService == nil {
 		return nil, fmt.Errorf("exportcodec/v1: workflow service is not configured")
 	}
@@ -111,10 +111,10 @@ func (c *Codec) WriteScriptFiles(ctx context.Context, req exportcodec.ScriptWrit
 	return payload, nil
 }
 
-// WriteWorkflowFiles 生成 v1 格式的 workflow.json 落盘到 req.WorkflowDir，
+// WriteCommmitWorkflowFiles 生成 v1 格式的 workflow.json 落盘到 req.WorkflowDir，
 // 把 workflow 引用的脚本目录快照到 <workflowDir>/script/<scriptID>（排除脚本自身的 .git），
 // 最后把目录改动提交为一个 commit。
-func (c *Codec) WriteWorkflowFiles(ctx context.Context, req exportcodec.WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error) {
+func (c *Codec) WriteCommmitWorkflowFiles(ctx context.Context, req exportcodec.WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error) {
 	if c.workflowService == nil {
 		return nil, fmt.Errorf("exportcodec/v1: workflow service is not configured")
 	}

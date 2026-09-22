@@ -36,6 +36,7 @@ type RouterParams struct {
 	ContainerHandler *handler.ContainerHandler
 	AnalysisHandler  *handler.AnalysisHandler
 	WorkflowHandler  *handler.WorkflowHandler
+	GitHandler       *handler.GitHandler
 	SettingHandler   *handler.SettingHandler
 	ConfigHandler    *handler.ConfigHandler
 	SheetHandler     *handler.SheetHandler
@@ -99,6 +100,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterContainerRoutes(v1, params.ContainerHandler)
 		RegisterAnalysisRoutes(v1, params.AnalysisHandler)
 		RegisterWorkflowRoutes(v1, params.WorkflowHandler)
+		RegisterGitRoutes(v1, params.GitHandler)
 		RegisterSettingRoutes(v1, params.SettingHandler)
 		RegisterConfigRoutes(v1, params.ConfigHandler)
 		RegisterSheetRoutes(v1, params.SheetHandler)
@@ -341,6 +343,14 @@ func RegisterWorkflowRoutes(r *gin.RouterGroup, handler *handler.WorkflowHandler
 	r.POST("/script/:scriptId/readme", handler.SaveScriptReadme)
 	r.GET("/workflow/:workflowId/readme", handler.GetWorkflowReadme)
 	r.POST("/workflow/:workflowId/readme", handler.SaveWorkflowReadme)
+}
+
+// RegisterGitRoutes 注册组件目录的只读 git 接口（见 handler.GitHandler）。
+// 目前只有「本地变化 diff」，后续的 git 操作（提交历史等）在此按同样的
+// /<resource>/:<id>/git-xxx 形式扩展。
+func RegisterGitRoutes(r *gin.RouterGroup, handler *handler.GitHandler) {
+	r.GET("/script/:scriptId/git-diff", handler.GetScriptDiff)
+	r.GET("/workflow/:workflowId/git-diff", handler.GetWorkflowDiff)
 }
 
 func RegisterSettingRoutes(r *gin.RouterGroup, handler *handler.SettingHandler) {
