@@ -48,7 +48,7 @@ func TestReadGitSyncState(t *testing.T) {
 	if _, err := EnsureBareGitRepo(storeDir); err != nil {
 		t.Fatalf("EnsureBareGitRepo: %v", err)
 	}
-	if err := PushDirToRepo(t.Context(), localDir, storeDir); err != nil {
+	if _, err := PushDirToRepo(t.Context(), localDir, storeDir); err != nil {
 		t.Fatalf("PushDirToRepo: %v", err)
 	}
 	st = ReadGitSyncState(localDir, storeDir)
@@ -116,7 +116,7 @@ func TestReadGitSyncStateStoreAhead(t *testing.T) {
 	if _, err := EnsureBareGitRepo(storeDir); err != nil {
 		t.Fatalf("EnsureBareGitRepo: %v", err)
 	}
-	if err := PushDirToRepo(t.Context(), localDir, storeDir); err != nil {
+	if _, err := PushDirToRepo(t.Context(), localDir, storeDir); err != nil {
 		t.Fatalf("PushDirToRepo: %v", err)
 	}
 

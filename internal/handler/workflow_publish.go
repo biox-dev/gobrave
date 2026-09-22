@@ -59,6 +59,18 @@ func (h *WorkflowHandler) exportCodec(version string) (exportcodec.Codec, error)
 	return codec, nil
 }
 
+// publishResultMessage 把 PushDirToRepo 的结果映射为给用户的提示文案。
+//
+// 重复 publish 一个自上次发布后没有新提交的脚本/工作流时，push 会因为目标分支
+// 已经是同一个提交而「没有内容可推」（utils.PushDirToRepo 返回 pushed=false）。
+// 这种情况属于幂等成功，回复 "already up-to-date" 让前端提示用户，而不是当失败报 500。
+func publishResultMessage(pushed bool) string {
+	if pushed {
+		return "success"
+	}
+	return "already up-to-date"
+}
+
 // resolveStorePathNameForPublish 决定本次发布使用的 store 目录标识（types.Store.PathName）。
 //
 // PathName 只在首次发布（storeID == 0）时由 utils.GenerateStorePathName 生成的随机串决定；
@@ -234,13 +246,15 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to prepare store git repository").WithDetails(repoErr.Error()))
 		return
 	}
-	if pushErr := utils.PushDirToRepo(c.Request.Context(), workflowSourceDir, storePath); pushErr != nil {
+	pushed, pushErr := utils.PushDirToRepo(c.Request.Context(), workflowSourceDir, storePath)
+	if pushErr != nil {
 		c.Error(errors.NewInternalServerError("failed to push workflow to store").WithDetails(pushErr.Error()))
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":    "success",
+		"message":    publishResultMessage(pushed),
+		"pushed":     pushed,
 		"store":      store,
 		"workflow":   workflow,
 		"store_path": storePath,
@@ -388,13 +402,15 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to prepare store git repository").WithDetails(repoErr.Error()))
 		return
 	}
-	if pushErr := utils.PushDirToRepo(c.Request.Context(), sourceScriptDir, storePath); pushErr != nil {
+	pushed, pushErr := utils.PushDirToRepo(c.Request.Context(), sourceScriptDir, storePath)
+	if pushErr != nil {
 		c.Error(errors.NewInternalServerError("failed to push script to store").WithDetails(pushErr.Error()))
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":    "success",
+		"message":    publishResultMessage(pushed),
+		"pushed":     pushed,
 		"store":      store,
 		"script":     script,
 		"store_path": storePath,

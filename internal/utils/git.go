@@ -183,38 +183,44 @@ func EnsureBareGitRepo(dir string) (*git.Repository, error) {
 // 每次调用都会把名为 origin 的 remote 指向最新的 targetRepoPath（base_dir 变更后
 // 无需手工改 remote 配置），并以 force 方式推送，使目标仓库与源分支内容完全一致。
 //
+// 返回值 pushed 表示目标仓库这次是否真的被更新：
+//   - true：远端分支前移了；
+//   - false：远端分支已经是同一个提交（go-git 返回 git.NoErrAlreadyUpToDate），
+//     「没有新内容可推送」属于幂等成功，调用方应据此给用户提示而不是报错
+//     （例如重复 publish 同一个未再修改的脚本/工作流）。
+//
 // 源仓库没有 commit（HEAD 未出生）时返回错误，调用方应提示先保存。
-func PushDirToRepo(ctx context.Context, sourceDir, targetRepoPath string) error {
+func PushDirToRepo(ctx context.Context, sourceDir, targetRepoPath string) (bool, error) {
 	ensureLocalGitTransport()
 
 	sourceDir = strings.TrimSpace(sourceDir)
 	targetRepoPath = strings.TrimSpace(targetRepoPath)
 	if sourceDir == "" || targetRepoPath == "" {
-		return stderrs.New("git source directory and target repository path must not be empty")
+		return false, stderrs.New("git source directory and target repository path must not be empty")
 	}
 
 	repo, err := git.PlainOpen(sourceDir)
 	if err != nil {
-		return fmt.Errorf("open source git repository %q: %w", sourceDir, err)
+		return false, fmt.Errorf("open source git repository %q: %w", sourceDir, err)
 	}
 
 	head, err := repo.Head()
 	if err != nil {
 		if stderrs.Is(err, plumbing.ErrReferenceNotFound) {
-			return fmt.Errorf("source git repository %q has no commit yet", sourceDir)
+			return false, fmt.Errorf("source git repository %q has no commit yet", sourceDir)
 		}
-		return err
+		return false, err
 	}
 
 	// remote 已存在时先删除再加回，等价于 git remote set-url，避免残留旧地址。
 	if delErr := repo.DeleteRemote(storeRemoteName); delErr != nil && !stderrs.Is(delErr, git.ErrRemoteNotFound) {
-		return delErr
+		return false, delErr
 	}
 	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{
 		Name: storeRemoteName,
 		URLs: []string{targetRepoPath},
 	}); err != nil {
-		return err
+		return false, err
 	}
 
 	// "+" 前缀表示允许非快进更新：store 是脚本目录的发布镜像，需要与源分支完全一致。
@@ -223,9 +229,14 @@ func PushDirToRepo(ctx context.Context, sourceDir, targetRepoPath string) error 
 		RemoteName: storeRemoteName,
 		RefSpecs:   []gitconfig.RefSpec{refSpec},
 	}); err != nil {
-		return fmt.Errorf("push %q to %q: %w", sourceDir, targetRepoPath, err)
+		// 远端已是同一个提交时 go-git 返回 NoErrAlreadyUpToDate：这不是失败，
+		// 只是没有新内容可推送，转成 (false, nil) 让调用方回复提示信息。
+		if stderrs.Is(err, git.NoErrAlreadyUpToDate) {
+			return false, nil
+		}
+		return false, fmt.Errorf("push %q to %q: %w", sourceDir, targetRepoPath, err)
 	}
-	return nil
+	return true, nil
 }
 
 // SyncWorktreeFromRepo 让 targetDir 的工作区与 srcRepoPath 仓库保持一致：

@@ -171,7 +171,7 @@ func TestGetWorkflowGitDiffUnpublished(t *testing.T) {
 	if _, err := utils.EnsureBareGitRepo(storeDir); err != nil {
 		t.Fatalf("EnsureBareGitRepo: %v", err)
 	}
-	if err := utils.PushDirToRepo(t.Context(), workflowDir, storeDir); err != nil {
+	if _, err := utils.PushDirToRepo(t.Context(), workflowDir, storeDir); err != nil {
 		t.Fatalf("PushDirToRepo: %v", err)
 	}
 

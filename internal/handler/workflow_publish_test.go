@@ -2,13 +2,21 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/exportcodec"
+	exportcodecv1 "github.com/biox-dev/gobrave/internal/exportcodec/v1"
+	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
+	"github.com/gin-gonic/gin"
 	git "github.com/go-git/go-git/v5"
 )
 
@@ -162,7 +170,7 @@ func TestReadStoreExportJSONFromBareRepo(t *testing.T) {
 	if _, err := utils.EnsureBareGitRepo(origin); err != nil {
 		t.Fatalf("utils.EnsureBareGitRepo: %v", err)
 	}
-	if err := utils.PushDirToRepo(context.Background(), src, origin); err != nil {
+	if _, err := utils.PushDirToRepo(context.Background(), src, origin); err != nil {
 		t.Fatalf("utils.PushDirToRepo: %v", err)
 	}
 	// 裸克隆：与 DownloadStore 的产物完全一致（目录即 git 目录，没有工作区文件）。
@@ -215,5 +223,150 @@ func TestReadStoreExportJSONFromBareRepo(t *testing.T) {
 	}
 	if _, err := readStoreExportJSON(filepath.Join(t.TempDir(), "not-exists"), exportcodec.ScriptJSONFileName); err == nil {
 		t.Fatal("readStoreExportJSON on non-repository should fail")
+	}
+}
+
+// ---- 发布到 store 的测试 stub：只实现 PublishScript 会走到的链路 ----------------
+// 其余方法由内嵌接口占位（调用会 nil panic），能跑到说明链路被改动过、需要补实现。
+
+type publishStubWorkflowService struct {
+	interfaces.WorkflowService
+	script *types.Script
+}
+
+func (s publishStubWorkflowService) GetScriptByID(_ context.Context, _ int64) (*types.Script, error) {
+	return s.script, nil
+}
+
+// UpdateScript 复用同一个 script 指针：接口返回的就是 handler 改写过的对象，
+// 第二次发布因此能看到第一次写入的 store_id。
+func (s publishStubWorkflowService) UpdateScript(_ context.Context, _ *types.Script) error {
+	return nil
+}
+
+// GenerateScriptJSONByScriptID 每次返回完全相同的 payload：重复发布不会产生新的文件改动，
+// 从而走到 store push「没有内容可推」的分支。
+func (s publishStubWorkflowService) GenerateScriptJSONByScriptID(_ context.Context, _ int64) (*types.ScriptJSONExportResponse, error) {
+	return &types.ScriptJSONExportResponse{
+		ScriptID: s.script.ScriptID,
+		Script:   map[string]any{"script_id": s.script.ScriptID, "name": s.script.ComponentName},
+	}, nil
+}
+
+type publishStubProjectService struct {
+	interfaces.ProjectService
+	project *types.Project
+}
+
+func (s publishStubProjectService) GetActiveProjectByUserID(_ context.Context, _ string) (*types.Project, error) {
+	return s.project, nil
+}
+
+func (s publishStubProjectService) GetProjectByID(_ context.Context, _ int64) (*types.Project, error) {
+	return s.project, nil
+}
+
+type publishStubStoreService struct {
+	interfaces.StoreService
+	store  *types.Store
+	nextID int64
+}
+
+func (s *publishStubStoreService) CreateStore(_ context.Context, item *types.Store) error {
+	s.nextID++
+	item.ID = s.nextID
+	s.store = item
+	return nil
+}
+
+func (s *publishStubStoreService) GetStoreByID(_ context.Context, _ int64) (*types.Store, error) {
+	return s.store, nil
+}
+
+func (s *publishStubStoreService) UpdateStore(_ context.Context, item *types.Store) error {
+	s.store = item
+	return nil
+}
+
+// publishResponse 只声明断言用得到的字段，避免测试与响应结构强耦合。
+type publishResponse struct {
+	Message   string `json:"message"`
+	Pushed    *bool  `json:"pushed"`
+	StorePath string `json:"store_path"`
+}
+
+// servePublishScript 直接挂载 handler（绕过认证中间件），返回响应记录器。
+func servePublishScript(t *testing.T, h *WorkflowHandler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.POST("/api/v1/workflow/publish-script", func(c *gin.Context) {
+		c.Set(types.UserIDContextKey.String(), "test-user")
+		h.PublishScript(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflow/publish-script", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, req)
+	return recorder
+}
+
+func decodePublishResponse(t *testing.T, recorder *httptest.ResponseRecorder) publishResponse {
+	t.Helper()
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var resp publishResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body=%s)", err, recorder.Body.String())
+	}
+	return resp
+}
+
+// TestPublishScriptAlreadyUpToDate 锁定「重复发布」的语义：
+// 第二次发布时脚本目录没有新的提交，store 的 push 返回 "already up-to-date"，
+// 接口应回 200 + pushed=false + message="already up-to-date"，而不是报 500。
+func TestPublishScriptAlreadyUpToDate(t *testing.T) {
+	baseDir := t.TempDir()
+	scriptDir := utils.GetScriptFileDir(baseDir, "p1", "s1")
+	writeTestFile(t, filepath.Join(scriptDir, "main.R"), "print('v1')\n")
+	mustGitRepo(t, scriptDir)
+
+	wfService := publishStubWorkflowService{script: &types.Script{ID: 1, ScriptID: "s1", ProjectID: 7, ComponentName: "comp"}}
+	reg := exportcodec.NewRegistry()
+	reg.Register(exportcodecv1.NewCodec(wfService, nil, utils.GitIdentity{Name: "test", Email: "test@example.com"}))
+
+	h := &WorkflowHandler{
+		workflowService: wfService,
+		projectService:  publishStubProjectService{project: &types.Project{ID: 7, ProjectID: "p1"}},
+		storeService:    &publishStubStoreService{},
+		exportCodecs:    reg,
+		cfg:             &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}},
+	}
+
+	// 首次发布：脚本目录产生了新提交，push 应报告 pushed=true。
+	first := decodePublishResponse(t, servePublishScript(t, h, `{"script_id":"1","message":"first"}`))
+	if first.Pushed == nil || !*first.Pushed {
+		t.Fatalf("first publish pushed = %v, want true (body should be a real response)", first.Pushed)
+	}
+	if first.Message != "success" {
+		t.Fatalf("first publish message = %q, want %q", first.Message, "success")
+	}
+	if first.StorePath == "" {
+		t.Fatal("first publish store_path is empty")
+	}
+
+	// 再次发布且脚本没有任何改动：远端已是同一个提交，应提示而不是报错。
+	second := decodePublishResponse(t, servePublishScript(t, h, `{"script_id":"1","message":"second"}`))
+	if second.Pushed == nil || *second.Pushed {
+		t.Fatalf("second publish pushed = %v, want false", second.Pushed)
+	}
+	if second.Message != "already up-to-date" {
+		t.Fatalf("second publish message = %q, want %q", second.Message, "already up-to-date")
+	}
+	if second.StorePath != first.StorePath {
+		t.Fatalf("store_path drifted: %q -> %q", first.StorePath, second.StorePath)
 	}
 }

@@ -240,8 +240,21 @@ func TestPushDirToRepoAndSyncWorktree(t *testing.T) {
 	if _, err := EnsureBareGitRepo(storeDir); err != nil {
 		t.Fatalf("EnsureBareGitRepo: %v", err)
 	}
-	if err := PushDirToRepo(ctx, srcDir, storeDir); err != nil {
+	pushed, err := PushDirToRepo(ctx, srcDir, storeDir)
+	if err != nil {
 		t.Fatalf("PushDirToRepo: %v", err)
+	}
+	if !pushed {
+		t.Fatal("PushDirToRepo first push should report pushed=true")
+	}
+
+	// 源仓库没有再提交时重复 push：远端已是同一个提交，应报 pushed=false 且不报错。
+	pushed, err = PushDirToRepo(ctx, srcDir, storeDir)
+	if err != nil {
+		t.Fatalf("PushDirToRepo up-to-date should not fail: %v", err)
+	}
+	if pushed {
+		t.Fatal("PushDirToRepo on unchanged source should report pushed=false")
 	}
 
 	// store 裸仓库应拿到与脚本目录一致的 main 分支。
@@ -277,8 +290,10 @@ func TestPushDirToRepoAndSyncWorktree(t *testing.T) {
 	if _, err := CommitAll(srcRepo, "save script script-1 v2", identity); err != nil {
 		t.Fatalf("CommitAll v2: %v", err)
 	}
-	if err := PushDirToRepo(ctx, srcDir, storeDir); err != nil {
+	if pushed, err := PushDirToRepo(ctx, srcDir, storeDir); err != nil {
 		t.Fatalf("PushDirToRepo v2: %v", err)
+	} else if !pushed {
+		t.Fatal("PushDirToRepo v2 should report pushed=true")
 	}
 
 	// 目标目录已有仓库：本地改动（含未提交修改）应被 pull 覆盖。
@@ -315,7 +330,7 @@ func TestPushDirToRepoAndSyncWorktree(t *testing.T) {
 	if _, err := EnsureGitRepo(emptyDir); err != nil {
 		t.Fatalf("EnsureGitRepo empty: %v", err)
 	}
-	if err := PushDirToRepo(ctx, emptyDir, filepath.Join(root, "store", "empty")); err == nil {
+	if _, err := PushDirToRepo(ctx, emptyDir, filepath.Join(root, "store", "empty")); err == nil {
 		t.Fatal("PushDirToRepo with unborn HEAD should fail")
 	}
 }
@@ -364,7 +379,7 @@ func TestPushDirToRepoForceOverwritesRemote(t *testing.T) {
 	if _, err := EnsureBareGitRepo(storeDir); err != nil {
 		t.Fatalf("EnsureBareGitRepo: %v", err)
 	}
-	if err := PushDirToRepo(ctx, srcDir, storeDir); err != nil {
+	if _, err := PushDirToRepo(ctx, srcDir, storeDir); err != nil {
 		t.Fatalf("PushDirToRepo initial: %v", err)
 	}
 	if got := repoHeadHash(t, storeDir); got != firstLocal {
@@ -377,7 +392,7 @@ func TestPushDirToRepoForceOverwritesRemote(t *testing.T) {
 		t.Fatalf("SyncWorktreeFromRepo other: %v", err)
 	}
 	remoteOnly := commitFile(otherDir, "remote.txt", "remote only\n", "remote only")
-	if err := PushDirToRepo(ctx, otherDir, storeDir); err != nil {
+	if _, err := PushDirToRepo(ctx, otherDir, storeDir); err != nil {
 		t.Fatalf("PushDirToRepo remote: %v", err)
 	}
 	if got := repoHeadHash(t, storeDir); got != remoteOnly {
@@ -390,7 +405,7 @@ func TestPushDirToRepoForceOverwritesRemote(t *testing.T) {
 	if localHead == remoteOnly {
 		t.Fatal("expected local and remote heads to diverge")
 	}
-	if err := PushDirToRepo(ctx, srcDir, storeDir); err != nil {
+	if _, err := PushDirToRepo(ctx, srcDir, storeDir); err != nil {
 		t.Fatalf("PushDirToRepo on diverged history should force-update, got: %v", err)
 	}
 	if got := repoHeadHash(t, storeDir); got != localHead {
@@ -448,7 +463,7 @@ func TestFetchBareRepoFromOrigin(t *testing.T) {
 	if _, err := EnsureBareGitRepo(storeDir); err != nil {
 		t.Fatalf("EnsureBareGitRepo: %v", err)
 	}
-	if err := PushDirToRepo(ctx, originDir, storeDir); err != nil {
+	if _, err := PushDirToRepo(ctx, originDir, storeDir); err != nil {
 		t.Fatalf("PushDirToRepo v1: %v", err)
 	}
 
@@ -480,7 +495,7 @@ func TestFetchBareRepoFromOrigin(t *testing.T) {
 	if _, err := CommitAll(originRepo, "v2", identity); err != nil {
 		t.Fatalf("CommitAll v2: %v", err)
 	}
-	if err := PushDirToRepo(ctx, originDir, storeDir); err != nil {
+	if _, err := PushDirToRepo(ctx, originDir, storeDir); err != nil {
 		t.Fatalf("PushDirToRepo v2: %v", err)
 	}
 
