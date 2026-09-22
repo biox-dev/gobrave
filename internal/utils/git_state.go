@@ -44,6 +44,12 @@ type GitSyncState struct {
 	HasStoreChanges bool `json:"has_store_changes"`
 	// InSync 本地干净且两侧 commit 一致。
 	InSync bool `json:"in_sync"`
+
+	// Remotes 是 store 裸仓库上配置的远程仓库列表（github / gitee / origin ...），
+	// 从磁盘 git 配置实时读取、不落库：发布到远程（PublishStoreRemote）只把地址写成
+	// store 仓库的 remote，不经数据库，因此这里就是「已配置的远程仓库」的唯一数据源。
+	// 没有 store 仓库或未配置任何 remote 时为空。
+	Remotes []GitRemote `json:"remotes,omitempty"`
 }
 
 // ReadGitSyncState 读取 localDir（脚本/工作流目录）与 storeDir（发布裸仓库）的同步状态。
@@ -65,6 +71,9 @@ func ReadGitSyncState(localDir, storeDir string) GitSyncState {
 	storeCommit, storeOK := readRepoHead(state.StoreDir)
 	state.StoreCommit = storeCommit
 	state.StoreInitialized = storeOK
+	// remote 列表同样从 store 仓库实时读取：本地发布时通常只有 origin（本地路径）之外
+	// 没有任何 remote，配置过发布目标后才会出现 github / gitee 等条目。
+	state.Remotes = ReadGitRemotes(state.StoreDir)
 
 	switch {
 	case localCommit == "" && storeCommit == "":

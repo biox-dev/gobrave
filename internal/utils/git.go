@@ -5,8 +5,10 @@ import (
 	stderrs "errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -548,4 +550,170 @@ func FetchBareRepoFromOrigin(ctx context.Context, repoPath string) error {
 		return err
 	}
 	return nil
+}
+
+// GitRemote 是仓库中配置的一个 git remote：名称 + 全部地址。
+//
+// 同一 remote 可以配置多个 URL（git 的 remote.<name>.url 可重复），因此这里用切片表达。
+// store 表不再保存「目标远程地址」列，发布到远程时写入的信息全部保存在 store 裸仓库的
+// remote 配置里，读取侧（git_state.remotes）也从这里实时推导，不落库。
+type GitRemote struct {
+	Name string   `json:"name"`
+	URLs []string `json:"urls"`
+}
+
+// ReadGitRemotes 读取仓库配置里的 remote 列表（按名称排序，输出稳定）。
+//
+// 目录不存在、不是仓库或没有 remote 时返回 nil（不报错），
+// 便于接口在「从未发布 / 从未配置远程」的情况下安全返回。
+func ReadGitRemotes(repoPath string) []GitRemote {
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return nil
+	}
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		return nil
+	}
+	remotes, err := repo.Remotes()
+	if err != nil {
+		return nil
+	}
+
+	result := make([]GitRemote, 0, len(remotes))
+	for _, remote := range remotes {
+		if remote == nil {
+			continue
+		}
+		cfg := remote.Config()
+		if cfg == nil {
+			continue
+		}
+		urls := make([]string, 0, len(cfg.URLs))
+		for _, raw := range cfg.URLs {
+			if trimmed := strings.TrimSpace(raw); trimmed != "" {
+				urls = append(urls, trimmed)
+			}
+		}
+		if len(urls) == 0 {
+			continue
+		}
+		result = append(result, GitRemote{Name: cfg.Name, URLs: urls})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result
+}
+
+// EnsureGitRemote 保证 repoPath 仓库里存在指向 remoteURL 的 remote。
+//
+//   - remoteURL 已经配置在某个 remote 上：直接复用该 remote，added=false（跳过添加）；
+//   - 否则按地址主机名推导 remote 名（github.com → github、gitee.com → gitee，
+//     其余取主机名首段，取不到时用 "remote"），同名被其它地址占用时追加 "-2"、"-3"…
+//     保证名称唯一，added=true。
+//
+// 只写仓库配置、不做任何网络操作；真正的 push 由调用方后续实现。
+// store 是裸仓库，配置文件就是仓库本身，因此这里对裸仓库同样适用。
+func EnsureGitRemote(repoPath, remoteURL string) (remote GitRemote, added bool, err error) {
+	repoPath = strings.TrimSpace(repoPath)
+	remoteURL = strings.TrimSpace(remoteURL)
+	if repoPath == "" {
+		return GitRemote{}, false, stderrs.New("git repository path is empty")
+	}
+	if remoteURL == "" {
+		return GitRemote{}, false, stderrs.New("git remote url is empty")
+	}
+
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		return GitRemote{}, false, err
+	}
+
+	existing := ReadGitRemotes(repoPath)
+	for _, item := range existing {
+		for _, configured := range item.URLs {
+			if configured == remoteURL {
+				return item, false, nil
+			}
+		}
+	}
+
+	name := uniqueGitRemoteName(gitRemoteNameFromURL(remoteURL), existing)
+	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{
+		Name: name,
+		URLs: []string{remoteURL},
+	}); err != nil {
+		return GitRemote{}, false, err
+	}
+	return GitRemote{Name: name, URLs: []string{remoteURL}}, true, nil
+}
+
+// gitRemoteNameFromURL 把 git 地址映射成一个可读的 remote 名：
+// github.com → github、gitee.com → gitee、gitlab.example.com → gitlab，
+// 解析不出主机名时回退 "remote"。
+func gitRemoteNameFromURL(rawURL string) string {
+	host := gitRemoteHost(rawURL)
+	if host == "" {
+		return "remote"
+	}
+	name := host
+	if idx := strings.Index(name, "."); idx > 0 {
+		name = name[:idx]
+	}
+	return name
+}
+
+// gitRemoteHost 从 ssh（git@host:owner/repo.git、ssh://git@host/owner/repo.git）
+// 或 http(s) 地址里取出主机名，取不到时返回空串。
+func gitRemoteHost(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if strings.HasPrefix(rawURL, "git@") {
+		rest := strings.TrimPrefix(rawURL, "git@")
+		if idx := strings.Index(rest, ":"); idx > 0 {
+			return rest[:idx]
+		}
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Hostname()
+}
+
+// uniqueGitRemoteName 保证 remote 名合法且不与已有 remote 冲突：
+// 非法字符替换为 "-"，名称被占用时追加 "-2"、"-3"…
+func uniqueGitRemoteName(name string, existing []GitRemote) string {
+	name = sanitizeGitRemoteName(name)
+	if name == "" {
+		name = "remote"
+	}
+
+	used := make(map[string]bool, len(existing))
+	for _, item := range existing {
+		used[item.Name] = true
+	}
+	if !used[name] {
+		return name
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d", name, i)
+		if !used[candidate] {
+			return candidate
+		}
+	}
+}
+
+// sanitizeGitRemoteName 只保留 git remote 名允许的字符（字母/数字/.-_），
+// 其余（含空格、斜杠）统一替换为 "-"。
+func sanitizeGitRemoteName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }

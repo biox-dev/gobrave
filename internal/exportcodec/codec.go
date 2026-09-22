@@ -200,7 +200,7 @@ type WorkflowWriteRequest struct {
 //
 // 字段语义与 handler 原实现保持一致：
 //   - ProjectID 是 project 表主键（写入 script.project_id），不是 project.project_id；
-//   - StoreURL / StoreMessage 非空时覆盖 script 行的 url / message；
+//   - StoreMessage 非空时覆盖 script 行的 message；
 //   - CreateMode 为 true 时作为副本新增（component_name 追加 _Copy 后缀、store_id 置 0），
 //     否则按 ScriptID 在目标 project 内存在与否决定更新或新增。
 //
@@ -214,8 +214,6 @@ type ScriptInstallRequest struct {
 	ProjectID int64
 	// StoreID 是发布来源 store 主键（写入 script.store_id）。
 	StoreID int64
-	// StoreURL 非空时覆盖 script.url。
-	StoreURL string
 	// StoreMessage 非空时覆盖 script.message。
 	StoreMessage string
 	// ScriptID 是安装后的 script_id：create=true 时调用方已生成新 uuid，
@@ -255,8 +253,6 @@ type WorkflowInstallRequest struct {
 	ProjectCode string
 	// StoreID 是发布来源 store 主键。
 	StoreID int64
-	// StoreURL 非空时覆盖 workflow / script 行的 url。
-	StoreURL string
 	// StoreMessage 非空时覆盖 workflow / script 行的 message。
 	StoreMessage string
 	// BaseDir 是 storage.base_dir。

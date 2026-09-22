@@ -37,21 +37,12 @@ func (r *storeRepository) GetStoreByStoreID(ctx context.Context, storeID string)
 	return item, nil
 }
 
-func (r *storeRepository) GetStoreByURL(ctx context.Context, rawURL string) (*types.Store, error) {
-	item := &types.Store{}
-	if err := r.db.WithContext(ctx).Where("url = ?", rawURL).Take(item).Error; err != nil {
-		return nil, err
-	}
-	return item, nil
-}
-
 func (r *storeRepository) UpdateStore(ctx context.Context, item *types.Store) error {
 	return r.db.WithContext(ctx).Model(&types.Store{}).Where("id = ?", item.ID).Updates(map[string]interface{}{
 		// "store_id":     item.StoreID,
 		"store_type": item.StoreType,
 		"name":       item.Name,
 		"origin":     item.Origin,
-		"url":        item.URL,
 		// "status":     item.Status,
 		"path_name": item.PathName,
 		"category":  item.Category,
@@ -62,28 +53,6 @@ func (r *storeRepository) UpdateStore(ctx context.Context, item *types.Store) er
 		// "version":      item.Version,
 		// "message": item.Message,
 	}).Error
-}
-
-// UpdateStoreURL 只更新 url 单列。
-//
-// UpdateStore 用 map 调 Updates 会把未提交的字段一并写成零值，
-// 「发布到远程只改 URL」这类局部更新必须走这里。
-func (r *storeRepository) UpdateStoreURL(ctx context.Context, id int64, rawURL string) error {
-	if id == 0 {
-		return gorm.ErrRecordNotFound
-	}
-
-	result := r.db.WithContext(ctx).
-		Model(&types.Store{}).
-		Where("id = ?", id).
-		Update("url", rawURL)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
 }
 
 func (r *storeRepository) DeleteStore(ctx context.Context, id int64) error {
@@ -134,8 +103,7 @@ func (r *storeRepository) PageStore(ctx context.Context, pagination *types.Pagin
 			db = db.Where(
 				r.db.WithContext(ctx).Where("store.name LIKE ?", like).
 					Or("store.category LIKE ?", like).
-					Or("store.store_id LIKE ?", like).
-					Or("store.url LIKE ?", like),
+					Or("store.store_id LIKE ?", like),
 			)
 		}
 

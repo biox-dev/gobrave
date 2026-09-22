@@ -90,6 +90,7 @@ func (h *StoreHandler) GetStore(c *gin.Context) {
 	}
 
 	fillStorePath(h.cfg, item)
+	fillStoreRemotes(h.cfg, item)
 
 	c.JSON(http.StatusOK, item)
 }
@@ -112,6 +113,7 @@ func (h *StoreHandler) GetStoreByStoreID(c *gin.Context) {
 	}
 
 	fillStorePath(h.cfg, item)
+	fillStoreRemotes(h.cfg, item)
 
 	c.JSON(http.StatusOK, item)
 }
@@ -258,7 +260,9 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		return
 	}
 
-	findStore, err := h.storeService.GetStoreByURL(c.Request.Context(), repoURL)
+	// store 表不再保存 url：来源地址现在只存在于 store 裸仓库的 remote 配置里
+	// （下载时 clone 生成的 origin），按 remote 地址比对实现「同一个仓库不重复下载」。
+	findStore, err := h.findStoreByRemoteURL(c.Request.Context(), repoURL)
 	if err == nil && findStore != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"store_id":       findStore.ID,
@@ -351,7 +355,6 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		StoreType: storeType,
 		Name:      storeName,
 		Origin:    origin,
-		URL:       repoURL,
 		// Status:    "running",
 		PathName: pathName,
 		Category: strings.TrimSpace(req.Category),
@@ -631,6 +634,48 @@ func fillStorePathForPage(cfg *config.Config, result *types.PageResult) {
 		}
 		fillStorePath(cfg, &dto.Store)
 	}
+}
+
+// fillStoreRemotes 把 store 裸仓库上配置的 git remote 列表写进响应的 remotes 字段。
+//
+// 与 store_path 一样是响应专属字段（gorm:"-"，不落库）：发布到远程只写仓库的 remote
+// 配置，所以这里每次从磁盘实时读取，保证前端看到的 remote 与仓库真实状态一致。
+func fillStoreRemotes(cfg *config.Config, item *types.Store) {
+	if item == nil {
+		return
+	}
+	item.Remotes = utils.ReadGitRemotes(resolveStoreDir(cfg, item))
+}
+
+// findStoreByRemoteURL 在已有 store 中按 remote 地址查找记录，用于下载去重。
+//
+// store 表已删除 url 列：来源仓库地址现在只存在于 store 裸仓库的 git remote 配置里
+// （下载时 clone 生成的 origin，以及发布到远程时添加的 github / gitee remote），
+// 因此逐个仓库比对 remote 地址（trim 后精确匹配，语义与旧的 GetStoreByURL 一致）。
+// 没有命中时返回 gorm.ErrRecordNotFound，与旧实现的错误语义保持一致。
+func (h *StoreHandler) findStoreByRemoteURL(ctx context.Context, repoURL string) (*types.Store, error) {
+	repoURL = strings.TrimSpace(repoURL)
+	if repoURL == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	items, err := h.storeService.ListStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		for _, remote := range utils.ReadGitRemotes(resolveStoreDir(h.cfg, item)) {
+			for _, configured := range remote.URLs {
+				if configured == repoURL {
+					return item, nil
+				}
+			}
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 // hydrateStoreMetadataFromStoreFiles 用 store 仓库 HEAD 提交里的导出文件回填 store 元数据。

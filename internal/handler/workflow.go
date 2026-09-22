@@ -1163,7 +1163,6 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 	// storeVersion := ""
 	storePath := ""
 	storeID := workflow.StoreID
-	StoreURL := ""
 	// StoreMessage := ""
 	if storeID != 0 {
 		store, err := h.storeService.GetStoreByID(c.Request.Context(), storeID)
@@ -1174,16 +1173,24 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		if store != nil {
 			// storeVersion = store.Version
 			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
-			StoreURL = store.URL
 			// StoreMessage = store.Message
 		}
 
 	}
 	project, err := h.projectService.GetProjectByID(c.Request.Context(), workflow.ProjectID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("project not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get project").WithDetails(err.Error()))
+		return
+	}
 
 	workflowPath := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
 
-	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地。
+	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地，
+	// 以及 store 裸仓库上配置的远程仓库列表（remotes，发布到远程时写入）。
 	gitState := utils.ReadGitSyncState(workflowPath, storePath)
 
 	workflowVersion := &types.WorkflowVersion{
@@ -1193,7 +1200,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		// StoreVersion: storeVersion,
 		WorkflowPath: workflowPath,
 		GitState:     &gitState,
-		StoreURL:     StoreURL,
+		// StoreURL:     StoreURL,
 		// StoreMessage: StoreMessage,
 	}
 
@@ -1237,7 +1244,6 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 	// storeVersion := ""
 	storeID := script.StoreID
 	storePath := ""
-	storeUrl := ""
 	// storeMessage := ""
 	if storeID != 0 {
 		store, err := h.storeService.GetStoreByID(c.Request.Context(), storeID)
@@ -1248,18 +1254,26 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 		if store != nil {
 			// storeVersion = store.Version
 			storePath = utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, store.PathName)
-			storeUrl = store.URL
 			// storeMessage = store.Message
 		}
 	}
 	project, err := h.projectService.GetProjectByID(c.Request.Context(), script.ProjectID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("project not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get project").WithDetails(err.Error()))
+		return
+	}
 
 	scriptPath := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
 
 	// io_schema 从脚本目录的 io_schema.json 实时读取（不再是数据库字段）。
 	ioSchema, _ := utils.ReadScriptIOSchemaFile(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
 
-	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地。
+	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地，
+	// 以及 store 裸仓库上配置的远程仓库列表（remotes，发布到远程时写入）。
 	gitState := utils.ReadGitSyncState(scriptPath, storePath)
 
 	scriptVersion := &types.ScriptVersion{
@@ -1269,7 +1283,7 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 		ScriptPath: scriptPath,
 		IOSchema:   string(ioSchema),
 		GitState:   &gitState,
-		StoreURL:   storeUrl,
+		// StoreURL:   storeUrl,
 		// StoreMessage: storeMessage,
 	}
 

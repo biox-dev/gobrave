@@ -296,7 +296,8 @@ func RegisterStoreRoutes(r *gin.RouterGroup, handler *handler.StoreHandler) {
 	r.POST("/store/create", handler.CreateStore)
 	r.POST("/store/download", handler.DownloadStore)
 	r.POST("/store/redownload", handler.ReDownloadStore)
-	// 发布到远程（github / gitee）：当前阶段只把 url 写回 store.url，push 待实现
+	// 发布到远程（github / gitee 等，可多个）：把 url 写成 store 裸仓库的 git remote，
+	// 不落库；同一个 url 已配置时跳过添加。真正的 push 待实现。
 	r.POST("/store/publish-remote", handler.PublishStoreRemote)
 	r.GET("/store/get", handler.GetStore)
 	r.GET("/store/get-by-store-id", handler.GetStoreByStoreID)

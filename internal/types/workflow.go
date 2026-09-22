@@ -153,7 +153,7 @@ type WorkflowVersion struct {
 	Workflow
 	StorePath    string `json:"store_path"`
 	WorkflowPath string `json:"workflow_path"`
-	StoreURL     string `json:"store_url"`
+	// StoreURL     string `json:"store_url"`
 	// StoreMessage string `json:"store_message"`
 	// StoreVersion string `json:"store_version"`
 	// GitState 由磁盘上的 git 元数据实时推导（不落库）：
@@ -169,7 +169,7 @@ type ScriptVersion struct {
 	ScriptPath string `json:"script_path"`
 	// IOSchema 实时读取自脚本目录的 io_schema.json（不再是数据库字段）。
 	IOSchema string `json:"io_schema"`
-	StoreURL string `json:"store_url"`
+	// StoreURL string `json:"store_url"`
 	// StoreMessage string `json:"store_message"`
 	// GitState 由磁盘上的 git 元数据实时推导（不落库）：
 	// has_local_changes=true 表示本地有未发布改动，
