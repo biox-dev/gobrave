@@ -27,6 +27,13 @@ const defaultGitCommitMessage = "update repository"
 // storeRemoteName 是脚本目录推送到本地 store 仓库时使用的 remote 名称。
 const storeRemoteName = "origin"
 
+const (
+	// defaultBranchName 是新建仓库的默认分支名，也是分支兜底顺序里的首选。
+	defaultBranchName = "main"
+	// branchRefPrefix 是本地分支引用的前缀（按它枚举仓库里实际存在的分支）。
+	branchRefPrefix = "refs/heads/"
+)
+
 // localGitTransportOnce 保证 file 协议只被替换一次。
 var localGitTransportOnce sync.Once
 
@@ -189,6 +196,12 @@ func EnsureBareGitRepo(dir string) (*git.Repository, error) {
 //     「没有新内容可推送」属于幂等成功，调用方应据此给用户提示而不是报错
 //     （例如重复 publish 同一个未再修改的脚本/工作流）。
 //
+// 发布后会把目标裸仓库（store）的 HEAD 切到本次发布的分支：store 的分支跟随工作目录
+// （publish(dev) => store 变成 dev），不再固定为初始化时的 main。这样 install / 读导出
+// 文件 / 检查更新都只需要认 store 的 HEAD，不必依赖源目录或 store 的历史分支名；
+// 之前没有这一步时，从非 main 分支发布会让 store 的 HEAD 悬空（reference not found）
+// 或读到旧分支上的旧内容。
+//
 // 源仓库没有 commit（HEAD 未出生）时返回错误，调用方应提示先保存。
 func PushDirToRepo(ctx context.Context, sourceDir, targetRepoPath string) (bool, error) {
 	ensureLocalGitTransport()
@@ -224,27 +237,41 @@ func PushDirToRepo(ctx context.Context, sourceDir, targetRepoPath string) (bool,
 	}
 
 	// "+" 前缀表示允许非快进更新：store 是脚本目录的发布镜像，需要与源分支完全一致。
+	// 源分支名原样写入 store（store 的分支跟随工作目录），随后再把 store 的 HEAD 切过去。
+	branch := head.Name().Short()
 	refSpec := gitconfig.RefSpec(fmt.Sprintf("+%s:%s", head.Name(), head.Name()))
+	upToDate := false
 	if err := repo.PushContext(ctx, &git.PushOptions{
 		RemoteName: storeRemoteName,
 		RefSpecs:   []gitconfig.RefSpec{refSpec},
 	}); err != nil {
 		// 远端已是同一个提交时 go-git 返回 NoErrAlreadyUpToDate：这不是失败，
 		// 只是没有新内容可推送，转成 (false, nil) 让调用方回复提示信息。
-		if stderrs.Is(err, git.NoErrAlreadyUpToDate) {
-			return false, nil
+		if !stderrs.Is(err, git.NoErrAlreadyUpToDate) {
+			return false, fmt.Errorf("push %q to %q: %w", sourceDir, targetRepoPath, err)
 		}
-		return false, fmt.Errorf("push %q to %q: %w", sourceDir, targetRepoPath, err)
+		upToDate = true
 	}
-	return true, nil
+
+	// 无论这次是否真的推了新提交，都要对齐目标裸仓库的 HEAD：
+	// 历史遗留的 store（HEAD 指向初始化时的 main，内容却推在别的分支上）会在这里自愈；
+	// 缺少这一步就会出现「push 成功但读侧 reference not found / 读到旧分支内容」。
+	if err := alignBareRepoHead(targetRepoPath, branch); err != nil {
+		return false, err
+	}
+	return !upToDate, nil
 }
 
 // SyncWorktreeFromRepo 让 targetDir 的工作区与 srcRepoPath 仓库保持一致：
 //
-//   - targetDir 已是 git 仓库：从 srcRepoPath fetch 后 reset --hard，覆盖本地改动
+//   - targetDir 已是 git 仓库：从 srcRepoPath fetch 后把 HEAD 切到源仓库的分支再 reset --hard
 //   - targetDir 不存在或为空目录：从 srcRepoPath clone（非裸克隆，带工作区）
 //   - targetDir 存在已有内容但不是 git 仓库（旧版本安装留下的普通文件目录）：
 //     就地初始化仓库后再 reset --hard，语义同"覆盖本地"
+//
+// 三种情况都以源仓库（install 场景下是 store 裸仓库）的分支为准：执行完 targetDir 的
+// 当前分支与源仓库一致（见 resolveRepoBranch / resetWorktreeToRemote），目标目录原有的
+// 其它分支保留不删，只是不再被 HEAD 指向。
 //
 // srcRepoPath 既可以是裸仓库（publish 产物），也可以是普通工作区仓库。
 func SyncWorktreeFromRepo(ctx context.Context, targetDir, srcRepoPath string) error {
@@ -273,7 +300,14 @@ func SyncWorktreeFromRepo(ctx context.Context, targetDir, srcRepoPath string) er
 	}
 
 	if len(entries) == 0 {
-		if _, err := git.PlainCloneContext(ctx, targetDir, false, &git.CloneOptions{URL: srcRepoPath}); err != nil {
+		// 显式指定要检出的分支：目标分支跟随源仓库（store）的分支。
+		// clone 默认按源仓库 HEAD 解析，而历史遗留的 store 可能存在 HEAD 悬挂，
+		// 这种情况不指定分支会直接 reference not found。
+		cloneOpts := &git.CloneOptions{URL: srcRepoPath}
+		if branch, branchErr := sourceRepoBranch(srcRepoPath); branchErr == nil {
+			cloneOpts.ReferenceName = plumbing.NewBranchReferenceName(branch)
+		}
+		if _, err := git.PlainCloneContext(ctx, targetDir, false, cloneOpts); err != nil {
 			return fmt.Errorf("clone %q to %q: %w", srcRepoPath, targetDir, err)
 		}
 		return nil
@@ -365,9 +399,186 @@ func remoteURL(repo *git.Repository, remoteName string) string {
 	return rc.URLs[0]
 }
 
+// referenceBranchNames 返回仓库中指定前缀下真实存在的分支名（已排序）。
+//
+// prefix 形如 "refs/heads/" 或 "refs/remotes/origin/"；只统计哈希引用，
+// 符号引用（HEAD、refs/remotes/<remote>/HEAD）不计入。
+func referenceBranchNames(repo *git.Repository, prefix string) []string {
+	if repo == nil {
+		return nil
+	}
+	iter, err := repo.References()
+	if err != nil {
+		return nil
+	}
+
+	var names []string
+	iterErr := iter.ForEach(func(ref *plumbing.Reference) error {
+		if ref.Type() != plumbing.HashReference {
+			return nil
+		}
+		name := ref.Name().String()
+		if !strings.HasPrefix(name, prefix) {
+			return nil
+		}
+		short := strings.TrimPrefix(name, prefix)
+		if short == "" || short == "HEAD" {
+			return nil
+		}
+		names = append(names, short)
+		return nil
+	})
+	iter.Close()
+	if iterErr != nil {
+		return nil
+	}
+
+	sort.Strings(names)
+	return names
+}
+
+// resolveRepoBranch 返回仓库「当前使用的分支名」，用于跨仓库同步时对齐两侧分支：
+//
+//  1. HEAD 指向且真实存在的分支（正常情况）；
+//  2. 否则（HEAD 悬挂 / 未出生 / 游离）取仓库实际存在的分支：优先 main、其次 master，
+//     再退化为名称排序第一的分支；
+//  3. 仓库里一个分支都没有时返回 main（全新仓库的初始化分支）。
+//
+// 不能直接用 repo.Head()：go-git 在 HEAD 指向不存在的分支时报 reference not found，
+// 而历史遗留的 store 正是这种状态（HEAD 指向初始化时的 main，内容却推在其它分支上）。
+// 这里用确定性的兜底顺序，保证同一仓库多次调用得到同一个分支名。
+func resolveRepoBranch(repo *git.Repository) string {
+	if repo == nil {
+		return defaultBranchName
+	}
+	if head, err := repo.Head(); err == nil && head.Name().IsBranch() {
+		return head.Name().Short()
+	}
+
+	branches := referenceBranchNames(repo, branchRefPrefix)
+	if len(branches) == 0 {
+		return defaultBranchName
+	}
+	for _, candidate := range []string{defaultBranchName, plumbing.Master.Short()} {
+		for _, name := range branches {
+			if name == candidate {
+				return name
+			}
+		}
+	}
+	return branches[0]
+}
+
+// headCommitHash 返回仓库 HEAD 对应的提交 hash。
+//
+// HEAD 正常时等同于 repo.Head().Hash()；HEAD 悬挂时回退到 resolveRepoBranch 选出的分支，
+// 让「读导出文件 / 回填元数据 / 读同步状态」在历史遗留的 store 上仍然可用，
+// 而不是直接抛 reference not found。
+func headCommitHash(repo *git.Repository) (plumbing.Hash, error) {
+	if repo == nil {
+		return plumbing.ZeroHash, stderrs.New("git repository is nil")
+	}
+	if head, err := repo.Head(); err == nil {
+		return head.Hash(), nil
+	}
+	ref, err := repo.Reference(plumbing.NewBranchReferenceName(resolveRepoBranch(repo)), true)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	return ref.Hash(), nil
+}
+
+// alignRepoHead 把仓库的 HEAD 切到指定分支（幂等：已经在该分支上时不写任何 ref）。
+//
+// go-git 没有 checkout：裸仓库只要改 HEAD 这个符号引用；带工作区的仓库由调用方随后
+// reset --hard 对齐工作区。
+func alignRepoHead(repo *git.Repository, branch string) error {
+	if repo == nil {
+		return stderrs.New("git repository is nil")
+	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return stderrs.New("branch name is empty")
+	}
+
+	target := plumbing.NewBranchReferenceName(branch)
+	if head, err := repo.Reference(plumbing.HEAD, false); err == nil && head.Type() == plumbing.SymbolicReference && head.Target() == target {
+		return nil
+	}
+	return repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, target))
+}
+
+// alignBareRepoHead 把裸仓库（store）的 HEAD 切到指定分支。
+//
+// 只处理裸仓库：非裸目录带工作区，直接改 HEAD 会让工作区与分支脱节（历史遗留用法，
+// 例如把普通仓库目录当作 store 使用），这种情况保持原样不动。
+func alignBareRepoHead(repoPath, branch string) error {
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		return fmt.Errorf("open target git repository %q: %w", repoPath, err)
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		return fmt.Errorf("read target git repository config %q: %w", repoPath, err)
+	}
+	if !cfg.Core.IsBare {
+		return nil
+	}
+	return alignRepoHead(repo, branch)
+}
+
+// sourceRepoBranch 打开仓库并返回它「当前使用的分支名」。
+//
+// install 时目标目录的分支跟随 store，就是靠这个取值（见 resetWorktreeToRemote）。
+func sourceRepoBranch(repoPath string) (string, error) {
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		return "", err
+	}
+	return resolveRepoBranch(repo), nil
+}
+
+// pickRemoteBranch 在指定 remote 的远端分支里挑选本次要拉取的分支。
+//
+// 首选与本地同名（want）的分支；远端没有同名分支时，若远端只有一个分支就直接跟随它
+// （覆盖「本地 store 分支被 publish 改成 dev，远端默认分支仍是 main」这种情况），
+// 否则优先 main / master，都不匹配时返回带可用分支列表的错误。
+func pickRemoteBranch(repo *git.Repository, remoteName, want string) (string, error) {
+	names := referenceBranchNames(repo, "refs/remotes/"+remoteName+"/")
+	if len(names) == 0 {
+		return "", fmt.Errorf("remote %q has no branch to fetch", remoteName)
+	}
+	for _, name := range names {
+		if name == want {
+			return name, nil
+		}
+	}
+	if len(names) == 1 {
+		return names[0], nil
+	}
+	for _, candidate := range []string{defaultBranchName, plumbing.Master.Short()} {
+		for _, name := range names {
+			if name == candidate {
+				return name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("remote %q has no branch %q (available: %s)", remoteName, want, strings.Join(names, ", "))
+}
+
 // resetWorktreeToRemote 让已存在的仓库工作区与远端仓库 srcRepoPath 完全一致：
-// 重置 origin 地址 -> fetch -> reset --hard 到远端同名分支。
+// 重置 origin 地址 -> fetch -> 把 HEAD 切到源仓库的分支 -> reset --hard。
+//
+// 分支一律跟随源仓库（install 场景下是 store 裸仓库，见 resolveRepoBranch）：
+// reset --hard 只移动当前分支的提交指针、不会改分支名，所以必须显式切换 HEAD，
+// 否则目标目录会停留在旧分支名上，下次 publish 又按旧名字推回 store。
+// 目标目录原有的其它分支保留不删。
 func resetWorktreeToRemote(ctx context.Context, repo *git.Repository, targetDir, srcRepoPath string) error {
+	branch, err := sourceRepoBranch(srcRepoPath)
+	if err != nil {
+		return fmt.Errorf("open source git repository %q: %w", srcRepoPath, err)
+	}
+
 	if delErr := repo.DeleteRemote(storeRemoteName); delErr != nil && !stderrs.Is(delErr, git.ErrRemoteNotFound) {
 		return delErr
 	}
@@ -377,11 +588,6 @@ func resetWorktreeToRemote(ctx context.Context, repo *git.Repository, targetDir,
 		Fetch: []gitconfig.RefSpec{gitconfig.RefSpec("+refs/heads/*:refs/remotes/" + storeRemoteName + "/*")},
 	}); err != nil {
 		return err
-	}
-
-	branch := plumbing.Main.Short()
-	if head, err := repo.Head(); err == nil && head.Name().IsBranch() {
-		branch = head.Name().Short()
 	}
 
 	if err := fetchFromLocalRepo(ctx, repo, &git.FetchOptions{
@@ -394,17 +600,23 @@ func resetWorktreeToRemote(ctx context.Context, repo *git.Repository, targetDir,
 
 	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName(storeRemoteName, branch), true)
 	if err != nil {
-		return fmt.Errorf("resolve remote branch %q of %q: %w", branch, srcRepoPath, err)
+		return fmt.Errorf("resolve remote branch %q of %q (available: %s): %w",
+			branch, srcRepoPath, strings.Join(referenceBranchNames(repo, "refs/remotes/"+storeRemoteName+"/"), ", "), err)
 	}
 
-	// 就地初始化出来的空仓库 HEAD 处于未出生状态，先建出同名分支，
-	// 否则 Reset 无法定位当前分支（go-git 会报 reference not found）。
+	// 就地初始化出来的空仓库、或本地还没有 store 那个分支时，先建出同名分支，
+	// 否则切 HEAD / Reset 都无法定位该分支（go-git 会报 reference not found）。
 	if _, refErr := repo.Reference(plumbing.NewBranchReferenceName(branch), false); stderrs.Is(refErr, plumbing.ErrReferenceNotFound) {
 		if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName(branch), remoteRef.Hash())); err != nil {
 			return err
 		}
 	} else if refErr != nil {
 		return refErr
+	}
+
+	// 切到源仓库的分支后再 reset --hard：工作区内容与当前分支名都对齐到 store。
+	if err := alignRepoHead(repo, branch); err != nil {
+		return err
 	}
 
 	wt, err := repo.Worktree()
@@ -420,7 +632,8 @@ func resetWorktreeToRemote(ctx context.Context, repo *git.Repository, targetDir,
 // ReadFileFromGitRepo 读取仓库 HEAD 提交中指定相对路径（"/" 分隔）的文件内容。
 //
 // 同时支持裸仓库与普通仓库：本地发布的 store 是裸仓库，没有工作区文件，封面图等
-// 只能从 git 对象里读取。
+// 只能从 git 对象里读取。HEAD 悬挂（历史遗留的 store）时按 resolveRepoBranch 回退到
+// 实际分支，不直接报 reference not found。
 func ReadFileFromGitRepo(repoPath, relPath string) ([]byte, error) {
 	ensureLocalGitTransport()
 
@@ -434,11 +647,11 @@ func ReadFileFromGitRepo(repoPath, relPath string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	head, err := repo.Head()
+	hash, err := headCommitHash(repo)
 	if err != nil {
 		return nil, err
 	}
-	commit, err := repo.CommitObject(head.Hash())
+	commit, err := repo.CommitObject(hash)
 	if err != nil {
 		return nil, err
 	}
@@ -462,6 +675,7 @@ func ReadFileFromGitRepo(repoPath, relPath string) ([]byte, error) {
 //
 // 查找口径与旧的文件系统查找保持一致：根目录优先，其次按路径顺序查找（忽略大小写）。
 // 同时支持裸仓库与普通仓库：store 是裸仓库，没有工作区文件，只能从 git 对象里找。
+// HEAD 悬挂（历史遗留的 store）时按 resolveRepoBranch 回退到实际分支。
 func FindFileInGitRepo(repoPath, fileName string) (string, error) {
 	ensureLocalGitTransport()
 
@@ -475,11 +689,11 @@ func FindFileInGitRepo(repoPath, fileName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	head, err := repo.Head()
+	hash, err := headCommitHash(repo)
 	if err != nil {
 		return "", err
 	}
-	commit, err := repo.CommitObject(head.Hash())
+	commit, err := repo.CommitObject(hash)
 	if err != nil {
 		return "", err
 	}
@@ -514,8 +728,13 @@ func FindFileInGitRepo(repoPath, fileName string) (string, error) {
 // FetchBareRepoFromRemote 把裸仓库更新到指定 remote 的最新提交。
 //
 // 裸仓库没有工作区，Worktree().Pull 不可用（会报 worktree not available），因此等价实现为：
-// force fetch <remoteName>（刷新 refs/remotes/<remoteName>/*）后，把 HEAD 指向的本地分支
-// 指向同名远端分支。remoteName 为空时回退 storeRemoteName（origin）。
+// force fetch <remoteName>（刷新 refs/remotes/<remoteName>/*）后，把本地分支指向远端分支，
+// 并把 HEAD 切到该分支。remoteName 为空时回退 storeRemoteName（origin）。
+//
+// 分支选取：优先本地 store 当前的分支（resolveRepoBranch，HEAD 悬挂也能容错）；
+// 远端没有同名分支时跟随远端实际存在的分支（只有一个分支，或 main / master），
+// 并把 store 的 HEAD 一起切过去，保证后续「publish 跟随本地分支、install 跟随 store 分支」
+// 这条链路始终自洽。
 //
 // store 裸仓库上可以配置多个远端（origin / github / gitee ...，见 ReadGitRemotes），
 // 「检查更新」（/store/redownload）因此可以指定从哪个 remote 拉取。
@@ -539,14 +758,9 @@ func FetchBareRepoFromRemote(ctx context.Context, repoPath, remoteName string) e
 		return err
 	}
 
-	head, err := repo.Head()
-	if err != nil {
-		return err
-	}
-	branch := plumbing.Main.Short()
-	if head.Name().IsBranch() {
-		branch = head.Name().Short()
-	}
+	branch := resolveRepoBranch(repo)
+	// 还没有任何提交的 store（headErr != nil）也允许 fetch 建分支，只是无法判断“已是最新”。
+	headHash, headErr := headCommitHash(repo)
 
 	if fetchErr := fetchFromLocalRepo(ctx, repo, &git.FetchOptions{
 		RemoteName: remoteName,
@@ -558,17 +772,24 @@ func FetchBareRepoFromRemote(ctx context.Context, repoPath, remoteName string) e
 
 	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName(remoteName, branch), true)
 	if err != nil {
-		return fmt.Errorf("resolve remote branch %q of %q: %w", branch, repoPath, err)
+		// 远端没有与 store 同名的分支（例如 store 分支被 publish 改成 dev，
+		// 而远端默认分支仍是 main）：挑一个远端实际存在的分支跟随。
+		if branch, err = pickRemoteBranch(repo, remoteName, branch); err != nil {
+			return fmt.Errorf("resolve remote branch of %q on remote %q: %w", repoPath, remoteName, err)
+		}
+		if remoteRef, err = repo.Reference(plumbing.NewRemoteReferenceName(remoteName, branch), true); err != nil {
+			return fmt.Errorf("resolve remote branch %q of %q: %w", branch, repoPath, err)
+		}
 	}
-	if remoteRef.Hash() == head.Hash() {
+	if headErr == nil && remoteRef.Hash() == headHash {
 		return git.NoErrAlreadyUpToDate
 	}
 
-	// 裸仓库没有工作区可以 reset，直接让本地分支指向远端提交（HEAD 是指向该分支的符号引用）。
+	// 裸仓库没有工作区可以 reset，直接让本地分支指向远端提交，并把 HEAD 切到该分支。
 	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName(branch), remoteRef.Hash())); err != nil {
 		return err
 	}
-	return nil
+	return alignRepoHead(repo, branch)
 }
 
 // GitRemote 是仓库中配置的一个 git remote：名称 + 全部地址。

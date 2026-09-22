@@ -606,3 +606,239 @@ func TestFindFileInGitRepo(t *testing.T) {
 		t.Fatal("FindFileInGitRepo on non-repository should fail")
 	}
 }
+
+// TestStoreBranchFollowsPublishAndInstall 固定「分支跟随」约定：
+//
+//   - publish：store 的分支跟随工作目录（publish(dev) => store 变成 dev），并切换 store 的 HEAD；
+//     换分支发布后读出的是新内容，旧分支按约定保留不删；
+//   - install：目标目录的分支跟随 store（并切换 HEAD），目标目录已存在时同样生效；
+//   - 历史遗留的坏 store（HEAD 悬挂在 main、内容在 master 上）在读取与安装时都能自愈。
+func TestStoreBranchFollowsPublishAndInstall(t *testing.T) {
+	ctx := context.Background()
+	identity := GitIdentity{Name: "gobrave", Email: "gobrave@123.com"}
+	t.Setenv("PATH", t.TempDir())
+
+	root := t.TempDir()
+	// sourceWithBranch 建一个指定分支的脚本目录，并提交一个 script.json。
+	sourceWithBranch := func(name, branch, content string) string {
+		t.Helper()
+		dir := filepath.Join(root, "script", name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		repo, err := git.PlainInitWithOptions(dir, &git.PlainInitOptions{
+			InitOptions: git.InitOptions{DefaultBranch: plumbing.NewBranchReferenceName(branch)},
+		})
+		if err != nil {
+			t.Fatalf("init %s: %v", dir, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "script.json"), []byte(content), 0o644); err != nil {
+			t.Fatalf("write script.json: %v", err)
+		}
+		if _, err := CommitAll(repo, "init "+branch, identity); err != nil {
+			t.Fatalf("CommitAll %s: %v", dir, err)
+		}
+		return dir
+	}
+	branchOf := func(dir string) string {
+		t.Helper()
+		repo, err := git.PlainOpen(dir)
+		if err != nil {
+			t.Fatalf("open %s: %v", dir, err)
+		}
+		head, err := repo.Head()
+		if err != nil {
+			t.Fatalf("head %s: %v", dir, err)
+		}
+		return head.Name().Short()
+	}
+
+	storeDir := filepath.Join(root, "store", "script-1")
+	if _, err := EnsureBareGitRepo(storeDir); err != nil {
+		t.Fatalf("EnsureBareGitRepo: %v", err)
+	}
+
+	// 1) publish(dev)：store 的分支跟随成 dev，导出文件立刻可读。
+	devDir := sourceWithBranch("dev-src", "dev", `{"script_id":"s1","v":"dev"}`)
+	if pushed, err := PushDirToRepo(ctx, devDir, storeDir); err != nil || !pushed {
+		t.Fatalf("PushDirToRepo dev = (%v, %v), want (true, nil)", pushed, err)
+	}
+	if got := branchOf(storeDir); got != "dev" {
+		t.Fatalf("store branch after publish(dev) = %q, want dev", got)
+	}
+	assertStoreScriptJSON(t, storeDir, `{"script_id":"s1","v":"dev"}`)
+
+	// 2) install 到不存在的目标目录：分支跟随 store(dev)。
+	targetDir := filepath.Join(root, "install", "s1")
+	if err := SyncWorktreeFromRepo(ctx, targetDir, storeDir); err != nil {
+		t.Fatalf("SyncWorktreeFromRepo clone: %v", err)
+	}
+	if got := branchOf(targetDir); got != "dev" {
+		t.Fatalf("installed branch = %q, want dev", got)
+	}
+	assertFileContent(t, filepath.Join(targetDir, "script.json"), `{"script_id":"s1","v":"dev"}`)
+
+	// 3) 换成 main 分支再发布：store 切到 main，读出的是新内容（不是留在 dev 上的旧内容）。
+	mainDir := sourceWithBranch("main-src", "main", `{"script_id":"s1","v":"main"}`)
+	if _, err := PushDirToRepo(ctx, mainDir, storeDir); err != nil {
+		t.Fatalf("PushDirToRepo main: %v", err)
+	}
+	if got := branchOf(storeDir); got != "main" {
+		t.Fatalf("store branch after publish(main) = %q, want main", got)
+	}
+	assertStoreScriptJSON(t, storeDir, `{"script_id":"s1","v":"main"}`)
+
+	// 旧分支保留不删（约定如此，install 之后仍可能有人按名字回溯）。
+	storeRepo, err := git.PlainOpen(storeDir)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if _, err := storeRepo.Reference(plumbing.NewBranchReferenceName("dev"), true); err != nil {
+		t.Fatalf("unused branch dev should be kept: %v", err)
+	}
+
+	// 4) install 到已存在且分支为 dev 的目标目录：应切到 store 的 main 并覆盖内容。
+	if err := SyncWorktreeFromRepo(ctx, targetDir, storeDir); err != nil {
+		t.Fatalf("SyncWorktreeFromRepo pull: %v", err)
+	}
+	if got := branchOf(targetDir); got != "main" {
+		t.Fatalf("target branch after install = %q, want main", got)
+	}
+	assertFileContent(t, filepath.Join(targetDir, "script.json"), `{"script_id":"s1","v":"main"}`)
+
+	// 5) 历史遗留的坏 store：HEAD 悬挂在 main（不存在），内容在 master 上。
+	legacyStore := filepath.Join(root, "store", "legacy")
+	if _, err := EnsureBareGitRepo(legacyStore); err != nil {
+		t.Fatalf("EnsureBareGitRepo legacy: %v", err)
+	}
+	legacySrc := sourceWithBranch("legacy-src", "master", `{"script_id":"s-legacy"}`)
+	if _, err := PushDirToRepo(ctx, legacySrc, legacyStore); err != nil {
+		t.Fatalf("PushDirToRepo legacy: %v", err)
+	}
+	legacyRepo, err := git.PlainOpen(legacyStore)
+	if err != nil {
+		t.Fatalf("open legacy store: %v", err)
+	}
+	if err := legacyRepo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main"))); err != nil {
+		t.Fatalf("hang legacy HEAD: %v", err)
+	}
+	if _, err := legacyRepo.Head(); !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		t.Fatalf("legacy Head() err = %v, want reference not found", err)
+	}
+	// 读取侧应回退到实际分支 master，而不是报 reference not found。
+	assertStoreScriptJSON(t, legacyStore, `{"script_id":"s-legacy"}`)
+	// 安装也应成功，并且目标目录分支跟随实际分支 master。
+	legacyTarget := filepath.Join(root, "install", "legacy")
+	if err := SyncWorktreeFromRepo(ctx, legacyTarget, legacyStore); err != nil {
+		t.Fatalf("SyncWorktreeFromRepo legacy: %v", err)
+	}
+	if got := branchOf(legacyTarget); got != "master" {
+		t.Fatalf("legacy install branch = %q, want master", got)
+	}
+	// 再次 publish 会把坏 store 的 HEAD 修正到发布分支。
+	if _, err := PushDirToRepo(ctx, legacySrc, legacyStore); err != nil {
+		t.Fatalf("PushDirToRepo legacy again: %v", err)
+	}
+	if got := branchOf(legacyStore); got != "master" {
+		t.Fatalf("legacy store branch after republish = %q, want master", got)
+	}
+}
+
+// assertStoreScriptJSON 从 store 裸仓库当前分支读取 script.json 并比对内容。
+func assertStoreScriptJSON(t *testing.T, storeDir, want string) {
+	t.Helper()
+	relPath, err := FindFileInGitRepo(storeDir, "script.json")
+	if err != nil {
+		t.Fatalf("FindFileInGitRepo %s: %v", storeDir, err)
+	}
+	content, err := ReadFileFromGitRepo(storeDir, relPath)
+	if err != nil {
+		t.Fatalf("ReadFileFromGitRepo %s: %v", storeDir, err)
+	}
+	if string(content) != want {
+		t.Fatalf("store script.json = %q, want %q", string(content), want)
+	}
+}
+
+// TestFetchBareRepoFromRemoteFollowsRemoteBranch 覆盖「检查更新」的分支兜底：
+// 本地 store 的分支被 publish 改成 dev 后，远端默认分支仍是 main，此时不应报
+// reference not found，而应跟随远端实际存在的分支，并把 store 的 HEAD 一起切过去。
+func TestFetchBareRepoFromRemoteFollowsRemoteBranch(t *testing.T) {
+	ctx := context.Background()
+	identity := GitIdentity{Name: "gobrave", Email: "gobrave@123.com"}
+	t.Setenv("PATH", t.TempDir())
+
+	root := t.TempDir()
+	// 上游：只有 main 分支的裸仓库（模拟 GitHub 上默认分支为 main 的仓库）。
+	upstreamSrc := filepath.Join(root, "upstream-src")
+	if _, err := EnsureGitRepo(upstreamSrc); err != nil {
+		t.Fatalf("EnsureGitRepo: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(upstreamSrc, "script.json"), []byte(`{"v":"upstream"}`), 0o644); err != nil {
+		t.Fatalf("write script.json: %v", err)
+	}
+	upstreamRepo, err := git.PlainOpen(upstreamSrc)
+	if err != nil {
+		t.Fatalf("open upstream src: %v", err)
+	}
+	if _, err := CommitAll(upstreamRepo, "upstream", identity); err != nil {
+		t.Fatalf("CommitAll upstream: %v", err)
+	}
+	upstream := filepath.Join(root, "upstream.git")
+	if _, err := EnsureBareGitRepo(upstream); err != nil {
+		t.Fatalf("EnsureBareGitRepo upstream: %v", err)
+	}
+	if _, err := PushDirToRepo(ctx, upstreamSrc, upstream); err != nil {
+		t.Fatalf("PushDirToRepo upstream: %v", err)
+	}
+
+	// DownloadStore 产物：从上游裸克隆出来的 store（origin 指向上游，分支 main）。
+	storeDir := filepath.Join(root, "store", "script-1")
+	if _, err := git.PlainCloneContext(ctx, storeDir, true, &git.CloneOptions{URL: upstream}); err != nil {
+		t.Fatalf("bare clone store: %v", err)
+	}
+
+	// 本地 publish(dev)：store 的分支变成 dev，内容也换成 dev，但上游仍然只有 main。
+	devSrc := filepath.Join(root, "dev-src")
+	if err := os.MkdirAll(devSrc, 0o755); err != nil {
+		t.Fatalf("mkdir dev-src: %v", err)
+	}
+	devRepo, err := git.PlainInitWithOptions(devSrc, &git.PlainInitOptions{
+		InitOptions: git.InitOptions{DefaultBranch: plumbing.NewBranchReferenceName("dev")},
+	})
+	if err != nil {
+		t.Fatalf("init dev-src: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(devSrc, "script.json"), []byte(`{"v":"dev"}`), 0o644); err != nil {
+		t.Fatalf("write dev script.json: %v", err)
+	}
+	if _, err := CommitAll(devRepo, "dev", identity); err != nil {
+		t.Fatalf("CommitAll dev: %v", err)
+	}
+	if _, err := PushDirToRepo(ctx, devSrc, storeDir); err != nil {
+		t.Fatalf("PushDirToRepo dev: %v", err)
+	}
+	assertStoreScriptJSON(t, storeDir, `{"v":"dev"}`)
+
+	// 检查更新：远端没有 dev 分支，应跟随远端唯一的分支 main，并把 store 切回 main。
+	if err := FetchBareRepoFromRemote(ctx, storeDir, ""); err != nil {
+		t.Fatalf("FetchBareRepoFromRemote: %v", err)
+	}
+	storeRepo, err := git.PlainOpen(storeDir)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	head, err := storeRepo.Head()
+	if err != nil {
+		t.Fatalf("store head: %v", err)
+	}
+	if got := head.Name().Short(); got != "main" {
+		t.Fatalf("store branch after fetch = %q, want main", got)
+	}
+	assertStoreScriptJSON(t, storeDir, `{"v":"upstream"}`)
+
+	// 已经跟到远端最新：再次检查更新应报告“已是最新”。
+	if err := FetchBareRepoFromRemote(ctx, storeDir, ""); !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		t.Fatalf("second fetch = %v, want NoErrAlreadyUpToDate", err)
+	}
+}

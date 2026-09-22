@@ -132,6 +132,10 @@ func readWorktreeHead(dir string) (commit string, dirty bool, ok bool) {
 }
 
 // readRepoHead 返回仓库 HEAD hash 以及目录是否为可用仓库（裸/非裸均可）。
+//
+// HEAD 悬挂（历史遗留的 store：HEAD 指向初始化时的 main，内容却推在别的分支上）时
+// 回退到实际分支，与读侧（ReadFileFromGitRepo / FindFileInGitRepo）保持一致，
+// 避免同步状态误报成“从未发布”。
 func readRepoHead(dir string) (string, bool) {
 	if dir == "" {
 		return "", false
@@ -140,11 +144,11 @@ func readRepoHead(dir string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	head, err := repo.Head()
+	hash, err := headCommitHash(repo)
 	if err != nil {
 		return "", true
 	}
-	return head.Hash().String(), true
+	return hash.String(), true
 }
 
 // commitIsAncestor 判断 ancestorHash 是否为 descendantHash 的祖先提交。
