@@ -42,6 +42,17 @@ func (s *storeService) UpdateStore(ctx context.Context, item *types.Store) error
 	return s.storeRepo.UpdateStore(ctx, item)
 }
 
+// UpdateStoreURL 只更新 store 的 url，不动其他字段。
+func (s *storeService) UpdateStoreURL(ctx context.Context, id int64, rawURL string) error {
+	if id <= 0 {
+		return fmt.Errorf("invalid store id: %d", id)
+	}
+	if _, err := s.storeRepo.GetStoreByID(ctx, id); err != nil {
+		return err
+	}
+	return s.storeRepo.UpdateStoreURL(ctx, id, rawURL)
+}
+
 func (s *storeService) DeleteStore(ctx context.Context, id int64) error {
 	if _, err := s.storeRepo.GetStoreByID(ctx, id); err != nil {
 		return err

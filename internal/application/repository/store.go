@@ -64,6 +64,28 @@ func (r *storeRepository) UpdateStore(ctx context.Context, item *types.Store) er
 	}).Error
 }
 
+// UpdateStoreURL 只更新 url 单列。
+//
+// UpdateStore 用 map 调 Updates 会把未提交的字段一并写成零值，
+// 「发布到远程只改 URL」这类局部更新必须走这里。
+func (r *storeRepository) UpdateStoreURL(ctx context.Context, id int64, rawURL string) error {
+	if id == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&types.Store{}).
+		Where("id = ?", id).
+		Update("url", rawURL)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (r *storeRepository) DeleteStore(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&types.Script{}).Where("store_id = ?", id).Update("store_id", 0).Error; err != nil {

@@ -35,8 +35,8 @@ import (
 
 // saveScriptFilesRequest 是 SaveScriptFiles 的入参。
 type saveScriptFilesRequest struct {
-	// ScriptID 是 script 表主键（int64），与其它接口一致按字符串编码（json:"...,string"）。
-	ScriptID int64ID `json:"script_id,string"`
+	// ScriptID 是 script 表主键（int64），兼容 JSON 字符串（"123"）与数字（123）两种写法。
+	ScriptID int64ID `json:"script_id"`
 	// CommitMessage 可选：本次提交使用的 message，为空时使用默认文案（save script <scriptID>）。
 	CommitMessage string `json:"commit_message"`
 }
@@ -129,8 +129,8 @@ func (h *WorkflowHandler) SaveScriptFiles(c *gin.Context) {
 
 // saveWorkflowFilesRequest 是 SaveWorkflowFiles 的入参。
 type saveWorkflowFilesRequest struct {
-	// WorkflowID 是 workflow 表主键（int64），与其它接口一致按字符串编码（json:"...,string"）。
-	WorkflowID int64ID `json:"workflow_id,string"`
+	// WorkflowID 是 workflow 表主键（int64），兼容 JSON 字符串（"123"）与数字（123）两种写法。
+	WorkflowID int64ID `json:"workflow_id"`
 	// CommitMessage 可选：本次提交使用的 message，为空时使用默认文案（save workflow <workflowID>）。
 	CommitMessage string `json:"commit_message"`
 }

@@ -59,8 +59,8 @@ func (h *WorkflowHandler) exportCodec(version string) (exportcodec.Codec, error)
 }
 
 type PublishWorkflowRequest struct {
-	WorkflowID int64  `json:"workflow_id,string"`
-	Url        string `json:"url"`
+	WorkflowID int64 `json:"workflow_id,string"`
+	// Url        string `json:"url"`
 	// Version    string `json:"version"`
 	Message string `json:"message"`
 }
@@ -105,10 +105,10 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 
 	store := &types.Store{
 		// StoreID:     workflow.WorkflowID,
-		StoreType:   "workflow",
-		Name:        workflow.Name,
-		Origin:      "local",
-		URL:         req.Url,
+		StoreType: "workflow",
+		Name:      workflow.Name,
+		Origin:    "local",
+		// URL:         req.Url,
 		Status:      "done",
 		PathName:    workflow.WorkflowID,
 		Category:    workflow.Category,
@@ -214,8 +214,8 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 }
 
 type PublishScriptRequest struct {
-	ScriptID int64  `json:"script_id,string"`
-	Url      string `json:"url"`
+	ScriptID int64 `json:"script_id,string"`
+	// Url      string `json:"url"`
 	// Version  string `json:"version"`
 	Message string `json:"message"`
 }
@@ -260,10 +260,10 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 	}
 
 	store := &types.Store{
-		StoreType:   "script",
-		Name:        script.ComponentName,
-		Origin:      "local",
-		URL:         req.Url,
+		StoreType: "script",
+		Name:      script.ComponentName,
+		Origin:    "local",
+		// URL:         req.Url,
 		Status:      "done",
 		PathName:    script.ScriptID,
 		Category:    script.Category,

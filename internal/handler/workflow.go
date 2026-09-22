@@ -107,32 +107,37 @@ type createWorkflowRequest struct {
 // saveWorkflowDagRequest 仅保存工作流 DAG 定义。
 // WorkflowID 是 workflow 表主键（int64），兼容 JSON 字符串（"123"）与数字（123）两种写法。
 type saveWorkflowDagRequest struct {
-	WorkflowID    int64ID `json:"workflow_id,string"`
+	WorkflowID    int64ID `json:"workflow_id"`
 	DagDefinition string  `json:"dag_definition"`
 }
 
-// int64ID 解析 int64 主键，同时接受 JSON 字符串与数字，避免 `json:"x,string"`
-// 在收到数字时报 "invalid use of ,string struct tag"。
+// int64ID 解析 int64 主键，同时接受 JSON 字符串与数字。
+//
+// 注意：字段上**不能**再带 `,string` 选项 —— 该选项会在自定义 UnmarshalJSON 之前
+// 生效，收到数字时直接报 "invalid use of ,string struct tag"。
+// 因此仅用于「只反序列化、不回写响应」的请求结构体（本包内 int64ID 的用法都是请求入参）。
 type int64ID int64
 
-// func (v *int64ID) UnmarshalJSON(data []byte) error {
-// 	raw := strings.TrimSpace(string(data))
-// 	if raw == "" || raw == "null" {
-// 		*v = 0
-// 		return nil
-// 	}
-// 	raw = strings.Trim(raw, `"`)
-// 	if raw == "" || raw == "null" {
-// 		*v = 0
-// 		return nil
-// 	}
-// 	n, err := strconv.ParseInt(raw, 10, 64)
-// 	if err != nil {
-// 		return fmt.Errorf("workflow_id must be a valid integer, got %q", raw)
-// 	}
-// 	*v = int64ID(n)
-// 	return nil
-// }
+// UnmarshalJSON 同时接受 `"12"`、`12`，以及空值（`""`/`null` → 0，交由上层校验必填）。
+func (v *int64ID) UnmarshalJSON(data []byte) error {
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || raw == "null" {
+		*v = 0
+		return nil
+	}
+	raw = strings.Trim(raw, `"`)
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		*v = 0
+		return nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return fmt.Errorf("must be a valid integer, got %q", raw)
+	}
+	*v = int64ID(n)
+	return nil
+}
 
 type pageScriptRequest struct {
 	types.Pagination
