@@ -49,6 +49,16 @@ type downloadStoreRequest struct {
 	Tags      any    `json:"tags"`
 }
 
+// reDownloadStoreRequest 是「检查更新」（/store/redownload）的入参。
+//
+// store 裸仓库上可以配置多个 remote（origin / github / gitee ...，见 utils.ReadGitRemotes），
+// 因此要拉取哪个上游由 RemoteName 指定；为空时回退 origin（下载 store 时 clone 生成的默认上游），
+// 与旧调用方（只传 id）保持兼容。
+type reDownloadStoreRequest struct {
+	ID         int64  `json:"id,string" binding:"required"`
+	RemoteName string `json:"remote_name"`
+}
+
 func NewStoreHandler(storeService interfaces.StoreService, cfg *config.Config) *StoreHandler {
 	return &StoreHandler{storeService: storeService, cfg: cfg}
 }
@@ -421,7 +431,7 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 		return
 	}
 
-	var req idBody
+	var req reDownloadStoreRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
@@ -456,7 +466,15 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 		return
 	}
 
-	pullErr := pullStoreRepo(c.Request.Context(), repo, targetPath)
+	// 指定从哪个 remote 拉取：store 仓库上可能配置了多个远端（origin / github / gitee ...），
+	// 请求未指定时回退 origin；remote 不存在直接返回 400，而不是让 go-git 报底层错误。
+	remoteName, err := resolveStoreRemoteName(targetPath, req.RemoteName)
+	if err != nil {
+		c.Error(errors.NewValidationError(err.Error()))
+		return
+	}
+
+	pullErr := pullStoreRepo(c.Request.Context(), repo, targetPath, remoteName)
 	if pullErr != nil && !stderrs.Is(pullErr, git.NoErrAlreadyUpToDate) {
 		// item.Status = "done"
 		item.Log = pullErr.Error()
@@ -496,29 +514,55 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"store_id":   item.ID,
+		"remote":     remoteName,
 		"up_to_date": stderrs.Is(pullErr, git.NoErrAlreadyUpToDate),
 		"message":    "success",
 	})
 }
 
-// pullStoreRepo 把 store 仓库更新到远端最新提交。
+// resolveStoreRemoteName 校验「检查更新」要用的 remote 名：
+// 为空时回退 origin（git.DefaultRemoteName），并确认该 remote 确实配置在 store 仓库上。
+// 仓库没有任何 remote（例如只在本地发布过）时给出可读提示，而不是把 go-git 的
+// "remote not found" 当 500 抛出。
+func resolveStoreRemoteName(repoPath, requested string) (string, error) {
+	name := strings.TrimSpace(requested)
+	if name == "" {
+		name = git.DefaultRemoteName
+	}
+
+	remotes := utils.ReadGitRemotes(repoPath)
+	available := make([]string, 0, len(remotes))
+	for _, remote := range remotes {
+		if remote.Name == name {
+			return name, nil
+		}
+		available = append(available, remote.Name)
+	}
+
+	if len(available) == 0 {
+		return "", fmt.Errorf("store repository has no remote: nothing to update from")
+	}
+	return "", fmt.Errorf("remote %q is not configured on the store repository (available: %s)", name, strings.Join(available, ", "))
+}
+
+// pullStoreRepo 把 store 仓库从指定 remote 更新到远端最新提交。
 //
 // store 是裸仓库（本地 publish 与远程 clone 都是裸仓库，没有工作区），
-// 裸仓库不能用 Worktree().Pull，改为 fetch origin 后把本地分支指向同名远端分支；
+// 裸仓库不能用 Worktree().Pull，改为 fetch <remoteName> 后把本地分支指向同名远端分支；
 // 历史遗留的普通仓库仍走 PullContext。两者都以 git.NoErrAlreadyUpToDate 表示无更新。
-func pullStoreRepo(ctx context.Context, repo *git.Repository, repoPath string) error {
+func pullStoreRepo(ctx context.Context, repo *git.Repository, repoPath, remoteName string) error {
 	if repo == nil {
 		return fmt.Errorf("git repository is nil")
 	}
 	if cfg, cfgErr := repo.Config(); cfgErr == nil && cfg.Core.IsBare {
-		return utils.FetchBareRepoFromOrigin(ctx, repoPath)
+		return utils.FetchBareRepoFromRemote(ctx, repoPath, remoteName)
 	}
 
 	wt, err := repo.Worktree()
 	if err != nil {
 		return err
 	}
-	return wt.PullContext(ctx, &git.PullOptions{RemoteName: "origin"})
+	return wt.PullContext(ctx, &git.PullOptions{RemoteName: remoteName})
 }
 
 // repoPathFromGitURL 从 git 地址（ssh 或 http(s)）里取出 "<owner>/<repo>"。

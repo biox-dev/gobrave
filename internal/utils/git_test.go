@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	git "github.com/go-git/go-git/v5"
+	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
@@ -436,10 +437,11 @@ func repoHeadHash(t *testing.T, dir string) plumbing.Hash {
 	return head.Hash()
 }
 
-// TestFetchBareRepoFromOrigin 覆盖「裸仓库 pull」的语义（ReDownloadStore 用）：
-// 裸仓库没有工作区，不能 Worktree().Pull，fetch origin 后本地分支应跟到远端同名分支，
+// TestFetchBareRepoFromRemote 覆盖「裸仓库 pull」的语义（ReDownloadStore 用）：
+// 裸仓库没有工作区，不能 Worktree().Pull，fetch 指定 remote 后本地分支应跟到远端同名分支，
 // 且无更新时返回 git.NoErrAlreadyUpToDate（与 PullContext 一致）。
-func TestFetchBareRepoFromOrigin(t *testing.T) {
+// remoteName 为空时回退 origin（下载 store 时 clone 出来的默认上游）。
+func TestFetchBareRepoFromRemote(t *testing.T) {
 	ctx := context.Background()
 	identity := GitIdentity{Name: "gobrave", Email: "gobrave@123.com"}
 	// 只用进程内 file 传输：裸仓库之间不需要外部 git 可执行文件。
@@ -467,7 +469,7 @@ func TestFetchBareRepoFromOrigin(t *testing.T) {
 		t.Fatalf("PushDirToRepo v1: %v", err)
 	}
 
-	// DownloadStore 产物：从远端裸克隆出来的 store 裸仓库。
+	// DownloadStore 产物：从远端裸克隆出来的 store 裸仓库（origin 即上游）。
 	cloneDir := filepath.Join(root, "download", "script-1")
 	if _, err := git.PlainCloneContext(ctx, cloneDir, true, &git.CloneOptions{URL: storeDir}); err != nil {
 		t.Fatalf("bare clone: %v", err)
@@ -483,12 +485,18 @@ func TestFetchBareRepoFromOrigin(t *testing.T) {
 		t.Fatalf("cloned head = %s, want %s", got, repoHeadHash(t, storeDir))
 	}
 
-	// 远端无新提交：报告“已是最新”，不报错。
-	if err := FetchBareRepoFromOrigin(ctx, cloneDir); !errors.Is(err, git.NoErrAlreadyUpToDate) {
+	// 远端无新提交：报告“已是最新”，不报错（remoteName 为空 => 回退 origin）。
+	if err := FetchBareRepoFromRemote(ctx, cloneDir, ""); !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		t.Fatalf("fetch without changes = %v, want NoErrAlreadyUpToDate", err)
 	}
 
-	// 源更新并再次 push 到远端后，fetch 应把本地分支前移，且文件内容随之更新。
+	// store 裸仓库上可以有多个远端：再挂一个名为 github 的 remote 指向同一上游，
+	// 覆盖「指定 remote 拉取」（/store/redownload 的 remote_name）。
+	if _, err := cloneRepo.CreateRemote(&gitconfig.RemoteConfig{Name: "github", URLs: []string{storeDir}}); err != nil {
+		t.Fatalf("CreateRemote github: %v", err)
+	}
+
+	// 源更新并再次 push 到远端后，从 github 拉取应把本地分支前移，且文件内容随之更新。
 	if err := os.WriteFile(filepath.Join(originDir, "main.R"), []byte("print('v2')\n"), 0o644); err != nil {
 		t.Fatalf("rewrite main.R: %v", err)
 	}
@@ -499,8 +507,8 @@ func TestFetchBareRepoFromOrigin(t *testing.T) {
 		t.Fatalf("PushDirToRepo v2: %v", err)
 	}
 
-	if err := FetchBareRepoFromOrigin(ctx, cloneDir); err != nil {
-		t.Fatalf("FetchBareRepoFromOrigin update: %v", err)
+	if err := FetchBareRepoFromRemote(ctx, cloneDir, "github"); err != nil {
+		t.Fatalf("FetchBareRepoFromRemote github: %v", err)
 	}
 	if got, want := repoHeadHash(t, cloneDir), repoHeadHash(t, storeDir); got != want {
 		t.Fatalf("cloned head after fetch = %s, want %s", got, want)
@@ -513,9 +521,30 @@ func TestFetchBareRepoFromOrigin(t *testing.T) {
 		t.Fatalf("main.R after fetch = %q, want v2", string(content))
 	}
 
-	// 再次 fetch 已无更新。
-	if err := FetchBareRepoFromOrigin(ctx, cloneDir); !errors.Is(err, git.NoErrAlreadyUpToDate) {
+	// origin 与 github 指向同一上游，此时已无更新。
+	if err := FetchBareRepoFromRemote(ctx, cloneDir, "origin"); !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		t.Fatalf("second fetch = %v, want NoErrAlreadyUpToDate", err)
+	}
+
+	// 源再次更新后，默认（remoteName 为空）也应拉到最新。
+	if err := os.WriteFile(filepath.Join(originDir, "main.R"), []byte("print('v3')\n"), 0o644); err != nil {
+		t.Fatalf("rewrite main.R to v3: %v", err)
+	}
+	if _, err := CommitAll(originRepo, "v3", identity); err != nil {
+		t.Fatalf("CommitAll v3: %v", err)
+	}
+	if _, err := PushDirToRepo(ctx, originDir, storeDir); err != nil {
+		t.Fatalf("PushDirToRepo v3: %v", err)
+	}
+	if err := FetchBareRepoFromRemote(ctx, cloneDir, ""); err != nil {
+		t.Fatalf("FetchBareRepoFromRemote default remote: %v", err)
+	}
+	content, err = ReadFileFromGitRepo(cloneDir, "main.R")
+	if err != nil {
+		t.Fatalf("ReadFileFromGitRepo v3: %v", err)
+	}
+	if string(content) != "print('v3')\n" {
+		t.Fatalf("main.R after default fetch = %q, want v3", string(content))
 	}
 }
 

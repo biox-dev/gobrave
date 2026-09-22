@@ -511,19 +511,27 @@ func FindFileInGitRepo(repoPath, fileName string) (string, error) {
 	return "", fmt.Errorf("%s not found in repository %s", fileName, repoPath)
 }
 
-// FetchBareRepoFromOrigin 把裸仓库更新到 origin 的最新提交。
+// FetchBareRepoFromRemote 把裸仓库更新到指定 remote 的最新提交。
 //
 // 裸仓库没有工作区，Worktree().Pull 不可用（会报 worktree not available），因此等价实现为：
-// force fetch origin（刷新 refs/remotes/origin/*）后，把 HEAD 指向的本地分支指向同名远端分支。
+// force fetch <remoteName>（刷新 refs/remotes/<remoteName>/*）后，把 HEAD 指向的本地分支
+// 指向同名远端分支。remoteName 为空时回退 storeRemoteName（origin）。
+//
+// store 裸仓库上可以配置多个远端（origin / github / gitee ...，见 ReadGitRemotes），
+// 「检查更新」（/store/redownload）因此可以指定从哪个 remote 拉取。
 //
 // 远端没有新提交时返回 git.NoErrAlreadyUpToDate，与 Worktree().Pull 的语义一致，
 // 调用方可用 stderrs.Is(err, git.NoErrAlreadyUpToDate) 判断“已是最新”。
-func FetchBareRepoFromOrigin(ctx context.Context, repoPath string) error {
+func FetchBareRepoFromRemote(ctx context.Context, repoPath, remoteName string) error {
 	ensureLocalGitTransport()
 
 	repoPath = strings.TrimSpace(repoPath)
 	if repoPath == "" {
 		return stderrs.New("git repository path is empty")
+	}
+	remoteName = strings.TrimSpace(remoteName)
+	if remoteName == "" {
+		remoteName = storeRemoteName
 	}
 
 	repo, err := git.PlainOpen(repoPath)
@@ -541,14 +549,14 @@ func FetchBareRepoFromOrigin(ctx context.Context, repoPath string) error {
 	}
 
 	if fetchErr := fetchFromLocalRepo(ctx, repo, &git.FetchOptions{
-		RemoteName: storeRemoteName,
-		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec("+refs/heads/*:refs/remotes/" + storeRemoteName + "/*")},
+		RemoteName: remoteName,
+		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec("+refs/heads/*:refs/remotes/" + remoteName + "/*")},
 		Force:      true,
 	}); fetchErr != nil && !stderrs.Is(fetchErr, git.NoErrAlreadyUpToDate) {
 		return fmt.Errorf("fetch %q: %w", repoPath, fetchErr)
 	}
 
-	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName(storeRemoteName, branch), true)
+	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName(remoteName, branch), true)
 	if err != nil {
 		return fmt.Errorf("resolve remote branch %q of %q: %w", branch, repoPath, err)
 	}
