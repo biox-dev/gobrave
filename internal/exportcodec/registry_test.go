@@ -15,11 +15,19 @@ type stubCodec struct {
 
 func (c *stubCodec) Version() string { return c.version }
 
+func (c *stubCodec) WriteScriptFiles(_ context.Context, _ ScriptWriteRequest) (*types.ScriptJSONExportResponse, error) {
+	return &types.ScriptJSONExportResponse{Version: c.version}, nil
+}
+
+func (c *stubCodec) WriteWorkflowFiles(_ context.Context, _ WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error) {
+	return &types.WorkflowJSONExportResponse{Version: c.version}, nil
+}
+
 func (c *stubCodec) WriteCommitScriptFiles(_ context.Context, _ ScriptWriteRequest) (*types.ScriptJSONExportResponse, error) {
 	return &types.ScriptJSONExportResponse{Version: c.version}, nil
 }
 
-func (c *stubCodec) WriteCommmitWorkflowFiles(_ context.Context, _ WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error) {
+func (c *stubCodec) WriteCommitWorkflowFiles(_ context.Context, _ WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error) {
 	return &types.WorkflowJSONExportResponse{Version: c.version}, nil
 }
 

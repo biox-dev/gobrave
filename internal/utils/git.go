@@ -124,8 +124,8 @@ func CommitAll(repo *git.Repository, message string, identity GitIdentity) (bool
 // CommitDirChanges 确保 dir 是一个 git 仓库（不存在则初始化，默认分支 main），
 // 并把当前工作区改动提交为一个 commit（无变更时不会产生空提交）。
 //
-// 这是脚本/工作流导出目录共用的提交步骤：写侧（Codec 的 WriteScriptFiles /
-// WriteWorkflowFiles）落盘后调用它，保证目录内容始终有对应的 git 提交，
+// 这是脚本/工作流导出目录共用的提交步骤：提交路径（Codec 的 WriteCommitScriptFiles /
+// WriteCommitWorkflowFiles）落盘后调用它，保证目录内容始终有对应的 git 提交，
 // 供后续 PushDirToRepo 推送到 store。
 func CommitDirChanges(dir, commitMessage string, identity GitIdentity) error {
 	repo, err := EnsureGitRepo(dir)

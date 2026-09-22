@@ -173,7 +173,7 @@ func (h *WorkflowHandler) storageBaseDir() string {
 
 // SaveScript godoc
 // @Summary      保存脚本组件
-// @Description  保存 script 组件：当请求包含 id 时更新记录，否则创建新记录；更新时以数据库已有记录为基准，只覆盖请求中有值的字段（未提交的 store_id/url/message 等保持原值）；同时把 io_schema 与脚本主文件写入脚本目录。本接口不再生成 script.json、也不提交 git：生成导出文件与提交版本由 POST /workflow/save-script-files（SaveScriptFiles）负责
+// @Description  保存 script 组件：当请求包含 id 时更新记录，否则创建新记录；更新时以数据库已有记录为基准，只覆盖请求中有值的字段（未提交的 store_id/url/message 等保持原值）；同时把 io_schema、脚本主文件与 script.json 写入脚本目录（script.json 只落盘、不提交 git）。生成导出文件并提交版本由 POST /workflow/save-script-files（SaveScriptFiles）负责
 // @Tags         工作流
 // @Accept       json
 // @Produce      json
@@ -320,16 +320,30 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 		}
 	}
 
-	// 这里不再生成 script.json，也不提交 git（原先由 Codec.WriteScriptFiles 一并完成）：
-	// 「保存组件」与「生成导出文件 + 提交版本」已解耦，后者由专用接口
-	// POST /workflow/save-script-files（SaveScriptFiles）按需触发，commit message 由调用方决定。
-	// 保存后脚本目录会处于 dirty 状态，正好驱动前端在「本地有变化」时展示提交按钮。
+	// 重新生成 script.json，保持导出文件与数据库一致：只落盘、不提交 git。
+	// 「保存组件」与「提交版本」仍然解耦 —— 提交由专用接口
+	// POST /workflow/save-script-files（SaveScriptFiles）或发布（PublishScript）按需触发，
+	// commit message 由调用方决定。写完脚本目录即处于 dirty 状态，
+	// 正好驱动前端在「本地有变化」时展示提交按钮。
+	codec, err := h.exportCodecForWrite()
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
+		return
+	}
+	if _, err := codec.WriteScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
+		ScriptPK:  item.ID,
+		ScriptDir: scriptDir,
+	}); err != nil {
+		c.Error(errors.NewInternalServerError("failed to write script files").WithDetails(err.Error()))
+		return
+	}
+
 	c.JSON(http.StatusOK, item)
 }
 
 // SaveWorkflow godoc
 // @Summary      保存工作流
-// @Description  保存 workflow 组件：当请求包含 id 时更新记录，否则创建新记录；更新时以数据库已有记录为基准，只覆盖请求中有值的字段（未提交的 store_id/url/message 等保持原值）。本接口不再生成 workflow.json、也不提交 git：生成导出文件与提交版本由 POST /workflow/save-workflow-files（SaveWorkflowFiles）负责
+// @Description  保存 workflow 组件：当请求包含 id 时更新记录，否则创建新记录；更新时以数据库已有记录为基准，只覆盖请求中有值的字段（未提交的 store_id/url/message 等保持原值）；同时把 workflow.json（含脚本目录快照）写入 workflow 目录（只落盘、不提交 git）。生成导出文件并提交版本由 POST /workflow/save-workflow-files（SaveWorkflowFiles）负责
 // @Tags         工作流
 // @Accept       json
 // @Produce      json
@@ -469,9 +483,26 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 		}
 	}
 
-	// 这里不再生成 workflow.json（含脚本快照），也不提交 git（原先由 Codec.WriteWorkflowFiles 一并完成）：
-	// 「保存组件」与「生成导出文件 + 提交版本」已解耦，后者由专用接口
-	// POST /workflow/save-workflow-files（SaveWorkflowFiles）按需触发，commit message 由调用方决定。
+	// 重新生成 workflow.json（含脚本快照），保持导出文件与数据库一致：只落盘、不提交 git。
+	// 「保存组件」与「提交版本」仍然解耦 —— 提交由专用接口
+	// POST /workflow/save-workflow-files（SaveWorkflowFiles）或发布（PublishWorkflow）按需触发，
+	// commit message 由调用方决定。
+	codec, err := h.exportCodecForWrite()
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
+		return
+	}
+	workflowDir := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, item.WorkflowID)
+	if _, err := codec.WriteWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
+		WorkflowPK:  item.ID,
+		ProjectID:   project.ProjectID,
+		BaseDir:     h.cfg.Storage.BaseDir,
+		WorkflowDir: workflowDir,
+	}); err != nil {
+		c.Error(errors.NewInternalServerError("failed to write workflow files").WithDetails(err.Error()))
+		return
+	}
+
 	c.JSON(http.StatusOK, item)
 }
 

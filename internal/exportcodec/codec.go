@@ -1,7 +1,8 @@
 // Package exportcodec 定义「导出文件格式版本」的策略（Codec）与注册表（Registry）。
 //
-// 背景：SaveScript/SaveWorkflow 会把数据库记录导出为 script.json / workflow.json
-// 落盘并提交 git，PublishScript/PublishWorkflow 再把它推送到 store 裸仓库；
+// 背景：SaveScript/SaveWorkflow 会把数据库记录导出为 script.json / workflow.json 落盘
+// （只落盘、不提交 git），SaveScriptFiles/SaveWorkflowFiles 与 PublishScript/PublishWorkflow
+// 再落盘并提交为一个 git commit，发布路径随后把它推送到 store 裸仓库；
 // InstallScript/InstallWorkflow 则从 store 同步回目录后反向读取这两个文件导入数据库。
 //
 // 一旦文件格式演进（字段增删、脚本快照的目录布局变化），新旧产物必须能被区分处理，
@@ -67,8 +68,8 @@ var (
 // Codec 实现直接持有 interfaces.WorkflowService（写侧用它按主键生成导出 payload），
 // 由 DI 容器在装配 Registry 时注入（见 internal/container/container.go）。
 //
-// WriteXxxFiles 负责「按该版本的格式生成文件、落盘，并把目录改动提交为一个 git commit」；
-// DecodeXxx / ScriptSnapshotDir 只负责解析内容与解释目录布局。
+// WriteXxxFiles 负责「按该版本的格式生成文件并落盘」，WriteCommitXxxFiles 在此基础上
+// 把目录改动提交为一个 git commit；DecodeXxx / ScriptSnapshotDir 只负责解析内容与解释目录布局。
 // git 提交本身与格式版本无关，由 utils.CommitDirChanges 统一实现，各版本 Codec 直接复用，
 // 因此调用方（handler）落盘后无需再单独提交。
 //
@@ -88,20 +89,35 @@ type Codec interface {
 	// ===== 写侧 =====
 
 	// WriteScriptFiles 按该版本格式生成脚本导出内容并落盘到 req.ScriptDir
-	// （文件名、是否附带 container_templates 等由版本决定），把目录改动提交为一个
-	// git commit，返回写入的 payload，其 Version 必须等于 Version()。
+	// （文件名、是否附带 container_templates 等由版本决定），返回写入的 payload，
+	// 其 Version 必须等于 Version()。
 	//
-	// 实现需保证 req.ScriptDir 存在（不存在则创建）并完成 git 提交
-	// （见 utils.CommitDirChanges，提交身份由装配时注入）。
-	WriteCommitScriptFiles(ctx context.Context, req ScriptWriteRequest) (*types.ScriptJSONExportResponse, error)
+	// 只落盘、不提交 git：SaveScript 用它把导出文件与数据库保持一致，写完目录即处于
+	// dirty 状态；需要产出带提交的版本产物时，由调用方再调 WriteCommitScriptFiles。
+	//
+	// 实现需保证 req.ScriptDir 存在（不存在则创建）。
+	WriteScriptFiles(ctx context.Context, req ScriptWriteRequest) (*types.ScriptJSONExportResponse, error)
 
 	// WriteWorkflowFiles 按该版本格式生成工作流导出内容并落盘到 req.WorkflowDir，
 	// 同时按该版本的目录布局把工作流引用的脚本快照到 req.WorkflowDir 下，
-	// 最后把目录改动提交为一个 git commit，返回写入的 payload，其 Version 必须等于 Version()。
+	// 返回写入的 payload，其 Version 必须等于 Version()。
 	//
-	// 实现需保证 req.WorkflowDir 存在（不存在则创建）并完成 git 提交
-	// （见 utils.CommitDirChanges，提交身份由装配时注入）。
-	WriteCommmitWorkflowFiles(ctx context.Context, req WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error)
+	// 与 WriteScriptFiles 一样只落盘、不提交 git（SaveWorkflow 使用它）。
+	//
+	// 实现需保证 req.WorkflowDir 存在（不存在则创建）。
+	WriteWorkflowFiles(ctx context.Context, req WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error)
+
+	// WriteCommitScriptFiles 在 WriteScriptFiles 的基础上，把 req.ScriptDir 的目录改动
+	// 提交为一个 git commit（见 utils.CommitDirChanges，提交身份由装配时注入）。
+	//
+	// 调用方：SaveScriptFiles / PublishScript（保存或发布必须产出带提交的完整产物）。
+	WriteCommitScriptFiles(ctx context.Context, req ScriptWriteRequest) (*types.ScriptJSONExportResponse, error)
+
+	// WriteCommitWorkflowFiles 在 WriteWorkflowFiles 的基础上，把 req.WorkflowDir 的目录改动
+	// 提交为一个 git commit（见 utils.CommitDirChanges，提交身份由装配时注入）。
+	//
+	// 调用方：SaveWorkflowFiles / PublishWorkflow。
+	WriteCommitWorkflowFiles(ctx context.Context, req WorkflowWriteRequest) (*types.WorkflowJSONExportResponse, error)
 
 	// ===== 读侧 =====
 

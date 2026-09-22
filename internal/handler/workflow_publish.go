@@ -171,7 +171,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		return
 	}
 
-	// workflow 目录是发布的数据源：workflow.json 与脚本目录快照由 Codec.WriteWorkflowFiles
+	// workflow 目录是发布的数据源：workflow.json 与脚本目录快照由 Codec.WriteCommitWorkflowFiles
 	// 统一生成、落盘并提交，再 push 到 store 裸仓库。
 	workflowSourceDir := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
 	codec, err := h.exportCodecForWrite()
@@ -179,7 +179,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
 		return
 	}
-	if _, err := codec.WriteCommmitWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
+	if _, err := codec.WriteCommitWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
 		WorkflowPK:    workflow.ID,
 		ProjectID:     project.ProjectID,
 		BaseDir:       h.storageBaseDir(),
@@ -247,7 +247,7 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		return
 	}
 
-	// 脚本目录是发布的数据源：script.json 与 git 提交由 Codec.WriteScriptFiles
+	// 脚本目录是发布的数据源：script.json 与 git 提交由 Codec.WriteCommitScriptFiles
 	// 在 push 前统一生成，这里不再校验文件是否存在。
 	sourceScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
 

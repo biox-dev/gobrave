@@ -18,9 +18,9 @@ import (
 //	POST /workflow/save-script-files    → SaveScriptFiles
 //	POST /workflow/save-workflow-files  → SaveWorkflowFiles
 //
-// 背景：保存组件（SaveScript / SaveWorkflow）现在只落库（脚本目录的 io_schema.json /
-// 脚本主文件仍随保存写入），不再生成 script.json / workflow.json，也不提交 git。
-// 生成导出文件与「把本地目录改动提交为一个 commit」被提取成本文件的两个接口，
+// 背景：保存组件（SaveScript / SaveWorkflow）会落库，并把 script.json / workflow.json
+// 重新生成落盘（脚本目录的 io_schema.json / 脚本主文件也随保存写入），但不提交 git。
+// 「把本地目录改动提交为一个 commit」被提取成本文件的两个接口，
 // 由调用方按需触发（前端在 git_state 显示「本地有变化」时才展示按钮），
 // 并可自带 commit_message（为空时使用默认文案）。
 //
@@ -203,7 +203,7 @@ func (h *WorkflowHandler) SaveWorkflowFiles(c *gin.Context) {
 	}
 
 	workflowDir := utils.GetWorkflowFileDir(baseDir, project.ProjectID, workflow.WorkflowID)
-	if _, err := codec.WriteCommmitWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
+	if _, err := codec.WriteCommitWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
 		WorkflowPK:    workflow.ID,
 		ProjectID:     project.ProjectID,
 		BaseDir:       baseDir,

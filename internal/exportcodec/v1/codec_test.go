@@ -104,7 +104,7 @@ func TestWriteWorkflowFilesSnapshotsScripts(t *testing.T) {
 	}, nil, testGitIdentity)
 
 	workflowDir := filepath.Join(t.TempDir(), "workflow")
-	payload, err := codec.WriteCommmitWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{
+	payload, err := codec.WriteCommitWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{
 		WorkflowPK:  1,
 		ProjectID:   projectID,
 		BaseDir:     baseDir,
@@ -151,7 +151,7 @@ func TestDecodeWorkflowRoundTrip(t *testing.T) {
 			Workflow:   map[string]any{"name": "demo", "dag_definition": map[string]any{"a": 1}},
 		},
 	}, nil, testGitIdentity)
-	written, err := codec.WriteCommmitWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{
+	written, err := codec.WriteCommitWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{
 		WorkflowDir: workflowDir,
 		BaseDir:     t.TempDir(),
 	})
@@ -185,14 +185,57 @@ func TestDecodeWorkflowRoundTrip(t *testing.T) {
 	}
 }
 
+// TestWriteFilesWithoutCommit 覆盖「保存只落盘、不提交 git」的约定（SaveScript / SaveWorkflow
+// 分别调 WriteScriptFiles / WriteWorkflowFiles）：两个方法都应写出导出文件，但不初始化 git 仓库、
+// 也不产生提交，目录保持 dirty 以驱动前端展示「生成并提交」按钮。
+func TestWriteFilesWithoutCommit(t *testing.T) {
+	codec := NewCodec(&fakeWorkflowService{
+		script:   &types.ScriptJSONExportResponse{ScriptID: "s-1", Script: map[string]any{"name": "demo"}},
+		workflow: &types.WorkflowJSONExportResponse{WorkflowID: "wf-1", Workflow: map[string]any{"name": "demo"}},
+	}, nil, testGitIdentity)
+
+	scriptDir := filepath.Join(t.TempDir(), "script")
+	if _, err := codec.WriteScriptFiles(context.Background(), exportcodec.ScriptWriteRequest{ScriptPK: 1, ScriptDir: scriptDir}); err != nil {
+		t.Fatalf("WriteScriptFiles: %v", err)
+	}
+	assertWrittenWithoutGit(t, scriptDir, exportcodec.ScriptJSONFileName)
+
+	workflowDir := filepath.Join(t.TempDir(), "workflow")
+	if _, err := codec.WriteWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{
+		WorkflowPK:  1,
+		BaseDir:     t.TempDir(),
+		WorkflowDir: workflowDir,
+	}); err != nil {
+		t.Fatalf("WriteWorkflowFiles: %v", err)
+	}
+	assertWrittenWithoutGit(t, workflowDir, exportcodec.WorkflowJSONFileName)
+}
+
+// assertWrittenWithoutGit 断言 dir 下有 fileName，且没有 git 仓库（即未提交）。
+func assertWrittenWithoutGit(t *testing.T, dir, fileName string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(dir, fileName)); err != nil {
+		t.Fatalf("%s should be written into %s: %v", fileName, dir, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); !os.IsNotExist(err) {
+		t.Fatalf("write-only path must not commit, .git stat err = %v", err)
+	}
+}
+
 // TestWriteRequiresWorkflowService 校验未注入 WorkflowService 时给出明确错误，
 // 而不是在调用 service 时 nil panic。
 func TestWriteRequiresWorkflowService(t *testing.T) {
 	codec := NewCodec(nil, nil, testGitIdentity)
-	if _, err := codec.WriteCommitScriptFiles(context.Background(), exportcodec.ScriptWriteRequest{ScriptDir: t.TempDir()}); err == nil {
+	if _, err := codec.WriteScriptFiles(context.Background(), exportcodec.ScriptWriteRequest{ScriptDir: t.TempDir()}); err == nil {
 		t.Fatal("WriteScriptFiles without workflow service should fail")
 	}
-	if _, err := codec.WriteCommmitWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{WorkflowDir: t.TempDir(), BaseDir: t.TempDir()}); err == nil {
+	if _, err := codec.WriteWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{WorkflowDir: t.TempDir(), BaseDir: t.TempDir()}); err == nil {
 		t.Fatal("WriteWorkflowFiles without workflow service should fail")
+	}
+	if _, err := codec.WriteCommitScriptFiles(context.Background(), exportcodec.ScriptWriteRequest{ScriptDir: t.TempDir()}); err == nil {
+		t.Fatal("WriteCommitScriptFiles without workflow service should fail")
+	}
+	if _, err := codec.WriteCommitWorkflowFiles(context.Background(), exportcodec.WorkflowWriteRequest{WorkflowDir: t.TempDir(), BaseDir: t.TempDir()}); err == nil {
+		t.Fatal("WriteCommitWorkflowFiles without workflow service should fail")
 	}
 }
