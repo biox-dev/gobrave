@@ -17,8 +17,11 @@ import (
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
+	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 )
 
 // defaultGitCommitMessage 是调用方未提供 commit message 时的兜底文案。
@@ -919,6 +922,20 @@ func gitRemoteHost(rawURL string) string {
 	return parsed.Hostname()
 }
 
+// redactGitURLCredentials 去掉 http(s) 地址里的密码，只保留用户名。
+//
+// 用户可以把 token 写在 remote 地址里（https://<user>:<token>@github.com/owner/repo.git），
+// 这类地址一旦被拼进错误信息就会随着日志/接口 details 泄出凭据，因此对外输出前先脱敏。
+// ssh 地址（git@host:owner/repo.git）本身不含密码，解析不出 userinfo 时原样返回。
+func redactGitURLCredentials(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.User == nil {
+		return rawURL
+	}
+	parsed.User = url.User(parsed.User.Username())
+	return parsed.String()
+}
+
 // uniqueGitRemoteName 保证 remote 名合法且不与已有 remote 冲突：
 // 非法字符替换为 "-"，名称被占用时追加 "-2"、"-3"…
 func uniqueGitRemoteName(name string, existing []GitRemote) string {
@@ -956,4 +973,122 @@ func sanitizeGitRemoteName(name string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
+}
+
+// ErrGitRepoHasNoCommit 表示仓库还没有任何提交（HEAD 未出生），没有内容可以推送。
+// 调用方（发布到远程）应据此提示「先把组件发布到 store」而不是当成 500。
+var ErrGitRepoHasNoCommit = stderrs.New("git repository has no commit to push")
+
+// PushBareRepoToRemote 把 store 裸仓库「当前分支」推送到已配置的 remote。
+//
+// 与 PushDirToRepo（推本地路径的 store 镜像）不同，这里推的是用户填写的真正远程地址
+// （github / gitee / gitlab，或测试用的本地路径），等价于
+// `git push --force <remote> <branch>`：
+//
+//   - 分支跟随 store 当前使用的分支（resolveRepoBranch，HEAD 悬挂也能容错），并推成远端
+//     同名分支。store 是组件的发布镜像，远端分支必须与本地完全一致，因此用 "+" 前缀
+//     （允许非快进更新）覆盖远端历史 —— GitHub 建仓时自动生成的 README 提交会被顶掉；
+//   - 远端分支已经是同一个提交时 go-git 返回 git.NoErrAlreadyUpToDate，这里转成
+//     (false, nil)：没有新内容可推送属于幂等成功，调用方据此提示「已是最新」而不是报错；
+//   - 认证方式由 remote 地址推导（见 resolveGitPushAuth），本地路径 / file:// 走匿名，
+//     因此单测可以直接把临时裸仓库当远端。
+//
+// 仓库还没有提交（组件尚未发布到 store）时返回 ErrGitRepoHasNoCommit。
+func PushBareRepoToRemote(ctx context.Context, repoPath, remoteName string) (branch string, pushed bool, err error) {
+	ensureLocalGitTransport()
+
+	repoPath = strings.TrimSpace(repoPath)
+	remoteName = strings.TrimSpace(remoteName)
+	if repoPath == "" || remoteName == "" {
+		return "", false, stderrs.New("git repository path and remote name must not be empty")
+	}
+
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		return "", false, err
+	}
+
+	remote, err := repo.Remote(remoteName)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve remote %q of %q: %w", remoteName, repoPath, err)
+	}
+	remoteURL := ""
+	if cfg := remote.Config(); cfg != nil && len(cfg.URLs) > 0 {
+		remoteURL = strings.TrimSpace(cfg.URLs[0])
+	}
+
+	branch = resolveRepoBranch(repo)
+	branchRef := plumbing.NewBranchReferenceName(branch)
+	if _, err := repo.Reference(branchRef, true); err != nil {
+		if stderrs.Is(err, plumbing.ErrReferenceNotFound) {
+			return branch, false, fmt.Errorf("%w (branch %q)", ErrGitRepoHasNoCommit, branch)
+		}
+		return branch, false, err
+	}
+
+	auth, err := resolveGitPushAuth(remoteURL)
+	if err != nil {
+		return branch, false, err
+	}
+
+	// "+" 前缀 = 允许非快进更新；分支名原样写入远端（store 分支跟随本地工作目录）。
+	refSpec := gitconfig.RefSpec(fmt.Sprintf("+%s:%s", branchRef, branchRef))
+	if err := repo.PushContext(ctx, &git.PushOptions{
+		RemoteName: remoteName,
+		RefSpecs:   []gitconfig.RefSpec{refSpec},
+		Auth:       auth,
+	}); err != nil {
+		if stderrs.Is(err, git.NoErrAlreadyUpToDate) {
+			return branch, false, nil
+		}
+		return branch, false, fmt.Errorf("push %q branch %q to remote %q (%s): %w", repoPath, branch, remoteName, redactGitURLCredentials(remoteURL), err)
+	}
+	return branch, true, nil
+}
+
+// resolveGitPushAuth 根据 remote 地址推导推送用的认证方式，取不到可用凭据时返回 nil（匿名）。
+//
+// 认证配置有意保持「零配置」：没有专门的凭据配置段，凭据要么写在 remote 地址里，要么
+// 交给进程环境（ssh-agent）。
+//
+//   - http(s) 地址里带用户名（https://<user>:<token>@github.com/owner/repo.git）：
+//     用 BasicAuth 把 token 当密码提交。github / gitee / gitlab 的 personal access token
+//     都是这种用法，也是本服务无需额外配置即可带上凭据的唯一方式；
+//   - ssh 地址（git@host:owner/repo.git、ssh://git@host/owner/repo.git）：
+//     进程设置了 SSH_AUTH_SOCK 且本机能读到 known_hosts 时用 ssh-agent 的密钥；
+//   - 其余（本地路径 / file:// / 不带凭据的 https 公共仓库）：返回 nil，由 go-git 匿名访问，
+//     认证失败时 go-git 会返回 ErrAuthenticationRequired / ErrAuthorizationFailed。
+func resolveGitPushAuth(remoteURL string) (transport.AuthMethod, error) {
+	if strings.TrimSpace(remoteURL) == "" {
+		return nil, nil
+	}
+
+	// 解析失败（例如本地相对路径）不视作错误：交给 go-git 走它自己的协议判定。
+	endpoint, err := transport.NewEndpoint(remoteURL)
+	if err != nil {
+		return nil, nil
+	}
+
+	switch endpoint.Protocol {
+	case "http", "https":
+		if endpoint.User == "" {
+			return nil, nil
+		}
+		return &githttp.BasicAuth{Username: endpoint.User, Password: endpoint.Password}, nil
+	case "ssh":
+		if strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK")) == "" {
+			return nil, nil
+		}
+		agentAuth, agentErr := gitssh.NewSSHAgentAuth(endpoint.User)
+		if agentErr != nil {
+			return nil, nil
+		}
+		// ClientConfig 会校验 ssh-agent 与 known_hosts 两者是否可用（缺 known_hosts 时会报错）：
+		// 任一不可用就退回匿名，让 go-git 报出原始错误而不是在这里吞掉。
+		if _, cfgErr := agentAuth.ClientConfig(); cfgErr != nil {
+			return nil, nil
+		}
+		return agentAuth, nil
+	}
+	return nil, nil
 }

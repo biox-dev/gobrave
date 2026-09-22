@@ -10,6 +10,7 @@ import (
 	git "github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
 func TestEnsureGitRepo(t *testing.T) {
@@ -840,5 +841,75 @@ func TestFetchBareRepoFromRemoteFollowsRemoteBranch(t *testing.T) {
 	// 已经跟到远端最新：再次检查更新应报告“已是最新”。
 	if err := FetchBareRepoFromRemote(ctx, storeDir, ""); !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		t.Fatalf("second fetch = %v, want NoErrAlreadyUpToDate", err)
+	}
+}
+
+// redactGitURLCredentials 必须抹掉 http(s) 地址里的密码（token），否则它会随错误信息/
+// 接口 details 泄出；用户名与其它地址形态保持原样。
+func TestRedactGitURLCredentials(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "https password is stripped",
+			in:   "https://alice:ghp_secret@github.com/owner/repo.git",
+			want: "https://alice@github.com/owner/repo.git",
+		},
+		{
+			name: "https without credentials is unchanged",
+			in:   "https://github.com/owner/repo.git",
+			want: "https://github.com/owner/repo.git",
+		},
+		{
+			name: "ssh scp-like url is unchanged",
+			in:   "git@gitee.com:owner/repo.git",
+			want: "git@gitee.com:owner/repo.git",
+		},
+		{
+			name: "local path is unchanged",
+			in:   "/tmp/store/remote.git",
+			want: "/tmp/store/remote.git",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := redactGitURLCredentials(tc.in); got != tc.want {
+				t.Fatalf("redactGitURLCredentials(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// resolveGitPushAuth 只在能拿到真正可用的凭据时才返回 AuthMethod，其余情况一律匿名：
+// 本地路径绝不能带认证，未带凭据的 https 也不带（否则 go-git 会发出空的 BasicAuth）。
+func TestResolveGitPushAuth(t *testing.T) {
+	for _, raw := range []string{
+		"",
+		"https://github.com/owner/repo.git",
+		"/tmp/store/remote.git",
+		"file:///tmp/store/remote.git",
+	} {
+		auth, err := resolveGitPushAuth(raw)
+		if err != nil {
+			t.Fatalf("resolveGitPushAuth(%q) error = %v", raw, err)
+		}
+		if auth != nil {
+			t.Fatalf("resolveGitPushAuth(%q) = %v, want nil (anonymous)", raw, auth)
+		}
+	}
+
+	auth, err := resolveGitPushAuth("https://alice:ghp_secret@github.com/owner/repo.git")
+	if err != nil {
+		t.Fatalf("resolveGitPushAuth(https with creds) error = %v", err)
+	}
+	basic, ok := auth.(*githttp.BasicAuth)
+	if !ok {
+		t.Fatalf("resolveGitPushAuth(https with creds) = %T, want *http.BasicAuth", auth)
+	}
+	if basic.Username != "alice" || basic.Password != "ghp_secret" {
+		t.Fatalf("basic auth = %s/%s, want alice/ghp_secret", basic.Username, basic.Password)
 	}
 }

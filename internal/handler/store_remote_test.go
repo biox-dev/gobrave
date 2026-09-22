@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/biox-dev/gobrave/internal/config"
@@ -32,24 +35,68 @@ func (s *stubStoreRemoteService) GetStoreByID(_ context.Context, id int64) (*typ
 	return s.store, nil
 }
 
-// newPublishStoreRemoteFixture 在临时 base_dir 下准备一个 store 裸仓库：
-// 目录布局与生产一致（base_dir/store/<path_name>），并返回 store 记录与 handler。
-func newPublishStoreRemoteFixture(t *testing.T) (*types.Store, *StoreHandler, string) {
+// newPublishStoreRemoteFixture 在临时 base_dir 下准备发布到远程所需的两个仓库：
+//
+//   - storeDir：store 裸仓库（生产布局 base_dir/store/<path_name>），且已经有一个提交，
+//     模拟「组件已发布到 store」；
+//   - 返回的 remoteDir：一个空的裸仓库目录，充当本次发布的「远程仓库」。地址用本地路径，
+//     go-git 的 file 协议由进程内 server 实现，所以测试执行的是真实 push，不走网络。
+//
+// 返回 store 记录、handler、store 目录与远程裸仓库目录。
+func newPublishStoreRemoteFixture(t *testing.T) (*types.Store, *StoreHandler, string, string) {
 	t.Helper()
 
 	baseDir := t.TempDir()
 	store := &types.Store{ID: 12, StoreType: "script", Name: "demo", PathName: "test-store"}
 	storeDir := utils.GetWorkflowOrScriptStoreDir(baseDir, store.PathName)
-	if _, err := utils.EnsureBareGitRepo(storeDir); err != nil {
-		t.Fatalf("EnsureBareGitRepo: %v", err)
-	}
+	seedStoreBareRepo(t, storeDir)
+
+	remoteDir := newRemoteBareRepo(t)
 
 	svc := &stubStoreRemoteService{store: store}
 	handler := &StoreHandler{
 		storeService: svc,
 		cfg:          &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}},
 	}
-	return store, handler, storeDir
+	return store, handler, storeDir, remoteDir
+}
+
+// seedStoreBareRepo 让 storeDir 成为一个「已发布过内容」的裸仓库：建一个带提交的普通仓库，
+// 再 force push 到 storeDir（与 PublishScript 的路径一致），使 store 的 HEAD 指向真实提交，
+// 这样它才能被推送到远程。
+func seedStoreBareRepo(t *testing.T, storeDir string) {
+	t.Helper()
+
+	if _, err := utils.EnsureBareGitRepo(storeDir); err != nil {
+		t.Fatalf("EnsureBareGitRepo(store): %v", err)
+	}
+
+	srcDir := t.TempDir()
+	repo, err := utils.EnsureGitRepo(srcDir)
+	if err != nil {
+		t.Fatalf("EnsureGitRepo: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "README.md"), []byte("demo store"), 0o644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+	identity := utils.GitIdentity{Name: "test", Email: "test@example.com"}
+	if _, err := utils.CommitAll(repo, "seed store", identity); err != nil {
+		t.Fatalf("CommitAll: %v", err)
+	}
+	if _, err := utils.PushDirToRepo(context.Background(), srcDir, storeDir); err != nil {
+		t.Fatalf("PushDirToRepo: %v", err)
+	}
+}
+
+// newRemoteBareRepo 建一个空的裸仓库目录，作为「远程仓库」（本地路径本身就是合法 git 地址）。
+func newRemoteBareRepo(t *testing.T) string {
+	t.Helper()
+
+	dir := filepath.Join(t.TempDir(), "remote.git")
+	if _, err := utils.EnsureBareGitRepo(dir); err != nil {
+		t.Fatalf("EnsureBareGitRepo(remote): %v", err)
+	}
+	return dir
 }
 
 // postPublishStoreRemote 直接挂载 handler（绕过认证中间件），返回响应记录器。
@@ -71,13 +118,13 @@ func postPublishStoreRemote(t *testing.T, h *StoreHandler, body string) *httptes
 	return recorder
 }
 
-// 首次发布：url（trim 后）被写成 store 裸仓库的 remote（按主机名命名为 github），
-// 不再落库，且如实返回 published=false（push 未实现）。
-func TestPublishStoreRemoteAddsGitRemote(t *testing.T) {
-	_, handler, storeDir := newPublishStoreRemoteFixture(t)
+// 首次发布：url（trim 后）被写成 store 裸仓库的 remote（本地路径 -> 名 "remote"），
+// 并把 store 当前分支 push 到该远程仓库；published / pushed 如实反映推送结果。
+func TestPublishStoreRemoteAddsRemoteAndPushes(t *testing.T) {
+	_, handler, storeDir, remoteDir := newPublishStoreRemoteFixture(t)
 	svc := handler.storeService.(*stubStoreRemoteService)
 
-	recorder := postPublishStoreRemote(t, handler, `{"store_id":"12","url":"  https://github.com/owner/repo.git  "}`)
+	recorder := postPublishStoreRemote(t, handler, fmt.Sprintf(`{"store_id":"12","url":"  %s  "}`, remoteDir))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body = %s", recorder.Code, recorder.Body.String())
@@ -91,7 +138,10 @@ func TestPublishStoreRemoteAddsGitRemote(t *testing.T) {
 		URL         string            `json:"url"`
 		Remote      string            `json:"remote"`
 		RemoteAdded bool              `json:"remote_added"`
+		Branch      string            `json:"branch"`
 		Published   bool              `json:"published"`
+		Pushed      bool              `json:"pushed"`
+		UpToDate    bool              `json:"up_to_date"`
 		Remotes     []utils.GitRemote `json:"remotes"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
@@ -100,45 +150,62 @@ func TestPublishStoreRemoteAddsGitRemote(t *testing.T) {
 	if resp.StoreID != "12" {
 		t.Fatalf("resp store_id = %q, want \"12\"", resp.StoreID)
 	}
-	if resp.URL != "https://github.com/owner/repo.git" {
-		t.Fatalf("resp url = %q, want the trimmed url", resp.URL)
+	if resp.URL != remoteDir {
+		t.Fatalf("resp url = %q, want the trimmed url %q", resp.URL, remoteDir)
 	}
-	if resp.Remote != "github" {
-		t.Fatalf("resp remote = %q, want github", resp.Remote)
+	if resp.Remote != "remote" {
+		t.Fatalf("resp remote = %q, want remote", resp.Remote)
 	}
 	if !resp.RemoteAdded {
 		t.Fatal("resp remote_added = false, want true on first publish")
 	}
-	if resp.Published {
-		t.Fatal("resp published = true, want false (push not implemented yet)")
+	if resp.Branch != "main" {
+		t.Fatalf("resp branch = %q, want main", resp.Branch)
+	}
+	if !resp.Published || !resp.Pushed || resp.UpToDate {
+		t.Fatalf("resp published=%v pushed=%v up_to_date=%v, want true/true/false", resp.Published, resp.Pushed, resp.UpToDate)
 	}
 
-	// 仓库配置里应该真的多了这个 remote。
+	// 仓库配置里应该真的多了这个 remote，且与响应一致。
 	remotes := utils.ReadGitRemotes(storeDir)
-	if len(remotes) != 1 || remotes[0].Name != "github" || remotes[0].URLs[0] != "https://github.com/owner/repo.git" {
-		t.Fatalf("store remotes = %+v, want a single github remote", remotes)
+	if len(remotes) != 1 || remotes[0].Name != "remote" || remotes[0].URLs[0] != remoteDir {
+		t.Fatalf("store remotes = %+v, want a single remote pointing at %q", remotes, remoteDir)
 	}
-	if len(resp.Remotes) != 1 || resp.Remotes[0].Name != "github" {
-		t.Fatalf("resp remotes = %+v, want the newly added github remote", resp.Remotes)
+	if len(resp.Remotes) != 1 || resp.Remotes[0].Name != "remote" {
+		t.Fatalf("resp remotes = %+v, want the newly added remote", resp.Remotes)
+	}
+
+	// 远程裸仓库真的收到了 store 的内容（README.md 来自 seedStoreBareRepo）。
+	content, err := utils.ReadFileFromGitRepo(remoteDir, "README.md")
+	if err != nil {
+		t.Fatalf("read pushed file from remote: %v", err)
+	}
+	if string(content) != "demo store" {
+		t.Fatalf("remote README.md = %q, want %q", content, "demo store")
 	}
 }
 
-// 同一个 url 再次发布：跳过添加（remote_added=false），remote 数量不变；
-// 不同主机（gitee）则新增第二个 remote，支撑「一次发布到多个远端」。
-func TestPublishStoreRemoteSkipsExistingRemoteAndAddsMultiple(t *testing.T) {
-	_, handler, storeDir := newPublishStoreRemoteFixture(t)
+// 同一个 url 再次发布：跳过添加（remote_added=false）但仍执行 push，且已是最新
+// （pushed=false、up_to_date=true），remote 数量不变；
+// 另一个地址则新增第二个 remote（同名冲突追加 -2），一次发布到多个远端。
+func TestPublishStoreRemoteRePublishAndMultipleRemotes(t *testing.T) {
+	_, handler, storeDir, remoteDir := newPublishStoreRemoteFixture(t)
+	body := fmt.Sprintf(`{"store_id":"12","url":%q}`, remoteDir)
 
-	if recorder := postPublishStoreRemote(t, handler, `{"store_id":"12","url":"https://github.com/owner/repo.git"}`); recorder.Code != http.StatusOK {
+	if recorder := postPublishStoreRemote(t, handler, body); recorder.Code != http.StatusOK {
 		t.Fatalf("first publish status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 
-	recorder := postPublishStoreRemote(t, handler, `{"store_id":"12","url":"https://github.com/owner/repo.git"}`)
+	recorder := postPublishStoreRemote(t, handler, body)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("second publish status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 
 	var resp struct {
 		RemoteAdded bool `json:"remote_added"`
+		Published   bool `json:"published"`
+		Pushed      bool `json:"pushed"`
+		UpToDate    bool `json:"up_to_date"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
@@ -146,21 +213,37 @@ func TestPublishStoreRemoteSkipsExistingRemoteAndAddsMultiple(t *testing.T) {
 	if resp.RemoteAdded {
 		t.Fatal("resp remote_added = true, want false when the url is already configured")
 	}
+	if !resp.Published {
+		t.Fatal("resp published = false, want true (push reuses the existing remote)")
+	}
+	if resp.Pushed || !resp.UpToDate {
+		t.Fatalf("resp pushed=%v up_to_date=%v, want false/true when nothing changed", resp.Pushed, resp.UpToDate)
+	}
 	if remotes := utils.ReadGitRemotes(storeDir); len(remotes) != 1 {
 		t.Fatalf("store remotes = %+v, want still 1 remote", remotes)
 	}
 
-	// 另一个远端（gitee ssh）：新增 remote，名称为 gitee。
-	recorder = postPublishStoreRemote(t, handler, `{"store_id":12,"url":"git@gitee.com:owner/repo.git"}`)
+	// 第二个远端（另一个本地裸仓库）：新增 remote，名称为 remote-2。
+	second := newRemoteBareRepo(t)
+	recorder = postPublishStoreRemote(t, handler, fmt.Sprintf(`{"store_id":12,"url":%q}`, second))
 	if recorder.Code != http.StatusOK {
-		t.Fatalf("gitee publish status = %d, body = %s", recorder.Code, recorder.Body.String())
+		t.Fatalf("second remote publish status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	remotes := utils.ReadGitRemotes(storeDir)
 	if len(remotes) != 2 {
-		t.Fatalf("store remotes = %+v, want github + gitee", remotes)
+		t.Fatalf("store remotes = %+v, want two remotes", remotes)
 	}
-	if remotes[0].Name != "gitee" || remotes[1].Name != "github" {
-		t.Fatalf("store remotes = %+v, want gitee then github (sorted by name)", remotes)
+	if remotes[0].Name != "remote" || remotes[1].Name != "remote-2" {
+		t.Fatalf("store remotes = %+v, want remote then remote-2 (sorted by name)", remotes)
+	}
+
+	// 两个远端都收到了内容。
+	for _, dir := range []string{remoteDir, second} {
+		if content, err := utils.ReadFileFromGitRepo(dir, "README.md"); err != nil {
+			t.Fatalf("read pushed file from %q: %v", dir, err)
+		} else if string(content) != "demo store" {
+			t.Fatalf("remote %q README.md = %q, want %q", dir, content, "demo store")
+		}
 	}
 }
 
@@ -179,7 +262,7 @@ func TestPublishStoreRemoteRejectsInvalidInput(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, handler, storeDir := newPublishStoreRemoteFixture(t)
+			_, handler, storeDir, _ := newPublishStoreRemoteFixture(t)
 			svc := handler.storeService.(*stubStoreRemoteService)
 
 			recorder := postPublishStoreRemote(t, handler, tc.body)
@@ -212,9 +295,31 @@ func TestPublishStoreRemoteMissingRepository(t *testing.T) {
 	}
 }
 
+// store 目录已存在但裸仓库里还没有任何提交（只建了 store、没发布过组件）时返回 409：
+// 没有内容可推送，提示先发布组件。
+func TestPublishStoreRemoteRepositoryWithoutCommit(t *testing.T) {
+	baseDir := t.TempDir()
+	store := &types.Store{ID: 12, StoreType: "script", PathName: "empty-store"}
+	storeDir := utils.GetWorkflowOrScriptStoreDir(baseDir, store.PathName)
+	if _, err := utils.EnsureBareGitRepo(storeDir); err != nil {
+		t.Fatalf("EnsureBareGitRepo: %v", err)
+	}
+
+	handler := &StoreHandler{
+		storeService: &stubStoreRemoteService{store: store},
+		cfg:          &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}},
+	}
+
+	remoteDir := newRemoteBareRepo(t)
+	recorder := postPublishStoreRemote(t, handler, fmt.Sprintf(`{"store_id":"12","url":%q}`, remoteDir))
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 // store 不存在时按 404 返回（handleDataError 识别 gorm.ErrRecordNotFound）。
 func TestPublishStoreRemoteStoreNotFound(t *testing.T) {
-	_, handler, _ := newPublishStoreRemoteFixture(t)
+	_, handler, _, _ := newPublishStoreRemoteFixture(t)
 
 	recorder := postPublishStoreRemote(t, handler, `{"store_id":"999","url":"https://github.com/owner/repo.git"}`)
 	if recorder.Code != http.StatusNotFound {

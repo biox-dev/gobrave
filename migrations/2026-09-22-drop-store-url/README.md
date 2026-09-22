@@ -20,7 +20,8 @@ After this change the git repository is the **single source of truth**:
 
 - `PublishStoreRemote` adds/keeps a remote (`github`, `gitee`, …) on the store bare repo instead of
   writing a DB column — the same url published twice is detected via the existing remote and is
-  **not** added again (it goes straight to the (not yet implemented) push step);
+  **not** added again (it goes straight to the push step, so re-publishing an unchanged component just
+  reports "already up to date");
 - `GitState.remotes` (read side, `utils.ReadGitRemotes`) reports all configured remotes for
   `GetScriptById` / `GetWorkflowById`;
 - `DownloadStore` de-duplicates by comparing the requested url against each store repository's

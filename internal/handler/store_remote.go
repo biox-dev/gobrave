@@ -1,6 +1,7 @@
 package handler
 
 import (
+	stderrs "errors"
 	"net/http"
 	"os"
 	"strconv"
@@ -23,17 +24,19 @@ type publishStoreRemoteRequest struct {
 
 // PublishStoreRemote 把 store 发布到远程仓库（github / gitee 等，可配置多个）。
 //
-// 当前阶段做三件事：
+// 做三件事：
 //   - 校验 store_id / url（url 复用下载侧的 git 地址校验，必须是 <owner>/<repo> 形态）；
 //   - 打开 store 裸仓库，把 url 写成 remote（按主机名命名 github / gitee / gitlab ...，
 //     同名冲突时追加序号），同一个 url 已配置过则跳过添加；
-//   - 返回仓库当前的 remote 列表，便于前端刷新展示。
+//   - 把 store 裸仓库的当前分支推送到该 remote（force 覆盖远端同名分支），并返回仓库当前的
+//     remote 列表与本次推送结果，便于前端刷新展示。
 //
 // 之所以写 git remote 而不是数据库列：地址只有一份真实来源（仓库配置），
 // 数据库副本极易与实际仓库状态漂移；store 表已删除 url 列。
 //
-// 真正的远程发布（push 本地分支到这些 remote）待实现，因此响应里的 published 目前恒为 false；
-// 「url 已存在则跳过添加、直接 push」的分支也已经就位（added=false），只等 push 落地。
+// 已配置过的 url（added=false）也会继续执行 push —— 「改了组件再发布一次」正是主路径。
+// 推送凭据走 resolveGitPushAuth 的零配置约定（https 地址里的用户名密码 / ssh-agent），
+// 认证失败等底层错误以 500 + details 返回。
 func (h *StoreHandler) PublishStoreRemote(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
@@ -89,13 +92,28 @@ func (h *StoreHandler) PublishStoreRemote(c *gin.Context) {
 		return
 	}
 
-	// TODO(remote-push): 对仓库上配置的 remote（或本次的 remote）执行 push，
-	// 把 store 裸仓库的 HEAD 推到远端；失败时返回 500 并把错误写回 store.log。
-	// added=false 表示该 url 已经配置过，本次跳过添加、直接进入 push 流程。
+	// 把 store 裸仓库的当前分支推送到该 remote。同一个 url 已配置过（added=false）时
+	// 仍然要 push：那正是「组件改完再发布一次」的主路径。
+	branch, pushed, pushErr := utils.PushBareRepoToRemote(c.Request.Context(), storeDir, remote.Name)
+	if pushErr != nil {
+		if stderrs.Is(pushErr, utils.ErrGitRepoHasNoCommit) {
+			// store 裸仓库还没有任何提交（只建了 store、没发布过组件），没有内容可推送。
+			c.Error(errors.NewConflictError("store git repository has no commit, publish the component first"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to push store to remote").WithDetails(pushErr.Error()))
+		return
+	}
 
-	message := "remote already configured, skipping add"
-	if added {
-		message = "remote added to store repository"
+	upToDate := !pushed
+	message := "remote added and store pushed"
+	switch {
+	case added && upToDate:
+		message = "remote added; store is already up to date on the remote"
+	case !added && upToDate:
+		message = "remote already configured and already up to date"
+	case !added:
+		message = "remote already configured, store pushed"
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -104,7 +122,10 @@ func (h *StoreHandler) PublishStoreRemote(c *gin.Context) {
 		"url":          remoteURL,
 		"remote":       remote.Name,
 		"remote_added": added,
+		"branch":       branch,
+		"published":    true,
+		"pushed":       pushed,
+		"up_to_date":   upToDate,
 		"remotes":      utils.ReadGitRemotes(storeDir),
-		"published":    false,
 	})
 }
