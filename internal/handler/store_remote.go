@@ -50,7 +50,8 @@ func (h *StoreHandler) PublishStoreRemote(c *gin.Context) {
 		c.Error(errors.NewValidationError("url is required"))
 		return
 	}
-	if _, err := buildStorePathNameFromGitURL(remoteURL); err != nil {
+	// 这里只用它做「地址形态必须是 <owner>/<repo>」的校验，不参与 store 目录命名。
+	if _, err := repoPathFromGitURL(remoteURL); err != nil {
 		c.Error(errors.NewValidationError("invalid git url").WithDetails(err.Error()))
 		return
 	}

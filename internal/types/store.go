@@ -18,19 +18,20 @@ type Store struct {
 	Name      string `json:"name" gorm:"type:varchar(255)"`
 	Origin    string `json:"origin" gorm:"type:varchar(255)"`
 	URL       string `json:"url" gorm:"column:url;type:varchar(255)"`
-	Status    string `json:"status" gorm:"type:varchar(255);index"`
-	// PathName 是 store 目录在 storage.base_dir/store 下的相对标识：
-	// 发布产物为 workflow/script ID，下载产物为 "<owner>/<repo>"。
+	// Status    string `json:"status" gorm:"type:varchar(255);index"`
+	// PathName 是 store 目录在 storage.base_dir/store 下的相对标识，只在首次创建 store 时
+	// 由 utils.GenerateStorePathName 生成随机串并固定下来：既不随 workflow_id / script_id 变化，
+	// 也不来自下载源地址（历史数据可能仍是 workflow/script ID 或 "<owner>/<repo>"，原样沿用）。
 	// 绝对路径一律不落库，需要时用 utils.GetWorkflowOrScriptStoreDir(baseDir, PathName) 解析。
 	PathName string `json:"path_name" gorm:"type:varchar(255)"`
 	// StorePath 是 PathName 按当前 storage.base_dir 解析出的绝对目录，只在响应里返回。
 	// 不落库（gorm:"-"），既避免 base_dir 迁移后库内路径失效，也保证与 PathName 单一来源一致。
-	StorePath   string         `json:"store_path,omitempty" gorm:"-"`
-	Category    string         `json:"category" gorm:"type:varchar(255);index"`
-	Tags        datatypes.JSON `json:"tags" gorm:"type:json"`
-	Img         string         `json:"img" gorm:"type:varchar(255)"`
-	PublishURLs datatypes.JSON `json:"publish_urls" gorm:"column:publish_urls;type:json"`
-	Log         string         `json:"log" gorm:"type:longtext"`
+	StorePath string         `json:"store_path,omitempty" gorm:"-"`
+	Category  string         `json:"category" gorm:"type:varchar(255);index"`
+	Tags      datatypes.JSON `json:"tags" gorm:"type:json"`
+	Img       string         `json:"img" gorm:"type:varchar(255)"`
+	// PublishURLs datatypes.JSON `json:"publish_urls" gorm:"column:publish_urls;type:json"`
+	Log string `json:"log" gorm:"type:longtext"`
 
 	// Version string `json:"version" gorm:"type:varchar(255)"`
 	Message string `json:"message" gorm:"type:longtext"`

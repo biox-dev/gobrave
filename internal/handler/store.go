@@ -272,9 +272,12 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		return
 	}
 
-	pathName, err := buildStorePathNameFromGitURL(repoURL)
+	// store 目录名不再由仓库地址推导，统一用随机标识：目录名与上游仓库解耦，
+	// 既不暴露 owner/repo，也不会因仓库改名或同一个 owner/repo 结两次而互相污染。
+	// 只生成一次，后续 ReDownloadStore 不再重新生成（它复用库里的 path_name）。
+	pathName, err := utils.GenerateStorePathName()
 	if err != nil {
-		c.Error(errors.NewValidationError("invalid git url").WithDetails(err.Error()))
+		c.Error(errors.NewInternalServerError("failed to generate store path name").WithDetails(err.Error()))
 		return
 	}
 
@@ -306,11 +309,19 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		return
 	}
 
-	publishURLs, err := buildPublishURLsJSON(pathName)
+	// publish_urls 仍描述来源仓库本身（同一仓库的 ssh / https 两种地址），
+	// 由 git 地址推导，与随机目录名无关。
+	repoPath, err := repoPathFromGitURL(repoURL)
 	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to build publish urls").WithDetails(err.Error()))
+		c.Error(errors.NewValidationError("invalid git url").WithDetails(err.Error()))
 		return
 	}
+
+	// publishURLs, err := buildPublishURLsJSON(repoPath)
+	// if err != nil {
+	// 	c.Error(errors.NewInternalServerError("failed to build publish urls").WithDetails(err.Error()))
+	// 	return
+	// }
 
 	tagsJSON, err := buildStoreTagsJSON(req.Tags)
 	if err != nil {
@@ -329,7 +340,7 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 
 	storeName := strings.TrimSpace(req.Name)
 	if storeName == "" {
-		storeName = pathName
+		storeName = repoPath
 	}
 	origin := strings.TrimSpace(req.Origin)
 	if origin == "" {
@@ -337,16 +348,16 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 	}
 
 	item := &types.Store{
-		StoreType:   storeType,
-		Name:        storeName,
-		Origin:      origin,
-		URL:         repoURL,
-		Status:      "running",
-		PathName:    pathName,
-		Category:    strings.TrimSpace(req.Category),
-		Tags:        tagsJSON,
-		Img:         strings.TrimSpace(req.Img),
-		PublishURLs: publishURLs,
+		StoreType: storeType,
+		Name:      storeName,
+		Origin:    origin,
+		URL:       repoURL,
+		// Status:    "running",
+		PathName: pathName,
+		Category: strings.TrimSpace(req.Category),
+		Tags:     tagsJSON,
+		Img:      strings.TrimSpace(req.Img),
+		// PublishURLs: publishURLs,
 		// Version:     strings.TrimSpace(req.Version),
 		Message: strings.TrimSpace(req.Message),
 		Log:     fmt.Sprintf("clone %s %s", repoURL, targetPath),
@@ -363,7 +374,7 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		URL: repoURL,
 	})
 	if cloneErr != nil {
-		item.Status = "failed"
+		// item.Status = "failed"
 		item.Message = cloneErr.Error()
 		item.Log = cloneErr.Error()
 		if updateErr := h.storeService.UpdateStore(c.Request.Context(), item); updateErr != nil {
@@ -375,7 +386,7 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 	}
 
 	if metadataErr := hydrateStoreMetadataFromStoreFiles(targetPath, item); metadataErr != nil {
-		item.Status = "failed"
+		// item.Status = "failed"
 		item.Message = metadataErr.Error()
 		item.Log = metadataErr.Error()
 		if updateErr := h.storeService.UpdateStore(c.Request.Context(), item); updateErr != nil {
@@ -386,7 +397,7 @@ func (h *StoreHandler) DownloadStore(c *gin.Context) {
 		return
 	}
 
-	item.Status = "done"
+	// item.Status = "done"
 	item.Log = "clone completed"
 	if err := h.storeService.UpdateStore(c.Request.Context(), item); err != nil {
 		handleDataError(c, err, "failed to update store status")
@@ -444,7 +455,7 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 
 	pullErr := pullStoreRepo(c.Request.Context(), repo, targetPath)
 	if pullErr != nil && !stderrs.Is(pullErr, git.NoErrAlreadyUpToDate) {
-		item.Status = "done"
+		// item.Status = "done"
 		item.Log = pullErr.Error()
 		item.Message = pullErr.Error()
 		if updateErr := h.storeService.UpdateStore(c.Request.Context(), item); updateErr != nil {
@@ -466,7 +477,7 @@ func (h *StoreHandler) ReDownloadStore(c *gin.Context) {
 		return
 	}
 
-	item.Status = "done"
+	// item.Status = "done"
 	if stderrs.Is(pullErr, git.NoErrAlreadyUpToDate) {
 		item.Log = "already up to date"
 		item.Message = "already up to date"
@@ -507,7 +518,12 @@ func pullStoreRepo(ctx context.Context, repo *git.Repository, repoPath string) e
 	return wt.PullContext(ctx, &git.PullOptions{RemoteName: "origin"})
 }
 
-func buildStorePathNameFromGitURL(rawURL string) (string, error) {
+// repoPathFromGitURL 从 git 地址（ssh 或 http(s)）里取出 "<owner>/<repo>"。
+//
+// 只用于派生「仓库自身」的信息（当前是 publish_urls 里的 github / gitee 地址建议，
+// 以及下载 store 的默认展示名），不再用来给 store 目录命名：
+// 目录名统一走 utils.GenerateStorePathName（见 types.Store.PathName 的注释）。
+func repoPathFromGitURL(rawURL string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return "", fmt.Errorf("url is empty")

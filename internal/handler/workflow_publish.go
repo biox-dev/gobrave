@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
@@ -58,6 +59,42 @@ func (h *WorkflowHandler) exportCodec(version string) (exportcodec.Codec, error)
 	return codec, nil
 }
 
+// resolveStorePathNameForPublish 决定本次发布使用的 store 目录标识（types.Store.PathName）。
+//
+// PathName 只在首次发布（storeID == 0）时由 utils.GenerateStorePathName 生成的随机串决定；
+// 重新发布一律沿用既有 store 记录的 PathName，保证 store 目录（裸仓库位置）不漂移。
+// 返回的 existingStore 为 nil 表示还没有 store 记录（走创建分支）。
+// 历史数据的 PathName 可能仍是旧规则（workflow_id / script_id / "<owner>/<repo>"），
+// 一律原样沿用，不做改写。
+func (h *WorkflowHandler) resolveStorePathNameForPublish(ctx context.Context, storeID int64) (*types.Store, string, error) {
+	if storeID == 0 {
+		pathName, err := utils.GenerateStorePathName()
+		if err != nil {
+			return nil, "", err
+		}
+		return nil, pathName, nil
+	}
+
+	existingStore, err := h.storeService.GetStoreByID(ctx, storeID)
+	if err != nil {
+		return nil, "", err
+	}
+	if existingStore == nil {
+		return nil, "", gorm.ErrRecordNotFound
+	}
+
+	pathName := strings.TrimSpace(existingStore.PathName)
+	if pathName == "" {
+		// 极端情况：历史行没有 PathName（旧版本落库缺失）。目录名缺了就无法定位裸仓库，
+		// 这里补一个随机值，下次更新起就固定下来了。
+		pathName, err = utils.GenerateStorePathName()
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	return existingStore, pathName, nil
+}
+
 type PublishWorkflowRequest struct {
 	WorkflowID int64 `json:"workflow_id,string"`
 	// Url        string `json:"url"`
@@ -91,17 +128,24 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		return
 	}
 
-	// pathName, err := buildStorePathNameFromURL(req.Url)
-	// if err != nil {
-	// 	pathName = workflow.WorkflowID
-	// }
-	storePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, workflow.WorkflowID) //filepath.Join(h.cfg.Storage.BaseDir, "store", workflow.WorkflowID)
-
-	publishURLsJSON, err := buildPublishURLsJSON(workflow.WorkflowID)
+	// store 目录名（PathName）与业务 ID 解耦：首次发布生成随机标识，重新发布沿用既有值，
+	// 这样目录名不会随 workflow_id 变化而漂移。
+	existingStore, pathName, err := h.resolveStorePathNameForPublish(c.Request.Context(), workflow.StoreID)
 	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to build publish urls").WithDetails(err.Error()))
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("store not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to prepare store path name").WithDetails(err.Error()))
 		return
 	}
+	storePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, pathName)
+
+	// publishURLsJSON, err := buildPublishURLsJSON(workflow.WorkflowID)
+	// if err != nil {
+	// 	c.Error(errors.NewInternalServerError("failed to build publish urls").WithDetails(err.Error()))
+	// 	return
+	// }
 
 	store := &types.Store{
 		// StoreID:     workflow.WorkflowID,
@@ -109,12 +153,12 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		Name:      workflow.Name,
 		Origin:    "local",
 		// URL:         req.Url,
-		Status:      "done",
-		PathName:    workflow.WorkflowID,
-		Category:    workflow.Category,
-		Tags:        workflow.Tags,
-		Img:         workflow.Img,
-		PublishURLs: publishURLsJSON,
+		// Status:   "done",
+		PathName: pathName,
+		Category: workflow.Category,
+		Tags:     workflow.Tags,
+		Img:      workflow.Img,
+		// PublishURLs: publishURLsJSON,
 		// Version:     req.Version,
 		Message: req.Message,
 	}
@@ -124,32 +168,20 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 		return
 	}
 
-	if workflow.StoreID != 0 {
-		existingStore, storeErr := h.storeService.GetStoreByID(c.Request.Context(), workflow.StoreID)
-		if storeErr != nil {
-			if stderrs.Is(storeErr, gorm.ErrRecordNotFound) {
-				c.Error(errors.NewNotFoundError("store not found"))
-				return
-			}
-			c.Error(errors.NewInternalServerError("failed to get store").WithDetails(storeErr.Error()))
-			return
-		}
-
-		if existingStore != nil {
-			// 旧目录由 PathName 推导；PathName 变化时清理遗留目录，
-			// 避免 base_dir/store 下残留旧产物。
-			if oldPathName := strings.TrimSpace(existingStore.PathName); oldPathName != "" && oldPathName != strings.TrimSpace(store.PathName) {
-				oldStorePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, oldPathName)
-				if stat, statErr := os.Stat(oldStorePath); statErr == nil && stat.IsDir() {
-					if rmErr := os.RemoveAll(oldStorePath); rmErr != nil {
-						c.Error(errors.NewInternalServerError("failed to clean old store path").WithDetails(rmErr.Error()))
-						return
-					}
+	if existingStore != nil {
+		// 历史数据的 PathName 可能还是旧规则（workflow_id）；目录名一旦变化就清掉遗留目录，
+		// 避免 base_dir/store 下残留旧产物。
+		if oldPathName := strings.TrimSpace(existingStore.PathName); oldPathName != "" && oldPathName != strings.TrimSpace(store.PathName) {
+			oldStorePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, oldPathName)
+			if stat, statErr := os.Stat(oldStorePath); statErr == nil && stat.IsDir() {
+				if rmErr := os.RemoveAll(oldStorePath); rmErr != nil {
+					c.Error(errors.NewInternalServerError("failed to clean old store path").WithDetails(rmErr.Error()))
+					return
 				}
 			}
-			store.ID = existingStore.ID
-			// store.StoreID = existingStore.StoreID
 		}
+		store.ID = existingStore.ID
+		// store.StoreID = existingStore.StoreID
 
 		if err := h.storeService.UpdateStore(c.Request.Context(), store); err != nil {
 			c.Error(errors.NewInternalServerError("failed to update store").WithDetails(err.Error()))
@@ -251,25 +283,36 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 	// 在 push 前统一生成，这里不再校验文件是否存在。
 	sourceScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
 
-	storePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, script.ScriptID) //filepath.Join(h.cfg.Storage.BaseDir, "store", script.ScriptID)
-
-	publishURLsJSON, err := buildPublishURLsJSON(script.ScriptID)
+	// store 目录名（PathName）与业务 ID 解耦：首次发布生成随机标识，重新发布沿用既有值，
+	// 这样目录名不会随 script_id 变化而漂移。
+	existingStore, pathName, err := h.resolveStorePathNameForPublish(c.Request.Context(), script.StoreID)
 	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to build publish urls").WithDetails(err.Error()))
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("store not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to prepare store path name").WithDetails(err.Error()))
 		return
 	}
+	storePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, pathName)
+
+	// publishURLsJSON, err := buildPublishURLsJSON(script.ScriptID)
+	// if err != nil {
+	// 	c.Error(errors.NewInternalServerError("failed to build publish urls").WithDetails(err.Error()))
+	// 	return
+	// }
 
 	store := &types.Store{
 		StoreType: "script",
 		Name:      script.ComponentName,
 		Origin:    "local",
 		// URL:         req.Url,
-		Status:      "done",
-		PathName:    script.ScriptID,
-		Category:    script.Category,
-		Tags:        nil,
-		Img:         script.Img,
-		PublishURLs: publishURLsJSON,
+		// Status:   "done",
+		PathName: pathName,
+		Category: script.Category,
+		Tags:     nil,
+		Img:      script.Img,
+		// PublishURLs: publishURLsJSON,
 		// Version:     req.Version,
 		Message: req.Message,
 	}
@@ -285,30 +328,18 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 		return
 	}
 
-	if script.StoreID != 0 {
-		existingStore, storeErr := h.storeService.GetStoreByID(c.Request.Context(), script.StoreID)
-		if storeErr != nil {
-			if stderrs.Is(storeErr, gorm.ErrRecordNotFound) {
-				c.Error(errors.NewNotFoundError("store not found"))
-				return
-			}
-			c.Error(errors.NewInternalServerError("failed to get store").WithDetails(storeErr.Error()))
-			return
-		}
-
-		if existingStore != nil {
-			// 旧目录由 PathName 推导；PathName 变化时清理遗留目录。
-			if oldPathName := strings.TrimSpace(existingStore.PathName); oldPathName != "" && oldPathName != strings.TrimSpace(store.PathName) {
-				oldStorePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, oldPathName)
-				if stat, statErr := os.Stat(oldStorePath); statErr == nil && stat.IsDir() {
-					if rmErr := os.RemoveAll(oldStorePath); rmErr != nil {
-						c.Error(errors.NewInternalServerError("failed to clean old store path").WithDetails(rmErr.Error()))
-						return
-					}
+	if existingStore != nil {
+		// 历史数据的 PathName 可能还是旧规则（script_id）；目录名一旦变化就清掉遗留目录。
+		if oldPathName := strings.TrimSpace(existingStore.PathName); oldPathName != "" && oldPathName != strings.TrimSpace(store.PathName) {
+			oldStorePath := utils.GetWorkflowOrScriptStoreDir(h.cfg.Storage.BaseDir, oldPathName)
+			if stat, statErr := os.Stat(oldStorePath); statErr == nil && stat.IsDir() {
+				if rmErr := os.RemoveAll(oldStorePath); rmErr != nil {
+					c.Error(errors.NewInternalServerError("failed to clean old store path").WithDetails(rmErr.Error()))
+					return
 				}
 			}
-			store.ID = existingStore.ID
 		}
+		store.ID = existingStore.ID
 
 		if err := h.storeService.UpdateStore(c.Request.Context(), store); err != nil {
 			c.Error(errors.NewInternalServerError("failed to update store").WithDetails(err.Error()))
@@ -408,12 +439,9 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 		return
 	}
 
-	// 目标 workflow_id：本地发布时 store.PathName 即 workflow_id。
-	workflowID := strings.TrimSpace(store.PathName)
-	if workflowID == "" || strings.Contains(workflowID, "/") {
-		// 远程下载的 store：PathName 是 <owner>/<repo>，真实 workflow_id 需要从 store 内的 workflow.json 读取。
-		workflowID = h.readWorkflowIDFromStoreDir(storeDir)
-	}
+	// 目标 workflow_id 一律从 store 内的 workflow.json 读取：store.PathName 只是随机目录名
+	// （见 utils.GenerateStorePathName），不再承载 workflow_id。
+	workflowID := h.readWorkflowIDFromStoreDir(storeDir)
 	if workflowID == "" {
 		c.Error(errors.NewValidationError("workflow_id is required in workflow.json"))
 		return
@@ -519,13 +547,12 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		return
 	}
 
-	// 目标 script_id：create=true 时安装为新脚本，使用新的 uuid；否则沿用 store 记录的
-	// script_id（本地发布时 store.PathName 即 script_id）。
-	scriptID := strings.TrimSpace(store.PathName)
+	// 目标 script_id：create=true 时安装为新脚本，使用新的 uuid；否则从 store 内的
+	// script.json 读取（store.PathName 只是随机目录名，不再承载 script_id）。
+	scriptID := ""
 	if createMode {
 		scriptID = uuid.NewString()
-	} else if scriptID == "" || strings.Contains(scriptID, "/") {
-		// 远程下载的 store：PathName 是 <owner>/<repo>，真实 script_id 需要从 store 内的 script.json 读取。
+	} else {
 		scriptID = h.readScriptIDFromStoreDir(storeDir)
 	}
 	if scriptID == "" {
@@ -587,8 +614,9 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 
 // readScriptIDFromStoreDir 读取 store 仓库内 script.json 的 script_id。
 //
-// 仅用于 PathName 不是 script_id 的 store（远程下载的 store，PathName 是 <owner>/<repo>）；
-// store 是裸仓库，没有工作区文件，内容从 git 对象里读（见 readStoreExportJSON）。
+// store.PathName 只是随机目录名，不承载 script_id，因此所有 store（本地发布与远程下载）
+// 的真实 script_id 都从这里读取；store 是裸仓库，没有工作区文件，内容从 git 对象里读
+// （见 readStoreExportJSON）。
 func (h *WorkflowHandler) readScriptIDFromStoreDir(storeDir string) string {
 	content, err := readStoreExportJSON(storeDir, exportcodec.ScriptJSONFileName)
 	if err != nil {
@@ -623,8 +651,9 @@ func (h *WorkflowHandler) readScriptRawFromDir(scriptDir string) (exportcodec.Co
 
 // readWorkflowIDFromStoreDir 读取 store 仓库内 workflow.json 的 workflow_id。
 //
-// 仅用于 PathName 不是 workflow_id 的 store（远程下载的 store，PathName 是 <owner>/<repo>）；
-// store 是裸仓库，没有工作区文件，内容从 git 对象里读（见 readStoreExportJSON）。
+// store.PathName 只是随机目录名，不承载 workflow_id，因此所有 store（本地发布与远程下载）
+// 的真实 workflow_id 都从这里读取；store 是裸仓库，没有工作区文件，内容从 git 对象里读
+// （见 readStoreExportJSON）。
 func (h *WorkflowHandler) readWorkflowIDFromStoreDir(storeDir string) string {
 	content, err := readStoreExportJSON(storeDir, exportcodec.WorkflowJSONFileName)
 	if err != nil {
@@ -697,23 +726,23 @@ func readStoreExportJSON(storeDir, fileName string) ([]byte, error) {
 // 	return filepath.Join(owner, repo), nil
 // }
 
-func buildPublishURLsJSON(pathName string) (datatypes.JSON, error) {
-	publishURLs := []map[string]string{
-		{
-			"name":  "github",
-			"ssh":   fmt.Sprintf("git@github.com:%s.git", pathName),
-			"https": fmt.Sprintf("https://github.com/%s.git", pathName),
-		},
-		{
-			"name":  "gitee",
-			"ssh":   fmt.Sprintf("git@gitee.com:%s.git", pathName),
-			"https": fmt.Sprintf("https://gitee.com/%s.git", pathName),
-		},
-	}
+// func buildPublishURLsJSON(pathName string) (datatypes.JSON, error) {
+// 	publishURLs := []map[string]string{
+// 		{
+// 			"name":  "github",
+// 			"ssh":   fmt.Sprintf("git@github.com:%s.git", pathName),
+// 			"https": fmt.Sprintf("https://github.com/%s.git", pathName),
+// 		},
+// 		{
+// 			"name":  "gitee",
+// 			"ssh":   fmt.Sprintf("git@gitee.com:%s.git", pathName),
+// 			"https": fmt.Sprintf("https://gitee.com/%s.git", pathName),
+// 		},
+// 	}
 
-	b, err := json.Marshal(publishURLs)
-	if err != nil {
-		return nil, err
-	}
-	return datatypes.JSON(b), nil
-}
+// 	b, err := json.Marshal(publishURLs)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return datatypes.JSON(b), nil
+// }

@@ -79,8 +79,9 @@ func GetStoreDir(baseDir string) string {
 }
 
 // GetWorkflowOrScriptStoreDir resolves the absolute store directory of a
-// published workflow/script (or of a downloaded remote repo whose id is
-// "<owner>/<repo>").
+// published workflow/script or of a downloaded remote repo, from its
+// types.Store.PathName (a random identifier generated once at store creation
+// time; legacy rows may still hold a workflow/script id or "<owner>/<repo>").
 //
 // The single source of truth for the relative layout is RelStoreDir; keep both
 // in sync by always deriving one from the other.
