@@ -102,20 +102,20 @@ func buildAnalysisDictFromDB(
 	queryNameDict map[string]map[string]interface{},
 ) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
-	samplesByName := loadSamplesByName(ctx, dataService, requestParam)
+	assaysByName := loadAssaysByName(ctx, dataService, requestParam)
 
 	for _, key := range queryNames {
 		formItem := queryNameDict[key]
 		inputType := strings.TrimSpace(anyToString(formItem["input_type"]))
-		if inputType == "sample" {
+		if inputType == "assay" {
 			rawValue, exists := requestParam[key]
 			if !exists {
 				continue
 			}
 
-			resolved, err := resolveSampleInputValue(ctx, dataService, formItem, rawValue)
+			resolved, err := resolveAssayInputValue(ctx, dataService, formItem, rawValue)
 			if err != nil {
-				return nil, fmt.Errorf("resolve sample db fields for %s failed: %w", key, err)
+				return nil, fmt.Errorf("resolve assay db fields for %s failed: %w", key, err)
 			}
 			result[key] = resolved
 			continue
@@ -131,8 +131,8 @@ func buildAnalysisDictFromDB(
 		}
 
 		formType := anyToString(formItem["type"])
-		if formType == "NestSelectSampleV2" {
-			resolved, err := resolveNestSelectSampleV2Value(ctx, dataService, formItem, rawValue)
+		if formType == "NestSelectAssayV2" {
+			resolved, err := resolveNestSelectAssayV2Value(ctx, dataService, formItem, rawValue)
 			if err != nil {
 				return nil, fmt.Errorf("resolve nest select db fields for %s failed: %w", key, err)
 			}
@@ -154,7 +154,7 @@ func buildAnalysisDictFromDB(
 		reGroupName := getReGroupName(rawValue)
 		extraByID := extractRequestExtrasByID(rawValue)
 
-		if formType == "CollectedGroupSelectSampleButton" {
+		if formType == "CollectedGroupSelectAssayButton" {
 			analysisResult := copyAnyMap(items[0])
 			columns := toInterfaceSlice(formItem["columns"])
 			analysisResult["form_type"] = formType
@@ -175,14 +175,14 @@ func buildAnalysisDictFromDB(
 				case []interface{}:
 					groupItems := make([]interface{}, 0, len(v))
 					for _, col := range v {
-						built := buildCollectedAnalysisResult(col, analysisResult, samplesByName)
+						built := buildCollectedAnalysisResult(col, analysisResult, assaysByName)
 						built["selcted_group_name"] = selectedGroupMap[groupName]
 						built["re_groups_name"] = reGroupMap[groupName]
 						groupItems = append(groupItems, built)
 					}
 					analysisResult[groupName] = groupItems
 				default:
-					analysisResult[groupName] = buildCollectedAnalysisResult(v, analysisResult, samplesByName)
+					analysisResult[groupName] = buildCollectedAnalysisResult(v, analysisResult, assaysByName)
 				}
 			}
 
@@ -190,7 +190,7 @@ func buildAnalysisDictFromDB(
 			continue
 		}
 
-		if formType == "CollectedSampleSelect" {
+		if formType == "CollectedAssaySelect" {
 			analysisResult := copyAnyMap(items[0])
 			if requestMap, ok := rawValue.(map[string]interface{}); ok {
 				for rk, rv := range requestMap {
@@ -203,7 +203,7 @@ func buildAnalysisDictFromDB(
 			continue
 		}
 
-		if formType == "NestCollectedSampleSelect" {
+		if formType == "NestCollectedAssaySelect" {
 			itemByID := make(map[string]map[string]interface{}, len(items))
 			for _, item := range items {
 				itemByID[anyToString(item["id"])] = item
@@ -341,7 +341,7 @@ func buildCompatAnalysisResultItem(file *types.File) map[string]interface{} {
 	return map[string]interface{}{
 		"id":                 id,
 		"analysis_result_id": id,
-		"sample_id":          "",
+		"assay_id":           "",
 		"file_name":          file.FileName,
 		"component_id":       "",
 		"file_type":          file.Format,
@@ -354,31 +354,54 @@ func buildCompatAnalysisResultItem(file *types.File) map[string]interface{} {
 	}
 }
 
-func loadSamplesByName(ctx context.Context, dataService interfaces.DataService, requestParam map[string]interface{}) map[string]map[string]interface{} {
+// assayDisplayName 返回 Assay 的展示名：library_id 优先，其次 assay_type，最后回退主键。
+func assayDisplayName(item map[string]interface{}) string {
+	for _, key := range []string{"library_id", "assay_type"} {
+		if s := strings.TrimSpace(anyToString(item[key])); s != "" {
+			return s
+		}
+	}
+	return strings.TrimSpace(anyToString(item["id"]))
+}
+
+// assayColumnName 返回用于列匹配的 Assay 名称，与 buildCompatAssayItem 的 assay_name 保持一致。
+func assayColumnName(assay *types.AssayWithDatasetInfo) string {
+	if name := strings.TrimSpace(assay.LibraryID); name != "" {
+		return name
+	}
+	if name := strings.TrimSpace(assay.AssayType); name != "" {
+		return name
+	}
+	return strconv.FormatInt(assay.ID, 10)
+}
+
+func loadAssaysByName(ctx context.Context, dataService interfaces.DataService, requestParam map[string]interface{}) map[string]map[string]interface{} {
 	projectID := strings.TrimSpace(anyToString(requestParam["project"]))
 	if projectID == "" {
 		return map[string]map[string]interface{}{}
 	}
 
-	samples, err := dataService.ListSampleByProjectID(ctx, projectID)
+	assays, err := dataService.ListAssayByProjectID(ctx, projectID)
 	if err != nil {
 		return map[string]map[string]interface{}{}
 	}
 
-	result := make(map[string]map[string]interface{}, len(samples))
-	for _, sample := range samples {
-		metadata := parseMetadataJSON(sample.Metadata)
+	result := make(map[string]map[string]interface{}, len(assays))
+	for _, assay := range assays {
+		metadata := parseMetadataJSON(assay.Metadata)
+		name := assayColumnName(assay)
 		item := map[string]interface{}{
-			"sample_id":   sample.SampleID,
-			"sample_name": sample.SampleName,
-			"subject_id":  sample.SubjectID,
-			"group_name":  sample.GroupName,
-			"phenotype":   sample.Phenotype,
+			"assay_id":   strconv.FormatInt(assay.ID, 10),
+			"assay_name": name,
+			"assay_type": assay.AssayType,
+			"platform":   assay.Platform,
+			"library_id": assay.LibraryID,
+			"sample_id":  strconv.FormatInt(assay.SampleID, 10),
 		}
 		for k, v := range metadata {
 			item[k] = v
 		}
-		result[sample.SampleName] = item
+		result[name] = item
 	}
 
 	return result
@@ -403,10 +426,10 @@ func parseMetadataJSON(raw string) map[string]interface{} {
 	return result
 }
 
-func buildCollectedAnalysisResult(column interface{}, analysisResult map[string]interface{}, samplesByName map[string]map[string]interface{}) map[string]interface{} {
+func buildCollectedAnalysisResult(column interface{}, analysisResult map[string]interface{}, assaysByName map[string]map[string]interface{}) map[string]interface{} {
 	columnName := anyToString(column)
-	if sample, ok := samplesByName[columnName]; ok {
-		result := copyAnyMap(sample)
+	if assay, ok := assaysByName[columnName]; ok {
+		result := copyAnyMap(assay)
 		result["id"] = analysisResult["id"]
 		result["analysis_result_id"] = analysisResult["analysis_result_id"]
 		result["columns_name"] = columnName
@@ -415,7 +438,7 @@ func buildCollectedAnalysisResult(column interface{}, analysisResult map[string]
 
 	return map[string]interface{}{
 		"id":                 analysisResult["id"],
-		"sample_name":        columnName,
+		"assay_name":         columnName,
 		"analysis_result_id": analysisResult["analysis_result_id"],
 		"columns_name":       columnName,
 	}
@@ -451,7 +474,7 @@ func getQueryDBField(formJSONWrap []interface{}) map[string]map[string]interface
 
 func mergeColumnsByName(formJSONWrap []interface{}) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(formJSONWrap))
-	sampleMap := make(map[string]map[string]interface{})
+	assayMap := make(map[string]map[string]interface{})
 	columnsMap := make(map[string][][]interface{})
 
 	for _, item := range formJSONWrap {
@@ -466,9 +489,9 @@ func mergeColumnsByName(formJSONWrap []interface{}) []map[string]interface{} {
 		itemType, _ := copied["type"].(string)
 
 		switch itemType {
-		case "CollectedSampleSelect":
+		case "CollectedAssaySelect":
 			if name != "" {
-				sampleMap[name] = copied
+				assayMap[name] = copied
 			}
 		case "CollectedColumnsSelect":
 			if name == "" {
@@ -480,14 +503,14 @@ func mergeColumnsByName(formJSONWrap []interface{}) []map[string]interface{} {
 		}
 	}
 
-	for name, sample := range sampleMap {
-		current, _ := sample["columns"].([]interface{})
+	for name, assay := range assayMap {
+		current, _ := assay["columns"].([]interface{})
 		merged := make([]interface{}, 0, len(current)+8)
 		merged = append(merged, current...)
 		for _, cols := range columnsMap[name] {
 			merged = append(merged, cols...)
 		}
-		sample["columns"] = merged
+		assay["columns"] = merged
 	}
 
 	return result
@@ -597,8 +620,8 @@ func extractIDs(value interface{}) ([]string, bool) {
 			}
 			return []string{id}, true
 		}
-		if sample, ok := v["sample"]; ok {
-			ids := extractIDList(sample)
+		if assay, ok := v["assay"]; ok {
+			ids := extractIDList(assay)
 			if len(ids) == 1 {
 				return ids, true
 			}
@@ -626,8 +649,8 @@ func extractIDs(value interface{}) ([]string, bool) {
 				}
 				continue
 			}
-			if sample, ok := m["sample"]; ok {
-				ids = append(ids, extractIDList(sample)...)
+			if assay, ok := m["assay"]; ok {
+				ids = append(ids, extractIDList(assay)...)
 				continue
 			}
 			if val, ok := m["value"]; ok {
@@ -660,7 +683,7 @@ func extractRequestExtrasByID(value interface{}) map[string]map[string]interface
 		}
 		extras := copyAnyMap(raw)
 		delete(extras, "file")
-		delete(extras, "sample")
+		delete(extras, "assay")
 		delete(extras, "value")
 		result[id] = extras
 	}
@@ -686,7 +709,7 @@ func extractPrimaryID(raw map[string]interface{}) string {
 	if id != "" {
 		return id
 	}
-	id = strings.TrimSpace(anyToString(raw["sample"]))
+	id = strings.TrimSpace(anyToString(raw["assay"]))
 	if id != "" {
 		return id
 	}
@@ -709,7 +732,7 @@ func extractOneIDAndExtras(value interface{}) (string, map[string]interface{}) {
 
 	id := strings.TrimSpace(anyToString(raw["file"]))
 	if id == "" {
-		ids := extractIDList(raw["sample"])
+		ids := extractIDList(raw["assay"])
 		if len(ids) > 0 {
 			id = strings.TrimSpace(ids[0])
 		}
@@ -723,7 +746,7 @@ func extractOneIDAndExtras(value interface{}) (string, map[string]interface{}) {
 
 	extras := copyAnyMap(raw)
 	delete(extras, "file")
-	delete(extras, "sample")
+	delete(extras, "assay")
 	delete(extras, "value")
 	return id, extras
 }
@@ -779,13 +802,13 @@ func anyToString(v interface{}) string {
 	}
 }
 
-func resolveNestSelectSampleV2Value(
+func resolveNestSelectAssayV2Value(
 	ctx context.Context,
 	dataService interfaces.DataService,
 	formItem map[string]interface{},
 	rawValue interface{},
 ) (interface{}, error) {
-	appendDBFields := getNestSelectSampleV2AppendDBFileFields(formItem)
+	appendDBFields := getNestSelectAssayV2AppendDBFileFields(formItem)
 	if len(appendDBFields) == 0 {
 		return rawValue, nil
 	}
@@ -824,7 +847,7 @@ func resolveNestSelectSampleV2Value(
 	}
 }
 
-func getNestSelectSampleV2AppendDBFileFields(formItem map[string]interface{}) []string {
+func getNestSelectAssayV2AppendDBFileFields(formItem map[string]interface{}) []string {
 	appendItems := toInterfaceSlice(formItem["append"])
 	result := make([]string, 0, len(appendItems))
 
@@ -908,25 +931,25 @@ func loadCompatFileObjectByID(
 	return copyAnyMap(item), nil
 }
 
-func resolveSampleInputValue(
+func resolveAssayInputValue(
 	ctx context.Context,
 	dataService interfaces.DataService,
 	formItem map[string]interface{},
 	rawValue interface{},
 ) (interface{}, error) {
-	sampleIDs := extractSampleIDsFromValue(rawValue)
-	if len(sampleIDs) == 0 {
+	assayIDs := extractAssayIDsFromValue(rawValue)
+	if len(assayIDs) == 0 {
 		return []interface{}{}, nil
 	}
 
-	acceptFormats := getSampleAcceptFormats(formItem)
+	acceptFormats := getAssayAcceptFormats(formItem)
 	acceptFormatByLower := make(map[string]string, len(acceptFormats))
 	for _, format := range acceptFormats {
 		acceptFormatByLower[strings.ToLower(strings.TrimSpace(format))] = format
 	}
 
-	selected := make(map[int64]struct{}, len(sampleIDs))
-	for _, id := range sampleIDs {
+	selected := make(map[int64]struct{}, len(assayIDs))
+	for _, id := range assayIDs {
 		if idNum, err := strconv.ParseInt(strings.TrimSpace(id), 10, 64); err == nil {
 			selected[idNum] = struct{}{}
 		}
@@ -935,23 +958,23 @@ func resolveSampleInputValue(
 		return []interface{}{}, nil
 	}
 
-	sampleFiles, err := dataService.ListSampleFile(ctx)
+	assayFiles, err := dataService.ListAssayFile(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	fileCache := make(map[int64]*types.File)
-	sampleRoleToPath := make(map[int64]map[string]string)
+	assayRoleToPath := make(map[int64]map[string]string)
 
-	for _, sampleFile := range sampleFiles {
-		if sampleFile == nil {
+	for _, assayFile := range assayFiles {
+		if assayFile == nil {
 			continue
 		}
-		if _, ok := selected[sampleFile.SampleID]; !ok {
+		if _, ok := selected[assayFile.AssayID]; !ok {
 			continue
 		}
 
-		role := strings.TrimSpace(sampleFile.Role)
+		role := strings.TrimSpace(assayFile.Role)
 		if len(acceptFormatByLower) > 0 {
 			mapped, ok := acceptFormatByLower[strings.ToLower(role)]
 			if !ok {
@@ -963,23 +986,23 @@ func resolveSampleInputValue(
 			continue
 		}
 
-		if _, ok := sampleRoleToPath[sampleFile.SampleID]; !ok {
-			sampleRoleToPath[sampleFile.SampleID] = make(map[string]string)
+		if _, ok := assayRoleToPath[assayFile.AssayID]; !ok {
+			assayRoleToPath[assayFile.AssayID] = make(map[string]string)
 		}
-		if existing := strings.TrimSpace(sampleRoleToPath[sampleFile.SampleID][role]); existing != "" {
+		if existing := strings.TrimSpace(assayRoleToPath[assayFile.AssayID][role]); existing != "" {
 			continue
 		}
 
-		file, ok := fileCache[sampleFile.FileID]
+		file, ok := fileCache[assayFile.FileID]
 		if !ok {
-			file, err = dataService.GetFileByID(ctx, sampleFile.FileID)
+			file, err = dataService.GetFileByID(ctx, assayFile.FileID)
 			if err != nil {
 				if stderrs.Is(err, gorm.ErrRecordNotFound) {
 					continue
 				}
 				return nil, err
 			}
-			fileCache[sampleFile.FileID] = file
+			fileCache[assayFile.FileID] = file
 		}
 
 		if file == nil {
@@ -990,18 +1013,18 @@ func resolveSampleInputValue(
 		if path == "" {
 			path = strings.TrimSpace(file.FileID)
 		}
-		sampleRoleToPath[sampleFile.SampleID][role] = path
+		assayRoleToPath[assayFile.AssayID][role] = path
 	}
 
-	result := make([]interface{}, 0, len(sampleIDs))
-	for _, sampleID := range sampleIDs {
-		sampleIDNum, err := strconv.ParseInt(strings.TrimSpace(sampleID), 10, 64)
+	result := make([]interface{}, 0, len(assayIDs))
+	for _, assayID := range assayIDs {
+		assayIDNum, err := strconv.ParseInt(strings.TrimSpace(assayID), 10, 64)
 		if err != nil {
 			continue
 		}
 
 		row := map[string]interface{}{
-			"ID": sampleID,
+			"ID": assayID,
 		}
 
 		if len(acceptFormats) > 0 {
@@ -1010,7 +1033,7 @@ func resolveSampleInputValue(
 			}
 		}
 
-		roleMap := sampleRoleToPath[sampleIDNum]
+		roleMap := assayRoleToPath[assayIDNum]
 		if len(roleMap) > 0 {
 			if len(acceptFormats) == 0 {
 				roleKeys := make([]string, 0, len(roleMap))
@@ -1036,11 +1059,11 @@ func resolveSampleInputValue(
 	return result, nil
 }
 
-func extractSampleIDsFromValue(value interface{}) []string {
+func extractAssayIDsFromValue(value interface{}) []string {
 	switch v := value.(type) {
 	case map[string]interface{}:
-		if sample, ok := v["sample"]; ok {
-			return extractIDList(sample)
+		if assay, ok := v["assay"]; ok {
+			return extractIDList(assay)
 		}
 		return nil
 	default:
@@ -1048,7 +1071,7 @@ func extractSampleIDsFromValue(value interface{}) []string {
 	}
 }
 
-func getSampleAcceptFormats(formItem map[string]interface{}) []string {
+func getAssayAcceptFormats(formItem map[string]interface{}) []string {
 	resolver, _ := formItem["resolver"].(map[string]interface{})
 	if resolver == nil {
 		return nil

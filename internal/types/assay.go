@@ -7,44 +7,37 @@ import (
 	"gorm.io/gorm"
 )
 
-type Sample struct {
+// Assay 是一次实验/测序建库记录，隶属于某个 Sample（Sample -> Assay -> AssayFile）。
+type Assay struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	SampleID string `json:"sample_id" gorm:"type:varchar(255);uniqueIndex;not null"`
+	SampleID int64 `json:"sample_id,string" gorm:"index;not null"`
 
-	SampleName string `json:"sample_name" gorm:"type:varchar(255)"`
+	AssayType string `json:"assay_type" gorm:"type:varchar(64);index"`
 
-	SubjectID string `json:"subject_id" gorm:"type:varchar(255)"`
+	Platform string `json:"platform" gorm:"type:varchar(128)"`
 
-	GroupName string `json:"group_name" gorm:"type:varchar(255)"`
-
-	Phenotype string `json:"phenotype" gorm:"type:varchar(255)"`
+	LibraryID string `json:"library_id" gorm:"type:varchar(255)"`
 
 	Metadata string `json:"metadata" gorm:"type:text"`
-
-	Description string `json:"description" gorm:"type:text"`
 
 	CreatedAt time.Time `json:"created_at"`
 
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-type SampleWithDatasetInfo struct {
+type AssayWithDatasetInfo struct {
 	ID int64 `json:"id,string"`
 
-	SampleID string `json:"sample_id"`
+	SampleID int64 `json:"sample_id,string"`
 
-	SampleName string `json:"sample_name"`
+	AssayType string `json:"assay_type"`
 
-	SubjectID string `json:"subject_id"`
+	Platform string `json:"platform"`
 
-	GroupName string `json:"group_name"`
-
-	Phenotype string `json:"phenotype"`
+	LibraryID string `json:"library_id"`
 
 	Metadata string `json:"metadata"`
-
-	Description string `json:"description"`
 
 	CreatedAt time.Time `json:"created_at"`
 
@@ -55,42 +48,42 @@ type SampleWithDatasetInfo struct {
 	DatasetName string `json:"dataset_name"`
 }
 
-func (t *Sample) BeforeCreate(_ *gorm.DB) error {
+func (t *Assay) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()
 	}
 	return nil
 }
 
-func (Sample) TableName() string {
-	return "go_sample"
+func (Assay) TableName() string {
+	return "go_assay"
 }
 
-type DatasetSample struct {
+type DatasetAssay struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
 	DatasetID int64 `json:"dataset_id,string" gorm:"index;not null"`
 
-	SampleID int64 `json:"sample_id,string" gorm:"index;not null"`
+	AssayID int64 `json:"assay_id,string" gorm:"index;not null"`
 
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func (t *DatasetSample) BeforeCreate(_ *gorm.DB) error {
+func (t *DatasetAssay) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()
 	}
 	return nil
 }
 
-func (DatasetSample) TableName() string {
-	return "go_dataset_sample"
+func (DatasetAssay) TableName() string {
+	return "go_dataset_assay"
 }
 
-type SampleFile struct {
+type AssayFile struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	SampleID int64 `json:"sample_id,string" gorm:"index;not null"`
+	AssayID int64 `json:"assay_id,string" gorm:"index;not null"`
 
 	FileID int64 `json:"file_id,string" gorm:"index;not null"`
 
@@ -103,13 +96,13 @@ type SampleFile struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func (t *SampleFile) BeforeCreate(_ *gorm.DB) error {
+func (t *AssayFile) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()
 	}
 	return nil
 }
 
-func (SampleFile) TableName() string {
-	return "go_sample_file"
+func (AssayFile) TableName() string {
+	return "go_assay_file"
 }

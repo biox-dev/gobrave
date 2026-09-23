@@ -1432,7 +1432,7 @@ func (h *WorkflowHandler) DeleteScript(c *gin.Context) {
 	})
 }
 
-func buildCompatSampleItem(item interface{}) (map[string]interface{}, error) {
+func buildCompatAssayItem(item interface{}) (map[string]interface{}, error) {
 	b, err := json.Marshal(item)
 	if err != nil {
 		return nil, err
@@ -1443,7 +1443,9 @@ func buildCompatSampleItem(item interface{}) (map[string]interface{}, error) {
 		return nil, err
 	}
 
-	result["label"] = result["sample_name"]
+	// Assay 已无独立 name 列，展示名按 library_id → assay_type → 主键推导。
+	result["assay_name"] = assayDisplayName(result)
+	result["label"] = result["assay_name"]
 	result["value"] = result["id"]
 
 	return result, nil

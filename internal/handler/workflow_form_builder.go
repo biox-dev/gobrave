@@ -18,7 +18,7 @@ func buildScriptFormData(ctx context.Context,
 		return nil, nil, err
 	}
 
-	needSampleList := false
+	needAssayList := false
 	roleSet := make(map[string]struct{})
 
 	for _, item := range formJSONWrap {
@@ -29,8 +29,8 @@ func buildScriptFormData(ctx context.Context,
 
 		inputType, _ := formItem["input_type"].(string)
 		switch inputType {
-		case "sample":
-			needSampleList = true
+		case "assay":
+			needAssayList = true
 		case "file":
 			resolver, ok := formItem["resolver"].(map[string]interface{})
 			if !ok {
@@ -46,24 +46,24 @@ func buildScriptFormData(ctx context.Context,
 	}
 
 	analysisResult := map[string]interface{}{
-		"sample": make([]map[string]interface{}, 0),
+		"assay": make([]map[string]interface{}, 0),
 	}
 
-	if needSampleList {
-		sampleList, err := dataService.ListSampleByProjectID(ctx, projectID)
+	if needAssayList {
+		assayList, err := dataService.ListAssayByProjectID(ctx, projectID)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		compatSamples := make([]map[string]interface{}, 0, len(sampleList))
-		for _, sample := range sampleList {
-			compatItem, err := buildCompatSampleItem(sample)
+		compatAssays := make([]map[string]interface{}, 0, len(assayList))
+		for _, assay := range assayList {
+			compatItem, err := buildCompatAssayItem(assay)
 			if err != nil {
 				return nil, nil, err
 			}
-			compatSamples = append(compatSamples, compatItem)
+			compatAssays = append(compatAssays, compatItem)
 		}
-		analysisResult["sample"] = compatSamples
+		analysisResult["assay"] = compatAssays
 	}
 
 	if len(roleSet) > 0 {
@@ -109,7 +109,7 @@ func buildWorkflowFormData(ctx context.Context,
 		return nil, nil, err
 	}
 
-	needSampleList := false
+	needAssayList := false
 	roleSet := make(map[string]struct{})
 
 	for _, item := range formJSONWrap {
@@ -120,8 +120,8 @@ func buildWorkflowFormData(ctx context.Context,
 
 		inputType, _ := formItem["input_type"].(string)
 		switch inputType {
-		case "sample":
-			needSampleList = true
+		case "assay":
+			needAssayList = true
 		case "file":
 			resolver, ok := formItem["resolver"].(map[string]interface{})
 			if !ok {
@@ -137,24 +137,24 @@ func buildWorkflowFormData(ctx context.Context,
 	}
 
 	analysisResult := map[string]interface{}{
-		"sample": make([]map[string]interface{}, 0),
+		"assay": make([]map[string]interface{}, 0),
 	}
 
-	if needSampleList {
-		sampleList, err := dataService.ListSampleByProjectID(ctx, projectID)
+	if needAssayList {
+		assayList, err := dataService.ListAssayByProjectID(ctx, projectID)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		compatSamples := make([]map[string]interface{}, 0, len(sampleList))
-		for _, sample := range sampleList {
-			compatItem, err := buildCompatSampleItem(sample)
+		compatAssays := make([]map[string]interface{}, 0, len(assayList))
+		for _, assay := range assayList {
+			compatItem, err := buildCompatAssayItem(assay)
 			if err != nil {
 				return nil, nil, err
 			}
-			compatSamples = append(compatSamples, compatItem)
+			compatAssays = append(compatAssays, compatItem)
 		}
-		analysisResult["sample"] = compatSamples
+		analysisResult["assay"] = compatAssays
 	}
 
 	if len(roleSet) > 0 {

@@ -378,38 +378,36 @@ func (r *dataRepository) ListDatasetFile(ctx context.Context) ([]*types.DatasetF
 	return items, nil
 }
 
-func (r *dataRepository) CreateSample(ctx context.Context, sample *types.Sample) error {
-	return r.db.WithContext(ctx).Create(sample).Error
+func (r *dataRepository) CreateAssay(ctx context.Context, assay *types.Assay) error {
+	return r.db.WithContext(ctx).Create(assay).Error
 }
 
-func (r *dataRepository) GetSampleByID(ctx context.Context, id int64) (*types.Sample, error) {
-	item := &types.Sample{}
+func (r *dataRepository) GetAssayByID(ctx context.Context, id int64) (*types.Assay, error) {
+	item := &types.Assay{}
 	if err := r.db.WithContext(ctx).Where("id = ?", id).Take(item).Error; err != nil {
 		return nil, err
 	}
 	return item, nil
 }
 
-func (r *dataRepository) UpdateSample(ctx context.Context, sample *types.Sample) error {
-	return r.db.WithContext(ctx).Model(&types.Sample{}).
-		Where("id = ?", sample.ID).
+func (r *dataRepository) UpdateAssay(ctx context.Context, assay *types.Assay) error {
+	return r.db.WithContext(ctx).Model(&types.Assay{}).
+		Where("id = ?", assay.ID).
 		Updates(map[string]interface{}{
-			"sample_id":   sample.SampleID,
-			"sample_name": sample.SampleName,
-			"subject_id":  sample.SubjectID,
-			"group_name":  sample.GroupName,
-			"phenotype":   sample.Phenotype,
-			"metadata":    sample.Metadata,
-			"description": sample.Description,
+			"sample_id":  assay.SampleID,
+			"assay_type": assay.AssayType,
+			"platform":   assay.Platform,
+			"library_id": assay.LibraryID,
+			"metadata":   assay.Metadata,
 		}).Error
 }
 
-func (r *dataRepository) DeleteSample(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.Sample{}).Error
+func (r *dataRepository) DeleteAssay(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.Assay{}).Error
 }
 
-func (r *dataRepository) ListSample(ctx context.Context) ([]*types.Sample, error) {
-	items := make([]*types.Sample, 0)
+func (r *dataRepository) ListAssay(ctx context.Context) ([]*types.Assay, error) {
+	items := make([]*types.Assay, 0)
 	err := r.db.WithContext(ctx).Order("id DESC").Find(&items).Error
 	if err != nil {
 		return nil, err
@@ -417,46 +415,44 @@ func (r *dataRepository) ListSample(ctx context.Context) ([]*types.Sample, error
 	return items, nil
 }
 
-func (r *dataRepository) PageSampleByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.SampleWithDatasetInfo, int64, error) {
+func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithDatasetInfo, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
 
-	items := make([]*types.SampleWithDatasetInfo, 0)
+	items := make([]*types.AssayWithDatasetInfo, 0)
 	var total int64
 
 	buildQuery := func() *gorm.DB {
 		return r.db.WithContext(ctx).
 			Table("go_project_dataset AS pd").
 			Select(`
-				s.id,
-				s.sample_id,
-				s.sample_name,
-				s.subject_id,
-				s.group_name,
-				s.phenotype,
-				s.metadata,
-				s.description,
-				s.created_at,
-				s.updated_at,
+				a.id,
+				a.sample_id,
+				a.assay_type,
+				a.platform,
+				a.library_id,
+				a.metadata,
+				a.created_at,
+				a.updated_at,
 				d.id AS dataset_id,
 				d.dataset_name
 			`).
-			Joins("JOIN go_dataset_sample AS ds ON ds.dataset_id = pd.dataset_id").
+			Joins("JOIN go_dataset_assay AS da ON da.dataset_id = pd.dataset_id").
 			Joins("JOIN go_dataset AS d ON d.id = pd.dataset_id").
-			Joins("JOIN go_sample AS s ON s.id = ds.sample_id").
+			Joins("JOIN go_assay AS a ON a.id = da.assay_id").
 			Where("pd.project_id = ?", projectID)
 	}
 
 	if err := buildQuery().
-		Select("COUNT(DISTINCT ds.id)").
+		Select("COUNT(DISTINCT da.id)").
 		Scan(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	err := buildQuery().
-		Group("s.id, d.id, d.dataset_name").
-		Order("s.id DESC").
+		Group("a.id, d.id, d.dataset_name").
+		Order("a.id DESC").
 		Offset(pagination.Offset()).
 		Limit(pagination.Limit()).
 		Find(&items).Error
@@ -465,36 +461,34 @@ func (r *dataRepository) PageSampleByProjectID(ctx context.Context, pagination *
 	}
 
 	if len(items) == 0 {
-		return []*types.SampleWithDatasetInfo{}, total, nil
+		return []*types.AssayWithDatasetInfo{}, total, nil
 	}
 
 	return items, total, nil
 }
 
-func (r *dataRepository) ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error) {
-	items := make([]*types.SampleWithDatasetInfo, 0)
+func (r *dataRepository) ListAssayByProjectID(ctx context.Context, projectID string) ([]*types.AssayWithDatasetInfo, error) {
+	items := make([]*types.AssayWithDatasetInfo, 0)
 	err := r.db.WithContext(ctx).
 		Table("go_project_dataset AS pd").
 		Select(`
-			s.id,
-			s.sample_id,
-			s.sample_name,
-			s.subject_id,
-			s.group_name,
-			s.phenotype,
-			s.metadata,
-			s.description,
-			s.created_at,
-			s.updated_at,
+			a.id,
+			a.sample_id,
+			a.assay_type,
+			a.platform,
+			a.library_id,
+			a.metadata,
+			a.created_at,
+			a.updated_at,
 			d.id as dataset_id,
 			d.dataset_name
 		`).
-		Joins("JOIN go_dataset_sample AS ds ON ds.dataset_id = pd.dataset_id").
+		Joins("JOIN go_dataset_assay AS da ON da.dataset_id = pd.dataset_id").
 		Joins("JOIN go_dataset AS d ON d.id = pd.dataset_id").
-		Joins("JOIN go_sample AS s ON s.id = ds.sample_id").
+		Joins("JOIN go_assay AS a ON a.id = da.assay_id").
 		Where("pd.project_id = ?", projectID).
-		Group("s.id, d.id, d.dataset_name").
-		Order("s.id DESC").
+		Group("a.id, d.id, d.dataset_name").
+		Order("a.id DESC").
 		Find(&items).Error
 	if err != nil {
 		return nil, err
@@ -502,36 +496,36 @@ func (r *dataRepository) ListSampleByProjectID(ctx context.Context, projectID st
 	return items, nil
 }
 
-func (r *dataRepository) CreateSampleFile(ctx context.Context, sampleFile *types.SampleFile) error {
-	return r.db.WithContext(ctx).Create(sampleFile).Error
+func (r *dataRepository) CreateAssayFile(ctx context.Context, assayFile *types.AssayFile) error {
+	return r.db.WithContext(ctx).Create(assayFile).Error
 }
 
-func (r *dataRepository) GetSampleFileByID(ctx context.Context, id int64) (*types.SampleFile, error) {
-	item := &types.SampleFile{}
+func (r *dataRepository) GetAssayFileByID(ctx context.Context, id int64) (*types.AssayFile, error) {
+	item := &types.AssayFile{}
 	if err := r.db.WithContext(ctx).Where("id = ?", id).Take(item).Error; err != nil {
 		return nil, err
 	}
 	return item, nil
 }
 
-func (r *dataRepository) UpdateSampleFile(ctx context.Context, sampleFile *types.SampleFile) error {
-	return r.db.WithContext(ctx).Model(&types.SampleFile{}).
-		Where("id = ?", sampleFile.ID).
+func (r *dataRepository) UpdateAssayFile(ctx context.Context, assayFile *types.AssayFile) error {
+	return r.db.WithContext(ctx).Model(&types.AssayFile{}).
+		Where("id = ?", assayFile.ID).
 		Updates(map[string]interface{}{
-			"sample_id": sampleFile.SampleID,
-			"file_id":   sampleFile.FileID,
-			"role":      sampleFile.Role,
-			"lane":      sampleFile.Lane,
-			"replicate": sampleFile.Replicate,
+			"assay_id":  assayFile.AssayID,
+			"file_id":   assayFile.FileID,
+			"role":      assayFile.Role,
+			"lane":      assayFile.Lane,
+			"replicate": assayFile.Replicate,
 		}).Error
 }
 
-func (r *dataRepository) DeleteSampleFile(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.SampleFile{}).Error
+func (r *dataRepository) DeleteAssayFile(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.AssayFile{}).Error
 }
 
-func (r *dataRepository) ListSampleFile(ctx context.Context) ([]*types.SampleFile, error) {
-	items := make([]*types.SampleFile, 0)
+func (r *dataRepository) ListAssayFile(ctx context.Context) ([]*types.AssayFile, error) {
+	items := make([]*types.AssayFile, 0)
 	err := r.db.WithContext(ctx).Order("id DESC").Find(&items).Error
 	if err != nil {
 		return nil, err
@@ -539,33 +533,33 @@ func (r *dataRepository) ListSampleFile(ctx context.Context) ([]*types.SampleFil
 	return items, nil
 }
 
-func (r *dataRepository) CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error {
-	return r.db.WithContext(ctx).Create(datasetSample).Error
+func (r *dataRepository) CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error {
+	return r.db.WithContext(ctx).Create(datasetAssay).Error
 }
 
-func (r *dataRepository) GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error) {
-	item := &types.DatasetSample{}
+func (r *dataRepository) GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error) {
+	item := &types.DatasetAssay{}
 	if err := r.db.WithContext(ctx).Where("id = ?", id).Take(item).Error; err != nil {
 		return nil, err
 	}
 	return item, nil
 }
 
-func (r *dataRepository) UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error {
-	return r.db.WithContext(ctx).Model(&types.DatasetSample{}).
-		Where("id = ?", datasetSample.ID).
+func (r *dataRepository) UpdateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error {
+	return r.db.WithContext(ctx).Model(&types.DatasetAssay{}).
+		Where("id = ?", datasetAssay.ID).
 		Updates(map[string]interface{}{
-			"dataset_id": datasetSample.DatasetID,
-			"sample_id":  datasetSample.SampleID,
+			"dataset_id": datasetAssay.DatasetID,
+			"assay_id":   datasetAssay.AssayID,
 		}).Error
 }
 
-func (r *dataRepository) DeleteDatasetSample(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.DatasetSample{}).Error
+func (r *dataRepository) DeleteDatasetAssay(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.DatasetAssay{}).Error
 }
 
-func (r *dataRepository) ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error) {
-	items := make([]*types.DatasetSample, 0)
+func (r *dataRepository) ListDatasetAssay(ctx context.Context) ([]*types.DatasetAssay, error) {
+	items := make([]*types.DatasetAssay, 0)
 	err := r.db.WithContext(ctx).Order("id DESC").Find(&items).Error
 	if err != nil {
 		return nil, err
@@ -591,9 +585,9 @@ func (r *dataRepository) ExistsFileByID(ctx context.Context, id int64) (bool, er
 	return count > 0, err
 }
 
-func (r *dataRepository) ExistsSampleByID(ctx context.Context, id int64) (bool, error) {
+func (r *dataRepository) ExistsAssayByID(ctx context.Context, id int64) (bool, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&types.Sample{}).Where("id = ?", id).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&types.Assay{}).Where("id = ?", id).Count(&count).Error
 	return count > 0, err
 }
 
@@ -605,7 +599,7 @@ func (r *dataRepository) DeleteDatasetWithRelations(ctx context.Context, id int6
 		if err := tx.Where("dataset_id = ?", id).Delete(&types.DatasetFile{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("dataset_id = ?", id).Delete(&types.DatasetSample{}).Error; err != nil {
+		if err := tx.Where("dataset_id = ?", id).Delete(&types.DatasetAssay{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("id = ?", id).Delete(&types.Dataset{}).Error; err != nil {
@@ -620,7 +614,7 @@ func (r *dataRepository) DeleteFileWithRelations(ctx context.Context, id int64) 
 		if err := tx.Where("file_id = ?", id).Delete(&types.DatasetFile{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("file_id = ?", id).Delete(&types.SampleFile{}).Error; err != nil {
+		if err := tx.Where("file_id = ?", id).Delete(&types.AssayFile{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("id = ?", id).Delete(&types.File{}).Error; err != nil {
@@ -630,15 +624,15 @@ func (r *dataRepository) DeleteFileWithRelations(ctx context.Context, id int64) 
 	})
 }
 
-func (r *dataRepository) DeleteSampleWithRelations(ctx context.Context, id int64) error {
+func (r *dataRepository) DeleteAssayWithRelations(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("sample_id = ?", id).Delete(&types.DatasetSample{}).Error; err != nil {
+		if err := tx.Where("assay_id = ?", id).Delete(&types.DatasetAssay{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("sample_id = ?", id).Delete(&types.SampleFile{}).Error; err != nil {
+		if err := tx.Where("assay_id = ?", id).Delete(&types.AssayFile{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("id = ?", id).Delete(&types.Sample{}).Error; err != nil {
+		if err := tx.Where("id = ?", id).Delete(&types.Assay{}).Error; err != nil {
 			return err
 		}
 		return nil

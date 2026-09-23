@@ -41,25 +41,25 @@ type DataService interface {
 	DeleteDatasetFile(ctx context.Context, id int64) error
 	ListDatasetFile(ctx context.Context) ([]*types.DatasetFile, error)
 
-	CreateSample(ctx context.Context, sample *types.Sample) error
-	GetSampleByID(ctx context.Context, id int64) (*types.Sample, error)
-	UpdateSample(ctx context.Context, sample *types.Sample) error
-	DeleteSample(ctx context.Context, id int64) error
-	ListSample(ctx context.Context) ([]*types.Sample, error)
-	PageSampleByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error)
-	ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error)
+	CreateAssay(ctx context.Context, assay *types.Assay) error
+	GetAssayByID(ctx context.Context, id int64) (*types.Assay, error)
+	UpdateAssay(ctx context.Context, assay *types.Assay) error
+	DeleteAssay(ctx context.Context, id int64) error
+	ListAssay(ctx context.Context) ([]*types.Assay, error)
+	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error)
+	ListAssayByProjectID(ctx context.Context, projectID string) ([]*types.AssayWithDatasetInfo, error)
 
-	CreateSampleFile(ctx context.Context, sampleFile *types.SampleFile) error
-	GetSampleFileByID(ctx context.Context, id int64) (*types.SampleFile, error)
-	UpdateSampleFile(ctx context.Context, sampleFile *types.SampleFile) error
-	DeleteSampleFile(ctx context.Context, id int64) error
-	ListSampleFile(ctx context.Context) ([]*types.SampleFile, error)
+	CreateAssayFile(ctx context.Context, assayFile *types.AssayFile) error
+	GetAssayFileByID(ctx context.Context, id int64) (*types.AssayFile, error)
+	UpdateAssayFile(ctx context.Context, assayFile *types.AssayFile) error
+	DeleteAssayFile(ctx context.Context, id int64) error
+	ListAssayFile(ctx context.Context) ([]*types.AssayFile, error)
 
-	CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
-	GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error)
-	UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
-	DeleteDatasetSample(ctx context.Context, id int64) error
-	ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error)
+	CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
+	GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error)
+	UpdateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
+	DeleteDatasetAssay(ctx context.Context, id int64) error
+	ListDatasetAssay(ctx context.Context) ([]*types.DatasetAssay, error)
 }
 
 type DataRepository interface {
@@ -94,32 +94,32 @@ type DataRepository interface {
 	DeleteDatasetFile(ctx context.Context, id int64) error
 	ListDatasetFile(ctx context.Context) ([]*types.DatasetFile, error)
 
-	CreateSample(ctx context.Context, sample *types.Sample) error
-	GetSampleByID(ctx context.Context, id int64) (*types.Sample, error)
-	UpdateSample(ctx context.Context, sample *types.Sample) error
-	DeleteSample(ctx context.Context, id int64) error
-	ListSample(ctx context.Context) ([]*types.Sample, error)
-	PageSampleByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.SampleWithDatasetInfo, int64, error)
-	ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error)
+	CreateAssay(ctx context.Context, assay *types.Assay) error
+	GetAssayByID(ctx context.Context, id int64) (*types.Assay, error)
+	UpdateAssay(ctx context.Context, assay *types.Assay) error
+	DeleteAssay(ctx context.Context, id int64) error
+	ListAssay(ctx context.Context) ([]*types.Assay, error)
+	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithDatasetInfo, int64, error)
+	ListAssayByProjectID(ctx context.Context, projectID string) ([]*types.AssayWithDatasetInfo, error)
 
-	CreateSampleFile(ctx context.Context, sampleFile *types.SampleFile) error
-	GetSampleFileByID(ctx context.Context, id int64) (*types.SampleFile, error)
-	UpdateSampleFile(ctx context.Context, sampleFile *types.SampleFile) error
-	DeleteSampleFile(ctx context.Context, id int64) error
-	ListSampleFile(ctx context.Context) ([]*types.SampleFile, error)
+	CreateAssayFile(ctx context.Context, assayFile *types.AssayFile) error
+	GetAssayFileByID(ctx context.Context, id int64) (*types.AssayFile, error)
+	UpdateAssayFile(ctx context.Context, assayFile *types.AssayFile) error
+	DeleteAssayFile(ctx context.Context, id int64) error
+	ListAssayFile(ctx context.Context) ([]*types.AssayFile, error)
 
-	CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
-	GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error)
-	UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
-	DeleteDatasetSample(ctx context.Context, id int64) error
-	ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error)
+	CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
+	GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error)
+	UpdateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
+	DeleteDatasetAssay(ctx context.Context, id int64) error
+	ListDatasetAssay(ctx context.Context) ([]*types.DatasetAssay, error)
 
 	ExistsProjectByID(ctx context.Context, id string) (bool, error)
 	ExistsDatasetByID(ctx context.Context, id int64) (bool, error)
 	ExistsFileByID(ctx context.Context, id int64) (bool, error)
-	ExistsSampleByID(ctx context.Context, id int64) (bool, error)
+	ExistsAssayByID(ctx context.Context, id int64) (bool, error)
 
 	DeleteDatasetWithRelations(ctx context.Context, id int64) error
 	DeleteFileWithRelations(ctx context.Context, id int64) error
-	DeleteSampleWithRelations(ctx context.Context, id int64) error
+	DeleteAssayWithRelations(ctx context.Context, id int64) error
 }
