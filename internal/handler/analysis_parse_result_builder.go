@@ -991,14 +991,24 @@ func resolveAssayInputValue(
 	}
 
 	result := make([]interface{}, 0, len(assayIDs))
+	// assayDisplayCache 以 assayID 为键缓存 Assay -> Sample -> Subject 的展示名，
+	// 避免同一 assay 在最终输出循环里重复查询。
+	assayDisplayCache := make(map[int64]map[string]string)
 	for _, assayID := range assayIDs {
 		assayIDNum, err := strconv.ParseInt(strings.TrimSpace(assayID), 10, 64)
 		if err != nil {
 			continue
 		}
 
+		displayNames, err := resolveAssayDisplayNames(ctx, dataService, assayIDNum, assayDisplayCache)
+		if err != nil {
+			return nil, err
+		}
+
 		row := map[string]interface{}{
-			"ID": assayID,
+			"ID":           assayID,
+			"subject_name": displayNames["subject_name"],
+			"sample_name":  displayNames["sample_name"],
 		}
 
 		// Keep the expected accept_formats keys present (empty when the assay
@@ -1022,6 +1032,58 @@ func resolveAssayInputValue(
 	}
 
 	return result, nil
+}
+
+// resolveAssayDisplayNames 沿 Assay -> Sample -> Subject 解析展示名，给
+// resolveAssayInputValue 的 assay 行补上 sample_name / subject_name（与
+// AssayWithDatasetInfo 的 json 标签一致）。任一层记录缺失时对应字段留空，
+// 不影响其余字段；只有非 NotFound 的查询错误才向上返回。
+// cache 以 assayID 为键，避免同一 assay 被重复查询。
+func resolveAssayDisplayNames(
+	ctx context.Context,
+	dataService interfaces.DataService,
+	assayID int64,
+	cache map[int64]map[string]string,
+) (map[string]string, error) {
+	if names, ok := cache[assayID]; ok {
+		return names, nil
+	}
+
+	names := map[string]string{"subject_name": "", "sample_name": ""}
+
+	assay, err := dataService.GetAssayByID(ctx, assayID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			cache[assayID] = names
+			return names, nil
+		}
+		return nil, err
+	}
+	if assay == nil {
+		cache[assayID] = names
+		return names, nil
+	}
+
+	sample, err := dataService.GetSampleByID(ctx, assay.SampleID)
+	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if sample == nil {
+		cache[assayID] = names
+		return names, nil
+	}
+	names["sample_name"] = strings.TrimSpace(sample.SampleName)
+
+	subject, err := dataService.GetSubjectByID(ctx, sample.SubjectID)
+	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if subject != nil {
+		names["subject_name"] = strings.TrimSpace(subject.SubjectName)
+	}
+
+	cache[assayID] = names
+	return names, nil
 }
 
 func extractAssayIDsFromValue(value interface{}) []string {

@@ -1432,7 +1432,11 @@ func (h *WorkflowHandler) DeleteScript(c *gin.Context) {
 	})
 }
 
-func buildCompatAssayItem(item interface{}) (map[string]interface{}, error) {
+// buildCompatAssayItem 的入参固定为 *types.AssayWithDatasetInfo（由
+// resolveFormAnalysisResult 经 ListAssayByProjectID 取得），与 buildCompatFileItem
+// 的 *types.FileWithDatasetInfo 保持同一风格。这里仍先 marshal 成 map，是为了在
+// JSON 标签之外追加 label / value / assay_name 等前端字段。
+func buildCompatAssayItem(item *types.AssayWithDatasetInfo) (map[string]interface{}, error) {
 	b, err := json.Marshal(item)
 	if err != nil {
 		return nil, err
@@ -1445,10 +1449,27 @@ func buildCompatAssayItem(item interface{}) (map[string]interface{}, error) {
 
 	// Assay 已无独立 name 列，展示名按 library_id → assay_type → 主键推导。
 	result["assay_name"] = assayDisplayName(result)
-	result["label"] = result["assay_name"]
+	// label 供前端下拉展示：SubjectName - SampleName - AssayType。
+	result["label"] = assayLabel(item)
 	result["value"] = result["id"]
 
 	return result, nil
+}
+
+// assayLabel 返回 Assay 的下拉展示标签：SubjectName - SampleName - AssayType。
+// 直接读取结构体字段（无需再依赖 map/JSON 往返）；缺失的段自动跳过，
+// 避免出现 " - - " 之类的空占位。
+func assayLabel(assay *types.AssayWithDatasetInfo) string {
+	if assay == nil {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	for _, seg := range []string{assay.SubjectName, assay.SampleName, assay.AssayType} {
+		if s := strings.TrimSpace(seg); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, " - ")
 }
 
 func extractStringList(v interface{}) []string {
