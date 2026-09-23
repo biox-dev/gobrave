@@ -575,8 +575,8 @@ func (s *dataService) PageAssayByProjectID(ctx context.Context, pagination *type
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-func (s *dataService) ListAssayByProjectID(ctx context.Context, projectID string) ([]*types.AssayWithDatasetInfo, error) {
-	return s.dataRepo.ListAssayByProjectID(ctx, projectID)
+func (s *dataService) ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error) {
+	return s.dataRepo.ListAssayByProjectID(ctx, projectID, roles)
 }
 
 func (s *dataService) GetDatasetAssayByAssayID(ctx context.Context, assayID int64) (*types.DatasetAssay, error) {

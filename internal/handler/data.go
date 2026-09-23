@@ -1303,7 +1303,7 @@ func (h *DataHandler) ListAssayByProjectID(c *gin.Context) {
 		return
 	}
 
-	items, err := h.dataService.ListAssayByProjectID(c.Request.Context(), req.ProjectID)
+	items, err := h.dataService.ListAssayByProjectID(c.Request.Context(), req.ProjectID, nil)
 	if err != nil {
 		handleDataError(c, err, "failed to list assay by project id")
 		return

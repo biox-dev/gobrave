@@ -50,7 +50,10 @@ type DataService interface {
 	DeleteAssay(ctx context.Context, id int64) error
 	ListAssay(ctx context.Context) ([]*types.Assay, error)
 	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error)
-	ListAssayByProjectID(ctx context.Context, projectID string) ([]*types.AssayWithDatasetInfo, error)
+	// ListAssayByProjectID returns the project's assays joined with their dataset
+	// binding. When roles is non-empty it filters by go_dataset_assay.role and
+	// fills AssayWithDatasetInfo.Role from that binding.
+	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error)
 
 	CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
 	GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error)
@@ -122,7 +125,7 @@ type DataRepository interface {
 	DeleteAssay(ctx context.Context, id int64) error
 	ListAssay(ctx context.Context) ([]*types.Assay, error)
 	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithDatasetInfo, int64, error)
-	ListAssayByProjectID(ctx context.Context, projectID string) ([]*types.AssayWithDatasetInfo, error)
+	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error)
 
 	CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
 	GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error)

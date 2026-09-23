@@ -29,9 +29,10 @@ type File struct {
 	// owned by any assay.
 	AssayID int64 `json:"assay_id,string" gorm:"type:bigint;index"`
 
-	// Role is the file's role inside its owning assay, e.g. FASTQ or BAM.
-	// Analysis form inputs match this value against their accept formats.
-	Role string `json:"role" gorm:"type:varchar(64)"`
+	// FileKey is the file's key inside its owning assay, e.g. FASTQ_R1 or BAM.
+	// Analysis form inputs use it to map the file onto the matching key of
+	// their resolver.accept_formats (see buildParseAnalysisResult).
+	FileKey string `json:"file_key" gorm:"type:varchar(64)"`
 
 	AnalysisNodeID int64 `json:"analysis_node_id" gorm:"type:bigint;index"`
 

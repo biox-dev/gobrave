@@ -183,6 +183,11 @@ type AssayWithDatasetInfo struct {
 	DatasetID string `json:"dataset_id"`
 
 	DatasetName string `json:"dataset_name"`
+
+	// Role is the assay's role inside its owning dataset binding
+	// (go_dataset_assay.role). Analysis form inputs with input_type=assay match
+	// it against their resolver.accept_formats, mirroring DatasetFile.Role.
+	Role string `json:"role"`
 }
 
 func (t *Assay) BeforeCreate(_ *gorm.DB) error {
@@ -202,6 +207,11 @@ type DatasetAssay struct {
 	DatasetID int64 `json:"dataset_id,string" gorm:"index;not null"`
 
 	AssayID int64 `json:"assay_id,string" gorm:"index;not null"`
+
+	// Role is the assay's role inside its dataset binding, e.g. DEFAULT or TABLE.
+	// Analysis form inputs with input_type=assay match it against their
+	// resolver.accept_formats (same convention as DatasetFile.Role).
+	Role string `json:"role" gorm:"type:varchar(64)"`
 
 	CreatedAt time.Time `json:"created_at"`
 }

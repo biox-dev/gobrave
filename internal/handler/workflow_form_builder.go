@@ -18,8 +18,29 @@ func buildScriptFormData(ctx context.Context,
 		return nil, nil, err
 	}
 
-	needAssayList := false
-	roleSet := make(map[string]struct{})
+	analysisResult, err := resolveFormAnalysisResult(ctx, dataService, formJSONWrap, projectID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return formJSONWrap, analysisResult, nil
+}
+
+// resolveFormAnalysisResult builds the `analysis_result` map for a form JSON.
+// Every `input_type=assay` item contributes its assays under each of its
+// `resolver.accept_formats` roles (matched against `go_dataset_assay.role`), and
+// every `input_type=file` item contributes its files under each of its
+// `resolver.accept_formats` roles (matched against `go_dataset_file.role`). The
+// frontend resolves an item's options as `dataMap[role]`, which is why both are
+// keyed by role just like the file case always was.
+func resolveFormAnalysisResult(
+	ctx context.Context,
+	dataService interfaces.DataService,
+	formJSONWrap []interface{},
+	projectID string,
+) (map[string]interface{}, error) {
+	assayRoleSet := make(map[string]struct{})
+	fileRoleSet := make(map[string]struct{})
 
 	for _, item := range formJSONWrap {
 		formItem, ok := item.(map[string]interface{})
@@ -28,77 +49,88 @@ func buildScriptFormData(ctx context.Context,
 		}
 
 		inputType, _ := formItem["input_type"].(string)
-		switch inputType {
-		case "assay":
-			needAssayList = true
-		case "file":
-			resolver, ok := formItem["resolver"].(map[string]interface{})
-			if !ok {
-				continue
-			}
-			acceptFormats := extractStringList(resolver["accept_formats"])
-			for _, role := range acceptFormats {
-				if role != "" {
-					roleSet[role] = struct{}{}
-				}
+		if inputType != "assay" && inputType != "file" {
+			continue
+		}
+
+		resolver, ok := formItem["resolver"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		target := fileRoleSet
+		if inputType == "assay" {
+			target = assayRoleSet
+		}
+		for _, role := range extractStringList(resolver["accept_formats"]) {
+			if role != "" {
+				target[role] = struct{}{}
 			}
 		}
 	}
 
-	analysisResult := map[string]interface{}{
-		"assay": make([]map[string]interface{}, 0),
-	}
+	analysisResult := make(map[string]interface{})
 
-	if needAssayList {
-		assayList, err := dataService.ListAssayByProjectID(ctx, projectID)
+	if len(assayRoleSet) > 0 {
+		roles := sortedKeys(assayRoleSet)
+
+		assays, err := dataService.ListAssayByProjectID(ctx, projectID, roles)
 		if err != nil {
-			return nil, nil, err
-		}
-
-		compatAssays := make([]map[string]interface{}, 0, len(assayList))
-		for _, assay := range assayList {
-			compatItem, err := buildCompatAssayItem(assay)
-			if err != nil {
-				return nil, nil, err
-			}
-			compatAssays = append(compatAssays, compatItem)
-		}
-		analysisResult["assay"] = compatAssays
-	}
-
-	if len(roleSet) > 0 {
-		roles := make([]string, 0, len(roleSet))
-		for role := range roleSet {
-			roles = append(roles, role)
-		}
-		sort.Strings(roles)
-
-		files, err := dataService.ListFileByProjectID(ctx, projectID, roles)
-		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		grouped := make(map[string][]map[string]interface{}, len(roles))
 		for _, role := range roles {
 			grouped[role] = make([]map[string]interface{}, 0)
 		}
-
-		for _, file := range files {
-			compatItem, err := buildCompatFileItem(file)
+		for _, assay := range assays {
+			compatItem, err := buildCompatAssayItem(assay)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			grouped[file.Role] = append(grouped[file.Role], compatItem)
+			grouped[assay.Role] = append(grouped[assay.Role], compatItem)
 		}
-
 		for role, items := range grouped {
 			analysisResult[role] = items
 		}
 	}
 
-	return formJSONWrap, analysisResult, nil
+	if len(fileRoleSet) > 0 {
+		roles := sortedKeys(fileRoleSet)
 
+		files, err := dataService.ListFileByProjectID(ctx, projectID, roles)
+		if err != nil {
+			return nil, err
+		}
+
+		grouped := make(map[string][]map[string]interface{}, len(roles))
+		for _, role := range roles {
+			grouped[role] = make([]map[string]interface{}, 0)
+		}
+		for _, file := range files {
+			compatItem, err := buildCompatFileItem(file)
+			if err != nil {
+				return nil, err
+			}
+			grouped[file.Role] = append(grouped[file.Role], compatItem)
+		}
+		for role, items := range grouped {
+			analysisResult[role] = items
+		}
+	}
+
+	return analysisResult, nil
 }
+
+func sortedKeys(set map[string]struct{}) []string {
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func buildWorkflowFormData(ctx context.Context,
 	workflowService interfaces.WorkflowService,
 	dataService interfaces.DataService,
@@ -109,82 +141,9 @@ func buildWorkflowFormData(ctx context.Context,
 		return nil, nil, err
 	}
 
-	needAssayList := false
-	roleSet := make(map[string]struct{})
-
-	for _, item := range formJSONWrap {
-		formItem, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		inputType, _ := formItem["input_type"].(string)
-		switch inputType {
-		case "assay":
-			needAssayList = true
-		case "file":
-			resolver, ok := formItem["resolver"].(map[string]interface{})
-			if !ok {
-				continue
-			}
-			acceptFormats := extractStringList(resolver["accept_formats"])
-			for _, role := range acceptFormats {
-				if role != "" {
-					roleSet[role] = struct{}{}
-				}
-			}
-		}
-	}
-
-	analysisResult := map[string]interface{}{
-		"assay": make([]map[string]interface{}, 0),
-	}
-
-	if needAssayList {
-		assayList, err := dataService.ListAssayByProjectID(ctx, projectID)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		compatAssays := make([]map[string]interface{}, 0, len(assayList))
-		for _, assay := range assayList {
-			compatItem, err := buildCompatAssayItem(assay)
-			if err != nil {
-				return nil, nil, err
-			}
-			compatAssays = append(compatAssays, compatItem)
-		}
-		analysisResult["assay"] = compatAssays
-	}
-
-	if len(roleSet) > 0 {
-		roles := make([]string, 0, len(roleSet))
-		for role := range roleSet {
-			roles = append(roles, role)
-		}
-		sort.Strings(roles)
-
-		files, err := dataService.ListFileByProjectID(ctx, projectID, roles)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		grouped := make(map[string][]map[string]interface{}, len(roles))
-		for _, role := range roles {
-			grouped[role] = make([]map[string]interface{}, 0)
-		}
-
-		for _, file := range files {
-			compatItem, err := buildCompatFileItem(file)
-			if err != nil {
-				return nil, nil, err
-			}
-			grouped[file.Role] = append(grouped[file.Role], compatItem)
-		}
-
-		for role, items := range grouped {
-			analysisResult[role] = items
-		}
+	analysisResult, err := resolveFormAnalysisResult(ctx, dataService, formJSONWrap, projectID)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return formJSONWrap, analysisResult, nil

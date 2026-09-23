@@ -113,7 +113,7 @@ func buildAnalysisDictFromDB(
 				continue
 			}
 
-			resolved, err := resolveAssayInputValue(ctx, dataService, formItem, rawValue)
+			resolved, err := resolveAssayInputValue(ctx, dataService, rawValue)
 			if err != nil {
 				return nil, fmt.Errorf("resolve assay db fields for %s failed: %w", key, err)
 			}
@@ -381,7 +381,7 @@ func loadAssaysByName(ctx context.Context, dataService interfaces.DataService, r
 		return map[string]map[string]interface{}{}
 	}
 
-	assays, err := dataService.ListAssayByProjectID(ctx, projectID)
+	assays, err := dataService.ListAssayByProjectID(ctx, projectID, nil)
 	if err != nil {
 		return map[string]map[string]interface{}{}
 	}
@@ -934,7 +934,7 @@ func loadCompatFileObjectByID(
 func resolveAssayInputValue(
 	ctx context.Context,
 	dataService interfaces.DataService,
-	formItem map[string]interface{},
+	// formItem map[string]interface{},
 	rawValue interface{},
 ) (interface{}, error) {
 	assayIDs := extractAssayIDsFromValue(rawValue)
@@ -942,11 +942,7 @@ func resolveAssayInputValue(
 		return []interface{}{}, nil
 	}
 
-	acceptFormats := getAssayAcceptFormats(formItem)
-	acceptFormatByLower := make(map[string]string, len(acceptFormats))
-	for _, format := range acceptFormats {
-		acceptFormatByLower[strings.ToLower(strings.TrimSpace(format))] = format
-	}
+	// acceptFormats := getAssayAcceptFormats(formItem)
 
 	selected := make(map[int64]struct{}, len(assayIDs))
 	for _, id := range assayIDs {
@@ -962,6 +958,8 @@ func resolveAssayInputValue(
 
 	// Files are assay-private (go_file.assay_id), so every selected assay is
 	// resolved on its own; an assay without files contributes an empty map.
+	// accept_formats is NOT used to filter files: every file of the assay is
+	// added, keyed by its own file_key.
 	for assayID := range selected {
 		files, err := dataService.ListFileByAssayID(ctx, assayID)
 		if err != nil {
@@ -974,14 +972,7 @@ func resolveAssayInputValue(
 				continue
 			}
 
-			role := strings.TrimSpace(file.Role)
-			if len(acceptFormatByLower) > 0 {
-				mapped, ok := acceptFormatByLower[strings.ToLower(role)]
-				if !ok {
-					continue
-				}
-				role = mapped
-			}
+			role := strings.TrimSpace(file.FileKey)
 			if role == "" {
 				continue
 			}
@@ -1010,30 +1001,21 @@ func resolveAssayInputValue(
 			"ID": assayID,
 		}
 
-		if len(acceptFormats) > 0 {
-			for _, format := range acceptFormats {
-				row[format] = ""
-			}
-		}
+		// Keep the expected accept_formats keys present (empty when the assay
+		// has no matching file), then add every file of the assay under its
+		// file_key.
+		// for _, format := range acceptFormats {
+		// 	row[format] = ""
+		// }
 
 		roleMap := assayRoleToPath[assayIDNum]
-		if len(roleMap) > 0 {
-			if len(acceptFormats) == 0 {
-				roleKeys := make([]string, 0, len(roleMap))
-				for role := range roleMap {
-					roleKeys = append(roleKeys, role)
-				}
-				sort.Strings(roleKeys)
-				for _, role := range roleKeys {
-					row[role] = roleMap[role]
-				}
-			} else {
-				for _, format := range acceptFormats {
-					if path, ok := roleMap[format]; ok {
-						row[format] = path
-					}
-				}
-			}
+		roleKeys := make([]string, 0, len(roleMap))
+		for role := range roleMap {
+			roleKeys = append(roleKeys, role)
+		}
+		sort.Strings(roleKeys)
+		for _, role := range roleKeys {
+			row[role] = roleMap[role]
 		}
 
 		result = append(result, row)

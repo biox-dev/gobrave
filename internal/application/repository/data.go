@@ -204,8 +204,8 @@ func (r *dataRepository) UpdateFile(ctx context.Context, file *types.File) error
 	if file.AssayID != 0 {
 		updates["assay_id"] = file.AssayID
 	}
-	if file.Role != "" {
-		updates["role"] = file.Role
+	if file.FileKey != "" {
+		updates["file_key"] = file.FileKey
 	}
 	if file.Size != 0 {
 		updates["size"] = file.Size
@@ -443,7 +443,7 @@ func (r *dataRepository) ListAssay(ctx context.Context) ([]*types.Assay, error) 
 }
 
 // assayWithDatasetSelect is the shared projection of the assay read model: the
-// assay row plus its owning dataset, sample name and subject identifiers.
+// assay row plus its owning dataset binding, sample name and subject identifiers.
 const assayWithDatasetSelect = `
 	a.id,
 	a.sample_id,
@@ -456,7 +456,8 @@ const assayWithDatasetSelect = `
 	s.sample_name,
 	sub.subject_name AS subject_name,
 	d.id AS dataset_id,
-	d.dataset_name`
+	d.dataset_name,
+	da.role`
 
 func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithDatasetInfo, int64, error) {
 	if pagination == nil {
@@ -487,7 +488,7 @@ func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *t
 	// Grouping by the joined PKs (s.id / sub.id) keeps the extra columns valid
 	// under MySQL's ONLY_FULL_GROUP_BY without changing the row cardinality.
 	err := buildQuery().
-		Group("a.id, d.id, d.dataset_name, s.id, sub.id").
+		Group("a.id, d.id, d.dataset_name, da.role, s.id, sub.id").
 		Order("a.id DESC").
 		Offset(pagination.Offset()).
 		Limit(pagination.Limit()).
@@ -503,9 +504,9 @@ func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *t
 	return items, total, nil
 }
 
-func (r *dataRepository) ListAssayByProjectID(ctx context.Context, projectID string) ([]*types.AssayWithDatasetInfo, error) {
+func (r *dataRepository) ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error) {
 	items := make([]*types.AssayWithDatasetInfo, 0)
-	err := r.db.WithContext(ctx).
+	query := r.db.WithContext(ctx).
 		Table("go_project_dataset AS pd").
 		Select(assayWithDatasetSelect).
 		Joins("JOIN go_dataset_assay AS da ON da.dataset_id = pd.dataset_id").
@@ -513,8 +514,14 @@ func (r *dataRepository) ListAssayByProjectID(ctx context.Context, projectID str
 		Joins("JOIN go_assay AS a ON a.id = da.assay_id").
 		Joins("LEFT JOIN go_sample AS s ON s.id = a.sample_id").
 		Joins("LEFT JOIN go_subject AS sub ON sub.id = s.subject_id").
-		Where("pd.project_id = ?", projectID).
-		Group("a.id, d.id, d.dataset_name, s.id, sub.id").
+		Where("pd.project_id = ?", projectID)
+
+	if len(roles) > 0 {
+		query = query.Where("da.role IN ?", roles)
+	}
+
+	err := query.
+		Group("a.id, d.id, d.dataset_name, da.role, s.id, sub.id").
 		Order("a.id DESC").
 		Find(&items).Error
 	if err != nil {
@@ -549,6 +556,7 @@ func (r *dataRepository) UpdateDatasetAssay(ctx context.Context, datasetAssay *t
 		Updates(map[string]interface{}{
 			"dataset_id": datasetAssay.DatasetID,
 			"assay_id":   datasetAssay.AssayID,
+			"role":       datasetAssay.Role,
 		}).Error
 }
 
