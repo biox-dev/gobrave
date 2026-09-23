@@ -7,6 +7,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// File is a physical file. A file belongs to at most one Assay (Assay -> File is
+// 1:N), so the binding lives directly on this row instead of a join table:
+//
+//	Project -> Subject -> Sample -> Assay -> File
+//
+// Files that are only attached to a dataset (never produced by an assay) keep
+// AssayID == 0, which is why the column stays nullable.
 type File struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
@@ -17,6 +24,14 @@ type File struct {
 	Path string `json:"path" gorm:"type:text;not null"`
 
 	Format string `json:"format" gorm:"type:varchar(64)"`
+
+	// AssayID owns the file (int64 PK of go_assay). 0 means the file is not
+	// owned by any assay.
+	AssayID int64 `json:"assay_id,string" gorm:"type:bigint;index"`
+
+	// Role is the file's role inside its owning assay, e.g. FASTQ or BAM.
+	// Analysis form inputs match this value against their accept formats.
+	Role string `json:"role" gorm:"type:varchar(64)"`
 
 	AnalysisNodeID int64 `json:"analysis_node_id" gorm:"type:bigint;index"`
 

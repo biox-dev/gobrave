@@ -58,6 +58,30 @@ type assayByProjectPageRequest struct {
 	// ProjectID string `json:"project_id" binding:"required"`
 }
 
+type subjectPageRequest struct {
+	types.Pagination
+
+	SubjectName string `json:"subject_name"`
+	Species     string `json:"species"`
+	Strain      string `json:"strain"`
+	Sex         string `json:"sex"`
+}
+
+type samplePageRequest struct {
+	types.Pagination
+
+	SampleID   string `json:"sample_id"`
+	SampleName string `json:"sample_name"`
+	SubjectID  *int64 `json:"subject_id,string"`
+	Tissue     string `json:"tissue"`
+	CellType   string `json:"cell_type"`
+}
+
+// assayIDQuery addresses a resource by its owning assay (int64 PK).
+type assayIDQuery struct {
+	AssayID int64 `form:"assay_id" binding:"required"`
+}
+
 func handleDataError(c *gin.Context, err error, internalMsg string) {
 	if stderrs.Is(err, gorm.ErrRecordNotFound) {
 		c.Error(errors.NewNotFoundError("record not found"))
@@ -756,6 +780,38 @@ func (h *DataHandler) ListFile(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
+// ListFileByAssayID godoc
+// @Summary      按 Assay 查询文件列表
+// @Description  返回某个 Assay 所拥有的全部文件（无文件时返回空数组）
+// @Tags         数据管理
+// @Produce      json
+// @Param        assay_id  query     integer           true  "Assay 主键 ID"
+// @Success      200       {array}   types.File
+// @Failure      400       {object}  errors.AppError
+// @Failure      401       {object}  errors.AppError
+// @Failure      500       {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/file/list-by-assay [get]
+func (h *DataHandler) ListFileByAssayID(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req assayIDQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	items, err := h.dataService.ListFileByAssayID(c.Request.Context(), req.AssayID)
+	if err != nil {
+		handleDataError(c, err, "failed to list file by assay id")
+		return
+	}
+
+	c.JSON(http.StatusOK, items)
+}
+
 // ListFileByProjectID godoc
 // @Summary      按项目查询文件列表
 // @Description  根据 project_id 查询关联的所有文件；支持按 go_dataset_file.role 过滤
@@ -1300,166 +1356,6 @@ func (h *DataHandler) PageAssayByProjectID(c *gin.Context) {
 	})
 }
 
-// CreateAssayFile godoc
-// @Summary      创建 Assay-文件映射
-// @Description  创建 AssayFile 记录
-// @Tags         数据管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      types.AssayFile  true  "请求参数"
-// @Success      200      {object}  types.AssayFile
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/assay-file/create [post]
-func (h *DataHandler) CreateAssayFile(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req types.AssayFile
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	if err := h.dataService.CreateAssayFile(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to create assay file")
-		return
-	}
-
-	c.JSON(http.StatusOK, req)
-}
-
-// GetAssayFile godoc
-// @Summary      获取 Assay-文件映射
-// @Description  按 ID 查询 AssayFile 详情
-// @Tags         数据管理
-// @Produce      json
-// @Param        id       query     integer             true  "主键 ID"
-// @Success      200      {object}  types.AssayFile
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/assay-file/get [get]
-func (h *DataHandler) GetAssayFile(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req idQuery
-	if err := c.ShouldBindQuery(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
-		return
-	}
-
-	item, err := h.dataService.GetAssayFileByID(c.Request.Context(), req.ID)
-	if err != nil {
-		handleDataError(c, err, "failed to get assay file")
-		return
-	}
-
-	c.JSON(http.StatusOK, item)
-}
-
-// UpdateAssayFile godoc
-// @Summary      更新 Assay-文件映射
-// @Description  按 ID 更新 AssayFile 记录
-// @Tags         数据管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      types.AssayFile  true  "请求参数"
-// @Success      200      {object}  map[string]string
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/assay-file/update [post]
-func (h *DataHandler) UpdateAssayFile(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req types.AssayFile
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-	if req.ID == 0 {
-		c.Error(errors.NewValidationError("id is required"))
-		return
-	}
-
-	if err := h.dataService.UpdateAssayFile(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to update assay file")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "assay file updated successfully"})
-}
-
-// DeleteAssayFile godoc
-// @Summary      删除 Assay-文件映射
-// @Description  按 ID 删除 AssayFile 记录
-// @Tags         数据管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      idBody             true  "请求参数"
-// @Success      200      {object}  map[string]string
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/assay-file/delete [post]
-func (h *DataHandler) DeleteAssayFile(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req idBody
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	if err := h.dataService.DeleteAssayFile(c.Request.Context(), req.ID); err != nil {
-		handleDataError(c, err, "failed to delete assay file")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "assay file deleted successfully"})
-}
-
-// ListAssayFile godoc
-// @Summary      Assay-文件映射列表
-// @Description  查询 AssayFile 列表
-// @Tags         数据管理
-// @Produce      json
-// @Success      200      {array}   types.AssayFile
-// @Failure      401      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/assay-file/list [get]
-func (h *DataHandler) ListAssayFile(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	items, err := h.dataService.ListAssayFile(c.Request.Context())
-	if err != nil {
-		handleDataError(c, err, "failed to list assay file")
-		return
-	}
-
-	c.JSON(http.StatusOK, items)
-}
-
 // CreateDatasetAssay godoc
 // @Summary      创建数据集-Assay 映射
 // @Description  创建 DatasetAssay 记录
@@ -1606,6 +1502,16 @@ func (h *DataHandler) DeleteDatasetAssay(c *gin.Context) {
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
 // @Router       /data/dataset-assay/list [get]
+// ListDatasetAssay godoc
+// @Summary      数据集-Assay 映射列表
+// @Description  查询 DatasetAssay 列表
+// @Tags         数据管理
+// @Produce      json
+// @Success      200      {array}   types.DatasetAssay
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/dataset-assay/list [get]
 func (h *DataHandler) ListDatasetAssay(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
@@ -1618,4 +1524,453 @@ func (h *DataHandler) ListDatasetAssay(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, items)
+}
+
+// GetDatasetAssayByAssayID godoc
+// @Summary      按 Assay 查询数据集映射
+// @Description  返回 Assay 绑定的 DatasetAssay；尚未绑定任何数据集时返回 null
+// @Tags         数据管理
+// @Produce      json
+// @Param        assay_id  query     integer               true  "Assay 主键 ID"
+// @Success      200       {object}  types.DatasetAssay
+// @Failure      400       {object}  errors.AppError
+// @Failure      401       {object}  errors.AppError
+// @Failure      500       {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/dataset-assay/get-by-assay [get]
+func (h *DataHandler) GetDatasetAssayByAssayID(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req assayIDQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	item, err := h.dataService.GetDatasetAssayByAssayID(c.Request.Context(), req.AssayID)
+	if err != nil {
+		// An assay that is not bound to a dataset yet is a normal state, not an error.
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusOK, nil)
+			return
+		}
+		handleDataError(c, err, "failed to get dataset assay by assay id")
+		return
+	}
+
+	c.JSON(http.StatusOK, item)
+}
+
+// CreateSubject godoc
+// @Summary      创建 Subject
+// @Description  创建实验对象/个体记录，主键由服务端生成，subject_name 业务名必须唯一
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      types.Subject  true  "请求参数"
+// @Success      200      {object}  types.Subject
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/subject/create [post]
+func (h *DataHandler) CreateSubject(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req types.Subject
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if err := h.dataService.CreateSubject(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to create subject")
+		return
+	}
+
+	c.JSON(http.StatusOK, req)
+}
+
+// GetSubject godoc
+// @Summary      获取 Subject
+// @Description  按 ID 查询 Subject 详情
+// @Tags         数据管理
+// @Produce      json
+// @Param        id       query     integer      true  "主键 ID"
+// @Success      200      {object}  types.Subject
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/subject/get [get]
+func (h *DataHandler) GetSubject(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req idQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	item, err := h.dataService.GetSubjectByID(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to get subject")
+		return
+	}
+
+	c.JSON(http.StatusOK, item)
+}
+
+// UpdateSubject godoc
+// @Summary      更新 Subject
+// @Description  按 ID 更新 Subject 记录
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      types.Subject     true  "请求参数"
+// @Success      200      {object}  types.Subject
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/subject/update [post]
+func (h *DataHandler) UpdateSubject(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req types.Subject
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+	if req.ID == 0 {
+		c.Error(errors.NewValidationError("id is required"))
+		return
+	}
+
+	if err := h.dataService.UpdateSubject(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to update subject")
+		return
+	}
+
+	c.JSON(http.StatusOK, req)
+}
+
+// DeleteSubject godoc
+// @Summary      删除 Subject
+// @Description  按 ID 删除 Subject；当该 Subject 下仍存在 Sample 时返回 409，需先删除其 Sample
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      idBody            true  "请求参数"
+// @Success      200      {object}  map[string]string
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/subject/delete [post]
+func (h *DataHandler) DeleteSubject(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req idBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if err := h.dataService.DeleteSubject(c.Request.Context(), req.ID); err != nil {
+		handleDataError(c, err, "failed to delete subject")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "subject deleted successfully"})
+}
+
+// ListSubject godoc
+// @Summary      Subject 列表
+// @Description  查询 Subject 列表
+// @Tags         数据管理
+// @Produce      json
+// @Success      200      {array}   types.Subject
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/subject/list [get]
+func (h *DataHandler) ListSubject(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	items, err := h.dataService.ListSubject(c.Request.Context())
+	if err != nil {
+		handleDataError(c, err, "failed to list subject")
+		return
+	}
+
+	c.JSON(http.StatusOK, items)
+}
+
+// PageSubject godoc
+// @Summary      分页查询 Subject
+// @Description  按 subject_name / species / strain / sex 过滤并分页
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      subjectPageRequest  true  "分页请求参数"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/subject/page [post]
+func (h *DataHandler) PageSubject(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req subjectPageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	result, err := h.dataService.PageSubject(c.Request.Context(), &req.Pagination, &types.QuerySubject{
+		SubjectName: req.SubjectName,
+		Species:     req.Species,
+		Strain:      req.Strain,
+		Sex:         req.Sex,
+	})
+	if err != nil {
+		handleDataError(c, err, "failed to page subject")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":      result.Data,
+		"total":     result.Total,
+		"page":      result.Page,
+		"page_size": result.PageSize,
+	})
+}
+
+// CreateSample godoc
+// @Summary      创建 Sample
+// @Description  创建采样记录，主键由服务端生成；sample_id 业务号唯一，subject_id 必须指向已存在的 Subject 主键
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      types.Sample  true  "请求参数"
+// @Success      200      {object}  types.Sample
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/sample/create [post]
+func (h *DataHandler) CreateSample(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req types.Sample
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if err := h.dataService.CreateSample(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to create sample")
+		return
+	}
+
+	c.JSON(http.StatusOK, req)
+}
+
+// GetSample godoc
+// @Summary      获取 Sample
+// @Description  按 ID 查询 Sample 详情
+// @Tags         数据管理
+// @Produce      json
+// @Param        id       query     integer     true  "主键 ID"
+// @Success      200      {object}  types.Sample
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/sample/get [get]
+func (h *DataHandler) GetSample(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req idQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	item, err := h.dataService.GetSampleByID(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to get sample")
+		return
+	}
+
+	c.JSON(http.StatusOK, item)
+}
+
+// UpdateSample godoc
+// @Summary      更新 Sample
+// @Description  按 ID 更新 Sample 记录
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      types.Sample      true  "请求参数"
+// @Success      200      {object}  types.Sample
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/sample/update [post]
+func (h *DataHandler) UpdateSample(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req types.Sample
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+	if req.ID == 0 {
+		c.Error(errors.NewValidationError("id is required"))
+		return
+	}
+
+	if err := h.dataService.UpdateSample(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to update sample")
+		return
+	}
+
+	c.JSON(http.StatusOK, req)
+}
+
+// DeleteSample godoc
+// @Summary      删除 Sample
+// @Description  按 ID 删除 Sample；当该 Sample 下仍存在 Assay 时返回 409，需先删除其 Assay
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      idBody            true  "请求参数"
+// @Success      200      {object}  map[string]string
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/sample/delete [post]
+func (h *DataHandler) DeleteSample(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req idBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if err := h.dataService.DeleteSample(c.Request.Context(), req.ID); err != nil {
+		handleDataError(c, err, "failed to delete sample")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "sample deleted successfully"})
+}
+
+// ListSample godoc
+// @Summary      Sample 列表
+// @Description  查询 Sample 列表
+// @Tags         数据管理
+// @Produce      json
+// @Success      200      {array}   types.Sample
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/sample/list [get]
+func (h *DataHandler) ListSample(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	items, err := h.dataService.ListSample(c.Request.Context())
+	if err != nil {
+		handleDataError(c, err, "failed to list sample")
+		return
+	}
+
+	c.JSON(http.StatusOK, items)
+}
+
+// PageSample godoc
+// @Summary      分页查询 Sample
+// @Description  按 sample_id / sample_name / subject_id（Subject 主键）/ tissue / cell_type 过滤并分页，附带 Subject 业务名
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      samplePageRequest  true  "分页请求参数"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/sample/page [post]
+func (h *DataHandler) PageSample(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req samplePageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	result, err := h.dataService.PageSample(c.Request.Context(), &req.Pagination, &types.QuerySample{
+		SampleID:   req.SampleID,
+		SampleName: req.SampleName,
+		SubjectID:  req.SubjectID,
+		Tissue:     req.Tissue,
+		CellType:   req.CellType,
+	})
+	if err != nil {
+		handleDataError(c, err, "failed to page sample")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":      result.Data,
+		"total":     result.Total,
+		"page":      result.Page,
+		"page_size": result.PageSize,
+	})
 }

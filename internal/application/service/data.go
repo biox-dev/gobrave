@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/config"
+	apperrors "github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -231,7 +232,47 @@ func (s *dataService) ListProjectDataset(ctx context.Context) ([]*types.ProjectD
 	return s.dataRepo.ListProjectDataset(ctx)
 }
 
+// ensureFileAssayExists verifies the owning assay of a file. assayID 0 means the
+// file is not owned by any assay (dataset-only attachment) and is always valid.
+func (s *dataService) ensureFileAssayExists(ctx context.Context, assayID int64) error {
+	if assayID == 0 {
+		return nil
+	}
+	exists, err := s.dataRepo.ExistsAssayByID(ctx, assayID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (s *dataService) CreateFile(ctx context.Context, file *types.File) error {
+	if err := s.ensureFileAssayExists(ctx, file.AssayID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(file.Path) == "" {
+		return apperrors.NewValidationError("path is required")
+	}
+
+	// go_file.file_id is a unique business number: generate one when the caller
+	// does not supply it (same convention as AddFileToDataset).
+	if strings.TrimSpace(file.FileID) == "" {
+		file.FileID = strconv.FormatInt(utils.GenerateID(), 10)
+	}
+
+	// A path may only be registered once per assay scope. Two rows for the same
+	// (path, assay_id) would make the assay own the same file twice and the
+	// analysis input resolver would pick one of them at random.
+	_, err := s.dataRepo.GetFileByPathAndAssayID(ctx, file.Path, file.AssayID)
+	if err == nil {
+		return apperrors.NewConflictError("file already registered for this assay: " + file.Path)
+	}
+	if !stderrs.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
 	return s.dataRepo.CreateFile(ctx, file)
 }
 
@@ -246,6 +287,9 @@ func (s *dataService) GetFileByFileID(ctx context.Context, fileID string) (*type
 func (s *dataService) UpdateFile(ctx context.Context, file *types.File) error {
 	_, err := s.dataRepo.GetFileByID(ctx, file.ID)
 	if err != nil {
+		return err
+	}
+	if err := s.ensureFileAssayExists(ctx, file.AssayID); err != nil {
 		return err
 	}
 	return s.dataRepo.UpdateFile(ctx, file)
@@ -265,6 +309,10 @@ func (s *dataService) ListFile(ctx context.Context) ([]*types.File, error) {
 
 func (s *dataService) ListFileByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.FileWithDatasetInfo, error) {
 	return s.dataRepo.ListFileByProjectID(ctx, projectID, roles)
+}
+
+func (s *dataService) ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error) {
+	return s.dataRepo.ListFileByAssayID(ctx, assayID)
 }
 
 func (s *dataService) ListFileByProjectIDGroupByRole(ctx context.Context, projectID string) ([]*types.FileByProjectRoleGroup, error) {
@@ -400,7 +448,9 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 		role = "DEFAULT"
 	}
 
-	file, err := s.dataRepo.GetFileByPath(ctx, resolvedPath)
+	// Files are assay-private: a path registered outside of any assay (assayID 0)
+	// is a distinct row from an assay-owned one, so the lookup is assay-scoped.
+	file, err := s.dataRepo.GetFileByPathAndAssayID(ctx, resolvedPath, 0)
 	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
@@ -529,65 +579,195 @@ func (s *dataService) ListAssayByProjectID(ctx context.Context, projectID string
 	return s.dataRepo.ListAssayByProjectID(ctx, projectID)
 }
 
-func (s *dataService) CreateAssayFile(ctx context.Context, assayFile *types.AssayFile) error {
-	assayExists, err := s.dataRepo.ExistsAssayByID(ctx, assayFile.AssayID)
+func (s *dataService) GetDatasetAssayByAssayID(ctx context.Context, assayID int64) (*types.DatasetAssay, error) {
+	return s.dataRepo.GetDatasetAssayByAssayID(ctx, assayID)
+}
+
+func (s *dataService) CreateSubject(ctx context.Context, subject *types.Subject) error {
+	subjectName := strings.TrimSpace(subject.SubjectName)
+	if subjectName == "" {
+		return apperrors.NewValidationError("subject_name is required")
+	}
+	subject.SubjectName = subjectName
+
+	exists, err := s.dataRepo.ExistsSubjectBySubjectName(ctx, subjectName)
 	if err != nil {
 		return err
 	}
-	if !assayExists {
+	if exists {
+		return apperrors.NewConflictError("subject_name already exists: " + subjectName)
+	}
+
+	return s.dataRepo.CreateSubject(ctx, subject)
+}
+
+func (s *dataService) GetSubjectByID(ctx context.Context, id int64) (*types.Subject, error) {
+	return s.dataRepo.GetSubjectByID(ctx, id)
+}
+
+func (s *dataService) UpdateSubject(ctx context.Context, subject *types.Subject) error {
+	current, err := s.dataRepo.GetSubjectByID(ctx, subject.ID)
+	if err != nil {
+		return err
+	}
+
+	subjectName := strings.TrimSpace(subject.SubjectName)
+	if subjectName == "" {
+		return apperrors.NewValidationError("subject_name is required")
+	}
+	if subjectName != current.SubjectName {
+		exists, err := s.dataRepo.ExistsSubjectBySubjectName(ctx, subjectName)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return apperrors.NewConflictError("subject_name already exists: " + subjectName)
+		}
+	}
+	subject.SubjectName = subjectName
+
+	return s.dataRepo.UpdateSubject(ctx, subject)
+}
+
+// DeleteSubject removes a subject only when no sample still references it; the
+// hierarchy is Subject -> Sample -> Assay -> File, so the children have to be
+// deleted from the leaves up.
+func (s *dataService) DeleteSubject(ctx context.Context, id int64) error {
+	if _, err := s.dataRepo.GetSubjectByID(ctx, id); err != nil {
+		return err
+	}
+
+	sampleCount, err := s.dataRepo.CountSamplesBySubjectID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if sampleCount > 0 {
+		return apperrors.NewConflictError(
+			fmt.Sprintf("subject still has %d sample(s); delete them first", sampleCount))
+	}
+
+	return s.dataRepo.DeleteSubject(ctx, id)
+}
+
+func (s *dataService) ListSubject(ctx context.Context) ([]*types.Subject, error) {
+	return s.dataRepo.ListSubject(ctx)
+}
+
+func (s *dataService) PageSubject(ctx context.Context, pagination *types.Pagination, query *types.QuerySubject) (*types.PageResult, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	items, total, err := s.dataRepo.PageSubject(ctx, pagination, query)
+	if err != nil {
+		return nil, err
+	}
+
+	return types.NewPageResult(total, pagination, items), nil
+}
+
+func (s *dataService) CreateSample(ctx context.Context, sample *types.Sample) error {
+	sampleID := strings.TrimSpace(sample.SampleID)
+	if sampleID == "" {
+		return apperrors.NewValidationError("sample_id is required")
+	}
+	sample.SampleID = sampleID
+
+	if sample.SubjectID == 0 {
+		return apperrors.NewValidationError("subject_id is required")
+	}
+	subjectExists, err := s.dataRepo.ExistsSubjectByID(ctx, sample.SubjectID)
+	if err != nil {
+		return err
+	}
+	if !subjectExists {
 		return gorm.ErrRecordNotFound
 	}
 
-	fileExists, err := s.dataRepo.ExistsFileByID(ctx, assayFile.FileID)
+	exists, err := s.dataRepo.ExistsSampleBySampleID(ctx, sampleID)
 	if err != nil {
 		return err
 	}
-	if !fileExists {
+	if exists {
+		return apperrors.NewConflictError("sample_id already exists: " + sampleID)
+	}
+
+	return s.dataRepo.CreateSample(ctx, sample)
+}
+
+func (s *dataService) GetSampleByID(ctx context.Context, id int64) (*types.Sample, error) {
+	return s.dataRepo.GetSampleByID(ctx, id)
+}
+
+func (s *dataService) UpdateSample(ctx context.Context, sample *types.Sample) error {
+	current, err := s.dataRepo.GetSampleByID(ctx, sample.ID)
+	if err != nil {
+		return err
+	}
+
+	sampleID := strings.TrimSpace(sample.SampleID)
+	if sampleID == "" {
+		return apperrors.NewValidationError("sample_id is required")
+	}
+	if sampleID != current.SampleID {
+		exists, err := s.dataRepo.ExistsSampleBySampleID(ctx, sampleID)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return apperrors.NewConflictError("sample_id already exists: " + sampleID)
+		}
+	}
+	sample.SampleID = sampleID
+
+	if sample.SubjectID == 0 {
+		sample.SubjectID = current.SubjectID
+	}
+	subjectExists, err := s.dataRepo.ExistsSubjectByID(ctx, sample.SubjectID)
+	if err != nil {
+		return err
+	}
+	if !subjectExists {
 		return gorm.ErrRecordNotFound
 	}
 
-	return s.dataRepo.CreateAssayFile(ctx, assayFile)
+	return s.dataRepo.UpdateSample(ctx, sample)
 }
 
-func (s *dataService) GetAssayFileByID(ctx context.Context, id int64) (*types.AssayFile, error) {
-	return s.dataRepo.GetAssayFileByID(ctx, id)
-}
-
-func (s *dataService) UpdateAssayFile(ctx context.Context, assayFile *types.AssayFile) error {
-	_, err := s.dataRepo.GetAssayFileByID(ctx, assayFile.ID)
-	if err != nil {
+// DeleteSample removes a sample only when no assay still references it; assays
+// own files and dataset bindings and must be deleted first.
+func (s *dataService) DeleteSample(ctx context.Context, id int64) error {
+	if _, err := s.dataRepo.GetSampleByID(ctx, id); err != nil {
 		return err
 	}
 
-	assayExists, err := s.dataRepo.ExistsAssayByID(ctx, assayFile.AssayID)
+	assayCount, err := s.dataRepo.CountAssaysBySampleID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if !assayExists {
-		return gorm.ErrRecordNotFound
+	if assayCount > 0 {
+		return apperrors.NewConflictError(
+			fmt.Sprintf("sample still has %d assay(s); delete them first", assayCount))
 	}
 
-	fileExists, err := s.dataRepo.ExistsFileByID(ctx, assayFile.FileID)
-	if err != nil {
-		return err
-	}
-	if !fileExists {
-		return gorm.ErrRecordNotFound
-	}
-
-	return s.dataRepo.UpdateAssayFile(ctx, assayFile)
+	return s.dataRepo.DeleteSample(ctx, id)
 }
 
-func (s *dataService) DeleteAssayFile(ctx context.Context, id int64) error {
-	_, err := s.dataRepo.GetAssayFileByID(ctx, id)
-	if err != nil {
-		return err
-	}
-	return s.dataRepo.DeleteAssayFile(ctx, id)
+func (s *dataService) ListSample(ctx context.Context) ([]*types.Sample, error) {
+	return s.dataRepo.ListSample(ctx)
 }
 
-func (s *dataService) ListAssayFile(ctx context.Context) ([]*types.AssayFile, error) {
-	return s.dataRepo.ListAssayFile(ctx)
+func (s *dataService) PageSample(ctx context.Context, pagination *types.Pagination, query *types.QuerySample) (*types.PageResult, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	items, total, err := s.dataRepo.PageSample(ctx, pagination, query)
+	if err != nil {
+		return nil, err
+	}
+
+	return types.NewPageResult(total, pagination, items), nil
 }
 
 func (s *dataService) CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error {

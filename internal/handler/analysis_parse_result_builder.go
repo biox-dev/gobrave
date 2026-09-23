@@ -958,62 +958,45 @@ func resolveAssayInputValue(
 		return []interface{}{}, nil
 	}
 
-	assayFiles, err := dataService.ListAssayFile(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	fileCache := make(map[int64]*types.File)
 	assayRoleToPath := make(map[int64]map[string]string)
 
-	for _, assayFile := range assayFiles {
-		if assayFile == nil {
-			continue
-		}
-		if _, ok := selected[assayFile.AssayID]; !ok {
-			continue
+	// Files are assay-private (go_file.assay_id), so every selected assay is
+	// resolved on its own; an assay without files contributes an empty map.
+	for assayID := range selected {
+		files, err := dataService.ListFileByAssayID(ctx, assayID)
+		if err != nil {
+			return nil, err
 		}
 
-		role := strings.TrimSpace(assayFile.Role)
-		if len(acceptFormatByLower) > 0 {
-			mapped, ok := acceptFormatByLower[strings.ToLower(role)]
-			if !ok {
+		roleToPath := make(map[string]string, len(files))
+		for _, file := range files {
+			if file == nil {
 				continue
 			}
-			role = mapped
-		}
-		if role == "" {
-			continue
-		}
 
-		if _, ok := assayRoleToPath[assayFile.AssayID]; !ok {
-			assayRoleToPath[assayFile.AssayID] = make(map[string]string)
-		}
-		if existing := strings.TrimSpace(assayRoleToPath[assayFile.AssayID][role]); existing != "" {
-			continue
-		}
-
-		file, ok := fileCache[assayFile.FileID]
-		if !ok {
-			file, err = dataService.GetFileByID(ctx, assayFile.FileID)
-			if err != nil {
-				if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			role := strings.TrimSpace(file.Role)
+			if len(acceptFormatByLower) > 0 {
+				mapped, ok := acceptFormatByLower[strings.ToLower(role)]
+				if !ok {
 					continue
 				}
-				return nil, err
+				role = mapped
 			}
-			fileCache[assayFile.FileID] = file
+			if role == "" {
+				continue
+			}
+			if existing := strings.TrimSpace(roleToPath[role]); existing != "" {
+				continue
+			}
+
+			path := strings.TrimSpace(file.Path)
+			if path == "" {
+				path = strings.TrimSpace(file.FileID)
+			}
+			roleToPath[role] = path
 		}
 
-		if file == nil {
-			continue
-		}
-
-		path := strings.TrimSpace(file.Path)
-		if path == "" {
-			path = strings.TrimSpace(file.FileID)
-		}
-		assayRoleToPath[assayFile.AssayID][role] = path
+		assayRoleToPath[assayID] = roleToPath
 	}
 
 	result := make([]interface{}, 0, len(assayIDs))

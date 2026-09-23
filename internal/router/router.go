@@ -220,6 +220,7 @@ func RegisterDataRoutes(r *gin.RouterGroup, handler *handler.DataHandler) {
 	r.GET("/data/file/list-by-project", handler.ListFileByProjectID)
 	r.POST("/data/file/list-by-project-page", handler.PageFileByProjectID)
 	r.GET("/data/file/list-by-project-group", handler.ListFileByProjectIDGroupByRole)
+	r.GET("/data/file/list-by-assay", handler.ListFileByAssayID)
 
 	r.POST("/data/dataset-file/create", handler.CreateDatasetFile)
 	r.POST("/data/dataset-file/add-file", handler.AddFileToDataset)
@@ -236,17 +237,26 @@ func RegisterDataRoutes(r *gin.RouterGroup, handler *handler.DataHandler) {
 	r.GET("/data/assay/list-by-project", handler.ListAssayByProjectID)
 	r.POST("/data/assay/list-by-project-page", handler.PageAssayByProjectID)
 
-	r.POST("/data/assay-file/create", handler.CreateAssayFile)
-	r.GET("/data/assay-file/get", handler.GetAssayFile)
-	r.POST("/data/assay-file/update", handler.UpdateAssayFile)
-	r.POST("/data/assay-file/delete", handler.DeleteAssayFile)
-	r.GET("/data/assay-file/list", handler.ListAssayFile)
-
 	r.POST("/data/dataset-assay/create", handler.CreateDatasetAssay)
 	r.GET("/data/dataset-assay/get", handler.GetDatasetAssay)
+	r.GET("/data/dataset-assay/get-by-assay", handler.GetDatasetAssayByAssayID)
 	r.POST("/data/dataset-assay/update", handler.UpdateDatasetAssay)
 	r.POST("/data/dataset-assay/delete", handler.DeleteDatasetAssay)
 	r.GET("/data/dataset-assay/list", handler.ListDatasetAssay)
+
+	r.POST("/data/subject/create", handler.CreateSubject)
+	r.GET("/data/subject/get", handler.GetSubject)
+	r.POST("/data/subject/update", handler.UpdateSubject)
+	r.POST("/data/subject/delete", handler.DeleteSubject)
+	r.GET("/data/subject/list", handler.ListSubject)
+	r.POST("/data/subject/page", handler.PageSubject)
+
+	r.POST("/data/sample/create", handler.CreateSample)
+	r.GET("/data/sample/get", handler.GetSample)
+	r.POST("/data/sample/update", handler.UpdateSample)
+	r.POST("/data/sample/delete", handler.DeleteSample)
+	r.GET("/data/sample/list", handler.ListSample)
+	r.POST("/data/sample/page", handler.PageSample)
 }
 
 func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandler) {
