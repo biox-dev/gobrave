@@ -51,8 +51,28 @@ func (d *DockerRuntime) Create(ctx context.Context, spec *types.ContainerSpec) (
 		return "", err
 	}
 
+	// docker create 本身不含拉取动作（没有 imagePullPolicy 概念），
+	// 因此把镜像的 PullPolicy 翻译成 create 前是否/何时 pull，语义与 k8s 对齐：
+	// Always -> 强制 pull，IfNotPresent -> 本地缺失才 pull，Never -> 本地缺失直接失败。
+	pullPolicy := normalizePullPolicy(spec.PullPolicy)
+	switch pullPolicy {
+	case types.PullPolicyAlways, types.PullPolicyIfNotPresent, types.PullPolicyNever:
+	default:
+		// 与 k8s 侧（toKubeImagePullPolicy）保持一致：无法识别的策略按 IfNotPresent 处理，
+		// 避免历史脏数据直接阻断容器创建。
+		pullPolicy = types.PullPolicyIfNotPresent
+	}
+	if err := d.EnsureImage(ctx, spec.Image, pullPolicy); err != nil {
+		return "", err
+	}
+
 	resp, err := cli.ContainerCreate(ctx, d.toContainerConfig(spec), d.toHostConfig(spec), nil, nil, "")
 	if err != nil {
+		// Never 表示只允许使用本地镜像，兜底 pull 会违背语义。
+		if pullPolicy == types.PullPolicyNever {
+			return "", fmt.Errorf("create container: %w", err)
+		}
+
 		pullErr := d.pullImage(ctx, cli, spec.Image)
 		if pullErr != nil {
 			return "", fmt.Errorf("create container: %w", err)

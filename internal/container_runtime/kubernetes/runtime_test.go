@@ -297,3 +297,65 @@ func TestCreateJob_DefaultsToSuspended(t *testing.T) {
 		t.Fatalf("expected created job to be suspended by default")
 	}
 }
+
+func TestToKubeImagePullPolicy(t *testing.T) {
+	cases := []struct {
+		policy string
+		want   corev1.PullPolicy
+	}{
+		{types.PullPolicyAlways, corev1.PullAlways},
+		{"always", corev1.PullAlways},
+		{types.PullPolicyIfNotPresent, corev1.PullIfNotPresent},
+		{types.PullPolicyNever, corev1.PullNever},
+		{"never", corev1.PullNever},
+		{"", corev1.PullIfNotPresent},
+		{"unknown-policy", corev1.PullIfNotPresent},
+	}
+
+	for _, tc := range cases {
+		if got := toKubeImagePullPolicy(tc.policy); got != tc.want {
+			t.Errorf("toKubeImagePullPolicy(%q) = %q, want %q", tc.policy, got, tc.want)
+		}
+	}
+}
+
+func TestBuildPodSpec_UsesSpecPullPolicy(t *testing.T) {
+	podSpec := buildPodSpec(&types.ContainerSpec{
+		Image:      "busybox:latest",
+		PullPolicy: types.PullPolicyAlways,
+	})
+	if len(podSpec.Containers) != 1 {
+		t.Fatalf("expected 1 container, got %d", len(podSpec.Containers))
+	}
+	if got := podSpec.Containers[0].ImagePullPolicy; got != corev1.PullAlways {
+		t.Fatalf("imagePullPolicy = %q, want %q", got, corev1.PullAlways)
+	}
+}
+
+func TestCreateJob_PropagatesPullPolicy(t *testing.T) {
+	k := &KubernetesRuntime{
+		name:      "k8s",
+		namespace: "default",
+		clientset: fake.NewSimpleClientset(),
+	}
+
+	if _, err := k.Create(context.Background(), &types.ContainerSpec{
+		RuntimeName:  "pull-policy-job",
+		WorkloadKind: workloadKindJob,
+		Image:        "busybox:latest",
+		PullPolicy:   types.PullPolicyNever,
+	}); err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+
+	job, err := k.clientset.BatchV1().Jobs("default").Get(context.Background(), "pull-policy-job", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get created job failed: %v", err)
+	}
+	if len(job.Spec.Template.Spec.Containers) != 1 {
+		t.Fatalf("expected 1 container, got %d", len(job.Spec.Template.Spec.Containers))
+	}
+	if got := job.Spec.Template.Spec.Containers[0].ImagePullPolicy; got != corev1.PullNever {
+		t.Fatalf("imagePullPolicy = %q, want %q", got, corev1.PullNever)
+	}
+}

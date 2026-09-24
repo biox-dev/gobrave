@@ -581,7 +581,7 @@ func buildPodSpec(spec *types.ContainerSpec) corev1.PodSpec {
 		WorkingDir:      strings.TrimSpace(spec.WorkDir),
 		VolumeMounts:    mounts,
 		Resources:       resources,
-		ImagePullPolicy: corev1.PullIfNotPresent,
+		ImagePullPolicy: toKubeImagePullPolicy(spec.PullPolicy),
 	}
 	if strings.TrimSpace(spec.User) != "" {
 		container.SecurityContext = &corev1.SecurityContext{RunAsUser: parseUserID(spec.User)}
@@ -957,5 +957,18 @@ func normalizePullPolicy(policy string) string {
 		return types.PullPolicyIfNotPresent
 	default:
 		return strings.TrimSpace(policy)
+	}
+}
+
+// toKubeImagePullPolicy 把镜像目录里的 PullPolicy 映射为 k8s container.imagePullPolicy。
+// 未知/空值回落 IfNotPresent，与镜像表默认值保持一致。
+func toKubeImagePullPolicy(policy string) corev1.PullPolicy {
+	switch normalizePullPolicy(policy) {
+	case types.PullPolicyAlways:
+		return corev1.PullAlways
+	case types.PullPolicyNever:
+		return corev1.PullNever
+	default:
+		return corev1.PullIfNotPresent
 	}
 }

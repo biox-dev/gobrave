@@ -406,7 +406,9 @@ func (w *ContainerCreateWorker) executeCreate(
 	}
 
 	spec := &types.ContainerSpec{
-		Image:                img.FullName,
+		Image: img.FullName,
+		// 镜像的拉取策略随镜像目录一起下发给 runtime（docker 在 create 前 pull，k8s 设 imagePullPolicy）。
+		PullPolicy:           img.PullPolicy,
 		Command:              parseCommand(tpl.Command),
 		Env:                  envs,
 		Volumes:              volumes,

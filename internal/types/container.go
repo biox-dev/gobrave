@@ -554,6 +554,12 @@ type ContainerSpec struct {
 	User                 string
 	Labels               map[string]string
 
+	// PullPolicy 来自镜像目录（ContainerImage.PullPolicy），取值 Always / IfNotPresent / Never，
+	// 空值按 IfNotPresent 处理。落地方式由 runtime 决定：
+	// docker 没有 imagePullPolicy 概念，在 create 前按策略决定是否 pull；
+	// kubernetes 直接映射为 container.imagePullPolicy。
+	PullPolicy string
+
 	CPU    float64
 	Memory int64
 
