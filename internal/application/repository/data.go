@@ -603,15 +603,9 @@ func (r *dataRepository) ExistsSubjectByID(ctx context.Context, id int64) (bool,
 	return count > 0, err
 }
 
-func (r *dataRepository) ExistsSubjectBySubjectName(ctx context.Context, subjectName string) (bool, error) {
+func (r *dataRepository) ExistsSampleBySampleKey(ctx context.Context, sampleKey string) (bool, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&types.Subject{}).Where("subject_name = ?", subjectName).Count(&count).Error
-	return count > 0, err
-}
-
-func (r *dataRepository) ExistsSampleBySampleID(ctx context.Context, sampleID string) (bool, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&types.Sample{}).Where("sample_id = ?", sampleID).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&types.Sample{}).Where("sample_key = ?", sampleKey).Count(&count).Error
 	return count > 0, err
 }
 
@@ -645,6 +639,7 @@ func (r *dataRepository) UpdateSubject(ctx context.Context, subject *types.Subje
 	return r.db.WithContext(ctx).Model(&types.Subject{}).
 		Where("id = ?", subject.ID).
 		Updates(map[string]interface{}{
+			"subject_key":  subject.SubjectKey,
 			"subject_name": subject.SubjectName,
 			"species":      subject.Species,
 			"strain":       subject.Strain,
@@ -679,6 +674,9 @@ func (r *dataRepository) PageSubject(ctx context.Context, pagination *types.Pagi
 		db := r.db.WithContext(ctx).Table("go_subject AS subject")
 		if query == nil {
 			return db
+		}
+		if v := strings.TrimSpace(query.SubjectKey); v != "" {
+			db = db.Where("subject.subject_key LIKE ?", "%"+v+"%")
 		}
 		if v := strings.TrimSpace(query.SubjectName); v != "" {
 			db = db.Where("subject.subject_name LIKE ?", "%"+v+"%")
@@ -728,7 +726,7 @@ func (r *dataRepository) UpdateSample(ctx context.Context, sample *types.Sample)
 	return r.db.WithContext(ctx).Model(&types.Sample{}).
 		Where("id = ?", sample.ID).
 		Updates(map[string]interface{}{
-			"sample_id":       sample.SampleID,
+			"sample_key":      sample.SampleKey,
 			"sample_name":     sample.SampleName,
 			"subject_id":      sample.SubjectID,
 			"tissue":          sample.Tissue,
@@ -755,7 +753,7 @@ func (r *dataRepository) ListSample(ctx context.Context) ([]*types.Sample, error
 // sampleWithSubjectSelect is the shared projection of the Sample+Subject read model.
 const sampleWithSubjectSelect = `
 	s.id,
-	s.sample_id,
+	s.sample_key,
 	s.sample_name,
 	s.subject_id,
 	sub.subject_name AS subject_name,
@@ -783,8 +781,8 @@ func (r *dataRepository) PageSample(ctx context.Context, pagination *types.Pagin
 		if query == nil {
 			return db
 		}
-		if v := strings.TrimSpace(query.SampleID); v != "" {
-			db = db.Where("s.sample_id LIKE ?", "%"+v+"%")
+		if v := strings.TrimSpace(query.SampleKey); v != "" {
+			db = db.Where("s.sample_key LIKE ?", "%"+v+"%")
 		}
 		if v := strings.TrimSpace(query.SampleName); v != "" {
 			db = db.Where("s.sample_name LIKE ?", "%"+v+"%")

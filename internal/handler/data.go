@@ -61,6 +61,7 @@ type assayByProjectPageRequest struct {
 type subjectPageRequest struct {
 	types.Pagination
 
+	SubjectKey  string `json:"subject_key"`
 	SubjectName string `json:"subject_name"`
 	Species     string `json:"species"`
 	Strain      string `json:"strain"`
@@ -70,7 +71,7 @@ type subjectPageRequest struct {
 type samplePageRequest struct {
 	types.Pagination
 
-	SampleID   string `json:"sample_id"`
+	SampleKey  string `json:"sample_key"`
 	SampleName string `json:"sample_name"`
 	SubjectID  *int64 `json:"subject_id,string"`
 	Tissue     string `json:"tissue"`
@@ -1565,7 +1566,7 @@ func (h *DataHandler) GetDatasetAssayByAssayID(c *gin.Context) {
 
 // CreateSubject godoc
 // @Summary      创建 Subject
-// @Description  创建实验对象/个体记录，主键由服务端生成，subject_name 业务名必须唯一
+// @Description  创建实验对象/个体记录，主键由服务端生成，subject_key 英文标识必填（不要求唯一），subject_name 为人类可读展示名
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -1727,7 +1728,7 @@ func (h *DataHandler) ListSubject(c *gin.Context) {
 
 // PageSubject godoc
 // @Summary      分页查询 Subject
-// @Description  按 subject_name / species / strain / sex 过滤并分页
+// @Description  按 subject_key / subject_name / species / strain / sex 过滤并分页
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -1750,6 +1751,7 @@ func (h *DataHandler) PageSubject(c *gin.Context) {
 	}
 
 	result, err := h.dataService.PageSubject(c.Request.Context(), &req.Pagination, &types.QuerySubject{
+		SubjectKey:  req.SubjectKey,
 		SubjectName: req.SubjectName,
 		Species:     req.Species,
 		Strain:      req.Strain,
@@ -1770,7 +1772,7 @@ func (h *DataHandler) PageSubject(c *gin.Context) {
 
 // CreateSample godoc
 // @Summary      创建 Sample
-// @Description  创建采样记录，主键由服务端生成；sample_id 业务号唯一，subject_id 必须指向已存在的 Subject 主键
+// @Description  创建采样记录，主键由服务端生成；sample_key 业务号唯一，subject_id 必须指向已存在的 Subject 主键
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -1933,7 +1935,7 @@ func (h *DataHandler) ListSample(c *gin.Context) {
 
 // PageSample godoc
 // @Summary      分页查询 Sample
-// @Description  按 sample_id / sample_name / subject_id（Subject 主键）/ tissue / cell_type 过滤并分页，附带 Subject 业务名
+// @Description  按 sample_key / sample_name / subject_id（Subject 主键）/ tissue / cell_type 过滤并分页，附带 Subject 业务名
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -1956,7 +1958,7 @@ func (h *DataHandler) PageSample(c *gin.Context) {
 	}
 
 	result, err := h.dataService.PageSample(c.Request.Context(), &req.Pagination, &types.QuerySample{
-		SampleID:   req.SampleID,
+		SampleKey:  req.SampleKey,
 		SampleName: req.SampleName,
 		SubjectID:  req.SubjectID,
 		Tissue:     req.Tissue,

@@ -11,9 +11,15 @@ import (
 type Subject struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	// SubjectName 是业务编号/展示名，例如 Mouse-001（列 go_subject.subject_name）。
-	// 注意：只有 ID 才是主键；go_sample.subject_id 是指向它的外键，语义不同。
-	SubjectName string `json:"subject_name" gorm:"type:varchar(255);uniqueIndex;not null"`
+	// SubjectKey 是输入用的英文标识（列 go_subject.subject_key），例如 mouse-001；
+	// 与 Sample.SampleKey 同语义，是业务意义上的“编号”。无需全局唯一。
+	// 注意：Subject 的真正主键仍然是 ID；go_sample.subject_id 是指向 ID 的
+	// 外键，语义不同（一个是编号，一个是主键）。
+	SubjectKey string `json:"subject_key" gorm:"type:varchar(255);index;not null"`
+
+	// SubjectName 是人类可读的展示名（中文或带空格），例如 “小鼠 001”；
+	// 不要求唯一，可为空，展示时回退到 SubjectKey。
+	SubjectName string `json:"subject_name" gorm:"type:varchar(255)"`
 
 	Species string `json:"species" gorm:"type:varchar(128)"`
 
@@ -44,6 +50,8 @@ func (Subject) TableName() string {
 // QuerySubject carries optional Subject filters for list/page APIs. Empty
 // strings are ignored by the repository.
 type QuerySubject struct {
+	SubjectKey string
+
 	SubjectName string
 
 	Species string
@@ -57,8 +65,8 @@ type QuerySubject struct {
 type Sample struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	// SampleID 是业务编号。
-	SampleID string `json:"sample_id" gorm:"type:varchar(255);uniqueIndex;not null"`
+	// SampleKey 是业务编号（列 go_sample.sample_key），例如 S-001。
+	SampleKey string `json:"sample_key" gorm:"type:varchar(255);uniqueIndex;not null"`
 
 	SampleName string `json:"sample_name" gorm:"type:varchar(255)"`
 
@@ -91,9 +99,10 @@ func (Sample) TableName() string {
 }
 
 // QuerySample carries optional Sample filters for list/page APIs. Empty values
-// are ignored by the repository; SubjectID matches the owning subject PK.
+// are ignored by the repository; SampleKey matches the business number
+// (go_sample.sample_key) while SubjectID matches the owning subject PK.
 type QuerySample struct {
-	SampleID string
+	SampleKey string
 
 	SampleName string
 
@@ -109,14 +118,18 @@ type QuerySample struct {
 type SampleWithSubjectInfo struct {
 	ID int64 `json:"id,string"`
 
-	SampleID string `json:"sample_id"`
+	// SampleKey 是 Sample 的业务编号（go_sample.sample_key）。
+	SampleKey string `json:"sample_key"`
 
 	SampleName string `json:"sample_name"`
 
 	// SubjectID 是所属 Subject 的主键（等于 go_sample.subject_id 外键）。
 	SubjectID int64 `json:"subject_id,string"`
 
-	// SubjectName is the subject's business name (go_subject.subject_name).
+	// SubjectName is the subject's human-readable display name
+	// (go_subject.subject_name); the machine-readable business key lives on
+	// go_subject.subject_key and is intentionally NOT projected here because
+	// `subject_id` on this struct is the owning subject's int64 primary key.
 	SubjectName string `json:"subject_name"`
 
 	Species string `json:"species"`
@@ -164,8 +177,10 @@ type AssayWithDatasetInfo struct {
 	// SampleName 是所属 Sample 的展示名（go_sample.sample_name）。
 	SampleName string `json:"sample_name"`
 
-	// SubjectName 是所属 Subject 的业务名/编号（go_subject.subject_name），
-	// 与 SampleName 一样只承载展示名；需要主键时经 SampleID 再查 Sample。
+	// SubjectName 是所属 Subject 的人类可读展示名（go_subject.subject_name），
+	// 与 SampleName 一样只承载展示名；需要主键时经 SampleKey 再查 Sample。
+	// 英文标识（go_subject.subject_key）不在此投影，避免与 go_sample.subject_id
+	// 这个外键同名字段混淆。
 	SubjectName string `json:"subject_name"`
 
 	AssayType string `json:"assay_type"`

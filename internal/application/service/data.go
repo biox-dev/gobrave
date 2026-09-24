@@ -584,19 +584,12 @@ func (s *dataService) GetDatasetAssayByAssayID(ctx context.Context, assayID int6
 }
 
 func (s *dataService) CreateSubject(ctx context.Context, subject *types.Subject) error {
-	subjectName := strings.TrimSpace(subject.SubjectName)
-	if subjectName == "" {
-		return apperrors.NewValidationError("subject_name is required")
+	subjectKey := strings.TrimSpace(subject.SubjectKey)
+	if subjectKey == "" {
+		return apperrors.NewValidationError("subject_key is required")
 	}
-	subject.SubjectName = subjectName
-
-	exists, err := s.dataRepo.ExistsSubjectBySubjectName(ctx, subjectName)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return apperrors.NewConflictError("subject_name already exists: " + subjectName)
-	}
+	subject.SubjectKey = subjectKey
+	subject.SubjectName = strings.TrimSpace(subject.SubjectName)
 
 	return s.dataRepo.CreateSubject(ctx, subject)
 }
@@ -606,25 +599,18 @@ func (s *dataService) GetSubjectByID(ctx context.Context, id int64) (*types.Subj
 }
 
 func (s *dataService) UpdateSubject(ctx context.Context, subject *types.Subject) error {
-	current, err := s.dataRepo.GetSubjectByID(ctx, subject.ID)
-	if err != nil {
+	if _, err := s.dataRepo.GetSubjectByID(ctx, subject.ID); err != nil {
 		return err
 	}
 
-	subjectName := strings.TrimSpace(subject.SubjectName)
-	if subjectName == "" {
-		return apperrors.NewValidationError("subject_name is required")
+	// subject_key / subject_name are not unique, so only the "required" rule is
+	// enforced here (mirrors Sample, whose SampleKey is not checked either).
+	subjectKey := strings.TrimSpace(subject.SubjectKey)
+	if subjectKey == "" {
+		return apperrors.NewValidationError("subject_key is required")
 	}
-	if subjectName != current.SubjectName {
-		exists, err := s.dataRepo.ExistsSubjectBySubjectName(ctx, subjectName)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return apperrors.NewConflictError("subject_name already exists: " + subjectName)
-		}
-	}
-	subject.SubjectName = subjectName
+	subject.SubjectKey = subjectKey
+	subject.SubjectName = strings.TrimSpace(subject.SubjectName)
 
 	return s.dataRepo.UpdateSubject(ctx, subject)
 }
@@ -667,11 +653,11 @@ func (s *dataService) PageSubject(ctx context.Context, pagination *types.Paginat
 }
 
 func (s *dataService) CreateSample(ctx context.Context, sample *types.Sample) error {
-	sampleID := strings.TrimSpace(sample.SampleID)
-	if sampleID == "" {
-		return apperrors.NewValidationError("sample_id is required")
+	sampleKey := strings.TrimSpace(sample.SampleKey)
+	if sampleKey == "" {
+		return apperrors.NewValidationError("sample_key is required")
 	}
-	sample.SampleID = sampleID
+	sample.SampleKey = sampleKey
 
 	if sample.SubjectID == 0 {
 		return apperrors.NewValidationError("subject_id is required")
@@ -684,12 +670,12 @@ func (s *dataService) CreateSample(ctx context.Context, sample *types.Sample) er
 		return gorm.ErrRecordNotFound
 	}
 
-	exists, err := s.dataRepo.ExistsSampleBySampleID(ctx, sampleID)
+	exists, err := s.dataRepo.ExistsSampleBySampleKey(ctx, sampleKey)
 	if err != nil {
 		return err
 	}
 	if exists {
-		return apperrors.NewConflictError("sample_id already exists: " + sampleID)
+		return apperrors.NewConflictError("sample_key already exists: " + sampleKey)
 	}
 
 	return s.dataRepo.CreateSample(ctx, sample)
@@ -705,20 +691,20 @@ func (s *dataService) UpdateSample(ctx context.Context, sample *types.Sample) er
 		return err
 	}
 
-	sampleID := strings.TrimSpace(sample.SampleID)
-	if sampleID == "" {
-		return apperrors.NewValidationError("sample_id is required")
+	sampleKey := strings.TrimSpace(sample.SampleKey)
+	if sampleKey == "" {
+		return apperrors.NewValidationError("sample_key is required")
 	}
-	if sampleID != current.SampleID {
-		exists, err := s.dataRepo.ExistsSampleBySampleID(ctx, sampleID)
+	if sampleKey != current.SampleKey {
+		exists, err := s.dataRepo.ExistsSampleBySampleKey(ctx, sampleKey)
 		if err != nil {
 			return err
 		}
 		if exists {
-			return apperrors.NewConflictError("sample_id already exists: " + sampleID)
+			return apperrors.NewConflictError("sample_key already exists: " + sampleKey)
 		}
 	}
-	sample.SampleID = sampleID
+	sample.SampleKey = sampleKey
 
 	if sample.SubjectID == 0 {
 		sample.SubjectID = current.SubjectID

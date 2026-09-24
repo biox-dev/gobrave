@@ -7201,7 +7201,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "创建采样记录，主键由服务端生成；sample_id 业务号唯一，subject_id 必须指向已存在的 Subject 主键",
+                "description": "创建采样记录，主键由服务端生成；sample_key 业务号唯一，subject_id 必须指向已存在的 Subject 主键",
                 "consumes": [
                     "application/json"
                 ],
@@ -7440,7 +7440,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按 sample_id / sample_name / subject_id（Subject 主键）/ tissue / cell_type 过滤并分页，附带 Subject 业务名",
+                "description": "按 sample_key / sample_name / subject_id（Subject 主键）/ tissue / cell_type 过滤并分页，附带 Subject 业务名",
                 "consumes": [
                     "application/json"
                 ],
@@ -7567,7 +7567,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "创建实验对象/个体记录，主键由服务端生成，subject_name 业务名必须唯一",
+                "description": "创建实验对象/个体记录，主键由服务端生成，subject_key 英文标识必填（不要求唯一），subject_name 为人类可读展示名",
                 "consumes": [
                     "application/json"
                 ],
@@ -7800,7 +7800,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按 subject_name / species / strain / sex 过滤并分页",
+                "description": "按 subject_key / subject_name / species / strain / sex 过滤并分页",
                 "consumes": [
                     "application/json"
                 ],
@@ -13706,7 +13706,7 @@ const docTemplate = `{
                     "maximum": 1000,
                     "minimum": 1
                 },
-                "sample_id": {
+                "sample_key": {
                     "type": "string"
                 },
                 "sample_name": {
@@ -13803,6 +13803,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "strain": {
+                    "type": "string"
+                },
+                "subject_key": {
                     "type": "string"
                 },
                 "subject_name": {
@@ -14508,6 +14511,10 @@ const docTemplate = `{
                 "platform": {
                     "type": "string"
                 },
+                "role": {
+                    "description": "Role is the assay's role inside its owning dataset binding\n(go_dataset_assay.role). Analysis form inputs with input_type=assay match\nit against their resolver.accept_formats, mirroring DatasetFile.Role.",
+                    "type": "string"
+                },
                 "sample_id": {
                     "type": "string",
                     "example": "0"
@@ -14517,7 +14524,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "subject_name": {
-                    "description": "SubjectName 是所属 Subject 的业务名/编号（go_subject.subject_name），\n与 SampleName 一样只承载展示名；需要主键时经 SampleID 再查 Sample。",
+                    "description": "SubjectName 是所属 Subject 的人类可读展示名（go_subject.subject_name），\n与 SampleName 一样只承载展示名；需要主键时经 SampleKey 再查 Sample。\n英文标识（go_subject.subject_key）不在此投影，避免与 go_sample.subject_id\n这个外键同名字段混淆。",
                     "type": "string"
                 },
                 "updated_at": {
@@ -14934,6 +14941,10 @@ const docTemplate = `{
                 "id": {
                     "type": "string",
                     "example": "0"
+                },
+                "role": {
+                    "description": "Role is the assay's role inside its dataset binding, e.g. DEFAULT or TABLE.\nAnalysis form inputs with input_type=assay match it against their\nresolver.accept_formats (same convention as DatasetFile.Role).",
+                    "type": "string"
                 }
             }
         },
@@ -14980,6 +14991,10 @@ const docTemplate = `{
                 "file_id": {
                     "type": "string"
                 },
+                "file_key": {
+                    "description": "FileKey is the file's key inside its owning assay, e.g. FASTQ_R1 or BAM.\nAnalysis form inputs use it to map the file onto the matching key of\ntheir resolver.accept_formats (see buildParseAnalysisResult).",
+                    "type": "string"
+                },
                 "file_name": {
                     "type": "string"
                 },
@@ -14994,10 +15009,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "path": {
-                    "type": "string"
-                },
-                "role": {
-                    "description": "Role is the file's role inside its owning assay, e.g. FASTQ or BAM.\nAnalysis form inputs match this value against their accept formats.",
                     "type": "string"
                 },
                 "size": {
@@ -15249,8 +15260,8 @@ const docTemplate = `{
                 "metadata": {
                     "type": "string"
                 },
-                "sample_id": {
-                    "description": "SampleID 是业务编号。",
+                "sample_key": {
+                    "description": "SampleKey 是业务编号（列 go_sample.sample_key），例如 S-001。",
                     "type": "string"
                 },
                 "sample_name": {
@@ -15526,8 +15537,12 @@ const docTemplate = `{
                 "strain": {
                     "type": "string"
                 },
+                "subject_key": {
+                    "description": "SubjectKey 是输入用的英文标识（列 go_subject.subject_key），例如 mouse-001；\n与 Sample.SampleKey 同语义，是业务意义上的“编号”。无需全局唯一。\n注意：Subject 的真正主键仍然是 ID；go_sample.subject_id 是指向 ID 的\n外键，语义不同（一个是编号，一个是主键）。",
+                    "type": "string"
+                },
                 "subject_name": {
-                    "description": "SubjectName 是业务编号/展示名，例如 Mouse-001（列 go_subject.subject_name）。\n注意：只有 ID 才是主键；go_sample.subject_id 是指向它的外键，语义不同。",
+                    "description": "SubjectName 是人类可读的展示名（中文或带空格），例如 “小鼠 001”；\n不要求唯一，可为空，展示时回退到 SubjectKey。",
                     "type": "string"
                 },
                 "updated_at": {

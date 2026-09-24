@@ -158,13 +158,9 @@ type DataRepository interface {
 
 	ExistsSubjectByID(ctx context.Context, id int64) (bool, error)
 
-	// ExistsSubjectBySubjectName reports whether the subject business name
-	// (go_subject.subject_name) is already taken.
-	ExistsSubjectBySubjectName(ctx context.Context, subjectName string) (bool, error)
-
-	// ExistsSampleBySampleID reports whether the business number
-	// (go_sample.sample_id) is already taken.
-	ExistsSampleBySampleID(ctx context.Context, sampleID string) (bool, error)
+	// ExistsSampleBySampleKey reports whether the business number
+	// (go_sample.sample_key) is already taken.
+	ExistsSampleBySampleKey(ctx context.Context, sampleKey string) (bool, error)
 
 	ExistsProjectByID(ctx context.Context, id string) (bool, error)
 	ExistsDatasetByID(ctx context.Context, id int64) (bool, error)
