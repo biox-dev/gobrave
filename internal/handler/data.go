@@ -83,9 +83,9 @@ type assayIDQuery struct {
 	AssayID int64 `form:"assay_id" binding:"required"`
 }
 
-// sampleIDQuery addresses a resource by its owning sample (int64 PK).
-type sampleIDQuery struct {
-	SampleID int64 `form:"sample_id" binding:"required"`
+// subjectIDQuery addresses a resource by its owning subject (int64 PK).
+type subjectIDQuery struct {
+	SubjectID int64 `form:"subject_id" binding:"required"`
 }
 
 func handleDataError(c *gin.Context, err error, internalMsg string) {
@@ -1362,53 +1362,53 @@ func (h *DataHandler) PageAssayByProjectID(c *gin.Context) {
 	})
 }
 
-// CreateDatasetSample godoc
-// @Summary      创建数据集-Sample 映射
-// @Description  创建 DatasetSample 记录
+// CreateDatasetSubject godoc
+// @Summary      创建数据集-Subject 映射
+// @Description  创建 DatasetSubject 记录（数据集只与顶层 Subject 关联）
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
-// @Param        request  body      types.DatasetSample  true  "请求参数"
-// @Success      200      {object}  types.DatasetSample
+// @Param        request  body      types.DatasetSubject  true  "请求参数"
+// @Success      200      {object}  types.DatasetSubject
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/create [post]
-func (h *DataHandler) CreateDatasetSample(c *gin.Context) {
+// @Router       /data/dataset-subject/create [post]
+func (h *DataHandler) CreateDatasetSubject(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
-	var req types.DatasetSample
+	var req types.DatasetSubject
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
 
-	if err := h.dataService.CreateDatasetSample(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to create dataset sample")
+	if err := h.dataService.CreateDatasetSubject(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to create dataset subject")
 		return
 	}
 
 	c.JSON(http.StatusOK, req)
 }
 
-// GetDatasetSample godoc
-// @Summary      获取数据集-Sample 映射
-// @Description  按 ID 查询 DatasetSample 详情
+// GetDatasetSubject godoc
+// @Summary      获取数据集-Subject 映射
+// @Description  按 ID 查询 DatasetSubject 详情
 // @Tags         数据管理
 // @Produce      json
 // @Param        id       query     integer               true  "主键 ID"
-// @Success      200      {object}  types.DatasetSample
+// @Success      200      {object}  types.DatasetSubject
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/get [get]
-func (h *DataHandler) GetDatasetSample(c *gin.Context) {
+// @Router       /data/dataset-subject/get [get]
+func (h *DataHandler) GetDatasetSubject(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
@@ -1419,72 +1419,72 @@ func (h *DataHandler) GetDatasetSample(c *gin.Context) {
 		return
 	}
 
-	item, err := h.dataService.GetDatasetSampleByID(c.Request.Context(), req.ID)
+	item, err := h.dataService.GetDatasetSubjectByID(c.Request.Context(), req.ID)
 	if err != nil {
-		handleDataError(c, err, "failed to get dataset sample")
+		handleDataError(c, err, "failed to get dataset subject")
 		return
 	}
 
 	c.JSON(http.StatusOK, item)
 }
 
-// GetDatasetSampleBySampleID godoc
-// @Summary      按 Sample 查询数据集映射
-// @Description  返回 Sample 绑定的 DatasetSample；尚未绑定任何数据集时返回 null
+// GetDatasetSubjectBySubjectID godoc
+// @Summary      按 Subject 查询数据集映射
+// @Description  返回 Subject 绑定的 DatasetSubject；尚未绑定任何数据集时返回 null
 // @Tags         数据管理
 // @Produce      json
-// @Param        sample_id  query     integer               true  "Sample 主键 ID"
-// @Success      200        {object}  types.DatasetSample
-// @Failure      400        {object}  errors.AppError
-// @Failure      401        {object}  errors.AppError
-// @Failure      500        {object}  errors.AppError
+// @Param        subject_id  query     integer               true  "Subject 主键 ID"
+// @Success      200         {object}  types.DatasetSubject
+// @Failure      400         {object}  errors.AppError
+// @Failure      401         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/get-by-sample [get]
-func (h *DataHandler) GetDatasetSampleBySampleID(c *gin.Context) {
+// @Router       /data/dataset-subject/get-by-subject [get]
+func (h *DataHandler) GetDatasetSubjectBySubjectID(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
-	var req sampleIDQuery
+	var req subjectIDQuery
 	if err := c.ShouldBindQuery(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
 		return
 	}
 
-	item, err := h.dataService.GetDatasetSampleBySampleID(c.Request.Context(), req.SampleID)
+	item, err := h.dataService.GetDatasetSubjectBySubjectID(c.Request.Context(), req.SubjectID)
 	if err != nil {
-		// A sample that is not bound to a dataset yet is a normal state, not an error.
+		// A subject that is not bound to a dataset yet is a normal state, not an error.
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusOK, nil)
 			return
 		}
-		handleDataError(c, err, "failed to get dataset sample by sample id")
+		handleDataError(c, err, "failed to get dataset subject by subject id")
 		return
 	}
 
 	c.JSON(http.StatusOK, item)
 }
 
-// UpdateDatasetSample godoc
-// @Summary      更新数据集-Sample 映射
-// @Description  按 ID 更新 DatasetSample 记录
+// UpdateDatasetSubject godoc
+// @Summary      更新数据集-Subject 映射
+// @Description  按 ID 更新 DatasetSubject 记录
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
-// @Param        request  body      types.DatasetSample   true  "请求参数"
+// @Param        request  body      types.DatasetSubject   true  "请求参数"
 // @Success      200      {object}  map[string]string
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/update [post]
-func (h *DataHandler) UpdateDatasetSample(c *gin.Context) {
+// @Router       /data/dataset-subject/update [post]
+func (h *DataHandler) UpdateDatasetSubject(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
-	var req types.DatasetSample
+	var req types.DatasetSubject
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
@@ -1494,17 +1494,17 @@ func (h *DataHandler) UpdateDatasetSample(c *gin.Context) {
 		return
 	}
 
-	if err := h.dataService.UpdateDatasetSample(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to update dataset sample")
+	if err := h.dataService.UpdateDatasetSubject(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to update dataset subject")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "dataset sample updated successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "dataset subject updated successfully"})
 }
 
-// DeleteDatasetSample godoc
-// @Summary      删除数据集-Sample 映射
-// @Description  按 ID 删除 DatasetSample 记录
+// DeleteDatasetSubject godoc
+// @Summary      删除数据集-Subject 映射
+// @Description  按 ID 删除 DatasetSubject 记录
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -1515,8 +1515,8 @@ func (h *DataHandler) UpdateDatasetSample(c *gin.Context) {
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/delete [post]
-func (h *DataHandler) DeleteDatasetSample(c *gin.Context) {
+// @Router       /data/dataset-subject/delete [post]
+func (h *DataHandler) DeleteDatasetSubject(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
@@ -1527,32 +1527,32 @@ func (h *DataHandler) DeleteDatasetSample(c *gin.Context) {
 		return
 	}
 
-	if err := h.dataService.DeleteDatasetSample(c.Request.Context(), req.ID); err != nil {
-		handleDataError(c, err, "failed to delete dataset sample")
+	if err := h.dataService.DeleteDatasetSubject(c.Request.Context(), req.ID); err != nil {
+		handleDataError(c, err, "failed to delete dataset subject")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "dataset sample deleted successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "dataset subject deleted successfully"})
 }
 
-// ListDatasetSample godoc
-// @Summary      数据集-Sample 映射列表
-// @Description  查询 DatasetSample 列表
+// ListDatasetSubject godoc
+// @Summary      数据集-Subject 映射列表
+// @Description  查询 DatasetSubject 列表
 // @Tags         数据管理
 // @Produce      json
-// @Success      200      {array}   types.DatasetSample
+// @Success      200      {array}   types.DatasetSubject
 // @Failure      401      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/list [get]
-func (h *DataHandler) ListDatasetSample(c *gin.Context) {
+// @Router       /data/dataset-subject/list [get]
+func (h *DataHandler) ListDatasetSubject(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
-	items, err := h.dataService.ListDatasetSample(c.Request.Context())
+	items, err := h.dataService.ListDatasetSubject(c.Request.Context())
 	if err != nil {
-		handleDataError(c, err, "failed to list dataset sample")
+		handleDataError(c, err, "failed to list dataset subject")
 		return
 	}
 
@@ -1763,6 +1763,38 @@ func (h *DataHandler) PageSubject(c *gin.Context) {
 		"page":      result.Page,
 		"page_size": result.PageSize,
 	})
+}
+
+// ListSubjectByProjectID godoc
+// @Summary      按当前激活项目查询 Subject 列表
+// @Description  查询当前用户激活项目下关联的所有 Subject，附带其绑定的 Dataset 信息（dataset 只与顶层 Subject 关联）
+// @Tags         数据管理
+// @Produce      json
+// @Success      200         {array}   types.SubjectWithDatasetInfo
+// @Failure      401         {object}  errors.AppError
+// @Failure      404         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/subject/list-by-project [get]
+func (h *DataHandler) ListSubjectByProjectID(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project by user id")
+		return
+	}
+
+	items, err := h.dataService.ListSubjectByProjectID(c.Request.Context(), project.ProjectID)
+	if err != nil {
+		handleDataError(c, err, "failed to list subject by project id")
+		return
+	}
+
+	c.JSON(http.StatusOK, items)
 }
 
 // CreateSample godoc

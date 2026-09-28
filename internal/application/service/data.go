@@ -656,6 +656,13 @@ func (s *dataService) PageSubject(ctx context.Context, pagination *types.Paginat
 	return types.NewPageResult(total, pagination, items), nil
 }
 
+// ListSubjectByProjectID returns the project's subjects joined with the dataset
+// they are bound to (go_dataset_subject); this is the entry point for the whole
+// Subject -> Sample -> Assay -> File branch.
+func (s *dataService) ListSubjectByProjectID(ctx context.Context, projectID string) ([]*types.SubjectWithDatasetInfo, error) {
+	return s.dataRepo.ListSubjectByProjectID(ctx, projectID)
+}
+
 func (s *dataService) CreateSample(ctx context.Context, sample *types.Sample) error {
 	sampleKey := strings.TrimSpace(sample.SampleKey)
 	if sampleKey == "" {
@@ -764,8 +771,8 @@ func (s *dataService) ListSampleByProjectID(ctx context.Context, projectID strin
 	return s.dataRepo.ListSampleByProjectID(ctx, projectID)
 }
 
-func (s *dataService) CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error {
-	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetSample.DatasetID)
+func (s *dataService) CreateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error {
+	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetSubject.DatasetID)
 	if err != nil {
 		return err
 	}
@@ -773,32 +780,32 @@ func (s *dataService) CreateDatasetSample(ctx context.Context, datasetSample *ty
 		return gorm.ErrRecordNotFound
 	}
 
-	sampleExists, err := s.dataRepo.ExistsSampleByID(ctx, datasetSample.SampleID)
+	subjectExists, err := s.dataRepo.ExistsSubjectByID(ctx, datasetSubject.SubjectID)
 	if err != nil {
 		return err
 	}
-	if !sampleExists {
+	if !subjectExists {
 		return gorm.ErrRecordNotFound
 	}
 
-	return s.dataRepo.CreateDatasetSample(ctx, datasetSample)
+	return s.dataRepo.CreateDatasetSubject(ctx, datasetSubject)
 }
 
-func (s *dataService) GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error) {
-	return s.dataRepo.GetDatasetSampleByID(ctx, id)
+func (s *dataService) GetDatasetSubjectByID(ctx context.Context, id int64) (*types.DatasetSubject, error) {
+	return s.dataRepo.GetDatasetSubjectByID(ctx, id)
 }
 
-func (s *dataService) GetDatasetSampleBySampleID(ctx context.Context, sampleID int64) (*types.DatasetSample, error) {
-	return s.dataRepo.GetDatasetSampleBySampleID(ctx, sampleID)
+func (s *dataService) GetDatasetSubjectBySubjectID(ctx context.Context, subjectID int64) (*types.DatasetSubject, error) {
+	return s.dataRepo.GetDatasetSubjectBySubjectID(ctx, subjectID)
 }
 
-func (s *dataService) UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error {
-	_, err := s.dataRepo.GetDatasetSampleByID(ctx, datasetSample.ID)
+func (s *dataService) UpdateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error {
+	_, err := s.dataRepo.GetDatasetSubjectByID(ctx, datasetSubject.ID)
 	if err != nil {
 		return err
 	}
 
-	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetSample.DatasetID)
+	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetSubject.DatasetID)
 	if err != nil {
 		return err
 	}
@@ -806,27 +813,27 @@ func (s *dataService) UpdateDatasetSample(ctx context.Context, datasetSample *ty
 		return gorm.ErrRecordNotFound
 	}
 
-	sampleExists, err := s.dataRepo.ExistsSampleByID(ctx, datasetSample.SampleID)
+	subjectExists, err := s.dataRepo.ExistsSubjectByID(ctx, datasetSubject.SubjectID)
 	if err != nil {
 		return err
 	}
-	if !sampleExists {
+	if !subjectExists {
 		return gorm.ErrRecordNotFound
 	}
 
-	return s.dataRepo.UpdateDatasetSample(ctx, datasetSample)
+	return s.dataRepo.UpdateDatasetSubject(ctx, datasetSubject)
 }
 
-func (s *dataService) DeleteDatasetSample(ctx context.Context, id int64) error {
-	_, err := s.dataRepo.GetDatasetSampleByID(ctx, id)
+func (s *dataService) DeleteDatasetSubject(ctx context.Context, id int64) error {
+	_, err := s.dataRepo.GetDatasetSubjectByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	return s.dataRepo.DeleteDatasetSample(ctx, id)
+	return s.dataRepo.DeleteDatasetSubject(ctx, id)
 }
 
-func (s *dataService) ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error) {
-	return s.dataRepo.ListDatasetSample(ctx)
+func (s *dataService) ListDatasetSubject(ctx context.Context) ([]*types.DatasetSubject, error) {
+	return s.dataRepo.ListDatasetSubject(ctx)
 }
 
 // copyFile copies src to dst, preserving permissions but not timestamps.

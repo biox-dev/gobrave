@@ -59,20 +59,21 @@ type DataService interface {
 	ListAssayBySampleID(ctx context.Context, sampleID int64) ([]*types.Assay, error)
 	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error)
 	// ListAssayByProjectID returns the project's assays, resolved through the
-	// project's samples (go_project_dataset -> go_dataset_sample -> go_sample ->
-	// go_assay). When roles is non-empty the assays are filtered on go_assay.role;
-	// an empty roles slice adds no role condition and returns every assay.
+	// project's subjects and samples (go_project_dataset -> go_dataset_subject ->
+	// go_subject -> go_sample -> go_assay). When roles is non-empty the assays
+	// are filtered on go_assay.role; an empty roles slice adds no role condition
+	// and returns every assay.
 	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithSampleInfo, error)
 
-	CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
-	GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error)
-	// GetDatasetSampleBySampleID returns the single dataset binding of one
-	// sample, or gorm.ErrRecordNotFound when the sample is not bound to any
+	CreateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error
+	GetDatasetSubjectByID(ctx context.Context, id int64) (*types.DatasetSubject, error)
+	// GetDatasetSubjectBySubjectID returns the single dataset binding of one
+	// subject, or gorm.ErrRecordNotFound when the subject is not bound to any
 	// dataset yet.
-	GetDatasetSampleBySampleID(ctx context.Context, sampleID int64) (*types.DatasetSample, error)
-	UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
-	DeleteDatasetSample(ctx context.Context, id int64) error
-	ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error)
+	GetDatasetSubjectBySubjectID(ctx context.Context, subjectID int64) (*types.DatasetSubject, error)
+	UpdateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error
+	DeleteDatasetSubject(ctx context.Context, id int64) error
+	ListDatasetSubject(ctx context.Context) ([]*types.DatasetSubject, error)
 
 	CreateSubject(ctx context.Context, subject *types.Subject) error
 	GetSubjectByID(ctx context.Context, id int64) (*types.Subject, error)
@@ -82,6 +83,10 @@ type DataService interface {
 	DeleteSubject(ctx context.Context, id int64) error
 	ListSubject(ctx context.Context) ([]*types.Subject, error)
 	PageSubject(ctx context.Context, pagination *types.Pagination, query *types.QuerySubject) (*types.PageResult, error)
+	// ListSubjectByProjectID returns the project's subjects joined with the
+	// dataset they are bound to. Subjects are resolved project-wide without a
+	// role filter.
+	ListSubjectByProjectID(ctx context.Context, projectID string) ([]*types.SubjectWithDatasetInfo, error)
 
 	CreateSample(ctx context.Context, sample *types.Sample) error
 	GetSampleByID(ctx context.Context, id int64) (*types.Sample, error)
@@ -92,7 +97,8 @@ type DataService interface {
 	ListSample(ctx context.Context) ([]*types.Sample, error)
 	PageSample(ctx context.Context, pagination *types.Pagination, query *types.QuerySample) (*types.PageResult, error)
 	// ListSampleByProjectID returns the project's samples joined with their
-	// dataset binding. Samples are resolved project-wide without a role filter.
+	// owning subject and the dataset that subject is bound to. Samples are
+	// resolved project-wide without a role filter.
 	ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error)
 }
 
@@ -142,12 +148,12 @@ type DataRepository interface {
 	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithSampleInfo, int64, error)
 	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithSampleInfo, error)
 
-	CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
-	GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error)
-	GetDatasetSampleBySampleID(ctx context.Context, sampleID int64) (*types.DatasetSample, error)
-	UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
-	DeleteDatasetSample(ctx context.Context, id int64) error
-	ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error)
+	CreateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error
+	GetDatasetSubjectByID(ctx context.Context, id int64) (*types.DatasetSubject, error)
+	GetDatasetSubjectBySubjectID(ctx context.Context, subjectID int64) (*types.DatasetSubject, error)
+	UpdateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error
+	DeleteDatasetSubject(ctx context.Context, id int64) error
+	ListDatasetSubject(ctx context.Context) ([]*types.DatasetSubject, error)
 
 	CreateSubject(ctx context.Context, subject *types.Subject) error
 	GetSubjectByID(ctx context.Context, id int64) (*types.Subject, error)
@@ -155,6 +161,7 @@ type DataRepository interface {
 	DeleteSubject(ctx context.Context, id int64) error
 	ListSubject(ctx context.Context) ([]*types.Subject, error)
 	PageSubject(ctx context.Context, pagination *types.Pagination, query *types.QuerySubject) ([]*types.Subject, int64, error)
+	ListSubjectByProjectID(ctx context.Context, projectID string) ([]*types.SubjectWithDatasetInfo, error)
 
 	CreateSample(ctx context.Context, sample *types.Sample) error
 	GetSampleByID(ctx context.Context, id int64) (*types.Sample, error)

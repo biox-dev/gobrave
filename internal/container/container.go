@@ -750,7 +750,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.File{},
 		&types.DatasetFile{},
 		&types.Assay{},
-		&types.DatasetSample{},
+		&types.DatasetSubject{},
 		&types.Subject{},
 		&types.Sample{},
 		&types.Store{},

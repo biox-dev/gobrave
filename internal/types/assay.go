@@ -149,10 +149,42 @@ type SampleWithSubjectInfo struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// SubjectWithDatasetInfo is the read model of a Subject joined with the dataset
+// it is bound to (go_dataset_subject), used by the project-wide subject list.
+// The dataset binding lives on the top-level Subject, so this is where a
+// project's subjects (and, transitively, their samples/assays/files) come from.
+type SubjectWithDatasetInfo struct {
+	ID int64 `json:"id,string"`
+
+	// SubjectKey 是输入用的英文标识（go_subject.subject_key）。
+	SubjectKey string `json:"subject_key"`
+
+	SubjectName string `json:"subject_name"`
+
+	Species string `json:"species"`
+
+	Strain string `json:"strain"`
+
+	Sex string `json:"sex"`
+
+	Age string `json:"age"`
+
+	Metadata string `json:"metadata"`
+
+	CreatedAt time.Time `json:"created_at"`
+
+	UpdatedAt time.Time `json:"updated_at"`
+
+	DatasetID string `json:"dataset_id"`
+
+	DatasetName string `json:"dataset_name"`
+}
+
 // SampleWithDatasetInfo is the read model of a Sample joined with its owning
-// dataset binding and subject, used by the project-wide sample picker. Samples
-// are resolved without a role filter (unlike Assay/File), so this model carries
-// no Role field.
+// Subject and the dataset that subject is bound to, used by the project-wide
+// sample picker. The dataset is resolved through the subject (go_dataset_subject
+// -> go_subject), not the sample itself. Samples are resolved without a role
+// filter (unlike Assay/File), so this model carries no Role field.
 type SampleWithDatasetInfo struct {
 	ID int64 `json:"id,string"`
 
@@ -216,9 +248,10 @@ type Assay struct {
 
 // AssayWithSampleInfo is the read model of an Assay joined with its owning
 // Sample and Subject. Assays no longer carry a dataset binding of their own
-// (go_dataset_assay is gone): an assay belongs to a Sample, and it is the Sample
-// that is bound to a project's dataset, so a project's assays are resolved
-// through the project's samples.
+// (go_dataset_assay is gone): an assay belongs to a Sample, which belongs to a
+// Subject, and it is the Subject that is bound to a project's dataset
+// (go_dataset_subject), so a project's assays are resolved through the project's
+// subjects and samples.
 type AssayWithSampleInfo struct {
 	ID int64 `json:"id,string"`
 
@@ -262,29 +295,30 @@ func (Assay) TableName() string {
 	return "go_assay"
 }
 
-// DatasetSample is the join table binding a Sample into a Dataset
-// (go_dataset_sample). It is the only project binding on the Sample -> Assay
-// branch: assays hang off samples, so a project's assays are resolved through
-// the project's samples. The same sample can be bound to multiple datasets, and
-// samples are resolved project-wide without a role, so this binding carries no
-// Role field.
-type DatasetSample struct {
+// DatasetSubject is the join table binding a Subject into a Dataset
+// (go_dataset_subject). A dataset only binds to the top-level Subject; its
+// samples, assays and files are resolved through that subject, so every
+// project-scoped query joins go_dataset_subject -> go_subject to filter on
+// dataset_id. The same subject can be bound to multiple datasets, and subjects
+// are resolved project-wide without a role, so this binding carries no Role
+// field.
+type DatasetSubject struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
 	DatasetID int64 `json:"dataset_id,string" gorm:"index;not null"`
 
-	SampleID int64 `json:"sample_id,string" gorm:"index;not null"`
+	SubjectID int64 `json:"subject_id,string" gorm:"index;not null"`
 
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func (t *DatasetSample) BeforeCreate(_ *gorm.DB) error {
+func (t *DatasetSubject) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()
 	}
 	return nil
 }
 
-func (DatasetSample) TableName() string {
-	return "go_dataset_sample"
+func (DatasetSubject) TableName() string {
+	return "go_dataset_subject"
 }
