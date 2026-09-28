@@ -1559,6 +1559,48 @@ func (h *DataHandler) ListDatasetSubject(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
+// ImportAssayTSV godoc
+// @Summary      通过 TSV 导入 Subject/Sample/Assay/File
+// @Description  解析 TSV 文本（表头为列名），按 dataset+subject_key、subject+sample_key、sample+assay_role、assay+文件列 逐级 upsert；未映射的列作为 File 列（FileKey=列名）
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      types.ImportAssayTSVRequest  true  "请求参数"
+// @Success      200      {object}  types.ImportAssayTSVResult
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/import/assay-tsv [post]
+func (h *DataHandler) ImportAssayTSV(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req types.ImportAssayTSVRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project by user id")
+		return
+	}
+	req.ProjectID = project.ProjectID
+
+	result, err := h.dataService.ImportAssayTSV(c.Request.Context(), &req)
+	if err != nil {
+		handleDataError(c, err, "failed to import assay tsv")
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
 // CreateSubject godoc
 // @Summary      创建 Subject
 // @Description  创建实验对象/个体记录，主键由服务端生成，subject_key 英文标识必填（不要求唯一），subject_name 为人类可读展示名

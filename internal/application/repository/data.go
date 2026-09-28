@@ -637,16 +637,67 @@ func (r *dataRepository) ExistsSubjectByID(ctx context.Context, id int64) (bool,
 	return count > 0, err
 }
 
-func (r *dataRepository) ExistsSampleBySampleKey(ctx context.Context, sampleKey string) (bool, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&types.Sample{}).Where("sample_key = ?", sampleKey).Count(&count).Error
-	return count > 0, err
-}
-
 func (r *dataRepository) ExistsSampleByID(ctx context.Context, id int64) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&types.Sample{}).Where("id = ?", id).Count(&count).Error
 	return count > 0, err
+}
+
+// ExistsSubjectKeyInDataset reports whether another subject with subjectKey is
+// already bound to datasetID. subject_key is only unique inside a dataset, so
+// the check joins go_dataset_subject instead of looking at go_subject alone.
+func (r *dataRepository) ExistsSubjectKeyInDataset(ctx context.Context, datasetID int64, subjectKey string, excludeSubjectID int64) (bool, error) {
+	if datasetID == 0 || strings.TrimSpace(subjectKey) == "" {
+		return false, nil
+	}
+
+	var count int64
+	query := r.db.WithContext(ctx).
+		Table("go_subject AS sub").
+		Joins("JOIN go_dataset_subject AS ds ON ds.subject_id = sub.id").
+		Where("ds.dataset_id = ? AND sub.subject_key = ?", datasetID, subjectKey)
+	if excludeSubjectID != 0 {
+		query = query.Where("sub.id <> ?", excludeSubjectID)
+	}
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// ExistsSampleKeyInDatasets reports whether a sample with sampleKey exists under
+// a subject bound to any of datasetIDs. sample_key is only unique inside a
+// dataset, so the check joins go_dataset_subject. An empty datasetIDs slice
+// means the sample is not part of any dataset yet, hence no constraint.
+func (r *dataRepository) ExistsSampleKeyInDatasets(ctx context.Context, datasetIDs []int64, sampleKey string, excludeSampleID int64) (bool, error) {
+	if len(datasetIDs) == 0 || strings.TrimSpace(sampleKey) == "" {
+		return false, nil
+	}
+
+	var count int64
+	query := r.db.WithContext(ctx).
+		Table("go_sample AS s").
+		Joins("JOIN go_dataset_subject AS ds ON ds.subject_id = s.subject_id").
+		Where("s.sample_key = ? AND ds.dataset_id IN ?", sampleKey, datasetIDs)
+	if excludeSampleID != 0 {
+		query = query.Where("s.id <> ?", excludeSampleID)
+	}
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// ListDatasetIDsBySubjectID returns the datasets a subject is bound to
+// (go_dataset_subject).
+func (r *dataRepository) ListDatasetIDsBySubjectID(ctx context.Context, subjectID int64) ([]int64, error) {
+	ids := make([]int64, 0)
+	if err := r.db.WithContext(ctx).Model(&types.DatasetSubject{}).
+		Where("subject_id = ?", subjectID).
+		Pluck("dataset_id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // CountSamplesBySubjectID counts samples owned by a subject (go_sample.subject_id).
@@ -927,6 +978,68 @@ func (r *dataRepository) ListSampleByProjectID(ctx context.Context, projectID st
 		return nil, err
 	}
 	return items, nil
+}
+
+// GetSubjectByKeyAndDatasetID resolves a subject by its business key inside one
+// dataset. Subjects are only "in" a dataset through go_dataset_subject, so the
+// lookup joins that binding; it returns gorm.ErrRecordNotFound when the subject
+// is not bound to the dataset yet (the importer then creates the subject and the
+// binding).
+func (r *dataRepository) GetSubjectByKeyAndDatasetID(ctx context.Context, datasetID int64, subjectKey string) (*types.Subject, error) {
+	item := &types.Subject{}
+	err := r.db.WithContext(ctx).
+		Table("go_subject AS sub").
+		Select("sub.*").
+		Joins("JOIN go_dataset_subject AS ds ON ds.subject_id = sub.id").
+		Where("ds.dataset_id = ? AND sub.subject_key = ?", datasetID, subjectKey).
+		Order("sub.id ASC").
+		Take(item).Error
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// GetSampleBySubjectIDAndSampleKey resolves a sample by its business key inside
+// one subject (the natural key used by the TSV importer).
+func (r *dataRepository) GetSampleBySubjectIDAndSampleKey(ctx context.Context, subjectID int64, sampleKey string) (*types.Sample, error) {
+	item := &types.Sample{}
+	err := r.db.WithContext(ctx).
+		Where("subject_id = ? AND sample_key = ?", subjectID, sampleKey).
+		Order("id ASC").
+		Take(item).Error
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// GetAssayBySampleIDAndRole resolves an assay by its owning sample and role (the
+// natural key used by the TSV importer).
+func (r *dataRepository) GetAssayBySampleIDAndRole(ctx context.Context, sampleID int64, role string) (*types.Assay, error) {
+	item := &types.Assay{}
+	err := r.db.WithContext(ctx).
+		Where("sample_id = ? AND role = ?", sampleID, role).
+		Order("id ASC").
+		Take(item).Error
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// GetFileByAssayIDAndFileKey resolves a file by its owning assay and file key
+// (the TSV column name, e.g. FASTQ_R1).
+func (r *dataRepository) GetFileByAssayIDAndFileKey(ctx context.Context, assayID int64, fileKey string) (*types.File, error) {
+	item := &types.File{}
+	err := r.db.WithContext(ctx).
+		Where("assay_id = ? AND file_key = ?", assayID, fileKey).
+		Order("id ASC").
+		Take(item).Error
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
 }
 
 func (r *dataRepository) DeleteDatasetWithRelations(ctx context.Context, id int64) error {

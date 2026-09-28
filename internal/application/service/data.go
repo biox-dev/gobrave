@@ -603,18 +603,31 @@ func (s *dataService) GetSubjectByID(ctx context.Context, id int64) (*types.Subj
 }
 
 func (s *dataService) UpdateSubject(ctx context.Context, subject *types.Subject) error {
-	if _, err := s.dataRepo.GetSubjectByID(ctx, subject.ID); err != nil {
+	current, err := s.dataRepo.GetSubjectByID(ctx, subject.ID)
+	if err != nil {
 		return err
 	}
 
-	// subject_key / subject_name are not unique, so only the "required" rule is
-	// enforced here (mirrors Sample, whose SampleKey is not checked either).
+	// subject_key is required but not globally unique: it only has to stay unique
+	// within each dataset the subject is bound to.
 	subjectKey := strings.TrimSpace(subject.SubjectKey)
 	if subjectKey == "" {
 		return apperrors.NewValidationError("subject_key is required")
 	}
 	subject.SubjectKey = subjectKey
 	subject.SubjectName = strings.TrimSpace(subject.SubjectName)
+
+	if subjectKey != current.SubjectKey {
+		datasetIDs, err := s.dataRepo.ListDatasetIDsBySubjectID(ctx, subject.ID)
+		if err != nil {
+			return err
+		}
+		for _, datasetID := range datasetIDs {
+			if err := s.ensureSubjectKeyUniqueInDataset(ctx, datasetID, subjectKey, subject.ID); err != nil {
+				return err
+			}
+		}
+	}
 
 	return s.dataRepo.UpdateSubject(ctx, subject)
 }
@@ -663,6 +676,25 @@ func (s *dataService) ListSubjectByProjectID(ctx context.Context, projectID stri
 	return s.dataRepo.ListSubjectByProjectID(ctx, projectID)
 }
 
+// ensureSampleKeyUniqueInDatasets enforces that sample_key is unique within each
+// dataset: a key may repeat across datasets, but not inside any dataset the
+// sample's subject is bound to. A subject outside every dataset has no
+// constraint (the sample is not in any dataset yet).
+func (s *dataService) ensureSampleKeyUniqueInDatasets(ctx context.Context, subjectID int64, sampleKey string, excludeSampleID int64) error {
+	datasetIDs, err := s.dataRepo.ListDatasetIDsBySubjectID(ctx, subjectID)
+	if err != nil {
+		return err
+	}
+	exists, err := s.dataRepo.ExistsSampleKeyInDatasets(ctx, datasetIDs, sampleKey, excludeSampleID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return apperrors.NewConflictError("sample_key already exists in this dataset: " + sampleKey)
+	}
+	return nil
+}
+
 func (s *dataService) CreateSample(ctx context.Context, sample *types.Sample) error {
 	sampleKey := strings.TrimSpace(sample.SampleKey)
 	if sampleKey == "" {
@@ -681,12 +713,8 @@ func (s *dataService) CreateSample(ctx context.Context, sample *types.Sample) er
 		return gorm.ErrRecordNotFound
 	}
 
-	exists, err := s.dataRepo.ExistsSampleBySampleKey(ctx, sampleKey)
-	if err != nil {
+	if err := s.ensureSampleKeyUniqueInDatasets(ctx, sample.SubjectID, sampleKey, 0); err != nil {
 		return err
-	}
-	if exists {
-		return apperrors.NewConflictError("sample_key already exists: " + sampleKey)
 	}
 
 	return s.dataRepo.CreateSample(ctx, sample)
@@ -706,15 +734,6 @@ func (s *dataService) UpdateSample(ctx context.Context, sample *types.Sample) er
 	if sampleKey == "" {
 		return apperrors.NewValidationError("sample_key is required")
 	}
-	if sampleKey != current.SampleKey {
-		exists, err := s.dataRepo.ExistsSampleBySampleKey(ctx, sampleKey)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return apperrors.NewConflictError("sample_key already exists: " + sampleKey)
-		}
-	}
 	sample.SampleKey = sampleKey
 
 	if sample.SubjectID == 0 {
@@ -726,6 +745,13 @@ func (s *dataService) UpdateSample(ctx context.Context, sample *types.Sample) er
 	}
 	if !subjectExists {
 		return gorm.ErrRecordNotFound
+	}
+
+	// Re-check only when the key or the owning subject actually changed.
+	if sampleKey != current.SampleKey || sample.SubjectID != current.SubjectID {
+		if err := s.ensureSampleKeyUniqueInDatasets(ctx, sample.SubjectID, sampleKey, sample.ID); err != nil {
+			return err
+		}
 	}
 
 	return s.dataRepo.UpdateSample(ctx, sample)
@@ -780,15 +806,32 @@ func (s *dataService) CreateDatasetSubject(ctx context.Context, datasetSubject *
 		return gorm.ErrRecordNotFound
 	}
 
-	subjectExists, err := s.dataRepo.ExistsSubjectByID(ctx, datasetSubject.SubjectID)
+	subject, err := s.dataRepo.GetSubjectByID(ctx, datasetSubject.SubjectID)
 	if err != nil {
 		return err
 	}
-	if !subjectExists {
-		return gorm.ErrRecordNotFound
+
+	// subject_key is only unique inside a dataset, so binding is where a
+	// duplicate within the same dataset is rejected (the DB index is not unique).
+	if err := s.ensureSubjectKeyUniqueInDataset(ctx, datasetSubject.DatasetID, subject.SubjectKey, 0); err != nil {
+		return err
 	}
 
 	return s.dataRepo.CreateDatasetSubject(ctx, datasetSubject)
+}
+
+// ensureSubjectKeyUniqueInDataset enforces that subject_key is unique inside one
+// dataset (excluding excludeSubjectID). The same key may exist in other
+// datasets.
+func (s *dataService) ensureSubjectKeyUniqueInDataset(ctx context.Context, datasetID int64, subjectKey string, excludeSubjectID int64) error {
+	exists, err := s.dataRepo.ExistsSubjectKeyInDataset(ctx, datasetID, subjectKey, excludeSubjectID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return apperrors.NewConflictError("subject_key already exists in this dataset: " + subjectKey)
+	}
+	return nil
 }
 
 func (s *dataService) GetDatasetSubjectByID(ctx context.Context, id int64) (*types.DatasetSubject, error) {
@@ -813,12 +856,13 @@ func (s *dataService) UpdateDatasetSubject(ctx context.Context, datasetSubject *
 		return gorm.ErrRecordNotFound
 	}
 
-	subjectExists, err := s.dataRepo.ExistsSubjectByID(ctx, datasetSubject.SubjectID)
+	subject, err := s.dataRepo.GetSubjectByID(ctx, datasetSubject.SubjectID)
 	if err != nil {
 		return err
 	}
-	if !subjectExists {
-		return gorm.ErrRecordNotFound
+
+	if err := s.ensureSubjectKeyUniqueInDataset(ctx, datasetSubject.DatasetID, subject.SubjectKey, subject.ID); err != nil {
+		return err
 	}
 
 	return s.dataRepo.UpdateDatasetSubject(ctx, datasetSubject)
@@ -834,6 +878,340 @@ func (s *dataService) DeleteDatasetSubject(ctx context.Context, id int64) error 
 
 func (s *dataService) ListDatasetSubject(ctx context.Context) ([]*types.DatasetSubject, error) {
 	return s.dataRepo.ListDatasetSubject(ctx)
+}
+
+// importSubjectColumns maps a TSV column name to the Subject field it fills.
+// Adding another importable Subject field is a one-line change here.
+var importSubjectColumns = map[string]func(*types.Subject, string){
+	"subject_key":  func(s *types.Subject, v string) { s.SubjectKey = v },
+	"subject_name": func(s *types.Subject, v string) { s.SubjectName = v },
+	"species":      func(s *types.Subject, v string) { s.Species = v },
+	"strain":       func(s *types.Subject, v string) { s.Strain = v },
+	"sex":          func(s *types.Subject, v string) { s.Sex = v },
+	"age":          func(s *types.Subject, v string) { s.Age = v },
+}
+
+// importSampleColumns maps a TSV column name to the Sample field it fills.
+var importSampleColumns = map[string]func(*types.Sample, string){
+	"sample_key":  func(s *types.Sample, v string) { s.SampleKey = v },
+	"sample_name": func(s *types.Sample, v string) { s.SampleName = v },
+	"tissue":      func(s *types.Sample, v string) { s.Tissue = v },
+	"cell_type":   func(s *types.Sample, v string) { s.CellType = v },
+}
+
+// importAssayColumns maps a TSV column name to the Assay field it fills. Note
+// that assay_role is also the assay's natural key (sample_id + role).
+var importAssayColumns = map[string]func(*types.Assay, string){
+	"assay_type": func(a *types.Assay, v string) { a.AssayType = v },
+	"assay_role": func(a *types.Assay, v string) { a.Role = v },
+	"platform":   func(a *types.Assay, v string) { a.Platform = v },
+	"library_id": func(a *types.Assay, v string) { a.LibraryID = v },
+}
+
+// ImportAssayTSV imports a TSV table into one dataset, upserting the whole
+// Subject -> Sample -> Assay -> File tree per row:
+//
+//	dataset + subject_key      -> Subject (create+bind, or update)
+//	subject_id + sample_key    -> Sample  (create, or update)
+//	sample_id + assay_role     -> Assay   (create, or update)
+//	assay_id + <file column>   -> File    (create, or update; FileKey = column)
+//
+// The header names the columns; columns not mapped to a Subject/Sample/Assay
+// field are File columns, so new file keys need no code change. The run is
+// transactional: any invalid row rolls the whole import back.
+func (s *dataService) ImportAssayTSV(ctx context.Context, req *types.ImportAssayTSVRequest) (*types.ImportAssayTSVResult, error) {
+	if req == nil {
+		return nil, apperrors.NewValidationError("request is required")
+	}
+	if req.DatasetID == 0 {
+		return nil, apperrors.NewValidationError("dataset_id is required")
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		return nil, apperrors.NewValidationError("content is required")
+	}
+
+	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, req.DatasetID)
+	if err != nil {
+		return nil, err
+	}
+	if !datasetExists {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	header, rows := parseTSV(req.Content)
+	if len(header) == 0 {
+		return nil, apperrors.NewValidationError("tsv header is empty")
+	}
+
+	colIndex := make(map[string]int, len(header))
+	for i, name := range header {
+		if name = strings.TrimSpace(name); name != "" {
+			colIndex[name] = i
+		}
+	}
+	for _, required := range []string{"subject_key", "sample_key"} {
+		if _, ok := colIndex[required]; !ok {
+			return nil, apperrors.NewValidationError("tsv is missing required column: " + required)
+		}
+	}
+
+	// Every column that is not a Subject/Sample/Assay field is a File column
+	// whose key is the column name (kept in header order for stable results).
+	fileColumns := make([]string, 0, len(header))
+	for _, name := range header {
+		name = strings.TrimSpace(name)
+		if name == "" || isImportEntityColumn(name) {
+			continue
+		}
+		fileColumns = append(fileColumns, name)
+	}
+
+	// Organize the dataset workspace so imported files have a home even though
+	// the TSV paths themselves are referenced in place (not copied).
+	if projectID := strings.TrimSpace(req.ProjectID); projectID != "" && strings.TrimSpace(s.baseDir) != "" {
+		if absBaseDir, err := utils.ResolveExternalPath(s.baseDir); err == nil && absBaseDir != "" {
+			if err := os.MkdirAll(utils.GetDatasetDir(absBaseDir, projectID, req.DatasetID), 0755); err != nil {
+				return nil, fmt.Errorf("failed to create dataset directory: %w", err)
+			}
+		}
+	}
+
+	result := &types.ImportAssayTSVResult{}
+	err = s.dataRepo.WithTransaction(ctx, func(tx interfaces.DataRepository) error {
+		for i, fields := range rows {
+			row := importRowMap(colIndex, fields)
+			subjectKey := strings.TrimSpace(row["subject_key"])
+			sampleKey := strings.TrimSpace(row["sample_key"])
+			if subjectKey == "" || sampleKey == "" {
+				return apperrors.NewValidationError(
+					fmt.Sprintf("tsv row %d: subject_key and sample_key are required", i+2))
+			}
+
+			subject, err := upsertImportSubject(ctx, tx, req.DatasetID, subjectKey, row, result)
+			if err != nil {
+				return err
+			}
+			sample, err := upsertImportSample(ctx, tx, req.DatasetID, subject.ID, sampleKey, row, result)
+			if err != nil {
+				return err
+			}
+			assay, err := upsertImportAssay(ctx, tx, sample.ID, strings.TrimSpace(row["assay_role"]), row, result)
+			if err != nil {
+				return err
+			}
+			for _, fileKey := range fileColumns {
+				if err := upsertImportFile(ctx, tx, assay.ID, fileKey, strings.TrimSpace(row[fileKey]), result); err != nil {
+					return err
+				}
+			}
+			result.Rows++
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// isImportEntityColumn reports whether a TSV column is consumed by one of the
+// Subject/Sample/Assay setter maps (and is therefore not a File column).
+func isImportEntityColumn(name string) bool {
+	if _, ok := importSubjectColumns[name]; ok {
+		return true
+	}
+	if _, ok := importSampleColumns[name]; ok {
+		return true
+	}
+	if _, ok := importAssayColumns[name]; ok {
+		return true
+	}
+	return false
+}
+
+// parseTSV splits TSV text into its header and data rows. CRLF is normalised to
+// LF and blank lines are ignored; the separator stays a tab so values containing
+// spaces survive.
+func parseTSV(content string) (header []string, rows [][]string) {
+	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if header == nil {
+			header = fields
+			continue
+		}
+		rows = append(rows, fields)
+	}
+	return header, rows
+}
+
+// importRowMap projects one data row onto the header column names, padding
+// missing trailing cells with empty strings.
+func importRowMap(colIndex map[string]int, fields []string) map[string]string {
+	row := make(map[string]string, len(colIndex))
+	for name, idx := range colIndex {
+		if idx < len(fields) {
+			row[name] = fields[idx]
+		} else {
+			row[name] = ""
+		}
+	}
+	return row
+}
+
+// applyImportColumns applies every column present in row onto the entity via the
+// setter map, so importing another field is just adding it to that map.
+func applyImportColumns[T any](entity *T, row map[string]string, setters map[string]func(*T, string)) {
+	for column, set := range setters {
+		if value, ok := row[column]; ok {
+			set(entity, strings.TrimSpace(value))
+		}
+	}
+}
+
+// upsertImportSubject resolves a subject by dataset + subject_key, creating the
+// subject plus its dataset binding when missing and updating it otherwise.
+func upsertImportSubject(ctx context.Context, repo interfaces.DataRepository, datasetID int64, subjectKey string, row map[string]string, result *types.ImportAssayTSVResult) (*types.Subject, error) {
+	subject, err := repo.GetSubjectByKeyAndDatasetID(ctx, datasetID, subjectKey)
+	switch {
+	case err == nil:
+		applyImportColumns(subject, row, importSubjectColumns)
+		subject.SubjectKey = subjectKey
+		if err := repo.UpdateSubject(ctx, subject); err != nil {
+			return nil, err
+		}
+		result.SubjectsUpdated++
+		return subject, nil
+	case stderrs.Is(err, gorm.ErrRecordNotFound):
+		subject = &types.Subject{}
+		applyImportColumns(subject, row, importSubjectColumns)
+		subject.SubjectKey = subjectKey
+		if err := repo.CreateSubject(ctx, subject); err != nil {
+			return nil, err
+		}
+		if err := repo.CreateDatasetSubject(ctx, &types.DatasetSubject{
+			DatasetID: datasetID,
+			SubjectID: subject.ID,
+		}); err != nil {
+			return nil, err
+		}
+		result.SubjectsCreated++
+		return subject, nil
+	default:
+		return nil, err
+	}
+}
+
+// upsertImportSample resolves a sample by subject + sample_key, creating it when
+// missing and updating it otherwise.
+func upsertImportSample(ctx context.Context, repo interfaces.DataRepository, datasetID, subjectID int64, sampleKey string, row map[string]string, result *types.ImportAssayTSVResult) (*types.Sample, error) {
+	sample, err := repo.GetSampleBySubjectIDAndSampleKey(ctx, subjectID, sampleKey)
+	switch {
+	case err == nil:
+		applyImportColumns(sample, row, importSampleColumns)
+		sample.SampleKey = sampleKey
+		sample.SubjectID = subjectID
+		if err := repo.UpdateSample(ctx, sample); err != nil {
+			return nil, err
+		}
+		result.SamplesUpdated++
+		return sample, nil
+	case stderrs.Is(err, gorm.ErrRecordNotFound):
+		// sample_key is unique inside a dataset, so another subject in the same
+		// dataset cannot already hold it.
+		exists, err := repo.ExistsSampleKeyInDatasets(ctx, []int64{datasetID}, sampleKey, 0)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, apperrors.NewConflictError(
+				fmt.Sprintf("sample_key already exists in dataset %d: %s", datasetID, sampleKey))
+		}
+
+		sample = &types.Sample{}
+		applyImportColumns(sample, row, importSampleColumns)
+		sample.SampleKey = sampleKey
+		sample.SubjectID = subjectID
+		if err := repo.CreateSample(ctx, sample); err != nil {
+			return nil, err
+		}
+		result.SamplesCreated++
+		return sample, nil
+	default:
+		return nil, err
+	}
+}
+
+// upsertImportAssay resolves an assay by sample + role, creating it when missing
+// and updating it otherwise.
+func upsertImportAssay(ctx context.Context, repo interfaces.DataRepository, sampleID int64, role string, row map[string]string, result *types.ImportAssayTSVResult) (*types.Assay, error) {
+	assay, err := repo.GetAssayBySampleIDAndRole(ctx, sampleID, role)
+	switch {
+	case err == nil:
+		applyImportColumns(assay, row, importAssayColumns)
+		assay.SampleID = sampleID
+		assay.Role = role
+		if err := repo.UpdateAssay(ctx, assay); err != nil {
+			return nil, err
+		}
+		result.AssaysUpdated++
+		return assay, nil
+	case stderrs.Is(err, gorm.ErrRecordNotFound):
+		assay = &types.Assay{}
+		applyImportColumns(assay, row, importAssayColumns)
+		assay.SampleID = sampleID
+		assay.Role = role
+		if err := repo.CreateAssay(ctx, assay); err != nil {
+			return nil, err
+		}
+		result.AssaysCreated++
+		return assay, nil
+	default:
+		return nil, err
+	}
+}
+
+// upsertImportFile resolves a file by assay + fileKey (the TSV column name),
+// creating it when missing and re-pointing it when the path changed. The stored
+// path is the value from the TSV (referenced in place, not copied); file_name and
+// format are derived from it so the file table stays self-describing.
+func upsertImportFile(ctx context.Context, repo interfaces.DataRepository, assayID int64, fileKey, path string, result *types.ImportAssayTSVResult) error {
+	if path == "" {
+		return nil
+	}
+
+	file, err := repo.GetFileByAssayIDAndFileKey(ctx, assayID, fileKey)
+	switch {
+	case err == nil:
+		file.Path = path
+		file.FileName = filepath.Base(path)
+		file.Format = strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+		if err := repo.UpdateFile(ctx, file); err != nil {
+			return err
+		}
+		result.FilesUpdated++
+		return nil
+	case stderrs.Is(err, gorm.ErrRecordNotFound):
+		file = &types.File{
+			FileID:   strconv.FormatInt(utils.GenerateID(), 10),
+			FileName: filepath.Base(path),
+			Path:     path,
+			Format:   strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
+			AssayID:  assayID,
+			FileKey:  fileKey,
+			Storage:  "LOCAL",
+		}
+		if err := repo.CreateFile(ctx, file); err != nil {
+			return err
+		}
+		result.FilesCreated++
+		return nil
+	default:
+		return err
+	}
 }
 
 // copyFile copies src to dst, preserving permissions but not timestamps.

@@ -100,6 +100,12 @@ type DataService interface {
 	// owning subject and the dataset that subject is bound to. Samples are
 	// resolved project-wide without a role filter.
 	ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error)
+
+	// ImportAssayTSV bulk-imports the Subject -> Sample -> Assay -> File tree from
+	// a TSV text scoped to one dataset, upserting each level by its natural key
+	// (dataset+subject_key, subject+sample_key, sample+assay_role,
+	// assay+file_key).
+	ImportAssayTSV(ctx context.Context, req *types.ImportAssayTSVRequest) (*types.ImportAssayTSVResult, error)
 }
 
 type DataRepository interface {
@@ -171,6 +177,13 @@ type DataRepository interface {
 	PageSample(ctx context.Context, pagination *types.Pagination, query *types.QuerySample) ([]*types.SampleWithSubjectInfo, int64, error)
 	ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error)
 
+	// Import lookups: resolve each hierarchy level by its natural key so the TSV
+	// importer can decide between insert and update.
+	GetSubjectByKeyAndDatasetID(ctx context.Context, datasetID int64, subjectKey string) (*types.Subject, error)
+	GetSampleBySubjectIDAndSampleKey(ctx context.Context, subjectID int64, sampleKey string) (*types.Sample, error)
+	GetAssayBySampleIDAndRole(ctx context.Context, sampleID int64, role string) (*types.Assay, error)
+	GetFileByAssayIDAndFileKey(ctx context.Context, assayID int64, fileKey string) (*types.File, error)
+
 	// CountSamplesBySubjectID counts the samples owned by one subject; used to
 	// guard subject deletion.
 	CountSamplesBySubjectID(ctx context.Context, subjectID int64) (int64, error)
@@ -181,9 +194,19 @@ type DataRepository interface {
 
 	ExistsSubjectByID(ctx context.Context, id int64) (bool, error)
 
-	// ExistsSampleBySampleKey reports whether the business number
-	// (go_sample.sample_key) is already taken.
-	ExistsSampleBySampleKey(ctx context.Context, sampleKey string) (bool, error)
+	// SubjectKey / SampleKey are only unique inside a dataset, so the uniqueness
+	// checks below are dataset-scoped instead of global.
+	//
+	// ExistsSubjectKeyInDataset reports whether another subject with subjectKey
+	// (excluding excludeSubjectID) is bound to datasetID.
+	ExistsSubjectKeyInDataset(ctx context.Context, datasetID int64, subjectKey string, excludeSubjectID int64) (bool, error)
+	// ExistsSampleKeyInDatasets reports whether a sample with sampleKey (excluding
+	// excludeSampleID) exists under a subject bound to any of datasetIDs. An empty
+	// slice adds no constraint.
+	ExistsSampleKeyInDatasets(ctx context.Context, datasetIDs []int64, sampleKey string, excludeSampleID int64) (bool, error)
+	// ListDatasetIDsBySubjectID returns the datasets a subject is bound to, so a
+	// sample's key uniqueness can be checked against each of them.
+	ListDatasetIDsBySubjectID(ctx context.Context, subjectID int64) ([]int64, error)
 
 	ExistsSampleByID(ctx context.Context, id int64) (bool, error)
 

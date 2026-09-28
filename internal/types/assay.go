@@ -12,7 +12,8 @@ type Subject struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
 	// SubjectKey 是输入用的英文标识（列 go_subject.subject_key），例如 mouse-001；
-	// 与 Sample.SampleKey 同语义，是业务意义上的“编号”。无需全局唯一。
+	// 与 Sample.SampleKey 同语义，是业务意义上的“编号”。无需全局唯一，只在同一个
+	// dataset 下唯一（go_dataset_subject 绑定）；同一个 key 可以出现在不同 dataset。
 	// 注意：Subject 的真正主键仍然是 ID；go_sample.subject_id 是指向 ID 的
 	// 外键，语义不同（一个是编号，一个是主键）。
 	SubjectKey string `json:"subject_key" gorm:"type:varchar(255);index;not null"`
@@ -65,8 +66,10 @@ type QuerySubject struct {
 type Sample struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	// SampleKey 是业务编号（列 go_sample.sample_key），例如 S-001。
-	SampleKey string `json:"sample_key" gorm:"type:varchar(255);uniqueIndex;not null"`
+	// SampleKey 是业务编号（列 go_sample.sample_key），例如 S-001。无需全局唯一，
+	// 只在同一个 dataset 下唯一（经所属 Subject 的 go_dataset_subject 绑定判定）；
+	// 同一个 key 可以出现在不同 dataset。
+	SampleKey string `json:"sample_key" gorm:"type:varchar(255);index;not null"`
 
 	SampleName string `json:"sample_name" gorm:"type:varchar(255)"`
 

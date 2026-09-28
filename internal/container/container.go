@@ -784,6 +784,13 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to auto migrate tables: %w", err)
 	}
 
+	// sample_key is no longer globally unique (only unique inside a dataset), so
+	// the legacy unique index has to be replaced explicitly: AutoMigrate never
+	// drops indexes it no longer declares.
+	if err := migrateSampleKeyIndex(db); err != nil {
+		return nil, fmt.Errorf("failed to migrate go_sample.sample_key index: %w", err)
+	}
+
 	// if err := migratePipelineComponentsContainerIDType(db, driver); err != nil {
 	// 	return nil, fmt.Errorf("failed to migrate pipeline_components.container_id type: %w", err)
 	// }
@@ -806,6 +813,34 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 	sqlDB.SetConnMaxLifetime(time.Duration(10) * time.Minute)
 
 	return db, nil
+}
+
+// migrateSampleKeyIndex replaces the legacy globally-unique index on
+// go_sample.sample_key with a plain (non-unique) one. sample_key is now only
+// unique inside a dataset, which is enforced in the data service, so the DB must
+// stop rejecting duplicates across datasets. AutoMigrate alone never drops
+// indexes, hence the explicit drop-and-recreate (idempotent: it is a no-op once
+// the index is already non-unique).
+func migrateSampleKeyIndex(db *gorm.DB) error {
+	const indexName = "idx_go_sample_sample_key"
+
+	indexes, err := db.Migrator().GetIndexes(&types.Sample{})
+	if err != nil {
+		return err
+	}
+	for _, idx := range indexes {
+		if idx.Name() != indexName {
+			continue
+		}
+		if unique, ok := idx.Unique(); !ok || !unique {
+			return nil // already the non-unique index
+		}
+		if err := db.Migrator().DropIndex(&types.Sample{}, indexName); err != nil {
+			return err
+		}
+		return db.Migrator().CreateIndex(&types.Sample{}, indexName)
+	}
+	return nil
 }
 
 // func migratePipelineComponentsContainerIDType(db *gorm.DB, driver string) error {
