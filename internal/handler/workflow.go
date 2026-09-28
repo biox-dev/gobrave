@@ -1432,11 +1432,11 @@ func (h *WorkflowHandler) DeleteScript(c *gin.Context) {
 	})
 }
 
-// buildCompatAssayItem 的入参固定为 *types.AssayWithDatasetInfo（由
+// buildCompatAssayItem 的入参固定为 *types.AssayWithSampleInfo（由
 // resolveFormAnalysisResult 经 ListAssayByProjectID 取得），与 buildCompatFileItem
 // 的 *types.FileWithDatasetInfo 保持同一风格。这里仍先 marshal 成 map，是为了在
 // JSON 标签之外追加 label / value / assay_name 等前端字段。
-func buildCompatAssayItem(item *types.AssayWithDatasetInfo) (map[string]interface{}, error) {
+func buildCompatAssayItem(item *types.AssayWithSampleInfo) (map[string]interface{}, error) {
 	b, err := json.Marshal(item)
 	if err != nil {
 		return nil, err
@@ -1459,7 +1459,7 @@ func buildCompatAssayItem(item *types.AssayWithDatasetInfo) (map[string]interfac
 // assayLabel 返回 Assay 的下拉展示标签：SubjectName - SampleName - AssayType。
 // 直接读取结构体字段（无需再依赖 map/JSON 往返）；缺失的段自动跳过，
 // 避免出现 " - - " 之类的空占位。
-func assayLabel(assay *types.AssayWithDatasetInfo) string {
+func assayLabel(assay *types.AssayWithSampleInfo) string {
 	if assay == nil {
 		return ""
 	}
@@ -1472,27 +1472,40 @@ func assayLabel(assay *types.AssayWithDatasetInfo) string {
 	return strings.Join(parts, " - ")
 }
 
-func extractStringList(v interface{}) []string {
-	if v == nil {
-		return nil
+// buildCompatSampleItem 的入参固定为 *types.SampleWithDatasetInfo（由
+// resolveFormAnalysisResult 经 ListSampleByProjectID 取得），与 buildCompatAssayItem
+// 保持同一风格：先 marshal 成 map，再在 JSON 标签之外追加 label / value 等前端字段。
+func buildCompatSampleItem(item *types.SampleWithDatasetInfo) (map[string]interface{}, error) {
+	b, err := json.Marshal(item)
+	if err != nil {
+		return nil, err
 	}
 
-	if values, ok := v.([]string); ok {
-		return values
+	result := make(map[string]interface{})
+	if err := json.Unmarshal(b, &result); err != nil {
+		return nil, err
 	}
 
-	items, ok := v.([]interface{})
-	if !ok {
-		return nil
-	}
+	// label 供前端下拉展示：SubjectName - SampleName。
+	result["label"] = sampleLabel(item)
+	result["value"] = result["id"]
 
-	result := make([]string, 0, len(items))
-	for _, item := range items {
-		if s, ok := item.(string); ok && s != "" {
-			result = append(result, s)
+	return result, nil
+}
+
+// sampleLabel 返回 Sample 的下拉展示标签：SubjectName - SampleName；
+// 缺失的段自动跳过。
+func sampleLabel(sample *types.SampleWithDatasetInfo) string {
+	if sample == nil {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	for _, seg := range []string{sample.SubjectName, sample.SampleName} {
+		if s := strings.TrimSpace(seg); s != "" {
+			parts = append(parts, s)
 		}
 	}
-	return result
+	return strings.Join(parts, " - ")
 }
 
 func normalizeJSONOrDefault(raw string, defaultJSON string) string {

@@ -252,6 +252,30 @@ func (r *dataRepository) ListFileByAssayID(ctx context.Context, assayID int64) (
 	return items, nil
 }
 
+// ListFileByAssayIDAndRole returns the files owned by one assay ordered by
+// creation order (oldest first), keeping only the assays whose go_assay.role is
+// in roles. An empty roles slice adds no role condition at all, so every file of
+// the assay is returned — matching ListAssayByProjectID's "empty roles means no
+// condition" convention. The assay's role lives on go_assay, hence the join.
+func (r *dataRepository) ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error) {
+	items := make([]*types.File, 0)
+	query := r.db.WithContext(ctx).
+		Table("go_file AS f").
+		Select("f.*").
+		Joins("JOIN go_assay AS a ON a.id = f.assay_id").
+		Where("f.assay_id = ?", assayID)
+
+	if len(roles) > 0 {
+		query = query.Where("a.role IN ?", roles)
+	}
+
+	err := query.Order("f.id ASC").Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *dataRepository) PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID string, roles []string) ([]*types.FileWithDatasetInfo, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
@@ -425,6 +449,7 @@ func (r *dataRepository) UpdateAssay(ctx context.Context, assay *types.Assay) er
 			"assay_type": assay.AssayType,
 			"platform":   assay.Platform,
 			"library_id": assay.LibraryID,
+			"role":       assay.Role,
 			"metadata":   assay.Metadata,
 		}).Error
 }
@@ -442,53 +467,66 @@ func (r *dataRepository) ListAssay(ctx context.Context) ([]*types.Assay, error) 
 	return items, nil
 }
 
-// assayWithDatasetSelect is the shared projection of the assay read model: the
-// assay row plus its owning dataset binding, sample name and subject identifiers.
-const assayWithDatasetSelect = `
+// ListAssayBySampleID returns the assays owned by one sample ordered by id
+// ascending, so a sample's files can be grouped per assay role deterministically.
+func (r *dataRepository) ListAssayBySampleID(ctx context.Context, sampleID int64) ([]*types.Assay, error) {
+	items := make([]*types.Assay, 0)
+	err := r.db.WithContext(ctx).Where("sample_id = ?", sampleID).Order("id ASC").Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// assayWithSampleSelect is the shared projection of the assay read model: the
+// assay row plus its owning sample name and subject identifiers. Assays have no
+// dataset binding of their own; the project link goes through the sample.
+const assayWithSampleSelect = `
 	a.id,
 	a.sample_id,
 	a.assay_type,
 	a.platform,
 	a.library_id,
+	a.role,
 	a.metadata,
 	a.created_at,
 	a.updated_at,
 	s.sample_name,
-	sub.subject_name AS subject_name,
-	d.id AS dataset_id,
-	d.dataset_name,
-	da.role`
+	sub.subject_name AS subject_name`
 
-func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithDatasetInfo, int64, error) {
+// assayByProjectBase builds the query resolving a project's assays through the
+// project's samples: go_project_dataset -> go_dataset_sample -> go_sample ->
+// go_assay. Assays are no longer bound to a dataset directly.
+func (r *dataRepository) assayByProjectBase(ctx context.Context, projectID string) *gorm.DB {
+	return r.db.WithContext(ctx).
+		Table("go_project_dataset AS pd").
+		Select(assayWithSampleSelect).
+		Joins("JOIN go_dataset_sample AS ds ON ds.dataset_id = pd.dataset_id").
+		Joins("JOIN go_sample AS s ON s.id = ds.sample_id").
+		Joins("JOIN go_assay AS a ON a.sample_id = s.id").
+		Joins("LEFT JOIN go_subject AS sub ON sub.id = s.subject_id").
+		Where("pd.project_id = ?", projectID)
+}
+
+func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithSampleInfo, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
 
-	items := make([]*types.AssayWithDatasetInfo, 0)
+	items := make([]*types.AssayWithSampleInfo, 0)
 	var total int64
 
-	buildQuery := func() *gorm.DB {
-		return r.db.WithContext(ctx).
-			Table("go_project_dataset AS pd").
-			Select(assayWithDatasetSelect).
-			Joins("JOIN go_dataset_assay AS da ON da.dataset_id = pd.dataset_id").
-			Joins("JOIN go_dataset AS d ON d.id = pd.dataset_id").
-			Joins("JOIN go_assay AS a ON a.id = da.assay_id").
-			Joins("LEFT JOIN go_sample AS s ON s.id = a.sample_id").
-			Joins("LEFT JOIN go_subject AS sub ON sub.id = s.subject_id").
-			Where("pd.project_id = ?", projectID)
-	}
-
-	if err := buildQuery().
-		Select("COUNT(DISTINCT da.id)").
+	if err := r.assayByProjectBase(ctx, projectID).
+		Select("COUNT(DISTINCT a.id)").
 		Scan(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	// Grouping by the joined PKs (s.id / sub.id) keeps the extra columns valid
-	// under MySQL's ONLY_FULL_GROUP_BY without changing the row cardinality.
-	err := buildQuery().
-		Group("a.id, d.id, d.dataset_name, da.role, s.id, sub.id").
+	// under MySQL's ONLY_FULL_GROUP_BY while collapsing the row to one per assay
+	// (a sample bound to several datasets would otherwise duplicate its assays).
+	err := r.assayByProjectBase(ctx, projectID).
+		Group("a.id, s.id, sub.id").
 		Order("a.id DESC").
 		Offset(pagination.Offset()).
 		Limit(pagination.Limit()).
@@ -498,30 +536,26 @@ func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *t
 	}
 
 	if len(items) == 0 {
-		return []*types.AssayWithDatasetInfo{}, total, nil
+		return []*types.AssayWithSampleInfo{}, total, nil
 	}
 
 	return items, total, nil
 }
 
-func (r *dataRepository) ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error) {
-	items := make([]*types.AssayWithDatasetInfo, 0)
-	query := r.db.WithContext(ctx).
-		Table("go_project_dataset AS pd").
-		Select(assayWithDatasetSelect).
-		Joins("JOIN go_dataset_assay AS da ON da.dataset_id = pd.dataset_id").
-		Joins("JOIN go_dataset AS d ON d.id = pd.dataset_id").
-		Joins("JOIN go_assay AS a ON a.id = da.assay_id").
-		Joins("LEFT JOIN go_sample AS s ON s.id = a.sample_id").
-		Joins("LEFT JOIN go_subject AS sub ON sub.id = s.subject_id").
-		Where("pd.project_id = ?", projectID)
+// ListAssayByProjectID returns the project's assays, resolved through the
+// project's samples. When roles is non-empty the query filters on go_assay.role;
+// an empty roles slice adds no role condition at all, so every assay of the
+// project is returned.
+func (r *dataRepository) ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithSampleInfo, error) {
+	items := make([]*types.AssayWithSampleInfo, 0)
+	query := r.assayByProjectBase(ctx, projectID)
 
 	if len(roles) > 0 {
-		query = query.Where("da.role IN ?", roles)
+		query = query.Where("a.role IN ?", roles)
 	}
 
 	err := query.
-		Group("a.id, d.id, d.dataset_name, da.role, s.id, sub.id").
+		Group("a.id, s.id, sub.id").
 		Order("a.id DESC").
 		Find(&items).Error
 	if err != nil {
@@ -530,42 +564,41 @@ func (r *dataRepository) ListAssayByProjectID(ctx context.Context, projectID str
 	return items, nil
 }
 
-func (r *dataRepository) CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error {
-	return r.db.WithContext(ctx).Create(datasetAssay).Error
+func (r *dataRepository) CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error {
+	return r.db.WithContext(ctx).Create(datasetSample).Error
 }
 
-func (r *dataRepository) GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error) {
-	item := &types.DatasetAssay{}
+func (r *dataRepository) GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error) {
+	item := &types.DatasetSample{}
 	if err := r.db.WithContext(ctx).Where("id = ?", id).Take(item).Error; err != nil {
 		return nil, err
 	}
 	return item, nil
 }
 
-func (r *dataRepository) GetDatasetAssayByAssayID(ctx context.Context, assayID int64) (*types.DatasetAssay, error) {
-	item := &types.DatasetAssay{}
-	if err := r.db.WithContext(ctx).Where("assay_id = ?", assayID).Order("id ASC").Take(item).Error; err != nil {
+func (r *dataRepository) GetDatasetSampleBySampleID(ctx context.Context, sampleID int64) (*types.DatasetSample, error) {
+	item := &types.DatasetSample{}
+	if err := r.db.WithContext(ctx).Where("sample_id = ?", sampleID).Order("id ASC").Take(item).Error; err != nil {
 		return nil, err
 	}
 	return item, nil
 }
 
-func (r *dataRepository) UpdateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error {
-	return r.db.WithContext(ctx).Model(&types.DatasetAssay{}).
-		Where("id = ?", datasetAssay.ID).
+func (r *dataRepository) UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error {
+	return r.db.WithContext(ctx).Model(&types.DatasetSample{}).
+		Where("id = ?", datasetSample.ID).
 		Updates(map[string]interface{}{
-			"dataset_id": datasetAssay.DatasetID,
-			"assay_id":   datasetAssay.AssayID,
-			"role":       datasetAssay.Role,
+			"dataset_id": datasetSample.DatasetID,
+			"sample_id":  datasetSample.SampleID,
 		}).Error
 }
 
-func (r *dataRepository) DeleteDatasetAssay(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.DatasetAssay{}).Error
+func (r *dataRepository) DeleteDatasetSample(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.DatasetSample{}).Error
 }
 
-func (r *dataRepository) ListDatasetAssay(ctx context.Context) ([]*types.DatasetAssay, error) {
-	items := make([]*types.DatasetAssay, 0)
+func (r *dataRepository) ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error) {
+	items := make([]*types.DatasetSample, 0)
 	err := r.db.WithContext(ctx).Order("id DESC").Find(&items).Error
 	if err != nil {
 		return nil, err
@@ -606,6 +639,12 @@ func (r *dataRepository) ExistsSubjectByID(ctx context.Context, id int64) (bool,
 func (r *dataRepository) ExistsSampleBySampleKey(ctx context.Context, sampleKey string) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&types.Sample{}).Where("sample_key = ?", sampleKey).Count(&count).Error
+	return count > 0, err
+}
+
+func (r *dataRepository) ExistsSampleByID(ctx context.Context, id int64) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&types.Sample{}).Where("id = ?", id).Count(&count).Error
 	return count > 0, err
 }
 
@@ -816,6 +855,43 @@ func (r *dataRepository) PageSample(ctx context.Context, pagination *types.Pagin
 	return items, total, nil
 }
 
+// ListSampleByProjectID returns the project's samples joined with their dataset
+// binding and owning subject. Samples are resolved project-wide, so there is no
+// role filter (contrast with ListAssayByProjectID/ListFileByProjectID).
+func (r *dataRepository) ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error) {
+	items := make([]*types.SampleWithDatasetInfo, 0)
+	err := r.db.WithContext(ctx).
+		Table("go_project_dataset AS pd").
+		Select(`
+	s.id,
+	s.sample_key,
+	s.sample_name,
+	s.subject_id,
+	sub.subject_name AS subject_name,
+	sub.species AS species,
+	s.tissue,
+	s.cell_type,
+	s.collection_time,
+	s.metadata,
+	s.description,
+	s.created_at,
+	s.updated_at,
+	d.id AS dataset_id,
+	d.dataset_name`).
+		Joins("JOIN go_dataset_sample AS ds ON ds.dataset_id = pd.dataset_id").
+		Joins("JOIN go_dataset AS d ON d.id = pd.dataset_id").
+		Joins("JOIN go_sample AS s ON s.id = ds.sample_id").
+		Joins("LEFT JOIN go_subject AS sub ON sub.id = s.subject_id").
+		Where("pd.project_id = ?", projectID).
+		Group("s.id, d.id, d.dataset_name, sub.id").
+		Order("s.id DESC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *dataRepository) DeleteDatasetWithRelations(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("dataset_id = ?", id).Delete(&types.ProjectDataset{}).Error; err != nil {
@@ -824,7 +900,7 @@ func (r *dataRepository) DeleteDatasetWithRelations(ctx context.Context, id int6
 		if err := tx.Where("dataset_id = ?", id).Delete(&types.DatasetFile{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("dataset_id = ?", id).Delete(&types.DatasetAssay{}).Error; err != nil {
+		if err := tx.Where("dataset_id = ?", id).Delete(&types.DatasetSample{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("id = ?", id).Delete(&types.Dataset{}).Error; err != nil {
@@ -849,9 +925,9 @@ func (r *dataRepository) DeleteFileWithRelations(ctx context.Context, id int64) 
 	})
 }
 
-// DeleteAssayWithRelations removes an assay, its dataset binding and the files it
-// owns. Files are assay-private, so they go away with their assay (along with any
-// dataset bindings those files had).
+// DeleteAssayWithRelations removes an assay and the files it owns. Files are
+// assay-private, so they go away with their assay (along with any dataset
+// bindings those files had). An assay has no dataset binding of its own.
 func (r *dataRepository) DeleteAssayWithRelations(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		fileIDs := make([]int64, 0)
@@ -865,9 +941,6 @@ func (r *dataRepository) DeleteAssayWithRelations(ctx context.Context, id int64)
 			if err := tx.Where("id IN ?", fileIDs).Delete(&types.File{}).Error; err != nil {
 				return err
 			}
-		}
-		if err := tx.Where("assay_id = ?", id).Delete(&types.DatasetAssay{}).Error; err != nil {
-			return err
 		}
 		if err := tx.Where("id = ?", id).Delete(&types.Assay{}).Error; err != nil {
 			return err

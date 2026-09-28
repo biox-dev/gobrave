@@ -149,6 +149,46 @@ type SampleWithSubjectInfo struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// SampleWithDatasetInfo is the read model of a Sample joined with its owning
+// dataset binding and subject, used by the project-wide sample picker. Samples
+// are resolved without a role filter (unlike Assay/File), so this model carries
+// no Role field.
+type SampleWithDatasetInfo struct {
+	ID int64 `json:"id,string"`
+
+	// SampleKey 是 Sample 的业务编号（go_sample.sample_key）。
+	SampleKey string `json:"sample_key"`
+
+	SampleName string `json:"sample_name"`
+
+	// SubjectID 是所属 Subject 的主键（等于 go_sample.subject_id 外键）。
+	SubjectID int64 `json:"subject_id,string"`
+
+	// SubjectName is the subject's human-readable display name
+	// (go_subject.subject_name).
+	SubjectName string `json:"subject_name"`
+
+	Species string `json:"species"`
+
+	Tissue string `json:"tissue"`
+
+	CellType string `json:"cell_type"`
+
+	CollectionTime *time.Time `json:"collection_time"`
+
+	Metadata string `json:"metadata"`
+
+	Description string `json:"description"`
+
+	CreatedAt time.Time `json:"created_at"`
+
+	UpdatedAt time.Time `json:"updated_at"`
+
+	DatasetID string `json:"dataset_id"`
+
+	DatasetName string `json:"dataset_name"`
+}
+
 // Assay 是一次实验/测序建库记录，隶属于某个 Sample（Subject -> Sample -> Assay -> File）。
 // 其下文件（go_file.assay_id）是 assay 私有的，不跨 assay 复用。
 type Assay struct {
@@ -162,6 +202,11 @@ type Assay struct {
 
 	LibraryID string `json:"library_id" gorm:"type:varchar(255)"`
 
+	// Role 是该 assay 的角色（列 go_assay.role），例如 DEFAULT / TABLE；
+	// input_type=assay 的表单输入用 resolver.accept_formats 与之匹配（与
+	// go_dataset_file.role 对文件的口径一致）。空表示不参与角色过滤。
+	Role string `json:"role" gorm:"type:varchar(64);index"`
+
 	Metadata string `json:"metadata" gorm:"type:text"`
 
 	CreatedAt time.Time `json:"created_at"`
@@ -169,7 +214,12 @@ type Assay struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-type AssayWithDatasetInfo struct {
+// AssayWithSampleInfo is the read model of an Assay joined with its owning
+// Sample and Subject. Assays no longer carry a dataset binding of their own
+// (go_dataset_assay is gone): an assay belongs to a Sample, and it is the Sample
+// that is bound to a project's dataset, so a project's assays are resolved
+// through the project's samples.
+type AssayWithSampleInfo struct {
 	ID int64 `json:"id,string"`
 
 	SampleID int64 `json:"sample_id,string"`
@@ -189,20 +239,16 @@ type AssayWithDatasetInfo struct {
 
 	LibraryID string `json:"library_id"`
 
+	// Role 是该 assay 的角色（go_assay.role），例如 DEFAULT / TABLE；
+	// input_type=assay 的表单输入用 resolver.accept_formats 与之匹配，
+	// resolveFormAnalysisResult 据此把 assay 分组挂到 analysis_result[role]。
+	Role string `json:"role"`
+
 	Metadata string `json:"metadata"`
 
 	CreatedAt time.Time `json:"created_at"`
 
 	UpdatedAt time.Time `json:"updated_at"`
-
-	DatasetID string `json:"dataset_id"`
-
-	DatasetName string `json:"dataset_name"`
-
-	// Role is the assay's role inside its owning dataset binding
-	// (go_dataset_assay.role). Analysis form inputs with input_type=assay match
-	// it against their resolver.accept_formats, mirroring DatasetFile.Role.
-	Role string `json:"role"`
 }
 
 func (t *Assay) BeforeCreate(_ *gorm.DB) error {
@@ -216,28 +262,29 @@ func (Assay) TableName() string {
 	return "go_assay"
 }
 
-type DatasetAssay struct {
+// DatasetSample is the join table binding a Sample into a Dataset
+// (go_dataset_sample). It is the only project binding on the Sample -> Assay
+// branch: assays hang off samples, so a project's assays are resolved through
+// the project's samples. The same sample can be bound to multiple datasets, and
+// samples are resolved project-wide without a role, so this binding carries no
+// Role field.
+type DatasetSample struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
 	DatasetID int64 `json:"dataset_id,string" gorm:"index;not null"`
 
-	AssayID int64 `json:"assay_id,string" gorm:"index;not null"`
-
-	// Role is the assay's role inside its dataset binding, e.g. DEFAULT or TABLE.
-	// Analysis form inputs with input_type=assay match it against their
-	// resolver.accept_formats (same convention as DatasetFile.Role).
-	Role string `json:"role" gorm:"type:varchar(64)"`
+	SampleID int64 `json:"sample_id,string" gorm:"index;not null"`
 
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func (t *DatasetAssay) BeforeCreate(_ *gorm.DB) error {
+func (t *DatasetSample) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()
 	}
 	return nil
 }
 
-func (DatasetAssay) TableName() string {
-	return "go_dataset_assay"
+func (DatasetSample) TableName() string {
+	return "go_dataset_sample"
 }

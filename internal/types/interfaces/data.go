@@ -36,6 +36,11 @@ type DataService interface {
 	// ListFileByAssayID returns the files owned by one assay; an assay without
 	// files yields an empty slice (not an error).
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
+	// ListFileByAssayIDAndRole returns the files owned by one assay, filtered on
+	// the owning assay's role (go_assay.role). An empty roles slice adds no role
+	// condition, so every file of the assay is returned (mirrors
+	// ListAssayByProjectID).
+	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error)
 
 	CreateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error
 	AddFileToDataset(ctx context.Context, req *types.AddFileToDatasetRequest) (*types.AddFileToDatasetResponse, error)
@@ -49,20 +54,25 @@ type DataService interface {
 	UpdateAssay(ctx context.Context, assay *types.Assay) error
 	DeleteAssay(ctx context.Context, id int64) error
 	ListAssay(ctx context.Context) ([]*types.Assay, error)
+	// ListAssayBySampleID returns the assays owned by one sample, oldest first;
+	// a sample without assays yields an empty slice (not an error).
+	ListAssayBySampleID(ctx context.Context, sampleID int64) ([]*types.Assay, error)
 	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error)
-	// ListAssayByProjectID returns the project's assays joined with their dataset
-	// binding. When roles is non-empty it filters by go_dataset_assay.role and
-	// fills AssayWithDatasetInfo.Role from that binding.
-	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error)
+	// ListAssayByProjectID returns the project's assays, resolved through the
+	// project's samples (go_project_dataset -> go_dataset_sample -> go_sample ->
+	// go_assay). When roles is non-empty the assays are filtered on go_assay.role;
+	// an empty roles slice adds no role condition and returns every assay.
+	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithSampleInfo, error)
 
-	CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
-	GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error)
-	// GetDatasetAssayByAssayID returns the single dataset binding of one assay,
-	// or gorm.ErrRecordNotFound when the assay is not bound to any dataset yet.
-	GetDatasetAssayByAssayID(ctx context.Context, assayID int64) (*types.DatasetAssay, error)
-	UpdateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
-	DeleteDatasetAssay(ctx context.Context, id int64) error
-	ListDatasetAssay(ctx context.Context) ([]*types.DatasetAssay, error)
+	CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
+	GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error)
+	// GetDatasetSampleBySampleID returns the single dataset binding of one
+	// sample, or gorm.ErrRecordNotFound when the sample is not bound to any
+	// dataset yet.
+	GetDatasetSampleBySampleID(ctx context.Context, sampleID int64) (*types.DatasetSample, error)
+	UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
+	DeleteDatasetSample(ctx context.Context, id int64) error
+	ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error)
 
 	CreateSubject(ctx context.Context, subject *types.Subject) error
 	GetSubjectByID(ctx context.Context, id int64) (*types.Subject, error)
@@ -81,6 +91,9 @@ type DataService interface {
 	DeleteSample(ctx context.Context, id int64) error
 	ListSample(ctx context.Context) ([]*types.Sample, error)
 	PageSample(ctx context.Context, pagination *types.Pagination, query *types.QuerySample) (*types.PageResult, error)
+	// ListSampleByProjectID returns the project's samples joined with their
+	// dataset binding. Samples are resolved project-wide without a role filter.
+	ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error)
 }
 
 type DataRepository interface {
@@ -110,6 +123,7 @@ type DataRepository interface {
 	PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID string, roles []string) ([]*types.FileWithDatasetInfo, int64, error)
 	ListFileByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.FileWithDatasetInfo, error)
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
+	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error)
 
 	CreateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error
 	ExistsDatasetFile(ctx context.Context, datasetID, fileID int64) (bool, error)
@@ -124,15 +138,16 @@ type DataRepository interface {
 	UpdateAssay(ctx context.Context, assay *types.Assay) error
 	DeleteAssay(ctx context.Context, id int64) error
 	ListAssay(ctx context.Context) ([]*types.Assay, error)
-	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithDatasetInfo, int64, error)
-	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error)
+	ListAssayBySampleID(ctx context.Context, sampleID int64) ([]*types.Assay, error)
+	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithSampleInfo, int64, error)
+	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithSampleInfo, error)
 
-	CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
-	GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error)
-	GetDatasetAssayByAssayID(ctx context.Context, assayID int64) (*types.DatasetAssay, error)
-	UpdateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
-	DeleteDatasetAssay(ctx context.Context, id int64) error
-	ListDatasetAssay(ctx context.Context) ([]*types.DatasetAssay, error)
+	CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
+	GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error)
+	GetDatasetSampleBySampleID(ctx context.Context, sampleID int64) (*types.DatasetSample, error)
+	UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
+	DeleteDatasetSample(ctx context.Context, id int64) error
+	ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error)
 
 	CreateSubject(ctx context.Context, subject *types.Subject) error
 	GetSubjectByID(ctx context.Context, id int64) (*types.Subject, error)
@@ -147,6 +162,7 @@ type DataRepository interface {
 	DeleteSample(ctx context.Context, id int64) error
 	ListSample(ctx context.Context) ([]*types.Sample, error)
 	PageSample(ctx context.Context, pagination *types.Pagination, query *types.QuerySample) ([]*types.SampleWithSubjectInfo, int64, error)
+	ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error)
 
 	// CountSamplesBySubjectID counts the samples owned by one subject; used to
 	// guard subject deletion.
@@ -161,6 +177,8 @@ type DataRepository interface {
 	// ExistsSampleBySampleKey reports whether the business number
 	// (go_sample.sample_key) is already taken.
 	ExistsSampleBySampleKey(ctx context.Context, sampleKey string) (bool, error)
+
+	ExistsSampleByID(ctx context.Context, id int64) (bool, error)
 
 	ExistsProjectByID(ctx context.Context, id string) (bool, error)
 	ExistsDatasetByID(ctx context.Context, id int64) (bool, error)

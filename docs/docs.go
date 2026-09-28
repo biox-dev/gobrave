@@ -5077,41 +5077,32 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "根据 project_id 查询关联的所有 Assay",
+                "description": "查询当前用户激活项目下所有样本的 Assay",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "数据管理"
                 ],
-                "summary": "按项目查询 Assay 列表",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "项目业务ID",
-                        "name": "project_id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
+                "summary": "按当前激活项目查询 Assay 列表",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/types.AssayWithDatasetInfo"
+                                "$ref": "#/definitions/types.AssayWithSampleInfo"
                             }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -5132,7 +5123,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "根据 project_id 分页查询项目下关联 Assay，并返回 dataset_name、dataset_id 等信息",
+                "description": "根据 project_id 分页查询其样本下的 Assay，并返回所属 sample_name、subject_name 等信息",
                 "consumes": [
                     "application/json"
                 ],
@@ -5209,356 +5200,6 @@ const docTemplate = `{
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/types.Assay"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/dataset-assay/create": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "创建 DatasetAssay 记录",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "创建数据集-Assay 映射",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.DatasetAssay"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.DatasetAssay"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/dataset-assay/delete": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按 ID 删除 DatasetAssay 记录",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "删除数据集-Assay 映射",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.idBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/dataset-assay/get": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按 ID 查询 DatasetAssay 详情",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "获取数据集-Assay 映射",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "主键 ID",
-                        "name": "id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.DatasetAssay"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/dataset-assay/get-by-assay": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "返回 Assay 绑定的 DatasetAssay；尚未绑定任何数据集时返回 null",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "按 Assay 查询数据集映射",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Assay 主键 ID",
-                        "name": "assay_id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.DatasetAssay"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/dataset-assay/list": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    },
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "查询 DatasetAssay 列表\n查询 DatasetAssay 列表",
-                "produces": [
-                    "application/json",
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理",
-                    "数据管理"
-                ],
-                "summary": "数据集-Assay 映射列表",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/types.DatasetAssay"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/dataset-assay/update": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按 ID 更新 DatasetAssay 记录",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "更新数据集-Assay 映射",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.DatasetAssay"
                         }
                     }
                 ],
@@ -5915,6 +5556,351 @@ const docTemplate = `{
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/types.UpdateDatasetFileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/data/dataset-sample/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "创建 DatasetSample 记录",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "创建数据集-Sample 映射",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.DatasetSample"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.DatasetSample"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/data/dataset-sample/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按 ID 删除 DatasetSample 记录",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "删除数据集-Sample 映射",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.idBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/data/dataset-sample/get": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按 ID 查询 DatasetSample 详情",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "获取数据集-Sample 映射",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "主键 ID",
+                        "name": "id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.DatasetSample"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/data/dataset-sample/get-by-sample": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回 Sample 绑定的 DatasetSample；尚未绑定任何数据集时返回 null",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "按 Sample 查询数据集映射",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Sample 主键 ID",
+                        "name": "sample_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.DatasetSample"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/data/dataset-sample/list": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "查询 DatasetSample 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "数据集-Sample 映射列表",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/types.DatasetSample"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/data/dataset-sample/update": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按 ID 更新 DatasetSample 记录",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "更新数据集-Sample 映射",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.DatasetSample"
                         }
                     }
                 ],
@@ -7420,6 +7406,52 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/data/sample/list-by-project": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "查询当前用户激活项目下关联的所有 Sample，附带所属 Subject 与 Dataset 信息",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "按当前激活项目查询 Sample 列表",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/types.SampleWithDatasetInfo"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -14474,6 +14506,10 @@ const docTemplate = `{
                 "platform": {
                     "type": "string"
                 },
+                "role": {
+                    "description": "Role 是该 assay 的角色（列 go_assay.role），例如 DEFAULT / TABLE；\ninput_type=assay 的表单输入用 resolver.accept_formats 与之匹配（与\ngo_dataset_file.role 对文件的口径一致）。空表示不参与角色过滤。",
+                    "type": "string"
+                },
                 "sample_id": {
                     "type": "string",
                     "example": "0"
@@ -14483,19 +14519,13 @@ const docTemplate = `{
                 }
             }
         },
-        "types.AssayWithDatasetInfo": {
+        "types.AssayWithSampleInfo": {
             "type": "object",
             "properties": {
                 "assay_type": {
                     "type": "string"
                 },
                 "created_at": {
-                    "type": "string"
-                },
-                "dataset_id": {
-                    "type": "string"
-                },
-                "dataset_name": {
                     "type": "string"
                 },
                 "id": {
@@ -14512,7 +14542,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "role": {
-                    "description": "Role is the assay's role inside its owning dataset binding\n(go_dataset_assay.role). Analysis form inputs with input_type=assay match\nit against their resolver.accept_formats, mirroring DatasetFile.Role.",
+                    "description": "Role 是该 assay 的角色（go_assay.role），例如 DEFAULT / TABLE；\ninput_type=assay 的表单输入用 resolver.accept_formats 与之匹配，\nresolveFormAnalysisResult 据此把 assay 分组挂到 analysis_result[role]。",
                     "type": "string"
                 },
                 "sample_id": {
@@ -14924,30 +14954,6 @@ const docTemplate = `{
                 }
             }
         },
-        "types.DatasetAssay": {
-            "type": "object",
-            "properties": {
-                "assay_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "dataset_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "role": {
-                    "description": "Role is the assay's role inside its dataset binding, e.g. DEFAULT or TABLE.\nAnalysis form inputs with input_type=assay match it against their\nresolver.accept_formats (same convention as DatasetFile.Role).",
-                    "type": "string"
-                }
-            }
-        },
         "types.DatasetFile": {
             "type": "object",
             "properties": {
@@ -14968,6 +14974,26 @@ const docTemplate = `{
                 },
                 "role": {
                     "type": "string"
+                }
+            }
+        },
+        "types.DatasetSample": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "dataset_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "sample_id": {
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -15270,6 +15296,61 @@ const docTemplate = `{
                 "subject_id": {
                     "type": "string",
                     "example": "0"
+                },
+                "tissue": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.SampleWithDatasetInfo": {
+            "type": "object",
+            "properties": {
+                "cell_type": {
+                    "type": "string"
+                },
+                "collection_time": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "dataset_id": {
+                    "type": "string"
+                },
+                "dataset_name": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "metadata": {
+                    "type": "string"
+                },
+                "sample_key": {
+                    "description": "SampleKey 是 Sample 的业务编号（go_sample.sample_key）。",
+                    "type": "string"
+                },
+                "sample_name": {
+                    "type": "string"
+                },
+                "species": {
+                    "type": "string"
+                },
+                "subject_id": {
+                    "description": "SubjectID 是所属 Subject 的主键（等于 go_sample.subject_id 外键）。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "subject_name": {
+                    "description": "SubjectName is the subject's human-readable display name\n(go_subject.subject_name).",
+                    "type": "string"
                 },
                 "tissue": {
                     "type": "string"

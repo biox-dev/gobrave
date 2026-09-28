@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	stderrs "errors"
 	"fmt"
 	"os"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -102,7 +102,6 @@ func buildAnalysisDictFromDB(
 	queryNameDict map[string]map[string]interface{},
 ) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
-	assaysByName := loadAssaysByName(ctx, dataService, requestParam)
 
 	for _, key := range queryNames {
 		formItem := queryNameDict[key]
@@ -113,9 +112,23 @@ func buildAnalysisDictFromDB(
 				continue
 			}
 
-			resolved, err := resolveAssayInputValue(ctx, dataService, rawValue)
+			resolved, err := resolveAssayInputValue(ctx, dataService, formItem, rawValue)
 			if err != nil {
 				return nil, fmt.Errorf("resolve assay db fields for %s failed: %w", key, err)
+			}
+			result[key] = resolved
+			continue
+		}
+
+		if inputType == "sample" {
+			rawValue, exists := requestParam[key]
+			if !exists {
+				continue
+			}
+
+			resolved, err := resolveSampleInputValue(ctx, dataService, formItem, rawValue)
+			if err != nil {
+				return nil, fmt.Errorf("resolve sample db fields for %s failed: %w", key, err)
 			}
 			result[key] = resolved
 			continue
@@ -175,14 +188,14 @@ func buildAnalysisDictFromDB(
 				case []interface{}:
 					groupItems := make([]interface{}, 0, len(v))
 					for _, col := range v {
-						built := buildCollectedAnalysisResult(col, analysisResult, assaysByName)
+						built := buildCollectedAnalysisResult(col, analysisResult)
 						built["selcted_group_name"] = selectedGroupMap[groupName]
 						built["re_groups_name"] = reGroupMap[groupName]
 						groupItems = append(groupItems, built)
 					}
 					analysisResult[groupName] = groupItems
 				default:
-					analysisResult[groupName] = buildCollectedAnalysisResult(v, analysisResult, assaysByName)
+					analysisResult[groupName] = buildCollectedAnalysisResult(v, analysisResult)
 				}
 			}
 
@@ -364,78 +377,10 @@ func assayDisplayName(item map[string]interface{}) string {
 	return strings.TrimSpace(anyToString(item["id"]))
 }
 
-// assayColumnName 返回用于列匹配的 Assay 名称，与 buildCompatAssayItem 的 assay_name 保持一致。
-func assayColumnName(assay *types.AssayWithDatasetInfo) string {
-	if name := strings.TrimSpace(assay.LibraryID); name != "" {
-		return name
-	}
-	if name := strings.TrimSpace(assay.AssayType); name != "" {
-		return name
-	}
-	return strconv.FormatInt(assay.ID, 10)
-}
-
-func loadAssaysByName(ctx context.Context, dataService interfaces.DataService, requestParam map[string]interface{}) map[string]map[string]interface{} {
-	projectID := strings.TrimSpace(anyToString(requestParam["project"]))
-	if projectID == "" {
-		return map[string]map[string]interface{}{}
-	}
-
-	assays, err := dataService.ListAssayByProjectID(ctx, projectID, nil)
-	if err != nil {
-		return map[string]map[string]interface{}{}
-	}
-
-	result := make(map[string]map[string]interface{}, len(assays))
-	for _, assay := range assays {
-		metadata := parseMetadataJSON(assay.Metadata)
-		name := assayColumnName(assay)
-		item := map[string]interface{}{
-			"assay_id":   strconv.FormatInt(assay.ID, 10),
-			"assay_name": name,
-			"assay_type": assay.AssayType,
-			"platform":   assay.Platform,
-			"library_id": assay.LibraryID,
-			"sample_id":  strconv.FormatInt(assay.SampleID, 10),
-		}
-		for k, v := range metadata {
-			item[k] = v
-		}
-		result[name] = item
-	}
-
-	return result
-}
-
-func parseMetadataJSON(raw string) map[string]interface{} {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return map[string]interface{}{}
-	}
-	meta := make(map[string]interface{})
-	if err := json.Unmarshal([]byte(raw), &meta); err != nil {
-		return map[string]interface{}{}
-	}
-	result := make(map[string]interface{}, len(meta))
-	for k, v := range meta {
-		if v == nil {
-			continue
-		}
-		result[k] = fmt.Sprint(v)
-	}
-	return result
-}
-
-func buildCollectedAnalysisResult(column interface{}, analysisResult map[string]interface{}, assaysByName map[string]map[string]interface{}) map[string]interface{} {
+// buildCollectedAnalysisResult 把 `CollectedGroupSelectAssayButton` 的一列名包成结果行。
+// assay 名称不再回查数据库（loadAssaysByName 已删除），所以这里只输出列名本身。
+func buildCollectedAnalysisResult(column interface{}, analysisResult map[string]interface{}) map[string]interface{} {
 	columnName := anyToString(column)
-	if assay, ok := assaysByName[columnName]; ok {
-		result := copyAnyMap(assay)
-		result["id"] = analysisResult["id"]
-		result["analysis_result_id"] = analysisResult["analysis_result_id"]
-		result["columns_name"] = columnName
-		return result
-	}
-
 	return map[string]interface{}{
 		"id":                 analysisResult["id"],
 		"assay_name":         columnName,
@@ -931,18 +876,28 @@ func loadCompatFileObjectByID(
 	return copyAnyMap(item), nil
 }
 
+// resolveAssayInputValue turns the selected assay ids of an `input_type=assay`
+// item into one row per assay: `{ID, subject_key, sample_key}` plus one entry per
+// file_key of that assay's files, valued by the file's path (falling back to its
+// business file_id). Files are assay-private (go_file.assay_id), so each assay is
+// resolved on its own; an assay without files contributes an empty map.
+//
+// The item's `resolver.accept_formats` (read via utils.AcceptFormats) is matched
+// against the assay's own role (`go_assay.role`, the same field
+// resolveFormAnalysisResult used to build the item's options), which
+// ListFileByAssayIDAndRole applies in SQL. An empty accept_formats adds no role
+// condition at all — every selected assay contributes its files — matching
+// ListAssayByProjectID's "empty roles means no condition" convention.
 func resolveAssayInputValue(
 	ctx context.Context,
 	dataService interfaces.DataService,
-	// formItem map[string]interface{},
+	formItem map[string]interface{},
 	rawValue interface{},
 ) (interface{}, error) {
 	assayIDs := extractAssayIDsFromValue(rawValue)
 	if len(assayIDs) == 0 {
 		return []interface{}{}, nil
 	}
-
-	// acceptFormats := getAssayAcceptFormats(formItem)
 
 	selected := make(map[int64]struct{}, len(assayIDs))
 	for _, id := range assayIDs {
@@ -954,14 +909,17 @@ func resolveAssayInputValue(
 		return []interface{}{}, nil
 	}
 
+	// accept_formats 决定保留哪些 assay role；空表示不按 role 过滤。
+	acceptFormats := utils.AcceptFormats(formItem)
+
 	assayRoleToPath := make(map[int64]map[string]string)
 
 	// Files are assay-private (go_file.assay_id), so every selected assay is
-	// resolved on its own; an assay without files contributes an empty map.
-	// accept_formats is NOT used to filter files: every file of the assay is
-	// added, keyed by its own file_key.
+	// resolved on its own; an assay without files contributes an empty map. The
+	// assay's role has to be in accept_formats, which the repository applies
+	// together with the assay id (go_assay.role IN roles).
 	for assayID := range selected {
-		files, err := dataService.ListFileByAssayID(ctx, assayID)
+		files, err := dataService.ListFileByAssayIDAndRole(ctx, assayID, acceptFormats)
 		if err != nil {
 			return nil, err
 		}
@@ -1011,13 +969,7 @@ func resolveAssayInputValue(
 			"sample_key":  assayKeys["sample_key"],
 		}
 
-		// Keep the expected accept_formats keys present (empty when the assay
-		// has no matching file), then add every file of the assay under its
-		// file_key.
-		// for _, format := range acceptFormats {
-		// 	row[format] = ""
-		// }
-
+		// Every kept file of the assay is added under its own file_key.
 		roleMap := assayRoleToPath[assayIDNum]
 		roleKeys := make([]string, 0, len(roleMap))
 		for role := range roleMap {
@@ -1086,6 +1038,203 @@ func resolveAssayKeys(
 	return keys, nil
 }
 
+// resolveSampleInputValue mirrors resolveAssayInputValue for `input_type=sample`:
+// every selected sample becomes one row of `{ID, subject_key, sample_key}` plus
+// one nested map per assay role of that sample, e.g.
+// `{"WGS": {"FASTQ_R1": "/path/a_1.fq.gz", "FASTQ_R2": "/path/a_2.fq.gz"}, ...}`.
+// Files are assay-private (go_file.assay_id), so the sample is walked through
+// every assay it owns (ListAssayBySampleID) and each assay's files are keyed by
+// their file_key inside that assay's role bucket.
+//
+// The item's `resolver.accept_formats` (read via utils.AcceptFormats) selects
+// which assay roles are kept: only assays whose `go_assay.role` is listed there
+// are emitted, i.e. the same roles resolveFormAnalysisResult used to build the
+// item's options. An empty accept_formats adds no role filter at all — every role
+// is returned — matching ListAssayByProjectID's "empty roles means no condition"
+// convention.
+//
+// An assay with an empty role has no bucket to nest into and is skipped, exactly
+// like resolveAssayInputValue skips a file with an empty file_key; inside one role
+// bucket the first file (oldest) wins when the same file_key shows up more than
+// once.
+func resolveSampleInputValue(
+	ctx context.Context,
+	dataService interfaces.DataService,
+	formItem map[string]interface{},
+	rawValue interface{},
+) (interface{}, error) {
+	sampleIDs := extractSampleIDsFromValue(rawValue)
+	if len(sampleIDs) == 0 {
+		return []interface{}{}, nil
+	}
+
+	selected := make(map[int64]struct{}, len(sampleIDs))
+	for _, id := range sampleIDs {
+		if idNum, err := strconv.ParseInt(strings.TrimSpace(id), 10, 64); err == nil {
+			selected[idNum] = struct{}{}
+		}
+	}
+	if len(selected) == 0 {
+		return []interface{}{}, nil
+	}
+
+	// accept_formats 决定保留哪些 assay role；空表示不按 role 过滤。
+	acceptFormats := utils.AcceptFormats(formItem)
+	acceptSet := make(map[string]struct{}, len(acceptFormats))
+	for _, format := range acceptFormats {
+		acceptSet[format] = struct{}{}
+	}
+
+	// sampleID -> assay role -> file_key -> path
+	sampleRoleToFiles := make(map[int64]map[string]map[string]string, len(selected))
+	for sampleID := range selected {
+		assays, err := dataService.ListAssayBySampleID(ctx, sampleID)
+		if err != nil {
+			return nil, err
+		}
+
+		roleToFiles := make(map[string]map[string]string)
+		for _, assay := range assays {
+			if assay == nil {
+				continue
+			}
+
+			role := strings.TrimSpace(assay.Role)
+			if role == "" {
+				continue
+			}
+			if len(acceptSet) > 0 {
+				if _, ok := acceptSet[role]; !ok {
+					continue
+				}
+			}
+
+			files, err := dataService.ListFileByAssayID(ctx, assay.ID)
+			if err != nil {
+				return nil, err
+			}
+
+			fileKeyToPath, ok := roleToFiles[role]
+			if !ok {
+				fileKeyToPath = make(map[string]string, len(files))
+				roleToFiles[role] = fileKeyToPath
+			}
+
+			for _, file := range files {
+				if file == nil {
+					continue
+				}
+
+				fileKey := strings.TrimSpace(file.FileKey)
+				if fileKey == "" {
+					continue
+				}
+				if existing := strings.TrimSpace(fileKeyToPath[fileKey]); existing != "" {
+					continue
+				}
+
+				path := strings.TrimSpace(file.Path)
+				if path == "" {
+					path = strings.TrimSpace(file.FileID)
+				}
+				fileKeyToPath[fileKey] = path
+			}
+		}
+
+		sampleRoleToFiles[sampleID] = roleToFiles
+	}
+
+	result := make([]interface{}, 0, len(sampleIDs))
+	// sampleKeyCache 以 sampleID 为键缓存 Sample -> Subject 的业务编号，避免同一
+	// sample 在最终输出循环里重复查询。
+	sampleKeyCache := make(map[int64]map[string]string)
+	for _, sampleID := range sampleIDs {
+		sampleIDNum, err := strconv.ParseInt(strings.TrimSpace(sampleID), 10, 64)
+		if err != nil {
+			continue
+		}
+
+		sampleKeys, err := resolveSampleKeys(ctx, dataService, sampleIDNum, sampleKeyCache)
+		if err != nil {
+			return nil, err
+		}
+
+		row := map[string]interface{}{
+			"ID":          sampleID,
+			"subject_key": sampleKeys["subject_key"],
+			"sample_key":  sampleKeys["sample_key"],
+		}
+
+		roleToFiles := sampleRoleToFiles[sampleIDNum]
+		roles := make([]string, 0, len(roleToFiles))
+		for role := range roleToFiles {
+			roles = append(roles, role)
+		}
+		sort.Strings(roles)
+		for _, role := range roles {
+			row[role] = roleToFiles[role]
+		}
+
+		result = append(result, row)
+	}
+
+	return result, nil
+}
+
+// resolveSampleKeys 沿 Sample -> Subject 解析业务编号，给 resolveSampleInputValue 的
+// sample 行补上 sample_key / subject_key（即 go_sample.sample_key /
+// go_subject.subject_key）。任一层记录缺失时对应字段留空，不影响其余字段；只有非
+// NotFound 的查询错误才向上返回。cache 以 sampleID 为键，避免同一 sample 被重复查询。
+func resolveSampleKeys(
+	ctx context.Context,
+	dataService interfaces.DataService,
+	sampleID int64,
+	cache map[int64]map[string]string,
+) (map[string]string, error) {
+	if keys, ok := cache[sampleID]; ok {
+		return keys, nil
+	}
+
+	keys := map[string]string{"subject_key": "", "sample_key": ""}
+
+	sample, err := dataService.GetSampleByID(ctx, sampleID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			cache[sampleID] = keys
+			return keys, nil
+		}
+		return nil, err
+	}
+	if sample == nil {
+		cache[sampleID] = keys
+		return keys, nil
+	}
+	keys["sample_key"] = strings.TrimSpace(sample.SampleKey)
+
+	subject, err := dataService.GetSubjectByID(ctx, sample.SubjectID)
+	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if subject != nil {
+		keys["subject_key"] = strings.TrimSpace(subject.SubjectKey)
+	}
+
+	cache[sampleID] = keys
+	return keys, nil
+}
+
+func extractSampleIDsFromValue(value interface{}) []string {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		if sample, ok := v["sample"]; ok {
+			return extractIDList(sample)
+		}
+		return nil
+	default:
+		return extractIDList(v)
+	}
+}
+
 func extractAssayIDsFromValue(value interface{}) []string {
 	switch v := value.(type) {
 	case map[string]interface{}:
@@ -1096,26 +1245,4 @@ func extractAssayIDsFromValue(value interface{}) []string {
 	default:
 		return extractIDList(v)
 	}
-}
-
-func getAssayAcceptFormats(formItem map[string]interface{}) []string {
-	resolver, _ := formItem["resolver"].(map[string]interface{})
-	if resolver == nil {
-		return nil
-	}
-
-	raw := resolver["accept_formats"]
-	formats := make([]string, 0)
-	for _, one := range toInterfaceSlice(raw) {
-		format := strings.TrimSpace(anyToString(one))
-		if format == "" {
-			continue
-		}
-		formats = append(formats, format)
-	}
-
-	if len(formats) == 0 {
-		return nil
-	}
-	return formats
 }

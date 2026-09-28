@@ -315,6 +315,10 @@ func (s *dataService) ListFileByAssayID(ctx context.Context, assayID int64) ([]*
 	return s.dataRepo.ListFileByAssayID(ctx, assayID)
 }
 
+func (s *dataService) ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error) {
+	return s.dataRepo.ListFileByAssayIDAndRole(ctx, assayID, roles)
+}
+
 func (s *dataService) ListFileByProjectIDGroupByRole(ctx context.Context, projectID string) ([]*types.FileByProjectRoleGroup, error) {
 	items, err := s.dataRepo.ListFileByProjectID(ctx, projectID, nil)
 	if err != nil {
@@ -562,6 +566,10 @@ func (s *dataService) ListAssay(ctx context.Context) ([]*types.Assay, error) {
 	return s.dataRepo.ListAssay(ctx)
 }
 
+func (s *dataService) ListAssayBySampleID(ctx context.Context, sampleID int64) ([]*types.Assay, error) {
+	return s.dataRepo.ListAssayBySampleID(ctx, sampleID)
+}
+
 func (s *dataService) PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
@@ -575,12 +583,8 @@ func (s *dataService) PageAssayByProjectID(ctx context.Context, pagination *type
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-func (s *dataService) ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error) {
+func (s *dataService) ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithSampleInfo, error) {
 	return s.dataRepo.ListAssayByProjectID(ctx, projectID, roles)
-}
-
-func (s *dataService) GetDatasetAssayByAssayID(ctx context.Context, assayID int64) (*types.DatasetAssay, error) {
-	return s.dataRepo.GetDatasetAssayByAssayID(ctx, assayID)
 }
 
 func (s *dataService) CreateSubject(ctx context.Context, subject *types.Subject) error {
@@ -756,8 +760,12 @@ func (s *dataService) PageSample(ctx context.Context, pagination *types.Paginati
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-func (s *dataService) CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error {
-	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetAssay.DatasetID)
+func (s *dataService) ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error) {
+	return s.dataRepo.ListSampleByProjectID(ctx, projectID)
+}
+
+func (s *dataService) CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error {
+	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetSample.DatasetID)
 	if err != nil {
 		return err
 	}
@@ -765,28 +773,32 @@ func (s *dataService) CreateDatasetAssay(ctx context.Context, datasetAssay *type
 		return gorm.ErrRecordNotFound
 	}
 
-	assayExists, err := s.dataRepo.ExistsAssayByID(ctx, datasetAssay.AssayID)
+	sampleExists, err := s.dataRepo.ExistsSampleByID(ctx, datasetSample.SampleID)
 	if err != nil {
 		return err
 	}
-	if !assayExists {
+	if !sampleExists {
 		return gorm.ErrRecordNotFound
 	}
 
-	return s.dataRepo.CreateDatasetAssay(ctx, datasetAssay)
+	return s.dataRepo.CreateDatasetSample(ctx, datasetSample)
 }
 
-func (s *dataService) GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error) {
-	return s.dataRepo.GetDatasetAssayByID(ctx, id)
+func (s *dataService) GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error) {
+	return s.dataRepo.GetDatasetSampleByID(ctx, id)
 }
 
-func (s *dataService) UpdateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error {
-	_, err := s.dataRepo.GetDatasetAssayByID(ctx, datasetAssay.ID)
+func (s *dataService) GetDatasetSampleBySampleID(ctx context.Context, sampleID int64) (*types.DatasetSample, error) {
+	return s.dataRepo.GetDatasetSampleBySampleID(ctx, sampleID)
+}
+
+func (s *dataService) UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error {
+	_, err := s.dataRepo.GetDatasetSampleByID(ctx, datasetSample.ID)
 	if err != nil {
 		return err
 	}
 
-	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetAssay.DatasetID)
+	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetSample.DatasetID)
 	if err != nil {
 		return err
 	}
@@ -794,27 +806,27 @@ func (s *dataService) UpdateDatasetAssay(ctx context.Context, datasetAssay *type
 		return gorm.ErrRecordNotFound
 	}
 
-	assayExists, err := s.dataRepo.ExistsAssayByID(ctx, datasetAssay.AssayID)
+	sampleExists, err := s.dataRepo.ExistsSampleByID(ctx, datasetSample.SampleID)
 	if err != nil {
 		return err
 	}
-	if !assayExists {
+	if !sampleExists {
 		return gorm.ErrRecordNotFound
 	}
 
-	return s.dataRepo.UpdateDatasetAssay(ctx, datasetAssay)
+	return s.dataRepo.UpdateDatasetSample(ctx, datasetSample)
 }
 
-func (s *dataService) DeleteDatasetAssay(ctx context.Context, id int64) error {
-	_, err := s.dataRepo.GetDatasetAssayByID(ctx, id)
+func (s *dataService) DeleteDatasetSample(ctx context.Context, id int64) error {
+	_, err := s.dataRepo.GetDatasetSampleByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	return s.dataRepo.DeleteDatasetAssay(ctx, id)
+	return s.dataRepo.DeleteDatasetSample(ctx, id)
 }
 
-func (s *dataService) ListDatasetAssay(ctx context.Context) ([]*types.DatasetAssay, error) {
-	return s.dataRepo.ListDatasetAssay(ctx)
+func (s *dataService) ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error) {
+	return s.dataRepo.ListDatasetSample(ctx)
 }
 
 // copyFile copies src to dst, preserving permissions but not timestamps.
