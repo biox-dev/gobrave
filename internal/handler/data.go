@@ -1705,7 +1705,7 @@ func (h *DataHandler) UpdateSubject(c *gin.Context) {
 
 // DeleteSubject godoc
 // @Summary      删除 Subject
-// @Description  按 ID 删除 Subject；当该 Subject 下仍存在 Sample 时返回 409，需先删除其 Sample
+// @Description  按 ID 删除 Subject，并级联删除其下的 Sample、Assay、File 及 File 的数据集关联，同时清理 Subject 的数据集绑定
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -1714,7 +1714,6 @@ func (h *DataHandler) UpdateSubject(c *gin.Context) {
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
-// @Failure      409      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
 // @Router       /data/subject/delete [post]
@@ -1943,7 +1942,7 @@ func (h *DataHandler) UpdateSample(c *gin.Context) {
 
 // DeleteSample godoc
 // @Summary      删除 Sample
-// @Description  按 ID 删除 Sample；当该 Sample 下仍存在 Assay 时返回 409，需先删除其 Assay
+// @Description  按 ID 删除 Sample，并级联删除其下的 Assay、File 及 File 的数据集关联
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -1952,7 +1951,6 @@ func (h *DataHandler) UpdateSample(c *gin.Context) {
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
-// @Failure      409      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
 // @Router       /data/sample/delete [post]

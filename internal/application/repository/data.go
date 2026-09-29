@@ -705,20 +705,6 @@ func (r *dataRepository) ListDatasetIDsBySubjectID(ctx context.Context, subjectI
 	return ids, nil
 }
 
-// CountSamplesBySubjectID counts samples owned by a subject (go_sample.subject_id).
-func (r *dataRepository) CountSamplesBySubjectID(ctx context.Context, subjectID int64) (int64, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&types.Sample{}).Where("subject_id = ?", subjectID).Count(&count).Error
-	return count, err
-}
-
-// CountAssaysBySampleID counts assays owned by a sample (go_assay.sample_id).
-func (r *dataRepository) CountAssaysBySampleID(ctx context.Context, sampleID int64) (int64, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&types.Assay{}).Where("sample_id = ?", sampleID).Count(&count).Error
-	return count, err
-}
-
 func (r *dataRepository) CreateSubject(ctx context.Context, subject *types.Subject) error {
 	return r.db.WithContext(ctx).Create(subject).Error
 }
@@ -1071,26 +1057,78 @@ func (r *dataRepository) DeleteFileWithRelations(ctx context.Context, id int64) 
 	})
 }
 
+// deleteAssayTreeTx removes one assay together with the files it owns and those
+// files' dataset bindings (go_dataset_file). Files are assay-private, so they go
+// away with their assay; an assay has no dataset binding of its own. It runs on
+// an existing transaction so callers can cascade across a whole subtree.
+func deleteAssayTreeTx(tx *gorm.DB, id int64) error {
+	fileIDs := make([]int64, 0)
+	if err := tx.Model(&types.File{}).Where("assay_id = ?", id).Pluck("id", &fileIDs).Error; err != nil {
+		return err
+	}
+	if len(fileIDs) > 0 {
+		if err := tx.Where("file_id IN ?", fileIDs).Delete(&types.DatasetFile{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id IN ?", fileIDs).Delete(&types.File{}).Error; err != nil {
+			return err
+		}
+	}
+	return tx.Where("id = ?", id).Delete(&types.Assay{}).Error
+}
+
+// deleteSampleTreeTx removes one sample and every assay it owns (including those
+// assays' files and dataset bindings). Deletion walks the hierarchy from the
+// leaves up: File -> Assay -> Sample.
+func deleteSampleTreeTx(tx *gorm.DB, id int64) error {
+	assayIDs := make([]int64, 0)
+	if err := tx.Model(&types.Assay{}).Where("sample_id = ?", id).Pluck("id", &assayIDs).Error; err != nil {
+		return err
+	}
+	for _, assayID := range assayIDs {
+		if err := deleteAssayTreeTx(tx, assayID); err != nil {
+			return err
+		}
+	}
+	return tx.Where("id = ?", id).Delete(&types.Sample{}).Error
+}
+
 // DeleteAssayWithRelations removes an assay and the files it owns. Files are
 // assay-private, so they go away with their assay (along with any dataset
 // bindings those files had). An assay has no dataset binding of its own.
 func (r *dataRepository) DeleteAssayWithRelations(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		fileIDs := make([]int64, 0)
-		if err := tx.Model(&types.File{}).Where("assay_id = ?", id).Pluck("id", &fileIDs).Error; err != nil {
+		return deleteAssayTreeTx(tx, id)
+	})
+}
+
+// DeleteSampleWithRelations removes a sample and the whole subtree below it:
+// every assay it owns, plus those assays' files and dataset bindings. The
+// hierarchy is Subject -> Sample -> Assay -> File, so deletion starts at the
+// leaves.
+func (r *dataRepository) DeleteSampleWithRelations(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return deleteSampleTreeTx(tx, id)
+	})
+}
+
+// DeleteSubjectWithRelations removes a subject and the whole Subject -> Sample ->
+// Assay -> File tree below it, together with the dataset binding that anchors the
+// subject (go_dataset_subject).
+func (r *dataRepository) DeleteSubjectWithRelations(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		sampleIDs := make([]int64, 0)
+		if err := tx.Model(&types.Sample{}).Where("subject_id = ?", id).Pluck("id", &sampleIDs).Error; err != nil {
 			return err
 		}
-		if len(fileIDs) > 0 {
-			if err := tx.Where("file_id IN ?", fileIDs).Delete(&types.DatasetFile{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("id IN ?", fileIDs).Delete(&types.File{}).Error; err != nil {
+		for _, sampleID := range sampleIDs {
+			if err := deleteSampleTreeTx(tx, sampleID); err != nil {
 				return err
 			}
 		}
-		if err := tx.Where("id = ?", id).Delete(&types.Assay{}).Error; err != nil {
+		if err := tx.Where("subject_id = ?", id).Delete(&types.DatasetSubject{}).Error; err != nil {
 			return err
 		}
-		return nil
+		return tx.Where("id = ?", id).Delete(&types.Subject{}).Error
 	})
 }

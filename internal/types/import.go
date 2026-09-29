@@ -4,11 +4,13 @@ package types
 // plus the raw TSV text (an uploaded file or pasted content).
 //
 // The header row names the columns. Columns that map onto a Subject/Sample/Assay
-// field configure that entity (see the column maps in the data service); every
-// other column is treated as a File whose FileKey is the column name and whose
-// Path is the cell value — so new file columns (FASTQ_R3, BAM, ...) need no code
-// change. ProjectID is filled in by the handler from the active project and is
-// never sent by the client.
+// field configure that entity (see the column maps in the data service), e.g.
+// subject_name / sample_desc / subject_desc / assay_desc; every other column is
+// treated as a File whose FileKey is the column name and whose Path is the cell
+// value — so new file columns (FASTQ_R3, BAM, ...) need no code change. All
+// columns except subject_name/sample_name are optional, so a table without the
+// desc columns imports fine. ProjectID is filled in by the handler from the
+// active project and is never sent by the client.
 type ImportAssayTSVRequest struct {
 	DatasetID int64  `json:"dataset_id,string" binding:"required"`
 	Content   string `json:"content" binding:"required"`

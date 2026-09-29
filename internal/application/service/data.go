@@ -628,24 +628,15 @@ func (s *dataService) UpdateSubject(ctx context.Context, subject *types.Subject)
 	return s.dataRepo.UpdateSubject(ctx, subject)
 }
 
-// DeleteSubject removes a subject only when no sample still references it; the
-// hierarchy is Subject -> Sample -> Assay -> File, so the children have to be
-// deleted from the leaves up.
+// DeleteSubject removes a subject together with everything below it in the
+// Subject -> Sample -> Assay -> File tree, and clears its dataset binding. The
+// repository performs the whole cascade in one transaction.
 func (s *dataService) DeleteSubject(ctx context.Context, id int64) error {
 	if _, err := s.dataRepo.GetSubjectByID(ctx, id); err != nil {
 		return err
 	}
 
-	sampleCount, err := s.dataRepo.CountSamplesBySubjectID(ctx, id)
-	if err != nil {
-		return err
-	}
-	if sampleCount > 0 {
-		return apperrors.NewConflictError(
-			fmt.Sprintf("subject still has %d sample(s); delete them first", sampleCount))
-	}
-
-	return s.dataRepo.DeleteSubject(ctx, id)
+	return s.dataRepo.DeleteSubjectWithRelations(ctx, id)
 }
 
 func (s *dataService) ListSubject(ctx context.Context) ([]*types.Subject, error) {
@@ -751,23 +742,15 @@ func (s *dataService) UpdateSample(ctx context.Context, sample *types.Sample) er
 	return s.dataRepo.UpdateSample(ctx, sample)
 }
 
-// DeleteSample removes a sample only when no assay still references it; assays
-// own files and dataset bindings and must be deleted first.
+// DeleteSample removes a sample together with the assays it owns and those
+// assays' files (Sample -> Assay -> File). The repository runs the whole cascade
+// in one transaction.
 func (s *dataService) DeleteSample(ctx context.Context, id int64) error {
 	if _, err := s.dataRepo.GetSampleByID(ctx, id); err != nil {
 		return err
 	}
 
-	assayCount, err := s.dataRepo.CountAssaysBySampleID(ctx, id)
-	if err != nil {
-		return err
-	}
-	if assayCount > 0 {
-		return apperrors.NewConflictError(
-			fmt.Sprintf("sample still has %d assay(s); delete them first", assayCount))
-	}
-
-	return s.dataRepo.DeleteSample(ctx, id)
+	return s.dataRepo.DeleteSampleWithRelations(ctx, id)
 }
 
 func (s *dataService) ListSample(ctx context.Context) ([]*types.Sample, error) {
@@ -875,7 +858,9 @@ func (s *dataService) ListDatasetSubject(ctx context.Context) ([]*types.DatasetS
 }
 
 // importSubjectColumns maps a TSV column name to the Subject field it fills.
-// Adding another importable Subject field is a one-line change here.
+// Adding another importable Subject field is a one-line change here. Every
+// column is optional: a row that omits it simply leaves the field untouched
+// (subject_desc, for instance, may be absent entirely).
 var importSubjectColumns = map[string]func(*types.Subject, string){
 	"subject_name": func(s *types.Subject, v string) { s.SubjectName = v },
 	"species":      func(s *types.Subject, v string) { s.Species = v },
@@ -883,28 +868,30 @@ var importSubjectColumns = map[string]func(*types.Subject, string){
 	"sex":          func(s *types.Subject, v string) { s.Sex = v },
 	"age":          func(s *types.Subject, v string) { s.Age = v },
 	"metadata":     func(s *types.Subject, v string) { s.Metadata = v },
-	"description":  func(s *types.Subject, v string) { s.Description = v },
+	"subject_desc": func(s *types.Subject, v string) { s.Description = v },
 }
 
 // importSampleColumns maps a TSV column name to the Sample field it fills.
+// sample_desc is optional; omitting the column leaves Sample.Description as-is.
 var importSampleColumns = map[string]func(*types.Sample, string){
 	"sample_name": func(s *types.Sample, v string) { s.SampleName = v },
 	"tissue":      func(s *types.Sample, v string) { s.Tissue = v },
 	"cell_type":   func(s *types.Sample, v string) { s.CellType = v },
 	"metadata":    func(s *types.Sample, v string) { s.Metadata = v },
-	"description": func(s *types.Sample, v string) { s.Description = v },
+	"sample_desc": func(s *types.Sample, v string) { s.Description = v },
 }
 
 // importAssayColumns maps a TSV column name to the Assay field it fills. Note
 // that assay_role is also the assay's natural key (sample_id + role).
+// assay_desc is optional; omitting the column leaves Assay.Description as-is.
 var importAssayColumns = map[string]func(*types.Assay, string){
-	"assay_type":  func(a *types.Assay, v string) { a.AssayType = v },
-	"assay_name":  func(a *types.Assay, v string) { a.AssayName = v },
-	"assay_role":  func(a *types.Assay, v string) { a.Role = v },
-	"platform":    func(a *types.Assay, v string) { a.Platform = v },
-	"library_id":  func(a *types.Assay, v string) { a.LibraryID = v },
-	"metadata":    func(a *types.Assay, v string) { a.Metadata = v },
-	"description": func(a *types.Assay, v string) { a.Description = v },
+	"assay_type": func(a *types.Assay, v string) { a.AssayType = v },
+	"assay_name": func(a *types.Assay, v string) { a.AssayName = v },
+	"assay_role": func(a *types.Assay, v string) { a.Role = v },
+	"platform":   func(a *types.Assay, v string) { a.Platform = v },
+	"library_id": func(a *types.Assay, v string) { a.LibraryID = v },
+	"metadata":   func(a *types.Assay, v string) { a.Metadata = v },
+	"assay_desc": func(a *types.Assay, v string) { a.Description = v },
 }
 
 // ImportAssayTSV imports a TSV table into one dataset, upserting the whole

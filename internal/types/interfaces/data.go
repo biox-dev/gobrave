@@ -78,8 +78,8 @@ type DataService interface {
 	CreateSubject(ctx context.Context, subject *types.Subject) error
 	GetSubjectByID(ctx context.Context, id int64) (*types.Subject, error)
 	UpdateSubject(ctx context.Context, subject *types.Subject) error
-	// DeleteSubject removes a subject. It refuses (409) while the subject still
-	// owns samples, so callers must delete the samples first.
+	// DeleteSubject removes a subject and cascades through its whole subtree
+	// (Subject -> Sample -> Assay -> File), also clearing its dataset binding.
 	DeleteSubject(ctx context.Context, id int64) error
 	ListSubject(ctx context.Context) ([]*types.Subject, error)
 	PageSubject(ctx context.Context, pagination *types.Pagination, query *types.QuerySubject) (*types.PageResult, error)
@@ -91,8 +91,8 @@ type DataService interface {
 	CreateSample(ctx context.Context, sample *types.Sample) error
 	GetSampleByID(ctx context.Context, id int64) (*types.Sample, error)
 	UpdateSample(ctx context.Context, sample *types.Sample) error
-	// DeleteSample removes a sample. It refuses (409) while the sample still
-	// owns assays, so callers must delete the assays first.
+	// DeleteSample removes a sample and cascades through its assays (Sample ->
+	// Assay -> File), including the files' dataset bindings.
 	DeleteSample(ctx context.Context, id int64) error
 	ListSample(ctx context.Context) ([]*types.Sample, error)
 	PageSample(ctx context.Context, pagination *types.Pagination, query *types.QuerySample) (*types.PageResult, error)
@@ -184,14 +184,6 @@ type DataRepository interface {
 	GetAssayBySampleIDAndRole(ctx context.Context, sampleID int64, role string) (*types.Assay, error)
 	GetFileByAssayIDAndFileKey(ctx context.Context, assayID int64, fileKey string) (*types.File, error)
 
-	// CountSamplesBySubjectID counts the samples owned by one subject; used to
-	// guard subject deletion.
-	CountSamplesBySubjectID(ctx context.Context, subjectID int64) (int64, error)
-
-	// CountAssaysBySampleID counts the assays owned by one sample; used to guard
-	// sample deletion.
-	CountAssaysBySampleID(ctx context.Context, sampleID int64) (int64, error)
-
 	ExistsSubjectByID(ctx context.Context, id int64) (bool, error)
 
 	// SubjectName / SampleName are only unique inside a dataset, so the uniqueness
@@ -218,4 +210,10 @@ type DataRepository interface {
 	DeleteDatasetWithRelations(ctx context.Context, id int64) error
 	DeleteFileWithRelations(ctx context.Context, id int64) error
 	DeleteAssayWithRelations(ctx context.Context, id int64) error
+	// DeleteSampleWithRelations removes a sample and every assay it owns
+	// (including those assays' files and dataset bindings).
+	DeleteSampleWithRelations(ctx context.Context, id int64) error
+	// DeleteSubjectWithRelations removes a subject and the whole
+	// Subject -> Sample -> Assay -> File tree below it, plus its dataset binding.
+	DeleteSubjectWithRelations(ctx context.Context, id int64) error
 }
