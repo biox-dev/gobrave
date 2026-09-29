@@ -120,20 +120,6 @@ func buildAnalysisDictFromDB(
 			continue
 		}
 
-		if inputType == "sample" {
-			rawValue, exists := requestParam[key]
-			if !exists {
-				continue
-			}
-
-			resolved, err := resolveSampleInputValue(ctx, dataService, formItem, rawValue)
-			if err != nil {
-				return nil, fmt.Errorf("resolve sample db fields for %s failed: %w", key, err)
-			}
-			result[key] = resolved
-			continue
-		}
-
 		if inputType != "file" {
 			continue
 		}
@@ -365,17 +351,6 @@ func buildCompatAnalysisResultItem(file *types.File) map[string]interface{} {
 		"storage":            file.Storage,
 		"description":        file.Description,
 	}
-}
-
-// assayDisplayName 返回 Assay 的展示名：assay_name 优先，其次 library_id，再 assay_type，
-// 最后回退主键。
-func assayDisplayName(item map[string]interface{}) string {
-	for _, key := range []string{"assay_name", "library_id", "assay_type"} {
-		if s := strings.TrimSpace(anyToString(item[key])); s != "" {
-			return s
-		}
-	}
-	return strings.TrimSpace(anyToString(item["id"]))
 }
 
 // buildCollectedAnalysisResult 把 `CollectedGroupSelectAssayButton` 的一列名包成结果行。
@@ -986,10 +961,10 @@ func resolveAssayInputValue(
 	return result, nil
 }
 
-// resolveAssaySampleName 沿 Assay -> Sample 解析业务名，给
-// resolveAssayInputValue 的 assay 行补上 sample_name（即 go_sample.sample_name）。
-// 任一层记录缺失时留空，不影响其余字段；只有非 NotFound 的查询错误才向上返回。
-// cache 以 assayID 为键，避免同一 assay 被重复查询。
+// resolveAssaySampleName 解析 assay 自身的业务名，给 resolveAssayInputValue 的
+// assay 行补上 sample_name（即 go_assay.sample_name）。记录缺失时留空，不影响
+// 其余字段；只有非 NotFound 的查询错误才向上返回。cache 以 assayID 为键，避免
+// 同一 assay 被重复查询。
 func resolveAssaySampleName(
 	ctx context.Context,
 	dataService interfaces.DataService,
@@ -1013,204 +988,9 @@ func resolveAssaySampleName(
 		return "", nil
 	}
 
-	sample, err := dataService.GetSampleByID(ctx, assay.SampleID)
-	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
-		return "", err
-	}
-	if sample == nil {
-		cache[assayID] = ""
-		return "", nil
-	}
-
-	name := strings.TrimSpace(sample.SampleName)
+	name := strings.TrimSpace(assay.SampleName)
 	cache[assayID] = name
 	return name, nil
-}
-
-// resolveSampleInputValue mirrors resolveAssayInputValue for `input_type=sample`:
-// every selected sample becomes one row of `{ID, sample_name}` plus
-// one nested map per assay role of that sample, e.g.
-// `{"WGS": {"FASTQ_R1": "/path/a_1.fq.gz", "FASTQ_R2": "/path/a_2.fq.gz"}, ...}`.
-// Files are assay-private (go_file.assay_id), so the sample is walked through
-// every assay it owns (ListAssayBySampleID) and each assay's files are keyed by
-// their file_key inside that assay's role bucket.
-//
-// The item's `resolver.accept_formats` (read via utils.AcceptFormats) selects
-// which assay roles are kept: only assays whose `go_assay.role` is listed there
-// are emitted, i.e. the same roles resolveFormAnalysisResult used to build the
-// item's options. An empty accept_formats adds no role filter at all — every role
-// is returned — matching ListAssayByProjectID's "empty roles means no condition"
-// convention.
-//
-// An assay with an empty role has no bucket to nest into and is skipped, exactly
-// like resolveAssayInputValue skips a file with an empty file_key; inside one role
-// bucket the first file (oldest) wins when the same file_key shows up more than
-// once.
-func resolveSampleInputValue(
-	ctx context.Context,
-	dataService interfaces.DataService,
-	formItem map[string]interface{},
-	rawValue interface{},
-) (interface{}, error) {
-	sampleIDs := extractSampleIDsFromValue(rawValue)
-	if len(sampleIDs) == 0 {
-		return []interface{}{}, nil
-	}
-
-	selected := make(map[int64]struct{}, len(sampleIDs))
-	for _, id := range sampleIDs {
-		if idNum, err := strconv.ParseInt(strings.TrimSpace(id), 10, 64); err == nil {
-			selected[idNum] = struct{}{}
-		}
-	}
-	if len(selected) == 0 {
-		return []interface{}{}, nil
-	}
-
-	// accept_formats 决定保留哪些 assay role；空表示不按 role 过滤。
-	acceptFormats := utils.AcceptFormats(formItem)
-	acceptSet := make(map[string]struct{}, len(acceptFormats))
-	for _, format := range acceptFormats {
-		acceptSet[format] = struct{}{}
-	}
-
-	// sampleID -> assay role -> file_key -> path
-	sampleRoleToFiles := make(map[int64]map[string]map[string]string, len(selected))
-	for sampleID := range selected {
-		assays, err := dataService.ListAssayBySampleID(ctx, sampleID)
-		if err != nil {
-			return nil, err
-		}
-
-		roleToFiles := make(map[string]map[string]string)
-		for _, assay := range assays {
-			if assay == nil {
-				continue
-			}
-
-			role := strings.TrimSpace(assay.Role)
-			if role == "" {
-				continue
-			}
-			if len(acceptSet) > 0 {
-				if _, ok := acceptSet[role]; !ok {
-					continue
-				}
-			}
-
-			files, err := dataService.ListFileByAssayID(ctx, assay.ID)
-			if err != nil {
-				return nil, err
-			}
-
-			fileKeyToPath, ok := roleToFiles[role]
-			if !ok {
-				fileKeyToPath = make(map[string]string, len(files))
-				roleToFiles[role] = fileKeyToPath
-			}
-
-			for _, file := range files {
-				if file == nil {
-					continue
-				}
-
-				fileKey := strings.TrimSpace(file.FileKey)
-				if fileKey == "" {
-					continue
-				}
-				if existing := strings.TrimSpace(fileKeyToPath[fileKey]); existing != "" {
-					continue
-				}
-
-				path := strings.TrimSpace(file.Path)
-				if path == "" {
-					path = strings.TrimSpace(file.FileID)
-				}
-				fileKeyToPath[fileKey] = path
-			}
-		}
-
-		sampleRoleToFiles[sampleID] = roleToFiles
-	}
-
-	result := make([]interface{}, 0, len(sampleIDs))
-	// sampleNameCache 以 sampleID 为键缓存 Sample 的业务名，避免同一
-	// sample 在最终输出循环里重复查询。
-	sampleNameCache := make(map[int64]string)
-	for _, sampleID := range sampleIDs {
-		sampleIDNum, err := strconv.ParseInt(strings.TrimSpace(sampleID), 10, 64)
-		if err != nil {
-			continue
-		}
-
-		sampleName, err := resolveSampleName(ctx, dataService, sampleIDNum, sampleNameCache)
-		if err != nil {
-			return nil, err
-		}
-
-		row := map[string]interface{}{
-			"ID":          sampleID,
-			"sample_name": sampleName,
-		}
-
-		roleToFiles := sampleRoleToFiles[sampleIDNum]
-		roles := make([]string, 0, len(roleToFiles))
-		for role := range roleToFiles {
-			roles = append(roles, role)
-		}
-		sort.Strings(roles)
-		for _, role := range roles {
-			row[role] = roleToFiles[role]
-		}
-
-		result = append(result, row)
-	}
-
-	return result, nil
-}
-
-// resolveSampleName 解析 Sample 的业务名，给 resolveSampleInputValue 的
-// sample 行补上 sample_name（即 go_sample.sample_name）。记录缺失时留空，不影响
-// 其余字段；只有非 NotFound 的查询错误才向上返回。cache 以 sampleID 为键，避免
-// 同一 sample 被重复查询。
-func resolveSampleName(
-	ctx context.Context,
-	dataService interfaces.DataService,
-	sampleID int64,
-	cache map[int64]string,
-) (string, error) {
-	if name, ok := cache[sampleID]; ok {
-		return name, nil
-	}
-
-	sample, err := dataService.GetSampleByID(ctx, sampleID)
-	if err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			cache[sampleID] = ""
-			return "", nil
-		}
-		return "", err
-	}
-	if sample == nil {
-		cache[sampleID] = ""
-		return "", nil
-	}
-
-	name := strings.TrimSpace(sample.SampleName)
-	cache[sampleID] = name
-	return name, nil
-}
-
-func extractSampleIDsFromValue(value interface{}) []string {
-	switch v := value.(type) {
-	case map[string]interface{}:
-		if sample, ok := v["sample"]; ok {
-			return extractIDList(sample)
-		}
-		return nil
-	default:
-		return extractIDList(v)
-	}
 }
 
 func extractAssayIDsFromValue(value interface{}) []string {

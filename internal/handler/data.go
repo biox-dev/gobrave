@@ -58,22 +58,9 @@ type assayByProjectPageRequest struct {
 	// ProjectID string `json:"project_id" binding:"required"`
 }
 
-type samplePageRequest struct {
-	types.Pagination
-
-	SampleName string `json:"sample_name"`
-	Tissue     string `json:"tissue"`
-	CellType   string `json:"cell_type"`
-}
-
 // assayIDQuery addresses a resource by its owning assay (int64 PK).
 type assayIDQuery struct {
 	AssayID int64 `form:"assay_id" binding:"required"`
-}
-
-// sampleIDQuery addresses a resource by its owning sample (int64 PK).
-type sampleIDQuery struct {
-	SampleID int64 `form:"sample_id" binding:"required"`
 }
 
 func handleDataError(c *gin.Context, err error, internalMsg string) {
@@ -1279,7 +1266,7 @@ func (h *DataHandler) ListAssay(c *gin.Context) {
 // @Description  查询当前用户激活项目下所有样本的 Assay
 // @Tags         数据管理
 // @Produce      json
-// @Success      200         {array}   types.AssayWithSampleInfo
+// @Success      200         {array}   types.AssayWithDatasetInfo
 // @Failure      401         {object}  errors.AppError
 // @Failure      404         {object}  errors.AppError
 // @Failure      500         {object}  errors.AppError
@@ -1308,7 +1295,7 @@ func (h *DataHandler) ListAssayByProjectID(c *gin.Context) {
 
 // PageAssayByProjectID godoc
 // @Summary      按项目分页查询 Assay
-// @Description  根据 project_id 分页查询其样本下的 Assay，并返回所属 sample_name 等信息
+// @Description  根据 project_id 分页查询其下的 Assay，并返回所属 dataset 等信息
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -1350,53 +1337,53 @@ func (h *DataHandler) PageAssayByProjectID(c *gin.Context) {
 	})
 }
 
-// CreateDatasetSample godoc
-// @Summary      创建数据集-Sample 映射
-// @Description  创建 DatasetSample 记录（数据集直接与 Sample 关联）
+// CreateDatasetAssay godoc
+// @Summary      创建数据集-Assay 映射
+// @Description  创建 DatasetAssay 记录（数据集直接与 Assay 关联）
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
-// @Param        request  body      types.DatasetSample  true  "请求参数"
-// @Success      200      {object}  types.DatasetSample
+// @Param        request  body      types.DatasetAssay  true  "请求参数"
+// @Success      200      {object}  types.DatasetAssay
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/create [post]
-func (h *DataHandler) CreateDatasetSample(c *gin.Context) {
+// @Router       /data/dataset-assay/create [post]
+func (h *DataHandler) CreateDatasetAssay(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
-	var req types.DatasetSample
+	var req types.DatasetAssay
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
 
-	if err := h.dataService.CreateDatasetSample(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to create dataset sample")
+	if err := h.dataService.CreateDatasetAssay(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to create dataset assay")
 		return
 	}
 
 	c.JSON(http.StatusOK, req)
 }
 
-// GetDatasetSample godoc
-// @Summary      获取数据集-Sample 映射
-// @Description  按 ID 查询 DatasetSample 详情
+// GetDatasetAssay godoc
+// @Summary      获取数据集-Assay 映射
+// @Description  按 ID 查询 DatasetAssay 详情
 // @Tags         数据管理
 // @Produce      json
 // @Param        id       query     integer               true  "主键 ID"
-// @Success      200      {object}  types.DatasetSample
+// @Success      200      {object}  types.DatasetAssay
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/get [get]
-func (h *DataHandler) GetDatasetSample(c *gin.Context) {
+// @Router       /data/dataset-assay/get [get]
+func (h *DataHandler) GetDatasetAssay(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
@@ -1407,72 +1394,72 @@ func (h *DataHandler) GetDatasetSample(c *gin.Context) {
 		return
 	}
 
-	item, err := h.dataService.GetDatasetSampleByID(c.Request.Context(), req.ID)
+	item, err := h.dataService.GetDatasetAssayByID(c.Request.Context(), req.ID)
 	if err != nil {
-		handleDataError(c, err, "failed to get dataset sample")
+		handleDataError(c, err, "failed to get dataset assay")
 		return
 	}
 
 	c.JSON(http.StatusOK, item)
 }
 
-// GetDatasetSampleBySampleID godoc
-// @Summary      按 Sample 查询数据集映射
-// @Description  返回 Sample 绑定的 DatasetSample；尚未绑定任何数据集时返回 null
+// GetDatasetAssayByAssayID godoc
+// @Summary      按 Assay 查询数据集映射
+// @Description  返回 Assay 绑定的 DatasetAssay；尚未绑定任何数据集时返回 null
 // @Tags         数据管理
 // @Produce      json
-// @Param        sample_id  query     integer               true  "Sample 主键 ID"
-// @Success      200        {object}  types.DatasetSample
-// @Failure      400        {object}  errors.AppError
-// @Failure      401        {object}  errors.AppError
-// @Failure      500        {object}  errors.AppError
+// @Param        assay_id  query     integer               true  "Assay 主键 ID"
+// @Success      200       {object}  types.DatasetAssay
+// @Failure      400       {object}  errors.AppError
+// @Failure      401       {object}  errors.AppError
+// @Failure      500       {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/get-by-sample [get]
-func (h *DataHandler) GetDatasetSampleBySampleID(c *gin.Context) {
+// @Router       /data/dataset-assay/get-by-assay [get]
+func (h *DataHandler) GetDatasetAssayByAssayID(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
-	var req sampleIDQuery
+	var req assayIDQuery
 	if err := c.ShouldBindQuery(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
 		return
 	}
 
-	item, err := h.dataService.GetDatasetSampleBySampleID(c.Request.Context(), req.SampleID)
+	item, err := h.dataService.GetDatasetAssayByAssayID(c.Request.Context(), req.AssayID)
 	if err != nil {
-		// A sample that is not bound to a dataset yet is a normal state, not an error.
+		// An assay that is not bound to a dataset yet is a normal state, not an error.
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusOK, nil)
 			return
 		}
-		handleDataError(c, err, "failed to get dataset sample by sample id")
+		handleDataError(c, err, "failed to get dataset assay by assay id")
 		return
 	}
 
 	c.JSON(http.StatusOK, item)
 }
 
-// UpdateDatasetSample godoc
-// @Summary      更新数据集-Sample 映射
-// @Description  按 ID 更新 DatasetSample 记录
+// UpdateDatasetAssay godoc
+// @Summary      更新数据集-Assay 映射
+// @Description  按 ID 更新 DatasetAssay 记录
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
-// @Param        request  body      types.DatasetSample   true  "请求参数"
+// @Param        request  body      types.DatasetAssay   true  "请求参数"
 // @Success      200      {object}  map[string]string
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/update [post]
-func (h *DataHandler) UpdateDatasetSample(c *gin.Context) {
+// @Router       /data/dataset-assay/update [post]
+func (h *DataHandler) UpdateDatasetAssay(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
-	var req types.DatasetSample
+	var req types.DatasetAssay
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
@@ -1482,17 +1469,17 @@ func (h *DataHandler) UpdateDatasetSample(c *gin.Context) {
 		return
 	}
 
-	if err := h.dataService.UpdateDatasetSample(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to update dataset sample")
+	if err := h.dataService.UpdateDatasetAssay(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to update dataset assay")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "dataset sample updated successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "dataset assay updated successfully"})
 }
 
-// DeleteDatasetSample godoc
-// @Summary      删除数据集-Sample 映射
-// @Description  按 ID 删除 DatasetSample 记录
+// DeleteDatasetAssay godoc
+// @Summary      删除数据集-Assay 映射
+// @Description  按 ID 删除 DatasetAssay 记录
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -1503,8 +1490,8 @@ func (h *DataHandler) UpdateDatasetSample(c *gin.Context) {
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/delete [post]
-func (h *DataHandler) DeleteDatasetSample(c *gin.Context) {
+// @Router       /data/dataset-assay/delete [post]
+func (h *DataHandler) DeleteDatasetAssay(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
@@ -1515,32 +1502,32 @@ func (h *DataHandler) DeleteDatasetSample(c *gin.Context) {
 		return
 	}
 
-	if err := h.dataService.DeleteDatasetSample(c.Request.Context(), req.ID); err != nil {
-		handleDataError(c, err, "failed to delete dataset sample")
+	if err := h.dataService.DeleteDatasetAssay(c.Request.Context(), req.ID); err != nil {
+		handleDataError(c, err, "failed to delete dataset assay")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "dataset sample deleted successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "dataset assay deleted successfully"})
 }
 
-// ListDatasetSample godoc
-// @Summary      数据集-Sample 映射列表
-// @Description  查询 DatasetSample 列表
+// ListDatasetAssay godoc
+// @Summary      数据集-Assay 映射列表
+// @Description  查询 DatasetAssay 列表
 // @Tags         数据管理
 // @Produce      json
-// @Success      200      {array}   types.DatasetSample
+// @Success      200      {array}   types.DatasetAssay
 // @Failure      401      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/dataset-sample/list [get]
-func (h *DataHandler) ListDatasetSample(c *gin.Context) {
+// @Router       /data/dataset-assay/list [get]
+func (h *DataHandler) ListDatasetAssay(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
-	items, err := h.dataService.ListDatasetSample(c.Request.Context())
+	items, err := h.dataService.ListDatasetAssay(c.Request.Context())
 	if err != nil {
-		handleDataError(c, err, "failed to list dataset sample")
+		handleDataError(c, err, "failed to list dataset assay")
 		return
 	}
 
@@ -1548,8 +1535,8 @@ func (h *DataHandler) ListDatasetSample(c *gin.Context) {
 }
 
 // ImportAssayTSV godoc
-// @Summary      通过 TSV 导入 Sample/Assay/File
-// @Description  解析 TSV 文本（表头为列名），按 dataset+sample_name、sample+assay_role、assay+文件列 逐级 upsert；未映射的列作为 File 列（FileKey=列名）
+// @Summary      通过 TSV 导入 Assay/File
+// @Description  解析 TSV 文本（表头为列名），按 dataset+sample_name+assay_role、assay+文件列 逐级 upsert；未映射的列作为 File 列（FileKey=列名）
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -1587,240 +1574,4 @@ func (h *DataHandler) ImportAssayTSV(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
-}
-
-// CreateSample godoc
-// @Summary      创建 Sample
-// @Description  创建采样记录，主键由服务端生成；sample_name 业务号必填（只在 dataset 内唯一）；样本归属数据集通过 DatasetSample 绑定建立
-// @Tags         数据管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      types.Sample  true  "请求参数"
-// @Success      200      {object}  types.Sample
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      409      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/sample/create [post]
-func (h *DataHandler) CreateSample(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req types.Sample
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	if err := h.dataService.CreateSample(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to create sample")
-		return
-	}
-
-	c.JSON(http.StatusOK, req)
-}
-
-// GetSample godoc
-// @Summary      获取 Sample
-// @Description  按 ID 查询 Sample 详情
-// @Tags         数据管理
-// @Produce      json
-// @Param        id       query     integer     true  "主键 ID"
-// @Success      200      {object}  types.Sample
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/sample/get [get]
-func (h *DataHandler) GetSample(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req idQuery
-	if err := c.ShouldBindQuery(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
-		return
-	}
-
-	item, err := h.dataService.GetSampleByID(c.Request.Context(), req.ID)
-	if err != nil {
-		handleDataError(c, err, "failed to get sample")
-		return
-	}
-
-	c.JSON(http.StatusOK, item)
-}
-
-// UpdateSample godoc
-// @Summary      更新 Sample
-// @Description  按 ID 更新 Sample 记录
-// @Tags         数据管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      types.Sample      true  "请求参数"
-// @Success      200      {object}  types.Sample
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      409      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/sample/update [post]
-func (h *DataHandler) UpdateSample(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req types.Sample
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-	if req.ID == 0 {
-		c.Error(errors.NewValidationError("id is required"))
-		return
-	}
-
-	if err := h.dataService.UpdateSample(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to update sample")
-		return
-	}
-
-	c.JSON(http.StatusOK, req)
-}
-
-// DeleteSample godoc
-// @Summary      删除 Sample
-// @Description  按 ID 删除 Sample，并级联删除其下的 Assay、File 及 File 的数据集关联
-// @Tags         数据管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      idBody            true  "请求参数"
-// @Success      200      {object}  map[string]string
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/sample/delete [post]
-func (h *DataHandler) DeleteSample(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req idBody
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	if err := h.dataService.DeleteSample(c.Request.Context(), req.ID); err != nil {
-		handleDataError(c, err, "failed to delete sample")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "sample deleted successfully"})
-}
-
-// ListSample godoc
-// @Summary      Sample 列表
-// @Description  查询 Sample 列表
-// @Tags         数据管理
-// @Produce      json
-// @Success      200      {array}   types.Sample
-// @Failure      401      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/sample/list [get]
-func (h *DataHandler) ListSample(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	items, err := h.dataService.ListSample(c.Request.Context())
-	if err != nil {
-		handleDataError(c, err, "failed to list sample")
-		return
-	}
-
-	c.JSON(http.StatusOK, items)
-}
-
-// ListSampleByProjectID godoc
-// @Summary      按当前激活项目查询 Sample 列表
-// @Description  查询当前用户激活项目下关联的所有 Sample，附带其绑定的 Dataset 信息
-// @Tags         数据管理
-// @Produce      json
-// @Success      200         {array}   types.SampleWithDatasetInfo
-// @Failure      401         {object}  errors.AppError
-// @Failure      404         {object}  errors.AppError
-// @Failure      500         {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/sample/list-by-project [get]
-func (h *DataHandler) ListSampleByProjectID(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
-	if !ok {
-		return
-	}
-
-	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
-	if err != nil {
-		handleDataError(c, err, "failed to get active project by user id")
-		return
-	}
-
-	items, err := h.dataService.ListSampleByProjectID(c.Request.Context(), project.ProjectID)
-	if err != nil {
-		handleDataError(c, err, "failed to list sample by project id")
-		return
-	}
-
-	c.JSON(http.StatusOK, items)
-}
-
-// PageSample godoc
-// @Summary      分页查询 Sample
-// @Description  按 sample_name / tissue / cell_type 过滤并分页
-// @Tags         数据管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      samplePageRequest  true  "分页请求参数"
-// @Success      200      {object}  map[string]interface{}
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/sample/page [post]
-func (h *DataHandler) PageSample(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req samplePageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	result, err := h.dataService.PageSample(c.Request.Context(), &req.Pagination, &types.QuerySample{
-		SampleName: req.SampleName,
-		Tissue:     req.Tissue,
-		CellType:   req.CellType,
-	})
-	if err != nil {
-		handleDataError(c, err, "failed to page sample")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data":      result.Data,
-		"total":     result.Total,
-		"page":      result.Page,
-		"page_size": result.PageSize,
-	})
 }

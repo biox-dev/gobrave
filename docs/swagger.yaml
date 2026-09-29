@@ -1585,24 +1585,6 @@ definitions:
       total_nodes:
         type: integer
     type: object
-  handler.samplePageRequest:
-    properties:
-      cell_type:
-        type: string
-      page:
-        description: Page
-        minimum: 1
-        type: integer
-      page_size:
-        description: Page size
-        maximum: 1000
-        minimum: 1
-        type: integer
-      sample_name:
-        type: string
-      tissue:
-        type: string
-    type: object
   handler.saveReadmeRequest:
     properties:
       commit_message:
@@ -2091,11 +2073,6 @@ definitions:
     type: object
   types.Assay:
     properties:
-      assay_name:
-        description: |-
-          AssayName 是 assay 的展示名（列 go_assay.assay_name）；为空时展示层回退到
-          library_id → assay_type → 主键（见 handler.assayDisplayName）。
-        type: string
       assay_type:
         type: string
       created_at:
@@ -2117,20 +2094,24 @@ definitions:
           input_type=assay 的表单输入用 resolver.accept_formats 与之匹配（与
           go_dataset_file.role 对文件的口径一致）。空表示不参与角色过滤。
         type: string
-      sample_id:
-        example: "0"
+      sample_name:
+        description: |-
+          SampleName 是样本的业务编号兼展示名（列 go_assay.sample_name），例如
+          S-001 / 脾脏-6。无需全局唯一，只在同一个 dataset 下唯一（经
+          go_dataset_assay 绑定判定）；同一个名字可以出现在不同 dataset。
         type: string
       updated_at:
         type: string
     type: object
-  types.AssayWithSampleInfo:
+  types.AssayWithDatasetInfo:
     properties:
-      assay_name:
-        description: AssayName 是该 assay 的展示名（go_assay.assay_name）。
-        type: string
       assay_type:
         type: string
       created_at:
+        type: string
+      dataset_id:
+        type: string
+      dataset_name:
         type: string
       description:
         type: string
@@ -2149,13 +2130,7 @@ definitions:
           input_type=assay 的表单输入用 resolver.accept_formats 与之匹配，
           resolveFormAnalysisResult 据此把 assay 分组挂到 analysis_result[role]。
         type: string
-      sample_id:
-        example: "0"
-        type: string
       sample_name:
-        description: |-
-          SampleName 是所属 Sample 的业务名（go_sample.sample_name）；需要主键时
-          经 sample_id 再查 Sample。
         type: string
       updated_at:
         type: string
@@ -2422,6 +2397,20 @@ definitions:
       updated_at:
         type: string
     type: object
+  types.DatasetAssay:
+    properties:
+      assay_id:
+        example: "0"
+        type: string
+      created_at:
+        type: string
+      dataset_id:
+        example: "0"
+        type: string
+      id:
+        example: "0"
+        type: string
+    type: object
   types.DatasetFile:
     properties:
       created_at:
@@ -2436,20 +2425,6 @@ definitions:
         example: "0"
         type: string
       role:
-        type: string
-    type: object
-  types.DatasetSample:
-    properties:
-      created_at:
-        type: string
-      dataset_id:
-        example: "0"
-        type: string
-      id:
-        example: "0"
-        type: string
-      sample_id:
-        example: "0"
         type: string
     type: object
   types.File:
@@ -2549,10 +2524,6 @@ definitions:
       files_updated:
         type: integer
       rows:
-        type: integer
-      samples_created:
-        type: integer
-      samples_updated:
         type: integer
     type: object
   types.JSONMap:
@@ -2674,59 +2645,6 @@ definitions:
         type: boolean
       user:
         $ref: '#/definitions/types.User'
-    type: object
-  types.Sample:
-    properties:
-      cell_type:
-        type: string
-      collection_time:
-        type: string
-      created_at:
-        type: string
-      description:
-        type: string
-      id:
-        example: "0"
-        type: string
-      metadata:
-        type: string
-      sample_name:
-        description: |-
-          SampleName 是唯一的业务编号兼展示名（列 go_sample.sample_name），例如
-          S-001 / 脾脏-6。无需全局唯一，只在同一个 dataset 下唯一（经
-          go_dataset_sample 绑定判定）；同一个名字可以出现在不同 dataset。
-        type: string
-      tissue:
-        type: string
-      updated_at:
-        type: string
-    type: object
-  types.SampleWithDatasetInfo:
-    properties:
-      cell_type:
-        type: string
-      collection_time:
-        type: string
-      created_at:
-        type: string
-      dataset_id:
-        type: string
-      dataset_name:
-        type: string
-      description:
-        type: string
-      id:
-        example: "0"
-        type: string
-      metadata:
-        type: string
-      sample_name:
-        description: SampleName 是 Sample 的业务编号兼展示名（go_sample.sample_name）。
-        type: string
-      tissue:
-        type: string
-      updated_at:
-        type: string
     type: object
   types.Script:
     properties:
@@ -6403,7 +6321,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/types.AssayWithSampleInfo'
+              $ref: '#/definitions/types.AssayWithDatasetInfo'
             type: array
         "401":
           description: Unauthorized
@@ -6426,7 +6344,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 根据 project_id 分页查询其样本下的 Assay，并返回所属 sample_name 等信息
+      description: 根据 project_id 分页查询其下的 Assay，并返回所属 dataset 等信息
       parameters:
       - description: 分页请求参数
         in: body
@@ -6499,6 +6417,225 @@ paths:
       security:
       - Bearer: []
       summary: 更新 Assay
+      tags:
+      - 数据管理
+  /data/dataset-assay/create:
+    post:
+      consumes:
+      - application/json
+      description: 创建 DatasetAssay 记录（数据集直接与 Assay 关联）
+      parameters:
+      - description: 请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.DatasetAssay'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.DatasetAssay'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 创建数据集-Assay 映射
+      tags:
+      - 数据管理
+  /data/dataset-assay/delete:
+    post:
+      consumes:
+      - application/json
+      description: 按 ID 删除 DatasetAssay 记录
+      parameters:
+      - description: 请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.idBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 删除数据集-Assay 映射
+      tags:
+      - 数据管理
+  /data/dataset-assay/get:
+    get:
+      description: 按 ID 查询 DatasetAssay 详情
+      parameters:
+      - description: 主键 ID
+        in: query
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.DatasetAssay'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 获取数据集-Assay 映射
+      tags:
+      - 数据管理
+  /data/dataset-assay/get-by-assay:
+    get:
+      description: 返回 Assay 绑定的 DatasetAssay；尚未绑定任何数据集时返回 null
+      parameters:
+      - description: Assay 主键 ID
+        in: query
+        name: assay_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.DatasetAssay'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 按 Assay 查询数据集映射
+      tags:
+      - 数据管理
+  /data/dataset-assay/list:
+    get:
+      description: 查询 DatasetAssay 列表
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/types.DatasetAssay'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 数据集-Assay 映射列表
+      tags:
+      - 数据管理
+  /data/dataset-assay/update:
+    post:
+      consumes:
+      - application/json
+      description: 按 ID 更新 DatasetAssay 记录
+      parameters:
+      - description: 请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.DatasetAssay'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 更新数据集-Assay 映射
       tags:
       - 数据管理
   /data/dataset-file/add-file:
@@ -6725,225 +6862,6 @@ paths:
       security:
       - Bearer: []
       summary: 更新数据集-文件映射
-      tags:
-      - 数据管理
-  /data/dataset-sample/create:
-    post:
-      consumes:
-      - application/json
-      description: 创建 DatasetSample 记录（数据集直接与 Sample 关联）
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/types.DatasetSample'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.DatasetSample'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 创建数据集-Sample 映射
-      tags:
-      - 数据管理
-  /data/dataset-sample/delete:
-    post:
-      consumes:
-      - application/json
-      description: 按 ID 删除 DatasetSample 记录
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.idBody'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 删除数据集-Sample 映射
-      tags:
-      - 数据管理
-  /data/dataset-sample/get:
-    get:
-      description: 按 ID 查询 DatasetSample 详情
-      parameters:
-      - description: 主键 ID
-        in: query
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.DatasetSample'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 获取数据集-Sample 映射
-      tags:
-      - 数据管理
-  /data/dataset-sample/get-by-sample:
-    get:
-      description: 返回 Sample 绑定的 DatasetSample；尚未绑定任何数据集时返回 null
-      parameters:
-      - description: Sample 主键 ID
-        in: query
-        name: sample_id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.DatasetSample'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 按 Sample 查询数据集映射
-      tags:
-      - 数据管理
-  /data/dataset-sample/list:
-    get:
-      description: 查询 DatasetSample 列表
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/types.DatasetSample'
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 数据集-Sample 映射列表
-      tags:
-      - 数据管理
-  /data/dataset-sample/update:
-    post:
-      consumes:
-      - application/json
-      description: 按 ID 更新 DatasetSample 记录
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/types.DatasetSample'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 更新数据集-Sample 映射
       tags:
       - 数据管理
   /data/dataset/create:
@@ -7552,8 +7470,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: 解析 TSV 文本（表头为列名），按 dataset+sample_name、sample+assay_role、assay+文件列
-        逐级 upsert；未映射的列作为 File 列（FileKey=列名）
+      description: 解析 TSV 文本（表头为列名），按 dataset+sample_name+assay_role、assay+文件列 逐级
+        upsert；未映射的列作为 File 列（FileKey=列名）
       parameters:
       - description: 请求参数
         in: body
@@ -7586,7 +7504,7 @@ paths:
             $ref: '#/definitions/errors.AppError'
       security:
       - Bearer: []
-      summary: 通过 TSV 导入 Sample/Assay/File
+      summary: 通过 TSV 导入 Assay/File
       tags:
       - 数据管理
   /data/project-dataset/create:
@@ -7773,265 +7691,6 @@ paths:
       security:
       - Bearer: []
       summary: 更新项目-数据集映射
-      tags:
-      - 数据管理
-  /data/sample/create:
-    post:
-      consumes:
-      - application/json
-      description: 创建采样记录，主键由服务端生成；sample_name 业务号必填（只在 dataset 内唯一）；样本归属数据集通过 DatasetSample
-        绑定建立
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/types.Sample'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.Sample'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 创建 Sample
-      tags:
-      - 数据管理
-  /data/sample/delete:
-    post:
-      consumes:
-      - application/json
-      description: 按 ID 删除 Sample，并级联删除其下的 Assay、File 及 File 的数据集关联
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.idBody'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 删除 Sample
-      tags:
-      - 数据管理
-  /data/sample/get:
-    get:
-      description: 按 ID 查询 Sample 详情
-      parameters:
-      - description: 主键 ID
-        in: query
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.Sample'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 获取 Sample
-      tags:
-      - 数据管理
-  /data/sample/list:
-    get:
-      description: 查询 Sample 列表
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/types.Sample'
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: Sample 列表
-      tags:
-      - 数据管理
-  /data/sample/list-by-project:
-    get:
-      description: 查询当前用户激活项目下关联的所有 Sample，附带其绑定的 Dataset 信息
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/types.SampleWithDatasetInfo'
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 按当前激活项目查询 Sample 列表
-      tags:
-      - 数据管理
-  /data/sample/page:
-    post:
-      consumes:
-      - application/json
-      description: 按 sample_name / tissue / cell_type 过滤并分页
-      parameters:
-      - description: 分页请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.samplePageRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 分页查询 Sample
-      tags:
-      - 数据管理
-  /data/sample/update:
-    post:
-      consumes:
-      - application/json
-      description: 按 ID 更新 Sample 记录
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/types.Sample'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.Sample'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 更新 Sample
       tags:
       - 数据管理
   /find-script/{id}:

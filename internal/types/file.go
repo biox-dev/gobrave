@@ -10,7 +10,7 @@ import (
 // File is a physical file. A file belongs to at most one Assay (Assay -> File is
 // 1:N), so the binding lives directly on this row instead of a join table:
 //
-//	Project -> DatasetSample -> Sample -> Assay -> File
+//	Project -> DatasetAssay -> Assay -> File
 //
 // Files that are only attached to a dataset (never produced by an assay) keep
 // AssayID == 0, which is why the column stays nullable.

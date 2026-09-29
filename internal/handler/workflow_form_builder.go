@@ -28,20 +28,15 @@ func buildScriptFormData(ctx context.Context,
 }
 
 // resolveFormAnalysisResult builds the `analysis_result` map for a form JSON.
-// Every `input_type=sample` item contributes the project's whole sample list
-// under the fixed `sample` key (samples are resolved project-wide, with no role
-// filter). Every `input_type=assay` item contributes the project's assays: an
-// assay belongs to a sample, and a sample is what the dataset binds to, so the
-// chain is
-// (go_project_dataset -> go_dataset_sample -> go_sample ->
-// go_assay), and it
-// carries its own `role`, which the item's `resolver.accept_formats` are matched
-// against. The assays are then keyed by their own role, which the frontend reads
-// as `dataMap[role]`. Every `input_type=file` item contributes its files under
-// each of its `resolver.accept_formats` roles (matched against
+// Every `input_type=assay` item contributes the project's assays: a dataset binds
+// directly to the assay (go_project_dataset -> go_dataset_assay -> go_assay), and
+// the assay carries its own `role`, which the item's `resolver.accept_formats` are
+// matched against. The assays are then keyed by their own role, which the
+// frontend reads as `dataMap[role]`. Every `input_type=file` item contributes its
+// files under each of its `resolver.accept_formats` roles (matched against
 // `go_dataset_file.role`). The frontend resolves an item's options as
-// `dataMap[role]` (or `dataMap["sample"]` for samples), which is why these are
-// keyed by role/fixed key just like the file case always was.
+// `dataMap[role]`, which is why these are keyed by role just like the file case
+// always was.
 func resolveFormAnalysisResult(
 	ctx context.Context,
 	dataService interfaces.DataService,
@@ -50,7 +45,6 @@ func resolveFormAnalysisResult(
 ) (map[string]interface{}, error) {
 	assayRoleSet := make(map[string]struct{})
 	fileRoleSet := make(map[string]struct{})
-	needSampleList := false
 
 	for _, item := range formJSONWrap {
 		formItem, ok := item.(map[string]interface{})
@@ -59,14 +53,6 @@ func resolveFormAnalysisResult(
 		}
 
 		inputType, _ := formItem["input_type"].(string)
-
-		// Samples are resolved project-wide: an `input_type=sample` item just
-		// flags that the project sample list is needed, with no role handling.
-		if inputType == "sample" {
-			needSampleList = true
-			continue
-		}
-
 		if inputType != "assay" && inputType != "file" {
 			continue
 		}
@@ -81,23 +67,6 @@ func resolveFormAnalysisResult(
 	}
 
 	analysisResult := make(map[string]interface{})
-
-	if needSampleList {
-		samples, err := dataService.ListSampleByProjectID(ctx, projectID)
-		if err != nil {
-			return nil, err
-		}
-
-		items := make([]map[string]interface{}, 0, len(samples))
-		for _, sample := range samples {
-			compatItem, err := buildCompatSampleItem(sample)
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, compatItem)
-		}
-		analysisResult["sample"] = items
-	}
 
 	if len(assayRoleSet) > 0 {
 		roles := sortedKeys(assayRoleSet)

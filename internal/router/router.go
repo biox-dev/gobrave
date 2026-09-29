@@ -238,20 +238,12 @@ func RegisterDataRoutes(r *gin.RouterGroup, handler *handler.DataHandler) {
 	r.GET("/data/assay/list-by-project", handler.ListAssayByProjectID)
 	r.POST("/data/assay/list-by-project-page", handler.PageAssayByProjectID)
 
-	r.POST("/data/dataset-sample/create", handler.CreateDatasetSample)
-	r.GET("/data/dataset-sample/get", handler.GetDatasetSample)
-	r.GET("/data/dataset-sample/get-by-sample", handler.GetDatasetSampleBySampleID)
-	r.POST("/data/dataset-sample/update", handler.UpdateDatasetSample)
-	r.POST("/data/dataset-sample/delete", handler.DeleteDatasetSample)
-	r.GET("/data/dataset-sample/list", handler.ListDatasetSample)
-
-	r.POST("/data/sample/create", handler.CreateSample)
-	r.GET("/data/sample/get", handler.GetSample)
-	r.POST("/data/sample/update", handler.UpdateSample)
-	r.POST("/data/sample/delete", handler.DeleteSample)
-	r.GET("/data/sample/list", handler.ListSample)
-	r.GET("/data/sample/list-by-project", handler.ListSampleByProjectID)
-	r.POST("/data/sample/page", handler.PageSample)
+	r.POST("/data/dataset-assay/create", handler.CreateDatasetAssay)
+	r.GET("/data/dataset-assay/get", handler.GetDatasetAssay)
+	r.GET("/data/dataset-assay/get-by-assay", handler.GetDatasetAssayByAssayID)
+	r.POST("/data/dataset-assay/update", handler.UpdateDatasetAssay)
+	r.POST("/data/dataset-assay/delete", handler.DeleteDatasetAssay)
+	r.GET("/data/dataset-assay/list", handler.ListDatasetAssay)
 }
 
 func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandler) {
