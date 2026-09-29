@@ -31,9 +31,9 @@ func buildScriptFormData(ctx context.Context,
 // Every `input_type=sample` item contributes the project's whole sample list
 // under the fixed `sample` key (samples are resolved project-wide, with no role
 // filter). Every `input_type=assay` item contributes the project's assays: an
-// assay belongs to a sample, which belongs to a subject; a subject is what the
-// dataset binds to, so the chain is
-// (go_project_dataset -> go_dataset_subject -> go_subject -> go_sample ->
+// assay belongs to a sample, and a sample is what the dataset binds to, so the
+// chain is
+// (go_project_dataset -> go_dataset_sample -> go_sample ->
 // go_assay), and it
 // carries its own `role`, which the item's `resolver.accept_formats` are matched
 // against. The assays are then keyed by their own role, which the frontend reads

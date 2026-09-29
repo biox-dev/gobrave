@@ -59,52 +59,39 @@ type DataService interface {
 	ListAssayBySampleID(ctx context.Context, sampleID int64) ([]*types.Assay, error)
 	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error)
 	// ListAssayByProjectID returns the project's assays, resolved through the
-	// project's subjects and samples (go_project_dataset -> go_dataset_subject ->
-	// go_subject -> go_sample -> go_assay). When roles is non-empty the assays
-	// are filtered on go_assay.role; an empty roles slice adds no role condition
-	// and returns every assay.
+	// project's samples (go_project_dataset -> go_dataset_sample -> go_sample ->
+	// go_assay). When roles is non-empty the assays are filtered on
+	// go_assay.role; an empty roles slice adds no role condition and returns
+	// every assay.
 	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithSampleInfo, error)
 
-	CreateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error
-	GetDatasetSubjectByID(ctx context.Context, id int64) (*types.DatasetSubject, error)
-	// GetDatasetSubjectBySubjectID returns the single dataset binding of one
-	// subject, or gorm.ErrRecordNotFound when the subject is not bound to any
+	CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
+	GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error)
+	// GetDatasetSampleBySampleID returns the single dataset binding of one
+	// sample, or gorm.ErrRecordNotFound when the sample is not bound to any
 	// dataset yet.
-	GetDatasetSubjectBySubjectID(ctx context.Context, subjectID int64) (*types.DatasetSubject, error)
-	UpdateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error
-	DeleteDatasetSubject(ctx context.Context, id int64) error
-	ListDatasetSubject(ctx context.Context) ([]*types.DatasetSubject, error)
-
-	CreateSubject(ctx context.Context, subject *types.Subject) error
-	GetSubjectByID(ctx context.Context, id int64) (*types.Subject, error)
-	UpdateSubject(ctx context.Context, subject *types.Subject) error
-	// DeleteSubject removes a subject and cascades through its whole subtree
-	// (Subject -> Sample -> Assay -> File), also clearing its dataset binding.
-	DeleteSubject(ctx context.Context, id int64) error
-	ListSubject(ctx context.Context) ([]*types.Subject, error)
-	PageSubject(ctx context.Context, pagination *types.Pagination, query *types.QuerySubject) (*types.PageResult, error)
-	// ListSubjectByProjectID returns the project's subjects joined with the
-	// dataset they are bound to. Subjects are resolved project-wide without a
-	// role filter.
-	ListSubjectByProjectID(ctx context.Context, projectID string) ([]*types.SubjectWithDatasetInfo, error)
+	GetDatasetSampleBySampleID(ctx context.Context, sampleID int64) (*types.DatasetSample, error)
+	UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
+	DeleteDatasetSample(ctx context.Context, id int64) error
+	ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error)
 
 	CreateSample(ctx context.Context, sample *types.Sample) error
 	GetSampleByID(ctx context.Context, id int64) (*types.Sample, error)
 	UpdateSample(ctx context.Context, sample *types.Sample) error
 	// DeleteSample removes a sample and cascades through its assays (Sample ->
-	// Assay -> File), including the files' dataset bindings.
+	// Assay -> File), including the files' dataset bindings and the sample's own
+	// dataset binding (go_dataset_sample).
 	DeleteSample(ctx context.Context, id int64) error
 	ListSample(ctx context.Context) ([]*types.Sample, error)
 	PageSample(ctx context.Context, pagination *types.Pagination, query *types.QuerySample) (*types.PageResult, error)
-	// ListSampleByProjectID returns the project's samples joined with their
-	// owning subject and the dataset that subject is bound to. Samples are
-	// resolved project-wide without a role filter.
+	// ListSampleByProjectID returns the project's samples joined with the dataset
+	// they are bound to through go_dataset_sample. Samples are resolved
+	// project-wide without a role filter.
 	ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error)
 
-	// ImportAssayTSV bulk-imports the Subject -> Sample -> Assay -> File tree from
-	// a TSV text scoped to one dataset, upserting each level by its natural key
-	// (dataset+subject_name, subject+sample_name, sample+assay_role,
-	// assay+file_key).
+	// ImportAssayTSV bulk-imports the Sample -> Assay -> File tree from a TSV
+	// text scoped to one dataset, upserting each level by its natural key
+	// (dataset+sample_name, sample+assay_role, assay+file_key).
 	ImportAssayTSV(ctx context.Context, req *types.ImportAssayTSVRequest) (*types.ImportAssayTSVResult, error)
 }
 
@@ -154,53 +141,35 @@ type DataRepository interface {
 	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithSampleInfo, int64, error)
 	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithSampleInfo, error)
 
-	CreateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error
-	GetDatasetSubjectByID(ctx context.Context, id int64) (*types.DatasetSubject, error)
-	GetDatasetSubjectBySubjectID(ctx context.Context, subjectID int64) (*types.DatasetSubject, error)
-	UpdateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error
-	DeleteDatasetSubject(ctx context.Context, id int64) error
-	ListDatasetSubject(ctx context.Context) ([]*types.DatasetSubject, error)
-
-	CreateSubject(ctx context.Context, subject *types.Subject) error
-	GetSubjectByID(ctx context.Context, id int64) (*types.Subject, error)
-	UpdateSubject(ctx context.Context, subject *types.Subject) error
-	DeleteSubject(ctx context.Context, id int64) error
-	ListSubject(ctx context.Context) ([]*types.Subject, error)
-	PageSubject(ctx context.Context, pagination *types.Pagination, query *types.QuerySubject) ([]*types.Subject, int64, error)
-	ListSubjectByProjectID(ctx context.Context, projectID string) ([]*types.SubjectWithDatasetInfo, error)
+	CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
+	GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error)
+	GetDatasetSampleBySampleID(ctx context.Context, sampleID int64) (*types.DatasetSample, error)
+	UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error
+	DeleteDatasetSample(ctx context.Context, id int64) error
+	ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error)
 
 	CreateSample(ctx context.Context, sample *types.Sample) error
 	GetSampleByID(ctx context.Context, id int64) (*types.Sample, error)
 	UpdateSample(ctx context.Context, sample *types.Sample) error
 	DeleteSample(ctx context.Context, id int64) error
 	ListSample(ctx context.Context) ([]*types.Sample, error)
-	PageSample(ctx context.Context, pagination *types.Pagination, query *types.QuerySample) ([]*types.SampleWithSubjectInfo, int64, error)
+	PageSample(ctx context.Context, pagination *types.Pagination, query *types.QuerySample) ([]*types.Sample, int64, error)
 	ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error)
 
 	// Import lookups: resolve each hierarchy level by its natural key so the TSV
 	// importer can decide between insert and update.
-	GetSubjectByKeyAndDatasetID(ctx context.Context, datasetID int64, subjectName string) (*types.Subject, error)
-	GetSampleBySubjectIDAndSampleKey(ctx context.Context, subjectID int64, sampleName string) (*types.Sample, error)
+	GetSampleByNameAndDatasetID(ctx context.Context, datasetID int64, sampleName string) (*types.Sample, error)
 	GetAssayBySampleIDAndRole(ctx context.Context, sampleID int64, role string) (*types.Assay, error)
 	GetFileByAssayIDAndFileKey(ctx context.Context, assayID int64, fileKey string) (*types.File, error)
 
-	ExistsSubjectByID(ctx context.Context, id int64) (bool, error)
-
-	// SubjectName / SampleName are only unique inside a dataset, so the uniqueness
-	// checks below are dataset-scoped instead of global.
-	//
-	// ExistsSubjectKeyInDataset reports whether another subject with the same
-	// subject_name (excluding excludeSubjectID) is bound to datasetID.
-	ExistsSubjectKeyInDataset(ctx context.Context, datasetID int64, subjectName string, excludeSubjectID int64) (bool, error)
-	// ExistsSampleKeyInDatasets reports whether a sample with the same sample_name
-	// (excluding excludeSampleID) exists under a subject bound to any of datasetIDs.
-	// An empty slice adds no constraint.
-	ExistsSampleKeyInDatasets(ctx context.Context, datasetIDs []int64, sampleName string, excludeSampleID int64) (bool, error)
-	// ListDatasetIDsBySubjectID returns the datasets a subject is bound to, so a
-	// sample's key uniqueness can be checked against each of them.
-	ListDatasetIDsBySubjectID(ctx context.Context, subjectID int64) ([]int64, error)
-
 	ExistsSampleByID(ctx context.Context, id int64) (bool, error)
+
+	// SampleName is only unique inside a dataset, so the uniqueness check below is
+	// dataset-scoped instead of global.
+	//
+	// ExistsSampleNameInDataset reports whether another sample with the same
+	// sample_name (excluding excludeSampleID) is bound to datasetID.
+	ExistsSampleNameInDataset(ctx context.Context, datasetID int64, sampleName string, excludeSampleID int64) (bool, error)
 
 	ExistsProjectByID(ctx context.Context, id string) (bool, error)
 	ExistsDatasetByID(ctx context.Context, id int64) (bool, error)
@@ -210,10 +179,8 @@ type DataRepository interface {
 	DeleteDatasetWithRelations(ctx context.Context, id int64) error
 	DeleteFileWithRelations(ctx context.Context, id int64) error
 	DeleteAssayWithRelations(ctx context.Context, id int64) error
-	// DeleteSampleWithRelations removes a sample and every assay it owns
-	// (including those assays' files and dataset bindings).
+	// DeleteSampleWithRelations removes a sample, every assay it owns (including
+	// those assays' files and dataset bindings), and its own dataset binding
+	// (go_dataset_sample).
 	DeleteSampleWithRelations(ctx context.Context, id int64) error
-	// DeleteSubjectWithRelations removes a subject and the whole
-	// Subject -> Sample -> Assay -> File tree below it, plus its dataset binding.
-	DeleteSubjectWithRelations(ctx context.Context, id int64) error
 }

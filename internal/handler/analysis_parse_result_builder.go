@@ -878,7 +878,7 @@ func loadCompatFileObjectByID(
 }
 
 // resolveAssayInputValue turns the selected assay ids of an `input_type=assay`
-// item into one row per assay: `{ID, subject_name, sample_name}` plus one entry per
+// item into one row per assay: `{ID, sample_name}` plus one entry per
 // file_key of that assay's files, valued by the file's path (falling back to its
 // business file_id). Files are assay-private (go_file.assay_id), so each assay is
 // resolved on its own; an assay without files contributes an empty map.
@@ -950,24 +950,23 @@ func resolveAssayInputValue(
 	}
 
 	result := make([]interface{}, 0, len(assayIDs))
-	// assayKeyCache 以 assayID 为键缓存 Assay -> Sample -> Subject 的业务编号，
+	// assayKeyCache 以 assayID 为键缓存 Assay -> Sample 的业务编号，
 	// 避免同一 assay 在最终输出循环里重复查询。
-	assayKeyCache := make(map[int64]map[string]string)
+	assayKeyCache := make(map[int64]string)
 	for _, assayID := range assayIDs {
 		assayIDNum, err := strconv.ParseInt(strings.TrimSpace(assayID), 10, 64)
 		if err != nil {
 			continue
 		}
 
-		assayKeys, err := resolveAssayKeys(ctx, dataService, assayIDNum, assayKeyCache)
+		sampleName, err := resolveAssaySampleName(ctx, dataService, assayIDNum, assayKeyCache)
 		if err != nil {
 			return nil, err
 		}
 
 		row := map[string]interface{}{
-			"ID":           assayID,
-			"subject_name": assayKeys["subject_name"],
-			"sample_name":  assayKeys["sample_name"],
+			"ID":          assayID,
+			"sample_name": sampleName,
 		}
 
 		// Every kept file of the assay is added under its own file_key.
@@ -987,60 +986,49 @@ func resolveAssayInputValue(
 	return result, nil
 }
 
-// resolveAssayKeys 沿 Assay -> Sample -> Subject 解析业务名，给
-// resolveAssayInputValue 的 assay 行补上 sample_name / subject_name（即
-// go_sample.sample_name / go_subject.subject_name）。任一层记录缺失时对应字段
-// 留空，不影响其余字段；只有非 NotFound 的查询错误才向上返回。
+// resolveAssaySampleName 沿 Assay -> Sample 解析业务名，给
+// resolveAssayInputValue 的 assay 行补上 sample_name（即 go_sample.sample_name）。
+// 任一层记录缺失时留空，不影响其余字段；只有非 NotFound 的查询错误才向上返回。
 // cache 以 assayID 为键，避免同一 assay 被重复查询。
-func resolveAssayKeys(
+func resolveAssaySampleName(
 	ctx context.Context,
 	dataService interfaces.DataService,
 	assayID int64,
-	cache map[int64]map[string]string,
-) (map[string]string, error) {
-	if keys, ok := cache[assayID]; ok {
-		return keys, nil
+	cache map[int64]string,
+) (string, error) {
+	if name, ok := cache[assayID]; ok {
+		return name, nil
 	}
-
-	keys := map[string]string{"subject_name": "", "sample_name": ""}
 
 	assay, err := dataService.GetAssayByID(ctx, assayID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			cache[assayID] = keys
-			return keys, nil
+			cache[assayID] = ""
+			return "", nil
 		}
-		return nil, err
+		return "", err
 	}
 	if assay == nil {
-		cache[assayID] = keys
-		return keys, nil
+		cache[assayID] = ""
+		return "", nil
 	}
 
 	sample, err := dataService.GetSampleByID(ctx, assay.SampleID)
 	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
+		return "", err
 	}
 	if sample == nil {
-		cache[assayID] = keys
-		return keys, nil
-	}
-	keys["sample_name"] = strings.TrimSpace(sample.SampleName)
-
-	subject, err := dataService.GetSubjectByID(ctx, sample.SubjectID)
-	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	if subject != nil {
-		keys["subject_name"] = strings.TrimSpace(subject.SubjectName)
+		cache[assayID] = ""
+		return "", nil
 	}
 
-	cache[assayID] = keys
-	return keys, nil
+	name := strings.TrimSpace(sample.SampleName)
+	cache[assayID] = name
+	return name, nil
 }
 
 // resolveSampleInputValue mirrors resolveAssayInputValue for `input_type=sample`:
-// every selected sample becomes one row of `{ID, subject_name, sample_name}` plus
+// every selected sample becomes one row of `{ID, sample_name}` plus
 // one nested map per assay role of that sample, e.g.
 // `{"WGS": {"FASTQ_R1": "/path/a_1.fq.gz", "FASTQ_R2": "/path/a_2.fq.gz"}, ...}`.
 // Files are assay-private (go_file.assay_id), so the sample is walked through
@@ -1146,24 +1134,23 @@ func resolveSampleInputValue(
 	}
 
 	result := make([]interface{}, 0, len(sampleIDs))
-	// sampleKeyCache 以 sampleID 为键缓存 Sample -> Subject 的业务名，避免同一
+	// sampleNameCache 以 sampleID 为键缓存 Sample 的业务名，避免同一
 	// sample 在最终输出循环里重复查询。
-	sampleKeyCache := make(map[int64]map[string]string)
+	sampleNameCache := make(map[int64]string)
 	for _, sampleID := range sampleIDs {
 		sampleIDNum, err := strconv.ParseInt(strings.TrimSpace(sampleID), 10, 64)
 		if err != nil {
 			continue
 		}
 
-		sampleKeys, err := resolveSampleKeys(ctx, dataService, sampleIDNum, sampleKeyCache)
+		sampleName, err := resolveSampleName(ctx, dataService, sampleIDNum, sampleNameCache)
 		if err != nil {
 			return nil, err
 		}
 
 		row := map[string]interface{}{
-			"ID":           sampleID,
-			"subject_name": sampleKeys["subject_name"],
-			"sample_name":  sampleKeys["sample_name"],
+			"ID":          sampleID,
+			"sample_name": sampleName,
 		}
 
 		roleToFiles := sampleRoleToFiles[sampleIDNum]
@@ -1182,46 +1169,36 @@ func resolveSampleInputValue(
 	return result, nil
 }
 
-// resolveSampleKeys 沿 Sample -> Subject 解析业务名，给 resolveSampleInputValue 的
-// sample 行补上 sample_name / subject_name（即 go_sample.sample_name /
-// go_subject.subject_name）。任一层记录缺失时对应字段留空，不影响其余字段；只有非
-// NotFound 的查询错误才向上返回。cache 以 sampleID 为键，避免同一 sample 被重复查询。
-func resolveSampleKeys(
+// resolveSampleName 解析 Sample 的业务名，给 resolveSampleInputValue 的
+// sample 行补上 sample_name（即 go_sample.sample_name）。记录缺失时留空，不影响
+// 其余字段；只有非 NotFound 的查询错误才向上返回。cache 以 sampleID 为键，避免
+// 同一 sample 被重复查询。
+func resolveSampleName(
 	ctx context.Context,
 	dataService interfaces.DataService,
 	sampleID int64,
-	cache map[int64]map[string]string,
-) (map[string]string, error) {
-	if keys, ok := cache[sampleID]; ok {
-		return keys, nil
+	cache map[int64]string,
+) (string, error) {
+	if name, ok := cache[sampleID]; ok {
+		return name, nil
 	}
-
-	keys := map[string]string{"subject_name": "", "sample_name": ""}
 
 	sample, err := dataService.GetSampleByID(ctx, sampleID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			cache[sampleID] = keys
-			return keys, nil
+			cache[sampleID] = ""
+			return "", nil
 		}
-		return nil, err
+		return "", err
 	}
 	if sample == nil {
-		cache[sampleID] = keys
-		return keys, nil
-	}
-	keys["sample_name"] = strings.TrimSpace(sample.SampleName)
-
-	subject, err := dataService.GetSubjectByID(ctx, sample.SubjectID)
-	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	if subject != nil {
-		keys["subject_name"] = strings.TrimSpace(subject.SubjectName)
+		cache[sampleID] = ""
+		return "", nil
 	}
 
-	cache[sampleID] = keys
-	return keys, nil
+	name := strings.TrimSpace(sample.SampleName)
+	cache[sampleID] = name
+	return name, nil
 }
 
 func extractSampleIDsFromValue(value interface{}) []string {

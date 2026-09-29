@@ -587,120 +587,10 @@ func (s *dataService) ListAssayByProjectID(ctx context.Context, projectID string
 	return s.dataRepo.ListAssayByProjectID(ctx, projectID, roles)
 }
 
-func (s *dataService) CreateSubject(ctx context.Context, subject *types.Subject) error {
-	subject.SubjectName = strings.TrimSpace(subject.SubjectName)
-	if subject.SubjectName == "" {
-		return apperrors.NewValidationError("subject_name is required")
-	}
-
-	return s.dataRepo.CreateSubject(ctx, subject)
-}
-
-func (s *dataService) GetSubjectByID(ctx context.Context, id int64) (*types.Subject, error) {
-	return s.dataRepo.GetSubjectByID(ctx, id)
-}
-
-func (s *dataService) UpdateSubject(ctx context.Context, subject *types.Subject) error {
-	current, err := s.dataRepo.GetSubjectByID(ctx, subject.ID)
-	if err != nil {
-		return err
-	}
-
-	// subject_name is required but not globally unique: it only has to stay unique
-	// within each dataset the subject is bound to.
-	subject.SubjectName = strings.TrimSpace(subject.SubjectName)
-	if subject.SubjectName == "" {
-		return apperrors.NewValidationError("subject_name is required")
-	}
-
-	if subject.SubjectName != current.SubjectName {
-		datasetIDs, err := s.dataRepo.ListDatasetIDsBySubjectID(ctx, subject.ID)
-		if err != nil {
-			return err
-		}
-		for _, datasetID := range datasetIDs {
-			if err := s.ensureSubjectKeyUniqueInDataset(ctx, datasetID, subject.SubjectName, subject.ID); err != nil {
-				return err
-			}
-		}
-	}
-
-	return s.dataRepo.UpdateSubject(ctx, subject)
-}
-
-// DeleteSubject removes a subject together with everything below it in the
-// Subject -> Sample -> Assay -> File tree, and clears its dataset binding. The
-// repository performs the whole cascade in one transaction.
-func (s *dataService) DeleteSubject(ctx context.Context, id int64) error {
-	if _, err := s.dataRepo.GetSubjectByID(ctx, id); err != nil {
-		return err
-	}
-
-	return s.dataRepo.DeleteSubjectWithRelations(ctx, id)
-}
-
-func (s *dataService) ListSubject(ctx context.Context) ([]*types.Subject, error) {
-	return s.dataRepo.ListSubject(ctx)
-}
-
-func (s *dataService) PageSubject(ctx context.Context, pagination *types.Pagination, query *types.QuerySubject) (*types.PageResult, error) {
-	if pagination == nil {
-		pagination = &types.Pagination{}
-	}
-
-	items, total, err := s.dataRepo.PageSubject(ctx, pagination, query)
-	if err != nil {
-		return nil, err
-	}
-
-	return types.NewPageResult(total, pagination, items), nil
-}
-
-// ListSubjectByProjectID returns the project's subjects joined with the dataset
-// they are bound to (go_dataset_subject); this is the entry point for the whole
-// Subject -> Sample -> Assay -> File branch.
-func (s *dataService) ListSubjectByProjectID(ctx context.Context, projectID string) ([]*types.SubjectWithDatasetInfo, error) {
-	return s.dataRepo.ListSubjectByProjectID(ctx, projectID)
-}
-
-// ensureSampleKeyUniqueInDatasets enforces that sample_name is unique within each
-// dataset: a name may repeat across datasets, but not inside any dataset the
-// sample's subject is bound to. A subject outside every dataset has no
-// constraint (the sample is not in any dataset yet).
-func (s *dataService) ensureSampleKeyUniqueInDatasets(ctx context.Context, subjectID int64, sampleName string, excludeSampleID int64) error {
-	datasetIDs, err := s.dataRepo.ListDatasetIDsBySubjectID(ctx, subjectID)
-	if err != nil {
-		return err
-	}
-	exists, err := s.dataRepo.ExistsSampleKeyInDatasets(ctx, datasetIDs, sampleName, excludeSampleID)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return apperrors.NewConflictError("sample_name already exists in this dataset: " + sampleName)
-	}
-	return nil
-}
-
 func (s *dataService) CreateSample(ctx context.Context, sample *types.Sample) error {
 	sample.SampleName = strings.TrimSpace(sample.SampleName)
 	if sample.SampleName == "" {
 		return apperrors.NewValidationError("sample_name is required")
-	}
-
-	if sample.SubjectID == 0 {
-		return apperrors.NewValidationError("subject_id is required")
-	}
-	subjectExists, err := s.dataRepo.ExistsSubjectByID(ctx, sample.SubjectID)
-	if err != nil {
-		return err
-	}
-	if !subjectExists {
-		return gorm.ErrRecordNotFound
-	}
-
-	if err := s.ensureSampleKeyUniqueInDatasets(ctx, sample.SubjectID, sample.SampleName, 0); err != nil {
-		return err
 	}
 
 	return s.dataRepo.CreateSample(ctx, sample)
@@ -711,8 +601,7 @@ func (s *dataService) GetSampleByID(ctx context.Context, id int64) (*types.Sampl
 }
 
 func (s *dataService) UpdateSample(ctx context.Context, sample *types.Sample) error {
-	current, err := s.dataRepo.GetSampleByID(ctx, sample.ID)
-	if err != nil {
+	if _, err := s.dataRepo.GetSampleByID(ctx, sample.ID); err != nil {
 		return err
 	}
 
@@ -721,30 +610,13 @@ func (s *dataService) UpdateSample(ctx context.Context, sample *types.Sample) er
 		return apperrors.NewValidationError("sample_name is required")
 	}
 
-	if sample.SubjectID == 0 {
-		sample.SubjectID = current.SubjectID
-	}
-	subjectExists, err := s.dataRepo.ExistsSubjectByID(ctx, sample.SubjectID)
-	if err != nil {
-		return err
-	}
-	if !subjectExists {
-		return gorm.ErrRecordNotFound
-	}
-
-	// Re-check only when the name or the owning subject actually changed.
-	if sample.SampleName != current.SampleName || sample.SubjectID != current.SubjectID {
-		if err := s.ensureSampleKeyUniqueInDatasets(ctx, sample.SubjectID, sample.SampleName, sample.ID); err != nil {
-			return err
-		}
-	}
-
 	return s.dataRepo.UpdateSample(ctx, sample)
 }
 
-// DeleteSample removes a sample together with the assays it owns and those
-// assays' files (Sample -> Assay -> File). The repository runs the whole cascade
-// in one transaction.
+// DeleteSample removes a sample together with the assays it owns, those assays'
+// files, and the dataset binding that anchors the sample
+// (DatasetSample -> Sample -> Assay -> File). The repository runs the whole
+// cascade in one transaction.
 func (s *dataService) DeleteSample(ctx context.Context, id int64) error {
 	if _, err := s.dataRepo.GetSampleByID(ctx, id); err != nil {
 		return err
@@ -770,12 +642,15 @@ func (s *dataService) PageSample(ctx context.Context, pagination *types.Paginati
 	return types.NewPageResult(total, pagination, items), nil
 }
 
+// ListSampleByProjectID returns the project's samples joined with the dataset
+// they are bound to (go_dataset_sample); this is the entry point for the whole
+// Sample -> Assay -> File branch.
 func (s *dataService) ListSampleByProjectID(ctx context.Context, projectID string) ([]*types.SampleWithDatasetInfo, error) {
 	return s.dataRepo.ListSampleByProjectID(ctx, projectID)
 }
 
-func (s *dataService) CreateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error {
-	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetSubject.DatasetID)
+func (s *dataService) CreateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error {
+	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetSample.DatasetID)
 	if err != nil {
 		return err
 	}
@@ -783,49 +658,49 @@ func (s *dataService) CreateDatasetSubject(ctx context.Context, datasetSubject *
 		return gorm.ErrRecordNotFound
 	}
 
-	subject, err := s.dataRepo.GetSubjectByID(ctx, datasetSubject.SubjectID)
+	sample, err := s.dataRepo.GetSampleByID(ctx, datasetSample.SampleID)
 	if err != nil {
 		return err
 	}
 
-	// subject_name is only unique inside a dataset, so binding is where a
+	// sample_name is only unique inside a dataset, so binding is where a
 	// duplicate within the same dataset is rejected (the DB index is not unique).
-	if err := s.ensureSubjectKeyUniqueInDataset(ctx, datasetSubject.DatasetID, subject.SubjectName, 0); err != nil {
+	if err := s.ensureSampleNameUniqueInDataset(ctx, datasetSample.DatasetID, sample.SampleName, 0); err != nil {
 		return err
 	}
 
-	return s.dataRepo.CreateDatasetSubject(ctx, datasetSubject)
+	return s.dataRepo.CreateDatasetSample(ctx, datasetSample)
 }
 
-// ensureSubjectKeyUniqueInDataset enforces that subject_name is unique inside one
-// dataset (excluding excludeSubjectID). The same name may exist in other
+// ensureSampleNameUniqueInDataset enforces that sample_name is unique inside one
+// dataset (excluding excludeSampleID). The same name may exist in other
 // datasets.
-func (s *dataService) ensureSubjectKeyUniqueInDataset(ctx context.Context, datasetID int64, subjectName string, excludeSubjectID int64) error {
-	exists, err := s.dataRepo.ExistsSubjectKeyInDataset(ctx, datasetID, subjectName, excludeSubjectID)
+func (s *dataService) ensureSampleNameUniqueInDataset(ctx context.Context, datasetID int64, sampleName string, excludeSampleID int64) error {
+	exists, err := s.dataRepo.ExistsSampleNameInDataset(ctx, datasetID, sampleName, excludeSampleID)
 	if err != nil {
 		return err
 	}
 	if exists {
-		return apperrors.NewConflictError("subject_name already exists in this dataset: " + subjectName)
+		return apperrors.NewConflictError("sample_name already exists in this dataset: " + sampleName)
 	}
 	return nil
 }
 
-func (s *dataService) GetDatasetSubjectByID(ctx context.Context, id int64) (*types.DatasetSubject, error) {
-	return s.dataRepo.GetDatasetSubjectByID(ctx, id)
+func (s *dataService) GetDatasetSampleByID(ctx context.Context, id int64) (*types.DatasetSample, error) {
+	return s.dataRepo.GetDatasetSampleByID(ctx, id)
 }
 
-func (s *dataService) GetDatasetSubjectBySubjectID(ctx context.Context, subjectID int64) (*types.DatasetSubject, error) {
-	return s.dataRepo.GetDatasetSubjectBySubjectID(ctx, subjectID)
+func (s *dataService) GetDatasetSampleBySampleID(ctx context.Context, sampleID int64) (*types.DatasetSample, error) {
+	return s.dataRepo.GetDatasetSampleBySampleID(ctx, sampleID)
 }
 
-func (s *dataService) UpdateDatasetSubject(ctx context.Context, datasetSubject *types.DatasetSubject) error {
-	_, err := s.dataRepo.GetDatasetSubjectByID(ctx, datasetSubject.ID)
+func (s *dataService) UpdateDatasetSample(ctx context.Context, datasetSample *types.DatasetSample) error {
+	_, err := s.dataRepo.GetDatasetSampleByID(ctx, datasetSample.ID)
 	if err != nil {
 		return err
 	}
 
-	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetSubject.DatasetID)
+	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, datasetSample.DatasetID)
 	if err != nil {
 		return err
 	}
@@ -833,42 +708,28 @@ func (s *dataService) UpdateDatasetSubject(ctx context.Context, datasetSubject *
 		return gorm.ErrRecordNotFound
 	}
 
-	subject, err := s.dataRepo.GetSubjectByID(ctx, datasetSubject.SubjectID)
+	sample, err := s.dataRepo.GetSampleByID(ctx, datasetSample.SampleID)
 	if err != nil {
 		return err
 	}
 
-	if err := s.ensureSubjectKeyUniqueInDataset(ctx, datasetSubject.DatasetID, subject.SubjectName, subject.ID); err != nil {
+	if err := s.ensureSampleNameUniqueInDataset(ctx, datasetSample.DatasetID, sample.SampleName, sample.ID); err != nil {
 		return err
 	}
 
-	return s.dataRepo.UpdateDatasetSubject(ctx, datasetSubject)
+	return s.dataRepo.UpdateDatasetSample(ctx, datasetSample)
 }
 
-func (s *dataService) DeleteDatasetSubject(ctx context.Context, id int64) error {
-	_, err := s.dataRepo.GetDatasetSubjectByID(ctx, id)
+func (s *dataService) DeleteDatasetSample(ctx context.Context, id int64) error {
+	_, err := s.dataRepo.GetDatasetSampleByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	return s.dataRepo.DeleteDatasetSubject(ctx, id)
+	return s.dataRepo.DeleteDatasetSample(ctx, id)
 }
 
-func (s *dataService) ListDatasetSubject(ctx context.Context) ([]*types.DatasetSubject, error) {
-	return s.dataRepo.ListDatasetSubject(ctx)
-}
-
-// importSubjectColumns maps a TSV column name to the Subject field it fills.
-// Adding another importable Subject field is a one-line change here. Every
-// column is optional: a row that omits it simply leaves the field untouched
-// (subject_desc, for instance, may be absent entirely).
-var importSubjectColumns = map[string]func(*types.Subject, string){
-	"subject_name": func(s *types.Subject, v string) { s.SubjectName = v },
-	"species":      func(s *types.Subject, v string) { s.Species = v },
-	"strain":       func(s *types.Subject, v string) { s.Strain = v },
-	"sex":          func(s *types.Subject, v string) { s.Sex = v },
-	"age":          func(s *types.Subject, v string) { s.Age = v },
-	"metadata":     func(s *types.Subject, v string) { s.Metadata = v },
-	"subject_desc": func(s *types.Subject, v string) { s.Description = v },
+func (s *dataService) ListDatasetSample(ctx context.Context) ([]*types.DatasetSample, error) {
+	return s.dataRepo.ListDatasetSample(ctx)
 }
 
 // importSampleColumns maps a TSV column name to the Sample field it fills.
@@ -895,14 +756,13 @@ var importAssayColumns = map[string]func(*types.Assay, string){
 }
 
 // ImportAssayTSV imports a TSV table into one dataset, upserting the whole
-// Subject -> Sample -> Assay -> File tree per row:
+// Sample -> Assay -> File tree per row:
 //
-//	dataset + subject_name     -> Subject (create+bind, or update)
-//	subject_id + sample_name   -> Sample  (create, or update)
+//	dataset + sample_name      -> Sample  (create+bind, or update)
 //	sample_id + assay_role     -> Assay   (create, or update)
 //	assay_id + <file column>   -> File    (create, or update; FileKey = column)
 //
-// The header names the columns; columns not mapped to a Subject/Sample/Assay
+// The header names the columns; columns not mapped to a Sample/Assay
 // field are File columns, so new file keys need no code change. The run is
 // transactional: any invalid row rolls the whole import back.
 func (s *dataService) ImportAssayTSV(ctx context.Context, req *types.ImportAssayTSVRequest) (*types.ImportAssayTSVResult, error) {
@@ -935,13 +795,13 @@ func (s *dataService) ImportAssayTSV(ctx context.Context, req *types.ImportAssay
 			colIndex[name] = i
 		}
 	}
-	for _, required := range []string{"subject_name", "sample_name"} {
+	for _, required := range []string{"sample_name"} {
 		if _, ok := colIndex[required]; !ok {
 			return nil, apperrors.NewValidationError("tsv is missing required column: " + required)
 		}
 	}
 
-	// Every column that is not a Subject/Sample/Assay field is a File column
+	// Every column that is not a Sample/Assay field is a File column
 	// whose key is the column name (kept in header order for stable results).
 	fileColumns := make([]string, 0, len(header))
 	for _, name := range header {
@@ -966,18 +826,13 @@ func (s *dataService) ImportAssayTSV(ctx context.Context, req *types.ImportAssay
 	err = s.dataRepo.WithTransaction(ctx, func(tx interfaces.DataRepository) error {
 		for i, fields := range rows {
 			row := importRowMap(colIndex, fields)
-			subjectName := strings.TrimSpace(row["subject_name"])
 			sampleName := strings.TrimSpace(row["sample_name"])
-			if subjectName == "" || sampleName == "" {
+			if sampleName == "" {
 				return apperrors.NewValidationError(
-					fmt.Sprintf("tsv row %d: subject_name and sample_name are required", i+2))
+					fmt.Sprintf("tsv row %d: sample_name is required", i+2))
 			}
 
-			subject, err := upsertImportSubject(ctx, tx, req.DatasetID, subjectName, row, result)
-			if err != nil {
-				return err
-			}
-			sample, err := upsertImportSample(ctx, tx, req.DatasetID, subject.ID, sampleName, row, result)
+			sample, err := upsertImportSample(ctx, tx, req.DatasetID, sampleName, row, result)
 			if err != nil {
 				return err
 			}
@@ -1001,11 +856,8 @@ func (s *dataService) ImportAssayTSV(ctx context.Context, req *types.ImportAssay
 }
 
 // isImportEntityColumn reports whether a TSV column is consumed by one of the
-// Subject/Sample/Assay setter maps (and is therefore not a File column).
+// Sample/Assay setter maps (and is therefore not a File column).
 func isImportEntityColumn(name string) bool {
-	if _, ok := importSubjectColumns[name]; ok {
-		return true
-	}
 	if _, ok := importSampleColumns[name]; ok {
 		return true
 	}
@@ -1058,57 +910,24 @@ func applyImportColumns[T any](entity *T, row map[string]string, setters map[str
 	}
 }
 
-// upsertImportSubject resolves a subject by dataset + subject_name, creating the
-// subject plus its dataset binding when missing and updating it otherwise.
-func upsertImportSubject(ctx context.Context, repo interfaces.DataRepository, datasetID int64, subjectName string, row map[string]string, result *types.ImportAssayTSVResult) (*types.Subject, error) {
-	subject, err := repo.GetSubjectByKeyAndDatasetID(ctx, datasetID, subjectName)
-	switch {
-	case err == nil:
-		applyImportColumns(subject, row, importSubjectColumns)
-		subject.SubjectName = subjectName
-		if err := repo.UpdateSubject(ctx, subject); err != nil {
-			return nil, err
-		}
-		result.SubjectsUpdated++
-		return subject, nil
-	case stderrs.Is(err, gorm.ErrRecordNotFound):
-		subject = &types.Subject{}
-		applyImportColumns(subject, row, importSubjectColumns)
-		subject.SubjectName = subjectName
-		if err := repo.CreateSubject(ctx, subject); err != nil {
-			return nil, err
-		}
-		if err := repo.CreateDatasetSubject(ctx, &types.DatasetSubject{
-			DatasetID: datasetID,
-			SubjectID: subject.ID,
-		}); err != nil {
-			return nil, err
-		}
-		result.SubjectsCreated++
-		return subject, nil
-	default:
-		return nil, err
-	}
-}
-
-// upsertImportSample resolves a sample by subject + sample_name, creating it when
-// missing and updating it otherwise.
-func upsertImportSample(ctx context.Context, repo interfaces.DataRepository, datasetID, subjectID int64, sampleName string, row map[string]string, result *types.ImportAssayTSVResult) (*types.Sample, error) {
-	sample, err := repo.GetSampleBySubjectIDAndSampleKey(ctx, subjectID, sampleName)
+// upsertImportSample resolves a sample by dataset + sample_name, creating the
+// sample plus its dataset binding (go_dataset_sample) when missing and updating
+// it otherwise.
+func upsertImportSample(ctx context.Context, repo interfaces.DataRepository, datasetID int64, sampleName string, row map[string]string, result *types.ImportAssayTSVResult) (*types.Sample, error) {
+	sample, err := repo.GetSampleByNameAndDatasetID(ctx, datasetID, sampleName)
 	switch {
 	case err == nil:
 		applyImportColumns(sample, row, importSampleColumns)
 		sample.SampleName = sampleName
-		sample.SubjectID = subjectID
 		if err := repo.UpdateSample(ctx, sample); err != nil {
 			return nil, err
 		}
 		result.SamplesUpdated++
 		return sample, nil
 	case stderrs.Is(err, gorm.ErrRecordNotFound):
-		// sample_name is unique inside a dataset, so another subject in the same
+		// sample_name is unique inside a dataset, so another sample in the same
 		// dataset cannot already hold it.
-		exists, err := repo.ExistsSampleKeyInDatasets(ctx, []int64{datasetID}, sampleName, 0)
+		exists, err := repo.ExistsSampleNameInDataset(ctx, datasetID, sampleName, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -1120,8 +939,13 @@ func upsertImportSample(ctx context.Context, repo interfaces.DataRepository, dat
 		sample = &types.Sample{}
 		applyImportColumns(sample, row, importSampleColumns)
 		sample.SampleName = sampleName
-		sample.SubjectID = subjectID
 		if err := repo.CreateSample(ctx, sample); err != nil {
+			return nil, err
+		}
+		if err := repo.CreateDatasetSample(ctx, &types.DatasetSample{
+			DatasetID: datasetID,
+			SampleID:  sample.ID,
+		}); err != nil {
 			return nil, err
 		}
 		result.SamplesCreated++

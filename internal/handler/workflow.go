@@ -1449,22 +1449,22 @@ func buildCompatAssayItem(item *types.AssayWithSampleInfo) (map[string]interface
 
 	// Assay 展示名优先取 assay_name，缺失时按 library_id → assay_type → 主键推导。
 	result["assay_name"] = assayDisplayName(result)
-	// label 供前端下拉展示：SubjectName - SampleName - AssayType。
+	// label 供前端下拉展示：SampleName - AssayType。
 	result["label"] = assayLabel(item)
 	result["value"] = result["id"]
 
 	return result, nil
 }
 
-// assayLabel 返回 Assay 的下拉展示标签：SubjectName - SampleName - AssayType。
+// assayLabel 返回 Assay 的下拉展示标签：SampleName - AssayType。
 // 直接读取结构体字段（无需再依赖 map/JSON 往返）；缺失的段自动跳过，
 // 避免出现 " - - " 之类的空占位。
 func assayLabel(assay *types.AssayWithSampleInfo) string {
 	if assay == nil {
 		return ""
 	}
-	parts := make([]string, 0, 3)
-	for _, seg := range []string{assay.SubjectName, assay.SampleName, assay.AssayType} {
+	parts := make([]string, 0, 2)
+	for _, seg := range []string{assay.SampleName, assay.AssayType} {
 		if s := strings.TrimSpace(seg); s != "" {
 			parts = append(parts, s)
 		}
@@ -1486,21 +1486,20 @@ func buildCompatSampleItem(item *types.SampleWithDatasetInfo) (map[string]interf
 		return nil, err
 	}
 
-	// label 供前端下拉展示：SubjectName - SampleName。
+	// label 供前端下拉展示：SampleName。
 	result["label"] = sampleLabel(item)
 	result["value"] = result["id"]
 
 	return result, nil
 }
 
-// sampleLabel 返回 Sample 的下拉展示标签：SubjectName - SampleName；
-// 缺失的段自动跳过。
+// sampleLabel 返回 Sample 的下拉展示标签：SampleName；缺失的段自动跳过。
 func sampleLabel(sample *types.SampleWithDatasetInfo) string {
 	if sample == nil {
 		return ""
 	}
-	parts := make([]string, 0, 2)
-	for _, seg := range []string{sample.SubjectName, sample.SampleName} {
+	parts := make([]string, 0, 1)
+	for _, seg := range []string{sample.SampleName} {
 		if s := strings.TrimSpace(seg); s != "" {
 			parts = append(parts, s)
 		}

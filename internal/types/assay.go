@@ -7,67 +7,15 @@ import (
 	"gorm.io/gorm"
 )
 
-// Subject 是实验对象/个体，隶属于某个 Project（Subject -> Sample -> Assay -> File）。
-type Subject struct {
-	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-
-	// SubjectName 是唯一的业务标识兼展示名（列 go_subject.subject_name），例如
-	// mouse-001 或 “小鼠 001”。无需全局唯一，只在同一个 dataset 下唯一
-	// （go_dataset_subject 绑定）；同一个名字可以出现在不同 dataset。
-	// 注意：Subject 的真正主键仍然是 ID；go_sample.subject_id 是指向 ID 的
-	// 外键，语义不同（一个是名字，一个是主键）。
-	SubjectName string `json:"subject_name" gorm:"type:varchar(255);index;not null"`
-
-	Species string `json:"species" gorm:"type:varchar(128)"`
-
-	Strain string `json:"strain" gorm:"type:varchar(128)"`
-
-	Sex string `json:"sex" gorm:"type:varchar(32)"`
-
-	Age string `json:"age" gorm:"type:varchar(64)"`
-
-	Metadata string `json:"metadata" gorm:"type:text"`
-
-	Description string `json:"description" gorm:"type:text"`
-
-	CreatedAt time.Time `json:"created_at"`
-
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-func (t *Subject) BeforeCreate(_ *gorm.DB) error {
-	if t.ID == 0 {
-		t.ID = utils.GenerateID()
-	}
-	return nil
-}
-
-func (Subject) TableName() string {
-	return "go_subject"
-}
-
-// QuerySubject carries optional Subject filters for list/page APIs. Empty
-// strings are ignored by the repository.
-type QuerySubject struct {
-	SubjectName string
-
-	Species string
-
-	Strain string
-
-	Sex string
-}
-
-// Sample 是一次生物采样记录，隶属于某个 Subject（Subject -> Sample -> Assay -> File）。
+// Sample 是一次生物采样记录，隶属于某个 Dataset（Dataset -> DatasetSample ->
+// Sample -> Assay -> File）。
 type Sample struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
 	// SampleName 是唯一的业务编号兼展示名（列 go_sample.sample_name），例如
-	// S-001 / 脾脏-6。无需全局唯一，只在同一个 dataset 下唯一（经所属 Subject 的
-	// go_dataset_subject 绑定判定）；同一个名字可以出现在不同 dataset。
-	SampleName string `json:"sample_name" gorm:"type:varchar(255);index"`
-
-	SubjectID int64 `json:"subject_id,string" gorm:"index;not null"`
+	// S-001 / 脾脏-6。无需全局唯一，只在同一个 dataset 下唯一（经
+	// go_dataset_sample 绑定判定）；同一个名字可以出现在不同 dataset。
+	SampleName string `json:"sample_name" gorm:"type:varchar(255);index;not null"`
 
 	Tissue string `json:"tissue" gorm:"type:varchar(128)"`
 
@@ -97,100 +45,27 @@ func (Sample) TableName() string {
 
 // QuerySample carries optional Sample filters for list/page APIs. Empty values
 // are ignored by the repository; SampleName matches the business number
-// (go_sample.sample_name) while SubjectID matches the owning subject PK.
+// (go_sample.sample_name).
 type QuerySample struct {
 	SampleName string
-
-	SubjectID *int64
 
 	Tissue string
 
 	CellType string
 }
 
-// SampleWithSubjectInfo is the read model of a Sample joined with its owning
-// Subject, used by the paged/list APIs so the UI can show the subject name.
-type SampleWithSubjectInfo struct {
-	ID int64 `json:"id,string"`
-
-	// SampleName 是 Sample 的业务编号兼展示名（go_sample.sample_name）。
-	SampleName string `json:"sample_name"`
-
-	// SubjectID 是所属 Subject 的主键（等于 go_sample.subject_id 外键）。
-	SubjectID int64 `json:"subject_id,string"`
-
-	// SubjectName is the owning Subject's business name (go_subject.subject_name);
-	// it is intentionally NOT ambiguous with `subject_id` on this struct, which is
-	// the owning subject's int64 primary key.
-	SubjectName string `json:"subject_name"`
-
-	Species string `json:"species"`
-
-	Tissue string `json:"tissue"`
-
-	CellType string `json:"cell_type"`
-
-	CollectionTime *time.Time `json:"collection_time"`
-
-	Metadata string `json:"metadata"`
-
-	Description string `json:"description"`
-
-	CreatedAt time.Time `json:"created_at"`
-
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// SubjectWithDatasetInfo is the read model of a Subject joined with the dataset
-// it is bound to (go_dataset_subject), used by the project-wide subject list.
-// The dataset binding lives on the top-level Subject, so this is where a
-// project's subjects (and, transitively, their samples/assays/files) come from.
-type SubjectWithDatasetInfo struct {
-	ID int64 `json:"id,string"`
-
-	// SubjectName 是唯一的业务标识兼展示名（go_subject.subject_name）。
-	SubjectName string `json:"subject_name"`
-
-	Species string `json:"species"`
-
-	Strain string `json:"strain"`
-
-	Sex string `json:"sex"`
-
-	Age string `json:"age"`
-
-	Metadata string `json:"metadata"`
-
-	Description string `json:"description"`
-
-	CreatedAt time.Time `json:"created_at"`
-
-	UpdatedAt time.Time `json:"updated_at"`
-
-	DatasetID string `json:"dataset_id"`
-
-	DatasetName string `json:"dataset_name"`
-}
-
-// SampleWithDatasetInfo is the read model of a Sample joined with its owning
-// Subject and the dataset that subject is bound to, used by the project-wide
-// sample picker. The dataset is resolved through the subject (go_dataset_subject
-// -> go_subject), not the sample itself. Samples are resolved without a role
-// filter (unlike Assay/File), so this model carries no Role field.
+// SampleWithDatasetInfo is the read model of a Sample joined with the dataset it
+// is bound to through go_dataset_sample, used by the project-wide sample picker.
+// The dataset binding lives on go_dataset_sample (dataset_id + sample_id), so
+// this is the entry point of the Sample -> Assay -> File branch. Samples are
+// resolved without a role filter (unlike Assay/File), so this model carries no
+// Role field.
 type SampleWithDatasetInfo struct {
 	ID int64 `json:"id,string"`
 
 	// SampleName 是 Sample 的业务编号兼展示名（go_sample.sample_name）。
 	SampleName string `json:"sample_name"`
 
-	// SubjectID 是所属 Subject 的主键（等于 go_sample.subject_id 外键）。
-	SubjectID int64 `json:"subject_id,string"`
-
-	// SubjectName is the owning Subject's business name (go_subject.subject_name).
-	SubjectName string `json:"subject_name"`
-
-	Species string `json:"species"`
-
 	Tissue string `json:"tissue"`
 
 	CellType string `json:"cell_type"`
@@ -210,8 +85,8 @@ type SampleWithDatasetInfo struct {
 	DatasetName string `json:"dataset_name"`
 }
 
-// Assay 是一次实验/测序建库记录，隶属于某个 Sample（Subject -> Sample -> Assay -> File）。
-// 其下文件（go_file.assay_id）是 assay 私有的，不跨 assay 复用。
+// Assay 是一次实验/测序建库记录，隶属于某个 Sample（Dataset -> DatasetSample ->
+// Sample -> Assay -> File）。其下文件（go_file.assay_id）是 assay 私有的，不跨 assay 复用。
 type Assay struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
@@ -242,22 +117,18 @@ type Assay struct {
 }
 
 // AssayWithSampleInfo is the read model of an Assay joined with its owning
-// Sample and Subject. Assays no longer carry a dataset binding of their own
-// (go_dataset_assay is gone): an assay belongs to a Sample, which belongs to a
-// Subject, and it is the Subject that is bound to a project's dataset
-// (go_dataset_subject), so a project's assays are resolved through the project's
-// subjects and samples.
+// Sample. Assays carry no dataset binding of their own: an assay belongs to a
+// Sample, and it is the Sample that is bound to a project's dataset through
+// go_dataset_sample, so a project's assays are resolved through the project's
+// samples.
 type AssayWithSampleInfo struct {
 	ID int64 `json:"id,string"`
 
 	SampleID int64 `json:"sample_id,string"`
 
-	// SampleName 是所属 Sample 的业务名（go_sample.sample_name）。
+	// SampleName 是所属 Sample 的业务名（go_sample.sample_name）；需要主键时
+	// 经 sample_id 再查 Sample。
 	SampleName string `json:"sample_name"`
-
-	// SubjectName 是所属 Subject 的业务名（go_subject.subject_name），与
-	// SampleName 一样只承载名字；需要主键时经 sample_id 再查 Sample。
-	SubjectName string `json:"subject_name"`
 
 	AssayType string `json:"assay_type"`
 
@@ -293,30 +164,29 @@ func (Assay) TableName() string {
 	return "go_assay"
 }
 
-// DatasetSubject is the join table binding a Subject into a Dataset
-// (go_dataset_subject). A dataset only binds to the top-level Subject; its
-// samples, assays and files are resolved through that subject, so every
-// project-scoped query joins go_dataset_subject -> go_subject to filter on
-// dataset_id. The same subject can be bound to multiple datasets, and subjects
-// are resolved project-wide without a role, so this binding carries no Role
-// field.
-type DatasetSubject struct {
+// DatasetSample is the join table binding a Sample into a Dataset
+// (go_dataset_sample). A dataset binds directly to the Sample; its assays and
+// files are resolved through that sample, so every project-scoped query joins
+// go_dataset_sample -> go_sample to filter on dataset_id. The same sample can be
+// bound to multiple datasets, and samples are resolved project-wide without a
+// role, so this binding carries no Role field.
+type DatasetSample struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
 	DatasetID int64 `json:"dataset_id,string" gorm:"index;not null"`
 
-	SubjectID int64 `json:"subject_id,string" gorm:"index;not null"`
+	SampleID int64 `json:"sample_id,string" gorm:"index;not null"`
 
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func (t *DatasetSubject) BeforeCreate(_ *gorm.DB) error {
+func (t *DatasetSample) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()
 	}
 	return nil
 }
 
-func (DatasetSubject) TableName() string {
-	return "go_dataset_subject"
+func (DatasetSample) TableName() string {
+	return "go_dataset_sample"
 }

@@ -750,8 +750,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.File{},
 		&types.DatasetFile{},
 		&types.Assay{},
-		&types.DatasetSubject{},
-		&types.Subject{},
+		&types.DatasetSample{},
 		&types.Sample{},
 		&types.Store{},
 		&types.Script{},
@@ -791,13 +790,13 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to migrate go_sample.sample_key index: %w", err)
 	}
 
-	// subject_key / sample_key are no longer written (subject_name / sample_name are
-	// the business identifiers), but AutoMigrate keeps the legacy NOT NULL columns
-	// untouched. An INSERT that omits a NOT NULL column with no default is rejected
-	// by MySQL/Postgres, so the columns have to be made nullable in code (no SQL
-	// migration file; idempotent, skipped on a fresh schema).
+	// sample_key is no longer written (sample_name is the business identifier), but
+	// AutoMigrate keeps the legacy NOT NULL column untouched. An INSERT that omits a
+	// NOT NULL column with no default is rejected by MySQL/Postgres, so the column
+	// has to be made nullable in code (no SQL migration file; idempotent, skipped on
+	// a fresh schema).
 	if err := relaxLegacyKeyColumns(db, driver); err != nil {
-		return nil, fmt.Errorf("failed to relax legacy subject_key/sample_key columns: %w", err)
+		return nil, fmt.Errorf("failed to relax legacy sample_key column: %w", err)
 	}
 
 	// if err := migratePipelineComponentsContainerIDType(db, driver); err != nil {
@@ -852,13 +851,13 @@ func migrateSampleKeyIndex(db *gorm.DB) error {
 	return nil
 }
 
-// relaxLegacyKeyColumns makes the deprecated go_subject.subject_key /
-// go_sample.sample_key columns nullable so inserts still work now that the
-// corresponding model fields are gone. AutoMigrate never alters columns it no
-// longer declares, and MySQL/Postgres reject an INSERT that omits a NOT NULL
-// column without a default, so this is done explicitly in code (no SQL migration
-// file). It is idempotent and skips columns that do not exist / unsupported
-// drivers.
+// relaxLegacyKeyColumns makes the deprecated go_sample.sample_key /
+// go_sample.subject_id columns nullable so inserts still work now that the
+// corresponding model fields are gone (the dataset binding now lives on
+// go_dataset_sample). AutoMigrate never alters columns it no longer declares, and
+// MySQL/Postgres reject an INSERT that omits a NOT NULL column without a default,
+// so this is done explicitly in code (no SQL migration file). It is idempotent
+// and skips columns that do not exist / unsupported drivers.
 func relaxLegacyKeyColumns(db *gorm.DB, driver string) error {
 	type legacyColumn struct {
 		model  interface{}
@@ -870,13 +869,13 @@ func relaxLegacyKeyColumns(db *gorm.DB, driver string) error {
 	switch driver {
 	case "mysql":
 		targets = []legacyColumn{
-			{&types.Subject{}, "subject_key", "ALTER TABLE go_subject MODIFY COLUMN subject_key VARCHAR(255) NULL"},
 			{&types.Sample{}, "sample_key", "ALTER TABLE go_sample MODIFY COLUMN sample_key VARCHAR(255) NULL"},
+			{&types.Sample{}, "subject_id", "ALTER TABLE go_sample MODIFY COLUMN subject_id BIGINT NULL"},
 		}
 	case "postgres":
 		targets = []legacyColumn{
-			{&types.Subject{}, "subject_key", "ALTER TABLE go_subject ALTER COLUMN subject_key DROP NOT NULL"},
 			{&types.Sample{}, "sample_key", "ALTER TABLE go_sample ALTER COLUMN sample_key DROP NOT NULL"},
+			{&types.Sample{}, "subject_id", "ALTER TABLE go_sample ALTER COLUMN subject_id DROP NOT NULL"},
 		}
 	default:
 		return nil

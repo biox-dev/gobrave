@@ -5123,7 +5123,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "根据 project_id 分页查询其样本下的 Assay，并返回所属 sample_name、subject_name 等信息",
+                "description": "根据 project_id 分页查询其样本下的 Assay，并返回所属 sample_name 等信息",
                 "consumes": [
                     "application/json"
                 ],
@@ -5596,14 +5596,14 @@ const docTemplate = `{
                 }
             }
         },
-        "/data/dataset-subject/create": {
+        "/data/dataset-sample/create": {
             "post": {
                 "security": [
                     {
                         "Bearer": []
                     }
                 ],
-                "description": "创建 DatasetSubject 记录（数据集只与顶层 Subject 关联）",
+                "description": "创建 DatasetSample 记录（数据集直接与 Sample 关联）",
                 "consumes": [
                     "application/json"
                 ],
@@ -5613,7 +5613,7 @@ const docTemplate = `{
                 "tags": [
                     "数据管理"
                 ],
-                "summary": "创建数据集-Subject 映射",
+                "summary": "创建数据集-Sample 映射",
                 "parameters": [
                     {
                         "description": "请求参数",
@@ -5621,7 +5621,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.DatasetSubject"
+                            "$ref": "#/definitions/types.DatasetSample"
                         }
                     }
                 ],
@@ -5629,7 +5629,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/types.DatasetSubject"
+                            "$ref": "#/definitions/types.DatasetSample"
                         }
                     },
                     "400": {
@@ -5659,14 +5659,14 @@ const docTemplate = `{
                 }
             }
         },
-        "/data/dataset-subject/delete": {
+        "/data/dataset-sample/delete": {
             "post": {
                 "security": [
                     {
                         "Bearer": []
                     }
                 ],
-                "description": "按 ID 删除 DatasetSubject 记录",
+                "description": "按 ID 删除 DatasetSample 记录",
                 "consumes": [
                     "application/json"
                 ],
@@ -5676,7 +5676,7 @@ const docTemplate = `{
                 "tags": [
                     "数据管理"
                 ],
-                "summary": "删除数据集-Subject 映射",
+                "summary": "删除数据集-Sample 映射",
                 "parameters": [
                     {
                         "description": "请求参数",
@@ -5725,21 +5725,21 @@ const docTemplate = `{
                 }
             }
         },
-        "/data/dataset-subject/get": {
+        "/data/dataset-sample/get": {
             "get": {
                 "security": [
                     {
                         "Bearer": []
                     }
                 ],
-                "description": "按 ID 查询 DatasetSubject 详情",
+                "description": "按 ID 查询 DatasetSample 详情",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "数据管理"
                 ],
-                "summary": "获取数据集-Subject 映射",
+                "summary": "获取数据集-Sample 映射",
                 "parameters": [
                     {
                         "type": "integer",
@@ -5753,7 +5753,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/types.DatasetSubject"
+                            "$ref": "#/definitions/types.DatasetSample"
                         }
                     },
                     "400": {
@@ -5783,26 +5783,26 @@ const docTemplate = `{
                 }
             }
         },
-        "/data/dataset-subject/get-by-subject": {
+        "/data/dataset-sample/get-by-sample": {
             "get": {
                 "security": [
                     {
                         "Bearer": []
                     }
                 ],
-                "description": "返回 Subject 绑定的 DatasetSubject；尚未绑定任何数据集时返回 null",
+                "description": "返回 Sample 绑定的 DatasetSample；尚未绑定任何数据集时返回 null",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "数据管理"
                 ],
-                "summary": "按 Subject 查询数据集映射",
+                "summary": "按 Sample 查询数据集映射",
                 "parameters": [
                     {
                         "type": "integer",
-                        "description": "Subject 主键 ID",
-                        "name": "subject_id",
+                        "description": "Sample 主键 ID",
+                        "name": "sample_id",
                         "in": "query",
                         "required": true
                     }
@@ -5811,7 +5811,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/types.DatasetSubject"
+                            "$ref": "#/definitions/types.DatasetSample"
                         }
                     },
                     "400": {
@@ -5835,28 +5835,28 @@ const docTemplate = `{
                 }
             }
         },
-        "/data/dataset-subject/list": {
+        "/data/dataset-sample/list": {
             "get": {
                 "security": [
                     {
                         "Bearer": []
                     }
                 ],
-                "description": "查询 DatasetSubject 列表",
+                "description": "查询 DatasetSample 列表",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "数据管理"
                 ],
-                "summary": "数据集-Subject 映射列表",
+                "summary": "数据集-Sample 映射列表",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/types.DatasetSubject"
+                                "$ref": "#/definitions/types.DatasetSample"
                             }
                         }
                     },
@@ -5875,14 +5875,14 @@ const docTemplate = `{
                 }
             }
         },
-        "/data/dataset-subject/update": {
+        "/data/dataset-sample/update": {
             "post": {
                 "security": [
                     {
                         "Bearer": []
                     }
                 ],
-                "description": "按 ID 更新 DatasetSubject 记录",
+                "description": "按 ID 更新 DatasetSample 记录",
                 "consumes": [
                     "application/json"
                 ],
@@ -5892,7 +5892,7 @@ const docTemplate = `{
                 "tags": [
                     "数据管理"
                 ],
-                "summary": "更新数据集-Subject 映射",
+                "summary": "更新数据集-Sample 映射",
                 "parameters": [
                     {
                         "description": "请求参数",
@@ -5900,7 +5900,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.DatasetSubject"
+                            "$ref": "#/definitions/types.DatasetSample"
                         }
                     }
                 ],
@@ -6894,7 +6894,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "解析 TSV 文本（表头为列名），按 dataset+subject_name、subject+sample_name、sample+assay_role、assay+文件列 逐级 upsert；未映射的列作为 File 列（FileKey=列名）",
+                "description": "解析 TSV 文本（表头为列名），按 dataset+sample_name、sample+assay_role、assay+文件列 逐级 upsert；未映射的列作为 File 列（FileKey=列名）",
                 "consumes": [
                     "application/json"
                 ],
@@ -6904,7 +6904,7 @@ const docTemplate = `{
                 "tags": [
                     "数据管理"
                 ],
-                "summary": "通过 TSV 导入 Subject/Sample/Assay/File",
+                "summary": "通过 TSV 导入 Sample/Assay/File",
                 "parameters": [
                     {
                         "description": "请求参数",
@@ -7250,7 +7250,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "创建采样记录，主键由服务端生成；sample_name 业务号必填（只在 dataset 内唯一），subject_id 必须指向已存在的 Subject 主键",
+                "description": "创建采样记录，主键由服务端生成；sample_name 业务号必填（只在 dataset 内唯一）；样本归属数据集通过 DatasetSample 绑定建立",
                 "consumes": [
                     "application/json"
                 ],
@@ -7319,7 +7319,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按 ID 删除 Sample；当该 Sample 下仍存在 Assay 时返回 409，需先删除其 Assay",
+                "description": "按 ID 删除 Sample，并级联删除其下的 Assay、File 及 File 的数据集关联",
                 "consumes": [
                     "application/json"
                 ],
@@ -7365,12 +7365,6 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -7489,7 +7483,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "查询当前用户激活项目下关联的所有 Sample，附带所属 Subject 与 Dataset 信息",
+                "description": "查询当前用户激活项目下关联的所有 Sample，附带其绑定的 Dataset 信息",
                 "produces": [
                     "application/json"
                 ],
@@ -7535,7 +7529,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按 sample_name / subject_id（Subject 主键）/ tissue / cell_type 过滤并分页，附带 Subject 业务名",
+                "description": "按 sample_name / tissue / cell_type 过滤并分页",
                 "consumes": [
                     "application/json"
                 ],
@@ -7620,412 +7614,6 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/types.Sample"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/subject/create": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "创建实验对象/个体记录，主键由服务端生成，subject_name 业务标识/展示名必填（不要求全局唯一，只在 dataset 内唯一）",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "创建 Subject",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.Subject"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.Subject"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/subject/delete": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按 ID 删除 Subject；当该 Subject 下仍存在 Sample 时返回 409，需先删除其 Sample",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "删除 Subject",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.idBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/subject/get": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按 ID 查询 Subject 详情",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "获取 Subject",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "主键 ID",
-                        "name": "id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.Subject"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/subject/list": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "查询 Subject 列表",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "Subject 列表",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/types.Subject"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/subject/list-by-project": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "查询当前用户激活项目下关联的所有 Subject，附带其绑定的 Dataset 信息（dataset 只与顶层 Subject 关联）",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "按当前激活项目查询 Subject 列表",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/types.SubjectWithDatasetInfo"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/subject/page": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按 subject_name / species / strain / sex 过滤并分页",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "分页查询 Subject",
-                "parameters": [
-                    {
-                        "description": "分页请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.subjectPageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/subject/update": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按 ID 更新 Subject 记录",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "更新 Subject",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.Subject"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.Subject"
                         }
                     },
                     "400": {
@@ -13850,10 +13438,6 @@ const docTemplate = `{
                 "sample_name": {
                     "type": "string"
                 },
-                "subject_id": {
-                    "type": "string",
-                    "example": "0"
-                },
                 "tissue": {
                     "type": "string"
                 }
@@ -13917,34 +13501,6 @@ const docTemplate = `{
                 "workflow_id": {
                     "description": "WorkflowID 是 workflow 表主键（int64），兼容 JSON 字符串（\"123\"）与数字（123）两种写法。",
                     "type": "integer"
-                }
-            }
-        },
-        "handler.subjectPageRequest": {
-            "type": "object",
-            "properties": {
-                "page": {
-                    "description": "Page",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "page_size": {
-                    "description": "Page size",
-                    "type": "integer",
-                    "maximum": 1000,
-                    "minimum": 1
-                },
-                "sex": {
-                    "type": "string"
-                },
-                "species": {
-                    "type": "string"
-                },
-                "strain": {
-                    "type": "string"
-                },
-                "subject_name": {
-                    "type": "string"
                 }
             }
         },
@@ -14667,11 +14223,7 @@ const docTemplate = `{
                     "example": "0"
                 },
                 "sample_name": {
-                    "description": "SampleName 是所属 Sample 的业务名（go_sample.sample_name）。",
-                    "type": "string"
-                },
-                "subject_name": {
-                    "description": "SubjectName 是所属 Subject 的业务名（go_subject.subject_name），与\nSampleName 一样只承载名字；需要主键时经 sample_id 再查 Sample。",
+                    "description": "SampleName 是所属 Sample 的业务名（go_sample.sample_name）；需要主键时\n经 sample_id 再查 Sample。",
                     "type": "string"
                 },
                 "updated_at": {
@@ -15094,7 +14646,7 @@ const docTemplate = `{
                 }
             }
         },
-        "types.DatasetSubject": {
+        "types.DatasetSample": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -15108,7 +14660,7 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0"
                 },
-                "subject_id": {
+                "sample_id": {
                     "type": "string",
                     "example": "0"
                 }
@@ -15255,12 +14807,6 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "samples_updated": {
-                    "type": "integer"
-                },
-                "subjects_created": {
-                    "type": "integer"
-                },
-                "subjects_updated": {
                     "type": "integer"
                 }
             }
@@ -15452,12 +14998,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "sample_name": {
-                    "description": "SampleName 是唯一的业务编号兼展示名（列 go_sample.sample_name），例如\nS-001 / 脾脏-6。无需全局唯一，只在同一个 dataset 下唯一（经所属 Subject 的\ngo_dataset_subject 绑定判定）；同一个名字可以出现在不同 dataset。",
+                    "description": "SampleName 是唯一的业务编号兼展示名（列 go_sample.sample_name），例如\nS-001 / 脾脏-6。无需全局唯一，只在同一个 dataset 下唯一（经\ngo_dataset_sample 绑定判定）；同一个名字可以出现在不同 dataset。",
                     "type": "string"
-                },
-                "subject_id": {
-                    "type": "string",
-                    "example": "0"
                 },
                 "tissue": {
                     "type": "string"
@@ -15497,18 +15039,6 @@ const docTemplate = `{
                 },
                 "sample_name": {
                     "description": "SampleName 是 Sample 的业务编号兼展示名（go_sample.sample_name）。",
-                    "type": "string"
-                },
-                "species": {
-                    "type": "string"
-                },
-                "subject_id": {
-                    "description": "SubjectID 是所属 Subject 的主键（等于 go_sample.subject_id 外键）。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "subject_name": {
-                    "description": "SubjectName is the owning Subject's business name (go_subject.subject_name).",
                     "type": "string"
                 },
                 "tissue": {
@@ -15745,86 +15275,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "tools_container_id": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "types.Subject": {
-            "type": "object",
-            "properties": {
-                "age": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "metadata": {
-                    "type": "string"
-                },
-                "sex": {
-                    "type": "string"
-                },
-                "species": {
-                    "type": "string"
-                },
-                "strain": {
-                    "type": "string"
-                },
-                "subject_name": {
-                    "description": "SubjectName 是唯一的业务标识兼展示名（列 go_subject.subject_name），例如\nmouse-001 或 “小鼠 001”。无需全局唯一，只在同一个 dataset 下唯一\n（go_dataset_subject 绑定）；同一个名字可以出现在不同 dataset。\n注意：Subject 的真正主键仍然是 ID；go_sample.subject_id 是指向 ID 的\n外键，语义不同（一个是名字，一个是主键）。",
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "types.SubjectWithDatasetInfo": {
-            "type": "object",
-            "properties": {
-                "age": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "dataset_id": {
-                    "type": "string"
-                },
-                "dataset_name": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "metadata": {
-                    "type": "string"
-                },
-                "sex": {
-                    "type": "string"
-                },
-                "species": {
-                    "type": "string"
-                },
-                "strain": {
-                    "type": "string"
-                },
-                "subject_name": {
-                    "description": "SubjectName 是唯一的业务标识兼展示名（go_subject.subject_name）。",
                     "type": "string"
                 },
                 "updated_at": {
