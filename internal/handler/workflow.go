@@ -1447,7 +1447,7 @@ func buildCompatAssayItem(item *types.AssayWithSampleInfo) (map[string]interface
 		return nil, err
 	}
 
-	// Assay 已无独立 name 列，展示名按 library_id → assay_type → 主键推导。
+	// Assay 展示名优先取 assay_name，缺失时按 library_id → assay_type → 主键推导。
 	result["assay_name"] = assayDisplayName(result)
 	// label 供前端下拉展示：SubjectName - SampleName - AssayType。
 	result["label"] = assayLabel(item)

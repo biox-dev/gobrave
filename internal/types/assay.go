@@ -11,16 +11,12 @@ import (
 type Subject struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	// SubjectKey 是输入用的英文标识（列 go_subject.subject_key），例如 mouse-001；
-	// 与 Sample.SampleKey 同语义，是业务意义上的“编号”。无需全局唯一，只在同一个
-	// dataset 下唯一（go_dataset_subject 绑定）；同一个 key 可以出现在不同 dataset。
+	// SubjectName 是唯一的业务标识兼展示名（列 go_subject.subject_name），例如
+	// mouse-001 或 “小鼠 001”。无需全局唯一，只在同一个 dataset 下唯一
+	// （go_dataset_subject 绑定）；同一个名字可以出现在不同 dataset。
 	// 注意：Subject 的真正主键仍然是 ID；go_sample.subject_id 是指向 ID 的
-	// 外键，语义不同（一个是编号，一个是主键）。
-	SubjectKey string `json:"subject_key" gorm:"type:varchar(255);index;not null"`
-
-	// SubjectName 是人类可读的展示名（中文或带空格），例如 “小鼠 001”；
-	// 不要求唯一，可为空，展示时回退到 SubjectKey。
-	SubjectName string `json:"subject_name" gorm:"type:varchar(255)"`
+	// 外键，语义不同（一个是名字，一个是主键）。
+	SubjectName string `json:"subject_name" gorm:"type:varchar(255);index;not null"`
 
 	Species string `json:"species" gorm:"type:varchar(128)"`
 
@@ -31,6 +27,8 @@ type Subject struct {
 	Age string `json:"age" gorm:"type:varchar(64)"`
 
 	Metadata string `json:"metadata" gorm:"type:text"`
+
+	Description string `json:"description" gorm:"type:text"`
 
 	CreatedAt time.Time `json:"created_at"`
 
@@ -51,8 +49,6 @@ func (Subject) TableName() string {
 // QuerySubject carries optional Subject filters for list/page APIs. Empty
 // strings are ignored by the repository.
 type QuerySubject struct {
-	SubjectKey string
-
 	SubjectName string
 
 	Species string
@@ -66,12 +62,10 @@ type QuerySubject struct {
 type Sample struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	// SampleKey 是业务编号（列 go_sample.sample_key），例如 S-001。无需全局唯一，
-	// 只在同一个 dataset 下唯一（经所属 Subject 的 go_dataset_subject 绑定判定）；
-	// 同一个 key 可以出现在不同 dataset。
-	SampleKey string `json:"sample_key" gorm:"type:varchar(255);index;not null"`
-
-	SampleName string `json:"sample_name" gorm:"type:varchar(255)"`
+	// SampleName 是唯一的业务编号兼展示名（列 go_sample.sample_name），例如
+	// S-001 / 脾脏-6。无需全局唯一，只在同一个 dataset 下唯一（经所属 Subject 的
+	// go_dataset_subject 绑定判定）；同一个名字可以出现在不同 dataset。
+	SampleName string `json:"sample_name" gorm:"type:varchar(255);index"`
 
 	SubjectID int64 `json:"subject_id,string" gorm:"index;not null"`
 
@@ -102,11 +96,9 @@ func (Sample) TableName() string {
 }
 
 // QuerySample carries optional Sample filters for list/page APIs. Empty values
-// are ignored by the repository; SampleKey matches the business number
-// (go_sample.sample_key) while SubjectID matches the owning subject PK.
+// are ignored by the repository; SampleName matches the business number
+// (go_sample.sample_name) while SubjectID matches the owning subject PK.
 type QuerySample struct {
-	SampleKey string
-
 	SampleName string
 
 	SubjectID *int64
@@ -121,18 +113,15 @@ type QuerySample struct {
 type SampleWithSubjectInfo struct {
 	ID int64 `json:"id,string"`
 
-	// SampleKey 是 Sample 的业务编号（go_sample.sample_key）。
-	SampleKey string `json:"sample_key"`
-
+	// SampleName 是 Sample 的业务编号兼展示名（go_sample.sample_name）。
 	SampleName string `json:"sample_name"`
 
 	// SubjectID 是所属 Subject 的主键（等于 go_sample.subject_id 外键）。
 	SubjectID int64 `json:"subject_id,string"`
 
-	// SubjectName is the subject's human-readable display name
-	// (go_subject.subject_name); the machine-readable business key lives on
-	// go_subject.subject_key and is intentionally NOT projected here because
-	// `subject_id` on this struct is the owning subject's int64 primary key.
+	// SubjectName is the owning Subject's business name (go_subject.subject_name);
+	// it is intentionally NOT ambiguous with `subject_id` on this struct, which is
+	// the owning subject's int64 primary key.
 	SubjectName string `json:"subject_name"`
 
 	Species string `json:"species"`
@@ -159,9 +148,7 @@ type SampleWithSubjectInfo struct {
 type SubjectWithDatasetInfo struct {
 	ID int64 `json:"id,string"`
 
-	// SubjectKey 是输入用的英文标识（go_subject.subject_key）。
-	SubjectKey string `json:"subject_key"`
-
+	// SubjectName 是唯一的业务标识兼展示名（go_subject.subject_name）。
 	SubjectName string `json:"subject_name"`
 
 	Species string `json:"species"`
@@ -173,6 +160,8 @@ type SubjectWithDatasetInfo struct {
 	Age string `json:"age"`
 
 	Metadata string `json:"metadata"`
+
+	Description string `json:"description"`
 
 	CreatedAt time.Time `json:"created_at"`
 
@@ -191,16 +180,13 @@ type SubjectWithDatasetInfo struct {
 type SampleWithDatasetInfo struct {
 	ID int64 `json:"id,string"`
 
-	// SampleKey 是 Sample 的业务编号（go_sample.sample_key）。
-	SampleKey string `json:"sample_key"`
-
+	// SampleName 是 Sample 的业务编号兼展示名（go_sample.sample_name）。
 	SampleName string `json:"sample_name"`
 
 	// SubjectID 是所属 Subject 的主键（等于 go_sample.subject_id 外键）。
 	SubjectID int64 `json:"subject_id,string"`
 
-	// SubjectName is the subject's human-readable display name
-	// (go_subject.subject_name).
+	// SubjectName is the owning Subject's business name (go_subject.subject_name).
 	SubjectName string `json:"subject_name"`
 
 	Species string `json:"species"`
@@ -237,12 +223,18 @@ type Assay struct {
 
 	LibraryID string `json:"library_id" gorm:"type:varchar(255)"`
 
+	// AssayName 是 assay 的展示名（列 go_assay.assay_name）；为空时展示层回退到
+	// library_id → assay_type → 主键（见 handler.assayDisplayName）。
+	AssayName string `json:"assay_name" gorm:"type:varchar(255);index"`
+
 	// Role 是该 assay 的角色（列 go_assay.role），例如 DEFAULT / TABLE；
 	// input_type=assay 的表单输入用 resolver.accept_formats 与之匹配（与
 	// go_dataset_file.role 对文件的口径一致）。空表示不参与角色过滤。
 	Role string `json:"role" gorm:"type:varchar(64);index"`
 
 	Metadata string `json:"metadata" gorm:"type:text"`
+
+	Description string `json:"description" gorm:"type:text"`
 
 	CreatedAt time.Time `json:"created_at"`
 
@@ -260,13 +252,11 @@ type AssayWithSampleInfo struct {
 
 	SampleID int64 `json:"sample_id,string"`
 
-	// SampleName 是所属 Sample 的展示名（go_sample.sample_name）。
+	// SampleName 是所属 Sample 的业务名（go_sample.sample_name）。
 	SampleName string `json:"sample_name"`
 
-	// SubjectName 是所属 Subject 的人类可读展示名（go_subject.subject_name），
-	// 与 SampleName 一样只承载展示名；需要主键时经 SampleKey 再查 Sample。
-	// 英文标识（go_subject.subject_key）不在此投影，避免与 go_sample.subject_id
-	// 这个外键同名字段混淆。
+	// SubjectName 是所属 Subject 的业务名（go_subject.subject_name），与
+	// SampleName 一样只承载名字；需要主键时经 sample_id 再查 Sample。
 	SubjectName string `json:"subject_name"`
 
 	AssayType string `json:"assay_type"`
@@ -275,12 +265,17 @@ type AssayWithSampleInfo struct {
 
 	LibraryID string `json:"library_id"`
 
+	// AssayName 是该 assay 的展示名（go_assay.assay_name）。
+	AssayName string `json:"assay_name"`
+
 	// Role 是该 assay 的角色（go_assay.role），例如 DEFAULT / TABLE；
 	// input_type=assay 的表单输入用 resolver.accept_formats 与之匹配，
 	// resolveFormAnalysisResult 据此把 assay 分组挂到 analysis_result[role]。
 	Role string `json:"role"`
 
 	Metadata string `json:"metadata"`
+
+	Description string `json:"description"`
 
 	CreatedAt time.Time `json:"created_at"`
 

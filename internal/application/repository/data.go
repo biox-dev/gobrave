@@ -445,12 +445,14 @@ func (r *dataRepository) UpdateAssay(ctx context.Context, assay *types.Assay) er
 	return r.db.WithContext(ctx).Model(&types.Assay{}).
 		Where("id = ?", assay.ID).
 		Updates(map[string]interface{}{
-			"sample_id":  assay.SampleID,
-			"assay_type": assay.AssayType,
-			"platform":   assay.Platform,
-			"library_id": assay.LibraryID,
-			"role":       assay.Role,
-			"metadata":   assay.Metadata,
+			"sample_id":   assay.SampleID,
+			"assay_type":  assay.AssayType,
+			"platform":    assay.Platform,
+			"library_id":  assay.LibraryID,
+			"assay_name":  assay.AssayName,
+			"role":        assay.Role,
+			"metadata":    assay.Metadata,
+			"description": assay.Description,
 		}).Error
 }
 
@@ -487,8 +489,10 @@ const assayWithSampleSelect = `
 	a.assay_type,
 	a.platform,
 	a.library_id,
+	a.assay_name,
 	a.role,
 	a.metadata,
+	a.description,
 	a.created_at,
 	a.updated_at,
 	s.sample_name,
@@ -643,11 +647,12 @@ func (r *dataRepository) ExistsSampleByID(ctx context.Context, id int64) (bool, 
 	return count > 0, err
 }
 
-// ExistsSubjectKeyInDataset reports whether another subject with subjectKey is
-// already bound to datasetID. subject_key is only unique inside a dataset, so
-// the check joins go_dataset_subject instead of looking at go_subject alone.
-func (r *dataRepository) ExistsSubjectKeyInDataset(ctx context.Context, datasetID int64, subjectKey string, excludeSubjectID int64) (bool, error) {
-	if datasetID == 0 || strings.TrimSpace(subjectKey) == "" {
+// ExistsSubjectKeyInDataset reports whether another subject with the same
+// subject_name is already bound to datasetID. subject_name is only unique inside
+// a dataset, so the check joins go_dataset_subject instead of looking at
+// go_subject alone.
+func (r *dataRepository) ExistsSubjectKeyInDataset(ctx context.Context, datasetID int64, subjectName string, excludeSubjectID int64) (bool, error) {
+	if datasetID == 0 || strings.TrimSpace(subjectName) == "" {
 		return false, nil
 	}
 
@@ -655,7 +660,7 @@ func (r *dataRepository) ExistsSubjectKeyInDataset(ctx context.Context, datasetI
 	query := r.db.WithContext(ctx).
 		Table("go_subject AS sub").
 		Joins("JOIN go_dataset_subject AS ds ON ds.subject_id = sub.id").
-		Where("ds.dataset_id = ? AND sub.subject_key = ?", datasetID, subjectKey)
+		Where("ds.dataset_id = ? AND sub.subject_name = ?", datasetID, subjectName)
 	if excludeSubjectID != 0 {
 		query = query.Where("sub.id <> ?", excludeSubjectID)
 	}
@@ -665,12 +670,12 @@ func (r *dataRepository) ExistsSubjectKeyInDataset(ctx context.Context, datasetI
 	return count > 0, nil
 }
 
-// ExistsSampleKeyInDatasets reports whether a sample with sampleKey exists under
-// a subject bound to any of datasetIDs. sample_key is only unique inside a
-// dataset, so the check joins go_dataset_subject. An empty datasetIDs slice
-// means the sample is not part of any dataset yet, hence no constraint.
-func (r *dataRepository) ExistsSampleKeyInDatasets(ctx context.Context, datasetIDs []int64, sampleKey string, excludeSampleID int64) (bool, error) {
-	if len(datasetIDs) == 0 || strings.TrimSpace(sampleKey) == "" {
+// ExistsSampleKeyInDatasets reports whether a sample with the same sample_name
+// exists under a subject bound to any of datasetIDs. sample_name is only unique
+// inside a dataset, so the check joins go_dataset_subject. An empty datasetIDs
+// slice means the sample is not part of any dataset yet, hence no constraint.
+func (r *dataRepository) ExistsSampleKeyInDatasets(ctx context.Context, datasetIDs []int64, sampleName string, excludeSampleID int64) (bool, error) {
+	if len(datasetIDs) == 0 || strings.TrimSpace(sampleName) == "" {
 		return false, nil
 	}
 
@@ -678,7 +683,7 @@ func (r *dataRepository) ExistsSampleKeyInDatasets(ctx context.Context, datasetI
 	query := r.db.WithContext(ctx).
 		Table("go_sample AS s").
 		Joins("JOIN go_dataset_subject AS ds ON ds.subject_id = s.subject_id").
-		Where("s.sample_key = ? AND ds.dataset_id IN ?", sampleKey, datasetIDs)
+		Where("s.sample_name = ? AND ds.dataset_id IN ?", sampleName, datasetIDs)
 	if excludeSampleID != 0 {
 		query = query.Where("s.id <> ?", excludeSampleID)
 	}
@@ -730,13 +735,13 @@ func (r *dataRepository) UpdateSubject(ctx context.Context, subject *types.Subje
 	return r.db.WithContext(ctx).Model(&types.Subject{}).
 		Where("id = ?", subject.ID).
 		Updates(map[string]interface{}{
-			"subject_key":  subject.SubjectKey,
 			"subject_name": subject.SubjectName,
 			"species":      subject.Species,
 			"strain":       subject.Strain,
 			"sex":          subject.Sex,
 			"age":          subject.Age,
 			"metadata":     subject.Metadata,
+			"description":  subject.Description,
 		}).Error
 }
 
@@ -765,9 +770,6 @@ func (r *dataRepository) PageSubject(ctx context.Context, pagination *types.Pagi
 		db := r.db.WithContext(ctx).Table("go_subject AS subject")
 		if query == nil {
 			return db
-		}
-		if v := strings.TrimSpace(query.SubjectKey); v != "" {
-			db = db.Where("subject.subject_key LIKE ?", "%"+v+"%")
 		}
 		if v := strings.TrimSpace(query.SubjectName); v != "" {
 			db = db.Where("subject.subject_name LIKE ?", "%"+v+"%")
@@ -811,13 +813,13 @@ func (r *dataRepository) ListSubjectByProjectID(ctx context.Context, projectID s
 		Table("go_project_dataset AS pd").
 		Select(`
 	sub.id,
-	sub.subject_key,
 	sub.subject_name,
 	sub.species,
 	sub.strain,
 	sub.sex,
 	sub.age,
 	sub.metadata,
+	sub.description,
 	sub.created_at,
 	sub.updated_at,
 	d.id AS dataset_id,
@@ -851,7 +853,6 @@ func (r *dataRepository) UpdateSample(ctx context.Context, sample *types.Sample)
 	return r.db.WithContext(ctx).Model(&types.Sample{}).
 		Where("id = ?", sample.ID).
 		Updates(map[string]interface{}{
-			"sample_key":      sample.SampleKey,
 			"sample_name":     sample.SampleName,
 			"subject_id":      sample.SubjectID,
 			"tissue":          sample.Tissue,
@@ -878,7 +879,6 @@ func (r *dataRepository) ListSample(ctx context.Context) ([]*types.Sample, error
 // sampleWithSubjectSelect is the shared projection of the Sample+Subject read model.
 const sampleWithSubjectSelect = `
 	s.id,
-	s.sample_key,
 	s.sample_name,
 	s.subject_id,
 	sub.subject_name AS subject_name,
@@ -905,9 +905,6 @@ func (r *dataRepository) PageSample(ctx context.Context, pagination *types.Pagin
 			Joins("LEFT JOIN go_subject AS sub ON sub.id = s.subject_id")
 		if query == nil {
 			return db
-		}
-		if v := strings.TrimSpace(query.SampleKey); v != "" {
-			db = db.Where("s.sample_key LIKE ?", "%"+v+"%")
 		}
 		if v := strings.TrimSpace(query.SampleName); v != "" {
 			db = db.Where("s.sample_name LIKE ?", "%"+v+"%")
@@ -952,7 +949,6 @@ func (r *dataRepository) ListSampleByProjectID(ctx context.Context, projectID st
 		Table("go_project_dataset AS pd").
 		Select(`
 	s.id,
-	s.sample_key,
 	s.sample_name,
 	s.subject_id,
 	sub.subject_name AS subject_name,
@@ -980,18 +976,18 @@ func (r *dataRepository) ListSampleByProjectID(ctx context.Context, projectID st
 	return items, nil
 }
 
-// GetSubjectByKeyAndDatasetID resolves a subject by its business key inside one
+// GetSubjectByKeyAndDatasetID resolves a subject by its business name inside one
 // dataset. Subjects are only "in" a dataset through go_dataset_subject, so the
 // lookup joins that binding; it returns gorm.ErrRecordNotFound when the subject
 // is not bound to the dataset yet (the importer then creates the subject and the
 // binding).
-func (r *dataRepository) GetSubjectByKeyAndDatasetID(ctx context.Context, datasetID int64, subjectKey string) (*types.Subject, error) {
+func (r *dataRepository) GetSubjectByKeyAndDatasetID(ctx context.Context, datasetID int64, subjectName string) (*types.Subject, error) {
 	item := &types.Subject{}
 	err := r.db.WithContext(ctx).
 		Table("go_subject AS sub").
 		Select("sub.*").
 		Joins("JOIN go_dataset_subject AS ds ON ds.subject_id = sub.id").
-		Where("ds.dataset_id = ? AND sub.subject_key = ?", datasetID, subjectKey).
+		Where("ds.dataset_id = ? AND sub.subject_name = ?", datasetID, subjectName).
 		Order("sub.id ASC").
 		Take(item).Error
 	if err != nil {
@@ -1000,12 +996,12 @@ func (r *dataRepository) GetSubjectByKeyAndDatasetID(ctx context.Context, datase
 	return item, nil
 }
 
-// GetSampleBySubjectIDAndSampleKey resolves a sample by its business key inside
+// GetSampleBySubjectIDAndSampleKey resolves a sample by its business name inside
 // one subject (the natural key used by the TSV importer).
-func (r *dataRepository) GetSampleBySubjectIDAndSampleKey(ctx context.Context, subjectID int64, sampleKey string) (*types.Sample, error) {
+func (r *dataRepository) GetSampleBySubjectIDAndSampleKey(ctx context.Context, subjectID int64, sampleName string) (*types.Sample, error) {
 	item := &types.Sample{}
 	err := r.db.WithContext(ctx).
-		Where("subject_id = ? AND sample_key = ?", subjectID, sampleKey).
+		Where("subject_id = ? AND sample_name = ?", subjectID, sampleName).
 		Order("id ASC").
 		Take(item).Error
 	if err != nil {

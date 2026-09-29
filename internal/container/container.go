@@ -784,11 +784,20 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to auto migrate tables: %w", err)
 	}
 
-	// sample_key is no longer globally unique (only unique inside a dataset), so
-	// the legacy unique index has to be replaced explicitly: AutoMigrate never
-	// drops indexes it no longer declares.
+	// sample_key is deprecated (sample_name is the business identifier now), but the
+	// legacy NOT NULL column survives AutoMigrate, so the legacy unique index has to
+	// be replaced explicitly: AutoMigrate never drops indexes it no longer declares.
 	if err := migrateSampleKeyIndex(db); err != nil {
 		return nil, fmt.Errorf("failed to migrate go_sample.sample_key index: %w", err)
+	}
+
+	// subject_key / sample_key are no longer written (subject_name / sample_name are
+	// the business identifiers), but AutoMigrate keeps the legacy NOT NULL columns
+	// untouched. An INSERT that omits a NOT NULL column with no default is rejected
+	// by MySQL/Postgres, so the columns have to be made nullable in code (no SQL
+	// migration file; idempotent, skipped on a fresh schema).
+	if err := relaxLegacyKeyColumns(db, driver); err != nil {
+		return nil, fmt.Errorf("failed to relax legacy subject_key/sample_key columns: %w", err)
 	}
 
 	// if err := migratePipelineComponentsContainerIDType(db, driver); err != nil {
@@ -816,11 +825,11 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 }
 
 // migrateSampleKeyIndex replaces the legacy globally-unique index on
-// go_sample.sample_key with a plain (non-unique) one. sample_key is now only
-// unique inside a dataset, which is enforced in the data service, so the DB must
-// stop rejecting duplicates across datasets. AutoMigrate alone never drops
-// indexes, hence the explicit drop-and-recreate (idempotent: it is a no-op once
-// the index is already non-unique).
+// go_sample.sample_key with a plain (non-unique) one. sample_key is deprecated
+// (sample_name is now the business identifier) but AutoMigrate keeps the
+// NOT NULL column, so the DB must not reject the many empty sample_key values new
+// rows write. AutoMigrate alone never drops indexes, hence the explicit
+// drop-and-recreate (idempotent: it is a no-op once the index is non-unique).
 func migrateSampleKeyIndex(db *gorm.DB) error {
 	const indexName = "idx_go_sample_sample_key"
 
@@ -839,6 +848,47 @@ func migrateSampleKeyIndex(db *gorm.DB) error {
 			return err
 		}
 		return db.Migrator().CreateIndex(&types.Sample{}, indexName)
+	}
+	return nil
+}
+
+// relaxLegacyKeyColumns makes the deprecated go_subject.subject_key /
+// go_sample.sample_key columns nullable so inserts still work now that the
+// corresponding model fields are gone. AutoMigrate never alters columns it no
+// longer declares, and MySQL/Postgres reject an INSERT that omits a NOT NULL
+// column without a default, so this is done explicitly in code (no SQL migration
+// file). It is idempotent and skips columns that do not exist / unsupported
+// drivers.
+func relaxLegacyKeyColumns(db *gorm.DB, driver string) error {
+	type legacyColumn struct {
+		model  interface{}
+		column string
+		alter  string
+	}
+
+	var targets []legacyColumn
+	switch driver {
+	case "mysql":
+		targets = []legacyColumn{
+			{&types.Subject{}, "subject_key", "ALTER TABLE go_subject MODIFY COLUMN subject_key VARCHAR(255) NULL"},
+			{&types.Sample{}, "sample_key", "ALTER TABLE go_sample MODIFY COLUMN sample_key VARCHAR(255) NULL"},
+		}
+	case "postgres":
+		targets = []legacyColumn{
+			{&types.Subject{}, "subject_key", "ALTER TABLE go_subject ALTER COLUMN subject_key DROP NOT NULL"},
+			{&types.Sample{}, "sample_key", "ALTER TABLE go_sample ALTER COLUMN sample_key DROP NOT NULL"},
+		}
+	default:
+		return nil
+	}
+
+	for _, target := range targets {
+		if !db.Migrator().HasColumn(target.model, target.column) {
+			continue
+		}
+		if err := db.Exec(target.alter).Error; err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -367,9 +367,10 @@ func buildCompatAnalysisResultItem(file *types.File) map[string]interface{} {
 	}
 }
 
-// assayDisplayName 返回 Assay 的展示名：library_id 优先，其次 assay_type，最后回退主键。
+// assayDisplayName 返回 Assay 的展示名：assay_name 优先，其次 library_id，再 assay_type，
+// 最后回退主键。
 func assayDisplayName(item map[string]interface{}) string {
-	for _, key := range []string{"library_id", "assay_type"} {
+	for _, key := range []string{"assay_name", "library_id", "assay_type"} {
 		if s := strings.TrimSpace(anyToString(item[key])); s != "" {
 			return s
 		}
@@ -877,7 +878,7 @@ func loadCompatFileObjectByID(
 }
 
 // resolveAssayInputValue turns the selected assay ids of an `input_type=assay`
-// item into one row per assay: `{ID, subject_key, sample_key}` plus one entry per
+// item into one row per assay: `{ID, subject_name, sample_name}` plus one entry per
 // file_key of that assay's files, valued by the file's path (falling back to its
 // business file_id). Files are assay-private (go_file.assay_id), so each assay is
 // resolved on its own; an assay without files contributes an empty map.
@@ -964,9 +965,9 @@ func resolveAssayInputValue(
 		}
 
 		row := map[string]interface{}{
-			"ID":          assayID,
-			"subject_key": assayKeys["subject_key"],
-			"sample_key":  assayKeys["sample_key"],
+			"ID":           assayID,
+			"subject_name": assayKeys["subject_name"],
+			"sample_name":  assayKeys["sample_name"],
 		}
 
 		// Every kept file of the assay is added under its own file_key.
@@ -986,9 +987,9 @@ func resolveAssayInputValue(
 	return result, nil
 }
 
-// resolveAssayKeys 沿 Assay -> Sample -> Subject 解析业务编号，给
-// resolveAssayInputValue 的 assay 行补上 sample_key / subject_key（即
-// go_sample.sample_key / go_subject.subject_key）。任一层记录缺失时对应字段
+// resolveAssayKeys 沿 Assay -> Sample -> Subject 解析业务名，给
+// resolveAssayInputValue 的 assay 行补上 sample_name / subject_name（即
+// go_sample.sample_name / go_subject.subject_name）。任一层记录缺失时对应字段
 // 留空，不影响其余字段；只有非 NotFound 的查询错误才向上返回。
 // cache 以 assayID 为键，避免同一 assay 被重复查询。
 func resolveAssayKeys(
@@ -1001,7 +1002,7 @@ func resolveAssayKeys(
 		return keys, nil
 	}
 
-	keys := map[string]string{"subject_key": "", "sample_key": ""}
+	keys := map[string]string{"subject_name": "", "sample_name": ""}
 
 	assay, err := dataService.GetAssayByID(ctx, assayID)
 	if err != nil {
@@ -1024,14 +1025,14 @@ func resolveAssayKeys(
 		cache[assayID] = keys
 		return keys, nil
 	}
-	keys["sample_key"] = strings.TrimSpace(sample.SampleKey)
+	keys["sample_name"] = strings.TrimSpace(sample.SampleName)
 
 	subject, err := dataService.GetSubjectByID(ctx, sample.SubjectID)
 	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 	if subject != nil {
-		keys["subject_key"] = strings.TrimSpace(subject.SubjectKey)
+		keys["subject_name"] = strings.TrimSpace(subject.SubjectName)
 	}
 
 	cache[assayID] = keys
@@ -1039,7 +1040,7 @@ func resolveAssayKeys(
 }
 
 // resolveSampleInputValue mirrors resolveAssayInputValue for `input_type=sample`:
-// every selected sample becomes one row of `{ID, subject_key, sample_key}` plus
+// every selected sample becomes one row of `{ID, subject_name, sample_name}` plus
 // one nested map per assay role of that sample, e.g.
 // `{"WGS": {"FASTQ_R1": "/path/a_1.fq.gz", "FASTQ_R2": "/path/a_2.fq.gz"}, ...}`.
 // Files are assay-private (go_file.assay_id), so the sample is walked through
@@ -1145,7 +1146,7 @@ func resolveSampleInputValue(
 	}
 
 	result := make([]interface{}, 0, len(sampleIDs))
-	// sampleKeyCache 以 sampleID 为键缓存 Sample -> Subject 的业务编号，避免同一
+	// sampleKeyCache 以 sampleID 为键缓存 Sample -> Subject 的业务名，避免同一
 	// sample 在最终输出循环里重复查询。
 	sampleKeyCache := make(map[int64]map[string]string)
 	for _, sampleID := range sampleIDs {
@@ -1160,9 +1161,9 @@ func resolveSampleInputValue(
 		}
 
 		row := map[string]interface{}{
-			"ID":          sampleID,
-			"subject_key": sampleKeys["subject_key"],
-			"sample_key":  sampleKeys["sample_key"],
+			"ID":           sampleID,
+			"subject_name": sampleKeys["subject_name"],
+			"sample_name":  sampleKeys["sample_name"],
 		}
 
 		roleToFiles := sampleRoleToFiles[sampleIDNum]
@@ -1181,9 +1182,9 @@ func resolveSampleInputValue(
 	return result, nil
 }
 
-// resolveSampleKeys 沿 Sample -> Subject 解析业务编号，给 resolveSampleInputValue 的
-// sample 行补上 sample_key / subject_key（即 go_sample.sample_key /
-// go_subject.subject_key）。任一层记录缺失时对应字段留空，不影响其余字段；只有非
+// resolveSampleKeys 沿 Sample -> Subject 解析业务名，给 resolveSampleInputValue 的
+// sample 行补上 sample_name / subject_name（即 go_sample.sample_name /
+// go_subject.subject_name）。任一层记录缺失时对应字段留空，不影响其余字段；只有非
 // NotFound 的查询错误才向上返回。cache 以 sampleID 为键，避免同一 sample 被重复查询。
 func resolveSampleKeys(
 	ctx context.Context,
@@ -1195,7 +1196,7 @@ func resolveSampleKeys(
 		return keys, nil
 	}
 
-	keys := map[string]string{"subject_key": "", "sample_key": ""}
+	keys := map[string]string{"subject_name": "", "sample_name": ""}
 
 	sample, err := dataService.GetSampleByID(ctx, sampleID)
 	if err != nil {
@@ -1209,14 +1210,14 @@ func resolveSampleKeys(
 		cache[sampleID] = keys
 		return keys, nil
 	}
-	keys["sample_key"] = strings.TrimSpace(sample.SampleKey)
+	keys["sample_name"] = strings.TrimSpace(sample.SampleName)
 
 	subject, err := dataService.GetSubjectByID(ctx, sample.SubjectID)
 	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 	if subject != nil {
-		keys["subject_key"] = strings.TrimSpace(subject.SubjectKey)
+		keys["subject_name"] = strings.TrimSpace(subject.SubjectName)
 	}
 
 	cache[sampleID] = keys
