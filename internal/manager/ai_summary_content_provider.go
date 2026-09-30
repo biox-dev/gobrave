@@ -21,6 +21,10 @@ type AISummaryContent struct {
 	Text string
 
 	WorkingDir string
+
+	// ProjectID 是摘要所属对象（Analysis / AnalysisNode）归属的项目 ID，
+	// 供 AISummaryWorker 回填到摘要记录。
+	ProjectID int64
 }
 
 // AISummaryContentProvider 根据摘要所属对象解析用于生成摘要的原始内容。
@@ -67,6 +71,7 @@ func (p *aiSummaryContentProvider) resolveAnalysis(ctx context.Context, analysis
 		Title: fmt.Sprintf("分析摘要：%s", a.AnalysisName),
 		// SystemPrompt: p.systemPrompt,
 		WorkingDir: a.WorkspaceDir,
+		ProjectID:  a.ProjectID,
 		Text: strings.Join(filterNonEmpty([]string{
 			"分析名称: " + a.AnalysisName,
 			"分析方法: " + a.AnalysisMethod,
@@ -87,6 +92,7 @@ func (p *aiSummaryContentProvider) resolveAnalysisNode(ctx context.Context, node
 		Title: fmt.Sprintf("Node Summary: %s", n.NodeName),
 		// SystemPrompt: p.systemPrompt,
 		WorkingDir: n.OutputDir,
+		ProjectID:  n.ProjectID,
 		Text: strings.Join(filterNonEmpty([]string{
 			"Analysis Name: " + n.NodeName,
 			// "节点 ID: " + n.NodeID,

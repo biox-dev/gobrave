@@ -103,6 +103,11 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 		return fmt.Errorf("resolve summary source: %w", err)
 	}
 
+	// 项目 ID 取自所属对象（Analysis / AnalysisNode），与创建摘要的用户无关。
+	if content.ProjectID != 0 {
+		summary.ProjectID = content.ProjectID
+	}
+
 	profile := strings.TrimSpace(summary.Profile)
 	if profile == "" {
 		profile = agent.ProfileSummary

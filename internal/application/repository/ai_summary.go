@@ -48,6 +48,7 @@ func (r *aiSummaryRepository) UpdateAISummary(ctx context.Context, item *types.A
 	updates := map[string]any{
 		"owner_id":   item.OwnerID,
 		"owner_type": item.OwnerType,
+		"project_id": item.ProjectID,
 		"title":      item.Title,
 		"content":    item.Content,
 		"status":     item.Status,

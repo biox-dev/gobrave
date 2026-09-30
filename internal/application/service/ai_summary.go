@@ -42,6 +42,7 @@ func NewAISummaryService(
 // AISummaryWorker 异步消费生成摘要内容。
 //
 // profile 为生成时使用的 Agent Profile 名称，为空表示使用内置 summary Profile。
+// 摘要所属项目 ID 由 AISummaryWorker 从所属对象解析后回填，此处不设置。
 func (s *aiSummaryService) CreateAISummary(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64, profile string) (*types.AISummary, error) {
 	summary := &types.AISummary{
 		OwnerType: ownerType,

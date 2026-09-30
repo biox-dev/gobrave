@@ -38,7 +38,9 @@ type AISummary struct {
 	OwnerID int64 `json:"owner_id,string" gorm:"column:owner_id;type:bigint;index:idx_ai_summaries_owner"`
 	// OwnerType 摘要所属对象的类型：analysis 或 analysis_node。
 	OwnerType SummaryOwnerType `json:"owner_type" gorm:"column:owner_type;type:varchar(32);index:idx_ai_summaries_owner"`
-	Title     string           `json:"title" gorm:"column:title;type:varchar(255)"`
+	// ProjectID 摘要所属项目 ID（t_project.id），创建时由创建者的激活项目推导。
+	ProjectID int64  `json:"project_id,string" gorm:"column:project_id;type:bigint;index:idx_ai_summaries_project"`
+	Title     string `json:"title" gorm:"column:title;type:varchar(255)"`
 	// Content AI 生成的摘要内容。
 	Content string `json:"content" gorm:"column:content;type:longtext"`
 	// Status 生成状态：生成中 / 生成成功 / 生成失败。
