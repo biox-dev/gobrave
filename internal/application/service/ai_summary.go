@@ -120,6 +120,37 @@ func (s *aiSummaryService) ListAISummariesByOwner(ctx context.Context, ownerType
 	return items, nil
 }
 
+// ListAISummariesByProjectID 按项目 ID 查询摘要列表，并为每个 item 补充所属对象
+// 输出目录对应的 /data-analysis URL 前缀。
+func (s *aiSummaryService) ListAISummariesByProjectID(ctx context.Context, projectID int64) ([]*types.AISummary, error) {
+	items, err := s.summaryRepo.ListAISummariesByProjectID(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	type ownerKey struct {
+		ownerType types.SummaryOwnerType
+		ownerID   int64
+	}
+	// 同一项目下多个摘要可能共享所属对象，按 (owner_type, owner_id) 缓存前缀，
+	// 避免对同一对象重复解析输出目录。
+	prefixCache := make(map[ownerKey]string, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		key := ownerKey{ownerType: item.OwnerType, ownerID: item.OwnerID}
+		prefix, ok := prefixCache[key]
+		if !ok {
+			prefix = s.resolveOwnerURLPrefix(ctx, item.OwnerType, item.OwnerID)
+			prefixCache[key] = prefix
+		}
+		item.Prefix = prefix
+	}
+
+	return items, nil
+}
+
 // resolveOwnerURLPrefix 解析摘要所属对象输出目录对应的 URL 前缀。
 // 对象不存在或目录为空时返回空串：前缀只是响应增强字段，
 // 不应阻塞摘要列表本身的返回。

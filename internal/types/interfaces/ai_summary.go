@@ -12,6 +12,8 @@ type AISummaryRepository interface {
 	GetAISummaryByID(ctx context.Context, id int64) (*types.AISummary, error)
 	// ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表。
 	ListAISummariesByOwner(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) ([]*types.AISummary, error)
+	// ListAISummariesByProjectID 按项目 ID（ai_summaries.project_id）查询摘要列表。
+	ListAISummariesByProjectID(ctx context.Context, projectID int64) ([]*types.AISummary, error)
 	UpdateAISummary(ctx context.Context, item *types.AISummary) error
 	DeleteAISummary(ctx context.Context, id int64) error
 }
@@ -28,6 +30,9 @@ type AISummaryService interface {
 	// ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表，
 	// 并填充每个摘要的 Prefix（所属对象输出目录对应的 URL 前缀）。
 	ListAISummariesByOwner(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) ([]*types.AISummary, error)
+	// ListAISummariesByProjectID 按项目 ID 查询摘要列表，
+	// 并填充每个摘要的 Prefix（所属对象输出目录对应的 URL 前缀）。
+	ListAISummariesByProjectID(ctx context.Context, projectID int64) ([]*types.AISummary, error)
 	// UpdateAISummary 按摘要 ID 更新标题、内容与 Agent Profile（nil 表示不修改对应字段）。
 	UpdateAISummary(ctx context.Context, id int64, title, content, profile *string) (*types.AISummary, error)
 	// DeleteAISummary 按摘要 ID 删除摘要记录。

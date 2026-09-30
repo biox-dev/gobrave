@@ -1,21 +1,28 @@
 package handler
 
 import (
+	stderrs "errors"
 	"net/http"
 
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // AISummaryHandler 处理 AI 摘要相关接口。
 type AISummaryHandler struct {
 	aiSummaryService interfaces.AISummaryService
+	// projectService 用于把当前登录用户解析为其激活项目，供按项目查询摘要使用。
+	projectService interfaces.ProjectService
 }
 
-func NewAISummaryHandler(aiSummaryService interfaces.AISummaryService) *AISummaryHandler {
-	return &AISummaryHandler{aiSummaryService: aiSummaryService}
+func NewAISummaryHandler(aiSummaryService interfaces.AISummaryService, projectService interfaces.ProjectService) *AISummaryHandler {
+	return &AISummaryHandler{
+		aiSummaryService: aiSummaryService,
+		projectService:   projectService,
+	}
 }
 
 type createAISummaryRequest struct {
@@ -168,6 +175,42 @@ func (h *AISummaryHandler) ListAISummary(c *gin.Context) {
 	}
 
 	summaries, err := h.aiSummaryService.ListAISummariesByOwner(c.Request.Context(), req.OwnerType, req.OwnerID)
+	if err != nil {
+		handleDataError(c, err, "failed to list ai summaries")
+		return
+	}
+
+	c.JSON(http.StatusOK, summaries)
+}
+
+// ListAISummaryByActiveProject godoc
+// @Summary      按当前用户激活项目查询 AI 摘要列表
+// @Description  解析当前登录用户的激活项目，返回该项目（project_id）下的全部 AI 摘要
+// @Tags         AI摘要
+// @Produce      json
+// @Success      200      {array}   types.AISummary
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /ai-summary/list-by-project [get]
+func (h *AISummaryHandler) ListAISummaryByActiveProject(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("active project not found"))
+			return
+		}
+		handleDataError(c, err, "failed to get active project")
+		return
+	}
+
+	summaries, err := h.aiSummaryService.ListAISummariesByProjectID(c.Request.Context(), project.ID)
 	if err != nil {
 		handleDataError(c, err, "failed to list ai summaries")
 		return

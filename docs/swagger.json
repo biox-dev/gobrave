@@ -1595,6 +1595,52 @@
                 }
             }
         },
+        "/ai-summary/list-by-project": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "解析当前登录用户的激活项目，返回该项目（project_id）下的全部 AI 摘要",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "AI摘要"
+                ],
+                "summary": "按当前用户激活项目查询 AI 摘要列表",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/types.AISummary"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/ai-summary/regenerate": {
             "post": {
                 "security": [
@@ -13369,9 +13415,18 @@
                         }
                     ]
                 },
+                "prefix": {
+                    "description": "Prefix 是摘要所属对象输出目录对应的 /data-analysis URL 前缀，便于前端拼接\n该输出目录下结果文件的访问地址。非持久化字段，查询时按需填充\n（见 aiSummaryService.ListAISummariesByOwner）。",
+                    "type": "string"
+                },
                 "profile": {
                     "description": "Profile 生成该摘要使用的 Agent Profile 名称（agent_profiles.name）。\n为空时由 AISummaryWorker 回退到内置 summary Profile。",
                     "type": "string"
+                },
+                "project_id": {
+                    "description": "ProjectID 摘要所属项目 ID（t_project.id），创建时由创建者的激活项目推导。",
+                    "type": "string",
+                    "example": "0"
                 },
                 "status": {
                     "description": "Status 生成状态：生成中 / 生成成功 / 生成失败。",

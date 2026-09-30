@@ -39,6 +39,17 @@ func (r *aiSummaryRepository) ListAISummariesByOwner(ctx context.Context, ownerT
 	return items, nil
 }
 
+func (r *aiSummaryRepository) ListAISummariesByProjectID(ctx context.Context, projectID int64) ([]*types.AISummary, error) {
+	items := make([]*types.AISummary, 0)
+	if err := r.db.WithContext(ctx).
+		Where("project_id = ?", projectID).
+		Order("created_at DESC").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *aiSummaryRepository) UpdateAISummary(ctx context.Context, item *types.AISummary) error {
 	if item == nil || item.ID == 0 {
 		return gorm.ErrRecordNotFound
