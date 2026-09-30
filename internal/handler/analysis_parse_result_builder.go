@@ -853,10 +853,11 @@ func loadCompatFileObjectByID(
 }
 
 // resolveAssayInputValue turns the selected assay ids of an `input_type=assay`
-// item into one row per assay: `{ID, sample_name}` plus one entry per
-// file_key of that assay's files, valued by the file's path (falling back to its
-// business file_id). Files are assay-private (go_file.assay_id), so each assay is
-// resolved on its own; an assay without files contributes an empty map.
+// item into one row per assay: `{ID, sample_name, assay_type, platform, role}`
+// plus one entry per file_key of that assay's files, valued by the file's path
+// (falling back to its business file_id). Files are assay-private
+// (go_file.assay_id), so each assay is resolved on its own; an assay without
+// files contributes an empty map.
 //
 // The item's `resolver.accept_formats` (read via utils.AcceptFormats) is matched
 // against the assay's own role (`go_assay.role`, the same field
@@ -925,23 +926,32 @@ func resolveAssayInputValue(
 	}
 
 	result := make([]interface{}, 0, len(assayIDs))
-	// assayKeyCache 以 assayID 为键缓存 Assay -> Sample 的业务编号，
-	// 避免同一 assay 在最终输出循环里重复查询。
-	assayKeyCache := make(map[int64]string)
+	// assayCache 以 assayID 为键缓存 Assay 记录，避免同一 assay 在最终输出
+	// 循环里重复查询，并据此补齐 sample_name / assay_type / platform / role。
+	assayCache := make(map[int64]*types.Assay)
 	for _, assayID := range assayIDs {
 		assayIDNum, err := strconv.ParseInt(strings.TrimSpace(assayID), 10, 64)
 		if err != nil {
 			continue
 		}
 
-		sampleName, err := resolveAssaySampleName(ctx, dataService, assayIDNum, assayKeyCache)
+		assay, err := resolveAssayByID(ctx, dataService, assayIDNum, assayCache)
 		if err != nil {
 			return nil, err
 		}
 
 		row := map[string]interface{}{
 			"ID":          assayID,
-			"sample_name": sampleName,
+			"sample_name": "",
+			"assay_type":  "",
+			"platform":    "",
+			"role":        "",
+		}
+		if assay != nil {
+			row["sample_name"] = strings.TrimSpace(assay.SampleName)
+			row["assay_type"] = strings.TrimSpace(assay.AssayType)
+			row["platform"] = strings.TrimSpace(assay.Platform)
+			row["role"] = strings.TrimSpace(assay.Role)
 		}
 
 		// Every kept file of the assay is added under its own file_key.
@@ -961,36 +971,35 @@ func resolveAssayInputValue(
 	return result, nil
 }
 
-// resolveAssaySampleName 解析 assay 自身的业务名，给 resolveAssayInputValue 的
-// assay 行补上 sample_name（即 go_assay.sample_name）。记录缺失时留空，不影响
-// 其余字段；只有非 NotFound 的查询错误才向上返回。cache 以 assayID 为键，避免
-// 同一 assay 被重复查询。
-func resolveAssaySampleName(
+// resolveAssayByID 加载 assay 自身记录，给 resolveAssayInputValue 的 assay 行
+// 补上 sample_name / assay_type / platform / role（对应 go_assay 的同名列）。
+// 记录缺失时返回 (nil, nil)，不影响其余字段；只有非 NotFound 的查询错误才向
+// 上返回。cache 以 assayID 为键，避免同一 assay 被重复查询。
+func resolveAssayByID(
 	ctx context.Context,
 	dataService interfaces.DataService,
 	assayID int64,
-	cache map[int64]string,
-) (string, error) {
-	if name, ok := cache[assayID]; ok {
-		return name, nil
+	cache map[int64]*types.Assay,
+) (*types.Assay, error) {
+	if assay, ok := cache[assayID]; ok {
+		return assay, nil
 	}
 
 	assay, err := dataService.GetAssayByID(ctx, assayID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			cache[assayID] = ""
-			return "", nil
+			cache[assayID] = nil
+			return nil, nil
 		}
-		return "", err
+		return nil, err
 	}
 	if assay == nil {
-		cache[assayID] = ""
-		return "", nil
+		cache[assayID] = nil
+		return nil, nil
 	}
 
-	name := strings.TrimSpace(assay.SampleName)
-	cache[assayID] = name
-	return name, nil
+	cache[assayID] = assay
+	return assay, nil
 }
 
 func extractAssayIDsFromValue(value interface{}) []string {

@@ -1307,7 +1307,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "根据 OwnerID/OwnerType 创建摘要记录，并异步触发 LLM 生成摘要",
+                "description": "根据 OwnerID/OwnerType 创建摘要记录（可指定 Agent Profile），并异步触发 LLM 生成摘要",
                 "consumes": [
                     "application/json"
                 ],
@@ -1672,7 +1672,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按摘要 ID 更新标题与内容，title/content 不传则保持原值",
+                "description": "按摘要 ID 更新标题、内容与 Agent Profile，字段不传则保持原值",
                 "consumes": [
                     "application/json"
                 ],
@@ -12214,6 +12214,10 @@ const docTemplate = `{
                 },
                 "owner_type": {
                     "$ref": "#/definitions/types.SummaryOwnerType"
+                },
+                "profile": {
+                    "description": "Profile 生成摘要使用的 Agent Profile 名称（为空则使用内置 summary Profile）。",
+                    "type": "string"
                 }
             }
         },
@@ -13109,6 +13113,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0"
                 },
+                "profile": {
+                    "description": "Profile 生成摘要使用的 Agent Profile 名称；传入空串表示改回内置 summary Profile。",
+                    "type": "string"
+                },
                 "title": {
                     "type": "string"
                 }
@@ -13367,6 +13375,10 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.SummaryOwnerType"
                         }
                     ]
+                },
+                "profile": {
+                    "description": "Profile 生成该摘要使用的 Agent Profile 名称（agent_profiles.name）。\n为空时由 AISummaryWorker 回退到内置 summary Profile。",
+                    "type": "string"
                 },
                 "status": {
                     "description": "Status 生成状态：生成中 / 生成成功 / 生成失败。",

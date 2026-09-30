@@ -43,6 +43,9 @@ type AISummary struct {
 	Content string `json:"content" gorm:"column:content;type:longtext"`
 	// Status 生成状态：生成中 / 生成成功 / 生成失败。
 	Status SummaryStatus `json:"status" gorm:"column:status;type:varchar(32);default:generating"`
+	// Profile 生成该摘要使用的 Agent Profile 名称（agent_profiles.name）。
+	// 为空时由 AISummaryWorker 回退到内置 summary Profile。
+	Profile string `json:"profile" gorm:"column:profile;type:varchar(64)"`
 	// TaskID 生成该摘要的 Agent 任务 ID（agent_tasks 表）。
 	TaskID int64 `json:"task_id,string" gorm:"column:task_id;type:bigint;index"`
 

@@ -1043,6 +1043,9 @@ definitions:
         type: string
       owner_type:
         $ref: '#/definitions/types.SummaryOwnerType'
+      profile:
+        description: Profile 生成摘要使用的 Agent Profile 名称（为空则使用内置 summary Profile）。
+        type: string
     required:
     - owner_id
     - owner_type
@@ -1649,6 +1652,9 @@ definitions:
       id:
         example: "0"
         type: string
+      profile:
+        description: Profile 生成摘要使用的 Agent Profile 名称；传入空串表示改回内置 summary Profile。
+        type: string
       title:
         type: string
     required:
@@ -1825,6 +1831,11 @@ definitions:
         allOf:
         - $ref: '#/definitions/types.SummaryOwnerType'
         description: OwnerType 摘要所属对象的类型：analysis 或 analysis_node。
+      profile:
+        description: |-
+          Profile 生成该摘要使用的 Agent Profile 名称（agent_profiles.name）。
+          为空时由 AISummaryWorker 回退到内置 summary Profile。
+        type: string
       status:
         allOf:
         - $ref: '#/definitions/types.SummaryStatus'
@@ -3905,7 +3916,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 根据 OwnerID/OwnerType 创建摘要记录，并异步触发 LLM 生成摘要
+      description: 根据 OwnerID/OwnerType 创建摘要记录（可指定 Agent Profile），并异步触发 LLM 生成摘要
       parameters:
       - description: 请求参数
         in: body
@@ -4138,7 +4149,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 按摘要 ID 更新标题与内容，title/content 不传则保持原值
+      description: 按摘要 ID 更新标题、内容与 Agent Profile，字段不传则保持原值
       parameters:
       - description: 请求参数
         in: body

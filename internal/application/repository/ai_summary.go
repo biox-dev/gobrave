@@ -40,7 +40,21 @@ func (r *aiSummaryRepository) ListAISummariesByOwner(ctx context.Context, ownerT
 }
 
 func (r *aiSummaryRepository) UpdateAISummary(ctx context.Context, item *types.AISummary) error {
-	return r.db.WithContext(ctx).Model(&types.AISummary{}).Where("id = ?", item.ID).Updates(item).Error
+	if item == nil || item.ID == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	// 用 map 整体替换：零值（如清空 content / profile）也需要写库。
+	updates := map[string]any{
+		"owner_id":   item.OwnerID,
+		"owner_type": item.OwnerType,
+		"title":      item.Title,
+		"content":    item.Content,
+		"status":     item.Status,
+		"profile":    item.Profile,
+		"task_id":    item.TaskID,
+	}
+	return r.db.WithContext(ctx).Model(&types.AISummary{}).Where("id = ?", item.ID).Updates(updates).Error
 }
 
 func (r *aiSummaryRepository) DeleteAISummary(ctx context.Context, id int64) error {

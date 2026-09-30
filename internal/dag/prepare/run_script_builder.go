@@ -18,7 +18,7 @@ type RunScriptBuilder interface {
 	// Name 返回构建器唯一标识（小写脚本类型，如 r / python / shell / qmd / jupyter）。
 	Name() string
 	// Build 根据节点、脚本路径、脚本内容与参数生成 run.sh 内容。
-	Build(node *types.AnalysisNode, scriptPath string, scriptContent string, params map[string]any) (string, error)
+	Build(node *types.AnalysisNode, scriptPath string, scriptWorkspacePath string, scriptContent string, params map[string]any) (string, error)
 }
 
 // RunScriptBuilderRegistry 负责注册与解析 RunScriptBuilder。
@@ -101,7 +101,7 @@ type RScriptBuilder struct{}
 
 func (RScriptBuilder) Name() string { return "r" }
 
-func (RScriptBuilder) Build(node *types.AnalysisNode, scriptPath string, _ string, _ map[string]any) (string, error) {
+func (RScriptBuilder) Build(node *types.AnalysisNode, scriptPath, scriptWorkspacePath string, _ string, _ map[string]any) (string, error) {
 	return fmt.Sprintf("#!/usr/bin/env bash\nset -euo pipefail\nRscript %q %q %q\n", scriptPath, node.ParamsPath, node.OutputDir), nil
 }
 
@@ -109,7 +109,7 @@ type JupyterScriptBuilder struct{}
 
 func (JupyterScriptBuilder) Name() string { return "jupyter" }
 
-func (JupyterScriptBuilder) Build(node *types.AnalysisNode, scriptPath string, _ string, _ map[string]any) (string, error) {
+func (JupyterScriptBuilder) Build(node *types.AnalysisNode, scriptPath, scriptWorkspacePath string, _ string, _ map[string]any) (string, error) {
 	outputFileName := "output.md"
 	return fmt.Sprintf(`#!/usr/bin/env bash
 export HOME=$PWD/.home
@@ -119,14 +119,14 @@ mkdir -p "$TMPDIR"
 
 set -euo pipefail
 jupyter nbconvert --to markdown --execute %q --output-dir %q  --output %q
-`, scriptPath, node.OutputDir, outputFileName), nil
+`, scriptWorkspacePath, node.OutputDir, outputFileName), nil
 }
 
 type QmdScriptBuilder struct{}
 
 func (QmdScriptBuilder) Name() string { return "qmd" }
 
-func (QmdScriptBuilder) Build(node *types.AnalysisNode, scriptPath string, _ string, _ map[string]any) (string, error) {
+func (QmdScriptBuilder) Build(node *types.AnalysisNode, scriptPath, scriptWorkspacePath string, _ string, _ map[string]any) (string, error) {
 	// quarto preview chapter_5.qmd --to md --no-watch-inputs --no-browse
 	// 判断node.WorkspaceDir 是否存在 main.qmd文件，不存在创建 链接 ln -s scriptPath main.qmd
 	mainFile := filepath.Join(node.WorkspaceDir, "main.qmd")
@@ -157,7 +157,7 @@ type PythonScriptBuilder struct{}
 
 func (PythonScriptBuilder) Name() string { return "python" }
 
-func (PythonScriptBuilder) Build(node *types.AnalysisNode, scriptPath string, _ string, _ map[string]any) (string, error) {
+func (PythonScriptBuilder) Build(node *types.AnalysisNode, scriptPath, scriptWorkspacePath string, _ string, _ map[string]any) (string, error) {
 	return fmt.Sprintf("#!/usr/bin/env bash\nset -euo pipefail\npython %q %q %q\n", scriptPath, node.ParamsPath, node.OutputDir), nil
 }
 
@@ -165,7 +165,7 @@ type ShellScriptBuilder struct{}
 
 func (ShellScriptBuilder) Name() string { return "shell" }
 
-func (ShellScriptBuilder) Build(_ *types.AnalysisNode, scriptPath string, scriptContent string, params map[string]any) (string, error) {
+func (ShellScriptBuilder) Build(_ *types.AnalysisNode, scriptPath, scriptWorkspacePath string, scriptContent string, params map[string]any) (string, error) {
 	rendered, err := renderShellTemplate(scriptContent, params)
 	if err != nil {
 		return "", err

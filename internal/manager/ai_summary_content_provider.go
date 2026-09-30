@@ -95,7 +95,7 @@ func (p *aiSummaryContentProvider) resolveAnalysisNode(ctx context.Context, node
 			"分析结果目录: " + n.OutputDir,
 			"分析结果文件: " + outputFile,
 			"\n",
-			fmt.Sprintf("不要运行分析命令，主要阅读根据分析结果文件[%s]中的内容完成相应任务, 如果需要额外的信息，可以在摘要末尾补充，提醒用户加入到分析结果中。", outputFile),
+			fmt.Sprintf("不要运行分析命令，主要阅读根据分析结果文件[%s]中的内容完成相应任务。", outputFile),
 		}), "\n"),
 	}, nil
 }

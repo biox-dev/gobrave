@@ -19,14 +19,15 @@ type AISummaryRepository interface {
 // AISummaryService 定义 AI 摘要的业务操作。
 type AISummaryService interface {
 	// CreateAISummary 创建摘要记录并投递异步生成事件。
-	CreateAISummary(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) (*types.AISummary, error)
+	// profile 为本次生成使用的 Agent Profile 名称，为空表示使用内置 summary Profile。
+	CreateAISummary(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64, profile string) (*types.AISummary, error)
 	// RegenerateAISummary 按摘要 ID 重新投递异步生成事件。
 	RegenerateAISummary(ctx context.Context, id int64) (*types.AISummary, error)
 	GetAISummaryByID(ctx context.Context, id int64) (*types.AISummary, error)
 	// ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表。
 	ListAISummariesByOwner(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) ([]*types.AISummary, error)
-	// UpdateAISummary 按摘要 ID 更新标题与内容（nil 表示不修改对应字段）。
-	UpdateAISummary(ctx context.Context, id int64, title, content *string) (*types.AISummary, error)
+	// UpdateAISummary 按摘要 ID 更新标题、内容与 Agent Profile（nil 表示不修改对应字段）。
+	UpdateAISummary(ctx context.Context, id int64, title, content, profile *string) (*types.AISummary, error)
 	// DeleteAISummary 按摘要 ID 删除摘要记录。
 	DeleteAISummary(ctx context.Context, id int64) error
 	// GetAISummaryInput 按所属对象类型与 ID 解析生成摘要时交给 LLM 的输入信息。

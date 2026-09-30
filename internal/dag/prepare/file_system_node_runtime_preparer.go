@@ -124,10 +124,10 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	// script_dir 仅用于构造 run script，不写入 params.json。
 	paramsPayload["script_dir"] = scriptDir
 
-	scriptWorkspaceDir := filepath.Join(node.WorkspaceDir, scriptFile)
-	if _, err := os.Lstat(scriptWorkspaceDir); err != nil {
+	scriptWorkspacePath := filepath.Join(node.WorkspaceDir, scriptFile)
+	if _, err := os.Lstat(scriptWorkspacePath); err != nil {
 		if os.IsNotExist(err) {
-			if err := os.Symlink(scriptPath, scriptWorkspaceDir); err != nil {
+			if err := os.Symlink(scriptPath, scriptWorkspacePath); err != nil {
 				return err
 			}
 		} else {
@@ -154,7 +154,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if err := p.WriteEnvFile(ctx, envFilePath, node, scriptDir); err != nil {
 		return fmt.Errorf("write env.sh failed: %w", err)
 	}
-	if err := p.WriteCommand(node, script.ScriptType, scriptPath, paramsPayload); err != nil {
+	if err := p.WriteCommand(node, script.ScriptType, scriptPath, scriptWorkspacePath, paramsPayload); err != nil {
 		return fmt.Errorf("write command failed: %w", err)
 	}
 
@@ -226,7 +226,7 @@ func (p *FileSystemNodeRuntimePreparer) resolveBaseParams(ctx context.Context, n
 	return p.buildNodeParams(node, analysis)
 }
 
-func (p *FileSystemNodeRuntimePreparer) WriteCommand(node *types.AnalysisNode, scriptType, scriptPath string, params map[string]any) error {
+func (p *FileSystemNodeRuntimePreparer) WriteCommand(node *types.AnalysisNode, scriptType, scriptPath, scriptWorkspacePath string, params map[string]any) error {
 
 	scriptContent, err := os.ReadFile(scriptPath)
 	if err != nil {
@@ -236,7 +236,7 @@ func (p *FileSystemNodeRuntimePreparer) WriteCommand(node *types.AnalysisNode, s
 	if builder == nil {
 		return fmt.Errorf("no run script builder registered for script type %q", scriptType)
 	}
-	runScript, err := builder.Build(node, scriptPath, string(scriptContent), params)
+	runScript, err := builder.Build(node, scriptPath, scriptWorkspacePath, string(scriptContent), params)
 	if err != nil {
 		return fmt.Errorf("build run script failed: %w", err)
 	}

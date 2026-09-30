@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -25,11 +26,14 @@ func NewAISummaryService(
 
 // CreateAISummary 创建摘要记录（pending 状态）并投递 outbox 事件，由
 // AISummaryWorker 异步消费生成摘要内容。
-func (s *aiSummaryService) CreateAISummary(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) (*types.AISummary, error) {
+//
+// profile 为生成时使用的 Agent Profile 名称，为空表示使用内置 summary Profile。
+func (s *aiSummaryService) CreateAISummary(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64, profile string) (*types.AISummary, error) {
 	summary := &types.AISummary{
 		OwnerType: ownerType,
 		OwnerID:   ownerID,
 		Status:    types.SummaryStatusPending,
+		Profile:   strings.TrimSpace(profile),
 	}
 	if err := s.summaryRepo.CreateAISummary(ctx, summary); err != nil {
 		return nil, err
@@ -85,8 +89,8 @@ func (s *aiSummaryService) ListAISummariesByOwner(ctx context.Context, ownerType
 	return s.summaryRepo.ListAISummariesByOwner(ctx, ownerType, ownerID)
 }
 
-// UpdateAISummary 按摘要 ID 更新标题与内容，nil 表示不修改对应字段。
-func (s *aiSummaryService) UpdateAISummary(ctx context.Context, id int64, title, content *string) (*types.AISummary, error) {
+// UpdateAISummary 按摘要 ID 更新标题、内容与 Agent Profile，nil 表示不修改对应字段。
+func (s *aiSummaryService) UpdateAISummary(ctx context.Context, id int64, title, content, profile *string) (*types.AISummary, error) {
 	summary, err := s.summaryRepo.GetAISummaryByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -97,6 +101,9 @@ func (s *aiSummaryService) UpdateAISummary(ctx context.Context, id int64, title,
 	}
 	if content != nil {
 		summary.Content = *content
+	}
+	if profile != nil {
+		summary.Profile = strings.TrimSpace(*profile)
 	}
 
 	if err := s.summaryRepo.UpdateAISummary(ctx, summary); err != nil {
