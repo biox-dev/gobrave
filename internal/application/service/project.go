@@ -266,16 +266,7 @@ func (s *projectService) DeleteProjectReport(ctx context.Context, userID string,
 		return err
 	}
 
-	// 先删除报告下所有条目（含 File 类型磁盘文件），再删除报告本身。
-	items, err := s.projectRepo.ListProjectReportItemsByReportID(ctx, report.ID)
-	if err != nil {
-		return err
-	}
-	for _, item := range items {
-		if item.OwnerType == types.ProjectReportItemOwnerFile {
-			_ = s.deleteProjectReportItemFile(report, item.ID)
-		}
-	}
+	// 先删除报告下所有条目，再删除报告本身。
 	if err := s.projectRepo.DeleteProjectReportItemsByReportID(ctx, report.ID); err != nil {
 		return err
 	}
@@ -379,8 +370,7 @@ func (s *projectService) AddProjectReportItem(ctx context.Context, userID string
 		return errors.New("project report item is nil")
 	}
 
-	report, err := s.loadOwnedProjectReport(ctx, userID, item.ProjectReportID)
-	if err != nil {
+	if _, err := s.loadOwnedProjectReport(ctx, userID, item.ProjectReportID); err != nil {
 		return err
 	}
 
@@ -389,8 +379,8 @@ func (s *projectService) AddProjectReportItem(ctx context.Context, userID string
 		return fmt.Errorf("invalid owner_type: %s", item.OwnerType)
 	}
 	item.OwnerType = ownerType
-	if ownerType != types.ProjectReportItemOwnerFile && item.OwnerID <= 0 {
-		return errors.New("owner_id is required for non-file project report item")
+	if item.OwnerID <= 0 {
+		return errors.New("owner_id is required for project report item")
 	}
 
 	if item.ID == 0 {
@@ -404,10 +394,6 @@ func (s *projectService) AddProjectReportItem(ctx context.Context, userID string
 
 	if err := s.projectRepo.AddProjectReportItem(ctx, item); err != nil {
 		return err
-	}
-
-	if ownerType == types.ProjectReportItemOwnerFile {
-		return s.ensureProjectReportItemFile(report, item.ID)
 	}
 	return nil
 }
@@ -438,51 +424,22 @@ func (s *projectService) UpdateProjectReportItem(ctx context.Context, userID str
 	return s.projectRepo.UpdateProjectReportItem(ctx, stored)
 }
 
-func (s *projectService) UpdateProjectReportItemContent(ctx context.Context, userID string, itemID int64, content string) error {
-	item, report, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
-	if err != nil {
-		return err
-	}
-	if item.OwnerType != types.ProjectReportItemOwnerFile {
-		return errors.New("only file project report item supports content editing")
-	}
-
-	return s.writeProjectReportItemFile(report, item.ID, content)
-}
-
 func (s *projectService) DeleteProjectReportItem(ctx context.Context, userID string, itemID int64) error {
-	item, report, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
+	item, _, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
 	if err != nil {
 		return err
-	}
-
-	if item.OwnerType == types.ProjectReportItemOwnerFile {
-		if err := s.deleteProjectReportItemFile(report, item.ID); err != nil {
-			return err
-		}
 	}
 
 	return s.projectRepo.DeleteProjectReportItem(ctx, item.ID)
 }
 
 func (s *projectService) GetProjectReportItemDetailByID(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, error) {
-	item, report, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
+	item, _, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
 	if err != nil {
 		return nil, err
 	}
 
 	s.hydrateProjectReportItemTitle(ctx, item)
-	if item.OwnerType == types.ProjectReportItemOwnerFile {
-		content, err := s.readProjectReportItemFile(report, item.ID)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return item, nil
-			}
-			return nil, err
-		}
-		item.Content = content
-	}
-
 	return item, nil
 }
 
@@ -533,10 +490,6 @@ func (s *projectService) hydrateProjectReportItemTitle(ctx context.Context, item
 		return
 	}
 	fallback := func() {
-		if item.OwnerType == types.ProjectReportItemOwnerFile {
-			item.Title = types.DefaultProjectReportItemFilename
-			return
-		}
 		item.Title = fmt.Sprintf("%s #%d", item.OwnerType, item.OwnerID)
 	}
 
@@ -580,18 +533,8 @@ func (s *projectService) hydrateProjectReportItemTitle(ctx context.Context, item
 }
 
 // projectReportItemMarkdown 返回单个条目对应的 markdown 片段。
-func (s *projectService) projectReportItemMarkdown(ctx context.Context, report *types.ProjectReport, item *types.ProjectReportItem) (string, error) {
+func (s *projectService) projectReportItemMarkdown(ctx context.Context, _ *types.ProjectReport, item *types.ProjectReportItem) (string, error) {
 	switch item.OwnerType {
-	case types.ProjectReportItemOwnerFile:
-		content, err := s.readProjectReportItemFile(report, item.ID)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return "", nil
-			}
-			return "", err
-		}
-		item.Content = content
-		return content, nil
 	case types.ProjectReportItemOwnerAISummary:
 		return s.aiSummaryMarkdown(ctx, item)
 	case types.ProjectReportItemOwnerAnalysisNode:
@@ -611,7 +554,6 @@ func (s *projectService) aiSummaryMarkdown(ctx context.Context, item *types.Proj
 	if err != nil {
 		return "", err
 	}
-	item.Content = summary.Content
 	return formatMarkdownSection(sectionTitle(item.Title, summary.Title), summary.Content), nil
 }
 
@@ -626,9 +568,8 @@ func (s *projectService) analysisNodeMarkdown(ctx context.Context, item *types.P
 
 	content := readMarkdownFile(node.OutputDir)
 	if strings.TrimSpace(content) == "" {
-		content = fmt.Sprintf("> 未找到节点输出文件：%s", filepath.Join(node.OutputDir, types.DefaultProjectReportItemFilename))
+		content = fmt.Sprintf("> 未找到节点输出文件：%s", filepath.Join(node.OutputDir, types.DefaultProjectReportFilename))
 	}
-	item.Content = content
 	return formatMarkdownSection(sectionTitle(item.Title, node.NodeName), content), nil
 }
 
@@ -680,7 +621,7 @@ func readMarkdownFile(dir string) string {
 	if dir == "" {
 		return ""
 	}
-	data, err := os.ReadFile(filepath.Join(dir, types.DefaultProjectReportItemFilename))
+	data, err := os.ReadFile(filepath.Join(dir, types.DefaultProjectReportFilename))
 	if err != nil {
 		return ""
 	}
@@ -696,75 +637,6 @@ func (s *projectService) projectReportDir(report *types.ProjectReport) (string, 
 		return "", errors.New("storage base dir is empty")
 	}
 	return utils.GetProjectReportDir(baseDir, report.ProjectID, strconv.FormatInt(report.ID, 10)), nil
-}
-
-func (s *projectService) projectReportItemFilePath(report *types.ProjectReport, itemID int64) (string, error) {
-	if s.cfg == nil || s.cfg.Storage == nil {
-		return "", errors.New("storage config is missing")
-	}
-
-	baseDir := strings.TrimSpace(s.cfg.Storage.BaseDir)
-	if baseDir == "" {
-		return "", errors.New("storage base dir is empty")
-	}
-
-	dir := utils.GetProjectReportItemDir(baseDir, report.ProjectID, strconv.FormatInt(report.ID, 10), strconv.FormatInt(itemID, 10))
-	return filepath.Join(dir, types.DefaultProjectReportItemFilename), nil
-}
-
-func (s *projectService) ensureProjectReportItemFile(report *types.ProjectReport, itemID int64) error {
-	filePath, err := s.projectReportItemFilePath(report, itemID)
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-		return err
-	}
-
-	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return err
-	}
-	return f.Close()
-}
-
-func (s *projectService) writeProjectReportItemFile(report *types.ProjectReport, itemID int64, content string) error {
-	filePath, err := s.projectReportItemFilePath(report, itemID)
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-		return err
-	}
-
-	return os.WriteFile(filePath, []byte(content), 0o644)
-}
-
-func (s *projectService) readProjectReportItemFile(report *types.ProjectReport, itemID int64) (string, error) {
-	filePath, err := s.projectReportItemFilePath(report, itemID)
-	if err != nil {
-		return "", err
-	}
-
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", err
-	}
-	return string(content), nil
-}
-
-func (s *projectService) deleteProjectReportItemFile(report *types.ProjectReport, itemID int64) error {
-	filePath, err := s.projectReportItemFilePath(report, itemID)
-	if err != nil {
-		return err
-	}
-
-	if err := os.RemoveAll(filepath.Dir(filePath)); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
 }
 
 // ---------- Literature ----------

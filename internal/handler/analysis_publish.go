@@ -497,8 +497,8 @@ func (h *AnalysisHandler) PublishToDocByAnalysisNodeID(c *gin.Context) {
 
 }
 
-// PublishProjectReportToDoc copies a file-based project report into the project doc
-// directory and registers a link in SUMMARY.md.
+// PublishProjectReportToDoc writes the aggregated markdown of all report items
+// into the project doc directory and registers a link in SUMMARY.md.
 func (h *AnalysisHandler) PublishProjectReportToDoc(c *gin.Context) {
 	userID, ok := getCurrentUserID(c)
 	if !ok {
@@ -511,51 +511,35 @@ func (h *AnalysisHandler) PublishProjectReportToDoc(c *gin.Context) {
 		return
 	}
 
-	report, err := h.projectService.GetProjectReportDetailByID(c.Request.Context(), userID, reportID)
+	report, _, content, err := h.projectService.GetProjectReportContent(c.Request.Context(), userID, reportID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("project report not found"))
 			return
 		}
-		c.Error(errors.NewInternalServerError("failed to get project report").WithDetails(err.Error()))
-		return
-	}
-
-	items, err := h.projectService.ListProjectReportItemsByReportID(c.Request.Context(), userID, reportID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to list project report items").WithDetails(err.Error()))
-		return
-	}
-
-	// 选择第一个 File 类型条目作为发布到文档目录的入口文件。
-	var firstFileItem *types.ProjectReportItem
-	for _, item := range items {
-		if item.OwnerType == types.ProjectReportItemOwnerFile {
-			firstFileItem = item
-			break
-		}
-	}
-	if firstFileItem == nil {
-		c.Error(errors.NewValidationError("project report has no file item to publish"))
+		c.Error(errors.NewInternalServerError("failed to get project report content").WithDetails(err.Error()))
 		return
 	}
 
 	reportIDStr := strconv.FormatInt(report.ID, 10)
-	filename := types.DefaultProjectReportItemFilename
+	filename := types.DefaultProjectReportFilename
 	title := strings.TrimSpace(report.Title)
 	if title == "" {
 		title = filename
 	}
 
 	projectDocDir := utils.GetProjectDocDir(h.config.Storage.BaseDir, report.ProjectID)
-	reportDir := utils.GetProjectReportDir(h.config.Storage.BaseDir, report.ProjectID, reportIDStr)
-
-	if err := utils.CopyDir(reportDir, filepath.Join(projectDocDir, reportIDStr)); err != nil {
-		c.Error(errors.NewInternalServerError("failed to copy project report to project doc dir").WithDetails(err.Error()))
+	targetDir := filepath.Join(projectDocDir, reportIDStr)
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		c.Error(errors.NewInternalServerError("failed to create project doc dir").WithDetails(err.Error()))
+		return
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, filename), []byte(content), 0o644); err != nil {
+		c.Error(errors.NewInternalServerError("failed to write project report content").WithDetails(err.Error()))
 		return
 	}
 
-	entry := fmt.Sprintf("./%s/items/%d/%s", reportIDStr, firstFileItem.ID, filename)
+	entry := fmt.Sprintf("./%s/%s", reportIDStr, filename)
 	line := fmt.Sprintf("- [%s](%s)\n", title, entry)
 	if err := appendProjectDocSummary(projectDocDir, entry, line); err != nil {
 		c.Error(errors.NewInternalServerError("failed to update SUMMARY.md").WithDetails(err.Error()))

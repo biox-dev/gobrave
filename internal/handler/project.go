@@ -747,7 +747,6 @@ type projectReportItemDTO struct {
 	OwnerID         string    `json:"owner_id"`
 	SortOrder       int       `json:"sort_order"`
 	Title           string    `json:"title"`
-	Content         string    `json:"content,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -763,7 +762,6 @@ func newProjectReportItemDTO(item *types.ProjectReportItem) projectReportItemDTO
 		OwnerID:         strconv.FormatInt(item.OwnerID, 10),
 		SortOrder:       item.SortOrder,
 		Title:           item.Title,
-		Content:         item.Content,
 		CreatedAt:       item.CreatedAt,
 		UpdatedAt:       item.UpdatedAt,
 	}
@@ -1060,58 +1058,13 @@ func (h *ProjectHandler) GetProjectReportItemContent(c *gin.Context) {
 	})
 }
 
-type updateProjectReportItemContentRequest struct {
-	ID      int64  `json:"id,string" binding:"required"`
-	Content string `json:"content"`
-}
-
-// UpdateProjectReportItemContent godoc
-// @Summary      更新 File 类型报告条目内容
-// @Description  仅 OwnerType 为 file 的条目支持写入内容文件
-// @Tags         项目
-// @Accept       json
-// @Produce      json
-// @Param        request  body      updateProjectReportItemContentRequest  true  "请求参数"
-// @Success      200      {object}  map[string]string
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /project/update-project-report-item-content [post]
-func (h *ProjectHandler) UpdateProjectReportItemContent(c *gin.Context) {
-	ctx := c.Request.Context()
-
-	userID, ok := getCurrentUserID(c)
-	if !ok {
-		return
-	}
-
-	var req updateProjectReportItemContentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	if err := h.projectService.UpdateProjectReportItemContent(ctx, userID, req.ID, req.Content); err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			c.Error(errors.NewNotFoundError("project report item not found"))
-			return
-		}
-		c.Error(errors.NewBadRequestError("failed to update project report item content").WithDetails(err.Error()))
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "project report item content updated successfully"})
-}
-
 type projectReportContentRequest struct {
 	ReportID int64 `form:"report_id" binding:"required"`
 }
 
 // GetProjectReportContent godoc
 // @Summary      查询报告聚合内容
-// @Description  汇总报告下所有条目并拼接成正文（拼接逻辑待完善），同时返回条目列表
+// @Description  汇总报告下所有条目并拼接成正文，同时返回条目列表
 // @Tags         项目
 // @Produce      json
 // @Param        report_id  query     int64  true  "报告ID"

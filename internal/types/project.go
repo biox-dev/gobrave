@@ -69,9 +69,6 @@ func (UserProject) TableName() string {
 // 它仍然被 LLM 运行时（projectReport 环境）用来定位报告输出文件。
 const DefaultProjectReportFilename = "output.md"
 
-// DefaultProjectReportItemFilename 是 File 类型报告条目在磁盘上的固定文件名。
-const DefaultProjectReportItemFilename = "output.md"
-
 // ProjectReport 是一个报告容器，只保存标题等元信息，不再承载文件内容。
 // 报告的内容由 ProjectReportItem 列表按顺序拼接而成。
 type ProjectReport struct {
@@ -103,8 +100,6 @@ const (
 	ProjectReportItemOwnerAnalysisNode ProjectReportItemOwnerType = "analysis_node"
 	// ProjectReportItemOwnerAISummary 指向 AISummary 的 ID。
 	ProjectReportItemOwnerAISummary ProjectReportItemOwnerType = "ai_summary"
-	// ProjectReportItemOwnerFile 表示内容由用户在报告目录内手工编辑的文件，OwnerID 无意义。
-	ProjectReportItemOwnerFile ProjectReportItemOwnerType = "file"
 )
 
 // NormalizeProjectReportItemOwnerType 校验并归一化 OwnerType。
@@ -116,8 +111,6 @@ func NormalizeProjectReportItemOwnerType(t string) (ProjectReportItemOwnerType, 
 		return ProjectReportItemOwnerAnalysisNode, true
 	case ProjectReportItemOwnerAISummary:
 		return ProjectReportItemOwnerAISummary, true
-	case ProjectReportItemOwnerFile:
-		return ProjectReportItemOwnerFile, true
 	default:
 		return "", false
 	}
@@ -128,16 +121,14 @@ type ProjectReportItem struct {
 	ID              int64                      `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 	ProjectReportID int64                      `json:"project_report_id,string" gorm:"column:project_report_id;type:bigint;index:idx_project_report_items_report"`
 	OwnerType       ProjectReportItemOwnerType `json:"owner_type" gorm:"column:owner_type;type:varchar(32);index:idx_project_report_items_owner"`
-	// OwnerID 指向 OwnerType 对应的主键；OwnerType 为 file 时该字段无意义。
+	// OwnerID 指向 OwnerType 对应的主键。
 	OwnerID   int64     `json:"owner_id,string" gorm:"column:owner_id;type:bigint;index:idx_project_report_items_owner"`
 	SortOrder int       `json:"sort_order" gorm:"column:sort_order;default:0"`
 	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt time.Time `json:"updated_at" gorm:"column:updated_at"`
 
-	// Title 是展示用标题。File 类型取自文件名，其它类型由 owner 推导；不落库。
+	// Title 是展示用标题，由 owner 推导；不落库。
 	Title string `json:"title" gorm:"-"`
-	// Content 仅在 File 类型时按需从磁盘读取；不落库。
-	Content string `json:"content,omitempty" gorm:"-"`
 }
 
 func (t *ProjectReportItem) BeforeCreate(_ *gorm.DB) error {

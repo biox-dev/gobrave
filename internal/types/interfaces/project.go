@@ -30,7 +30,6 @@ type ProjectService interface {
 	ListProjectReportItemsByReportID(ctx context.Context, userID string, reportID int64) ([]*types.ProjectReportItem, error)
 	AddProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error
 	UpdateProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error
-	UpdateProjectReportItemContent(ctx context.Context, userID string, itemID int64, content string) error
 	DeleteProjectReportItem(ctx context.Context, userID string, itemID int64) error
 	GetProjectReportItemDetailByID(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, error)
 	// GetProjectReportItemContent 返回指定条目的 markdown 内容（入参为 ProjectReportItem ID）。

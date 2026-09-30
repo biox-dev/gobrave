@@ -50,11 +50,6 @@ func GetProjectReportDir(baseDir, projectId, reportID string) string {
 	return filepath.Join(projectDir, "report", reportID)
 
 }
-
-// GetProjectReportItemDir 返回报告下单个条目的目录，用于 File 类型条目的内容文件。
-func GetProjectReportItemDir(baseDir, projectId, reportID, itemID string) string {
-	return filepath.Join(GetProjectReportDir(baseDir, projectId, reportID), "items", itemID)
-}
 func GetProjectLiteratureDir(baseDir, projectId, literatureID string) string {
 	projectDir := GetProjectDir(baseDir, projectId)
 	return filepath.Join(projectDir, "literature", literatureID)
