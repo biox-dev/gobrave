@@ -51,6 +51,11 @@ type AISummary struct {
 
 	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt time.Time `json:"updated_at" gorm:"column:updated_at"`
+
+	// Prefix 是摘要所属对象输出目录对应的 /data-analysis URL 前缀，便于前端拼接
+	// 该输出目录下结果文件的访问地址。非持久化字段，查询时按需填充
+	// （见 aiSummaryService.ListAISummariesByOwner）。
+	Prefix string `json:"prefix" gorm:"-"`
 }
 
 func (t *AISummary) BeforeCreate(_ *gorm.DB) error {

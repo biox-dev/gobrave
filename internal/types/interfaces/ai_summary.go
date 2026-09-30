@@ -24,7 +24,8 @@ type AISummaryService interface {
 	// RegenerateAISummary 按摘要 ID 重新投递异步生成事件。
 	RegenerateAISummary(ctx context.Context, id int64) (*types.AISummary, error)
 	GetAISummaryByID(ctx context.Context, id int64) (*types.AISummary, error)
-	// ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表。
+	// ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表，
+	// 并填充每个摘要的 Prefix（所属对象输出目录对应的 URL 前缀）。
 	ListAISummariesByOwner(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) ([]*types.AISummary, error)
 	// UpdateAISummary 按摘要 ID 更新标题、内容与 Agent Profile（nil 表示不修改对应字段）。
 	UpdateAISummary(ctx context.Context, id int64, title, content, profile *string) (*types.AISummary, error)

@@ -1657,14 +1657,7 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to build visualization node payload").WithDetails(err.Error()))
 		return
 	}
-	outputDir := strings.TrimSpace(analysisNode.OutputDir)
-	dataDir := filepath.Join(h.config.Storage.BaseDir, "data")
-	// outputDir 去除 dataDir 前缀
-	if after, ok := strings.CutPrefix(outputDir, dataDir); ok {
-		outputDir = after
-	}
-
-	prefix := fmt.Sprintf("/data-analysis%s/", outputDir)
+	prefix := utils.GetAnalysisURLPrefix(h.config.Storage.BaseDir, analysisNode.OutputDir)
 
 	result, err := visualizationResultsPath(analysisNode.OutputDir, analysisNode.CacheDir, prefix, scriptType, h.config)
 	if err != nil {

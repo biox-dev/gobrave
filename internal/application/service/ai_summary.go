@@ -5,23 +5,37 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 type aiSummaryService struct {
 	summaryRepo   interfaces.AISummaryRepository
 	containerRepo interfaces.ContainerRepository
 	content       manager.AISummaryContentProvider
+	// analysisRepo 用于解析摘要所属对象的输出目录，以补充响应中的 URL 前缀。
+	analysisRepo interfaces.AnalysisRepository
+	cfg          *config.Config
 }
 
 func NewAISummaryService(
 	summaryRepo interfaces.AISummaryRepository,
 	containerRepo interfaces.ContainerRepository,
 	content manager.AISummaryContentProvider,
+	analysisRepo interfaces.AnalysisRepository,
+	cfg *config.Config,
 ) interfaces.AISummaryService {
-	return &aiSummaryService{summaryRepo: summaryRepo, containerRepo: containerRepo, content: content}
+	return &aiSummaryService{
+		summaryRepo:   summaryRepo,
+		containerRepo: containerRepo,
+		content:       content,
+		analysisRepo:  analysisRepo,
+		cfg:           cfg,
+	}
 }
 
 // CreateAISummary 创建摘要记录（pending 状态）并投递 outbox 事件，由
@@ -84,9 +98,64 @@ func (s *aiSummaryService) GetAISummaryByID(ctx context.Context, id int64) (*typ
 	return s.summaryRepo.GetAISummaryByID(ctx, id)
 }
 
-// ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表。
+// ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表，并为每个 item 补充
+// 所属对象输出目录对应的 /data-analysis URL 前缀。
 func (s *aiSummaryService) ListAISummariesByOwner(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) ([]*types.AISummary, error) {
-	return s.summaryRepo.ListAISummariesByOwner(ctx, ownerType, ownerID)
+	items, err := s.summaryRepo.ListAISummariesByOwner(ctx, ownerType, ownerID)
+	if err != nil {
+		return nil, err
+	}
+
+	prefix := s.resolveOwnerURLPrefix(ctx, ownerType, ownerID)
+	if prefix == "" {
+		return items, nil
+	}
+	for _, item := range items {
+		if item != nil {
+			item.Prefix = prefix
+		}
+	}
+
+	return items, nil
+}
+
+// resolveOwnerURLPrefix 解析摘要所属对象输出目录对应的 URL 前缀。
+// 对象不存在或目录为空时返回空串：前缀只是响应增强字段，
+// 不应阻塞摘要列表本身的返回。
+func (s *aiSummaryService) resolveOwnerURLPrefix(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) string {
+	if s.analysisRepo == nil {
+		return ""
+	}
+
+	var outputDir string
+	switch ownerType {
+	case types.SummaryOwnerAnalysisNode:
+		node, err := s.analysisRepo.GetAnalysisNodeByID(ctx, ownerID)
+		if err != nil {
+			logger.Warnf(ctx, "[AISummary] resolve analysis node output dir failed, analysis_node_id=%d err=%v", ownerID, err)
+			return ""
+		}
+		outputDir = node.OutputDir
+	case types.SummaryOwnerAnalysis:
+		analysis, err := s.analysisRepo.GetAnalysisByID(ctx, ownerID)
+		if err != nil {
+			logger.Warnf(ctx, "[AISummary] resolve analysis output dir failed, analysis_id=%d err=%v", ownerID, err)
+			return ""
+		}
+		outputDir = analysis.WorkspaceDir
+	default:
+		return ""
+	}
+
+	if strings.TrimSpace(outputDir) == "" {
+		return ""
+	}
+
+	baseDir := ""
+	if s.cfg != nil && s.cfg.Storage != nil {
+		baseDir = s.cfg.Storage.BaseDir
+	}
+	return utils.GetAnalysisURLPrefix(baseDir, outputDir)
 }
 
 // UpdateAISummary 按摘要 ID 更新标题、内容与 Agent Profile，nil 表示不修改对应字段。

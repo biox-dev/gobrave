@@ -84,18 +84,18 @@ func (p *aiSummaryContentProvider) resolveAnalysisNode(ctx context.Context, node
 	}
 	outputFile := filepath.Join(n.OutputDir, "output.md")
 	return AISummaryContent{
-		Title: fmt.Sprintf("节点摘要：%s", n.NodeName),
+		Title: fmt.Sprintf("Node Summary: %s", n.NodeName),
 		// SystemPrompt: p.systemPrompt,
 		WorkingDir: n.OutputDir,
 		Text: strings.Join(filterNonEmpty([]string{
-			"节点名称: " + n.NodeName,
-			"节点 ID: " + n.NodeID,
-			"样本 ID: " + n.SampleID,
-			"状态: " + n.Status,
-			"分析结果目录: " + n.OutputDir,
-			"分析结果文件: " + outputFile,
+			"Analysis Name: " + n.NodeName,
+			// "节点 ID: " + n.NodeID,
+			// "样本 ID: " + n.SampleID,
+			// "状态: " + n.Status,
+			"Output Directory: " + n.OutputDir,
+			"Output File: " + outputFile,
 			"\n",
-			fmt.Sprintf("不要运行分析命令，主要阅读根据分析结果文件[%s]中的内容完成相应任务。", outputFile),
+			fmt.Sprintf("Do not run analysis commands, mainly read the content of the analysis result file [%s] to complete the corresponding tasks.", outputFile),
 		}), "\n"),
 	}, nil
 }
