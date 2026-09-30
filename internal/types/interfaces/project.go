@@ -26,6 +26,17 @@ type ProjectService interface {
 	PageProjectReportByProjectID(ctx context.Context, userID, projectID string, pagination *types.Pagination) ([]*types.ProjectReport, int64, error)
 	GetProjectReportDetailByID(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, error)
 	GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error)
+	// ProjectReportItem business capabilities.
+	ListProjectReportItemsByReportID(ctx context.Context, userID string, reportID int64) ([]*types.ProjectReportItem, error)
+	AddProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error
+	UpdateProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error
+	UpdateProjectReportItemContent(ctx context.Context, userID string, itemID int64, content string) error
+	DeleteProjectReportItem(ctx context.Context, userID string, itemID int64) error
+	GetProjectReportItemDetailByID(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, error)
+	// GetProjectReportItemContent 返回指定条目的 markdown 内容（入参为 ProjectReportItem ID）。
+	GetProjectReportItemContent(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, string, error)
+	// GetProjectReportContent 汇总报告下所有条目，按顺序拼接成正文。
+	GetProjectReportContent(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, []*types.ProjectReportItem, string, error)
 
 	// Literature (参考文献) business capabilities.
 	AddLiterature(ctx context.Context, userID string, literature *types.Literature) (*types.Literature, error)
@@ -58,6 +69,13 @@ type ProjectRepository interface {
 	DeleteProjectReport(ctx context.Context, projectID string, reportID int64) error
 	ListProjectReportByProjectID(ctx context.Context, projectID string) ([]*types.ProjectReport, error)
 	PageProjectReportByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.ProjectReport, int64, error)
+	// ProjectReportItem data access methods.
+	AddProjectReportItem(ctx context.Context, item *types.ProjectReportItem) error
+	GetProjectReportItemByID(ctx context.Context, itemID int64) (*types.ProjectReportItem, error)
+	UpdateProjectReportItem(ctx context.Context, item *types.ProjectReportItem) error
+	DeleteProjectReportItem(ctx context.Context, itemID int64) error
+	DeleteProjectReportItemsByReportID(ctx context.Context, reportID int64) error
+	ListProjectReportItemsByReportID(ctx context.Context, reportID int64) ([]*types.ProjectReportItem, error)
 
 	// Literature data access methods.
 	CreateLiterature(ctx context.Context, literature *types.Literature) error

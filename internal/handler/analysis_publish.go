@@ -520,16 +520,28 @@ func (h *AnalysisHandler) PublishProjectReportToDoc(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to get project report").WithDetails(err.Error()))
 		return
 	}
-	if report.ContentSource != types.ProjectReportContentSourceFile {
-		c.Error(errors.NewValidationError("only file-based project report can be published to doc"))
+
+	items, err := h.projectService.ListProjectReportItemsByReportID(c.Request.Context(), userID, reportID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to list project report items").WithDetails(err.Error()))
+		return
+	}
+
+	// 选择第一个 File 类型条目作为发布到文档目录的入口文件。
+	var firstFileItem *types.ProjectReportItem
+	for _, item := range items {
+		if item.OwnerType == types.ProjectReportItemOwnerFile {
+			firstFileItem = item
+			break
+		}
+	}
+	if firstFileItem == nil {
+		c.Error(errors.NewValidationError("project report has no file item to publish"))
 		return
 	}
 
 	reportIDStr := strconv.FormatInt(report.ID, 10)
-	filename := filepath.Base(strings.TrimSpace(report.Filename))
-	if filename == "" || filename == "." {
-		filename = types.DefaultProjectReportFilename
-	}
+	filename := types.DefaultProjectReportItemFilename
 	title := strings.TrimSpace(report.Title)
 	if title == "" {
 		title = filename
@@ -543,7 +555,7 @@ func (h *AnalysisHandler) PublishProjectReportToDoc(c *gin.Context) {
 		return
 	}
 
-	entry := fmt.Sprintf("./%s/%s", reportIDStr, filename)
+	entry := fmt.Sprintf("./%s/items/%d/%s", reportIDStr, firstFileItem.ID, filename)
 	line := fmt.Sprintf("- [%s](%s)\n", title, entry)
 	if err := appendProjectDocSummary(projectDocDir, entry, line); err != nil {
 		c.Error(errors.NewInternalServerError("failed to update SUMMARY.md").WithDetails(err.Error()))

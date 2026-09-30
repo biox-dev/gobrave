@@ -1,6 +1,7 @@
 package types
 
 import (
+	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -64,24 +65,19 @@ func (UserProject) TableName() string {
 	return "user_project"
 }
 
-// ProjectReport content source values.
-const (
-	ProjectReportContentSourceFile     = "file"
-	ProjectReportContentSourceDatabase = "database"
-)
-
+// DefaultProjectReportFilename 是项目报告工作目录下约定的输出文件名。
+// 它仍然被 LLM 运行时（projectReport 环境）用来定位报告输出文件。
 const DefaultProjectReportFilename = "output.md"
 
+// DefaultProjectReportItemFilename 是 File 类型报告条目在磁盘上的固定文件名。
+const DefaultProjectReportItemFilename = "output.md"
+
+// ProjectReport 是一个报告容器，只保存标题等元信息，不再承载文件内容。
+// 报告的内容由 ProjectReportItem 列表按顺序拼接而成。
 type ProjectReport struct {
-	ID        int64  `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-	ProjectID string `json:"project_id" gorm:"type:varchar(255);not null;index"`
-	Title     string `json:"title" gorm:"type:varchar(255)"`
-	Content   string `json:"content" gorm:"type:longtext"`
-	SortOrder int    `json:"sort_order" gorm:"default:0"`
-	// ContentSource indicates where Content is stored: "file" or "database".
-	ContentSource string `json:"content_source" gorm:"type:varchar(16);default:file"`
-	// Filename is the report file name under the project report directory.
-	Filename  string    `json:"filename" gorm:"type:varchar(255);default:output.md"`
+	ID        int64     `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
+	ProjectID string    `json:"project_id" gorm:"type:varchar(255);not null;index"`
+	Title     string    `json:"title" gorm:"type:varchar(255)"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -90,15 +86,67 @@ func (t *ProjectReport) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()
 	}
-	if t.ContentSource == "" {
-		t.ContentSource = ProjectReportContentSourceFile
-	}
-	if t.Filename == "" {
-		t.Filename = DefaultProjectReportFilename
-	}
 	return nil
 }
 
 func (ProjectReport) TableName() string {
 	return "t_project_report"
+}
+
+// ProjectReportItemOwnerType 标识 ProjectReportItem 指向的内容来源类型。
+type ProjectReportItemOwnerType string
+
+const (
+	// ProjectReportItemOwnerAnalysis 指向 Analysis（nextflow 表）的 ID。
+	ProjectReportItemOwnerAnalysis ProjectReportItemOwnerType = "analysis"
+	// ProjectReportItemOwnerAnalysisNode 指向 AnalysisNode（analysis_nodes 表）的 ID。
+	ProjectReportItemOwnerAnalysisNode ProjectReportItemOwnerType = "analysis_node"
+	// ProjectReportItemOwnerAISummary 指向 AISummary 的 ID。
+	ProjectReportItemOwnerAISummary ProjectReportItemOwnerType = "ai_summary"
+	// ProjectReportItemOwnerFile 表示内容由用户在报告目录内手工编辑的文件，OwnerID 无意义。
+	ProjectReportItemOwnerFile ProjectReportItemOwnerType = "file"
+)
+
+// NormalizeProjectReportItemOwnerType 校验并归一化 OwnerType。
+func NormalizeProjectReportItemOwnerType(t string) (ProjectReportItemOwnerType, bool) {
+	switch ProjectReportItemOwnerType(strings.ToLower(strings.TrimSpace(t))) {
+	case ProjectReportItemOwnerAnalysis:
+		return ProjectReportItemOwnerAnalysis, true
+	case ProjectReportItemOwnerAnalysisNode:
+		return ProjectReportItemOwnerAnalysisNode, true
+	case ProjectReportItemOwnerAISummary:
+		return ProjectReportItemOwnerAISummary, true
+	case ProjectReportItemOwnerFile:
+		return ProjectReportItemOwnerFile, true
+	default:
+		return "", false
+	}
+}
+
+// ProjectReportItem 是 ProjectReport 下的一个内容条目，按 SortOrder 排序后拼接成报告正文。
+type ProjectReportItem struct {
+	ID              int64                      `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
+	ProjectReportID int64                      `json:"project_report_id,string" gorm:"column:project_report_id;type:bigint;index:idx_project_report_items_report"`
+	OwnerType       ProjectReportItemOwnerType `json:"owner_type" gorm:"column:owner_type;type:varchar(32);index:idx_project_report_items_owner"`
+	// OwnerID 指向 OwnerType 对应的主键；OwnerType 为 file 时该字段无意义。
+	OwnerID   int64     `json:"owner_id,string" gorm:"column:owner_id;type:bigint;index:idx_project_report_items_owner"`
+	SortOrder int       `json:"sort_order" gorm:"column:sort_order;default:0"`
+	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt time.Time `json:"updated_at" gorm:"column:updated_at"`
+
+	// Title 是展示用标题。File 类型取自文件名，其它类型由 owner 推导；不落库。
+	Title string `json:"title" gorm:"-"`
+	// Content 仅在 File 类型时按需从磁盘读取；不落库。
+	Content string `json:"content,omitempty" gorm:"-"`
+}
+
+func (t *ProjectReportItem) BeforeCreate(_ *gorm.DB) error {
+	if t.ID == 0 {
+		t.ID = utils.GenerateID()
+	}
+	return nil
+}
+
+func (ProjectReportItem) TableName() string {
+	return "t_project_report_items"
 }

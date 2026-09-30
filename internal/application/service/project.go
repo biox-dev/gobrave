@@ -22,12 +22,24 @@ import (
 var ErrUserProjectActive = errors.New("user project is active")
 
 type projectService struct {
-	projectRepo interfaces.ProjectRepository
-	cfg         *config.Config
+	projectRepo  interfaces.ProjectRepository
+	analysisRepo interfaces.AnalysisRepository
+	summaryRepo  interfaces.AISummaryRepository
+	cfg          *config.Config
 }
 
-func NewProjectService(projectRepo interfaces.ProjectRepository, cfg *config.Config) interfaces.ProjectService {
-	return &projectService{projectRepo: projectRepo, cfg: cfg}
+func NewProjectService(
+	projectRepo interfaces.ProjectRepository,
+	analysisRepo interfaces.AnalysisRepository,
+	summaryRepo interfaces.AISummaryRepository,
+	cfg *config.Config,
+) interfaces.ProjectService {
+	return &projectService{
+		projectRepo:  projectRepo,
+		analysisRepo: analysisRepo,
+		summaryRepo:  summaryRepo,
+		cfg:          cfg,
+	}
 }
 
 func (s *projectService) ListProjectByUserID(ctx context.Context, userID string) ([]*types.ProjectListItem, error) {
@@ -200,6 +212,9 @@ func (s *projectService) CreateProjectForUser(ctx context.Context, userID string
 }
 
 func (s *projectService) AddProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error {
+	if report == nil {
+		return errors.New("project report is nil")
+	}
 	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, report.ProjectID)
 	if err != nil {
 		return err
@@ -208,27 +223,22 @@ func (s *projectService) AddProjectReport(ctx context.Context, userID string, re
 		return gorm.ErrRecordNotFound
 	}
 
-	s.ensureProjectReportDefaults(report)
 	if report.ID == 0 {
 		report.ID = utils.GenerateID()
 	}
-
-	if report.ContentSource == types.ProjectReportContentSourceFile {
-		report.Content = ""
+	now := time.Now()
+	if report.CreatedAt.IsZero() {
+		report.CreatedAt = now
 	}
+	report.UpdatedAt = now
 
-	if err := s.projectRepo.AddProjectReport(ctx, report); err != nil {
-		return err
-	}
-
-	if report.ContentSource == types.ProjectReportContentSourceFile {
-		return s.ensureProjectReportFile(report)
-	}
-
-	return nil
+	return s.projectRepo.AddProjectReport(ctx, report)
 }
 
 func (s *projectService) UpdateProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error {
+	if report == nil {
+		return errors.New("project report is nil")
+	}
 	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, report.ProjectID)
 	if err != nil {
 		return err
@@ -245,82 +255,40 @@ func (s *projectService) UpdateProjectReport(ctx context.Context, userID string,
 		return gorm.ErrRecordNotFound
 	}
 
-	s.ensureProjectReportDefaults(stored)
-
-	// Resolve the target storage settings. Keep the stored values unless the
-	// caller explicitly switches the source or filename.
-	targetSource := strings.TrimSpace(report.ContentSource)
-	if targetSource == "" ||
-		(targetSource != types.ProjectReportContentSourceFile && targetSource != types.ProjectReportContentSourceDatabase) {
-		targetSource = stored.ContentSource
-	}
-
-	targetFilename := strings.TrimSpace(report.Filename)
-	if targetFilename == "" {
-		targetFilename = stored.Filename
-	}
-	if targetFilename == "" {
-		targetFilename = types.DefaultProjectReportFilename
-	}
-
-	report.ContentSource = targetSource
-	report.Filename = targetFilename
-
-	switch {
-	case stored.ContentSource == types.ProjectReportContentSourceFile && targetSource == types.ProjectReportContentSourceDatabase:
-		// file -> database: write the file content into the database.
-		content, err := s.readProjectReportFile(stored)
-		if err != nil {
-			if os.IsNotExist(err) {
-				content = report.Content
-			} else {
-				return err
-			}
-		}
-		report.Content = content
-
-	case stored.ContentSource == types.ProjectReportContentSourceDatabase && targetSource == types.ProjectReportContentSourceFile:
-		// database -> file: write the database content into the file.
-		report.Content = stored.Content
-		if err := s.writeProjectReportFile(report); err != nil {
-			return err
-		}
-		report.Content = ""
-
-	default:
-		// Same-source update.
-		if targetSource == types.ProjectReportContentSourceFile {
-			if err := s.writeProjectReportFile(report); err != nil {
-				return err
-			}
-			report.Content = ""
-		}
-	}
-
-	return s.projectRepo.UpdateProjectReport(ctx, report)
+	stored.Title = report.Title
+	stored.UpdatedAt = time.Now()
+	return s.projectRepo.UpdateProjectReport(ctx, stored)
 }
 
 func (s *projectService) DeleteProjectReport(ctx context.Context, userID string, reportID int64) error {
-	report, err := s.projectRepo.GetProjectReportByID(ctx, reportID)
+	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
 	if err != nil {
 		return err
 	}
 
-	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, report.ProjectID)
+	// 先删除报告下所有条目（含 File 类型磁盘文件），再删除报告本身。
+	items, err := s.projectRepo.ListProjectReportItemsByReportID(ctx, report.ID)
 	if err != nil {
 		return err
 	}
-	if !bound {
-		return gorm.ErrRecordNotFound
-	}
-
-	if report.ContentSource == types.ProjectReportContentSourceFile {
-		if err := s.deleteProjectReportFile(report); err != nil {
-			return err
+	for _, item := range items {
+		if item.OwnerType == types.ProjectReportItemOwnerFile {
+			_ = s.deleteProjectReportItemFile(report, item.ID)
 		}
 	}
+	if err := s.projectRepo.DeleteProjectReportItemsByReportID(ctx, report.ID); err != nil {
+		return err
+	}
 
-	return s.projectRepo.DeleteProjectReport(ctx, report.ProjectID, reportID)
+	if err := s.projectRepo.DeleteProjectReport(ctx, report.ProjectID, reportID); err != nil {
+		return err
+	}
+
+	// Best-effort cleanup of the per-report directory.
+	if dir, dirErr := s.projectReportDir(report); dirErr == nil {
+		_ = os.RemoveAll(dir)
+	}
+	return nil
 }
 
 func (s *projectService) ListProjectReportByProjectID(ctx context.Context, userID, projectID string) ([]*types.ProjectReport, error) {
@@ -348,6 +316,17 @@ func (s *projectService) PageProjectReportByProjectID(ctx context.Context, userI
 }
 
 func (s *projectService) GetProjectReportDetailByID(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, error) {
+	return s.loadOwnedProjectReport(ctx, userID, reportID)
+}
+
+func (s *projectService) GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error) {
+	return s.projectRepo.GetProjectReportByID(ctx, reportID)
+}
+
+// ---------- ProjectReportItem ----------
+
+// loadOwnedProjectReport 读取报告并校验其所属项目已绑定到当前用户。
+func (s *projectService) loadOwnedProjectReport(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, error) {
 	report, err := s.projectRepo.GetProjectReportByID(ctx, reportID)
 	if err != nil {
 		return nil, err
@@ -361,42 +340,365 @@ func (s *projectService) GetProjectReportDetailByID(ctx context.Context, userID 
 		return nil, gorm.ErrRecordNotFound
 	}
 
-	s.ensureProjectReportDefaults(report)
-
-	if report.ContentSource == types.ProjectReportContentSourceFile {
-		content, err := s.readProjectReportFile(report)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// Fall back to the database content for legacy reports whose file
-				// has not been initialized yet.
-				return report, nil
-			}
-			return nil, err
-		}
-		report.Content = content
-	}
-
 	return report, nil
 }
 
-func (s *projectService) GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error) {
-	return s.projectRepo.GetProjectReportByID(ctx, reportID)
+// loadOwnedProjectReportItem 读取条目并校验其所属报告归属当前用户。
+func (s *projectService) loadOwnedProjectReportItem(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, *types.ProjectReport, error) {
+	item, err := s.projectRepo.GetProjectReportItemByID(ctx, itemID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	report, err := s.loadOwnedProjectReport(ctx, userID, item.ProjectReportID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return item, report, nil
 }
 
-func (s *projectService) ensureProjectReportDefaults(report *types.ProjectReport) {
-	if report == nil {
+func (s *projectService) ListProjectReportItemsByReportID(ctx context.Context, userID string, reportID int64) ([]*types.ProjectReportItem, error) {
+	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
+	if err != nil {
+		return nil, err
+	}
+
+	items, err := s.projectRepo.ListProjectReportItemsByReportID(ctx, report.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		s.hydrateProjectReportItemTitle(ctx, item)
+	}
+	return items, nil
+}
+
+func (s *projectService) AddProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error {
+	if item == nil {
+		return errors.New("project report item is nil")
+	}
+
+	report, err := s.loadOwnedProjectReport(ctx, userID, item.ProjectReportID)
+	if err != nil {
+		return err
+	}
+
+	ownerType, ok := types.NormalizeProjectReportItemOwnerType(string(item.OwnerType))
+	if !ok {
+		return fmt.Errorf("invalid owner_type: %s", item.OwnerType)
+	}
+	item.OwnerType = ownerType
+	if ownerType != types.ProjectReportItemOwnerFile && item.OwnerID <= 0 {
+		return errors.New("owner_id is required for non-file project report item")
+	}
+
+	if item.ID == 0 {
+		item.ID = utils.GenerateID()
+	}
+	now := time.Now()
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	item.UpdatedAt = now
+
+	if err := s.projectRepo.AddProjectReportItem(ctx, item); err != nil {
+		return err
+	}
+
+	if ownerType == types.ProjectReportItemOwnerFile {
+		return s.ensureProjectReportItemFile(report, item.ID)
+	}
+	return nil
+}
+
+func (s *projectService) UpdateProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error {
+	if item == nil {
+		return errors.New("project report item is nil")
+	}
+
+	stored, _, err := s.loadOwnedProjectReportItem(ctx, userID, item.ID)
+	if err != nil {
+		return err
+	}
+
+	stored.SortOrder = item.SortOrder
+	if strings.TrimSpace(string(item.OwnerType)) != "" {
+		ownerType, ok := types.NormalizeProjectReportItemOwnerType(string(item.OwnerType))
+		if !ok {
+			return fmt.Errorf("invalid owner_type: %s", item.OwnerType)
+		}
+		stored.OwnerType = ownerType
+		if item.OwnerID > 0 {
+			stored.OwnerID = item.OwnerID
+		}
+	}
+	stored.UpdatedAt = time.Now()
+
+	return s.projectRepo.UpdateProjectReportItem(ctx, stored)
+}
+
+func (s *projectService) UpdateProjectReportItemContent(ctx context.Context, userID string, itemID int64, content string) error {
+	item, report, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
+	if err != nil {
+		return err
+	}
+	if item.OwnerType != types.ProjectReportItemOwnerFile {
+		return errors.New("only file project report item supports content editing")
+	}
+
+	return s.writeProjectReportItemFile(report, item.ID, content)
+}
+
+func (s *projectService) DeleteProjectReportItem(ctx context.Context, userID string, itemID int64) error {
+	item, report, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
+	if err != nil {
+		return err
+	}
+
+	if item.OwnerType == types.ProjectReportItemOwnerFile {
+		if err := s.deleteProjectReportItemFile(report, item.ID); err != nil {
+			return err
+		}
+	}
+
+	return s.projectRepo.DeleteProjectReportItem(ctx, item.ID)
+}
+
+func (s *projectService) GetProjectReportItemDetailByID(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, error) {
+	item, report, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.hydrateProjectReportItemTitle(ctx, item)
+	if item.OwnerType == types.ProjectReportItemOwnerFile {
+		content, err := s.readProjectReportItemFile(report, item.ID)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return item, nil
+			}
+			return nil, err
+		}
+		item.Content = content
+	}
+
+	return item, nil
+}
+
+// GetProjectReportContent 汇总报告下所有条目，按 SortOrder 拼接成正文。
+func (s *projectService) GetProjectReportContent(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, []*types.ProjectReportItem, string, error) {
+	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	items, err := s.projectRepo.ListProjectReportItemsByReportID(ctx, report.ID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	var builder strings.Builder
+	for _, item := range items {
+		s.hydrateProjectReportItemTitle(ctx, item)
+		section, err := s.projectReportItemMarkdown(ctx, report, item)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		builder.WriteString(section)
+	}
+
+	return report, items, builder.String(), nil
+}
+
+// GetProjectReportItemContent 返回指定条目（入参为 ProjectReportItem ID）的 markdown 内容。
+func (s *projectService) GetProjectReportItemContent(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, string, error) {
+	item, report, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	s.hydrateProjectReportItemTitle(ctx, item)
+	content, err := s.projectReportItemMarkdown(ctx, report, item)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return item, content, nil
+}
+
+// hydrateProjectReportItemTitle 解析条目的展示标题；解析失败时回退到 "owner_type #id"。
+func (s *projectService) hydrateProjectReportItemTitle(ctx context.Context, item *types.ProjectReportItem) {
+	if item == nil {
 		return
 	}
-	if report.ContentSource != types.ProjectReportContentSourceDatabase &&
-		report.ContentSource != types.ProjectReportContentSourceFile {
-		report.ContentSource = types.ProjectReportContentSourceFile
+	fallback := func() {
+		if item.OwnerType == types.ProjectReportItemOwnerFile {
+			item.Title = types.DefaultProjectReportItemFilename
+			return
+		}
+		item.Title = fmt.Sprintf("%s #%d", item.OwnerType, item.OwnerID)
 	}
-	if strings.TrimSpace(report.Filename) == "" {
-		report.Filename = types.DefaultProjectReportFilename
+
+	switch item.OwnerType {
+	case types.ProjectReportItemOwnerAnalysis:
+		if s.analysisRepo == nil {
+			fallback()
+			return
+		}
+		analysis, err := s.analysisRepo.GetAnalysisByID(ctx, item.OwnerID)
+		if err != nil || strings.TrimSpace(analysis.AnalysisName) == "" {
+			fallback()
+			return
+		}
+		item.Title = analysis.AnalysisName
+	case types.ProjectReportItemOwnerAnalysisNode:
+		if s.analysisRepo == nil {
+			fallback()
+			return
+		}
+		node, err := s.analysisRepo.GetAnalysisNodeByID(ctx, item.OwnerID)
+		if err != nil || strings.TrimSpace(node.NodeName) == "" {
+			fallback()
+			return
+		}
+		item.Title = node.NodeName
+	case types.ProjectReportItemOwnerAISummary:
+		if s.summaryRepo == nil {
+			fallback()
+			return
+		}
+		summary, err := s.summaryRepo.GetAISummaryByID(ctx, item.OwnerID)
+		if err != nil || strings.TrimSpace(summary.Title) == "" {
+			fallback()
+			return
+		}
+		item.Title = summary.Title
+	default:
+		fallback()
 	}
 }
 
-func (s *projectService) projectReportFilePath(report *types.ProjectReport) (string, error) {
+// projectReportItemMarkdown 返回单个条目对应的 markdown 片段。
+func (s *projectService) projectReportItemMarkdown(ctx context.Context, report *types.ProjectReport, item *types.ProjectReportItem) (string, error) {
+	switch item.OwnerType {
+	case types.ProjectReportItemOwnerFile:
+		content, err := s.readProjectReportItemFile(report, item.ID)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", nil
+			}
+			return "", err
+		}
+		item.Content = content
+		return content, nil
+	case types.ProjectReportItemOwnerAISummary:
+		return s.aiSummaryMarkdown(ctx, item)
+	case types.ProjectReportItemOwnerAnalysisNode:
+		return s.analysisNodeMarkdown(ctx, item)
+	case types.ProjectReportItemOwnerAnalysis:
+		return s.analysisMarkdown(ctx, item)
+	default:
+		return "", fmt.Errorf("unsupported project report item owner type: %s", item.OwnerType)
+	}
+}
+
+func (s *projectService) aiSummaryMarkdown(ctx context.Context, item *types.ProjectReportItem) (string, error) {
+	if s.summaryRepo == nil {
+		return "", errors.New("ai summary repository is unavailable")
+	}
+	summary, err := s.summaryRepo.GetAISummaryByID(ctx, item.OwnerID)
+	if err != nil {
+		return "", err
+	}
+	item.Content = summary.Content
+	return formatMarkdownSection(sectionTitle(item.Title, summary.Title), summary.Content), nil
+}
+
+func (s *projectService) analysisNodeMarkdown(ctx context.Context, item *types.ProjectReportItem) (string, error) {
+	if s.analysisRepo == nil {
+		return "", errors.New("analysis repository is unavailable")
+	}
+	node, err := s.analysisRepo.GetAnalysisNodeByID(ctx, item.OwnerID)
+	if err != nil {
+		return "", err
+	}
+
+	content := readMarkdownFile(node.OutputDir)
+	if strings.TrimSpace(content) == "" {
+		content = fmt.Sprintf("> 未找到节点输出文件：%s", filepath.Join(node.OutputDir, types.DefaultProjectReportItemFilename))
+	}
+	item.Content = content
+	return formatMarkdownSection(sectionTitle(item.Title, node.NodeName), content), nil
+}
+
+func (s *projectService) analysisMarkdown(ctx context.Context, item *types.ProjectReportItem) (string, error) {
+	if s.analysisRepo == nil {
+		return "", errors.New("analysis repository is unavailable")
+	}
+	analysis, err := s.analysisRepo.GetAnalysisByID(ctx, item.OwnerID)
+	if err != nil {
+		return "", err
+	}
+	nodes, err := s.analysisRepo.ListAnalysisNodesByAnalysisID(ctx, item.OwnerID)
+	if err != nil {
+		return "", err
+	}
+
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("# %s\n\n", sectionTitle(item.Title, analysis.AnalysisName)))
+	for _, node := range nodes {
+		content := readMarkdownFile(node.OutputDir)
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		builder.WriteString(fmt.Sprintf("## %s\n\n%s\n\n", node.NodeName, content))
+	}
+	return builder.String(), nil
+}
+
+func sectionTitle(resolved, fallback string) string {
+	if strings.TrimSpace(resolved) != "" {
+		return resolved
+	}
+	if strings.TrimSpace(fallback) != "" {
+		return fallback
+	}
+	return "Untitled"
+}
+
+func formatMarkdownSection(title, content string) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	return fmt.Sprintf("# %s\n\n%s\n\n", title, content)
+}
+
+// readMarkdownFile 读取节点输出目录下的 output.md，文件不存在时返回空串。
+func readMarkdownFile(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, types.DefaultProjectReportItemFilename))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func (s *projectService) projectReportDir(report *types.ProjectReport) (string, error) {
+	if s.cfg == nil || s.cfg.Storage == nil {
+		return "", errors.New("storage config is missing")
+	}
+	baseDir := strings.TrimSpace(s.cfg.Storage.BaseDir)
+	if baseDir == "" {
+		return "", errors.New("storage base dir is empty")
+	}
+	return utils.GetProjectReportDir(baseDir, report.ProjectID, strconv.FormatInt(report.ID, 10)), nil
+}
+
+func (s *projectService) projectReportItemFilePath(report *types.ProjectReport, itemID int64) (string, error) {
 	if s.cfg == nil || s.cfg.Storage == nil {
 		return "", errors.New("storage config is missing")
 	}
@@ -406,20 +708,12 @@ func (s *projectService) projectReportFilePath(report *types.ProjectReport) (str
 		return "", errors.New("storage base dir is empty")
 	}
 
-	filename := strings.TrimSpace(report.Filename)
-	if filename == "" {
-		filename = types.DefaultProjectReportFilename
-	}
-	if filepath.Base(filename) != filename {
-		return "", errors.New("invalid report filename")
-	}
-
-	dir := utils.GetProjectReportDir(baseDir, report.ProjectID, strconv.FormatInt(report.ID, 10))
-	return filepath.Join(dir, filename), nil
+	dir := utils.GetProjectReportItemDir(baseDir, report.ProjectID, strconv.FormatInt(report.ID, 10), strconv.FormatInt(itemID, 10))
+	return filepath.Join(dir, types.DefaultProjectReportItemFilename), nil
 }
 
-func (s *projectService) ensureProjectReportFile(report *types.ProjectReport) error {
-	filePath, err := s.projectReportFilePath(report)
+func (s *projectService) ensureProjectReportItemFile(report *types.ProjectReport, itemID int64) error {
+	filePath, err := s.projectReportItemFilePath(report, itemID)
 	if err != nil {
 		return err
 	}
@@ -435,8 +729,8 @@ func (s *projectService) ensureProjectReportFile(report *types.ProjectReport) er
 	return f.Close()
 }
 
-func (s *projectService) writeProjectReportFile(report *types.ProjectReport) error {
-	filePath, err := s.projectReportFilePath(report)
+func (s *projectService) writeProjectReportItemFile(report *types.ProjectReport, itemID int64, content string) error {
+	filePath, err := s.projectReportItemFilePath(report, itemID)
 	if err != nil {
 		return err
 	}
@@ -445,11 +739,11 @@ func (s *projectService) writeProjectReportFile(report *types.ProjectReport) err
 		return err
 	}
 
-	return os.WriteFile(filePath, []byte(report.Content), 0o644)
+	return os.WriteFile(filePath, []byte(content), 0o644)
 }
 
-func (s *projectService) readProjectReportFile(report *types.ProjectReport) (string, error) {
-	filePath, err := s.projectReportFilePath(report)
+func (s *projectService) readProjectReportItemFile(report *types.ProjectReport, itemID int64) (string, error) {
+	filePath, err := s.projectReportItemFilePath(report, itemID)
 	if err != nil {
 		return "", err
 	}
@@ -461,18 +755,15 @@ func (s *projectService) readProjectReportFile(report *types.ProjectReport) (str
 	return string(content), nil
 }
 
-func (s *projectService) deleteProjectReportFile(report *types.ProjectReport) error {
-	filePath, err := s.projectReportFilePath(report)
+func (s *projectService) deleteProjectReportItemFile(report *types.ProjectReport, itemID int64) error {
+	filePath, err := s.projectReportItemFilePath(report, itemID)
 	if err != nil {
 		return err
 	}
 
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+	if err := os.RemoveAll(filepath.Dir(filePath)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-
-	// Best-effort cleanup of the now-empty per-report directory.
-	_ = os.Remove(filepath.Dir(filePath))
 	return nil
 }
 

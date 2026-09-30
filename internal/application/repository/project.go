@@ -167,11 +167,7 @@ func (r *projectRepository) UpdateProjectReport(ctx context.Context, report *typ
 		Model(&types.ProjectReport{}).
 		Where("id = ? AND project_id = ?", report.ID, report.ProjectID).
 		Updates(map[string]interface{}{
-			"title":          report.Title,
-			"content":        report.Content,
-			"sort_order":     report.SortOrder,
-			"content_source": report.ContentSource,
-			"filename":       report.Filename,
+			"title": report.Title,
 		}).Error
 }
 
@@ -185,9 +181,8 @@ func (r *projectRepository) ListProjectReportByProjectID(ctx context.Context, pr
 	reports := make([]*types.ProjectReport, 0)
 	err := r.db.WithContext(ctx).
 		Model(&types.ProjectReport{}).
-		Select("id, project_id, title, sort_order, created_at, updated_at").
+		Select("id, project_id, title, created_at, updated_at").
 		Where("project_id = ?", projectID).
-		Order("sort_order DESC").
 		Order("created_at ASC").
 		Find(&reports).Error
 	if err != nil {
@@ -205,7 +200,7 @@ func (r *projectRepository) PageProjectReportByProjectID(ctx context.Context, pa
 	items := make([]*types.ProjectReport, 0)
 	base := r.db.WithContext(ctx).
 		Model(&types.ProjectReport{}).
-		Select("id, project_id, title, sort_order, created_at, updated_at").
+		Select("id, project_id, title, created_at, updated_at").
 		Where("project_id = ?", projectID)
 
 	var total int64
@@ -214,7 +209,6 @@ func (r *projectRepository) PageProjectReportByProjectID(ctx context.Context, pa
 	}
 
 	err := base.
-		Order("sort_order DESC").
 		Order("created_at ASC").
 		Offset(pagination.Offset()).
 		Limit(pagination.Limit()).
@@ -230,7 +224,6 @@ func (r *projectRepository) ListProjectReportDetailByProjectID(ctx context.Conte
 	reports := make([]*types.ProjectReport, 0)
 	err := r.db.WithContext(ctx).
 		Where("project_id = ?", projectID).
-		Order("sort_order DESC").
 		Order("created_at ASC").
 		Find(&reports).Error
 	if err != nil {
@@ -238,6 +231,62 @@ func (r *projectRepository) ListProjectReportDetailByProjectID(ctx context.Conte
 	}
 
 	return reports, nil
+}
+
+// ---------- ProjectReportItem ----------
+
+func (r *projectRepository) AddProjectReportItem(ctx context.Context, item *types.ProjectReportItem) error {
+	return r.db.WithContext(ctx).Create(item).Error
+}
+
+func (r *projectRepository) GetProjectReportItemByID(ctx context.Context, itemID int64) (*types.ProjectReportItem, error) {
+	item := &types.ProjectReportItem{}
+	err := r.db.WithContext(ctx).
+		Where("id = ?", itemID).
+		Take(item).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return item, nil
+}
+
+func (r *projectRepository) UpdateProjectReportItem(ctx context.Context, item *types.ProjectReportItem) error {
+	return r.db.WithContext(ctx).
+		Model(&types.ProjectReportItem{}).
+		Where("id = ?", item.ID).
+		Updates(map[string]interface{}{
+			"owner_type": item.OwnerType,
+			"owner_id":   item.OwnerID,
+			"sort_order": item.SortOrder,
+		}).Error
+}
+
+func (r *projectRepository) DeleteProjectReportItem(ctx context.Context, itemID int64) error {
+	return r.db.WithContext(ctx).
+		Where("id = ?", itemID).
+		Delete(&types.ProjectReportItem{}).Error
+}
+
+func (r *projectRepository) DeleteProjectReportItemsByReportID(ctx context.Context, reportID int64) error {
+	return r.db.WithContext(ctx).
+		Where("project_report_id = ?", reportID).
+		Delete(&types.ProjectReportItem{}).Error
+}
+
+func (r *projectRepository) ListProjectReportItemsByReportID(ctx context.Context, reportID int64) ([]*types.ProjectReportItem, error) {
+	items := make([]*types.ProjectReportItem, 0)
+	err := r.db.WithContext(ctx).
+		Model(&types.ProjectReportItem{}).
+		Where("project_report_id = ?", reportID).
+		Order("sort_order ASC").
+		Order("created_at ASC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return items, nil
 }
 
 // ---------- Literature ----------
