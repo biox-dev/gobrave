@@ -1602,29 +1602,47 @@ const docTemplate = `{
                 }
             }
         },
-        "/ai-summary/list-by-project": {
-            "get": {
+        "/ai-summary/list-by-project-page": {
+            "post": {
                 "security": [
                     {
                         "Bearer": []
                     }
                 ],
-                "description": "解析当前登录用户的激活项目，返回该项目（project_id）下的全部 AI 摘要",
+                "description": "解析当前登录用户的激活项目，分页返回该项目（project_id）下的 AI 摘要，不返回 content",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "AI摘要"
                 ],
-                "summary": "按当前用户激活项目查询 AI 摘要列表",
+                "summary": "按当前用户激活项目分页查询 AI 摘要列表",
+                "parameters": [
+                    {
+                        "description": "分页请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.aiSummaryByProjectPageRequest"
+                        }
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/types.AISummary"
-                            }
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
                         }
                     },
                     "401": {
@@ -7649,6 +7667,69 @@ const docTemplate = `{
                 }
             }
         },
+        "/project/add-project-report-item": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "向指定报告添加条目。OwnerType 为 analysis/analysis_node/ai_summary 时需提供 OwnerID；file 时忽略 OwnerID。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "添加报告条目",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.addProjectReportItemRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "创建成功",
+                        "schema": {
+                            "$ref": "#/definitions/handler.projectReportItemDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/project/add-project-to-user": {
             "post": {
                 "security": [
@@ -8024,6 +8105,72 @@ const docTemplate = `{
                 }
             }
         },
+        "/project/delete-project-report-item": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "删除指定报告条目及其 File 类型内容文件",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "删除报告条目",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.deleteProjectReportItemRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/project/delete-user-project": {
             "post": {
                 "security": [
@@ -8344,6 +8491,68 @@ const docTemplate = `{
                 }
             }
         },
+        "/project/list-project-report-item": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "查询指定报告下的所有条目，按 sort_order、created_at 升序排序",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "查询报告条目列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "报告ID",
+                        "name": "report_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/handler.projectReportItemDTO"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/project/list-project-report-page": {
             "post": {
                 "security": [
@@ -8467,6 +8676,66 @@ const docTemplate = `{
                 }
             }
         },
+        "/project/project-report-content": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "汇总报告下所有条目并拼接成正文，同时返回条目列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "查询报告聚合内容",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "报告ID",
+                        "name": "report_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/project/project-report-detail": {
             "get": {
                 "security": [
@@ -8519,6 +8788,125 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "服务器错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/project/project-report-item-content": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "入参为 ProjectReportItem ID，返回该条目解析后的 markdown 内容",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "查询报告条目 markdown 内容",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "条目ID",
+                        "name": "id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/project/project-report-item-detail": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "根据 id 查询条目详情，File 类型会返回文件内容",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "查询报告条目详情",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "条目ID",
+                        "name": "id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.projectReportItemDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -8717,6 +9105,72 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "服务器错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/project/update-project-report-item": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "更新条目的排序或 owner 绑定",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "更新报告条目",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.updateProjectReportItemRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -11816,6 +12270,29 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.addProjectReportItemRequest": {
+            "type": "object",
+            "required": [
+                "owner_type",
+                "project_report_id"
+            ],
+            "properties": {
+                "owner_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "owner_type": {
+                    "type": "string"
+                },
+                "project_report_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "sort_order": {
+                    "type": "integer"
+                }
+            }
+        },
         "handler.addProjectReportRequest": {
             "type": "object",
             "required": [
@@ -11823,20 +12300,8 @@ const docTemplate = `{
                 "title"
             ],
             "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "content_source": {
-                    "type": "string"
-                },
-                "filename": {
-                    "type": "string"
-                },
                 "project_id": {
                     "type": "string"
-                },
-                "sort_order": {
-                    "type": "integer"
                 },
                 "title": {
                     "type": "string"
@@ -11954,6 +12419,22 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/agent.TaskStatus"
                     }
+                }
+            }
+        },
+        "handler.aiSummaryByProjectPageRequest": {
+            "type": "object",
+            "properties": {
+                "page": {
+                    "description": "Page",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "page_size": {
+                    "description": "Page size",
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
                 }
             }
         },
@@ -12464,6 +12945,18 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.deleteProjectReportItemRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                }
+            }
+        },
         "handler.deleteProjectReportRequest": {
             "type": "object",
             "required": [
@@ -12928,22 +13421,39 @@ const docTemplate = `{
         "handler.projectReportDetailItem": {
             "type": "object",
             "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "content_source": {
-                    "type": "string"
-                },
                 "created_at": {
-                    "type": "string"
-                },
-                "filename": {
                     "type": "string"
                 },
                 "id": {
                     "type": "string"
                 },
                 "project_id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "handler.projectReportItemDTO": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "owner_id": {
+                    "type": "string"
+                },
+                "owner_type": {
+                    "type": "string"
+                },
+                "project_report_id": {
                     "type": "string"
                 },
                 "sort_order": {
@@ -12967,12 +13477,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "project_id": {
-                    "type": "string"
-                },
-                "sort_order": {
-                    "type": "integer"
-                },
-                "source": {
                     "type": "string"
                 },
                 "title": {
@@ -13227,6 +13731,28 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.updateProjectReportItemRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "owner_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "owner_type": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                }
+            }
+        },
         "handler.updateProjectReportRequest": {
             "type": "object",
             "required": [
@@ -13235,24 +13761,12 @@ const docTemplate = `{
                 "title"
             ],
             "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "content_source": {
-                    "type": "string"
-                },
-                "filename": {
-                    "type": "string"
-                },
                 "id": {
                     "type": "string",
                     "example": "0"
                 },
                 "project_id": {
                     "type": "string"
-                },
-                "sort_order": {
-                    "type": "integer"
                 },
                 "title": {
                     "type": "string"
@@ -14530,18 +15044,7 @@ const docTemplate = `{
         "types.ProjectReport": {
             "type": "object",
             "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "content_source": {
-                    "description": "ContentSource indicates where Content is stored: \"file\" or \"database\".",
-                    "type": "string"
-                },
                 "created_at": {
-                    "type": "string"
-                },
-                "filename": {
-                    "description": "Filename is the report file name under the project report directory.",
                     "type": "string"
                 },
                 "id": {
@@ -14550,9 +15053,6 @@ const docTemplate = `{
                 },
                 "project_id": {
                     "type": "string"
-                },
-                "sort_order": {
-                    "type": "integer"
                 },
                 "title": {
                     "type": "string"

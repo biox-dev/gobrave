@@ -3,6 +3,7 @@ package handler
 import (
 	stderrs "errors"
 	"net/http"
+	"strconv"
 
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -35,6 +36,25 @@ type createAISummaryRequest struct {
 type listAISummaryRequest struct {
 	OwnerID   int64                  `form:"owner_id" binding:"required"`
 	OwnerType types.SummaryOwnerType `form:"owner_type" binding:"required"`
+}
+
+type aiSummaryByProjectPageRequest struct {
+	types.Pagination
+}
+
+// aiSummaryListItem 是 AI 摘要分页列表项：刻意不包含 content（正文可能很大），
+// 正文与 Prefix 由详情接口（GetAISummary）按 ID 返回。
+type aiSummaryListItem struct {
+	ID        string                 `json:"id"`
+	OwnerID   string                 `json:"owner_id"`
+	OwnerType types.SummaryOwnerType `json:"owner_type"`
+	ProjectID string                 `json:"project_id"`
+	Title     string                 `json:"title"`
+	Status    types.SummaryStatus    `json:"status"`
+	Profile   string                 `json:"profile"`
+	TaskID    string                 `json:"task_id"`
+	CreatedAt string                 `json:"created_at"`
+	UpdatedAt string                 `json:"updated_at"`
 }
 
 type aiSummaryInputRequest struct {
@@ -183,20 +203,29 @@ func (h *AISummaryHandler) ListAISummary(c *gin.Context) {
 	c.JSON(http.StatusOK, summaries)
 }
 
-// ListAISummaryByActiveProject godoc
-// @Summary      按当前用户激活项目查询 AI 摘要列表
-// @Description  解析当前登录用户的激活项目，返回该项目（project_id）下的全部 AI 摘要
+// PageAISummaryByActiveProject godoc
+// @Summary      按当前用户激活项目分页查询 AI 摘要列表
+// @Description  解析当前登录用户的激活项目，分页返回该项目（project_id）下的 AI 摘要，不返回 content
 // @Tags         AI摘要
+// @Accept       json
 // @Produce      json
-// @Success      200      {array}   types.AISummary
+// @Param        request  body      handler.aiSummaryByProjectPageRequest  true  "分页请求参数"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /ai-summary/list-by-project [get]
-func (h *AISummaryHandler) ListAISummaryByActiveProject(c *gin.Context) {
+// @Router       /ai-summary/list-by-project-page [post]
+func (h *AISummaryHandler) PageAISummaryByActiveProject(c *gin.Context) {
 	userID, ok := getCurrentUserID(c)
 	if !ok {
+		return
+	}
+
+	var req aiSummaryByProjectPageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
 
@@ -210,13 +239,38 @@ func (h *AISummaryHandler) ListAISummaryByActiveProject(c *gin.Context) {
 		return
 	}
 
-	summaries, err := h.aiSummaryService.ListAISummariesByProjectID(c.Request.Context(), project.ID)
+	summaries, total, err := h.aiSummaryService.PageAISummariesByProjectID(c.Request.Context(), &req.Pagination, project.ID)
 	if err != nil {
-		handleDataError(c, err, "failed to list ai summaries")
+		handleDataError(c, err, "failed to page ai summaries")
 		return
 	}
 
-	c.JSON(http.StatusOK, summaries)
+	result := make([]aiSummaryListItem, 0, len(summaries))
+	for _, summary := range summaries {
+		if summary == nil {
+			continue
+		}
+		result = append(result, aiSummaryListItem{
+			ID:        strconv.FormatInt(summary.ID, 10),
+			OwnerID:   strconv.FormatInt(summary.OwnerID, 10),
+			OwnerType: summary.OwnerType,
+			ProjectID: strconv.FormatInt(summary.ProjectID, 10),
+			Title:     summary.Title,
+			Status:    summary.Status,
+			Profile:   summary.Profile,
+			TaskID:    strconv.FormatInt(summary.TaskID, 10),
+			CreatedAt: summary.CreatedAt.Format("2006-01-02 15:04:05"),
+			UpdatedAt: summary.UpdatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":       result,
+		"total":      total,
+		"page":       req.GetPage(),
+		"page_size":  req.GetPageSize(),
+		"project_id": project.ID,
+	})
 }
 
 // UpdateAISummary godoc

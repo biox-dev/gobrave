@@ -95,8 +95,16 @@ func (s *aiSummaryService) enqueueGeneration(ctx context.Context, summaryID int6
 	})
 }
 
+// GetAISummaryByID 按摘要 ID 查询详情，并填充 Prefix（所属对象输出目录对应的
+// /data-analysis URL 前缀），供前端渲染 content 中的相对图片/链接。
 func (s *aiSummaryService) GetAISummaryByID(ctx context.Context, id int64) (*types.AISummary, error) {
-	return s.summaryRepo.GetAISummaryByID(ctx, id)
+	summary, err := s.summaryRepo.GetAISummaryByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	summary.Prefix = s.resolveOwnerURLPrefix(ctx, summary.OwnerType, summary.OwnerID)
+	return summary, nil
 }
 
 // ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表，并为每个 item 补充
@@ -120,35 +128,10 @@ func (s *aiSummaryService) ListAISummariesByOwner(ctx context.Context, ownerType
 	return items, nil
 }
 
-// ListAISummariesByProjectID 按项目 ID 查询摘要列表，并为每个 item 补充所属对象
-// 输出目录对应的 /data-analysis URL 前缀。
-func (s *aiSummaryService) ListAISummariesByProjectID(ctx context.Context, projectID int64) ([]*types.AISummary, error) {
-	items, err := s.summaryRepo.ListAISummariesByProjectID(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-
-	type ownerKey struct {
-		ownerType types.SummaryOwnerType
-		ownerID   int64
-	}
-	// 同一项目下多个摘要可能共享所属对象，按 (owner_type, owner_id) 缓存前缀，
-	// 避免对同一对象重复解析输出目录。
-	prefixCache := make(map[ownerKey]string, len(items))
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		key := ownerKey{ownerType: item.OwnerType, ownerID: item.OwnerID}
-		prefix, ok := prefixCache[key]
-		if !ok {
-			prefix = s.resolveOwnerURLPrefix(ctx, item.OwnerType, item.OwnerID)
-			prefixCache[key] = prefix
-		}
-		item.Prefix = prefix
-	}
-
-	return items, nil
+// PageAISummariesByProjectID 按项目 ID 分页查询摘要列表。列表项不包含 content，
+// 详情由 GetAISummaryByID 按 ID 单独返回。
+func (s *aiSummaryService) PageAISummariesByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.AISummary, int64, error) {
+	return s.summaryRepo.PageAISummariesByProjectID(ctx, pagination, projectID)
 }
 
 // resolveOwnerURLPrefix 解析摘要所属对象输出目录对应的 URL 前缀。

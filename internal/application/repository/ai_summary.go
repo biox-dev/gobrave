@@ -39,15 +39,40 @@ func (r *aiSummaryRepository) ListAISummariesByOwner(ctx context.Context, ownerT
 	return items, nil
 }
 
-func (r *aiSummaryRepository) ListAISummariesByProjectID(ctx context.Context, projectID int64) ([]*types.AISummary, error) {
-	items := make([]*types.AISummary, 0)
-	if err := r.db.WithContext(ctx).
-		Where("project_id = ?", projectID).
-		Order("created_at DESC").
-		Find(&items).Error; err != nil {
-		return nil, err
+// aiSummaryPageColumns 是分页列表需要查询的列：显式排除 content（longtext），
+// 避免列表接口把大字段读入内存并返回给前端。
+var aiSummaryPageColumns = []string{
+	"id", "owner_id", "owner_type", "project_id",
+	"title", "status", "profile", "task_id", "created_at", "updated_at",
+}
+
+func (r *aiSummaryRepository) PageAISummariesByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.AISummary, int64, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
 	}
-	return items, nil
+
+	buildQuery := func() *gorm.DB {
+		return r.db.WithContext(ctx).
+			Model(&types.AISummary{}).
+			Where("project_id = ?", projectID)
+	}
+
+	var total int64
+	if err := buildQuery().Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]*types.AISummary, 0)
+	if err := buildQuery().
+		Select(aiSummaryPageColumns).
+		Order("created_at DESC").
+		Offset(pagination.Offset()).
+		Limit(pagination.Limit()).
+		Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return items, total, nil
 }
 
 func (r *aiSummaryRepository) UpdateAISummary(ctx context.Context, item *types.AISummary) error {
