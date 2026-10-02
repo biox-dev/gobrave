@@ -54,8 +54,11 @@ func GetProjectLiteratureDir(baseDir, projectId, literatureID string) string {
 	projectDir := GetProjectDir(baseDir, projectId)
 	return filepath.Join(projectDir, "literature", literatureID)
 }
-func GetProjectDocDir(baseDir, projectId string) string {
-	return filepath.Join(baseDir, "data", projectId, "docs", "src")
+
+// GetProjectDocDir 返回某个 ProjectReport 的文档源目录：
+// <baseDir>/data/<projectId>/docs/<reportId>/docs/src。
+func GetProjectDocDir(baseDir, projectId, reportID string) string {
+	return filepath.Join(baseDir, "data", projectId, "docs", reportID, "docs", "src")
 }
 
 func GetAnalysisDebugDir(baseDir, analysisID, version string) string {

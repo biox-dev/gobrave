@@ -138,21 +138,32 @@ func (s *aiSummaryService) PageAISummariesByProjectID(ctx context.Context, pagin
 // 对象不存在或目录为空时返回空串：前缀只是响应增强字段，
 // 不应阻塞摘要列表本身的返回。
 func (s *aiSummaryService) resolveOwnerURLPrefix(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) string {
-	if s.analysisRepo == nil {
+	baseDir := ""
+	if s.cfg != nil && s.cfg.Storage != nil {
+		baseDir = s.cfg.Storage.BaseDir
+	}
+	return resolveSummaryOwnerURLPrefix(ctx, s.analysisRepo, baseDir, ownerType, ownerID)
+}
+
+// resolveSummaryOwnerURLPrefix 将摘要所属对象（Analysis / AnalysisNode）的输出目录
+// 解析为 /data-analysis URL 前缀。对象不存在或目录为空时返回空串。
+// 供 aiSummaryService 与 projectService 共享。
+func resolveSummaryOwnerURLPrefix(ctx context.Context, analysisRepo interfaces.AnalysisRepository, baseDir string, ownerType types.SummaryOwnerType, ownerID int64) string {
+	if analysisRepo == nil {
 		return ""
 	}
 
 	var outputDir string
 	switch ownerType {
 	case types.SummaryOwnerAnalysisNode:
-		node, err := s.analysisRepo.GetAnalysisNodeByID(ctx, ownerID)
+		node, err := analysisRepo.GetAnalysisNodeByID(ctx, ownerID)
 		if err != nil {
 			logger.Warnf(ctx, "[AISummary] resolve analysis node output dir failed, analysis_node_id=%d err=%v", ownerID, err)
 			return ""
 		}
 		outputDir = node.OutputDir
 	case types.SummaryOwnerAnalysis:
-		analysis, err := s.analysisRepo.GetAnalysisByID(ctx, ownerID)
+		analysis, err := analysisRepo.GetAnalysisByID(ctx, ownerID)
 		if err != nil {
 			logger.Warnf(ctx, "[AISummary] resolve analysis output dir failed, analysis_id=%d err=%v", ownerID, err)
 			return ""
@@ -166,10 +177,6 @@ func (s *aiSummaryService) resolveOwnerURLPrefix(ctx context.Context, ownerType 
 		return ""
 	}
 
-	baseDir := ""
-	if s.cfg != nil && s.cfg.Storage != nil {
-		baseDir = s.cfg.Storage.BaseDir
-	}
 	return utils.GetAnalysisURLPrefix(baseDir, outputDir)
 }
 

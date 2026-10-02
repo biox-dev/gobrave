@@ -1048,14 +1048,17 @@ func (h *ProjectHandler) GetProjectReportItemContent(c *gin.Context) {
 	}
 
 	title := ""
+	prefix := ""
 	content := ""
 	if section != nil {
 		title = section.Title
+		prefix = section.Prefix
 		content = section.Render()
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"title":   title,
+		"prefix":  prefix,
 		"content": content,
 	})
 }

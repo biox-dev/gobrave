@@ -370,10 +370,10 @@ func RegisterConfigRoutes(r *gin.RouterGroup, handler *handler.ConfigHandler) {
 }
 
 func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler) {
-	r.POST("/workflow/publish-to-doc/:workflowId", handler.PublishToDocByWorkflowID)
-	r.POST("/analysis/publish-to-doc/:analsyisId", handler.PublishToDocByAnalysisID)
-	r.POST("/analysis-node/:analysisNodeId/publish-to-doc", handler.PublishToDocByAnalysisNodeID)
-	r.POST("/script/:scriptId/publish-to-doc", handler.PublishScriptAnalysisNodeToDoc)
+	// 发布到文档目录：
+	//   - 单条目：按 ProjectReportItem 的 OwnerType/OwnerID 发布
+	//   - 整报告：遍历报告下所有 ProjectReportItem 逐个发布
+	r.POST("/project-report-item/:itemId/publish-to-doc", handler.PublishProjectReportItemToDoc)
 	r.POST("/project-report/:reportId/publish-to-doc", handler.PublishProjectReportToDoc)
 
 	r.POST("/analysis/parse-params", handler.ParseParams)

@@ -531,6 +531,7 @@ func (s *projectService) aiSummaryMarkdown(ctx context.Context, item *types.Proj
 	}
 	return &types.ProjectReportItemContent{
 		Title:   sectionTitle(item.Title, summary.Title),
+		Prefix:  resolveSummaryOwnerURLPrefix(ctx, s.analysisRepo, s.storageBaseDir(), summary.OwnerType, summary.OwnerID),
 		Content: summary.Content,
 	}, nil
 }
@@ -550,6 +551,7 @@ func (s *projectService) analysisNodeMarkdown(ctx context.Context, item *types.P
 	}
 	return &types.ProjectReportItemContent{
 		Title:   sectionTitle(item.Title, node.NodeName),
+		Prefix:  utils.GetAnalysisURLPrefix(s.storageBaseDir(), node.OutputDir),
 		Content: content,
 	}, nil
 }
@@ -577,6 +579,7 @@ func (s *projectService) analysisMarkdown(ctx context.Context, item *types.Proje
 	}
 	return &types.ProjectReportItemContent{
 		Title:   sectionTitle(item.Title, analysis.AnalysisName),
+		Prefix:  utils.GetAnalysisURLPrefix(s.storageBaseDir(), analysis.WorkspaceDir),
 		Content: builder.String(),
 	}, nil
 }
@@ -613,6 +616,14 @@ func (s *projectService) projectReportDir(report *types.ProjectReport) (string, 
 		return "", errors.New("storage base dir is empty")
 	}
 	return utils.GetProjectReportDir(baseDir, report.ProjectID, strconv.FormatInt(report.ID, 10)), nil
+}
+
+// storageBaseDir 返回去除首尾空白后的 storage.base_dir，未配置时返回空串。
+func (s *projectService) storageBaseDir() string {
+	if s.cfg == nil || s.cfg.Storage == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.cfg.Storage.BaseDir)
 }
 
 // ---------- Literature ----------

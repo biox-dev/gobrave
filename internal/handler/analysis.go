@@ -2506,42 +2506,6 @@ func readDelimitedTable(path string, sep rune, rowLimit int) (map[string]interfa
 	}, nil
 }
 
-// scriptTypeToMarkdownLang maps a script type to a markdown code fence language identifier.
-func scriptTypeToMarkdownLang(scriptType string) string {
-	switch strings.ToLower(strings.TrimSpace(scriptType)) {
-	case "python", "py":
-		return "python"
-	case "r", "rscript":
-		return "r"
-	case "shell", "bash", "sh":
-		return "bash"
-	case "perl":
-		return "perl"
-	case "ruby":
-		return "ruby"
-	case "javascript", "js", "node":
-		return "javascript"
-	case "typescript", "ts":
-		return "typescript"
-	case "go", "golang":
-		return "go"
-	case "java":
-		return "java"
-	case "rust":
-		return "rust"
-	case "c":
-		return "c"
-	case "cpp", "c++":
-		return "cpp"
-	case "sql":
-		return "sql"
-	case "nextflow", "nf":
-		return "groovy"
-	default:
-		return ""
-	}
-}
-
 func buildAnalysisFileURL(path string, cfg *config.Config) string {
 	p := filepath.Clean(path)
 	p = filepath.ToSlash(p)

@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -144,22 +145,67 @@ func (ProjectReportItem) TableName() string {
 }
 
 // ProjectReportItemContent 是 ProjectReportItem 渲染后的内容片段。
-// Title 为展示标题，Content 为正文，Prefix 预留给正文前的额外前缀（如引用标记）。
+// Title 为展示标题，Content 为正文，Prefix 为正文中相对资源（图片/链接）的
+// /data-analysis URL 前缀，渲染时拼接到相对图片路径前。
 type ProjectReportItemContent struct {
 	Title   string `json:"title"`
 	Prefix  string `json:"prefix"`
 	Content string `json:"content"`
 }
 
-// Render 将片段渲染为 markdown 小节；正文（Prefix+Content）为空时返回空串。
+// markdownImagePattern 匹配 markdown 图片语法 ![alt](url)。
+var markdownImagePattern = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
+
+// Render 将片段渲染为 markdown 小节；正文为空时返回空串。
+// Prefix 作为正文中相对图片资源的 URL 前缀，会拼接到每个 img 的相对路径前。
 func (c ProjectReportItemContent) Render() string {
-	body := c.Prefix + c.Content
-	if strings.TrimSpace(body) == "" {
+	content := c.withImagePrefix(c.Content)
+	if strings.TrimSpace(content) == "" {
 		return ""
 	}
 	title := strings.TrimSpace(c.Title)
 	if title == "" {
 		title = "Untitled"
 	}
-	return fmt.Sprintf("# %s\n\n%s\n\n", title, body)
+	return fmt.Sprintf("# %s\n\n%s\n\n", title, content)
+}
+
+// withImagePrefix 为 markdown 内容中相对图片路径拼上 Prefix。
+// Prefix 为空时原样返回；已是绝对路径/URL 的图片保持不变。
+func (c ProjectReportItemContent) withImagePrefix(content string) string {
+	prefix := strings.TrimSpace(c.Prefix)
+	if prefix == "" {
+		return content
+	}
+
+	return markdownImagePattern.ReplaceAllStringFunc(content, func(match string) string {
+		sub := markdownImagePattern.FindStringSubmatch(match)
+		if len(sub) != 3 {
+			return match
+		}
+		alt, url := sub[1], strings.TrimSpace(sub[2])
+		if !isRelativeResourceURL(url) {
+			return match
+		}
+		return fmt.Sprintf("![%s](%s%s)", alt, prefix, strings.TrimPrefix(url, "./"))
+	})
+}
+
+// isRelativeResourceURL 判断 url 是否为需要拼前缀的相对路径。
+// 绝对 URL（带 scheme）、协议相对地址、根路径、锚点与 data URI 均视为非相对。
+func isRelativeResourceURL(url string) bool {
+	if url == "" {
+		return false
+	}
+	if strings.HasPrefix(url, "/") || strings.HasPrefix(url, "#") {
+		return false
+	}
+	if strings.Contains(url, "://") {
+		return false
+	}
+	lower := strings.ToLower(url)
+	if strings.HasPrefix(lower, "data:") || strings.HasPrefix(lower, "mailto:") {
+		return false
+	}
+	return true
 }
