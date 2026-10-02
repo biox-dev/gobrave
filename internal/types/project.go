@@ -1,6 +1,7 @@
 package types
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -140,4 +141,25 @@ func (t *ProjectReportItem) BeforeCreate(_ *gorm.DB) error {
 
 func (ProjectReportItem) TableName() string {
 	return "t_project_report_items"
+}
+
+// ProjectReportItemContent 是 ProjectReportItem 渲染后的内容片段。
+// Title 为展示标题，Content 为正文，Prefix 预留给正文前的额外前缀（如引用标记）。
+type ProjectReportItemContent struct {
+	Title   string `json:"title"`
+	Prefix  string `json:"prefix"`
+	Content string `json:"content"`
+}
+
+// Render 将片段渲染为 markdown 小节；正文（Prefix+Content）为空时返回空串。
+func (c ProjectReportItemContent) Render() string {
+	body := c.Prefix + c.Content
+	if strings.TrimSpace(body) == "" {
+		return ""
+	}
+	title := strings.TrimSpace(c.Title)
+	if title == "" {
+		title = "Untitled"
+	}
+	return fmt.Sprintf("# %s\n\n%s\n\n", title, body)
 }

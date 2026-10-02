@@ -1031,18 +1031,13 @@ type projectReportItemContentRequest struct {
 func (h *ProjectHandler) GetProjectReportItemContent(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	userID, ok := getCurrentUserID(c)
-	if !ok {
-		return
-	}
-
 	var req projectReportItemContentRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
 
-	item, content, err := h.projectService.GetProjectReportItemContent(ctx, userID, req.ID)
+	section, err := h.projectService.GetProjectReportItemContent(ctx, req.ID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("project report item not found"))
@@ -1052,8 +1047,15 @@ func (h *ProjectHandler) GetProjectReportItemContent(c *gin.Context) {
 		return
 	}
 
+	title := ""
+	content := ""
+	if section != nil {
+		title = section.Title
+		content = section.Render()
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"item":    newProjectReportItemDTO(item),
+		"title":   title,
 		"content": content,
 	})
 }
@@ -1064,7 +1066,7 @@ type projectReportContentRequest struct {
 
 // GetProjectReportContent godoc
 // @Summary      查询报告聚合内容
-// @Description  汇总报告下所有条目并拼接成正文，同时返回条目列表
+// @Description  汇总报告下所有条目并拼接成正文，返回报告标题与正文
 // @Tags         项目
 // @Produce      json
 // @Param        report_id  query     int64  true  "报告ID"
@@ -1089,7 +1091,17 @@ func (h *ProjectHandler) GetProjectReportContent(c *gin.Context) {
 		return
 	}
 
-	report, items, content, err := h.projectService.GetProjectReportContent(ctx, userID, req.ReportID)
+	report, err := h.projectService.GetProjectReportDetailByID(ctx, userID, req.ReportID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("project report not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get project report").WithDetails(err.Error()))
+		return
+	}
+
+	content, err := h.projectService.GetProjectReportContent(ctx, req.ReportID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("project report not found"))
@@ -1099,14 +1111,8 @@ func (h *ProjectHandler) GetProjectReportContent(c *gin.Context) {
 		return
 	}
 
-	itemDTOs := make([]projectReportItemDTO, 0, len(items))
-	for _, item := range items {
-		itemDTOs = append(itemDTOs, newProjectReportItemDTO(item))
-	}
-
 	c.JSON(http.StatusOK, gin.H{
-		"report":  newProjectReportDetailItem(strconv.FormatInt(report.ID, 10), report),
-		"items":   itemDTOs,
+		"title":   report.Title,
 		"content": content,
 	})
 }

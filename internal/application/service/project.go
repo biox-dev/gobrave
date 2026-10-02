@@ -360,7 +360,7 @@ func (s *projectService) ListProjectReportItemsByReportID(ctx context.Context, u
 		return nil, err
 	}
 	for _, item := range items {
-		s.hydrateProjectReportItemTitle(ctx, item)
+		item.Title = s.projectReportItemTitle(ctx, item)
 	}
 	return items, nil
 }
@@ -439,101 +439,76 @@ func (s *projectService) GetProjectReportItemDetailByID(ctx context.Context, use
 		return nil, err
 	}
 
-	s.hydrateProjectReportItemTitle(ctx, item)
+	item.Title = s.projectReportItemTitle(ctx, item)
 	return item, nil
 }
 
-// GetProjectReportContent 汇总报告下所有条目，按 SortOrder 拼接成正文。
-func (s *projectService) GetProjectReportContent(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, []*types.ProjectReportItem, string, error) {
-	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
+// GetProjectReportContent 汇总报告下所有条目，按 SortOrder 拼接成正文，仅返回拼接后的内容。
+func (s *projectService) GetProjectReportContent(ctx context.Context, reportID int64) (string, error) {
+	report, err := s.projectRepo.GetProjectReportByID(ctx, reportID)
 	if err != nil {
-		return nil, nil, "", err
+		return "", err
 	}
 
 	items, err := s.projectRepo.ListProjectReportItemsByReportID(ctx, report.ID)
 	if err != nil {
-		return nil, nil, "", err
+		return "", err
 	}
 
 	var builder strings.Builder
 	for _, item := range items {
-		s.hydrateProjectReportItemTitle(ctx, item)
-		section, err := s.projectReportItemMarkdown(ctx, report, item)
+		section, err := s.projectReportItemMarkdown(ctx, item)
 		if err != nil {
-			return nil, nil, "", err
+			return "", err
 		}
-		builder.WriteString(section)
+		builder.WriteString(section.Render())
 	}
 
-	return report, items, builder.String(), nil
+	return builder.String(), nil
 }
 
-// GetProjectReportItemContent 返回指定条目（入参为 ProjectReportItem ID）的 markdown 内容。
-func (s *projectService) GetProjectReportItemContent(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, string, error) {
-	item, report, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
+// GetProjectReportItemContent 返回指定条目（入参为 ProjectReportItem ID）渲染后的内容片段。
+func (s *projectService) GetProjectReportItemContent(ctx context.Context, itemID int64) (*types.ProjectReportItemContent, error) {
+	item, err := s.projectRepo.GetProjectReportItemByID(ctx, itemID)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
-	s.hydrateProjectReportItemTitle(ctx, item)
-	content, err := s.projectReportItemMarkdown(ctx, report, item)
-	if err != nil {
-		return nil, "", err
-	}
-
-	return item, content, nil
+	return s.projectReportItemMarkdown(ctx, item)
 }
 
-// hydrateProjectReportItemTitle 解析条目的展示标题；解析失败时回退到 "owner_type #id"。
-func (s *projectService) hydrateProjectReportItemTitle(ctx context.Context, item *types.ProjectReportItem) {
+// projectReportItemTitle 解析条目的展示标题；解析失败时回退到 "owner_type #id"。
+func (s *projectService) projectReportItemTitle(ctx context.Context, item *types.ProjectReportItem) string {
 	if item == nil {
-		return
-	}
-	fallback := func() {
-		item.Title = fmt.Sprintf("%s #%d", item.OwnerType, item.OwnerID)
+		return ""
 	}
 
 	switch item.OwnerType {
 	case types.ProjectReportItemOwnerAnalysis:
-		if s.analysisRepo == nil {
-			fallback()
-			return
+		if s.analysisRepo != nil {
+			if analysis, err := s.analysisRepo.GetAnalysisByID(ctx, item.OwnerID); err == nil && strings.TrimSpace(analysis.AnalysisName) != "" {
+				return analysis.AnalysisName
+			}
 		}
-		analysis, err := s.analysisRepo.GetAnalysisByID(ctx, item.OwnerID)
-		if err != nil || strings.TrimSpace(analysis.AnalysisName) == "" {
-			fallback()
-			return
-		}
-		item.Title = analysis.AnalysisName
 	case types.ProjectReportItemOwnerAnalysisNode:
-		if s.analysisRepo == nil {
-			fallback()
-			return
+		if s.analysisRepo != nil {
+			if node, err := s.analysisRepo.GetAnalysisNodeByID(ctx, item.OwnerID); err == nil && strings.TrimSpace(node.NodeName) != "" {
+				return node.NodeName
+			}
 		}
-		node, err := s.analysisRepo.GetAnalysisNodeByID(ctx, item.OwnerID)
-		if err != nil || strings.TrimSpace(node.NodeName) == "" {
-			fallback()
-			return
-		}
-		item.Title = node.NodeName
 	case types.ProjectReportItemOwnerAISummary:
-		if s.summaryRepo == nil {
-			fallback()
-			return
+		if s.summaryRepo != nil {
+			if summary, err := s.summaryRepo.GetAISummaryByID(ctx, item.OwnerID); err == nil && strings.TrimSpace(summary.Title) != "" {
+				return summary.Title
+			}
 		}
-		summary, err := s.summaryRepo.GetAISummaryByID(ctx, item.OwnerID)
-		if err != nil || strings.TrimSpace(summary.Title) == "" {
-			fallback()
-			return
-		}
-		item.Title = summary.Title
-	default:
-		fallback()
 	}
+
+	return fmt.Sprintf("%s #%d", item.OwnerType, item.OwnerID)
 }
 
-// projectReportItemMarkdown 返回单个条目对应的 markdown 片段。
-func (s *projectService) projectReportItemMarkdown(ctx context.Context, _ *types.ProjectReport, item *types.ProjectReportItem) (string, error) {
+// projectReportItemMarkdown 返回单个条目对应的内容片段（标题 + 正文）。
+func (s *projectService) projectReportItemMarkdown(ctx context.Context, item *types.ProjectReportItem) (*types.ProjectReportItemContent, error) {
 	switch item.OwnerType {
 	case types.ProjectReportItemOwnerAISummary:
 		return s.aiSummaryMarkdown(ctx, item)
@@ -542,52 +517,57 @@ func (s *projectService) projectReportItemMarkdown(ctx context.Context, _ *types
 	case types.ProjectReportItemOwnerAnalysis:
 		return s.analysisMarkdown(ctx, item)
 	default:
-		return "", fmt.Errorf("unsupported project report item owner type: %s", item.OwnerType)
+		return nil, fmt.Errorf("unsupported project report item owner type: %s", item.OwnerType)
 	}
 }
 
-func (s *projectService) aiSummaryMarkdown(ctx context.Context, item *types.ProjectReportItem) (string, error) {
+func (s *projectService) aiSummaryMarkdown(ctx context.Context, item *types.ProjectReportItem) (*types.ProjectReportItemContent, error) {
 	if s.summaryRepo == nil {
-		return "", errors.New("ai summary repository is unavailable")
+		return nil, errors.New("ai summary repository is unavailable")
 	}
 	summary, err := s.summaryRepo.GetAISummaryByID(ctx, item.OwnerID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return formatMarkdownSection(sectionTitle(item.Title, summary.Title), summary.Content), nil
+	return &types.ProjectReportItemContent{
+		Title:   sectionTitle(item.Title, summary.Title),
+		Content: summary.Content,
+	}, nil
 }
 
-func (s *projectService) analysisNodeMarkdown(ctx context.Context, item *types.ProjectReportItem) (string, error) {
+func (s *projectService) analysisNodeMarkdown(ctx context.Context, item *types.ProjectReportItem) (*types.ProjectReportItemContent, error) {
 	if s.analysisRepo == nil {
-		return "", errors.New("analysis repository is unavailable")
+		return nil, errors.New("analysis repository is unavailable")
 	}
 	node, err := s.analysisRepo.GetAnalysisNodeByID(ctx, item.OwnerID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	content := readMarkdownFile(node.OutputDir)
 	if strings.TrimSpace(content) == "" {
 		content = fmt.Sprintf("> 未找到节点输出文件：%s", filepath.Join(node.OutputDir, types.DefaultProjectReportFilename))
 	}
-	return formatMarkdownSection(sectionTitle(item.Title, node.NodeName), content), nil
+	return &types.ProjectReportItemContent{
+		Title:   sectionTitle(item.Title, node.NodeName),
+		Content: content,
+	}, nil
 }
 
-func (s *projectService) analysisMarkdown(ctx context.Context, item *types.ProjectReportItem) (string, error) {
+func (s *projectService) analysisMarkdown(ctx context.Context, item *types.ProjectReportItem) (*types.ProjectReportItemContent, error) {
 	if s.analysisRepo == nil {
-		return "", errors.New("analysis repository is unavailable")
+		return nil, errors.New("analysis repository is unavailable")
 	}
 	analysis, err := s.analysisRepo.GetAnalysisByID(ctx, item.OwnerID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	nodes, err := s.analysisRepo.ListAnalysisNodesByAnalysisID(ctx, item.OwnerID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("# %s\n\n", sectionTitle(item.Title, analysis.AnalysisName)))
 	for _, node := range nodes {
 		content := readMarkdownFile(node.OutputDir)
 		if strings.TrimSpace(content) == "" {
@@ -595,7 +575,10 @@ func (s *projectService) analysisMarkdown(ctx context.Context, item *types.Proje
 		}
 		builder.WriteString(fmt.Sprintf("## %s\n\n%s\n\n", node.NodeName, content))
 	}
-	return builder.String(), nil
+	return &types.ProjectReportItemContent{
+		Title:   sectionTitle(item.Title, analysis.AnalysisName),
+		Content: builder.String(),
+	}, nil
 }
 
 func sectionTitle(resolved, fallback string) string {
@@ -606,13 +589,6 @@ func sectionTitle(resolved, fallback string) string {
 		return fallback
 	}
 	return "Untitled"
-}
-
-func formatMarkdownSection(title, content string) string {
-	if strings.TrimSpace(content) == "" {
-		return ""
-	}
-	return fmt.Sprintf("# %s\n\n%s\n\n", title, content)
 }
 
 // readMarkdownFile 读取节点输出目录下的 output.md，文件不存在时返回空串。

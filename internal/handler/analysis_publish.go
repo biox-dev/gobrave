@@ -511,7 +511,17 @@ func (h *AnalysisHandler) PublishProjectReportToDoc(c *gin.Context) {
 		return
 	}
 
-	report, _, content, err := h.projectService.GetProjectReportContent(c.Request.Context(), userID, reportID)
+	report, err := h.projectService.GetProjectReportDetailByID(c.Request.Context(), userID, reportID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("project report not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get project report").WithDetails(err.Error()))
+		return
+	}
+
+	content, err := h.projectService.GetProjectReportContent(c.Request.Context(), reportID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("project report not found"))
