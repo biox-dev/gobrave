@@ -167,6 +167,7 @@ func RegisterProjectRoutes(r *gin.RouterGroup, handler *handler.ProjectHandler, 
 	r.POST("/project/list-project-report-page", handler.PageProjectReport)
 	r.GET("/project/project-report-detail", handler.GetProjectReportDetail)
 	r.GET("/project/project-report-content", handler.GetProjectReportContent)
+	r.GET("/project/project-report-html", handler.GetProjectReportHTML)
 	r.GET("/project/list-project-report-item", handler.ListProjectReportItem)
 	r.POST("/project/add-project-report-item", handler.AddProjectReportItem)
 	r.POST("/project/update-project-report-item", handler.UpdateProjectReportItem)

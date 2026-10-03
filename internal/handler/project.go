@@ -9,7 +9,9 @@ import (
 	"time"
 
 	appservice "github.com/biox-dev/gobrave/internal/application/service"
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/htmlreport"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
@@ -18,10 +20,16 @@ import (
 
 type ProjectHandler struct {
 	projectService interfaces.ProjectService
+	config         *config.Config
+	htmlRenderer   *htmlreport.Renderer
 }
 
-func NewProjectHandler(projectService interfaces.ProjectService) *ProjectHandler {
-	return &ProjectHandler{projectService: projectService}
+func NewProjectHandler(projectService interfaces.ProjectService, cfg *config.Config) *ProjectHandler {
+	return &ProjectHandler{
+		projectService: projectService,
+		config:         cfg,
+		htmlRenderer:   htmlreport.New(),
+	}
 }
 
 // ProjectListItem godoc
