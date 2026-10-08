@@ -379,8 +379,16 @@ func (s *projectService) AddProjectReportItem(ctx context.Context, userID string
 		return fmt.Errorf("invalid owner_type: %s", item.OwnerType)
 	}
 	item.OwnerType = ownerType
-	if item.OwnerID <= 0 {
-		return errors.New("owner_id is required for project report item")
+	if ownerType == types.ProjectReportItemOwnerCustom {
+		// 自定义内容条目无 owner 引用，仅保存用户编辑的标题与正文。
+		item.OwnerID = 0
+	} else {
+		if item.OwnerID <= 0 {
+			return errors.New("owner_id is required for project report item")
+		}
+		// 其他引用类型的标题/正文由 owner 推导，不落库。
+		item.Title = ""
+		item.Content = ""
 	}
 
 	if err := s.validateProjectReportItemParent(ctx, item.ProjectReportID, item.ID, item.ParentID); err != nil {
@@ -419,9 +427,20 @@ func (s *projectService) UpdateProjectReportItem(ctx context.Context, userID str
 			return fmt.Errorf("invalid owner_type: %s", item.OwnerType)
 		}
 		stored.OwnerType = ownerType
-		if item.OwnerID > 0 {
+		if ownerType == types.ProjectReportItemOwnerCustom {
+			stored.OwnerID = 0
+		} else if item.OwnerID > 0 {
 			stored.OwnerID = item.OwnerID
 		}
+	}
+	if stored.OwnerType == types.ProjectReportItemOwnerCustom {
+		// 自定义内容条目保存标题与正文。
+		stored.Title = item.Title
+		stored.Content = item.Content
+	} else {
+		// 其他引用类型不存储标题与内容（由 owner 推导）。
+		stored.Title = ""
+		stored.Content = ""
 	}
 	stored.ParentID = item.ParentID
 	if err := s.validateProjectReportItemParent(ctx, stored.ProjectReportID, stored.ID, stored.ParentID); err != nil {
@@ -620,6 +639,11 @@ func (s *projectService) projectReportItemTitle(ctx context.Context, item *types
 	}
 
 	switch item.OwnerType {
+	case types.ProjectReportItemOwnerCustom:
+		if title := strings.TrimSpace(item.Title); title != "" {
+			return title
+		}
+		return "Untitled"
 	case types.ProjectReportItemOwnerAnalysis:
 		if s.analysisRepo != nil {
 			if analysis, err := s.analysisRepo.GetAnalysisByID(ctx, item.OwnerID); err == nil && strings.TrimSpace(analysis.AnalysisName) != "" {
@@ -645,16 +669,33 @@ func (s *projectService) projectReportItemTitle(ctx context.Context, item *types
 
 // projectReportItemMarkdown 返回单个条目对应的内容片段（标题 + 正文）。
 func (s *projectService) projectReportItemMarkdown(ctx context.Context, item *types.ProjectReportItem) (*types.ProjectReportItemContent, error) {
+	var (
+		section *types.ProjectReportItemContent
+		err     error
+	)
 	switch item.OwnerType {
+	case types.ProjectReportItemOwnerCustom:
+		// 自定义内容条目直接渲染用户编辑的标题与 markdown 正文。
+		section = &types.ProjectReportItemContent{
+			Title:   item.Title,
+			Content: item.Content,
+		}
 	case types.ProjectReportItemOwnerAISummary:
-		return s.aiSummaryMarkdown(ctx, item)
+		section, err = s.aiSummaryMarkdown(ctx, item)
 	case types.ProjectReportItemOwnerAnalysisNode:
-		return s.analysisNodeMarkdown(ctx, item)
+		section, err = s.analysisNodeMarkdown(ctx, item)
 	case types.ProjectReportItemOwnerAnalysis:
-		return s.analysisMarkdown(ctx, item)
+		section, err = s.analysisMarkdown(ctx, item)
 	default:
 		return nil, fmt.Errorf("unsupported project report item owner type: %s", item.OwnerType)
 	}
+	if err != nil {
+		return nil, err
+	}
+	if section != nil {
+		section.OwnerType = item.OwnerType
+	}
+	return section, nil
 }
 
 func (s *projectService) aiSummaryMarkdown(ctx context.Context, item *types.ProjectReportItem) (*types.ProjectReportItemContent, error) {

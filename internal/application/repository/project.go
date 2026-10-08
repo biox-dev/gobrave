@@ -261,6 +261,8 @@ func (r *projectRepository) UpdateProjectReportItem(ctx context.Context, item *t
 			"owner_type": item.OwnerType,
 			"owner_id":   item.OwnerID,
 			"sort_order": item.SortOrder,
+			"title":      item.Title,
+			"content":    item.Content,
 		}).Error
 }
 

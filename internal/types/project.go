@@ -102,6 +102,9 @@ const (
 	ProjectReportItemOwnerAnalysisNode ProjectReportItemOwnerType = "analysis_node"
 	// ProjectReportItemOwnerAISummary 指向 AISummary 的 ID。
 	ProjectReportItemOwnerAISummary ProjectReportItemOwnerType = "ai_summary"
+	// ProjectReportItemOwnerCustom 是自定义内容条目，用于章节占位/自定义 markdown 段落。
+	// 它不引用外部 owner，标题与正文由用户直接编辑并持久化在本表。
+	ProjectReportItemOwnerCustom ProjectReportItemOwnerType = "custom"
 )
 
 // NormalizeProjectReportItemOwnerType 校验并归一化 OwnerType。
@@ -113,6 +116,8 @@ func NormalizeProjectReportItemOwnerType(t string) (ProjectReportItemOwnerType, 
 		return ProjectReportItemOwnerAnalysisNode, true
 	case ProjectReportItemOwnerAISummary:
 		return ProjectReportItemOwnerAISummary, true
+	case ProjectReportItemOwnerCustom:
+		return ProjectReportItemOwnerCustom, true
 	default:
 		return "", false
 	}
@@ -131,8 +136,12 @@ type ProjectReportItem struct {
 	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt time.Time `json:"updated_at" gorm:"column:updated_at"`
 
-	// Title 是展示用标题，由 owner 推导；不落库。
-	Title string `json:"title" gorm:"-"`
+	// Title 是展示用标题。仅 OwnerType=custom 时由用户编辑并持久化；
+	// 其他引用类型的标题由 owner 推导（读取时派生），写入时会清空，不落库。
+	Title string `json:"title" gorm:"type:varchar(255)"`
+	// Content 是自定义 markdown 正文，仅 OwnerType=custom 时持久化；
+	// 其他引用类型不存储内容。
+	Content string `json:"content" gorm:"type:longtext"`
 }
 
 func (t *ProjectReportItem) BeforeCreate(_ *gorm.DB) error {
@@ -157,9 +166,10 @@ type ProjectReportItemOrder struct {
 // Title 为展示标题，Content 为正文，Prefix 为正文中相对资源（图片/链接）的
 // /data-analysis URL 前缀，渲染时拼接到相对图片路径前。
 type ProjectReportItemContent struct {
-	Title   string `json:"title"`
-	Prefix  string `json:"prefix"`
-	Content string `json:"content"`
+	Title     string                     `json:"title"`
+	Prefix    string                     `json:"prefix"`
+	Content   string                     `json:"content"`
+	OwnerType ProjectReportItemOwnerType `json:"owner_type"`
 }
 
 // markdownImagePattern 匹配 markdown 图片语法 ![alt](url)。

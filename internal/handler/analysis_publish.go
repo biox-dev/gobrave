@@ -131,9 +131,30 @@ func (h *AnalysisHandler) publishProjectReportItem(ctx context.Context, item *ty
 		return h.publishAnalysisNodeToDoc(ctx, item.OwnerID, projectDocDir, item.Title)
 	case types.ProjectReportItemOwnerAISummary:
 		return h.publishAISummaryToDoc(ctx, item.OwnerID, projectDocDir, item.Title)
+	case types.ProjectReportItemOwnerCustom:
+		return h.publishCustomItemToDoc(item, projectDocDir)
 	default:
 		return errors.NewValidationError(fmt.Sprintf("unsupported owner_type: %s", item.OwnerType))
 	}
+}
+
+// publishCustomItemToDoc 将自定义内容条目（章节占位/自定义 markdown）的正文写入报告文档目录。
+func (h *AnalysisHandler) publishCustomItemToDoc(item *types.ProjectReportItem, projectDocDir string) error {
+	if err := os.MkdirAll(projectDocDir, 0o755); err != nil {
+		return errors.NewInternalServerError("failed to create project doc dir").WithDetails(err.Error())
+	}
+
+	entry := fmt.Sprintf("./%d.md", item.ID)
+	target := filepath.Join(projectDocDir, fmt.Sprintf("%d.md", item.ID))
+	if err := os.WriteFile(target, []byte(item.Content), 0o644); err != nil {
+		return errors.NewInternalServerError("failed to write custom item to project doc dir").WithDetails(err.Error())
+	}
+
+	line := fmt.Sprintf("- [%s](%s)\n", docSectionTitle(item.Title, ""), entry)
+	if err := appendProjectDocSummary(projectDocDir, entry, line); err != nil {
+		return errors.NewInternalServerError("failed to update SUMMARY.md").WithDetails(err.Error())
+	}
+	return nil
 }
 
 // publishAnalysisToDoc 将 Analysis 及其所有 AnalysisNode 的输出发布到报告文档目录。

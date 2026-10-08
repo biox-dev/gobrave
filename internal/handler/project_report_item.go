@@ -22,6 +22,7 @@ type projectReportItemDTO struct {
 	OwnerID         string    `json:"owner_id"`
 	SortOrder       int       `json:"sort_order"`
 	Title           string    `json:"title"`
+	Content         string    `json:"content"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -44,6 +45,7 @@ func newProjectReportItemDTO(item *types.ProjectReportItem) projectReportItemDTO
 		OwnerID:         strconv.FormatInt(item.OwnerID, 10),
 		SortOrder:       item.SortOrder,
 		Title:           item.Title,
+		Content:         item.Content,
 		CreatedAt:       item.CreatedAt,
 		UpdatedAt:       item.UpdatedAt,
 	}
@@ -126,11 +128,13 @@ type addProjectReportItemRequest struct {
 	OwnerType       string `json:"owner_type" binding:"required"`
 	OwnerID         int64  `json:"owner_id,string"`
 	SortOrder       int    `json:"sort_order"`
+	Title           string `json:"title"`
+	Content         string `json:"content"`
 }
 
 // AddProjectReportItem godoc
 // @Summary      添加报告条目
-// @Description  向指定报告添加条目。OwnerType 为 analysis/analysis_node/ai_summary 时需提供 OwnerID；parent_id 为 0 时挂到根节点。
+// @Description  向指定报告添加条目。OwnerType 为 analysis/analysis_node/ai_summary 时需提供 OwnerID；OwnerType 为 custom（章节占位/自定义内容）时只需提供 title。parent_id 为 0 时挂到根节点。
 // @Tags         项目
 // @Accept       json
 // @Produce      json
@@ -162,6 +166,8 @@ func (h *ProjectHandler) AddProjectReportItem(c *gin.Context) {
 		OwnerType:       types.ProjectReportItemOwnerType(req.OwnerType),
 		OwnerID:         req.OwnerID,
 		SortOrder:       req.SortOrder,
+		Title:           req.Title,
+		Content:         req.Content,
 	}
 
 	if err := h.projectService.AddProjectReportItem(ctx, userID, item); err != nil {
@@ -182,6 +188,8 @@ type updateProjectReportItemRequest struct {
 	OwnerType string `json:"owner_type"`
 	OwnerID   int64  `json:"owner_id,string"`
 	SortOrder int    `json:"sort_order"`
+	Title     string `json:"title"`
+	Content   string `json:"content"`
 }
 
 // UpdateProjectReportItem godoc
@@ -218,6 +226,8 @@ func (h *ProjectHandler) UpdateProjectReportItem(c *gin.Context) {
 		OwnerType: types.ProjectReportItemOwnerType(req.OwnerType),
 		OwnerID:   req.OwnerID,
 		SortOrder: req.SortOrder,
+		Title:     req.Title,
+		Content:   req.Content,
 	})
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
@@ -418,15 +428,18 @@ func (h *ProjectHandler) GetProjectReportItemContent(c *gin.Context) {
 	title := ""
 	prefix := ""
 	content := ""
+	ownerType := ""
 	if section != nil {
 		title = section.Title
 		prefix = section.Prefix
 		content = section.Render()
+		ownerType = string(section.OwnerType)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"title":   title,
-		"prefix":  prefix,
-		"content": content,
+		"title":      title,
+		"prefix":     prefix,
+		"content":    content,
+		"owner_type": ownerType,
 	})
 }
