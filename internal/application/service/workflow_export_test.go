@@ -139,7 +139,7 @@ func TestCollectScriptContainerAssetsDeduplicates(t *testing.T) {
 			300: {ID: 300, Name: "spec-300", Command: "R -e 1", Port: 8787},
 		},
 		definitions: map[int64]*types.ContainerTemplateDefinition{
-			200: {ID: 200, SpecID: 300, ImageID: 100, RLibraryPath: "/lib/R"},
+			200: {ID: 200, SpecID: 300, ImageID: 100},
 		},
 	}
 	svc := &workflowService{containerRepo: repo}

@@ -162,6 +162,7 @@ func (w *ContainerCreateWorker) buildSystemVariables(set *RuntimeVariableSet, in
 // buildPackageVariables 负责 R/Python/Conda 包目录与 Rprofile 路径。
 func (w *ContainerCreateWorker) buildPackageVariables(ctx context.Context, set *RuntimeVariableSet, in *runtimeVariableBuildInput) {
 	baseDir := in.baseDir
+	imageID := in.tpl.ImageID
 
 	packageDir := fmt.Sprintf("%s/package", baseDir)
 	profilePath := fmt.Sprintf("%s/Rprofile", packageDir)
@@ -170,31 +171,13 @@ func (w *ContainerCreateWorker) buildPackageVariables(ctx context.Context, set *
 	set.add("PACKAGE_DIR", packageDir)
 	projectDir := fmt.Sprintf("%s/data/%s", in.baseDir, in.ownerCtx.project.ProjectID)
 
-	libraryRPath := in.tpl.GetRLibraryPath()
-	var rPackageDir string
-	if libraryRPath == "__PROJECT__" {
-		rPackageDir = fmt.Sprintf("%s/package/R", projectDir)
-	} else {
-		rPackageDir = fmt.Sprintf("%s/package/R/%s", baseDir, libraryRPath)
-	}
+	rPackageDir := fmt.Sprintf("%s/package/R-%d", projectDir, imageID)
 	set.add("R_PACKAGE_DIR", rPackageDir)
 
-	libraryPythonPath := in.tpl.GetPythonLibraryPath()
-	var pythonPackageDir string
-	if libraryPythonPath == "__PROJECT__" {
-		pythonPackageDir = fmt.Sprintf("%s/package/python", projectDir)
-	} else {
-		pythonPackageDir = fmt.Sprintf("%s/package/python/%s", baseDir, libraryPythonPath)
-	}
+	pythonPackageDir := fmt.Sprintf("%s/package/python-%d", projectDir, imageID)
 	set.add("PYTHON_PACKAGE_DIR", pythonPackageDir)
 
-	libraryCondaPath := in.tpl.GetCondaLibraryPath()
-	var condaPackageDir string
-	if libraryCondaPath == "__PROJECT__" {
-		condaPackageDir = fmt.Sprintf("%s/package/conda", projectDir)
-	} else {
-		condaPackageDir = fmt.Sprintf("%s/package/conda/%s", baseDir, libraryCondaPath)
-	}
+	condaPackageDir := fmt.Sprintf("%s/package/conda-%d", projectDir, imageID)
 	set.add("CONDA_PACKAGE_DIR", condaPackageDir)
 
 	ensureDirs(ctx, []string{rPackageDir, pythonPackageDir, condaPackageDir})

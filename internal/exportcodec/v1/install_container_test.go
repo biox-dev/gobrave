@@ -120,7 +120,7 @@ func TestInstallContainerAssetsUpsertsByID(t *testing.T) {
 		{"id": "300", "name": "spec-300", "command": "R -e 1", "cpu": float64(2), "port": float64(8787)},
 	}
 	definitions := []map[string]any{
-		{"id": "200", "spec_id": "300", "image_id": "100", "r_library_path": "/lib/R"},
+		{"id": "200", "spec_id": "300", "image_id": "100"},
 	}
 
 	imageCount, specCount, definitionCount, err := c.installContainerAssets(context.Background(), images, specs, definitions)
@@ -147,7 +147,7 @@ func TestInstallContainerAssetsUpsertsByID(t *testing.T) {
 	if got := svc.specs[300]; got == nil || got.Name != "spec-300" || got.Port != 8787 || got.CPU != 2 {
 		t.Errorf("missing spec not created correctly: %+v", got)
 	}
-	if got := svc.definitions[200]; got == nil || got.SpecID != 300 || got.ImageID != 100 || got.RLibraryPath != "/lib/R" {
+	if got := svc.definitions[200]; got == nil || got.SpecID != 300 || got.ImageID != 100 {
 		t.Errorf("missing definition not created correctly: %+v", got)
 	}
 

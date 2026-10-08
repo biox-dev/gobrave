@@ -201,12 +201,9 @@ func containerTemplateSpecFromReadModel(tpl *types.ContainerTemplate) *types.Con
 // DisplayName 故意留空：读模型里的 Name 可能是配置名，写入绑定行会把配置名误固化成展示名。
 func containerTemplateDefinitionFromReadModel(tpl *types.ContainerTemplate) *types.ContainerTemplateDefinition {
 	return &types.ContainerTemplateDefinition{
-		ID:                tpl.ID,
-		SpecID:            tpl.SpecID,
-		ImageID:           tpl.ImageID,
-		RLibraryPath:      tpl.RLibraryPath,
-		PythonLibraryPath: tpl.PythonLibraryPath,
-		CondaLibraryPath:  tpl.CondaLibraryPath,
+		ID:      tpl.ID,
+		SpecID:  tpl.SpecID,
+		ImageID: tpl.ImageID,
 	}
 }
 
@@ -413,9 +410,6 @@ func (s *containerService) ImportContainerTemplate(ctx context.Context, item *ty
 		SchedulingConstraint: item.SchedulingConstraint,
 		Labels:               item.Labels,
 		ChangeUID:            item.ChangeUID,
-		RLibraryPath:         item.RLibraryPath,
-		PythonLibraryPath:    item.PythonLibraryPath,
-		CondaLibraryPath:     item.CondaLibraryPath,
 	}
 
 	if item.ID != 0 {

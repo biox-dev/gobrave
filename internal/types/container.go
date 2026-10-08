@@ -152,11 +152,6 @@ type ContainerTemplateDefinition struct {
 	// DisplayName 为空时，对外名称回退到 ContainerTemplateConfig.Name。
 	DisplayName string `json:"display_name" gorm:"type:varchar(255)"`
 
-	// R/Python/Conda 包目录与镜像版本强耦合（R 4.3 与 4.4 不能共用），故挂在绑定行而非配置上。
-	RLibraryPath      string `json:"r_library_path" gorm:"type:varchar(512)"`
-	PythonLibraryPath string `json:"python_library_path" gorm:"type:varchar(512)"`
-	CondaLibraryPath  string `json:"conda_library_path" gorm:"type:varchar(512)"`
-
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -202,31 +197,8 @@ type ContainerTemplate struct {
 	Labels               datatypes.JSON `json:"labels"`
 	ChangeUID            bool           `json:"change_uid"`
 
-	RLibraryPath      string `json:"r_library_path"`
-	PythonLibraryPath string `json:"python_library_path"`
-	CondaLibraryPath  string `json:"conda_library_path"`
-
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-}
-
-func (c *ContainerTemplate) GetRLibraryPath() string {
-	if c.RLibraryPath == "" {
-		return "R_DEFAULT_LIBS"
-	}
-	return c.RLibraryPath
-}
-func (c *ContainerTemplate) GetPythonLibraryPath() string {
-	if c.PythonLibraryPath == "" {
-		return "PYTHON_DEFAULT_LIBS"
-	}
-	return c.PythonLibraryPath
-}
-func (c *ContainerTemplate) GetCondaLibraryPath() string {
-	if c.CondaLibraryPath == "" {
-		return "CONDA_DEFAULT_LIBS"
-	}
-	return c.CondaLibraryPath
 }
 
 // NewContainerTemplate 把共享配置、绑定行与镜像组装成对外读模型。spec/image 允许为 nil：
@@ -237,15 +209,12 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 	}
 
 	tpl := &ContainerTemplate{
-		ID:                binding.ID,
-		SpecID:            binding.SpecID,
-		ImageID:           binding.ImageID,
-		Image:             image,
-		RLibraryPath:      binding.RLibraryPath,
-		PythonLibraryPath: binding.PythonLibraryPath,
-		CondaLibraryPath:  binding.CondaLibraryPath,
-		CreatedAt:         binding.CreatedAt,
-		UpdatedAt:         binding.UpdatedAt,
+		ID:        binding.ID,
+		SpecID:    binding.SpecID,
+		ImageID:   binding.ImageID,
+		Image:     image,
+		CreatedAt: binding.CreatedAt,
+		UpdatedAt: binding.UpdatedAt,
 	}
 
 	if spec != nil {
@@ -318,9 +287,6 @@ type ContainerTemplateExport struct {
 	SchedulingConstraint datatypes.JSON        `json:"scheduling_constraint"`
 	Labels               datatypes.JSON        `json:"labels"`
 	ChangeUID            bool                  `json:"change_uid"`
-	RLibraryPath         string                `json:"r_library_path"`
-	PythonLibraryPath    string                `json:"python_library_path"`
-	CondaLibraryPath     string                `json:"conda_library_path"`
 }
 
 func (t *ContainerTemplate) ToExport(image *ContainerImage) *ContainerTemplateExport {
@@ -346,9 +312,6 @@ func (t *ContainerTemplate) ToExport(image *ContainerImage) *ContainerTemplateEx
 		SchedulingConstraint: t.SchedulingConstraint,
 		Labels:               t.Labels,
 		ChangeUID:            t.ChangeUID,
-		RLibraryPath:         t.RLibraryPath,
-		PythonLibraryPath:    t.PythonLibraryPath,
-		CondaLibraryPath:     t.CondaLibraryPath,
 	}
 	if image != nil {
 		export.Image = image.ToExport()
