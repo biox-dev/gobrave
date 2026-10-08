@@ -36,17 +36,20 @@ type AISummaryContentProvider interface {
 
 type aiSummaryContentProvider struct {
 	analysisRepo interfaces.AnalysisRepository
+	workflowRepo interfaces.WorkflowRepository
 	// systemPrompt string
 }
 
 // NewAISummaryContentProvider 创建 AISummaryContentProvider。
 // 系统提示词优先读取配置 cfg.AISummary.SystemPrompt，未配置时回退到默认值。
-func NewAISummaryContentProvider(analysisRepo interfaces.AnalysisRepository, cfg *config.Config) AISummaryContentProvider {
+func NewAISummaryContentProvider(analysisRepo interfaces.AnalysisRepository,
+	workflowRepo interfaces.WorkflowRepository,
+	cfg *config.Config) AISummaryContentProvider {
 	// prompt := config.DefaultAISummarySystemPrompt
 	// if cfg != nil && cfg.AISummary != nil && strings.TrimSpace(cfg.AISummary.SystemPrompt) != "" {
 	// 	prompt = cfg.AISummary.SystemPrompt
 	// }
-	return &aiSummaryContentProvider{analysisRepo: analysisRepo}
+	return &aiSummaryContentProvider{analysisRepo: analysisRepo, workflowRepo: workflowRepo}
 }
 
 // Resolve 按所属对象类型分发解析逻辑。
@@ -63,12 +66,13 @@ func (p *aiSummaryContentProvider) Resolve(ctx context.Context, ownerType types.
 
 func (p *aiSummaryContentProvider) resolveAnalysis(ctx context.Context, analysisID int64) (AISummaryContent, error) {
 	a, err := p.analysisRepo.GetAnalysisByID(ctx, analysisID)
+	workflow, err := p.workflowRepo.GetWorkflowByID(ctx, a.WorkflowID)
 	if err != nil {
 		return AISummaryContent{}, err
 	}
 
 	return AISummaryContent{
-		Title: fmt.Sprintf("分析摘要：%s", a.AnalysisName),
+		Title: fmt.Sprintf("%s: %s", workflow.Name, a.AnalysisName),
 		// SystemPrompt: p.systemPrompt,
 		WorkingDir: a.WorkspaceDir,
 		ProjectID:  a.ProjectID,
@@ -84,12 +88,16 @@ func (p *aiSummaryContentProvider) resolveAnalysis(ctx context.Context, analysis
 
 func (p *aiSummaryContentProvider) resolveAnalysisNode(ctx context.Context, nodeID int64) (AISummaryContent, error) {
 	n, err := p.analysisRepo.GetAnalysisNodeByID(ctx, nodeID)
+
+	script, err := p.workflowRepo.GetScriptByID(ctx, n.ScriptID)
 	if err != nil {
 		return AISummaryContent{}, err
 	}
+
 	outputFile := filepath.Join(n.OutputDir, "output.md")
 	return AISummaryContent{
-		Title: fmt.Sprintf("Node Summary: %s", n.NodeName),
+		// "Node Summary: %s",
+		Title: fmt.Sprintf("%s: %s", script.ComponentName, n.NodeName),
 		// SystemPrompt: p.systemPrompt,
 		WorkingDir: n.OutputDir,
 		ProjectID:  n.ProjectID,
