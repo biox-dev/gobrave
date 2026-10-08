@@ -31,6 +31,8 @@ type ProjectService interface {
 	AddProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error
 	UpdateProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error
 	DeleteProjectReportItem(ctx context.Context, userID string, itemID int64) error
+	// ReorderProjectReportItems 按拖拽结果批量更新条目的父节点与同级顺序。
+	ReorderProjectReportItems(ctx context.Context, userID string, reportID int64, orders []types.ProjectReportItemOrder) error
 	GetProjectReportItemDetailByID(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, error)
 	// GetProjectReportItemContent 返回指定条目（入参为 ProjectReportItem ID）渲染后的内容片段。
 	GetProjectReportItemContent(ctx context.Context, itemID int64) (*types.ProjectReportItemContent, error)
@@ -73,8 +75,10 @@ type ProjectRepository interface {
 	GetProjectReportItemByID(ctx context.Context, itemID int64) (*types.ProjectReportItem, error)
 	UpdateProjectReportItem(ctx context.Context, item *types.ProjectReportItem) error
 	DeleteProjectReportItem(ctx context.Context, itemID int64) error
+	DeleteProjectReportItemsByIDs(ctx context.Context, itemIDs []int64) error
 	DeleteProjectReportItemsByReportID(ctx context.Context, reportID int64) error
 	ListProjectReportItemsByReportID(ctx context.Context, reportID int64) ([]*types.ProjectReportItem, error)
+	ReorderProjectReportItems(ctx context.Context, reportID int64, orders []types.ProjectReportItemOrder) error
 
 	// Literature data access methods.
 	CreateLiterature(ctx context.Context, literature *types.Literature) error

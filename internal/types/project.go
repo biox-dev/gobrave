@@ -120,9 +120,11 @@ func NormalizeProjectReportItemOwnerType(t string) (ProjectReportItemOwnerType, 
 
 // ProjectReportItem 是 ProjectReport 下的一个内容条目，按 SortOrder 排序后拼接成报告正文。
 type ProjectReportItem struct {
-	ID              int64                      `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-	ProjectReportID int64                      `json:"project_report_id,string" gorm:"column:project_report_id;type:bigint;index:idx_project_report_items_report"`
-	OwnerType       ProjectReportItemOwnerType `json:"owner_type" gorm:"column:owner_type;type:varchar(32);index:idx_project_report_items_owner"`
+	ID              int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
+	ProjectReportID int64 `json:"project_report_id,string" gorm:"column:project_report_id;type:bigint;index:idx_project_report_items_report"`
+	// ParentID 指向同一报告下的父条目 ID，0 表示根节点。用于组织树形结构。
+	ParentID  int64                      `json:"parent_id,string" gorm:"column:parent_id;type:bigint;index:idx_project_report_items_parent"`
+	OwnerType ProjectReportItemOwnerType `json:"owner_type" gorm:"column:owner_type;type:varchar(32);index:idx_project_report_items_owner"`
 	// OwnerID 指向 OwnerType 对应的主键。
 	OwnerID   int64     `json:"owner_id,string" gorm:"column:owner_id;type:bigint;index:idx_project_report_items_owner"`
 	SortOrder int       `json:"sort_order" gorm:"column:sort_order;default:0"`
@@ -142,6 +144,13 @@ func (t *ProjectReportItem) BeforeCreate(_ *gorm.DB) error {
 
 func (ProjectReportItem) TableName() string {
 	return "t_project_report_items"
+}
+
+// ProjectReportItemOrder 描述拖拽重排后单个条目的目标位置（父节点与同级顺序）。
+type ProjectReportItemOrder struct {
+	ID        int64
+	ParentID  int64
+	SortOrder int
 }
 
 // ProjectReportItemContent 是 ProjectReportItem 渲染后的内容片段。

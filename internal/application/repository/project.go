@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -256,6 +257,7 @@ func (r *projectRepository) UpdateProjectReportItem(ctx context.Context, item *t
 		Model(&types.ProjectReportItem{}).
 		Where("id = ?", item.ID).
 		Updates(map[string]interface{}{
+			"parent_id":  item.ParentID,
 			"owner_type": item.OwnerType,
 			"owner_id":   item.OwnerID,
 			"sort_order": item.SortOrder,
@@ -265,6 +267,16 @@ func (r *projectRepository) UpdateProjectReportItem(ctx context.Context, item *t
 func (r *projectRepository) DeleteProjectReportItem(ctx context.Context, itemID int64) error {
 	return r.db.WithContext(ctx).
 		Where("id = ?", itemID).
+		Delete(&types.ProjectReportItem{}).Error
+}
+
+// DeleteProjectReportItemsByIDs 批量删除条目（用于删除某个节点及其子孙）。
+func (r *projectRepository) DeleteProjectReportItemsByIDs(ctx context.Context, itemIDs []int64) error {
+	if len(itemIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("id IN ?", itemIDs).
 		Delete(&types.ProjectReportItem{}).Error
 }
 
@@ -287,6 +299,30 @@ func (r *projectRepository) ListProjectReportItemsByReportID(ctx context.Context
 	}
 
 	return items, nil
+}
+
+// ReorderProjectReportItems 在一个事务中批量更新条目的 parent_id 与 sort_order。
+func (r *projectRepository) ReorderProjectReportItems(ctx context.Context, reportID int64, orders []types.ProjectReportItemOrder) error {
+	if len(orders) == 0 {
+		return nil
+	}
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		for _, order := range orders {
+			err := tx.Model(&types.ProjectReportItem{}).
+				Where("id = ? AND project_report_id = ?", order.ID, reportID).
+				Updates(map[string]interface{}{
+					"parent_id":  order.ParentID,
+					"sort_order": order.SortOrder,
+					"updated_at": now,
+				}).Error
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // ---------- Literature ----------

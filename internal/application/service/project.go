@@ -383,6 +383,10 @@ func (s *projectService) AddProjectReportItem(ctx context.Context, userID string
 		return errors.New("owner_id is required for project report item")
 	}
 
+	if err := s.validateProjectReportItemParent(ctx, item.ProjectReportID, item.ID, item.ParentID); err != nil {
+		return err
+	}
+
 	if item.ID == 0 {
 		item.ID = utils.GenerateID()
 	}
@@ -419,9 +423,74 @@ func (s *projectService) UpdateProjectReportItem(ctx context.Context, userID str
 			stored.OwnerID = item.OwnerID
 		}
 	}
+	stored.ParentID = item.ParentID
+	if err := s.validateProjectReportItemParent(ctx, stored.ProjectReportID, stored.ID, stored.ParentID); err != nil {
+		return err
+	}
 	stored.UpdatedAt = time.Now()
 
 	return s.projectRepo.UpdateProjectReportItem(ctx, stored)
+}
+
+// ReorderProjectReportItems 持久化拖拽结果：批量更新条目的父节点与同级顺序。
+func (s *projectService) ReorderProjectReportItems(ctx context.Context, userID string, reportID int64, orders []types.ProjectReportItemOrder) error {
+	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
+	if err != nil {
+		return err
+	}
+
+	if len(orders) == 0 {
+		return nil
+	}
+
+	items, err := s.projectRepo.ListProjectReportItemsByReportID(ctx, report.ID)
+	if err != nil {
+		return err
+	}
+	belongs := make(map[int64]bool, len(items))
+	for _, item := range items {
+		belongs[item.ID] = true
+	}
+
+	seen := make(map[int64]bool, len(orders))
+	for _, order := range orders {
+		if !belongs[order.ID] {
+			return fmt.Errorf("project report item %d does not belong to report %d", order.ID, report.ID)
+		}
+		if order.ParentID != 0 && !belongs[order.ParentID] {
+			return fmt.Errorf("parent item %d does not belong to report %d", order.ParentID, report.ID)
+		}
+		if order.ParentID == order.ID {
+			return fmt.Errorf("project report item %d cannot be its own parent", order.ID)
+		}
+		seen[order.ID] = true
+	}
+	for _, order := range orders {
+		if order.ParentID != 0 && !seen[order.ParentID] {
+			return fmt.Errorf("parent item %d is not part of the reorder payload", order.ParentID)
+		}
+	}
+
+	return s.projectRepo.ReorderProjectReportItems(ctx, report.ID, orders)
+}
+
+// validateProjectReportItemParent 校验父节点存在且属于同一报告，避免出现跨报告父子关系。
+func (s *projectService) validateProjectReportItemParent(ctx context.Context, reportID, itemID, parentID int64) error {
+	if parentID == 0 {
+		return nil
+	}
+	if parentID == itemID && itemID != 0 {
+		return errors.New("project report item cannot be its own parent")
+	}
+
+	parent, err := s.projectRepo.GetProjectReportItemByID(ctx, parentID)
+	if err != nil {
+		return err
+	}
+	if parent.ProjectReportID != reportID {
+		return errors.New("parent project report item belongs to another report")
+	}
+	return nil
 }
 
 func (s *projectService) DeleteProjectReportItem(ctx context.Context, userID string, itemID int64) error {
@@ -430,7 +499,32 @@ func (s *projectService) DeleteProjectReportItem(ctx context.Context, userID str
 		return err
 	}
 
-	return s.projectRepo.DeleteProjectReportItem(ctx, item.ID)
+	items, err := s.projectRepo.ListProjectReportItemsByReportID(ctx, item.ProjectReportID)
+	if err != nil {
+		return err
+	}
+
+	return s.projectRepo.DeleteProjectReportItemsByIDs(ctx, collectProjectReportItemSubtree(items, item.ID))
+}
+
+// collectProjectReportItemSubtree 返回 itemID 及其所有子孙节点的 ID 集合。
+func collectProjectReportItemSubtree(items []*types.ProjectReportItem, rootID int64) []int64 {
+	children := make(map[int64][]int64, len(items))
+	for _, item := range items {
+		if item.ParentID != 0 {
+			children[item.ParentID] = append(children[item.ParentID], item.ID)
+		}
+	}
+
+	ids := make([]int64, 0, len(items))
+	stack := []int64{rootID}
+	for len(stack) > 0 {
+		id := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		ids = append(ids, id)
+		stack = append(stack, children[id]...)
+	}
+	return ids
 }
 
 func (s *projectService) GetProjectReportItemDetailByID(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, error) {
@@ -443,7 +537,7 @@ func (s *projectService) GetProjectReportItemDetailByID(ctx context.Context, use
 	return item, nil
 }
 
-// GetProjectReportContent 汇总报告下所有条目，按 SortOrder 拼接成正文，仅返回拼接后的内容。
+// GetProjectReportContent 汇总报告下所有条目，按树的前序遍历拼接成正文，仅返回拼接后的内容。
 func (s *projectService) GetProjectReportContent(ctx context.Context, reportID int64) (string, error) {
 	report, err := s.projectRepo.GetProjectReportByID(ctx, reportID)
 	if err != nil {
@@ -456,7 +550,7 @@ func (s *projectService) GetProjectReportContent(ctx context.Context, reportID i
 	}
 
 	var builder strings.Builder
-	for _, item := range items {
+	for _, item := range flattenProjectReportItems(items) {
 		section, err := s.projectReportItemMarkdown(ctx, item)
 		if err != nil {
 			return "", err
@@ -465,6 +559,48 @@ func (s *projectService) GetProjectReportContent(ctx context.Context, reportID i
 	}
 
 	return builder.String(), nil
+}
+
+// flattenProjectReportItems 按树的先序遍历排列条目（父节点先于其子节点）。
+// 入参需已按同级 sort_order 升序排列；出现环或孤立的不可达节点时按原顺序兜底追加。
+func flattenProjectReportItems(items []*types.ProjectReportItem) []*types.ProjectReportItem {
+	existing := make(map[int64]bool, len(items))
+	for _, item := range items {
+		existing[item.ID] = true
+	}
+
+	childrenByParent := make(map[int64][]*types.ProjectReportItem, len(items))
+	for _, item := range items {
+		if item.ParentID != 0 && existing[item.ParentID] {
+			childrenByParent[item.ParentID] = append(childrenByParent[item.ParentID], item)
+			continue
+		}
+		childrenByParent[0] = append(childrenByParent[0], item)
+	}
+
+	result := make([]*types.ProjectReportItem, 0, len(items))
+	visited := make(map[int64]bool, len(items))
+	var walk func(parentID int64)
+	walk = func(parentID int64) {
+		for _, item := range childrenByParent[parentID] {
+			if visited[item.ID] {
+				continue
+			}
+			visited[item.ID] = true
+			result = append(result, item)
+			walk(item.ID)
+		}
+	}
+	walk(0)
+
+	for _, item := range items {
+		if !visited[item.ID] {
+			visited[item.ID] = true
+			result = append(result, item)
+		}
+	}
+
+	return result
 }
 
 // GetProjectReportItemContent 返回指定条目（入参为 ProjectReportItem ID）渲染后的内容片段。

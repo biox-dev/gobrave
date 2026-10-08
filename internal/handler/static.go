@@ -5,20 +5,25 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
+	"github.com/gin-gonic/gin"
 )
 
 var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-// RegisterProjectDocsRoute registers project docs entry route.
-// It maps:
-// - GET /docs/:projectid to {base_dir}/data/{projectid}/docs/index.html
-// - GET /docs/:projectid/*filepath to {base_dir}/data/{projectid}/docs/*filepath
-func RegisterProjectDocsRoute(r *gin.Engine, cfg *config.Config) {
+// RegisterProjectDocsRoute registers the project docs entry route.
+//
+// The only path parameter is a ProjectReport ID; the owning project id is
+// resolved from the report and the docs are served from that report's doc
+// source directory (see utils.GetProjectDocDir):
+// - GET /docs/:reportid            -> {projectDocBookDir}/index.html
+// - GET /docs/:reportid/*filepath  -> {projectDocBookDir}/*filepath
+func RegisterProjectDocsRoute(r *gin.Engine, cfg *config.Config, projectService interfaces.ProjectService) {
 	resolveDocPath := func(c *gin.Context) (string, int, bool) {
 		if cfg == nil || cfg.Storage == nil {
 			return "", http.StatusNotFound, false
@@ -29,9 +34,28 @@ func RegisterProjectDocsRoute(r *gin.Engine, cfg *config.Config) {
 			return "", http.StatusNotFound, false
 		}
 
-		projectID := strings.TrimSpace(c.Param("projectid"))
+		if projectService == nil {
+			return "", http.StatusInternalServerError, false
+		}
+
+		reportID, err := strconv.ParseInt(strings.TrimSpace(c.Param("reportid")), 10, 64)
+		if err != nil || reportID <= 0 {
+			return "", http.StatusBadRequest, false
+		}
+
+		report, err := projectService.GetProjectReportByID(c.Request.Context(), reportID)
+		if err != nil || report == nil {
+			return "", http.StatusNotFound, false
+		}
+
+		projectID := strings.TrimSpace(report.ProjectID)
 		if projectID == "" || !projectIDPattern.MatchString(projectID) {
 			return "", http.StatusBadRequest, false
+		}
+
+		projectDocBookDir := utils.GetProjectDocBookDir(baseDir, projectID, strconv.FormatInt(report.ID, 10))
+		if strings.TrimSpace(projectDocBookDir) == "" {
+			return "", http.StatusNotFound, false
 		}
 
 		relFile := strings.TrimSpace(c.Param("filepath"))
@@ -40,7 +64,7 @@ func RegisterProjectDocsRoute(r *gin.Engine, cfg *config.Config) {
 			relFile = "index.html"
 		}
 
-		targetPath, err := utils.SafePathUnderBase(baseDir, filepath.Join(baseDir, "data", projectID, "docs", "book", relFile))
+		targetPath, err := utils.SafePathUnderBase(baseDir, filepath.Join(projectDocBookDir, relFile))
 		if err != nil {
 			return "", http.StatusBadRequest, false
 		}
@@ -73,7 +97,7 @@ func RegisterProjectDocsRoute(r *gin.Engine, cfg *config.Config) {
 		return targetPath, http.StatusOK, true
 	}
 
-	r.GET("/docs/:projectid", func(c *gin.Context) {
+	r.GET("/docs/:reportid", func(c *gin.Context) {
 		targetPath, status, ok := resolveDocPath(c)
 		if !ok {
 			c.AbortWithStatus(status)
@@ -82,7 +106,7 @@ func RegisterProjectDocsRoute(r *gin.Engine, cfg *config.Config) {
 		c.File(targetPath)
 	})
 
-	r.GET("/docs/:projectid/*filepath", func(c *gin.Context) {
+	r.GET("/docs/:reportid/*filepath", func(c *gin.Context) {
 		targetPath, status, ok := resolveDocPath(c)
 		if !ok {
 			c.AbortWithStatus(status)

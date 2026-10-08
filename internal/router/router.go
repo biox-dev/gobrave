@@ -29,6 +29,7 @@ type RouterParams struct {
 	dig.In
 	Config           *config.Config
 	UserService      interfaces.UserService
+	ProjectService   interfaces.ProjectService
 	AuthHandler      *handler.AuthHandler
 	ProjectHandler   *handler.ProjectHandler
 	DataHandler      *handler.DataHandler
@@ -88,7 +89,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 	handler.RegisterOnlyOfficeRoutes(r, params.ProxyHandler)
 
 	r.Use(middleware.Auth(params.UserService, params.Config))
-	handler.RegisterProjectDocsRoute(r, params.Config)
+	handler.RegisterProjectDocsRoute(r, params.Config, params.ProjectService)
 
 	serveStatic(r, params.Config)
 	v1 := r.Group("/api/v1")
@@ -171,6 +172,7 @@ func RegisterProjectRoutes(r *gin.RouterGroup, handler *handler.ProjectHandler, 
 	r.GET("/project/list-project-report-item", handler.ListProjectReportItem)
 	r.POST("/project/add-project-report-item", handler.AddProjectReportItem)
 	r.POST("/project/update-project-report-item", handler.UpdateProjectReportItem)
+	r.POST("/project/reorder-project-report-item", handler.ReorderProjectReportItem)
 	r.POST("/project/delete-project-report-item", handler.DeleteProjectReportItem)
 	r.GET("/project/project-report-item-detail", handler.GetProjectReportItemDetail)
 	r.GET("/project/project-report-item-content", handler.GetProjectReportItemContent)
