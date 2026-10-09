@@ -116,7 +116,11 @@ func buildAnalysisDictFromDB(
 			if err != nil {
 				return nil, fmt.Errorf("resolve assay db fields for %s failed: %w", key, err)
 			}
-			result[key] = resolved
+			if itemName, ok := formItem["item_name"].(string); ok && itemName != "" {
+				result[key] = wrapResolvedItemsByItemName(itemName, resolved)
+			} else {
+				result[key] = resolved
+			}
 			continue
 		}
 
@@ -888,7 +892,6 @@ func resolveAssayInputValue(
 
 	// accept_formats 决定保留哪些 assay role；空表示不按 role 过滤。
 	acceptFormats := utils.AcceptFormats(formItem)
-
 	assayRoleToPath := make(map[int64]map[string]string)
 
 	// Files are assay-private (go_file.assay_id), so every selected assay is
@@ -968,6 +971,14 @@ func resolveAssayInputValue(
 		result = append(result, row)
 	}
 
+	formType := anyToString(formItem["type"])
+
+	if formType == "SelectAssay" {
+		if len(result) > 0 {
+			return result[0], nil
+		}
+	}
+
 	return result, nil
 }
 
@@ -1012,4 +1023,23 @@ func extractAssayIDsFromValue(value interface{}) []string {
 	default:
 		return extractIDList(v)
 	}
+}
+
+// wrapResolvedItemsByItemName 把 assay 解析出的列表按 item_name 包装：每个元素
+// 变成 {item_name: row}，即 `[{sample: row1}, {sample: row2}, ...]`。这样下游
+// scatter(in each) 与按句柄取值时可以用 item_name 作为键拿到整行。
+//
+// 只有列表结果会被包装：SelectAssay 之类的单行结果（map）保持原样，避免把单行
+// 也变成 list 而破坏既有调用方。
+func wrapResolvedItemsByItemName(itemName string, resolved interface{}) interface{} {
+	rows, ok := resolved.([]interface{})
+	if !ok {
+		return resolved
+	}
+
+	wrapped := make([]interface{}, 0, len(rows))
+	for _, row := range rows {
+		wrapped = append(wrapped, map[string]interface{}{itemName: row})
+	}
+	return wrapped
 }
