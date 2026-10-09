@@ -92,6 +92,7 @@ type createWorkflowRequest struct {
 	Prompt             string `json:"prompt"`
 	DagDefinition      string `json:"dag_definition"`
 	WorkflowID         string `json:"workflow_id"`
+	IOSchema           string `json:"io_schema"`
 	RelationType       string `json:"relation_type"`
 	InstallKey         string `json:"install_key"`
 	ModuleID           string `json:"component_id"`
@@ -397,6 +398,10 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 		c.Error(errors.NewValidationError("output_component_ids is not valid JSON format"))
 		return
 	}
+	if req.IOSchema != "" && !json.Valid([]byte(req.IOSchema)) {
+		c.Error(errors.NewValidationError("io_schema is not valid JSON format"))
+		return
+	}
 
 	// item 是最终落库的 workflow：
 	// 新建时直接使用请求字段（tags/input_component_ids/output_component_ids 缺省为 []）；
@@ -486,6 +491,14 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("failed to create workflow").WithDetails(err.Error()))
 			return
 		}
+	}
+
+	// io_schema 落盘到工作流目录（GetWorkflowFileDir）的 io_schema.json；该文件是工作流级
+	// inputs 的唯一数据源，读取侧统一通过 utils.ReadWorkflowIOSchema 从该文件获取。
+	// 内容为空时不落盘（保留磁盘上已有文件），与 SaveScript 的 io_schema 口径一致。
+	if err := utils.WriteWorkflowIOSchema(h.cfg.Storage.BaseDir, project.ProjectID, item.WorkflowID, req.IOSchema); err != nil {
+		c.Error(errors.NewInternalServerError("failed to write workflow io_schema file").WithDetails(err.Error()))
+		return
 	}
 
 	// 重新生成 workflow.json（含脚本快照），保持导出文件与数据库一致：只落盘、不提交 git。
@@ -1189,6 +1202,9 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 
 	workflowPath := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
 
+	// io_schema 从工作流目录的 io_schema.json 实时读取（不再落库）。
+	ioSchema, _ := utils.ReadWorkflowIOSchemaFile(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
+
 	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地，
 	// 以及 store 裸仓库上配置的远程仓库列表（remotes，发布到远程时写入）。
 	gitState := utils.ReadGitSyncState(workflowPath, storePath)
@@ -1199,6 +1215,7 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		StorePath: storePath,
 		// StoreVersion: storeVersion,
 		WorkflowPath: workflowPath,
+		IOSchema:     string(ioSchema),
 		GitState:     &gitState,
 		// StoreURL:     StoreURL,
 		// StoreMessage: StoreMessage,

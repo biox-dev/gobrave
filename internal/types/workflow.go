@@ -153,6 +153,9 @@ type WorkflowVersion struct {
 	Workflow
 	StorePath    string `json:"store_path"`
 	WorkflowPath string `json:"workflow_path"`
+	// IOSchema 实时读取自工作流目录的 io_schema.json（不再是数据库字段）。
+	// 工作流级 inputs 用于运行工作流时生成 formJson（见 GetFormJSONByWorkflowID）。
+	IOSchema string `json:"io_schema"`
 	// StoreURL     string `json:"store_url"`
 	// StoreMessage string `json:"store_message"`
 	// StoreVersion string `json:"store_version"`

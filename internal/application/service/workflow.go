@@ -755,8 +755,11 @@ func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowI
 		return nil, err
 	}
 
-	// io_schema 以脚本目录下的 io_schema.json 为准，解析一次项目目录字符串复用。
+	// io_schema 以目录下的 io_schema.json 为准，解析一次项目目录字符串复用。
 	projectID, _ := s.projectStringID(ctx, findWorkflow.ProjectID)
+	// 工作流级 io_schema 从工作流目录（GetWorkflowFileDir）的 io_schema.json 读取：
+	// scatter 配置与 scatter.mode=each 时的表单字段都用它，不再从脚本 io_schema 读取。
+	workflowIOSchema, _ := utils.ReadWorkflowIOSchema(s.cfg.Storage.BaseDir, projectID, findWorkflow.WorkflowID)
 	for _, script := range scripts {
 		scriptID := script.ScriptID
 		ioSchema, _ := utils.ReadScriptIOSchema(s.cfg.Storage.BaseDir, projectID, script.ScriptID)
@@ -786,7 +789,7 @@ func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowI
 					merged[k] = v
 				}
 			}
-			buildInputScriptFormJSON(merged, &formJSONWrap, missingInputNames)
+			buildInputScriptFormJSON(merged, workflowIOSchema, &formJSONWrap, missingInputNames)
 		}
 
 		if params, ok := ioSchema["params"].([]any); ok {
@@ -877,25 +880,30 @@ func filterInputs(items []any, inputNames map[string]struct{}) []any {
 	return filtered
 }
 
-func buildInputScriptFormJSON(ioSchema map[string]any, formJSONWrap *[]any, inputNames map[string]struct{}) {
-	if scatterAny, ok := ioSchema["scatter"]; ok {
+// buildInputScriptFormJSON 追加一个「输入脚本」（存在未连接 input 的节点）的表单字段。
+//
+// scatter 配置取「工作流级 io_schema」（workflowIOSchema，来自工作流目录 io_schema.json），
+// 不再取脚本 io_schema：scatter.mode=each 时表单字段取工作流级 inputs；
+// 其他情况按节点缺失的 input 名过滤脚本自身的 inputs。
+func buildInputScriptFormJSON(scriptIOSchema, workflowIOSchema map[string]any, formJSONWrap *[]any, inputNames map[string]struct{}) {
+	if scatterAny, ok := workflowIOSchema["scatter"]; ok {
 		scatter, ok := scatterAny.(map[string]any)
 		if !ok {
 			return
 		}
 		if mode, _ := scatter["mode"].(string); mode == "each" {
-			if workflow, ok := ioSchema["workflow"].([]any); ok {
-				*formJSONWrap = append(*formJSONWrap, workflow...)
+			if inputs, ok := workflowIOSchema["inputs"].([]any); ok {
+				*formJSONWrap = append(*formJSONWrap, inputs...)
 			}
 			return
 		}
-		if inputs, ok := ioSchema["inputs"].([]any); ok {
+		if inputs, ok := scriptIOSchema["inputs"].([]any); ok {
 			*formJSONWrap = append(*formJSONWrap, filterInputs(inputs, inputNames)...)
 		}
 		return
 	}
 
-	if inputs, ok := ioSchema["inputs"].([]any); ok {
+	if inputs, ok := scriptIOSchema["inputs"].([]any); ok {
 		*formJSONWrap = append(*formJSONWrap, filterInputs(inputs, inputNames)...)
 	}
 }
