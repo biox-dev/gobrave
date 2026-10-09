@@ -174,7 +174,8 @@ type analysisControllerRequest struct {
 
 type analysisNodeByProjectPageRequest struct {
 	types.Pagination
-	ScriptID int64 `json:"script_id,string"`
+	ScriptID   int64 `json:"script_id,string"`
+	AnalysisID int64 `json:"analysis_id,string"`
 }
 
 type analysisByProjectPageRequest struct {
@@ -1335,7 +1336,8 @@ func (h *AnalysisHandler) PageAnalysisNodeByProject(c *gin.Context) {
 
 	projectID := activeProject.ID
 	scriptID := req.ScriptID
-	items, total, err := h.analysisRepo.PageAnalysisNodesByProjectID(c.Request.Context(), &req.Pagination, projectID, scriptID)
+	analysisID := req.AnalysisID
+	items, total, err := h.analysisRepo.PageAnalysisNodesByProjectID(c.Request.Context(), &req.Pagination, projectID, scriptID, analysisID)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to page analysis nodes by project").WithDetails(err.Error()))
 		return

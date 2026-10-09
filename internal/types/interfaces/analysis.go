@@ -40,7 +40,7 @@ type AnalysisRepository interface {
 	UpdateAnalysisByID(ctx context.Context, analysisID int64, values map[string]any) error
 
 	ListAnalysisNodesByAnalysisID(ctx context.Context, analysisID int64) ([]*types.AnalysisNode, error)
-	PageAnalysisNodesByProjectID(ctx context.Context, pagination *types.Pagination, projectID, scriptID int64) ([]*types.AnalysisNode, int64, error)
+	PageAnalysisNodesByProjectID(ctx context.Context, pagination *types.Pagination, projectID, scriptID, analysisID int64) ([]*types.AnalysisNode, int64, error)
 	ListAnalysisNodesByProjectIDAndScriptID(ctx context.Context, projectID, scriptID int64) ([]*types.AnalysisNode, error)
 	ListAnalysisNodesByProjectIDAndStatus(ctx context.Context, projectID int64, status string) ([]*types.AnalysisNode, error)
 	ListAnalysisEdgesByAnalysisID(ctx context.Context, analysisID int64) ([]*types.AnalysisEdge, error)

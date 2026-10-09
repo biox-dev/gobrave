@@ -389,11 +389,14 @@ func (r *analysisRepository) ListAnalysisNodesByProjectIDAndStatus(ctx context.C
 	return r.resolveNodes(items), nil
 }
 
-func (r *analysisRepository) PageAnalysisNodesByProjectID(ctx context.Context, pagination *types.Pagination, projectID, scriptID int64) ([]*types.AnalysisNode, int64, error) {
+func (r *analysisRepository) PageAnalysisNodesByProjectID(ctx context.Context, pagination *types.Pagination, projectID, scriptID, analysisID int64) ([]*types.AnalysisNode, int64, error) {
 	items := make([]*types.AnalysisNode, 0)
 	query := r.db.WithContext(ctx).Model(&types.AnalysisNode{}).Where("project_id = ?", projectID)
 	if scriptID != 0 {
 		query = query.Where("script_id = ?", scriptID)
+	}
+	if analysisID != 0 {
+		query = query.Where("analysis_id = ?", analysisID)
 	}
 
 	var total int64
