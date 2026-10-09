@@ -1026,7 +1026,7 @@ func resolveAssayByID(
 func extractAssayIDsFromValue(value interface{}) []string {
 	switch v := value.(type) {
 	case map[string]interface{}:
-		if assay, ok := v["assay"]; ok {
+		if assay, ok := v["files"]; ok {
 			return extractIDList(assay)
 		}
 		return nil
