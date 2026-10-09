@@ -223,7 +223,7 @@ func (p *FileSystemNodeRuntimePreparer) resolveBaseParams(ctx context.Context, n
 		return nil, fmt.Errorf("create output dir failed: %w", err)
 	}
 
-	return p.buildNodeParams(node, analysis)
+	return p.buildNodeParams(ctx, node, analysis)
 }
 
 func (p *FileSystemNodeRuntimePreparer) WriteCommand(node *types.AnalysisNode, scriptType, scriptPath, scriptWorkspacePath string, params map[string]any) error {
@@ -282,7 +282,7 @@ func (p *FileSystemNodeRuntimePreparer) ensureNodePaths(node *types.AnalysisNode
 	return nil
 }
 
-func (p *FileSystemNodeRuntimePreparer) buildNodeParams(node *types.AnalysisNode, analysis *types.Analysis) (map[string]any, error) {
+func (p *FileSystemNodeRuntimePreparer) buildNodeParams(ctx context.Context, node *types.AnalysisNode, analysis *types.Analysis) (map[string]any, error) {
 	baseParams := map[string]any{}
 	if analysis != nil && strings.TrimSpace(analysis.ParamsPath) != "" {
 		raw, err := os.ReadFile(analysis.ParamsPath)
@@ -305,9 +305,58 @@ func (p *FileSystemNodeRuntimePreparer) buildNodeParams(node *types.AnalysisNode
 	for k, v := range resolvedInputs {
 		merged[k] = v
 	}
+
+	// 只保留脚本 io_schema（GetScriptFormJSONByID 的 formJson）中声明过的参数名，
+	// 而不是把分析级 params.json 的全部参数原样透传给脚本。
+	formNames, err := p.scriptFormParamNames(ctx, node.ScriptID)
+	if err != nil {
+		return nil, err
+	}
+	if formNames != nil {
+		filtered := make(map[string]any, len(merged))
+		for name, value := range merged {
+			if _, ok := formNames[name]; ok {
+				filtered[name] = value
+			}
+		}
+		merged = filtered
+	}
+
+	// output_dir 是运行期公共参数，不依赖 formJson，始终注入。
 	merged["output_dir"] = node.OutputDir
 
 	return merged, nil
+}
+
+// scriptFormParamNames 读取脚本 GetScriptFormJSONByID 返回的 formJson，
+// 汇总其中每个条目的 name 值作为参数名白名单。
+// 脚本没有 form 定义（无 io_schema / 无 name）时返回 nil，表示不做过滤。
+func (p *FileSystemNodeRuntimePreparer) scriptFormParamNames(ctx context.Context, scriptID int64) (map[string]struct{}, error) {
+	formJSON, err := p.workflowService.GetScriptFormJSONByID(ctx, scriptID)
+	if err != nil {
+		return nil, fmt.Errorf("load script form json failed: %w", err)
+	}
+	if len(formJSON) == 0 {
+		return nil, nil
+	}
+
+	names := make(map[string]struct{}, len(formJSON))
+	for _, itemAny := range formJSON {
+		item, ok := itemAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := item["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		names[name] = struct{}{}
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+
+	return names, nil
 }
 func cloneAnyMapForNode(in map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(in))

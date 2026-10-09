@@ -1039,7 +1039,8 @@ func wrapResolvedItemsByItemName(itemName string, resolved interface{}) interfac
 
 	wrapped := make([]interface{}, 0, len(rows))
 	for _, row := range rows {
-		wrapped = append(wrapped, map[string]interface{}{itemName: row})
+		sample_name := row.(map[string]interface{})["sample_name"]
+		wrapped = append(wrapped, map[string]interface{}{itemName: row, "node_name": sample_name})
 	}
 	return wrapped
 }
