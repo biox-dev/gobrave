@@ -28,12 +28,7 @@ func GetDefaultIOSchame() string {
         }
     ],
     "params": [
-        {
-            "name": "params_name",
-            "label": "params_name",
-            "type": "BaseInput",
-            "initialValue": "params_value"
-        }
+     
     ],
     "resources": {
         "cpu": 4,

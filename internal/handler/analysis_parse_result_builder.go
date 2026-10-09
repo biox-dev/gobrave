@@ -545,6 +545,8 @@ func extractIDs(value interface{}) ([]string, bool) {
 			}
 			return []string{id}, true
 		}
+		// go-brave-ui/src/components/form-components/components/assay/group-select-assay-button.tsx
+		// <Form.Item label={label} name={[name, "files"]} rules={rules}>
 		if assay, ok := v["assay"]; ok {
 			ids := extractIDList(assay)
 			if len(ids) == 1 {
@@ -558,6 +560,14 @@ func extractIDs(value interface{}) ([]string, bool) {
 				return nil, true
 			}
 			return []string{id}, true
+		}
+		if fileIDS, ok := v["files"]; ok {
+			// id := strings.TrimSpace(anyToString(fileID))
+			// if id == "" {
+			// 	return nil, true
+			// }
+			ids := extractIDList(fileIDS)
+			return ids, false
 		}
 		return nil, false
 	case []interface{}:
