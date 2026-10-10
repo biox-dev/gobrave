@@ -315,6 +315,19 @@ func (s *dataService) ListFileByProjectIDViaAnalysisNode(ctx context.Context, pr
 	return s.dataRepo.ListFileByProjectIDViaAnalysisNode(ctx, projectID)
 }
 
+func (s *dataService) PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	items, total, err := s.dataRepo.PageFileByProjectIDViaAnalysisNode(ctx, pagination, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	return types.NewPageResult(total, pagination, items), nil
+}
+
 func (s *dataService) ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error) {
 	return s.dataRepo.ListFileByAssayID(ctx, assayID)
 }

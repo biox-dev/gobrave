@@ -416,6 +416,61 @@ func (r *dataRepository) ListFileByProjectIDViaAnalysisNode(ctx context.Context,
 	return items, nil
 }
 
+// PageFileByProjectIDViaAnalysisNode is the paginated form of
+// ListFileByProjectIDViaAnalysisNode. The total is the number of distinct files
+// produced by the project's analysis nodes (no JOIN fan-out, since a file has a
+// single analysis_node_id).
+func (r *dataRepository) PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.FileWithDatasetInfo, int64, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	items := make([]*types.FileWithDatasetInfo, 0)
+	var total int64
+
+	buildQuery := func() *gorm.DB {
+		return r.db.WithContext(ctx).
+			Table("analysis_nodes AS an").
+			Joins("JOIN t_project AS p ON p.id = an.project_id").
+			Joins("JOIN go_file AS f ON f.analysis_node_id = an.id").
+			Where("p.project_id = ?", projectID)
+	}
+
+	if err := buildQuery().Select("COUNT(DISTINCT f.id)").Scan(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := buildQuery().
+		Select(`
+			f.id,
+			f.file_id,
+			f.file_name,
+			f.path,
+			f.format,
+			f.analysis_node_id,
+			f.size,
+			f.md5,
+			f.storage,
+			f.description,
+			f.created_at,
+			f.updated_at,
+			f.file_key AS role
+		`).
+		Order("f.id DESC").
+		Offset(pagination.Offset()).
+		Limit(pagination.Limit()).
+		Find(&items).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if len(items) == 0 {
+		return []*types.FileWithDatasetInfo{}, total, nil
+	}
+
+	return items, total, nil
+}
+
 func (r *dataRepository) CreateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error {
 	return r.db.WithContext(ctx).Create(datasetFile).Error
 }

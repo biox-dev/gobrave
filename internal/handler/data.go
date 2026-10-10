@@ -846,46 +846,50 @@ func (h *DataHandler) ListFileByProjectID(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// ListFileByProjectIDViaAnalysisNode godoc
-// @Summary      按项目查询分析节点产出的文件
-// @Description  根据 project_id 查询由分析节点（analysis_nodes）产出的文件，通过 go_file.analysis_node_id 关联
+// PageFileByProjectIDViaAnalysisNode godoc
+// @Summary      按当前激活项目分页查询分析节点产出的文件
+// @Description  根据当前用户激活的项目分页查询由分析节点（analysis_nodes）产出的文件，通过 go_file.analysis_node_id 关联
 // @Tags         数据管理
+// @Accept       json
 // @Produce      json
-// @Param        project_id  query     string           true  "项目业务ID"
-// @Success      200         {array}   types.FileWithDatasetInfo
-// @Failure      400         {object}  errors.AppError
-// @Failure      401         {object}  errors.AppError
-// @Failure      500         {object}  errors.AppError
+// @Param        request  body      types.Pagination  true  "分页请求参数"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /data/file/list-by-project-analysis-node [get]
-func (h *DataHandler) ListFileByProjectIDViaAnalysisNode(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
+// @Router       /data/file/list-by-project-analysis-node-page [post]
+func (h *DataHandler) PageFileByProjectIDViaAnalysisNode(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		c.Error(errors.NewUnauthorizedError("unauthorized"))
 		return
 	}
 
-	var req projectIDQuery
-	if err := c.ShouldBindQuery(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+	var req types.Pagination
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
 
-	items, err := h.dataService.ListFileByProjectIDViaAnalysisNode(c.Request.Context(), req.ProjectID)
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
 	if err != nil {
-		handleDataError(c, err, "failed to list analysis node file by project id")
+		handleDataError(c, err, "failed to get active project by user id")
 		return
 	}
 
-	result := make([]map[string]interface{}, 0, len(items))
-	for _, item := range items {
-		compatItem, err := buildCompatFileItem(item)
-		if err != nil {
-			handleDataError(c, err, "failed to build file response")
-			return
-		}
-		result = append(result, compatItem)
+	result, err := h.dataService.PageFileByProjectIDViaAnalysisNode(c.Request.Context(), &req, project.ProjectID)
+	if err != nil {
+		handleDataError(c, err, "failed to page analysis node file by project id")
+		return
 	}
 
-	c.JSON(http.StatusOK, result)
+	c.JSON(http.StatusOK, gin.H{
+		"data":      result.Data,
+		"total":     result.Total,
+		"page":      result.Page,
+		"page_size": result.PageSize,
+	})
 }
 
 // ListFileByProjectIDGroupByRole godoc

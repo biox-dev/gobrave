@@ -38,6 +38,9 @@ type DataService interface {
 	// analysis_nodes.id (analysis_nodes.project_id carries the numeric project
 	// PK). Every node file is returned, keyed by its own file_key.
 	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error)
+	// PageFileByProjectIDViaAnalysisNode returns the same analysis-node files as
+	// ListFileByProjectIDViaAnalysisNode, paginated.
+	PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error)
 	// ListFileByAssayID returns the files owned by one assay; an assay without
 	// files yields an empty slice (not an error).
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
@@ -108,6 +111,7 @@ type DataRepository interface {
 	PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID string, roles []string) ([]*types.FileWithDatasetInfo, int64, error)
 	ListFileByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.FileWithDatasetInfo, error)
 	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error)
+	PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.FileWithDatasetInfo, int64, error)
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
 	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error)
 
