@@ -40,8 +40,12 @@ type NodeRuntimeState struct {
 type CompileContext struct {
 	AnalysisID int64
 	Params     map[string]any
-	Dag        map[string]any
-	Abort      bool
+	// RequestParam 是本次分析的原始 request_param（已解析成 map）。它由调用方
+	// 从 analysis.request_param 透传进来，用于为每个 runtime 节点生成
+	// analysis_node.request_param，语义与 Params 派生 resolved_inputs 一致。
+	RequestParam map[string]any
+	Dag          map[string]any
+	Abort        bool
 
 	Nodes []map[string]any
 	Edges []map[string]any
@@ -62,9 +66,12 @@ type CompileContext struct {
 	AnalysisEdges []map[string]any
 }
 
-func NewCompileContext(analysisID int64, params map[string]any, dagDefinition map[string]any) *CompileContext {
+func NewCompileContext(analysisID int64, params map[string]any, requestParam map[string]any, dagDefinition map[string]any) *CompileContext {
 	if params == nil {
 		params = map[string]any{}
+	}
+	if requestParam == nil {
+		requestParam = map[string]any{}
 	}
 	if dagDefinition == nil {
 		dagDefinition = map[string]any{}
@@ -72,6 +79,7 @@ func NewCompileContext(analysisID int64, params map[string]any, dagDefinition ma
 	return &CompileContext{
 		AnalysisID:     analysisID,
 		Params:         params,
+		RequestParam:   requestParam,
 		Dag:            dagDefinition,
 		Abort:          false,
 		Incoming:       map[string][]map[string]any{},
@@ -118,6 +126,25 @@ func cloneMap(src map[string]any) map[string]any {
 		dst[k] = v
 	}
 	return dst
+}
+
+// filterRequestParamByHandles 从 analysis 的原始 request_param 中，只保留键与节点
+// 输入句柄（inputs_patterns 的 name）相同的项。
+//
+// 这与 inputs_patterns 的填充口径一致：inputs_patterns 按脚本 form json（io_schema
+// 的 inputs）里的 name 建键，节点的 request_param 也用同一组 name 过滤，所以节点
+// 只携带脚本声明过的输入对应的请求值，而不是整份 analysis 请求。
+func filterRequestParamByHandles(requestParam map[string]any, inputs map[string]any) map[string]any {
+	if len(requestParam) == 0 || len(inputs) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(inputs))
+	for handle := range inputs {
+		if value, ok := requestParam[handle]; ok {
+			out[handle] = value
+		}
+	}
+	return out
 }
 
 func nodeKey(node map[string]any) string {

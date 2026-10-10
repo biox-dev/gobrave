@@ -147,6 +147,23 @@ func cloneJSONMap(src types.JSONMap) types.JSONMap {
 	return out
 }
 
+// encodeRequestParam renders the analysis request_param carried on a spec into
+// the JSON string stored in analysis_nodes.request_param.
+//
+// An empty payload yields an empty string so a caller that never sets it (the
+// dataflow scheduler builds specs without the raw request) leaves the column
+// untouched instead of writing "{}".
+func encodeRequestParam(payload types.JSONMap) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return string(buf)
+}
+
 // cloneJSONSlice copies a JSON slice so callers cannot mutate compiler output.
 func cloneJSONSlice(src types.JSONSlice) types.JSONSlice {
 	if len(src) == 0 {

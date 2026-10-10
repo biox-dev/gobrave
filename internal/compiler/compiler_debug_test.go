@@ -48,7 +48,7 @@ func TestBuildRuntimeTasks_DebugFromLocalParams(t *testing.T) {
 		analysisID = payload.AnalysisID
 	}
 
-	runtimeDAG, err := BuildRuntimeTasks(analysisID, payload.ParseAnalysisResult, payload.DagDefinition)
+	runtimeDAG, err := BuildRuntimeTasks(analysisID, payload.ParseAnalysisResult, map[string]any{}, payload.DagDefinition)
 	if err != nil {
 		t.Fatalf("BuildRuntimeTasks failed: %v", err)
 	}

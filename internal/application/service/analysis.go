@@ -479,6 +479,9 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 			OutputPatterns:         toJSONMap(row["output_patterns"]),
 			ResolvedOutputs:        toJSONMap(row["resolved_outputs"]),
 			Params:                 toJSONMap(row["params"]),
+			// request_param 由编译器从 analysis.request_param 派生；空值保持空串，
+			// 避免用 "{}" 覆盖掉读取时的兼容回退。
+			RequestParam:           toJSONString(row["request_param"]),
 			Status:                 status,
 			Executor:               toString(row["executor"]),
 			Retry:                  intFromAny(row["retry"], 0),
@@ -626,6 +629,32 @@ func intFromAny(v any, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// toJSONString renders a map-like payload into the JSON string stored in a
+// text column (for example analysis_nodes.request_param). A nil, blank or empty
+// payload yields an empty string so callers never overwrite a column with "{}"
+// when the compiler did not emit anything.
+func toJSONString(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case types.JSONMap:
+		if len(v) == 0 {
+			return ""
+		}
+	case map[string]any:
+		if len(v) == 0 {
+			return ""
+		}
+	}
+	buf, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(buf)
 }
 
 func toJSONMap(value any) types.JSONMap {

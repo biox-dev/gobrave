@@ -3,7 +3,7 @@ package compiler
 import "testing"
 
 func TestTopologyStage_NormalizesEdgeNodeAliases(t *testing.T) {
-	ctx := NewCompileContext(1, map[string]any{}, map[string]any{
+	ctx := NewCompileContext(1, map[string]any{}, map[string]any{}, map[string]any{
 		"nodes": []any{
 			map[string]any{
 				"id":      "A",

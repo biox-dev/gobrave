@@ -8,7 +8,7 @@ func TestBuildRuntimeTasks_ScatterEachMapsPluralFieldToSingularInput(t *testing.
 			map[string]any{"file_name": "sample-1.rds", "sample_id": "s1"},
 			map[string]any{"file_name": "sample-2.rds", "sample_id": "s2"},
 		},
-	}, map[string]any{
+	}, map[string]any{}, map[string]any{
 		"nodes": []any{
 			map[string]any{
 				"id":   "node-1",
@@ -69,7 +69,7 @@ func TestBuildRuntimeTasks_DownstreamSampleNodeKeepsGlobalMetadata(t *testing.T)
 			},
 		},
 		"metadata": metadata,
-	}, map[string]any{
+	}, map[string]any{}, map[string]any{
 		"nodes": []any{
 			map[string]any{
 				"id":   "node-lda",

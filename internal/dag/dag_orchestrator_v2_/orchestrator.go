@@ -2,8 +2,10 @@ package orchestratorv2
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/compiler"
@@ -150,7 +152,7 @@ func (o *Orchestrator) StartAsyncV2(
 		return nil
 	}
 
-	graph, err := compileGraph(analysisID, parseAnalysisResult, dagDefinition)
+	graph, err := compileGraph(analysisID, parseAnalysisResult, o.analysisRequestParam(ctx, analysisID), dagDefinition)
 	if err != nil {
 		o.failSubmission(analysisID, err)
 		return fmt.Errorf("compile dynamic dag failed: %w", err)
@@ -285,14 +287,32 @@ func (o *Orchestrator) failSubmission(analysisID int64, cause error) {
 }
 
 // compileGraph runs the runtime compiler and wraps the result in a Graph.
-func compileGraph(analysisID int64, parseAnalysisResult, dagDefinition map[string]any) (*Graph, error) {
+func compileGraph(analysisID int64, parseAnalysisResult, requestParam, dagDefinition map[string]any) (*Graph, error) {
 	compiled, err := compiler.BuildRuntimeTasks(
 		analysisID,
 		cloneAnyMap(parseAnalysisResult),
+		cloneAnyMap(requestParam),
 		cloneAnyMap(dagDefinition),
 	)
 	if err != nil {
 		return nil, err
 	}
 	return NewGraph(analysisID, compiled)
+}
+
+// analysisRequestParam 读取 analysis.request_param 并解析成 map，供编译器为节点
+// 生成 analysis_node.request_param。读取或解析失败时返回空 map（不阻断调度）。
+func (o *Orchestrator) analysisRequestParam(ctx context.Context, analysisID int64) map[string]any {
+	if o.repo == nil {
+		return map[string]any{}
+	}
+	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
+	if err != nil || analysis == nil || strings.TrimSpace(analysis.RequestParam) == "" {
+		return map[string]any{}
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal([]byte(analysis.RequestParam), &out); err != nil {
+		return map[string]any{}
+	}
+	return out
 }

@@ -125,7 +125,7 @@ func TestNewGraphAcceptsRealCompilerOutput(t *testing.T) {
 		t.Fatalf("invalid analysis id: %v", err)
 	}
 
-	compiled, err := compiler.BuildRuntimeTasks(analysisID, payload.ParseAnalysisResult, payload.DagDefinition)
+	compiled, err := compiler.BuildRuntimeTasks(analysisID, payload.ParseAnalysisResult, map[string]any{}, payload.DagDefinition)
 	if err != nil {
 		t.Fatalf("compile fixture failed: %v", err)
 	}

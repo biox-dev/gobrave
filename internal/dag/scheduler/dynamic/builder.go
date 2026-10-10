@@ -33,6 +33,7 @@ func dynamicNodeSpecFromRow(nodeID string, scriptID int64, row map[string]any) *
 		ResolvedInputs:        dynamicToJSONMap(row["resolved_inputs"]),
 		OutputPatterns:        dynamicToJSONMap(row["output_patterns"]),
 		ResolvedOutputs:       dynamicToJSONMap(row["resolved_outputs"]),
+		RequestParam:          dynamicToJSONMap(row["request_param"]),
 		Params:                dynamicToJSONMap(row["params"]),
 		UpstreamIDs:           dynamicToStringSlice(row["upstream_ids"]),
 		DownstreamIDs:         dynamicToStringSlice(row["downstream_ids"]),

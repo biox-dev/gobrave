@@ -45,6 +45,9 @@ type Spec struct {
 	OutputPatterns types.JSONMap
 	// ResolvedOutputs holds the predicted outputs.
 	ResolvedOutputs types.JSONMap
+	// RequestParam is the original analysis request_param carried onto the node so
+	// a single node can be re-run or edited with the same request context.
+	RequestParam types.JSONMap
 	// Params are the process parameters merged from workflow defaults.
 	Params types.JSONMap
 	// UpstreamIDs lists declared upstream node identities.
@@ -169,6 +172,7 @@ func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 		ResolvedInputs:         resolvedInputs,
 		OutputPatterns:         cloneJSONMap(req.Spec.OutputPatterns),
 		ResolvedOutputs:        cloneJSONMap(req.Spec.ResolvedOutputs),
+		RequestParam:           encodeRequestParam(req.Spec.RequestParam),
 		Params:                 params,
 		InputHash:              inputHash,
 		Status:                 strings.TrimSpace(req.Status),
@@ -219,6 +223,12 @@ func Probe(req ProbeRequest) (*types.AnalysisNode, error) {
 	probe.Params = cloneJSONMap(req.Spec.Params)
 	probe.ResolvedInputs = cloneJSONMap(req.Spec.ResolvedInputs)
 	probe.ResolvedOutputs = cloneJSONMap(req.Spec.ResolvedOutputs)
+	// Only overwrite the persisted request_param when the freshly compiled spec
+	// carries one; the dataflow scheduler leaves it empty and must not blank an
+	// already stored value.
+	if encoded := encodeRequestParam(req.Spec.RequestParam); encoded != "" {
+		probe.RequestParam = encoded
+	}
 	probe.InputValidationErrors = cloneJSONSlice(req.Spec.InputValidationErrors)
 
 	MergeUpstreamInputs(req.Spec, probe.Params, probe.ResolvedInputs, req.Incoming, req.Upstream)

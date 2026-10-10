@@ -2,6 +2,7 @@ package dynamic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -218,7 +219,7 @@ func (o *dynamicDagOrchestratorV2) startAsyncV2(ctx context.Context, analysisID 
 		return o.failStart(analysisID, "prepare cached analysis rerun failed", err)
 	}
 
-	compiled, err := compiler.BuildRuntimeTasks(analysisID, dynamicCloneAnyMap(parseAnalysisResult), dynamicCloneAnyMap(dagDefinition))
+	compiled, err := compiler.BuildRuntimeTasks(analysisID, dynamicCloneAnyMap(parseAnalysisResult), dynamicAnalysisRequestParam(analysis), dynamicCloneAnyMap(dagDefinition))
 	if err != nil {
 		// Compile failure is terminal for current submission; mark analysis failed.
 		return o.failStart(analysisID, "compile runtime dag for dynamic v2 failed", err)
@@ -972,6 +973,7 @@ func (o *dynamicDagOrchestratorV2) markExistingNodeReadyForRerun(ctx context.Con
 	if err := o.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, existing.AnalysisNodeID, map[string]any{
 		"node_name":                probe.NodeName,
 		"sample_id":                probe.SampleID,
+		"request_param":            probe.RequestParam,
 		"script_id":                probe.ScriptID,
 		"inputs_patterns":          probe.InputsPatterns,
 		"resolved_inputs":          probe.ResolvedInputs,
@@ -1007,6 +1009,7 @@ func applyRerunToNode(node *types.AnalysisNode, probe *types.AnalysisNode, reaso
 	}
 	node.NodeName = probe.NodeName
 	node.SampleID = probe.SampleID
+	node.RequestParam = probe.RequestParam
 	node.ScriptID = probe.ScriptID
 	node.InputsPatterns = probe.InputsPatterns
 	node.ResolvedInputs = probe.ResolvedInputs
@@ -1266,6 +1269,20 @@ func dynamicCloneAnyMap(src map[string]any) map[string]any {
 	out := make(map[string]any, len(src))
 	for k, v := range src {
 		out[k] = v
+	}
+	return out
+}
+
+// dynamicAnalysisRequestParam 解析 analysis.request_param（原始 JSON 字符串）成 map，
+// 供编译器把它作为每个 runtime 节点的 analysis_node.request_param 下发。
+// 解析失败或为空时返回空 map，让下游落库保持空值而不是报错。
+func dynamicAnalysisRequestParam(analysis *types.Analysis) map[string]any {
+	if analysis == nil || strings.TrimSpace(analysis.RequestParam) == "" {
+		return map[string]any{}
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal([]byte(analysis.RequestParam), &out); err != nil {
+		return map[string]any{}
 	}
 	return out
 }

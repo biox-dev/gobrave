@@ -296,7 +296,7 @@ func (h *AnalysisHandler) ParseParams(c *gin.Context) {
 		return
 	}
 
-	runtimeDAG, err := compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, dagDefinition)
+	runtimeDAG, err := compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, requestParam, dagDefinition)
 	if true {
 		// 将 parseAnalysisResult+dagDefinition 写入json文件
 
@@ -408,7 +408,7 @@ func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 		}
 	}
 
-	dagRuntime, err := compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, dagDefinition)
+	dagRuntime, err := compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, req.RequestParam, dagDefinition)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to compile runtime dag").WithDetails(err.Error()))
 		return
