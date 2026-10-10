@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -24,6 +26,7 @@ type NodeCompletionCoordinator struct {
 	analysisRepo   interfaces.AnalysisRepository
 	containerRepo  interfaces.ContainerRepository
 	containerOps   NodeContainerOperator
+	dataRepo       interfaces.DataRepository
 	outputResolver nodeOutputResolver
 	runtime        *RuntimeEngine
 	bus            event.Bus
@@ -50,6 +53,7 @@ func NewNodeCompletionCoordinator(
 	analysisRepo interfaces.AnalysisRepository,
 	containerRepo interfaces.ContainerRepository,
 	containerOps NodeContainerOperator,
+	dataRepo interfaces.DataRepository,
 	bus event.Bus,
 	cfg *config.Config,
 ) *NodeCompletionCoordinator {
@@ -68,6 +72,7 @@ func NewNodeCompletionCoordinator(
 		analysisRepo:   analysisRepo,
 		containerRepo:  containerRepo,
 		containerOps:   containerOps,
+		dataRepo:       dataRepo,
 		outputResolver: newFileSystemNodeOutputResolver(),
 		runtime:        runtime,
 		bus:            bus,
@@ -286,6 +291,14 @@ func (c *NodeCompletionCoordinator) reconcileContainer(ctx context.Context, inst
 		c.logOutputValidationDiagnosis(ctx, node, inst, outputErrors)
 		c.scheduleOutputVisibilityPostMortem(node, inst)
 	}
+
+	// When the node's declared outputs resolved without error, mirror the file
+	// outputs into go_file so they become visible to the file/dataset layer. This
+	// is best-effort: a failure here is logged and never changes the node's verdict.
+	if len(outputErrors) == 0 {
+		c.recordNodeOutputFiles(ctx, node, outputs)
+	}
+
 	if _, err := c.runtime.CompleteNode(ctx, node.ID, finalStatus, outputs, exitCode, errorMessage, outputErrors); err != nil {
 		latest, latestErr := c.analysisRepo.GetAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID)
 		if latestErr == nil && latest != nil && IsTerminalStatus(latest.Status) {
@@ -515,6 +528,116 @@ func (c *NodeCompletionCoordinator) scheduleOutputVisibilityPostMortem(node *typ
 		logger.Warnf(ctx, "[NodeCompletionCoordinator] output visibility post-mortem: outputs never became readable analysis_id=%d node_id=%s path=%s container_finished_at=%s waited=%s",
 			node.AnalysisID, node.NodeID, path, finishedAt, outputVisibilityPostMortemOffsets[len(outputVisibilityPostMortemOffsets)-1])
 	}()
+}
+
+// recordNodeOutputFiles mirrors a completed node's declared file outputs into the
+// go_file table so they become visible to the file/dataset layer.
+//
+// Only output_patterns entries whose type is "file" are considered. For each of
+// those, the resolved output value is expected to carry the file's path and an
+// optional key; each row is keyed by (analysis_node_id, file_key), so re-running a
+// node updates its existing rows instead of piling up duplicates.
+//
+// This is a deliberately thin, best-effort mirror of AddFileToDataset: it does not
+// copy files or bind them to a dataset, it only records that the node produced
+// them.
+func (c *NodeCompletionCoordinator) recordNodeOutputFiles(ctx context.Context, node *types.AnalysisNode, outputs map[string]any) {
+	if c == nil || c.dataRepo == nil || node == nil || node.ID == 0 {
+		return
+	}
+	if len(node.OutputPatterns) == 0 || len(outputs) == 0 {
+		return
+	}
+
+	// Iterate the declared handles (not the outputs map) so only declared file
+	// outputs are recorded and the mapping stays tied to output_patterns.
+	for handle, pattern := range node.OutputPatterns {
+		if !isFileOutputPattern(pattern) {
+			continue
+		}
+		path, fileKey, ok := resolveNodeOutputFile(outputs[handle], handle)
+		if !ok {
+			continue
+		}
+		if err := c.upsertNodeOutputFile(ctx, node, path, fileKey); err != nil {
+			logger.Warnf(ctx, "[NodeCompletionCoordinator] record node output file failed, analysis_id=%d node_id=%s file_key=%s path=%s err=%v",
+				node.AnalysisID, node.NodeID, fileKey, path, err)
+		}
+	}
+}
+
+// isFileOutputPattern reports whether an output_patterns entry declares a file
+// output, i.e. {"type": "file"}.
+func isFileOutputPattern(pattern any) bool {
+	m, ok := pattern.(map[string]any)
+	if !ok {
+		return false
+	}
+	typeName, _ := m["type"].(string)
+	return strings.EqualFold(strings.TrimSpace(typeName), "file")
+}
+
+// resolveNodeOutputFile extracts the on-disk path and the file key from one
+// resolved output value. The value is normally {"path": ..., "key": ...}; a bare
+// string is treated as the path with the declared handle as its key.
+func resolveNodeOutputFile(value any, handle string) (path string, fileKey string, ok bool) {
+	switch v := value.(type) {
+	case string:
+		path = strings.TrimSpace(v)
+		if path == "" {
+			return "", "", false
+		}
+		return path, handle, true
+	case map[string]any:
+		path = strings.TrimSpace(outputStringField(v, "path"))
+		if path == "" {
+			return "", "", false
+		}
+		fileKey = strings.TrimSpace(outputStringField(v, "key"))
+		if fileKey == "" {
+			fileKey = handle
+		}
+		return path, fileKey, true
+	default:
+		return "", "", false
+	}
+}
+
+// outputStringField reads a string field from a resolved output value.
+func outputStringField(fields map[string]any, key string) string {
+	v, ok := fields[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
+// upsertNodeOutputFile records one node output file, keyed by the node it belongs
+// to and its file key: an existing row is re-pointed at the new path, a missing
+// one is created.
+func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, node *types.AnalysisNode, path, fileKey string) error {
+	existing, err := c.dataRepo.GetFileByAnalysisNodeIDAndFileKey(ctx, node.ID, fileKey)
+	switch {
+	case err == nil:
+		existing.Path = path
+		existing.FileName = filepath.Base(path)
+		existing.Format = strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+		return c.dataRepo.UpdateFile(ctx, existing)
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		file := &types.File{
+			FileID:         strconv.FormatInt(utils.GenerateID(), 10),
+			FileName:       filepath.Base(path),
+			Path:           path,
+			Format:         strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
+			AnalysisNodeID: node.ID,
+			FileKey:        fileKey,
+			Storage:        "LOCAL",
+		}
+		return c.dataRepo.CreateFile(ctx, file)
+	default:
+		return err
+	}
 }
 
 func containerInstanceID(inst *types.ContainerInstance) int64 {

@@ -377,6 +377,45 @@ func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID stri
 	return items, nil
 }
 
+// ListFileByProjectIDViaAnalysisNode returns the files produced by the project's
+// DAG analysis nodes. Unlike ListFileByProjectID (which walks the
+// go_project_dataset -> go_dataset_file chain), the binding here is the file's
+// own go_file.analysis_node_id -> analysis_nodes.id. analysis_nodes.project_id
+// holds the numeric project PK (t_project.id), so the business project_id is
+// resolved through t_project.id. These files are node-private and not
+// dataset-bound, so dataset_id/dataset_name stay empty; role is filled from the
+// file's own file_key for shape compatibility, and the caller decides how to
+// group them.
+func (r *dataRepository) ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error) {
+	items := make([]*types.FileWithDatasetInfo, 0)
+	err := r.db.WithContext(ctx).
+		Table("analysis_nodes AS an").
+		Select(`
+			f.id,
+			f.file_id,
+			f.file_name,
+			f.path,
+			f.format,
+			f.analysis_node_id,
+			f.size,
+			f.md5,
+			f.storage,
+			f.description,
+			f.created_at,
+			f.updated_at,
+			f.file_key AS role
+		`).
+		Joins("JOIN t_project AS p ON p.id = an.project_id").
+		Joins("JOIN go_file AS f ON f.analysis_node_id = an.id").
+		Where("p.project_id = ?", projectID).
+		Order("f.id DESC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *dataRepository) CreateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error {
 	return r.db.WithContext(ctx).Create(datasetFile).Error
 }
@@ -669,6 +708,22 @@ func (r *dataRepository) GetFileByAssayIDAndFileKey(ctx context.Context, assayID
 	item := &types.File{}
 	err := r.db.WithContext(ctx).
 		Where("assay_id = ? AND file_key = ?", assayID, fileKey).
+		Order("id ASC").
+		Take(item).Error
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// GetFileByAnalysisNodeIDAndFileKey resolves a file produced by a DAG node by the
+// node that produced it and its file key (an output_patterns handle, e.g. BAM).
+// Files are node-private, so the lookup is scoped to the node and a re-run updates
+// the existing row instead of inserting a duplicate.
+func (r *dataRepository) GetFileByAnalysisNodeIDAndFileKey(ctx context.Context, analysisNodeID int64, fileKey string) (*types.File, error) {
+	item := &types.File{}
+	err := r.db.WithContext(ctx).
+		Where("analysis_node_id = ? AND file_key = ?", analysisNodeID, fileKey).
 		Order("id ASC").
 		Take(item).Error
 	if err != nil {

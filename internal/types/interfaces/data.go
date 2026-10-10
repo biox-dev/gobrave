@@ -33,6 +33,11 @@ type DataService interface {
 	PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID string, roles []string) (*types.PageResult, error)
 	ListFileByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.FileWithDatasetInfo, error)
 	ListFileByProjectIDGroupByRole(ctx context.Context, projectID string) ([]*types.FileByProjectRoleGroup, error)
+	// ListFileByProjectIDViaAnalysisNode returns the files produced by the
+	// project's analysis nodes, resolved through go_file.analysis_node_id ->
+	// analysis_nodes.id (analysis_nodes.project_id carries the numeric project
+	// PK). Every node file is returned, keyed by its own file_key.
+	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error)
 	// ListFileByAssayID returns the files owned by one assay; an assay without
 	// files yields an empty slice (not an error).
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
@@ -102,6 +107,7 @@ type DataRepository interface {
 	ListFile(ctx context.Context) ([]*types.File, error)
 	PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID string, roles []string) ([]*types.FileWithDatasetInfo, int64, error)
 	ListFileByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.FileWithDatasetInfo, error)
+	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error)
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
 	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error)
 
@@ -132,6 +138,11 @@ type DataRepository interface {
 	// importer can decide between insert and update.
 	GetAssayByNameAndDatasetID(ctx context.Context, datasetID int64, sampleName, role string) (*types.Assay, error)
 	GetFileByAssayIDAndFileKey(ctx context.Context, assayID int64, fileKey string) (*types.File, error)
+
+	// GetFileByAnalysisNodeIDAndFileKey resolves a file produced by a DAG node by
+	// the node it belongs to and its file key, so the completion path can upsert
+	// instead of inserting duplicates when a node is re-run.
+	GetFileByAnalysisNodeIDAndFileKey(ctx context.Context, analysisNodeID int64, fileKey string) (*types.File, error)
 
 	// SampleName is only unique inside a dataset (per role), so the uniqueness
 	// check below is dataset-scoped instead of global.

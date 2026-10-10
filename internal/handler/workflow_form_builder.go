@@ -37,6 +37,11 @@ func buildScriptFormData(ctx context.Context,
 // `go_dataset_file.role`). The frontend resolves an item's options as
 // `dataMap[role]`, which is why these are keyed by role just like the file case
 // always was.
+//
+// In addition, the files produced by the project's analysis nodes are always
+// published under the DEFAULT role key (see defaultAnalysisResultRole): they are
+// not dataset-scoped, so no item's resolver.accept_formats can match them, and
+// the frontend reads them as `dataMap["DEFAULT"]`.
 func resolveFormAnalysisResult(
 	ctx context.Context,
 	dataService interfaces.DataService,
@@ -120,8 +125,33 @@ func resolveFormAnalysisResult(
 		}
 	}
 
+	// Files produced by the project's analysis nodes (bound via
+	// go_file.analysis_node_id) are not dataset-scoped, so they never match any
+	// item's resolver.accept_formats. They are always published under the DEFAULT
+	// role key so the frontend can pick them up as upstream analysis results.
+	nodeFiles, err := dataService.ListFileByProjectIDViaAnalysisNode(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodeFiles) > 0 {
+		items := make([]map[string]interface{}, 0, len(nodeFiles))
+		for _, file := range nodeFiles {
+			compatItem, err := buildCompatFileItem(file)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, compatItem)
+		}
+		analysisResult[defaultAnalysisResultRole] = items
+	}
+
 	return analysisResult, nil
 }
+
+// defaultAnalysisResultRole is the analysis_result key that always receives the
+// project's analysis-node output files (bound via go_file.analysis_node_id).
+// The frontend's ComponentsRender reads it as dataMap["DEFAULT"].
+const defaultAnalysisResultRole = "DEFAULT"
 
 func sortedKeys(set map[string]struct{}) []string {
 	keys := make([]string, 0, len(set))

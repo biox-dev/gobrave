@@ -311,6 +311,10 @@ func (s *dataService) ListFileByProjectID(ctx context.Context, projectID string,
 	return s.dataRepo.ListFileByProjectID(ctx, projectID, roles)
 }
 
+func (s *dataService) ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error) {
+	return s.dataRepo.ListFileByProjectIDViaAnalysisNode(ctx, projectID)
+}
+
 func (s *dataService) ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error) {
 	return s.dataRepo.ListFileByAssayID(ctx, assayID)
 }
