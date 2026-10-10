@@ -1546,14 +1546,19 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("failed to get workflow").WithDetails(err.Error()))
 			return
 		}
-		// io_schema 以脚本目录下的 io_schema.json 为准（不再是 script 的数据库字段）。
+		// io_schema 以脚本目录下的 io_schema.json 为准（不再是 script 的数据库字段）；
+		// dag_definition 以工作流目录下的 dag_definition.json 为准（不再是 workflow 的数据库字段）。
 		ioSchema := map[string]interface{}{}
+		dagDefinition := ""
 		if h.config != nil && h.config.Storage != nil {
 			if project, projectErr := h.projectRepo.GetProjectByID(c.Request.Context(), workflowItem.ProjectID); projectErr == nil && project != nil {
 				ioSchema, _ = utils.ReadScriptIOSchema(h.config.Storage.BaseDir, project.ProjectID, scriptItem.ScriptID)
+				if dagBytes, dagErr := utils.ReadWorkflowDagDefinitionFile(h.config.Storage.BaseDir, project.ProjectID, workflowItem.WorkflowID); dagErr == nil {
+					dagDefinition = string(dagBytes)
+				}
 			}
 		}
-		formJSON, err := buildNodeFormJSON(workflowItem.DagDefinition, ioSchema, scriptItem, scriptItem.ScriptID)
+		formJSON, err := buildNodeFormJSON(dagDefinition, ioSchema, scriptItem, scriptItem.ScriptID)
 		if err != nil {
 			c.Error(errors.NewInternalServerError("failed to build node form json").WithDetails(err.Error()))
 			return

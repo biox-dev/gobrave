@@ -331,7 +331,6 @@ func (r *workflowRepository) UpdateWorkflow(ctx context.Context, workflow *types
 		"category":             workflow.Category,
 		"description":          workflow.Description,
 		"prompt":               workflow.Prompt,
-		"dag_definition":       workflow.DagDefinition,
 		"relation_id":          workflow.WorkflowID,
 		"relation_type":        workflow.RelationType,
 		"install_key":          workflow.InstallKey,
@@ -351,26 +350,6 @@ func (r *workflowRepository) UpdateWorkflow(ctx context.Context, workflow *types
 	}
 	if result.RowsAffected == 0 {
 		return r.notFoundIfMissing(ctx, &types.Workflow{}, workflow.ID)
-	}
-	return nil
-}
-
-// UpdateWorkflowDagDefinition 只更新 dag_definition 单列。
-// UpdateWorkflow 使用 map 更新会把未提交字段写成零值，画布保存这类局部更新必须走这里。
-func (r *workflowRepository) UpdateWorkflowDagDefinition(ctx context.Context, workflowID int64, dagDefinition string) error {
-	if workflowID == 0 {
-		return gorm.ErrRecordNotFound
-	}
-
-	result := r.db.WithContext(ctx).
-		Model(&types.Workflow{}).
-		Where("id = ?", workflowID).
-		Update("dag_definition", dagDefinition)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
 	}
 	return nil
 }

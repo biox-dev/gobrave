@@ -60,10 +60,10 @@ type Workflow struct {
 	Img       string         `json:"img" gorm:"type:varchar(255)"`
 	Tags      datatypes.JSON `json:"tags" gorm:"type:json"`
 	// URL                string         `json:"url" gorm:"column:url;type:varchar(255)"`
-	Category           string         `json:"category" gorm:"type:varchar(255);default:default"`
-	Description        string         `json:"description" gorm:"type:longtext"`
-	Prompt             string         `json:"prompt" gorm:"type:longtext"`
-	DagDefinition      string         `json:"dag_definition" gorm:"column:dag_definition;type:longtext"`
+	Category    string `json:"category" gorm:"type:varchar(255);default:default"`
+	Description string `json:"description" gorm:"type:longtext"`
+	Prompt      string `json:"prompt" gorm:"type:longtext"`
+	// DagDefinition      string         `json:"dag_definition" gorm:"column:dag_definition;type:longtext"`
 	WorkflowID         string         `json:"workflow_id" gorm:"column:relation_id;type:varchar(255)"`
 	RelationType       string         `json:"relation_type" gorm:"type:varchar(255)"`
 	InstallKey         string         `json:"install_key" gorm:"type:varchar(255)"`
@@ -153,6 +153,9 @@ type WorkflowVersion struct {
 	Workflow
 	StorePath    string `json:"store_path"`
 	WorkflowPath string `json:"workflow_path"`
+	// DagDefinition 实时读取自工作流目录的 dag_definition.json（不再是数据库字段）。
+	// 用于工作流可视化编辑与 DAG 运行时编译（见 GetWorkflowVisByWorkflowID / SaveWorkflow）。
+	DagDefinition string `json:"dag_definition"`
 	// IOSchema 实时读取自工作流目录的 io_schema.json（不再是数据库字段）。
 	// 工作流级 inputs 用于运行工作流时生成 formJson（见 GetFormJSONByWorkflowID）。
 	IOSchema string `json:"io_schema"`

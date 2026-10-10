@@ -56,8 +56,6 @@ type WorkflowRepository interface {
 	GetScriptContainerSnapshotByScriptID(ctx context.Context, scriptID int64) (*types.ScriptContainerSnapshot, error)
 	CreateWorkflow(ctx context.Context, workflow *types.Workflow) error
 	UpdateWorkflow(ctx context.Context, workflow *types.Workflow) error
-	// UpdateWorkflowDagDefinition 仅更新指定 workflow 的 dag_definition，避免整体替换把其他字段写成零值
-	UpdateWorkflowDagDefinition(ctx context.Context, workflowID int64, dagDefinition string) error
 	DeleteWorkflowByID(ctx context.Context, id int64) error
 	CreateScript(ctx context.Context, script *types.Script) error
 	UpdateScript(ctx context.Context, script *types.Script) error

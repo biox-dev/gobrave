@@ -51,6 +51,20 @@ func (s *workflowService) projectStringID(ctx context.Context, projectPK int64) 
 	return project.ProjectID, nil
 }
 
+// workflowDagDefinitionFile 读取工作流目录下 dag_definition.json 的原始内容。
+// dag_definition 不再是数据库字段，所有读取方（可视化 DAG、导出、formJson、脚本引用检查）
+// 都通过这里统一取文件内容；文件不存在时返回 nil（不视为错误）。
+func (s *workflowService) workflowDagDefinitionFile(ctx context.Context, findWorkflow *types.Workflow) ([]byte, error) {
+	if findWorkflow == nil {
+		return nil, nil
+	}
+	projectID, err := s.projectStringID(ctx, findWorkflow.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	return utils.ReadWorkflowDagDefinitionFile(s.cfg.Storage.BaseDir, projectID, findWorkflow.WorkflowID)
+}
+
 func (s *workflowService) GetWorkflowByID(ctx context.Context, id int64) (*types.Workflow, error) {
 	return s.workflowRepo.GetWorkflowByID(ctx, id)
 }
@@ -88,10 +102,14 @@ func (s *workflowService) GetWorkflowVisByWorkflow(ctx context.Context, findWork
 	// }
 
 	dagDefinition := make(map[string]any)
-	if findWorkflow.DagDefinition == "" {
+	dagBytes, err := s.workflowDagDefinitionFile(ctx, findWorkflow)
+	if err != nil {
+		return nil, err
+	}
+	if len(dagBytes) == 0 {
 		return dagDefinition, nil
 	}
-	if err := json.Unmarshal([]byte(findWorkflow.DagDefinition), &dagDefinition); err != nil {
+	if err := json.Unmarshal(dagBytes, &dagDefinition); err != nil {
 		return dagDefinition, nil
 	}
 
@@ -191,7 +209,8 @@ func (s *workflowService) ScriptToNode(ctx context.Context, workflowID int64, sc
 	node := buildScriptVisItem(s.cfg.Storage.BaseDir, projectID, script)
 
 	// script_to_node: 统计 DAG 中引用同一 script 的节点数量，生成唯一 node_id（script_id_N）
-	suffix := countDagNodesByScriptID(findWorkflow.DagDefinition, script.ScriptID) + 1
+	dagBytes, _ := s.workflowDagDefinitionFile(ctx, findWorkflow)
+	suffix := countDagNodesByScriptID(string(dagBytes), script.ScriptID) + 1
 	node["node_id"] = fmt.Sprintf("%s_%d", script.ScriptID, suffix)
 
 	return node, nil
@@ -284,12 +303,17 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 	}
 	omitExportFields(workflowMap, exportOmitWorkflowScriptFields)
 
+	// dag_definition 不再是数据库字段，导出时从工作流目录的 dag_definition.json 读取。
+	dagBytes, err := s.workflowDagDefinitionFile(ctx, workflow)
+	if err != nil {
+		return nil, err
+	}
 	var dagDefinition map[string]any
-	if workflow.DagDefinition != "" {
-		if !json.Valid([]byte(workflow.DagDefinition)) {
+	if len(dagBytes) > 0 {
+		if !json.Valid(dagBytes) {
 			return nil, interfaces.ErrInvalidDagDefinitionJSON
 		}
-		if err := json.Unmarshal([]byte(workflow.DagDefinition), &dagDefinition); err != nil {
+		if err := json.Unmarshal(dagBytes, &dagDefinition); err != nil {
 			return nil, err
 		}
 		workflowMap["dag_definition"] = dagDefinition
@@ -550,12 +574,25 @@ func (s *workflowService) UpdateWorkflow(ctx context.Context, workflow *types.Wo
 	return s.workflowRepo.UpdateWorkflow(ctx, workflow)
 }
 
-// UpdateWorkflowDagDefinition 仅更新 workflow 的 dag_definition，不动其他字段。
+// UpdateWorkflowDagDefinition 仅更新 workflow 的 dag_definition。
+// dag_definition 不再是数据库字段，这里把它格式化后写入工作流目录的 dag_definition.json
+// （内容为空时不落盘，保留磁盘上已有 DAG，避免画布局部保存把定义清空）。
 func (s *workflowService) UpdateWorkflowDagDefinition(ctx context.Context, workflowID int64, dagDefinition string) error {
 	if workflowID <= 0 {
 		return fmt.Errorf("invalid workflow id: %d", workflowID)
 	}
-	return s.workflowRepo.UpdateWorkflowDagDefinition(ctx, workflowID, dagDefinition)
+	workflow, err := s.workflowRepo.GetWorkflowByID(ctx, workflowID)
+	if err != nil {
+		return err
+	}
+	if workflow == nil {
+		return fmt.Errorf("workflow not found: %d", workflowID)
+	}
+	projectID, err := s.projectStringID(ctx, workflow.ProjectID)
+	if err != nil {
+		return err
+	}
+	return utils.WriteWorkflowDagDefinition(s.cfg.Storage.BaseDir, projectID, workflow.WorkflowID, dagDefinition)
 }
 
 func (s *workflowService) DeleteWorkflow(ctx context.Context, id int64) error {
@@ -612,11 +649,12 @@ func (s *workflowService) DeleteScript(ctx context.Context, id int64) error {
 		return fmt.Errorf("failed to list workflows for project: %w", err)
 	}
 	for _, wf := range workflows {
-		if strings.TrimSpace(wf.DagDefinition) == "" {
+		dagBytes, dagErr := s.workflowDagDefinitionFile(ctx, wf)
+		if dagErr != nil || len(dagBytes) == 0 {
 			continue
 		}
 		var dag map[string]any
-		if err := json.Unmarshal([]byte(wf.DagDefinition), &dag); err != nil {
+		if err := json.Unmarshal(dagBytes, &dag); err != nil {
 			continue
 		}
 		nodesAny, _ := dag["nodes"].([]any)
@@ -691,12 +729,13 @@ func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowI
 	}
 
 	formJSONWrap := make([]any, 0)
-	if findWorkflow.DagDefinition == "" {
-		return formJSONWrap, nil
+	dagBytes, err := s.workflowDagDefinitionFile(ctx, findWorkflow)
+	if err != nil || len(dagBytes) == 0 {
+		return formJSONWrap, err
 	}
 
 	var dagDefinition map[string]any
-	if err := json.Unmarshal([]byte(findWorkflow.DagDefinition), &dagDefinition); err != nil {
+	if err := json.Unmarshal(dagBytes, &dagDefinition); err != nil {
 		return formJSONWrap, nil
 	}
 

@@ -160,6 +160,16 @@ func (c *Codec) InstallWorkflow(ctx context.Context, req exportcodec.WorkflowIns
 		}
 	}
 
+	// dag_definition 不再是数据库字段：安装时把它写回工作流目录的 dag_definition.json，
+	// 与导出侧（utils.WriteWorkflowDagDefinition）口径一致 —— DecodeWorkflow 已把对象规整为字符串。
+	if rawDag, ok := payload.Workflow["dag_definition"]; ok {
+		if dagStr, ok := rawDag.(string); ok && strings.TrimSpace(dagStr) != "" {
+			if err := utils.WriteWorkflowDagDefinition(req.BaseDir, req.ProjectCode, payload.WorkflowID, dagStr); err != nil {
+				return nil, fmt.Errorf("failed to write workflow dag_definition file: %w", err)
+			}
+		}
+	}
+
 	installedScriptCount := 0
 	for _, scriptMap := range payload.Scripts {
 		scriptBytes, marshalErr := json.Marshal(scriptMap)

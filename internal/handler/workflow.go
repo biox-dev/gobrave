@@ -430,7 +430,6 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 		item.Category = firstNonEmpty(req.Category, existing.Category)
 		item.Description = firstNonEmpty(req.Description, existing.Description)
 		item.Prompt = firstNonEmpty(req.Prompt, existing.Prompt)
-		item.DagDefinition = firstNonEmpty(req.DagDefinition, existing.DagDefinition)
 		item.WorkflowID = firstNonEmpty(req.WorkflowID, existing.WorkflowID)
 		item.RelationType = firstNonEmpty(req.RelationType, existing.RelationType)
 		item.InstallKey = firstNonEmpty(req.InstallKey, existing.InstallKey)
@@ -462,7 +461,6 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 			Category:           req.Category,
 			Description:        req.Description,
 			Prompt:             req.Prompt,
-			DagDefinition:      req.DagDefinition,
 			WorkflowID:         workflowID,
 			RelationType:       req.RelationType,
 			InstallKey:         req.InstallKey,
@@ -498,6 +496,15 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 	// 内容为空时不落盘（保留磁盘上已有文件），与 SaveScript 的 io_schema 口径一致。
 	if err := utils.WriteWorkflowIOSchema(h.cfg.Storage.BaseDir, project.ProjectID, item.WorkflowID, req.IOSchema); err != nil {
 		c.Error(errors.NewInternalServerError("failed to write workflow io_schema file").WithDetails(err.Error()))
+		return
+	}
+
+	// dag_definition 落盘到工作流目录（GetWorkflowFileDir）的 dag_definition.json；该文件是
+	// 工作流 DAG 定义的唯一数据源，读取侧统一通过 utils.ReadWorkflowDagDefinition* 获取。
+	// 内容为空时不落盘（保留磁盘上已有文件），因此更新时未提交 dag_definition 不会覆盖历史定义。
+	// 必须在 WriteWorkflowFiles 之前写入 —— workflow.json 的生成需要读取该文件。
+	if err := utils.WriteWorkflowDagDefinition(h.cfg.Storage.BaseDir, project.ProjectID, item.WorkflowID, req.DagDefinition); err != nil {
+		c.Error(errors.NewInternalServerError("failed to write workflow dag_definition file").WithDetails(err.Error()))
 		return
 	}
 
@@ -1205,6 +1212,9 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 	// io_schema 从工作流目录的 io_schema.json 实时读取（不再落库）。
 	ioSchema, _ := utils.ReadWorkflowIOSchemaFile(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
 
+	// dag_definition 从工作流目录的 dag_definition.json 实时读取（不再落库）。
+	dagDefinition, _ := utils.ReadWorkflowDagDefinitionFile(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
+
 	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地，
 	// 以及 store 裸仓库上配置的远程仓库列表（remotes，发布到远程时写入）。
 	gitState := utils.ReadGitSyncState(workflowPath, storePath)
@@ -1214,9 +1224,10 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		Workflow:  *workflow,
 		StorePath: storePath,
 		// StoreVersion: storeVersion,
-		WorkflowPath: workflowPath,
-		IOSchema:     string(ioSchema),
-		GitState:     &gitState,
+		WorkflowPath:  workflowPath,
+		DagDefinition: string(dagDefinition),
+		IOSchema:      string(ioSchema),
+		GitState:      &gitState,
 		// StoreURL:     StoreURL,
 		// StoreMessage: StoreMessage,
 	}
