@@ -14,7 +14,7 @@ func buildScriptFormData(ctx context.Context,
 	scriptID int64,
 	projectID string) ([]interface{}, map[string]interface{}, error) {
 
-	formJSONWrap, err := workflowService.GetScriptFormJSONByID(ctx, scriptID)
+	formJSONWrap, _, err := workflowService.GetScriptFormJSONByID(ctx, scriptID)
 	if err != nil {
 		return nil, nil, err
 	}

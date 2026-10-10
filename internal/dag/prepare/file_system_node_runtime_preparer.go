@@ -332,7 +332,7 @@ func (p *FileSystemNodeRuntimePreparer) buildNodeParams(ctx context.Context, nod
 // 汇总其中每个条目的 name 值作为参数名白名单。
 // 脚本没有 form 定义（无 io_schema / 无 name）时返回 nil，表示不做过滤。
 func (p *FileSystemNodeRuntimePreparer) scriptFormParamNames(ctx context.Context, scriptID int64) (map[string]struct{}, error) {
-	formJSON, err := p.workflowService.GetScriptFormJSONByID(ctx, scriptID)
+	formJSON, _, err := p.workflowService.GetScriptFormJSONByID(ctx, scriptID)
 	if err != nil {
 		return nil, fmt.Errorf("load script form json failed: %w", err)
 	}

@@ -686,10 +686,10 @@ func (s *workflowService) DeleteScript(ctx context.Context, id int64) error {
 	return s.workflowRepo.DeleteScriptByID(ctx, id)
 }
 
-func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID int64) ([]any, error) {
+func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID int64) ([]any, map[string]any, error) {
 	script, err := s.workflowRepo.GetScriptByID(ctx, scriptID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	formJSONWrap := make([]interface{}, 0)
@@ -697,11 +697,11 @@ func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID in
 	// io_schema 不再是 script 的数据库字段，统一从脚本目录的 io_schema.json 读取。
 	projectID, err := s.projectStringID(ctx, script.ProjectID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ioSchema, err := utils.ReadScriptIOSchema(s.cfg.Storage.BaseDir, projectID, script.ScriptID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if inputs, ok := ioSchema["inputs"].([]interface{}); ok {
 		formJSONWrap = append(formJSONWrap, inputs...)
@@ -719,7 +719,7 @@ func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID in
 	// 		formJSONWrap = append(formJSONWrap, contentFormJSON...)
 	// 	}
 	// }
-	return formJSONWrap, err
+	return formJSONWrap, ioSchema, nil
 }
 
 func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowID int64) ([]any, error) {
@@ -997,8 +997,8 @@ func buildScriptVisItem(baseDir, projectID string, script *types.Script) map[str
 		return node
 	}
 
-	node["inputs"] = formatIOSchemaItems(ioSchema["inputs"])
-	node["outputs"] = formatIOSchemaItems(ioSchema["outputs"])
+	node["inputs"] = utils.FormatIOSchemaItems(ioSchema["inputs"])
+	node["outputs"] = utils.FormatIOSchemaItems(ioSchema["outputs"])
 
 	if scatter, ok := ioSchema["scatter"]; ok {
 		node["scatter"] = scatter
@@ -1016,36 +1016,6 @@ func buildScriptVisItem(baseDir, projectID string, script *types.Script) map[str
 	}
 
 	return node
-}
-
-func formatIOSchemaItems(raw any) map[string]any {
-	items, ok := raw.([]any)
-	if !ok {
-		return map[string]any{}
-	}
-
-	result := make(map[string]any)
-	for _, itemAny := range items {
-		item, ok := itemAny.(map[string]any)
-		if !ok {
-			continue
-		}
-		name, _ := item["name"].(string)
-		if name == "" {
-			continue
-		}
-
-		formatted := make(map[string]any)
-		for k, v := range item {
-			if k == "name" {
-				continue
-			}
-			formatted[k] = v
-		}
-		result[name] = formatted
-	}
-
-	return result
 }
 
 func cloneAnyMap(in map[string]any) map[string]any {

@@ -506,7 +506,7 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		return
 	}
 
-	formJSONWrap, err := h.workflowService.GetScriptFormJSONByID(c.Request.Context(), scriptIDInt)
+	formJSONWrap, scriptIOSchema, err := h.workflowService.GetScriptFormJSONByID(c.Request.Context(), scriptIDInt)
 
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to get form JSON").WithDetails(err.Error()))
@@ -609,9 +609,9 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		NodeID:                 nodeID,
 		NodeName:               strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_name"])),
 		ScriptID:               scriptIDInt,
-		InputsPatterns:         types.JSONMap{},
+		InputsPatterns:         types.JSONMap(utils.FormatIOSchemaItems(scriptIOSchema["inputs"])),
 		ResolvedInputs:         types.JSONMap(cloneAnyMapForNode(parseAnalysisResult)),
-		OutputPatterns:         types.JSONMap{},
+		OutputPatterns:         types.JSONMap(utils.FormatIOSchemaItems(scriptIOSchema["outputs"])),
 		ResolvedOutputs:        types.JSONMap{},
 		Params:                 types.JSONMap(cloneAnyMapForNode(parseAnalysisResult)),
 		RequestParam:           string(requestParamBytes),

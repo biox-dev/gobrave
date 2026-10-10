@@ -57,3 +57,43 @@ func readIOSchema(path string) (map[string]any, error) {
 	}
 	return result, nil
 }
+
+// FormatIOSchemaItems 把 io_schema 的 inputs / outputs 数组转成以 name 为键的 map：
+// 每项去掉 name 后，其余字段（type / required / description 等）原样保留。
+//
+// 例： [{"name":"tsv","type":"file"},{"name":"plot","type":"file"}]
+//
+//	→  {"tsv":{"type":"file"},"plot":{"type":"file"}}
+//
+// 该形态与 analysis_nodes.inputs_patterns / output_patterns 的存储结构一致，
+// 因此也是脚本可视化节点（buildScriptVisItem）与独立节点 OutputPatterns 的公共构造逻辑。
+// name 为空或类型不符的项被跳过（无法作为 handle 键）；raw 不是数组时返回空 map。
+func FormatIOSchemaItems(raw any) map[string]any {
+	items, ok := raw.([]any)
+	if !ok {
+		return map[string]any{}
+	}
+
+	result := make(map[string]any, len(items))
+	for _, itemAny := range items {
+		item, ok := itemAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := item["name"].(string)
+		if name == "" {
+			continue
+		}
+
+		formatted := make(map[string]any, len(item))
+		for k, v := range item {
+			if k == "name" {
+				continue
+			}
+			formatted[k] = v
+		}
+		result[name] = formatted
+	}
+
+	return result
+}

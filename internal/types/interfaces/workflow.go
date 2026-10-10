@@ -12,7 +12,9 @@ var ErrInvalidDagDefinitionJSON = stderrs.New("dag_definition is not valid JSON 
 type WorkflowService interface {
 	// GetFormJSONByWorkflowID 按工作流主键（int64）返回表单配置。
 	GetFormJSONByWorkflowID(ctx context.Context, workflowID int64) ([]any, error)
-	GetScriptFormJSONByID(ctx context.Context, scriptID int64) ([]any, error)
+	// GetScriptFormJSONByID 返回脚本表单配置（io_schema.inputs）以及脚本目录下 io_schema.json 的
+	// 完整内容；需要 outputs / scatter / gather 等的调用方复用第二个返回值，避免重复读盘。
+	GetScriptFormJSONByID(ctx context.Context, scriptID int64) ([]any, map[string]any, error)
 	// 后续废除
 	// GetFormJSONByScriptID(ctx context.Context, scriptID string) ([]any, error)
 	GetWorkflowByID(ctx context.Context, id int64) (*types.Workflow, error)
