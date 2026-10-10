@@ -899,7 +899,7 @@ func filterInputs(items []any, inputNames map[string]struct{}) []any {
 // 不再取脚本 io_schema：scatter.mode=each 时表单字段取工作流级 inputs；
 // 其他情况按节点缺失的 input 名过滤脚本自身的 inputs。
 func buildInputScriptFormJSON(scriptIOSchema, workflowIOSchema map[string]any, formJSONWrap *[]any, inputNames map[string]struct{}) {
-	if scatterAny, ok := workflowIOSchema["scatter"]; ok {
+	if scatterAny, ok := scriptIOSchema["scatter"]; ok {
 		scatter, ok := scatterAny.(map[string]any)
 		if !ok {
 			return
