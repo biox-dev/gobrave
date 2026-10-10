@@ -282,7 +282,7 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	omitExportFields(workflowMap, exportOmitFields)
+	omitExportFields(workflowMap, exportOmitWorkflowScriptFields)
 
 	var dagDefinition map[string]any
 	if workflow.DagDefinition != "" {
@@ -334,7 +334,7 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 		if scriptMapErr != nil {
 			return nil, scriptMapErr
 		}
-		omitExportFields(scriptMap, exportOmitFields)
+		omitExportFields(scriptMap, exportOmitWorkflowScriptFields)
 
 		// 脚本只保存 container_template_id（绑定行主键），导出的容器资产由绑定行反查：
 		// 绑定行 → 运行配置（spec_id）→ 镜像（image_id），三者各自按主键去重。
@@ -384,7 +384,7 @@ func (s *workflowService) GenerateScriptJSONByScriptID(ctx context.Context, scri
 	if err != nil {
 		return nil, err
 	}
-	omitExportFields(scriptMap, exportOmitFields)
+	omitExportFields(scriptMap, exportOmitWorkflowScriptFields)
 
 	containerTemplateSpecs := make([]map[string]any, 0)
 	containerTemplateDefinitions := make([]map[string]any, 0)
@@ -848,7 +848,20 @@ func structToMap(value any) (map[string]any, error) {
 // exportOmitFields 是导出 JSON（script.json / workflow.json）时需要剔除的字段。
 // updated_at 由数据库自动维护，每次保存都会变化，保留它会产生无意义的 git diff；
 // 后续如需剔除其他字段，直接追加到该列表即可。
+//
+// 注意：该列表同时作用于容器资产（运行配置 / 绑定行 / 镜像）。这些资产的 id 是
+// 实体之间的引用键（绑定行主键被脚本 container_template_id 引用，spec_id / image_id
+// 反过来引用运行配置与镜像），安装侧按主键 upsert 才能保持引用链，因此不能把 id 放进来。
 var exportOmitFields = []string{"updated_at"}
+
+// exportOmitWorkflowScriptFields 是导出 workflow / script 对象时需要剔除的字段。
+// 相比 exportOmitFields 多剔除 id / project_id / store_id / created_at：
+// 这四项是数据库内部的定位与审计信息（主键、归属、创建时间），每个环境各自生成，
+// 对导入方没有意义，导出后只会在不同环境间产生无意义的差异。
+// 顶层 workflow_id / script_id（字符串业务主键）才是导入方的标识，保留。
+// 容器资产不走这个列表，否则会断开 id 引用链。
+var exportOmitWorkflowScriptFields = append(append([]string{}, exportOmitFields...),
+	"id", "project_id", "store_id", "created_at")
 
 // omitExportFields 从导出 JSON 的顶层 map 中剔除指定字段（keys 为 nil 时不做任何处理）。
 func omitExportFields(m map[string]any, keys []string) {

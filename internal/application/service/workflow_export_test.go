@@ -182,3 +182,42 @@ func TestCollectScriptContainerAssetsDeduplicates(t *testing.T) {
 		t.Fatalf("lens = (%d, %d, %d), want (1, 1, 1) after skipped lookups", len(definitions), len(specs), len(images))
 	}
 }
+
+// TestExportOmitWorkflowScriptFields 保证 workflow / script 对象导出时剔除
+// id / project_id / store_id / created_at（以及 updated_at），
+// 但保留 script_id（component_id）等业务字段；同时不污染容器资产的 exportOmitFields。
+func TestExportOmitWorkflowScriptFields(t *testing.T) {
+	now := time.Now()
+	script := &types.Script{
+		ID:        7,
+		StoreID:   8,
+		ProjectID: 9,
+		ScriptID:  "script-abc",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	scriptMap, err := structToMap(script)
+	if err != nil {
+		t.Fatalf("structToMap: %v", err)
+	}
+	omitExportFields(scriptMap, exportOmitWorkflowScriptFields)
+
+	for _, field := range []string{"id", "project_id", "store_id", "created_at", "updated_at"} {
+		if _, exists := scriptMap[field]; exists {
+			t.Fatalf("script export must not contain %q: %#v", field, scriptMap)
+		}
+	}
+	if scriptMap["component_id"] != "script-abc" {
+		t.Fatalf("script component_id = %#v, want \"script-abc\"", scriptMap["component_id"])
+	}
+
+	// 容器资产仍需保留 id（引用键），因此 exportOmitFields 不能被污染。
+	for _, field := range []string{"id", "project_id", "store_id", "created_at"} {
+		for _, omitted := range exportOmitFields {
+			if omitted == field {
+				t.Fatalf("exportOmitFields must not contain %q", field)
+			}
+		}
+	}
+}
