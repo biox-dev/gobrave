@@ -1404,7 +1404,7 @@ func (h *AnalysisHandler) EditParamsV2(c *gin.Context) {
 			return
 		}
 	}
-	requestParam["analysis_type"] = "workflow"
+	// requestParam["analysis_type"] = "workflow"
 	requestParam["analysis_id"] = fmt.Sprintf("%d", analysisItem.ID)
 
 	// TODO data的projectId 没有修改
@@ -1481,7 +1481,7 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 		return
 	}
 
-	scriptItem, err := h.workflowService.GetScriptByID(c.Request.Context(), analysisNode.ScriptID)
+	script, err := h.workflowService.GetScriptByID(c.Request.Context(), analysisNode.ScriptID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("script not found"))
@@ -1499,7 +1499,7 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 		}
 	}
 	// requestParam["analysis_node_id"] = analysisNodeID
-	requestParam["analysis_type"] = "workflow"
+	// requestParam["analysis_type"] = "workflow"
 	requestParam["analysis_node_id"] = fmt.Sprintf("%d", analysisNode.ID)
 	analysisName := analysisNode.NodeName
 	isReport := false
@@ -1537,28 +1537,39 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 		analysisWorkflowID = analysisItem.WorkflowID
 	}
 	if analysisWorkflowID > 0 {
-		workflowItem, err := h.workflowService.GetWorkflowByID(c.Request.Context(), analysisWorkflowID)
-		if err != nil {
-			if stderrs.Is(err, gorm.ErrRecordNotFound) {
-				c.Error(errors.NewNotFoundError("workflow not found"))
-				return
-			}
-			c.Error(errors.NewInternalServerError("failed to get workflow").WithDetails(err.Error()))
-			return
-		}
+		// workflowItem, err := h.workflowService.GetWorkflowByID(c.Request.Context(), analysisWorkflowID)
+		// if err != nil {
+		// 	if stderrs.Is(err, gorm.ErrRecordNotFound) {
+		// 		c.Error(errors.NewNotFoundError("workflow not found"))
+		// 		return
+		// 	}
+		// 	c.Error(errors.NewInternalServerError("failed to get workflow").WithDetails(err.Error()))
+		// 	return
+		// }
 		// io_schema 以脚本目录下的 io_schema.json 为准（不再是 script 的数据库字段）；
 		// dag_definition 以工作流目录下的 dag_definition.json 为准（不再是 workflow 的数据库字段）。
-		ioSchema := map[string]interface{}{}
-		dagDefinition := ""
-		if h.config != nil && h.config.Storage != nil {
-			if project, projectErr := h.projectRepo.GetProjectByID(c.Request.Context(), workflowItem.ProjectID); projectErr == nil && project != nil {
-				ioSchema, _ = utils.ReadScriptIOSchema(h.config.Storage.BaseDir, project.ProjectID, scriptItem.ScriptID)
-				if dagBytes, dagErr := utils.ReadWorkflowDagDefinitionFile(h.config.Storage.BaseDir, project.ProjectID, workflowItem.WorkflowID); dagErr == nil {
-					dagDefinition = string(dagBytes)
-				}
-			}
+		// ioSchema := map[string]interface{}{}
+		// dagDefinition := ""
+		// if h.config != nil && h.config.Storage != nil {
+		// 	if project, projectErr := h.projectRepo.GetProjectByID(c.Request.Context(), workflowItem.ProjectID); projectErr == nil && project != nil {
+		// 		ioSchema, _ = utils.ReadScriptIOSchema(h.config.Storage.BaseDir, project.ProjectID, script.ScriptID)
+		// 		if dagBytes, dagErr := utils.ReadWorkflowDagDefinitionFile(h.config.Storage.BaseDir, project.ProjectID, workflowItem.WorkflowID); dagErr == nil {
+		// 			dagDefinition = string(dagBytes)
+		// 		}
+		// 	}
+		// }
+		requestParam["analysis_name"] = analysisNode.NodeName
+		requestParam["script_id"] = fmt.Sprintf("%d", script.ID)
+
+		// formJSON, err := h.workflowService.GetScriptFormJSONByID(c.Request.Context(), script.ID)
+
+		project, err := h.projectRepo.GetProjectByID(c.Request.Context(), analysisNode.ProjectID)
+		if err != nil {
+			c.Error(errors.NewNotFoundError("project not found"))
 		}
-		formJSON, err := buildNodeFormJSON(dagDefinition, ioSchema, scriptItem, scriptItem.ScriptID)
+		formJSON, analysisResult, err := buildScriptFormData(c.Request.Context(), h.workflowService, h.dataService, script.ID, project.ProjectID)
+
+		// formJSON, err := buildNodeFormJSON(dagDefinition, ioSchema, scriptItem, scriptItem.ScriptID)
 		if err != nil {
 			c.Error(errors.NewInternalServerError("failed to build node form json").WithDetails(err.Error()))
 			return
@@ -1567,6 +1578,7 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 			AnalysisName:   analysisName,
 			IsReport:       isReport,
 			CacheType:      cacheType,
+			AnalysisResult: analysisResult,
 			AnalysisID:     analysisIDValue,
 			AnalysisNodeID: strconv.FormatInt(analysisNode.ID, 10),
 			Status:         analysisNode.Status,
@@ -1576,15 +1588,15 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 		})
 	} else {
 		// TODO analysisNode 的 scriptID 后续变成 int64，直接使用 scriptID 查询 formJSON
-		script, err := h.workflowService.GetScriptByID(c.Request.Context(), analysisNode.ScriptID)
-		if err != nil {
-			if stderrs.Is(err, gorm.ErrRecordNotFound) {
-				c.Error(errors.NewNotFoundError("script not found"))
-				return
-			}
-			c.Error(errors.NewInternalServerError("failed to get script").WithDetails(err.Error()))
-			return
-		}
+		// script, err := h.workflowService.GetScriptByID(c.Request.Context(), analysisNode.ScriptID)
+		// if err != nil {
+		// 	if stderrs.Is(err, gorm.ErrRecordNotFound) {
+		// 		c.Error(errors.NewNotFoundError("script not found"))
+		// 		return
+		// 	}
+		// 	c.Error(errors.NewInternalServerError("failed to get script").WithDetails(err.Error()))
+		// 	return
+		// }
 		// TODO data的projectId 没有修改
 		project, err := h.projectRepo.GetProjectByID(c.Request.Context(), analysisNode.ProjectID)
 		if err != nil {

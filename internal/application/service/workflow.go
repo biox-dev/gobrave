@@ -706,9 +706,9 @@ func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID in
 	if inputs, ok := ioSchema["inputs"].([]interface{}); ok {
 		formJSONWrap = append(formJSONWrap, inputs...)
 	}
-	if params, ok := ioSchema["params"].([]interface{}); ok {
-		formJSONWrap = append(formJSONWrap, params...)
-	}
+	// if params, ok := ioSchema["params"].([]interface{}); ok {
+	// 	formJSONWrap = append(formJSONWrap, params...)
+	// }
 
 	// if script.Content != "" {
 	// 	content := make(map[string]interface{})
@@ -831,10 +831,6 @@ func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowI
 			buildInputScriptFormJSON(merged, workflowIOSchema, &formJSONWrap, missingInputNames)
 		}
 
-		if params, ok := ioSchema["params"].([]any); ok {
-			formJSONWrap = append(formJSONWrap, params...)
-		}
-
 		// if script.Content != "" {
 		// 	var content map[string]any
 		// 	if err := json.Unmarshal([]byte(script.Content), &content); err == nil {
@@ -934,30 +930,54 @@ func filterInputs(items []any, inputNames map[string]struct{}) []any {
 
 // buildInputScriptFormJSON 追加一个「输入脚本」（存在未连接 input 的节点）的表单字段。
 //
-// scatter 配置取「工作流级 io_schema」（workflowIOSchema，来自工作流目录 io_schema.json），
-// 不再取脚本 io_schema：scatter.mode=each 时表单字段取工作流级 inputs；
-// 其他情况按节点缺失的 input 名过滤脚本自身的 inputs。
+// 表单字段统一取自 io_schema 的 inputs（params 已废弃不再导出）。
+//   - 普通情况：只取脚本自身 name 未被 edges 连接的 inputs（inputNames）。
+//   - scatter.mode=each：scatter 维度取值来自工作流级 inputs（workflowIOSchema），
+//     故先追加工作流级 inputs，再补充脚本自身除 scatter.names（已被 scatter 消费）之外、
+//     未被 edges 连接的 inputs。
 func buildInputScriptFormJSON(scriptIOSchema, workflowIOSchema map[string]any, formJSONWrap *[]any, inputNames map[string]struct{}) {
-	if scatterAny, ok := scriptIOSchema["scatter"]; ok {
-		scatter, ok := scatterAny.(map[string]any)
-		if !ok {
-			return
+	scatter, _ := scriptIOSchema["scatter"].(map[string]any)
+
+	if mode, _ := scatter["mode"].(string); mode == "each" {
+		if inputs, ok := workflowIOSchema["inputs"].([]any); ok {
+			*formJSONWrap = append(*formJSONWrap, inputs...)
 		}
-		if mode, _ := scatter["mode"].(string); mode == "each" {
-			if inputs, ok := workflowIOSchema["inputs"].([]any); ok {
-				*formJSONWrap = append(*formJSONWrap, inputs...)
-			}
-			return
-		}
-		if inputs, ok := scriptIOSchema["inputs"].([]any); ok {
-			*formJSONWrap = append(*formJSONWrap, filterInputs(inputs, inputNames)...)
-		}
+		scriptInputs, _ := scriptIOSchema["inputs"].([]any)
+		*formJSONWrap = append(*formJSONWrap, filterInputs(excludeInputNames(scriptInputs, scatter["names"]), inputNames)...)
 		return
 	}
 
 	if inputs, ok := scriptIOSchema["inputs"].([]any); ok {
 		*formJSONWrap = append(*formJSONWrap, filterInputs(inputs, inputNames)...)
 	}
+}
+
+// excludeInputNames 过滤掉 name 命中 names（即 scatter.names）的 input 项。
+// names 为空或类型不符时原样返回。
+func excludeInputNames(items []any, names any) []any {
+	namesList, ok := names.([]any)
+	if !ok || len(namesList) == 0 {
+		return items
+	}
+
+	excluded := make(map[string]struct{}, len(namesList))
+	for _, n := range namesList {
+		excluded[fmt.Sprintf("%v", n)] = struct{}{}
+	}
+
+	filtered := make([]any, 0, len(items))
+	for _, itemAny := range items {
+		item, ok := itemAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, hit := excluded[fmt.Sprintf("%v", item["name"])]; hit {
+			continue
+		}
+		filtered = append(filtered, itemAny)
+	}
+
+	return filtered
 }
 
 func buildScriptVisItem(baseDir, projectID string, script *types.Script) map[string]any {
