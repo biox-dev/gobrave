@@ -336,6 +336,10 @@ func (s *dataService) ListFileByAssayIDAndRole(ctx context.Context, assayID int6
 	return s.dataRepo.ListFileByAssayIDAndRole(ctx, assayID, roles)
 }
 
+func (s *dataService) ListFileByAnalysisNodeID(ctx context.Context, analysisNodeID int64) ([]*types.File, error) {
+	return s.dataRepo.ListFileByAnalysisNodeID(ctx, analysisNodeID)
+}
+
 func (s *dataService) ListFileByProjectIDGroupByRole(ctx context.Context, projectID string) ([]*types.FileByProjectRoleGroup, error) {
 	items, err := s.dataRepo.ListFileByProjectID(ctx, projectID, nil)
 	if err != nil {

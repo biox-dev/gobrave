@@ -49,6 +49,10 @@ type DataService interface {
 	// condition, so every file of the assay is returned (mirrors
 	// ListAssayByProjectID).
 	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error)
+	// ListFileByAnalysisNodeID returns the files produced by one DAG analysis
+	// node, resolved through go_file.analysis_node_id -> analysis_nodes.id. A node
+	// without files yields an empty slice (not an error).
+	ListFileByAnalysisNodeID(ctx context.Context, analysisNodeID int64) ([]*types.File, error)
 
 	CreateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error
 	AddFileToDataset(ctx context.Context, req *types.AddFileToDatasetRequest) (*types.AddFileToDatasetResponse, error)
@@ -114,6 +118,7 @@ type DataRepository interface {
 	PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.FileWithDatasetInfo, int64, error)
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
 	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error)
+	ListFileByAnalysisNodeID(ctx context.Context, analysisNodeID int64) ([]*types.File, error)
 
 	CreateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error
 	ExistsDatasetFile(ctx context.Context, datasetID, fileID int64) (bool, error)

@@ -276,6 +276,22 @@ func (r *dataRepository) ListFileByAssayIDAndRole(ctx context.Context, assayID i
 	return items, nil
 }
 
+// ListFileByAnalysisNodeID returns the files produced by one DAG analysis node,
+// ordered by creation order (oldest first), resolved through the file's own
+// go_file.analysis_node_id -> analysis_nodes.id binding. A node without files
+// yields an empty slice (not an error).
+func (r *dataRepository) ListFileByAnalysisNodeID(ctx context.Context, analysisNodeID int64) ([]*types.File, error) {
+	items := make([]*types.File, 0)
+	err := r.db.WithContext(ctx).
+		Where("analysis_node_id = ?", analysisNodeID).
+		Order("id ASC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *dataRepository) PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID string, roles []string) ([]*types.FileWithDatasetInfo, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}

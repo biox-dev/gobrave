@@ -63,6 +63,12 @@ type assayIDQuery struct {
 	AssayID int64 `form:"assay_id" binding:"required"`
 }
 
+// analysisNodeIDQuery addresses a resource by its owning analysis node (int64 PK
+// of analysis_nodes, i.e. go_file.analysis_node_id).
+type analysisNodeIDQuery struct {
+	AnalysisNodeID int64 `form:"analysis_node_id" binding:"required"`
+}
+
 func handleDataError(c *gin.Context, err error, internalMsg string) {
 	if stderrs.Is(err, gorm.ErrRecordNotFound) {
 		c.Error(errors.NewNotFoundError("record not found"))
@@ -787,6 +793,38 @@ func (h *DataHandler) ListFileByAssayID(c *gin.Context) {
 	items, err := h.dataService.ListFileByAssayID(c.Request.Context(), req.AssayID)
 	if err != nil {
 		handleDataError(c, err, "failed to list file by assay id")
+		return
+	}
+
+	c.JSON(http.StatusOK, items)
+}
+
+// ListFileByAnalysisNodeID godoc
+// @Summary      按分析节点查询文件列表
+// @Description  返回某个分析节点（analysis_nodes）产出的全部文件，通过 go_file.analysis_node_id 关联（无文件时返回空数组）
+// @Tags         数据管理
+// @Produce      json
+// @Param        analysis_node_id  query     integer           true  "分析节点主键 ID"
+// @Success      200               {array}   types.File
+// @Failure      400               {object}  errors.AppError
+// @Failure      401               {object}  errors.AppError
+// @Failure      500               {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/file/list-by-analysis-node [get]
+func (h *DataHandler) ListFileByAnalysisNodeID(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req analysisNodeIDQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	items, err := h.dataService.ListFileByAnalysisNodeID(c.Request.Context(), req.AnalysisNodeID)
+	if err != nil {
+		handleDataError(c, err, "failed to list file by analysis node id")
 		return
 	}
 
