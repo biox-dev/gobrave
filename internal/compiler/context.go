@@ -31,6 +31,11 @@ type NodeRuntimeState struct {
 	Inputs         map[string]any
 	Outputs        map[string]any
 	ResolvedInputs map[string]any
+	// RequestParam 汇总节点自身的原始请求值（按输入句柄 name 建键）。目前只由散列
+	// (scatter each) 节点写入：item 里按句柄名命中的原始值放到这里，而不是直接写进
+	// resolved_inputs，落库后由 nodebuild.Materialize 的解析器据此生成结构化
+	// resolved_inputs（与 select-assay 输入同一口径）。
+	RequestParam   map[string]any
 	ResolvedOutput map[string]any
 	InputErrors    []string
 	MaxRetry       int
@@ -252,6 +257,13 @@ func gatherField(node map[string]any) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprintf("%v", firstNonNil(gather["field"], "")))
+}
+
+// isScatterEachNode 报告节点是否声明了 scatter(mode=each)，即会被展开成多个
+// runtime 实例的散列节点。scatterField 只在 mode=each 时返回非空字段名，因此直接
+// 复用它即可。
+func isScatterEachNode(node map[string]any) bool {
+	return scatterField(node) != ""
 }
 
 func edgeValue(edge map[string]any, camel string, snake string) string {

@@ -164,6 +164,20 @@ func encodeRequestParam(payload types.JSONMap) string {
 	return string(buf)
 }
 
+// decodeRequestParam parses a node request_param string back into a map. An empty
+// or invalid payload yields an empty map so callers can treat "no raw request" and
+// "unparsable request" the same way.
+func decodeRequestParam(raw string) map[string]any {
+	out := map[string]any{}
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
 // cloneJSONSlice copies a JSON slice so callers cannot mutate compiler output.
 func cloneJSONSlice(src types.JSONSlice) types.JSONSlice {
 	if len(src) == 0 {

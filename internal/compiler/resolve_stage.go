@@ -75,7 +75,8 @@ func (s *SampleResolveStrategy) Resolve(ctx *CompileContext, state *NodeRuntimeS
 			continue
 		}
 
-		direct := sampleValue(state.Sample, inputHandle)
+		byName := sampleValue(state.Sample, inputHandle)
+		direct := byName
 		if direct == nil {
 			scatter := scatterField(state.Node)
 			if scatterMatchesInputHandle(scatter, inputHandle) {
@@ -83,6 +84,21 @@ func (s *SampleResolveStrategy) Resolve(ctx *CompileContext, state *NodeRuntimeS
 			}
 		}
 		if direct != nil {
+			// 散列(each)节点里，按句柄名命中的 item 值属于「原始请求值」，应写进节点的
+			// request_param，而不是直接写进 resolved_inputs：request_param 保留原始值，
+			// 落库时（nodebuild.Materialize）再由解析器据其生成结构化 resolved_inputs，
+			// 与 select-assay 输入同一口径。
+			//
+			// 只有「按名称」(sampleValue) 命中的值走这条路；按散列字段名匹配整行 item 的
+			// 兼容分支（scatterMatchesInputHandle）仍写回 resolved_inputs，因为整行 item
+			// 不是可解析的原始表单值（例如 {"files": "<id>"}）。
+			if byName != nil && isScatterEachNode(state.Node) {
+				if state.RequestParam == nil {
+					state.RequestParam = map[string]any{}
+				}
+				state.RequestParam[inputHandle] = direct
+				continue
+			}
 			direct = projectInputValueBySchema(direct, inputSchema)
 			state.ResolvedInputs[inputHandle] = direct
 			state.InputErrors = append(state.InputErrors, collectRequiredInputErrors(inputHandle, inputSchema, direct)...)

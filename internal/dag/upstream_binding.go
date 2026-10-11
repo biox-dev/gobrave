@@ -133,6 +133,60 @@ func ApplySelectAssayBindings(ctx context.Context, parser NodeRequestParser, tar
 	return true
 }
 
+// ApplyRequestParamParse parses target.request_param through the injected parser and
+// overwrites the matching declared resolved_inputs. It returns true when the target was
+// modified.
+//
+// It is the request_param-source counterpart of ApplySelectAssayBindings: where that one
+// needs a resolved upstream edge (and its recorded file id) to know what to rewrite, this
+// one derives resolved_inputs straight from request_param. It exists so a node whose
+// inputs were written as raw request values - for example a scatter(each) item's
+// per-handle value, keyed by the input name - can be turned into the structured recipe
+// the script form expects, without requiring any upstream graph snapshot. parser may be
+// nil, in which case nothing changes.
+func ApplyRequestParamParse(ctx context.Context, parser NodeRequestParser, target *types.AnalysisNode) bool {
+	if target == nil || parser == nil {
+		return false
+	}
+	requestParams := map[string]any{}
+	if raw := strings.TrimSpace(target.RequestParam); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &requestParams); err != nil {
+			return false
+		}
+	}
+	if len(requestParams) == 0 {
+		return false
+	}
+
+	parsed := parseNodeRequestParam(ctx, parser, target, requestParams)
+	if len(parsed) == 0 {
+		return false
+	}
+
+	// Only overwrite the resolved_inputs of handles this node actually declares; a parsed
+	// payload also carries non-input fields (analysis_name / colors / groups) that must not
+	// leak into the node's inputs.
+	declared := map[string]any(target.InputsPatterns)
+	changed := false
+	for key := range parsed {
+		if _, ok := declared[key]; ok {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return false
+	}
+
+	resolvedInputs := map[string]any(target.ResolvedInputs)
+	if resolvedInputs == nil {
+		resolvedInputs = map[string]any{}
+	}
+	overwriteResolvedInputs(resolvedInputs, target, parsed)
+	target.ResolvedInputs = types.JSONMap(resolvedInputs)
+	return true
+}
+
 // parseNodeRequestParam 调用注入的解析器把 request_param 还原成结构化配方。解析器未
 // 注入或解析失败时返回 nil，调用方保留原始 resolved_inputs。
 func parseNodeRequestParam(ctx context.Context, parser NodeRequestParser, target *types.AnalysisNode, requestParam map[string]any) map[string]any {

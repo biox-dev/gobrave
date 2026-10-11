@@ -53,6 +53,71 @@ func TestBuildRuntimeTasks_ScatterEachMapsPluralFieldToSingularInput(t *testing.
 	}
 }
 
+// TestBuildRuntimeTasks_ScatterEachFillsRequestParamByHandleName 验证散列(each)节点
+// 把 parse_analysis_result 的 item 按句柄名命中的原始值填进 request_param，而不再直接
+// 写进 resolved_inputs —— 结构化 resolved_inputs 由落库时（nodebuild.Materialize）
+// 依据 request_param 解析得到。
+func TestBuildRuntimeTasks_ScatterEachFillsRequestParamByHandleName(t *testing.T) {
+	runtimeDAG, err := BuildRuntimeTasks(1, map[string]any{
+		"sample_list": []any{
+			map[string]any{"node_name": "OL-1", "sample": map[string]any{"files": "aaaa"}},
+			map[string]any{"node_name": "OL-2", "sample": map[string]any{"files": "bbbb"}},
+		},
+	}, map[string]any{}, map[string]any{
+		"nodes": []any{
+			map[string]any{
+				"id":   "node-assay",
+				"name": "Assay",
+				"inputs": map[string]any{
+					"sample": map[string]any{"type": "selectassay", "required": true},
+				},
+				"outputs": map[string]any{
+					"out": map[string]any{"pattern": "out.txt", "required": true, "type": "file"},
+				},
+				"scatter": map[string]any{
+					"mode":  "each",
+					"field": "sample_list",
+				},
+			},
+		},
+		"edges": []any{},
+	})
+	if err != nil {
+		t.Fatalf("BuildRuntimeTasks failed: %v", err)
+	}
+
+	nodes, ok := runtimeDAG["analysis_nodes"].([]map[string]any)
+	if !ok {
+		t.Fatalf("analysis_nodes type mismatch: %T", runtimeDAG["analysis_nodes"])
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 analysis nodes, got %d", len(nodes))
+	}
+
+	wantFiles := []string{"aaaa", "bbbb"}
+	for i, node := range nodes {
+		requestParam, ok := node["request_param"].(map[string]any)
+		if !ok {
+			t.Fatalf("node %d request_param type mismatch: %T", i, node["request_param"])
+		}
+		sample, ok := requestParam["sample"].(map[string]any)
+		if !ok {
+			t.Fatalf("node %d request_param.sample type mismatch: %T", i, requestParam["sample"])
+		}
+		if sample["files"] != wantFiles[i] {
+			t.Fatalf("node %d request_param.sample.files = %v, want %v", i, sample["files"], wantFiles[i])
+		}
+
+		resolvedInputs, ok := node["resolved_inputs"].(map[string]any)
+		if !ok {
+			t.Fatalf("node %d resolved_inputs type mismatch: %T", i, node["resolved_inputs"])
+		}
+		if _, exists := resolvedInputs["sample"]; exists {
+			t.Fatalf("node %d must not carry the raw scatter value in resolved_inputs: %#v", i, resolvedInputs["sample"])
+		}
+	}
+}
+
 func TestBuildRuntimeTasks_DownstreamSampleNodeKeepsGlobalMetadata(t *testing.T) {
 	metadata := map[string]any{
 		"path":       "/tmp/metadata.tsv",

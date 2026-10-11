@@ -139,6 +139,7 @@ func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 	MergeUpstreamInputs(req.Spec, resolvedInputs, req.Incoming, req.Upstream)
 	requestParam := encodeRequestParam(req.Spec.RequestParam)
 	resolvedInputs, requestParam = applyUpstreamBindings(req.Ctx, req.Parser, req.Analysis, req.Spec, req.Incoming, req.Upstream, resolvedInputs, requestParam)
+	resolvedInputs, requestParam = applyRequestParamParse(req.Ctx, req.Parser, req.Analysis, req.Spec, resolvedInputs, requestParam)
 
 	// Only create the tree when a workspace could be derived; a caller that
 	// supplies paths later owns creating them (see v3's populateNodePathDefaults).
@@ -241,6 +242,7 @@ func Probe(req ProbeRequest) (*types.AnalysisNode, error) {
 
 	MergeUpstreamInputs(req.Spec, probe.ResolvedInputs, req.Incoming, req.Upstream)
 	dagruntime.ApplySelectAssayBindings(req.Ctx, req.Parser, &probe, dagruntime.BuildUpstreamInputBindings(req.Incoming, req.Upstream))
+	probe.ResolvedInputs, probe.RequestParam = applyRequestParamParse(req.Ctx, req.Parser, req.Analysis, req.Spec, probe.ResolvedInputs, probe.RequestParam)
 	return &probe, nil
 }
 
@@ -327,6 +329,68 @@ func applyUpstreamBindings(
 	}
 	bindings := dagruntime.BuildUpstreamInputBindings(incoming, upstream)
 	if !dagruntime.ApplySelectAssayBindings(ctx, parser, target, bindings) {
+		return resolvedInputs, requestParam
+	}
+	if target.ResolvedInputs == nil {
+		target.ResolvedInputs = types.JSONMap{}
+	}
+	return target.ResolvedInputs, target.RequestParam
+}
+
+// applyRequestParamParse derives structured resolved_inputs from the node's own
+// request_param, without requiring an upstream graph snapshot.
+//
+// It is the pull-side counterpart of the compiler writing raw request values into
+// request_param - most notably a scatter(each) item's per-handle value, keyed by
+// the input name. Once the raw value is on request_param, this step parses it
+// through the injected parser (the same one select-assay binding uses) so the row
+// persisted with the node carries the structured recipe rather than the raw form.
+//
+// The parse is skipped unless a declared input handle is provided by request_param
+// and is still absent from resolved_inputs, so nodes whose inputs the compiler (or
+// an upstream merge) already resolved never pay for the parser.
+func applyRequestParamParse(
+	ctx context.Context,
+	parser dagruntime.NodeRequestParser,
+	analysis *types.Analysis,
+	spec *Spec,
+	resolvedInputs types.JSONMap,
+	requestParam string,
+) (types.JSONMap, string) {
+	if parser == nil || spec == nil || len(spec.InputsPatterns) == 0 {
+		return resolvedInputs, requestParam
+	}
+	params := decodeRequestParam(requestParam)
+	if len(params) == 0 {
+		return resolvedInputs, requestParam
+	}
+
+	pending := false
+	for handle := range spec.InputsPatterns {
+		value, ok := params[handle]
+		if !ok || value == nil {
+			continue
+		}
+		if resolvedInputs[handle] == nil {
+			pending = true
+			break
+		}
+	}
+	if !pending {
+		return resolvedInputs, requestParam
+	}
+
+	target := &types.AnalysisNode{
+		NodeID:         spec.NodeID,
+		ScriptID:       spec.ScriptID,
+		InputsPatterns: spec.InputsPatterns,
+		ResolvedInputs: resolvedInputs,
+		RequestParam:   requestParam,
+	}
+	if analysis != nil {
+		target.AnalysisID = analysis.ID
+	}
+	if !dagruntime.ApplyRequestParamParse(ctx, parser, target) {
 		return resolvedInputs, requestParam
 	}
 	if target.ResolvedInputs == nil {
