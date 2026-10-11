@@ -32,7 +32,6 @@ func TestBuildDynamicAnalysisNodeUsesSharedLayoutAndIdentity(t *testing.T) {
 		"node_id":         "align",
 		"node_name":       "align",
 		"script_id":       "42",
-		"params":          types.JSONMap{"threads": 4},
 		"resolved_inputs": types.JSONMap{},
 		"upstream_ids":    []any{},
 		"downstream_ids":  []any{},
@@ -56,7 +55,7 @@ func TestBuildDynamicAnalysisNodeUsesSharedLayoutAndIdentity(t *testing.T) {
 
 	// The persisted identity must equal the shared algorithm's, otherwise V3
 	// could never recognize this row as the same instance.
-	wantHash := nodebuild.InstanceInputHash("align", types.JSONMap{}, types.JSONMap{"threads": 4})
+	wantHash := nodebuild.InstanceInputHash("align", types.JSONMap{})
 	if node.InputHash != wantHash {
 		t.Fatalf("input hash = %q, want %q", node.InputHash, wantHash)
 	}

@@ -128,10 +128,8 @@ func TestMergeUpstreamInputsHonoursFanIn(t *testing.T) {
 		InputsPatterns: types.JSONMap{
 			"in": map[string]any{"multiple": true},
 		},
-		Params:         types.JSONMap{},
 		ResolvedInputs: types.JSONMap{},
 	}
-	params := cloneJSONMap(spec.Params)
 	resolved := cloneJSONMap(spec.ResolvedInputs)
 
 	upstream := map[string]*types.AnalysisNode{
@@ -145,16 +143,13 @@ func TestMergeUpstreamInputsHonoursFanIn(t *testing.T) {
 		{SourceNode: "a3", SourceHandle: "out", TargetNode: "b1", TargetHandle: "in"},
 	}
 
-	mergeUpstreamInputs(spec, params, resolved, incoming, upstream)
+	mergeUpstreamInputs(spec, resolved, incoming, upstream)
 
-	values, ok := params["in"].([]any)
+	values, ok := resolved["in"].([]any)
 	if !ok || len(values) != 2 {
-		t.Fatalf("expected two fan-in values, got %#v", params["in"])
+		t.Fatalf("expected two fan-in values, got %#v", resolved["in"])
 	}
 	if values[0] != "v1" || values[1] != "v2" {
 		t.Fatalf("unexpected fan-in payload %#v", values)
-	}
-	if _, exists := resolved["in"]; !exists {
-		t.Fatal("resolved inputs must be populated as well")
 	}
 }

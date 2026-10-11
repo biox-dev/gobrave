@@ -70,7 +70,6 @@ func (s *SampleResolveStrategy) Resolve(ctx *CompileContext, state *NodeRuntimeS
 			}
 
 			resolved = projectInputValueBySchema(resolved, inputSchema)
-			state.NodeParams[inputHandle] = resolved
 			state.ResolvedInputs[inputHandle] = resolved
 			state.InputErrors = append(state.InputErrors, collectRequiredInputErrors(inputHandle, inputSchema, resolved)...)
 			continue
@@ -85,14 +84,12 @@ func (s *SampleResolveStrategy) Resolve(ctx *CompileContext, state *NodeRuntimeS
 		}
 		if direct != nil {
 			direct = projectInputValueBySchema(direct, inputSchema)
-			state.NodeParams[inputHandle] = direct
 			state.ResolvedInputs[inputHandle] = direct
 			state.InputErrors = append(state.InputErrors, collectRequiredInputErrors(inputHandle, inputSchema, direct)...)
 			continue
 		}
 
 		if fmt.Sprintf("%v", firstNonNil(inputSchema["type"], "")) == "CollectedSampleSelect" {
-			state.NodeParams[inputHandle] = state.Sample
 			state.ResolvedInputs[inputHandle] = state.Sample
 			continue
 		}
@@ -112,7 +109,7 @@ func (s *SampleResolveStrategy) Resolve(ctx *CompileContext, state *NodeRuntimeS
 		outputCfg := asMap(state.Outputs[outputHandle])
 		var outputValue any
 		if !hasInputErr {
-			outputValue = state.NodeParams[outputHandle]
+			outputValue = state.ResolvedInputs[outputHandle]
 		}
 		if !hasInputErr {
 			if pattern, ok := outputCfg["pattern"].(string); ok && pattern != "" {
@@ -170,13 +167,11 @@ func (s *SingletonResolveStrategy) Resolve(ctx *CompileContext, state *NodeRunti
 
 		isList := isAggregate && gather != "" && inputHandle == gather
 		if isList {
-			state.NodeParams[inputHandle] = filtered
 			state.ResolvedInputs[inputHandle] = filtered
 			state.InputErrors = append(state.InputErrors, collectRequiredInputErrors(inputHandle, inputSchema, filtered)...)
 			continue
 		}
 		if len(filtered) > 0 {
-			state.NodeParams[inputHandle] = filtered[0]
 			state.ResolvedInputs[inputHandle] = filtered[0]
 			state.InputErrors = append(state.InputErrors, collectRequiredInputErrors(inputHandle, inputSchema, filtered[0])...)
 			continue
@@ -185,7 +180,6 @@ func (s *SingletonResolveStrategy) Resolve(ctx *CompileContext, state *NodeRunti
 		direct := ctx.Params[inputHandle]
 		if direct != nil {
 			direct = projectInputValueBySchema(direct, inputSchema)
-			state.NodeParams[inputHandle] = direct
 			state.ResolvedInputs[inputHandle] = direct
 			state.InputErrors = append(state.InputErrors, collectRequiredInputErrors(inputHandle, inputSchema, direct)...)
 			continue
@@ -199,7 +193,7 @@ func (s *SingletonResolveStrategy) Resolve(ctx *CompileContext, state *NodeRunti
 		outputCfg := asMap(state.Outputs[outputHandle])
 		var outputValue any
 		if !hasInputErr {
-			outputValue = state.NodeParams[outputHandle]
+			outputValue = state.ResolvedInputs[outputHandle]
 		}
 		if !hasInputErr {
 			if pattern, ok := outputCfg["pattern"].(string); ok && pattern != "" {

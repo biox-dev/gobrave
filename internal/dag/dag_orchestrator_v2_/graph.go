@@ -32,8 +32,6 @@ type NodeSpec struct {
 	OutputPatterns types.JSONMap
 	// ResolvedOutputs holds the statically predicted outputs.
 	ResolvedOutputs types.JSONMap
-	// Params are the process parameters merged from workflow defaults.
-	Params types.JSONMap
 	// UpstreamIDs lists declared upstream node identities.
 	UpstreamIDs []string
 	// DownstreamIDs lists declared downstream node identities.
@@ -134,7 +132,6 @@ func newNodeSpec(row map[string]any) *NodeSpec {
 		ResolvedInputs:        toJSONMap(row["resolved_inputs"]),
 		OutputPatterns:        toJSONMap(row["output_patterns"]),
 		ResolvedOutputs:       toJSONMap(row["resolved_outputs"]),
-		Params:                toJSONMap(row["params"]),
 		UpstreamIDs:           toStringSlice(row["upstream_ids"]),
 		DownstreamIDs:         toStringSlice(row["downstream_ids"]),
 		InputValidationErrors: toJSONSlice(row["input_validation_errors"]),

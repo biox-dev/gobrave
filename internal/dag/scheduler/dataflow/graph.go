@@ -100,7 +100,6 @@ func (o *dataflowDagOrchestratorV3) buildGraphSpec(analysisID int64, dagDefiniti
 				InputKeys:    inputKeys,
 				Inputs:       dynamicToMap(resolveNodeField(node, "inputs")),
 				Outputs:      dynamicToMap(resolveNodeField(node, "outputs")),
-				Params:       dynamicToMap(resolveNodeField(node, "params")),
 				ResolvedIn:   dynamicToMap(resolveNodeField(node, "resolved_inputs")),
 				ResolvedOut:  dynamicToMap(resolveNodeField(node, "resolved_outputs")),
 				Executor:     strings.TrimSpace(dynamicToString(resolveNodeField(node, "executor"))),

@@ -149,7 +149,7 @@ func (r *persistentDataflowRuntime) persistAnalysisNode(ctx context.Context, pay
 		return nil, false, nil
 	}
 	if payload.InputHash == "" {
-		payload.InputHash = nodebuild.InstanceInputHash(payload.NodeID, types.JSONMap(payload.ResolvedInputs), types.JSONMap(payload.Params))
+		payload.InputHash = nodebuild.InstanceInputHash(payload.NodeID, types.JSONMap(payload.ResolvedInputs))
 	}
 
 	existingNodes, err := r.repo.ListAnalysisNodesByAnalysisID(ctx, payload.AnalysisID)
@@ -360,7 +360,6 @@ func buildNodeSpec(script *types.Script, payload *DataflowAnalysisNodePersistPar
 		ResolvedInputs:  nodebuild.ToJSONMap(payload.ResolvedInputs),
 		OutputPatterns:  nodebuild.ToJSONMap(payload.OutputPatterns),
 		ResolvedOutputs: nodebuild.ToJSONMap(payload.ResolvedOutputs),
-		Params:          nodebuild.ToJSONMap(payload.Params),
 		// RequestParam 让 V3 节点也带上「原始输入」形态（与 V2 一致）：base 是
 		// analysis.request_param 按输入名过滤，select-assay 句柄已由 kernel 写回
 		// {"files": "<id>"}。

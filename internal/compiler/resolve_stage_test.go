@@ -145,16 +145,4 @@ func TestBuildRuntimeTasks_DownstreamSampleNodeKeepsGlobalMetadata(t *testing.T)
 	if resolvedMetadata["analysis_result_id"] != nil {
 		t.Fatalf("metadata should not be replaced by upstream sample payload: %+v", resolvedMetadata)
 	}
-
-	params, ok := rocNode["params"].(map[string]any)
-	if !ok {
-		t.Fatalf("params type mismatch: %T", rocNode["params"])
-	}
-	paramsMetadata, ok := params["metadata"].(map[string]any)
-	if !ok {
-		t.Fatalf("params.metadata type mismatch: %T", params["metadata"])
-	}
-	if paramsMetadata["path"] != metadata["path"] {
-		t.Fatalf("params.metadata.path mismatch: got %v want %v", paramsMetadata["path"], metadata["path"])
-	}
 }

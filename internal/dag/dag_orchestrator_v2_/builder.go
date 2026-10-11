@@ -92,9 +92,8 @@ func (b *NodeBuilder) Materialize(req MaterializeRequest) (*types.AnalysisNode, 
 	nodeID := utils.GenerateID()
 	layout := newWorkspaceLayout(req.Analysis.WorkspaceDir, nodeID)
 
-	params := cloneJSONMap(req.Spec.Params)
 	resolvedInputs := cloneJSONMap(req.Spec.ResolvedInputs)
-	mergeUpstreamInputs(req.Spec, params, resolvedInputs, req.Incoming, req.Upstream)
+	mergeUpstreamInputs(req.Spec, resolvedInputs, req.Incoming, req.Upstream)
 
 	if err := os.MkdirAll(layout.OutputDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create node output dir failed: %w", err)
@@ -162,10 +161,7 @@ func (b *NodeBuilder) Probe(req ProbeRequest) *types.AnalysisNode {
 	probe.ResolvedOutputs = cloneJSONMap(req.Spec.ResolvedOutputs)
 	probe.InputValidationErrors = cloneJSONSlice(req.Spec.InputValidationErrors)
 
-	// params is no longer persisted on the node, but it is still merged locally so
-	// the upstream fan-in shape matches what Materialize would have produced.
-	params := cloneJSONMap(req.Spec.Params)
-	mergeUpstreamInputs(req.Spec, params, probe.ResolvedInputs, req.Incoming, req.Upstream)
+	mergeUpstreamInputs(req.Spec, probe.ResolvedInputs, req.Incoming, req.Upstream)
 	return &probe
 }
 
@@ -173,14 +169,13 @@ func (b *NodeBuilder) Probe(req ProbeRequest) *types.AnalysisNode {
 const creationSourceScheduler = "scheduler"
 
 // mergeUpstreamInputs injects the resolved outputs of successful upstream nodes
-// into the downstream params / resolved_inputs payload.
+// into the downstream resolved_inputs payload.
 //
 // The runtime engine performs the same merge when an upstream completes, but a
 // node materialized *after* that point (the normal dynamic-v2 order) is not yet
 // persisted when the propagation happens, so the merge must be repeated here.
 func mergeUpstreamInputs(
 	spec *NodeSpec,
-	params types.JSONMap,
 	resolvedInputs types.JSONMap,
 	incoming []*EdgeSpec,
 	upstream map[string]*types.AnalysisNode,
@@ -203,16 +198,12 @@ func mergeUpstreamInputs(
 		}
 
 		pattern := asMap(spec.InputsPatterns[edge.TargetHandle])
-		fanIn := toBool(pattern["multiple"]) ||
-			isList(params[edge.TargetHandle]) ||
-			isList(resolvedInputs[edge.TargetHandle])
+		fanIn := toBool(pattern["multiple"]) || isList(resolvedInputs[edge.TargetHandle])
 
 		if fanIn {
-			params[edge.TargetHandle] = appendToList(params[edge.TargetHandle], value)
 			resolvedInputs[edge.TargetHandle] = appendToList(resolvedInputs[edge.TargetHandle], value)
 			continue
 		}
-		params[edge.TargetHandle] = value
 		resolvedInputs[edge.TargetHandle] = value
 	}
 }

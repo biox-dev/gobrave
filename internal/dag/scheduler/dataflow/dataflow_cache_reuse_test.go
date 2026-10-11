@@ -73,12 +73,11 @@ func materializePersistedV3Node(t *testing.T, cacheType int, commandMD5, paramsM
 	requireSnowflakeV3(t)
 
 	analysis := &types.Analysis{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir(), CacheType: cacheType}
-	params := types.JSONMap{"threads": 4}
 	resolved := types.JSONMap{"bam": "a.bam"}
 
 	node, err := nodebuild.Materialize(nodebuild.MaterializeRequest{
 		Analysis: analysis,
-		Spec:     &nodebuild.Spec{NodeID: "align", Params: params, ResolvedInputs: resolved},
+		Spec:     &nodebuild.Spec{NodeID: "align", ResolvedInputs: resolved},
 		Status:   dagruntime.StatusReady,
 	})
 	if err != nil {
@@ -102,7 +101,6 @@ func persistV3Submit(t *testing.T, runtime *persistentDataflowRuntime, analysisI
 		NodeID:         "align",
 		ScriptID:       "42",
 		Status:         "ready",
-		Params:         map[string]any{"threads": 4},
 		ResolvedInputs: map[string]any{"bam": "a.bam"},
 	})
 	if err != nil {

@@ -12,20 +12,17 @@ import (
 
 // InstanceInputHash is the stable identity of one materialized node instance.
 //
-// It hashes the runtime node id together with the resolved inputs and the
-// effective params, which is exactly the payload that decides what a node runs.
-// Two schedulers that build the same node therefore compute the same hash, which
-// is what allows them to recognize each other's persisted rows as the same
-// instance (cache hit) instead of materializing a duplicate.
+// It hashes the runtime node id together with the resolved inputs, which is
+// exactly the payload that decides what a node runs. Two schedulers that build
+// the same node therefore compute the same hash, which is what allows them to
+// recognize each other's persisted rows as the same instance (cache hit) instead
+// of materializing a duplicate.
 //
-// Hashes are persisted on analysis_nodes.input_hash. The payload shape (and the
-// "{}" encoding of empty maps) is part of the contract and must not change
-// without a migration, otherwise historical rows stop matching.
-func InstanceInputHash(nodeID string, resolvedInputs types.JSONMap, params types.JSONMap) string {
+// Hashes are persisted on analysis_nodes.input_hash.
+func InstanceInputHash(nodeID string, resolvedInputs types.JSONMap) string {
 	payload := map[string]any{
 		"node_id":         strings.TrimSpace(nodeID),
 		"resolved_inputs": cloneJSONMap(resolvedInputs),
-		"params":          cloneJSONMap(params),
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -40,11 +37,11 @@ func InstanceInputHash(nodeID string, resolvedInputs types.JSONMap, params types
 
 // SpecInstanceHash computes the instance identity for a spec after its upstream
 // inputs have been merged, using the same payload the builder persists.
-func SpecInstanceHash(spec *Spec, resolvedInputs types.JSONMap, params types.JSONMap) string {
+func SpecInstanceHash(spec *Spec, resolvedInputs types.JSONMap) string {
 	if spec == nil {
 		return ""
 	}
-	return InstanceInputHash(spec.NodeID, resolvedInputs, params)
+	return InstanceInputHash(spec.NodeID, resolvedInputs)
 }
 
 // MatchInstance finds the persisted node that represents the same instance as

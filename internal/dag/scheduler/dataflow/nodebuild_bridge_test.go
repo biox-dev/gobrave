@@ -73,7 +73,6 @@ func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 		NodeID:     "align",
 		ScriptID:   "42",
 		Status:     "ready",
-		Params:     map[string]any{"threads": 4},
 	})
 	if err != nil {
 		t.Fatalf("persistAnalysisNode failed: %v", err)
@@ -99,7 +98,7 @@ func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 		t.Fatalf("project scoping not copied: %d", node.ProjectID)
 	}
 
-	wantHash := nodebuild.InstanceInputHash("align", nil, types.JSONMap{"threads": 4})
+	wantHash := nodebuild.InstanceInputHash("align", nil)
 	if node.InputHash != wantHash {
 		t.Fatalf("input hash = %q, want %q", node.InputHash, wantHash)
 	}
@@ -112,13 +111,12 @@ func TestV3PersistReusesV2MaterializedNode(t *testing.T) {
 	requireSnowflakeV3(t)
 
 	analysis := &types.Analysis{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
-	params := types.JSONMap{"threads": 4}
 	resolved := types.JSONMap{"bam": "a.bam"}
 
 	// Simulate a previous run that persisted this node through the V2 path.
 	v2Node, err := nodebuild.Materialize(nodebuild.MaterializeRequest{
 		Analysis: analysis,
-		Spec:     &nodebuild.Spec{NodeID: "align", Params: params, ResolvedInputs: resolved},
+		Spec:     &nodebuild.Spec{NodeID: "align", ResolvedInputs: resolved},
 		Status:   dagruntime.StatusReady,
 	})
 	if err != nil {
@@ -138,7 +136,6 @@ func TestV3PersistReusesV2MaterializedNode(t *testing.T) {
 		NodeID:         "align",
 		ScriptID:       "42",
 		Status:         "ready",
-		Params:         map[string]any(params),
 		ResolvedInputs: map[string]any(resolved),
 	})
 	if err != nil {

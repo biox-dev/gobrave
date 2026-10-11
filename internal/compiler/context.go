@@ -30,7 +30,6 @@ type NodeRuntimeState struct {
 	Sample         map[string]any
 	Inputs         map[string]any
 	Outputs        map[string]any
-	NodeParams     map[string]any
 	ResolvedInputs map[string]any
 	ResolvedOutput map[string]any
 	InputErrors    []string

@@ -34,7 +34,6 @@ func (b *RuntimeNodeBuilder) Build(ctx *CompileContext, state *NodeRuntimeState)
 		// request_param 与 inputs_patterns 的填充口径一致：只保留 analysis 请求里
 		// 键与节点输入 name（脚本 form json 的 name）相同的项，而不是整份请求。
 		"request_param":           FilterRequestParamByHandles(ctx.RequestParam, state.Inputs),
-		"params":                  state.NodeParams,
 		"input_validation_errors": state.InputErrors,
 		"executor":                fmt.Sprintf("%v", firstNonNil(ctx.Params["executor"], "")),
 		"max_retry":               state.MaxRetry,

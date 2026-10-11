@@ -19,7 +19,6 @@ type DataflowProcessSpec struct {
 	Downstream   []string
 	Inputs       map[string]any
 	Outputs      map[string]any
-	Params       map[string]any
 	ResolvedIn   map[string]any
 	ResolvedOut  map[string]any
 	Executor     string
@@ -47,7 +46,6 @@ type DataflowAnalysisNodePersistParams struct {
 	ScriptID        string
 	InputsPatterns  map[string]any
 	OutputPatterns  map[string]any
-	Params          map[string]any
 	ResolvedInputs  map[string]any
 	ResolvedOutputs map[string]any
 	// RequestParam carries the node's original request form (analysis.request_param

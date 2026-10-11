@@ -334,14 +334,12 @@ func (k *dataflowKernel) buildAnalysisNodePersistParams(ctx context.Context, req
 		analysisID = k.analysisID
 	}
 
-	params := cloneInputs(proc.Params)
 	resolvedInputs := cloneInputs(proc.ResolvedIn)
 	for key, value := range req.Inputs {
 		trimmed := strings.TrimSpace(key)
 		if trimmed == "" {
 			continue
 		}
-		params[trimmed] = value
 		resolvedInputs[trimmed] = value
 	}
 
@@ -355,13 +353,12 @@ func (k *dataflowKernel) buildAnalysisNodePersistParams(ctx context.Context, req
 	return &DataflowAnalysisNodePersistParams{
 		AnalysisID:      analysisID,
 		NodeID:          nodeID,
-		InputHash:       nodebuild.InstanceInputHash(nodeID, types.JSONMap(resolvedInputs), types.JSONMap(params)),
+		InputHash:       nodebuild.InstanceInputHash(nodeID, types.JSONMap(resolvedInputs)),
 		NodeName:        strings.TrimSpace(proc.NodeName),
 		SampleID:        strings.TrimSpace(proc.SampleID),
 		ScriptID:        strings.TrimSpace(proc.ScriptID),
 		InputsPatterns:  cloneInputs(proc.Inputs),
 		OutputPatterns:  cloneInputs(proc.Outputs),
-		Params:          params,
 		ResolvedInputs:  resolvedInputs,
 		RequestParam:    requestParam,
 		ResolvedOutputs: cloneInputs(proc.ResolvedOut),

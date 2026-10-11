@@ -49,8 +49,6 @@ type Spec struct {
 	// RequestParam is the original analysis request_param carried onto the node so
 	// a single node can be re-run or edited with the same request context.
 	RequestParam types.JSONMap
-	// Params are the process parameters merged from workflow defaults.
-	Params types.JSONMap
 	// UpstreamIDs lists declared upstream node identities.
 	UpstreamIDs []string
 	// DownstreamIDs lists declared downstream node identities.
@@ -117,9 +115,9 @@ type ProbeRequest struct {
 // Materialize assembles a brand new analysis node row with a dedicated
 // workspace.
 //
-// Upstream outputs are merged into params / resolved_inputs before the instance
-// identity is computed, because the merged payload is what the node will
-// actually execute with and therefore what must decide cache equality.
+// Upstream outputs are merged into resolved_inputs before the instance identity
+// is computed, because the merged payload is what the node will actually execute
+// with and therefore what must decide cache equality.
 func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 	if req.Analysis == nil {
 		return nil, fmt.Errorf("analysis is required")
@@ -137,9 +135,8 @@ func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 	}
 	layout := ResolveLayout(req.Analysis.WorkspaceDir, req.WorkspaceDir, nodeRecordID)
 
-	params := cloneJSONMap(req.Spec.Params)
 	resolvedInputs := cloneJSONMap(req.Spec.ResolvedInputs)
-	MergeUpstreamInputs(req.Spec, params, resolvedInputs, req.Incoming, req.Upstream)
+	MergeUpstreamInputs(req.Spec, resolvedInputs, req.Incoming, req.Upstream)
 	requestParam := encodeRequestParam(req.Spec.RequestParam)
 	resolvedInputs, requestParam = applyUpstreamBindings(req.Ctx, req.Parser, req.Analysis, req.Spec, req.Incoming, req.Upstream, resolvedInputs, requestParam)
 
@@ -153,7 +150,7 @@ func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 
 	inputHash := strings.TrimSpace(req.Spec.InputHash)
 	if inputHash == "" {
-		inputHash = InstanceInputHash(req.Spec.NodeID, resolvedInputs, params)
+		inputHash = InstanceInputHash(req.Spec.NodeID, resolvedInputs)
 	}
 
 	var finishedAt *time.Time
@@ -242,16 +239,13 @@ func Probe(req ProbeRequest) (*types.AnalysisNode, error) {
 	}
 	probe.InputValidationErrors = cloneJSONSlice(req.Spec.InputValidationErrors)
 
-	// params is no longer persisted on the node, but it is still merged locally so
-	// the upstream fan-in shape matches what Materialize would have produced.
-	params := cloneJSONMap(req.Spec.Params)
-	MergeUpstreamInputs(req.Spec, params, probe.ResolvedInputs, req.Incoming, req.Upstream)
+	MergeUpstreamInputs(req.Spec, probe.ResolvedInputs, req.Incoming, req.Upstream)
 	dagruntime.ApplySelectAssayBindings(req.Ctx, req.Parser, &probe, dagruntime.BuildUpstreamInputBindings(req.Incoming, req.Upstream))
 	return &probe, nil
 }
 
 // MergeUpstreamInputs injects the resolved outputs of successful upstream nodes
-// into the downstream params / resolved_inputs payload.
+// into the downstream resolved_inputs payload.
 //
 // The runtime engine performs the same merge when an upstream completes, but a
 // node materialized *after* that point is not yet persisted when the propagation
@@ -262,7 +256,6 @@ func Probe(req ProbeRequest) (*types.AnalysisNode, error) {
 // overwriting each other.
 func MergeUpstreamInputs(
 	spec *Spec,
-	params types.JSONMap,
 	resolvedInputs types.JSONMap,
 	incoming []*types.AnalysisEdge,
 	upstream map[string]*types.AnalysisNode,
@@ -289,16 +282,12 @@ func MergeUpstreamInputs(
 		}
 
 		pattern := asMap(spec.InputsPatterns[targetHandle])
-		fanIn := toBool(pattern["multiple"]) ||
-			isList(params[targetHandle]) ||
-			isList(resolvedInputs[targetHandle])
+		fanIn := toBool(pattern["multiple"]) || isList(resolvedInputs[targetHandle])
 
 		if fanIn {
-			params[targetHandle] = appendToList(params[targetHandle], value)
 			resolvedInputs[targetHandle] = appendToList(resolvedInputs[targetHandle], value)
 			continue
 		}
-		params[targetHandle] = value
 		resolvedInputs[targetHandle] = value
 	}
 }

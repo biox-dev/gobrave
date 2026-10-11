@@ -30,7 +30,6 @@ func TestMaterializePersistsCanonicalLayout(t *testing.T) {
 		ScriptID:       42,
 		Executor:       "docker",
 		MaxRetry:       3,
-		Params:         types.JSONMap{"threads": 4},
 	}
 
 	node, err := Materialize(MaterializeRequest{
@@ -93,7 +92,6 @@ func TestMaterializeMergesUpstreamOutputs(t *testing.T) {
 	spec := &Spec{
 		NodeID:         "second",
 		InputsPatterns: types.JSONMap{"input_bam": map[string]any{"multiple": false}},
-		Params:         types.JSONMap{},
 	}
 
 	node, err := Materialize(MaterializeRequest{
@@ -188,21 +186,20 @@ func TestProbeKeepsIdentityAndRefreshsTemplate(t *testing.T) {
 
 func TestInstanceInputHashIsStableAndSensitive(t *testing.T) {
 	inputs := types.JSONMap{"bam": "a.bam"}
-	params := types.JSONMap{"threads": 4}
 
-	first := InstanceInputHash("align", inputs, params)
-	second := InstanceInputHash("align", inputs, params)
+	first := InstanceInputHash("align", inputs)
+	second := InstanceInputHash("align", inputs)
 	if first != second {
 		t.Fatalf("hash is not stable: %q vs %q", first, second)
 	}
-	if first == InstanceInputHash("align", inputs, types.JSONMap{"threads": 8}) {
-		t.Fatal("hash must change when params change")
+	if first == InstanceInputHash("align", types.JSONMap{"bam": "b.bam"}) {
+		t.Fatal("hash must change when the resolved inputs change")
 	}
-	if first == InstanceInputHash("other", inputs, params) {
+	if first == InstanceInputHash("other", inputs) {
 		t.Fatal("hash must change when the node id changes")
 	}
-	// Empty maps must hash deterministically (contract with historical rows).
-	if InstanceInputHash("a", nil, nil) != InstanceInputHash("a", types.JSONMap{}, types.JSONMap{}) {
+	// Nil and empty maps must hash identically.
+	if InstanceInputHash("a", nil) != InstanceInputHash("a", types.JSONMap{}) {
 		t.Fatal("nil and empty maps must hash identically")
 	}
 }
@@ -213,12 +210,11 @@ func TestInstanceInputHashIsStableAndSensitive(t *testing.T) {
 func TestCrossSchedulerCacheMatch(t *testing.T) {
 	analysis := testAnalysis(t)
 	inputs := types.JSONMap{"bam": "a.bam"}
-	params := types.JSONMap{"threads": 4}
 
 	// Scheduler A (V2) materializes and finishes the node.
 	materialized, err := Materialize(MaterializeRequest{
 		Analysis: analysis,
-		Spec:     &Spec{NodeID: "align", ResolvedInputs: inputs, Params: params},
+		Spec:     &Spec{NodeID: "align", ResolvedInputs: inputs},
 		Status:   dagruntime.StatusReady,
 	})
 	if err != nil {
@@ -227,7 +223,7 @@ func TestCrossSchedulerCacheMatch(t *testing.T) {
 	materialized.Status = dagruntime.StatusDone
 
 	// Scheduler B (V3) computes the instance identity for the same work.
-	wantHash := InstanceInputHash("align", inputs, params)
+	wantHash := InstanceInputHash("align", inputs)
 	if materialized.InputHash != wantHash {
 		t.Fatalf("schedulers disagree on instance identity: %q vs %q", materialized.InputHash, wantHash)
 	}
