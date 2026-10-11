@@ -56,8 +56,10 @@ func NewNodeCompletionCoordinator(
 	dataRepo interfaces.DataRepository,
 	bus event.Bus,
 	cfg *config.Config,
+	requestParser NodeRequestParser,
 ) *NodeCompletionCoordinator {
 	runtime := NewRuntimeEngine(analysisRepo)
+	runtime.SetRequestParser(requestParser)
 	pollInterval := 2 * time.Second
 	deleteOnSuccess := false
 	// cleanup := buildNodeFailureCleanup(containerRepo, containerOps, cfg)
@@ -295,11 +297,15 @@ func (c *NodeCompletionCoordinator) reconcileContainer(ctx context.Context, inst
 	// When the node's declared outputs resolved without error, mirror the file
 	// outputs into go_file so they become visible to the file/dataset layer. This
 	// is best-effort: a failure here is logged and never changes the node's verdict.
+	//
+	// The returned handle->file_id map is threaded into CompleteNode so downstream
+	// SelectAssay inputs can be rewritten from paths back into go_file ids.
+	var outputFileIDs map[string]string
 	if len(outputErrors) == 0 {
-		c.recordNodeOutputFiles(ctx, node, outputs)
+		outputFileIDs = c.recordNodeOutputFiles(ctx, node, outputs)
 	}
 
-	if _, err := c.runtime.CompleteNode(ctx, node.ID, finalStatus, outputs, exitCode, errorMessage, outputErrors); err != nil {
+	if _, err := c.runtime.CompleteNode(ctx, node.ID, finalStatus, outputs, exitCode, errorMessage, outputErrors, outputFileIDs); err != nil {
 		latest, latestErr := c.analysisRepo.GetAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID)
 		if latestErr == nil && latest != nil && IsTerminalStatus(latest.Status) {
 			return
@@ -531,7 +537,8 @@ func (c *NodeCompletionCoordinator) scheduleOutputVisibilityPostMortem(node *typ
 }
 
 // recordNodeOutputFiles mirrors a completed node's declared file outputs into the
-// go_file table so they become visible to the file/dataset layer.
+// go_file table so they become visible to the file/dataset layer, and returns the
+// recorded go_file primary key id for each declared output handle.
 //
 // Only output_patterns entries whose type is "file" are considered. For each of
 // those, the resolved output value is expected to carry the file's path and an
@@ -540,13 +547,14 @@ func (c *NodeCompletionCoordinator) scheduleOutputVisibilityPostMortem(node *typ
 //
 // This is a deliberately thin, best-effort mirror of AddFileToDataset: it does not
 // copy files or bind them to a dataset, it only records that the node produced
-// them.
-func (c *NodeCompletionCoordinator) recordNodeOutputFiles(ctx context.Context, node *types.AnalysisNode, outputs map[string]any) {
+// them. Handles that fail to record are simply absent from the returned map.
+func (c *NodeCompletionCoordinator) recordNodeOutputFiles(ctx context.Context, node *types.AnalysisNode, outputs map[string]any) map[string]string {
+	fileIDs := map[string]string{}
 	if c == nil || c.dataRepo == nil || node == nil || node.ID == 0 {
-		return
+		return fileIDs
 	}
 	if len(node.OutputPatterns) == 0 || len(outputs) == 0 {
-		return
+		return fileIDs
 	}
 
 	// Iterate the declared handles (not the outputs map) so only declared file
@@ -559,11 +567,17 @@ func (c *NodeCompletionCoordinator) recordNodeOutputFiles(ctx context.Context, n
 		if !ok {
 			continue
 		}
-		if err := c.upsertNodeOutputFile(ctx, node, path, fileKey); err != nil {
+		fileID, err := c.upsertNodeOutputFile(ctx, node, path, fileKey)
+		if err != nil {
 			logger.Warnf(ctx, "[NodeCompletionCoordinator] record node output file failed, analysis_id=%d node_id=%s file_key=%s path=%s err=%v",
 				node.AnalysisID, node.NodeID, fileKey, path, err)
+			continue
+		}
+		if strings.TrimSpace(fileID) != "" {
+			fileIDs[handle] = fileID
 		}
 	}
+	return fileIDs
 }
 
 // isFileOutputPattern reports whether an output_patterns entry declares a file
@@ -615,15 +629,19 @@ func outputStringField(fields map[string]any, key string) string {
 
 // upsertNodeOutputFile records one node output file, keyed by the node it belongs
 // to and its file key: an existing row is re-pointed at the new path, a missing
-// one is created.
-func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, node *types.AnalysisNode, path, fileKey string) error {
+// one is created. It returns the go_file primary key id (File.ID) of the recorded
+// row, which is the value SelectAssay inputs reference in `{"files": "<id>"}`.
+func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, node *types.AnalysisNode, path, fileKey string) (string, error) {
 	existing, err := c.dataRepo.GetFileByAnalysisNodeIDAndFileKey(ctx, node.ID, fileKey)
 	switch {
 	case err == nil:
 		existing.Path = path
 		existing.FileName = filepath.Base(path)
 		existing.Format = strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
-		return c.dataRepo.UpdateFile(ctx, existing)
+		if err := c.dataRepo.UpdateFile(ctx, existing); err != nil {
+			return "", err
+		}
+		return strconv.FormatInt(existing.ID, 10), nil
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		file := &types.File{
 			FileID:         strconv.FormatInt(utils.GenerateID(), 10),
@@ -634,9 +652,14 @@ func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, no
 			FileKey:        fileKey,
 			Storage:        "LOCAL",
 		}
-		return c.dataRepo.CreateFile(ctx, file)
+		if err := c.dataRepo.CreateFile(ctx, file); err != nil {
+			return "", err
+		}
+		// CreateFile runs the BeforeCreate hook, which fills the primary key on
+		// the passed struct, so file.ID is populated here.
+		return strconv.FormatInt(file.ID, 10), nil
 	default:
-		return err
+		return "", err
 	}
 }
 

@@ -1,6 +1,8 @@
 package dynamic
 
 import (
+	"context"
+
 	"github.com/biox-dev/gobrave/internal/dag/nodebuild"
 	"github.com/biox-dev/gobrave/internal/types"
 )
@@ -55,6 +57,7 @@ func scriptPrimaryKey(script *types.Script) int64 {
 // buildDynamicAnalysisNode materializes one compiled template into a persisted
 // analysis_node row through the shared builder.
 func (o *dynamicDagOrchestratorV2) buildDynamicAnalysisNode(
+	ctx context.Context,
 	script *types.Script,
 	analysis *types.Analysis,
 	nodeID string,
@@ -71,12 +74,15 @@ func (o *dynamicDagOrchestratorV2) buildDynamicAnalysisNode(
 		ErrorMessage: errorMessage,
 		Incoming:     incomingEdges,
 		Upstream:     existingByNodeID,
+		Ctx:          ctx,
+		Parser:       o.requestParser,
 	})
 }
 
 // buildCacheProbe rebuilds the node payload from the freshly compiled template so
 // the cache policies can compare what would run now against what ran last time.
 func (o *dynamicDagOrchestratorV2) buildCacheProbe(
+	ctx context.Context,
 	script *types.Script,
 	existingNode *types.AnalysisNode,
 	nodeID string,
@@ -92,6 +98,8 @@ func (o *dynamicDagOrchestratorV2) buildCacheProbe(
 		Existing: existingNode,
 		Incoming: incomingEdges,
 		Upstream: existingByNodeID,
+		Ctx:      ctx,
+		Parser:   o.requestParser,
 	})
 	if err != nil {
 		// Probing must never fail the run: fall back to the persisted node, which

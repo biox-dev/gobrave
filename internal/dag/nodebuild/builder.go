@@ -1,6 +1,7 @@
 package nodebuild
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -82,6 +83,11 @@ type MaterializeRequest struct {
 	Incoming []*types.AnalysisEdge
 	// Upstream maps node id -> persisted node, used to resolve edge sources.
 	Upstream map[string]*types.AnalysisNode
+	// Ctx carries the request context for the optional select-assay input parser.
+	Ctx context.Context
+	// Parser optionally produces the structured recipe for inputs whose declared
+	// type needs the original request form (currently SelectAssay). nil skips it.
+	Parser dagruntime.NodeRequestParser
 	// WorkspaceDir overrides the derived workspace root when a caller has
 	// already allocated one.
 	WorkspaceDir string
@@ -101,6 +107,11 @@ type ProbeRequest struct {
 	Incoming []*types.AnalysisEdge
 	// Upstream maps node id -> persisted node.
 	Upstream map[string]*types.AnalysisNode
+	// Ctx carries the request context for the optional select-assay input parser.
+	Ctx context.Context
+	// Parser optionally produces the structured recipe for inputs whose declared
+	// type needs the original request form (currently SelectAssay). nil skips it.
+	Parser dagruntime.NodeRequestParser
 }
 
 // Materialize assembles a brand new analysis node row with a dedicated
@@ -129,6 +140,8 @@ func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 	params := cloneJSONMap(req.Spec.Params)
 	resolvedInputs := cloneJSONMap(req.Spec.ResolvedInputs)
 	MergeUpstreamInputs(req.Spec, params, resolvedInputs, req.Incoming, req.Upstream)
+	requestParam := encodeRequestParam(req.Spec.RequestParam)
+	resolvedInputs, requestParam = applyUpstreamBindings(req.Ctx, req.Parser, req.Analysis, req.Spec, req.Incoming, req.Upstream, resolvedInputs, requestParam)
 
 	// Only create the tree when a workspace could be derived; a caller that
 	// supplies paths later owns creating them (see v3's populateNodePathDefaults).
@@ -172,7 +185,7 @@ func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 		ResolvedInputs:         resolvedInputs,
 		OutputPatterns:         cloneJSONMap(req.Spec.OutputPatterns),
 		ResolvedOutputs:        cloneJSONMap(req.Spec.ResolvedOutputs),
-		RequestParam:           encodeRequestParam(req.Spec.RequestParam),
+		RequestParam:           requestParam,
 		Params:                 params,
 		InputHash:              inputHash,
 		Status:                 strings.TrimSpace(req.Status),
@@ -232,6 +245,7 @@ func Probe(req ProbeRequest) (*types.AnalysisNode, error) {
 	probe.InputValidationErrors = cloneJSONSlice(req.Spec.InputValidationErrors)
 
 	MergeUpstreamInputs(req.Spec, probe.Params, probe.ResolvedInputs, req.Incoming, req.Upstream)
+	dagruntime.ApplySelectAssayBindings(req.Ctx, req.Parser, &probe, dagruntime.BuildUpstreamInputBindings(req.Incoming, req.Upstream))
 	return &probe, nil
 }
 
@@ -286,6 +300,49 @@ func MergeUpstreamInputs(
 		params[targetHandle] = value
 		resolvedInputs[targetHandle] = value
 	}
+}
+
+// applyUpstreamBindings rewrites the inputs whose declared type needs the original
+// request form (currently SelectAssay) using the upstream nodes' recorded output
+// file ids, then returns the possibly rewritten resolved_inputs and request_param.
+//
+// It is the pull-side half of the input binding: MergeUpstreamInputs copies the
+// upstream's raw resolved output into params/resolved_inputs, while this step turns
+// a file output back into the `{"files": "<go_file id>"}` reference the script form
+// expects and replaces resolved_inputs with the structured recipe the parser builds.
+// It is a no-op when the caller has no graph snapshot (Incoming/Upstream empty), as
+// is the case for schedulers that bind at dispatch time instead.
+func applyUpstreamBindings(
+	ctx context.Context,
+	parser dagruntime.NodeRequestParser,
+	analysis *types.Analysis,
+	spec *Spec,
+	incoming []*types.AnalysisEdge,
+	upstream map[string]*types.AnalysisNode,
+	resolvedInputs types.JSONMap,
+	requestParam string,
+) (types.JSONMap, string) {
+	if spec == nil || len(incoming) == 0 || len(upstream) == 0 {
+		return resolvedInputs, requestParam
+	}
+	target := &types.AnalysisNode{
+		NodeID:         spec.NodeID,
+		ScriptID:       spec.ScriptID,
+		InputsPatterns: spec.InputsPatterns,
+		ResolvedInputs: resolvedInputs,
+		RequestParam:   requestParam,
+	}
+	if analysis != nil {
+		target.AnalysisID = analysis.ID
+	}
+	bindings := dagruntime.BuildUpstreamInputBindings(incoming, upstream)
+	if !dagruntime.ApplySelectAssayBindings(ctx, parser, target, bindings) {
+		return resolvedInputs, requestParam
+	}
+	if target.ResolvedInputs == nil {
+		target.ResolvedInputs = types.JSONMap{}
+	}
+	return target.ResolvedInputs, target.RequestParam
 }
 
 // IsSuccessNode reports whether a persisted node holds a reusable successful

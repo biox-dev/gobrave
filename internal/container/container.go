@@ -378,6 +378,11 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		prepare.NewFileSystemNodeRuntimePreparer,
 		dig.As(new(prepare.NodeRuntimePreparer)),
 	))
+	// 节点 request_param 解析器：复用 handler 侧静态分析的解析逻辑
+	// (buildParseAnalysisResult)，把运行期 propagateOutputs 重写后的原始输入
+	// （如 SelectAssay 的 {"files": "<id>"}）还原成结构化 resolved_inputs。
+	// 以 dag.NodeRequestParser 接口注入 NodeDispatcher / NodeCompletionCoordinator。
+	must(container.Provide(handler.NewNodeRequestParser))
 	must(container.Provide(dag.NewNodeDispatcher))
 
 	// 调度层指纹器：复用同一份 preparer 预测 run.sh / params.json 的摘要，
@@ -566,6 +571,7 @@ func newSchedulerRegistry(
 	runningRegistry *dagruntime.RunningRegistry,
 	router *dagruntime.EventRouter,
 	bus event.Bus,
+	requestParser dagruntime.NodeRequestParser,
 	cfg *config.Config,
 ) *scheduler.Registry {
 	registry := scheduler.NewRegistry()
@@ -574,10 +580,10 @@ func newSchedulerRegistry(
 		repo, workflowRepo, projectRepo, containerRepo, dispatcher, containerMgr, cfg, bus, runningRegistry,
 	))
 	registry.Register(schedulerdynamic.NewDynamicDagOrchestratorV2(
-		repo, workflowRepo, workflowService, containerRepo, dispatcher, fingerprinter, runningRegistry, router, bus,
+		repo, workflowRepo, workflowService, containerRepo, dispatcher, fingerprinter, runningRegistry, router, bus, requestParser,
 	))
 	registry.Register(schedulerdataflow.NewDataflowDagOrchestratorV3(
-		repo, workflowRepo, workflowService, containerMgr, projectRepo, dispatcher, fingerprinter, cfg, bus, router,
+		repo, workflowRepo, workflowService, containerMgr, projectRepo, dispatcher, fingerprinter, cfg, bus, router, requestParser,
 	))
 
 	return registry

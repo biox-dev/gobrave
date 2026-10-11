@@ -23,7 +23,7 @@ func (r *persistentDataflowRuntime) SubmitProcessInstance(ctx context.Context, r
 	)
 
 	if r.repo != nil && r.buildPersistParams != nil {
-		persistParams, ok := r.buildPersistParams(req)
+		persistParams, ok := r.buildPersistParams(ctx, req)
 		if ok {
 			node, created, err := r.persistAnalysisNode(ctx, persistParams)
 			if err != nil {
@@ -361,11 +361,15 @@ func buildNodeSpec(script *types.Script, payload *DataflowAnalysisNodePersistPar
 		OutputPatterns:  nodebuild.ToJSONMap(payload.OutputPatterns),
 		ResolvedOutputs: nodebuild.ToJSONMap(payload.ResolvedOutputs),
 		Params:          nodebuild.ToJSONMap(payload.Params),
-		UpstreamIDs:     payload.UpstreamIDs,
-		DownstreamIDs:   payload.DownstreamIDs,
-		Retry:           payload.Retry,
-		MaxRetry:        payload.MaxRetry,
-		RerunReason:     strings.TrimSpace(payload.RerunReason),
+		// RequestParam 让 V3 节点也带上「原始输入」形态（与 V2 一致）：base 是
+		// analysis.request_param 按输入名过滤，select-assay 句柄已由 kernel 写回
+		// {"files": "<id>"}。
+		RequestParam:  nodebuild.ToJSONMap(payload.RequestParam),
+		UpstreamIDs:   payload.UpstreamIDs,
+		DownstreamIDs: payload.DownstreamIDs,
+		Retry:         payload.Retry,
+		MaxRetry:      payload.MaxRetry,
+		RerunReason:   strings.TrimSpace(payload.RerunReason),
 		// Keep the hash that was just used for deduplication so the persisted
 		// identity and the dedup identity can never diverge.
 		InputHash: strings.TrimSpace(payload.InputHash),

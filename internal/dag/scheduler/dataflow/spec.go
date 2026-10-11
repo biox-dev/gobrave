@@ -50,20 +50,24 @@ type DataflowAnalysisNodePersistParams struct {
 	Params          map[string]any
 	ResolvedInputs  map[string]any
 	ResolvedOutputs map[string]any
-	UpstreamIDs     []string
-	DownstreamIDs   []string
-	Executor        string
-	Retry           int
-	MaxRetry        int
-	RerunReason     string
-	Status          string
-	SubmitReason    string
-	WorkspaceDir    string
-	OutputDir       string
-	CommandPath     string
-	ParamsPath      string
-	LogPath         string
-	CacheDir        string
+	// RequestParam carries the node's original request form (analysis.request_param
+	// filtered by input handles, with runtime select-assay references written back as
+	// {"files": "<id>"}). It is persisted to analysis_node.request_param.
+	RequestParam  map[string]any
+	UpstreamIDs   []string
+	DownstreamIDs []string
+	Executor      string
+	Retry         int
+	MaxRetry      int
+	RerunReason   string
+	Status        string
+	SubmitReason  string
+	WorkspaceDir  string
+	OutputDir     string
+	CommandPath   string
+	ParamsPath    string
+	LogPath       string
+	CacheDir      string
 }
 
 // DataflowChannelSpec represents a logical edge/channel in the dataflow graph.

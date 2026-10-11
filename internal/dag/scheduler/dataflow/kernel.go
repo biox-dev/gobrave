@@ -2,10 +2,14 @@ package dataflow
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/biox-dev/gobrave/internal/compiler"
+	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/dag/nodebuild"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -29,6 +33,13 @@ type dataflowKernel struct {
 	outputsClosed       map[string]bool
 	emittingByNode      map[string]int
 	sourcesBootstrapped bool
+	// analysisRequestParam is the analysis's raw request_param (parsed). Each node's
+	// request_param is derived from it by keeping only that node's input handles, so
+	// V3 matches the compiler / V2 口径.
+	analysisRequestParam map[string]any
+	// parser turns a select-assay input's original form into the structured
+	// resolved_inputs recipe. nil skips parsing (request_param is still written).
+	parser dagruntime.NodeRequestParser
 }
 
 type finishAwareDataflowOperator interface {
@@ -308,7 +319,7 @@ func (k *dataflowKernel) noMoreSubmissionsExpected(nodeID string) bool {
 	return isDataflowOperatorFinished(op)
 }
 
-func (k *dataflowKernel) buildAnalysisNodePersistParams(req DataflowProcessRunRequest) (*DataflowAnalysisNodePersistParams, bool) {
+func (k *dataflowKernel) buildAnalysisNodePersistParams(ctx context.Context, req DataflowProcessRunRequest) (*DataflowAnalysisNodePersistParams, bool) {
 	nodeID := strings.TrimSpace(req.NodeID)
 	if nodeID == "" {
 		return nil, false
@@ -334,6 +345,13 @@ func (k *dataflowKernel) buildAnalysisNodePersistParams(req DataflowProcessRunRe
 		resolvedInputs[trimmed] = value
 	}
 
+	// request_param 与 V2/compiler 同口径：analysis.request_param 按本节点输入句柄过滤。
+	requestParam := compiler.FilterRequestParamByHandles(k.analysisRequestParam, proc.Inputs)
+	// 再把 select-assay 输入重写成原始形态 {"files": "<id>"} 并用解析结果覆盖
+	// resolved_inputs（V3 的 req.Inputs 已经带了上游运行期原始值，所以这里只做 select-assay
+	// 重写，不重复合并上游产物）。
+	resolvedInputs, requestParam = k.bindSelectAssayInputs(ctx, analysisID, nodeID, proc, resolvedInputs, requestParam)
+
 	return &DataflowAnalysisNodePersistParams{
 		AnalysisID:      analysisID,
 		NodeID:          nodeID,
@@ -345,6 +363,7 @@ func (k *dataflowKernel) buildAnalysisNodePersistParams(req DataflowProcessRunRe
 		OutputPatterns:  cloneInputs(proc.Outputs),
 		Params:          params,
 		ResolvedInputs:  resolvedInputs,
+		RequestParam:    requestParam,
 		ResolvedOutputs: cloneInputs(proc.ResolvedOut),
 		UpstreamIDs:     append([]string(nil), proc.UpstreamIDs...),
 		DownstreamIDs:   append([]string(nil), proc.Downstream...),
@@ -355,6 +374,106 @@ func (k *dataflowKernel) buildAnalysisNodePersistParams(req DataflowProcessRunRe
 		Status:          "ready",
 		SubmitReason:    strings.TrimSpace(req.Reason),
 	}, true
+}
+
+// bindSelectAssayInputs rewrites this node's select-assay inputs from the original
+// input form into {"files": "<go_file id>"} and replaces the matching resolved_inputs
+// with the structured recipe the parser builds.
+//
+// V3 does not persist analysis_edges, so the incoming edges are synthesized from the
+// in-memory channel specs; the upstream node rows (which carry output_file_ids) are
+// read from the repository. This is the V3-native equivalent of V2's
+// materialization-time binding.
+func (k *dataflowKernel) bindSelectAssayInputs(
+	ctx context.Context,
+	analysisID int64,
+	nodeID string,
+	proc DataflowProcessSpec,
+	resolvedInputs map[string]any,
+	requestParam map[string]any,
+) (map[string]any, map[string]any) {
+	if k == nil || k.repo == nil || len(k.channelSpecByID) == 0 {
+		return resolvedInputs, requestParam
+	}
+
+	incoming := make([]*types.AnalysisEdge, 0)
+	upstream := map[string]*types.AnalysisNode{}
+	for _, ch := range k.channelSpecByID {
+		if strings.TrimSpace(ch.ToNodeID) != nodeID {
+			continue
+		}
+		sourceNodeID := strings.TrimSpace(ch.FromNodeID)
+		if sourceNodeID == "" {
+			continue
+		}
+		incoming = append(incoming, &types.AnalysisEdge{
+			AnalysisID:   analysisID,
+			SourceNode:   sourceNodeID,
+			TargetNode:   strings.TrimSpace(ch.ToNodeID),
+			SourceHandle: strings.TrimSpace(ch.FromPort),
+			TargetHandle: strings.TrimSpace(ch.ToPort),
+		})
+		if _, ok := upstream[sourceNodeID]; ok {
+			continue
+		}
+		source, err := k.repo.GetAnalysisNodeByNodeID(ctx, analysisID, sourceNodeID)
+		if err != nil || source == nil {
+			continue
+		}
+		upstream[sourceNodeID] = source
+	}
+	if len(incoming) == 0 {
+		return resolvedInputs, requestParam
+	}
+
+	target := &types.AnalysisNode{
+		AnalysisID:     analysisID,
+		NodeID:         nodeID,
+		ScriptID:       parseScriptID(proc.ScriptID),
+		InputsPatterns: types.JSONMap(proc.Inputs),
+		ResolvedInputs: types.JSONMap(resolvedInputs),
+		RequestParam:   encodeRequestParamMap(requestParam),
+	}
+	bindings := dagruntime.BuildUpstreamInputBindings(incoming, upstream)
+	if !dagruntime.ApplySelectAssayBindings(ctx, k.parser, target, bindings) {
+		return resolvedInputs, requestParam
+	}
+	return map[string]any(target.ResolvedInputs), decodeRequestParamMap(target.RequestParam)
+}
+
+// parseScriptID parses the process spec's string script id into the numeric primary
+// key the parser needs. Invalid / empty values yield 0.
+func parseScriptID(raw string) int64 {
+	id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+// encodeRequestParamMap renders a request_param map into the JSON string stored on the
+// node. An empty map yields "" so a caller that never set it leaves the column alone.
+func encodeRequestParamMap(m map[string]any) string {
+	if len(m) == 0 {
+		return ""
+	}
+	buf, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return string(buf)
+}
+
+// decodeRequestParamMap parses a node request_param string back into a map.
+func decodeRequestParamMap(raw string) map[string]any {
+	out := map[string]any{}
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return map[string]any{}
+	}
+	return out
 }
 
 func (k *dataflowKernel) emitToDownstream(ctx context.Context, fromNodeID string, value any) error {

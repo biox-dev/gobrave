@@ -33,9 +33,11 @@ func NewNodeDispatcher(
 	bus event.Bus,
 	factory *executor.ExecuterFactory,
 	preparer prepare.NodeRuntimePreparer,
+	requestParser NodeRequestParser,
 	// cleanup NodeFailureCleanupFunc,
 ) *NodeDispatcher {
 	runtime := NewRuntimeEngine(repo)
+	runtime.SetRequestParser(requestParser)
 
 	return &NodeDispatcher{runtime: runtime, repo: repo, bus: bus, factory: factory,
 		cleanup: nil, preparer: preparer}
@@ -48,7 +50,7 @@ func (d *NodeDispatcher) Dispatch(ctx context.Context, analysisNodeID int64) err
 	}
 	analysisID := node.AnalysisID
 	if err := d.preparer.Prepare(ctx, node); err != nil {
-		_, _ = d.runtime.CompleteNode(ctx, node.ID, StatusFailed, nil, 1, fmt.Sprintf("prepare runtime failed: %v", err), nil)
+		_, _ = d.runtime.CompleteNode(ctx, node.ID, StatusFailed, nil, 1, fmt.Sprintf("prepare runtime failed: %v", err), nil, nil)
 		d.runCleanup(ctx, node)
 		d.publish(RuntimeEvent{
 			Name:           EventNodeFailed,
@@ -85,7 +87,7 @@ func (d *NodeDispatcher) Dispatch(ctx context.Context, analysisNodeID int64) err
 	ex := d.factory.Resolve(node.Executor)
 	result, execErr := ex.Execute(ctx, node)
 	if execErr != nil {
-		_, _ = d.runtime.CompleteNode(ctx, node.ID, StatusFailed, nil, 1, execErr.Error(), nil)
+		_, _ = d.runtime.CompleteNode(ctx, node.ID, StatusFailed, nil, 1, execErr.Error(), nil, nil)
 		d.runCleanup(ctx, node)
 		d.publish(RuntimeEvent{
 			Name:           EventNodeFailed,
@@ -128,6 +130,7 @@ func (d *NodeDispatcher) Dispatch(ctx context.Context, analysisNodeID int64) err
 		result.ResolvedOutputs,
 		result.ExitCode,
 		result.ErrorMessage,
+		nil,
 		nil,
 	)
 	if err != nil {

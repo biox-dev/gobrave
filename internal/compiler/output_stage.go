@@ -23,17 +23,17 @@ func (s *OutputStage) Run(ctx *CompileContext) error {
 
 func (b *RuntimeNodeBuilder) Build(ctx *CompileContext, state *NodeRuntimeState) map[string]any {
 	node := map[string]any{
-		"analysis_id":             ctx.AnalysisID,
-		"node_id":                 state.NodeID,
-		"node_name":               state.NodeName,
-		"script_id":               state.ScriptID,
-		"inputs_patterns":         state.Inputs,
-		"resolved_inputs":         state.ResolvedInputs,
-		"output_patterns":         state.Outputs,
-		"resolved_outputs":        state.ResolvedOutput,
+		"analysis_id":      ctx.AnalysisID,
+		"node_id":          state.NodeID,
+		"node_name":        state.NodeName,
+		"script_id":        state.ScriptID,
+		"inputs_patterns":  state.Inputs,
+		"resolved_inputs":  state.ResolvedInputs,
+		"output_patterns":  state.Outputs,
+		"resolved_outputs": state.ResolvedOutput,
 		// request_param 与 inputs_patterns 的填充口径一致：只保留 analysis 请求里
 		// 键与节点输入 name（脚本 form json 的 name）相同的项，而不是整份请求。
-		"request_param":           filterRequestParamByHandles(ctx.RequestParam, state.Inputs),
+		"request_param":           FilterRequestParamByHandles(ctx.RequestParam, state.Inputs),
 		"params":                  state.NodeParams,
 		"input_validation_errors": state.InputErrors,
 		"executor":                fmt.Sprintf("%v", firstNonNil(ctx.Params["executor"], "")),

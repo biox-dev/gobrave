@@ -79,6 +79,11 @@ type dynamicDagOrchestratorV2 struct {
 	// bus emits runtime events using the existing event pipeline.
 	bus event.Bus
 
+	// requestParser optionally turns a SelectAssay input's original request form into
+	// the structured resolved_inputs recipe at materialization / probe time (the
+	// pull-side counterpart of the removed push propagation). nil skips parsing.
+	requestParser dagruntime.NodeRequestParser
+
 	// registry is the process-wide running registry injected by the container and
 	// shared with the other schedulers, so "is this analysis running in this
 	// process?" has exactly one answer for duplicate-run checks and stop state.
@@ -121,6 +126,7 @@ func NewDynamicDagOrchestratorV2(
 	registry *dagruntime.RunningRegistry,
 	router *dagruntime.EventRouter,
 	bus event.Bus,
+	requestParser dagruntime.NodeRequestParser,
 ) interfaces.DagOrchestrator {
 	return &dynamicDagOrchestratorV2{
 		repo:            repo,
@@ -134,6 +140,7 @@ func NewDynamicDagOrchestratorV2(
 		bus:             bus,
 		registry:        registry,
 		router:          router,
+		requestParser:   requestParser,
 		traces:          trace.NewRegistry[int64](),
 	}
 }
@@ -859,7 +866,7 @@ func (o *dynamicDagOrchestratorV2) materializePlannedNode(
 		return nil, err
 	}
 
-	node, err := o.buildDynamicAnalysisNode(script, analysis, nodeID, planned.template, planned.incoming, state.nodes, status, errorMessage)
+	node, err := o.buildDynamicAnalysisNode(ctx, script, analysis, nodeID, planned.template, planned.incoming, state.nodes, status, errorMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -942,7 +949,7 @@ func (o *dynamicDagOrchestratorV2) decideExistingNode(
 	if err != nil {
 		return nil, dagruntime.CacheDecision{}, err
 	}
-	probe := o.buildCacheProbe(script, existing, strings.TrimSpace(existing.NodeID), planned.template, planned.incoming, state.nodes)
+	probe := o.buildCacheProbe(ctx, script, existing, strings.TrimSpace(existing.NodeID), planned.template, planned.incoming, state.nodes)
 	if err := o.fingerprintNodeArtifacts(ctx, probe); err != nil {
 		return nil, dagruntime.CacheDecision{}, err
 	}
@@ -979,6 +986,7 @@ func (o *dynamicDagOrchestratorV2) markExistingNodeReadyForRerun(ctx context.Con
 		"resolved_inputs":          probe.ResolvedInputs,
 		"output_patterns":          probe.OutputPatterns,
 		"resolved_outputs":         types.JSONMap{},
+		"output_file_ids":          types.JSONMap{},
 		"params":                   probe.Params,
 		"status":                   dagruntime.StatusReady,
 		"executor":                 probe.Executor,
@@ -1015,6 +1023,7 @@ func applyRerunToNode(node *types.AnalysisNode, probe *types.AnalysisNode, reaso
 	node.ResolvedInputs = probe.ResolvedInputs
 	node.OutputPatterns = probe.OutputPatterns
 	node.ResolvedOutputs = types.JSONMap{}
+	node.OutputFileIDs = types.JSONMap{}
 	node.Params = probe.Params
 	node.Executor = probe.Executor
 	node.CommandMD5 = probe.CommandMD5

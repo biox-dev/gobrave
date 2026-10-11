@@ -1,6 +1,7 @@
 package dynamic
 
 import (
+	"context"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -37,7 +38,7 @@ func TestBuildDynamicAnalysisNodeUsesSharedLayoutAndIdentity(t *testing.T) {
 		"downstream_ids":  []any{},
 	}
 
-	node, err := orchestrator.buildDynamicAnalysisNode(&types.Script{ID: 42}, analysis, "align", row, nil, nil, dagruntime.StatusReady, "")
+	node, err := orchestrator.buildDynamicAnalysisNode(context.Background(), &types.Script{ID: 42}, analysis, "align", row, nil, nil, dagruntime.StatusReady, "")
 	if err != nil {
 		t.Fatalf("buildDynamicAnalysisNode failed: %v", err)
 	}
@@ -77,7 +78,7 @@ func TestBuildCacheProbeIsACopyWithFreshParams(t *testing.T) {
 		"params":    types.JSONMap{"threads": 4},
 	}
 
-	probe := orchestrator.buildCacheProbe(&types.Script{ID: 42}, existing, "align", row, nil, nil)
+	probe := orchestrator.buildCacheProbe(context.Background(), &types.Script{ID: 42}, existing, "align", row, nil, nil)
 	if probe == nil {
 		t.Fatal("probe must not be nil")
 	}

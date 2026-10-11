@@ -128,13 +128,16 @@ func cloneMap(src map[string]any) map[string]any {
 	return dst
 }
 
-// filterRequestParamByHandles 从 analysis 的原始 request_param 中，只保留键与节点
+// FilterRequestParamByHandles 从 analysis 的原始 request_param 中，只保留键与节点
 // 输入句柄（inputs_patterns 的 name）相同的项。
 //
 // 这与 inputs_patterns 的填充口径一致：inputs_patterns 按脚本 form json（io_schema
 // 的 inputs）里的 name 建键，节点的 request_param 也用同一组 name 过滤，所以节点
 // 只携带脚本声明过的输入对应的请求值，而不是整份 analysis 请求。
-func filterRequestParamByHandles(requestParam map[string]any, inputs map[string]any) map[string]any {
+//
+// 导出版本供其他调度器（如 dataflow V3）复用，保证各调度器的节点 request_param
+// 口径完全一致。
+func FilterRequestParamByHandles(requestParam map[string]any, inputs map[string]any) map[string]any {
 	if len(requestParam) == 0 || len(inputs) == 0 {
 		return map[string]any{}
 	}

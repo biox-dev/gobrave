@@ -2,6 +2,7 @@ package dataflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -55,6 +56,9 @@ type dataflowDagOrchestratorV3 struct {
 	// and records their digests, so the fingerprint cache types (3/4) can tell
 	// whether a persisted instance is still reusable.
 	fingerprinter dagruntime.NodeArtifactFingerprinter
+	// requestParser turns a select-assay input's original form into the structured
+	// resolved_inputs recipe at persist / probe time (V3-native pull, matching V2).
+	requestParser dagruntime.NodeRequestParser
 }
 
 func NewDataflowDagOrchestratorV3(
@@ -69,6 +73,7 @@ func NewDataflowDagOrchestratorV3(
 	cfg *config.Config,
 	bus event.Bus,
 	router *dagruntime.EventRouter,
+	requestParser dagruntime.NodeRequestParser,
 ) interfaces.DagOrchestrator {
 	return &dataflowDagOrchestratorV3{
 		bus:             bus,
@@ -84,6 +89,7 @@ func NewDataflowDagOrchestratorV3(
 		router:        router,
 		cachePolicies: dagruntime.NewCachePolicyRegistry(),
 		fingerprinter: fingerprinter,
+		requestParser: requestParser,
 	}
 }
 
@@ -110,8 +116,25 @@ func (o *dataflowDagOrchestratorV3) resolveProjectID(ctx context.Context, analys
 	return analysis.ProjectID
 }
 
-// StartAsync implements interfaces.DagOrchestrator and launches a dataflow run
-// in the background, returning immediately.
+// analysisRequestParamMap loads the analysis's raw request_param and parses it into a
+// map, so each node's request_param can be derived the same way the compiler does
+// (keys filtered by the node's input handles).
+func (o *dataflowDagOrchestratorV3) analysisRequestParamMap(ctx context.Context, analysisID int64) map[string]any {
+	if o == nil || o.repo == nil || analysisID <= 0 {
+		return map[string]any{}
+	}
+	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
+	if err != nil || analysis == nil || strings.TrimSpace(analysis.RequestParam) == "" {
+		return map[string]any{}
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal([]byte(analysis.RequestParam), &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+// StartAsync implements interfaces.DagOrchestrator and launches a dataflow run// in the background, returning immediately.
 func (o *dataflowDagOrchestratorV3) StartAsync(ctx context.Context, analysisID int64, parseAnalysisResult map[string]any, dagDefinition map[string]any) error {
 	if analysisID <= 0 {
 		return fmt.Errorf("analysis_id is required")
@@ -238,11 +261,11 @@ func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, project
 			}
 			return kernel.onInstanceReused(ctx, node)
 		},
-		buildPersistParams: func(req DataflowProcessRunRequest) (*DataflowAnalysisNodePersistParams, bool) {
+		buildPersistParams: func(ctx context.Context, req DataflowProcessRunRequest) (*DataflowAnalysisNodePersistParams, bool) {
 			if kernel == nil {
 				return nil, false
 			}
-			return kernel.buildAnalysisNodePersistParams(req)
+			return kernel.buildAnalysisNodePersistParams(ctx, req)
 		}, workflowRepo: o.workflowRepo,
 		projectID:     projectID,
 		cachePolicies: o.cachePolicies,
@@ -250,6 +273,8 @@ func (o *dataflowDagOrchestratorV3) runStartAsyncV3(ctx context.Context, project
 	}
 	kernel = newDataflowKernel(spec, runtime, parseAnalysisResult)
 	kernel.repo = o.repo
+	kernel.parser = o.requestParser
+	kernel.analysisRequestParam = o.analysisRequestParamMap(ctx, analysisID)
 	if err := kernel.bootstrapSourceProcesses(ctx); err != nil {
 		return err
 	}

@@ -641,7 +641,7 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		if err := h.analysisRepo.UpdateAnalysisNodeByAnalysisNodeID(c.Request.Context(), node.AnalysisNodeID, map[string]any{
 			"project_id": node.ProjectID,
 			// "analysis_id":              node.AnalysisID,
-			"node_id":                  node.NodeID,
+			// "node_id":                  node.NodeID,
 			"node_name":                node.NodeName,
 			"script_id":                node.ScriptID,
 			"inputs_patterns":          node.InputsPatterns,

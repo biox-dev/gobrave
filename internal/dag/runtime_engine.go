@@ -24,12 +24,36 @@ type RuntimeSnapshot struct {
 	IsFinished        bool           `json:"is_finished"`
 }
 
+// NodeRequestParser 把节点的 request_param（原始输入，例如
+// `{"handle": {"files": "<id>"}}`）依据脚本表单解析成结构化配方，与静态分析保存时
+// 的解析结果一致（handler 侧复用 buildParseAnalysisResult 实现）。
+//
+// 由上层实现并通过 SetRequestParser 注入；未注入（nil）时跳过解析，resolved_inputs
+// 保留原始值。
+//
+// consumer-side 接口：只在 runtime 包定义，实现放在 handler 包，避免 dag -> handler
+// 的循环依赖。
+type NodeRequestParser interface {
+	ParseRequestParam(ctx context.Context, scriptID int64, requestParam map[string]any) (map[string]any, error)
+}
+
 type RuntimeEngine struct {
 	repo interfaces.AnalysisRepository
+	// requestParser 可选的 request_param 解析器，见 NodeRequestParser。
+	requestParser NodeRequestParser
 }
 
 func NewRuntimeEngine(repo interfaces.AnalysisRepository) *RuntimeEngine {
 	return &RuntimeEngine{repo: repo}
+}
+
+// SetRequestParser 注入可选的 request_param 解析器，用于把 propagateOutputs 重写后的
+// 原始输入还原成结构化 resolved_inputs。为 nil 时表示不解析。
+func (e *RuntimeEngine) SetRequestParser(parser NodeRequestParser) {
+	if e == nil {
+		return
+	}
+	e.requestParser = parser
 }
 
 func (e *RuntimeEngine) GetSnapshot(ctx context.Context, analysisID int64) (*RuntimeSnapshot, error) {
@@ -178,6 +202,7 @@ func (e *RuntimeEngine) CompleteNode(
 	exitCode int,
 	errorMessage string,
 	outputValidationErrors []string,
+	outputFileIDs map[string]string,
 ) (*types.AnalysisNode, error) {
 	node, err := e.repo.GetAnalysisNodeByID(ctx, analysisNodeID)
 	if err != nil {
@@ -212,6 +237,16 @@ func (e *RuntimeEngine) CompleteNode(
 	if IsSuccessStatus(status) {
 		updates["resolved_outputs"] = types.JSONMap(resolvedOutputs)
 		updates["output_validation_errors"] = types.JSONSlice{}
+		// 记录本节点输出句柄到 go_file 主键的映射，供下游节点物化/执行时把上游文件
+		// 还原成 SelectAssay 的原始输入 `{"files": "<id>"}`。这里只落库，不再向下游
+		// 推送（推模式已移除，改由下游拉取）。
+		if len(outputFileIDs) > 0 {
+			ids := make(types.JSONMap, len(outputFileIDs))
+			for handle, fileID := range outputFileIDs {
+				ids[handle] = fileID
+			}
+			updates["output_file_ids"] = ids
+		}
 	} else if len(outputValidationErrors) > 0 {
 		errs := make(types.JSONSlice, 0, len(outputValidationErrors))
 		for _, item := range outputValidationErrors {
@@ -224,77 +259,22 @@ func (e *RuntimeEngine) CompleteNode(
 		return nil, err
 	}
 
-	if IsSuccessStatus(status) {
-		if err := e.propagateOutputs(ctx, node.AnalysisID, node.NodeID, resolvedOutputs); err != nil {
-			return nil, err
-		}
-	}
 	if err := e.RefreshReadyStatus(ctx, node.AnalysisID); err != nil {
 		return nil, err
 	}
 	return e.repo.GetAnalysisNodeByID(ctx, analysisNodeID)
 }
 
-func (e *RuntimeEngine) propagateOutputs(ctx context.Context, analysisID int64, sourceNodeID string, outputs map[string]any) error {
-	if len(outputs) == 0 {
-		return nil
+// NOTE: 推模式（propagateOutputs / encodeOriginalRequestInput / parseNodeRequestParam /
+// overwriteResolvedInputs）已移除。上游输入不再在上游完成时向下游推送，而是由下游在
+// 物化/探测时拉取，见 upstream_binding.go。
+
+func asString(v any) string {
+	if v == nil {
+		return ""
 	}
-	sourceNodeID = strings.TrimSpace(sourceNodeID)
-	if sourceNodeID == "" {
-		return nil
-	}
-
-	edges, err := e.repo.ListAnalysisEdgesByAnalysisID(ctx, analysisID)
-	if err != nil {
-		return err
-	}
-
-	for _, edge := range edges {
-		if strings.TrimSpace(edge.SourceNode) != sourceNodeID {
-			continue
-		}
-		sourceHandle := strings.TrimSpace(edge.SourceHandle)
-		targetHandle := strings.TrimSpace(edge.TargetHandle)
-		targetNodeID := strings.TrimSpace(edge.TargetNode)
-		if sourceHandle == "" || targetHandle == "" || targetNodeID == "" {
-			continue
-		}
-		value, ok := outputs[sourceHandle]
-		if !ok {
-			continue
-		}
-
-		targetNode, err := e.repo.GetAnalysisNodeByNodeID(ctx, analysisID, targetNodeID)
-		if err != nil {
-			if err == gorm.ErrRecordNotFound {
-				continue
-			}
-			return err
-		}
-
-		params := cloneAnyMap(targetNode.Params)
-		resolvedInputs := cloneAnyMap(targetNode.ResolvedInputs)
-		inputPatterns := map[string]any(targetNode.InputsPatterns)
-		inputCfg := asMap(inputPatterns[targetHandle])
-		multiple := asBool(inputCfg["multiple"])
-
-		if multiple || isListValue(params[targetHandle]) || isListValue(resolvedInputs[targetHandle]) {
-			params[targetHandle] = appendToList(params[targetHandle], value)
-			resolvedInputs[targetHandle] = appendToList(resolvedInputs[targetHandle], value)
-		} else {
-			params[targetHandle] = value
-			resolvedInputs[targetHandle] = value
-		}
-
-		if err := e.repo.UpdateAnalysisNodeByAnalysisNodeID(ctx, targetNode.AnalysisNodeID, map[string]any{
-			"params":          types.JSONMap(params),
-			"resolved_inputs": types.JSONMap(resolvedInputs),
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	s, _ := v.(string)
+	return s
 }
 
 func asMap(v any) map[string]any {
@@ -316,83 +296,6 @@ func asMap(v any) map[string]any {
 		return out
 	}
 	return map[string]any{}
-}
-
-func asBool(v any) bool {
-	switch val := v.(type) {
-	case bool:
-		return val
-	case string:
-		normalized := strings.TrimSpace(strings.ToLower(val))
-		return normalized == "true" || normalized == "1" || normalized == "yes" || normalized == "y"
-	case int:
-		return val != 0
-	case int8:
-		return val != 0
-	case int16:
-		return val != 0
-	case int32:
-		return val != 0
-	case int64:
-		return val != 0
-	case uint:
-		return val != 0
-	case uint8:
-		return val != 0
-	case uint16:
-		return val != 0
-	case uint32:
-		return val != 0
-	case uint64:
-		return val != 0
-	case float32:
-		return val != 0
-	case float64:
-		return val != 0
-	default:
-		return false
-	}
-}
-
-func isListValue(v any) bool {
-	if v == nil {
-		return false
-	}
-	rv := reflect.ValueOf(v)
-	return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
-}
-
-func appendToList(current any, value any) []any {
-	if current == nil {
-		return []any{value}
-	}
-	if arr, ok := current.([]any); ok {
-		return append(arr, value)
-	}
-	if arr, ok := current.([]interface{}); ok {
-		return append(arr, value)
-	}
-	rv := reflect.ValueOf(current)
-	if rv.IsValid() && (rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array) {
-		out := make([]any, 0, rv.Len()+1)
-		for i := 0; i < rv.Len(); i++ {
-			out = append(out, rv.Index(i).Interface())
-		}
-		out = append(out, value)
-		return out
-	}
-	return []any{current, value}
-}
-
-func cloneAnyMap(src map[string]any) map[string]any {
-	if len(src) == 0 {
-		return map[string]any{}
-	}
-	out := make(map[string]any, len(src))
-	for k, v := range src {
-		out[k] = v
-	}
-	return out
 }
 
 func isTerminalNodeStatus(node *types.AnalysisNode) bool {

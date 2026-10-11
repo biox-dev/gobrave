@@ -265,6 +265,7 @@ type AnalysisNode struct {
 	ResolvedInputs         JSONMap   `json:"resolved_inputs" gorm:"column:resolved_inputs;type:json"`
 	OutputPatterns         JSONMap   `json:"output_patterns" gorm:"column:output_patterns;type:json"`
 	ResolvedOutputs        JSONMap   `json:"resolved_outputs" gorm:"column:resolved_outputs;type:json"`
+	OutputFileIDs          JSONMap   `json:"output_file_ids" gorm:"column:output_file_ids;type:json"` // 输出句柄 -> go_file id，供下游 SelectAssay 输入还原为 {"files": "<id>"}
 	Params                 JSONMap   `json:"params" gorm:"column:params;type:json"`
 	RequestParam           string    `json:"request_param" gorm:"column:request_param;type:longtext"`
 	CPU                    int       `json:"cpu" gorm:"column:cpu"`

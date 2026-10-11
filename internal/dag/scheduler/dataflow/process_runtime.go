@@ -48,7 +48,7 @@ type persistentDataflowRuntime struct {
 	dispatchFn         func(ctx context.Context, analysisNodeID int64) error
 	onNodeSubmitChange func(nodeID string, delta int)
 	onInstanceReused   func(ctx context.Context, node *types.AnalysisNode) error
-	buildPersistParams func(req DataflowProcessRunRequest) (*DataflowAnalysisNodePersistParams, bool)
+	buildPersistParams func(ctx context.Context, req DataflowProcessRunRequest) (*DataflowAnalysisNodePersistParams, bool)
 	// cachePolicies + fingerprinter drive the per-node reuse decision: what a cache
 	// type means and the artifacts that decide it are both shared with V2.
 	cachePolicies      *dagruntime.CachePolicyRegistry
