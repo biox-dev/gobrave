@@ -50,18 +50,18 @@ func (d *NodeDispatcher) Dispatch(ctx context.Context, analysisNodeID int64) err
 	}
 	analysisID := node.AnalysisID
 	if err := d.preparer.Prepare(ctx, node); err != nil {
-		_, _ = d.runtime.CompleteNode(ctx, node.ID, StatusFailed, nil, 1, fmt.Sprintf("prepare runtime failed: %v", err), nil, nil)
-		d.runCleanup(ctx, node)
-		d.publish(RuntimeEvent{
-			Name:           EventNodeFailed,
-			AnalysisID:     analysisID,
-			AnalysisNodeID: node.ID,
-			NodeID:         node.NodeID,
-			OccurredAt:     time.Now().UTC(),
-			Payload: map[string]any{
-				"error": fmt.Sprintf("prepare runtime failed: %v", err),
-			},
-		})
+		// _, _ = d.runtime.CompleteNode(ctx, node.ID, StatusFailed, nil, 1, fmt.Sprintf("prepare runtime failed: %v", err), nil, nil)
+		// d.runCleanup(ctx, node)
+		// d.publish(RuntimeEvent{
+		// 	Name:           EventNodeFailed,
+		// 	AnalysisID:     analysisID,
+		// 	AnalysisNodeID: node.ID,
+		// 	NodeID:         node.NodeID,
+		// 	OccurredAt:     time.Now().UTC(),
+		// 	Payload: map[string]any{
+		// 		"error": fmt.Sprintf("prepare runtime failed: %v", err),
+		// 	},
+		// })
 		return err
 	}
 

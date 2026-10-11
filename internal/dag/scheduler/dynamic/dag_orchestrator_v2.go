@@ -698,7 +698,7 @@ func (o *dynamicDagOrchestratorV2) reconcilePlan(ctx context.Context, analysis *
 		// claimable. The dispatch pump claims purely by persisted status, so leaving it
 		// ready would let it overtake the upstream it consumes.
 		if current != nil &&
-			normaliseNodeStatus(current) == dagruntime.StatusReady &&
+			current.Status == dagruntime.StatusReady &&
 			!current.CacheHit &&
 			!state.canRun(nodeID) {
 			if err := o.demoteNodeToPending(ctx, current); err != nil {
@@ -707,17 +707,29 @@ func (o *dynamicDagOrchestratorV2) reconcilePlan(ctx context.Context, analysis *
 			continue
 		}
 
+		// state.isBlocked(nodeID) 判断该节点的上游（祖先）里是否存在“失败/跳过”的节点：
+		// 只要有一条上游链断了，这个节点就永远不可能满足执行条件，因此应被判定为 blocked。
 		if state.isBlocked(nodeID) {
+			// 被阻塞的节点只在数据库里“落一次”skipped 记录，目的不是传播失败，
+			// 而是让整个 DAG 能收敛到终态（完成判定要求每个节点都是终态）：
 			// A blocked node is materialized once as skipped so completion converges; the
 			// skip then blocks its own dependants through the same derived query on the
 			// following iterations, without an explicit failure cascade.
+			//
+			// 这里不显式做“失败级联”：它自己的下游会在后续迭代里，通过同一个
+			// isBlocked 派生查询（看到本节点是 skipped）被自动判定为 blocked，
+			// 雪崩式地向后传播，无需为每个节点单独写级联逻辑。
 			if current != nil {
+				// 该节点已有持久化记录（无论之前是什么状态），无需重复落库，直接跳过。
 				continue
 			}
+			// 首次遇到：以 skipped 状态物化（materialize）这一行，
+			// error_message 标注为“被失败的上游依赖阻塞”，便于回溯原因。
 			node, err := o.materializePlannedNode(ctx, analysis, plan, state, nodeID, dagruntime.StatusSkipped, "blocked by failed upstream dependency")
 			if err != nil {
 				return err
 			}
+			// 收集到本轮待创建列表，函数末尾统一调用 CreateAnalysisNodes 批量落库。
 			newItems = append(newItems, node)
 			continue
 		}
@@ -738,7 +750,7 @@ func (o *dynamicDagOrchestratorV2) reconcilePlan(ctx context.Context, analysis *
 
 		// The node exists and its upstream is satisfied: decide whether its persisted
 		// result is reusable, or whether it must be flipped back to ready.
-		switch normaliseNodeStatus(current) {
+		switch current.Status {
 		case dagruntime.StatusRunning, dagruntime.StatusSubmitted:
 			// Already executing; the runtime owns it.
 			continue

@@ -90,10 +90,10 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 	if input == nil || input.RequestParam == nil {
 		return nil, fmt.Errorf("request_param is required")
 	}
-	analysisType := strings.TrimSpace(toString(input.RequestParam["analysis_type"]))
-	if analysisType == "" {
-		return nil, fmt.Errorf("request_param.analysis_type is required")
-	}
+	// analysisType := strings.TrimSpace(toString(input.RequestParam["analysis_type"]))
+	// if analysisType == "" {
+	// 	return nil, fmt.Errorf("request_param.analysis_type is required")
+	// }
 	// workflow_id 是工作流 int64 主键（pipeline_components_relation.id）。
 	workflowID := parseWorkflowID(input.RequestParam["workflow_id"])
 	if workflowID <= 0 {
