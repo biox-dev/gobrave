@@ -145,7 +145,6 @@ func (r *persistentDataflowRuntime) resetExistingNodeForRerun(ctx context.Contex
 		"output_patterns":          probe.OutputPatterns,
 		"resolved_outputs":         types.JSONMap{},
 		"output_file_ids":          types.JSONMap{},
-		"params":                   probe.Params,
 		"status":                   dagruntime.StatusReady,
 		"executor":                 probe.Executor,
 		"cache_hit":                false,
@@ -169,7 +168,6 @@ func (r *persistentDataflowRuntime) resetExistingNodeForRerun(ctx context.Contex
 	existing.OutputPatterns = probe.OutputPatterns
 	existing.ResolvedOutputs = types.JSONMap{}
 	existing.OutputFileIDs = types.JSONMap{}
-	existing.Params = probe.Params
 	existing.Executor = probe.Executor
 	existing.CommandMD5 = probe.CommandMD5
 	existing.ParamsMD5 = probe.ParamsMD5

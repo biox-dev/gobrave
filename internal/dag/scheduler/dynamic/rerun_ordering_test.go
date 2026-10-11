@@ -66,11 +66,6 @@ func applyNodeUpdates(node *types.AnalysisNode, values map[string]any) {
 	if value, ok := values["error_message"]; ok {
 		node.ErrorMessage, _ = value.(string)
 	}
-	if value, ok := values["params"]; ok {
-		if params, ok := value.(types.JSONMap); ok {
-			node.Params = params
-		}
-	}
 }
 
 // stubWorkflowRepo resolves every script to the same row; the reconciler only needs a
@@ -92,7 +87,7 @@ func (stubFingerprinter) Fingerprint(_ context.Context, node *types.AnalysisNode
 		return fmt.Errorf("stubFingerprinter: node is nil")
 	}
 	node.CommandMD5 = "cmd:" + node.NodeID
-	node.ParamsMD5 = fmt.Sprintf("params:%s:%v", node.NodeID, map[string]any(node.Params))
+	node.ParamsMD5 = fmt.Sprintf("params:%s:%v", node.NodeID, map[string]any(node.ResolvedInputs))
 	return nil
 }
 
@@ -131,9 +126,9 @@ func newRerunOrderingFixture(t *testing.T, mutate func(nodes []*types.AnalysisNo
 	}
 
 	repo := &stubAnalysisRepo{nodes: []*types.AnalysisNode{
-		{AnalysisNodeID: "node-a", NodeID: "a", AnalysisID: 7, Status: dagruntime.StatusDone, CommandMD5: "cmd:a", ParamsMD5: "stale", Params: types.JSONMap{"p": "old"}},
-		{AnalysisNodeID: "node-b", NodeID: "b", AnalysisID: 7, Status: dagruntime.StatusDone, CommandMD5: "cmd:b", ParamsMD5: "stale", Params: types.JSONMap{"p": "old"}},
-		{AnalysisNodeID: "node-c", NodeID: "c", AnalysisID: 7, Status: dagruntime.StatusDone, CommandMD5: "cmd:c", ParamsMD5: "stale", Params: types.JSONMap{"p": "old"}},
+		{AnalysisNodeID: "node-a", NodeID: "a", AnalysisID: 7, Status: dagruntime.StatusDone, CommandMD5: "cmd:a", ParamsMD5: "stale", ResolvedInputs: types.JSONMap{"p": "old"}},
+		{AnalysisNodeID: "node-b", NodeID: "b", AnalysisID: 7, Status: dagruntime.StatusDone, CommandMD5: "cmd:b", ParamsMD5: "stale", ResolvedInputs: types.JSONMap{"p": "old"}},
+		{AnalysisNodeID: "node-c", NodeID: "c", AnalysisID: 7, Status: dagruntime.StatusDone, CommandMD5: "cmd:c", ParamsMD5: "stale", ResolvedInputs: types.JSONMap{"p": "old"}},
 	}}
 	if mutate != nil {
 		mutate(repo.nodes)

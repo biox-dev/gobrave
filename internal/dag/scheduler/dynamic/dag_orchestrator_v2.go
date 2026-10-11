@@ -987,7 +987,6 @@ func (o *dynamicDagOrchestratorV2) markExistingNodeReadyForRerun(ctx context.Con
 		"output_patterns":          probe.OutputPatterns,
 		"resolved_outputs":         types.JSONMap{},
 		"output_file_ids":          types.JSONMap{},
-		"params":                   probe.Params,
 		"status":                   dagruntime.StatusReady,
 		"executor":                 probe.Executor,
 		"cache_hit":                false,
@@ -1024,7 +1023,6 @@ func applyRerunToNode(node *types.AnalysisNode, probe *types.AnalysisNode, reaso
 	node.OutputPatterns = probe.OutputPatterns
 	node.ResolvedOutputs = types.JSONMap{}
 	node.OutputFileIDs = types.JSONMap{}
-	node.Params = probe.Params
 	node.Executor = probe.Executor
 	node.CommandMD5 = probe.CommandMD5
 	node.ParamsMD5 = probe.ParamsMD5

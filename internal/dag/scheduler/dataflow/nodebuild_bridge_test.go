@@ -99,7 +99,7 @@ func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 		t.Fatalf("project scoping not copied: %d", node.ProjectID)
 	}
 
-	wantHash := nodebuild.InstanceInputHash("align", node.ResolvedInputs, node.Params)
+	wantHash := nodebuild.InstanceInputHash("align", nil, types.JSONMap{"threads": 4})
 	if node.InputHash != wantHash {
 		t.Fatalf("input hash = %q, want %q", node.InputHash, wantHash)
 	}

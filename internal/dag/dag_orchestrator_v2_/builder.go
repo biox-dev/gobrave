@@ -119,7 +119,6 @@ func (b *NodeBuilder) Materialize(req MaterializeRequest) (*types.AnalysisNode, 
 		ResolvedInputs:         resolvedInputs,
 		OutputPatterns:         cloneJSONMap(req.Spec.OutputPatterns),
 		ResolvedOutputs:        cloneJSONMap(req.Spec.ResolvedOutputs),
-		Params:                 params,
 		Status:                 req.Status,
 		Executor:               req.Spec.Executor,
 		Retry:                  req.Spec.Retry,
@@ -159,12 +158,14 @@ func (b *NodeBuilder) Probe(req ProbeRequest) *types.AnalysisNode {
 	}
 	probe.InputsPatterns = cloneJSONMap(req.Spec.InputsPatterns)
 	probe.OutputPatterns = cloneJSONMap(req.Spec.OutputPatterns)
-	probe.Params = cloneJSONMap(req.Spec.Params)
 	probe.ResolvedInputs = cloneJSONMap(req.Spec.ResolvedInputs)
 	probe.ResolvedOutputs = cloneJSONMap(req.Spec.ResolvedOutputs)
 	probe.InputValidationErrors = cloneJSONSlice(req.Spec.InputValidationErrors)
 
-	mergeUpstreamInputs(req.Spec, probe.Params, probe.ResolvedInputs, req.Incoming, req.Upstream)
+	// params is no longer persisted on the node, but it is still merged locally so
+	// the upstream fan-in shape matches what Materialize would have produced.
+	params := cloneJSONMap(req.Spec.Params)
+	mergeUpstreamInputs(req.Spec, params, probe.ResolvedInputs, req.Incoming, req.Upstream)
 	return &probe
 }
 

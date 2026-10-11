@@ -56,7 +56,7 @@ func TestBuildDynamicAnalysisNodeUsesSharedLayoutAndIdentity(t *testing.T) {
 
 	// The persisted identity must equal the shared algorithm's, otherwise V3
 	// could never recognize this row as the same instance.
-	wantHash := nodebuild.InstanceInputHash("align", node.ResolvedInputs, node.Params)
+	wantHash := nodebuild.InstanceInputHash("align", types.JSONMap{}, types.JSONMap{"threads": 4})
 	if node.InputHash != wantHash {
 		t.Fatalf("input hash = %q, want %q", node.InputHash, wantHash)
 	}
@@ -70,12 +70,12 @@ func TestBuildCacheProbeIsACopyWithFreshParams(t *testing.T) {
 		NodeID:         "align",
 		WorkspaceDir:   "/tmp/1",
 		Status:         dagruntime.StatusDone,
-		Params:         types.JSONMap{"threads": 1},
+		ResolvedInputs: types.JSONMap{"threads": 1},
 	}
 	row := map[string]any{
-		"node_id":   "align",
-		"script_id": "42",
-		"params":    types.JSONMap{"threads": 4},
+		"node_id":         "align",
+		"script_id":       "42",
+		"resolved_inputs": types.JSONMap{"threads": 4},
 	}
 
 	probe := orchestrator.buildCacheProbe(context.Background(), &types.Script{ID: 42}, existing, "align", row, nil, nil)
@@ -88,10 +88,10 @@ func TestBuildCacheProbeIsACopyWithFreshParams(t *testing.T) {
 	if probe.ID != existing.ID || probe.AnalysisNodeID != existing.AnalysisNodeID || probe.WorkspaceDir != existing.WorkspaceDir {
 		t.Fatalf("probe must keep the node identity/workspace: %+v", probe)
 	}
-	if probe.Params["threads"] != 4 {
-		t.Fatalf("probe should carry the freshly compiled params, got %#v", probe.Params)
+	if probe.ResolvedInputs["threads"] != 4 {
+		t.Fatalf("probe should carry the freshly compiled inputs, got %#v", probe.ResolvedInputs)
 	}
-	if existing.Params["threads"] != 1 {
+	if existing.ResolvedInputs["threads"] != 1 {
 		t.Fatal("probing must not mutate the persisted node")
 	}
 }

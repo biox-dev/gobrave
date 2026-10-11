@@ -106,9 +106,6 @@ func TestMaterializeMergesUpstreamOutputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Materialize failed: %v", err)
 	}
-	if node.Params["input_bam"] != "a.bam" {
-		t.Fatalf("upstream output not merged into params: %+v", node.Params)
-	}
 	if node.ResolvedInputs["input_bam"] != "a.bam" {
 		t.Fatalf("upstream output not merged into resolved inputs: %+v", node.ResolvedInputs)
 	}
@@ -139,9 +136,9 @@ func TestMaterializeAccumulatesFanInInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Materialize failed: %v", err)
 	}
-	values, ok := node.Params["reads"].([]any)
+	values, ok := node.ResolvedInputs["reads"].([]any)
 	if !ok || len(values) != 2 {
-		t.Fatalf("fan-in should accumulate both values, got %#v", node.Params["reads"])
+		t.Fatalf("fan-in should accumulate both values, got %#v", node.ResolvedInputs["reads"])
 	}
 }
 
@@ -166,13 +163,13 @@ func TestProbeKeepsIdentityAndRefreshsTemplate(t *testing.T) {
 		AnalysisNodeID: "node-a",
 		NodeID:         "a",
 		WorkspaceDir:   "/tmp/5",
-		Params:         types.JSONMap{"p": "old"},
+		ResolvedInputs: types.JSONMap{"p": "old"},
 		Status:         dagruntime.StatusDone,
 	}
 	probe, err := Probe(ProbeRequest{
 		Analysis: testAnalysis(t),
 		Existing: existing,
-		Spec:     &Spec{NodeID: "a", ScriptID: 9, Params: types.JSONMap{"p": "new"}},
+		Spec:     &Spec{NodeID: "a", ScriptID: 9, ResolvedInputs: types.JSONMap{"p": "new"}},
 	})
 	if err != nil {
 		t.Fatalf("Probe failed: %v", err)
@@ -180,11 +177,11 @@ func TestProbeKeepsIdentityAndRefreshsTemplate(t *testing.T) {
 	if probe.ID != existing.ID || probe.AnalysisNodeID != existing.AnalysisNodeID || probe.WorkspaceDir != existing.WorkspaceDir {
 		t.Fatalf("probe must keep the node identity/workspace: %+v", probe)
 	}
-	if probe.Params["p"] != "new" {
-		t.Fatalf("probe should carry the freshly compiled params, got %#v", probe.Params)
+	if probe.ResolvedInputs["p"] != "new" {
+		t.Fatalf("probe should carry the freshly compiled inputs, got %#v", probe.ResolvedInputs)
 	}
 	// The probe must be a copy: mutating it must not touch the persisted row.
-	if existing.Params["p"] != "old" {
+	if existing.ResolvedInputs["p"] != "old" {
 		t.Fatal("probe mutated the existing node")
 	}
 }

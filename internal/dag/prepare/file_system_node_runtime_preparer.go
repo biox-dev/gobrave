@@ -194,11 +194,11 @@ fi
 }
 
 // resolveBaseParams 构建节点的基础参数（不含公共参数）：
-//   - 独立节点（AnalysisID == 0）：使用节点自带的 Params；
+//   - 独立节点（AnalysisID == 0）：使用节点自带的 ResolvedInputs；
 //   - 分析节点：合并分析级参数与节点已解析的输入参数。
 func (p *FileSystemNodeRuntimePreparer) resolveBaseParams(ctx context.Context, node *types.AnalysisNode) (map[string]any, error) {
 	if node.AnalysisID == 0 {
-		return cloneAnyMapForNode(map[string]interface{}(node.Params)), nil
+		return cloneAnyMapForNode(map[string]interface{}(node.ResolvedInputs)), nil
 	}
 
 	if strings.TrimSpace(node.AnalysisNodeID) == "" {

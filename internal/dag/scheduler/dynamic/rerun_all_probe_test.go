@@ -28,9 +28,9 @@ func TestProbeWhichCacheTypesRequeueFreshlyCompletedNodes(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			orchestrator, repo, plan := newRerunOrderingFixture(t, func(nodes []*types.AnalysisNode) {
 				for _, node := range nodes {
-					node.Params = types.JSONMap{"p": "new"}
+					node.ResolvedInputs = types.JSONMap{"p": "new"}
 					node.CommandMD5 = "cmd:" + node.NodeID
-					node.ParamsMD5 = fmt.Sprintf("params:%s:%v", node.NodeID, map[string]any(node.Params))
+					node.ParamsMD5 = fmt.Sprintf("params:%s:%v", node.NodeID, map[string]any(node.ResolvedInputs))
 				}
 			})
 			analysis := &types.Analysis{ID: 7, ProjectID: 1, CacheType: testCase.cacheType}

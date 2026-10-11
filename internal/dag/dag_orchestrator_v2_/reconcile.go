@@ -353,7 +353,6 @@ func (r *Reconciler) markReadyForRerun(ctx context.Context, existing *types.Anal
 		"resolved_inputs":          probe.ResolvedInputs,
 		"output_patterns":          probe.OutputPatterns,
 		"resolved_outputs":         types.JSONMap{},
-		"params":                   probe.Params,
 		"status":                   dagruntime.StatusReady,
 		"executor":                 probe.Executor,
 		"cache_hit":                false,
@@ -420,7 +419,6 @@ func applyRerunToNode(existing *types.AnalysisNode, probe *types.AnalysisNode, r
 	existing.ResolvedInputs = probe.ResolvedInputs
 	existing.OutputPatterns = probe.OutputPatterns
 	existing.ResolvedOutputs = types.JSONMap{}
-	existing.Params = probe.Params
 	existing.Status = dagruntime.StatusReady
 	existing.Executor = probe.Executor
 	existing.CacheHit = false

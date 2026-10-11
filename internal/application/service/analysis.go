@@ -467,18 +467,17 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 			return err
 		}
 		node := &types.AnalysisNode{
-			ID:                     id,
-			AnalysisNodeID:         analysisNodeID,
-			AnalysisID:             analysis.ID,
-			NodeID:                 nodeID,
-			NodeName:               toString(row["node_name"]),
-			SampleID:               toString(row["sample_id"]),
-			ScriptID:               script.ID,
-			InputsPatterns:         toJSONMap(row["inputs_patterns"]),
-			ResolvedInputs:         toJSONMap(row["resolved_inputs"]),
-			OutputPatterns:         toJSONMap(row["output_patterns"]),
-			ResolvedOutputs:        toJSONMap(row["resolved_outputs"]),
-			Params:                 toJSONMap(row["params"]),
+			ID:              id,
+			AnalysisNodeID:  analysisNodeID,
+			AnalysisID:      analysis.ID,
+			NodeID:          nodeID,
+			NodeName:        toString(row["node_name"]),
+			SampleID:        toString(row["sample_id"]),
+			ScriptID:        script.ID,
+			InputsPatterns:  toJSONMap(row["inputs_patterns"]),
+			ResolvedInputs:  toJSONMap(row["resolved_inputs"]),
+			OutputPatterns:  toJSONMap(row["output_patterns"]),
+			ResolvedOutputs: toJSONMap(row["resolved_outputs"]),
 			// request_param 由编译器从 analysis.request_param 派生；空值保持空串，
 			// 避免用 "{}" 覆盖掉读取时的兼容回退。
 			RequestParam:           toJSONString(row["request_param"]),

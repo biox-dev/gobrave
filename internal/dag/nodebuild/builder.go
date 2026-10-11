@@ -186,7 +186,6 @@ func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 		OutputPatterns:         cloneJSONMap(req.Spec.OutputPatterns),
 		ResolvedOutputs:        cloneJSONMap(req.Spec.ResolvedOutputs),
 		RequestParam:           requestParam,
-		Params:                 params,
 		InputHash:              inputHash,
 		Status:                 strings.TrimSpace(req.Status),
 		Executor:               req.Spec.Executor,
@@ -233,7 +232,6 @@ func Probe(req ProbeRequest) (*types.AnalysisNode, error) {
 	}
 	probe.InputsPatterns = cloneJSONMap(req.Spec.InputsPatterns)
 	probe.OutputPatterns = cloneJSONMap(req.Spec.OutputPatterns)
-	probe.Params = cloneJSONMap(req.Spec.Params)
 	probe.ResolvedInputs = cloneJSONMap(req.Spec.ResolvedInputs)
 	probe.ResolvedOutputs = cloneJSONMap(req.Spec.ResolvedOutputs)
 	// Only overwrite the persisted request_param when the freshly compiled spec
@@ -244,7 +242,10 @@ func Probe(req ProbeRequest) (*types.AnalysisNode, error) {
 	}
 	probe.InputValidationErrors = cloneJSONSlice(req.Spec.InputValidationErrors)
 
-	MergeUpstreamInputs(req.Spec, probe.Params, probe.ResolvedInputs, req.Incoming, req.Upstream)
+	// params is no longer persisted on the node, but it is still merged locally so
+	// the upstream fan-in shape matches what Materialize would have produced.
+	params := cloneJSONMap(req.Spec.Params)
+	MergeUpstreamInputs(req.Spec, params, probe.ResolvedInputs, req.Incoming, req.Upstream)
 	dagruntime.ApplySelectAssayBindings(req.Ctx, req.Parser, &probe, dagruntime.BuildUpstreamInputBindings(req.Incoming, req.Upstream))
 	return &probe, nil
 }
