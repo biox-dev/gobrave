@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -17,7 +18,7 @@ import (
 // RuntimeEnvType 是与前端 llmEnv.type 约定的「业务上下文」枚举。
 //
 // 前端通过 setLLMEnv(id, type) 设置全局上下文，后端据此解析出：
-//   - SystemPrompt：注入给 Agent 的系统提示词（含工作目录与工具使用约束）；
+//   - SystemPromptVars：渲染 Profile 系统提示词模板所需的变量（如工作目录、脚本路径）；
 //   - WorkingDir：Agent 执行时的工作目录。
 //
 // 这些枚举是前端与后端之间的契约，新增业务上下文时在此登记并同步前端 llm-env.ts。
@@ -49,10 +50,14 @@ func normalizeEnvType(typ string) string {
 
 // RuntimeContext 是解析后的运行时上下文。
 type RuntimeContext struct {
-	Type         string // 归一化后的业务类型（为空表示默认工作区）
-	Label        string // 人类可读的上下文名称（如节点名 / 报告标题），用于前端展示
-	SystemPrompt string // 注入给 Agent 的完整系统提示词
-	WorkingDir   string // Agent 执行工作目录
+	Type  string // 归一化后的业务类型（为空表示默认工作区）
+	Label string // 人类可读的上下文名称（如节点名 / 报告标题），用于前端展示
+	// SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量。
+	//
+	// 例如 workspace_directory / script_file_path / output_directory / output_file 等；
+	// AgentService 用它与 Profile.SystemPrompt 模板合成真正的系统提示词。
+	SystemPromptVars map[string]any
+	WorkingDir       string // Agent 执行工作目录
 }
 
 // RuntimeContextResolver 把「业务 env(type,id) → 系统提示词 + 工作目录」的解析逻辑
@@ -63,6 +68,8 @@ type RuntimeContextResolver struct {
 	projectSvc  interfaces.ProjectService
 	workflowSvc interfaces.WorkflowService
 	analysisSvc interfaces.AnalysisService
+	// agentSvc 用于在 Describe 中按用户 Profile 渲染真正的系统提示词（可为空）。
+	agentSvc *agent.AgentService
 }
 
 // NewRuntimeContextResolver 创建运行时上下文解析器。
@@ -71,16 +78,21 @@ func NewRuntimeContextResolver(
 	projectSvc interfaces.ProjectService,
 	workflowSvc interfaces.WorkflowService,
 	analysisSvc interfaces.AnalysisService,
+	agentSvc *agent.AgentService,
 ) *RuntimeContextResolver {
 	return &RuntimeContextResolver{
 		cfg:         cfg,
 		projectSvc:  projectSvc,
 		workflowSvc: workflowSvc,
 		analysisSvc: analysisSvc,
+		agentSvc:    agentSvc,
 	}
 }
 
-// Resolve 根据 env 解析出系统提示词与工作目录。
+// Resolve 根据 env 解析出系统提示词模板变量与工作目录。
+//
+// 它不再返回拼装好的系统提示词，而是返回 SystemPromptVars；真正的系统提示词由
+// AgentService 依据 Profile 模板渲染（见 applyProfile / RenderSystemPrompt）。
 //
 // env 为 nil 或 type 为空时，回退到当前用户激活项目的默认工作目录。
 func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env map[string]any) (*RuntimeContext, error) {
@@ -88,11 +100,8 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 		return nil, fmt.Errorf("project service is not initialized")
 	}
 
-	lines := []string{
-		// "You are operating inside Gobrave's LLM runtime.",
-		// "Follow the runtime context below when choosing tools or file locations.",
-		// fmt.Sprintf("current_user_id: %s", strings.TrimSpace(userID)),
-	}
+	// vars 收集渲染 Profile 系统提示词模板所需的变量（业务上下文事实）。
+	vars := map[string]any{}
 
 	var workingDir string
 	var label string
@@ -123,9 +132,7 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 				if s, sErr := r.workflowSvc.GetScriptByID(ctx, id); sErr == nil {
 					label = s.ComponentName
 				}
-				lines = append(lines,
-					"When you need to run a script-based task, resolve the script workspace from env.id through the runtime context.",
-				)
+				vars["script_workspace_directory"] = dir
 
 			case EnvTypeAnalysisNode:
 				node, nodeErr := r.analysisSvc.GetAnalysisNodeByID(ctx, id)
@@ -145,13 +152,15 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 				scriptDir, scriptFile, _ := utils.GetScriptFile(r.cfg.Storage.BaseDir, project.ProjectID, script.ScriptType, script.ScriptID)
 				scriptFilePath := filepath.Join(scriptDir, scriptFile)
 
+				ioSchemaPath := utils.ScriptIOSchemaPath(r.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
+
 				dir = node.WorkspaceDir
 				label = node.NodeName
 
-				lines = append(lines,
-					fmt.Sprintf("脚本文件路径：%s ", scriptFilePath),
-					fmt.Sprintf("参数文件路径：%s ", node.ParamsPath),
-				)
+				vars["script_file_path"] = scriptFilePath
+				vars["params_file_path"] = node.ParamsPath
+				vars["io_schema_path"] = ioSchemaPath
+				vars["output_directory"] = node.OutputDir
 
 			case EnvTypeAnalysis:
 				analysis, analysisErr := r.analysisSvc.GetAnalysisByID(ctx, id)
@@ -172,11 +181,9 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 				}
 				outputFile := filepath.Join(dir, types.DefaultProjectReportFilename)
 				label = report.Title
-				// 科研文章撰写提示词：以科研报告/科研文章的规范撰写内容，并输出到 output.md 文件。
-				lines = append(lines, fmt.Sprintf(`
-				当前上下文是科研报告/科研文章撰写环境，请严格按照科研报告/科研文章的规范撰写内容，并将撰写的内容输出到指定的文件路径：%s，确保文件名为 output.md。
-				请不要在其他地方输出科研报告/科研文章的内容，必须严格遵守输出到指定文件的要求。
-				`, outputFile))
+				// 科研报告撰写提示词由 Profile 模板负责组织，这里只提供变量（输出文件路径等）。
+				vars["output_file"] = outputFile
+				vars["report_title"] = report.Title
 
 			default:
 				return nil, fmt.Errorf("unsupported runtime env type: %s", envType)
@@ -200,36 +207,50 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 		label = "Default workspace"
 	}
 
-	lines = append(lines, fmt.Sprintf("working_directory: %s", strings.TrimSpace(workingDir)))
+	vars["workspace_directory"] = strings.TrimSpace(workingDir)
+	vars["workspace_label"] = label
 
 	return &RuntimeContext{
-		Type:         rtcType,
-		Label:        label,
-		SystemPrompt: strings.Join(lines, "\n"),
-		WorkingDir:   workingDir,
+		Type:             rtcType,
+		Label:            label,
+		SystemPromptVars: vars,
+		WorkingDir:       workingDir,
 	}, nil
 }
 
-// RuntimeContextInfo 是用于前端展示的轻量上下文描述（不含 SystemPrompt）。
+// RuntimeContextInfo 是用于前端展示的轻量上下文描述。
 type RuntimeContextInfo struct {
-	Type         string `json:"type"`                    // 归一化后的业务类型（空表示默认工作区）
-	Label        string `json:"label"`                   // 人类可读的名称
-	WorkingDir   string `json:"working_dir"`             // 工作目录
-	SystemPrompt string `json:"system_prompt,omitempty"` // 系统提示词（仅在需要时返回）
+	Type         string         `json:"type"`                    // 归一化后的业务类型（空表示默认工作区）
+	Label        string         `json:"label"`                   // 人类可读的名称
+	WorkingDir   string         `json:"working_dir"`             // 工作目录
+	SystemPrompt string         `json:"system_prompt,omitempty"` // 用当前用户 Profile 模板渲染后的真实系统提示词
+	Vars         map[string]any `json:"vars,omitempty"`          // 渲染系统提示词模板所用的变量
 }
 
 // Describe 解析 env 并返回用于前端展示的上下文描述。
-// 与 Resolve 共享同一套解析逻辑，仅裁剪掉仅供 Agent 使用的 SystemPrompt。
-func (r *RuntimeContextResolver) Describe(ctx context.Context, userID string, env map[string]any) (*RuntimeContextInfo, error) {
+//
+// 与 Resolve 共享同一套解析逻辑：先用 env 解析出 SystemPromptVars，再按当前用户选中的
+// Profile（profileName）解析其系统提示词模板，用变量渲染出真正的系统提示词。
+func (r *RuntimeContextResolver) Describe(ctx context.Context, userID, profileName string, env map[string]any) (*RuntimeContextInfo, error) {
 	rc, err := r.Resolve(ctx, userID, env)
 	if err != nil {
 		return nil, err
 	}
+
+	systemPrompt := ""
+	if r.agentSvc != nil {
+		systemPrompt, err = r.agentSvc.RenderSystemPrompt(ctx, userID, profileName, rc.SystemPromptVars)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &RuntimeContextInfo{
 		Type:         rc.Type,
 		Label:        rc.Label,
 		WorkingDir:   rc.WorkingDir,
-		SystemPrompt: rc.SystemPrompt,
+		SystemPrompt: systemPrompt,
+		Vars:         rc.SystemPromptVars,
 	}, nil
 }
 

@@ -95,13 +95,15 @@ func BuiltinProfiles() []*Profile {
 	now := time.Now()
 	return []*Profile{
 		{
-			ID:           BuiltinDefaultProfileID,
-			Name:         DefaultProfileName,
-			DisplayName:  "通用助手",
-			Description:  "默认配置：不附加领域提示词；注入记忆、不注入项目上下文。",
-			IsDefault:    true,
-			IsBuiltin:    true,
-			SystemPrompt: "",
+			ID:          BuiltinDefaultProfileID,
+			Name:        DefaultProfileName,
+			DisplayName: "通用助手",
+			Description: "默认配置：不附加领域提示词；注入记忆、不注入项目上下文。",
+			IsDefault:   true,
+			IsBuiltin:   true,
+			// SystemPrompt 为 pongo2 模板：调用方通过 Request.SystemPromptVars 提供变量，
+			// AgentService.applyProfile 渲染后写入真正的系统提示词。
+			SystemPrompt: "{% if workspace_directory %}workspace_directory: {{ workspace_directory }}{% endif %}",
 			Model:        "deepseek-v4-flash",
 			Provider:     ProviderCopilot,
 			Context:      ContextConfig{InjectMemory: true, InjectProject: false},
@@ -109,42 +111,52 @@ func BuiltinProfiles() []*Profile {
 			UpdatedAt:    now,
 		},
 		{
-			ID:           BuiltinAnalysisCoderID,
-			Name:         ProfileAnalysisCoder,
-			DisplayName:  "分析代码编写",
-			Description:  "用于撰写生物信息学分析代码：强调代码规范、可复现性与执行约束。",
-			IsBuiltin:    true,
-			SystemPrompt: "你是一名生物信息学数据分析工程师。请输出规范、可复现的分析代码，明确依赖与输入输出；如需执行，优先使用运行时提供的工具，而不是直接调用 shell / Rscript / python 等命令。",
-			Context:      ContextConfig{InjectMemory: true, InjectProject: false},
-			CreatedAt:    now,
-			Model:        "deepseek-v4-flash",
-			Provider:     ProviderCustom,
-			UpdatedAt:    now,
+			ID:          BuiltinAnalysisCoderID,
+			Name:        ProfileAnalysisCoder,
+			DisplayName: "分析代码编写",
+			Description: "用于撰写生物信息学分析代码：强调代码规范、可复现性与执行约束。",
+			IsBuiltin:   true,
+			SystemPrompt: `你是一名生物信息学数据分析工程师。请输出规范、可复现的分析代码，明确依赖与输入输出；如需执行，优先使用运行时提供的工具，而不是直接调用 shell / Rscript / python 等命令。
+{% if workspace_directory %}workspace_directory: {{ workspace_directory }}{% endif %}{% if script_file_path %}
+script_file_path: {{ script_file_path }}
+params_file_path: {{ params_file_path }}
+io_schema_path: {{ io_schema_path }}
+output_directory: {{ output_directory }}{% endif %}{% if script_workspace_directory %}
+script_workspace_directory: {{ script_workspace_directory }}{% endif %}`,
+			Context:   ContextConfig{InjectMemory: true, InjectProject: false},
+			CreatedAt: now,
+			Model:     "deepseek-v4-flash",
+			Provider:  ProviderCustom,
+			UpdatedAt: now,
 		},
 		{
-			ID:           BuiltinArticleWriterID,
-			Name:         ProfileArticleWriter,
-			DisplayName:  "科研文章撰写",
-			Description:  "用于撰写科研报告 / 文章：注入项目上下文（已完成的分析节点等），按学术规范写作。",
-			IsBuiltin:    true,
-			SystemPrompt: "你是一名科研写作助手。请严格遵循科研报告 / 科研文章的学术规范撰写内容，语言严谨、结构完整，并确保结论与项目中的分析结果保持一致。",
-			Context:      ContextConfig{InjectMemory: true, InjectProject: true},
-			CreatedAt:    now,
-			Model:        "deepseek-v4-flash",
-			Provider:     ProviderCustom,
-			UpdatedAt:    now,
+			ID:          BuiltinArticleWriterID,
+			Name:        ProfileArticleWriter,
+			DisplayName: "科研文章撰写",
+			Description: "用于撰写科研报告 / 文章：注入项目上下文（已完成的分析节点等），按学术规范写作。",
+			IsBuiltin:   true,
+			SystemPrompt: `你是一名科研写作助手。请严格遵循科研报告 / 科研文章的学术规范撰写内容，语言严谨、结构完整，并确保结论与项目中的分析结果保持一致。{% if output_file %}
+当前上下文是科研报告/科研文章撰写环境，请严格按照科研报告/科研文章的规范撰写内容，并将撰写的内容输出到指定的文件路径：{{ output_file }}，确保文件名为 output.md。
+请不要在其他地方输出科研报告/科研文章的内容，必须严格遵守输出到指定文件的要求。{% endif %}{% if workspace_directory %}
+workspace_directory: {{ workspace_directory }}{% endif %}`,
+			Context:   ContextConfig{InjectMemory: true, InjectProject: true},
+			CreatedAt: now,
+			Model:     "deepseek-v4-flash",
+			Provider:  ProviderCustom,
+			UpdatedAt: now,
 		}, {
-			ID:           BuiltinSummaryProfileID,
-			Name:         ProfileSummary,
-			DisplayName:  "摘要总结",
-			Description:  "用于生成分析 / 节点的摘要：注入项目上下文（已完成的分析节点等），按学术规范写作。",
-			IsBuiltin:    true,
-			SystemPrompt: "你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要; 检查分析中存在的问题，并提出改进建议。",
-			Context:      ContextConfig{InjectMemory: true, InjectProject: true},
-			CreatedAt:    now,
-			Model:        "deepseek-v4-flash",
-			Provider:     ProviderCustom,
-			UpdatedAt:    now,
+			ID:          BuiltinSummaryProfileID,
+			Name:        ProfileSummary,
+			DisplayName: "摘要总结",
+			Description: "用于生成分析 / 节点的摘要：注入项目上下文（已完成的分析节点等），按学术规范写作。",
+			IsBuiltin:   true,
+			SystemPrompt: `你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要; 检查分析中存在的问题，并提出改进建议。{% if workspace_directory %}
+workspace_directory: {{ workspace_directory }}{% endif %}`,
+			Context:   ContextConfig{InjectMemory: true, InjectProject: true},
+			CreatedAt: now,
+			Model:     "deepseek-v4-flash",
+			Provider:  ProviderCustom,
+			UpdatedAt: now,
 		},
 	}
 }
@@ -209,7 +221,7 @@ func NewProfileManager(repo ProfileRepository) *ProfileManager {
 //   - 先按 name 查询 Profile；
 //   - name 不存在：返回 ErrProfileNotFound；
 //   - userID 非空时校验其与查询到的 Profile 的 UserID 是否相等，不相等返回 ErrProfileNotFound。
-func (m *ProfileManager) Resolve(ctx context.Context, userID, name string) (*Profile, error) {
+func (m *ProfileManager) Resolve(ctx context.Context, name string) (*Profile, error) {
 	name = normalizeProfileName(name)
 	// uid := strings.TrimSpace(userID)
 

@@ -460,16 +460,38 @@ func (s *AgentService) DeleteProfile(ctx context.Context, userID string, id int6
 	return s.profiles.Delete(ctx, userID, id)
 }
 
+// RenderSystemPrompt 解析指定用户的 Profile，并用 vars 渲染其系统提示词模板，
+// 返回真正的系统提示词（供 DescribeEnv 等前端展示 / 调试场景使用）。
+//
+// Profile 不存在或未配置系统提示词时返回空串、nil 错误。
+func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID, profileName string, vars map[string]any) (string, error) {
+	if s.profiles == nil {
+		return "", nil
+	}
+	profile, err := s.profiles.Resolve(ctx, profileName)
+	if err != nil || profile == nil {
+		return "", nil
+	}
+	return RenderSystemPromptTemplate(profile.SystemPrompt, vars)
+}
+
 // applyProfile 在调用前应用 Agent Profile：
 //
 //  1. 解析 Profile（未指定名称时取默认；解析失败则不应用）；
-//  2. 把 Profile 的系统提示词作为基础合并进请求；
+//  2. 用请求携带的 SystemPromptVars 渲染 Profile.SystemPrompt 模板，得到本轮系统提示词
+//     （系统提示词只来源于 Profile，调用方不再直接提供）；
 //  3. Profile 指定了技能时，限制本次调用可见的技能集合；
 //  4. 按 Profile 的上下文开关决定是否注入记忆 / 项目上下文。
 func (s *AgentService) applyProfile(ctx context.Context, req Request) Request {
 	var profile *Profile
 	if s.profiles != nil {
-		profile, _ = s.profiles.Resolve(ctx, req.UserID, req.Profile)
+		// 未指定 Profile 时回退到内置默认 Profile，保证系统提示词（含工作目录等
+		// 模板变量）始终可用。
+		name := strings.TrimSpace(req.Profile)
+		if name == "" {
+			name = DefaultProfileName
+		}
+		profile, _ = s.profiles.Resolve(ctx, name)
 	}
 	if profile == nil {
 		return req
@@ -485,12 +507,15 @@ func (s *AgentService) applyProfile(ctx context.Context, req Request) Request {
 		req.Provider = provider
 	}
 
-	// 1) 系统提示词：Profile 基础提示词在前，请求已有提示词（运行时上下文等）在后。
-	if strings.TrimSpace(profile.SystemPrompt) != "" {
-		if strings.TrimSpace(req.SystemPrompt) == "" {
-			req.SystemPrompt = profile.SystemPrompt
+	// 1) 系统提示词：只来源于 Profile —— 用请求携带的变量渲染 Profile 的模板。
+	//    渲染失败时退回原始模板，保证调用仍可进行。
+	req.SystemPrompt = ""
+	if tpl := strings.TrimSpace(profile.SystemPrompt); tpl != "" {
+		rendered, renderErr := RenderSystemPromptTemplate(profile.SystemPrompt, req.SystemPromptVars)
+		if renderErr != nil {
+			req.SystemPrompt = tpl
 		} else {
-			req.SystemPrompt = profile.SystemPrompt + "\n\n" + req.SystemPrompt
+			req.SystemPrompt = rendered
 		}
 	}
 

@@ -85,8 +85,16 @@ type Request struct {
 	Profile string `json:"profile,omitempty"`
 	// Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。
 	Skills []string `json:"skills,omitempty"`
-	// SystemPrompt 系统提示词。
-	SystemPrompt string `json:"system_prompt"`
+	// SystemPromptVars 是渲染 Profile 系统提示词模板所用的变量（业务上下文）。
+	//
+	// 调用方（HTTP Handler）解析 env(type,id) 后把变量放进这里，AgentService 在
+	// applyProfile 中用它与 Profile.SystemPrompt（pongo2 模板）合成最终系统提示词。
+	SystemPromptVars map[string]any `json:"system_prompt_vars,omitempty"`
+	// SystemPrompt 是最终发送给 Provider 的系统提示词。
+	//
+	// 注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +
+	// SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。
+	SystemPrompt string `json:"system_prompt,omitempty"`
 	// Messages 对话上下文（不含 SystemPrompt）。
 	Messages []Message `json:"messages"`
 	// WorkingDir 可选：Agent 执行的工作目录。

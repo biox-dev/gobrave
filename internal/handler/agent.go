@@ -78,10 +78,9 @@ type chatRequest struct {
 	Message        string         `json:"message" binding:"required"` // 本轮用户输入
 	Provider       string         `json:"provider"`
 	Model          string         `json:"model"`
-	SystemPrompt   string         `json:"system_prompt"`
 	Profile        string         `json:"profile"` // AgentProfile 名称（为空取默认）
 	WorkingDir     string         `json:"working_dir"`
-	Env            map[string]any `json:"env"` // 业务上下文 {id,type}，用于解析系统提示词与工作目录
+	Env            map[string]any `json:"env"` // 业务上下文 {id,type}，用于解析系统提示词模板变量与工作目录
 }
 
 type describeEnvRequest struct {
@@ -230,21 +229,14 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	// Profile 只能来自当前登录用户，忽略请求体中的 profile。
 	profile := user.AgentConfig.Profile
 
-	// 解析业务上下文（llmEnv）→ 系统提示词 + 工作目录。
-	// 显式传入的 system_prompt / working_dir 优先；未提供时回退到运行时解析结果。
-	systemPrompt := strings.TrimSpace(req.SystemPrompt)
-	// workingDir := strings.TrimSpace(req.WorkingDir)
-	// if h.runtimeCtx != nil {
+	// 解析业务上下文（llmEnv）→ 系统提示词模板变量 + 工作目录。
+	// 系统提示词本身不在这里拼装：它由 AgentService 依据 Profile 模板 + 这些变量渲染。
 	rc, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), userID, req.Env)
 	if rcErr != nil {
 		handleAgentError(c, rcErr, "failed to resolve runtime context")
 		return
 	}
-	if systemPrompt == "" {
-		systemPrompt = rc.SystemPrompt
-	}
 	workingDir := rc.WorkingDir
-	// }
 
 	// 1) 准备一轮：追加 user 消息、组装历史、创建任务（复用 AgentService 状态机）。
 	// 新的对话 ConversationID 可能为空字符串，表示新建会话（TurnInput.ConversationID == 0）。
@@ -258,14 +250,14 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		}
 	}
 	task, conv, err := h.conv.CreateTurn(c.Request.Context(), agent.TurnInput{
-		UserID:         userID,
-		ConversationID: conversationID,
-		Message:        req.Message,
-		Provider:       req.Provider,
-		Model:          req.Model,
-		SystemPrompt:   systemPrompt,
-		Profile:        profile,
-		WorkingDir:     workingDir,
+		UserID:           userID,
+		ConversationID:   conversationID,
+		Message:          req.Message,
+		Provider:         req.Provider,
+		Model:            req.Model,
+		SystemPromptVars: rc.SystemPromptVars,
+		Profile:          profile,
+		WorkingDir:       workingDir,
 	})
 	if err != nil {
 		handleAgentError(c, err, "failed to create conversation turn")
@@ -301,7 +293,7 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 // @Security     Bearer
 // @Router       /agent/env/describe [post]
 func (h *AgentHandler) DescribeEnv(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
+	user, ok := getCurrentUser(c)
 	if !ok {
 		return
 	}
@@ -317,7 +309,12 @@ func (h *AgentHandler) DescribeEnv(c *gin.Context) {
 		return
 	}
 
-	info, err := h.runtimeCtx.Describe(c.Request.Context(), userID, req.Env)
+	// 用当前用户选中的 Profile 解析系统提示词模板，返回渲染后的真实提示词。
+	profileName := strings.TrimSpace(user.AgentConfig.Profile)
+	if profileName == "" {
+		profileName = agent.DefaultProfileName
+	}
+	info, err := h.runtimeCtx.Describe(c.Request.Context(), user.ID, profileName, req.Env)
 	if err != nil {
 		handleAgentError(c, err, "failed to describe runtime env")
 		return

@@ -185,9 +185,11 @@ type TurnInput struct {
 	Message        string // 本轮用户输入
 	Provider       string
 	Model          string
-	SystemPrompt   string
-	Profile        string // AgentProfile 名称（为空取默认）
-	WorkingDir     string
+	// SystemPromptVars 是渲染 Profile 系统提示词模板所用的变量（业务上下文），
+	// 由 HTTP 层解析 env(type,id) 得到；系统提示词本身由 AgentService 渲染。
+	SystemPromptVars map[string]any
+	Profile          string // AgentProfile 名称（为空取默认）
+	WorkingDir       string
 }
 
 // turnState 记录一轮执行期间的中间态（从 CreateTurn 到本轮结束）。
@@ -264,15 +266,15 @@ func (s *ConversationService) CreateTurn(ctx context.Context, in TurnInput) (*Ta
 
 	// 用完整历史组装请求（快照，避免后续 assistant 回复混入本轮 prompt）。
 	req := Request{
-		Provider:     in.Provider,
-		Model:        in.Model,
-		SessionID:    strconv.FormatInt(conv.ID, 10),
-		UserID:       in.UserID,
-		SystemPrompt: in.SystemPrompt,
-		Profile:      in.Profile,
-		Messages:     promptMessagesForRequest(conv.Messages),
-		WorkingDir:   in.WorkingDir,
-		Stream:       true, // 会话轮次统一走流式，便于捕获 assistant 文本
+		Provider:         in.Provider,
+		Model:            in.Model,
+		SessionID:        strconv.FormatInt(conv.ID, 10),
+		UserID:           in.UserID,
+		SystemPromptVars: in.SystemPromptVars,
+		Profile:          in.Profile,
+		Messages:         promptMessagesForRequest(conv.Messages),
+		WorkingDir:       in.WorkingDir,
+		Stream:           true, // 会话轮次统一走流式，便于捕获 assistant 文本
 	}
 
 	task, err := s.agent.CreateTask(ctx, req)

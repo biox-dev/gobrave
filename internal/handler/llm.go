@@ -30,6 +30,11 @@ import (
 
 const defaultCopilotCLIURL = "localhost:4321"
 
+// LLMHandler 是早期基于 Copilot SDK 的 LLM 桥接实现。
+//
+// Deprecated: 已被 AgentHandler（/agent/chat + AgentService/ConversationService）取代，
+// 保留仅为兼容历史调用方；系统提示词现由 AgentService 依据 AgentProfile 模板渲染，
+// 本桥接不再负责拼装，请勿在新功能中继续使用。
 type LLMHandler struct {
 	cliURL      string
 	model       string
@@ -106,6 +111,9 @@ func (b *nodeCompletionBroker) notify(nodeID int64, event nodeCompletionEvent) {
 	}
 }
 
+// NewLLMHandler 创建 LLMHandler。
+//
+// Deprecated: 参见 LLMHandler 的弃用说明。
 func NewLLMHandler(hub *realtime.Hub, cfg *config.Config, projectSvc interfaces.ProjectService,
 	llmSvc interfaces.LLMService,
 	workflowSvc interfaces.WorkflowService,
@@ -814,10 +822,12 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 	})
 
 	// Build a provider-agnostic request and stream through the unified Agent client.
+	// 注意：本桥接直接调用 Client，不经过 AgentService.applyProfile，因此这里只能携带
+	// 系统提示词模板变量；渲染后的系统提示词由 AgentService 路径负责。
 	req := agent.Request{
-		Model:        resolvedModel,
-		SystemPrompt: runtimeCtx.SystemPrompt,
-		WorkingDir:   runtimeCtx.WorkingDir,
+		Model:            resolvedModel,
+		SystemPromptVars: runtimeCtx.SystemPromptVars,
+		WorkingDir:       runtimeCtx.WorkingDir,
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: prompt},
 		},
