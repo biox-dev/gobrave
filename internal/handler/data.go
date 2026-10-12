@@ -89,10 +89,10 @@ func handleDataError(c *gin.Context, err error, internalMsg string) {
 // build_collected_analysis_result output.
 func columnItem(column string, fileID int64) map[string]interface{} {
 	return map[string]interface{}{
-		"id":                 fileID,
-		"analysis_result_id": fileID,
-		"assay_name":         column,
-		"columns_name":       column,
+		"id": fileID,
+		// "analysis_result_id": fileID,
+		// "assay_name":         column,
+		"columns_name": column,
 	}
 }
 
@@ -949,7 +949,7 @@ func (h *DataHandler) ListFileByAnalysisNodeID(c *gin.Context) {
 
 // ListFileByProjectID godoc
 // @Summary      按项目查询文件列表
-// @Description  根据 project_id 查询关联的所有文件；支持按 go_dataset_file.role 过滤
+// @Description  根据 project_id 查询关联的所有文件；支持按 go_file.role 过滤
 // @Tags         数据管理
 // @Produce      json
 // @Param        project_id  query     string           true  "项目业务ID"
@@ -1202,46 +1202,6 @@ func (h *DataHandler) GetDatasetFile(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, item)
-}
-
-// UpdateDatasetFile godoc
-// @Summary      更新数据集-文件映射
-// @Description  根据 DatasetID + FileID 更新 DatasetFile 的 Role 字段
-// @Tags         数据管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      types.UpdateDatasetFileRequest  true  "请求参数"
-// @Success      200      {object}  map[string]string
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/dataset-file/update [post]
-func (h *DataHandler) UpdateDatasetFile(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req types.UpdateDatasetFileRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	// Convert DTO to domain model
-	datasetFile := &types.DatasetFile{
-		DatasetID: req.DatasetID,
-		FileID:    req.FileID,
-		Role:      req.Role,
-	}
-
-	if err := h.dataService.UpdateDatasetFile(c.Request.Context(), datasetFile); err != nil {
-		handleDataError(c, err, "failed to update dataset file")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "dataset file updated successfully"})
 }
 
 // DeleteDatasetFile godoc

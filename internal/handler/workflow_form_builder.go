@@ -36,7 +36,7 @@ func buildScriptFormData(ctx context.Context,
 // matched against. The assays are then keyed by their own role, which the
 // frontend reads as `dataMap[role]`. Every `input_type=file` item contributes its
 // files under each of its `resolver.accept_formats` roles (matched against
-// `go_dataset_file.role`). The frontend resolves an item's options as
+// `go_file.role`). The frontend resolves an item's options as
 // `dataMap[role]`, which is why these are keyed by role just like the file case
 // always was.
 //

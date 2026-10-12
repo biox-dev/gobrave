@@ -57,7 +57,6 @@ type DataService interface {
 	CreateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error
 	AddFileToDataset(ctx context.Context, req *types.AddFileToDatasetRequest) (*types.AddFileToDatasetResponse, error)
 	GetDatasetFileByID(ctx context.Context, id int64) (*types.DatasetFile, error)
-	UpdateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error
 	DeleteDatasetFile(ctx context.Context, id int64) error
 	ListDatasetFile(ctx context.Context) ([]*types.DatasetFile, error)
 
@@ -123,7 +122,6 @@ type DataRepository interface {
 	ExistsDatasetFile(ctx context.Context, datasetID, fileID int64) (bool, error)
 	WithTransaction(ctx context.Context, fn func(DataRepository) error) error
 	GetDatasetFileByID(ctx context.Context, id int64) (*types.DatasetFile, error)
-	UpdateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error
 	DeleteDatasetFile(ctx context.Context, id int64) error
 	ListDatasetFile(ctx context.Context) ([]*types.DatasetFile, error)
 

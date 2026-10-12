@@ -25,7 +25,7 @@ type Assay struct {
 
 	// Role 是该 assay 的角色（列 go_assay.role），例如 DEFAULT / TABLE；
 	// input_type=assay 的表单输入用 resolver.accept_formats 与之匹配（与
-	// go_dataset_file.role 对文件的口径一致）。空表示不参与角色过滤。
+	// go_file.role 对文件的口径一致）。空表示不参与角色过滤。
 	Role string `json:"role" gorm:"type:varchar(64);index"`
 
 	Metadata string `json:"metadata" gorm:"type:text"`

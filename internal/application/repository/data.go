@@ -310,7 +310,7 @@ func (r *dataRepository) PageFileByProjectID(ctx context.Context, pagination *ty
 				file.updated_at,
 				dataset.id AS dataset_id,
 				dataset.dataset_name,
-				dataset_file.role
+				file.role
 			`).
 			Joins("JOIN go_dataset AS dataset ON dataset.id = pd.dataset_id").
 			Joins("JOIN go_dataset_file AS dataset_file ON dataset_file.dataset_id = dataset.id").
@@ -320,7 +320,7 @@ func (r *dataRepository) PageFileByProjectID(ctx context.Context, pagination *ty
 
 	applyFilters := func(db *gorm.DB) *gorm.DB {
 		if len(roles) > 0 {
-			db = db.Where("dataset_file.role IN ?", roles)
+			db = db.Where("file.role IN ?", roles)
 		}
 		return db
 	}
@@ -367,7 +367,7 @@ func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID stri
 			f.updated_at,
 			d.id AS dataset_id,
 			d.dataset_name,
-			df.role
+			f.role
 		`).
 		Joins("JOIN go_dataset AS d ON d.id = pd.dataset_id").
 		Joins("JOIN go_dataset_file AS df ON df.dataset_id = d.id").
@@ -375,7 +375,7 @@ func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID stri
 		Where("pd.project_id = ?", projectID)
 
 	if len(roles) > 0 {
-		query = query.Where("df.role IN ?", roles)
+		query = query.Where("f.role IN ?", roles)
 	}
 
 	err := query.Order("f.id DESC").Find(&items).Error
@@ -503,19 +503,6 @@ func (r *dataRepository) GetDatasetFileByID(ctx context.Context, id int64) (*typ
 		return nil, err
 	}
 	return item, nil
-}
-
-func (r *dataRepository) UpdateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error {
-	updates := make(map[string]interface{})
-	if datasetFile.Role != "" {
-		updates["role"] = datasetFile.Role
-	}
-	if len(updates) == 0 {
-		return nil
-	}
-	return r.db.WithContext(ctx).Model(&types.DatasetFile{}).
-		Where("dataset_id = ? AND file_id = ?", datasetFile.DatasetID, datasetFile.FileID).
-		Updates(updates).Error
 }
 
 func (r *dataRepository) DeleteDatasetFile(ctx context.Context, id int64) error {

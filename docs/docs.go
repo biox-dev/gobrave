@@ -5932,72 +5932,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/data/dataset-file/update": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "根据 DatasetID + FileID 更新 DatasetFile 的 Role 字段",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "更新数据集-文件映射",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.UpdateDatasetFileRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
         "/data/dataset/create": {
             "post": {
                 "security": [
@@ -6759,7 +6693,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "根据 project_id 查询关联的所有文件；支持按 go_dataset_file.role 过滤",
+                "description": "根据 project_id 查询关联的所有文件；支持按 go_file.role 过滤",
                 "produces": [
                     "application/json"
                 ],
@@ -14688,7 +14622,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "role": {
-                    "description": "Role 是该 assay 的角色（列 go_assay.role），例如 DEFAULT / TABLE；\ninput_type=assay 的表单输入用 resolver.accept_formats 与之匹配（与\ngo_dataset_file.role 对文件的口径一致）。空表示不参与角色过滤。",
+                    "description": "Role 是该 assay 的角色（列 go_assay.role），例如 DEFAULT / TABLE；\ninput_type=assay 的表单输入用 resolver.accept_formats 与之匹配（与\ngo_file.role 对文件的口径一致）。空表示不参与角色过滤。",
                     "type": "string"
                 },
                 "sample_name": {
@@ -15154,9 +15088,6 @@ const docTemplate = `{
                 "id": {
                     "type": "string",
                     "example": "0"
-                },
-                "role": {
-                    "type": "string"
                 }
             }
         },
@@ -15727,26 +15658,6 @@ const docTemplate = `{
                 "SummaryStatusSuccess",
                 "SummaryStatusFailed"
             ]
-        },
-        "types.UpdateDatasetFileRequest": {
-            "type": "object",
-            "required": [
-                "dataset_id",
-                "file_id"
-            ],
-            "properties": {
-                "dataset_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "file_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "role": {
-                    "type": "string"
-                }
-            }
         },
         "types.UpdateDatasetRequest": {
             "type": "object",

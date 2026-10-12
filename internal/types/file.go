@@ -63,14 +63,15 @@ func (t *File) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// DatasetFile is the pure join row binding a File to a Dataset. The file's role
+// lives on the file itself (go_file.role), not here, so this row only carries the
+// two foreign keys and the creation timestamp.
 type DatasetFile struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
 	DatasetID int64 `json:"dataset_id,string" gorm:"index;not null"`
 
 	FileID int64 `json:"file_id,string" gorm:"index;not null"`
-
-	Role string `json:"role" gorm:"type:varchar(64)"`
 
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -84,13 +85,6 @@ func (t *DatasetFile) BeforeCreate(_ *gorm.DB) error {
 		t.ID = utils.GenerateID()
 	}
 	return nil
-}
-
-// UpdateDatasetFileRequest DTO: lookup by DatasetID + FileID, only Role is updatable
-type UpdateDatasetFileRequest struct {
-	DatasetID int64  `json:"dataset_id,string" binding:"required"`
-	FileID    int64  `json:"file_id,string" binding:"required"`
-	Role      string `json:"role"`
 }
 
 type AddFileToDatasetRequest struct {

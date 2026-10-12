@@ -2256,7 +2256,7 @@ definitions:
         description: |-
           Role 是该 assay 的角色（列 go_assay.role），例如 DEFAULT / TABLE；
           input_type=assay 的表单输入用 resolver.accept_formats 与之匹配（与
-          go_dataset_file.role 对文件的口径一致）。空表示不参与角色过滤。
+          go_file.role 对文件的口径一致）。空表示不参与角色过滤。
         type: string
       sample_name:
         description: |-
@@ -2575,8 +2575,6 @@ definitions:
         type: string
       id:
         example: "0"
-        type: string
-      role:
         type: string
     type: object
   types.File:
@@ -2998,20 +2996,6 @@ definitions:
     - SummaryStatusGenerating
     - SummaryStatusSuccess
     - SummaryStatusFailed
-  types.UpdateDatasetFileRequest:
-    properties:
-      dataset_id:
-        example: "0"
-        type: string
-      file_id:
-        example: "0"
-        type: string
-      role:
-        type: string
-    required:
-    - dataset_id
-    - file_id
-    type: object
   types.UpdateDatasetRequest:
     properties:
       dataset_name:
@@ -7020,48 +7004,6 @@ paths:
       summary: 数据集-文件映射列表
       tags:
       - 数据管理
-  /data/dataset-file/update:
-    post:
-      consumes:
-      - application/json
-      description: 根据 DatasetID + FileID 更新 DatasetFile 的 Role 字段
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/types.UpdateDatasetFileRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 更新数据集-文件映射
-      tags:
-      - 数据管理
   /data/dataset/create:
     post:
       consumes:
@@ -7543,7 +7485,7 @@ paths:
       - 数据管理
   /data/file/list-by-project:
     get:
-      description: 根据 project_id 查询关联的所有文件；支持按 go_dataset_file.role 过滤
+      description: 根据 project_id 查询关联的所有文件；支持按 go_file.role 过滤
       parameters:
       - description: 项目业务ID
         in: query

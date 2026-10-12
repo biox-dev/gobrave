@@ -485,8 +485,16 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 				Format:         strings.TrimPrefix(strings.ToLower(filepath.Ext(resolvedPath)), "."),
 				Size:           size,
 				Storage:        "LOCAL",
+				Role:           role,
 			}
 			if err := tx.CreateFile(ctx, file); err != nil {
+				return err
+			}
+		} else if file.Role != role {
+			// Role now lives on the file (go_file.role): keep it in sync when the same
+			// file is added under a different role, instead of storing it on the binding.
+			file.Role = role
+			if err := tx.UpdateFile(ctx, file); err != nil {
 				return err
 			}
 		}
@@ -502,7 +510,6 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 		datasetFile := &types.DatasetFile{
 			DatasetID: req.DatasetID,
 			FileID:    file.ID,
-			Role:      role,
 		}
 		if err := tx.CreateDatasetFile(ctx, datasetFile); err != nil {
 			return err
@@ -521,18 +528,6 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 
 func (s *dataService) GetDatasetFileByID(ctx context.Context, id int64) (*types.DatasetFile, error) {
 	return s.dataRepo.GetDatasetFileByID(ctx, id)
-}
-
-func (s *dataService) UpdateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error {
-	exists, err := s.dataRepo.ExistsDatasetFile(ctx, datasetFile.DatasetID, datasetFile.FileID)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return gorm.ErrRecordNotFound
-	}
-
-	return s.dataRepo.UpdateDatasetFile(ctx, datasetFile)
 }
 
 func (s *dataService) DeleteDatasetFile(ctx context.Context, id int64) error {

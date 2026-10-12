@@ -4,7 +4,7 @@ import "strings"
 
 // AcceptFormats 读取 form item 的 `resolver.accept_formats`，也就是这个输入接受哪些
 // 角色（`input_type=assay` 匹配 `go_assay.role`，`input_type=file` 匹配
-// `go_dataset_file.role`）。返回去空白、去重后的角色列表并保持声明顺序；
+// `go_file.role`）。返回去空白、去重后的角色列表并保持声明顺序；
 // form item / resolver / accept_formats 缺失或类型不对时返回 nil。
 //
 // 约定：返回空切片（nil）表示“没有声明角色”，调用方据此决定是“不过滤”还是“没有候选”，
