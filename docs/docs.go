@@ -6649,6 +6649,61 @@ const docTemplate = `{
                 }
             }
         },
+        "/data/file/list-by-analysis-node": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回某个分析节点（analysis_nodes）产出的全部文件，通过 go_file.analysis_node_id 关联（无文件时返回空数组）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "按分析节点查询文件列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "分析节点主键 ID",
+                        "name": "analysis_node_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/types.File"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/data/file/list-by-assay": {
             "get": {
                 "security": [
@@ -6746,6 +6801,64 @@ const docTemplate = `{
                             "items": {
                                 "$ref": "#/definitions/types.FileWithDatasetInfo"
                             }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/data/file/list-by-project-analysis-node-page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "根据当前用户激活的项目分页查询由分析节点（analysis_nodes）产出的文件，通过 go_file.analysis_node_id 关联",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "按当前激活项目分页查询分析节点产出的文件",
+                "parameters": [
+                    {
+                        "description": "分页请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.Pagination"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -7674,7 +7787,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "向指定报告添加条目。OwnerType 为 analysis/analysis_node/ai_summary 时需提供 OwnerID；file 时忽略 OwnerID。",
+                "description": "向指定报告添加条目。OwnerType 为 analysis/analysis_node/ai_summary 时需提供 OwnerID；OwnerType 为 custom（章节占位/自定义内容）时只需提供 title。parent_id 为 0 时挂到根节点。",
                 "consumes": [
                     "application/json"
                 ],
@@ -8112,7 +8225,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "删除指定报告条目及其 File 类型内容文件",
+                "description": "删除指定报告条目（含其所有子孙条目）",
                 "consumes": [
                     "application/json"
                 ],
@@ -8498,14 +8611,14 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "查询指定报告下的所有条目，按 sort_order、created_at 升序排序",
+                "description": "查询指定报告下的所有条目，并按其 parent_id 组装成树返回",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "项目"
                 ],
-                "summary": "查询报告条目列表",
+                "summary": "查询报告条目树",
                 "parameters": [
                     {
                         "type": "integer",
@@ -8522,7 +8635,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/handler.projectReportItemDTO"
+                                "$ref": "#/definitions/handler.projectReportItemNode"
                             }
                         }
                     },
@@ -8683,7 +8796,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "汇总报告下所有条目并拼接成正文，同时返回条目列表",
+                "description": "汇总报告下所有条目并拼接成正文，返回报告标题与正文",
                 "produces": [
                     "application/json"
                 ],
@@ -8795,6 +8908,71 @@ const docTemplate = `{
                 }
             }
         },
+        "/project/project-report-html": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "将当前用户报告聚合为独立 HTML 文档；inline_images=true 时图片以 base64 内嵌（自包含），false 时保留原始 URL",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "导出报告为 HTML",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "报告ID",
+                        "name": "report_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "是否内嵌图片（默认 true）",
+                        "name": "inline_images",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML 文档",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "未认证",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "报告不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/project/project-report-item-content": {
             "get": {
                 "security": [
@@ -8885,6 +9063,72 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/handler.projectReportItemDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/project/reorder-project-report-item": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按前端拖拽结果批量更新条目的 parent_id 与 sort_order，实现树形结构的移动与排序",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "重排报告条目树",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.reorderProjectReportItemRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "400": {
@@ -9119,7 +9363,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "更新条目的排序或 owner 绑定",
+                "description": "更新条目的排序、父节点或 owner 绑定",
                 "consumes": [
                     "application/json"
                 ],
@@ -9952,7 +10196,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "根据 file_id 查找文件 path，再读取工作簿并转换为 Univer 可用结构。",
+                "description": "根据 file_id 查找文件 path，由 path 后缀推断读取格式（前端无需传递 format），再读取工作簿并转换为 Univer 可用结构。结果中附带文件信息；不支持的格式返回“页面不支持预览”。",
                 "produces": [
                     "application/json"
                 ],
@@ -9967,12 +10211,6 @@ const docTemplate = `{
                         "name": "file_id",
                         "in": "query",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "文件格式，可选：xlsx",
-                        "name": "format",
-                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -12277,6 +12515,9 @@ const docTemplate = `{
                 "project_report_id"
             ],
             "properties": {
+                "content": {
+                    "type": "string"
+                },
                 "owner_id": {
                     "type": "string",
                     "example": "0"
@@ -12284,12 +12525,19 @@ const docTemplate = `{
                 "owner_type": {
                     "type": "string"
                 },
+                "parent_id": {
+                    "type": "string",
+                    "example": "0"
+                },
                 "project_report_id": {
                     "type": "string",
                     "example": "0"
                 },
                 "sort_order": {
                     "type": "integer"
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },
@@ -12460,6 +12708,10 @@ const docTemplate = `{
         "handler.analysisNodeByProjectPageRequest": {
             "type": "object",
             "properties": {
+                "analysis_id": {
+                    "type": "string",
+                    "example": "0"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -12867,6 +13119,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "install_key": {
+                    "type": "string"
+                },
+                "io_schema": {
                     "type": "string"
                 },
                 "message": {
@@ -13441,6 +13696,9 @@ const docTemplate = `{
         "handler.projectReportItemDTO": {
             "type": "object",
             "properties": {
+                "content": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -13451,6 +13709,50 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "owner_type": {
+                    "type": "string"
+                },
+                "parent_id": {
+                    "type": "string"
+                },
+                "project_report_id": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "handler.projectReportItemNode": {
+            "type": "object",
+            "properties": {
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.projectReportItemNode"
+                    }
+                },
+                "content": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "owner_id": {
+                    "type": "string"
+                },
+                "owner_type": {
+                    "type": "string"
+                },
+                "parent_id": {
                     "type": "string"
                 },
                 "project_report_id": {
@@ -13511,6 +13813,44 @@ const docTemplate = `{
                 },
                 "path": {
                     "type": "string"
+                }
+            }
+        },
+        "handler.reorderProjectReportItemEntry": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "parent_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "sort_order": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handler.reorderProjectReportItemRequest": {
+            "type": "object",
+            "required": [
+                "items",
+                "report_id"
+            ],
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.reorderProjectReportItemEntry"
+                    }
+                },
+                "report_id": {
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -13737,6 +14077,9 @@ const docTemplate = `{
                 "id"
             ],
             "properties": {
+                "content": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string",
                     "example": "0"
@@ -13748,8 +14091,15 @@ const docTemplate = `{
                 "owner_type": {
                     "type": "string"
                 },
+                "parent_id": {
+                    "type": "string",
+                    "example": "0"
+                },
                 "sort_order": {
                     "type": "integer"
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },
@@ -13795,9 +14145,6 @@ const docTemplate = `{
             ],
             "properties": {
                 "file_id": {
-                    "type": "string"
-                },
-                "format": {
                     "type": "string"
                 },
                 "workbook_data": {
@@ -13864,6 +14211,14 @@ const docTemplate = `{
         "interfaces.WorkbookReadResult": {
             "type": "object",
             "properties": {
+                "file": {
+                    "description": "File is the go_file row the workbook was read from. It is only populated\nby ReadWorkbookByFileID so the frontend can render the file metadata\nwithout an extra request.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.File"
+                        }
+                    ]
+                },
                 "file_path": {
                     "type": "string"
                 },
@@ -14128,15 +14483,20 @@ const docTemplate = `{
                 "output_dir": {
                     "type": "string"
                 },
+                "output_file_ids": {
+                    "description": "输出句柄 -\u003e go_file id，供下游 SelectAssay 输入还原为 {\"files\": \"\u003cid\u003e\"}",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.JSONMap"
+                        }
+                    ]
+                },
                 "output_patterns": {
                     "$ref": "#/definitions/types.JSONMap"
                 },
                 "output_validation_errors": {
                     "type": "array",
                     "items": {}
-                },
-                "params": {
-                    "$ref": "#/definitions/types.JSONMap"
                 },
                 "params_md5": {
                     "type": "string"
@@ -14507,9 +14867,6 @@ const docTemplate = `{
                 "command": {
                     "type": "string"
                 },
-                "conda_library_path": {
-                    "type": "string"
-                },
                 "cpu": {
                     "type": "number"
                 },
@@ -14557,12 +14914,6 @@ const docTemplate = `{
                 "port": {
                     "type": "integer"
                 },
-                "python_library_path": {
-                    "type": "string"
-                },
-                "r_library_path": {
-                    "type": "string"
-                },
                 "scheduling_constraint": {
                     "type": "array",
                     "items": {
@@ -14591,9 +14942,6 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "command": {
-                    "type": "string"
-                },
-                "conda_library_path": {
                     "type": "string"
                 },
                 "cpu": {
@@ -14635,12 +14983,6 @@ const docTemplate = `{
                 },
                 "port": {
                     "type": "integer"
-                },
-                "python_library_path": {
-                    "type": "string"
-                },
-                "r_library_path": {
-                    "type": "string"
                 },
                 "scheduling_constraint": {
                     "type": "array",
@@ -14849,6 +15191,10 @@ const docTemplate = `{
                 "path": {
                     "type": "string"
                 },
+                "role": {
+                    "description": "Role is the role the file is published under in the workflow form's\nanalysis_result map, e.g. BAM / VCF / DEFAULT. A node output file takes it\nfrom its output_patterns entry (see NodeCompletionCoordinator.recordNodeOutputFiles),\ndefaulting to dag.DefaultNodeOutputRole (\"DEFAULT\") when the pattern declares\nnone; resolveFormAnalysisResult groups the node output files by it so the\nfrontend reads them as dataMap[role] just like dataset files.",
+                    "type": "string"
+                },
                 "size": {
                     "type": "integer"
                 },
@@ -15019,6 +15365,22 @@ const docTemplate = `{
                 },
                 "user": {
                     "$ref": "#/definitions/types.User"
+                }
+            }
+        },
+        "types.Pagination": {
+            "type": "object",
+            "properties": {
+                "page": {
+                    "description": "Page",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "page_size": {
+                    "description": "Page size",
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
                 }
             }
         },
@@ -15469,9 +15831,6 @@ const docTemplate = `{
                     "description": "Version            string         ` + "`" + `json:\"version\" gorm:\"type:varchar(255)\"` + "`" + `\nMessage   string    ` + "`" + `json:\"message\" gorm:\"type:longtext\"` + "`" + `",
                     "type": "string"
                 },
-                "dag_definition": {
-                    "type": "string"
-                },
                 "description": {
                     "type": "string"
                 },
@@ -15531,6 +15890,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "workflow_id": {
+                    "description": "DagDefinition      string         ` + "`" + `json:\"dag_definition\" gorm:\"column:dag_definition;type:longtext\"` + "`" + `",
                     "type": "string"
                 }
             }
