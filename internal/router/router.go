@@ -213,6 +213,7 @@ func RegisterDataRoutes(r *gin.RouterGroup, handler *handler.DataHandler) {
 	r.POST("/data/dataset/update", handler.UpdateDataset)
 	r.POST("/data/dataset/delete", handler.DeleteDataset)
 	r.GET("/data/dataset/list", handler.ListDataset)
+	r.GET("/data/dataset/list-by-project", handler.ListDatasetByProjectID)
 	r.POST("/data/dataset/list-by-project-page", handler.PageDatasetByProjectID)
 	r.POST("/data/dataset/ensure-dir", handler.EnsureDatasetDir)
 	r.POST("/data/import/assay-tsv", handler.ImportAssayTSV)

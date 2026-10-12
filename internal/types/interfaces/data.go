@@ -17,6 +17,9 @@ type DataService interface {
 	UpdateDataset(ctx context.Context, dataset *types.Dataset) error
 	DeleteDataset(ctx context.Context, id int64) error
 	ListDataset(ctx context.Context) ([]*types.Dataset, error)
+	// ListDatasetByProjectID returns every dataset bound to the project
+	// (go_project_dataset -> go_dataset), newest first.
+	ListDatasetByProjectID(ctx context.Context, projectID string) ([]*types.Dataset, error)
 	PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID string) (*types.PageResult, error)
 
 	CreateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error
@@ -97,6 +100,7 @@ type DataRepository interface {
 	UpdateDataset(ctx context.Context, dataset *types.Dataset) error
 	DeleteDataset(ctx context.Context, id int64) error
 	ListDataset(ctx context.Context) ([]*types.Dataset, error)
+	ListDatasetByProjectID(ctx context.Context, projectID string) ([]*types.Dataset, error)
 	PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID string) ([]*types.Dataset, int64, error)
 
 	CreateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error

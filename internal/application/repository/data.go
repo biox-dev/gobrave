@@ -52,6 +52,25 @@ func (r *dataRepository) ListDataset(ctx context.Context) ([]*types.Dataset, err
 	return items, nil
 }
 
+// ListDatasetByProjectID returns every dataset bound to the project through
+// go_project_dataset, newest first. It is the unpaginated counterpart of
+// PageDatasetByProjectID used by pickers.
+func (r *dataRepository) ListDatasetByProjectID(ctx context.Context, projectID string) ([]*types.Dataset, error) {
+	items := make([]*types.Dataset, 0)
+	err := r.db.WithContext(ctx).
+		Table("go_dataset AS dataset").
+		Select("dataset.id, dataset.dataset_name, dataset.description, dataset.metadata, dataset.created_at, dataset.updated_at").
+		Joins("JOIN go_project_dataset AS pd ON pd.dataset_id = dataset.id").
+		Where("pd.project_id = ?", projectID).
+		Distinct().
+		Order("dataset.id DESC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *dataRepository) PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID string) ([]*types.Dataset, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}

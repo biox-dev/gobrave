@@ -474,6 +474,38 @@ func (h *DataHandler) ListDataset(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
+// ListDatasetByProjectID godoc
+// @Summary      按项目查询数据集列表
+// @Description  根据当前用户激活的项目查询关联的所有 Dataset
+// @Tags         数据管理
+// @Produce      json
+// @Success      200      {array}   types.Dataset
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/dataset/list-by-project [get]
+func (h *DataHandler) ListDatasetByProjectID(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project")
+		return
+	}
+
+	items, err := h.dataService.ListDatasetByProjectID(c.Request.Context(), project.ProjectID)
+	if err != nil {
+		handleDataError(c, err, "failed to list dataset by project id")
+		return
+	}
+
+	c.JSON(http.StatusOK, items)
+}
+
 // PageDatasetByProjectID godoc
 // @Summary      按项目分页查询数据集
 // @Description  根据当前用户激活的项目分页查询关联的 Dataset 列表

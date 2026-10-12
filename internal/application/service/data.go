@@ -144,6 +144,10 @@ func (s *dataService) ListDataset(ctx context.Context) ([]*types.Dataset, error)
 	return s.dataRepo.ListDataset(ctx)
 }
 
+func (s *dataService) ListDatasetByProjectID(ctx context.Context, projectID string) ([]*types.Dataset, error) {
+	return s.dataRepo.ListDatasetByProjectID(ctx, projectID)
+}
+
 func (s *dataService) PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID string) (*types.PageResult, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
