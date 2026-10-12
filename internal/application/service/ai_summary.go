@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/manager"
@@ -20,6 +21,8 @@ type aiSummaryService struct {
 	// analysisRepo 用于解析摘要所属对象的输出目录，以补充响应中的 URL 前缀。
 	analysisRepo interfaces.AnalysisRepository
 	cfg          *config.Config
+	// agentSvc 用于按摘要使用的 Profile 渲染真实的系统提示词（可为空）。
+	agentSvc *agent.AgentService
 }
 
 func NewAISummaryService(
@@ -28,6 +31,7 @@ func NewAISummaryService(
 	content manager.AISummaryContentProvider,
 	analysisRepo interfaces.AnalysisRepository,
 	cfg *config.Config,
+	agentSvc *agent.AgentService,
 ) interfaces.AISummaryService {
 	return &aiSummaryService{
 		summaryRepo:   summaryRepo,
@@ -35,6 +39,7 @@ func NewAISummaryService(
 		content:       content,
 		analysisRepo:  analysisRepo,
 		cfg:           cfg,
+		agentSvc:      agentSvc,
 	}
 }
 
@@ -210,16 +215,47 @@ func (s *aiSummaryService) DeleteAISummary(ctx context.Context, id int64) error 
 }
 
 // GetAISummaryInput 按所属对象类型与 ID 解析生成摘要时交给 LLM 的输入信息。
+//
+// 与 DescribeEnv 类似：先用所属对象解析出系统提示词模板变量，再按该摘要使用的
+// Agent Profile（取自摘要记录，为空回退内置 agent.ProfileSummary）渲染出真正的系统提示词。
 func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) (*types.AISummaryInput, error) {
 	content, err := s.content.Resolve(ctx, ownerType, ownerID)
 	if err != nil {
 		return nil, err
 	}
 
+	profile := s.resolveSummaryProfile(ctx, ownerType, ownerID)
+
+	systemPrompt := ""
+	if s.agentSvc != nil {
+		systemPrompt, err = s.agentSvc.RenderSystemPrompt(ctx, "", profile, content.SystemPromptVars)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &types.AISummaryInput{
-		Title: content.Title,
-		// SystemPrompt: content.SystemPrompt,
-		WorkingDir: content.WorkingDir,
-		Text:       content.Text,
+		Title:        content.Title,
+		Profile:      profile,
+		SystemPrompt: systemPrompt,
+		Vars:         content.SystemPromptVars,
+		WorkingDir:   content.WorkingDir,
 	}, nil
+}
+
+// resolveSummaryProfile 返回该所属对象现有摘要使用的 Agent Profile；
+// 未找到摘要或 Profile 为空时回退到内置 agent.ProfileSummary。
+func (s *aiSummaryService) resolveSummaryProfile(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) string {
+	summaries, err := s.summaryRepo.ListAISummariesByOwner(ctx, ownerType, ownerID)
+	if err == nil {
+		for _, item := range summaries {
+			if item == nil {
+				continue
+			}
+			if name := strings.TrimSpace(item.Profile); name != "" {
+				return name
+			}
+		}
+	}
+	return agent.ProfileSummary
 }

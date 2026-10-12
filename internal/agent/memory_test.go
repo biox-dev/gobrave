@@ -96,15 +96,14 @@ func TestInjectMemory(t *testing.T) {
 		Messages:     []Message{{Role: RoleUser, Content: "请用 Go 简洁地介绍"}},
 	}
 
-	out := svc.injectMemory(ctx, req)
-	if !strings.Contains(out.SystemPrompt, "相关记忆") || !strings.Contains(out.SystemPrompt, "偏爱简洁") {
-		t.Fatalf("memory not injected into SystemPrompt:\n%s", out.SystemPrompt)
+	out := svc.injectMemory(ctx, req.SystemPrompt, req.UserID)
+	if !strings.Contains(out, "相关记忆") || !strings.Contains(out, "偏爱简洁") {
+		t.Fatalf("memory not injected into SystemPrompt:\n%s", out)
 	}
 
 	// 无 UserID 时不应注入。
-	noUser := Request{Messages: []Message{{Role: RoleUser, Content: "hi"}}}
-	if got := svc.injectMemory(ctx, noUser); got.SystemPrompt != "" {
-		t.Fatalf("expected no injection without UserID, got %q", got.SystemPrompt)
+	if got := svc.injectMemory(ctx, "你是助手", ""); got != "你是助手" {
+		t.Fatalf("expected no injection without userID, got %q", got)
 	}
 }
 

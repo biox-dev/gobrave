@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -15,11 +14,13 @@ import (
 type AISummaryContent struct {
 	// Title 是摘要标题的候选值。
 	Title string
-	// SystemPrompt 是交给 Agent 生成摘要时的系统提示词。
-	// SystemPrompt string
-	// Text 是交给 Agent 生成摘要的原始内容（用户输入）。
-	Text string
+	// SystemPromptVars 是渲染摘要 AgentProfile 系统提示词模板（pongo2）所需的变量。
+	//
+	// 与 RuntimeContextResolver 一致：这里只提供业务上下文事实（输出目录、输出文件等），
+	// 真正的系统提示词由 AgentService 用 Profile 模板 + 这些变量渲染。
+	SystemPromptVars map[string]any
 
+	// WorkingDir 是 Agent 执行任务时的工作目录。
 	WorkingDir string
 
 	// ProjectID 是摘要所属对象（Analysis / AnalysisNode）归属的项目 ID，
@@ -66,6 +67,9 @@ func (p *aiSummaryContentProvider) Resolve(ctx context.Context, ownerType types.
 
 func (p *aiSummaryContentProvider) resolveAnalysis(ctx context.Context, analysisID int64) (AISummaryContent, error) {
 	a, err := p.analysisRepo.GetAnalysisByID(ctx, analysisID)
+	if err != nil {
+		return AISummaryContent{}, err
+	}
 	workflow, err := p.workflowRepo.GetWorkflowByID(ctx, a.WorkflowID)
 	if err != nil {
 		return AISummaryContent{}, err
@@ -73,21 +77,26 @@ func (p *aiSummaryContentProvider) resolveAnalysis(ctx context.Context, analysis
 
 	return AISummaryContent{
 		Title: fmt.Sprintf("%s: %s", workflow.Name, a.AnalysisName),
-		// SystemPrompt: p.systemPrompt,
+		SystemPromptVars: map[string]any{
+			"workspace_directory": a.WorkspaceDir,
+			"workspace_label":     a.AnalysisName,
+			"output_directory":    a.WorkspaceDir,
+			"analysis_name":       a.AnalysisName,
+			"analysis_method":     a.AnalysisMethod,
+			"job_status":          a.JobStatus,
+			"output_format":       a.OutputFormat,
+			"workflow_name":       workflow.Name,
+		},
 		WorkingDir: a.WorkspaceDir,
 		ProjectID:  a.ProjectID,
-		Text: strings.Join(filterNonEmpty([]string{
-			"分析名称: " + a.AnalysisName,
-			"分析方法: " + a.AnalysisMethod,
-			"运行状态: " + a.JobStatus,
-			"输出目录: " + a.WorkspaceDir,
-			"输出格式: " + a.OutputFormat,
-		}), "\n"),
 	}, nil
 }
 
 func (p *aiSummaryContentProvider) resolveAnalysisNode(ctx context.Context, nodeID int64) (AISummaryContent, error) {
 	n, err := p.analysisRepo.GetAnalysisNodeByID(ctx, nodeID)
+	if err != nil {
+		return AISummaryContent{}, err
+	}
 
 	script, err := p.workflowRepo.GetScriptByID(ctx, n.ScriptID)
 	if err != nil {
@@ -96,30 +105,16 @@ func (p *aiSummaryContentProvider) resolveAnalysisNode(ctx context.Context, node
 
 	outputFile := filepath.Join(n.OutputDir, "output.md")
 	return AISummaryContent{
-		// "Node Summary: %s",
 		Title: fmt.Sprintf("%s: %s", script.ComponentName, n.NodeName),
-		// SystemPrompt: p.systemPrompt,
+		SystemPromptVars: map[string]any{
+			"workspace_directory": n.OutputDir,
+			"workspace_label":     n.NodeName,
+			"output_directory":    n.OutputDir,
+			"output_file":         outputFile,
+			"node_name":           n.NodeName,
+			"script_name":         script.ComponentName,
+		},
 		WorkingDir: n.OutputDir,
 		ProjectID:  n.ProjectID,
-		Text: strings.Join(filterNonEmpty([]string{
-			"Analysis Name: " + n.NodeName,
-			// "节点 ID: " + n.NodeID,
-			// "样本 ID: " + n.SampleID,
-			// "状态: " + n.Status,
-			"Output Directory: " + n.OutputDir,
-			"Output File: " + outputFile,
-			"\n",
-			fmt.Sprintf("Do not run analysis commands, mainly read the content of the analysis result file [%s] to complete the corresponding tasks.", outputFile),
-		}), "\n"),
 	}, nil
-}
-
-func filterNonEmpty(items []string) []string {
-	out := make([]string, 0, len(items))
-	for _, s := range items {
-		if strings.TrimSpace(s) != "" {
-			out = append(out, s)
-		}
-	}
-	return out
 }

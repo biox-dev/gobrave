@@ -114,10 +114,10 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	}
 
 	task, err := w.agentService.CreateTask(ctx, agent.Request{
-		// SystemPrompt: content.SystemPrompt,
-		WorkingDir: content.WorkingDir,
+		WorkingDir:       content.WorkingDir,
+		SystemPromptVars: content.SystemPromptVars,
 		Messages: []agent.Message{
-			{Role: agent.RoleUser, Content: content.Text},
+			{Role: agent.RoleUser, Content: "请根据系统提示词完成对应的任务"},
 		},
 		Provider: agent.ProviderCustom,
 		Profile:  profile,

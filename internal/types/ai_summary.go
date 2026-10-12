@@ -88,10 +88,12 @@ type AISummaryStatusEvent struct {
 type AISummaryInput struct {
 	// Title 是摘要标题的候选值。
 	Title string `json:"title"`
-	// SystemPrompt 是生成摘要时使用的系统提示词。
-	// SystemPrompt string `json:"system_prompt"`
+	// Profile 是生成该摘要使用的 AgentProfile 名称（取自摘要记录，为空回退内置 summary Profile）。
+	Profile string `json:"profile,omitempty"`
+	// SystemPrompt 是用 Profile 模板 + Vars 渲染后的真实系统提示词。
+	SystemPrompt string `json:"system_prompt,omitempty"`
+	// Vars 是渲染系统提示词模板所用的变量（业务上下文）。
+	Vars map[string]any `json:"vars,omitempty"`
 	// WorkingDir 是 Agent 执行任务时的工作目录。
 	WorkingDir string `json:"working_dir"`
-	// Text 是交给 Agent 的原始内容（用户输入）。
-	Text string `json:"text"`
 }

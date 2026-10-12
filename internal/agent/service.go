@@ -185,9 +185,22 @@ func (s *AgentService) execute(ctx context.Context, task *Task, rt Runtime) {
 //
 // 异步（execute）与同步（RunTaskSync）共享这一执行路径。
 func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result, error) {
-	// 应用 Agent Profile：解析 → 合并系统提示词 → 选择技能 → 按开关注入背景。
-	task.Request = s.applyProfile(ctx, task.Request)
-	// applyProfile 可能依据 Profile.Model 覆盖请求级模型，同步回任务持久化字段。
+	// 应用 Agent Profile：解析 Profile → 覆盖模型 / Agent / 技能 → 渲染最终系统提示词。
+	// 最终系统提示词由 applyProfile 依据 Profile.SystemPrompt 模板 + SystemPromptVars
+	// 渲染，并按 Profile.Context 开关注入记忆 / 项目上下文。
+	// profile := s.resolveProfile(ctx, task.Request.Profile)
+	name := task.Request.Profile
+	if strings.TrimSpace(task.Request.Profile) == "" {
+		name = DefaultProfileName
+	}
+	profile, err := s.profiles.Resolve(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("resolve profile %q: %w", task.Request.Profile, err)
+	}
+
+	task.Request = applyProfileOverrides(task.Request, profile)
+	task.Request.SystemPrompt = s.GetSystemSpromptByProfile(ctx, profile, task.Request.SystemPromptVars, task.Request.UserID)
+	// Profile 可能依据 Profile.Model 覆盖请求级模型，同步回任务持久化字段。
 	task.Model = task.Request.Model
 	if err := s.transitionTask(ctx, task, TaskRunning, ""); err != nil {
 		return nil, err
@@ -199,7 +212,7 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	}
 
 	var result *Result
-	var err error
+	// var err error
 	if task.Request.Stream {
 		result, err = s.client.StreamRuntime(ctx, task.Request, rt)
 	} else {
@@ -283,16 +296,16 @@ func (s *AgentService) GetTask(ctx context.Context, id int64) (*Task, error) {
 	return s.tasks.Get(ctx, id)
 }
 
-// GetTaskRequest 按任务 ID 加载任务，应用 Agent Profile 后返回实际发送给 LLM 的请求内容。
+// GetTaskRequest 按任务 ID 加载任务，返回任务持久化的 Request 内容。
 //
-// 供 UI 调试 / 审计使用：它复用了 run 路径上的 applyProfile（系统提示词合并、技能选择、
-// 记忆 / 项目上下文注入），因此结果与任务实际执行时发给 Provider 的 Request 一致。
+// 供 UI 调试 / 审计使用。注意：这里返回的是任务创建时的原始请求，未应用 Agent Profile；
+// 真正发送给 Provider 的系统提示词在任务执行时由 run 经 resolveProfile / applyProfile
+// 渲染（Profile 模板 + SystemPromptVars + 背景注入）。
 func (s *AgentService) GetTaskRequest(ctx context.Context, taskID int64) (*Request, error) {
 	task, err := s.tasks.Get(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
-	// req := s.applyProfile(ctx, task.Request)
 	return &task.Request, nil
 }
 
@@ -472,111 +485,127 @@ func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID, profileNa
 	if err != nil || profile == nil {
 		return "", nil
 	}
-	return RenderSystemPromptTemplate(profile.SystemPrompt, vars)
+	systemPrompt := s.GetSystemSpromptByProfile(ctx, profile, vars, userID)
+
+	// return RenderSystemPromptTemplate(profile.SystemPrompt, vars)
+	return systemPrompt, nil
 }
 
-// applyProfile 在调用前应用 Agent Profile：
+// resolveProfile 解析本次调用应使用的 Profile：name 为空时回退到内置默认 Profile
+// （保证系统提示词含的工作目录等模板变量始终可用）。
 //
-//  1. 解析 Profile（未指定名称时取默认；解析失败则不应用）；
-//  2. 用请求携带的 SystemPromptVars 渲染 Profile.SystemPrompt 模板，得到本轮系统提示词
-//     （系统提示词只来源于 Profile，调用方不再直接提供）；
-//  3. Profile 指定了技能时，限制本次调用可见的技能集合；
-//  4. 按 Profile 的上下文开关决定是否注入记忆 / 项目上下文。
-func (s *AgentService) applyProfile(ctx context.Context, req Request) Request {
-	var profile *Profile
-	if s.profiles != nil {
-		// 未指定 Profile 时回退到内置默认 Profile，保证系统提示词（含工作目录等
-		// 模板变量）始终可用。
-		name := strings.TrimSpace(req.Profile)
-		if name == "" {
-			name = DefaultProfileName
-		}
-		profile, _ = s.profiles.Resolve(ctx, name)
-	}
+// 未配置 ProfileManager 或解析失败时返回 nil，调用方按「无 Profile」处理。
+// func (s *AgentService) resolveProfile(ctx context.Context, name string) *Profile {
+// 	if s.profiles == nil {
+// 		return nil
+// 	}
+// if strings.TrimSpace(name) == "" {
+// 	name = DefaultProfileName
+// }
+
+// 	return profile
+// }
+
+// applyProfileOverrides 用 Profile 覆盖请求级的模型 / Agent（Provider）/ 技能选择。
+//
+// 覆盖规则：Profile 中非空的字段优先，为空时保留 req 原值（作为兜底）。
+func applyProfileOverrides(req Request, profile *Profile) Request {
 	if profile == nil {
 		return req
 	}
 
-	// 0) 模型选择：Profile 指定了模型时，以 Profile 为准（req.Model 作为兜底）。
+	// 模型选择：Profile 指定了模型时，以 Profile 为准（req.Model 作为兜底）。
 	if model := strings.TrimSpace(profile.Model); model != "" {
 		req.Model = model
 	}
 
-	// 0.5) Agent（Provider）选择：Profile 指定了 Agent 时，以 Profile 为准。
+	// Agent（Provider）选择：Profile 指定了 Agent 时，以 Profile 为准。
 	if provider := strings.TrimSpace(profile.Provider); provider != "" {
 		req.Provider = provider
 	}
 
-	// 1) 系统提示词：只来源于 Profile —— 用请求携带的变量渲染 Profile 的模板。
-	//    渲染失败时退回原始模板，保证调用仍可进行。
-	req.SystemPrompt = ""
-	if tpl := strings.TrimSpace(profile.SystemPrompt); tpl != "" {
-		rendered, renderErr := RenderSystemPromptTemplate(profile.SystemPrompt, req.SystemPromptVars)
-		if renderErr != nil {
-			req.SystemPrompt = tpl
-		} else {
-			req.SystemPrompt = rendered
-		}
-	}
-
-	// 2) 技能选择：Profile.Skills 非空时限制本次调用可见的技能集合。
+	// 技能选择：Profile.Skills 非空时限制本次调用可见的技能集合。
 	if len(profile.Skills) > 0 {
 		req.Skills = profile.Skills
 	}
 
-	// 3) 背景注入：按 Profile 声明的开关执行。
+	return req
+}
+
+// applyProfile 依据 Profile 生成本轮最终的 SystemPrompt。
+//
+// 入参：
+//   - profile：已解析的 Agent Profile（为 nil 时返回空提示词，表示不附加系统提示词）；
+//   - vars：渲染 Profile.SystemPrompt（pongo2 模板）所用的变量，通常为 Request.SystemPromptVars；
+//   - userID：记忆 / 项目上下文的归属用户（为空时不注入背景）。
+//
+// 处理顺序：渲染 Profile 模板 → 按 Profile.Context 开关注入记忆 / 项目上下文。
+// 模板渲染失败时退回原始模板，保证调用仍可进行。
+func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *Profile, vars map[string]any, userID string) string {
+	if profile == nil {
+		return ""
+	}
+
+	// 1) 系统提示词：只来源于 Profile —— 用调用方传入的变量渲染 Profile 的模板。
+	var prompt string
+	if tpl := strings.TrimSpace(profile.SystemPrompt); tpl != "" {
+		rendered, err := RenderSystemPromptTemplate(profile.SystemPrompt, vars)
+		if err != nil {
+			prompt = tpl
+		} else {
+			prompt = rendered
+		}
+	}
+
+	// 2) 背景注入：按 Profile 声明的开关执行。
 	if profile.Context.InjectMemory {
-		req = s.injectMemory(ctx, req)
+		prompt = s.injectMemory(ctx, prompt, userID)
 	}
 	if profile.Context.InjectProject {
-		req = s.injectProjectContext(ctx, req)
+		prompt = s.injectProjectContext(ctx, prompt, userID)
 	}
 
-	return req
+	return prompt
 }
 
-// injectMemory 在调用前检索相关记忆并注入 SystemPrompt。
+// injectMemory 检索相关记忆并把记忆背景块追加到系统提示词尾部。
 //
-// 未配置记忆、请求未携带 UserID、或检索不到相关记忆时，原样返回请求。
-func (s *AgentService) injectMemory(ctx context.Context, req Request) Request {
-	if s.memory == nil || strings.TrimSpace(req.UserID) == "" {
-		return req
+// 未配置记忆、userID 为空、或检索不到相关记忆时，原样返回 prompt。
+func (s *AgentService) injectMemory(ctx context.Context, prompt, userID string) string {
+	if s.memory == nil || strings.TrimSpace(userID) == "" {
+		return prompt
 	}
-	query := lastUserMessage(req.Messages)
-	mems, err := s.memory.Retrieve(ctx, req.UserID, query, defaultMemoryRetrieveLimit)
+	mems, err := s.memory.Retrieve(ctx, userID, "", defaultMemoryRetrieveLimit)
 	if err != nil || len(mems) == 0 {
-		return req
+		return prompt
 	}
-	block := BuildMemoryContext(mems)
-	if block == "" {
-		return req
-	}
-	if req.SystemPrompt == "" {
-		req.SystemPrompt = block
-	} else {
-		req.SystemPrompt = req.SystemPrompt + "\n\n" + block
-	}
-	return req
+	return appendPromptBlock(prompt, BuildMemoryContext(mems))
 }
 
-// injectProjectContext 在调用前把当前项目已完成的分析节点等背景注入 SystemPrompt。
+// injectProjectContext 把当前项目已完成的分析节点等背景追加到系统提示词尾部。
 //
-// 未配置项目上下文提供者、请求未携带 UserID、或查询不到上下文时，原样返回请求。
+// 未配置项目上下文提供者、userID 为空、或查询不到上下文时，原样返回 prompt。
 // 与 injectMemory 不同，项目上下文是实时查询的领域状态（而非持久化记忆），因此不落库。
-func (s *AgentService) injectProjectContext(ctx context.Context, req Request) Request {
-	if s.project == nil || strings.TrimSpace(req.UserID) == "" {
-		return req
+func (s *AgentService) injectProjectContext(ctx context.Context, prompt, userID string) string {
+	if s.project == nil || strings.TrimSpace(userID) == "" {
+		return prompt
 	}
-	block, err := s.project.ProjectContext(ctx, req.UserID)
-	if err != nil || block == "" {
-		return req
+	block, err := s.project.ProjectContext(ctx, userID)
+	if err != nil {
+		return prompt
 	}
-	if req.SystemPrompt == "" {
-		req.SystemPrompt = block
-	} else {
-		req.SystemPrompt = req.SystemPrompt + "\n\n" + block
+	return appendPromptBlock(prompt, block)
+}
+
+// appendPromptBlock 把上下文块追加到系统提示词尾部；块为空时原样返回。
+func appendPromptBlock(prompt, block string) string {
+	if block == "" {
+		return prompt
 	}
-	return req
+	if prompt == "" {
+		return block
+	}
+	return prompt + "\n\n" + block
 }
 
 // extractMemory 在任务成功完成后调用记忆提取器，把提取出的记忆写入 Repository 并广播。

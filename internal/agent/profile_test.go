@@ -22,7 +22,7 @@ func TestProfileManagerResolveBuiltin(t *testing.T) {
 	ctx := context.Background()
 
 	// 未指定名称 → 内置默认。
-	p, err := m.Resolve(ctx, "u1", "")
+	p, err := m.Resolve(ctx, "")
 	if err != nil {
 		t.Fatalf("resolve default: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestProfileManagerResolveBuiltin(t *testing.T) {
 	}
 
 	// 指定内置名称 → 命中内置 Profile。
-	p, err = m.Resolve(ctx, "u1", ProfileArticleWriter)
+	p, err = m.Resolve(ctx, ProfileArticleWriter)
 	if err != nil {
 		t.Fatalf("resolve article_writer: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestProfileManagerUserDefault(t *testing.T) {
 	}
 
 	// 用户默认优先于内置默认。
-	p, err := m.Resolve(ctx, "u1", "")
+	p, err := m.Resolve(ctx, "")
 	if err != nil {
 		t.Fatalf("resolve user default: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestProfileManagerUserDefault(t *testing.T) {
 	}
 
 	// 名称规整：空格转下划线、小写。
-	p, err = m.Resolve(ctx, "u1", "MY WRITER")
+	p, err = m.Resolve(ctx, "MY WRITER")
 	if err != nil {
 		t.Fatalf("resolve by normalized name: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestProfileManagerUserDefault(t *testing.T) {
 	}
 
 	// 其他用户不受影响（回退到内置默认）。
-	p, err = m.Resolve(ctx, "u2", "")
+	p, err = m.Resolve(ctx, "")
 	if err != nil {
 		t.Fatalf("resolve other user default: %v", err)
 	}
