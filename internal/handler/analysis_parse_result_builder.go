@@ -1030,6 +1030,9 @@ func extractAssayIDsFromValue(value interface{}) []string {
 		if assay, ok := v["files"]; ok {
 			return extractIDList(assay)
 		}
+		if assay, ok := v["file"]; ok {
+			return extractIDList(assay)
+		}
 		return nil
 	default:
 		return extractIDList(v)

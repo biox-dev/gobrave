@@ -105,7 +105,7 @@ func ApplySelectAssayBindings(ctx context.Context, parser NodeRequestParser, tar
 	changed := false
 	for _, binding := range bindings {
 		inputCfg := asMap(patterns[binding.TargetHandle])
-		if strings.ToLower(strings.TrimSpace(asString(inputCfg["type"]))) != "selectassay" {
+		if strings.ToLower(strings.TrimSpace(asString(inputCfg["type"]))) != "collectedassayselect" {
 			continue
 		}
 		if binding.FileID == "" {
