@@ -954,7 +954,7 @@ func resolveAssayInputValue(
 		}
 
 		row := map[string]interface{}{
-			"files":       assayID,
+			"file":        assayID,
 			"ID":          assayID,
 			"sample_name": "",
 			"assay_type":  "",

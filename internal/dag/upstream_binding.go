@@ -111,7 +111,7 @@ func ApplySelectAssayBindings(ctx context.Context, parser NodeRequestParser, tar
 		if binding.FileID == "" {
 			continue
 		}
-		requestParams[binding.TargetHandle] = map[string]any{"files": binding.FileID}
+		requestParams[binding.TargetHandle] = map[string]any{"file": binding.FileID}
 		changed = true
 	}
 	if !changed {
