@@ -234,6 +234,7 @@ func RegisterDataRoutes(r *gin.RouterGroup, handler *handler.DataHandler) {
 	r.GET("/data/file/list-by-project-group", handler.ListFileByProjectIDGroupByRole)
 	r.GET("/data/file/list-by-assay", handler.ListFileByAssayID)
 	r.GET("/data/file/list-by-analysis-node", handler.ListFileByAnalysisNodeID)
+	r.GET("/data/file/columns", handler.GetFileColumns)
 
 	r.POST("/data/dataset-file/create", handler.CreateDatasetFile)
 	r.POST("/data/dataset-file/add-file", handler.AddFileToDataset)

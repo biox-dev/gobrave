@@ -251,12 +251,12 @@ func buildCompatFileItem(item *types.FileWithDatasetInfo) (map[string]interface{
 	// For EXP/TABLE roles, attach the file's column names so the frontend can
 	// offer them as selectable fields. tsv/csv return a flat column list while
 	// Excel workbooks return columns grouped by sheet name.
-	if (item.Role == "EXP" || item.Role == "TABLE") && item.Path != "" {
-		if cols, ok := readFileColumns(item.Path, item.Format, item.ID); ok {
-			result["columns"] = cols
-		}
-		// silently skip if file is missing or unreadable
-	}
+	// if (item.Role == "EXP" || item.Role == "TABLE") && item.Path != "" {
+	// 	if cols, ok := readFileColumns(item.Path, item.Format, item.ID); ok {
+	// 		result["columns"] = cols
+	// 	}
+	// 	// silently skip if file is missing or unreadable
+	// }
 
 	return result, nil
 }
@@ -945,6 +945,45 @@ func (h *DataHandler) ListFileByAnalysisNodeID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, items)
+}
+
+// GetFileColumns godoc
+// @Summary      获取文件列名
+// @Description  按文件 ID 读取其列名：tsv/csv 返回扁平的列数组，Excel 返回按 sheet 名分组的列
+// @Tags         数据管理
+// @Produce      json
+// @Param        id       query     integer           true  "文件主键 ID"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/file/columns [get]
+func (h *DataHandler) GetFileColumns(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req idQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	item, err := h.dataService.GetFileByID(c.Request.Context(), req.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to get file")
+		return
+	}
+
+	columns, ok := readFileColumns(item.Path, item.Format, item.ID)
+	if !ok {
+		// File is missing or its format is not tabular; columns stay empty.
+		columns = nil
+	}
+
+	c.JSON(http.StatusOK, gin.H{"file_id": item.ID, "columns": columns})
 }
 
 // ListFileByProjectID godoc
