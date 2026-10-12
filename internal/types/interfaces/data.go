@@ -36,7 +36,8 @@ type DataService interface {
 	// ListFileByProjectIDViaAnalysisNode returns the files produced by the
 	// project's analysis nodes, resolved through go_file.analysis_node_id ->
 	// analysis_nodes.id (analysis_nodes.project_id carries the numeric project
-	// PK). Every node file is returned, keyed by its own file_key.
+	// PK). Every node file is returned, keyed by its own go_file.role (the role
+	// its output_patterns entry declared, defaulted on write).
 	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error)
 	// PageFileByProjectIDViaAnalysisNode returns the same analysis-node files as
 	// ListFileByProjectIDViaAnalysisNode, paginated.

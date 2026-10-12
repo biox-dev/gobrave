@@ -207,6 +207,9 @@ func (r *dataRepository) UpdateFile(ctx context.Context, file *types.File) error
 	if file.FileKey != "" {
 		updates["file_key"] = file.FileKey
 	}
+	if file.Role != "" {
+		updates["role"] = file.Role
+	}
 	if file.Size != 0 {
 		updates["size"] = file.Size
 	}
@@ -399,9 +402,9 @@ func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID stri
 // own go_file.analysis_node_id -> analysis_nodes.id. analysis_nodes.project_id
 // holds the numeric project PK (t_project.id), so the business project_id is
 // resolved through t_project.id. These files are node-private and not
-// dataset-bound, so dataset_id/dataset_name stay empty; role is filled from the
-// file's own file_key for shape compatibility, and the caller decides how to
-// group them.
+// dataset-bound, so dataset_id/dataset_name stay empty; role is the file's own
+// go_file.role (the role its output_patterns entry declared, defaulted to
+// "DEFAULT" on write), and the caller groups them by it.
 func (r *dataRepository) ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error) {
 	items := make([]*types.FileWithDatasetInfo, 0)
 	err := r.db.WithContext(ctx).
@@ -419,7 +422,7 @@ func (r *dataRepository) ListFileByProjectIDViaAnalysisNode(ctx context.Context,
 			f.description,
 			f.created_at,
 			f.updated_at,
-			f.file_key AS role
+			f.role
 		`).
 		Joins("JOIN t_project AS p ON p.id = an.project_id").
 		Joins("JOIN go_file AS f ON f.analysis_node_id = an.id").
@@ -470,7 +473,7 @@ func (r *dataRepository) PageFileByProjectIDViaAnalysisNode(ctx context.Context,
 			f.description,
 			f.created_at,
 			f.updated_at,
-			f.file_key AS role
+			f.role
 		`).
 		Order("f.id DESC").
 		Offset(pagination.Offset()).

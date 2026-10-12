@@ -536,6 +536,12 @@ func (c *NodeCompletionCoordinator) scheduleOutputVisibilityPostMortem(node *typ
 	}()
 }
 
+// DefaultNodeOutputRole is the role an output_patterns entry is recorded under
+// when it declares none. It is the analysis_result key the frontend reads for
+// node output files that cannot be matched to any item's accept_formats
+// (ComponentsRender resolves them as dataMap["DEFAULT"]).
+const DefaultNodeOutputRole = "DEFAULT"
+
 // recordNodeOutputFiles mirrors a completed node's declared file outputs into the
 // go_file table so they become visible to the file/dataset layer, and returns the
 // recorded go_file primary key id for each declared output handle.
@@ -543,7 +549,9 @@ func (c *NodeCompletionCoordinator) scheduleOutputVisibilityPostMortem(node *typ
 // Only output_patterns entries whose type is "file" are considered. For each of
 // those, the resolved output value is expected to carry the file's path and an
 // optional key; each row is keyed by (analysis_node_id, file_key), so re-running a
-// node updates its existing rows instead of piling up duplicates.
+// node updates its existing rows instead of piling up duplicates. The file's role
+// comes from the pattern's own "role" field (DefaultNodeOutputRole when absent),
+// and is what the handler groups the file under in analysis_result.
 //
 // This is a deliberately thin, best-effort mirror of AddFileToDataset: it does not
 // copy files or bind them to a dataset, it only records that the node produced
@@ -567,7 +575,7 @@ func (c *NodeCompletionCoordinator) recordNodeOutputFiles(ctx context.Context, n
 		if !ok {
 			continue
 		}
-		fileID, err := c.upsertNodeOutputFile(ctx, node, path, fileKey)
+		fileID, err := c.upsertNodeOutputFile(ctx, node, path, fileKey, nodeOutputRole(pattern))
 		if err != nil {
 			logger.Warnf(ctx, "[NodeCompletionCoordinator] record node output file failed, analysis_id=%d node_id=%s file_key=%s path=%s err=%v",
 				node.AnalysisID, node.NodeID, fileKey, path, err)
@@ -578,6 +586,23 @@ func (c *NodeCompletionCoordinator) recordNodeOutputFiles(ctx context.Context, n
 		}
 	}
 	return fileIDs
+}
+
+// nodeOutputRole reads the role an output_patterns entry publishes its file under,
+// defaulting to DefaultNodeOutputRole when the entry declares none. The role is
+// the analysis_result key the consuming form item resolves via dataMap[role], so
+// it mirrors the way input items declare their accepted roles.
+func nodeOutputRole(pattern any) string {
+	m, ok := pattern.(map[string]any)
+	if !ok {
+		return DefaultNodeOutputRole
+	}
+	role, _ := m["role"].(string)
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return DefaultNodeOutputRole
+	}
+	return role
 }
 
 // isFileOutputPattern reports whether an output_patterns entry declares a file
@@ -629,15 +654,18 @@ func outputStringField(fields map[string]any, key string) string {
 
 // upsertNodeOutputFile records one node output file, keyed by the node it belongs
 // to and its file key: an existing row is re-pointed at the new path, a missing
-// one is created. It returns the go_file primary key id (File.ID) of the recorded
-// row, which is the value SelectAssay inputs reference in `{"files": "<id>"}`.
-func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, node *types.AnalysisNode, path, fileKey string) (string, error) {
+// one is created. The pattern's role is persisted on go_file.role so the handler
+// can group the file under the matching analysis_result key. It returns the
+// go_file primary key id (File.ID) of the recorded row, which is the value
+// SelectAssay inputs reference in `{"files": "<id>"}`.
+func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, node *types.AnalysisNode, path, fileKey, role string) (string, error) {
 	existing, err := c.dataRepo.GetFileByAnalysisNodeIDAndFileKey(ctx, node.ID, fileKey)
 	switch {
 	case err == nil:
 		existing.Path = path
 		existing.FileName = filepath.Base(path)
 		existing.Format = strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+		existing.Role = role
 		if err := c.dataRepo.UpdateFile(ctx, existing); err != nil {
 			return "", err
 		}
@@ -650,6 +678,7 @@ func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, no
 			Format:         strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
 			AnalysisNodeID: node.ID,
 			FileKey:        fileKey,
+			Role:           role,
 			Storage:        "LOCAL",
 		}
 		if err := c.dataRepo.CreateFile(ctx, file); err != nil {

@@ -3,7 +3,9 @@ package handler
 import (
 	"context"
 	"sort"
+	"strings"
 
+	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
@@ -38,10 +40,12 @@ func buildScriptFormData(ctx context.Context,
 // `dataMap[role]`, which is why these are keyed by role just like the file case
 // always was.
 //
-// In addition, the files produced by the project's analysis nodes are always
-// published under the DEFAULT role key (see defaultAnalysisResultRole): they are
-// not dataset-scoped, so no item's resolver.accept_formats can match them, and
-// the frontend reads them as `dataMap["DEFAULT"]`.
+// In addition, the files produced by the project's analysis nodes (bound via
+// go_file.analysis_node_id) are not dataset-scoped, so no item's resolver
+// .accept_formats can match them. Each of those files carries its own role (the
+// role its output_patterns entry declared, defaulted to defaultAnalysisResultRole
+// on write), and is grouped under that role so the frontend reads it as
+// dataMap[role] like any other input candidate.
 func resolveFormAnalysisResult(
 	ctx context.Context,
 	dataService interfaces.DataService,
@@ -127,31 +131,39 @@ func resolveFormAnalysisResult(
 
 	// Files produced by the project's analysis nodes (bound via
 	// go_file.analysis_node_id) are not dataset-scoped, so they never match any
-	// item's resolver.accept_formats. They are always published under the DEFAULT
-	// role key so the frontend can pick them up as upstream analysis results.
+	// item's resolver.accept_formats. Each file carries its own role (the role its
+	// output_patterns entry declared, defaulted to defaultAnalysisResultRole on
+	// write), and is grouped under it so the frontend can pick the files up as
+	// upstream analysis results via dataMap[role]. A file recorded without a role
+	// falls back to defaultAnalysisResultRole, which is the key the frontend reads
+	// as dataMap["DEFAULT"].
 	nodeFiles, err := dataService.ListFileByProjectIDViaAnalysisNode(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
-	if len(nodeFiles) > 0 {
-		items := make([]map[string]interface{}, 0, len(nodeFiles))
-		for _, file := range nodeFiles {
-			compatItem, err := buildCompatFileItem(file)
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, compatItem)
+	for _, file := range nodeFiles {
+		compatItem, err := buildCompatFileItem(file)
+		if err != nil {
+			return nil, err
 		}
-		analysisResult[defaultAnalysisResultRole] = items
+		role := strings.TrimSpace(file.Role)
+		if role == "" {
+			role = defaultAnalysisResultRole
+		}
+		// Append rather than overwrite so a node output file whose role collides
+		// with a dataset role does not drop the dataset's own candidates.
+		existing, _ := analysisResult[role].([]map[string]interface{})
+		analysisResult[role] = append(existing, compatItem)
 	}
 
 	return analysisResult, nil
 }
 
-// defaultAnalysisResultRole is the analysis_result key that always receives the
-// project's analysis-node output files (bound via go_file.analysis_node_id).
-// The frontend's ComponentsRender reads it as dataMap["DEFAULT"].
-const defaultAnalysisResultRole = "DEFAULT"
+// defaultAnalysisResultRole is the fallback analysis_result key for the project's
+// analysis-node output files (bound via go_file.analysis_node_id) whose pattern
+// declared no role. It mirrors dag.DefaultNodeOutputRole so a file recorded
+// without a role lands under the same key the frontend reads as dataMap["DEFAULT"].
+const defaultAnalysisResultRole = dagruntime.DefaultNodeOutputRole
 
 func sortedKeys(set map[string]struct{}) []string {
 	keys := make([]string, 0, len(set))

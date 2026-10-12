@@ -33,8 +33,14 @@ type File struct {
 	// Analysis form inputs use it to map the file onto the matching key of
 	// their resolver.accept_formats (see buildParseAnalysisResult).
 	FileKey string `json:"file_key" gorm:"type:varchar(64)"`
-
-	AnalysisNodeID int64 `json:"analysis_node_id" gorm:"type:bigint;index"`
+	// Role is the role the file is published under in the workflow form's
+	// analysis_result map, e.g. BAM / VCF / DEFAULT. A node output file takes it
+	// from its output_patterns entry (see NodeCompletionCoordinator.recordNodeOutputFiles),
+	// defaulting to dag.DefaultNodeOutputRole ("DEFAULT") when the pattern declares
+	// none; resolveFormAnalysisResult groups the node output files by it so the
+	// frontend reads them as dataMap[role] just like dataset files.
+	Role           string `json:"role" gorm:"type:varchar(64);index"`
+	AnalysisNodeID int64  `json:"analysis_node_id" gorm:"type:bigint;index"`
 
 	Size int64 `json:"size"`
 
