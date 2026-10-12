@@ -35,6 +35,14 @@ type idBody struct {
 	ID int64 `json:"id,string" binding:"required"`
 }
 
+// uploadFileToDatasetForm is the multipart form of /data/dataset-file/upload.
+// The file itself is read separately via c.FormFile("file").
+type uploadFileToDatasetForm struct {
+	DatasetID int64  `form:"dataset_id,string" binding:"required"`
+	Role      string `form:"role"`
+	FileName  string `form:"file_name"`
+}
+
 type projectIDQuery struct {
 	ProjectID string `form:"project_id" binding:"required"`
 }
@@ -1171,6 +1179,83 @@ func (h *DataHandler) AddFileToDataset(c *gin.Context) {
 			return
 		}
 		handleDataError(c, err, "failed to add file to dataset")
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// UploadFileToDataset godoc
+// @Summary      上传本地文件到数据集
+// @Description  接收 multipart 表单（dataset_id / role / file），把文件保存到数据集工作目录，创建 File 记录并关联到 Dataset
+// @Tags         数据管理
+// @Accept       mpfd
+// @Produce      json
+// @Param        dataset_id  formData  integer  true  "数据集ID"
+// @Param        role        formData  string   false "文件角色（go_file.role），默认 DEFAULT"
+// @Param        file_name   formData  string   false "展示文件名，默认使用上传文件原名"
+// @Param        file        formData  file     true  "上传的文件"
+// @Success      200         {object}  types.AddFileToDatasetResponse
+// @Failure      400         {object}  errors.AppError
+// @Failure      401         {object}  errors.AppError
+// @Failure      404         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/dataset-file/upload [post]
+func (h *DataHandler) UploadFileToDataset(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var form uploadFileToDatasetForm
+	if err := c.ShouldBind(&form); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		c.Error(errors.NewValidationError("missing upload file").WithDetails(err.Error()))
+		return
+	}
+	if fileHeader.Size <= 0 {
+		c.Error(errors.NewValidationError("empty upload file"))
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project")
+		return
+	}
+
+	src, err := fileHeader.Open()
+	if err != nil {
+		handleDataError(c, err, "failed to open upload file")
+		return
+	}
+	defer src.Close()
+
+	fileName := strings.TrimSpace(form.FileName)
+	if fileName == "" {
+		fileName = fileHeader.Filename
+	}
+
+	result, err := h.dataService.UploadFileToDataset(
+		c.Request.Context(),
+		form.DatasetID,
+		project.ProjectID,
+		form.Role,
+		fileName,
+		src,
+	)
+	if err != nil {
+		if stderrs.Is(err, appservice.ErrDatasetFileAlreadyAdded) {
+			c.Error(errors.NewConflictError("文件已经添加"))
+			return
+		}
+		handleDataError(c, err, "failed to upload file to dataset")
 		return
 	}
 

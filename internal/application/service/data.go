@@ -526,6 +526,81 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 	return response, nil
 }
 
+// UploadFileToDataset stores an uploaded file into the dataset's own workspace
+// directory (utils.GetDatasetDir) and registers it as a dataset file with the
+// given role. It reuses AddFileToDataset with source "analysis" so the
+// File/DatasetFile bookkeeping and path-safety checks stay in one place.
+//
+// src is consumed once; the caller owns its lifetime.
+func (s *dataService) UploadFileToDataset(
+	ctx context.Context,
+	datasetID int64,
+	projectID string,
+	role string,
+	fileName string,
+	src io.Reader,
+) (*types.AddFileToDatasetResponse, error) {
+	if datasetID == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, fmt.Errorf("project id is required")
+	}
+
+	dataset, err := s.dataRepo.GetDatasetByID(ctx, datasetID)
+	if err != nil {
+		return nil, err
+	}
+	if dataset == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	baseDir := strings.TrimSpace(s.baseDir)
+	if baseDir == "" {
+		return nil, fmt.Errorf("storage base dir is required")
+	}
+	absBaseDir, err := utils.ResolveExternalPath(baseDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Keep the uploaded file inside the dataset workspace directory.
+	destDir := utils.GetDatasetDir(absBaseDir, projectID, datasetID)
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return nil, fmt.Errorf("failed to create dataset directory: %w", err)
+	}
+
+	origName := filepath.Base(strings.TrimSpace(fileName))
+	if origName == "" || origName == "." || origName == string(filepath.Separator) {
+		origName = "upload"
+	}
+	destPath := filepath.Join(destDir, time.Now().Format("20060102150405")+"_"+origName)
+
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create upload file: %w", err)
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(destPath)
+		return nil, fmt.Errorf("failed to write upload file: %w", err)
+	}
+	if err := dst.Close(); err != nil {
+		return nil, fmt.Errorf("failed to finalize upload file: %w", err)
+	}
+
+	return s.AddFileToDataset(ctx, &types.AddFileToDatasetRequest{
+		DatasetID: datasetID,
+		ProjectID: projectID,
+		Path:      destPath,
+		Role:      role,
+		FileName:  origName,
+		Source:    "analysis",
+	})
+}
+
 func (s *dataService) GetDatasetFileByID(ctx context.Context, id int64) (*types.DatasetFile, error) {
 	return s.dataRepo.GetDatasetFileByID(ctx, id)
 }

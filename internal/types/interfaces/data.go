@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"context"
+	"io"
 
 	"github.com/biox-dev/gobrave/internal/types"
 )
@@ -56,6 +57,9 @@ type DataService interface {
 
 	CreateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error
 	AddFileToDataset(ctx context.Context, req *types.AddFileToDatasetRequest) (*types.AddFileToDatasetResponse, error)
+	// UploadFileToDataset stores an uploaded file into the dataset workspace
+	// directory and registers it as a dataset file with the given role.
+	UploadFileToDataset(ctx context.Context, datasetID int64, projectID, role, fileName string, src io.Reader) (*types.AddFileToDatasetResponse, error)
 	GetDatasetFileByID(ctx context.Context, id int64) (*types.DatasetFile, error)
 	DeleteDatasetFile(ctx context.Context, id int64) error
 	ListDatasetFile(ctx context.Context) ([]*types.DatasetFile, error)

@@ -238,6 +238,7 @@ func RegisterDataRoutes(r *gin.RouterGroup, handler *handler.DataHandler) {
 
 	r.POST("/data/dataset-file/create", handler.CreateDatasetFile)
 	r.POST("/data/dataset-file/add-file", handler.AddFileToDataset)
+	r.POST("/data/dataset-file/upload", handler.UploadFileToDataset)
 	r.GET("/data/dataset-file/get", handler.GetDatasetFile)
 	r.POST("/data/dataset-file/delete", handler.DeleteDatasetFile)
 	r.GET("/data/dataset-file/list", handler.ListDatasetFile)
