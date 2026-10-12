@@ -660,10 +660,11 @@ func outputStringField(fields map[string]any, key string) string {
 // SelectAssay inputs reference in `{"files": "<id>"}`.
 func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, node *types.AnalysisNode, path, fileKey, role string) (string, error) {
 	existing, err := c.dataRepo.GetFileByAnalysisNodeIDAndFileKey(ctx, node.ID, fileKey)
+	fileName := fmt.Sprintf("%s (%s)", node.NodeName, filepath.Base(path))
 	switch {
 	case err == nil:
 		existing.Path = path
-		existing.FileName = filepath.Base(path)
+		existing.FileName = fileName
 		existing.Format = strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
 		existing.Role = role
 		if err := c.dataRepo.UpdateFile(ctx, existing); err != nil {
@@ -673,7 +674,7 @@ func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, no
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		file := &types.File{
 			FileID:         strconv.FormatInt(utils.GenerateID(), 10),
-			FileName:       filepath.Base(path),
+			FileName:       fileName,
 			Path:           path,
 			Format:         strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
 			AnalysisNodeID: node.ID,
