@@ -300,7 +300,7 @@ func findCompatAnalysisResultByIDs(ctx context.Context, dataService interfaces.D
 		}
 		seen[id] = struct{}{}
 
-		file, err := findFileByIDOrFileID(ctx, dataService, id)
+		file, err := findFileByID(ctx, dataService, id)
 		if err != nil {
 			return nil, err
 		}
@@ -318,18 +318,12 @@ func findCompatAnalysisResultByIDs(ctx context.Context, dataService interfaces.D
 	return result, nil
 }
 
-func findFileByIDOrFileID(ctx context.Context, dataService interfaces.DataService, rawID string) (*types.File, error) {
-	if n, err := strconv.ParseInt(rawID, 10, 64); err == nil {
-		file, err := dataService.GetFileByID(ctx, n)
-		if err == nil {
-			return file, nil
-		}
-		if !stderrs.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
+func findFileByID(ctx context.Context, dataService interfaces.DataService, rawID string) (*types.File, error) {
+	n, err := strconv.ParseInt(strings.TrimSpace(rawID), 10, 64)
+	if err != nil {
+		return nil, nil
 	}
-
-	file, err := dataService.GetFileByFileID(ctx, rawID)
+	file, err := dataService.GetFileByID(ctx, n)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -853,7 +847,7 @@ func loadCompatFileObjectByID(
 		return copyAnyMap(cached), nil
 	}
 
-	file, err := findFileByIDOrFileID(ctx, dataService, fileID)
+	file, err := findFileByID(ctx, dataService, fileID)
 	if err != nil {
 		return nil, err
 	}
@@ -869,7 +863,7 @@ func loadCompatFileObjectByID(
 // resolveAssayInputValue turns the selected assay ids of an `input_type=assay`
 // item into one row per assay: `{ID, sample_name, assay_type, platform, role}`
 // plus one entry per file_key of that assay's files, valued by the file's path
-// (falling back to its business file_id). Files are assay-private
+// (falling back to its primary key id). Files are assay-private
 // (go_file.assay_id), so each assay is resolved on its own; an assay without
 // files contributes an empty map.
 //
@@ -930,7 +924,7 @@ func resolveAssayInputValue(
 
 			path := strings.TrimSpace(file.Path)
 			if path == "" {
-				path = strings.TrimSpace(file.FileID)
+				path = strconv.FormatInt(file.ID, 10)
 			}
 			roleToPath[role] = path
 		}

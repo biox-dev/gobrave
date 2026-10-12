@@ -17,8 +17,6 @@ import (
 type File struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	FileID string `json:"file_id" gorm:"type:varchar(255);uniqueIndex;not null"`
-
 	FileName string `json:"file_name" gorm:"type:varchar(255)"`
 
 	Path string `json:"path" gorm:"type:text;not null"`
@@ -116,7 +114,10 @@ type AddFileToDatasetResponse struct {
 type FileWithDatasetInfo struct {
 	ID int64 `json:"id,string"`
 
-	FileID string `json:"file_id"`
+	// FileID mirrors the file's own primary key (go_file.id). It is kept so list
+	// responses still carry a "file_id" the frontend can pass straight to the
+	// by-id sheet endpoints; the entity no longer has a separate business id.
+	FileID int64 `json:"file_id,string"`
 
 	FileName string `json:"file_name"`
 

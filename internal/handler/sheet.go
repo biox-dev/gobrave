@@ -32,11 +32,13 @@ type writeWorkbookRequest struct {
 }
 
 type readWorkbookByFileIDQuery struct {
-	FileID string `form:"file_id" binding:"required"`
+	// ID is the go_file primary key (go_file.id).
+	ID int64 `form:"id" binding:"required"`
 }
 
 type writeWorkbookByFileIDRequest struct {
-	FileID       string         `json:"file_id" binding:"required"`
+	// ID is the go_file primary key (go_file.id).
+	ID           int64          `json:"id,string" binding:"required"`
 	WorkbookData map[string]any `json:"workbook_data" binding:"required"`
 }
 
@@ -123,10 +125,10 @@ func (h *SheetHandler) WriteWorkbook(c *gin.Context) {
 
 // ReadWorkbookByFileID godoc
 // @Summary      根据文件ID读取工作簿
-// @Description  根据 file_id 查找文件 path，由 path 后缀推断读取格式（前端无需传递 format），再读取工作簿并转换为 Univer 可用结构。结果中附带文件信息；不支持的格式返回“页面不支持预览”。
+// @Description  根据 go_file 主键 ID 查找文件 path，由 path 后缀推断读取格式（前端无需传递 format），再读取工作簿并转换为 Univer 可用结构。结果中附带文件信息；不支持的格式返回“页面不支持预览”。
 // @Tags         表格
 // @Produce      json
-// @Param        file_id  query     string  true   "文件业务ID"
+// @Param        id       query     integer  true   "文件主键 ID"
 // @Success      200      {object}  interfaces.WorkbookReadResult
 // @Failure      400      {object}  apperrors.AppError
 // @Failure      401      {object}  apperrors.AppError
@@ -145,7 +147,7 @@ func (h *SheetHandler) ReadWorkbookByFileID(c *gin.Context) {
 		return
 	}
 
-	file, err := h.dataService.GetFileByFileID(c.Request.Context(), req.FileID)
+	file, err := h.dataService.GetFileByID(c.Request.Context(), req.ID)
 	if err != nil {
 		c.Error(apperrors.NewNotFoundError("file not found").WithDetails(err.Error()))
 		return
@@ -172,7 +174,7 @@ func (h *SheetHandler) ReadWorkbookByFileID(c *gin.Context) {
 
 // WriteWorkbookByFileID godoc
 // @Summary      根据文件ID保存工作簿
-// @Description  根据 file_id 查找文件 path，再将 Univer 工作簿结构写入本地文件。
+// @Description  根据 go_file 主键 ID 查找文件 path，再将 Univer 工作簿结构写入本地文件。
 // @Tags         表格
 // @Accept       json
 // @Produce      json
@@ -195,7 +197,7 @@ func (h *SheetHandler) WriteWorkbookByFileID(c *gin.Context) {
 		return
 	}
 
-	file, err := h.dataService.GetFileByFileID(c.Request.Context(), req.FileID)
+	file, err := h.dataService.GetFileByID(c.Request.Context(), req.ID)
 	if err != nil {
 		c.Error(apperrors.NewNotFoundError("file not found").WithDetails(err.Error()))
 		return

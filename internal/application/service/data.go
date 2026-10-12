@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -256,12 +255,6 @@ func (s *dataService) CreateFile(ctx context.Context, file *types.File) error {
 		return apperrors.NewValidationError("path is required")
 	}
 
-	// go_file.file_id is a unique business number: generate one when the caller
-	// does not supply it (same convention as AddFileToDataset).
-	if strings.TrimSpace(file.FileID) == "" {
-		file.FileID = strconv.FormatInt(utils.GenerateID(), 10)
-	}
-
 	// A path may only be registered once per assay scope. Two rows for the same
 	// (path, assay_id) would make the assay own the same file twice and the
 	// analysis input resolver would pick one of them at random.
@@ -278,10 +271,6 @@ func (s *dataService) CreateFile(ctx context.Context, file *types.File) error {
 
 func (s *dataService) GetFileByID(ctx context.Context, id int64) (*types.File, error) {
 	return s.dataRepo.GetFileByID(ctx, id)
-}
-
-func (s *dataService) GetFileByFileID(ctx context.Context, fileID string) (*types.File, error) {
-	return s.dataRepo.GetFileByFileID(ctx, fileID)
 }
 
 func (s *dataService) UpdateFile(ctx context.Context, file *types.File) error {
@@ -490,7 +479,6 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 	err = s.dataRepo.WithTransaction(ctx, func(tx interfaces.DataRepository) error {
 		if file == nil {
 			file = &types.File{
-				FileID:         strconv.FormatInt(utils.GenerateID(), 10),
 				FileName:       displayName,
 				Path:           resolvedPath,
 				AnalysisNodeID: req.AnalysisNodeID,
@@ -938,7 +926,6 @@ func upsertImportFile(ctx context.Context, repo interfaces.DataRepository, assay
 		return nil
 	case stderrs.Is(err, gorm.ErrRecordNotFound):
 		file = &types.File{
-			FileID:   strconv.FormatInt(utils.GenerateID(), 10),
 			FileName: filepath.Base(path),
 			Path:     path,
 			Format:   strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),

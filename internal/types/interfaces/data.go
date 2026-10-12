@@ -26,7 +26,6 @@ type DataService interface {
 
 	CreateFile(ctx context.Context, file *types.File) error
 	GetFileByID(ctx context.Context, id int64) (*types.File, error)
-	GetFileByFileID(ctx context.Context, fileID string) (*types.File, error)
 	UpdateFile(ctx context.Context, file *types.File) error
 	DeleteFile(ctx context.Context, id int64) error
 	ListFile(ctx context.Context) ([]*types.File, error)
@@ -105,7 +104,6 @@ type DataRepository interface {
 
 	CreateFile(ctx context.Context, file *types.File) error
 	GetFileByID(ctx context.Context, id int64) (*types.File, error)
-	GetFileByFileID(ctx context.Context, fileID string) (*types.File, error)
 	// GetFileByPathAndAssayID resolves a path to its file row for one assay
 	// (assayID 0 = files that are not owned by any assay). Paths are unique per
 	// assay, not globally.

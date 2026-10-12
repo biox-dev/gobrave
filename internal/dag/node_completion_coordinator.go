@@ -16,7 +16,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
-	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -673,7 +672,6 @@ func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, no
 		return strconv.FormatInt(existing.ID, 10), nil
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		file := &types.File{
-			FileID:         strconv.FormatInt(utils.GenerateID(), 10),
 			FileName:       fileName,
 			Path:           path,
 			Format:         strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),

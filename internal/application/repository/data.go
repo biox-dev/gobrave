@@ -163,14 +163,6 @@ func (r *dataRepository) GetFileByID(ctx context.Context, id int64) (*types.File
 	return item, nil
 }
 
-func (r *dataRepository) GetFileByFileID(ctx context.Context, fileID string) (*types.File, error) {
-	item := &types.File{}
-	if err := r.db.WithContext(ctx).Where("file_id = ?", fileID).Take(item).Error; err != nil {
-		return nil, err
-	}
-	return item, nil
-}
-
 // GetFileByPathAndAssayID resolves a path to its file row within one assay scope.
 // Paths are only unique per assay (assayID 0 = files not owned by any assay), so
 // the same physical path can legitimately back one row per assay.
@@ -187,9 +179,6 @@ func (r *dataRepository) GetFileByPathAndAssayID(ctx context.Context, path strin
 
 func (r *dataRepository) UpdateFile(ctx context.Context, file *types.File) error {
 	updates := make(map[string]interface{})
-	if file.FileID != "" {
-		updates["file_id"] = file.FileID
-	}
 	if file.FileName != "" {
 		updates["file_name"] = file.FileName
 	}
@@ -308,7 +297,7 @@ func (r *dataRepository) PageFileByProjectID(ctx context.Context, pagination *ty
 			Table("go_project_dataset AS pd").
 			Select(`
 				file.id,
-				file.file_id,
+				file.id AS file_id,
 				file.analysis_node_id,
 				file.file_name,
 				file.path,
@@ -366,7 +355,7 @@ func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID stri
 		Table("go_project_dataset AS pd").
 		Select(`
 			f.id,
-			f.file_id,
+			f.id AS file_id,
 			f.file_name,
 			f.path,
 			f.format,
@@ -411,7 +400,7 @@ func (r *dataRepository) ListFileByProjectIDViaAnalysisNode(ctx context.Context,
 		Table("analysis_nodes AS an").
 		Select(`
 			f.id,
-			f.file_id,
+			f.id AS file_id,
 			f.file_name,
 			f.path,
 			f.format,
@@ -462,7 +451,7 @@ func (r *dataRepository) PageFileByProjectIDViaAnalysisNode(ctx context.Context,
 	err := buildQuery().
 		Select(`
 			f.id,
-			f.file_id,
+			f.id AS file_id,
 			f.file_name,
 			f.path,
 			f.format,
