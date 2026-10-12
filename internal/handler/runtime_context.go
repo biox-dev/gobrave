@@ -129,16 +129,28 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 
 			case EnvTypeAnalysisNode:
 				node, nodeErr := r.analysisSvc.GetAnalysisNodeByID(ctx, id)
+
 				if nodeErr != nil {
 					return nil, nodeErr
 				}
+				script, err := r.workflowSvc.GetScriptByID(ctx, node.ScriptID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get script by id: %w", err)
+				}
+				project, err := r.projectSvc.GetProjectByID(ctx, node.ProjectID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get project by id: %w", err)
+				}
+				// 获取Script File
+				scriptDir, scriptFile, _ := utils.GetScriptFile(r.cfg.Storage.BaseDir, project.ProjectID, script.ScriptType, script.ScriptID)
+				scriptFilePath := filepath.Join(scriptDir, scriptFile)
+
 				dir = node.WorkspaceDir
 				label = node.NodeName
+
 				lines = append(lines,
-					"When you need to run or inspect the current analysis node, use env.id as the analysis_node_id and do not guess a different ID.",
-					"For executing workflow scripts in this analysis node context (for example main.R, main.py, or similar entry scripts), you must call the tool run_analysis_node with analysis_node_id=env.id.",
-					"Do not execute scripts directly via shell/system calls such as Rscript, python, python3, bash, sh, or equivalent runtime commands.",
-					"The runtime will execute the node in the correct container automatically through run_analysis_node.",
+					fmt.Sprintf("脚本文件路径：%s ", scriptFilePath),
+					fmt.Sprintf("参数文件路径：%s ", node.ParamsPath),
 				)
 
 			case EnvTypeAnalysis:
