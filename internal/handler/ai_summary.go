@@ -58,8 +58,7 @@ type aiSummaryListItem struct {
 }
 
 type aiSummaryInputRequest struct {
-	OwnerID   int64                  `form:"owner_id" binding:"required"`
-	OwnerType types.SummaryOwnerType `form:"owner_type" binding:"required"`
+	ID int64 `form:"id" binding:"required"`
 }
 
 type updateAISummaryRequest struct {
@@ -342,11 +341,10 @@ func (h *AISummaryHandler) DeleteAISummary(c *gin.Context) {
 
 // GetAISummaryInput godoc
 // @Summary      获取 AI 摘要的 LLM 输入信息
-// @Description  根据 OwnerID/OwnerType 解析生成摘要时交给 LLM 的系统提示词、工作目录与原始内容
+// @Description  根据摘要 ID 解析生成该摘要时交给 LLM 的系统提示词、工作目录与原始内容
 // @Tags         AI摘要
 // @Produce      json
-// @Param        owner_id    query     integer  true  "所属对象 ID"
-// @Param        owner_type  query     string   true  "所属对象类型：analysis 或 analysis_node"
+// @Param        id          query     integer  true  "摘要 ID"
 // @Success      200         {object}  types.AISummaryInput
 // @Failure      400         {object}  errors.AppError
 // @Failure      401         {object}  errors.AppError
@@ -364,7 +362,7 @@ func (h *AISummaryHandler) GetAISummaryInput(c *gin.Context) {
 		return
 	}
 
-	input, err := h.aiSummaryService.GetAISummaryInput(c.Request.Context(), req.OwnerType, req.OwnerID)
+	input, err := h.aiSummaryService.GetAISummaryInput(c.Request.Context(), req.ID)
 	if err != nil {
 		handleDataError(c, err, "failed to get ai summary input")
 		return

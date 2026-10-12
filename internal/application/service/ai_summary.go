@@ -214,17 +214,26 @@ func (s *aiSummaryService) DeleteAISummary(ctx context.Context, id int64) error 
 	return s.summaryRepo.DeleteAISummary(ctx, id)
 }
 
-// GetAISummaryInput 按所属对象类型与 ID 解析生成摘要时交给 LLM 的输入信息。
+// GetAISummaryInput 按摘要 ID 解析生成该摘要时交给 LLM 的输入信息。
 //
-// 与 DescribeEnv 类似：先用所属对象解析出系统提示词模板变量，再按该摘要使用的
-// Agent Profile（取自摘要记录，为空回退内置 agent.ProfileSummary）渲染出真正的系统提示词。
-func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) (*types.AISummaryInput, error) {
-	content, err := s.content.Resolve(ctx, ownerType, ownerID)
+// 与 DescribeEnv 类似：先取摘要记录，按所属对象（Analysis / AnalysisNode）解析出
+// 系统提示词模板变量，再按该摘要使用的 Agent Profile（取自摘要记录，为空回退内置
+// agent.ProfileSummary）渲染出真正的系统提示词。
+func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, id int64) (*types.AISummaryInput, error) {
+	summary, err := s.summaryRepo.GetAISummaryByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 
-	profile := s.resolveSummaryProfile(ctx, ownerType, ownerID)
+	content, err := s.content.Resolve(ctx, summary.OwnerType, summary.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+
+	profile := strings.TrimSpace(summary.Profile)
+	if profile == "" {
+		profile = agent.ProfileSummary
+	}
 
 	systemPrompt := ""
 	if s.agentSvc != nil {
@@ -241,21 +250,4 @@ func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, ownerType type
 		Vars:         content.SystemPromptVars,
 		WorkingDir:   content.WorkingDir,
 	}, nil
-}
-
-// resolveSummaryProfile 返回该所属对象现有摘要使用的 Agent Profile；
-// 未找到摘要或 Profile 为空时回退到内置 agent.ProfileSummary。
-func (s *aiSummaryService) resolveSummaryProfile(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) string {
-	summaries, err := s.summaryRepo.ListAISummariesByOwner(ctx, ownerType, ownerID)
-	if err == nil {
-		for _, item := range summaries {
-			if item == nil {
-				continue
-			}
-			if name := strings.TrimSpace(item.Profile); name != "" {
-				return name
-			}
-		}
-	}
-	return agent.ProfileSummary
 }

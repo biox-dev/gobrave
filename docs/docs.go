@@ -1488,7 +1488,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "根据 OwnerID/OwnerType 解析生成摘要时交给 LLM 的系统提示词、工作目录与原始内容",
+                "description": "根据摘要 ID 解析生成该摘要时交给 LLM 的系统提示词、工作目录与原始内容",
                 "produces": [
                     "application/json"
                 ],
@@ -1499,15 +1499,8 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "integer",
-                        "description": "所属对象 ID",
-                        "name": "owner_id",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "所属对象类型：analysis 或 analysis_node",
-                        "name": "owner_type",
+                        "description": "摘要 ID",
+                        "name": "id",
                         "in": "query",
                         "required": true
                     }
@@ -11921,8 +11914,13 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "system_prompt": {
-                    "description": "SystemPrompt 系统提示词。",
+                    "description": "SystemPrompt 是最终发送给 Provider 的系统提示词。\n\n注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +\nSystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。",
                     "type": "string"
+                },
+                "system_prompt_vars": {
+                    "description": "SystemPromptVars 是渲染 Profile 系统提示词模板所用的变量（业务上下文）。\n\n调用方（HTTP Handler）解析 env(type,id) 后把变量放进这里，AgentService 在\napplyProfile 中用它与 Profile.SystemPrompt（pongo2 模板）合成最终系统提示词。",
+                    "type": "object",
+                    "additionalProperties": {}
                 },
                 "user_id": {
                     "description": "UserID 可选：发起调用的用户，用于记忆（memory）的归属隔离与检索。",
@@ -12287,12 +12285,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "system_prompt": {
-                    "description": "系统提示词（仅在需要时返回）",
+                    "description": "用当前用户 Profile 模板渲染后的真实系统提示词",
                     "type": "string"
                 },
                 "type": {
                     "description": "归一化后的业务类型（空表示默认工作区）",
                     "type": "string"
+                },
+                "vars": {
+                    "description": "渲染系统提示词模板所用的变量",
+                    "type": "object",
+                    "additionalProperties": {}
                 },
                 "working_dir": {
                     "description": "工作目录",
@@ -12844,7 +12847,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "env": {
-                    "description": "业务上下文 {id,type}，用于解析系统提示词与工作目录",
+                    "description": "业务上下文 {id,type}，用于解析系统提示词模板变量与工作目录",
                     "type": "object",
                     "additionalProperties": {}
                 },
@@ -12860,9 +12863,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider": {
-                    "type": "string"
-                },
-                "system_prompt": {
                     "type": "string"
                 },
                 "working_dir": {
@@ -14328,16 +14328,25 @@ const docTemplate = `{
         "types.AISummaryInput": {
             "type": "object",
             "properties": {
-                "text": {
-                    "description": "Text 是交给 Agent 的原始内容（用户输入）。",
+                "profile": {
+                    "description": "Profile 是生成该摘要使用的 AgentProfile 名称（取自摘要记录，为空回退内置 summary Profile）。",
+                    "type": "string"
+                },
+                "system_prompt": {
+                    "description": "SystemPrompt 是用 Profile 模板 + Vars 渲染后的真实系统提示词。",
                     "type": "string"
                 },
                 "title": {
                     "description": "Title 是摘要标题的候选值。",
                     "type": "string"
                 },
+                "vars": {
+                    "description": "Vars 是渲染系统提示词模板所用的变量（业务上下文）。",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "working_dir": {
-                    "description": "SystemPrompt 是生成摘要时使用的系统提示词。\nSystemPrompt string ` + "`" + `json:\"system_prompt\"` + "`" + `\nWorkingDir 是 Agent 执行任务时的工作目录。",
+                    "description": "WorkingDir 是 Agent 执行任务时的工作目录。",
                     "type": "string"
                 }
             }
