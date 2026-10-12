@@ -19,6 +19,8 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
+const excelPreviewRowLimit = 50
+
 var (
 	ErrUnsupportedSheetFormat = errors.New("unsupported sheet format")
 	ErrInvalidWorkbookData    = errors.New("invalid workbook data")
@@ -279,14 +281,22 @@ func (s *sheetFileService) readExcelWorkbook(filePath string) (map[string]any, e
 		sheetID := fmt.Sprintf("sheet-%02d", idx+1)
 		sheetOrder = append(sheetOrder, sheetID)
 
-		rows, err := f.GetRows(name)
+		// Stream rows instead of loading the whole sheet so we can read a
+		// small preview (the first excelPreviewRowLimit rows) quickly.
+		rows, err := f.Rows(name)
 		if err != nil {
 			return nil, err
 		}
 
 		cellData := make(map[string]any)
 		maxColCount := 0
-		for rowIndex, row := range rows {
+		rowIndex := 0
+		for rowIndex < excelPreviewRowLimit && rows.Next() {
+			row, err := rows.Columns()
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
 			if len(row) > maxColCount {
 				maxColCount = len(row)
 			}
@@ -302,9 +312,15 @@ func (s *sheetFileService) readExcelWorkbook(filePath string) (map[string]any, e
 			if len(rowData) > 0 {
 				cellData[strconv.Itoa(rowIndex)] = rowData
 			}
+			rowIndex++
 		}
+		if err := rows.Error(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
 
-		rowCount := len(rows)
+		rowCount := rowIndex
 		if rowCount < 200 {
 			rowCount = 200
 		}
