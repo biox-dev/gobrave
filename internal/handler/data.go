@@ -6,6 +6,7 @@ import (
 	stderrs "errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	appservice "github.com/biox-dev/gobrave/internal/application/service"
@@ -13,6 +14,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
 
@@ -83,9 +85,40 @@ func handleDataError(c *gin.Context, err error, internalMsg string) {
 	c.Error(errors.NewInternalServerError(internalMsg).WithDetails(err.Error()))
 }
 
-// buildFileColumns reads the TSV header at path and returns a column list
-// compatible with the Python build_collected_analysis_result output.
-func buildFileColumns(path string, fileID int64) ([]map[string]interface{}, error) {
+// columnItem builds a single column descriptor compatible with the Python
+// build_collected_analysis_result output.
+func columnItem(column string, fileID int64) map[string]interface{} {
+	return map[string]interface{}{
+		"id":                 fileID,
+		"analysis_result_id": fileID,
+		"assay_name":         column,
+		"columns_name":       column,
+	}
+}
+
+func buildColumnItems(header []string, fileID int64) []map[string]interface{} {
+	columns := make([]map[string]interface{}, 0, len(header))
+	for _, col := range header {
+		columns = append(columns, columnItem(col, fileID))
+	}
+	return columns
+}
+
+// normalizeColumnFormat derives the file format from the explicit format field,
+// falling back to the path extension when it is empty (the frontend does not
+// always send a format for dataset / node output files).
+func normalizeColumnFormat(format, path string) string {
+	normalized := strings.TrimSpace(strings.ToLower(format))
+	if normalized == "" {
+		normalized = strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+	}
+	return normalized
+}
+
+// readDelimitedHeader reads only the header row of a delimiter-separated file.
+// Unlike readDelimitedWorkbook it never loads the whole file, so previewing a
+// huge TSV/CSV stays cheap.
+func readDelimitedHeader(path string, delimiter rune, fileID int64) ([]map[string]interface{}, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -93,7 +126,7 @@ func buildFileColumns(path string, fileID int64) ([]map[string]interface{}, erro
 	defer f.Close()
 
 	r := csv.NewReader(f)
-	r.Comma = '\t'
+	r.Comma = delimiter
 	r.LazyQuotes = true
 	r.FieldsPerRecord = -1
 
@@ -102,16 +135,104 @@ func buildFileColumns(path string, fileID int64) ([]map[string]interface{}, erro
 		return nil, err
 	}
 
-	columns := make([]map[string]interface{}, 0, len(header))
-	for _, col := range header {
-		columns = append(columns, map[string]interface{}{
-			"id":                 fileID,
-			"analysis_result_id": fileID,
-			"assay_name":         col,
-			"columns_name":       col,
-		})
+	// Strip the UTF-8 BOM from the first header cell, mirroring readDelimitedWorkbook.
+	if len(header) > 0 {
+		header[0] = strings.TrimPrefix(header[0], "\ufeff")
 	}
-	return columns, nil
+
+	return buildColumnItems(header, fileID), nil
+}
+
+// readExcelSheetColumns reads the header row of every sheet in an Excel workbook
+// and returns the columns grouped by sheet name, i.e.
+// {"Sheet1": [{id, columns_name, ...}], "Sheet2": [...]}.
+//
+// It streams rows through excelize (the same technique readExcelWorkbook uses)
+// and stops at the first non-empty row of each sheet, so only the header row is
+// materialised instead of the whole sheet.
+func readExcelSheetColumns(path string, fileID int64) (map[string][]map[string]interface{}, error) {
+	f, err := excelize.OpenFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	sheets := make(map[string][]map[string]interface{})
+	for _, name := range f.GetSheetList() {
+		rows, err := f.Rows(name)
+		if err != nil {
+			return nil, err
+		}
+
+		var header []string
+		for rows.Next() {
+			row, err := rows.Columns()
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if !hasNonEmptyCell(row) {
+				continue
+			}
+			// The first non-empty row is treated as the header row.
+			header = row
+			break
+		}
+		if err := rows.Error(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+
+		sheetColumns := make([]map[string]interface{}, 0, len(header))
+		for _, col := range header {
+			if strings.TrimSpace(col) == "" {
+				continue
+			}
+			sheetColumns = append(sheetColumns, columnItem(col, fileID))
+		}
+		sheets[name] = sheetColumns
+	}
+
+	return sheets, nil
+}
+
+func hasNonEmptyCell(row []string) bool {
+	for _, cell := range row {
+		if strings.TrimSpace(cell) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// readFileColumns reads the column names of a tabular file according to its
+// format: tsv/csv expose a flat column list (mirrors Python
+// build_collected_analysis_result), while Excel workbooks expose columns grouped
+// by sheet name. The second return value reports whether columns could be read.
+func readFileColumns(path, format string, fileID int64) (interface{}, bool) {
+	switch normalizeColumnFormat(format, path) {
+	case "tsv":
+		cols, err := readDelimitedHeader(path, '\t', fileID)
+		if err != nil {
+			return nil, false
+		}
+		return cols, true
+	case "csv":
+		cols, err := readDelimitedHeader(path, ',', fileID)
+		if err != nil {
+			return nil, false
+		}
+		return cols, true
+	case "xlsx", "xlsm", "xls":
+		cols, err := readExcelSheetColumns(path, fileID)
+		if err != nil {
+			return nil, false
+		}
+		return cols, true
+	default:
+		return nil, false
+	}
 }
 
 func buildCompatFileItem(item *types.FileWithDatasetInfo) (map[string]interface{}, error) {
@@ -125,18 +246,13 @@ func buildCompatFileItem(item *types.FileWithDatasetInfo) (map[string]interface{
 		return nil, err
 	}
 
-	// if v, ok := result["path"]; ok {
-	// 	// result["content"] = v
-	// 	result["label"] = result["file_name"] // 保持 label 字段兼容
-	// 	result["value"] = result["id"]        // 保持 value 字段兼容
-	// 	// delete(result, "path")
-	// }
-
 	result["label"] = result["file_name"] // 保持 label 字段兼容
 	result["value"] = result["id"]        // 保持 value 字段兼容
-	// For EXP/TABLE roles, read TSV header and attach columns (mirrors Python build_collected_analysis_result).
+	// For EXP/TABLE roles, attach the file's column names so the frontend can
+	// offer them as selectable fields. tsv/csv return a flat column list while
+	// Excel workbooks return columns grouped by sheet name.
 	if (item.Role == "EXP" || item.Role == "TABLE") && item.Path != "" {
-		if cols, err := buildFileColumns(item.Path, item.ID); err == nil {
+		if cols, ok := readFileColumns(item.Path, item.Format, item.ID); ok {
 			result["columns"] = cols
 		}
 		// silently skip if file is missing or unreadable
