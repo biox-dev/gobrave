@@ -465,6 +465,7 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 	r.GET("/agent/project-context", handler.ProjectContext)
 
 	r.GET("/agent/profile/list", handler.ListProfiles)
+	r.GET("/agent/profile/get", handler.GetProfile)
 	r.POST("/agent/profile/save", handler.SaveProfile)
 	r.POST("/agent/profile/delete", handler.DeleteProfile)
 

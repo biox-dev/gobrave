@@ -161,6 +161,7 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 				vars["params_file_path"] = node.ParamsPath
 				vars["io_schema_path"] = ioSchemaPath
 				vars["output_directory"] = node.OutputDir
+				vars["script_type"] = script.ScriptType
 
 			case EnvTypeAnalysis:
 				analysis, analysisErr := r.analysisSvc.GetAnalysisByID(ctx, id)
@@ -220,11 +221,13 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 
 // RuntimeContextInfo 是用于前端展示的轻量上下文描述。
 type RuntimeContextInfo struct {
-	Type         string         `json:"type"`                    // 归一化后的业务类型（空表示默认工作区）
-	Label        string         `json:"label"`                   // 人类可读的名称
-	WorkingDir   string         `json:"working_dir"`             // 工作目录
-	SystemPrompt string         `json:"system_prompt,omitempty"` // 用当前用户 Profile 模板渲染后的真实系统提示词
-	Vars         map[string]any `json:"vars,omitempty"`          // 渲染系统提示词模板所用的变量
+	Type         string         `json:"type"`                        // 归一化后的业务类型（空表示默认工作区）
+	Label        string         `json:"label"`                       // 人类可读的名称
+	WorkingDir   string         `json:"working_dir"`                 // 工作目录
+	SystemPrompt string         `json:"system_prompt,omitempty"`     // 用当前用户 Profile 模板渲染后的真实系统提示词
+	Vars         map[string]any `json:"vars,omitempty"`              // 渲染系统提示词模板所用的变量
+	ProfileName  string         `json:"profile_name,omitempty"`      // 用于渲染系统提示词的 Profile 名称
+	ProfileID    int64          `json:"profile_id,omitempty,string"` // 用于渲染系统提示词的 Profile ID
 }
 
 // Describe 解析 env 并返回用于前端展示的上下文描述。
@@ -237,12 +240,9 @@ func (r *RuntimeContextResolver) Describe(ctx context.Context, userID, profileNa
 		return nil, err
 	}
 
-	systemPrompt := ""
-	if r.agentSvc != nil {
-		systemPrompt, err = r.agentSvc.RenderSystemPrompt(ctx, userID, profileName, rc.SystemPromptVars)
-		if err != nil {
-			return nil, err
-		}
+	profile, systemPrompt, err := r.agentSvc.RenderSystemPrompt(ctx, userID, profileName, rc.SystemPromptVars)
+	if err != nil {
+		return nil, err
 	}
 
 	return &RuntimeContextInfo{
@@ -251,6 +251,8 @@ func (r *RuntimeContextResolver) Describe(ctx context.Context, userID, profileNa
 		WorkingDir:   rc.WorkingDir,
 		SystemPrompt: systemPrompt,
 		Vars:         rc.SystemPromptVars,
+		ProfileName:  profile.Name,
+		ProfileID:    profile.ID,
 	}, nil
 }
 

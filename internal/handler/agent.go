@@ -435,6 +435,44 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, profile)
 }
 
+// GetProfile godoc
+// @Summary      查看单个 Agent Profile
+// @Description  按 ID 返回单个 Profile：内置 Profile 全局共享（任意用户可读），自定义 Profile 仅限其所属用户
+// @Tags         Agent
+// @Produce      json
+// @Param        id  query     string  true  "Profile ID"
+// @Success      200  {object}  agent.Profile
+// @Failure      400  {object}  errors.AppError
+// @Failure      401  {object}  errors.AppError
+// @Failure      404  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/profile/get [get]
+func (h *AgentHandler) GetProfile(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var query taskIDQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		c.Error(errors.NewValidationError("invalid query").WithDetails(err.Error()))
+		return
+	}
+
+	id, err := parseAgentID(query.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid profile id").WithDetails(err.Error()))
+		return
+	}
+
+	profile, err := h.svc.GetProfile(c.Request.Context(), userID, id)
+	if err != nil {
+		handleAgentError(c, err, "failed to get agent profile")
+		return
+	}
+	c.JSON(http.StatusOK, profile)
+}
+
 // DeleteProfile godoc
 // @Summary      删除 Agent Profile
 // @Description  仅能删除当前用户的自定义 Profile；内置 Profile 不可删除

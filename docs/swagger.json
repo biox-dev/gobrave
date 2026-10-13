@@ -767,6 +767,58 @@
                 }
             }
         },
+        "/agent/profile/get": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按 ID 返回单个 Profile：内置 Profile 全局共享（任意用户可读），自定义 Profile 仅限其所属用户",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "查看单个 Agent Profile",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Profile ID",
+                        "name": "id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/agent.Profile"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/agent/profile/list": {
             "get": {
                 "security": [
@@ -5925,6 +5977,86 @@
                 }
             }
         },
+        "/data/dataset-file/upload": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "接收 multipart 表单（dataset_id / role / file），把文件保存到数据集工作目录，创建 File 记录并关联到 Dataset",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "上传本地文件到数据集",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "数据集ID",
+                        "name": "dataset_id",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "文件角色（go_file.role），默认 DEFAULT",
+                        "name": "role",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "展示文件名，默认使用上传文件原名",
+                        "name": "file_name",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "file",
+                        "description": "上传的文件",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.AddFileToDatasetResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/data/dataset/create": {
             "post": {
                 "security": [
@@ -6218,6 +6350,52 @@
                 }
             }
         },
+        "/data/dataset/list-by-project": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "根据当前用户激活的项目查询关联的所有 Dataset",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "按项目查询数据集列表",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/types.Dataset"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/data/dataset/list-by-project-page": {
             "post": {
                 "security": [
@@ -6313,6 +6491,65 @@
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/data/file/columns": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按文件 ID 读取其列名：tsv/csv 返回扁平的列数组，Excel 返回按 sheet 名分组的列",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "获取文件列名",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "文件主键 ID",
+                        "name": "id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -10116,7 +10353,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "根据 file_id 查找文件 path，由 path 后缀推断读取格式（前端无需传递 format），再读取工作簿并转换为 Univer 可用结构。结果中附带文件信息；不支持的格式返回“页面不支持预览”。",
+                "description": "根据 go_file 主键 ID 查找文件 path，由 path 后缀推断读取格式（前端无需传递 format），再读取工作簿并转换为 Univer 可用结构。结果中附带文件信息；不支持的格式返回“页面不支持预览”。",
                 "produces": [
                     "application/json"
                 ],
@@ -10126,9 +10363,9 @@
                 "summary": "根据文件ID读取工作簿",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "文件业务ID",
-                        "name": "file_id",
+                        "type": "integer",
+                        "description": "文件主键 ID",
+                        "name": "id",
                         "in": "query",
                         "required": true
                     }
@@ -10231,7 +10468,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "根据 file_id 查找文件 path，再将 Univer 工作簿结构写入本地文件。",
+                "description": "根据 go_file 主键 ID 查找文件 path，再将 Univer 工作簿结构写入本地文件。",
                 "consumes": [
                     "application/json"
                 ],
@@ -12211,6 +12448,15 @@
                     "description": "人类可读的名称",
                     "type": "string"
                 },
+                "profile_id": {
+                    "description": "用于渲染系统提示词的 Profile ID",
+                    "type": "string",
+                    "example": "0"
+                },
+                "profile_name": {
+                    "description": "用于渲染系统提示词的 Profile 名称",
+                    "type": "string"
+                },
                 "system_prompt": {
                     "description": "用当前用户 Profile 模板渲染后的真实系统提示词",
                     "type": "string"
@@ -14067,12 +14313,14 @@
         "handler.writeWorkbookByFileIDRequest": {
             "type": "object",
             "required": [
-                "file_id",
+                "id",
                 "workbook_data"
             ],
             "properties": {
-                "file_id": {
-                    "type": "string"
+                "id": {
+                    "description": "ID is the go_file primary key (go_file.id).",
+                    "type": "string",
+                    "example": "0"
                 },
                 "workbook_data": {
                     "type": "object",
@@ -14258,6 +14506,10 @@
                 "profile": {
                     "description": "Profile 是生成该摘要使用的 AgentProfile 名称（取自摘要记录，为空回退内置 summary Profile）。",
                     "type": "string"
+                },
+                "profile_id": {
+                    "type": "string",
+                    "example": "0"
                 },
                 "system_prompt": {
                     "description": "SystemPrompt 是用 Profile 模板 + Vars 渲染后的真实系统提示词。",
@@ -15101,9 +15353,6 @@
                 "description": {
                     "type": "string"
                 },
-                "file_id": {
-                    "type": "string"
-                },
                 "file_key": {
                     "description": "FileKey is the file's key inside its owning assay, e.g. FASTQ_R1 or BAM.\nAnalysis form inputs use it to map the file onto the matching key of\ntheir resolver.accept_formats (see buildParseAnalysisResult).",
                     "type": "string"
@@ -15159,7 +15408,9 @@
                     "type": "string"
                 },
                 "file_id": {
-                    "type": "string"
+                    "description": "FileID mirrors the file's own primary key (go_file.id). It is kept so list\nresponses still carry a \"file_id\" the frontend can pass straight to the\nby-id sheet endpoints; the entity no longer has a separate business id.",
+                    "type": "string",
+                    "example": "0"
                 },
                 "file_name": {
                     "type": "string"

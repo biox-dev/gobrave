@@ -89,7 +89,8 @@ type AISummaryInput struct {
 	// Title 是摘要标题的候选值。
 	Title string `json:"title"`
 	// Profile 是生成该摘要使用的 AgentProfile 名称（取自摘要记录，为空回退内置 summary Profile）。
-	Profile string `json:"profile,omitempty"`
+	ProfileName string `json:"profile,omitempty"`
+	ProfileID   int64  `json:"profile_id,omitempty,string"`
 	// SystemPrompt 是用 Profile 模板 + Vars 渲染后的真实系统提示词。
 	SystemPrompt string `json:"system_prompt,omitempty"`
 	// Vars 是渲染系统提示词模板所用的变量（业务上下文）。

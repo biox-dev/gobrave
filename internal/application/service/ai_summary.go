@@ -230,22 +230,20 @@ func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, id int64) (*ty
 		return nil, err
 	}
 
-	profile := strings.TrimSpace(summary.Profile)
-	if profile == "" {
-		profile = agent.ProfileSummary
+	profileName := strings.TrimSpace(summary.Profile)
+	if profileName == "" {
+		profileName = agent.ProfileSummary
 	}
 
-	systemPrompt := ""
-	if s.agentSvc != nil {
-		systemPrompt, err = s.agentSvc.RenderSystemPrompt(ctx, "", profile, content.SystemPromptVars)
-		if err != nil {
-			return nil, err
-		}
+	profile, systemPrompt, err := s.agentSvc.RenderSystemPrompt(ctx, "", profileName, content.SystemPromptVars)
+	if err != nil {
+		return nil, err
 	}
 
 	return &types.AISummaryInput{
 		Title:        content.Title,
-		Profile:      profile,
+		ProfileName:  profile.Name,
+		ProfileID:    profile.ID,
 		SystemPrompt: systemPrompt,
 		Vars:         content.SystemPromptVars,
 		WorkingDir:   content.WorkingDir,

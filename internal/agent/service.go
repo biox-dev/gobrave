@@ -477,18 +477,18 @@ func (s *AgentService) DeleteProfile(ctx context.Context, userID string, id int6
 // 返回真正的系统提示词（供 DescribeEnv 等前端展示 / 调试场景使用）。
 //
 // Profile 不存在或未配置系统提示词时返回空串、nil 错误。
-func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID, profileName string, vars map[string]any) (string, error) {
+func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID, profileName string, vars map[string]any) (*Profile, string, error) {
 	if s.profiles == nil {
-		return "", nil
+		return nil, "", nil
 	}
 	profile, err := s.profiles.Resolve(ctx, profileName)
 	if err != nil || profile == nil {
-		return "", nil
+		return nil, "", nil
 	}
 	systemPrompt := s.GetSystemSpromptByProfile(ctx, profile, vars, userID)
 
 	// return RenderSystemPromptTemplate(profile.SystemPrompt, vars)
-	return systemPrompt, nil
+	return profile, systemPrompt, nil
 }
 
 // resolveProfile 解析本次调用应使用的 Profile：name 为空时回退到内置默认 Profile
