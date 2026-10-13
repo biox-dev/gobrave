@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 )
@@ -105,7 +106,7 @@ func ApplySelectAssayBindings(ctx context.Context, parser NodeRequestParser, tar
 	changed := false
 	for _, binding := range bindings {
 		inputCfg := asMap(patterns[binding.TargetHandle])
-		if strings.TrimSpace(asString(inputCfg["type"])) != "CollectedAssaySelect" {
+		if strings.TrimSpace(asString(inputCfg["type"])) != analysisform.CollectedAssaySelect {
 			continue
 		}
 		if binding.FileID == "" {

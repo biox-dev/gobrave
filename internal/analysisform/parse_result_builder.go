@@ -194,7 +194,7 @@ func buildAnalysisDictFromDB(
 			continue
 		}
 
-		if formType == "CollectedAssaySelect" {
+		if formType == CollectedAssaySelect {
 			analysisResult := copyAnyMap(items[0])
 			if requestMap, ok := rawValue.(map[string]interface{}); ok {
 				for rk, rv := range requestMap {
@@ -409,7 +409,7 @@ func mergeColumnsByName(formJSONWrap []interface{}) []map[string]interface{} {
 		itemType, _ := copied["type"].(string)
 
 		switch itemType {
-		case "CollectedAssaySelect":
+		case CollectedAssaySelect:
 			if name != "" {
 				assayMap[name] = copied
 			}
