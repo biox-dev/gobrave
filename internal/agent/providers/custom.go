@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -49,6 +50,9 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 		return nil, err
 	}
 
+	// 把 opencode 的工具权限请求委托给 gobrave 的 Runtime（策略 / 持久化 / UI）。
+	sdkOpts.PermissionHandler = a.permissionHandler(rt, strings.TrimSpace(req.UserID))
+
 	sdkClient, err := opencodesdk.NewClient(ctx, sdkOpts)
 	if err != nil {
 		return nil, fmt.Errorf("custom provider: init opencode sdk: %w", err)
@@ -69,7 +73,6 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 		SessionID:    strings.TrimSpace(req.SessionID),
 		SessionTitle: "gobrave-opencode",
 		Prompt:       prompt,
-		AutoApprove:  true,
 	}, func(event opencodesdk.Event) {
 		if event.Message != nil {
 			ensureSeenMaps(seenToolCalls, seenToolResults, event.Message.ID)
@@ -148,7 +151,6 @@ func (a *customAgent) buildSDKOptions(req agent.Request) (opencodesdk.Options, e
 	return opencodesdk.Options{
 		WorkingDir:      workingDir,
 		Debug:           isTrue(a.opts.Extra["opencode_debug"]),
-		AutoApprove:     true,
 		Provider:        strings.TrimSpace(a.opts.Extra["opencode_provider"]),
 		APIKey:          apiKey,
 		Model:           model,
@@ -164,6 +166,62 @@ func (a *customAgent) modelAPIKey(modelKey string) string {
 		return ""
 	}
 	return strings.TrimSpace(pc.APIKey)
+}
+
+// permissionHandler 把 opencode SDK 的工具权限请求桥接到 gobrave 的 Runtime：
+//
+//	SDK 权限请求 → agent.Operation → rt.RequestPermission → 回译为 SDK 决策
+//
+// 与 copilot.go 的 permissionHandler 同构；错误一律映射为拒绝（安全默认）。
+func (a *customAgent) permissionHandler(rt agent.Runtime, userID string) opencodesdk.PermissionHandler {
+	return func(ctx context.Context, p opencodesdk.PermissionRequest) opencodesdk.PermissionDecision {
+		op := permissionToOperation(p)
+		decision, err := rt.RequestPermission(ctx, userID, op)
+		if err != nil || decision != agent.DecisionAllow {
+			return opencodesdk.PermissionDeny
+		}
+		return opencodesdk.PermissionAllow
+	}
+}
+
+// permissionToOperation 把 opencode 的权限请求映射为框架内的 Operation 描述。
+func permissionToOperation(p opencodesdk.PermissionRequest) agent.Operation {
+	meta := map[string]any{"tool": p.ToolName}
+	if p.Description != "" {
+		meta["description"] = p.Description
+	}
+
+	switch strings.ToLower(strings.TrimSpace(p.Action)) {
+	case "execute":
+		return agent.Operation{
+			Type:     agent.OperationExecute,
+			Command:  commandFromParams(p.Params, p.Description),
+			Metadata: meta,
+		}
+	case "write", "create", "update", "edit":
+		return agent.Operation{Type: agent.OperationWrite, Path: p.Path, Metadata: meta}
+	case "delete":
+		return agent.Operation{Type: agent.OperationDelete, Path: p.Path, Metadata: meta}
+	case "read":
+		return agent.Operation{Type: agent.OperationRead, Path: p.Path, Metadata: meta}
+	case "fetch":
+		return agent.Operation{Type: agent.OperationNetwork, Metadata: meta}
+	default:
+		return agent.Operation{Type: agent.OperationExecute, Metadata: meta}
+	}
+}
+
+// commandFromParams 尽力从权限参数中抽取命令文本，失败时回退到描述。
+func commandFromParams(params any, fallback string) string {
+	if data, err := json.Marshal(params); err == nil {
+		var m map[string]any
+		if json.Unmarshal(data, &m) == nil {
+			if cmd, ok := m["command"].(string); ok && cmd != "" {
+				return cmd
+			}
+		}
+	}
+	return fallback
 }
 
 func isTrue(value string) bool {
