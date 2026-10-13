@@ -3,7 +3,7 @@ module github.com/biox-dev/gobrave
 go 1.25.6
 
 require (
-	github.com/biox-dev/opencode v0.0.0-20261013085358-058843d2eaf8
+	github.com/biox-dev/opencode v0.0.0-20261013105420-c3d63dcbe631
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/flosch/pongo2/v6 v6.0.0
