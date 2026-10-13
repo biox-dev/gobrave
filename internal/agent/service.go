@@ -571,7 +571,7 @@ func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *P
 
 	// 2) 技能指令正文：把本轮可用技能的说明注入提示词，使模型感知技能语义。
 	// 技能的工具暴露由各 Provider 负责（见 providers），此处只负责上下文注入。
-	if s.skills != nil {
+	if s.skills != nil && len(selectedSkills) > 0 {
 		prompt = appendPromptBlock(prompt, s.skills.PromptBlock(selectedSkills...))
 	}
 

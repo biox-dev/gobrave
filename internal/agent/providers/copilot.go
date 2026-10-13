@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent"
-	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	copilot "github.com/github/copilot-sdk/go"
 	copilotrpc "github.com/github/copilot-sdk/go/rpc"
@@ -255,7 +254,7 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 		WorkingDirectory:    firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
 		Streaming:           copilot.Bool(true),
 		OnPermissionRequest: a.permissionHandler(ctx, rt, req.UserID),
-		Tools:               append(a.buildTools(rt, req.UserID), a.buildSkills(rt, req.UserID)...),
+		Tools:               a.buildTools(rt, req.UserID),
 	}
 
 	system := strings.TrimSpace(req.SystemPrompt)
@@ -322,63 +321,6 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, userID string) []copilot.Too
 // 工具执行失败（IsError=true）映射为 failure 结果，错误信息写入 Error 字段，
 // 使模型能看到错误并尝试纠正；成功映射为 success 结果。
 func toCopilotToolResult(res tool.Result) copilot.ToolResult {
-	if res.IsError {
-		return copilot.ToolResult{
-			TextResultForLLM: res.Content,
-			ResultType:       "failure",
-			Error:            res.Content,
-		}
-	}
-	return copilot.ToolResult{
-		TextResultForLLM: res.Content,
-		ResultType:       "success",
-	}
-}
-
-// buildSkills 把 opts.Skills（skill.Registry）转换为 Copilot 的 Tool 列表，每个 Skill 附带一个
-// Handler，桥接到框架的 SkillRunner 执行技能并把结果回传给 Copilot。
-//
-// 技能在 Copilot 侧与工具共用同一套 function-calling 通道：模型发起技能调用时，SDK 会广播
-// 事件并在独立 goroutine 中调用对应 Handler，再把返回的 ToolResult 通过 RPC 回填给模型。
-// 此外，技能的指令正文（Instructions）还会由 AgentService（GetSystemSpromptByProfile）注入
-// 系统提示词，使模型在函数调用之外也能感知技能语义。
-//
-// 桥接过程（见 agent.SkillRunner.Run）：
-//
-//	SkillInvocation → agent.SkillCall → 输出 skill_call 事件 → 执行 → skill.Result
-//	  → 输出 skill_result 事件 → copilot.ToolResult → 回传给模型
-func (a *copilotAgent) buildSkills(rt agent.Runtime, userID string) []copilot.Tool {
-	if a.opts.Skills == nil {
-		return nil
-	}
-
-	runner := agent.NewSkillRunner(skill.NewInvoker(a.opts.Skills), rt).SetUserID(userID)
-	defs := a.opts.Skills.List()
-
-	out := make([]copilot.Tool, 0, len(defs))
-	for _, def := range defs {
-		name := def.Name
-		out = append(out, copilot.Tool{
-			Name:        def.Name,
-			Description: def.Description,
-			Parameters:  def.InputSchema,
-			Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
-				res := runner.Run(inv.TraceContext, agent.SkillCall{
-					ID:        inv.ToolCallID,
-					Name:      name,
-					Arguments: inv.Arguments,
-				})
-				return toCopilotSkillResult(res), nil
-			},
-		})
-	}
-	return out
-}
-
-// toCopilotSkillResult 把框架的 skill.Result 转换为 Copilot 的 ToolResult。
-//
-// 语义与 toCopilotToolResult 一致：失败映射为 failure，成功映射为 success。
-func toCopilotSkillResult(res skill.Result) copilot.ToolResult {
 	if res.IsError {
 		return copilot.ToolResult{
 			TextResultForLLM: res.Content,

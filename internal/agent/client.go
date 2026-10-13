@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 	"sync"
-
-	"github.com/biox-dev/gobrave/internal/agent/skill"
 )
 
 // Client 是 Agent 调用的统一门面（Facade）。
@@ -41,7 +39,7 @@ func (c *Client) Stream(ctx context.Context, req Request, handler StreamHandler)
 
 // InvokeRuntime 使用调用方提供的 Runtime 执行一次性任务（供 AgentService 任务模式使用）。
 func (c *Client) InvokeRuntime(ctx context.Context, req Request, rt Runtime) (*Result, error) {
-	a, err := c.resolve(req.Provider, c.optionsFor(req))
+	a, err := c.resolve(req.Provider, c.options())
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +51,7 @@ func (c *Client) InvokeRuntime(ctx context.Context, req Request, rt Runtime) (*R
 
 // StreamRuntime 使用调用方提供的 Runtime 执行流式请求（供 AgentService 任务模式使用）。
 func (c *Client) StreamRuntime(ctx context.Context, req Request, rt Runtime) (*Result, error) {
-	a, err := c.resolve(req.Provider, c.optionsFor(req))
+	a, err := c.resolve(req.Provider, c.options())
 	if err != nil {
 		return nil, err
 	}
@@ -63,28 +61,11 @@ func (c *Client) StreamRuntime(ctx context.Context, req Request, rt Runtime) (*R
 	return a.Stream(ctx, req, rt)
 }
 
-// optionsFor 基于默认 Options 构造本次调用的 Options：
-// 请求指定了 Skills（技能名白名单）时，从默认技能注册表过滤出对应子集。
-func (c *Client) optionsFor(req Request) Options {
+// options 返回默认 Options 的快照。
+func (c *Client) options() Options {
 	c.mu.RLock()
-	opts := c.defaultOptions
-	c.mu.RUnlock()
-
-	if len(req.Skills) == 0 || opts.Skills == nil {
-		return opts
-	}
-	reg := skill.NewRegistry()
-	for _, name := range req.Skills {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		if s, ok := opts.Skills.Get(name); ok {
-			reg.Register(s)
-		}
-	}
-	opts.Skills = reg
-	return opts
+	defer c.mu.RUnlock()
+	return c.defaultOptions
 }
 
 // resolve 解析请求应使用的 Agent 实例。

@@ -1,190 +1,157 @@
 package skill
 
 import (
-	"context"
-	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
-// echo 是一个用于测试的简单技能：把入参文本原样返回。
-type echoInput struct {
-	Text string `json:"text"`
-}
+const sampleSKILL = `---
+name: demo-skill
+description: A demo skill for tests.
+user-invocable: true
+---
 
-func newEcho() Skill {
-	return NewFunc(Manifest{
-		Definition: Definition{
-			Name:        "echo",
-			Description: "echo input text back",
-			InputSchema: Schema("echo input", map[string]any{
-				"text": StringProperty("text to echo"),
-			}, "text"),
-		},
-	}, func(_ context.Context, in echoInput) (map[string]string, error) {
-		return map[string]string{"echoed": in.Text}, nil
-	})
-}
+# Demo
+Follow these steps.
+`
 
-// failing 是一个始终返回错误的技能。
-func newFailing() Skill {
-	return NewFunc(Manifest{
-		Definition: Definition{Name: "failing", Description: "always fails"},
-	}, func(_ context.Context, _ struct{}) (any, error) {
-		return nil, errors.New("boom")
-	})
-}
-
-// panicking 是一个会 panic 的技能。
-func newPanicking() Skill {
-	return NewFunc(Manifest{
-		Definition: Definition{Name: "panicking", Description: "panics"},
-	}, func(_ context.Context, _ struct{}) (any, error) {
-		panic("kaboom")
-	})
-}
-
-func TestFuncAdapter(t *testing.T) {
-	inv := NewInvoker(NewRegistryWith(newEcho()))
-
-	res := inv.Invoke(context.Background(), Call{
-		ID:        "call_1",
-		Name:      "echo",
-		Arguments: []byte(`{"text":"hello"}`),
-	})
-	if res.IsError {
-		t.Fatalf("unexpected error: %v", res.Content)
+func writeSkill(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	skillDir := filepath.Join(dir, name)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
 	}
-	if res.Content != `{"echoed":"hello"}` {
-		t.Fatalf("content = %q, want echoed hello", res.Content)
+	path := filepath.Join(skillDir, SkillFileName)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	return path
+}
+
+func TestParseContent(t *testing.T) {
+	s, err := ParseContent([]byte(sampleSKILL))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if s.Name != "demo-skill" || s.Description != "A demo skill for tests." {
+		t.Fatalf("metadata = %+v", s)
+	}
+	if !s.UserInvocable {
+		t.Fatalf("user-invocable not parsed")
+	}
+	if !strings.Contains(s.Instructions, "Follow these steps.") {
+		t.Fatalf("instructions = %q", s.Instructions)
+	}
+}
+
+func TestParseContentRequiresFrontmatter(t *testing.T) {
+	if _, err := ParseContent([]byte("no frontmatter")); err == nil {
+		t.Fatalf("expected error for missing frontmatter")
+	}
+}
+
+func TestValidate(t *testing.T) {
+	cases := []struct {
+		name    string
+		skill   Skill
+		wantErr bool
+	}{
+		{"ok", Skill{Name: "a-b", Description: "d"}, false},
+		{"empty name", Skill{Description: "d"}, true},
+		{"bad name", Skill{Name: "Bad_Name", Description: "d"}, true},
+		{"empty description", Skill{Name: "a"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.skill.Validate()
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("Validate() err = %v, wantErr = %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestDiscoverAndRegistry(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, "demo-skill", sampleSKILL)
+	writeSkill(t, dir, "broken", "---\nname: broken\n---\n") // 缺 description
+
+	skills, states := DiscoverWithStates([]string{dir})
+	if len(skills) != 1 || skills[0].Name != "demo-skill" {
+		t.Fatalf("skills = %+v", skills)
+	}
+
+	var sawError bool
+	for _, st := range states {
+		if st.State == StateError {
+			sawError = true
+		}
+	}
+	if !sawError {
+		t.Fatalf("expected an error state for the invalid skill")
+	}
+
+	reg := NewRegistryWith(skills...)
+	if !reg.Has("demo-skill") {
+		t.Fatalf("registry missing demo-skill")
+	}
+	if got := reg.Names(); len(got) != 1 || got[0] != "demo-skill" {
+		t.Fatalf("names = %v", got)
 	}
 }
 
 func TestRegistryPromptBlock(t *testing.T) {
-	reg := NewRegistryWith(newEcho())
+	reg := NewRegistryWith(
+		&Skill{Name: "alpha", Description: "first", SkillFilePath: "alpha/SKILL.md"},
+		&Skill{Name: "beta", Description: "second", SkillFilePath: "beta/SKILL.md"},
+		&Skill{Name: "hidden", Description: "quiet", DisableModelInvocation: true, SkillFilePath: "x"},
+	)
 
 	block := reg.PromptBlock()
-	if !strings.Contains(block, "## Available skills") || !strings.Contains(block, "echo") {
-		t.Fatalf("block = %q, want skill listing", block)
+	if !strings.Contains(block, "<available_skills>") || !strings.Contains(block, "alpha") {
+		t.Fatalf("block = %q", block)
+	}
+	if strings.Contains(block, "hidden") {
+		t.Fatalf("block should exclude disable-model-invocation skills: %q", block)
+	}
+	// 元信息模式：不应注入指令正文。
+	if strings.Contains(block, "Instructions") {
+		t.Fatalf("block must not contain instruction bodies")
 	}
 
-	// 显式选中已注册技能 -> 包含该技能。
-	if got := reg.PromptBlock("echo"); !strings.Contains(got, "echo") {
-		t.Fatalf("block(echo) = %q, want echo", got)
+	// 仅选中 beta。
+	only := reg.PromptBlock("beta")
+	if strings.Contains(only, "alpha") || !strings.Contains(only, "beta") {
+		t.Fatalf("filtered block = %q", only)
 	}
 
-	// 未命中 / 空注册表 -> 空。
 	if got := reg.PromptBlock("missing"); got != "" {
-		t.Fatalf("block(missing) = %q, want empty", got)
+		t.Fatalf("missing selection = %q, want empty", got)
 	}
 	if got := NewRegistry().PromptBlock(); got != "" {
-		t.Fatalf("empty registry block = %q, want empty", got)
+		t.Fatalf("empty registry = %q, want empty", got)
 	}
 }
 
-func TestInvokerNotFound(t *testing.T) {
-	inv := NewInvoker(NewRegistry())
-	res := inv.Invoke(context.Background(), Call{Name: "missing"})
-	if !res.IsError {
-		t.Fatalf("expected error result")
-	}
-	if !errors.Is(res.Err, ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", res.Err)
-	}
-}
+func TestDeduplicateAndFilter(t *testing.T) {
+	a1 := &Skill{Name: "dup", Description: "builtin"}
+	a2 := &Skill{Name: "dup", Description: "user"}
+	other := &Skill{Name: "keep", Description: "k"}
 
-func TestInvokerInvalidArguments(t *testing.T) {
-	inv := NewInvoker(NewRegistryWith(newEcho()))
-	res := inv.Invoke(context.Background(), Call{Name: "echo", Arguments: []byte(`not-json`)})
-	if !res.IsError {
-		t.Fatalf("expected error result")
+	deduped := Deduplicate([]*Skill{a1, a2, other})
+	if len(deduped) != 2 {
+		t.Fatalf("deduped = %+v", deduped)
 	}
-	if !errors.Is(res.Err, ErrInvalidArguments) {
-		t.Fatalf("err = %v, want ErrInvalidArguments", res.Err)
-	}
-}
-
-func TestInvokerSkillError(t *testing.T) {
-	inv := NewInvoker(NewRegistryWith(newFailing()))
-	res := inv.Invoke(context.Background(), Call{Name: "failing"})
-	if !res.IsError {
-		t.Fatalf("expected error result")
-	}
-	if res.Content != "boom" {
-		t.Fatalf("content = %q, want boom", res.Content)
-	}
-}
-
-func TestInvokerRecoverPanic(t *testing.T) {
-	inv := NewInvoker(NewRegistryWith(newPanicking()))
-	res := inv.Invoke(context.Background(), Call{Name: "panicking"})
-	if !res.IsError {
-		t.Fatalf("expected error result from panic recovery")
-	}
-}
-
-func TestInvokerTimeout(t *testing.T) {
-	slow := NewFunc(Manifest{
-		Definition: Definition{Name: "slow"},
-	}, func(ctx context.Context, _ struct{}) (any, error) {
-		select {
-		case <-time.After(time.Second):
-			return "done", nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	})
-	inv := NewInvoker(NewRegistryWith(slow), WithMiddlewares(Timeout(10*time.Millisecond)))
-	res := inv.Invoke(context.Background(), Call{Name: "slow"})
-	if !res.IsError {
-		t.Fatalf("expected timeout error result")
-	}
-}
-
-func TestRegistryListSorted(t *testing.T) {
-	reg := NewRegistryWith(newEcho(), newFailing(), newPanicking())
-	names := reg.Names()
-	want := []string{"echo", "failing", "panicking"}
-	if len(names) != len(want) {
-		t.Fatalf("names = %v, want %v", names, want)
-	}
-	for i := range want {
-		if names[i] != want[i] {
-			t.Fatalf("names = %v, want %v", names, want)
+	for _, s := range deduped {
+		if s.Name == "dup" && s.Description != "user" {
+			t.Fatalf("last occurrence should win: %+v", s)
 		}
 	}
-	if !reg.Has("echo") || reg.Has("nope") {
-		t.Fatalf("Has() mismatch")
-	}
-	if _, ok := reg.Get("echo"); !ok {
-		t.Fatalf("Get(echo) not found")
-	}
-}
 
-func TestSuccessFailure(t *testing.T) {
-	if got := Success("hi").Content; got != "hi" {
-		t.Fatalf("Success content = %q", got)
-	}
-	f := Failure(errors.New("err"))
-	if !f.IsError || f.Content != "err" {
-		t.Fatalf("Failure = %+v", f)
-	}
-}
-
-func TestStaticSkill(t *testing.T) {
-	s := NewStatic(Manifest{
-		Definition:   Definition{Name: "guide", Description: "a guide"},
-		Instructions: "do this",
-	})
-	if s.Definition().Name != "guide" {
-		t.Fatalf("name = %q", s.Definition().Name)
-	}
-	res, err := s.Invoke(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("invoke: %v", err)
-	}
-	if res.Content != "do this" {
-		t.Fatalf("content = %q", res.Content)
+	filtered := Filter(deduped, []string{"dup"})
+	if len(filtered) != 1 || filtered[0].Name != "keep" {
+		t.Fatalf("filtered = %+v", filtered)
 	}
 }

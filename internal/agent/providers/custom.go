@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent"
-	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	opencodesdk "github.com/biox-dev/opencode/sdk"
 )
@@ -55,7 +54,7 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 	userID := strings.TrimSpace(req.UserID)
 	// 把 opencode 的工具权限请求委托给 gobrave 的 Runtime（策略 / 持久化 / UI）。
 	sdkOpts.PermissionHandler = a.permissionHandler(rt, userID)
-	// 把 gobrave 的工具与技能注册为 opencode 的宿主工具，与内置工具共用同一套 tool-call 循环。
+	// 把 gobrave 的工具注册为 opencode 的宿主工具，与内置工具共用同一套 tool-call 循环。
 	sdkOpts.Tools = a.buildHostTools()
 
 	sdkClient, err := opencodesdk.NewClient(ctx, sdkOpts)
@@ -328,18 +327,13 @@ func toSDKRole(role string) opencodesdk.Role {
 	}
 }
 
-// buildHostTools 把 gobrave 的工具与技能统一转换为 opencode 的宿主工具。
-//
-// 在 opencode 侧，工具与技能共用同一套 function calling 通道（都是 tools.BaseTool），
-// 因此两者最终合并进同一个 Tools 列表；区别只在 gobrave 侧的执行器：
-//   - 工具 → tool.Executor；
-//   - 技能 → skill.Invoker。
-//
-// 技能与工具的关键区别是携带「指令正文」（Instructions）：除暴露为可调用工具外，其正文还会
-// 由 AgentService（GetSystemSpromptByProfile）注入系统提示词，使模型即便不触发调用也能感知技能语义。
+// buildHostTools 把 gobrave 的工具转换为 opencode 的宿主工具。
 //
 // opencode 自带完整的 tool-call 循环：模型发起调用后，opencode 会在其内部循环中调用
 // 对应 Handler，再把结果回填给模型——Provider 无需自己驱动循环。
+//
+// 技能不是工具：技能只把元信息注入系统提示词（见 AgentService.GetSystemSpromptByProfile），
+// 模型按 location 自行读取 SKILL.md 正文，因此不在此注册。
 //
 // 注意：工具调用 / 结果的时间线事件由 opencode 记录进消息流后经 emitToolEvents 统一发出，
 // 因此这里只负责执行，不重复发事件（避免与快照事件重复落库）。
@@ -353,18 +347,6 @@ func (a *customAgent) buildHostTools() []opencodesdk.HostTool {
 			out = append(out, hostTool(def.Name, def.Description, def.InputSchema,
 				func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
 					res := exec.Execute(ctx, tool.Call{ID: call.ID, Name: name, Arguments: json.RawMessage(call.Input)})
-					return opencodesdk.HostToolResult{Content: res.Content, IsError: res.IsError}
-				}))
-		}
-	}
-
-	if a.opts.Skills != nil {
-		inv := skill.NewInvoker(a.opts.Skills)
-		for _, def := range a.opts.Skills.List() {
-			name := def.Name
-			out = append(out, hostTool(def.Name, def.Description, def.InputSchema,
-				func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
-					res := inv.Invoke(ctx, skill.Call{ID: call.ID, Name: name, Arguments: json.RawMessage(call.Input)})
 					return opencodesdk.HostToolResult{Content: res.Content, IsError: res.IsError}
 				}))
 		}

@@ -1,131 +1,337 @@
-// Package skill 定义 Agent 技能（skill）调用框架的基础设施。
+// Package skill 实现 Agent Skills 开放标准（https://agentskills.io）。
 //
-// 技能是比工具（tool）更高一层的可复用能力单元：一个技能既包含"元信息"
-// （Definition：名称 / 描述 / 入参 schema，用于暴露给模型做 function calling），
-// 也包含"指令正文"（Instructions：注入到上下文中的 markdown 说明），以及
-// 可选的"执行体"（Invoke：真正运行技能逻辑，产出结果）。
+// 一个技能就是一份带 YAML frontmatter 的 markdown 文档（SKILL.md）：frontmatter
+// 声明 name / description 等元信息，正文是指令内容。技能只做「上下文注入」，不是
+// 可执行工具——采用渐进式披露（progressive disclosure）：
 //
-// 与 tool 包一样，本包只回答三个问题：
+//   - 仅把技能元信息（name / description / location）以 XML 注入系统提示词；
+//   - 正文（Instructions）不注入，模型判断需要时按 location 自行读取 SKILL.md 文件。
 //
-//   - 有哪些技能（Definition / Instructions 描述给模型）；
-//   - 如何组织它们（Registry 按名注册 / 解析）；
-//   - 如何调用它们（Invoker 解析技能 → 校验参数 → 套用中间件 → 执行）。
-//
-// 上层 internal/agent 通过 SkillRunner 把技能执行桥接到 Runtime（事件流 + 权限门禁），
-// 因此本包不依赖 agent，避免循环引用。
+// 设计参考 crush/internal/skills 与 opencode/internal/skills。
 package skill
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+
+	yaml "github.com/goccy/go-yaml"
 )
 
-// 技能相关错误。
+const (
+	// SkillFileName 是技能描述文件的文件名。
+	SkillFileName = "SKILL.md"
+	// MaxNameLength 是技能名允许的最大长度。
+	MaxNameLength = 64
+	// MaxDescriptionLength 是技能描述允许的最大长度。
+	MaxDescriptionLength = 1024
+)
+
 var (
-	// ErrNotFound 表示技能未注册。
-	ErrNotFound = errors.New("skill: skill not found")
-	// ErrInvalidArguments 表示技能参数非法（无法解析为输入结构或不是合法 JSON）。
-	ErrInvalidArguments = errors.New("skill: invalid arguments")
+	namePattern   = regexp.MustCompile(`^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$`)
+	promptEscaper = strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+		"'", "&apos;",
+	)
 )
 
-// Definition 描述一个技能，用于暴露给模型（function calling 的技能定义）。
-//
-// 与工具不同，技能的 InputSchema 可为 nil：纯指令型技能无需参数，
-// 模型只需在上下文里看到 Instructions 并按需"启用"它。
-type Definition struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	InputSchema map[string]any `json:"input_schema,omitempty"`
+// Skill 表示一份解析后的 SKILL.md。
+type Skill struct {
+	Name                   string `yaml:"name" json:"name"`
+	Description            string `yaml:"description" json:"description"`
+	UserInvocable          bool   `yaml:"user-invocable" json:"user_invocable"`
+	DisableModelInvocation bool   `yaml:"disable-model-invocation" json:"disable_model_invocation"`
+
+	// 以下字段不参与 frontmatter 解析，由加载过程填充。
+	Instructions  string `yaml:"-" json:"instructions,omitempty"`    // 指令正文
+	Path          string `yaml:"-" json:"path,omitempty"`            // 技能目录
+	SkillFilePath string `yaml:"-" json:"skill_file_path,omitempty"` // SKILL.md 路径
 }
 
-// Manifest 是一个技能的完整元信息（Definition + 指令正文 + 版本）。
-type Manifest struct {
-	Definition
-	Version      string `json:"version,omitempty"`
-	Instructions string `json:"instructions,omitempty"` // markdown 指令正文，注入到上下文
+// DiscoveryState 表示单个技能文件的发现结果。
+type DiscoveryState int
+
+const (
+	// StateNormal 表示技能解析并校验成功。
+	StateNormal DiscoveryState = iota
+	// StateError 表示扫描 / 解析 / 校验失败。
+	StateError
+)
+
+// SkillState 描述单个技能文件的最新发现状态。
+type SkillState struct {
+	Name  string
+	Path  string
+	State DiscoveryState
+	Err   error
 }
 
-// Skill 是可被 Agent 启用并调用的一个技能。
-//
-// 实现约定：
-//   - Invoke 返回的 error 会被上层包装为"技能执行失败"的结果（Result.IsError=true），
-//     而不会中断整个调用流程——模型可以看到错误信息并尝试纠正。
-//   - 返回的 any 会被序列化为结果内容（Result.Content）回传给模型。
-//   - 纯指令型技能可以只提供 Instructions，Invoke 直接返回指令正文即可。
-type Skill interface {
-	// Definition 返回技能的元信息（名称 / 描述 / 入参 schema）。
-	Definition() Definition
-	// Instructions 返回注入到模型上下文的 markdown 指令正文；可为空。
-	Instructions() string
-	// Invoke 执行技能；args 是模型生成的参数（JSON，空时视为 {}）。
-	Invoke(ctx context.Context, args json.RawMessage) (Result, error)
-}
+// Validate 校验技能是否满足规范要求。
+func (s *Skill) Validate() error {
+	var errs []error
 
-// Func 把普通函数适配为 Skill：In 为入参结构，Out 为返回结构。
-//
-// Instructions 可用于附带指令正文；对纯函数型技能可留空。
-type Func[In, Out any] struct {
-	manifest Manifest
-	fn       func(context.Context, In) (Out, error)
-}
-
-// NewFunc 基于一个强类型函数构建技能。
-//
-//   - manifest：技能的元信息（名称 / 描述 / 入参 schema / 指令正文）；
-//   - fn：实际执行逻辑。
-func NewFunc[In, Out any](manifest Manifest, fn func(context.Context, In) (Out, error)) *Func[In, Out] {
-	return &Func[In, Out]{manifest: manifest, fn: fn}
-}
-
-// Definition 实现 Skill。
-func (f *Func[In, Out]) Definition() Definition { return f.manifest.Definition }
-
-// Instructions 实现 Skill。
-func (f *Func[In, Out]) Instructions() string { return f.manifest.Instructions }
-
-// Version 返回技能版本号（可为空）。
-func (f *Func[In, Out]) Version() string { return f.manifest.Version }
-
-// Invoke 实现 Skill：解析入参 → 调用函数。
-func (f *Func[In, Out]) Invoke(ctx context.Context, args json.RawMessage) (Result, error) {
-	if len(args) == 0 {
-		args = json.RawMessage(`{}`)
+	if s.Name == "" {
+		errs = append(errs, errors.New("name is required"))
+	} else {
+		if len(s.Name) > MaxNameLength {
+			errs = append(errs, fmt.Errorf("name exceeds %d characters", MaxNameLength))
+		}
+		if !namePattern.MatchString(s.Name) {
+			errs = append(errs, errors.New("name must be alphanumeric with hyphens, no leading/trailing/consecutive hyphens"))
+		}
+		if s.Path != "" && !strings.EqualFold(filepath.Base(s.Path), s.Name) {
+			errs = append(errs, fmt.Errorf("name %q must match directory %q", s.Name, filepath.Base(s.Path)))
+		}
 	}
-	var in In
-	if err := json.Unmarshal(args, &in); err != nil {
-		return Result{}, fmt.Errorf("%w: %v", ErrInvalidArguments, err)
+
+	if s.Description == "" {
+		errs = append(errs, errors.New("description is required"))
+	} else if len(s.Description) > MaxDescriptionLength {
+		errs = append(errs, fmt.Errorf("description exceeds %d characters", MaxDescriptionLength))
 	}
-	out, err := f.fn(ctx, in)
+
+	return errors.Join(errs...)
+}
+
+// Parse 从磁盘解析一个 SKILL.md 文件。
+func Parse(path string) (*Skill, error) {
+	content, err := os.ReadFile(path)
 	if err != nil {
-		return Result{}, err
+		return nil, err
 	}
-	return Success(out), nil
+
+	s, err := ParseContent(content)
+	if err != nil {
+		return nil, err
+	}
+
+	s.Path = filepath.Dir(path)
+	s.SkillFilePath = path
+	return s, nil
 }
 
-// Static 是一个纯指令型技能：只有指令正文，无独立执行逻辑。
+// ParseContent 从原始字节解析 SKILL.md。
+func ParseContent(content []byte) (*Skill, error) {
+	frontmatter, body, err := splitFrontmatter(string(content))
+	if err != nil {
+		return nil, err
+	}
+
+	var s Skill
+	if err := yaml.Unmarshal([]byte(frontmatter), &s); err != nil {
+		return nil, fmt.Errorf("parsing frontmatter: %w", err)
+	}
+	s.Instructions = strings.TrimSpace(body)
+	return &s, nil
+}
+
+// frontmatter 是技能写回 SKILL.md 时的 YAML 头部结构（控制字段顺序与省略空值）。
+type frontmatter struct {
+	Name                   string `yaml:"name"`
+	Description            string `yaml:"description"`
+	UserInvocable          bool   `yaml:"user-invocable,omitempty"`
+	DisableModelInvocation bool   `yaml:"disable-model-invocation,omitempty"`
+}
+
+// Marshal 把技能序列化为 SKILL.md 内容（YAML frontmatter + 正文）。
 //
-// Invoke 直接返回指令正文作为结果，便于把技能作为"可调用的提示词片段"使用。
-type Static struct {
-	manifest Manifest
+// 与 Parse / ParseContent 互逆：Save 出来的文件应能被 Parse 原样读回。
+func (s *Skill) Marshal() ([]byte, error) {
+	head, err := yaml.Marshal(frontmatter{
+		Name:                   s.Name,
+		Description:            s.Description,
+		UserInvocable:          s.UserInvocable,
+		DisableModelInvocation: s.DisableModelInvocation,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	sb.Write(head)
+	if !strings.HasSuffix(string(head), "\n") {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("---\n")
+	if body := strings.TrimSpace(s.Instructions); body != "" {
+		sb.WriteString("\n")
+		sb.WriteString(body)
+		sb.WriteString("\n")
+	}
+	return []byte(sb.String()), nil
 }
 
-// NewStatic 创建一个纯指令型技能。
-func NewStatic(manifest Manifest) *Static {
-	return &Static{manifest: manifest}
+// splitFrontmatter 从 markdown 内容中拆出 YAML frontmatter 与正文。
+func splitFrontmatter(content string) (frontmatter, body string, err error) {
+	// 去除编辑器可能写入的 UTF-8 BOM，并统一换行符。
+	content = strings.TrimPrefix(content, "\uFEFF")
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+
+	lines := strings.Split(content, "\n")
+	start := slices.IndexFunc(lines, func(line string) bool {
+		return strings.TrimSpace(line) != ""
+	})
+	if start == -1 || strings.TrimSpace(lines[start]) != "---" {
+		return "", "", errors.New("no YAML frontmatter found")
+	}
+
+	endOffset := slices.IndexFunc(lines[start+1:], func(line string) bool {
+		return strings.TrimSpace(line) == "---"
+	})
+	if endOffset == -1 {
+		return "", "", errors.New("unclosed frontmatter")
+	}
+	end := start + 1 + endOffset
+
+	frontmatter = strings.Join(lines[start+1:end], "\n")
+	body = strings.Join(lines[end+1:], "\n")
+	return frontmatter, body, nil
 }
 
-// Definition 实现 Skill。
-func (s *Static) Definition() Definition { return s.manifest.Definition }
+// Discover 发现给定路径下所有合法技能。
+func Discover(paths []string) []*Skill {
+	skills, _ := DiscoverWithStates(paths)
+	return skills
+}
 
-// Instructions 实现 Skill。
-func (s *Static) Instructions() string { return s.manifest.Instructions }
+// DiscoverWithStates 发现给定路径下所有合法技能，并返回每个文件的发现状态。
+func DiscoverWithStates(paths []string) ([]*Skill, []*SkillState) {
+	var skills []*Skill
+	var states []*SkillState
+	seen := map[string]bool{}
 
-// Version 返回技能版本号（可为空）。
-func (s *Static) Version() string { return s.manifest.Version }
+	addState := func(name, path string, state DiscoveryState, err error) {
+		states = append(states, &SkillState{Name: name, Path: path, State: state, Err: err})
+	}
 
-// Invoke 实现 Skill：直接返回指令正文。
-func (s *Static) Invoke(_ context.Context, _ json.RawMessage) (Result, error) {
-	return Success(s.manifest.Instructions), nil
+	for _, base := range paths {
+		walkErr := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				addState("", path, StateError, err)
+				return nil
+			}
+			if d.IsDir() || !strings.EqualFold(d.Name(), SkillFileName) {
+				return nil
+			}
+			if seen[path] {
+				return nil
+			}
+			seen[path] = true
+
+			s, parseErr := Parse(path)
+			if parseErr != nil {
+				addState("", path, StateError, parseErr)
+				return nil
+			}
+			if validateErr := s.Validate(); validateErr != nil {
+				addState(s.Name, path, StateError, validateErr)
+				return nil
+			}
+			skills = append(skills, s)
+			addState(s.Name, path, StateNormal, nil)
+			return nil
+		})
+		if walkErr != nil && !os.IsNotExist(walkErr) {
+			addState("", base, StateError, walkErr)
+		}
+	}
+
+	sortSkills(skills)
+	return skills, states
+}
+
+// Deduplicate 按名称去重；同名时后出现的覆盖先出现的（用户技能覆盖内置技能）。
+func Deduplicate(all []*Skill) []*Skill {
+	seen := make(map[string]int, len(all))
+	for i, s := range all {
+		seen[s.Name] = i
+	}
+	out := make([]*Skill, 0, len(seen))
+	for i, s := range all {
+		if seen[s.Name] == i {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// Filter 移除名称出现在 disabled 列表中的技能。
+func Filter(all []*Skill, disabled []string) []*Skill {
+	if len(disabled) == 0 {
+		return all
+	}
+	disabledSet := make(map[string]bool, len(disabled))
+	for _, name := range disabled {
+		disabledSet[name] = true
+	}
+	out := make([]*Skill, 0, len(all))
+	for _, s := range all {
+		if !disabledSet[s.Name] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// sortSkills 按路径、再按名称（不区分大小写）稳定排序。
+func sortSkills(skills []*Skill) {
+	slices.SortStableFunc(skills, func(a, b *Skill) int {
+		if c := strings.Compare(strings.ToLower(a.Path), strings.ToLower(b.Path)); c != 0 {
+			return c
+		}
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+}
+
+// ToPromptXML 生成注入系统提示词的 <available_skills> XML。
+//
+// 仅包含元信息（name / description / location），刻意不含指令正文——正文由模型
+// 按需读取，避免一次性塞满上下文。DisableModelInvocation 的技能会被排除。
+func ToPromptXML(skills []*Skill) string {
+	if len(skills) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<available_skills>\n")
+	for _, s := range skills {
+		if s.DisableModelInvocation {
+			continue
+		}
+		sb.WriteString("  <skill>\n")
+		fmt.Fprintf(&sb, "    <name>%s</name>\n", escape(s.Name))
+		fmt.Fprintf(&sb, "    <description>%s</description>\n", escape(s.Description))
+		fmt.Fprintf(&sb, "    <location>%s</location>\n", escape(s.SkillFilePath))
+		sb.WriteString("  </skill>\n")
+	}
+	sb.WriteString("</available_skills>")
+	return sb.String()
+}
+
+// FormatInvocation 生成把技能正文加载到上下文时的 XML 块。
+func (s *Skill) FormatInvocation() string {
+	var sb strings.Builder
+	sb.WriteString("<loaded_skill>\n")
+	fmt.Fprintf(&sb, "  <name>%s</name>\n", escape(s.Name))
+	fmt.Fprintf(&sb, "  <description>%s</description>\n", escape(s.Description))
+	fmt.Fprintf(&sb, "  <location>%s</location>\n", escape(s.SkillFilePath))
+	sb.WriteString("  <instructions>\n")
+	sb.WriteString(escape(s.Instructions))
+	sb.WriteString("\n  </instructions>\n")
+	sb.WriteString("</loaded_skill>")
+	return sb.String()
+}
+
+// escape 转义会破坏提示词 XML 结构的字符。
+func escape(s string) string {
+	return promptEscaper.Replace(s)
 }

@@ -18,7 +18,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
-	skillbuiltin "github.com/biox-dev/gobrave/internal/agent/skill/builtin"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
 	"github.com/biox-dev/gobrave/internal/application/repository"
@@ -71,37 +70,55 @@ func must(err error) {
 	}
 }
 
+// resolveSkillsDir 计算用户技能目录（$BaseDir/.skills）；未配置返回空串。
+func resolveSkillsDir(cfg *config.Config) string {
+	if cfg == nil || cfg.Storage == nil {
+		return ""
+	}
+	baseDir := strings.TrimSpace(cfg.Storage.BaseDir)
+	if baseDir == "" {
+		return ""
+	}
+	return filepath.Join(baseDir, ".skills")
+}
+
 // buildSkillRegistry 构建 Agent 技能注册表。
 //
-// 注册框架内置技能（echo / get_weather 等），并从 $BaseDir/.skills 目录加载用户
-// 自定义技能（SKILL.md）合并进注册表；目录不存在或加载失败时静默跳过。
-// 独立为 Provider 后，可供 Agent Client 与技能查看 API 共用同一份注册表。
+// 技能是带 frontmatter 的 SKILL.md 文档（不是可执行工具）：用户技能从 $BaseDir/.skills
+// 目录发现。该注册表既用于把技能元信息注入系统提示词，也用于技能查看 API。
+//
+// 注册表在进程内是单例，并被 skill.Store 在运行期热更新（保存 / 删除技能时
+// Register / Unregister），因此 Agent 运行期间新增的改动立即对后续调用生效。
 func buildSkillRegistry(cfg *config.Config) *skill.Registry {
-	reg := skill.NewRegistryWith(skillbuiltin.All()...)
+	reg := skill.NewRegistry()
 
-	if cfg != nil && cfg.Storage != nil && strings.TrimSpace(cfg.Storage.BaseDir) != "" {
-		skillsDir := filepath.Join(cfg.Storage.BaseDir, ".skills")
-		// 目录不存在，则创建
-		if _, err := os.Stat(skillsDir); os.IsNotExist(err) {
-			if err := os.MkdirAll(skillsDir, 0755); err != nil {
-				logger.Warnf(context.Background(), "[Container] Failed to create skills directory: %v", err)
-			}
+	skillsDir := resolveSkillsDir(cfg)
+	if skillsDir == "" {
+		return reg
+	}
+	// 目录不存在，则创建
+	if _, err := os.Stat(skillsDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(skillsDir, 0755); err != nil {
+			logger.Warnf(context.Background(), "[Container] Failed to create skills directory: %v", err)
 		}
-		if loaded, err := skill.NewLoader().LoadDir(skillsDir); err == nil {
-			for _, s := range loaded {
-				reg.Register(s)
-			}
-		}
+	}
+	for _, s := range skill.Discover([]string{skillsDir}) {
+		reg.Register(s)
 	}
 
 	return reg
+}
+
+// buildSkillStore 构建用户技能的文件存储（落盘目录同 buildSkillRegistry）。
+func buildSkillStore(cfg *config.Config) *skill.Store {
+	return skill.NewStore(resolveSkillsDir(cfg))
 }
 
 // buildAgentClient 根据配置构建 Agent 调用门面。
 // 模型提供商配置表（按模型名索引）从 config.agent.providers 映射进 Options.Providers，
 // 供 Provider 在每次调用时按 Profile.Model 解析出 base_url / api_key 等 LLM 配置。
 // 使用哪个 Agent（Provider）由 Profile.Provider 决定。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry, skills *skill.Registry) *agent.Client {
+func buildAgentClient(cfg *config.Config, registry *agent.Registry) *agent.Client {
 	opts := agent.Options{}
 
 	if cfg != nil && cfg.Agent != nil {
@@ -122,10 +139,6 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, skills *skil
 	// 注册框架内置工具（get_weather 等），供 Provider 的 tool-call 链路使用。
 	// 后续新增内置工具时在 builtin.All() 中追加即可，无需改动此处。
 	opts.Tools = tool.NewRegistryWith(builtin.All()...)
-
-	// 技能注册表由 buildSkillRegistry 统一构建（内置 + 用户自定义），
-	// 供 Provider 的 skill-call 链路使用。
-	opts.Skills = skills
 
 	return agent.NewClient(registry, opts)
 }
@@ -254,8 +267,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		return agent.NewRegistry(agentproviders.All()...)
 	}))
 	must(container.Provide(buildSkillRegistry))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, skills *skill.Registry) *agent.Client {
-		return buildAgentClient(cfg, registry, skills)
+	must(container.Provide(buildSkillStore))
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry) *agent.Client {
+		return buildAgentClient(cfg, registry)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。

@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrs "errors"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,7 +28,8 @@ type AgentHandler struct {
 	conv *agent.ConversationService
 	hub  *realtime.Hub
 
-	skills *skill.Registry
+	skills     *skill.Registry
+	skillStore *skill.Store
 
 	runtimeCtx *RuntimeContextResolver
 
@@ -36,12 +38,13 @@ type AgentHandler struct {
 }
 
 // NewAgentHandler 创建 AgentHandler。
-func NewAgentHandler(svc *agent.AgentService, conv *agent.ConversationService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry) *AgentHandler {
+func NewAgentHandler(svc *agent.AgentService, conv *agent.ConversationService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry, skillStore *skill.Store) *AgentHandler {
 	return &AgentHandler{
 		svc:        svc,
 		conv:       conv,
 		hub:        hub,
 		skills:     skills,
+		skillStore: skillStore,
 		runtimeCtx: runtimeCtx,
 		subs:       make(map[int64]func()),
 	}
@@ -324,10 +327,10 @@ func (h *AgentHandler) DescribeEnv(c *gin.Context) {
 
 // ListSkills godoc
 // @Summary      查看 Agent 技能
-// @Description  返回当前可用的全部技能（内置 + 用户自定义），包含名称、描述、入参 schema、版本与指令正文
+// @Description  返回当前可用的全部技能（内置 + 用户自定义），包含名称、描述与 SKILL.md 路径
 // @Tags         Agent
 // @Produce      json
-// @Success      200  {array}   skill.Manifest
+// @Success      200  {array}   skill.Skill
 // @Failure      401  {object}  errors.AppError
 // @Security     Bearer
 // @Router       /agent/skill/list [get]
@@ -337,10 +340,173 @@ func (h *AgentHandler) ListSkills(c *gin.Context) {
 	}
 
 	if h.skills == nil {
-		c.JSON(http.StatusOK, []skill.Manifest{})
+		c.JSON(http.StatusOK, []*skill.Skill{})
 		return
 	}
-	c.JSON(http.StatusOK, h.skills.Manifests())
+	c.JSON(http.StatusOK, h.skills.List())
+}
+
+// skillSaveRequest 是创建 / 更新技能的请求体。
+// ID 为原技能名（为空表示新建）；Name 为技能名，同时作为存放目录名。
+type skillSaveRequest struct {
+	ID                     string `json:"id"`
+	Name                   string `json:"name" binding:"required"`
+	Description            string `json:"description" binding:"required"`
+	UserInvocable          bool   `json:"user_invocable"`
+	DisableModelInvocation bool   `json:"disable_model_invocation"`
+	Instructions           string `json:"instructions"`
+}
+
+// GetSkill godoc
+// @Summary      查看单个 Agent 技能
+// @Description  按名称返回单个技能（含指令正文），供前端编辑回填
+// @Tags         Agent
+// @Produce      json
+// @Param        id   query     string  true  "技能名"
+// @Success      200  {object}  skill.Skill
+// @Failure      401  {object}  errors.AppError
+// @Failure      404  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/skill/get [get]
+func (h *AgentHandler) GetSkill(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var q taskIDQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if h.skills == nil {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+	s, ok := h.skills.Get(q.ID)
+	if !ok {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+	c.JSON(http.StatusOK, s)
+}
+
+// SaveSkill godoc
+// @Summary      创建或更新 Agent 技能
+// @Description  把技能写回 $BaseDir/.skills/<name>/SKILL.md 并热更新内存注册表，程序运行中即时生效
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.skillSaveRequest  true  "技能内容"
+// @Success      200      {object}  skill.Skill
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/skill/save [post]
+func (h *AgentHandler) SaveSkill(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req skillSaveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	sk := &skill.Skill{
+		Name:                   strings.TrimSpace(req.Name),
+		Description:            strings.TrimSpace(req.Description),
+		UserInvocable:          req.UserInvocable,
+		DisableModelInvocation: req.DisableModelInvocation,
+		Instructions:           req.Instructions,
+	}
+	// Path 参与校验（name 需与目录名一致）；此处先按目标目录名设定，再落盘。
+	if h.skillStore == nil || !h.skillStore.Available() {
+		c.Error(errors.NewInternalServerError("skill store is not configured"))
+		return
+	}
+	sk.Path = h.skillStore.SkillDir(sk.Name)
+	if err := sk.Validate(); err != nil {
+		c.Error(errors.NewValidationError(err.Error()))
+		return
+	}
+
+	// 改名：先删除旧技能目录，避免残留同内容不同目录的副本。
+	original := strings.TrimSpace(req.ID)
+	if original != "" && original != sk.Name {
+		if existing, ok := h.skills.Get(original); ok && h.skillStore.Contains(existing.SkillFilePath) {
+			_ = h.skillStore.Delete(original)
+		}
+		h.skills.Unregister(original)
+	}
+
+	if err := h.skillStore.Save(sk); err != nil {
+		c.Error(errors.NewInternalServerError("failed to save agent skill").WithDetails(err.Error()))
+		return
+	}
+
+	// 回填真实路径并热更新注册表。
+	sk.Path = h.skillStore.SkillDir(sk.Name)
+	sk.SkillFilePath = filepath.Join(sk.Path, skill.SkillFileName)
+	h.skills.Register(sk)
+
+	c.JSON(http.StatusOK, sk)
+}
+
+// DeleteSkill godoc
+// @Summary      删除 Agent 技能
+// @Description  删除 $BaseDir/.skills 下的技能目录并从内存注册表移除；仅允许删除用户技能目录内的技能
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      taskIDBody  true  "技能名"
+// @Success      200      {object}  gin.H
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/skill/delete [post]
+func (h *AgentHandler) DeleteSkill(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var body taskIDBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	name := strings.TrimSpace(body.ID)
+	if name == "" {
+		c.Error(errors.NewValidationError("id is required"))
+		return
+	}
+
+	if h.skills == nil {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+	existing, ok := h.skills.Get(name)
+	if !ok {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+	// 只允许删除用户技能目录内的技能，避免误删内置 / 外部技能。
+	if h.skillStore == nil || !h.skillStore.Contains(existing.SkillFilePath) {
+		c.Error(errors.NewValidationError("skill is not user-managed and cannot be deleted"))
+		return
+	}
+
+	if err := h.skillStore.Delete(name); err != nil {
+		c.Error(errors.NewInternalServerError("failed to delete agent skill").WithDetails(err.Error()))
+		return
+	}
+	h.skills.Unregister(name)
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": name})
 }
 
 // ListProfiles godoc

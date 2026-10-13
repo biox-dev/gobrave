@@ -446,22 +446,6 @@ func (s *ConversationService) appendTimelineMessages(ctx context.Context, conv *
 				Content: timelineEventSummary("tool_result", se.Data),
 				Data:    se.Data,
 			})
-		case StreamEventSkillCall:
-			conv.Messages = append(conv.Messages, Message{
-				Role:    RoleAssistant,
-				Kind:    MessageKindSkillCall,
-				TaskID:  taskID,
-				Content: timelineEventSummary("skill", se.Data),
-				Data:    se.Data,
-			})
-		case StreamEventSkillResult:
-			conv.Messages = append(conv.Messages, Message{
-				Role:    RoleAssistant,
-				Kind:    MessageKindSkillResult,
-				TaskID:  taskID,
-				Content: timelineEventSummary("skill_result", se.Data),
-				Data:    se.Data,
-			})
 		case StreamEventMessage:
 			if content, ok := messageBlockContent(se.Data); ok && strings.TrimSpace(content) != "" {
 				final = content
