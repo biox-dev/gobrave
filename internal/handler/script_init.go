@@ -93,7 +93,7 @@ format:
     variant: gfm
 editor: source
 execute:
-  echo: false
+  echo: true
 # knitr:
 #   opts_chunk:
 #     cache.path: "../cache/"
