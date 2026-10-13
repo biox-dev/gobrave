@@ -62,8 +62,8 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 
 	seenToolCalls := map[string]map[string]bool{}
 	seenToolResults := map[string]map[string]bool{}
+	seenReasoningMessages := map[string]bool{}
 	seenAssistantMessages := map[string]bool{}
-	// assistantMessageEmittedWithoutID := false
 
 	result, err := sdkClient.SendMessageStream(ctx, opencodesdk.RunRequest{
 		SessionID:    strings.TrimSpace(req.SessionID),
@@ -76,6 +76,16 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 			emitToolEvents(ctx, rt, event.Message, seenToolCalls, seenToolResults)
 			if event.Message.Role == opencodesdk.RoleAssistant && event.Message.Finished {
 				messageID := strings.TrimSpace(event.Message.ID)
+				// 思考内容随快照增量累积，Finished 后才是完整内容：这里补发“完整思考块”用于时间线持久化，
+				// 与只做实时渲染、不落库的 reasoning_delta 事件区分开（对齐 copilot provider 的 reasoning 块）。
+				// 纯思考消息（无文本）同样需要落库，因此该判断独立于下面的 message 块逻辑。
+				if messageID != "" && !seenReasoningMessages[messageID] && strings.TrimSpace(event.Message.Thinking) != "" {
+					_ = rt.Emit(ctx, agent.StreamEvent{
+						Type: agent.StreamEventReasoning,
+						Data: toReasoningBlock(*event.Message),
+					})
+					seenReasoningMessages[messageID] = true
+				}
 				// 文本内容已通过 text delta 实时下发，这里只补发“完整消息块”作为时间线锚点。
 				// 对纯工具调用消息（无文本）则不重复发 message 块，避免下游出现空文本重复记录。
 				if messageID != "" && strings.TrimSpace(event.Message.Text) != "" {
@@ -235,6 +245,17 @@ func emitToolEvents(
 			}})
 			seenToolResults[msg.ID][result.ToolCallID] = true
 		}
+	}
+}
+
+// toReasoningBlock 将 OpenCode 的完整思考内容转换为框架内的完整思考块。
+//
+// 思考文本随快照增量累积，调用方须在消息 Finished 后再转换，以保证内容完整。
+func toReasoningBlock(msg opencodesdk.MessageSnapshot) agent.ReasoningBlock {
+	// SDK 未单独提供 reasoning id，沿用 message id 作为时间线锚点标识。
+	return agent.ReasoningBlock{
+		ID:      msg.ID,
+		Content: msg.Thinking,
 	}
 }
 
