@@ -1,55 +1,28 @@
-package agent
+package agent_test
 
 import (
 	"context"
 	"strings"
 	"testing"
+
+	// 使用点导入以复用 agent 包中大量领域标识符（与合并前的包内测试保持一致）。
+	. "github.com/biox-dev/gobrave/internal/agent"
+	agentrepository "github.com/biox-dev/gobrave/internal/agent/repository"
 )
 
-// TestGormMemoryRepositoryRoundTrip 校验 GORM 记忆仓库的往返（含 Metadata 序列化）。
-func TestGormMemoryRepositoryRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	db := newGormTestDB(t)
-	repo := NewGormMemoryRepository(db)
-
-	m := NewMemory("user-1", "sess-1", MemoryKindFact, "用户喜欢用 Go")
-	m.Importance = 8
-	m.Metadata = map[string]any{"source": "extractor", "n": 42}
-
-	if err := repo.Create(ctx, m); err != nil {
-		t.Fatalf("Create: %v", err)
+// newTestMemoryManager 构建一个使用 GORM 记忆仓库（内存 sqlite）的记忆管理器。
+func newTestMemoryManager(t *testing.T, cfg MemoryConfig) *MemoryManager {
+	t.Helper()
+	if cfg.Repo == nil {
+		cfg.Repo = agentrepository.NewGormMemoryRepository(newTestDB(t))
 	}
-
-	got, err := repo.Get(ctx, m.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.ID != m.ID || got.Content != m.Content || got.Importance != 8 {
-		t.Fatalf("unexpected memory: %+v", got)
-	}
-	if got.Metadata == nil || got.Metadata["source"] != "extractor" {
-		t.Fatalf("metadata not round-tripped: %+v", got.Metadata)
-	}
-
-	// 检索命中。
-	hits, err := repo.Search(ctx, "user-1", "Go", 10)
-	if err != nil || len(hits) != 1 || hits[0].ID != m.ID {
-		t.Fatalf("Search = %d (err=%v), want 1", len(hits), err)
-	}
-
-	// 删除。
-	if err := repo.Delete(ctx, m.ID); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-	if _, err := repo.Get(ctx, m.ID); err != ErrMemoryNotFound {
-		t.Fatalf("expected ErrMemoryNotFound after delete, got %v", err)
-	}
+	return NewMemoryManager(cfg)
 }
 
-// TestMemoryManagerSearch 校验内存实现的检索排序（相关度 + 重要度）。
+// TestMemoryManagerSearch 校验检索器返回的记忆。
 func TestMemoryManagerSearch(t *testing.T) {
 	ctx := context.Background()
-	mgr := NewMemoryManager(MemoryConfig{})
+	mgr := newTestMemoryManager(t, MemoryConfig{})
 
 	save := func(kind MemoryKind, content string, importance int) *Memory {
 		m := NewMemory("user-1", "", kind, content)
@@ -82,7 +55,7 @@ func TestMemoryManagerSearch(t *testing.T) {
 // TestInjectMemory 校验调用前把相关记忆注入 SystemPrompt。
 func TestInjectMemory(t *testing.T) {
 	ctx := context.Background()
-	mgr := NewMemoryManager(MemoryConfig{})
+	mgr := newTestMemoryManager(t, MemoryConfig{})
 	m := NewMemory("user-1", "", MemoryKindFact, "用户偏爱简洁的 Go 答案")
 	if err := mgr.Save(ctx, m); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -96,13 +69,13 @@ func TestInjectMemory(t *testing.T) {
 		Messages:     []Message{{Role: RoleUser, Content: "请用 Go 简洁地介绍"}},
 	}
 
-	out := svc.injectMemory(ctx, req.SystemPrompt, req.UserID)
+	out := svc.InjectMemoryForTest(ctx, req.SystemPrompt, req.UserID)
 	if !strings.Contains(out, "相关记忆") || !strings.Contains(out, "偏爱简洁") {
 		t.Fatalf("memory not injected into SystemPrompt:\n%s", out)
 	}
 
 	// 无 UserID 时不应注入。
-	if got := svc.injectMemory(ctx, "你是助手", ""); got != "你是助手" {
+	if got := svc.InjectMemoryForTest(ctx, "你是助手", ""); got != "你是助手" {
 		t.Fatalf("expected no injection without userID, got %q", got)
 	}
 }
@@ -117,12 +90,12 @@ func TestExtractMemory(t *testing.T) {
 		}, nil
 	})
 
-	mgr := NewMemoryManager(MemoryConfig{Extractor: extractor})
+	mgr := newTestMemoryManager(t, MemoryConfig{Extractor: extractor})
 	svc := NewService(ServiceConfig{Memory: mgr})
 
 	task := NewTask(Request{UserID: "user-1", SessionID: "sess-1"})
 	req := task.Request
-	svc.extractMemory(ctx, task, req, &Result{Content: "done"})
+	svc.ExtractMemoryForTest(ctx, task, req, &Result{Content: "done"})
 
 	mems, _, err := mgr.List(ctx, "user-1", 0, 10)
 	if err != nil {
@@ -136,7 +109,7 @@ func TestExtractMemory(t *testing.T) {
 // TestMockMemoryExtractor 校验模拟提取器能把一轮执行摘要为一条 summary 记忆。
 func TestMockMemoryExtractor(t *testing.T) {
 	ctx := context.Background()
-	mgr := NewMemoryManager(MemoryConfig{Extractor: MockMemoryExtractor()})
+	mgr := newTestMemoryManager(t, MemoryConfig{Extractor: MockMemoryExtractor()})
 
 	turn := MemoryTurn{
 		UserID:    "user-1",

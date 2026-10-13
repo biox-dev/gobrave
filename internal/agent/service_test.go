@@ -2,24 +2,55 @@ package agent_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
+	agentrepository "github.com/biox-dev/gobrave/internal/agent/repository"
+	"github.com/biox-dev/gobrave/internal/utils"
+	"github.com/ncruces/go-sqlite3/gormlite"
+	"gorm.io/gorm"
 )
 
-// newTestService 构建一个使用 mock Provider 的 AgentService。
-func newTestService() *agent.AgentService {
+// newTestDB 打开一个内存 sqlite 数据库并迁移领域表（测试用）。
+func newTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	_ = utils.InitSnowflake(1)
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(gormlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &agent.AgentEvent{}, &agent.Conversation{}, &agent.ConversationMessage{}, &agent.Memory{}, &agent.Profile{}); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+	return db
+}
+
+// newTestService 构建一个使用 mock Provider 与数据库仓库（内存 sqlite）的 AgentService。
+func newTestService(t *testing.T) *agent.AgentService {
+	t.Helper()
 	registry := agent.NewRegistry(agentproviders.All()...)
 	client := agent.NewClient(registry, agent.Options{})
-	return agent.NewService(agent.ServiceConfig{Client: client})
+	db := newTestDB(t)
+
+	return agent.NewService(agent.ServiceConfig{
+		Client:    client,
+		Tasks:     agentrepository.NewGormTaskRepository(db),
+		Events:    agentrepository.NewGormEventRepository(db),
+		Perms:     agent.NewPermissionManager(agentrepository.NewGormPermissionRepository(db)),
+		Questions: agent.NewQuestionManager(agentrepository.NewGormQuestionRepository(db)),
+		Memory:    agent.NewMemoryManager(agent.MemoryConfig{Repo: agentrepository.NewGormMemoryRepository(db)}),
+		Profiles:  agent.NewProfileManager(agentrepository.NewGormProfileRepository(db)),
+	})
 }
 
 // TestServiceFullPermissionFlow 演示完整链路：
 // 创建任务 → 流式输出 → 请求权限（write → ask）→ 批准 → 恢复 → 完成。
 func TestServiceFullPermissionFlow(t *testing.T) {
-	svc := newTestService()
+	svc := newTestService(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -124,7 +155,7 @@ done:
 
 // TestServiceDenyPermissionFlow 演示拒绝路径：拒绝后任务失败。
 func TestServiceDenyPermissionFlow(t *testing.T) {
-	svc := newTestService()
+	svc := newTestService(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -197,7 +228,7 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 func TestRecoverInterruptedTask(t *testing.T) {
 	ctx := context.Background()
 
-	tasks := agent.NewMemoryTaskRepository()
+	tasks := agentrepository.NewGormTaskRepository(newTestDB(t))
 	task := agent.NewTask(agent.Request{Provider: agent.ProviderMock})
 	task.Status = agent.TaskRunning
 	if err := tasks.Update(ctx, task); err != nil {

@@ -1,4 +1,4 @@
-package agent
+package repository
 
 import (
 	"context"
@@ -7,11 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/ncruces/go-sqlite3/gormlite"
 	"gorm.io/gorm"
 )
 
+// newGormTestDB 打开一个共享内存的 sqlite 数据库并迁移领域表，供仓库往返测试使用。
 func newGormTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	_ = utils.InitSnowflake(1)
@@ -20,7 +22,7 @@ func newGormTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&Task{}, &PermissionRequest{}, &QuestionRequest{}, &AgentEvent{}, &Conversation{}, &ConversationMessage{}, &Memory{}); err != nil {
+	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &agent.AgentEvent{}, &agent.Conversation{}, &agent.ConversationMessage{}, &agent.Memory{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return db
@@ -30,10 +32,10 @@ func TestGormTaskRepositoryRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	repo := NewGormTaskRepository(newGormTestDB(t))
 
-	task := NewTask(Request{
-		Provider:   ProviderMock,
+	task := agent.NewTask(agent.Request{
+		Provider:   agent.ProviderMock,
 		SessionID:  "sess-1",
-		Messages:   []Message{{Role: RoleUser, Content: "hi"}},
+		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hi"}},
 		Env:        map[string]string{"K": "V"},
 		WorkingDir: "/tmp",
 	})
@@ -45,7 +47,7 @@ func TestGormTaskRepositoryRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.ID != task.ID || got.Status != TaskCreated {
+	if got.ID != task.ID || got.Status != agent.TaskCreated {
 		t.Fatalf("unexpected task: %+v", got)
 	}
 	// 校验序列化字段往返：Request.Messages / Env 应被 JSON 序列化后正确还原。
@@ -57,17 +59,17 @@ func TestGormTaskRepositoryRoundTrip(t *testing.T) {
 	}
 
 	// 状态迁移 + Update。
-	got.TransitionTo(TaskRunning)
+	got.TransitionTo(agent.TaskRunning)
 	if err := repo.Update(ctx, got); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	reloaded, _ := repo.Get(ctx, task.ID)
-	if reloaded.Status != TaskRunning {
+	if reloaded.Status != agent.TaskRunning {
 		t.Fatalf("status = %s, want running", reloaded.Status)
 	}
 
 	// ListByStatus / Page。
-	list, err := repo.ListByStatus(ctx, TaskRunning)
+	list, err := repo.ListByStatus(ctx, agent.TaskRunning)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("ListByStatus: len=%d err=%v", len(list), err)
 	}
@@ -81,8 +83,8 @@ func TestGormPermissionRepositoryRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	repo := NewGormPermissionRepository(newGormTestDB(t))
 
-	p := NewPermissionRequest(1, "sess-1", Operation{
-		Type:    OperationWrite,
+	p := agent.NewPermissionRequest(1, "sess-1", agent.Operation{
+		Type:    agent.OperationWrite,
 		Path:    "/a/b",
 		Content: "x",
 		Metadata: map[string]any{
@@ -97,7 +99,7 @@ func TestGormPermissionRepositoryRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Operation.Type != OperationWrite || got.Operation.Path != "/a/b" {
+	if got.Operation.Type != agent.OperationWrite || got.Operation.Path != "/a/b" {
 		t.Fatalf("operation not preserved: %+v", got.Operation)
 	}
 	if got.Operation.Metadata["cmd"] != "echo hi" {
@@ -110,7 +112,7 @@ func TestGormPermissionRepositoryRoundTrip(t *testing.T) {
 	}
 
 	// 批准并更新。
-	got.TransitionTo(PermissionApproved)
+	got.TransitionTo(agent.PermissionApproved)
 	if err := repo.Update(ctx, got); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -126,10 +128,10 @@ func TestGormEventRepositorySequence(t *testing.T) {
 
 	// 交错追加两个任务的事件，sequence 应按任务独立递增。
 	for i := 0; i < 3; i++ {
-		if err := repo.Append(ctx, &AgentEvent{TaskID: 1, Type: EventTaskStarted, CreatedAt: time.Now()}); err != nil {
+		if err := repo.Append(ctx, &agent.AgentEvent{TaskID: 1, Type: agent.EventTaskStarted, CreatedAt: time.Now()}); err != nil {
 			t.Fatalf("Append A%d: %v", i, err)
 		}
-		if err := repo.Append(ctx, &AgentEvent{TaskID: 2, Type: EventTaskStarted, CreatedAt: time.Now()}); err != nil {
+		if err := repo.Append(ctx, &agent.AgentEvent{TaskID: 2, Type: agent.EventTaskStarted, CreatedAt: time.Now()}); err != nil {
 			t.Fatalf("Append B%d: %v", i, err)
 		}
 	}
@@ -168,10 +170,10 @@ func TestGormConversationRepositoryRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	repo := NewGormConversationRepository(newGormTestDB(t))
 
-	conv := NewConversation("user-1", ProviderMock, "model-x")
-	conv.Messages = []Message{
-		{Role: RoleUser, Content: "你好"},
-		{Role: RoleAssistant, Content: "你好，有什么可以帮你？"},
+	conv := agent.NewConversation("user-1", agent.ProviderMock, "model-x")
+	conv.Messages = []agent.Message{
+		{Role: agent.RoleUser, Content: "你好"},
+		{Role: agent.RoleAssistant, Content: "你好，有什么可以帮你？"},
 	}
 	if err := repo.Create(ctx, conv); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -181,15 +183,15 @@ func TestGormConversationRepositoryRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if len(got.Messages) != 2 || got.Messages[0].Role != RoleUser || got.Messages[0].Content != "你好" {
+	if len(got.Messages) != 2 || got.Messages[0].Role != agent.RoleUser || got.Messages[0].Content != "你好" {
 		t.Fatalf("messages not preserved: %+v", got.Messages)
 	}
-	if got.Messages[1].Role != RoleAssistant {
+	if got.Messages[1].Role != agent.RoleAssistant {
 		t.Fatalf("assistant role not preserved: %+v", got.Messages[1])
 	}
 
 	// 追加消息后 Update，应正确重建消息列表。
-	got.Messages = append(got.Messages, Message{Role: RoleUser, Content: "第二句"})
+	got.Messages = append(got.Messages, agent.Message{Role: agent.RoleUser, Content: "第二句"})
 	if err := repo.Update(ctx, got); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -202,13 +204,13 @@ func TestGormConversationRepositoryRoundTrip(t *testing.T) {
 	}
 
 	// 不存在返回 ErrConversationNotFound。
-	if _, err := repo.Get(ctx, 0); !errors.Is(err, ErrConversationNotFound) {
+	if _, err := repo.Get(ctx, 0); !errors.Is(err, agent.ErrConversationNotFound) {
 		t.Fatalf("expected ErrConversationNotFound, got %v", err)
 	}
 
 	// Page 按 user 过滤 + 降序。
-	conv2 := NewConversation("user-2", ProviderMock, "model-x")
-	conv2.Messages = []Message{{Role: RoleUser, Content: "hi"}}
+	conv2 := agent.NewConversation("user-2", agent.ProviderMock, "model-x")
+	conv2.Messages = []agent.Message{{Role: agent.RoleUser, Content: "hi"}}
 	if err := repo.Create(ctx, conv2); err != nil {
 		t.Fatalf("Create conv2: %v", err)
 	}
@@ -218,5 +220,45 @@ func TestGormConversationRepositoryRoundTrip(t *testing.T) {
 	}
 	if len(page[0].Messages) != 3 {
 		t.Fatalf("page[0] messages not loaded: %+v", page[0].Messages)
+	}
+}
+
+// TestGormMemoryRepositoryRoundTrip 校验 GORM 记忆仓库的往返（含 Metadata 序列化）。
+func TestGormMemoryRepositoryRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := newGormTestDB(t)
+	repo := NewGormMemoryRepository(db)
+
+	m := agent.NewMemory("user-1", "sess-1", agent.MemoryKindFact, "用户喜欢用 Go")
+	m.Importance = 8
+	m.Metadata = map[string]any{"source": "extractor", "n": 42}
+
+	if err := repo.Create(ctx, m); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := repo.Get(ctx, m.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ID != m.ID || got.Content != m.Content || got.Importance != 8 {
+		t.Fatalf("unexpected memory: %+v", got)
+	}
+	if got.Metadata == nil || got.Metadata["source"] != "extractor" {
+		t.Fatalf("metadata not round-tripped: %+v", got.Metadata)
+	}
+
+	// 检索命中。
+	hits, err := repo.Search(ctx, "user-1", "Go", 10)
+	if err != nil || len(hits) != 1 || hits[0].ID != m.ID {
+		t.Fatalf("Search = %d (err=%v), want 1", len(hits), err)
+	}
+
+	// 删除。
+	if err := repo.Delete(ctx, m.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := repo.Get(ctx, m.ID); err != agent.ErrMemoryNotFound {
+		t.Fatalf("expected ErrMemoryNotFound after delete, got %v", err)
 	}
 }

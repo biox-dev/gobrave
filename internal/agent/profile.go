@@ -197,11 +197,8 @@ type ProfileManager struct {
 	repo ProfileRepository
 }
 
-// NewProfileManager 创建 Profile 管理器；repo 为空时使用内存实现。
+// NewProfileManager 创建 Profile 管理器。
 func NewProfileManager(repo ProfileRepository) *ProfileManager {
-	if repo == nil {
-		repo = NewMemoryProfileRepository()
-	}
 	return &ProfileManager{repo: repo}
 }
 

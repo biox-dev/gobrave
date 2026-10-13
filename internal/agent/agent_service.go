@@ -56,30 +56,16 @@ type ServiceConfig struct {
 }
 
 // NewService 创建 AgentService，未提供的依赖使用安全的默认值。
+//
+// 注意：仓库 / 管理器（Tasks / Events / Perms / Questions / Memory / Profiles）由调用方
+// 注入（见 container 的依赖注入配置）。数据库才是状态源，因此这里不再提供内存仓库兜底；
+// 仅 EventBus / PermissionPolicy 这类无状态组件提供默认值。
 func NewService(cfg ServiceConfig) *AgentService {
-	if cfg.Tasks == nil {
-		cfg.Tasks = NewMemoryTaskRepository()
-	}
-	if cfg.Events == nil {
-		cfg.Events = NewMemoryEventRepository()
-	}
 	if cfg.Bus == nil {
 		cfg.Bus = NewEventBus()
 	}
 	if cfg.Policy == nil {
 		cfg.Policy = DefaultPermissionPolicy()
-	}
-	if cfg.Perms == nil {
-		cfg.Perms = NewPermissionManager(NewMemoryPermissionRepository())
-	}
-	if cfg.Questions == nil {
-		cfg.Questions = NewQuestionManager(NewMemoryQuestionRepository())
-	}
-	if cfg.Memory == nil {
-		cfg.Memory = NewMemoryManager(MemoryConfig{})
-	}
-	if cfg.Profiles == nil {
-		cfg.Profiles = NewProfileManager(NewMemoryProfileRepository())
 	}
 	return &AgentService{
 		client:    cfg.Client,

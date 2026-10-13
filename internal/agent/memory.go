@@ -8,9 +8,7 @@ package agent
 import (
 	"context"
 	"errors"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -72,8 +70,7 @@ func NewMemory(userID, sessionID string, kind MemoryKind, content string) *Memor
 
 // MemoryRepository 持久化记忆。
 //
-// 与 TaskRepository / PermissionRepository 一致：当前提供内存实现，后续可替换为
-// GORM 等基于 DB 的实现（见 repository_gorm.go）。
+// 实现见 internal/agent/repository 子包（基于 GORM 的数据库实现）。
 type MemoryRepository interface {
 	Create(ctx context.Context, memory *Memory) error
 	Get(ctx context.Context, id string) (*Memory, error)
@@ -179,10 +176,8 @@ type MemoryManager struct {
 
 // NewMemoryManager 创建记忆管理器；未提供的依赖使用安全默认值。
 func NewMemoryManager(cfg MemoryConfig) *MemoryManager {
-	if cfg.Repo == nil {
-		cfg.Repo = NewMemoryRepository()
-	}
-	if cfg.Retriever == nil {
+	// 仅在配置了 Repo 时为默认检索器注入仓库；未配置 Repo 时由调用方负责注入检索器。
+	if cfg.Retriever == nil && cfg.Repo != nil {
 		cfg.Retriever = keywordMemoryRetriever{repo: cfg.Repo}
 	}
 	return &MemoryManager{
@@ -291,163 +286,3 @@ func lastUserMessage(messages []Message) string {
 
 // defaultMemoryRetrieveLimit 是单次注入检索记忆的默认条数上限。
 const defaultMemoryRetrieveLimit = 5
-
-// ---- 内存实现 ----
-
-// NewMemoryRepository 创建记忆的内存实现。
-func NewMemoryRepository() MemoryRepository {
-	return &memoryMemoryRepository{mems: make(map[string]*Memory)}
-}
-
-type memoryMemoryRepository struct {
-	mu   sync.RWMutex
-	mems map[string]*Memory
-}
-
-func (r *memoryMemoryRepository) Create(_ context.Context, m *Memory) error {
-	if m == nil {
-		return nil
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.mems[m.ID] = cloneMemory(m)
-	return nil
-}
-
-func (r *memoryMemoryRepository) Get(_ context.Context, id string) (*Memory, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	m, ok := r.mems[id]
-	if !ok {
-		return nil, ErrMemoryNotFound
-	}
-	return cloneMemory(m), nil
-}
-
-func (r *memoryMemoryRepository) Update(_ context.Context, m *Memory) error {
-	if m == nil {
-		return nil
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.mems[m.ID] = cloneMemory(m)
-	return nil
-}
-
-func (r *memoryMemoryRepository) Delete(_ context.Context, id string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.mems, id)
-	return nil
-}
-
-func (r *memoryMemoryRepository) ListByUser(_ context.Context, userID string, offset, limit int, kinds ...MemoryKind) ([]*Memory, int64, error) {
-	want := make(map[MemoryKind]bool, len(kinds))
-	for _, k := range kinds {
-		want[k] = true
-	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	all := make([]*Memory, 0)
-	for _, m := range r.mems {
-		if m.UserID != userID {
-			continue
-		}
-		if len(want) > 0 && !want[m.Kind] {
-			continue
-		}
-		all = append(all, m)
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.After(all[j].UpdatedAt) })
-	total := int64(len(all))
-	out := make([]*Memory, 0, limit)
-	for _, m := range sliceRange(all, offset, limit) {
-		out = append(out, cloneMemory(m))
-	}
-	return out, total, nil
-}
-
-func (r *memoryMemoryRepository) Search(_ context.Context, userID, query string, limit int) ([]*Memory, error) {
-	query = strings.TrimSpace(query)
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	type scored struct {
-		m     *Memory
-		score int
-	}
-	results := make([]scored, 0)
-	for _, m := range r.mems {
-		if m.UserID != userID {
-			continue
-		}
-		score := matchMemoryScore(m, query)
-		if score <= 0 {
-			continue
-		}
-		results = append(results, scored{m: m, score: score})
-	}
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].score != results[j].score {
-			return results[i].score > results[j].score
-		}
-		return results[i].m.UpdatedAt.After(results[j].m.UpdatedAt)
-	})
-	out := make([]*Memory, 0, limit)
-	for _, s := range sliceRange(results, 0, limit) {
-		out = append(out, cloneMemory(s.m))
-	}
-	return out, nil
-}
-
-// matchMemoryScore 计算记忆与查询的匹配得分：空查询匹配全部（得分为重要度 + 1）；
-// 否则先做整句短语匹配（加分），再按空白 / 标点切词做关键词匹配（命中一个词加分）。
-func matchMemoryScore(m *Memory, query string) int {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return m.Importance + 1
-	}
-	content := strings.ToLower(m.Content)
-	ql := strings.ToLower(query)
-
-	score := 0
-	if strings.Contains(content, ql) {
-		score += 20 // 整句命中，权重最高
-	}
-	terms := strings.FieldsFunc(ql, func(r rune) bool {
-		switch r {
-		case ' ', '\t', '\n', ',', '，', '。', '.', '!', '！', '?', '？', ';', '；', ':', '：':
-			return true
-		default:
-			return false
-		}
-	})
-	for _, term := range terms {
-		if term != "" && strings.Contains(content, term) {
-			score += 10 // 关键词命中
-		}
-	}
-	if score == 0 {
-		return 0
-	}
-	return score + m.Importance
-}
-
-// cloneMemory 返回记忆的副本，避免并发读写共享结构。
-func cloneMemory(m *Memory) *Memory {
-	if m == nil {
-		return nil
-	}
-	c := *m
-	if m.Metadata != nil {
-		md := make(map[string]any, len(m.Metadata))
-		for k, v := range m.Metadata {
-			md[k] = v
-		}
-		c.Metadata = md
-	}
-	if m.LastAccessedAt != nil {
-		v := *m.LastAccessedAt
-		c.LastAccessedAt = &v
-	}
-	return &c
-}

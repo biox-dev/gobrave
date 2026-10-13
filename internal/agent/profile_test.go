@@ -1,16 +1,19 @@
-package agent
+package agent_test
 
 import (
 	"context"
 	"testing"
 
+	// 使用点导入以复用 agent 包中大量领域标识符（与合并前的包内测试保持一致）。
+	. "github.com/biox-dev/gobrave/internal/agent"
+	agentrepository "github.com/biox-dev/gobrave/internal/agent/repository"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
 
-// newTestProfileManager 创建一个已同步内置 Profile 的内存 Profile 管理器。
+// newTestProfileManager 创建一个已同步内置 Profile 的 GORM Profile 管理器（内存 sqlite）。
 func newTestProfileManager(t *testing.T) *ProfileManager {
 	t.Helper()
-	repo := NewMemoryProfileRepository()
+	repo := agentrepository.NewGormProfileRepository(newTestDB(t))
 	if err := EnsureBuiltinProfiles(context.Background(), repo); err != nil {
 		t.Fatalf("seed builtin profiles: %v", err)
 	}
@@ -84,7 +87,7 @@ func TestProfileManagerDeleteBuiltin(t *testing.T) {
 }
 
 func TestEnsureBuiltinProfilesCreateOnly(t *testing.T) {
-	repo := NewMemoryProfileRepository()
+	repo := agentrepository.NewGormProfileRepository(newTestDB(t))
 	ctx := context.Background()
 
 	// 首次同步：新增。
@@ -99,7 +102,7 @@ func TestEnsureBuiltinProfilesCreateOnly(t *testing.T) {
 		t.Fatalf("builtin count = %d, want %d", len(builtins), len(BuiltinProfiles()))
 	}
 
-	// 修改内存中的一条内置记录，再同步：应保留改动（不再覆盖）。
+	// 修改数据库中的一条内置记录，再同步：应保留改动（不再覆盖）。
 	before, err := repo.Get(ctx, BuiltinDefaultProfileID)
 	if err != nil {
 		t.Fatalf("get default: %v", err)

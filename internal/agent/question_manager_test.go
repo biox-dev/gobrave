@@ -1,16 +1,20 @@
-package agent
+package agent_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 	"time"
+
+	// 使用点导入以复用 agent 包中大量领域标识符（与合并前的包内测试保持一致）。
+	. "github.com/biox-dev/gobrave/internal/agent"
+	agentrepository "github.com/biox-dev/gobrave/internal/agent/repository"
 )
 
-// newTestQuestionManager 构建一个使用内存 sqlite 的提问管理器。
+// newTestQuestionManager 构建一个使用 GORM 提问仓库（内存 sqlite）的提问管理器。
 func newTestQuestionManager(t *testing.T) *QuestionManager {
 	t.Helper()
-	return NewQuestionManager(NewGormQuestionRepository(newGormTestDB(t)))
+	return NewQuestionManager(agentrepository.NewGormQuestionRepository(newTestDB(t)))
 }
 
 func demoAskInput() AskUserInput {

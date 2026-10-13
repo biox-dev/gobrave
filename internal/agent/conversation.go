@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,80 +101,13 @@ func NewConversation(userID, provider, model string) *Conversation {
 
 // ConversationRepository 持久化会话。
 //
-// 与 TaskRepository 一致：当前提供内存实现保证链路可跑通，后续可替换为 DB 实现。
+// 实现见 internal/agent/repository 子包（基于 GORM 的数据库实现）。
 type ConversationRepository interface {
 	Get(ctx context.Context, id int64) (*Conversation, error)
 	Create(ctx context.Context, conv *Conversation) error
 	Update(ctx context.Context, conv *Conversation) error
 	// Page 分页查询会话（按 UpdatedAt 降序）；userID 为空表示全部用户。
 	Page(ctx context.Context, userID string, offset, limit int) ([]*Conversation, int64, error)
-}
-
-// NewMemoryConversationRepository 创建会话的内存实现。
-func NewMemoryConversationRepository() ConversationRepository {
-	return &memoryConversationRepository{convs: make(map[int64]*Conversation)}
-}
-
-type memoryConversationRepository struct {
-	mu    sync.RWMutex
-	convs map[int64]*Conversation
-}
-
-func (r *memoryConversationRepository) Get(_ context.Context, id int64) (*Conversation, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	c, ok := r.convs[id]
-	if !ok {
-		return nil, ErrConversationNotFound
-	}
-	return cloneConversation(c), nil
-}
-
-func (r *memoryConversationRepository) Create(_ context.Context, conv *Conversation) error {
-	if conv == nil {
-		return nil
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.convs[conv.ID] = cloneConversation(conv)
-	return nil
-}
-
-func (r *memoryConversationRepository) Update(_ context.Context, conv *Conversation) error {
-	if conv == nil {
-		return nil
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.convs[conv.ID] = cloneConversation(conv)
-	return nil
-}
-
-func (r *memoryConversationRepository) Page(_ context.Context, userID string, offset, limit int) ([]*Conversation, int64, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	all := make([]*Conversation, 0)
-	for _, c := range r.convs {
-		if userID == "" || c.UserID == userID {
-			all = append(all, c)
-		}
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.After(all[j].UpdatedAt) })
-	total := int64(len(all))
-	out := make([]*Conversation, 0, limit)
-	for _, c := range sliceRange(all, offset, limit) {
-		out = append(out, cloneConversation(c))
-	}
-	return out, total, nil
-}
-
-func cloneConversation(c *Conversation) *Conversation {
-	if c == nil {
-		return nil
-	}
-	d := *c
-	d.Messages = append([]Message(nil), c.Messages...)
-	return &d
 }
 
 // TurnInput 是一次「轮次」的输入，由 HTTP 层构造。
@@ -214,11 +146,8 @@ type ConversationService struct {
 	turns map[int64]*turnState  // taskID → 本轮中间态
 }
 
-// NewConversationService 创建 ConversationService；repo 为空时使用内存实现。
+// NewConversationService 创建 ConversationService。
 func NewConversationService(agent *AgentService, repo ConversationRepository) *ConversationService {
-	if repo == nil {
-		repo = NewMemoryConversationRepository()
-	}
 	return &ConversationService{
 		agent: agent,
 		repo:  repo,

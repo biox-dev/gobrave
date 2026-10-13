@@ -17,6 +17,7 @@ import (
 	// "github.com/minebiome/ai-agent-go/internal/handler"
 	"github.com/biox-dev/gobrave/internal/agent"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
+	agentrepository "github.com/biox-dev/gobrave/internal/agent/repository"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
@@ -274,22 +275,22 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。
 	must(container.Provide(func(db *gorm.DB) agent.TaskRepository {
-		return agent.NewGormTaskRepository(db)
+		return agentrepository.NewGormTaskRepository(db)
 	}))
 	must(container.Provide(func(db *gorm.DB) agent.PermissionRepository {
-		return agent.NewGormPermissionRepository(db)
+		return agentrepository.NewGormPermissionRepository(db)
 	}))
 	must(container.Provide(func(db *gorm.DB) agent.QuestionRepository {
-		return agent.NewGormQuestionRepository(db)
+		return agentrepository.NewGormQuestionRepository(db)
 	}))
 	must(container.Provide(func(db *gorm.DB) agent.EventRepository {
-		return agent.NewGormEventRepository(db)
+		return agentrepository.NewGormEventRepository(db)
 	}))
 	must(container.Provide(func(db *gorm.DB) agent.MemoryRepository {
-		return agent.NewGormMemoryRepository(db)
+		return agentrepository.NewGormMemoryRepository(db)
 	}))
 	must(container.Provide(func(db *gorm.DB) agent.ProfileRepository {
-		return agent.NewGormProfileRepository(db)
+		return agentrepository.NewGormProfileRepository(db)
 	}))
 	// 系统启动时同步内置 Profile 到数据库（按 ID 判断：不存在则新增、已存在则更新）。
 	must(container.Invoke(func(repo agent.ProfileRepository) error {
@@ -327,7 +328,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// Provide ConversationService：多轮对话编排层（复用 AgentService 的任务状态机）。
 	// 使用数据库 Repository，使会话历史跨进程重启持久化。
 	must(container.Provide(func(svc *agent.AgentService, db *gorm.DB) *agent.ConversationService {
-		return agent.NewConversationService(svc, agent.NewGormConversationRepository(db))
+		return agent.NewConversationService(svc, agentrepository.NewGormConversationRepository(db))
 	}))
 	must(container.Provide(manager.NewAISummaryContentProvider))
 	must(container.Provide(manager.NewAISummaryWorker))
