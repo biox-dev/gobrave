@@ -188,7 +188,7 @@ type TurnInput struct {
 	// SystemPromptVars 是渲染 Profile 系统提示词模板所用的变量（业务上下文），
 	// 由 HTTP 层解析 env(type,id) 得到；系统提示词本身由 AgentService 渲染。
 	SystemPromptVars map[string]any
-	Profile          string // AgentProfile 名称（为空取默认）
+	ProfileID        int64 // AgentProfile ID（为 0 取默认）
 	WorkingDir       string
 }
 
@@ -271,7 +271,7 @@ func (s *ConversationService) CreateTurn(ctx context.Context, in TurnInput) (*Ta
 		SessionID:        strconv.FormatInt(conv.ID, 10),
 		UserID:           in.UserID,
 		SystemPromptVars: in.SystemPromptVars,
-		Profile:          in.Profile,
+		ProfileID:        in.ProfileID,
 		Messages:         promptMessagesForRequest(conv.Messages),
 		WorkingDir:       in.WorkingDir,
 		Stream:           true, // 会话轮次统一走流式，便于捕获 assistant 文本

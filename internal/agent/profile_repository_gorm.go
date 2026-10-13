@@ -68,19 +68,6 @@ func (r *gormProfileRepository) ListBuiltin(ctx context.Context) ([]*Profile, er
 	return profiles, nil
 }
 
-func (r *gormProfileRepository) GetByName(ctx context.Context, name string) (*Profile, error) {
-	var p Profile
-	if err := r.db.WithContext(ctx).
-		Where("name = ?", name).
-		First(&p).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrProfileNotFound
-		}
-		return nil, err
-	}
-	return &p, nil
-}
-
 func (r *gormProfileRepository) GetDefault(ctx context.Context, userID string) (*Profile, error) {
 	var p Profile
 	if err := r.db.WithContext(ctx).

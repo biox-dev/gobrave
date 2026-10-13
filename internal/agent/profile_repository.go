@@ -19,8 +19,6 @@ type ProfileRepository interface {
 	ListByUser(ctx context.Context, userID string) ([]*Profile, error)
 	// ListBuiltin 返回全部内置 Profile（按名称升序）。
 	ListBuiltin(ctx context.Context) ([]*Profile, error)
-	// GetByName 按名称查询 Profile。
-	GetByName(ctx context.Context, name string) (*Profile, error)
 	// GetDefault 返回某用户的默认自定义 Profile；不存在时返回 (nil, nil)。
 	GetDefault(ctx context.Context, userID string) (*Profile, error)
 	// ClearDefault 清除某用户除 exceptID 外的默认标记。
@@ -107,17 +105,6 @@ func (r *memoryProfileRepository) ListBuiltin(_ context.Context) ([]*Profile, er
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
-}
-
-func (r *memoryProfileRepository) GetByName(_ context.Context, name string) (*Profile, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, p := range r.profiles {
-		if p.Name == name {
-			return cloneProfile(p), nil
-		}
-	}
-	return nil, ErrProfileNotFound
 }
 
 func (r *memoryProfileRepository) GetDefault(_ context.Context, userID string) (*Profile, error) {

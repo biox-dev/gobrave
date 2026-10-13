@@ -48,17 +48,17 @@ const (
 // UserAgentConfig 是存储在用户记录中的 Agent 配置快照（以 JSON 形式落库）。
 //
 // 它把「用户选择的 Profile」与「用户自定义的权限策略」合并为一处：
-//   - Profile：该用户选中的 AgentProfile 名称（空表示未选择，解析时走默认）；
+//   - ProfileID：该用户选中的 AgentProfile ID（0 表示未选择，解析时走默认）；
 //   - Permissions：按 OperationType 配置的决策。空 / 未命中某项时，该项回退到
 //     defaultPermissionPolicy 的默认决策。
 type UserAgentConfig struct {
-	Profile     string                               `json:"profile,omitempty"`
+	ProfileID   int64                                `json:"profile_id,omitempty,string"`
 	Permissions map[OperationType]PermissionDecision `json:"permissions,omitempty"`
 }
 
-// DefaultUserAgentConfig 返回默认用户配置（未选择 Profile、权限全部走默认策略）。
+// DefaultUserAgentConfig 返回默认用户配置（选中内置默认 Profile、权限全部走默认策略）。
 func DefaultUserAgentConfig() UserAgentConfig {
-	return UserAgentConfig{Profile: DefaultProfileName}
+	return UserAgentConfig{ProfileID: BuiltinDefaultProfileID}
 }
 
 // UserAgentConfigProvider 按 userID 读取用户的 Agent 配置（用于权限决策）。

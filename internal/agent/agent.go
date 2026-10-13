@@ -81,8 +81,8 @@ type Request struct {
 	SessionID string `json:"session_id"`
 	// UserID 可选：发起调用的用户，用于记忆（memory）的归属隔离与检索。
 	UserID string `json:"user_id,omitempty"`
-	// Profile 可选：AgentProfile 名称，AgentService 据此解析系统提示词、技能与上下文注入开关。
-	Profile string `json:"profile,omitempty"`
+	// ProfileID 可选：AgentProfile ID，AgentService 据此解析系统提示词、技能与上下文注入开关。
+	ProfileID int64 `json:"profile_id,omitempty,string"`
 	// Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。
 	Skills []string `json:"skills,omitempty"`
 	// SystemPromptVars 是渲染 Profile 系统提示词模板所用的变量（业务上下文）。

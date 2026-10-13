@@ -185,17 +185,12 @@ func (s *AgentService) execute(ctx context.Context, task *Task, rt Runtime) {
 //
 // 异步（execute）与同步（RunTaskSync）共享这一执行路径。
 func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result, error) {
-	// 应用 Agent Profile：解析 Profile → 覆盖模型 / Agent / 技能 → 渲染最终系统提示词。
+	// 应用 Agent Profile：按 ID 解析 Profile → 覆盖模型 / Agent / 技能 → 渲染最终系统提示词。
 	// 最终系统提示词由 applyProfile 依据 Profile.SystemPrompt 模板 + SystemPromptVars
 	// 渲染，并按 Profile.Context 开关注入记忆 / 项目上下文。
-	// profile := s.resolveProfile(ctx, task.Request.Profile)
-	name := task.Request.Profile
-	if strings.TrimSpace(task.Request.Profile) == "" {
-		name = DefaultProfileName
-	}
-	profile, err := s.profiles.Resolve(ctx, name)
+	profile, err := s.profiles.Resolve(ctx, task.Request.ProfileID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve profile %q: %w", task.Request.Profile, err)
+		return nil, fmt.Errorf("resolve profile %d: %w", task.Request.ProfileID, err)
 	}
 
 	task.Request = applyProfileOverrides(task.Request, profile)
@@ -457,6 +452,18 @@ func (s *AgentService) GetProfile(ctx context.Context, userID string, id int64) 
 	return s.profiles.Get(ctx, userID, id)
 }
 
+// ResolveProfile 按 ID 解析 Profile，与 run 内应用 Profile 的解析路径保持一致
+// （id 为 0 时回退到内置默认 Profile）。
+//
+// 与 GetProfile 的区别：GetProfile 会校验自定义 Profile 的归属（仅所属用户可读），
+// 而 ResolveProfile 仅按 ID 解析，适合“已经知道要用的 Profile ID、只取其配置”的场景。
+func (s *AgentService) ResolveProfile(ctx context.Context, id int64) (*Profile, error) {
+	if s.profiles == nil {
+		return nil, ErrProfileNotFound
+	}
+	return s.profiles.Resolve(ctx, id)
+}
+
 // SaveProfile 创建或更新 Profile（内置 Profile 也允许更新）。
 func (s *AgentService) SaveProfile(ctx context.Context, profile *Profile) error {
 	if s.profiles == nil {
@@ -473,15 +480,15 @@ func (s *AgentService) DeleteProfile(ctx context.Context, userID string, id int6
 	return s.profiles.Delete(ctx, userID, id)
 }
 
-// RenderSystemPrompt 解析指定用户的 Profile，并用 vars 渲染其系统提示词模板，
+// RenderSystemPrompt 按 Profile ID 解析 Profile，并用 vars 渲染其系统提示词模板，
 // 返回真正的系统提示词（供 DescribeEnv 等前端展示 / 调试场景使用）。
 //
 // Profile 不存在或未配置系统提示词时返回空串、nil 错误。
-func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID, profileName string, vars map[string]any) (*Profile, string, error) {
+func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID string, profileID int64, vars map[string]any) (*Profile, string, error) {
 	if s.profiles == nil {
 		return nil, "", nil
 	}
-	profile, err := s.profiles.Resolve(ctx, profileName)
+	profile, err := s.profiles.Resolve(ctx, profileID)
 	if err != nil || profile == nil {
 		return nil, "", nil
 	}

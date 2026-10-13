@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -21,6 +22,7 @@ import (
 type AuthHandler struct {
 	userService    interfaces.UserService
 	projectService interfaces.ProjectService
+	agentService   *agent.AgentService
 	configInfo     *config.Config
 }
 
@@ -31,11 +33,13 @@ const (
 
 func NewAuthHandler(configInfo *config.Config,
 	userService interfaces.UserService,
-	projectService interfaces.ProjectService) *AuthHandler {
+	projectService interfaces.ProjectService,
+	agentService *agent.AgentService) *AuthHandler {
 	return &AuthHandler{
 		configInfo:     configInfo,
 		userService:    userService,
 		projectService: projectService,
+		agentService:   agentService,
 	}
 }
 
@@ -285,6 +289,7 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	// 	}
 	// }
 	userInfo := user.ToUserInfo()
+	h.fillAgentProfile(ctx, userInfo, user)
 	// userInfo.CanAccessAllTenants = user.CanAccessAllTenants && h.configInfo.Tenant.EnableCrossTenantAccess
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -293,6 +298,22 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 			// "tenant": tenant,
 		},
 	})
+}
+
+// fillAgentProfile 按用户选中的 Profile ID 解析 Profile，并以 DTO 形式填入 userInfo。
+//
+// 与 AgentService.run 应用 Profile 的路径一致，统一走 ProfileManager.Resolve：
+// ProfileID 为 0 时 Resolve 会回退到内置默认 Profile。
+// 解析失败（如 Profile 不存在）时保持 AgentProfile 为空，不影响用户信息本身的返回。
+func (h *AuthHandler) fillAgentProfile(ctx context.Context, userInfo *types.UserInfo, user *types.User) {
+	if h.agentService == nil || userInfo == nil || user == nil {
+		return
+	}
+	profile, err := h.agentService.ResolveProfile(ctx, user.AgentConfig.ProfileID)
+	if err != nil || profile == nil {
+		return
+	}
+	userInfo.AgentProfile = types.NewAgentProfileInfo(profile)
 }
 
 // UpdateProfile godoc
@@ -318,7 +339,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	}
 
 	var req struct {
-		Profile string `json:"profile"`
+		ProfileID int64 `json:"profile_id,string"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logger.Error(ctx, "Failed to parse profile update request", err)
@@ -327,7 +348,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	user.AgentConfig.Profile = req.Profile
+	user.AgentConfig.ProfileID = req.ProfileID
 	if err := h.userService.UpdateUser(ctx, user); err != nil {
 		logger.Errorf(ctx, "Failed to update user profile: %v", err)
 		appErr := errors.NewInternalServerError("Failed to update profile").WithDetails(err.Error())
@@ -366,7 +387,7 @@ func (h *AuthHandler) UpdateAgentConfig(c *gin.Context) {
 	}
 
 	var req struct {
-		Profile     string                                           `json:"profile"`
+		ProfileID   int64                                            `json:"profile_id,string"`
 		Permissions map[agent.OperationType]agent.PermissionDecision `json:"permissions"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -376,7 +397,7 @@ func (h *AuthHandler) UpdateAgentConfig(c *gin.Context) {
 		return
 	}
 
-	user.AgentConfig.Profile = req.Profile
+	user.AgentConfig.ProfileID = req.ProfileID
 	if req.Permissions != nil {
 		user.AgentConfig.Permissions = req.Permissions
 	}

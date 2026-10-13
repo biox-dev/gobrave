@@ -233,14 +233,14 @@ type RuntimeContextInfo struct {
 // Describe 解析 env 并返回用于前端展示的上下文描述。
 //
 // 与 Resolve 共享同一套解析逻辑：先用 env 解析出 SystemPromptVars，再按当前用户选中的
-// Profile（profileName）解析其系统提示词模板，用变量渲染出真正的系统提示词。
-func (r *RuntimeContextResolver) Describe(ctx context.Context, userID, profileName string, env map[string]any) (*RuntimeContextInfo, error) {
+// Profile（profileID）解析其系统提示词模板，用变量渲染出真正的系统提示词。
+func (r *RuntimeContextResolver) Describe(ctx context.Context, userID string, profileID int64, env map[string]any) (*RuntimeContextInfo, error) {
 	rc, err := r.Resolve(ctx, userID, env)
 	if err != nil {
 		return nil, err
 	}
 
-	profile, systemPrompt, err := r.agentSvc.RenderSystemPrompt(ctx, userID, profileName, rc.SystemPromptVars)
+	profile, systemPrompt, err := r.agentSvc.RenderSystemPrompt(ctx, userID, profileID, rc.SystemPromptVars)
 	if err != nil {
 		return nil, err
 	}

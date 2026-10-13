@@ -78,7 +78,7 @@ type chatRequest struct {
 	Message        string         `json:"message" binding:"required"` // 本轮用户输入
 	Provider       string         `json:"provider"`
 	Model          string         `json:"model"`
-	Profile        string         `json:"profile"` // AgentProfile 名称（为空取默认）
+	ProfileID      int64          `json:"profile_id,string"` // AgentProfile ID（为空取默认；实际以当前用户配置为准）
 	WorkingDir     string         `json:"working_dir"`
 	Env            map[string]any `json:"env"` // 业务上下文 {id,type}，用于解析系统提示词模板变量与工作目录
 }
@@ -131,7 +131,6 @@ type memoryRetrieveRequest struct {
 type profileSaveRequest struct {
 	ID           string              `json:"id"` // 为空则新建，否则更新
 	Name         string              `json:"name" binding:"required"`
-	DisplayName  string              `json:"display_name"`
 	Description  string              `json:"description"`
 	SystemPrompt string              `json:"system_prompt"`
 	Model        string              `json:"model"`
@@ -227,7 +226,7 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	}
 
 	// Profile 只能来自当前登录用户，忽略请求体中的 profile。
-	profile := user.AgentConfig.Profile
+	profileID := user.AgentConfig.ProfileID
 
 	// 解析业务上下文（llmEnv）→ 系统提示词模板变量 + 工作目录。
 	// 系统提示词本身不在这里拼装：它由 AgentService 依据 Profile 模板 + 这些变量渲染。
@@ -256,7 +255,7 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		Provider:         req.Provider,
 		Model:            req.Model,
 		SystemPromptVars: rc.SystemPromptVars,
-		Profile:          profile,
+		ProfileID:        profileID,
 		WorkingDir:       workingDir,
 	})
 	if err != nil {
@@ -310,11 +309,11 @@ func (h *AgentHandler) DescribeEnv(c *gin.Context) {
 	}
 
 	// 用当前用户选中的 Profile 解析系统提示词模板，返回渲染后的真实提示词。
-	profileName := strings.TrimSpace(user.AgentConfig.Profile)
-	if profileName == "" {
-		profileName = agent.DefaultProfileName
+	profileID := user.AgentConfig.ProfileID
+	if profileID == 0 {
+		profileID = agent.BuiltinDefaultProfileID
 	}
-	info, err := h.runtimeCtx.Describe(c.Request.Context(), user.ID, profileName, req.Env)
+	info, err := h.runtimeCtx.Describe(c.Request.Context(), user.ID, profileID, req.Env)
 	if err != nil {
 		handleAgentError(c, err, "failed to describe runtime env")
 		return
@@ -406,7 +405,6 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 			return
 		}
 		existing.Name = req.Name
-		existing.DisplayName = req.DisplayName
 		existing.Description = req.Description
 		existing.SystemPrompt = req.SystemPrompt
 		existing.Model = req.Model
@@ -418,7 +416,6 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 		profile = &agent.Profile{
 			UserID:       userID,
 			Name:         req.Name,
-			DisplayName:  req.DisplayName,
 			Description:  req.Description,
 			SystemPrompt: req.SystemPrompt,
 			Model:        req.Model,

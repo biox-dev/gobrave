@@ -29,7 +29,9 @@ func NewAISummaryHandler(aiSummaryService interfaces.AISummaryService, projectSe
 type createAISummaryRequest struct {
 	OwnerID   int64                  `json:"owner_id,string" binding:"required"`
 	OwnerType types.SummaryOwnerType `json:"owner_type" binding:"required"`
-	// Profile 生成摘要使用的 Agent Profile 名称（为空则使用内置 summary Profile）。
+	// ProfileID 生成摘要使用的 Agent Profile ID（为 0 则使用内置 summary Profile）。
+	ProfileID int64 `json:"profile_id,string"`
+	// Profile 该 Profile 的展示名（仅用于展示，可为空）。
 	Profile string `json:"profile"`
 }
 
@@ -51,6 +53,7 @@ type aiSummaryListItem struct {
 	ProjectID string                 `json:"project_id"`
 	Title     string                 `json:"title"`
 	Status    types.SummaryStatus    `json:"status"`
+	ProfileID string                 `json:"profile_id"`
 	Profile   string                 `json:"profile"`
 	TaskID    string                 `json:"task_id"`
 	CreatedAt string                 `json:"created_at"`
@@ -65,7 +68,9 @@ type updateAISummaryRequest struct {
 	ID      int64   `json:"id,string" binding:"required"`
 	Title   *string `json:"title"`
 	Content *string `json:"content"`
-	// Profile 生成摘要使用的 Agent Profile 名称；传入空串表示改回内置 summary Profile。
+	// ProfileID 生成摘要使用的 Agent Profile ID；传入 0 表示改回内置 summary Profile。
+	ProfileID *int64 `json:"profile_id,string"`
+	// Profile 该 Profile 的展示名（仅用于展示）。
 	Profile *string `json:"profile"`
 }
 
@@ -93,7 +98,7 @@ func (h *AISummaryHandler) CreateAISummary(c *gin.Context) {
 		return
 	}
 
-	summary, err := h.aiSummaryService.CreateAISummary(c.Request.Context(), req.OwnerType, req.OwnerID, req.Profile)
+	summary, err := h.aiSummaryService.CreateAISummary(c.Request.Context(), req.OwnerType, req.OwnerID, req.ProfileID, req.Profile)
 	if err != nil {
 		handleDataError(c, err, "failed to create ai summary")
 		return
@@ -256,6 +261,7 @@ func (h *AISummaryHandler) PageAISummaryByActiveProject(c *gin.Context) {
 			ProjectID: strconv.FormatInt(summary.ProjectID, 10),
 			Title:     summary.Title,
 			Status:    summary.Status,
+			ProfileID: strconv.FormatInt(summary.ProfileID, 10),
 			Profile:   summary.Profile,
 			TaskID:    strconv.FormatInt(summary.TaskID, 10),
 			CreatedAt: summary.CreatedAt.Format("2006-01-02 15:04:05"),
@@ -297,7 +303,7 @@ func (h *AISummaryHandler) UpdateAISummary(c *gin.Context) {
 		return
 	}
 
-	summary, err := h.aiSummaryService.UpdateAISummary(c.Request.Context(), req.ID, req.Title, req.Content, req.Profile)
+	summary, err := h.aiSummaryService.UpdateAISummary(c.Request.Context(), req.ID, req.Title, req.Content, req.ProfileID, req.Profile)
 	if err != nil {
 		handleDataError(c, err, "failed to update ai summary")
 		return

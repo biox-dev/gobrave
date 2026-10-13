@@ -45,8 +45,11 @@ type AISummary struct {
 	Content string `json:"content" gorm:"column:content;type:longtext"`
 	// Status 生成状态：生成中 / 生成成功 / 生成失败。
 	Status SummaryStatus `json:"status" gorm:"column:status;type:varchar(32);default:generating"`
-	// Profile 生成该摘要使用的 Agent Profile 名称（agent_profiles.name）。
-	// 为空时由 AISummaryWorker 回退到内置 summary Profile。
+	// ProfileID 生成该摘要使用的 Agent Profile ID（agent_profiles.id），用于按 ID 解析 Profile。
+	// 为 0 时由 AISummaryWorker 回退到内置 summary Profile。
+	ProfileID int64 `json:"profile_id,string" gorm:"column:profile_id;type:bigint;index"`
+	// Profile 生成该摘要使用的 Agent Profile 展示名（仅用于展示，不参与查询；
+	// 为空表示使用内置 summary Profile）。
 	Profile string `json:"profile" gorm:"column:profile;type:varchar(64)"`
 	// TaskID 生成该摘要的 Agent 任务 ID（agent_tasks 表）。
 	TaskID int64 `json:"task_id,string" gorm:"column:task_id;type:bigint;index"`
@@ -88,7 +91,7 @@ type AISummaryStatusEvent struct {
 type AISummaryInput struct {
 	// Title 是摘要标题的候选值。
 	Title string `json:"title"`
-	// Profile 是生成该摘要使用的 AgentProfile 名称（取自摘要记录，为空回退内置 summary Profile）。
+	// ProfileName 是生成该摘要使用的 AgentProfile 展示名（取自摘要记录，为空回退内置 summary Profile）。
 	ProfileName string `json:"profile,omitempty"`
 	ProfileID   int64  `json:"profile_id,omitempty,string"`
 	// SystemPrompt 是用 Profile 模板 + Vars 渲染后的真实系统提示词。

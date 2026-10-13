@@ -43,7 +43,7 @@ func (r *aiSummaryRepository) ListAISummariesByOwner(ctx context.Context, ownerT
 // 避免列表接口把大字段读入内存并返回给前端。
 var aiSummaryPageColumns = []string{
 	"id", "owner_id", "owner_type", "project_id",
-	"title", "status", "profile", "task_id", "created_at", "updated_at",
+	"title", "status", "profile_id", "profile", "task_id", "created_at", "updated_at",
 }
 
 func (r *aiSummaryRepository) PageAISummariesByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.AISummary, int64, error) {
@@ -80,7 +80,7 @@ func (r *aiSummaryRepository) UpdateAISummary(ctx context.Context, item *types.A
 		return gorm.ErrRecordNotFound
 	}
 
-	// 用 map 整体替换：零值（如清空 content / profile）也需要写库。
+	// 用 map 整体替换：零值（如清空 content / profile_id）也需要写库。
 	updates := map[string]any{
 		"owner_id":   item.OwnerID,
 		"owner_type": item.OwnerType,
@@ -88,6 +88,7 @@ func (r *aiSummaryRepository) UpdateAISummary(ctx context.Context, item *types.A
 		"title":      item.Title,
 		"content":    item.Content,
 		"status":     item.Status,
+		"profile_id": item.ProfileID,
 		"profile":    item.Profile,
 		"task_id":    item.TaskID,
 	}

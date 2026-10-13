@@ -21,20 +21,20 @@ func TestProfileManagerResolveBuiltin(t *testing.T) {
 	m := newTestProfileManager(t)
 	ctx := context.Background()
 
-	// 未指定名称 → 内置默认。
-	p, err := m.Resolve(ctx, "")
+	// ID 为 0 → 内置默认。
+	p, err := m.Resolve(ctx, 0)
 	if err != nil {
 		t.Fatalf("resolve default: %v", err)
 	}
-	if p.Name != DefaultProfileName {
-		t.Fatalf("default profile name = %q, want %q", p.Name, DefaultProfileName)
+	if p.ID != BuiltinDefaultProfileID {
+		t.Fatalf("default profile id = %d, want %d", p.ID, BuiltinDefaultProfileID)
 	}
 	if !p.Context.InjectMemory || p.Context.InjectProject {
 		t.Fatalf("default context = %+v, want memory on / project off", p.Context)
 	}
 
-	// 指定内置名称 → 命中内置 Profile。
-	p, err = m.Resolve(ctx, ProfileArticleWriter)
+	// 指定内置 ID → 命中内置 Profile。
+	p, err = m.Resolve(ctx, BuiltinArticleWriterID)
 	if err != nil {
 		t.Fatalf("resolve article_writer: %v", err)
 	}
@@ -49,8 +49,7 @@ func TestProfileManagerUserDefault(t *testing.T) {
 	ctx := context.Background()
 
 	custom := &Profile{
-		Name:         "my_writer",
-		DisplayName:  "我的写作助手",
+		Name:         "我的写作助手",
 		UserID:       "u1",
 		IsDefault:    true,
 		SystemPrompt: "写作",
@@ -60,31 +59,18 @@ func TestProfileManagerUserDefault(t *testing.T) {
 		t.Fatalf("save custom: %v", err)
 	}
 
-	// 用户默认优先于内置默认。
-	p, err := m.Resolve(ctx, "")
+	// 保存后按 ID 解析。
+	p, err := m.Resolve(ctx, custom.ID)
 	if err != nil {
-		t.Fatalf("resolve user default: %v", err)
+		t.Fatalf("resolve custom: %v", err)
 	}
-	if p.Name != "my_writer" {
-		t.Fatalf("user default name = %q, want my_writer", p.Name)
+	if p.Name != "我的写作助手" {
+		t.Fatalf("custom name = %q, want 我的写作助手", p.Name)
 	}
 
-	// 名称规整：空格转下划线、小写。
-	p, err = m.Resolve(ctx, "MY WRITER")
-	if err != nil {
-		t.Fatalf("resolve by normalized name: %v", err)
-	}
-	if p.Name != "my_writer" {
-		t.Fatalf("normalized name = %q, want my_writer", p.Name)
-	}
-
-	// 其他用户不受影响（回退到内置默认）。
-	p, err = m.Resolve(ctx, "")
-	if err != nil {
-		t.Fatalf("resolve other user default: %v", err)
-	}
-	if p.Name != DefaultProfileName {
-		t.Fatalf("other user default name = %q, want %q", p.Name, DefaultProfileName)
+	// 未知 ID → ErrProfileNotFound。
+	if _, err := m.Resolve(ctx, custom.ID+1); err == nil {
+		t.Fatalf("resolve unknown id should fail")
 	}
 }
 

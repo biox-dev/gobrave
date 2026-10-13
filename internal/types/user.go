@@ -1,6 +1,7 @@
 package types
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent"
@@ -118,16 +119,48 @@ type RegisterResponse struct {
 
 // UserInfo represents user information for API responses
 type UserInfo struct {
-	ID                  string                `json:"id"`
-	Username            string                `json:"username"`
-	Email               string                `json:"email"`
-	Avatar              string                `json:"avatar"`
-	AgentConfig         agent.UserAgentConfig `json:"agent_config"`
-	TenantID            uint64                `json:"tenant_id"`
-	IsActive            bool                  `json:"is_active"`
-	CanAccessAllTenants bool                  `json:"can_access_all_tenants"`
-	CreatedAt           time.Time             `json:"created_at"`
-	UpdatedAt           time.Time             `json:"updated_at"`
+	ID          string                `json:"id"`
+	Username    string                `json:"username"`
+	Email       string                `json:"email"`
+	Avatar      string                `json:"avatar"`
+	AgentConfig agent.UserAgentConfig `json:"agent_config"`
+	// AgentProfile 是 agent_config.ProfileID 对应的 Profile 摘要（DTO，按需填充，可能为空）。
+	AgentProfile        *AgentProfileInfo `json:"agent_profile,omitempty"`
+	TenantID            uint64            `json:"tenant_id"`
+	IsActive            bool              `json:"is_active"`
+	CanAccessAllTenants bool              `json:"can_access_all_tenants"`
+	CreatedAt           time.Time         `json:"created_at"`
+	UpdatedAt           time.Time         `json:"updated_at"`
+}
+
+// AgentProfileInfo 是随用户信息返回的 Agent Profile 摘要（DTO）。
+//
+// 只暴露前端展示 / 选择所需的字段；Profile 的完整内容（系统提示词、技能等）
+// 仍通过 /agent/profile 接口按 ID 获取。
+type AgentProfileInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	IsDefault   bool   `json:"is_default"`
+	IsBuiltin   bool   `json:"is_builtin"`
+}
+
+// NewAgentProfileInfo 由 agent.Profile 构造展示用 DTO；p 为空时返回 nil。
+func NewAgentProfileInfo(p *agent.Profile) *AgentProfileInfo {
+	if p == nil {
+		return nil
+	}
+	return &AgentProfileInfo{
+		ID:          strconv.FormatInt(p.ID, 10),
+		Name:        p.Name,
+		Description: p.Description,
+		Model:       p.Model,
+		Provider:    p.Provider,
+		IsDefault:   p.IsDefault,
+		IsBuiltin:   p.IsBuiltin,
+	}
 }
 
 // ToUserInfo converts User to UserInfo (without sensitive data)

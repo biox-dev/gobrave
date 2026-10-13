@@ -46,13 +46,15 @@ func NewAISummaryService(
 // CreateAISummary 创建摘要记录（pending 状态）并投递 outbox 事件，由
 // AISummaryWorker 异步消费生成摘要内容。
 //
-// profile 为生成时使用的 Agent Profile 名称，为空表示使用内置 summary Profile。
+// profileID 为生成时使用的 Agent Profile ID（用于按 ID 解析），profile 为其展示名（仅用于展示）。
+// profileID 为 0 表示使用内置 summary Profile。
 // 摘要所属项目 ID 由 AISummaryWorker 从所属对象解析后回填，此处不设置。
-func (s *aiSummaryService) CreateAISummary(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64, profile string) (*types.AISummary, error) {
+func (s *aiSummaryService) CreateAISummary(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64, profileID int64, profile string) (*types.AISummary, error) {
 	summary := &types.AISummary{
 		OwnerType: ownerType,
 		OwnerID:   ownerID,
 		Status:    types.SummaryStatusPending,
+		ProfileID: profileID,
 		Profile:   strings.TrimSpace(profile),
 	}
 	if err := s.summaryRepo.CreateAISummary(ctx, summary); err != nil {
@@ -186,7 +188,7 @@ func resolveSummaryOwnerURLPrefix(ctx context.Context, analysisRepo interfaces.A
 }
 
 // UpdateAISummary 按摘要 ID 更新标题、内容与 Agent Profile，nil 表示不修改对应字段。
-func (s *aiSummaryService) UpdateAISummary(ctx context.Context, id int64, title, content, profile *string) (*types.AISummary, error) {
+func (s *aiSummaryService) UpdateAISummary(ctx context.Context, id int64, title, content *string, profileID *int64, profile *string) (*types.AISummary, error) {
 	summary, err := s.summaryRepo.GetAISummaryByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -197,6 +199,9 @@ func (s *aiSummaryService) UpdateAISummary(ctx context.Context, id int64, title,
 	}
 	if content != nil {
 		summary.Content = *content
+	}
+	if profileID != nil {
+		summary.ProfileID = *profileID
 	}
 	if profile != nil {
 		summary.Profile = strings.TrimSpace(*profile)
@@ -217,8 +222,8 @@ func (s *aiSummaryService) DeleteAISummary(ctx context.Context, id int64) error 
 // GetAISummaryInput 按摘要 ID 解析生成该摘要时交给 LLM 的输入信息。
 //
 // 与 DescribeEnv 类似：先取摘要记录，按所属对象（Analysis / AnalysisNode）解析出
-// 系统提示词模板变量，再按该摘要使用的 Agent Profile（取自摘要记录，为空回退内置
-// agent.ProfileSummary）渲染出真正的系统提示词。
+// 系统提示词模板变量，再按该摘要使用的 Agent Profile（取自摘要记录 ProfileID，为 0 回退
+// 内置 agent.BuiltinSummaryProfileID）渲染出真正的系统提示词。
 func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, id int64) (*types.AISummaryInput, error) {
 	summary, err := s.summaryRepo.GetAISummaryByID(ctx, id)
 	if err != nil {
@@ -230,12 +235,12 @@ func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, id int64) (*ty
 		return nil, err
 	}
 
-	profileName := strings.TrimSpace(summary.Profile)
-	if profileName == "" {
-		profileName = agent.ProfileSummary
+	profileID := summary.ProfileID
+	if profileID == 0 {
+		profileID = agent.BuiltinSummaryProfileID
 	}
 
-	profile, systemPrompt, err := s.agentSvc.RenderSystemPrompt(ctx, "", profileName, content.SystemPromptVars)
+	profile, systemPrompt, err := s.agentSvc.RenderSystemPrompt(ctx, "", profileID, content.SystemPromptVars)
 	if err != nil {
 		return nil, err
 	}

@@ -11,22 +11,18 @@ import (
 	"gorm.io/gorm"
 )
 
-// 内置 AgentProfile 名称常量。新增内置 Profile 时在此登记唯一名称。
-const (
-	DefaultProfileName   = "default"        // 系统默认 Profile
-	ProfileAnalysisCoder = "analysis_coder" // 撰写分析代码
-	ProfileArticleWriter = "article_writer" // 撰写科研文章 / 报告
-	ProfileSummary       = "summary"        // 摘要总结
-)
-
 // 内置 Profile 使用固定的负数 ID，避免与雪花算法生成的正整数主键冲突。
+// Profile 的查询 / 引用一律使用 ID；Name 仅用于展示。
 const (
 	BuiltinDefaultProfileID int64 = -1 // 内置默认 Profile
 	BuiltinAnalysisCoderID  int64 = -2 // 内置「分析代码编写」Profile
 	BuiltinArticleWriterID  int64 = -3 // 内置「科研文章撰写」Profile
-	// 摘要总结
 	BuiltinSummaryProfileID int64 = -4 // 内置「摘要总结」Profile
 )
+
+// BuiltinDefaultProfileName 是内置默认 Profile 的展示名。用于无需查询数据库即可获得
+// 展示名的场景（如 DefaultUserAgentConfig）。
+const BuiltinDefaultProfileName = "通用助手"
 
 // Profile 相关错误。
 var (
@@ -49,16 +45,17 @@ type ContextConfig struct {
 // Profile 描述一类任务的 Agent 配置（系统提示词 + 技能 + 上下文注入开关）。
 //
 // 与 Options / Request（每次调用的动态参数）不同，Profile 是「按任务类型选择」的静态
-// 配置快照：HTTP 层或前端在发起调用时通过 Request.Profile 指定名称，AgentService 在
-// 调用前解析并应用（合并系统提示词、过滤技能、按开关注入背景）。
+// 配置快照：HTTP 层或前端在发起调用时通过 Request.ProfileID 指定 Profile，AgentService
+// 在调用前按 ID 解析并应用（合并系统提示词、过滤技能、按开关注入背景）。
 //
+// Name 仅用于展示；Profile 的查询 / 引用一律使用 ID。
 // UserID 为空表示系统级（内置）Profile；非空表示某用户的自定义 Profile。
 type Profile struct {
-	ID           int64  `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	Name         string `json:"name" gorm:"column:name;type:varchar(64);index:idx_agent_profiles_user_name,priority:2"`
-	DisplayName  string `json:"display_name" gorm:"column:display_name;type:varchar(128)"`
+	ID int64 `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
+	// Name 仅作为展示名使用，不参与任何查询。
+	Name         string `json:"name" gorm:"column:name;type:varchar(128)"`
 	Description  string `json:"description" gorm:"column:description;type:text"`
-	UserID       string `json:"user_id" gorm:"column:user_id;type:varchar(64);index:idx_agent_profiles_user_name,priority:1"`
+	UserID       string `json:"user_id" gorm:"column:user_id;type:varchar(64);index:idx_agent_profiles_user"`
 	IsDefault    bool   `json:"is_default" gorm:"column:is_default"`
 	IsBuiltin    bool   `json:"is_builtin" gorm:"column:is_builtin"`
 	SystemPrompt string `json:"system_prompt" gorm:"column:system_prompt;type:text"`
@@ -96,8 +93,7 @@ func BuiltinProfiles() []*Profile {
 	return []*Profile{
 		{
 			ID:          BuiltinDefaultProfileID,
-			Name:        DefaultProfileName,
-			DisplayName: "通用助手",
+			Name:        BuiltinDefaultProfileName,
 			Description: "默认配置：不附加领域提示词；注入记忆、不注入项目上下文。",
 			IsDefault:   true,
 			IsBuiltin:   true,
@@ -112,8 +108,7 @@ func BuiltinProfiles() []*Profile {
 		},
 		{
 			ID:          BuiltinAnalysisCoderID,
-			Name:        ProfileAnalysisCoder,
-			DisplayName: "分析代码编写",
+			Name:        "分析代码编写",
 			Description: "用于撰写生物信息学分析代码：强调代码规范、可复现性与执行约束。",
 			IsBuiltin:   true,
 			SystemPrompt: `你是一名生物信息学数据分析工程师。请输出规范、可复现的分析代码，明确依赖与输入输出；如需执行，优先使用运行时提供的工具，而不是直接调用 shell / Rscript / python 等命令。
@@ -131,8 +126,7 @@ script_workspace_directory: {{ script_workspace_directory }}{% endif %}`,
 		},
 		{
 			ID:          BuiltinArticleWriterID,
-			Name:        ProfileArticleWriter,
-			DisplayName: "科研文章撰写",
+			Name:        "科研文章撰写",
 			Description: "用于撰写科研报告 / 文章：注入项目上下文（已完成的分析节点等），按学术规范写作。",
 			IsBuiltin:   true,
 			SystemPrompt: `你是一名科研写作助手。请严格遵循科研报告 / 科研文章的学术规范撰写内容，语言严谨、结构完整，并确保结论与项目中的分析结果保持一致。{% if output_file %}
@@ -146,8 +140,7 @@ workspace_directory: {{ workspace_directory }}{% endif %}`,
 			UpdatedAt: now,
 		}, {
 			ID:          BuiltinSummaryProfileID,
-			Name:        ProfileSummary,
-			DisplayName: "摘要总结",
+			Name:        "摘要总结",
 			Description: "用于生成分析 / 节点的摘要：注入项目上下文（已完成的分析节点等），按学术规范写作。",
 			IsBuiltin:   true,
 			SystemPrompt: `你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要; 检查分析中存在的问题，并提出改进建议。{% if workspace_directory %}
@@ -195,18 +188,11 @@ func EnsureBuiltinProfiles(ctx context.Context, repo ProfileRepository) error {
 	return nil
 }
 
-// normalizeProfileName 规整 Profile 名称：小写、去首尾空白、空格转下划线。
-func normalizeProfileName(name string) string {
-	name = strings.ToLower(strings.TrimSpace(name))
-	name = strings.ReplaceAll(name, " ", "_")
-	return name
-}
-
 // ProfileManager 负责 Profile 的解析、列表与增删改查编排。
 //
 // 内置 Profile 与用户自定义 Profile 均持久化在数据库（ProfileRepository）中，本管理器
-// 只做统一视图的编排：按名称解析时用户自定义优先、其次内置；未指定名称时回退到默认
-// Profile（用户默认优先、其次内置默认）。所有读写均通过仓库完成。
+// 只做统一视图的编排：所有解析 / 读取均按 ID 进行（Name 仅用于展示）。内置 Profile 与
+// 用户自定义 Profile 统一存储。
 type ProfileManager struct {
 	repo ProfileRepository
 }
@@ -219,25 +205,21 @@ func NewProfileManager(repo ProfileRepository) *ProfileManager {
 	return &ProfileManager{repo: repo}
 }
 
-// Resolve 按名称解析 Profile。
+// Resolve 按 ID 解析 Profile。
 //
-//   - 先按 name 查询 Profile；
-//   - name 不存在：返回 ErrProfileNotFound；
-//   - userID 非空时校验其与查询到的 Profile 的 UserID 是否相等，不相等返回 ErrProfileNotFound。
-func (m *ProfileManager) Resolve(ctx context.Context, name string) (*Profile, error) {
-	name = normalizeProfileName(name)
-	// uid := strings.TrimSpace(userID)
-
-	p, err := m.repo.GetByName(ctx, name)
+//   - id 为 0 时回退到内置默认 Profile；
+//   - id 不存在时返回 ErrProfileNotFound。
+func (m *ProfileManager) Resolve(ctx context.Context, id int64) (*Profile, error) {
+	if id == 0 {
+		id = BuiltinDefaultProfileID
+	}
+	p, err := m.repo.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if p == nil {
 		return nil, ErrProfileNotFound
 	}
-	// if uid != "" && strings.TrimSpace(p.UserID) != uid {
-	// 	return nil, ErrProfileNotFound
-	// }
 	return p, nil
 }
 
@@ -285,11 +267,11 @@ func (m *ProfileManager) Save(ctx context.Context, p *Profile) error {
 	if p == nil {
 		return nil
 	}
-	name := normalizeProfileName(p.Name)
-	if name == "" {
+	// Name 仅用于展示，不做名称规整，只校验非空。
+	p.Name = strings.TrimSpace(p.Name)
+	if p.Name == "" {
 		return ErrProfileNameRequired
 	}
-	p.Name = name
 
 	now := time.Now()
 	if p.ID == 0 {

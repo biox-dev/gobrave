@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/event"
@@ -84,8 +83,8 @@ func (w *AISummaryWorker) handleGenerateRequest(ctx context.Context, req AISumma
 // 再通过 RunTaskSyncByID 同步执行，确保生成期间即使进程崩溃，摘要与任务也不脱钩；
 // 若后续摘要需要边生成边推送给前端，可切换为任务流式模式并在 StreamHandler 中逐块发布状态事件。
 //
-// 生成使用的 Agent Profile 取自摘要记录（用户创建/更新时选定），为空时回退到内置
-// agent.ProfileSummary，保证旧数据仍按原有行为生成。
+// 生成使用的 Agent Profile 取自摘要记录（用户创建/更新时选定），为 0 时回退到内置
+// agent.BuiltinSummaryProfileID，保证旧数据仍按原有行为生成。
 func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	summary, err := w.summaryRepo.GetAISummaryByID(ctx, summaryID)
 	if err != nil {
@@ -108,9 +107,9 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 		summary.ProjectID = content.ProjectID
 	}
 
-	profile := strings.TrimSpace(summary.Profile)
-	if profile == "" {
-		profile = agent.ProfileSummary
+	profileID := summary.ProfileID
+	if profileID == 0 {
+		profileID = agent.BuiltinSummaryProfileID
 	}
 
 	task, err := w.agentService.CreateTask(ctx, agent.Request{
@@ -119,8 +118,8 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: "请根据系统提示词完成对应的任务"},
 		},
-		Provider: agent.ProviderCustom,
-		Profile:  profile,
+		Provider:  agent.ProviderCustom,
+		ProfileID: profileID,
 	})
 	if err != nil {
 		return fmt.Errorf("create agent task: %w", err)
