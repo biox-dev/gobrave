@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
 
@@ -32,6 +33,7 @@ type AgentService struct {
 	memory   *MemoryManager
 	project  ProjectContextProvider
 	profiles *ProfileManager
+	skills   *skill.Registry
 
 	mu     sync.Mutex
 	active map[int64]context.CancelFunc // taskID → 取消函数
@@ -48,6 +50,7 @@ type ServiceConfig struct {
 	Memory   *MemoryManager
 	Project  ProjectContextProvider
 	Profiles *ProfileManager
+	Skills   *skill.Registry
 }
 
 // NewService 创建 AgentService，未提供的依赖使用安全的默认值。
@@ -83,6 +86,7 @@ func NewService(cfg ServiceConfig) *AgentService {
 		memory:   cfg.Memory,
 		project:  cfg.Project,
 		profiles: cfg.Profiles,
+		skills:   cfg.Skills,
 		active:   make(map[int64]context.CancelFunc),
 	}
 }
@@ -194,7 +198,7 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	}
 
 	task.Request = applyProfileOverrides(task.Request, profile)
-	task.Request.SystemPrompt = s.GetSystemSpromptByProfile(ctx, profile, task.Request.SystemPromptVars, task.Request.UserID)
+	task.Request.SystemPrompt = s.GetSystemSpromptByProfile(ctx, profile, task.Request.SystemPromptVars, task.Request.UserID, task.Request.Skills)
 	// Profile 可能依据 Profile.Model 覆盖请求级模型，同步回任务持久化字段。
 	task.Model = task.Request.Model
 	if err := s.transitionTask(ctx, task, TaskRunning, ""); err != nil {
@@ -492,7 +496,7 @@ func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID string, pr
 	if err != nil || profile == nil {
 		return nil, "", nil
 	}
-	systemPrompt := s.GetSystemSpromptByProfile(ctx, profile, vars, userID)
+	systemPrompt := s.GetSystemSpromptByProfile(ctx, profile, vars, userID, profile.Skills)
 
 	// return RenderSystemPromptTemplate(profile.SystemPrompt, vars)
 	return profile, systemPrompt, nil
@@ -544,11 +548,12 @@ func applyProfileOverrides(req Request, profile *Profile) Request {
 // 入参：
 //   - profile：已解析的 Agent Profile（为 nil 时返回空提示词，表示不附加系统提示词）；
 //   - vars：渲染 Profile.SystemPrompt（pongo2 模板）所用的变量，通常为 Request.SystemPromptVars；
-//   - userID：记忆 / 项目上下文的归属用户（为空时不注入背景）。
+//   - userID：记忆 / 项目上下文的归属用户（为空时不注入背景）；
+//   - selectedSkills：本轮启用的技能名（为空表示全部）；据此把技能指令正文注入提示词。
 //
-// 处理顺序：渲染 Profile 模板 → 按 Profile.Context 开关注入记忆 / 项目上下文。
+// 处理顺序：渲染 Profile 模板 → 注入技能指令 → 按 Profile.Context 开关注入记忆 / 项目上下文。
 // 模板渲染失败时退回原始模板，保证调用仍可进行。
-func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *Profile, vars map[string]any, userID string) string {
+func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *Profile, vars map[string]any, userID string, selectedSkills []string) string {
 	if profile == nil {
 		return ""
 	}
@@ -564,7 +569,13 @@ func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *P
 		}
 	}
 
-	// 2) 背景注入：按 Profile 声明的开关执行。
+	// 2) 技能指令正文：把本轮可用技能的说明注入提示词，使模型感知技能语义。
+	// 技能的工具暴露由各 Provider 负责（见 providers），此处只负责上下文注入。
+	if s.skills != nil {
+		prompt = appendPromptBlock(prompt, s.skills.PromptBlock(selectedSkills...))
+	}
+
+	// 3) 背景注入：按 Profile 声明的开关执行。
 	if profile.Context.InjectMemory {
 		prompt = s.injectMemory(ctx, prompt, userID)
 	}

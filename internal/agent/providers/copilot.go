@@ -259,13 +259,6 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 	}
 
 	system := strings.TrimSpace(req.SystemPrompt)
-	if instr := a.buildSkillInstructions(); instr != "" {
-		if system != "" {
-			system += "\n\n" + instr
-		} else {
-			system = instr
-		}
-	}
 	if system != "" {
 		cfg.SystemMessage = &copilot.SystemMessageConfig{Content: system}
 	}
@@ -347,8 +340,8 @@ func toCopilotToolResult(res tool.Result) copilot.ToolResult {
 //
 // 技能在 Copilot 侧与工具共用同一套 function-calling 通道：模型发起技能调用时，SDK 会广播
 // 事件并在独立 goroutine 中调用对应 Handler，再把返回的 ToolResult 通过 RPC 回填给模型。
-// 此外，技能的指令正文（Instructions）会由 buildSkillInstructions 注入系统提示词，使模型
-// 在函数调用之外也能感知技能语义。
+// 此外，技能的指令正文（Instructions）还会由 AgentService（GetSystemSpromptByProfile）注入
+// 系统提示词，使模型在函数调用之外也能感知技能语义。
 //
 // 桥接过程（见 agent.SkillRunner.Run）：
 //
@@ -397,37 +390,6 @@ func toCopilotSkillResult(res skill.Result) copilot.ToolResult {
 		TextResultForLLM: res.Content,
 		ResultType:       "success",
 	}
-}
-
-// buildSkillInstructions 把所有技能的指令正文拼接为一个 markdown 块，用于注入系统提示词，
-// 让模型能感知可用技能及其用法（技能区别于工具的关键：携带上下文指令）。
-//
-// 无技能注册或全部技能均无指令正文时返回空字符串。
-func (a *copilotAgent) buildSkillInstructions() string {
-	if a.opts.Skills == nil {
-		return ""
-	}
-	manifests := a.opts.Skills.Instructions()
-	if len(manifests) == 0 {
-		return ""
-	}
-
-	var b strings.Builder
-	b.WriteString("## Available skills\n\n")
-	for _, m := range manifests {
-		b.WriteString("### ")
-		b.WriteString(m.Name)
-		if desc := strings.TrimSpace(m.Description); desc != "" {
-			b.WriteString(": ")
-			b.WriteString(desc)
-		}
-		b.WriteString("\n\n")
-		if instr := strings.TrimSpace(m.Instructions); instr != "" {
-			b.WriteString(instr)
-			b.WriteString("\n\n")
-		}
-	}
-	return strings.TrimSpace(b.String())
 }
 
 // permissionHandler 将 Copilot 的权限请求映射为 agent.Operation，并通过 Runtime 请求权限，

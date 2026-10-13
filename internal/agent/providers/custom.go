@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/skill"
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 	opencodesdk "github.com/biox-dev/opencode/sdk"
 )
 
@@ -50,8 +52,11 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 		return nil, err
 	}
 
+	userID := strings.TrimSpace(req.UserID)
 	// 把 opencode 的工具权限请求委托给 gobrave 的 Runtime（策略 / 持久化 / UI）。
-	sdkOpts.PermissionHandler = a.permissionHandler(rt, strings.TrimSpace(req.UserID))
+	sdkOpts.PermissionHandler = a.permissionHandler(rt, userID)
+	// 把 gobrave 的工具与技能注册为 opencode 的宿主工具，与内置工具共用同一套 tool-call 循环。
+	sdkOpts.Tools = a.buildHostTools()
 
 	sdkClient, err := opencodesdk.NewClient(ctx, sdkOpts)
 	if err != nil {
@@ -59,8 +64,8 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 	}
 	defer func() { _ = sdkClient.Close() }()
 
-	prompt := buildOpenCodePrompt(req)
-	if strings.TrimSpace(prompt) == "" {
+	runReq := buildRunRequest(req)
+	if strings.TrimSpace(runReq.Prompt) == "" {
 		return nil, fmt.Errorf("custom provider: empty prompt")
 	}
 
@@ -69,11 +74,7 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 	seenReasoningMessages := map[string]bool{}
 	seenAssistantMessages := map[string]bool{}
 
-	result, err := sdkClient.SendMessageStream(ctx, opencodesdk.RunRequest{
-		SessionID:    strings.TrimSpace(req.SessionID),
-		SessionTitle: "gobrave-opencode",
-		Prompt:       prompt,
-	}, func(event opencodesdk.Event) {
+	result, err := sdkClient.SendMessageStream(ctx, runReq, func(event opencodesdk.Event) {
 		if event.Message != nil {
 			ensureSeenMaps(seenToolCalls, seenToolResults, event.Message.ID)
 			emitToolEvents(ctx, rt, event.Message, seenToolCalls, seenToolResults)
@@ -273,23 +274,143 @@ func parseInt64(value string) int64 {
 	return parsed
 }
 
-func buildOpenCodePrompt(req agent.Request) string {
-	parts := make([]string, 0, len(req.Messages)+2)
-	if strings.TrimSpace(req.SystemPrompt) != "" {
-		parts = append(parts, "[system]\n"+strings.TrimSpace(req.SystemPrompt))
+// buildRunRequest 把 gobrave 请求转换为 opencode 结构化请求：
+//
+//   - SystemPrompt → RunRequest.System：走真正的 system 消息通道，不会作为 user 内容反复追加；
+//   - 历史消息     → RunRequest.History：结构化 user / assistant 消息，保留 role 结构；
+//   - 最后一条非空消息 → RunRequest.Prompt：本轮 user 输入，由 opencode 追加到会话末尾。
+//
+// 技能指令正文已由 AgentService 在 GetSystemSpromptByProfile 中注入 req.SystemPrompt，这里原样透传。
+func buildRunRequest(req agent.Request) opencodesdk.RunRequest {
+	type turn struct {
+		role    string
+		content string
 	}
+	turns := make([]turn, 0, len(req.Messages))
 	for _, msg := range req.Messages {
-		role := strings.TrimSpace(msg.Role)
-		if role == "" {
-			role = "user"
-		}
 		content := strings.TrimSpace(msg.Content)
 		if content == "" {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("[%s]\n%s", role, content))
+		turns = append(turns, turn{role: msg.Role, content: content})
 	}
-	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+
+	prompt := ""
+	if len(turns) > 0 {
+		prompt = turns[len(turns)-1].content
+		turns = turns[:len(turns)-1]
+	}
+
+	history := make([]opencodesdk.InputMessage, 0, len(turns))
+	for _, t := range turns {
+		history = append(history, opencodesdk.InputMessage{Role: toSDKRole(t.role), Content: t.content})
+	}
+
+	return opencodesdk.RunRequest{
+		SessionID:    strings.TrimSpace(req.SessionID),
+		SessionTitle: "gobrave-opencode",
+		Prompt:       prompt,
+		System:       strings.TrimSpace(req.SystemPrompt),
+		History:      history,
+	}
+}
+
+func toSDKRole(role string) opencodesdk.Role {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "assistant":
+		return opencodesdk.RoleAssistant
+	case "tool":
+		return opencodesdk.RoleTool
+	case "system":
+		return opencodesdk.RoleSystem
+	default:
+		return opencodesdk.RoleUser
+	}
+}
+
+// buildHostTools 把 gobrave 的工具与技能统一转换为 opencode 的宿主工具。
+//
+// 在 opencode 侧，工具与技能共用同一套 function calling 通道（都是 tools.BaseTool），
+// 因此两者最终合并进同一个 Tools 列表；区别只在 gobrave 侧的执行器：
+//   - 工具 → tool.Executor；
+//   - 技能 → skill.Invoker。
+//
+// 技能与工具的关键区别是携带「指令正文」（Instructions）：除暴露为可调用工具外，其正文还会
+// 由 AgentService（GetSystemSpromptByProfile）注入系统提示词，使模型即便不触发调用也能感知技能语义。
+//
+// opencode 自带完整的 tool-call 循环：模型发起调用后，opencode 会在其内部循环中调用
+// 对应 Handler，再把结果回填给模型——Provider 无需自己驱动循环。
+//
+// 注意：工具调用 / 结果的时间线事件由 opencode 记录进消息流后经 emitToolEvents 统一发出，
+// 因此这里只负责执行，不重复发事件（避免与快照事件重复落库）。
+func (a *customAgent) buildHostTools() []opencodesdk.HostTool {
+	out := make([]opencodesdk.HostTool, 0)
+
+	if a.opts.Tools != nil {
+		exec := tool.NewExecutor(a.opts.Tools)
+		for _, def := range a.opts.Tools.List() {
+			name := def.Name
+			out = append(out, hostTool(def.Name, def.Description, def.InputSchema,
+				func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
+					res := exec.Execute(ctx, tool.Call{ID: call.ID, Name: name, Arguments: json.RawMessage(call.Input)})
+					return opencodesdk.HostToolResult{Content: res.Content, IsError: res.IsError}
+				}))
+		}
+	}
+
+	if a.opts.Skills != nil {
+		inv := skill.NewInvoker(a.opts.Skills)
+		for _, def := range a.opts.Skills.List() {
+			name := def.Name
+			out = append(out, hostTool(def.Name, def.Description, def.InputSchema,
+				func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
+					res := inv.Invoke(ctx, skill.Call{ID: call.ID, Name: name, Arguments: json.RawMessage(call.Input)})
+					return opencodesdk.HostToolResult{Content: res.Content, IsError: res.IsError}
+				}))
+		}
+	}
+
+	return out
+}
+
+// hostTool 组装单个 opencode 宿主工具：拆解入参 JSON Schema 并绑定执行回调。
+func hostTool(name, description string, schema map[string]any, run func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult) opencodesdk.HostTool {
+	params, required := splitInputSchema(schema)
+	return opencodesdk.HostTool{
+		Name:        name,
+		Description: description,
+		Parameters:  params,
+		Required:    required,
+		Handler: func(ctx context.Context, call opencodesdk.HostToolCall) (opencodesdk.HostToolResult, error) {
+			return run(ctx, call), nil
+		},
+	}
+}
+
+// splitInputSchema 把 gobrave 的完整 object JSON Schema 拆分为 opencode 宿主工具所需的
+// properties 映射与 required 列表（对齐 opencode 的 tools.ToolInfo 组织结构）。
+//
+// 空 schema 返回非 nil 的空值，避免部分 provider 收到 null 属性 / null required。
+func splitInputSchema(schema map[string]any) (map[string]any, []string) {
+	params := map[string]any{}
+	required := []string{}
+	if schema == nil {
+		return params, required
+	}
+	if p, ok := schema["properties"].(map[string]any); ok {
+		params = p
+	}
+	switch r := schema["required"].(type) {
+	case []string:
+		required = r
+	case []any:
+		for _, v := range r {
+			if s, ok := v.(string); ok {
+				required = append(required, s)
+			}
+		}
+	}
+	return params, required
 }
 
 func ensureSeenMaps(

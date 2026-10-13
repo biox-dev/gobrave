@@ -3,6 +3,7 @@ package skill
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -57,6 +58,28 @@ func TestFuncAdapter(t *testing.T) {
 	}
 	if res.Content != `{"echoed":"hello"}` {
 		t.Fatalf("content = %q, want echoed hello", res.Content)
+	}
+}
+
+func TestRegistryPromptBlock(t *testing.T) {
+	reg := NewRegistryWith(newEcho())
+
+	block := reg.PromptBlock()
+	if !strings.Contains(block, "## Available skills") || !strings.Contains(block, "echo") {
+		t.Fatalf("block = %q, want skill listing", block)
+	}
+
+	// 显式选中已注册技能 -> 包含该技能。
+	if got := reg.PromptBlock("echo"); !strings.Contains(got, "echo") {
+		t.Fatalf("block(echo) = %q, want echo", got)
+	}
+
+	// 未命中 / 空注册表 -> 空。
+	if got := reg.PromptBlock("missing"); got != "" {
+		t.Fatalf("block(missing) = %q, want empty", got)
+	}
+	if got := NewRegistry().PromptBlock(); got != "" {
+		t.Fatalf("empty registry block = %q, want empty", got)
 	}
 }
 

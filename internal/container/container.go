@@ -288,6 +288,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		events agent.EventRepository,
 		mems agent.MemoryRepository,
 		profiles agent.ProfileRepository,
+		skills *skill.Registry,
 		projCtx *manager.AgentProjectContextProvider,
 		userRepo interfaces.UserRepository,
 	) *agent.AgentService {
@@ -299,6 +300,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 			Events:   events,
 			Memory:   agent.NewMemoryManager(agent.MemoryConfig{Repo: mems}), // Extractor: agent.MockMemoryExtractor(),
 			Profiles: agent.NewProfileManager(profiles),
+			Skills:   skills,
 			Project:  projCtx,
 			Policy:   agent.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
 		})

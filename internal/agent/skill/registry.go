@@ -2,6 +2,7 @@ package skill
 
 import (
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -135,4 +136,60 @@ func (r *Registry) Names() []string {
 		names = append(names, d.Name)
 	}
 	return names
+}
+
+// PromptBlock 把技能（selected 为空表示全部）的名称 / 描述 / 指令正文拼接为一个 markdown 块，
+// 供上层注入系统提示词，让模型感知可用技能及其用法（技能区别于工具的关键：携带上下文指令）。
+//
+// 仅渲染 selected 中命中注册表的技能；无匹配技能、或全部技能均无内容时返回空字符串。
+func (r *Registry) PromptBlock(selected ...string) string {
+	if r == nil {
+		return ""
+	}
+
+	var manifests []Manifest
+	if len(selected) == 0 {
+		manifests = r.Instructions()
+	} else {
+		for _, name := range selected {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			if s, ok := r.Get(name); ok {
+				manifests = append(manifests, Manifest{
+					Definition:   s.Definition(),
+					Instructions: s.Instructions(),
+				})
+			}
+		}
+		sort.Slice(manifests, func(i, j int) bool {
+			return manifests[i].Name < manifests[j].Name
+		})
+	}
+
+	var b strings.Builder
+	b.WriteString("## Available skills\n\n")
+	wrote := false
+	for _, m := range manifests {
+		if strings.TrimSpace(m.Name) == "" {
+			continue
+		}
+		wrote = true
+		b.WriteString("### ")
+		b.WriteString(m.Name)
+		if desc := strings.TrimSpace(m.Description); desc != "" {
+			b.WriteString(": ")
+			b.WriteString(desc)
+		}
+		b.WriteString("\n\n")
+		if instr := strings.TrimSpace(m.Instructions); instr != "" {
+			b.WriteString(instr)
+			b.WriteString("\n\n")
+		}
+	}
+	if !wrote {
+		return ""
+	}
+	return strings.TrimSpace(b.String())
 }

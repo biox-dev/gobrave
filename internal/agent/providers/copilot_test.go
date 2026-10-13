@@ -2,7 +2,6 @@ package providers
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/biox-dev/gobrave/internal/agent"
@@ -148,22 +147,5 @@ func TestToCopilotSkillResult(t *testing.T) {
 	fail := toCopilotSkillResult(skill.Failure(agent.ErrPermissionDenied))
 	if fail.ResultType != "failure" || fail.TextResultForLLM != agent.ErrPermissionDenied.Error() {
 		t.Fatalf("failure result = %+v", fail)
-	}
-}
-
-func TestBuildSkillInstructions(t *testing.T) {
-	reg := skill.NewRegistryWith(newEchoSkill())
-	a := &copilotAgent{opts: agent.Options{Skills: reg}}
-
-	instr := a.buildSkillInstructions()
-	if !strings.Contains(instr, "echo") || !strings.Contains(instr, "Echo the input text") {
-		t.Fatalf("instructions missing skill content: %q", instr)
-	}
-}
-
-func TestBuildSkillInstructionsNilRegistry(t *testing.T) {
-	a := &copilotAgent{opts: agent.Options{}}
-	if instr := a.buildSkillInstructions(); instr != "" {
-		t.Fatalf("instructions = %q, want empty", instr)
 	}
 }
