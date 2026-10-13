@@ -190,6 +190,14 @@ func permissionToOperation(p opencodesdk.PermissionRequest) agent.Operation {
 	if p.Description != "" {
 		meta["description"] = p.Description
 	}
+	// opencode 的 edit / write 工具会把 unified diff 放进权限请求的 params，
+	// 透传到 Operation.Metadata，使用户能在批准前先看 diff（而非批准后看 Tool Result）。
+	if diff, filePath := diffFromParams(p.Params); diff != "" {
+		meta["diff"] = diff
+		if filePath != "" {
+			meta["file_path"] = filePath
+		}
+	}
 
 	switch strings.ToLower(strings.TrimSpace(p.Action)) {
 	case "execute":
@@ -222,6 +230,28 @@ func commandFromParams(params any, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+// diffFromParams 尽力从权限参数中抽取 file_path / diff（opencode edit / write 工具）。
+//
+// gobrave 无法 import opencode 的 internal tools 包做类型断言，因此与 commandFromParams
+// 一样走 JSON 往返；字段名沿用 EditPermissionsParams / WritePermissionsParams 的 json tag。
+func diffFromParams(params any) (diff, filePath string) {
+	data, err := json.Marshal(params)
+	if err != nil {
+		return "", ""
+	}
+	var m map[string]any
+	if json.Unmarshal(data, &m) != nil {
+		return "", ""
+	}
+	if d, ok := m["diff"].(string); ok {
+		diff = d
+	}
+	if p, ok := m["file_path"].(string); ok {
+		filePath = p
+	}
+	return diff, filePath
 }
 
 func isTrue(value string) bool {
