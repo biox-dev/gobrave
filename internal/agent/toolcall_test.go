@@ -38,6 +38,10 @@ func (r *collectRuntime) WaitPermission(context.Context, int64) (agent.Permissio
 	return agent.DecisionAllow, nil
 }
 
+func (r *collectRuntime) AskUser(context.Context, string, agent.AskUserInput) (agent.AskUserAnswer, error) {
+	return agent.AskUserAnswer{}, nil
+}
+
 // denyRuntime 始终拒绝权限。
 type denyRuntime struct{}
 
@@ -47,6 +51,10 @@ func (denyRuntime) RequestPermission(context.Context, string, agent.Operation) (
 }
 func (denyRuntime) WaitPermission(context.Context, int64) (agent.PermissionDecision, error) {
 	return agent.DecisionDeny, nil
+}
+
+func (denyRuntime) AskUser(context.Context, string, agent.AskUserInput) (agent.AskUserAnswer, error) {
+	return agent.AskUserAnswer{}, nil
 }
 
 func TestToolRunnerEmitsEvents(t *testing.T) {

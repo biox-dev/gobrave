@@ -24,16 +24,17 @@ import (
 //
 // Recover 用于后端重启后重建运行态。
 type AgentService struct {
-	client   *Client
-	tasks    TaskRepository
-	perms    *PermissionManager
-	events   EventRepository
-	bus      EventBus
-	policy   PermissionPolicy
-	memory   *MemoryManager
-	project  ProjectContextProvider
-	profiles *ProfileManager
-	skills   *skill.Registry
+	client    *Client
+	tasks     TaskRepository
+	perms     *PermissionManager
+	questions *QuestionManager
+	events    EventRepository
+	bus       EventBus
+	policy    PermissionPolicy
+	memory    *MemoryManager
+	project   ProjectContextProvider
+	profiles  *ProfileManager
+	skills    *skill.Registry
 
 	mu     sync.Mutex
 	active map[int64]context.CancelFunc // taskID → 取消函数
@@ -41,16 +42,17 @@ type AgentService struct {
 
 // ServiceConfig 是 AgentService 的依赖配置。
 type ServiceConfig struct {
-	Client   *Client
-	Tasks    TaskRepository
-	Perms    *PermissionManager
-	Events   EventRepository
-	Bus      EventBus
-	Policy   PermissionPolicy
-	Memory   *MemoryManager
-	Project  ProjectContextProvider
-	Profiles *ProfileManager
-	Skills   *skill.Registry
+	Client    *Client
+	Tasks     TaskRepository
+	Perms     *PermissionManager
+	Questions *QuestionManager
+	Events    EventRepository
+	Bus       EventBus
+	Policy    PermissionPolicy
+	Memory    *MemoryManager
+	Project   ProjectContextProvider
+	Profiles  *ProfileManager
+	Skills    *skill.Registry
 }
 
 // NewService 创建 AgentService，未提供的依赖使用安全的默认值。
@@ -70,6 +72,9 @@ func NewService(cfg ServiceConfig) *AgentService {
 	if cfg.Perms == nil {
 		cfg.Perms = NewPermissionManager(NewMemoryPermissionRepository())
 	}
+	if cfg.Questions == nil {
+		cfg.Questions = NewQuestionManager(NewMemoryQuestionRepository())
+	}
 	if cfg.Memory == nil {
 		cfg.Memory = NewMemoryManager(MemoryConfig{})
 	}
@@ -77,17 +82,18 @@ func NewService(cfg ServiceConfig) *AgentService {
 		cfg.Profiles = NewProfileManager(NewMemoryProfileRepository())
 	}
 	return &AgentService{
-		client:   cfg.Client,
-		tasks:    cfg.Tasks,
-		perms:    cfg.Perms,
-		events:   cfg.Events,
-		bus:      cfg.Bus,
-		policy:   cfg.Policy,
-		memory:   cfg.Memory,
-		project:  cfg.Project,
-		profiles: cfg.Profiles,
-		skills:   cfg.Skills,
-		active:   make(map[int64]context.CancelFunc),
+		client:    cfg.Client,
+		tasks:     cfg.Tasks,
+		perms:     cfg.Perms,
+		questions: cfg.Questions,
+		events:    cfg.Events,
+		bus:       cfg.Bus,
+		policy:    cfg.Policy,
+		memory:    cfg.Memory,
+		project:   cfg.Project,
+		profiles:  cfg.Profiles,
+		skills:    cfg.Skills,
+		active:    make(map[int64]context.CancelFunc),
 	}
 }
 
@@ -322,6 +328,26 @@ func (s *AgentService) ProjectContext(ctx context.Context, userID string) (strin
 // GetPendingPermissions 查询任务当前待确认的权限请求。
 func (s *AgentService) GetPendingPermissions(ctx context.Context, taskID int64) ([]*PermissionRequest, error) {
 	return s.perms.GetPending(ctx, taskID)
+}
+
+// AnswerQuestion 提交用户对一次提问的作答（供 UI / HTTP 层调用）。
+func (s *AgentService) AnswerQuestion(ctx context.Context, id int64, answer AskUserAnswer, by string) error {
+	q, err := s.questions.Answer(ctx, id, answer, by)
+	if err != nil {
+		return err
+	}
+	s.emitEvent(ctx, q.TaskID, EventQuestionResolved, q)
+	return nil
+}
+
+// GetPendingQuestions 查询任务当前待作答的提问请求。
+func (s *AgentService) GetPendingQuestions(ctx context.Context, taskID int64) ([]*QuestionRequest, error) {
+	return s.questions.GetPending(ctx, taskID)
+}
+
+// PageQuestions 分页查询提问请求；taskID 为 0 表示全部任务，statuses 为空表示全部状态。
+func (s *AgentService) PageQuestions(ctx context.Context, offset, limit int, taskID int64, statuses ...QuestionStatus) ([]*QuestionRequest, int64, error) {
+	return s.questions.Page(ctx, offset, limit, taskID, statuses...)
 }
 
 // GetEvents 增量拉取任务事件（after 为上次收到的最大 sequence）。

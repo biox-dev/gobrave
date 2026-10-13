@@ -454,8 +454,12 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 	r.POST("/agent/permission/approve", handler.ApprovePermission)
 	r.POST("/agent/permission/deny", handler.DenyPermission)
 
+	r.GET("/agent/task/questions", handler.GetPendingQuestions)
+	r.POST("/agent/question/answer", handler.AnswerQuestion)
+
 	r.POST("/agent/task/page", handler.PageTasks)
 	r.POST("/agent/permission/page", handler.PagePermissions)
+	r.POST("/agent/question/page", handler.PageQuestions)
 	r.POST("/agent/event/page", handler.PageEvents)
 
 	r.POST("/agent/conversation/page", handler.PageConversations)

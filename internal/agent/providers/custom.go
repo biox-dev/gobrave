@@ -55,7 +55,7 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 	// 把 opencode 的工具权限请求委托给 gobrave 的 Runtime（策略 / 持久化 / UI）。
 	sdkOpts.PermissionHandler = a.permissionHandler(rt, userID)
 	// 把 gobrave 的工具注册为 opencode 的宿主工具，与内置工具共用同一套 tool-call 循环。
-	sdkOpts.Tools = a.buildHostTools()
+	sdkOpts.Tools = a.buildHostTools(rt, userID)
 
 	sdkClient, err := opencodesdk.NewClient(ctx, sdkOpts)
 	if err != nil {
@@ -337,7 +337,7 @@ func toSDKRole(role string) opencodesdk.Role {
 //
 // 注意：工具调用 / 结果的时间线事件由 opencode 记录进消息流后经 emitToolEvents 统一发出，
 // 因此这里只负责执行，不重复发事件（避免与快照事件重复落库）。
-func (a *customAgent) buildHostTools() []opencodesdk.HostTool {
+func (a *customAgent) buildHostTools(rt agent.Runtime, userID string) []opencodesdk.HostTool {
 	out := make([]opencodesdk.HostTool, 0)
 
 	if a.opts.Tools != nil {
@@ -352,7 +352,29 @@ func (a *customAgent) buildHostTools() []opencodesdk.HostTool {
 		}
 	}
 
+	// ask_user：宿主工具，阻塞等待用户在 UI 作答后把答案回填给模型。
+	out = append(out, a.askUserHostTool(rt, userID))
+
 	return out
+}
+
+// askUserHostTool 构建 ask_user 宿主工具：解析模型入参 → Runtime.AskUser 阻塞等待作答 →
+// 把答案（JSON）作为工具结果回填给模型。无 UI 时 Runtime 返回错误，转为失败结果。
+func (a *customAgent) askUserHostTool(rt agent.Runtime, userID string) opencodesdk.HostTool {
+	def := agent.AskUserToolDefinition()
+	return hostTool(def.Name, def.Description, def.InputSchema,
+		func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
+			var in agent.AskUserInput
+			if err := json.Unmarshal([]byte(call.Input), &in); err != nil {
+				return opencodesdk.HostToolResult{Content: err.Error(), IsError: true}
+			}
+			answer, err := rt.AskUser(ctx, userID, in)
+			if err != nil {
+				return opencodesdk.HostToolResult{Content: err.Error(), IsError: true}
+			}
+			content, _ := json.Marshal(answer)
+			return opencodesdk.HostToolResult{Content: string(content)}
+		})
 }
 
 // hostTool 组装单个 opencode 宿主工具：拆解入参 JSON Schema 并绑定执行回调。

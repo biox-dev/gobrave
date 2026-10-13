@@ -32,6 +32,16 @@ type PermissionRepository interface {
 	Page(ctx context.Context, offset, limit int, taskID int64, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error)
 }
 
+// QuestionRepository 持久化用户提问（AskUser）。与 PermissionRepository 同构。
+type QuestionRepository interface {
+	Create(ctx context.Context, question *QuestionRequest) error
+	Get(ctx context.Context, id int64) (*QuestionRequest, error)
+	Update(ctx context.Context, question *QuestionRequest) error
+	ListPendingByTask(ctx context.Context, taskID int64) ([]*QuestionRequest, error)
+	// Page 分页查询提问请求（按 CreatedAt 升序）；taskID 为 0 表示全部任务，statuses 为空表示全部状态。
+	Page(ctx context.Context, offset, limit int, taskID int64, statuses ...QuestionStatus) ([]*QuestionRequest, int64, error)
+}
+
 // EventRepository 持久化任务事件（带 per-task 单调递增 sequence）。
 type EventRepository interface {
 	// Append 为事件分配 sequence 并追加到任务事件流。
@@ -50,6 +60,11 @@ func NewMemoryTaskRepository() TaskRepository {
 // NewMemoryPermissionRepository 创建权限请求的内存实现。
 func NewMemoryPermissionRepository() PermissionRepository {
 	return &memoryPermissionRepository{perms: make(map[int64]*PermissionRequest)}
+}
+
+// NewMemoryQuestionRepository 创建提问请求的内存实现。
+func NewMemoryQuestionRepository() QuestionRepository {
+	return &memoryQuestionRepository{questions: make(map[int64]*QuestionRequest)}
 }
 
 // NewMemoryEventRepository 创建事件流的内存实现。
@@ -209,6 +224,82 @@ func (r *memoryPermissionRepository) Page(_ context.Context, offset, limit int, 
 	return out, total, nil
 }
 
+// ---- Question ----
+
+type memoryQuestionRepository struct {
+	mu        sync.RWMutex
+	questions map[int64]*QuestionRequest
+}
+
+func (r *memoryQuestionRepository) Create(_ context.Context, q *QuestionRequest) error {
+	if q == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.questions[q.ID] = cloneQuestion(q)
+	return nil
+}
+
+func (r *memoryQuestionRepository) Get(_ context.Context, id int64) (*QuestionRequest, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	q, ok := r.questions[id]
+	if !ok {
+		return nil, ErrQuestionNotFound
+	}
+	return cloneQuestion(q), nil
+}
+
+func (r *memoryQuestionRepository) Update(_ context.Context, q *QuestionRequest) error {
+	if q == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.questions[q.ID] = cloneQuestion(q)
+	return nil
+}
+
+func (r *memoryQuestionRepository) ListPendingByTask(_ context.Context, taskID int64) ([]*QuestionRequest, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*QuestionRequest, 0)
+	for _, q := range r.questions {
+		if q.TaskID == taskID && q.Status == QuestionPending {
+			out = append(out, cloneQuestion(q))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (r *memoryQuestionRepository) Page(_ context.Context, offset, limit int, taskID int64, statuses ...QuestionStatus) ([]*QuestionRequest, int64, error) {
+	want := make(map[QuestionStatus]bool, len(statuses))
+	for _, s := range statuses {
+		want[s] = true
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	all := make([]*QuestionRequest, 0)
+	for _, q := range r.questions {
+		if taskID != 0 && q.TaskID != taskID {
+			continue
+		}
+		if len(want) > 0 && !want[q.Status] {
+			continue
+		}
+		all = append(all, q)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.Before(all[j].CreatedAt) })
+	total := int64(len(all))
+	out := make([]*QuestionRequest, 0, limit)
+	for _, q := range sliceRange(all, offset, limit) {
+		out = append(out, cloneQuestion(q))
+	}
+	return out, total, nil
+}
+
 // ---- Event ----
 
 type memoryEventRepository struct {
@@ -317,6 +408,28 @@ func clonePermission(p *PermissionRequest) *PermissionRequest {
 	}
 	if p.ResolvedBy != nil {
 		v := *p.ResolvedBy
+		c.ResolvedBy = &v
+	}
+	return &c
+}
+
+func cloneQuestion(q *QuestionRequest) *QuestionRequest {
+	if q == nil {
+		return nil
+	}
+	c := *q
+	c.Questions = append([]Question(nil), q.Questions...)
+	if q.Answer != nil {
+		answer := *q.Answer
+		answer.Answers = append([]QuestionAnswer(nil), q.Answer.Answers...)
+		c.Answer = &answer
+	}
+	if q.ResolvedAt != nil {
+		v := *q.ResolvedAt
+		c.ResolvedAt = &v
+	}
+	if q.ResolvedBy != nil {
+		v := *q.ResolvedBy
 		c.ResolvedBy = &v
 	}
 	return &c

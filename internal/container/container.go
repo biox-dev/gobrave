@@ -279,6 +279,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(db *gorm.DB) agent.PermissionRepository {
 		return agent.NewGormPermissionRepository(db)
 	}))
+	must(container.Provide(func(db *gorm.DB) agent.QuestionRepository {
+		return agent.NewGormQuestionRepository(db)
+	}))
 	must(container.Provide(func(db *gorm.DB) agent.EventRepository {
 		return agent.NewGormEventRepository(db)
 	}))
@@ -299,6 +302,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		client *agent.Client,
 		tasks agent.TaskRepository,
 		perms agent.PermissionRepository,
+		questions agent.QuestionRepository,
 		events agent.EventRepository,
 		mems agent.MemoryRepository,
 		profiles agent.ProfileRepository,
@@ -308,15 +312,16 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	) *agent.AgentService {
 
 		return agent.NewService(agent.ServiceConfig{
-			Client:   client,
-			Tasks:    tasks,
-			Perms:    agent.NewPermissionManager(perms),
-			Events:   events,
-			Memory:   agent.NewMemoryManager(agent.MemoryConfig{Repo: mems}), // Extractor: agent.MockMemoryExtractor(),
-			Profiles: agent.NewProfileManager(profiles),
-			Skills:   skills,
-			Project:  projCtx,
-			Policy:   agent.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
+			Client:    client,
+			Tasks:     tasks,
+			Perms:     agent.NewPermissionManager(perms),
+			Questions: agent.NewQuestionManager(questions),
+			Events:    events,
+			Memory:    agent.NewMemoryManager(agent.MemoryConfig{Repo: mems}), // Extractor: agent.MockMemoryExtractor(),
+			Profiles:  agent.NewProfileManager(profiles),
+			Skills:    skills,
+			Project:   projCtx,
+			Policy:    agent.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
 		})
 	}))
 	// Provide ConversationService：多轮对话编排层（复用 AgentService 的任务状态机）。
@@ -794,6 +799,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.AISummary{},
 		&agent.Task{},
 		&agent.PermissionRequest{},
+		&agent.QuestionRequest{},
 		&agent.AgentEvent{},
 		&agent.Conversation{},
 		&agent.ConversationMessage{},

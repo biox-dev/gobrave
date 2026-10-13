@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -51,6 +52,16 @@ func (a *mockAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runt
 	if demoToolCall(req) {
 		content = fmt.Sprintf("%s\n%s", content, a.runMockToolCall(ctx, req, rt))
 	}
+
+	// 演示提问链路：模拟模型通过 ask_user 向用户提问并等待作答。
+	if demoAskUser(req) {
+		answer, err := requestDemoQuestion(ctx, rt, req)
+		if err != nil {
+			return nil, err
+		}
+		body, _ := json.Marshal(answer)
+		content = fmt.Sprintf("%s\n[ask_user=%s]", content, body)
+	}
 	return &agent.Result{Content: content}, nil
 }
 
@@ -96,6 +107,20 @@ func (a *mockAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runt
 		}
 	}
 
+	// 演示提问链路：模拟模型通过 ask_user 向用户提问并阻塞等待作答。
+	if demoAskUser(req) {
+		answer, err := requestDemoQuestion(ctx, rt, req)
+		if err != nil {
+			return nil, err
+		}
+		body, _ := json.Marshal(answer)
+		note := fmt.Sprintf("\n[ask_user=%s]", body)
+		sb.WriteString(note)
+		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: note}); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
 		return nil, err
 	}
@@ -105,6 +130,37 @@ func (a *mockAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runt
 // demoPermission 判断本次请求是否触发权限演示。
 func demoPermission(req agent.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(req.Env["MOCK_PERMISSION_DEMO"]), "true")
+}
+
+// demoAskUser 判断本次请求是否触发提问（ask_user）演示。
+func demoAskUser(req agent.Request) bool {
+	return strings.EqualFold(strings.TrimSpace(req.Env["MOCK_ASK_USER_DEMO"]), "true")
+}
+
+// requestDemoQuestion 构造一个示例问题，并通过 Runtime.AskUser 阻塞等待用户作答。
+//
+// 覆盖单选 + 自定义输入两种交互，供 mock 链路联调 / 演示使用。
+func requestDemoQuestion(ctx context.Context, rt agent.Runtime, req agent.Request) (agent.AskUserAnswer, error) {
+	input := agent.AskUserInput{
+		RequestID:   "ask_001",
+		Title:       "选择分析类型",
+		Description: "请确认你希望进行哪种差异分析。",
+		Questions: []agent.Question{
+			{
+				ID:       "analysis_type",
+				Type:     agent.QuestionTypeSingleChoice,
+				Title:    "你要分析什么？",
+				Required: true,
+				Options: []agent.QuestionOption{
+					{Label: "差异表达分析", Value: "differential_expression", Description: "适用于 RNA-seq 基因表达数据"},
+					{Label: "差异丰度分析", Value: "differential_abundance", Description: "适用于微生物或其他特征丰度数据"},
+					{Label: "差异代谢物分析", Value: "differential_metabolites", Description: "适用于代谢组数据"},
+				},
+				AllowCustom: true,
+			},
+		},
+	}
+	return rt.AskUser(ctx, req.UserID, input)
 }
 
 // requestDemoPermission 构造一个 write 操作并通过 Runtime 请求权限。

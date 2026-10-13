@@ -1,0 +1,168 @@
+package agent
+
+import (
+	"context"
+	"sync"
+	"time"
+)
+
+// QuestionManager 负责用户提问（AskUser）的创建、持久化与作答流转。
+//
+// 与 PermissionManager 完全同构，是“数据库才是状态源”的又一实现：
+//   - Create：把提问写入 Repository（pending），等待 UI 作答；
+//   - Answer：更新 Repository 状态并唤醒正在阻塞等待的 Agent；
+//   - Wait：Agent 侧阻塞等待作答（内存 channel 只做运行时同步，真正状态在 Repository）。
+//
+// 事件广播由上层 AgentService 负责（单一事件出口），QuestionManager 只维护状态。
+type QuestionManager struct {
+	repo QuestionRepository
+
+	mu      sync.Mutex
+	waiters map[int64]chan AskUserAnswer // questionID → 作答通道
+}
+
+// NewQuestionManager 创建提问管理器。
+func NewQuestionManager(repo QuestionRepository) *QuestionManager {
+	return &QuestionManager{
+		repo:    repo,
+		waiters: make(map[int64]chan AskUserAnswer),
+	}
+}
+
+// Create 创建一个 pending 状态的提问请求并返回。
+func (m *QuestionManager) Create(ctx context.Context, taskID int64, sessionID string, input AskUserInput) (*QuestionRequest, error) {
+	q := NewQuestionRequest(taskID, sessionID, input)
+	if err := m.repo.Create(ctx, q); err != nil {
+		return nil, err
+	}
+	return q, nil
+}
+
+// Get 按 ID 查询提问请求。
+func (m *QuestionManager) Get(ctx context.Context, id int64) (*QuestionRequest, error) {
+	return m.repo.Get(ctx, id)
+}
+
+// GetPending 返回某任务当前全部待作答的提问请求。
+func (m *QuestionManager) GetPending(ctx context.Context, taskID int64) ([]*QuestionRequest, error) {
+	return m.repo.ListPendingByTask(ctx, taskID)
+}
+
+// Page 分页查询提问请求；taskID 为 0 表示全部任务，statuses 为空表示全部状态。
+func (m *QuestionManager) Page(ctx context.Context, offset, limit int, taskID int64, statuses ...QuestionStatus) ([]*QuestionRequest, int64, error) {
+	return m.repo.Page(ctx, offset, limit, taskID, statuses...)
+}
+
+// Answer 提交用户作答，返回更新后的提问请求；并唤醒正在等待的 Agent。
+func (m *QuestionManager) Answer(ctx context.Context, id int64, answer AskUserAnswer, by string) (*QuestionRequest, error) {
+	m.mu.Lock()
+	q, err := m.repo.Get(ctx, id)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	if q.Status != QuestionPending {
+		m.mu.Unlock()
+		return nil, ErrQuestionNotPending
+	}
+	if !q.TransitionTo(QuestionAnswered) {
+		m.mu.Unlock()
+		return nil, ErrInvalidQuestionTransition
+	}
+	now := time.Now()
+	q.Answer = &answer
+	q.ResolvedAt = &now
+	q.ResolvedBy = &by
+	if err := m.repo.Update(ctx, q); err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+
+	ch, ok := m.waiters[id]
+	if ok {
+		delete(m.waiters, id)
+	}
+	m.mu.Unlock()
+
+	// 唤醒阻塞中的 Agent（非阻塞投递，避免无人等待时卡住）。
+	if ok {
+		ch <- answer
+	}
+	return q, nil
+}
+
+// Cancel 取消一个待作答的提问（任务被取消等）；被取消的等待返回 ErrQuestionCanceled。
+func (m *QuestionManager) Cancel(ctx context.Context, id int64) (*QuestionRequest, error) {
+	m.mu.Lock()
+	q, err := m.repo.Get(ctx, id)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	if q.Status != QuestionPending {
+		m.mu.Unlock()
+		return nil, ErrQuestionNotPending
+	}
+	if !q.TransitionTo(QuestionCanceled) {
+		m.mu.Unlock()
+		return nil, ErrInvalidQuestionTransition
+	}
+	if err := m.repo.Update(ctx, q); err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	if ch, ok := m.waiters[id]; ok {
+		delete(m.waiters, id)
+		close(ch)
+	}
+	m.mu.Unlock()
+	return q, nil
+}
+
+// Wait 阻塞等待提问的作答。
+//
+// 返回：
+//   - AskUserAnswer：用户已作答（快路径可直接从 Repository 读取）；
+//   - error：ctx 取消 / 提问被取消等。
+func (m *QuestionManager) Wait(ctx context.Context, id int64) (AskUserAnswer, error) {
+	m.mu.Lock()
+	q, err := m.repo.Get(ctx, id)
+	if err != nil {
+		m.mu.Unlock()
+		return AskUserAnswer{}, err
+	}
+
+	// 快路径：请求已被作答（例如后端重启后恢复，或 answer 先于 wait 到达）。
+	switch q.Status {
+	case QuestionAnswered:
+		m.mu.Unlock()
+		if q.Answer != nil {
+			return *q.Answer, nil
+		}
+		return AskUserAnswer{}, nil
+	case QuestionCanceled:
+		m.mu.Unlock()
+		return AskUserAnswer{}, ErrQuestionCanceled
+	case QuestionExpired:
+		m.mu.Unlock()
+		return AskUserAnswer{}, ErrQuestionExpired
+	}
+
+	// 慢路径：pending，注册 waiter 后阻塞。
+	ch := make(chan AskUserAnswer, 1)
+	m.waiters[id] = ch
+	m.mu.Unlock()
+
+	select {
+	case answer, ok := <-ch:
+		if !ok {
+			return AskUserAnswer{}, ErrQuestionCanceled
+		}
+		return answer, nil
+	case <-ctx.Done():
+		m.mu.Lock()
+		delete(m.waiters, id)
+		m.mu.Unlock()
+		return AskUserAnswer{}, ctx.Err()
+	}
+}

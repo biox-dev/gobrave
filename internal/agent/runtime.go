@@ -46,6 +46,11 @@ func (r *standaloneRuntime) WaitPermission(context.Context, int64) (PermissionDe
 	return "", ErrNoPermissionResolver
 }
 
+// AskUser 在无 UI 的独立调用中无法向用户提问，直接返回错误，由工具层转为失败结果。
+func (r *standaloneRuntime) AskUser(context.Context, string, AskUserInput) (AskUserAnswer, error) {
+	return AskUserAnswer{}, ErrNoUserInputResolver
+}
+
 // taskRuntime 是绑定到具体任务的 Runtime：事件持久化 + 广播，权限持久化 + 阻塞等待。
 type taskRuntime struct {
 	svc     *AgentService
@@ -132,4 +137,35 @@ func (r *taskRuntime) emitPermissionResult(ctx context.Context, content string) 
 
 func (r *taskRuntime) WaitPermission(ctx context.Context, permissionID int64) (PermissionDecision, error) {
 	return r.svc.perms.Wait(ctx, permissionID)
+}
+
+// AskUser 创建提问请求（pending）→ 任务置为等待 → 广播事件 → 阻塞等待用户作答。
+//
+// 与 RequestPermission 同构：持久化 pending 提问后，Agent 阻塞在 QuestionManager.Wait，
+// 用户在 UI 作答 → AnswerQuestion 更新 DB 并唤醒 Agent → 这里返回答案继续执行。
+func (r *taskRuntime) AskUser(ctx context.Context, _ string, input AskUserInput) (AskUserAnswer, error) {
+	task, err := r.svc.tasks.Get(ctx, r.taskID)
+	if err != nil {
+		return AskUserAnswer{}, err
+	}
+	question, err := r.svc.questions.Create(ctx, r.taskID, task.SessionID, input)
+	if err != nil {
+		return AskUserAnswer{}, err
+	}
+
+	// 任务进入等待状态，并广播提问事件（UI 据此渲染提问卡片）。
+	if err := r.svc.transitionTask(ctx, task, TaskWaitingPermission, ""); err != nil {
+		return AskUserAnswer{}, err
+	}
+	r.svc.emitEvent(ctx, r.taskID, EventQuestionCreated, question)
+
+	// 阻塞等待用户作答。
+	answer, err := r.svc.questions.Wait(ctx, question.ID)
+	if err != nil {
+		return AskUserAnswer{}, err
+	}
+
+	// 恢复任务为 running（后续结果由 run 决定终态）。
+	_ = r.svc.transitionTask(ctx, task, TaskRunning, "")
+	return answer, nil
 }

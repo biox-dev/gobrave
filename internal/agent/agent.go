@@ -218,6 +218,9 @@ type Runtime interface {
 	RequestPermission(ctx context.Context, userID string, operation Operation) (PermissionDecision, error)
 	// WaitPermission 等待一个已存在权限请求（permissionID）的决策。
 	WaitPermission(ctx context.Context, permissionID int64) (PermissionDecision, error)
+	// AskUser 向用户提问并阻塞等待作答（提问卡片由 UI 渲染）。
+	// userID 用于提问归属；无 UI 的独立调用返回 ErrNoUserInputResolver。
+	AskUser(ctx context.Context, userID string, input AskUserInput) (AskUserAnswer, error)
 }
 
 // Agent 是统一 Agent 调用接口。

@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -289,31 +290,56 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 //	ToolInvocation → agent.ToolCall → 输出 tool_call 事件 → 执行 → tool.Result
 //	  → 输出 tool_result 事件 → copilot.ToolResult → 回传给模型
 func (a *copilotAgent) buildTools(rt agent.Runtime, userID string) []copilot.Tool {
-	if a.opts.Tools == nil {
-		return nil
+	out := make([]copilot.Tool, 0)
+
+	if a.opts.Tools != nil {
+		runner := agent.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt).SetUserID(userID)
+		defs := a.opts.Tools.List()
+		for _, def := range defs {
+			name := def.Name
+			out = append(out, copilot.Tool{
+				Name:        def.Name,
+				Description: def.Description,
+				Parameters:  def.InputSchema,
+				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
+					res := runner.Run(inv.TraceContext, agent.ToolCall{
+						ID:        inv.ToolCallID,
+						Name:      name,
+						Arguments: inv.Arguments,
+					})
+					return toCopilotToolResult(res), nil
+				},
+			})
+		}
 	}
 
-	runner := agent.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt).SetUserID(userID)
-	defs := a.opts.Tools.List()
-
-	out := make([]copilot.Tool, 0, len(defs))
-	for _, def := range defs {
-		name := def.Name
-		out = append(out, copilot.Tool{
-			Name:        def.Name,
-			Description: def.Description,
-			Parameters:  def.InputSchema,
-			Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
-				res := runner.Run(inv.TraceContext, agent.ToolCall{
-					ID:        inv.ToolCallID,
-					Name:      name,
-					Arguments: inv.Arguments,
-				})
-				return toCopilotToolResult(res), nil
-			},
-		})
-	}
+	// ask_user：内置提问工具，阻塞等待用户在 UI 作答后把答案回填给模型。
+	out = append(out, a.askUserTool(rt, userID))
 	return out
+}
+
+// askUserTool 构建 ask_user 工具：解析模型入参 → Runtime.AskUser 阻塞等待作答 →
+// 把答案（JSON）作为工具结果回填给模型。无 UI 时 Runtime 返回错误，转为失败结果。
+func (a *copilotAgent) askUserTool(rt agent.Runtime, userID string) copilot.Tool {
+	def := agent.AskUserToolDefinition()
+	return copilot.Tool{
+		Name:        def.Name,
+		Description: def.Description,
+		Parameters:  def.InputSchema,
+		Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
+			var in agent.AskUserInput
+			raw, _ := json.Marshal(inv.Arguments)
+			if err := json.Unmarshal(raw, &in); err != nil {
+				return copilot.ToolResult{TextResultForLLM: err.Error(), ResultType: "failure", Error: err.Error()}, nil
+			}
+			answer, err := rt.AskUser(inv.TraceContext, userID, in)
+			if err != nil {
+				return copilot.ToolResult{TextResultForLLM: err.Error(), ResultType: "failure", Error: err.Error()}, nil
+			}
+			content, _ := json.Marshal(answer)
+			return copilot.ToolResult{TextResultForLLM: string(content), ResultType: "success"}, nil
+		},
+	}
 }
 
 // toCopilotToolResult 把框架的 tool.Result 转换为 Copilot 的 ToolResult。

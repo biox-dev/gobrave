@@ -103,6 +103,24 @@ type agentPermissionPageRequest struct {
 	Statuses []agent.PermissionStatus `json:"statuses"`
 }
 
+// agentQuestionsQuery 是查询任务待作答提问的查询参数。
+type agentQuestionsQuery struct {
+	TaskID string `form:"task_id" binding:"required"`
+}
+
+// questionAnswerBody 是用户作答请求体。
+type questionAnswerBody struct {
+	ID     string              `json:"id" binding:"required"`
+	Answer agent.AskUserAnswer `json:"answer"`
+}
+
+// agentQuestionPageRequest 是提问分页查询请求；task_id 为空表示全部任务。
+type agentQuestionPageRequest struct {
+	types.Pagination
+	TaskID   string                 `json:"task_id"`
+	Statuses []agent.QuestionStatus `json:"statuses"`
+}
+
 type agentEventPageRequest struct {
 	types.Pagination
 	TaskID string `json:"task_id"`
@@ -1310,6 +1328,118 @@ func (h *AgentHandler) resolvePermission(c *gin.Context, approve bool) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
 }
 
+// GetPendingQuestions godoc
+// @Summary      获取任务待作答提问
+// @Tags         Agent
+// @Produce      json
+// @Param        task_id  query     string  true  "任务 ID"
+// @Success      200      {array}   agent.QuestionRequest
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/task/questions [get]
+func (h *AgentHandler) GetPendingQuestions(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var q agentQuestionsQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	taskID, err := parseAgentID(q.TaskID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid task_id").WithDetails(err.Error()))
+		return
+	}
+	questions, err := h.svc.GetPendingQuestions(c.Request.Context(), taskID)
+	if err != nil {
+		handleAgentError(c, err, "failed to get pending questions")
+		return
+	}
+	c.JSON(http.StatusOK, questions)
+}
+
+// AnswerQuestion godoc
+// @Summary      提交用户对提问的作答
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.questionAnswerBody  true  "作答内容"
+// @Success      200      {object}  gin.H
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/question/answer [post]
+func (h *AgentHandler) AnswerQuestion(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body questionAnswerBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	id, err := parseAgentID(body.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
+	if err := h.svc.AnswerQuestion(c.Request.Context(), id, body.Answer, userID); err != nil {
+		handleAgentError(c, err, "failed to answer question")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
+}
+
+// PageQuestions godoc
+// @Summary      分页查询提问请求
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.agentQuestionPageRequest  true  "分页请求参数"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/question/page [post]
+func (h *AgentHandler) PageQuestions(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req agentQuestionPageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	// task_id 可选：为空表示查询全部任务（taskID == 0）。
+	taskID, err := parseOptionalAgentID(req.TaskID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid task_id").WithDetails(err.Error()))
+		return
+	}
+	items, total, err := h.svc.PageQuestions(c.Request.Context(), req.Offset(), req.Limit(), taskID, req.Statuses...)
+	if err != nil {
+		handleAgentError(c, err, "failed to page agent questions")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":      items,
+		"total":     total,
+		"page":      req.GetPage(),
+		"page_size": req.GetPageSize(),
+	})
+}
+
 // CancelTask godoc
 // @Summary      取消 Agent 任务
 // @Tags         Agent
@@ -1414,10 +1544,13 @@ func getCurrentUser(c *gin.Context) (*types.User, bool) {
 func handleAgentError(c *gin.Context, err error, internalMsg string) {
 	switch {
 	case stderrs.Is(err, agent.ErrTaskNotFound), stderrs.Is(err, agent.ErrPermissionNotFound),
+		stderrs.Is(err, agent.ErrQuestionNotFound),
 		stderrs.Is(err, agent.ErrConversationNotFound), stderrs.Is(err, agent.ErrMemoryNotFound):
 		c.Error(errors.NewNotFoundError("record not found"))
 	case stderrs.Is(err, agent.ErrPermissionNotPending),
+		stderrs.Is(err, agent.ErrQuestionNotPending),
 		stderrs.Is(err, agent.ErrInvalidPermissionTransition),
+		stderrs.Is(err, agent.ErrInvalidQuestionTransition),
 		stderrs.Is(err, agent.ErrTaskAlreadyRunning):
 		c.Error(errors.NewConflictError(err.Error()))
 	default:

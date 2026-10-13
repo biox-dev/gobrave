@@ -20,7 +20,7 @@ func newGormTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&Task{}, &PermissionRequest{}, &AgentEvent{}, &Conversation{}, &ConversationMessage{}, &Memory{}); err != nil {
+	if err := db.AutoMigrate(&Task{}, &PermissionRequest{}, &QuestionRequest{}, &AgentEvent{}, &Conversation{}, &ConversationMessage{}, &Memory{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return db
