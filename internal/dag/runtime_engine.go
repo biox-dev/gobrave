@@ -26,7 +26,7 @@ type RuntimeSnapshot struct {
 
 // NodeRequestParser 把节点的 request_param（原始输入，例如
 // `{"handle": {"files": "<id>"}}`）依据脚本表单解析成结构化配方，与静态分析保存时
-// 的解析结果一致（handler 侧复用 buildParseAnalysisResult 实现）。
+// 的解析结果一致（handler 侧复用 analysisform.BuildParseAnalysisResult 实现）。
 //
 // 由上层实现并通过 SetRequestParser 注入；未注入（nil）时跳过解析，resolved_inputs
 // 保留原始值。

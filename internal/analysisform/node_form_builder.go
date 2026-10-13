@@ -1,4 +1,4 @@
-package handler
+package analysisform
 
 import (
 	"encoding/json"
@@ -6,9 +6,9 @@ import (
 	"github.com/biox-dev/gobrave/internal/types"
 )
 
-// buildNodeFormJSON 根据 DAG 节点定义与 io_schema 构造节点表单。
+// BuildNodeFormJSON 根据 DAG 节点定义与 io_schema 构造节点表单。
 // io_schema 由调用方从脚本目录的 io_schema.json 读取后传入（不再来自 script 字段）。
-func buildNodeFormJSON(dagDefinitionRaw string, ioSchema map[string]interface{}, script *types.Script, scriptID string) ([]interface{}, error) {
+func BuildNodeFormJSON(dagDefinitionRaw string, ioSchema map[string]interface{}, script *types.Script, scriptID string) ([]interface{}, error) {
 	formJSON := make([]interface{}, 0)
 
 	nodeInDag := make(map[string]interface{})

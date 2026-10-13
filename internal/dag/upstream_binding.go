@@ -105,7 +105,7 @@ func ApplySelectAssayBindings(ctx context.Context, parser NodeRequestParser, tar
 	changed := false
 	for _, binding := range bindings {
 		inputCfg := asMap(patterns[binding.TargetHandle])
-		if strings.ToLower(strings.TrimSpace(asString(inputCfg["type"]))) != "collectedassayselect" {
+		if strings.TrimSpace(asString(inputCfg["type"])) != "CollectedAssaySelect" {
 			continue
 		}
 		if binding.FileID == "" {
@@ -203,7 +203,7 @@ func parseNodeRequestParam(ctx context.Context, parser NodeRequestParser, target
 }
 
 // overwriteResolvedInputs 用解析结果按 key 覆盖 resolved_inputs。只覆盖目标节点声明的
-// 输入句柄，避免 buildParseAnalysisResult 顺带产生的 analysis_name / colors / groups 等
+// 输入句柄，避免 analysisform.BuildParseAnalysisResult 顺带产生的 analysis_name / colors / groups 等
 // 非输入字段污染节点输入。
 func overwriteResolvedInputs(resolvedInputs map[string]any, target *types.AnalysisNode, parsed map[string]any) {
 	if len(parsed) == 0 || target == nil {

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 
+	"github.com/biox-dev/gobrave/internal/analysisform"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
@@ -10,7 +11,7 @@ import (
 // analysisRequestParser 实现 dagruntime.NodeRequestParser：把 DAG 节点运行期重写后的
 // request_param（形如 `{"handle": {"files": "<id>"}}`）依据脚本表单解析成结构化配方。
 //
-// 它复用静态分析保存时使用的 buildParseAnalysisResult，因此运行期节点与静态分析节点
+// 它复用静态分析保存时使用的 analysisform.BuildParseAnalysisResult，因此运行期节点与静态分析节点
 // 在 resolved_inputs 上得到的是同一套字段（assay 行、accept_formats 命中的文件路径等）。
 type analysisRequestParser struct {
 	dataService     interfaces.DataService
@@ -43,5 +44,5 @@ func (p *analysisRequestParser) ParseRequestParam(
 		return nil, nil
 	}
 
-	return buildParseAnalysisResult(ctx, p.dataService, requestParam, formJSONWrap)
+	return analysisform.BuildParseAnalysisResult(ctx, p.dataService, requestParam, formJSONWrap)
 }

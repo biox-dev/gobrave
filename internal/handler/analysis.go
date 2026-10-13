@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/compiler"
 	"github.com/biox-dev/gobrave/internal/config"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
@@ -252,7 +253,7 @@ func (h *AnalysisHandler) ParseParams(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to get workflow visualization").WithDetails(err.Error()))
 		return
 	}
-	parseAnalysisResult, err := buildParseAnalysisResult(c.Request.Context(), h.dataService, requestParam, formJSONWrap)
+	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, requestParam, formJSONWrap)
 	// 将requestParam+formJSONWrap写入json文件，方便调试
 	if true {
 		baseDir := h.config.Storage.BaseDir
@@ -385,7 +386,7 @@ func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 		return
 	}
 
-	parseAnalysisResult, err := buildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
+	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
 		return
@@ -513,7 +514,7 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		return
 	}
 
-	parseAnalysisResult, err := buildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
+	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
 		return
@@ -1569,7 +1570,7 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 		}
 		formJSON, analysisResult, err := buildScriptFormData(c.Request.Context(), h.workflowService, h.dataService, script.ID, project.ProjectID)
 
-		// formJSON, err := buildNodeFormJSON(dagDefinition, ioSchema, scriptItem, scriptItem.ScriptID)
+		// formJSON, err := analysisform.BuildNodeFormJSON(dagDefinition, ioSchema, scriptItem, scriptItem.ScriptID)
 		if err != nil {
 			c.Error(errors.NewInternalServerError("failed to build node form json").WithDetails(err.Error()))
 			return

@@ -379,7 +379,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		dig.As(new(prepare.NodeRuntimePreparer)),
 	))
 	// 节点 request_param 解析器：复用 handler 侧静态分析的解析逻辑
-	// (buildParseAnalysisResult)，把运行期 propagateOutputs 重写后的原始输入
+	// (analysisform.BuildParseAnalysisResult)，把运行期 propagateOutputs 重写后的原始输入
 	// （如 SelectAssay 的 {"files": "<id>"}）还原成结构化 resolved_inputs。
 	// 以 dag.NodeRequestParser 接口注入 NodeDispatcher / NodeCompletionCoordinator。
 	must(container.Provide(handler.NewNodeRequestParser))

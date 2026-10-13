@@ -1,4 +1,4 @@
-package handler
+package analysisform
 
 import (
 	"context"
@@ -15,7 +15,8 @@ import (
 	"gorm.io/gorm"
 )
 
-func buildParseAnalysisResult(ctx context.Context, dataService interfaces.DataService, requestParam map[string]interface{}, formJSONWrap []interface{}) (map[string]interface{}, error) {
+// BuildParseAnalysisResult 把 request_param 依据表单定义解析成结构化配方。
+func BuildParseAnalysisResult(ctx context.Context, dataService interfaces.DataService, requestParam map[string]interface{}, formJSONWrap []interface{}) (map[string]interface{}, error) {
 	queryNameDict := getQueryDBField(formJSONWrap)
 	queryNames := make([]string, 0, len(queryNameDict))
 	for _, item := range formJSONWrap {
