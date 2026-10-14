@@ -62,7 +62,7 @@ func (p *AgentProjectContextProvider) ProjectContext(ctx context.Context, userID
 		b.WriteString(analysisContext)
 	}
 
-	literatures, err := p.projects.ListLiteratureByProjectID(ctx, project.ProjectID)
+	literatures, err := p.projects.ListLiteratureByProjectID(ctx, project.ID)
 	if err != nil {
 		return "", err
 	}
@@ -86,8 +86,8 @@ func (p *AgentProjectContextProvider) formatLiteratureContext(project *types.Pro
 
 	var b strings.Builder
 	b.WriteString("## 当前项目关联的参考文献 (literature)\n")
-	fmt.Fprintf(&b, "项目「%s」(project_id=%s) 下关联的参考文献如下，可作为论文写作与背景资料的参考：\n",
-		project.ProjectName, project.ProjectID)
+	fmt.Fprintf(&b, "项目「%s」(project_id=%d) 下关联的参考文献如下，可作为论文写作与背景资料的参考：\n",
+		project.ProjectName, project.ID)
 	for _, lit := range literatures {
 		if lit == nil {
 			continue
@@ -109,7 +109,7 @@ func (p *AgentProjectContextProvider) formatLiteratureContext(project *types.Pro
 }
 
 func (p *AgentProjectContextProvider) literatureFilePath(lit *types.Literature, baseDir string) string {
-	if lit == nil || strings.TrimSpace(baseDir) == "" || strings.TrimSpace(lit.OwnerProjectID) == "" {
+	if lit == nil || strings.TrimSpace(baseDir) == "" || lit.OwnerProjectID == 0 {
 		return ""
 	}
 	filename := strings.TrimSpace(lit.Filename)
@@ -138,8 +138,8 @@ func formatAnalysisNodesContext(project *types.Project, nodes []*types.AnalysisN
 
 	var b strings.Builder
 	b.WriteString("## 当前项目已完成的独立分析节点 (analysis nodes)\n")
-	fmt.Fprintf(&b, "项目「%s」(project_id=%s) 下已完成（status=%s）的分析节点如下，可作为了解项目进展与可用分析结果的参考：\n",
-		project.ProjectName, project.ProjectID, analysisNodeDoneStatus)
+	fmt.Fprintf(&b, "项目「%s」(project_id=%d) 下已完成（status=%s）的分析节点如下，可作为了解项目进展与可用分析结果的参考：\n",
+		project.ProjectName, project.ID, analysisNodeDoneStatus)
 	for _, n := range nodes {
 		if n == nil {
 			continue

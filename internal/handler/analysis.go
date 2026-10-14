@@ -535,11 +535,11 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to get active project").WithDetails(err.Error()))
 		return
 	}
-	if activeProject == nil || strings.TrimSpace(activeProject.ProjectID) == "" {
+	if activeProject == nil || activeProject.ID == 0 {
 		c.Error(errors.NewValidationError("active project is required"))
 		return
 	}
-	projectID := strings.TrimSpace(activeProject.ProjectID)
+	projectID := activeProject.ID
 
 	// analysisID := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_id"]))
 	// if analysisID == "" || analysisID == "<nil>" {
@@ -899,7 +899,7 @@ type standaloneNodeArtifacts struct {
 }
 
 func (h *AnalysisHandler) buildStandaloneNodeArtifactPaths(
-	projectID string,
+	projectID int64,
 	scriptID int64,
 	analysisNodeID int64,
 ) *standaloneNodeArtifacts {
@@ -1418,7 +1418,7 @@ func (h *AnalysisHandler) EditParamsV2(c *gin.Context) {
 		h.workflowService,
 		h.dataService,
 		analysisItem.WorkflowID,
-		project.ProjectID,
+		project.ID,
 	)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
@@ -1568,7 +1568,7 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 		if err != nil {
 			c.Error(errors.NewNotFoundError("project not found"))
 		}
-		formJSON, analysisResult, err := buildScriptFormData(c.Request.Context(), h.workflowService, h.dataService, script.ID, project.ProjectID)
+		formJSON, analysisResult, err := buildScriptFormData(c.Request.Context(), h.workflowService, h.dataService, script.ID, project.ID)
 
 		// formJSON, err := analysisform.BuildNodeFormJSON(dagDefinition, ioSchema, scriptItem, scriptItem.ScriptID)
 		if err != nil {
@@ -1603,7 +1603,7 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 		if err != nil {
 			c.Error(errors.NewNotFoundError("project not found"))
 		}
-		formJSON, analysisResult, err := buildScriptFormData(c.Request.Context(), h.workflowService, h.dataService, script.ID, project.ProjectID)
+		formJSON, analysisResult, err := buildScriptFormData(c.Request.Context(), h.workflowService, h.dataService, script.ID, project.ID)
 
 		// formJSON, err = h.workflowService.GetFormJSONByScriptID(c.Request.Context(), analysisNode.ScriptID)
 		if err != nil {

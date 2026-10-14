@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,9 +35,8 @@ func NewDataService(cfg *config.Config, dataRepo interfaces.DataRepository) inte
 	return &dataService{dataRepo: dataRepo, baseDir: baseDir}
 }
 
-func (s *dataService) CreateDataset(ctx context.Context, dataset *types.Dataset, projectID string) error {
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
+func (s *dataService) CreateDataset(ctx context.Context, dataset *types.Dataset, projectID int64) error {
+	if projectID == 0 {
 		return gorm.ErrRecordNotFound
 	}
 
@@ -72,9 +72,8 @@ func (s *dataService) CreateDataset(ctx context.Context, dataset *types.Dataset,
 // EnsureDatasetDir validates that the dataset exists and creates the dataset
 // workspace directory (utils.GetDatasetDir) when it is missing. It returns the
 // dataset directory path so callers can use it directly.
-func (s *dataService) EnsureDatasetDir(ctx context.Context, datasetID int64, projectID string) (string, error) {
-	projectID = strings.TrimSpace(projectID)
-	if datasetID == 0 || projectID == "" {
+func (s *dataService) EnsureDatasetDir(ctx context.Context, datasetID int64, projectID int64) (string, error) {
+	if datasetID == 0 || projectID == 0 {
 		return "", gorm.ErrRecordNotFound
 	}
 
@@ -98,7 +97,7 @@ func (s *dataService) EnsureDatasetDir(ctx context.Context, datasetID int64, pro
 
 // ensureDatasetDir creates utils.GetDatasetDir(baseDir, projectID, datasetID)
 // when it is missing. A blank baseDir disables directory provisioning.
-func (s *dataService) ensureDatasetDir(projectID string, datasetID int64) error {
+func (s *dataService) ensureDatasetDir(projectID int64, datasetID int64) error {
 	if strings.TrimSpace(s.baseDir) == "" {
 		return nil
 	}
@@ -144,11 +143,11 @@ func (s *dataService) ListDataset(ctx context.Context) ([]*types.Dataset, error)
 	return s.dataRepo.ListDataset(ctx)
 }
 
-func (s *dataService) ListDatasetByProjectID(ctx context.Context, projectID string) ([]*types.Dataset, error) {
+func (s *dataService) ListDatasetByProjectID(ctx context.Context, projectID int64) ([]*types.Dataset, error) {
 	return s.dataRepo.ListDatasetByProjectID(ctx, projectID)
 }
 
-func (s *dataService) PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID string) (*types.PageResult, error) {
+func (s *dataService) PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID int64) (*types.PageResult, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -161,7 +160,7 @@ func (s *dataService) PageDatasetByProjectID(ctx context.Context, pagination *ty
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-func (s *dataService) PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID string, roles []string) (*types.PageResult, error) {
+func (s *dataService) PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, roles []string) (*types.PageResult, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -300,15 +299,15 @@ func (s *dataService) ListFile(ctx context.Context) ([]*types.File, error) {
 	return s.dataRepo.ListFile(ctx)
 }
 
-func (s *dataService) ListFileByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.FileWithDatasetInfo, error) {
+func (s *dataService) ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error) {
 	return s.dataRepo.ListFileByProjectID(ctx, projectID, roles)
 }
 
-func (s *dataService) ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error) {
+func (s *dataService) ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID int64) ([]*types.FileWithDatasetInfo, error) {
 	return s.dataRepo.ListFileByProjectIDViaAnalysisNode(ctx, projectID)
 }
 
-func (s *dataService) PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error) {
+func (s *dataService) PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID int64) (*types.PageResult, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -333,7 +332,7 @@ func (s *dataService) ListFileByAnalysisNodeID(ctx context.Context, analysisNode
 	return s.dataRepo.ListFileByAnalysisNodeID(ctx, analysisNodeID)
 }
 
-func (s *dataService) ListFileByProjectIDGroupByRole(ctx context.Context, projectID string) ([]*types.FileByProjectRoleGroup, error) {
+func (s *dataService) ListFileByProjectIDGroupByRole(ctx context.Context, projectID int64) ([]*types.FileByProjectRoleGroup, error) {
 	items, err := s.dataRepo.ListFileByProjectID(ctx, projectID, nil)
 	if err != nil {
 		return nil, err
@@ -394,7 +393,7 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 	if baseDir == "" {
 		return nil, fmt.Errorf("storage base dir is required")
 	}
-	if strings.TrimSpace(req.ProjectID) == "" {
+	if req.ProjectID == 0 {
 		return nil, fmt.Errorf("project id is required")
 	}
 
@@ -410,7 +409,7 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 	source := strings.TrimSpace(req.Source)
 	var candidatePath string
 	if source == "data" {
-		candidatePath = filepath.Join(absBaseDir, source, req.ProjectID, strings.TrimLeft(relativePath, string(filepath.Separator)))
+		candidatePath = filepath.Join(absBaseDir, source, strconv.FormatInt(req.ProjectID, 10), strings.TrimLeft(relativePath, string(filepath.Separator)))
 	} else if source == "analysis" {
 		candidatePath = relativePath
 	} else {
@@ -539,7 +538,7 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 func (s *dataService) UploadFileToDataset(
 	ctx context.Context,
 	datasetID int64,
-	projectID string,
+	projectID int64,
 	role string,
 	fileName string,
 	src io.Reader,
@@ -548,8 +547,7 @@ func (s *dataService) UploadFileToDataset(
 		return nil, gorm.ErrRecordNotFound
 	}
 
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
+	if projectID == 0 {
 		return nil, fmt.Errorf("project id is required")
 	}
 
@@ -659,7 +657,7 @@ func (s *dataService) ListAssay(ctx context.Context) ([]*types.Assay, error) {
 	return s.dataRepo.ListAssay(ctx)
 }
 
-func (s *dataService) PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error) {
+func (s *dataService) PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) (*types.PageResult, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -672,7 +670,7 @@ func (s *dataService) PageAssayByProjectID(ctx context.Context, pagination *type
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-func (s *dataService) ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error) {
+func (s *dataService) ListAssayByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.AssayWithDatasetInfo, error) {
 	return s.dataRepo.ListAssayByProjectID(ctx, projectID, roles)
 }
 
@@ -839,9 +837,9 @@ func (s *dataService) ImportAssayTSV(ctx context.Context, req *types.ImportAssay
 
 	// Organize the dataset workspace so imported files have a home even though
 	// the TSV paths themselves are referenced in place (not copied).
-	if projectID := strings.TrimSpace(req.ProjectID); projectID != "" && strings.TrimSpace(s.baseDir) != "" {
+	if req.ProjectID != 0 && strings.TrimSpace(s.baseDir) != "" {
 		if absBaseDir, err := utils.ResolveExternalPath(s.baseDir); err == nil && absBaseDir != "" {
-			if err := os.MkdirAll(utils.GetDatasetDir(absBaseDir, projectID, req.DatasetID), 0755); err != nil {
+			if err := os.MkdirAll(utils.GetDatasetDir(absBaseDir, req.ProjectID, req.DatasetID), 0755); err != nil {
 				return nil, fmt.Errorf("failed to create dataset directory: %w", err)
 			}
 		}

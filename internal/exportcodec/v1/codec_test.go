@@ -84,7 +84,7 @@ func TestWriteScriptFilesStampsVersion(t *testing.T) {
 // workflow.json 落盘 + 引用的脚本快照到 <workflowDir>/script/<scriptID>，且不带脚本自身的 .git。
 func TestWriteWorkflowFilesSnapshotsScripts(t *testing.T) {
 	baseDir := t.TempDir()
-	projectID := "p-1"
+	projectID := int64(1)
 	scriptID := "s-1"
 
 	scriptDir := utils.GetScriptFileDir(baseDir, projectID, scriptID)

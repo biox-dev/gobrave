@@ -104,14 +104,14 @@ func (h *WorkflowHandler) GetScriptReadme(c *gin.Context) {
 	}
 
 	baseDir := h.storageBaseDir()
-	content, err := utils.ReadScriptReadme(baseDir, project.ProjectID, script.ScriptID)
+	content, err := utils.ReadScriptReadme(baseDir, project.ID, script.ScriptID)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to read script readme").WithDetails(err.Error()))
 		return
 	}
 
 	c.JSON(http.StatusOK, readmeResponse{
-		Path:    utils.ScriptReadmePath(baseDir, project.ProjectID, script.ScriptID),
+		Path:    utils.ScriptReadmePath(baseDir, project.ID, script.ScriptID),
 		Content: string(content),
 	})
 }
@@ -155,12 +155,12 @@ func (h *WorkflowHandler) SaveScriptReadme(c *gin.Context) {
 	}
 
 	baseDir := h.storageBaseDir()
-	if err := utils.WriteScriptReadme(baseDir, project.ProjectID, script.ScriptID, req.Content); err != nil {
+	if err := utils.WriteScriptReadme(baseDir, project.ID, script.ScriptID, req.Content); err != nil {
 		c.Error(errors.NewInternalServerError("failed to write script readme").WithDetails(err.Error()))
 		return
 	}
 
-	scriptDir := utils.GetScriptFileDir(baseDir, project.ProjectID, script.ScriptID)
+	scriptDir := utils.GetScriptFileDir(baseDir, project.ID, script.ScriptID)
 	// if err := h.commitDirReadme(scriptDir, readmeCommitMessage(req.CommitMessage, "script", script.ScriptID)); err != nil {
 	// 	c.Error(errors.NewInternalServerError("failed to commit script readme").WithDetails(err.Error()))
 	// 	return
@@ -203,14 +203,14 @@ func (h *WorkflowHandler) GetWorkflowReadme(c *gin.Context) {
 	}
 
 	baseDir := h.storageBaseDir()
-	content, err := utils.ReadWorkflowReadme(baseDir, project.ProjectID, workflow.WorkflowID)
+	content, err := utils.ReadWorkflowReadme(baseDir, project.ID, workflow.WorkflowID)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to read workflow readme").WithDetails(err.Error()))
 		return
 	}
 
 	c.JSON(http.StatusOK, readmeResponse{
-		Path:    utils.WorkflowReadmePath(baseDir, project.ProjectID, workflow.WorkflowID),
+		Path:    utils.WorkflowReadmePath(baseDir, project.ID, workflow.WorkflowID),
 		Content: string(content),
 	})
 }
@@ -254,12 +254,12 @@ func (h *WorkflowHandler) SaveWorkflowReadme(c *gin.Context) {
 	}
 
 	baseDir := h.storageBaseDir()
-	if err := utils.WriteWorkflowReadme(baseDir, project.ProjectID, workflow.WorkflowID, req.Content); err != nil {
+	if err := utils.WriteWorkflowReadme(baseDir, project.ID, workflow.WorkflowID, req.Content); err != nil {
 		c.Error(errors.NewInternalServerError("failed to write workflow readme").WithDetails(err.Error()))
 		return
 	}
 
-	workflowDir := utils.GetWorkflowFileDir(baseDir, project.ProjectID, workflow.WorkflowID)
+	workflowDir := utils.GetWorkflowFileDir(baseDir, project.ID, workflow.WorkflowID)
 	// if err := h.commitDirReadme(workflowDir, readmeCommitMessage(req.CommitMessage, "workflow", workflow.WorkflowID)); err != nil {
 	// 	c.Error(errors.NewInternalServerError("failed to commit workflow readme").WithDetails(err.Error()))
 	// 	return

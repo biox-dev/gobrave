@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -13,8 +12,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/gin-gonic/gin"
 )
-
-var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // RegisterProjectDocsRoute registers the project docs entry route.
 //
@@ -48,8 +45,8 @@ func RegisterProjectDocsRoute(r *gin.Engine, cfg *config.Config, projectService 
 			return "", http.StatusNotFound, false
 		}
 
-		projectID := strings.TrimSpace(report.ProjectID)
-		if projectID == "" || !projectIDPattern.MatchString(projectID) {
+		projectID := report.ProjectID
+		if projectID == 0 {
 			return "", http.StatusBadRequest, false
 		}
 

@@ -87,7 +87,7 @@ func (h *WorkflowHandler) SaveScriptFiles(c *gin.Context) {
 		return
 	}
 
-	// 脚本目录用 project.project_id（字符串）推导，不能用 script.ProjectID（int64 外键）。
+	// 脚本目录按项目主键组织，不能用 script.ProjectID（int64 外键）之外的字符串。
 	project, err := h.projectService.GetProjectByID(c.Request.Context(), script.ProjectID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
@@ -109,7 +109,7 @@ func (h *WorkflowHandler) SaveScriptFiles(c *gin.Context) {
 		return
 	}
 
-	scriptDir := utils.GetScriptFileDir(baseDir, project.ProjectID, script.ScriptID)
+	scriptDir := utils.GetScriptFileDir(baseDir, project.ID, script.ScriptID)
 	if _, err := codec.WriteCommitScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
 		ScriptPK:      script.ID,
 		ScriptDir:     scriptDir,
@@ -202,10 +202,10 @@ func (h *WorkflowHandler) SaveWorkflowFiles(c *gin.Context) {
 		return
 	}
 
-	workflowDir := utils.GetWorkflowFileDir(baseDir, project.ProjectID, workflow.WorkflowID)
+	workflowDir := utils.GetWorkflowFileDir(baseDir, project.ID, workflow.WorkflowID)
 	if _, err := codec.WriteCommitWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
 		WorkflowPK:    workflow.ID,
-		ProjectID:     project.ProjectID,
+		ProjectID:     project.ID,
 		BaseDir:       baseDir,
 		WorkflowDir:   workflowDir,
 		CommitMessage: commitMessage,

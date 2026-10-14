@@ -13,7 +13,7 @@ package types
 type ImportAssayTSVRequest struct {
 	DatasetID int64  `json:"dataset_id,string" binding:"required"`
 	Content   string `json:"content" binding:"required"`
-	ProjectID string `json:"-"`
+	ProjectID int64  `json:"-"`
 }
 
 // ImportAssayTSVResult summarises one import run: how many rows were processed

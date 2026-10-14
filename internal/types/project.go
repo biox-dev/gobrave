@@ -15,7 +15,6 @@ import (
 type Project struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 	// ID           uint           `json:"id" gorm:"primaryKey;autoIncrement"`
-	ProjectID    string         `json:"project_id" gorm:"type:varchar(255);uniqueIndex;not null"`
 	ProjectName  string         `json:"project_name" gorm:"type:varchar(255)"`
 	MetadataForm string         `json:"metadata_form" gorm:"type:text"`
 	Research     string         `json:"research" gorm:"type:text"`
@@ -51,9 +50,9 @@ type ProjectListItem struct {
 type UserProject struct {
 	ID     uint   `json:"id" gorm:"primaryKey;autoIncrement"`
 	UserID string `json:"user_id" gorm:"type:varchar(36);not null;index:idx_user_project_user;uniqueIndex:idx_user_project_unique,priority:1"`
-	// ProjectID int64  `json:"project_id,string" gorm:"column:project_id;type:bigint"`
-	ProjectID string `json:"project_id" gorm:"type:varchar(255);not null;index:idx_user_project_project;uniqueIndex:idx_user_project_unique,priority:2"`
-	IsActive  bool   `json:"is_active" gorm:"default:false"`
+	// ProjectID 指向 t_project.id。
+	ProjectID int64 `json:"project_id,string" gorm:"column:project_id;type:bigint;not null;index:idx_user_project_project;uniqueIndex:idx_user_project_unique,priority:2"`
+	IsActive  bool  `json:"is_active" gorm:"default:false"`
 
 	// ShareCode is generated when the owner enables project sharing. Other users
 	// can use it to look up the project and gain access.
@@ -75,7 +74,7 @@ const DefaultProjectReportFilename = "output.md"
 // 报告的内容由 ProjectReportItem 列表按顺序拼接而成。
 type ProjectReport struct {
 	ID        int64     `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-	ProjectID string    `json:"project_id" gorm:"type:varchar(255);not null;index"`
+	ProjectID int64     `json:"project_id,string" gorm:"type:bigint;not null;index"`
 	Title     string    `json:"title" gorm:"type:varchar(255)"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

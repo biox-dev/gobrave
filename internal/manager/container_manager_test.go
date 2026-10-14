@@ -18,7 +18,7 @@ type mockContainerRepo struct {
 	definitions map[int64]*types.ContainerTemplateDefinition
 	templates   map[int64]*types.ContainerTemplate
 	sessions    map[int64]*types.AppSession
-	projects    map[string]*types.Project
+	projects    map[int64]*types.Project
 	instances   map[int64]*types.ContainerInstance
 	events      []*types.ContainerEvent
 	outbox      []*types.OutboxEvent
@@ -32,7 +32,7 @@ func newMockContainerRepo() *mockContainerRepo {
 		definitions: map[int64]*types.ContainerTemplateDefinition{},
 		templates:   map[int64]*types.ContainerTemplate{},
 		sessions:    map[int64]*types.AppSession{},
-		projects:    map[string]*types.Project{},
+		projects:    map[int64]*types.Project{},
 		instances:   map[int64]*types.ContainerInstance{},
 		events:      make([]*types.ContainerEvent, 0),
 		outbox:      make([]*types.OutboxEvent, 0),
@@ -252,8 +252,8 @@ func (m *mockContainerRepo) GetAppSessionByID(ctx context.Context, id int64) (*t
 	return item, nil
 }
 
-func (m *mockContainerRepo) GetProjectByProjectID(ctx context.Context, projectID string) (*types.Project, error) {
-	item, ok := m.projects[projectID]
+func (m *mockContainerRepo) GetProjectByID(ctx context.Context, id int64) (*types.Project, error) {
+	item, ok := m.projects[id]
 	if !ok {
 		return nil, errors.New("project not found")
 	}
@@ -634,7 +634,7 @@ func newTestManagerWithWorker(repo *mockContainerRepo, rt *dockerMockRuntime) (*
 	mgr := NewContainerManager(repo, nil, nil, nil, reg, nil, NewDefaultContainerRuntimeResolver(), nil, nil)
 	// The worker performs the create transition through the manager, so it must be
 	// given the same one instead of a nil dependency.
-	worker := NewContainerCreateWorker(repo, nil, nil, nil, reg, NewDefaultContainerRuntimeResolver(), mgr, nil)
+	worker := NewContainerCreateWorker(repo, repo, nil, nil, reg, NewDefaultContainerRuntimeResolver(), mgr, nil)
 	return mgr, worker
 }
 
@@ -872,9 +872,9 @@ func TestContainerManager_CreateByTemplate_AppSessionMergesProjectVolumes(t *tes
 		Mounts:  datatypes.JSON([]byte(`[{"source":"/template/src","target":"/template/dst","mode":"ro"}]`)),
 	}
 	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: "session-user", ProjectID: 002}
-	repo.projects["session-project"] = &types.Project{
-		ProjectID: "session-project",
-		Mounts:    datatypes.JSON([]byte(`[{"source":"/project/src","target":"/project/dst","mode":"rw"}]`)),
+	repo.projects[2] = &types.Project{
+		ID:     2,
+		Mounts: datatypes.JSON([]byte(`[{"source":"/project/src","target":"/project/dst","mode":"rw"}]`)),
 	}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-11"}

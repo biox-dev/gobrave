@@ -35,7 +35,7 @@ func NewProjectHandler(projectService interfaces.ProjectService, cfg *config.Con
 // ProjectListItem godoc
 type projectListItem struct {
 	ID           int64       `json:"id,string"`
-	ProjectID    string      `json:"project_id"`
+	ProjectID    int64       `json:"project_id,string"`
 	ProjectName  string      `json:"project_name"`
 	MetadataForm interface{} `json:"metadata_form"`
 	Research     string      `json:"research"`
@@ -43,6 +43,21 @@ type projectListItem struct {
 	Description  string      `json:"description"`
 	ShareCode    string      `json:"share_code"`
 	ShareEnabled bool        `json:"share_enabled"`
+}
+
+// newProjectListItem 把 Project 映射为对外 DTO：project_id 与主键同值。
+func newProjectListItem(p *types.Project, metadata interface{}, shareCode string, shareEnabled bool) projectListItem {
+	return projectListItem{
+		ID:           p.ID,
+		ProjectID:    p.ID,
+		ProjectName:  p.ProjectName,
+		MetadataForm: metadata,
+		Research:     p.Research,
+		Parameter:    p.Parameter,
+		Description:  p.Description,
+		ShareCode:    shareCode,
+		ShareEnabled: shareEnabled,
+	}
 }
 
 // ListProject godoc
@@ -72,17 +87,7 @@ func (h *ProjectHandler) ListProject(c *gin.Context) {
 	result := make([]projectListItem, 0, len(projects))
 	for _, p := range projects {
 		metadata := parseMetadataForm(p.MetadataForm)
-		result = append(result, projectListItem{
-			ID:           p.ID,
-			ProjectID:    p.ProjectID,
-			ProjectName:  p.ProjectName,
-			MetadataForm: metadata,
-			Research:     p.Research,
-			Parameter:    p.Parameter,
-			Description:  p.Description,
-			ShareCode:    p.ShareCode,
-			ShareEnabled: p.ShareEnabled,
-		})
+		result = append(result, newProjectListItem(&p.Project, metadata, p.ShareCode, p.ShareEnabled))
 	}
 
 	c.JSON(http.StatusOK, result)
@@ -117,15 +122,7 @@ func (h *ProjectHandler) GetActiveProject(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, projectListItem{
-		ID:           project.ID,
-		ProjectID:    project.ProjectID,
-		ProjectName:  project.ProjectName,
-		MetadataForm: parseMetadataForm(project.MetadataForm),
-		Research:     project.Research,
-		Parameter:    project.Parameter,
-		Description:  project.Description,
-	})
+	c.JSON(http.StatusOK, newProjectListItem(project, parseMetadataForm(project.MetadataForm), "", false))
 }
 
 // addUserProjectRequest is the request body for AddUserProject.
@@ -218,21 +215,13 @@ func (h *ProjectHandler) CreateProject(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, projectListItem{
-		ID:           created.ID,
-		ProjectID:    created.ProjectID,
-		ProjectName:  created.ProjectName,
-		MetadataForm: parseMetadataForm(created.MetadataForm),
-		Research:     created.Research,
-		Parameter:    created.Parameter,
-		Description:  created.Description,
-	})
+	c.JSON(http.StatusOK, newProjectListItem(created, parseMetadataForm(created.MetadataForm), "", false))
 }
 
 // updateProjectSharingRequest is the request body for UpdateProjectSharing.
 type updateProjectSharingRequest struct {
-	ProjectID string `json:"project_id" binding:"required"`
-	Enabled   bool   `json:"enabled"`
+	ProjectID int64 `json:"project_id,string" binding:"required"`
+	Enabled   bool  `json:"enabled"`
 }
 
 // UpdateProjectSharing godoc
@@ -279,7 +268,7 @@ func (h *ProjectHandler) UpdateProjectSharing(c *gin.Context) {
 // addProjectToUserRequest is the request body for AddProjectToUser.
 type addProjectToUserRequest struct {
 	UserID    string `json:"user_id" binding:"required"`
-	ProjectID string `json:"project_id" binding:"required"`
+	ProjectID int64  `json:"project_id,string" binding:"required"`
 }
 
 // AddProjectToUser godoc
@@ -313,7 +302,7 @@ func (h *ProjectHandler) AddProjectToUser(c *gin.Context) {
 }
 
 type activateProjectRequest struct {
-	ProjectID string `json:"project_id" binding:"required"`
+	ProjectID int64 `json:"project_id,string" binding:"required"`
 }
 
 // ActivateProject godoc
@@ -357,7 +346,7 @@ func (h *ProjectHandler) ActivateProject(c *gin.Context) {
 }
 
 type deleteUserProjectRequest struct {
-	ProjectID string `json:"project_id" binding:"required"`
+	ProjectID int64 `json:"project_id,string" binding:"required"`
 }
 
 // DeleteUserProject godoc
@@ -404,7 +393,7 @@ func (h *ProjectHandler) DeleteUserProject(c *gin.Context) {
 }
 
 type addProjectReportRequest struct {
-	ProjectID string `json:"project_id" binding:"required"`
+	ProjectID int64  `json:"project_id,string" binding:"required"`
 	Title     string `json:"title" binding:"required"`
 }
 
@@ -455,7 +444,7 @@ func (h *ProjectHandler) AddProjectReport(c *gin.Context) {
 
 type updateProjectReportRequest struct {
 	ID        int64  `json:"id,string" binding:"required"`
-	ProjectID string `json:"project_id" binding:"required"`
+	ProjectID int64  `json:"project_id,string" binding:"required"`
 	Title     string `json:"title" binding:"required"`
 }
 
@@ -553,7 +542,7 @@ type projectReportDetailRequest struct {
 
 type projectReportListItem struct {
 	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
+	ProjectID int64  `json:"project_id,string"`
 	Title     string `json:"title"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
@@ -561,7 +550,7 @@ type projectReportListItem struct {
 
 type projectReportDetailItem struct {
 	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id"`
+	ProjectID int64     `json:"project_id,string"`
 	Title     string    `json:"title"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -596,7 +585,7 @@ func (h *ProjectHandler) ListProjectReport(c *gin.Context) {
 		return
 	}
 
-	reports, err := h.projectService.ListProjectReportByProjectID(ctx, userID, project.ProjectID)
+	reports, err := h.projectService.ListProjectReportByProjectID(ctx, userID, project.ID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("active project is not bound to current user"))
@@ -662,7 +651,7 @@ func (h *ProjectHandler) PageProjectReport(c *gin.Context) {
 		return
 	}
 
-	reports, total, err := h.projectService.PageProjectReportByProjectID(ctx, userID, project.ProjectID, &req.Pagination)
+	reports, total, err := h.projectService.PageProjectReportByProjectID(ctx, userID, project.ID, &req.Pagination)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("active project is not bound to current user"))
@@ -688,7 +677,7 @@ func (h *ProjectHandler) PageProjectReport(c *gin.Context) {
 		"total":      total,
 		"page":       req.GetPage(),
 		"page_size":  req.GetPageSize(),
-		"project_id": project.ProjectID,
+		"project_id": project.ID,
 	})
 }
 
@@ -1084,7 +1073,7 @@ type literatureDetailRequest struct {
 
 type literatureListItem struct {
 	ID             string `json:"id"`
-	OwnerProjectID string `json:"owner_project_id"`
+	OwnerProjectID int64  `json:"owner_project_id,string"`
 	Title          string `json:"title"`
 	Source         string `json:"source"`
 	Filename       string `json:"filename"`
@@ -1094,7 +1083,7 @@ type literatureListItem struct {
 
 type literatureDetailItem struct {
 	ID             string    `json:"id"`
-	OwnerProjectID string    `json:"owner_project_id"`
+	OwnerProjectID int64     `json:"owner_project_id,string"`
 	Title          string    `json:"title"`
 	Content        string    `json:"content"`
 	ContentSource  string    `json:"content_source"`
@@ -1271,7 +1260,7 @@ func (h *ProjectHandler) PageLiterature(c *gin.Context) {
 		"total":      total,
 		"page":       req.GetPage(),
 		"page_size":  req.GetPageSize(),
-		"project_id": project.ProjectID,
+		"project_id": project.ID,
 	})
 }
 

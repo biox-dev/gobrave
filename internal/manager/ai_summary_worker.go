@@ -145,13 +145,12 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 		return fmt.Errorf("agent run task: %w", err)
 	}
 
-	// 摘要正文落盘到 GetAISummaryFile（data/<projectCode>/AiSummary/<summaryId>/summary.md）。
-	// summary.ProjectID 是数值主键，需换成存储目录使用的字符串标识（t_project.project_id）。
-	projectCode := ResolveProjectCode(ctx, w.projectRepo, summary.ProjectID)
-	if projectCode == "" {
-		return fmt.Errorf("resolve project code failed, project_id=%d", summary.ProjectID)
+	// 摘要正文落盘到 GetAISummaryFile（data/<projectId>/AiSummary/<summaryId>/summary.md）。
+	resolvedProjectID := ResolveProjectID(ctx, w.projectRepo, summary.ProjectID)
+	if resolvedProjectID == 0 {
+		return fmt.Errorf("resolve project failed, project_id=%d", summary.ProjectID)
 	}
-	if err := utils.WriteAISummaryFile(w.storageBaseDir(), projectCode, summary.ID, result.Content); err != nil {
+	if err := utils.WriteAISummaryFile(w.storageBaseDir(), resolvedProjectID, summary.ID, result.Content); err != nil {
 		return fmt.Errorf("write summary file: %w", err)
 	}
 
@@ -185,10 +184,10 @@ func (w *AISummaryWorker) markFailed(ctx context.Context, summaryID int64, err e
 		logger.Warnf(ctx, "[AISummaryWorker] resolve project id for failed summary failed, summary_id=%d", summary.ID)
 	} else {
 		summary.ProjectID = projectID
-		projectCode := ResolveProjectCode(ctx, w.projectRepo, projectID)
-		if projectCode == "" {
-			logger.Warnf(ctx, "[AISummaryWorker] resolve project code for failed summary failed, summary_id=%d", summary.ID)
-		} else if werr := utils.WriteAISummaryFile(w.storageBaseDir(), projectCode, summary.ID, err.Error()); werr != nil {
+		resolvedProjectID := ResolveProjectID(ctx, w.projectRepo, projectID)
+		if resolvedProjectID == 0 {
+			logger.Warnf(ctx, "[AISummaryWorker] resolve project for failed summary failed, summary_id=%d", summary.ID)
+		} else if werr := utils.WriteAISummaryFile(w.storageBaseDir(), resolvedProjectID, summary.ID, err.Error()); werr != nil {
 			logger.Errorf(ctx, "[AISummaryWorker] write failed summary file failed, summary_id=%d err=%v", summary.ID, werr)
 		}
 	}

@@ -55,7 +55,7 @@ func (r *dataRepository) ListDataset(ctx context.Context) ([]*types.Dataset, err
 // ListDatasetByProjectID returns every dataset bound to the project through
 // go_project_dataset, newest first. It is the unpaginated counterpart of
 // PageDatasetByProjectID used by pickers.
-func (r *dataRepository) ListDatasetByProjectID(ctx context.Context, projectID string) ([]*types.Dataset, error) {
+func (r *dataRepository) ListDatasetByProjectID(ctx context.Context, projectID int64) ([]*types.Dataset, error) {
 	items := make([]*types.Dataset, 0)
 	err := r.db.WithContext(ctx).
 		Table("go_dataset AS dataset").
@@ -71,7 +71,7 @@ func (r *dataRepository) ListDatasetByProjectID(ctx context.Context, projectID s
 	return items, nil
 }
 
-func (r *dataRepository) PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID string) ([]*types.Dataset, int64, error) {
+func (r *dataRepository) PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID int64) ([]*types.Dataset, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -303,7 +303,7 @@ func (r *dataRepository) ListFileByAnalysisNodeID(ctx context.Context, analysisN
 	return items, nil
 }
 
-func (r *dataRepository) PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID string, roles []string) ([]*types.FileWithDatasetInfo, int64, error) {
+func (r *dataRepository) PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -368,7 +368,7 @@ func (r *dataRepository) PageFileByProjectID(ctx context.Context, pagination *ty
 	return items, total, nil
 }
 
-func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.FileWithDatasetInfo, error) {
+func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error) {
 	items := make([]*types.FileWithDatasetInfo, 0)
 	query := r.db.WithContext(ctx).
 		Table("go_project_dataset AS pd").
@@ -413,7 +413,7 @@ func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID stri
 // dataset-bound, so dataset_id/dataset_name stay empty; role is the file's own
 // go_file.role (the role its output_patterns entry declared, defaulted to
 // "DEFAULT" on write), and the caller groups them by it.
-func (r *dataRepository) ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error) {
+func (r *dataRepository) ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID int64) ([]*types.FileWithDatasetInfo, error) {
 	items := make([]*types.FileWithDatasetInfo, 0)
 	err := r.db.WithContext(ctx).
 		Table("analysis_nodes AS an").
@@ -447,7 +447,7 @@ func (r *dataRepository) ListFileByProjectIDViaAnalysisNode(ctx context.Context,
 // ListFileByProjectIDViaAnalysisNode. The total is the number of distinct files
 // produced by the project's analysis nodes (no JOIN fan-out, since a file has a
 // single analysis_node_id).
-func (r *dataRepository) PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.FileWithDatasetInfo, int64, error) {
+func (r *dataRepository) PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.FileWithDatasetInfo, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -596,7 +596,7 @@ const assayWithDatasetSelect = `
 // assayByProjectBase builds the query resolving a project's assays through the
 // project's datasets: go_project_dataset -> go_dataset_assay -> go_assay. A
 // dataset binds directly to the assay, and files follow the assay.
-func (r *dataRepository) assayByProjectBase(ctx context.Context, projectID string) *gorm.DB {
+func (r *dataRepository) assayByProjectBase(ctx context.Context, projectID int64) *gorm.DB {
 	return r.db.WithContext(ctx).
 		Table("go_project_dataset AS pd").
 		Select(assayWithDatasetSelect).
@@ -606,7 +606,7 @@ func (r *dataRepository) assayByProjectBase(ctx context.Context, projectID strin
 		Where("pd.project_id = ?", projectID)
 }
 
-func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithDatasetInfo, int64, error) {
+func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.AssayWithDatasetInfo, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -644,7 +644,7 @@ func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *t
 // project's datasets. When roles is non-empty the query filters on
 // go_assay.role; an empty roles slice adds no role condition at all, so every
 // assay of the project is returned.
-func (r *dataRepository) ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error) {
+func (r *dataRepository) ListAssayByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.AssayWithDatasetInfo, error) {
 	items := make([]*types.AssayWithDatasetInfo, 0)
 	query := r.assayByProjectBase(ctx, projectID)
 
@@ -704,9 +704,9 @@ func (r *dataRepository) ListDatasetAssay(ctx context.Context) ([]*types.Dataset
 	return items, nil
 }
 
-func (r *dataRepository) ExistsProjectByID(ctx context.Context, id string) (bool, error) {
+func (r *dataRepository) ExistsProjectByID(ctx context.Context, id int64) (bool, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&types.Project{}).Where("project_id = ?", id).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&types.Project{}).Where("id = ?", id).Count(&count).Error
 	return count > 0, err
 }
 

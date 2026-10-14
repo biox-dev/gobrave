@@ -54,7 +54,7 @@ func (h *AISummaryEventHandler) Handle(evt event.Event) {
 		return
 	}
 
-	userIDs, err := h.listProjectUserIDs(ctx, project.ProjectID)
+	userIDs, err := h.listProjectUserIDs(ctx, project.ID)
 	if err != nil || len(userIDs) == 0 {
 		return
 	}
@@ -112,7 +112,7 @@ func (h *AISummaryEventHandler) resolveProjectID(ctx context.Context, ownerType 
 	return 0, nil
 }
 
-func (h *AISummaryEventHandler) listProjectUserIDs(ctx context.Context, projectID string) ([]string, error) {
+func (h *AISummaryEventHandler) listProjectUserIDs(ctx context.Context, projectID int64) ([]string, error) {
 	rows := make([]string, 0)
 	err := h.db.WithContext(ctx).
 		Model(&types.UserProject{}).

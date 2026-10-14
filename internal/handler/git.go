@@ -116,7 +116,7 @@ func (h *GitHandler) resolveScriptTarget(c *gin.Context, scriptID int64) (*gitCo
 	return &gitComponentTarget{
 		Entity:   "script",
 		ID:       script.ScriptID,
-		LocalDir: utils.GetScriptFileDir(h.storageBaseDir(), project.ProjectID, script.ScriptID),
+		LocalDir: utils.GetScriptFileDir(h.storageBaseDir(), project.ID, script.ScriptID),
 		StoreDir: storeDir,
 	}, nil
 }
@@ -147,7 +147,7 @@ func (h *GitHandler) resolveWorkflowTarget(c *gin.Context, workflowID int64) (*g
 	return &gitComponentTarget{
 		Entity:   "workflow",
 		ID:       workflow.WorkflowID,
-		LocalDir: utils.GetWorkflowFileDir(h.storageBaseDir(), project.ProjectID, workflow.WorkflowID),
+		LocalDir: utils.GetWorkflowFileDir(h.storageBaseDir(), project.ID, workflow.WorkflowID),
 		StoreDir: storeDir,
 	}, nil
 }

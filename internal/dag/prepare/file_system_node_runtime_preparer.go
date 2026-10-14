@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/config"
@@ -93,14 +94,14 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		return err
 	}
 
-	prefix := filepath.Join(p.baseDir(), "data", project.ProjectID)
+	prefix := filepath.Join(p.baseDir(), "data", strconv.FormatInt(project.ID, 10))
 
 	// projectCachedDir := filepath.Join(prefix, "cached")
 	// if err := os.MkdirAll(projectCachedDir, 0o755); err != nil {
 	// 	return err
 	// }
 	// 脚本路径统一绝对化，供软链与 run script 构造共用。
-	scriptDir, scriptFile, _ := utils.GetScriptFile(p.baseDir(), project.ProjectID, script.ScriptType, script.ScriptID)
+	scriptDir, scriptFile, _ := utils.GetScriptFile(p.baseDir(), project.ID, script.ScriptType, script.ScriptID)
 	scriptPath := filepath.Join(scriptDir, scriptFile)
 	if !filepath.IsAbs(scriptPath) {
 		scriptPath = filepath.Join(p.baseDir(), scriptPath)
@@ -112,7 +113,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if err != nil {
 		return err
 	}
-	paramsPayload["project_dir"] = utils.GetProjectDir(p.baseDir(), project.ProjectID)
+	paramsPayload["project_dir"] = utils.GetProjectDir(p.baseDir(), project.ID)
 	paramsPayload["output_dir"] = node.OutputDir
 	paramsPayload["node_cached_dir"] = node.CacheDir
 	// paramsPayload["project_cached_dir"] = projectCachedDir

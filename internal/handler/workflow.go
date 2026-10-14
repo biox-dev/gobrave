@@ -305,10 +305,10 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 		}
 	}
 
-	scriptDir, scriptFile, _ := utils.GetScriptFile(h.cfg.Storage.BaseDir, project.ProjectID, item.ScriptType, item.ScriptID)
+	scriptDir, scriptFile, _ := utils.GetScriptFile(h.cfg.Storage.BaseDir, project.ID, item.ScriptType, item.ScriptID)
 	// io_schema 落盘到脚本目录的 io_schema.json；该文件是 IOSchema 的唯一数据源，
 	// 读取侧统一通过 utils.ReadScriptIOSchema 从该文件获取。
-	if err := utils.WriteScriptIOSchema(h.cfg.Storage.BaseDir, project.ProjectID, item.ScriptID, req.IOSchema); err != nil {
+	if err := utils.WriteScriptIOSchema(h.cfg.Storage.BaseDir, project.ID, item.ScriptID, req.IOSchema); err != nil {
 		c.Error(errors.NewInternalServerError("failed to write io_schema file").WithDetails(err.Error()))
 		return
 	}
@@ -494,7 +494,7 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 	// io_schema 落盘到工作流目录（GetWorkflowFileDir）的 io_schema.json；该文件是工作流级
 	// inputs 的唯一数据源，读取侧统一通过 utils.ReadWorkflowIOSchema 从该文件获取。
 	// 内容为空时不落盘（保留磁盘上已有文件），与 SaveScript 的 io_schema 口径一致。
-	if err := utils.WriteWorkflowIOSchema(h.cfg.Storage.BaseDir, project.ProjectID, item.WorkflowID, req.IOSchema); err != nil {
+	if err := utils.WriteWorkflowIOSchema(h.cfg.Storage.BaseDir, project.ID, item.WorkflowID, req.IOSchema); err != nil {
 		c.Error(errors.NewInternalServerError("failed to write workflow io_schema file").WithDetails(err.Error()))
 		return
 	}
@@ -503,7 +503,7 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 	// 工作流 DAG 定义的唯一数据源，读取侧统一通过 utils.ReadWorkflowDagDefinition* 获取。
 	// 内容为空时不落盘（保留磁盘上已有文件），因此更新时未提交 dag_definition 不会覆盖历史定义。
 	// 必须在 WriteWorkflowFiles 之前写入 —— workflow.json 的生成需要读取该文件。
-	if err := utils.WriteWorkflowDagDefinition(h.cfg.Storage.BaseDir, project.ProjectID, item.WorkflowID, req.DagDefinition); err != nil {
+	if err := utils.WriteWorkflowDagDefinition(h.cfg.Storage.BaseDir, project.ID, item.WorkflowID, req.DagDefinition); err != nil {
 		c.Error(errors.NewInternalServerError("failed to write workflow dag_definition file").WithDetails(err.Error()))
 		return
 	}
@@ -517,10 +517,10 @@ func (h *WorkflowHandler) SaveWorkflow(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
 		return
 	}
-	workflowDir := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, item.WorkflowID)
+	workflowDir := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ID, item.WorkflowID)
 	if _, err := codec.WriteWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
 		WorkflowPK:  item.ID,
-		ProjectID:   project.ProjectID,
+		ProjectID:   project.ID,
 		BaseDir:     h.cfg.Storage.BaseDir,
 		WorkflowDir: workflowDir,
 	}); err != nil {
@@ -640,10 +640,9 @@ func (h *WorkflowHandler) FindScript(c *gin.Context) {
 	}
 
 	// io_schema 从脚本目录的 io_schema.json 实时读取（不再是数据库字段）。
-	// 脚本目录用的是 project.project_id（字符串）而非 script.ProjectID（int64 外键），
-	// 因此需要先按外键解析出项目。
+	// 脚本目录按项目主键组织，因此需要先按外键解析出项目。
 	if project, projectErr := h.projectService.GetProjectByID(c.Request.Context(), item.ProjectID); projectErr == nil && project != nil {
-		ioSchema, _ := utils.ReadScriptIOSchemaFile(h.cfg.Storage.BaseDir, project.ProjectID, item.ScriptID)
+		ioSchema, _ := utils.ReadScriptIOSchemaFile(h.cfg.Storage.BaseDir, project.ID, item.ScriptID)
 		result["io_schema"] = string(ioSchema)
 	}
 
@@ -934,7 +933,7 @@ func (h *WorkflowHandler) GetWorkflowForm(c *gin.Context) {
 		return
 	}
 
-	formJSONWrap, analysisResult, err := buildWorkflowFormData(c.Request.Context(), h.workflowService, h.dataService, workflowID, project.ProjectID)
+	formJSONWrap, analysisResult, err := buildWorkflowFormData(c.Request.Context(), h.workflowService, h.dataService, workflowID, project.ID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("workflow not found"))
@@ -983,7 +982,7 @@ func (h *WorkflowHandler) GetScriptForm(c *gin.Context) {
 		return
 	}
 
-	formJSONWrap, analysisResult, err := buildScriptFormData(c.Request.Context(), h.workflowService, h.dataService, scriptIDInt, project.ProjectID)
+	formJSONWrap, analysisResult, err := buildScriptFormData(c.Request.Context(), h.workflowService, h.dataService, scriptIDInt, project.ID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("script not found"))
@@ -1066,7 +1065,7 @@ func (h *WorkflowHandler) GetScriptContent(c *gin.Context) {
 	}
 
 	baseDir := h.cfg.Storage.BaseDir
-	content, err := utils.ReadScriptFileContent(baseDir, project.ProjectID, script.ScriptType, script.ScriptID)
+	content, err := utils.ReadScriptFileContent(baseDir, project.ID, script.ScriptType, script.ScriptID)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to read script file").WithDetails(err.Error()))
 		return
@@ -1077,7 +1076,7 @@ func (h *WorkflowHandler) GetScriptContent(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"path":    utils.ScriptMainFilePath(baseDir, project.ProjectID, script.ScriptType, script.ScriptID),
+		"path":    utils.ScriptMainFilePath(baseDir, project.ID, script.ScriptType, script.ScriptID),
 		"content": string(content),
 	})
 }
@@ -1128,7 +1127,7 @@ func (h *WorkflowHandler) SaveScriptContent(c *gin.Context) {
 	}
 
 	baseDir := h.cfg.Storage.BaseDir
-	if err := utils.WriteScriptFileContent(baseDir, project.ProjectID, script.ScriptType, script.ScriptID, req.Content); err != nil {
+	if err := utils.WriteScriptFileContent(baseDir, project.ID, script.ScriptType, script.ScriptID, req.Content); err != nil {
 		c.Error(errors.NewInternalServerError("failed to write script file").WithDetails(err.Error()))
 		return
 	}
@@ -1145,7 +1144,7 @@ func (h *WorkflowHandler) SaveScriptContent(c *gin.Context) {
 	// }
 	// if _, err := codec.WriteScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
 	// 	ScriptPK:      script.ID,
-	// 	ScriptDir:     utils.GetScriptFileDir(baseDir, project.ProjectID, script.ScriptID),
+	// 	ScriptDir:     utils.GetScriptFileDir(baseDir, project.ID, script.ScriptID),
 	// 	CommitMessage: commitMessage,
 	// }); err != nil {
 	// 	c.Error(errors.NewInternalServerError("failed to persist script files").WithDetails(err.Error()))
@@ -1153,7 +1152,7 @@ func (h *WorkflowHandler) SaveScriptContent(c *gin.Context) {
 	// }
 
 	c.JSON(http.StatusOK, gin.H{
-		"path":    utils.ScriptMainFilePath(baseDir, project.ProjectID, script.ScriptType, script.ScriptID),
+		"path":    utils.ScriptMainFilePath(baseDir, project.ID, script.ScriptType, script.ScriptID),
 		"message": "script content saved successfully",
 	})
 }
@@ -1207,13 +1206,13 @@ func (h *WorkflowHandler) GetWorkflowById(c *gin.Context) {
 		return
 	}
 
-	workflowPath := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
+	workflowPath := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ID, workflow.WorkflowID)
 
 	// io_schema 从工作流目录的 io_schema.json 实时读取（不再落库）。
-	ioSchema, _ := utils.ReadWorkflowIOSchemaFile(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
+	ioSchema, _ := utils.ReadWorkflowIOSchemaFile(h.cfg.Storage.BaseDir, project.ID, workflow.WorkflowID)
 
 	// dag_definition 从工作流目录的 dag_definition.json 实时读取（不再落库）。
-	dagDefinition, _ := utils.ReadWorkflowDagDefinitionFile(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
+	dagDefinition, _ := utils.ReadWorkflowDagDefinitionFile(h.cfg.Storage.BaseDir, project.ID, workflow.WorkflowID)
 
 	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地，
 	// 以及 store 裸仓库上配置的远程仓库列表（remotes，发布到远程时写入）。
@@ -1295,10 +1294,10 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 		return
 	}
 
-	scriptPath := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
+	scriptPath := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ID, script.ScriptID)
 
 	// io_schema 从脚本目录的 io_schema.json 实时读取（不再是数据库字段）。
-	ioSchema, _ := utils.ReadScriptIOSchemaFile(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
+	ioSchema, _ := utils.ReadScriptIOSchemaFile(h.cfg.Storage.BaseDir, project.ID, script.ScriptID)
 
 	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地，
 	// 以及 store 裸仓库上配置的远程仓库列表（remotes，发布到远程时写入）。

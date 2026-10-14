@@ -54,7 +54,7 @@ func (h *FileHandler) ListProjectDir(c *gin.Context) {
 
 	scope := strings.ToLower(strings.TrimSpace(c.DefaultQuery("type", "data")))
 	project, rootDir, err := h.resolveUserRootDir(c, userID, scope)
-	prefix := fmt.Sprintf("/data-project/%s", project.ProjectID)
+	prefix := fmt.Sprintf("/data-project/%d", project.ID)
 
 	if err != nil {
 		c.Error(err)

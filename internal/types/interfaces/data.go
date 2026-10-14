@@ -9,18 +9,18 @@ import (
 
 type DataService interface {
 	// CreateDataset creates a dataset and binds it to the given project.
-	CreateDataset(ctx context.Context, dataset *types.Dataset, projectID string) error
+	CreateDataset(ctx context.Context, dataset *types.Dataset, projectID int64) error
 	// EnsureDatasetDir verifies the dataset exists and creates its workspace
 	// directory (utils.GetDatasetDir) when missing, returning the path.
-	EnsureDatasetDir(ctx context.Context, datasetID int64, projectID string) (string, error)
+	EnsureDatasetDir(ctx context.Context, datasetID int64, projectID int64) (string, error)
 	GetDatasetByID(ctx context.Context, id int64) (*types.Dataset, error)
 	UpdateDataset(ctx context.Context, dataset *types.Dataset) error
 	DeleteDataset(ctx context.Context, id int64) error
 	ListDataset(ctx context.Context) ([]*types.Dataset, error)
 	// ListDatasetByProjectID returns every dataset bound to the project
 	// (go_project_dataset -> go_dataset), newest first.
-	ListDatasetByProjectID(ctx context.Context, projectID string) ([]*types.Dataset, error)
-	PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID string) (*types.PageResult, error)
+	ListDatasetByProjectID(ctx context.Context, projectID int64) ([]*types.Dataset, error)
+	PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID int64) (*types.PageResult, error)
 
 	CreateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error
 	GetProjectDatasetByID(ctx context.Context, id int64) (*types.ProjectDataset, error)
@@ -33,18 +33,18 @@ type DataService interface {
 	UpdateFile(ctx context.Context, file *types.File) error
 	DeleteFile(ctx context.Context, id int64) error
 	ListFile(ctx context.Context) ([]*types.File, error)
-	PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID string, roles []string) (*types.PageResult, error)
-	ListFileByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.FileWithDatasetInfo, error)
-	ListFileByProjectIDGroupByRole(ctx context.Context, projectID string) ([]*types.FileByProjectRoleGroup, error)
+	PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, roles []string) (*types.PageResult, error)
+	ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error)
+	ListFileByProjectIDGroupByRole(ctx context.Context, projectID int64) ([]*types.FileByProjectRoleGroup, error)
 	// ListFileByProjectIDViaAnalysisNode returns the files produced by the
 	// project's analysis nodes, resolved through go_file.analysis_node_id ->
 	// analysis_nodes.id (analysis_nodes.project_id carries the numeric project
 	// PK). Every node file is returned, keyed by its own go_file.role (the role
 	// its output_patterns entry declared, defaulted on write).
-	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error)
+	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID int64) ([]*types.FileWithDatasetInfo, error)
 	// PageFileByProjectIDViaAnalysisNode returns the same analysis-node files as
 	// ListFileByProjectIDViaAnalysisNode, paginated.
-	PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error)
+	PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID int64) (*types.PageResult, error)
 	// ListFileByAssayID returns the files owned by one assay; an assay without
 	// files yields an empty slice (not an error).
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
@@ -62,7 +62,7 @@ type DataService interface {
 	AddFileToDataset(ctx context.Context, req *types.AddFileToDatasetRequest) (*types.AddFileToDatasetResponse, error)
 	// UploadFileToDataset stores an uploaded file into the dataset workspace
 	// directory and registers it as a dataset file with the given role.
-	UploadFileToDataset(ctx context.Context, datasetID int64, projectID, role, fileName string, src io.Reader) (*types.AddFileToDatasetResponse, error)
+	UploadFileToDataset(ctx context.Context, datasetID int64, projectID int64, role, fileName string, src io.Reader) (*types.AddFileToDatasetResponse, error)
 	GetDatasetFileByID(ctx context.Context, id int64) (*types.DatasetFile, error)
 	DeleteDatasetFile(ctx context.Context, id int64) error
 	ListDatasetFile(ctx context.Context) ([]*types.DatasetFile, error)
@@ -72,12 +72,12 @@ type DataService interface {
 	UpdateAssay(ctx context.Context, assay *types.Assay) error
 	DeleteAssay(ctx context.Context, id int64) error
 	ListAssay(ctx context.Context) ([]*types.Assay, error)
-	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) (*types.PageResult, error)
+	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) (*types.PageResult, error)
 	// ListAssayByProjectID returns the project's assays, resolved through the
 	// project's datasets (go_project_dataset -> go_dataset_assay -> go_assay).
 	// When roles is non-empty the assays are filtered on go_assay.role; an empty
 	// roles slice adds no role condition and returns every assay.
-	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error)
+	ListAssayByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.AssayWithDatasetInfo, error)
 
 	CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
 	GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error)
@@ -100,8 +100,8 @@ type DataRepository interface {
 	UpdateDataset(ctx context.Context, dataset *types.Dataset) error
 	DeleteDataset(ctx context.Context, id int64) error
 	ListDataset(ctx context.Context) ([]*types.Dataset, error)
-	ListDatasetByProjectID(ctx context.Context, projectID string) ([]*types.Dataset, error)
-	PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID string) ([]*types.Dataset, int64, error)
+	ListDatasetByProjectID(ctx context.Context, projectID int64) ([]*types.Dataset, error)
+	PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID int64) ([]*types.Dataset, int64, error)
 
 	CreateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error
 	GetProjectDatasetByID(ctx context.Context, id int64) (*types.ProjectDataset, error)
@@ -118,10 +118,10 @@ type DataRepository interface {
 	UpdateFile(ctx context.Context, file *types.File) error
 	DeleteFile(ctx context.Context, id int64) error
 	ListFile(ctx context.Context) ([]*types.File, error)
-	PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID string, roles []string) ([]*types.FileWithDatasetInfo, int64, error)
-	ListFileByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.FileWithDatasetInfo, error)
-	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID string) ([]*types.FileWithDatasetInfo, error)
-	PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.FileWithDatasetInfo, int64, error)
+	PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, int64, error)
+	ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error)
+	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID int64) ([]*types.FileWithDatasetInfo, error)
+	PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.FileWithDatasetInfo, int64, error)
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
 	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error)
 	ListFileByAnalysisNodeID(ctx context.Context, analysisNodeID int64) ([]*types.File, error)
@@ -138,8 +138,8 @@ type DataRepository interface {
 	UpdateAssay(ctx context.Context, assay *types.Assay) error
 	DeleteAssay(ctx context.Context, id int64) error
 	ListAssay(ctx context.Context) ([]*types.Assay, error)
-	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.AssayWithDatasetInfo, int64, error)
-	ListAssayByProjectID(ctx context.Context, projectID string, roles []string) ([]*types.AssayWithDatasetInfo, error)
+	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.AssayWithDatasetInfo, int64, error)
+	ListAssayByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.AssayWithDatasetInfo, error)
 
 	CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
 	GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error)
@@ -165,7 +165,7 @@ type DataRepository interface {
 	// sample_name + role (excluding excludeAssayID) is bound to datasetID.
 	ExistsAssayNameInDataset(ctx context.Context, datasetID int64, sampleName, role string, excludeAssayID int64) (bool, error)
 
-	ExistsProjectByID(ctx context.Context, id string) (bool, error)
+	ExistsProjectByID(ctx context.Context, id int64) (bool, error)
 	ExistsDatasetByID(ctx context.Context, id int64) (bool, error)
 	ExistsFileByID(ctx context.Context, id int64) (bool, error)
 	ExistsAssayByID(ctx context.Context, id int64) (bool, error)

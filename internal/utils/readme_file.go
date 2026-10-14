@@ -11,34 +11,34 @@ import (
 const ReadmeFileName = "README.md"
 
 // ScriptReadmePath 返回脚本目录（GetScriptFileDir）下 README.md 的绝对路径。
-func ScriptReadmePath(baseDir, projectID, scriptID string) string {
+func ScriptReadmePath(baseDir string, projectID int64, scriptID string) string {
 	return filepath.Join(GetScriptFileDir(baseDir, projectID, scriptID), ReadmeFileName)
 }
 
 // WorkflowReadmePath 返回工作流目录（GetWorkflowFileDir）下 README.md 的绝对路径。
-func WorkflowReadmePath(baseDir, projectID, workflowID string) string {
+func WorkflowReadmePath(baseDir string, projectID int64, workflowID string) string {
 	return filepath.Join(GetWorkflowFileDir(baseDir, projectID, workflowID), ReadmeFileName)
 }
 
 // ReadScriptReadme 读取脚本目录下的 README.md。
 // 文件不存在时返回 nil（不视为错误），便于调用方按“空 README”处理。
-func ReadScriptReadme(baseDir, projectID, scriptID string) ([]byte, error) {
+func ReadScriptReadme(baseDir string, projectID int64, scriptID string) ([]byte, error) {
 	return readReadmeFile(ScriptReadmePath(baseDir, projectID, scriptID))
 }
 
 // WriteScriptReadme 覆盖写入脚本目录下的 README.md，目录不存在时自动创建。
-func WriteScriptReadme(baseDir, projectID, scriptID, content string) error {
+func WriteScriptReadme(baseDir string, projectID int64, scriptID, content string) error {
 	return writeReadmeFile(ScriptReadmePath(baseDir, projectID, scriptID), content)
 }
 
 // ReadWorkflowReadme 读取工作流目录下的 README.md。
 // 文件不存在时返回 nil（不视为错误），便于调用方按“空 README”处理。
-func ReadWorkflowReadme(baseDir, projectID, workflowID string) ([]byte, error) {
+func ReadWorkflowReadme(baseDir string, projectID int64, workflowID string) ([]byte, error) {
 	return readReadmeFile(WorkflowReadmePath(baseDir, projectID, workflowID))
 }
 
 // WriteWorkflowReadme 覆盖写入工作流目录下的 README.md，目录不存在时自动创建。
-func WriteWorkflowReadme(baseDir, projectID, workflowID, content string) error {
+func WriteWorkflowReadme(baseDir string, projectID int64, workflowID, content string) error {
 	return writeReadmeFile(WorkflowReadmePath(baseDir, projectID, workflowID), content)
 }
 

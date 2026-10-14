@@ -176,7 +176,7 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 			analysisID = utils.GenerateID()
 		}
 
-		analsyisDir := utils.GetAnalysisDir(baseDir, input.Project.ProjectID, workflow.ID)
+		analsyisDir := utils.GetAnalysisDir(baseDir, input.Project.ID, workflow.ID)
 
 		// workspaceDir 是本次分析的根目录。它会相对 base_dir 落库，
 		// 其余路径（params.json / run.sh / 各种 log）都由它派生，不再持久化。
@@ -285,7 +285,7 @@ func (s *analysisService) DeleteAnalysisNode(ctx context.Context, id int64) erro
 		logger.Warnf(ctx, "[NodeOrchestrator] failed to get project by id=%d, err=%v", node.ProjectID, err)
 		return err
 	}
-	prefix := filepath.Join(s.cfg.Storage.BaseDir, "data", project.ProjectID)
+	prefix := filepath.Join(s.cfg.Storage.BaseDir, "data", strconv.FormatInt(project.ID, 10))
 	//判断是否以prefix开头 如果不是就不删除
 	if !strings.HasPrefix(node.WorkspaceDir, prefix) {
 		logger.Warnf(ctx, "[NodeOrchestrator] workspace dir=%s is not under project data dir=%s, skip delete", node.WorkspaceDir, prefix)
@@ -318,7 +318,7 @@ func (s *analysisService) DeleteAnalysis(ctx context.Context, id int64) error {
 		logger.Warnf(ctx, "[AnalysisService] failed to get project by id=%d, err=%v", analysis.ProjectID, err)
 		return err
 	}
-	projectDataDir := filepath.Join(s.cfg.Storage.BaseDir, "data", project.ProjectID)
+	projectDataDir := filepath.Join(s.cfg.Storage.BaseDir, "data", strconv.FormatInt(project.ID, 10))
 
 	// 1. List all analysis nodes for this analysis
 	nodes, err := s.analysisRepo.ListAnalysisNodesByAnalysisID(ctx, id)

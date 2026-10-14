@@ -3,10 +3,16 @@ package utils
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
-func GetScriptFile(baseDir, projectID, scriptType, scriptID string) (string, string, error) {
+// projectDirName 将项目的数值主键格式化为存储目录名。
+func projectDirName(projectID int64) string {
+	return strconv.FormatInt(projectID, 10)
+}
+
+func GetScriptFile(baseDir string, projectID int64, scriptType, scriptID string) (string, string, error) {
 	resolvedScriptID := strings.TrimSpace(scriptID)
 	if resolvedScriptID == "" {
 		resolvedScriptID = strings.TrimSpace(scriptID)
@@ -16,66 +22,66 @@ func GetScriptFile(baseDir, projectID, scriptType, scriptID string) (string, str
 	scriptDir := GetScriptDir(baseDir, projectID)
 	return filepath.Join(scriptDir, scriptID), mainFileByScriptType(scriptType), nil
 }
-func GetScriptFileDir(baseDir, projectId, scriptID string) string {
-	scriptDir := GetScriptDir(baseDir, projectId)
+func GetScriptFileDir(baseDir string, projectID int64, scriptID string) string {
+	scriptDir := GetScriptDir(baseDir, projectID)
 	return filepath.Join(scriptDir, scriptID)
 }
-func GetScriptDir(baseDir, projectId string) string {
-	return filepath.Join(baseDir, "data", projectId, "pipeline", "script")
+func GetScriptDir(baseDir string, projectID int64) string {
+	return filepath.Join(baseDir, "data", projectDirName(projectID), "pipeline", "script")
 }
-func GetWorkflowFileDir(baseDir, projectId, workflowID string) string {
-	workflowDir := GetWorkflowDir(baseDir, projectId)
+func GetWorkflowFileDir(baseDir string, projectID int64, workflowID string) string {
+	workflowDir := GetWorkflowDir(baseDir, projectID)
 	return filepath.Join(workflowDir, workflowID)
 }
-func GetWorkflowDir(baseDir, projectId string) string {
-	return filepath.Join(baseDir, "data", projectId, "pipeline", "workflow")
+func GetWorkflowDir(baseDir string, projectID int64) string {
+	return filepath.Join(baseDir, "data", projectDirName(projectID), "pipeline", "workflow")
 }
-func GetAnalysisDir(baseDir, projectId string, workflow int64) string {
-	return filepath.Join(baseDir, "data", projectId, "analysis", fmt.Sprintf("%d", workflow))
+func GetAnalysisDir(baseDir string, projectID int64, workflow int64) string {
+	return filepath.Join(baseDir, "data", projectDirName(projectID), "analysis", fmt.Sprintf("%d", workflow))
 }
-func GetAnalysisNodeDir(baseDir, projectId, scriptID string) string {
-	return filepath.Join(baseDir, "data", projectId, "analysis_node", scriptID)
+func GetAnalysisNodeDir(baseDir string, projectID int64, scriptID string) string {
+	return filepath.Join(baseDir, "data", projectDirName(projectID), "analysis_node", scriptID)
 }
 
 func GetAnalysisNodeEnvFile(workspaceDir string) string {
 	return filepath.Join(workspaceDir, "env.sh")
 }
 
-func GetProjectDir(baseDir, projectId string) string {
-	return filepath.Join(baseDir, "data", projectId)
+func GetProjectDir(baseDir string, projectID int64) string {
+	return filepath.Join(baseDir, "data", projectDirName(projectID))
 }
 
-func GetProjectReportDir(baseDir, projectId, reportID string) string {
-	projectDir := GetProjectDir(baseDir, projectId)
+func GetProjectReportDir(baseDir string, projectID int64, reportID string) string {
+	projectDir := GetProjectDir(baseDir, projectID)
 	return filepath.Join(projectDir, "report", reportID)
 
 }
 
-func GetAISummaryDir(baseDir, projectId string, summaryID int64) string {
-	projectDir := GetProjectDir(baseDir, projectId)
+func GetAISummaryDir(baseDir string, projectID int64, summaryID int64) string {
+	projectDir := GetProjectDir(baseDir, projectID)
 	return filepath.Join(projectDir, "AiSummary", fmt.Sprintf("%d", summaryID))
 }
 
-func GetAISummaryFile(baseDir, projectId string, summaryID int64) string {
-	summaryDir := GetAISummaryDir(baseDir, projectId, summaryID)
+func GetAISummaryFile(baseDir string, projectID int64, summaryID int64) string {
+	summaryDir := GetAISummaryDir(baseDir, projectID, summaryID)
 	return filepath.Join(summaryDir, "summary.md")
 
 }
-func GetProjectLiteratureDir(baseDir, projectId, literatureID string) string {
-	projectDir := GetProjectDir(baseDir, projectId)
+func GetProjectLiteratureDir(baseDir string, projectID int64, literatureID string) string {
+	projectDir := GetProjectDir(baseDir, projectID)
 	return filepath.Join(projectDir, "literature", literatureID)
 }
 
 // GetProjectDocDir 返回某个 ProjectReport 的文档源目录：
 // <baseDir>/data/<projectId>/docs/<reportId>/src。
-func GetProjectDocDir(baseDir, projectId, reportID string) string {
-	return filepath.Join(baseDir, "data", projectId, "docs", reportID, "src")
+func GetProjectDocDir(baseDir string, projectID int64, reportID string) string {
+	return filepath.Join(baseDir, "data", projectDirName(projectID), "docs", reportID, "src")
 }
 
 // GetProjectDocBookDir 返回某个 ProjectReport 的文档站点（构建产物）目录：
 // <baseDir>/data/<projectId>/docs/<reportId>/book。
-func GetProjectDocBookDir(baseDir, projectId, reportID string) string {
-	return filepath.Join(baseDir, "data", projectId, "docs", reportID, "book")
+func GetProjectDocBookDir(baseDir string, projectID int64, reportID string) string {
+	return filepath.Join(baseDir, "data", projectDirName(projectID), "docs", reportID, "book")
 }
 
 func GetAnalysisDebugDir(baseDir, analysisID, version string) string {
@@ -89,8 +95,8 @@ func GetAnalysisNodeOutputDir(workspaceDir string) string {
 	return filepath.Join(workspaceDir, "output")
 }
 
-func GetDatasetDir(baseDir, projectId string, datasetID int64) string {
-	projectDir := GetProjectDir(baseDir, projectId)
+func GetDatasetDir(baseDir string, projectID int64, datasetID int64) string {
+	projectDir := GetProjectDir(baseDir, projectID)
 	return filepath.Join(projectDir, "dataset", fmt.Sprintf("%d", datasetID))
 }
 

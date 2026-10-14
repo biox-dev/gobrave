@@ -44,7 +44,7 @@ type uploadFileToDatasetForm struct {
 }
 
 type projectIDQuery struct {
-	ProjectID string `form:"project_id" binding:"required"`
+	ProjectID int64 `form:"project_id" binding:"required"`
 }
 
 type datasetByProjectPageRequest struct {
@@ -53,7 +53,7 @@ type datasetByProjectPageRequest struct {
 }
 
 type projectFileQuery struct {
-	ProjectID string   `form:"project_id" binding:"required"`
+	ProjectID int64    `form:"project_id" binding:"required"`
 	Roles     []string `form:"role"`
 }
 
@@ -302,7 +302,7 @@ func (h *DataHandler) CreateDataset(c *gin.Context) {
 	}
 
 	dataset := req.ToDataset()
-	if err := h.dataService.CreateDataset(c.Request.Context(), dataset, project.ProjectID); err != nil {
+	if err := h.dataService.CreateDataset(c.Request.Context(), dataset, project.ID); err != nil {
 		handleDataError(c, err, "failed to create dataset")
 		return
 	}
@@ -342,7 +342,7 @@ func (h *DataHandler) EnsureDatasetDir(c *gin.Context) {
 		return
 	}
 
-	dir, err := h.dataService.EnsureDatasetDir(c.Request.Context(), req.ID, project.ProjectID)
+	dir, err := h.dataService.EnsureDatasetDir(c.Request.Context(), req.ID, project.ID)
 	if err != nil {
 		handleDataError(c, err, "failed to ensure dataset dir")
 		return
@@ -497,7 +497,7 @@ func (h *DataHandler) ListDatasetByProjectID(c *gin.Context) {
 		return
 	}
 
-	items, err := h.dataService.ListDatasetByProjectID(c.Request.Context(), project.ProjectID)
+	items, err := h.dataService.ListDatasetByProjectID(c.Request.Context(), project.ID)
 	if err != nil {
 		handleDataError(c, err, "failed to list dataset by project id")
 		return
@@ -537,7 +537,7 @@ func (h *DataHandler) PageDatasetByProjectID(c *gin.Context) {
 		return
 	}
 
-	result, err := h.dataService.PageDatasetByProjectID(c.Request.Context(), &req.Pagination, &req.QueryDataset, project.ProjectID)
+	result, err := h.dataService.PageDatasetByProjectID(c.Request.Context(), &req.Pagination, &req.QueryDataset, project.ID)
 	if err != nil {
 		handleDataError(c, err, "failed to page dataset by project id")
 		return
@@ -589,7 +589,7 @@ func (h *DataHandler) PageFileByProjectID(c *gin.Context) {
 	}
 	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
 
-	result, err := h.dataService.PageFileByProjectID(c.Request.Context(), &req.Pagination, project.ProjectID, roles)
+	result, err := h.dataService.PageFileByProjectID(c.Request.Context(), &req.Pagination, project.ID, roles)
 	if err != nil {
 		handleDataError(c, err, "failed to page file by project id")
 		return
@@ -1111,7 +1111,7 @@ func (h *DataHandler) PageFileByProjectIDViaAnalysisNode(c *gin.Context) {
 		return
 	}
 
-	result, err := h.dataService.PageFileByProjectIDViaAnalysisNode(c.Request.Context(), &req, project.ProjectID)
+	result, err := h.dataService.PageFileByProjectIDViaAnalysisNode(c.Request.Context(), &req, project.ID)
 	if err != nil {
 		handleDataError(c, err, "failed to page analysis node file by project id")
 		return
@@ -1202,7 +1202,7 @@ func (h *DataHandler) AddFileToDataset(c *gin.Context) {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
-	req.ProjectID = project.ProjectID
+	req.ProjectID = project.ID
 
 	result, err := h.dataService.AddFileToDataset(c.Request.Context(), &req)
 	if err != nil {
@@ -1277,7 +1277,7 @@ func (h *DataHandler) UploadFileToDataset(c *gin.Context) {
 	result, err := h.dataService.UploadFileToDataset(
 		c.Request.Context(),
 		form.DatasetID,
-		project.ProjectID,
+		project.ID,
 		form.Role,
 		fileName,
 		src,
@@ -1600,7 +1600,7 @@ func (h *DataHandler) ListAssayByProjectID(c *gin.Context) {
 		return
 	}
 
-	items, err := h.dataService.ListAssayByProjectID(c.Request.Context(), project.ProjectID, nil)
+	items, err := h.dataService.ListAssayByProjectID(c.Request.Context(), project.ID, nil)
 	if err != nil {
 		handleDataError(c, err, "failed to list assay by project id")
 		return
@@ -1639,7 +1639,7 @@ func (h *DataHandler) PageAssayByProjectID(c *gin.Context) {
 		return
 	}
 
-	result, err := h.dataService.PageAssayByProjectID(c.Request.Context(), &req.Pagination, project.ProjectID)
+	result, err := h.dataService.PageAssayByProjectID(c.Request.Context(), &req.Pagination, project.ID)
 	if err != nil {
 		handleDataError(c, err, "failed to page assay by project id")
 		return
@@ -1881,7 +1881,7 @@ func (h *DataHandler) ImportAssayTSV(c *gin.Context) {
 		handleDataError(c, err, "failed to get active project by user id")
 		return
 	}
-	req.ProjectID = project.ProjectID
+	req.ProjectID = project.ID
 
 	result, err := h.dataService.ImportAssayTSV(c.Request.Context(), &req)
 	if err != nil {

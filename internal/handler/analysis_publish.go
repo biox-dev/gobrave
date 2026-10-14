@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/errors"
-	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -250,9 +249,8 @@ func (h *AnalysisHandler) publishAISummaryToDoc(ctx context.Context, summaryID i
 	}
 
 	// 摘要正文不再落库，从文件读取（文件缺失时视为空正文）。
-	// projectID 是数值主键，需换成存储目录使用的字符串标识（t_project.project_id）。
-	projectCode := manager.ResolveProjectCode(ctx, h.projectRepo, projectID)
-	content, err := utils.ReadAISummaryFile(h.config.Storage.BaseDir, projectCode, summary.ID)
+	// projectID 直接作为存储目录主键。
+	content, err := utils.ReadAISummaryFile(h.config.Storage.BaseDir, projectID, summary.ID)
 	if err != nil {
 		return errors.NewInternalServerError("failed to read ai summary content").WithDetails(err.Error())
 	}

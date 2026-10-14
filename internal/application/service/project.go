@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/config"
-	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -61,14 +60,14 @@ func (s *projectService) GetActiveProjectDirByUserID(ctx context.Context, userID
 		return nil, "", err
 	}
 
-	return project, utils.GetProjectDir(baseDir, project.ProjectID), nil
+	return project, utils.GetProjectDir(baseDir, project.ID), nil
 }
 
 func (s *projectService) GetProjectByID(ctx context.Context, id int64) (*types.Project, error) {
 	return s.projectRepo.GetProjectByID(ctx, id)
 }
 
-func (s *projectService) AddUserProject(ctx context.Context, userID, projectID string) error {
+func (s *projectService) AddUserProject(ctx context.Context, userID string, projectID int64) error {
 	exists, err := s.projectRepo.ExistsUserProject(ctx, userID, projectID)
 	if err != nil {
 		return err
@@ -112,7 +111,7 @@ func (s *projectService) AddUserProjectByShareCode(ctx context.Context, userID, 
 	})
 }
 
-func (s *projectService) UpdateProjectSharing(ctx context.Context, userID, projectID string, enabled bool) (string, error) {
+func (s *projectService) UpdateProjectSharing(ctx context.Context, userID string, projectID int64, enabled bool) (string, error) {
 	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, projectID)
 	if err != nil {
 		return "", err
@@ -133,11 +132,11 @@ func (s *projectService) UpdateProjectSharing(ctx context.Context, userID, proje
 	return shareCode, nil
 }
 
-func (s *projectService) ActivateUserProject(ctx context.Context, userID, projectID string) error {
+func (s *projectService) ActivateUserProject(ctx context.Context, userID string, projectID int64) error {
 	return s.projectRepo.ActivateUserProject(ctx, userID, projectID)
 }
 
-func (s *projectService) DeleteUserProject(ctx context.Context, userID, projectID string) error {
+func (s *projectService) DeleteUserProject(ctx context.Context, userID string, projectID int64) error {
 	up, err := s.projectRepo.GetUserProject(ctx, userID, projectID)
 	if err != nil {
 		return err
@@ -149,12 +148,10 @@ func (s *projectService) DeleteUserProject(ctx context.Context, userID, projectI
 }
 
 func (s *projectService) CreateDefaultProjectForUser(ctx context.Context, userID, username string) error {
-	projectID := uuid.New().String()
 	projectName := fmt.Sprintf("%s's Project", username)
 
 	project := &types.Project{
 		ID:          utils.GenerateID(),
-		ProjectID:   projectID,
 		ProjectName: projectName,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -166,7 +163,7 @@ func (s *projectService) CreateDefaultProjectForUser(ctx context.Context, userID
 
 	if err := s.projectRepo.AddUserProject(ctx, &types.UserProject{
 		UserID:    userID,
-		ProjectID: projectID,
+		ProjectID: project.ID,
 		IsActive:  true,
 		CreatedAt: time.Now(),
 	}); err != nil {
@@ -185,8 +182,8 @@ func (s *projectService) CreateProjectForUser(ctx context.Context, userID string
 		return nil, errors.New("project name is empty")
 	}
 
-	if project.ProjectID == "" {
-		project.ProjectID = uuid.New().String()
+	if project.ID == 0 {
+		project.ID = utils.GenerateID()
 	}
 
 	now := time.Now()
@@ -199,7 +196,7 @@ func (s *projectService) CreateProjectForUser(ctx context.Context, userID string
 
 	if err := s.projectRepo.AddUserProject(ctx, &types.UserProject{
 		UserID:    userID,
-		ProjectID: project.ProjectID,
+		ProjectID: project.ID,
 		CreatedAt: now,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to link user to project: %w", err)
@@ -313,7 +310,7 @@ func (s *projectService) DeleteProjectReport(ctx context.Context, userID string,
 	return nil
 }
 
-func (s *projectService) ListProjectReportByProjectID(ctx context.Context, userID, projectID string) ([]*types.ProjectReport, error) {
+func (s *projectService) ListProjectReportByProjectID(ctx context.Context, userID string, projectID int64) ([]*types.ProjectReport, error) {
 	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, projectID)
 	if err != nil {
 		return nil, err
@@ -325,7 +322,7 @@ func (s *projectService) ListProjectReportByProjectID(ctx context.Context, userI
 	return s.projectRepo.ListProjectReportByProjectID(ctx, projectID)
 }
 
-func (s *projectService) PageProjectReportByProjectID(ctx context.Context, userID, projectID string, pagination *types.Pagination) ([]*types.ProjectReport, int64, error) {
+func (s *projectService) PageProjectReportByProjectID(ctx context.Context, userID string, projectID int64, pagination *types.Pagination) ([]*types.ProjectReport, int64, error) {
 	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, projectID)
 	if err != nil {
 		return nil, 0, err
@@ -739,10 +736,10 @@ func (s *projectService) aiSummaryMarkdown(ctx context.Context, item *types.Proj
 	}
 
 	// 摘要正文保存在文件里（见 utils.GetAISummaryFile），不存在时按空正文处理。
-	// 存储目录用项目字符串标识（t_project.project_id），由数值主键解析得到。
+	// 存储目录直接使用项目数值主键。
 	var content string
-	if projectCode := manager.ResolveProjectCode(ctx, s.projectRepo, s.resolveSummaryProjectID(ctx, summary)); projectCode != "" {
-		content, err = utils.ReadAISummaryFile(s.storageBaseDir(), projectCode, summary.ID)
+	if projectID := s.resolveSummaryProjectID(ctx, summary); projectID != 0 {
+		content, err = utils.ReadAISummaryFile(s.storageBaseDir(), projectID, summary.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -928,8 +925,8 @@ func (s *projectService) AddLiterature(ctx context.Context, userID string, liter
 	if literature.ID == 0 {
 		literature.ID = utils.GenerateID()
 	}
-	if strings.TrimSpace(literature.OwnerProjectID) == "" {
-		literature.OwnerProjectID = project.ProjectID
+	if literature.OwnerProjectID == 0 {
+		literature.OwnerProjectID = project.ID
 	}
 
 	now := time.Now()
@@ -949,7 +946,7 @@ func (s *projectService) AddLiterature(ctx context.Context, userID string, liter
 	}
 
 	if err := s.projectRepo.AddProjectLiterature(ctx, &types.ProjectLiterature{
-		ProjectID:    project.ProjectID,
+		ProjectID:    project.ID,
 		LiteratureID: literature.ID,
 		CreatedAt:    now,
 	}); err != nil {
@@ -1077,7 +1074,7 @@ func (s *projectService) ListLiteratureByProjectID(ctx context.Context, userID s
 		return nil, err
 	}
 
-	return s.projectRepo.ListLiteratureByProjectID(ctx, project.ProjectID)
+	return s.projectRepo.ListLiteratureByProjectID(ctx, project.ID)
 }
 
 func (s *projectService) PageLiteratureByProjectID(ctx context.Context, userID string, pagination *types.Pagination) ([]*types.Literature, int64, error) {
@@ -1086,7 +1083,7 @@ func (s *projectService) PageLiteratureByProjectID(ctx context.Context, userID s
 		return nil, 0, err
 	}
 
-	return s.projectRepo.PageLiteratureByProjectID(ctx, pagination, project.ProjectID)
+	return s.projectRepo.PageLiteratureByProjectID(ctx, pagination, project.ID)
 }
 
 func (s *projectService) BindLiteratureToProject(ctx context.Context, userID string, literatureID int64) error {
@@ -1100,7 +1097,7 @@ func (s *projectService) BindLiteratureToProject(ctx context.Context, userID str
 		return err
 	}
 
-	exists, err := s.projectRepo.ExistsProjectLiterature(ctx, project.ProjectID, literatureID)
+	exists, err := s.projectRepo.ExistsProjectLiterature(ctx, project.ID, literatureID)
 	if err != nil {
 		return err
 	}
@@ -1109,7 +1106,7 @@ func (s *projectService) BindLiteratureToProject(ctx context.Context, userID str
 	}
 
 	return s.projectRepo.AddProjectLiterature(ctx, &types.ProjectLiterature{
-		ProjectID:    project.ProjectID,
+		ProjectID:    project.ID,
 		LiteratureID: literature.ID,
 		CreatedAt:    time.Now(),
 	})
@@ -1121,7 +1118,7 @@ func (s *projectService) UnbindLiteratureFromProject(ctx context.Context, userID
 		return err
 	}
 
-	exists, err := s.projectRepo.ExistsProjectLiterature(ctx, project.ProjectID, literatureID)
+	exists, err := s.projectRepo.ExistsProjectLiterature(ctx, project.ID, literatureID)
 	if err != nil {
 		return err
 	}
@@ -1129,7 +1126,7 @@ func (s *projectService) UnbindLiteratureFromProject(ctx context.Context, userID
 		return gorm.ErrRecordNotFound
 	}
 
-	return s.projectRepo.DeleteProjectLiterature(ctx, project.ProjectID, literatureID)
+	return s.projectRepo.DeleteProjectLiterature(ctx, project.ID, literatureID)
 }
 
 func (s *projectService) PageLiteraturePool(ctx context.Context, userID string, pagination *types.Pagination) ([]*types.LiteraturePoolItem, int64, error) {
@@ -1138,7 +1135,7 @@ func (s *projectService) PageLiteraturePool(ctx context.Context, userID string, 
 		return nil, 0, err
 	}
 
-	return s.projectRepo.PageLiteraturePool(ctx, pagination, project.ProjectID)
+	return s.projectRepo.PageLiteraturePool(ctx, pagination, project.ID)
 }
 
 // requireLiteratureAccess verifies the literature is bound to the current user's
@@ -1150,7 +1147,7 @@ func (s *projectService) requireLiteratureAccess(ctx context.Context, userID str
 		return err
 	}
 
-	bound, err := s.projectRepo.ExistsProjectLiterature(ctx, project.ProjectID, literatureID)
+	bound, err := s.projectRepo.ExistsProjectLiterature(ctx, project.ID, literatureID)
 	if err != nil {
 		return err
 	}
@@ -1178,7 +1175,7 @@ func (s *projectService) literatureFilePath(literature *types.Literature) (strin
 	if literature == nil {
 		return "", errors.New("literature is nil")
 	}
-	if strings.TrimSpace(literature.OwnerProjectID) == "" {
+	if literature.OwnerProjectID == 0 {
 		return "", errors.New("literature owner project id is empty")
 	}
 

@@ -14,7 +14,7 @@ func buildScriptFormData(ctx context.Context,
 	workflowService interfaces.WorkflowService,
 	dataService interfaces.DataService,
 	scriptID int64,
-	projectID string) ([]interface{}, map[string]interface{}, error) {
+	projectID int64) ([]interface{}, map[string]interface{}, error) {
 
 	formJSONWrap, _, err := workflowService.GetScriptFormJSONByID(ctx, scriptID)
 	if err != nil {
@@ -50,7 +50,7 @@ func resolveFormAnalysisResult(
 	ctx context.Context,
 	dataService interfaces.DataService,
 	formJSONWrap []interface{},
-	projectID string,
+	projectID int64,
 ) (map[string]interface{}, error) {
 	assayRoleSet := make(map[string]struct{})
 	fileRoleSet := make(map[string]struct{})
@@ -178,7 +178,7 @@ func buildWorkflowFormData(ctx context.Context,
 	workflowService interfaces.WorkflowService,
 	dataService interfaces.DataService,
 	workflowID int64,
-	projectID string) ([]interface{}, map[string]interface{}, error) {
+	projectID int64) ([]interface{}, map[string]interface{}, error) {
 	formJSONWrap, err := workflowService.GetFormJSONByWorkflowID(ctx, workflowID)
 	if err != nil {
 		return nil, nil, err

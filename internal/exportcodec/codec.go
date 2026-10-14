@@ -179,12 +179,12 @@ type ScriptWriteRequest struct {
 // WorkflowWriteRequest 是写工作流导出文件的入参。
 //
 // WorkflowPK 是 workflow 表主键（int64，不是 relation_id）；
-// ProjectID 是 project.project_id（字符串，注意与 workflow.ProjectID int64 外键区分）；
+// ProjectID 是 project 表主键（int64），同时用于推导本地目录布局；
 // BaseDir 是 storage.base_dir；WorkflowDir 是 workflow 目录绝对路径；
 // CommitMessage 是落盘后 git 提交使用的 message（为空时使用默认文案）。
 type WorkflowWriteRequest struct {
 	WorkflowPK    int64
-	ProjectID     string
+	ProjectID     int64
 	BaseDir       string
 	WorkflowDir   string
 	CommitMessage string
@@ -239,18 +239,15 @@ type ScriptInstallResult struct {
 //
 // Raw 是 workflow.json 的文件内容，与 DecodeWorkflow 的入参一致；InstallWorkflow 内部会
 // 调用 DecodeWorkflow 解析它。其余字段语义与 ScriptInstallRequest 一致，额外多出：
-//   - ProjectCode 是 project.project_id（字符串），用于推导本地目录布局
-//     （utils.GetScriptFileDir），注意与 ProjectID（int64 主键）区分；
+//   - ProjectID 是安装到的目标 project 主键（project.ID），同时用于推导本地目录布局；
 //   - BaseDir 是 storage.base_dir；
 //   - WorkflowDir 是已从 store 同步出的 workflow 目录，脚本快照位于
 //     <WorkflowDir>/script/<scriptID>（ScriptSnapshotDir），安装时还原到脚本目录。
 type WorkflowInstallRequest struct {
 	// Raw 是 workflow.json 文件内容（与 DecodeWorkflow 的入参一致）。
 	Raw []byte
-	// ProjectID 是安装到的目标 project 主键（project.ID）。
+	// ProjectID 是安装到的目标 project 主键（project.ID），同时用于推导本地目录。
 	ProjectID int64
-	// ProjectCode 是 project.project_id（字符串），仅用于推导本地目录。
-	ProjectCode string
 	// StoreID 是发布来源 store 主键。
 	StoreID int64
 	// StoreMessage 非空时覆盖 workflow / script 行的 message。

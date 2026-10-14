@@ -149,10 +149,10 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env
 					return nil, fmt.Errorf("failed to get project by id: %w", err)
 				}
 				// 获取Script File
-				scriptDir, scriptFile, _ := utils.GetScriptFile(r.cfg.Storage.BaseDir, project.ProjectID, script.ScriptType, script.ScriptID)
+				scriptDir, scriptFile, _ := utils.GetScriptFile(r.cfg.Storage.BaseDir, project.ID, script.ScriptType, script.ScriptID)
 				scriptFilePath := filepath.Join(scriptDir, scriptFile)
 
-				ioSchemaPath := utils.ScriptIOSchemaPath(r.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
+				ioSchemaPath := utils.ScriptIOSchemaPath(r.cfg.Storage.BaseDir, project.ID, script.ScriptID)
 
 				dir = node.WorkspaceDir
 				label = node.NodeName
@@ -262,7 +262,7 @@ func (r *RuntimeContextResolver) resolveDefaultWorkingDirectory(ctx context.Cont
 	if err != nil {
 		return "", "", err
 	}
-	if project == nil || strings.TrimSpace(project.ProjectID) == "" {
+	if project == nil || project.ID == 0 {
 		return "", "", fmt.Errorf("active project is empty")
 	}
 
@@ -271,7 +271,7 @@ func (r *RuntimeContextResolver) resolveDefaultWorkingDirectory(ctx context.Cont
 		return "", "", fmt.Errorf("storage.base_dir is empty")
 	}
 
-	workingDir := filepath.Join(baseDir, "data", strings.TrimSpace(project.ProjectID))
+	workingDir := filepath.Join(baseDir, "data", strconv.FormatInt(project.ID, 10))
 	if err := os.MkdirAll(workingDir, 0o755); err != nil {
 		return "", "", err
 	}

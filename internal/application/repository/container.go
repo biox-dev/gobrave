@@ -292,21 +292,6 @@ func (r *containerRepository) GetAppSessionByID(ctx context.Context, id int64) (
 	}
 	return item, nil
 }
-func (r *containerRepository) GetProjectByID(ctx context.Context, projectID string) (*types.Project, error) {
-	item := &types.Project{}
-	if err := r.db.WithContext(ctx).Where("project_id = ?", projectID).Take(item).Error; err != nil {
-		return nil, err
-	}
-	return item, nil
-}
-
-func (r *containerRepository) GetProjectByProjectID(ctx context.Context, projectID string) (*types.Project, error) {
-	item := &types.Project{}
-	if err := r.db.WithContext(ctx).Where("project_id = ?", projectID).Take(item).Error; err != nil {
-		return nil, err
-	}
-	return item, nil
-}
 
 func (r *containerRepository) UpdateAppSession(ctx context.Context, item *types.AppSession) error {
 	return r.db.WithContext(ctx).Model(&types.AppSession{}).Where("id = ?", item.ID).Updates(item).Error

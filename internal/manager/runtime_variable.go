@@ -169,7 +169,7 @@ func (w *ContainerCreateWorker) buildPackageVariables(ctx context.Context, set *
 	ensureEmptyFileIfNotExists(ctx, profilePath)
 	set.add("R_PROFILE", profilePath)
 	set.add("PACKAGE_DIR", packageDir)
-	projectDir := fmt.Sprintf("%s/data/%s", in.baseDir, in.ownerCtx.project.ProjectID)
+	projectDir := fmt.Sprintf("%s/data/%d", in.baseDir, in.ownerCtx.project.ID)
 
 	rPackageDir := fmt.Sprintf("%s/package/R-%d", projectDir, imageID)
 	set.add("R_PACKAGE_DIR", rPackageDir)
@@ -188,9 +188,9 @@ func (w *ContainerCreateWorker) buildProjectVariables(ctx context.Context, set *
 	if in.ownerCtx == nil || in.ownerCtx.project == nil {
 		return
 	}
-	projectDir := fmt.Sprintf("%s/data/%s", in.baseDir, in.ownerCtx.project.ProjectID)
+	projectDir := fmt.Sprintf("%s/data/%d", in.baseDir, in.ownerCtx.project.ID)
 	set.add("PROJECT_DIR", projectDir)
-	projectConfigDir := fmt.Sprintf("%s/data/%s/.config", in.baseDir, in.ownerCtx.project.ProjectID)
+	projectConfigDir := fmt.Sprintf("%s/data/%d/.config", in.baseDir, in.ownerCtx.project.ID)
 	set.add("PROJECT_CONFIG_DIR", projectConfigDir)
 
 	ensureDirs(ctx, []string{projectDir, projectConfigDir})
@@ -209,7 +209,7 @@ func (w *ContainerCreateWorker) buildAppSessionVariables(ctx context.Context, se
 
 	workspacePath := session.WorkspacePath
 	if workspacePath == "" && in.ownerCtx.projectID != 0 && in.baseDir != "" && in.ownerCtx.project != nil {
-		workspacePath = fmt.Sprintf("%s/data/%s", in.baseDir, in.ownerCtx.project.ProjectID)
+		workspacePath = fmt.Sprintf("%s/data/%d", in.baseDir, in.ownerCtx.project.ID)
 		session.WorkspacePath = workspacePath
 	}
 	set.add("WORKSPACE_PATH", workspacePath)

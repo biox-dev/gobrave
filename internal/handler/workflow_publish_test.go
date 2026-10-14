@@ -330,7 +330,7 @@ func decodePublishResponse(t *testing.T, recorder *httptest.ResponseRecorder) pu
 // 接口应回 200 + pushed=false + message="already up-to-date"，而不是报 500。
 func TestPublishScriptAlreadyUpToDate(t *testing.T) {
 	baseDir := t.TempDir()
-	scriptDir := utils.GetScriptFileDir(baseDir, "p1", "s1")
+	scriptDir := utils.GetScriptFileDir(baseDir, 7, "s1")
 	writeTestFile(t, filepath.Join(scriptDir, "main.R"), "print('v1')\n")
 	mustGitRepo(t, scriptDir)
 
@@ -340,7 +340,7 @@ func TestPublishScriptAlreadyUpToDate(t *testing.T) {
 
 	h := &WorkflowHandler{
 		workflowService: wfService,
-		projectService:  publishStubProjectService{project: &types.Project{ID: 7, ProjectID: "p1"}},
+		projectService:  publishStubProjectService{project: &types.Project{ID: 7}},
 		storeService:    &publishStubStoreService{},
 		exportCodecs:    reg,
 		cfg:             &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}},

@@ -12,18 +12,18 @@ type ProjectService interface {
 	GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error)
 	GetActiveProjectDirByUserID(ctx context.Context, userID, baseDir string) (*types.Project, string, error)
 	GetProjectByID(ctx context.Context, id int64) (*types.Project, error)
-	AddUserProject(ctx context.Context, userID, projectID string) error
+	AddUserProject(ctx context.Context, userID string, projectID int64) error
 	AddUserProjectByShareCode(ctx context.Context, userID, shareCode string) error
-	UpdateProjectSharing(ctx context.Context, userID, projectID string, enabled bool) (string, error)
-	ActivateUserProject(ctx context.Context, userID, projectID string) error
-	DeleteUserProject(ctx context.Context, userID, projectID string) error
+	UpdateProjectSharing(ctx context.Context, userID string, projectID int64, enabled bool) (string, error)
+	ActivateUserProject(ctx context.Context, userID string, projectID int64) error
+	DeleteUserProject(ctx context.Context, userID string, projectID int64) error
 	CreateDefaultProjectForUser(ctx context.Context, userID, username string) error
 	CreateProjectForUser(ctx context.Context, userID string, project *types.Project) (*types.Project, error)
 	AddProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error
 	UpdateProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error
 	DeleteProjectReport(ctx context.Context, userID string, reportID int64) error
-	ListProjectReportByProjectID(ctx context.Context, userID, projectID string) ([]*types.ProjectReport, error)
-	PageProjectReportByProjectID(ctx context.Context, userID, projectID string, pagination *types.Pagination) ([]*types.ProjectReport, int64, error)
+	ListProjectReportByProjectID(ctx context.Context, userID string, projectID int64) ([]*types.ProjectReport, error)
+	PageProjectReportByProjectID(ctx context.Context, userID string, projectID int64, pagination *types.Pagination) ([]*types.ProjectReport, int64, error)
 	GetProjectReportDetailByID(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, error)
 	GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error)
 	// ProjectReportItem business capabilities.
@@ -62,18 +62,18 @@ type ProjectRepository interface {
 	GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error)
 	CreateProject(ctx context.Context, project *types.Project) error
 	AddUserProject(ctx context.Context, up *types.UserProject) error
-	ExistsUserProject(ctx context.Context, userID, projectID string) (bool, error)
-	GetUserProject(ctx context.Context, userID, projectID string) (*types.UserProject, error)
+	ExistsUserProject(ctx context.Context, userID string, projectID int64) (bool, error)
+	GetUserProject(ctx context.Context, userID string, projectID int64) (*types.UserProject, error)
 	GetUserProjectByShareCode(ctx context.Context, shareCode string) (*types.UserProject, error)
-	UpdateProjectSharing(ctx context.Context, userID, projectID string, enabled bool, shareCode string) error
-	DeleteUserProject(ctx context.Context, userID, projectID string) error
-	ActivateUserProject(ctx context.Context, userID, projectID string) error
+	UpdateProjectSharing(ctx context.Context, userID string, projectID int64, enabled bool, shareCode string) error
+	DeleteUserProject(ctx context.Context, userID string, projectID int64) error
+	ActivateUserProject(ctx context.Context, userID string, projectID int64) error
 	AddProjectReport(ctx context.Context, report *types.ProjectReport) error
 	GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error)
 	UpdateProjectReport(ctx context.Context, report *types.ProjectReport) error
-	DeleteProjectReport(ctx context.Context, projectID string, reportID int64) error
-	ListProjectReportByProjectID(ctx context.Context, projectID string) ([]*types.ProjectReport, error)
-	PageProjectReportByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.ProjectReport, int64, error)
+	DeleteProjectReport(ctx context.Context, projectID int64, reportID int64) error
+	ListProjectReportByProjectID(ctx context.Context, projectID int64) ([]*types.ProjectReport, error)
+	PageProjectReportByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.ProjectReport, int64, error)
 	// ProjectReportItem data access methods.
 	AddProjectReportItem(ctx context.Context, item *types.ProjectReportItem) error
 	GetProjectReportItemByID(ctx context.Context, itemID int64) (*types.ProjectReportItem, error)
@@ -89,11 +89,11 @@ type ProjectRepository interface {
 	GetLiteratureByID(ctx context.Context, literatureID int64) (*types.Literature, error)
 	UpdateLiterature(ctx context.Context, literature *types.Literature) error
 	DeleteLiterature(ctx context.Context, literatureID int64) error
-	ListLiteratureByProjectID(ctx context.Context, projectID string) ([]*types.Literature, error)
-	PageLiteratureByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.Literature, int64, error)
+	ListLiteratureByProjectID(ctx context.Context, projectID int64) ([]*types.Literature, error)
+	PageLiteratureByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.Literature, int64, error)
 	AddProjectLiterature(ctx context.Context, pl *types.ProjectLiterature) error
-	ExistsProjectLiterature(ctx context.Context, projectID string, literatureID int64) (bool, error)
-	DeleteProjectLiterature(ctx context.Context, projectID string, literatureID int64) error
+	ExistsProjectLiterature(ctx context.Context, projectID int64, literatureID int64) (bool, error)
+	DeleteProjectLiterature(ctx context.Context, projectID int64, literatureID int64) error
 	DeleteProjectLiteratureByLiteratureID(ctx context.Context, literatureID int64) error
-	PageLiteraturePool(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.LiteraturePoolItem, int64, error)
+	PageLiteraturePool(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.LiteraturePoolItem, int64, error)
 }

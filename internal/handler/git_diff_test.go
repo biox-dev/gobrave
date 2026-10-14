@@ -116,7 +116,7 @@ func mustWriteScriptFile(t *testing.T, path, content string) {
 // 返回工作区未提交改动，并带上 entity/id/git_state。
 func TestGetScriptGitDiff(t *testing.T) {
 	baseDir := t.TempDir()
-	scriptDir := utils.GetScriptFileDir(baseDir, "p1", "s1")
+	scriptDir := utils.GetScriptFileDir(baseDir, 7, "s1")
 	mainPath := filepath.Join(scriptDir, "main.py")
 	mustWriteScriptFile(t, mainPath, "print(1)\n")
 	mustGitRepo(t, scriptDir)
@@ -125,7 +125,7 @@ func TestGetScriptGitDiff(t *testing.T) {
 
 	h := &GitHandler{
 		workflowService: stubGitWorkflowService{script: &types.Script{ID: 1, ScriptID: "s1", ProjectID: 7}},
-		projectService:  stubGitProjectService{project: &types.Project{ID: 7, ProjectID: "p1"}},
+		projectService:  stubGitProjectService{project: &types.Project{ID: 7}},
 		storeService:    stubStoreService{},
 		cfg:             &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}},
 	}
@@ -161,7 +161,7 @@ func TestGetScriptGitDiff(t *testing.T) {
 // 除工作区外还应返回 http://store 与本地 HEAD 之间的未发布提交差异。
 func TestGetWorkflowGitDiffUnpublished(t *testing.T) {
 	baseDir := t.TempDir()
-	workflowDir := utils.GetWorkflowFileDir(baseDir, "p1", "w1")
+	workflowDir := utils.GetWorkflowFileDir(baseDir, 7, "w1")
 	mainPath := filepath.Join(workflowDir, "workflow.json")
 	mustWriteScriptFile(t, mainPath, "{}\n")
 	mustGitRepo(t, workflowDir)
@@ -181,7 +181,7 @@ func TestGetWorkflowGitDiffUnpublished(t *testing.T) {
 
 	h := &GitHandler{
 		workflowService: stubGitWorkflowService{workflow: &types.Workflow{ID: 2, WorkflowID: "w1", ProjectID: 7, StoreID: 3}},
-		projectService:  stubGitProjectService{project: &types.Project{ID: 7, ProjectID: "p1"}},
+		projectService:  stubGitProjectService{project: &types.Project{ID: 7}},
 		storeService:    stubStoreService{store: &types.Store{ID: 3, PathName: "w-1"}},
 		cfg:             &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}},
 	}

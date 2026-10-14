@@ -2,27 +2,24 @@ package manager
 
 import (
 	"context"
-	"strings"
 
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
-// ResolveProjectCode 将项目的数值主键（t_project.id）解析为磁盘目录使用的项目标识
-// （t_project.project_id，见 types.Project.ProjectID）。
+// ResolveProjectID 校验项目数值主键（t_project.id）存在并返回它。
 //
-// 磁盘上的项目目录统一按 t_project.project_id 组织（见 utils.GetProjectDir、
-// utils.GetAISummaryFile 等），而 Analysis / AnalysisNode / AISummary 记录里保存的是
-// 数值主键，因此读写项目下的文件前需要用本方法把数值 ID 换成字符串标识。
-// 项目不存在或标识为空时返回空串。
-func ResolveProjectCode(ctx context.Context, projectRepo interfaces.ProjectRepository, projectID int64) string {
+// 磁盘上的项目目录统一按项目主键组织（见 utils.GetProjectDir、utils.GetAISummaryFile 等），
+// 而 Analysis / AnalysisNode / AISummary 记录里保存的也是这个数值主键，因此读写项目下的
+// 文件前只需确认该项目存在即可。项目不存在时返回 0。
+func ResolveProjectID(ctx context.Context, projectRepo interfaces.ProjectRepository, projectID int64) int64 {
 	if projectRepo == nil || projectID == 0 {
-		return ""
+		return 0
 	}
 	project, err := projectRepo.GetProjectByID(ctx, projectID)
 	if err != nil || project == nil {
-		logger.Warnf(ctx, "[Project] resolve project code failed, project_id=%d err=%v", projectID, err)
-		return ""
+		logger.Warnf(ctx, "[Project] resolve project failed, project_id=%d err=%v", projectID, err)
+		return 0
 	}
-	return strings.TrimSpace(project.ProjectID)
+	return project.ID
 }

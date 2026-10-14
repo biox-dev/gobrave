@@ -96,7 +96,6 @@ type ContainerRepository interface {
 
 	CreateAppSession(ctx context.Context, item *types.AppSession) error
 	GetAppSessionByID(ctx context.Context, id int64) (*types.AppSession, error)
-	GetProjectByProjectID(ctx context.Context, projectID string) (*types.Project, error)
 	UpdateAppSession(ctx context.Context, item *types.AppSession) error
 	DeleteAppSession(ctx context.Context, id int64) error
 	ListAppSession(ctx context.Context) ([]*types.AppSession, error)

@@ -85,8 +85,8 @@ func (s *aiSummaryService) RegenerateAISummary(ctx context.Context, id int64) (*
 	}
 
 	// 删除旧的正文文件，等待重新生成（正文不再落库）。
-	if projectCode := s.resolveSummaryProjectCode(ctx, summary); projectCode != "" {
-		if err := utils.DeleteAISummaryFile(s.storageBaseDir(), projectCode, summary.ID); err != nil {
+	if projectID := s.resolveSummaryProjectID(ctx, summary); projectID != 0 {
+		if err := utils.DeleteAISummaryFile(s.storageBaseDir(), projectID, summary.ID); err != nil {
 			logger.Warnf(ctx, "[AISummary] delete summary file failed, summary_id=%d err=%v", summary.ID, err)
 		}
 	}
@@ -208,22 +208,16 @@ func (s *aiSummaryService) storageBaseDir() string {
 // readSummaryContent 按摘要所属项目读取正文文件（见 utils.GetAISummaryFile），
 // 文件不存在或项目无法解析时返回空串（前端按空内容展示，而非报错）。
 func (s *aiSummaryService) readSummaryContent(ctx context.Context, summary *types.AISummary) string {
-	projectCode := s.resolveSummaryProjectCode(ctx, summary)
-	if projectCode == "" {
+	projectID := s.resolveSummaryProjectID(ctx, summary)
+	if projectID == 0 {
 		return ""
 	}
-	content, err := utils.ReadAISummaryFile(s.storageBaseDir(), projectCode, summary.ID)
+	content, err := utils.ReadAISummaryFile(s.storageBaseDir(), projectID, summary.ID)
 	if err != nil {
 		logger.Warnf(ctx, "[AISummary] read summary file failed, summary_id=%d err=%v", summary.ID, err)
 		return ""
 	}
 	return content
-}
-
-// resolveSummaryProjectCode 返回摘要所属项目在磁盘目录中使用的字符串标识
-// （t_project.project_id，见 types.Project.ProjectID），数值主键经 ResolveProjectCode 转换。
-func (s *aiSummaryService) resolveSummaryProjectCode(ctx context.Context, summary *types.AISummary) string {
-	return manager.ResolveProjectCode(ctx, s.projectRepo, s.resolveSummaryProjectID(ctx, summary))
 }
 
 // resolveSummaryProjectID 返回摘要所属对象的项目数值主键（t_project.id）：优先使用摘要记录上
@@ -258,11 +252,11 @@ func (s *aiSummaryService) UpdateAISummary(ctx context.Context, id int64, title,
 		summary.Title = *title
 	}
 	if content != nil {
-		projectCode := s.resolveSummaryProjectCode(ctx, summary)
-		if projectCode == "" {
-			return nil, fmt.Errorf("resolve summary project code failed, summary_id=%d", summary.ID)
+		projectID := s.resolveSummaryProjectID(ctx, summary)
+		if projectID == 0 {
+			return nil, fmt.Errorf("resolve summary project failed, summary_id=%d", summary.ID)
 		}
-		if err := utils.WriteAISummaryFile(s.storageBaseDir(), projectCode, summary.ID, *content); err != nil {
+		if err := utils.WriteAISummaryFile(s.storageBaseDir(), projectID, summary.ID, *content); err != nil {
 			return nil, fmt.Errorf("write summary file: %w", err)
 		}
 		// 供响应回显（非持久化字段）。
@@ -291,14 +285,14 @@ func (s *aiSummaryService) DeleteAISummary(ctx context.Context, id int64) error 
 		return err
 	}
 
-	projectCode := s.resolveSummaryProjectCode(ctx, summary)
+	projectID := s.resolveSummaryProjectID(ctx, summary)
 
 	if err := s.summaryRepo.DeleteAISummary(ctx, id); err != nil {
 		return err
 	}
 
-	if projectCode != "" {
-		if err := utils.DeleteAISummaryFile(s.storageBaseDir(), projectCode, id); err != nil {
+	if projectID != 0 {
+		if err := utils.DeleteAISummaryFile(s.storageBaseDir(), projectID, id); err != nil {
 			logger.Warnf(ctx, "[AISummary] delete summary file failed, summary_id=%d err=%v", id, err)
 		}
 	}

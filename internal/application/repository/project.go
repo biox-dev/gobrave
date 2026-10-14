@@ -25,7 +25,7 @@ func (r *projectRepository) AddUserProject(ctx context.Context, up *types.UserPr
 	return r.db.WithContext(ctx).Create(up).Error
 }
 
-func (r *projectRepository) ExistsUserProject(ctx context.Context, userID, projectID string) (bool, error) {
+func (r *projectRepository) ExistsUserProject(ctx context.Context, userID string, projectID int64) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&types.UserProject{}).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
@@ -33,7 +33,7 @@ func (r *projectRepository) ExistsUserProject(ctx context.Context, userID, proje
 	return count > 0, err
 }
 
-func (r *projectRepository) GetUserProject(ctx context.Context, userID, projectID string) (*types.UserProject, error) {
+func (r *projectRepository) GetUserProject(ctx context.Context, userID string, projectID int64) (*types.UserProject, error) {
 	up := &types.UserProject{}
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
@@ -55,7 +55,7 @@ func (r *projectRepository) GetUserProjectByShareCode(ctx context.Context, share
 	return up, nil
 }
 
-func (r *projectRepository) UpdateProjectSharing(ctx context.Context, userID, projectID string, enabled bool, shareCode string) error {
+func (r *projectRepository) UpdateProjectSharing(ctx context.Context, userID string, projectID int64, enabled bool, shareCode string) error {
 	return r.db.WithContext(ctx).
 		Model(&types.UserProject{}).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
@@ -65,7 +65,7 @@ func (r *projectRepository) UpdateProjectSharing(ctx context.Context, userID, pr
 		}).Error
 }
 
-func (r *projectRepository) DeleteUserProject(ctx context.Context, userID, projectID string) error {
+func (r *projectRepository) DeleteUserProject(ctx context.Context, userID string, projectID int64) error {
 	return r.db.WithContext(ctx).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
 		Delete(&types.UserProject{}).Error
@@ -91,7 +91,7 @@ func (r *projectRepository) GetActiveProjectByUserID(ctx context.Context, userID
 	return project, nil
 }
 
-func (r *projectRepository) ActivateUserProject(ctx context.Context, userID, projectID string) error {
+func (r *projectRepository) ActivateUserProject(ctx context.Context, userID string, projectID int64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var count int64
 		if err := tx.Model(&types.UserProject{}).
@@ -172,13 +172,13 @@ func (r *projectRepository) UpdateProjectReport(ctx context.Context, report *typ
 		}).Error
 }
 
-func (r *projectRepository) DeleteProjectReport(ctx context.Context, projectID string, reportID int64) error {
+func (r *projectRepository) DeleteProjectReport(ctx context.Context, projectID int64, reportID int64) error {
 	return r.db.WithContext(ctx).
 		Where("id = ? AND project_id = ?", reportID, projectID).
 		Delete(&types.ProjectReport{}).Error
 }
 
-func (r *projectRepository) ListProjectReportByProjectID(ctx context.Context, projectID string) ([]*types.ProjectReport, error) {
+func (r *projectRepository) ListProjectReportByProjectID(ctx context.Context, projectID int64) ([]*types.ProjectReport, error) {
 	reports := make([]*types.ProjectReport, 0)
 	err := r.db.WithContext(ctx).
 		Model(&types.ProjectReport{}).
@@ -193,7 +193,7 @@ func (r *projectRepository) ListProjectReportByProjectID(ctx context.Context, pr
 	return reports, nil
 }
 
-func (r *projectRepository) PageProjectReportByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.ProjectReport, int64, error) {
+func (r *projectRepository) PageProjectReportByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.ProjectReport, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -221,7 +221,7 @@ func (r *projectRepository) PageProjectReportByProjectID(ctx context.Context, pa
 	return items, total, nil
 }
 
-func (r *projectRepository) ListProjectReportDetailByProjectID(ctx context.Context, projectID string) ([]*types.ProjectReport, error) {
+func (r *projectRepository) ListProjectReportDetailByProjectID(ctx context.Context, projectID int64) ([]*types.ProjectReport, error) {
 	reports := make([]*types.ProjectReport, 0)
 	err := r.db.WithContext(ctx).
 		Where("project_id = ?", projectID).
@@ -364,7 +364,7 @@ func (r *projectRepository) DeleteLiterature(ctx context.Context, literatureID i
 		Delete(&types.Literature{}).Error
 }
 
-func (r *projectRepository) ListLiteratureByProjectID(ctx context.Context, projectID string) ([]*types.Literature, error) {
+func (r *projectRepository) ListLiteratureByProjectID(ctx context.Context, projectID int64) ([]*types.Literature, error) {
 	items := make([]*types.Literature, 0)
 	err := r.db.WithContext(ctx).
 		Table("t_literature AS l").
@@ -380,7 +380,7 @@ func (r *projectRepository) ListLiteratureByProjectID(ctx context.Context, proje
 	return items, nil
 }
 
-func (r *projectRepository) PageLiteratureByProjectID(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.Literature, int64, error) {
+func (r *projectRepository) PageLiteratureByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.Literature, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -413,7 +413,7 @@ func (r *projectRepository) AddProjectLiterature(ctx context.Context, pl *types.
 	return r.db.WithContext(ctx).Create(pl).Error
 }
 
-func (r *projectRepository) ExistsProjectLiterature(ctx context.Context, projectID string, literatureID int64) (bool, error) {
+func (r *projectRepository) ExistsProjectLiterature(ctx context.Context, projectID int64, literatureID int64) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&types.ProjectLiterature{}).
 		Where("project_id = ? AND literature_id = ?", projectID, literatureID).
@@ -421,7 +421,7 @@ func (r *projectRepository) ExistsProjectLiterature(ctx context.Context, project
 	return count > 0, err
 }
 
-func (r *projectRepository) DeleteProjectLiterature(ctx context.Context, projectID string, literatureID int64) error {
+func (r *projectRepository) DeleteProjectLiterature(ctx context.Context, projectID int64, literatureID int64) error {
 	return r.db.WithContext(ctx).
 		Where("project_id = ? AND literature_id = ?", projectID, literatureID).
 		Delete(&types.ProjectLiterature{}).Error
@@ -433,7 +433,7 @@ func (r *projectRepository) DeleteProjectLiteratureByLiteratureID(ctx context.Co
 		Delete(&types.ProjectLiterature{}).Error
 }
 
-func (r *projectRepository) PageLiteraturePool(ctx context.Context, pagination *types.Pagination, projectID string) ([]*types.LiteraturePoolItem, int64, error) {
+func (r *projectRepository) PageLiteraturePool(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.LiteraturePoolItem, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}

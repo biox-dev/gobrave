@@ -81,7 +81,7 @@ func (r *UpdateDatasetRequest) ToDataset() *Dataset {
 type ProjectDataset struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	ProjectID string `json:"project_id" gorm:"index;not null"`
+	ProjectID int64 `json:"project_id,string" gorm:"index;not null"`
 
 	DatasetID int64 `json:"dataset_id,string" gorm:"index;not null"`
 

@@ -68,13 +68,19 @@ var _ event.Handler = (*ContainerCreateWorker)(nil)
 // 	// UserID              string `json:"user_id,omitempty"`
 // }
 
+// projectLookup 是容器创建 worker 需要的项目只读依赖：仅按主键查项目，
+// 便于测试注入轻量实现（interfaces.ProjectRepository 天然满足它）。
+type projectLookup interface {
+	GetProjectByID(ctx context.Context, id int64) (*types.Project, error)
+}
+
 // ContainerCreateWorker subscribes to OutboxCreateRequestEvent and ContainerEvent
 // from the event bus. For creation requests it executes rt.Create + rt.Start,
 // and updates the active create request count while the request is being handled.
 type ContainerCreateWorker struct {
 	containerService interfaces.ContainerService
 	repo             interfaces.ContainerRepository
-	projectRepo      interfaces.ProjectRepository
+	projectRepo      projectLookup
 	analysisRepo     interfaces.AnalysisRepository
 	workflowService  interfaces.WorkflowService
 	reg              *containerruntime.Registry
@@ -88,7 +94,7 @@ type ContainerCreateWorker struct {
 // NewContainerCreateWorker creates a new worker.
 func NewContainerCreateWorker(
 	repo interfaces.ContainerRepository,
-	projectRepo interfaces.ProjectRepository,
+	projectRepo projectLookup,
 	analysisRepo interfaces.AnalysisRepository,
 	workflowService interfaces.WorkflowService,
 	reg *containerruntime.Registry,

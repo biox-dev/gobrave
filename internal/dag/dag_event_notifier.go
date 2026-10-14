@@ -76,7 +76,7 @@ func (n *DagRuntimeEventNotifier) Handle(evt event.Event) {
 	if err != nil {
 		return
 	}
-	userIDs, err := n.listProjectUserIDs(ctx, project.ProjectID)
+	userIDs, err := n.listProjectUserIDs(ctx, project.ID)
 	if err != nil {
 		logger.Warnf(ctx, "[Realtime] skip dag event notify: load project users failed project_id=%d event=%s err=%v", projectID, runtimeEvent.Name, err)
 		return
@@ -116,7 +116,7 @@ func (n *DagRuntimeEventNotifier) shouldNotify(eventName string) bool {
 	}
 }
 
-func (n *DagRuntimeEventNotifier) listProjectUserIDs(ctx context.Context, projectID string) ([]string, error) {
+func (n *DagRuntimeEventNotifier) listProjectUserIDs(ctx context.Context, projectID int64) ([]string, error) {
 	rows := make([]string, 0)
 	err := n.db.WithContext(ctx).
 		Model(&types.UserProject{}).

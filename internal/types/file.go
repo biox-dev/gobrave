@@ -89,7 +89,7 @@ func (t *DatasetFile) BeforeCreate(_ *gorm.DB) error {
 
 type AddFileToDatasetRequest struct {
 	DatasetID      int64  `json:"dataset_id,string" binding:"required"`
-	ProjectID      string `json:"-"`
+	ProjectID      int64  `json:"-"`
 	AnalysisNodeID int64  `json:"analysis_node_id,string,omitempty"` // optional, if provided, the file will be linked to the analysis node
 	Path           string `json:"path" binding:"required"`
 	Role           string `json:"role"`

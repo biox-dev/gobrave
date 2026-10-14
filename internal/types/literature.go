@@ -37,7 +37,7 @@ type Literature struct {
 	Filename string `json:"filename" gorm:"type:varchar(255);default:fulltext.md"`
 	// OwnerProjectID is the project whose literature directory owns the full-text
 	// file. It is set when the literature is first created.
-	OwnerProjectID string    `json:"owner_project_id" gorm:"type:varchar(255);index"`
+	OwnerProjectID int64     `json:"owner_project_id,string" gorm:"type:bigint;index"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -63,7 +63,7 @@ func (Literature) TableName() string {
 // literatures. We intentionally do not use GORM association tags/relations.
 type ProjectLiterature struct {
 	ID           uint      `json:"id" gorm:"primaryKey;autoIncrement"`
-	ProjectID    string    `json:"project_id" gorm:"type:varchar(255);not null;index:idx_project_literature_project;uniqueIndex:idx_project_literature_unique,priority:1"`
+	ProjectID    int64     `json:"project_id,string" gorm:"type:bigint;not null;index:idx_project_literature_project;uniqueIndex:idx_project_literature_unique,priority:1"`
 	LiteratureID int64     `json:"literature_id,string" gorm:"type:bigint;not null;index:idx_project_literature_literature;uniqueIndex:idx_project_literature_unique,priority:2"`
 	CreatedAt    time.Time `json:"created_at"`
 }

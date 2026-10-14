@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/config"
@@ -39,18 +40,6 @@ func NewWorkflowService(
 	}
 }
 
-// projectStringID 把 project 的 int64 主键解析为磁盘目录使用的 project_id 字符串。
-func (s *workflowService) projectStringID(ctx context.Context, projectPK int64) (string, error) {
-	project, err := s.projectRepo.GetProjectByID(ctx, projectPK)
-	if err != nil {
-		return "", err
-	}
-	if project == nil {
-		return "", nil
-	}
-	return project.ProjectID, nil
-}
-
 // workflowDagDefinitionFile 读取工作流目录下 dag_definition.json 的原始内容。
 // dag_definition 不再是数据库字段，所有读取方（可视化 DAG、导出、formJson、脚本引用检查）
 // 都通过这里统一取文件内容；文件不存在时返回 nil（不视为错误）。
@@ -58,11 +47,7 @@ func (s *workflowService) workflowDagDefinitionFile(ctx context.Context, findWor
 	if findWorkflow == nil {
 		return nil, nil
 	}
-	projectID, err := s.projectStringID(ctx, findWorkflow.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	return utils.ReadWorkflowDagDefinitionFile(s.cfg.Storage.BaseDir, projectID, findWorkflow.WorkflowID)
+	return utils.ReadWorkflowDagDefinitionFile(s.cfg.Storage.BaseDir, findWorkflow.ProjectID, findWorkflow.WorkflowID)
 }
 
 func (s *workflowService) GetWorkflowByID(ctx context.Context, id int64) (*types.Workflow, error) {
@@ -142,10 +127,9 @@ func (s *workflowService) GetWorkflowVisByWorkflow(ctx context.Context, findWork
 		if err != nil {
 			return nil, err
 		}
-		// io_schema 以脚本目录下的 io_schema.json 为准，这里只需解析一次项目目录字符串。
-		projectID, _ := s.projectStringID(ctx, findWorkflow.ProjectID)
+		// io_schema 以脚本目录下的 io_schema.json 为准，这里直接使用项目主键。
 		for _, script := range scripts {
-			scriptNodeMap[script.ScriptID] = buildScriptVisItem(s.cfg.Storage.BaseDir, projectID, script)
+			scriptNodeMap[script.ScriptID] = buildScriptVisItem(s.cfg.Storage.BaseDir, findWorkflow.ProjectID, script)
 		}
 	}
 
@@ -205,8 +189,7 @@ func (s *workflowService) ScriptToNode(ctx context.Context, workflowID int64, sc
 	}
 
 	// get_script_item: 复用 script 可视化节点构造逻辑
-	projectID, _ := s.projectStringID(ctx, script.ProjectID)
-	node := buildScriptVisItem(s.cfg.Storage.BaseDir, projectID, script)
+	node := buildScriptVisItem(s.cfg.Storage.BaseDir, script.ProjectID, script)
 
 	// script_to_node: 统计 DAG 中引用同一 script 的节点数量，生成唯一 node_id（script_id_N）
 	dagBytes, _ := s.workflowDagDefinitionFile(ctx, findWorkflow)
@@ -260,7 +243,7 @@ func (s *workflowService) GetScriptFileByScriptID(ctx context.Context, scriptID 
 	if project == nil {
 		return "", "", nil
 	}
-	return utils.GetScriptFile(s.cfg.Storage.BaseDir, project.ProjectID, script.ScriptType, script.ScriptID)
+	return utils.GetScriptFile(s.cfg.Storage.BaseDir, project.ID, script.ScriptType, script.ScriptID)
 }
 
 // func (s *workflowService) GetScriptMainFileByScriptID(ctx context.Context, scriptID string) (string, string, error) {
@@ -588,11 +571,7 @@ func (s *workflowService) UpdateWorkflowDagDefinition(ctx context.Context, workf
 	if workflow == nil {
 		return fmt.Errorf("workflow not found: %d", workflowID)
 	}
-	projectID, err := s.projectStringID(ctx, workflow.ProjectID)
-	if err != nil {
-		return err
-	}
-	return utils.WriteWorkflowDagDefinition(s.cfg.Storage.BaseDir, projectID, workflow.WorkflowID, dagDefinition)
+	return utils.WriteWorkflowDagDefinition(s.cfg.Storage.BaseDir, workflow.ProjectID, workflow.WorkflowID, dagDefinition)
 }
 
 func (s *workflowService) DeleteWorkflow(ctx context.Context, id int64) error {
@@ -675,8 +654,8 @@ func (s *workflowService) DeleteScript(ctx context.Context, id int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to get project: %w", err)
 	}
-	scriptDir := utils.GetScriptFileDir(s.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
-	projectDataPrefix := filepath.Join(s.cfg.Storage.BaseDir, "data", project.ProjectID)
+	scriptDir := utils.GetScriptFileDir(s.cfg.Storage.BaseDir, project.ID, script.ScriptID)
+	projectDataPrefix := filepath.Join(s.cfg.Storage.BaseDir, "data", strconv.FormatInt(project.ID, 10))
 	if strings.HasPrefix(scriptDir, projectDataPrefix) {
 		if err := os.RemoveAll(scriptDir); err != nil {
 			return fmt.Errorf("failed to remove script directory %s: %w", scriptDir, err)
@@ -695,11 +674,7 @@ func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID in
 	formJSONWrap := make([]interface{}, 0)
 
 	// io_schema 不再是 script 的数据库字段，统一从脚本目录的 io_schema.json 读取。
-	projectID, err := s.projectStringID(ctx, script.ProjectID)
-	if err != nil {
-		return nil, nil, err
-	}
-	ioSchema, err := utils.ReadScriptIOSchema(s.cfg.Storage.BaseDir, projectID, script.ScriptID)
+	ioSchema, err := utils.ReadScriptIOSchema(s.cfg.Storage.BaseDir, script.ProjectID, script.ScriptID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -794,14 +769,13 @@ func (s *workflowService) GetFormJSONByWorkflowID(ctx context.Context, workflowI
 		return nil, err
 	}
 
-	// io_schema 以目录下的 io_schema.json 为准，解析一次项目目录字符串复用。
-	projectID, _ := s.projectStringID(ctx, findWorkflow.ProjectID)
+	// io_schema 以目录下的 io_schema.json 为准，直接使用项目主键。
 	// 工作流级 io_schema 从工作流目录（GetWorkflowFileDir）的 io_schema.json 读取：
 	// scatter 配置与 scatter.mode=each 时的表单字段都用它，不再从脚本 io_schema 读取。
-	workflowIOSchema, _ := utils.ReadWorkflowIOSchema(s.cfg.Storage.BaseDir, projectID, findWorkflow.WorkflowID)
+	workflowIOSchema, _ := utils.ReadWorkflowIOSchema(s.cfg.Storage.BaseDir, findWorkflow.ProjectID, findWorkflow.WorkflowID)
 	for _, script := range scripts {
 		scriptID := script.ScriptID
-		ioSchema, _ := utils.ReadScriptIOSchema(s.cfg.Storage.BaseDir, projectID, script.ScriptID)
+		ioSchema, _ := utils.ReadScriptIOSchema(s.cfg.Storage.BaseDir, findWorkflow.ProjectID, script.ScriptID)
 
 		inputNames := getInputNames(ioSchema)
 		nodeIDs := nodeIDsByModuleID[scriptID]
@@ -980,7 +954,7 @@ func excludeInputNames(items []any, names any) []any {
 	return filtered
 }
 
-func buildScriptVisItem(baseDir, projectID string, script *types.Script) map[string]any {
+func buildScriptVisItem(baseDir string, projectID int64, script *types.Script) map[string]any {
 	node := map[string]any{
 		"name":         script.ComponentName,
 		"id":           script.ScriptID,

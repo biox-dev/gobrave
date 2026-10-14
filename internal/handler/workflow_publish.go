@@ -217,7 +217,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 
 	// workflow 目录是发布的数据源：workflow.json 与脚本目录快照由 Codec.WriteCommitWorkflowFiles
 	// 统一生成、落盘并提交，再 push 到 store 裸仓库。
-	workflowSourceDir := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, workflow.WorkflowID)
+	workflowSourceDir := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ID, workflow.WorkflowID)
 	codec, err := h.exportCodecForWrite()
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to resolve export codec").WithDetails(err.Error()))
@@ -228,7 +228,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 	}
 	if _, err := codec.WriteCommitWorkflowFiles(c.Request.Context(), exportcodec.WorkflowWriteRequest{
 		WorkflowPK:    workflow.ID,
-		ProjectID:     project.ProjectID,
+		ProjectID:     project.ID,
 		BaseDir:       h.storageBaseDir(),
 		WorkflowDir:   workflowSourceDir,
 		CommitMessage: req.Message,
@@ -298,7 +298,7 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 
 	// 脚本目录是发布的数据源：script.json 与 git 提交由 Codec.WriteCommitScriptFiles
 	// 在 push 前统一生成，这里不再校验文件是否存在。
-	sourceScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, script.ScriptID)
+	sourceScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ID, script.ScriptID)
 
 	// store 目录名（PathName）与业务 ID 解耦：首次发布生成随机标识，重新发布沿用既有值，
 	// 这样目录名不会随 script_id 变化而漂移。
@@ -469,7 +469,7 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 		return
 	}
 
-	targetWorkflowDir := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, workflowID)
+	targetWorkflowDir := utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ID, workflowID)
 
 	// store 是裸仓库：目标 workflow 目录已有仓库则 pull（fetch + reset --hard）覆盖本地，否则 clone 出工作区。
 	if syncErr := utils.SyncWorktreeFromRepo(c.Request.Context(), targetWorkflowDir, storeDir); syncErr != nil {
@@ -495,10 +495,9 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	}
 
 	result, installErr := codec.InstallWorkflow(c.Request.Context(), exportcodec.WorkflowInstallRequest{
-		Raw:         raw,
-		ProjectID:   project.ID,
-		ProjectCode: project.ProjectID,
-		StoreID:     store.ID,
+		Raw:       raw,
+		ProjectID: project.ID,
+		StoreID:   store.ID,
 		// StoreMessage: store.Message,
 		BaseDir:     h.storageBaseDir(),
 		WorkflowDir: targetWorkflowDir,
@@ -581,7 +580,7 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 		return
 	}
 
-	targetScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, scriptID)
+	targetScriptDir := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ID, scriptID)
 
 	// store 是裸仓库：目标脚本目录已有仓库则 pull（fetch + reset --hard）覆盖本地，否则 clone 出工作区。
 	if syncErr := utils.SyncWorktreeFromRepo(c.Request.Context(), targetScriptDir, storeDir); syncErr != nil {

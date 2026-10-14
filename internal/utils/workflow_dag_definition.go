@@ -16,24 +16,24 @@ import (
 const DagDefinitionFileName = "dag_definition.json"
 
 // WorkflowDagDefinitionPath 返回工作流目录下 dag_definition.json 的绝对路径。
-// 路径只取决于 baseDir / projectID / workflowID（都参与目录拼接）。
-func WorkflowDagDefinitionPath(baseDir, projectID, workflowID string) string {
+// 路径只取决于 baseDir / projectID（int64）/ workflowID（都参与目录拼接）。
+func WorkflowDagDefinitionPath(baseDir string, projectID int64, workflowID string) string {
 	return filepath.Join(GetWorkflowFileDir(baseDir, projectID, workflowID), DagDefinitionFileName)
 }
 
 // WriteWorkflowDagDefinition 将 dag_definition 内容格式化（两空格缩进）后写入工作流目录下的
 // dag_definition.json（详见 writeDagDefinitionFile）。
-func WriteWorkflowDagDefinition(baseDir, projectID, workflowID, content string) error {
+func WriteWorkflowDagDefinition(baseDir string, projectID int64, workflowID, content string) error {
 	return writeDagDefinitionFile(WorkflowDagDefinitionPath(baseDir, projectID, workflowID), content)
 }
 
 // ReadWorkflowDagDefinitionFile 读取工作流目录下 dag_definition.json 的原始内容，文件不存在时返回 nil。
-func ReadWorkflowDagDefinitionFile(baseDir, projectID, workflowID string) ([]byte, error) {
+func ReadWorkflowDagDefinitionFile(baseDir string, projectID int64, workflowID string) ([]byte, error) {
 	return readDagDefinitionFile(WorkflowDagDefinitionPath(baseDir, projectID, workflowID))
 }
 
 // ReadWorkflowDagDefinition 读取并解析工作流目录下的 dag_definition.json，缺失 / 空内容返回空 map。
-func ReadWorkflowDagDefinition(baseDir, projectID, workflowID string) (map[string]any, error) {
+func ReadWorkflowDagDefinition(baseDir string, projectID int64, workflowID string) (map[string]any, error) {
 	return readDagDefinition(WorkflowDagDefinitionPath(baseDir, projectID, workflowID))
 }
 

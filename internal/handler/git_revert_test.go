@@ -38,7 +38,7 @@ func serveGitRevert(t *testing.T, serve func(c *gin.Context), route, requestPath
 // RevertScriptFile 应把脚本目录里指定文件的未提交改动回退到本地 HEAD。
 func TestRevertScriptGitFile(t *testing.T) {
 	baseDir := t.TempDir()
-	scriptDir := utils.GetScriptFileDir(baseDir, "p1", "s1")
+	scriptDir := utils.GetScriptFileDir(baseDir, 7, "s1")
 	mainPath := filepath.Join(scriptDir, "main.py")
 	mustWriteScriptFile(t, mainPath, "print(1)\n")
 	mustGitRepo(t, scriptDir)
@@ -47,7 +47,7 @@ func TestRevertScriptGitFile(t *testing.T) {
 
 	h := &GitHandler{
 		workflowService: stubGitWorkflowService{script: &types.Script{ID: 1, ScriptID: "s1", ProjectID: 7}},
-		projectService:  stubGitProjectService{project: &types.Project{ID: 7, ProjectID: "p1"}},
+		projectService:  stubGitProjectService{project: &types.Project{ID: 7}},
 		storeService:    stubStoreService{},
 		cfg:             &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}},
 	}
@@ -83,13 +83,13 @@ func TestRevertScriptGitFile(t *testing.T) {
 // 路径缺失 / 无可撤回内容 / 非法 body 应分别转成 404 / 404 / 400。
 func TestRevertScriptGitFileErrors(t *testing.T) {
 	baseDir := t.TempDir()
-	scriptDir := utils.GetScriptFileDir(baseDir, "p1", "s1")
+	scriptDir := utils.GetScriptFileDir(baseDir, 7, "s1")
 	mustWriteScriptFile(t, filepath.Join(scriptDir, "main.py"), "print(1)\n")
 	mustGitRepo(t, scriptDir)
 
 	h := &GitHandler{
 		workflowService: stubGitWorkflowService{script: &types.Script{ID: 1, ScriptID: "s1", ProjectID: 7}},
-		projectService:  stubGitProjectService{project: &types.Project{ID: 7, ProjectID: "p1"}},
+		projectService:  stubGitProjectService{project: &types.Project{ID: 7}},
 		storeService:    stubStoreService{},
 		cfg:             &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}},
 	}

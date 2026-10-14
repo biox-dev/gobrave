@@ -216,7 +216,7 @@ func (h *WorkflowHandler) resolveScriptImageDir(c *gin.Context, projectID int64,
 		}
 		return "", errors.NewInternalServerError("failed to get project").WithDetails(err.Error())
 	}
-	return utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ProjectID, scriptID), nil
+	return utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ID, scriptID), nil
 }
 
 // resolveWorkflowImageDir 通过 workflow.ProjectID（DB 自增）找到项目，拼出 workflow 目录。
@@ -232,7 +232,7 @@ func (h *WorkflowHandler) resolveWorkflowImageDir(c *gin.Context, projectID int6
 		}
 		return "", errors.NewInternalServerError("failed to get project").WithDetails(err.Error())
 	}
-	return utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ProjectID, workflowID), nil
+	return utils.GetWorkflowFileDir(h.cfg.Storage.BaseDir, project.ID, workflowID), nil
 }
 
 // UploadScriptImage godoc

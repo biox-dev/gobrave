@@ -164,7 +164,7 @@ func (c *Codec) InstallWorkflow(ctx context.Context, req exportcodec.WorkflowIns
 	// 与导出侧（utils.WriteWorkflowDagDefinition）口径一致 —— DecodeWorkflow 已把对象规整为字符串。
 	if rawDag, ok := payload.Workflow["dag_definition"]; ok {
 		if dagStr, ok := rawDag.(string); ok && strings.TrimSpace(dagStr) != "" {
-			if err := utils.WriteWorkflowDagDefinition(req.BaseDir, req.ProjectCode, payload.WorkflowID, dagStr); err != nil {
+			if err := utils.WriteWorkflowDagDefinition(req.BaseDir, req.ProjectID, payload.WorkflowID, dagStr); err != nil {
 				return nil, fmt.Errorf("failed to write workflow dag_definition file: %w", err)
 			}
 		}
@@ -212,7 +212,7 @@ func (c *Codec) InstallWorkflow(ctx context.Context, req exportcodec.WorkflowIns
 			// 脚本文件随 workflow 目录一起从 store 同步到该版本约定的快照目录
 			// （v1 为 <workflowDir>/script/<scriptID>），这里再原样还原到脚本目录。
 			sourceScriptDir := c.ScriptSnapshotDir(req.WorkflowDir, scriptID)
-			targetScriptDir := utils.GetScriptFileDir(req.BaseDir, req.ProjectCode, scriptID)
+			targetScriptDir := utils.GetScriptFileDir(req.BaseDir, req.ProjectID, scriptID)
 			if copyErr := utils.CopyDirReplace(sourceScriptDir, targetScriptDir); copyErr != nil {
 				return nil, fmt.Errorf("failed to install script files: %w", copyErr)
 			}
