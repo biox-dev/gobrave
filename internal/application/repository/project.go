@@ -350,11 +350,7 @@ func (r *projectRepository) UpdateLiterature(ctx context.Context, literature *ty
 		Model(&types.Literature{}).
 		Where("id = ?", literature.ID).
 		Updates(map[string]interface{}{
-			"title":            literature.Title,
-			"content":          literature.Content,
-			"content_source":   literature.ContentSource,
-			"filename":         literature.Filename,
-			"owner_project_id": literature.OwnerProjectID,
+			"title": literature.Title,
 		}).Error
 }
 
@@ -431,6 +427,25 @@ func (r *projectRepository) DeleteProjectLiteratureByLiteratureID(ctx context.Co
 	return r.db.WithContext(ctx).
 		Where("literature_id = ?", literatureID).
 		Delete(&types.ProjectLiterature{}).Error
+}
+
+// GetLiteratureOwnerProjectID 返回文献第一条项目绑定所属的 project id。
+// 文献全文文件保存在绑定项目的 literature 目录下，此方法用于定位该文件。
+func (r *projectRepository) GetLiteratureOwnerProjectID(ctx context.Context, literatureID int64) (int64, error) {
+	var projectID int64
+	err := r.db.WithContext(ctx).
+		Model(&types.ProjectLiterature{}).
+		Where("literature_id = ?", literatureID).
+		Order("id ASC").
+		Limit(1).
+		Pluck("project_id", &projectID).Error
+	if err != nil {
+		return 0, err
+	}
+	if projectID == 0 {
+		return 0, gorm.ErrRecordNotFound
+	}
+	return projectID, nil
 }
 
 func (r *projectRepository) PageLiteraturePool(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.LiteraturePoolItem, int64, error) {

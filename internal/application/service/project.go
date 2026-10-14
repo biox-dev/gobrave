@@ -911,38 +911,25 @@ func (s *projectService) storageBaseDir() string {
 
 // ---------- Literature ----------
 
-func (s *projectService) AddLiterature(ctx context.Context, userID string, literature *types.Literature) (*types.Literature, error) {
+func (s *projectService) AddLiterature(ctx context.Context, userID string, literature *types.Literature, content string) (*types.Literature, string, error) {
 	if literature == nil {
-		return nil, errors.New("literature is nil")
+		return nil, "", errors.New("literature is nil")
 	}
 
 	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	s.ensureLiteratureDefaults(literature)
 	if literature.ID == 0 {
 		literature.ID = utils.GenerateID()
 	}
-	if literature.OwnerProjectID == 0 {
-		literature.OwnerProjectID = project.ID
-	}
-
 	now := time.Now()
 	literature.CreatedAt = now
 	literature.UpdatedAt = now
 
-	// For file-backed literature the database column stays empty; the full text
-	// is written to the project literature directory instead.
-	var fileContent string
-	if literature.ContentSource == types.LiteratureContentSourceFile {
-		fileContent = literature.Content
-		literature.Content = ""
-	}
-
 	if err := s.projectRepo.CreateLiterature(ctx, literature); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	if err := s.projectRepo.AddProjectLiterature(ctx, &types.ProjectLiterature{
@@ -950,21 +937,17 @@ func (s *projectService) AddLiterature(ctx context.Context, userID string, liter
 		LiteratureID: literature.ID,
 		CreatedAt:    now,
 	}); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	if literature.ContentSource == types.LiteratureContentSourceFile {
-		literature.Content = fileContent
-		if err := s.writeLiteratureFile(literature); err != nil {
-			return nil, err
-		}
-		literature.Content = ""
+	if err := s.writeLiteratureFile(project.ID, literature.ID, content); err != nil {
+		return nil, "", err
 	}
 
-	return literature, nil
+	return literature, content, nil
 }
 
-func (s *projectService) UpdateLiterature(ctx context.Context, userID string, literature *types.Literature) error {
+func (s *projectService) UpdateLiterature(ctx context.Context, userID string, literature *types.Literature, content string) error {
 	if literature == nil {
 		return errors.New("literature is nil")
 	}
@@ -978,50 +961,22 @@ func (s *projectService) UpdateLiterature(ctx context.Context, userID string, li
 		return err
 	}
 
-	s.ensureLiteratureDefaults(stored)
+	stored.Title = literature.Title
+	stored.UpdatedAt = time.Now()
 
-	// Owner project and filename are stable unless explicitly switched.
-	literature.OwnerProjectID = stored.OwnerProjectID
-	if strings.TrimSpace(literature.Filename) == "" {
-		literature.Filename = stored.Filename
-	}
-	if literature.ContentSource != types.LiteratureContentSourceDatabase &&
-		literature.ContentSource != types.LiteratureContentSourceFile {
-		literature.ContentSource = stored.ContentSource
-	}
-	if filepath.Base(literature.Filename) != literature.Filename {
-		literature.Filename = stored.Filename
+	if err := s.projectRepo.UpdateLiterature(ctx, stored); err != nil {
+		return err
 	}
 
-	switch {
-	case stored.ContentSource == types.LiteratureContentSourceDatabase &&
-		literature.ContentSource == types.LiteratureContentSourceFile:
-		// database -> file: persist the database content into the file.
-		if strings.TrimSpace(literature.Content) == "" {
-			literature.Content = stored.Content
-		}
-		if err := s.writeLiteratureFile(literature); err != nil {
-			return err
-		}
-		literature.Content = ""
-
-	case literature.ContentSource == types.LiteratureContentSourceFile:
-		// file -> file: rewrite the full text file.
-		if err := s.writeLiteratureFile(literature); err != nil {
-			return err
-		}
-		literature.Content = ""
-
-	default:
-		// database -> database: content stays in the database column.
+	projectID, err := s.projectRepo.GetLiteratureOwnerProjectID(ctx, literature.ID)
+	if err != nil {
+		return err
 	}
-
-	return s.projectRepo.UpdateLiterature(ctx, literature)
+	return s.writeLiteratureFile(projectID, literature.ID, content)
 }
 
 func (s *projectService) DeleteLiterature(ctx context.Context, userID string, literatureID int64) error {
-	literature, err := s.projectRepo.GetLiteratureByID(ctx, literatureID)
-	if err != nil {
+	if _, err := s.projectRepo.GetLiteratureByID(ctx, literatureID); err != nil {
 		return err
 	}
 
@@ -1030,9 +985,7 @@ func (s *projectService) DeleteLiterature(ctx context.Context, userID string, li
 	}
 
 	// Best-effort removal of the full-text file and its directory.
-	if err := s.deleteLiteratureFile(literature); err != nil {
-		return err
-	}
+	_ = s.deleteLiteratureFile(ctx, literatureID)
 
 	// Remove the association for every project that references this literature.
 	if err := s.projectRepo.DeleteProjectLiteratureByLiteratureID(ctx, literatureID); err != nil {
@@ -1042,7 +995,8 @@ func (s *projectService) DeleteLiterature(ctx context.Context, userID string, li
 	return s.projectRepo.DeleteLiterature(ctx, literatureID)
 }
 
-func (s *projectService) GetLiteratureDetailByID(ctx context.Context, userID string, literatureID int64) (*types.Literature, error) {
+// GetLiteratureDetailByID 返回文献元信息及其全文文件内容。
+func (s *projectService) GetLiteratureDetailByID(ctx context.Context, userID string, literatureID int64) (*types.LiteratureDetail, error) {
 	literature, err := s.projectRepo.GetLiteratureByID(ctx, literatureID)
 	if err != nil {
 		return nil, err
@@ -1052,20 +1006,20 @@ func (s *projectService) GetLiteratureDetailByID(ctx context.Context, userID str
 		return nil, err
 	}
 
-	s.ensureLiteratureDefaults(literature)
-
-	if literature.ContentSource == types.LiteratureContentSourceFile {
-		content, err := s.readLiteratureFile(literature)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return literature, nil
-			}
-			return nil, err
-		}
-		literature.Content = content
+	projectID, err := s.projectRepo.GetLiteratureOwnerProjectID(ctx, literatureID)
+	if err != nil {
+		return nil, err
 	}
 
-	return literature, nil
+	content, err := s.readLiteratureFile(projectID, literatureID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &types.LiteratureDetail{Literature: literature}, nil
+		}
+		return nil, err
+	}
+
+	return &types.LiteratureDetail{Literature: literature, Content: content}, nil
 }
 
 func (s *projectService) ListLiteratureByProjectID(ctx context.Context, userID string) ([]*types.Literature, error) {
@@ -1158,24 +1112,8 @@ func (s *projectService) requireLiteratureAccess(ctx context.Context, userID str
 	return nil
 }
 
-func (s *projectService) ensureLiteratureDefaults(literature *types.Literature) {
-	if literature == nil {
-		return
-	}
-	if literature.ContentSource != types.LiteratureContentSourceDatabase &&
-		literature.ContentSource != types.LiteratureContentSourceFile {
-		literature.ContentSource = types.LiteratureContentSourceFile
-	}
-	if strings.TrimSpace(literature.Filename) == "" {
-		literature.Filename = types.DefaultLiteratureFilename
-	}
-}
-
-func (s *projectService) literatureFilePath(literature *types.Literature) (string, error) {
-	if literature == nil {
-		return "", errors.New("literature is nil")
-	}
-	if literature.OwnerProjectID == 0 {
+func (s *projectService) literatureFilePath(projectID int64, literatureID int64) (string, error) {
+	if projectID == 0 {
 		return "", errors.New("literature owner project id is empty")
 	}
 
@@ -1188,20 +1126,11 @@ func (s *projectService) literatureFilePath(literature *types.Literature) (strin
 		return "", errors.New("storage base dir is empty")
 	}
 
-	filename := strings.TrimSpace(literature.Filename)
-	if filename == "" {
-		filename = types.DefaultLiteratureFilename
-	}
-	if filepath.Base(filename) != filename {
-		return "", errors.New("invalid literature filename")
-	}
-
-	dir := utils.GetProjectLiteratureDir(baseDir, literature.OwnerProjectID, strconv.FormatInt(literature.ID, 10))
-	return filepath.Join(dir, filename), nil
+	return utils.GetProjectLiteratureFile(baseDir, projectID, strconv.FormatInt(literatureID, 10)), nil
 }
 
-func (s *projectService) writeLiteratureFile(literature *types.Literature) error {
-	filePath, err := s.literatureFilePath(literature)
+func (s *projectService) writeLiteratureFile(projectID int64, literatureID int64, content string) error {
+	filePath, err := s.literatureFilePath(projectID, literatureID)
 	if err != nil {
 		return err
 	}
@@ -1210,11 +1139,11 @@ func (s *projectService) writeLiteratureFile(literature *types.Literature) error
 		return err
 	}
 
-	return os.WriteFile(filePath, []byte(literature.Content), 0o644)
+	return os.WriteFile(filePath, []byte(content), 0o644)
 }
 
-func (s *projectService) readLiteratureFile(literature *types.Literature) (string, error) {
-	filePath, err := s.literatureFilePath(literature)
+func (s *projectService) readLiteratureFile(projectID int64, literatureID int64) (string, error) {
+	filePath, err := s.literatureFilePath(projectID, literatureID)
 	if err != nil {
 		return "", err
 	}
@@ -1226,17 +1155,20 @@ func (s *projectService) readLiteratureFile(literature *types.Literature) (strin
 	return string(content), nil
 }
 
-func (s *projectService) deleteLiteratureFile(literature *types.Literature) error {
-	filePath, err := s.literatureFilePath(literature)
+func (s *projectService) deleteLiteratureFile(ctx context.Context, literatureID int64) error {
+	projectID, err := s.projectRepo.GetLiteratureOwnerProjectID(ctx, literatureID)
 	if err != nil {
 		return err
 	}
 
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+	dir, err := s.literatureFilePath(projectID, literatureID)
+	if err != nil {
 		return err
 	}
+	dir = filepath.Dir(dir)
 
-	// Best-effort cleanup of the now-empty per-literature directory.
-	_ = os.Remove(filepath.Dir(filePath))
+	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }

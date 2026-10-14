@@ -44,10 +44,10 @@ type ProjectService interface {
 	UpdateProjectReportFile(ctx context.Context, userID string, reportID int64, content string) error
 
 	// Literature (参考文献) business capabilities.
-	AddLiterature(ctx context.Context, userID string, literature *types.Literature) (*types.Literature, error)
-	UpdateLiterature(ctx context.Context, userID string, literature *types.Literature) error
+	AddLiterature(ctx context.Context, userID string, literature *types.Literature, content string) (*types.Literature, string, error)
+	UpdateLiterature(ctx context.Context, userID string, literature *types.Literature, content string) error
 	DeleteLiterature(ctx context.Context, userID string, literatureID int64) error
-	GetLiteratureDetailByID(ctx context.Context, userID string, literatureID int64) (*types.Literature, error)
+	GetLiteratureDetailByID(ctx context.Context, userID string, literatureID int64) (*types.LiteratureDetail, error)
 	ListLiteratureByProjectID(ctx context.Context, userID string) ([]*types.Literature, error)
 	PageLiteratureByProjectID(ctx context.Context, userID string, pagination *types.Pagination) ([]*types.Literature, int64, error)
 	BindLiteratureToProject(ctx context.Context, userID string, literatureID int64) error
@@ -95,5 +95,7 @@ type ProjectRepository interface {
 	ExistsProjectLiterature(ctx context.Context, projectID int64, literatureID int64) (bool, error)
 	DeleteProjectLiterature(ctx context.Context, projectID int64, literatureID int64) error
 	DeleteProjectLiteratureByLiteratureID(ctx context.Context, literatureID int64) error
+	// GetLiteratureOwnerProjectID 返回文献第一条项目绑定所属的 project id。
+	GetLiteratureOwnerProjectID(ctx context.Context, literatureID int64) (int64, error)
 	PageLiteraturePool(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.LiteraturePoolItem, int64, error)
 }

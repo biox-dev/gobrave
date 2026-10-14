@@ -7,18 +7,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// Literature content source values.
-const (
-	LiteratureContentSourceFile     = "file"
-	LiteratureContentSourceDatabase = "database"
-)
-
-// DefaultLiteratureFilename is the default full-text file name stored under the
-// project literature directory.
-const DefaultLiteratureFilename = "fulltext.md"
+// DefaultLiteratureFilename 是文献工作目录下约定的全文文件名。
+// 与 ProjectReport 的 output.md 类似，全文不再存入数据库，而是保存在
+// <projectDir>/literature/<literatureId>/ 目录下的该文件中。
+const DefaultLiteratureFilename = "literature.md"
 
 // Literature maps to the t_literature table. It represents a reference paper /
-// literature entry whose full text is (by default) stored as a file on disk.
+// literature entry. Only metadata (title) is persisted; the full text is stored
+// as a file on disk, mirroring how ProjectReport stores its content.
 //
 // The relationship between literature and projects is maintained manually via the
 // project_literature mapping table; we intentionally do NOT use GORM association
@@ -26,31 +22,14 @@ const DefaultLiteratureFilename = "fulltext.md"
 type Literature struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	Title string `json:"title" gorm:"type:varchar(255)"`
-	// Content is only authoritative when ContentSource == "database". For
-	// file-backed literature this column stays empty and the real content lives
-	// in the file referenced by Filename under the project literature directory.
-	Content string `json:"content" gorm:"type:longtext"`
-	// ContentSource indicates where the full text is stored: "file" or "database".
-	ContentSource string `json:"content_source" gorm:"type:varchar(16);default:file"`
-	// Filename is the full-text file name under the project literature directory.
-	Filename string `json:"filename" gorm:"type:varchar(255);default:fulltext.md"`
-	// OwnerProjectID is the project whose literature directory owns the full-text
-	// file. It is set when the literature is first created.
-	OwnerProjectID int64     `json:"owner_project_id,string" gorm:"type:bigint;index"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	Title     string    `json:"title" gorm:"type:varchar(255)"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (t *Literature) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()
-	}
-	if t.ContentSource == "" {
-		t.ContentSource = LiteratureContentSourceFile
-	}
-	if t.Filename == "" {
-		t.Filename = DefaultLiteratureFilename
 	}
 	return nil
 }
@@ -77,4 +56,10 @@ func (ProjectLiterature) TableName() string {
 type LiteraturePoolItem struct {
 	Literature
 	Bound bool `json:"bound"`
+}
+
+// LiteratureDetail 是文献详情：元信息 + 全文文件内容。
+type LiteratureDetail struct {
+	Literature *Literature
+	Content    string
 }

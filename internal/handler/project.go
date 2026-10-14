@@ -917,20 +917,18 @@ func parseMetadataForm(raw string) interface{} {
 // ---------- Literature (参考文献) ----------
 
 type addLiteratureRequest struct {
-	Title         string `json:"title" binding:"required"`
-	Content       string `json:"content"`
-	ContentSource string `json:"content_source"`
-	Filename      string `json:"filename"`
+	Title   string `json:"title" binding:"required"`
+	Content string `json:"content"`
 }
 
 // AddLiterature godoc
 // @Summary      为激活项目添加文献
-// @Description  创建一条参考文献记录并绑定到当前用户激活项目，全文按 content_source 存储（默认写入文件）
+// @Description  创建一条参考文献记录并绑定到当前用户激活项目，全文写入项目 literature 目录下的文件
 // @Tags         项目
 // @Accept       json
 // @Produce      json
 // @Param        request  body      addLiteratureRequest  true  "请求参数"
-// @Success      200      {object}  types.Literature      "创建成功"
+// @Success      200      {object}  literatureDetailItem  "创建成功"
 // @Failure      400      {object}  errors.AppError       "参数错误"
 // @Failure      401      {object}  errors.AppError       "未认证"
 // @Failure      404      {object}  errors.AppError       "未找到激活项目"
@@ -951,12 +949,9 @@ func (h *ProjectHandler) AddLiterature(c *gin.Context) {
 		return
 	}
 
-	literature, err := h.projectService.AddLiterature(ctx, userID, &types.Literature{
-		Title:         req.Title,
-		Content:       req.Content,
-		ContentSource: req.ContentSource,
-		Filename:      req.Filename,
-	})
+	literature, content, err := h.projectService.AddLiterature(ctx, userID, &types.Literature{
+		Title: req.Title,
+	}, req.Content)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("active project not found"))
@@ -966,20 +961,18 @@ func (h *ProjectHandler) AddLiterature(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, literature)
+	c.JSON(http.StatusOK, newLiteratureDetailItem(strconv.FormatInt(literature.ID, 10), literature, content))
 }
 
 type updateLiteratureRequest struct {
-	ID            int64  `json:"id,string" binding:"required"`
-	Title         string `json:"title" binding:"required"`
-	Content       string `json:"content"`
-	ContentSource string `json:"content_source"`
-	Filename      string `json:"filename"`
+	ID      int64  `json:"id,string" binding:"required"`
+	Title   string `json:"title" binding:"required"`
+	Content string `json:"content"`
 }
 
 // UpdateLiterature godoc
 // @Summary      更新文献
-// @Description  按文献ID更新标题、全文内容与存储方式
+// @Description  按文献ID更新标题，并将全文写到项目 literature 目录下的文件
 // @Tags         项目
 // @Accept       json
 // @Produce      json
@@ -1006,12 +999,9 @@ func (h *ProjectHandler) UpdateLiterature(c *gin.Context) {
 	}
 
 	if err := h.projectService.UpdateLiterature(ctx, userID, &types.Literature{
-		ID:            req.ID,
-		Title:         req.Title,
-		Content:       req.Content,
-		ContentSource: req.ContentSource,
-		Filename:      req.Filename,
-	}); err != nil {
+		ID:    req.ID,
+		Title: req.Title,
+	}, req.Content); err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("literature not found or not bound to active project"))
 			return
@@ -1072,24 +1062,18 @@ type literatureDetailRequest struct {
 }
 
 type literatureListItem struct {
-	ID             string `json:"id"`
-	OwnerProjectID int64  `json:"owner_project_id,string"`
-	Title          string `json:"title"`
-	Source         string `json:"source"`
-	Filename       string `json:"filename"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 type literatureDetailItem struct {
-	ID             string    `json:"id"`
-	OwnerProjectID int64     `json:"owner_project_id,string"`
-	Title          string    `json:"title"`
-	Content        string    `json:"content"`
-	ContentSource  string    `json:"content_source"`
-	Filename       string    `json:"filename"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // GetLiteratureDetail godoc
@@ -1119,7 +1103,7 @@ func (h *ProjectHandler) GetLiteratureDetail(c *gin.Context) {
 		return
 	}
 
-	literature, err := h.projectService.GetLiteratureDetailByID(ctx, userID, req.ID)
+	detail, err := h.projectService.GetLiteratureDetailByID(ctx, userID, req.ID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("literature not found or not bound to active project"))
@@ -1129,35 +1113,29 @@ func (h *ProjectHandler) GetLiteratureDetail(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, newLiteratureDetailItem(strconv.FormatInt(literature.ID, 10), literature))
+	c.JSON(http.StatusOK, newLiteratureDetailItem(strconv.FormatInt(detail.Literature.ID, 10), detail.Literature, detail.Content))
 }
 
-func newLiteratureDetailItem(id string, literature *types.Literature) *literatureDetailItem {
+func newLiteratureDetailItem(id string, literature *types.Literature, content string) *literatureDetailItem {
 	if literature == nil {
 		return nil
 	}
 
 	return &literatureDetailItem{
-		ID:             id,
-		OwnerProjectID: literature.OwnerProjectID,
-		Title:          literature.Title,
-		Content:        literature.Content,
-		ContentSource:  literature.ContentSource,
-		Filename:       literature.Filename,
-		CreatedAt:      literature.CreatedAt,
-		UpdatedAt:      literature.UpdatedAt,
+		ID:        id,
+		Title:     literature.Title,
+		Content:   content,
+		CreatedAt: literature.CreatedAt,
+		UpdatedAt: literature.UpdatedAt,
 	}
 }
 
 func toLiteratureListItem(literature *types.Literature) literatureListItem {
 	return literatureListItem{
-		ID:             strconv.FormatInt(literature.ID, 10),
-		OwnerProjectID: literature.OwnerProjectID,
-		Title:          literature.Title,
-		Source:         literature.ContentSource,
-		Filename:       literature.Filename,
-		CreatedAt:      literature.CreatedAt.Format("2006-01-02 15:04:05"),
-		UpdatedAt:      literature.UpdatedAt.Format("2006-01-02 15:04:05"),
+		ID:        strconv.FormatInt(literature.ID, 10),
+		Title:     literature.Title,
+		CreatedAt: literature.CreatedAt.Format("2006-01-02 15:04:05"),
+		UpdatedAt: literature.UpdatedAt.Format("2006-01-02 15:04:05"),
 	}
 }
 

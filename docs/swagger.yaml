@@ -860,6 +860,7 @@ definitions:
   handler.activateProjectRequest:
     properties:
       project_id:
+        example: "0"
         type: string
     required:
     - project_id
@@ -867,10 +868,6 @@ definitions:
   handler.addLiteratureRequest:
     properties:
       content:
-        type: string
-      content_source:
-        type: string
-      filename:
         type: string
       title:
         type: string
@@ -903,6 +900,7 @@ definitions:
   handler.addProjectReportRequest:
     properties:
       project_id:
+        example: "0"
         type: string
       title:
         type: string
@@ -913,6 +911,7 @@ definitions:
   handler.addProjectToUserRequest:
     properties:
       project_id:
+        example: "0"
         type: string
       user_id:
         type: string
@@ -1403,6 +1402,7 @@ definitions:
   handler.deleteUserProjectRequest:
     properties:
       project_id:
+        example: "0"
         type: string
     required:
     - project_id
@@ -1537,15 +1537,9 @@ definitions:
     properties:
       content:
         type: string
-      content_source:
-        type: string
       created_at:
         type: string
-      filename:
-        type: string
       id:
-        type: string
-      owner_project_id:
         type: string
       title:
         type: string
@@ -1556,13 +1550,7 @@ definitions:
     properties:
       created_at:
         type: string
-      filename:
-        type: string
       id:
-        type: string
-      owner_project_id:
-        type: string
-      source:
         type: string
       title:
         type: string
@@ -1710,6 +1698,7 @@ definitions:
       parameter:
         type: string
       project_id:
+        example: "0"
         type: string
       project_name:
         type: string
@@ -1727,6 +1716,7 @@ definitions:
       id:
         type: string
       project_id:
+        example: "0"
         type: string
       title:
         type: string
@@ -1790,6 +1780,7 @@ definitions:
       id:
         type: string
       project_id:
+        example: "0"
         type: string
       title:
         type: string
@@ -2005,10 +1996,6 @@ definitions:
     properties:
       content:
         type: string
-      content_source:
-        type: string
-      filename:
-        type: string
       id:
         example: "0"
         type: string
@@ -2056,6 +2043,7 @@ definitions:
         example: "0"
         type: string
       project_id:
+        example: "0"
         type: string
       title:
         type: string
@@ -2069,6 +2057,7 @@ definitions:
       enabled:
         type: boolean
       project_id:
+        example: "0"
         type: string
     required:
     - project_id
@@ -2170,7 +2159,11 @@ definitions:
   types.AISummary:
     properties:
       content:
-        description: Content AI 生成的摘要内容。
+        description: |-
+          Content AI 生成的摘要内容。正文不再落库，而是以文件形式存放在
+          GetAISummaryFile（<baseDir>/data/<projectId>/AiSummary/<summaryId>/summary.md）。
+          读取详情 / 列表时由 aiSummaryService 按需从文件填充；写入（生成、编辑、失败）
+          由 AISummaryWorker / aiSummaryService 落盘。非持久化字段。
         type: string
       created_at:
         type: string
@@ -2918,37 +2911,6 @@ definitions:
   types.JSONMap:
     additionalProperties: {}
     type: object
-  types.Literature:
-    properties:
-      content:
-        description: |-
-          Content is only authoritative when ContentSource == "database". For
-          file-backed literature this column stays empty and the real content lives
-          in the file referenced by Filename under the project literature directory.
-        type: string
-      content_source:
-        description: 'ContentSource indicates where the full text is stored: "file"
-          or "database".'
-        type: string
-      created_at:
-        type: string
-      filename:
-        description: Filename is the full-text file name under the project literature
-          directory.
-        type: string
-      id:
-        example: "0"
-        type: string
-      owner_project_id:
-        description: |-
-          OwnerProjectID is the project whose literature directory owns the full-text
-          file. It is set when the literature is first created.
-        type: string
-      title:
-        type: string
-      updated_at:
-        type: string
-    type: object
   types.LoginRequest:
     properties:
       email:
@@ -2996,6 +2958,7 @@ definitions:
         example: "0"
         type: string
       project_id:
+        example: "0"
         type: string
     type: object
   types.ProjectReport:
@@ -3006,6 +2969,7 @@ definitions:
         example: "0"
         type: string
       project_id:
+        example: "0"
         type: string
       title:
         type: string
@@ -8618,7 +8582,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 创建一条参考文献记录并绑定到当前用户激活项目，全文按 content_source 存储（默认写入文件）
+      description: 创建一条参考文献记录并绑定到当前用户激活项目，全文写入项目 literature 目录下的文件
       parameters:
       - description: 请求参数
         in: body
@@ -8632,7 +8596,7 @@ paths:
         "200":
           description: 创建成功
           schema:
-            $ref: '#/definitions/types.Literature'
+            $ref: '#/definitions/handler.literatureDetailItem'
         "400":
           description: 参数错误
           schema:
@@ -9661,7 +9625,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 按文献ID更新标题、全文内容与存储方式
+      description: 按文献ID更新标题，并将全文写到项目 literature 目录下的文件
       parameters:
       - description: 请求参数
         in: body

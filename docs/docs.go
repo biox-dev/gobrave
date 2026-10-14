@@ -8103,7 +8103,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "创建一条参考文献记录并绑定到当前用户激活项目，全文按 content_source 存储（默认写入文件）",
+                "description": "创建一条参考文献记录并绑定到当前用户激活项目，全文写入项目 literature 目录下的文件",
                 "consumes": [
                     "application/json"
                 ],
@@ -8129,7 +8129,7 @@ const docTemplate = `{
                     "200": {
                         "description": "创建成功",
                         "schema": {
-                            "$ref": "#/definitions/types.Literature"
+                            "$ref": "#/definitions/handler.literatureDetailItem"
                         }
                     },
                     "400": {
@@ -9733,7 +9733,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按文献ID更新标题、全文内容与存储方式",
+                "description": "按文献ID更新标题，并将全文写到项目 literature 目录下的文件",
                 "consumes": [
                     "application/json"
                 ],
@@ -13395,7 +13395,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "project_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -13406,12 +13407,6 @@ const docTemplate = `{
             ],
             "properties": {
                 "content": {
-                    "type": "string"
-                },
-                "content_source": {
-                    "type": "string"
-                },
-                "filename": {
                     "type": "string"
                 },
                 "title": {
@@ -13460,7 +13455,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "project_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "title": {
                     "type": "string"
@@ -13475,7 +13471,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "project_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "user_id": {
                     "type": "string"
@@ -14170,7 +14167,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "project_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -14370,19 +14368,10 @@ const docTemplate = `{
                 "content": {
                     "type": "string"
                 },
-                "content_source": {
-                    "type": "string"
-                },
                 "created_at": {
                     "type": "string"
                 },
-                "filename": {
-                    "type": "string"
-                },
                 "id": {
-                    "type": "string"
-                },
-                "owner_project_id": {
                     "type": "string"
                 },
                 "title": {
@@ -14399,16 +14388,7 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
-                "filename": {
-                    "type": "string"
-                },
                 "id": {
-                    "type": "string"
-                },
-                "owner_project_id": {
-                    "type": "string"
-                },
-                "source": {
                     "type": "string"
                 },
                 "title": {
@@ -14618,7 +14598,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "project_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "project_name": {
                     "type": "string"
@@ -14644,7 +14625,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "project_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "title": {
                     "type": "string"
@@ -14740,7 +14722,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "project_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "title": {
                     "type": "string"
@@ -15063,12 +15046,6 @@ const docTemplate = `{
                 "content": {
                     "type": "string"
                 },
-                "content_source": {
-                    "type": "string"
-                },
-                "filename": {
-                    "type": "string"
-                },
                 "id": {
                     "type": "string",
                     "example": "0"
@@ -15138,7 +15115,8 @@ const docTemplate = `{
                     "example": "0"
                 },
                 "project_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "title": {
                     "type": "string"
@@ -15155,7 +15133,8 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "project_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -15299,7 +15278,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "content": {
-                    "description": "Content AI 生成的摘要内容。",
+                    "description": "Content AI 生成的摘要内容。正文不再落库，而是以文件形式存放在\nGetAISummaryFile（\u003cbaseDir\u003e/data/\u003cprojectId\u003e/AiSummary/\u003csummaryId\u003e/summary.md）。\n读取详情 / 列表时由 aiSummaryService 按需从文件填充；写入（生成、编辑、失败）\n由 AISummaryWorker / aiSummaryService 落盘。非持久化字段。",
                     "type": "string"
                 },
                 "created_at": {
@@ -16343,40 +16322,6 @@ const docTemplate = `{
             "type": "object",
             "additionalProperties": {}
         },
-        "types.Literature": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "description": "Content is only authoritative when ContentSource == \"database\". For\nfile-backed literature this column stays empty and the real content lives\nin the file referenced by Filename under the project literature directory.",
-                    "type": "string"
-                },
-                "content_source": {
-                    "description": "ContentSource indicates where the full text is stored: \"file\" or \"database\".",
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "filename": {
-                    "description": "Filename is the full-text file name under the project literature directory.",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "owner_project_id": {
-                    "description": "OwnerProjectID is the project whose literature directory owns the full-text\nfile. It is set when the literature is first created.",
-                    "type": "string"
-                },
-                "title": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
         "types.LoginRequest": {
             "type": "object",
             "required": [
@@ -16444,7 +16389,8 @@ const docTemplate = `{
                     "example": "0"
                 },
                 "project_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -16459,7 +16405,8 @@ const docTemplate = `{
                     "example": "0"
                 },
                 "project_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "title": {
                     "type": "string"

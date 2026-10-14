@@ -3,7 +3,6 @@ package manager
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -99,7 +98,7 @@ func (p *AgentProjectContextProvider) formatLiteratureContext(project *types.Pro
 			b.WriteString(strconv.FormatInt(lit.ID, 10))
 			b.WriteString(")")
 		}
-		if filePath := p.literatureFilePath(lit, baseDir); filePath != "" {
+		if filePath := p.literatureFilePath(project.ID, lit.ID, baseDir); filePath != "" {
 			b.WriteString(" file=")
 			b.WriteString(filePath)
 		}
@@ -108,16 +107,11 @@ func (p *AgentProjectContextProvider) formatLiteratureContext(project *types.Pro
 	return b.String()
 }
 
-func (p *AgentProjectContextProvider) literatureFilePath(lit *types.Literature, baseDir string) string {
-	if lit == nil || strings.TrimSpace(baseDir) == "" || lit.OwnerProjectID == 0 {
+func (p *AgentProjectContextProvider) literatureFilePath(projectID int64, literatureID int64, baseDir string) string {
+	if projectID == 0 || literatureID == 0 || strings.TrimSpace(baseDir) == "" {
 		return ""
 	}
-	filename := strings.TrimSpace(lit.Filename)
-	if filename == "" {
-		filename = types.DefaultLiteratureFilename
-	}
-	dir := utils.GetProjectLiteratureDir(baseDir, lit.OwnerProjectID, strconv.FormatInt(lit.ID, 10))
-	return filepath.Join(dir, filename)
+	return utils.GetProjectLiteratureFile(baseDir, projectID, strconv.FormatInt(literatureID, 10))
 }
 
 func (p *AgentProjectContextProvider) resolveStorageBaseDir() string {
