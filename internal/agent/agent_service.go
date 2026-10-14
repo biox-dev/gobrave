@@ -446,27 +446,24 @@ func (s *AgentService) RetrieveMemory(ctx context.Context, userID int64, query s
 
 // ---- Profile 调用面（供 HTTP / 上层业务管理 Agent Profile） ----
 
-// ListProfiles 返回内置与当前用户自定义的 Profile 列表（合并视图）。
-func (s *AgentService) ListProfiles(ctx context.Context, userID int64) ([]*Profile, error) {
+// ListProfiles 返回全部 Profile（内置 + 自定义，全局可见）。
+func (s *AgentService) ListProfiles(ctx context.Context) ([]*Profile, error) {
 	if s.profiles == nil {
 		return nil, ErrProfileNotFound
 	}
-	return s.profiles.List(ctx, userID)
+	return s.profiles.List(ctx)
 }
 
-// GetProfile 按 ID 返回 Profile（内置 Profile 全局共享、任意用户可读）。
-func (s *AgentService) GetProfile(ctx context.Context, userID int64, id int64) (*Profile, error) {
+// GetProfile 按 ID 返回 Profile（全局可见）。
+func (s *AgentService) GetProfile(ctx context.Context, id int64) (*Profile, error) {
 	if s.profiles == nil {
 		return nil, ErrProfileNotFound
 	}
-	return s.profiles.Get(ctx, userID, id)
+	return s.profiles.Get(ctx, id)
 }
 
 // ResolveProfile 按 ID 解析 Profile，与 run 内应用 Profile 的解析路径保持一致
 // （id 为 0 时回退到内置默认 Profile）。
-//
-// 与 GetProfile 的区别：GetProfile 会校验自定义 Profile 的归属（仅所属用户可读），
-// 而 ResolveProfile 仅按 ID 解析，适合“已经知道要用的 Profile ID、只取其配置”的场景。
 func (s *AgentService) ResolveProfile(ctx context.Context, id int64) (*Profile, error) {
 	if s.profiles == nil {
 		return nil, ErrProfileNotFound
@@ -482,12 +479,12 @@ func (s *AgentService) SaveProfile(ctx context.Context, profile *Profile) error 
 	return s.profiles.Save(ctx, profile)
 }
 
-// DeleteProfile 删除用户自定义 Profile（内置 Profile 不可删除）。
-func (s *AgentService) DeleteProfile(ctx context.Context, userID int64, id int64) error {
+// DeleteProfile 删除自定义 Profile（内置 Profile 不可删除）。
+func (s *AgentService) DeleteProfile(ctx context.Context, id int64) error {
 	if s.profiles == nil {
 		return ErrProfileNotFound
 	}
-	return s.profiles.Delete(ctx, userID, id)
+	return s.profiles.Delete(ctx, id)
 }
 
 // RenderSystemPrompt 按 Profile ID 解析 Profile，并用 vars 渲染其系统提示词模板，

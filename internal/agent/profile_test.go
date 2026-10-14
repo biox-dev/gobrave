@@ -53,7 +53,6 @@ func TestProfileManagerUserDefault(t *testing.T) {
 
 	custom := &Profile{
 		Name:         "我的写作助手",
-		UserID:       1,
 		IsDefault:    true,
 		SystemPrompt: "写作",
 		Context:      ContextConfig{InjectMemory: true},
@@ -81,7 +80,7 @@ func TestProfileManagerDeleteBuiltin(t *testing.T) {
 	m := newTestProfileManager(t)
 	ctx := context.Background()
 
-	if err := m.Delete(ctx, 0, BuiltinDefaultProfileID); err == nil {
+	if err := m.Delete(ctx, BuiltinDefaultProfileID); err == nil {
 		t.Fatalf("delete builtin should fail")
 	}
 }
@@ -94,12 +93,12 @@ func TestEnsureBuiltinProfilesCreateOnly(t *testing.T) {
 	if err := EnsureBuiltinProfiles(ctx, repo); err != nil {
 		t.Fatalf("first seed: %v", err)
 	}
-	builtins, err := repo.ListBuiltin(ctx)
+	all, err := repo.List(ctx)
 	if err != nil {
-		t.Fatalf("list builtin: %v", err)
+		t.Fatalf("list: %v", err)
 	}
-	if len(builtins) != len(BuiltinProfiles()) {
-		t.Fatalf("builtin count = %d, want %d", len(builtins), len(BuiltinProfiles()))
+	if len(all) != len(BuiltinProfiles()) {
+		t.Fatalf("profile count = %d, want %d", len(all), len(BuiltinProfiles()))
 	}
 
 	// 修改数据库中的一条内置记录，再同步：应保留改动（不再覆盖）。

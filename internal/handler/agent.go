@@ -529,7 +529,7 @@ func (h *AgentHandler) DeleteSkill(c *gin.Context) {
 
 // ListProfiles godoc
 // @Summary      查看 Agent Profile
-// @Description  返回内置与当前用户自定义的全部 Profile（合并视图），包含系统提示词、技能与上下文注入开关
+// @Description  返回全部 Profile（全局可见），包含系统提示词、技能与上下文注入开关
 // @Tags         Agent
 // @Produce      json
 // @Success      200  {array}   agent.Profile
@@ -537,12 +537,11 @@ func (h *AgentHandler) DeleteSkill(c *gin.Context) {
 // @Security     Bearer
 // @Router       /agent/profile/list [get]
 func (h *AgentHandler) ListProfiles(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
-	if !ok {
+	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
-	profiles, err := h.svc.ListProfiles(c.Request.Context(), userID)
+	profiles, err := h.svc.ListProfiles(c.Request.Context())
 	if err != nil {
 		handleAgentError(c, err, "failed to list agent profiles")
 		return
@@ -552,7 +551,7 @@ func (h *AgentHandler) ListProfiles(c *gin.Context) {
 
 // SaveProfile godoc
 // @Summary      创建或更新 Agent Profile
-// @Description  ID 为空时新建，否则更新；UserID 由当前登录用户注入，自定义 Profile 仅能管理自己的，内置 Profile 可编辑（不可删除）
+// @Description  ID 为空时新建，否则更新；内置 Profile 可编辑（不可删除）
 // @Tags         Agent
 // @Accept       json
 // @Produce      json
@@ -564,8 +563,7 @@ func (h *AgentHandler) ListProfiles(c *gin.Context) {
 // @Security     Bearer
 // @Router       /agent/profile/save [post]
 func (h *AgentHandler) SaveProfile(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
-	if !ok {
+	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
@@ -582,8 +580,8 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 			c.Error(errors.NewValidationError("invalid profile id").WithDetails(err.Error()))
 			return
 		}
-		// 更新：先加载既有记录，校验归属并保留只读字段。
-		existing, err := h.svc.GetProfile(c.Request.Context(), userID, id)
+		// 更新：先加载既有记录，保留只读字段。
+		existing, err := h.svc.GetProfile(c.Request.Context(), id)
 		if err != nil {
 			handleAgentError(c, err, "failed to get agent profile")
 			return
@@ -598,7 +596,6 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 		profile = existing
 	} else {
 		profile = &agent.Profile{
-			UserID:       userID,
 			Name:         req.Name,
 			Description:  req.Description,
 			SystemPrompt: req.SystemPrompt,
@@ -618,7 +615,7 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 
 // GetProfile godoc
 // @Summary      查看单个 Agent Profile
-// @Description  按 ID 返回单个 Profile：内置 Profile 全局共享（任意用户可读），自定义 Profile 仅限其所属用户
+// @Description  按 ID 返回单个 Profile（全局可见）
 // @Tags         Agent
 // @Produce      json
 // @Param        id  query     string  true  "Profile ID"
@@ -629,8 +626,7 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 // @Security     Bearer
 // @Router       /agent/profile/get [get]
 func (h *AgentHandler) GetProfile(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
-	if !ok {
+	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
@@ -646,7 +642,7 @@ func (h *AgentHandler) GetProfile(c *gin.Context) {
 		return
 	}
 
-	profile, err := h.svc.GetProfile(c.Request.Context(), userID, id)
+	profile, err := h.svc.GetProfile(c.Request.Context(), id)
 	if err != nil {
 		handleAgentError(c, err, "failed to get agent profile")
 		return
@@ -656,7 +652,7 @@ func (h *AgentHandler) GetProfile(c *gin.Context) {
 
 // DeleteProfile godoc
 // @Summary      删除 Agent Profile
-// @Description  仅能删除当前用户的自定义 Profile；内置 Profile 不可删除
+// @Description  仅能删除自定义 Profile；内置 Profile 不可删除
 // @Tags         Agent
 // @Accept       json
 // @Produce      json
@@ -668,8 +664,7 @@ func (h *AgentHandler) GetProfile(c *gin.Context) {
 // @Security     Bearer
 // @Router       /agent/profile/delete [post]
 func (h *AgentHandler) DeleteProfile(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
-	if !ok {
+	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
@@ -684,7 +679,7 @@ func (h *AgentHandler) DeleteProfile(c *gin.Context) {
 		c.Error(errors.NewValidationError("invalid profile id").WithDetails(err.Error()))
 		return
 	}
-	if err := h.svc.DeleteProfile(c.Request.Context(), userID, id); err != nil {
+	if err := h.svc.DeleteProfile(c.Request.Context(), id); err != nil {
 		handleAgentError(c, err, "failed to delete agent profile")
 		return
 	}

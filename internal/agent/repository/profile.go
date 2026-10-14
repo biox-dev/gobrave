@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// NewGormProfileRepository 创建基于数据库的用户自定义 Profile Repository。
+// NewGormProfileRepository 创建基于数据库的 Profile Repository。
 func NewGormProfileRepository(db *gorm.DB) agent.ProfileRepository {
 	return &gormProfileRepository{db: db}
 }
@@ -46,10 +46,9 @@ func (r *gormProfileRepository) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&agent.Profile{}).Error
 }
 
-func (r *gormProfileRepository) ListByUser(ctx context.Context, userID int64) ([]*agent.Profile, error) {
+func (r *gormProfileRepository) List(ctx context.Context) ([]*agent.Profile, error) {
 	var profiles []*agent.Profile
 	if err := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
 		Order("name ASC").
 		Find(&profiles).Error; err != nil {
 		return nil, err
@@ -57,32 +56,8 @@ func (r *gormProfileRepository) ListByUser(ctx context.Context, userID int64) ([
 	return profiles, nil
 }
 
-func (r *gormProfileRepository) ListBuiltin(ctx context.Context) ([]*agent.Profile, error) {
-	var profiles []*agent.Profile
-	if err := r.db.WithContext(ctx).
-		Where("is_builtin = ?", true).
-		Order("name ASC").
-		Find(&profiles).Error; err != nil {
-		return nil, err
-	}
-	return profiles, nil
-}
-
-func (r *gormProfileRepository) GetDefault(ctx context.Context, userID int64) (*agent.Profile, error) {
-	var p agent.Profile
-	if err := r.db.WithContext(ctx).
-		Where("user_id = ? AND is_default = ?", userID, true).
-		First(&p).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &p, nil
-}
-
-func (r *gormProfileRepository) ClearDefault(ctx context.Context, userID int64, exceptID int64) error {
+func (r *gormProfileRepository) ClearDefault(ctx context.Context, exceptID int64) error {
 	return r.db.WithContext(ctx).Model(&agent.Profile{}).
-		Where("user_id = ? AND is_default = ? AND id <> ?", userID, true, exceptID).
+		Where("is_default = ? AND id <> ?", true, exceptID).
 		Update("is_default", false).Error
 }

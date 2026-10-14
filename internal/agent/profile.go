@@ -46,13 +46,12 @@ type ContextConfig struct {
 // 在调用前按 ID 解析并应用（合并系统提示词、过滤技能、按开关注入背景）。
 //
 // Name 仅用于展示；Profile 的查询 / 引用一律使用 ID。
-// UserID 为空表示系统级（内置）Profile；非空表示某用户的自定义 Profile。
+// Profile 不再按用户隔离：所有 Profile 全局可见。
 type Profile struct {
 	ID int64 `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
 	// Name 仅作为展示名使用，不参与任何查询。
 	Name         string `json:"name" gorm:"column:name;type:varchar(128)"`
 	Description  string `json:"description" gorm:"column:description;type:text"`
-	UserID       int64  `json:"user_id,string" gorm:"column:user_id;type:bigint;index:idx_agent_profiles_user"`
 	IsDefault    bool   `json:"is_default" gorm:"column:is_default"`
 	IsBuiltin    bool   `json:"is_builtin" gorm:"column:is_builtin"`
 	SystemPrompt string `json:"system_prompt" gorm:"column:system_prompt;type:text"`
@@ -217,46 +216,32 @@ func (m *ProfileManager) Resolve(ctx context.Context, id int64) (*Profile, error
 	return p, nil
 }
 
-// List 返回内置 Profile 与指定用户自定义 Profile 的合并列表（按名称升序）。
-func (m *ProfileManager) List(ctx context.Context, userID int64) ([]*Profile, error) {
-	builtins, err := m.repo.ListBuiltin(ctx)
+// List 返回全部 Profile（内置 + 自定义，按名称升序）。
+func (m *ProfileManager) List(ctx context.Context) ([]*Profile, error) {
+	out, err := m.repo.List(ctx)
 	if err != nil {
 		return nil, err
-	}
-	out := append([]*Profile(nil), builtins...)
-
-	if userID != 0 {
-		userProfiles, err := m.repo.ListByUser(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, userProfiles...)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
-// Get 按 ID 返回 Profile。内置 Profile 全局共享（任意用户可读），
-// 自定义 Profile 仅限其所属用户读取。
-func (m *ProfileManager) Get(ctx context.Context, userID int64, id int64) (*Profile, error) {
+// Get 按 ID 返回 Profile（全局可见）。
+func (m *ProfileManager) Get(ctx context.Context, id int64) (*Profile, error) {
 	p, err := m.repo.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if p.IsBuiltin {
-		return p, nil
-	}
-	if p.UserID != userID {
+	if p == nil {
 		return nil, ErrProfileNotFound
 	}
 	return p, nil
 }
 
-// Save 创建或更新 Profile；IsDefault 为 true 时清除该用户的其他默认标记。
+// Save 创建或更新 Profile；IsDefault 为 true 时清除其他 Profile 的默认标记。
 //
 // 内置 Profile（IsBuiltin=true、负数 ID）也允许更新：由管理端修改后持久化，
-// 启动时 EnsureBuiltinProfiles 不再覆盖其改动。内置 Profile 的默认标记为全局
-// 语义，不参与「清除该用户其他默认」的编排。
+// 启动时 EnsureBuiltinProfiles 不再覆盖其改动。
 func (m *ProfileManager) Save(ctx context.Context, p *Profile) error {
 	if p == nil {
 		return nil
@@ -274,7 +259,7 @@ func (m *ProfileManager) Save(ctx context.Context, p *Profile) error {
 		p.CreatedAt = now
 		p.UpdatedAt = now
 		if p.IsDefault {
-			if err := m.repo.ClearDefault(ctx, p.UserID, p.ID); err != nil {
+			if err := m.repo.ClearDefault(ctx, p.ID); err != nil {
 				return err
 			}
 		}
@@ -282,25 +267,18 @@ func (m *ProfileManager) Save(ctx context.Context, p *Profile) error {
 	}
 
 	p.UpdatedAt = now
-	if p.IsDefault && !p.IsBuiltin {
-		if err := m.repo.ClearDefault(ctx, p.UserID, p.ID); err != nil {
+	if p.IsDefault {
+		if err := m.repo.ClearDefault(ctx, p.ID); err != nil {
 			return err
 		}
 	}
 	return m.repo.Update(ctx, p)
 }
 
-// Delete 删除某用户的自定义 Profile；内置 Profile 不可删除。
-func (m *ProfileManager) Delete(ctx context.Context, userID int64, id int64) error {
+// Delete 删除自定义 Profile；内置 Profile 不可删除。
+func (m *ProfileManager) Delete(ctx context.Context, id int64) error {
 	// 内置 Profile（负数 ID）不可删除。
 	if IsBuiltinProfileID(id) {
-		return ErrProfileNotFound
-	}
-	p, err := m.repo.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if p.UserID != userID {
 		return ErrProfileNotFound
 	}
 	return m.repo.Delete(ctx, id)
