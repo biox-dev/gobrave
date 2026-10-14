@@ -691,30 +691,6 @@ func (h *AgentHandler) DeleteProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
 }
 
-// ProjectContext godoc
-// @Summary      查看当前用户的项目上下文
-// @Description  返回当前用户激活项目下已注入 Agent 系统提示词的项目上下文文本块（如已完成的分析节点）
-// @Tags         Agent
-// @Produce      json
-// @Success      200  {object}  gin.H
-// @Failure      401  {object}  errors.AppError
-// @Failure      500  {object}  errors.AppError
-// @Security     Bearer
-// @Router       /agent/project-context [get]
-func (h *AgentHandler) ProjectContext(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
-	if !ok {
-		return
-	}
-
-	text, err := h.svc.ProjectContext(c.Request.Context(), userID)
-	if err != nil {
-		handleAgentError(c, err, "failed to get agent project context")
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"project_context": text})
-}
-
 // GetTask godoc
 // @Summary      获取 Agent 任务
 // @Tags         Agent
@@ -752,7 +728,7 @@ func (h *AgentHandler) GetTask(c *gin.Context) {
 
 // GetTaskRequest godoc
 // @Summary      获取任务实际发送给 LLM 的请求内容
-// @Description  按任务 ID 加载任务，应用 Agent Profile（系统提示词合并、技能选择、记忆/项目上下文注入），返回最终 Request
+// @Description  按任务 ID 加载任务，应用 Agent Profile（系统提示词合并、技能选择、记忆注入），返回最终 Request
 // @Tags         Agent
 // @Produce      json
 // @Param        id   query     string  true  "任务 ID"

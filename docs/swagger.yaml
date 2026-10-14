@@ -1,10 +1,17 @@
 basePath: /api/v1
 definitions:
+  agent.AskUserAnswer:
+    properties:
+      answers:
+        items:
+          $ref: '#/definitions/agent.QuestionAnswer'
+        type: array
+      request_id:
+        type: string
+    type: object
   agent.ContextConfig:
     properties:
       inject_memory:
-        type: boolean
-      inject_project:
         type: boolean
     type: object
   agent.Conversation:
@@ -229,8 +236,6 @@ definitions:
         type: string
       description:
         type: string
-      display_name:
-        type: string
       id:
         example: "0"
         type: string
@@ -244,6 +249,7 @@ definitions:
           为空时回退到请求级 req.Model（若仍未指定则由 Provider 兜底）。
         type: string
       name:
+        description: Name 仅作为展示名使用，不参与任何查询。
         type: string
       provider:
         description: |-
@@ -261,6 +267,115 @@ definitions:
       user_id:
         type: string
     type: object
+  agent.Question:
+    properties:
+      allow_custom:
+        description: 是否允许自定义输入
+        type: boolean
+      description:
+        description: 问题补充说明
+        type: string
+      id:
+        description: 问题标识（答案按此 ID 回填）
+        type: string
+      options:
+        description: 选项（choice 类型）
+        items:
+          $ref: '#/definitions/agent.QuestionOption'
+        type: array
+      placeholder:
+        description: 自定义 / 文本输入的占位提示
+        type: string
+      required:
+        description: 是否必答
+        type: boolean
+      title:
+        description: 问题文本
+        type: string
+      type:
+        description: single_choice / multiple_choice / text
+        type: string
+    type: object
+  agent.QuestionAnswer:
+    properties:
+      custom:
+        type: string
+      id:
+        type: string
+      value:
+        type: string
+      values:
+        items:
+          type: string
+        type: array
+    type: object
+  agent.QuestionOption:
+    properties:
+      description:
+        description: 选项说明
+        type: string
+      label:
+        description: 展示文案
+        type: string
+      value:
+        description: 提交值
+        type: string
+    type: object
+  agent.QuestionRequest:
+    properties:
+      answer:
+        $ref: '#/definitions/agent.AskUserAnswer'
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        example: "0"
+        type: string
+      questions:
+        items:
+          $ref: '#/definitions/agent.Question'
+        type: array
+      request_id:
+        type: string
+      resolved_at:
+        type: string
+      resolved_by:
+        type: string
+      session_id:
+        type: string
+      status:
+        $ref: '#/definitions/agent.QuestionStatus'
+      task_id:
+        example: "0"
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  agent.QuestionStatus:
+    enum:
+    - pending
+    - answered
+    - canceled
+    - expired
+    type: string
+    x-enum-comments:
+      QuestionAnswered: 用户已作答
+      QuestionCanceled: 已取消（任务被取消等）
+      QuestionExpired: 已过期
+      QuestionPending: 等待用户作答
+    x-enum-descriptions:
+    - 等待用户作答
+    - 用户已作答
+    - 已取消（任务被取消等）
+    - 已过期
+    x-enum-varnames:
+    - QuestionPending
+    - QuestionAnswered
+    - QuestionCanceled
+    - QuestionExpired
   agent.Request:
     properties:
       env:
@@ -279,8 +394,9 @@ definitions:
       model:
         description: Model 可选：模型名称，为空时由 Provider 自行决定。
         type: string
-      profile:
-        description: Profile 可选：AgentProfile 名称，AgentService 据此解析系统提示词、技能与上下文注入开关。
+      profile_id:
+        description: ProfileID 可选：AgentProfile ID，AgentService 据此解析系统提示词、技能与上下文注入开关。
+        example: "0"
         type: string
       provider:
         description: Provider 可选：强制指定 Provider 名称；为空则使用 Client 的默认 Provider。
@@ -385,7 +501,8 @@ definitions:
         additionalProperties:
           $ref: '#/definitions/agent.PermissionDecision'
         type: object
-      profile:
+      profile_id:
+        example: "0"
         type: string
     type: object
   containerruntime.RuntimeDescription:
@@ -484,6 +601,8 @@ definitions:
     - task.canceled
     - permission.created
     - permission.resolved
+    - question.created
+    - question.resolved
     - memory.saved
     - memory.deleted
     - stream
@@ -493,6 +612,8 @@ definitions:
       EventMemorySaved: 记忆已保存（Payload 为 Memory）
       EventPermissionCreated: 新增待确认权限
       EventPermissionResolved: 权限已被批准 / 拒绝
+      EventQuestionCreated: 新增待作答提问（Payload 为 QuestionRequest）
+      EventQuestionResolved: 提问已作答 / 取消（Payload 为 QuestionRequest）
       EventStream: 透传的流式事件（Payload 为 StreamEvent）
       EventTaskCanceled: 任务取消
       EventTaskCompleted: 任务完成
@@ -509,6 +630,8 @@ definitions:
     - 任务取消
     - 新增待确认权限
     - 权限已被批准 / 拒绝
+    - 新增待作答提问（Payload 为 QuestionRequest）
+    - 提问已作答 / 取消（Payload 为 QuestionRequest）
     - 记忆已保存（Payload 为 Memory）
     - 记忆已删除（Payload 为 Memory）
     - 透传的流式事件（Payload 为 StreamEvent）
@@ -521,6 +644,8 @@ definitions:
     - EventTaskCanceled
     - EventPermissionCreated
     - EventPermissionResolved
+    - EventQuestionCreated
+    - EventQuestionResolved
     - EventMemorySaved
     - EventMemoryDeleted
     - EventStream
@@ -850,6 +975,24 @@ definitions:
       task_id:
         type: string
     type: object
+  handler.agentQuestionPageRequest:
+    properties:
+      page:
+        description: Page
+        minimum: 1
+        type: integer
+      page_size:
+        description: Page size
+        maximum: 1000
+        minimum: 1
+        type: integer
+      statuses:
+        items:
+          $ref: '#/definitions/agent.QuestionStatus'
+        type: array
+      task_id:
+        type: string
+    type: object
   handler.agentTaskPageRequest:
     properties:
       page:
@@ -996,8 +1139,9 @@ definitions:
         type: string
       model:
         type: string
-      profile:
-        description: AgentProfile 名称（为空取默认）
+      profile_id:
+        description: AgentProfile ID（为空取默认；实际以当前用户配置为准）
+        example: "0"
         type: string
       provider:
         type: string
@@ -1095,7 +1239,11 @@ definitions:
       owner_type:
         $ref: '#/definitions/types.SummaryOwnerType'
       profile:
-        description: Profile 生成摘要使用的 Agent Profile 名称（为空则使用内置 summary Profile）。
+        description: Profile 该 Profile 的展示名（仅用于展示，可为空）。
+        type: string
+      profile_id:
+        description: ProfileID 生成摘要使用的 Agent Profile ID（为 0 则使用内置 summary Profile）。
+        example: "0"
         type: string
     required:
     - owner_id
@@ -1291,6 +1439,22 @@ definitions:
         $ref: '#/definitions/utils.GitDiffSection'
       worktree:
         $ref: '#/definitions/utils.GitDiffSection'
+    type: object
+  handler.gitRevertFileRequest:
+    properties:
+      path:
+        type: string
+    type: object
+  handler.gitRevertFileResponse:
+    properties:
+      entity:
+        type: string
+      id:
+        type: string
+      path:
+        type: string
+      reverted:
+        type: boolean
     type: object
   handler.idBody:
     properties:
@@ -1500,8 +1664,6 @@ definitions:
         $ref: '#/definitions/agent.ContextConfig'
       description:
         type: string
-      display_name:
-        type: string
       id:
         description: 为空则新建，否则更新
         type: string
@@ -1646,6 +1808,15 @@ definitions:
         minimum: 1
         type: integer
     type: object
+  handler.questionAnswerBody:
+    properties:
+      answer:
+        $ref: '#/definitions/agent.AskUserAnswer'
+      id:
+        type: string
+    required:
+    - id
+    type: object
   handler.readmeResponse:
     properties:
       content:
@@ -1755,6 +1926,24 @@ definitions:
         description: WorkflowID 是 workflow 表主键（int64），兼容 JSON 字符串（"123"）与数字（123）两种写法。
         type: integer
     type: object
+  handler.skillSaveRequest:
+    properties:
+      description:
+        type: string
+      disable_model_invocation:
+        type: boolean
+      id:
+        type: string
+      instructions:
+        type: string
+      name:
+        type: string
+      user_invocable:
+        type: boolean
+    required:
+    - description
+    - name
+    type: object
   handler.taskIDBody:
     properties:
       id:
@@ -1778,7 +1967,11 @@ definitions:
         example: "0"
         type: string
       profile:
-        description: Profile 生成摘要使用的 Agent Profile 名称；传入空串表示改回内置 summary Profile。
+        description: Profile 该 Profile 的展示名（仅用于展示）。
+        type: string
+      profile_id:
+        description: ProfileID 生成摘要使用的 Agent Profile ID；传入 0 表示改回内置 summary Profile。
+        example: "0"
         type: string
       title:
         type: string
@@ -1824,6 +2017,16 @@ definitions:
     required:
     - id
     - title
+    type: object
+  handler.updateProjectReportFileRequest:
+    properties:
+      content:
+        type: string
+      report_id:
+        example: "0"
+        type: string
+    required:
+    - report_id
     type: object
   handler.updateProjectReportItemRequest:
     properties:
@@ -1944,20 +2147,25 @@ definitions:
       format:
         type: string
     type: object
-  skill.Manifest:
+  skill.Skill:
     properties:
       description:
         type: string
-      input_schema:
-        additionalProperties: {}
-        type: object
+      disable_model_invocation:
+        type: boolean
       instructions:
-        description: markdown 指令正文，注入到上下文
+        description: 以下字段不参与 frontmatter 解析，由加载过程填充。
         type: string
       name:
         type: string
-      version:
+      path:
+        description: 技能目录
         type: string
+      skill_file_path:
+        description: SKILL.md 路径
+        type: string
+      user_invocable:
+        type: boolean
     type: object
   types.AISummary:
     properties:
@@ -1985,8 +2193,14 @@ definitions:
         type: string
       profile:
         description: |-
-          Profile 生成该摘要使用的 Agent Profile 名称（agent_profiles.name）。
-          为空时由 AISummaryWorker 回退到内置 summary Profile。
+          Profile 生成该摘要使用的 Agent Profile 展示名（仅用于展示，不参与查询；
+          为空表示使用内置 summary Profile）。
+        type: string
+      profile_id:
+        description: |-
+          ProfileID 生成该摘要使用的 Agent Profile ID（agent_profiles.id），用于按 ID 解析 Profile。
+          为 0 时由 AISummaryWorker 回退到内置 summary Profile。
+        example: "0"
         type: string
       project_id:
         description: ProjectID 摘要所属项目 ID（t_project.id），创建时由创建者的激活项目推导。
@@ -2008,7 +2222,8 @@ definitions:
   types.AISummaryInput:
     properties:
       profile:
-        description: Profile 是生成该摘要使用的 AgentProfile 名称（取自摘要记录，为空回退内置 summary Profile）。
+        description: ProfileName 是生成该摘要使用的 AgentProfile 展示名（取自摘要记录，为空回退内置 summary
+          Profile）。
         type: string
       profile_id:
         example: "0"
@@ -3822,9 +4037,17 @@ paths:
       summary: 创建或更新 Agent Profile
       tags:
       - Agent
-  /agent/project-context:
-    get:
-      description: 返回当前用户激活项目下已注入 Agent 系统提示词的项目上下文文本块（如已完成的分析节点）
+  /agent/question/answer:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 作答内容
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.questionAnswerBody'
       produces:
       - application/json
       responses:
@@ -3832,6 +4055,164 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/gin.H'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 提交用户对提问的作答
+      tags:
+      - Agent
+  /agent/question/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 分页请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.agentQuestionPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 分页查询提问请求
+      tags:
+      - Agent
+  /agent/skill/delete:
+    post:
+      consumes:
+      - application/json
+      description: 删除 $BaseDir/.skills 下的技能目录并从内存注册表移除；仅允许删除用户技能目录内的技能
+      parameters:
+      - description: 技能名
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.taskIDBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 删除 Agent 技能
+      tags:
+      - Agent
+  /agent/skill/get:
+    get:
+      description: 按名称返回单个技能（含指令正文），供前端编辑回填
+      parameters:
+      - description: 技能名
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/skill.Skill'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 查看单个 Agent 技能
+      tags:
+      - Agent
+  /agent/skill/list:
+    get:
+      description: 返回当前可用的全部技能（内置 + 用户自定义），包含名称、描述与 SKILL.md 路径
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/skill.Skill'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 查看 Agent 技能
+      tags:
+      - Agent
+  /agent/skill/save:
+    post:
+      consumes:
+      - application/json
+      description: 把技能写回 $BaseDir/.skills/<name>/SKILL.md 并热更新内存注册表，程序运行中即时生效
+      parameters:
+      - description: 技能内容
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.skillSaveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/skill.Skill'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
         "401":
           description: Unauthorized
           schema:
@@ -3842,28 +4223,7 @@ paths:
             $ref: '#/definitions/errors.AppError'
       security:
       - Bearer: []
-      summary: 查看当前用户的项目上下文
-      tags:
-      - Agent
-  /agent/skill/list:
-    get:
-      description: 返回当前可用的全部技能（内置 + 用户自定义），包含名称、描述、入参 schema、版本与指令正文
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/skill.Manifest'
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 查看 Agent 技能
+      summary: 创建或更新 Agent 技能
       tags:
       - Agent
   /agent/task/cancel:
@@ -4062,9 +4422,39 @@ paths:
       summary: 获取任务待确认权限
       tags:
       - Agent
+  /agent/task/questions:
+    get:
+      parameters:
+      - description: 任务 ID
+        in: query
+        name: task_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/agent.QuestionRequest'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 获取任务待作答提问
+      tags:
+      - Agent
   /agent/task/request:
     get:
-      description: 按任务 ID 加载任务，应用 Agent Profile（系统提示词合并、技能选择、记忆/项目上下文注入），返回最终 Request
+      description: 按任务 ID 加载任务，应用 Agent Profile（系统提示词合并、技能选择、记忆注入），返回最终 Request
       parameters:
       - description: 任务 ID
         in: query
@@ -9024,6 +9414,45 @@ paths:
       summary: 查询项目报告详情
       tags:
       - 项目
+  /project/project-report-file:
+    get:
+      description: 读取报告工作目录下的自身 markdown 文件（output.md）内容
+      parameters:
+      - description: 报告ID
+        format: int64
+        in: query
+        name: report_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 查询报告自身文件
+      tags:
+      - 项目
   /project/project-report-html:
     get:
       description: 将当前用户报告聚合为独立 HTML 文档；inline_images=true 时图片以 base64 内嵌（自包含），false
@@ -9312,6 +9741,48 @@ paths:
       summary: 更新项目报告
       tags:
       - 项目
+  /project/update-project-report-file:
+    post:
+      consumes:
+      - application/json
+      description: 覆写报告工作目录下的自身 markdown 文件（output.md）内容
+      parameters:
+      - description: 请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.updateProjectReportFileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: 参数错误
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: 未认证
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: 报告不存在
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: 服务器错误
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 更新报告自身文件
+      tags:
+      - 项目
   /project/update-project-report-item:
     post:
       consumes:
@@ -9584,6 +10055,55 @@ paths:
       security:
       - Bearer: []
       summary: 获取脚本本地变化 diff
+      tags:
+      - Git
+  /script/{scriptId}/git-revert-file:
+    post:
+      consumes:
+      - application/json
+      description: 按脚本主键定位脚本目录，把指定文件恢复为本地 HEAD 版本（等同于 git checkout HEAD -- <path>）；文件为工作区新增时删除该文件。仅影响该文件，不产生提交
+      parameters:
+      - description: 脚本主键 ID
+        in: path
+        name: scriptId
+        required: true
+        type: string
+      - description: 相对仓库根目录的文件路径
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.gitRevertFileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.gitRevertFileResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 撤回脚本单个文件的未提交改动
       tags:
       - Git
   /script/{scriptId}/image:
@@ -10155,6 +10675,56 @@ paths:
       security:
       - Bearer: []
       summary: 获取工作流本地变化 diff
+      tags:
+      - Git
+  /workflow/{workflowId}/git-revert-file:
+    post:
+      consumes:
+      - application/json
+      description: 按工作流主键定位 workflow 目录，把指定文件恢复为本地 HEAD 版本（等同于 git checkout HEAD --
+        <path>）；文件为工作区新增时删除该文件。仅影响该文件，不产生提交
+      parameters:
+      - description: 工作流主键 ID
+        in: path
+        name: workflowId
+        required: true
+        type: string
+      - description: 相对仓库根目录的文件路径
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.gitRevertFileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.gitRevertFileResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 撤回工作流单个文件的未提交改动
       tags:
       - Git
   /workflow/{workflowId}/image:

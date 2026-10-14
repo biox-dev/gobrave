@@ -16,12 +16,12 @@ import (
 // analysisNodeDoneStatus 是「分析节点已完成」的状态值，与 dag.StatusDone 保持一致。
 const analysisNodeDoneStatus = "done"
 
-// AgentProjectContextProvider 实现 agent.ProjectContextProvider：
+// AgentProjectContextProvider 实现 ProjectContextProvider：
 // 查询当前用户激活项目下已完成（status=done）的分析节点，以及项目关联的参考文献，
-// 并格式化为注入上下文的文本。
+// 并格式化为上下文的文本。
 //
 // 采用实时查询而非写入 memory repo 的设计：analysis_nodes / project_literature
-// 是领域状态的唯一数据源，状态在运行期间频繁变化，实时查询可保证注入内容始终最新。
+// 是领域状态的唯一数据源，状态在运行期间频繁变化，实时查询可保证内容始终最新。
 type AgentProjectContextProvider struct {
 	projects interfaces.ProjectRepository
 	analyses interfaces.AnalysisRepository
@@ -37,7 +37,10 @@ func NewAgentProjectContextProvider(
 	return &AgentProjectContextProvider{projects: projects, analyses: analyses, cfg: cfg}
 }
 
-// ProjectContext 实现 agent.ProjectContextProvider。
+// 编译期断言：AgentProjectContextProvider 满足 ProjectContextProvider 接口。
+var _ ProjectContextProvider = (*AgentProjectContextProvider)(nil)
+
+// ProjectContext 实现 ProjectContextProvider。
 func (p *AgentProjectContextProvider) ProjectContext(ctx context.Context, userID string) (string, error) {
 	if p == nil || p.projects == nil || p.analyses == nil || strings.TrimSpace(userID) == "" {
 		return "", nil
@@ -126,7 +129,7 @@ func (p *AgentProjectContextProvider) resolveStorageBaseDir() string {
 	return ""
 }
 
-// formatAnalysisNodesContext 把已完成的分析节点格式化为注入上下文的文本块。
+// formatAnalysisNodesContext 把已完成的分析节点格式化为上下文的文本块。
 // 无节点时返回空字符串。
 func formatAnalysisNodesContext(project *types.Project, nodes []*types.AnalysisNode) string {
 	if len(nodes) == 0 {

@@ -296,8 +296,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Invoke(func(repo agent.ProfileRepository) error {
 		return agent.EnsureBuiltinProfiles(ctx, repo)
 	}))
-	// 项目上下文提供者：把当前项目已完成的分析节点注入 Agent 的 SystemPrompt。
-	must(container.Provide(manager.NewAgentProjectContextProvider))
 
 	must(container.Provide(func(
 		client *agent.Client,
@@ -308,7 +306,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		mems agent.MemoryRepository,
 		profiles agent.ProfileRepository,
 		skills *skill.Registry,
-		projCtx *manager.AgentProjectContextProvider,
 		userRepo interfaces.UserRepository,
 	) *agent.AgentService {
 
@@ -321,7 +318,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 			Memory:    agent.NewMemoryManager(agent.MemoryConfig{Repo: mems}), // Extractor: agent.MockMemoryExtractor(),
 			Profiles:  agent.NewProfileManager(profiles),
 			Skills:    skills,
-			Project:   projCtx,
 			Policy:    agent.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
 		})
 	}))

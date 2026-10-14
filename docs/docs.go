@@ -917,26 +917,45 @@ const docTemplate = `{
                 }
             }
         },
-        "/agent/project-context": {
-            "get": {
+        "/agent/question/answer": {
+            "post": {
                 "security": [
                     {
                         "Bearer": []
                     }
                 ],
-                "description": "返回当前用户激活项目下已注入 Agent 系统提示词的项目上下文文本块（如已完成的分析节点）",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Agent"
                 ],
-                "summary": "查看当前用户的项目上下文",
+                "summary": "提交用户对提问的作答",
+                "parameters": [
+                    {
+                        "description": "作答内容",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.questionAnswerBody"
+                        }
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/gin.H"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
                         }
                     },
                     "401": {
@@ -945,8 +964,162 @@ const docTemplate = `{
                             "$ref": "#/definitions/errors.AppError"
                         }
                     },
-                    "500": {
-                        "description": "Internal Server Error",
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/question/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "分页查询提问请求",
+                "parameters": [
+                    {
+                        "description": "分页请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.agentQuestionPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/skill/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "删除 $BaseDir/.skills 下的技能目录并从内存注册表移除；仅允许删除用户技能目录内的技能",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "删除 Agent 技能",
+                "parameters": [
+                    {
+                        "description": "技能名",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.taskIDBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/skill/get": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按名称返回单个技能（含指令正文），供前端编辑回填",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "查看单个 Agent 技能",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "技能名",
+                        "name": "id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/skill.Skill"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -961,7 +1134,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "返回当前可用的全部技能（内置 + 用户自定义），包含名称、描述、入参 schema、版本与指令正文",
+                "description": "返回当前可用的全部技能（内置 + 用户自定义），包含名称、描述与 SKILL.md 路径",
                 "produces": [
                     "application/json"
                 ],
@@ -975,12 +1148,69 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/skill.Manifest"
+                                "$ref": "#/definitions/skill.Skill"
                             }
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/skill/save": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "把技能写回 $BaseDir/.skills/\u003cname\u003e/SKILL.md 并热更新内存注册表，程序运行中即时生效",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "创建或更新 Agent 技能",
+                "parameters": [
+                    {
+                        "description": "技能内容",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.skillSaveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/skill.Skill"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -1300,6 +1530,54 @@ const docTemplate = `{
                 }
             }
         },
+        "/agent/task/questions": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "获取任务待作答提问",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "任务 ID",
+                        "name": "task_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/agent.QuestionRequest"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/agent/task/request": {
             "get": {
                 "security": [
@@ -1307,7 +1585,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按任务 ID 加载任务，应用 Agent Profile（系统提示词合并、技能选择、记忆/项目上下文注入），返回最终 Request",
+                "description": "按任务 ID 加载任务，应用 Agent Profile（系统提示词合并、技能选择、记忆注入），返回最终 Request",
                 "produces": [
                     "application/json"
                 ],
@@ -9072,6 +9350,66 @@ const docTemplate = `{
                 }
             }
         },
+        "/project/project-report-file": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "读取报告工作目录下的自身 markdown 文件（output.md）内容",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "查询报告自身文件",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "报告ID",
+                        "name": "report_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/project/project-report-html": {
             "get": {
                 "security": [
@@ -9507,6 +9845,72 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "项目或报告不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/project/update-project-report-file": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "覆写报告工作目录下的自身 markdown 文件（output.md）内容",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "更新报告自身文件",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.updateProjectReportFileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "更新成功",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "未认证",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "报告不存在",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -9998,6 +10402,82 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/script/{scriptId}/git-revert-file": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按脚本主键定位脚本目录，把指定文件恢复为本地 HEAD 版本（等同于 git checkout HEAD -- \u003cpath\u003e）；文件为工作区新增时删除该文件。仅影响该文件，不产生提交",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Git"
+                ],
+                "summary": "撤回脚本单个文件的未提交改动",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "脚本主键 ID",
+                        "name": "scriptId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "相对仓库根目录的文件路径",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.gitRevertFileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.gitRevertFileResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -11440,6 +11920,82 @@ const docTemplate = `{
                 }
             }
         },
+        "/workflow/{workflowId}/git-revert-file": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按工作流主键定位 workflow 目录，把指定文件恢复为本地 HEAD 版本（等同于 git checkout HEAD -- \u003cpath\u003e）；文件为工作区新增时删除该文件。仅影响该文件，不产生提交",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Git"
+                ],
+                "summary": "撤回工作流单个文件的未提交改动",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "工作流主键 ID",
+                        "name": "workflowId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "相对仓库根目录的文件路径",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.gitRevertFileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.gitRevertFileResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/workflow/{workflowId}/image": {
             "get": {
                 "security": [
@@ -11695,13 +12251,24 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "agent.AskUserAnswer": {
+            "type": "object",
+            "properties": {
+                "answers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agent.QuestionAnswer"
+                    }
+                },
+                "request_id": {
+                    "type": "string"
+                }
+            }
+        },
         "agent.ContextConfig": {
             "type": "object",
             "properties": {
                 "inject_memory": {
-                    "type": "boolean"
-                },
-                "inject_project": {
                     "type": "boolean"
                 }
             }
@@ -11995,9 +12562,6 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
-                "display_name": {
-                    "type": "string"
-                },
                 "id": {
                     "type": "string",
                     "example": "0"
@@ -12013,6 +12577,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "description": "Name 仅作为展示名使用，不参与任何查询。",
                     "type": "string"
                 },
                 "provider": {
@@ -12035,6 +12600,159 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "agent.Question": {
+            "type": "object",
+            "properties": {
+                "allow_custom": {
+                    "description": "是否允许自定义输入",
+                    "type": "boolean"
+                },
+                "description": {
+                    "description": "问题补充说明",
+                    "type": "string"
+                },
+                "id": {
+                    "description": "问题标识（答案按此 ID 回填）",
+                    "type": "string"
+                },
+                "options": {
+                    "description": "选项（choice 类型）",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agent.QuestionOption"
+                    }
+                },
+                "placeholder": {
+                    "description": "自定义 / 文本输入的占位提示",
+                    "type": "string"
+                },
+                "required": {
+                    "description": "是否必答",
+                    "type": "boolean"
+                },
+                "title": {
+                    "description": "问题文本",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "single_choice / multiple_choice / text",
+                    "type": "string"
+                }
+            }
+        },
+        "agent.QuestionAnswer": {
+            "type": "object",
+            "properties": {
+                "custom": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "agent.QuestionOption": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "description": "选项说明",
+                    "type": "string"
+                },
+                "label": {
+                    "description": "展示文案",
+                    "type": "string"
+                },
+                "value": {
+                    "description": "提交值",
+                    "type": "string"
+                }
+            }
+        },
+        "agent.QuestionRequest": {
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "$ref": "#/definitions/agent.AskUserAnswer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "questions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agent.Question"
+                    }
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "resolved_at": {
+                    "type": "string"
+                },
+                "resolved_by": {
+                    "type": "string"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/agent.QuestionStatus"
+                },
+                "task_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "agent.QuestionStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "answered",
+                "canceled",
+                "expired"
+            ],
+            "x-enum-comments": {
+                "QuestionAnswered": "用户已作答",
+                "QuestionCanceled": "已取消（任务被取消等）",
+                "QuestionExpired": "已过期",
+                "QuestionPending": "等待用户作答"
+            },
+            "x-enum-descriptions": [
+                "等待用户作答",
+                "用户已作答",
+                "已取消（任务被取消等）",
+                "已过期"
+            ],
+            "x-enum-varnames": [
+                "QuestionPending",
+                "QuestionAnswered",
+                "QuestionCanceled",
+                "QuestionExpired"
+            ]
         },
         "agent.Request": {
             "type": "object",
@@ -12061,9 +12779,10 @@ const docTemplate = `{
                     "description": "Model 可选：模型名称，为空时由 Provider 自行决定。",
                     "type": "string"
                 },
-                "profile": {
-                    "description": "Profile 可选：AgentProfile 名称，AgentService 据此解析系统提示词、技能与上下文注入开关。",
-                    "type": "string"
+                "profile_id": {
+                    "description": "ProfileID 可选：AgentProfile ID，AgentService 据此解析系统提示词、技能与上下文注入开关。",
+                    "type": "string",
+                    "example": "0"
                 },
                 "provider": {
                     "description": "Provider 可选：强制指定 Provider 名称；为空则使用 Client 的默认 Provider。",
@@ -12195,8 +12914,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/agent.PermissionDecision"
                     }
                 },
-                "profile": {
-                    "type": "string"
+                "profile_id": {
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -12318,6 +13038,8 @@ const docTemplate = `{
                 "task.canceled",
                 "permission.created",
                 "permission.resolved",
+                "question.created",
+                "question.resolved",
                 "memory.saved",
                 "memory.deleted",
                 "stream"
@@ -12327,6 +13049,8 @@ const docTemplate = `{
                 "EventMemorySaved": "记忆已保存（Payload 为 Memory）",
                 "EventPermissionCreated": "新增待确认权限",
                 "EventPermissionResolved": "权限已被批准 / 拒绝",
+                "EventQuestionCreated": "新增待作答提问（Payload 为 QuestionRequest）",
+                "EventQuestionResolved": "提问已作答 / 取消（Payload 为 QuestionRequest）",
                 "EventStream": "透传的流式事件（Payload 为 StreamEvent）",
                 "EventTaskCanceled": "任务取消",
                 "EventTaskCompleted": "任务完成",
@@ -12344,6 +13068,8 @@ const docTemplate = `{
                 "任务取消",
                 "新增待确认权限",
                 "权限已被批准 / 拒绝",
+                "新增待作答提问（Payload 为 QuestionRequest）",
+                "提问已作答 / 取消（Payload 为 QuestionRequest）",
                 "记忆已保存（Payload 为 Memory）",
                 "记忆已删除（Payload 为 Memory）",
                 "透传的流式事件（Payload 为 StreamEvent）"
@@ -12357,6 +13083,8 @@ const docTemplate = `{
                 "EventTaskCanceled",
                 "EventPermissionCreated",
                 "EventPermissionResolved",
+                "EventQuestionCreated",
+                "EventQuestionResolved",
                 "EventMemorySaved",
                 "EventMemoryDeleted",
                 "EventStream"
@@ -12831,6 +13559,31 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.agentQuestionPageRequest": {
+            "type": "object",
+            "properties": {
+                "page": {
+                    "description": "Page",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "page_size": {
+                    "description": "Page size",
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
+                },
+                "statuses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agent.QuestionStatus"
+                    }
+                },
+                "task_id": {
+                    "type": "string"
+                }
+            }
+        },
         "handler.agentTaskPageRequest": {
             "type": "object",
             "properties": {
@@ -13038,9 +13791,10 @@ const docTemplate = `{
                 "model": {
                     "type": "string"
                 },
-                "profile": {
-                    "description": "AgentProfile 名称（为空取默认）",
-                    "type": "string"
+                "profile_id": {
+                    "description": "AgentProfile ID（为空取默认；实际以当前用户配置为准）",
+                    "type": "string",
+                    "example": "0"
                 },
                 "provider": {
                     "type": "string"
@@ -13175,8 +13929,13 @@ const docTemplate = `{
                     "$ref": "#/definitions/types.SummaryOwnerType"
                 },
                 "profile": {
-                    "description": "Profile 生成摘要使用的 Agent Profile 名称（为空则使用内置 summary Profile）。",
+                    "description": "Profile 该 Profile 的展示名（仅用于展示，可为空）。",
                     "type": "string"
+                },
+                "profile_id": {
+                    "description": "ProfileID 生成摘要使用的 Agent Profile ID（为 0 则使用内置 summary Profile）。",
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -13462,6 +14221,31 @@ const docTemplate = `{
                 },
                 "worktree": {
                     "$ref": "#/definitions/utils.GitDiffSection"
+                }
+            }
+        },
+        "handler.gitRevertFileRequest": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string"
+                }
+            }
+        },
+        "handler.gitRevertFileResponse": {
+            "type": "object",
+            "properties": {
+                "entity": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "reverted": {
+                    "type": "boolean"
                 }
             }
         },
@@ -13772,9 +14556,6 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
-                "display_name": {
-                    "type": "string"
-                },
                 "id": {
                     "description": "为空则新建，否则更新",
                     "type": "string"
@@ -13985,6 +14766,20 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.questionAnswerBody": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "answer": {
+                    "$ref": "#/definitions/agent.AskUserAnswer"
+                },
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
         "handler.readmeResponse": {
             "type": "object",
             "properties": {
@@ -14147,6 +14942,33 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.skillSaveRequest": {
+            "type": "object",
+            "required": [
+                "description",
+                "name"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "disable_model_invocation": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "instructions": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "user_invocable": {
+                    "type": "boolean"
+                }
+            }
+        },
         "handler.taskIDBody": {
             "type": "object",
             "required": [
@@ -14184,8 +15006,13 @@ const docTemplate = `{
                     "example": "0"
                 },
                 "profile": {
-                    "description": "Profile 生成摘要使用的 Agent Profile 名称；传入空串表示改回内置 summary Profile。",
+                    "description": "Profile 该 Profile 的展示名（仅用于展示）。",
                     "type": "string"
+                },
+                "profile_id": {
+                    "description": "ProfileID 生成摘要使用的 Agent Profile ID；传入 0 表示改回内置 summary Profile。",
+                    "type": "string",
+                    "example": "0"
                 },
                 "title": {
                     "type": "string"
@@ -14248,6 +15075,21 @@ const docTemplate = `{
                 },
                 "title": {
                     "type": "string"
+                }
+            }
+        },
+        "handler.updateProjectReportFileRequest": {
+            "type": "object",
+            "required": [
+                "report_id"
+            ],
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "report_id": {
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -14424,25 +15266,32 @@ const docTemplate = `{
                 }
             }
         },
-        "skill.Manifest": {
+        "skill.Skill": {
             "type": "object",
             "properties": {
                 "description": {
                     "type": "string"
                 },
-                "input_schema": {
-                    "type": "object",
-                    "additionalProperties": {}
+                "disable_model_invocation": {
+                    "type": "boolean"
                 },
                 "instructions": {
-                    "description": "markdown 指令正文，注入到上下文",
+                    "description": "以下字段不参与 frontmatter 解析，由加载过程填充。",
                     "type": "string"
                 },
                 "name": {
                     "type": "string"
                 },
-                "version": {
+                "path": {
+                    "description": "技能目录",
                     "type": "string"
+                },
+                "skill_file_path": {
+                    "description": "SKILL.md 路径",
+                    "type": "string"
+                },
+                "user_invocable": {
+                    "type": "boolean"
                 }
             }
         },
@@ -14478,8 +15327,13 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "profile": {
-                    "description": "Profile 生成该摘要使用的 Agent Profile 名称（agent_profiles.name）。\n为空时由 AISummaryWorker 回退到内置 summary Profile。",
+                    "description": "Profile 生成该摘要使用的 Agent Profile 展示名（仅用于展示，不参与查询；\n为空表示使用内置 summary Profile）。",
                     "type": "string"
+                },
+                "profile_id": {
+                    "description": "ProfileID 生成该摘要使用的 Agent Profile ID（agent_profiles.id），用于按 ID 解析 Profile。\n为 0 时由 AISummaryWorker 回退到内置 summary Profile。",
+                    "type": "string",
+                    "example": "0"
                 },
                 "project_id": {
                     "description": "ProjectID 摘要所属项目 ID（t_project.id），创建时由创建者的激活项目推导。",
@@ -14511,7 +15365,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "profile": {
-                    "description": "Profile 是生成该摘要使用的 AgentProfile 名称（取自摘要记录，为空回退内置 summary Profile）。",
+                    "description": "ProfileName 是生成该摘要使用的 AgentProfile 展示名（取自摘要记录，为空回退内置 summary Profile）。",
                     "type": "string"
                 },
                 "profile_id": {

@@ -32,8 +32,8 @@ func TestProfileManagerResolveBuiltin(t *testing.T) {
 	if p.ID != BuiltinDefaultProfileID {
 		t.Fatalf("default profile id = %d, want %d", p.ID, BuiltinDefaultProfileID)
 	}
-	if !p.Context.InjectMemory || p.Context.InjectProject {
-		t.Fatalf("default context = %+v, want memory on / project off", p.Context)
+	if !p.Context.InjectMemory {
+		t.Fatalf("default context = %+v, want memory on", p.Context)
 	}
 
 	// 指定内置 ID → 命中内置 Profile。
@@ -41,8 +41,8 @@ func TestProfileManagerResolveBuiltin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve article_writer: %v", err)
 	}
-	if !p.Context.InjectProject {
-		t.Fatalf("article_writer should inject project context")
+	if p.Name != "科研文章撰写" {
+		t.Fatalf("article_writer name = %q", p.Name)
 	}
 }
 
@@ -56,7 +56,7 @@ func TestProfileManagerUserDefault(t *testing.T) {
 		UserID:       "u1",
 		IsDefault:    true,
 		SystemPrompt: "写作",
-		Context:      ContextConfig{InjectMemory: true, InjectProject: true},
+		Context:      ContextConfig{InjectMemory: true},
 	}
 	if err := m.Save(ctx, custom); err != nil {
 		t.Fatalf("save custom: %v", err)

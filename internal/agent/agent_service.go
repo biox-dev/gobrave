@@ -32,7 +32,6 @@ type AgentService struct {
 	bus       EventBus
 	policy    PermissionPolicy
 	memory    *MemoryManager
-	project   ProjectContextProvider
 	profiles  *ProfileManager
 	skills    *skill.Registry
 
@@ -50,7 +49,6 @@ type ServiceConfig struct {
 	Bus       EventBus
 	Policy    PermissionPolicy
 	Memory    *MemoryManager
-	Project   ProjectContextProvider
 	Profiles  *ProfileManager
 	Skills    *skill.Registry
 }
@@ -76,7 +74,6 @@ func NewService(cfg ServiceConfig) *AgentService {
 		bus:       cfg.Bus,
 		policy:    cfg.Policy,
 		memory:    cfg.Memory,
-		project:   cfg.Project,
 		profiles:  cfg.Profiles,
 		skills:    cfg.Skills,
 		active:    make(map[int64]context.CancelFunc),
@@ -183,7 +180,7 @@ func (s *AgentService) execute(ctx context.Context, task *Task, rt Runtime) {
 func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result, error) {
 	// 应用 Agent Profile：按 ID 解析 Profile → 覆盖模型 / Agent / 技能 → 渲染最终系统提示词。
 	// 最终系统提示词由 applyProfile 依据 Profile.SystemPrompt 模板 + SystemPromptVars
-	// 渲染，并按 Profile.Context 开关注入记忆 / 项目上下文。
+	// 渲染，并按 Profile.Context 开关注入记忆。
 	profile, err := s.profiles.Resolve(ctx, task.Request.ProfileID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve profile %d: %w", task.Request.ProfileID, err)
@@ -298,17 +295,6 @@ func (s *AgentService) GetTaskRequest(ctx context.Context, taskID int64) (*Reque
 		return nil, err
 	}
 	return &task.Request, nil
-}
-
-// ProjectContext 返回当前用户激活项目下的上下文文本块（例如已完成的分析节点）。
-//
-// 未配置项目上下文提供者或用户为空时返回空串；查询失败时返回错误。
-// 供 HTTP 层直接向用户展示注入 Agent 系统提示词的项目背景。
-func (s *AgentService) ProjectContext(ctx context.Context, userID string) (string, error) {
-	if s.project == nil || strings.TrimSpace(userID) == "" {
-		return "", nil
-	}
-	return s.project.ProjectContext(ctx, userID)
 }
 
 // GetPendingPermissions 查询任务当前待确认的权限请求。
@@ -560,10 +546,10 @@ func applyProfileOverrides(req Request, profile *Profile) Request {
 // 入参：
 //   - profile：已解析的 Agent Profile（为 nil 时返回空提示词，表示不附加系统提示词）；
 //   - vars：渲染 Profile.SystemPrompt（pongo2 模板）所用的变量，通常为 Request.SystemPromptVars；
-//   - userID：记忆 / 项目上下文的归属用户（为空时不注入背景）；
+//   - userID：记忆的归属用户（为空时不注入背景）；
 //   - selectedSkills：本轮启用的技能名（为空表示全部）；据此把技能指令正文注入提示词。
 //
-// 处理顺序：渲染 Profile 模板 → 注入技能指令 → 按 Profile.Context 开关注入记忆 / 项目上下文。
+// 处理顺序：渲染 Profile 模板 → 注入技能指令 → 按 Profile.Context 开关注入记忆。
 // 模板渲染失败时退回原始模板，保证调用仍可进行。
 func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *Profile, vars map[string]any, userID string, selectedSkills []string) string {
 	if profile == nil {
@@ -591,9 +577,6 @@ func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *P
 	if profile.Context.InjectMemory {
 		prompt = s.injectMemory(ctx, prompt, userID)
 	}
-	if profile.Context.InjectProject {
-		prompt = s.injectProjectContext(ctx, prompt, userID)
-	}
 
 	return prompt
 }
@@ -610,21 +593,6 @@ func (s *AgentService) injectMemory(ctx context.Context, prompt, userID string) 
 		return prompt
 	}
 	return appendPromptBlock(prompt, BuildMemoryContext(mems))
-}
-
-// injectProjectContext 把当前项目已完成的分析节点等背景追加到系统提示词尾部。
-//
-// 未配置项目上下文提供者、userID 为空、或查询不到上下文时，原样返回 prompt。
-// 与 injectMemory 不同，项目上下文是实时查询的领域状态（而非持久化记忆），因此不落库。
-func (s *AgentService) injectProjectContext(ctx context.Context, prompt, userID string) string {
-	if s.project == nil || strings.TrimSpace(userID) == "" {
-		return prompt
-	}
-	block, err := s.project.ProjectContext(ctx, userID)
-	if err != nil {
-		return prompt
-	}
-	return appendPromptBlock(prompt, block)
 }
 
 // appendPromptBlock 把上下文块追加到系统提示词尾部；块为空时原样返回。

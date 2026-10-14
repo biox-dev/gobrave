@@ -34,12 +34,9 @@ var (
 
 // ContextConfig 控制 AgentService 在调用前注入哪些背景。
 //
-//   - InjectMemory：检索长期记忆并拼进 SystemPrompt；
-//   - InjectProject：把当前项目已完成的分析节点等背景拼进 SystemPrompt。
-//     （只有撰写文章 / 报告一类的任务才需要项目背景，因此默认关闭。）
+//   - InjectMemory：检索长期记忆并拼进 SystemPrompt。
 type ContextConfig struct {
-	InjectMemory  bool `json:"inject_memory"`
-	InjectProject bool `json:"inject_project"`
+	InjectMemory bool `json:"inject_memory"`
 }
 
 // Profile 描述一类任务的 Agent 配置（系统提示词 + 技能 + 上下文注入开关）。
@@ -94,7 +91,7 @@ func BuiltinProfiles() []*Profile {
 		{
 			ID:          BuiltinDefaultProfileID,
 			Name:        BuiltinDefaultProfileName,
-			Description: "默认配置：不附加领域提示词；注入记忆、不注入项目上下文。",
+			Description: "默认配置：不附加领域提示词；注入记忆。",
 			IsDefault:   true,
 			IsBuiltin:   true,
 			// SystemPrompt 为 pongo2 模板：调用方通过 Request.SystemPromptVars 提供变量，
@@ -102,7 +99,7 @@ func BuiltinProfiles() []*Profile {
 			SystemPrompt: "{% if workspace_directory %}workspace_directory: {{ workspace_directory }}{% endif %}",
 			Model:        "deepseek-v4-flash",
 			Provider:     ProviderCopilot,
-			Context:      ContextConfig{InjectMemory: true, InjectProject: false},
+			Context:      ContextConfig{InjectMemory: true},
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		},
@@ -118,7 +115,7 @@ params_file_path: {{ params_file_path }}
 io_schema_path: {{ io_schema_path }}
 output_directory: {{ output_directory }}{% endif %}{% if script_workspace_directory %}
 script_workspace_directory: {{ script_workspace_directory }}{% endif %}`,
-			Context:   ContextConfig{InjectMemory: true, InjectProject: false},
+			Context:   ContextConfig{InjectMemory: true},
 			CreatedAt: now,
 			Model:     "deepseek-v4-flash",
 			Provider:  ProviderCustom,
@@ -127,13 +124,13 @@ script_workspace_directory: {{ script_workspace_directory }}{% endif %}`,
 		{
 			ID:          BuiltinArticleWriterID,
 			Name:        "科研文章撰写",
-			Description: "用于撰写科研报告 / 文章：注入项目上下文（已完成的分析节点等），按学术规范写作。",
+			Description: "用于撰写科研报告 / 文章：按学术规范写作。",
 			IsBuiltin:   true,
 			SystemPrompt: `你是一名科研写作助手。请严格遵循科研报告 / 科研文章的学术规范撰写内容，语言严谨、结构完整，并确保结论与项目中的分析结果保持一致。{% if output_file %}
 当前上下文是科研报告/科研文章撰写环境，请严格按照科研报告/科研文章的规范撰写内容，并将撰写的内容输出到指定的文件路径：{{ output_file }}，确保文件名为 output.md。
 请不要在其他地方输出科研报告/科研文章的内容，必须严格遵守输出到指定文件的要求。{% endif %}{% if workspace_directory %}
 workspace_directory: {{ workspace_directory }}{% endif %}`,
-			Context:   ContextConfig{InjectMemory: true, InjectProject: true},
+			Context:   ContextConfig{InjectMemory: true},
 			CreatedAt: now,
 			Model:     "deepseek-v4-flash",
 			Provider:  ProviderCustom,
@@ -141,14 +138,14 @@ workspace_directory: {{ workspace_directory }}{% endif %}`,
 		}, {
 			ID:          BuiltinSummaryProfileID,
 			Name:        "摘要总结",
-			Description: "用于生成分析 / 节点的摘要：注入项目上下文（已完成的分析节点等），按学术规范写作。",
+			Description: "用于生成分析 / 节点的摘要：按学术规范写作。",
 			IsBuiltin:   true,
 			SystemPrompt: `你是一名生物信息学分析助手，请根据给定的分析输出内容，生成简洁、准确的中文摘要; 检查分析中存在的问题，并提出改进建议。{% if workspace_directory %}
 workspace_directory: {{ workspace_directory }}{% endif %}{% if output_directory %}
 output_directory: {{ output_directory }}{% endif %}{% if output_file %}
 output_file: {{ output_file }}
 Do not run analysis commands, mainly read the content of the analysis result file [{{ output_file }}] to complete the corresponding tasks.{% endif %}`,
-			Context:   ContextConfig{InjectMemory: true, InjectProject: true},
+			Context:   ContextConfig{InjectMemory: true},
 			CreatedAt: now,
 			Model:     "deepseek-v4-flash",
 			Provider:  ProviderCustom,
