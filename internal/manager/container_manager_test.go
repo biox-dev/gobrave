@@ -260,6 +260,21 @@ func (m *mockContainerRepo) GetProjectByID(ctx context.Context, id int64) (*type
 	return item, nil
 }
 
+// mockProjectRepo 只为满足 interfaces.ProjectRepository。
+// 内嵌接口让其未实现的方法在调用时 panic，从而无需为测试补齐全部方法。
+type mockProjectRepo struct {
+	interfaces.ProjectRepository
+	projects map[int64]*types.Project
+}
+
+func (m *mockProjectRepo) GetProjectByID(ctx context.Context, id int64) (*types.Project, error) {
+	item, ok := m.projects[id]
+	if !ok {
+		return nil, errors.New("project not found")
+	}
+	return item, nil
+}
+
 func (m *mockContainerRepo) UpdateAppSession(ctx context.Context, item *types.AppSession) error {
 	m.sessions[item.ID] = item
 	return nil
@@ -630,11 +645,11 @@ func newTestManager(repo *mockContainerRepo, rt *dockerMockRuntime) *ContainerMa
 func newTestManagerWithWorker(repo *mockContainerRepo, rt *dockerMockRuntime) (*ContainerManager, *ContainerCreateWorker) {
 	reg := containerruntime.NewRegistry()
 	reg.Register("docker", rt)
-	// imgMgr := NewImageManager(repo, reg)
-	mgr := NewContainerManager(repo, nil, nil, nil, reg, nil, NewDefaultContainerRuntimeResolver(), nil, nil)
+	projectRepo := &mockProjectRepo{projects: repo.projects}
+	mgr := NewContainerManager(repo, nil, projectRepo, nil, reg, nil, NewDefaultContainerRuntimeResolver(), nil, nil)
 	// The worker performs the create transition through the manager, so it must be
 	// given the same one instead of a nil dependency.
-	worker := NewContainerCreateWorker(repo, repo, nil, nil, reg, NewDefaultContainerRuntimeResolver(), mgr, nil)
+	worker := NewContainerCreateWorker(repo, projectRepo, nil, nil, reg, NewDefaultContainerRuntimeResolver(), mgr, nil)
 	return mgr, worker
 }
 
@@ -779,7 +794,7 @@ func TestContainerManager_CreateByTemplate_ResolvesEnvAndVolumes(t *testing.T) {
 		ImageID: 1,
 		Command: "bash -lc echo ok",
 		Env:     datatypes.JSON([]byte(`{"USERID":"$USERID","GROUPID":"$GROUPID","R_SCRIPT":"$SCRIPT_FILE","R_LIBS_USER":"$R_PACKAGE_DIR","DISABLE_AUTH":true,"R_USER_WORKDIR":"$OUTPUT_DIR"}`)),
-		Mounts:  datatypes.JSON([]byte(`{"$R_PROFILE":{"bind":"/home/rstudio/.Rprofile","mode":"rw"}}`)),
+		Mounts:  datatypes.JSON([]byte(`[{"source":"/home/rstudio/.Rprofile","target":"/home/rstudio/.Rprofile","mode":"rw"}]`)),
 	}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-9"}
@@ -822,9 +837,8 @@ func TestContainerManager_CreateByTemplate_ResolvesEnvAndVolumes(t *testing.T) {
 }
 
 func TestContainerManager_CreateByTemplate_UsesAppSessionContextVariables(t *testing.T) {
-	ctx := context.WithValue(context.Background(), types.UserIDContextKey, "ctx-user")
+	ctx := context.Background()
 	t.Setenv("USERID", "env-user")
-	t.Setenv("PROJECTID", "env-project")
 
 	repo := newMockContainerRepo()
 	repo.images[1] = &types.ContainerImage{ID: 1, FullName: "docker.io/library/busybox:latest"}
@@ -832,9 +846,9 @@ func TestContainerManager_CreateByTemplate_UsesAppSessionContextVariables(t *tes
 		ID:      10,
 		ImageID: 1,
 		Command: "bash -lc echo ok",
-		Env:     datatypes.JSON([]byte(`{"USERID":"$USERID","PROJECTID":"$PROJECTID","APP_SESSION_ID":"$APP_SESSION_ID"}`)),
+		Env:     datatypes.JSON([]byte(`{"USERID":"$USERID","SYS_USER_ID":"$SYS_USER_ID","APP_SESSION_ID":"$APP_SESSION_ID"}`)),
 	}
-	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: "session-user", ProjectID: 001}
+	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: "session-user", ProjectID: 1}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-10"}
 	_, worker := newTestManagerWithWorker(repo, rt)
@@ -849,12 +863,15 @@ func TestContainerManager_CreateByTemplate_UsesAppSessionContextVariables(t *tes
 	if rt.lastSpec == nil {
 		t.Fatalf("runtime create spec was not captured")
 	}
-	if got := rt.lastSpec.Env["USERID"]; got != "session-user" {
-		t.Fatalf("expected USERID from app session context, got %q", got)
+	// USERID 是宿主环境变量（系统变量），来自 os.Getenv，而不是应用会话。
+	if got := rt.lastSpec.Env["USERID"]; got != "env-user" {
+		t.Fatalf("expected USERID from host env, got %q", got)
 	}
-	if got := rt.lastSpec.Env["PROJECTID"]; got != "session-project" {
-		t.Fatalf("expected PROJECTID from app session context, got %q", got)
+	// SYS_USER_ID 来自应用会话的 UserID。
+	if got := rt.lastSpec.Env["SYS_USER_ID"]; got != "session-user" {
+		t.Fatalf("expected SYS_USER_ID from app session, got %q", got)
 	}
+	// APP_SESSION_ID 来自 owner 上下文。
 	if got := rt.lastSpec.Env["APP_SESSION_ID"]; got != "1001" {
 		t.Fatalf("expected APP_SESSION_ID from owner context, got %q", got)
 	}
