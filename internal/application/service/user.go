@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/biox-dev/gobrave/internal/agent"
@@ -426,7 +425,6 @@ func (s *userService) GenerateTokens(
 
 	// Store tokens in database
 	accessTokenRecord := &types.AuthToken{
-		ID:        uuid.New().String(),
 		UserID:    user.ID,
 		Token:     accessToken,
 		TokenType: "access_token",
@@ -436,7 +434,6 @@ func (s *userService) GenerateTokens(
 	}
 
 	refreshTokenRecord := &types.AuthToken{
-		ID:        uuid.New().String(),
 		UserID:    user.ID,
 		Token:     refreshToken,
 		TokenType: "refresh_token",

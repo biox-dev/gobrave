@@ -89,8 +89,8 @@ func (m *mockTokenRepo) UpdateToken(ctx context.Context, token *types.AuthToken)
 	return nil
 }
 
-func (m *mockTokenRepo) DeleteToken(ctx context.Context, id string) error { return nil }
-func (m *mockTokenRepo) DeleteExpiredTokens(ctx context.Context) error    { return nil }
+func (m *mockTokenRepo) DeleteToken(ctx context.Context, id int64) error { return nil }
+func (m *mockTokenRepo) DeleteExpiredTokens(ctx context.Context) error   { return nil }
 func (m *mockTokenRepo) RevokeTokensByUserID(ctx context.Context, userID int64) error {
 	for _, token := range m.tokens {
 		if token.UserID == userID {

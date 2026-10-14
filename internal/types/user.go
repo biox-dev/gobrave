@@ -48,7 +48,7 @@ func (u *User) BeforeCreate(_ *gorm.DB) error {
 // AuthToken represents an authentication token
 type AuthToken struct {
 	// Unique identifier of the token
-	ID string `json:"id"         gorm:"type:varchar(36);primaryKey"`
+	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 	// User ID that owns this token
 	UserID int64 `json:"user_id,string" gorm:"type:bigint;index;not null"`
 	// Token value (JWT or other format)
@@ -66,6 +66,14 @@ type AuthToken struct {
 
 	// Association relationship
 	User *User `json:"user,omitempty" gorm:"foreignKey:UserID"`
+}
+
+// BeforeCreate assigns a snowflake ID when the token is created without one.
+func (t *AuthToken) BeforeCreate(_ *gorm.DB) error {
+	if t.ID == 0 {
+		t.ID = utils.GenerateID()
+	}
+	return nil
 }
 
 // LoginRequest represents a login request

@@ -79,7 +79,7 @@ type AuthTokenRepository interface {
 	// UpdateToken updates a token
 	UpdateToken(ctx context.Context, token *types.AuthToken) error
 	// DeleteToken deletes a token
-	DeleteToken(ctx context.Context, id string) error
+	DeleteToken(ctx context.Context, id int64) error
 	// DeleteExpiredTokens deletes all expired tokens
 	DeleteExpiredTokens(ctx context.Context) error
 	// RevokeTokensByUserID revokes all tokens for a user

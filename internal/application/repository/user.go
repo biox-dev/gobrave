@@ -171,7 +171,7 @@ func (r *authTokenRepository) UpdateToken(ctx context.Context, token *types.Auth
 }
 
 // DeleteToken deletes a token
-func (r *authTokenRepository) DeleteToken(ctx context.Context, id string) error {
+func (r *authTokenRepository) DeleteToken(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.AuthToken{}).Error
 }
 

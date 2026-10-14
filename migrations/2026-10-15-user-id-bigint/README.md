@@ -28,6 +28,7 @@ snowflake ids (19-digit values).
 | Table                       | Column                 | Old type       | New type   |
 |-----------------------------|------------------------|----------------|------------|
 | `users`                     | `id`                   | `varchar(36)`  | `bigint`   |
+| `auth_tokens`               | `id`                   | `varchar(36)`  | `bigint`   |
 | `auth_tokens`               | `user_id`              | `varchar(36)`  | `bigint`   |
 | `user_project`              | `user_id`              | `varchar(36)`  | `bigint`   |
 | `go_container_app_session`  | `user_id`              | `varchar(36)`  | `bigint`   |
