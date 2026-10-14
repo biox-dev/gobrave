@@ -24,7 +24,7 @@ func serveGitRevert(t *testing.T, serve func(c *gin.Context), route, requestPath
 	engine := gin.New()
 	engine.Use(middleware.ErrorHandler())
 	engine.POST(route, func(c *gin.Context) {
-		c.Set(types.UserIDContextKey.String(), "test-user")
+		c.Set(types.UserIDContextKey.String(), int64(1))
 		serve(c)
 	})
 

@@ -22,7 +22,7 @@ type ToolRunner struct {
 	exec     *tool.Executor
 	rt       Runtime
 	resolver ToolPermissionResolver
-	userID   string
+	userID   int64
 }
 
 // ToolPermissionResolver 把一次工具调用映射为需要授权的 Operation。
@@ -46,7 +46,7 @@ func (r *ToolRunner) SetPermissionResolver(resolver ToolPermissionResolver) *Too
 }
 
 // SetUserID 设置权限决策所使用的用户标识（用于按用户读取许可策略）。
-func (r *ToolRunner) SetUserID(userID string) *ToolRunner {
+func (r *ToolRunner) SetUserID(userID int64) *ToolRunner {
 	r.userID = userID
 	return r
 }

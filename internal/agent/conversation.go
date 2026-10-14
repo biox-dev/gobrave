@@ -34,7 +34,7 @@ var (
 // 每一轮执行前把历史拼进 Request.Messages，执行结束后把 assistant 回复写回历史。
 type Conversation struct {
 	ID       int64  `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	UserID   string `json:"user_id" gorm:"column:user_id;type:varchar(64);index"`
+	UserID   int64  `json:"user_id,string" gorm:"column:user_id;type:bigint;index"`
 	Provider string `json:"provider" gorm:"column:provider;type:varchar(64)"`
 	Model    string `json:"model" gorm:"column:model;type:varchar(128)"`
 	// Messages 保存完整历史（system 提示词之外的 user/assistant 消息）。
@@ -87,7 +87,7 @@ func (m *ConversationMessage) BeforeCreate(_ *gorm.DB) error {
 }
 
 // NewConversation 创建一个空的会话。
-func NewConversation(userID, provider, model string) *Conversation {
+func NewConversation(userID int64, provider, model string) *Conversation {
 	now := time.Now()
 	return &Conversation{
 		UserID:    userID,
@@ -106,13 +106,13 @@ type ConversationRepository interface {
 	Get(ctx context.Context, id int64) (*Conversation, error)
 	Create(ctx context.Context, conv *Conversation) error
 	Update(ctx context.Context, conv *Conversation) error
-	// Page 分页查询会话（按 UpdatedAt 降序）；userID 为空表示全部用户。
-	Page(ctx context.Context, userID string, offset, limit int) ([]*Conversation, int64, error)
+	// Page 分页查询会话（按 UpdatedAt 降序）；userID 为 0 表示全部用户。
+	Page(ctx context.Context, userID int64, offset, limit int) ([]*Conversation, int64, error)
 }
 
 // TurnInput 是一次「轮次」的输入，由 HTTP 层构造。
 type TurnInput struct {
-	UserID         string
+	UserID         int64
 	ConversationID int64  // 为 0 则创建新会话
 	Message        string // 本轮用户输入
 	Provider       string
@@ -435,7 +435,7 @@ func timelineEventSummary(prefix string, data any) string {
 }
 
 // PageConversations 分页查询会话；userID 为空表示全部用户。
-func (s *ConversationService) PageConversations(ctx context.Context, userID string, offset, limit int) ([]*Conversation, int64, error) {
+func (s *ConversationService) PageConversations(ctx context.Context, userID int64, offset, limit int) ([]*Conversation, int64, error) {
 	return s.repo.Page(ctx, userID, offset, limit)
 }
 

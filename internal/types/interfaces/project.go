@@ -8,66 +8,66 @@ import (
 
 // ProjectService defines project business capabilities.
 type ProjectService interface {
-	ListProjectByUserID(ctx context.Context, userID string) ([]*types.ProjectListItem, error)
-	GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error)
-	GetActiveProjectDirByUserID(ctx context.Context, userID, baseDir string) (*types.Project, string, error)
+	ListProjectByUserID(ctx context.Context, userID int64) ([]*types.ProjectListItem, error)
+	GetActiveProjectByUserID(ctx context.Context, userID int64) (*types.Project, error)
+	GetActiveProjectDirByUserID(ctx context.Context, userID int64, baseDir string) (*types.Project, string, error)
 	GetProjectByID(ctx context.Context, id int64) (*types.Project, error)
-	AddUserProject(ctx context.Context, userID string, projectID int64) error
-	AddUserProjectByShareCode(ctx context.Context, userID, shareCode string) error
-	UpdateProjectSharing(ctx context.Context, userID string, projectID int64, enabled bool) (string, error)
-	ActivateUserProject(ctx context.Context, userID string, projectID int64) error
-	DeleteUserProject(ctx context.Context, userID string, projectID int64) error
-	CreateDefaultProjectForUser(ctx context.Context, userID, username string) error
-	CreateProjectForUser(ctx context.Context, userID string, project *types.Project) (*types.Project, error)
-	AddProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error
-	UpdateProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error
-	DeleteProjectReport(ctx context.Context, userID string, reportID int64) error
-	ListProjectReportByProjectID(ctx context.Context, userID string, projectID int64) ([]*types.ProjectReport, error)
-	PageProjectReportByProjectID(ctx context.Context, userID string, projectID int64, pagination *types.Pagination) ([]*types.ProjectReport, int64, error)
-	GetProjectReportDetailByID(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, error)
+	AddUserProject(ctx context.Context, userID int64, projectID int64) error
+	AddUserProjectByShareCode(ctx context.Context, userID int64, shareCode string) error
+	UpdateProjectSharing(ctx context.Context, userID int64, projectID int64, enabled bool) (string, error)
+	ActivateUserProject(ctx context.Context, userID int64, projectID int64) error
+	DeleteUserProject(ctx context.Context, userID int64, projectID int64) error
+	CreateDefaultProjectForUser(ctx context.Context, userID int64, username string) error
+	CreateProjectForUser(ctx context.Context, userID int64, project *types.Project) (*types.Project, error)
+	AddProjectReport(ctx context.Context, userID int64, report *types.ProjectReport) error
+	UpdateProjectReport(ctx context.Context, userID int64, report *types.ProjectReport) error
+	DeleteProjectReport(ctx context.Context, userID int64, reportID int64) error
+	ListProjectReportByProjectID(ctx context.Context, userID int64, projectID int64) ([]*types.ProjectReport, error)
+	PageProjectReportByProjectID(ctx context.Context, userID int64, projectID int64, pagination *types.Pagination) ([]*types.ProjectReport, int64, error)
+	GetProjectReportDetailByID(ctx context.Context, userID int64, reportID int64) (*types.ProjectReport, error)
 	GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error)
 	// ProjectReportItem business capabilities.
-	ListProjectReportItemsByReportID(ctx context.Context, userID string, reportID int64) ([]*types.ProjectReportItem, error)
-	AddProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error
-	UpdateProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error
-	DeleteProjectReportItem(ctx context.Context, userID string, itemID int64) error
+	ListProjectReportItemsByReportID(ctx context.Context, userID int64, reportID int64) ([]*types.ProjectReportItem, error)
+	AddProjectReportItem(ctx context.Context, userID int64, item *types.ProjectReportItem) error
+	UpdateProjectReportItem(ctx context.Context, userID int64, item *types.ProjectReportItem) error
+	DeleteProjectReportItem(ctx context.Context, userID int64, itemID int64) error
 	// ReorderProjectReportItems 按拖拽结果批量更新条目的父节点与同级顺序。
-	ReorderProjectReportItems(ctx context.Context, userID string, reportID int64, orders []types.ProjectReportItemOrder) error
-	GetProjectReportItemDetailByID(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, error)
+	ReorderProjectReportItems(ctx context.Context, userID int64, reportID int64, orders []types.ProjectReportItemOrder) error
+	GetProjectReportItemDetailByID(ctx context.Context, userID int64, itemID int64) (*types.ProjectReportItem, error)
 	// GetProjectReportItemContent 返回指定条目（入参为 ProjectReportItem ID）渲染后的内容片段。
 	GetProjectReportItemContent(ctx context.Context, itemID int64) (*types.ProjectReportItemContent, error)
 	// GetProjectReportContent 汇总报告下所有条目，按顺序拼接成正文，仅返回拼接后的内容。
 	GetProjectReportContent(ctx context.Context, reportID int64) (string, error)
 	// GetProjectReportFile 读取报告工作目录下的自身 markdown 文件（output.md）内容。
-	GetProjectReportFile(ctx context.Context, userID string, reportID int64) (string, error)
+	GetProjectReportFile(ctx context.Context, userID int64, reportID int64) (string, error)
 	// UpdateProjectReportFile 覆写报告工作目录下的自身 markdown 文件（output.md）内容。
-	UpdateProjectReportFile(ctx context.Context, userID string, reportID int64, content string) error
+	UpdateProjectReportFile(ctx context.Context, userID int64, reportID int64, content string) error
 
 	// Literature (参考文献) business capabilities.
-	AddLiterature(ctx context.Context, userID string, literature *types.Literature, content string) (*types.Literature, string, error)
-	UpdateLiterature(ctx context.Context, userID string, literature *types.Literature, content string) error
-	DeleteLiterature(ctx context.Context, userID string, literatureID int64) error
-	GetLiteratureDetailByID(ctx context.Context, userID string, literatureID int64) (*types.LiteratureDetail, error)
-	ListLiteratureByProjectID(ctx context.Context, userID string) ([]*types.Literature, error)
-	PageLiteratureByProjectID(ctx context.Context, userID string, pagination *types.Pagination) ([]*types.Literature, int64, error)
-	BindLiteratureToProject(ctx context.Context, userID string, literatureID int64) error
-	UnbindLiteratureFromProject(ctx context.Context, userID string, literatureID int64) error
-	PageLiteraturePool(ctx context.Context, userID string, pagination *types.Pagination) ([]*types.LiteraturePoolItem, int64, error)
+	AddLiterature(ctx context.Context, userID int64, literature *types.Literature, content string) (*types.Literature, string, error)
+	UpdateLiterature(ctx context.Context, userID int64, literature *types.Literature, content string) error
+	DeleteLiterature(ctx context.Context, userID int64, literatureID int64) error
+	GetLiteratureDetailByID(ctx context.Context, userID int64, literatureID int64) (*types.LiteratureDetail, error)
+	ListLiteratureByProjectID(ctx context.Context, userID int64) ([]*types.Literature, error)
+	PageLiteratureByProjectID(ctx context.Context, userID int64, pagination *types.Pagination) ([]*types.Literature, int64, error)
+	BindLiteratureToProject(ctx context.Context, userID int64, literatureID int64) error
+	UnbindLiteratureFromProject(ctx context.Context, userID int64, literatureID int64) error
+	PageLiteraturePool(ctx context.Context, userID int64, pagination *types.Pagination) ([]*types.LiteraturePoolItem, int64, error)
 }
 
 // ProjectRepository defines project data access methods.
 type ProjectRepository interface {
-	ListProjectByUserID(ctx context.Context, userID string) ([]*types.ProjectListItem, error)
+	ListProjectByUserID(ctx context.Context, userID int64) ([]*types.ProjectListItem, error)
 	GetProjectByID(ctx context.Context, id int64) (*types.Project, error)
-	GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error)
+	GetActiveProjectByUserID(ctx context.Context, userID int64) (*types.Project, error)
 	CreateProject(ctx context.Context, project *types.Project) error
 	AddUserProject(ctx context.Context, up *types.UserProject) error
-	ExistsUserProject(ctx context.Context, userID string, projectID int64) (bool, error)
-	GetUserProject(ctx context.Context, userID string, projectID int64) (*types.UserProject, error)
+	ExistsUserProject(ctx context.Context, userID int64, projectID int64) (bool, error)
+	GetUserProject(ctx context.Context, userID int64, projectID int64) (*types.UserProject, error)
 	GetUserProjectByShareCode(ctx context.Context, shareCode string) (*types.UserProject, error)
-	UpdateProjectSharing(ctx context.Context, userID string, projectID int64, enabled bool, shareCode string) error
-	DeleteUserProject(ctx context.Context, userID string, projectID int64) error
-	ActivateUserProject(ctx context.Context, userID string, projectID int64) error
+	UpdateProjectSharing(ctx context.Context, userID int64, projectID int64, enabled bool, shareCode string) error
+	DeleteUserProject(ctx context.Context, userID int64, projectID int64) error
+	ActivateUserProject(ctx context.Context, userID int64, projectID int64) error
 	AddProjectReport(ctx context.Context, report *types.ProjectReport) error
 	GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error)
 	UpdateProjectReport(ctx context.Context, report *types.ProjectReport) error

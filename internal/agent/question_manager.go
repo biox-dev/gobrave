@@ -54,7 +54,7 @@ func (m *QuestionManager) Page(ctx context.Context, offset, limit int, taskID in
 }
 
 // Answer 提交用户作答，返回更新后的提问请求；并唤醒正在等待的 Agent。
-func (m *QuestionManager) Answer(ctx context.Context, id int64, answer AskUserAnswer, by string) (*QuestionRequest, error) {
+func (m *QuestionManager) Answer(ctx context.Context, id int64, answer AskUserAnswer, by int64) (*QuestionRequest, error) {
 	m.mu.Lock()
 	q, err := m.repo.Get(ctx, id)
 	if err != nil {

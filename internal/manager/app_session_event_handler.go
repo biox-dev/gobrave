@@ -97,8 +97,8 @@ func (h *AppSessionEventHandler) notifyStatusChanged(ctx context.Context, sessio
 	if h.hub == nil || session == nil {
 		return
 	}
-	userID := strings.TrimSpace(session.UserID)
-	if userID == "" {
+	userID := session.UserID
+	if userID == 0 {
 		return
 	}
 
@@ -120,7 +120,7 @@ func (h *AppSessionEventHandler) notifyStatusChanged(ctx context.Context, sessio
 		if strings.Contains(err.Error(), "no_client_for_user:") {
 			return
 		}
-		logger.Warnf(ctx, "[AppSessionEventHandler] push app session event failed user_id=%s session_id=%d event=%s err=%v", userID, session.ID, normalizedEvent, err)
+		logger.Warnf(ctx, "[AppSessionEventHandler] push app session event failed user_id=%d session_id=%d event=%s err=%v", userID, session.ID, normalizedEvent, err)
 	}
 }
 

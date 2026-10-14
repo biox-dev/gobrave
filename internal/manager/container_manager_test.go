@@ -293,10 +293,10 @@ func (m *mockContainerRepo) ListAppSession(ctx context.Context) ([]*types.AppSes
 	return items, nil
 }
 
-func (m *mockContainerRepo) PageAppSessionByUserID(ctx context.Context, userID string, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error) {
+func (m *mockContainerRepo) PageAppSessionByUserID(ctx context.Context, userID int64, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error) {
 	items := make([]*types.AppSession, 0)
 	for _, v := range m.sessions {
-		if userID != "" && v.UserID != userID {
+		if userID != 0 && v.UserID != userID {
 			continue
 		}
 		if query != nil && query.AnalysisNodeID != nil && v.AnalysisNodeID != *query.AnalysisNodeID {
@@ -848,7 +848,7 @@ func TestContainerManager_CreateByTemplate_UsesAppSessionContextVariables(t *tes
 		Command: "bash -lc echo ok",
 		Env:     datatypes.JSON([]byte(`{"USERID":"$USERID","SYS_USER_ID":"$SYS_USER_ID","APP_SESSION_ID":"$APP_SESSION_ID"}`)),
 	}
-	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: "session-user", ProjectID: 1}
+	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: 1, ProjectID: 1}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-10"}
 	_, worker := newTestManagerWithWorker(repo, rt)
@@ -868,7 +868,7 @@ func TestContainerManager_CreateByTemplate_UsesAppSessionContextVariables(t *tes
 		t.Fatalf("expected USERID from host env, got %q", got)
 	}
 	// SYS_USER_ID 来自应用会话的 UserID。
-	if got := rt.lastSpec.Env["SYS_USER_ID"]; got != "session-user" {
+	if got := rt.lastSpec.Env["SYS_USER_ID"]; got != "1" {
 		t.Fatalf("expected SYS_USER_ID from app session, got %q", got)
 	}
 	// APP_SESSION_ID 来自 owner 上下文。
@@ -888,7 +888,7 @@ func TestContainerManager_CreateByTemplate_AppSessionMergesProjectVolumes(t *tes
 		Command: "bash -lc echo ok",
 		Mounts:  datatypes.JSON([]byte(`[{"source":"/template/src","target":"/template/dst","mode":"ro"}]`)),
 	}
-	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: "session-user", ProjectID: 002}
+	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: 1, ProjectID: 002}
 	repo.projects[2] = &types.Project{
 		ID:     2,
 		Mounts: datatypes.JSON([]byte(`[{"source":"/project/src","target":"/project/dst","mode":"rw"}]`)),

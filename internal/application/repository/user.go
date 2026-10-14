@@ -31,7 +31,7 @@ func (r *userRepository) CreateUser(ctx context.Context, user *types.User) error
 }
 
 // GetUserByID gets a user by ID
-func (r *userRepository) GetUserByID(ctx context.Context, id string) (*types.User, error) {
+func (r *userRepository) GetUserByID(ctx context.Context, id int64) (*types.User, error) {
 	var user types.User
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -84,7 +84,7 @@ func (r *userRepository) UpdateUser(ctx context.Context, user *types.User) error
 }
 
 // DeleteUser deletes a user
-func (r *userRepository) DeleteUser(ctx context.Context, id string) error {
+func (r *userRepository) DeleteUser(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.User{}).Error
 }
 
@@ -157,7 +157,7 @@ func (r *authTokenRepository) GetTokenByValue(ctx context.Context, tokenValue st
 }
 
 // GetTokensByUserID gets all tokens for a user
-func (r *authTokenRepository) GetTokensByUserID(ctx context.Context, userID string) ([]*types.AuthToken, error) {
+func (r *authTokenRepository) GetTokensByUserID(ctx context.Context, userID int64) ([]*types.AuthToken, error) {
 	var tokens []*types.AuthToken
 	if err := r.db.WithContext(ctx).Where("user_id = ?", userID).Find(&tokens).Error; err != nil {
 		return nil, err
@@ -181,6 +181,6 @@ func (r *authTokenRepository) DeleteExpiredTokens(ctx context.Context) error {
 }
 
 // RevokeTokensByUserID revokes all tokens for a user
-func (r *authTokenRepository) RevokeTokensByUserID(ctx context.Context, userID string) error {
+func (r *authTokenRepository) RevokeTokensByUserID(ctx context.Context, userID int64) error {
 	return r.db.WithContext(ctx).Model(&types.AuthToken{}).Where("user_id = ?", userID).Update("is_revoked", true).Error
 }

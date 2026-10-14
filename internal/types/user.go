@@ -5,13 +5,14 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
 
 // User represents a user in the system
 type User struct {
 	// Unique identifier of the user
-	ID string `json:"id"         gorm:"type:varchar(36);primaryKey"`
+	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 	// Username of the user
 	Username string `json:"username"   gorm:"type:varchar(100);uniqueIndex;not null"`
 	// Email address of the user
@@ -36,12 +37,20 @@ type User struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 }
 
+// BeforeCreate assigns a snowflake ID when the user is created without one.
+func (u *User) BeforeCreate(_ *gorm.DB) error {
+	if u.ID == 0 {
+		u.ID = utils.GenerateID()
+	}
+	return nil
+}
+
 // AuthToken represents an authentication token
 type AuthToken struct {
 	// Unique identifier of the token
 	ID string `json:"id"         gorm:"type:varchar(36);primaryKey"`
 	// User ID that owns this token
-	UserID string `json:"user_id"    gorm:"type:varchar(36);index;not null"`
+	UserID int64 `json:"user_id,string" gorm:"type:bigint;index;not null"`
 	// Token value (JWT or other format)
 	Token string `json:"token"      gorm:"type:text;not null"`
 	// Token type (access_token, refresh_token)
@@ -119,7 +128,7 @@ type RegisterResponse struct {
 
 // UserInfo represents user information for API responses
 type UserInfo struct {
-	ID          string                `json:"id"`
+	ID          int64                 `json:"id,string"`
 	Username    string                `json:"username"`
 	Email       string                `json:"email"`
 	Avatar      string                `json:"avatar"`

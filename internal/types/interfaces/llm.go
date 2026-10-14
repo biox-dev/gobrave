@@ -7,17 +7,17 @@ import (
 )
 
 type LLMService interface {
-	CreateLLMSession(ctx context.Context, userID string, session *types.LLMSession) error
-	GetLLMSessionByID(ctx context.Context, userID string, id int64) (*types.LLMSession, error)
-	UpdateLLMSession(ctx context.Context, userID string, session *types.LLMSession) error
-	DeleteLLMSession(ctx context.Context, userID string, id int64) error
-	ListLLMSession(ctx context.Context, userID string) ([]*types.LLMSession, error)
+	CreateLLMSession(ctx context.Context, userID int64, session *types.LLMSession) error
+	GetLLMSessionByID(ctx context.Context, userID int64, id int64) (*types.LLMSession, error)
+	UpdateLLMSession(ctx context.Context, userID int64, session *types.LLMSession) error
+	DeleteLLMSession(ctx context.Context, userID int64, id int64) error
+	ListLLMSession(ctx context.Context, userID int64) ([]*types.LLMSession, error)
 
-	CreateLLMConversation(ctx context.Context, userID string, conversation *types.LLMConversation) error
-	GetLLMConversationByID(ctx context.Context, userID string, id int64) (*types.LLMConversation, error)
-	UpdateLLMConversation(ctx context.Context, userID string, conversation *types.LLMConversation) error
-	DeleteLLMConversation(ctx context.Context, userID string, id int64) error
-	ListLLMConversationBySessionID(ctx context.Context, userID string, llmSessionID int64) ([]*types.LLMConversation, error)
+	CreateLLMConversation(ctx context.Context, userID int64, conversation *types.LLMConversation) error
+	GetLLMConversationByID(ctx context.Context, userID int64, id int64) (*types.LLMConversation, error)
+	UpdateLLMConversation(ctx context.Context, userID int64, conversation *types.LLMConversation) error
+	DeleteLLMConversation(ctx context.Context, userID int64, id int64) error
+	ListLLMConversationBySessionID(ctx context.Context, userID int64, llmSessionID int64) ([]*types.LLMConversation, error)
 }
 
 type LLMRepository interface {

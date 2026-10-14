@@ -11,12 +11,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/biox-dev/gobrave/internal/config"
 	appErrors "github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -642,7 +642,7 @@ func (h *FileHandler) Search(c *gin.Context) {
 	})
 }
 
-func (h *FileHandler) resolveUserRootDir(c *gin.Context, userID, scope string) (*types.Project, string, error) {
+func (h *FileHandler) resolveUserRootDir(c *gin.Context, userID int64, scope string) (*types.Project, string, error) {
 	if h.cfg == nil || h.cfg.Storage == nil {
 		return nil, "", appErrors.NewInternalServerError("storage config is not available")
 	}

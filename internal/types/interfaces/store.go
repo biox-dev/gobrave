@@ -13,7 +13,7 @@ type StoreService interface {
 	UpdateStore(ctx context.Context, item *types.Store) error
 	DeleteStore(ctx context.Context, id int64) error
 	ListStore(ctx context.Context) ([]*types.Store, error)
-	PageStore(ctx context.Context, userID string, pagination *types.Pagination, query *types.StorePageQuery) (*types.PageResult, error)
+	PageStore(ctx context.Context, userID int64, pagination *types.Pagination, query *types.StorePageQuery) (*types.PageResult, error)
 }
 
 type StoreRepository interface {

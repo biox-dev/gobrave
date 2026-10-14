@@ -63,7 +63,7 @@ func DefaultUserAgentConfig() UserAgentConfig {
 
 // UserAgentConfigProvider 按 userID 读取用户的 Agent 配置（用于权限决策）。
 type UserAgentConfigProvider interface {
-	GetAgentConfig(ctx context.Context, userID string) (UserAgentConfig, error)
+	GetAgentConfig(ctx context.Context, userID int64) (UserAgentConfig, error)
 }
 
 // PermissionPolicy 判断一个 Operation 应被允许、拒绝，还是需要人工确认。
@@ -71,7 +71,7 @@ type UserAgentConfigProvider interface {
 // Agent 在执行前把 Operation 交给策略；策略返回 ask 时，由 PermissionManager
 // 持久化一个 pending 的 PermissionRequest 并等待 UI 确认。
 type PermissionPolicy interface {
-	Check(ctx context.Context, userID string, operation Operation) PermissionDecision
+	Check(ctx context.Context, userID int64, operation Operation) PermissionDecision
 }
 
 // defaultPermissionPolicy 是框架默认策略：
@@ -83,7 +83,7 @@ type defaultPermissionPolicy struct{}
 // DefaultPermissionPolicy 返回框架内置的默认策略实例。
 func DefaultPermissionPolicy() PermissionPolicy { return defaultPermissionPolicy{} }
 
-func (defaultPermissionPolicy) Check(_ context.Context, _ string, operation Operation) PermissionDecision {
+func (defaultPermissionPolicy) Check(_ context.Context, _ int64, operation Operation) PermissionDecision {
 	switch operation.Type {
 	case OperationNetwork:
 		return DecisionAllow
@@ -101,7 +101,7 @@ type allowAllPermissionPolicy struct{}
 // AllowAllPermissionPolicy 返回一个“全部放行”的策略实例。
 func AllowAllPermissionPolicy() PermissionPolicy { return allowAllPermissionPolicy{} }
 
-func (allowAllPermissionPolicy) Check(_ context.Context, _ string, _ Operation) PermissionDecision {
+func (allowAllPermissionPolicy) Check(_ context.Context, _ int64, _ Operation) PermissionDecision {
 	return DecisionAllow
 }
 
@@ -109,7 +109,7 @@ func (allowAllPermissionPolicy) Check(_ context.Context, _ string, _ Operation) 
 // 使 userPermissionPolicy 在未注入真实提供者时退化为纯默认策略。
 type nopUserAgentConfigProvider struct{}
 
-func (nopUserAgentConfigProvider) GetAgentConfig(context.Context, string) (UserAgentConfig, error) {
+func (nopUserAgentConfigProvider) GetAgentConfig(context.Context, int64) (UserAgentConfig, error) {
 	return UserAgentConfig{}, nil
 }
 
@@ -131,7 +131,7 @@ func NewUserPermissionPolicy(provider UserAgentConfigProvider) PermissionPolicy 
 	return &userPermissionPolicy{provider: provider, fallback: DefaultPermissionPolicy()}
 }
 
-func (p *userPermissionPolicy) Check(ctx context.Context, userID string, operation Operation) PermissionDecision {
+func (p *userPermissionPolicy) Check(ctx context.Context, userID int64, operation Operation) PermissionDecision {
 	cfg, err := p.provider.GetAgentConfig(ctx, userID)
 	if err == nil {
 		if decision, ok := cfg.Permissions[operation.Type]; ok {

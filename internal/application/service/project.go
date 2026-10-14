@@ -42,14 +42,14 @@ func NewProjectService(
 	}
 }
 
-func (s *projectService) ListProjectByUserID(ctx context.Context, userID string) ([]*types.ProjectListItem, error) {
+func (s *projectService) ListProjectByUserID(ctx context.Context, userID int64) ([]*types.ProjectListItem, error) {
 	return s.projectRepo.ListProjectByUserID(ctx, userID)
 }
-func (s *projectService) GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error) {
+func (s *projectService) GetActiveProjectByUserID(ctx context.Context, userID int64) (*types.Project, error) {
 	return s.projectRepo.GetActiveProjectByUserID(ctx, userID)
 }
 
-func (s *projectService) GetActiveProjectDirByUserID(ctx context.Context, userID, baseDir string) (*types.Project, string, error) {
+func (s *projectService) GetActiveProjectDirByUserID(ctx context.Context, userID int64, baseDir string) (*types.Project, string, error) {
 	baseDir = strings.TrimSpace(baseDir)
 	if baseDir == "" {
 		return nil, "", fmt.Errorf("storage base dir is empty")
@@ -67,7 +67,7 @@ func (s *projectService) GetProjectByID(ctx context.Context, id int64) (*types.P
 	return s.projectRepo.GetProjectByID(ctx, id)
 }
 
-func (s *projectService) AddUserProject(ctx context.Context, userID string, projectID int64) error {
+func (s *projectService) AddUserProject(ctx context.Context, userID int64, projectID int64) error {
 	exists, err := s.projectRepo.ExistsUserProject(ctx, userID, projectID)
 	if err != nil {
 		return err
@@ -82,7 +82,7 @@ func (s *projectService) AddUserProject(ctx context.Context, userID string, proj
 	})
 }
 
-func (s *projectService) AddUserProjectByShareCode(ctx context.Context, userID, shareCode string) error {
+func (s *projectService) AddUserProjectByShareCode(ctx context.Context, userID int64, shareCode string) error {
 	shareCode = strings.TrimSpace(shareCode)
 	if shareCode == "" {
 		return errors.New("share code is empty")
@@ -111,7 +111,7 @@ func (s *projectService) AddUserProjectByShareCode(ctx context.Context, userID, 
 	})
 }
 
-func (s *projectService) UpdateProjectSharing(ctx context.Context, userID string, projectID int64, enabled bool) (string, error) {
+func (s *projectService) UpdateProjectSharing(ctx context.Context, userID int64, projectID int64, enabled bool) (string, error) {
 	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, projectID)
 	if err != nil {
 		return "", err
@@ -132,11 +132,11 @@ func (s *projectService) UpdateProjectSharing(ctx context.Context, userID string
 	return shareCode, nil
 }
 
-func (s *projectService) ActivateUserProject(ctx context.Context, userID string, projectID int64) error {
+func (s *projectService) ActivateUserProject(ctx context.Context, userID int64, projectID int64) error {
 	return s.projectRepo.ActivateUserProject(ctx, userID, projectID)
 }
 
-func (s *projectService) DeleteUserProject(ctx context.Context, userID string, projectID int64) error {
+func (s *projectService) DeleteUserProject(ctx context.Context, userID int64, projectID int64) error {
 	up, err := s.projectRepo.GetUserProject(ctx, userID, projectID)
 	if err != nil {
 		return err
@@ -147,7 +147,7 @@ func (s *projectService) DeleteUserProject(ctx context.Context, userID string, p
 	return s.projectRepo.DeleteUserProject(ctx, userID, projectID)
 }
 
-func (s *projectService) CreateDefaultProjectForUser(ctx context.Context, userID, username string) error {
+func (s *projectService) CreateDefaultProjectForUser(ctx context.Context, userID int64, username string) error {
 	projectName := fmt.Sprintf("%s's Project", username)
 
 	project := &types.Project{
@@ -173,7 +173,7 @@ func (s *projectService) CreateDefaultProjectForUser(ctx context.Context, userID
 	return nil
 }
 
-func (s *projectService) CreateProjectForUser(ctx context.Context, userID string, project *types.Project) (*types.Project, error) {
+func (s *projectService) CreateProjectForUser(ctx context.Context, userID int64, project *types.Project) (*types.Project, error) {
 	if project == nil {
 		return nil, errors.New("project is nil")
 	}
@@ -209,7 +209,7 @@ func (s *projectService) CreateProjectForUser(ctx context.Context, userID string
 	return project, nil
 }
 
-func (s *projectService) AddProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error {
+func (s *projectService) AddProjectReport(ctx context.Context, userID int64, report *types.ProjectReport) error {
 	if report == nil {
 		return errors.New("project report is nil")
 	}
@@ -263,7 +263,7 @@ func (s *projectService) ensureProjectReportFile(report *types.ProjectReport) {
 	_ = os.WriteFile(file, []byte(fmt.Sprintf("# %s\n", title)), 0o644)
 }
 
-func (s *projectService) UpdateProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error {
+func (s *projectService) UpdateProjectReport(ctx context.Context, userID int64, report *types.ProjectReport) error {
 	if report == nil {
 		return errors.New("project report is nil")
 	}
@@ -288,7 +288,7 @@ func (s *projectService) UpdateProjectReport(ctx context.Context, userID string,
 	return s.projectRepo.UpdateProjectReport(ctx, stored)
 }
 
-func (s *projectService) DeleteProjectReport(ctx context.Context, userID string, reportID int64) error {
+func (s *projectService) DeleteProjectReport(ctx context.Context, userID int64, reportID int64) error {
 	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
 	if err != nil {
 		return err
@@ -310,7 +310,7 @@ func (s *projectService) DeleteProjectReport(ctx context.Context, userID string,
 	return nil
 }
 
-func (s *projectService) ListProjectReportByProjectID(ctx context.Context, userID string, projectID int64) ([]*types.ProjectReport, error) {
+func (s *projectService) ListProjectReportByProjectID(ctx context.Context, userID int64, projectID int64) ([]*types.ProjectReport, error) {
 	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, projectID)
 	if err != nil {
 		return nil, err
@@ -322,7 +322,7 @@ func (s *projectService) ListProjectReportByProjectID(ctx context.Context, userI
 	return s.projectRepo.ListProjectReportByProjectID(ctx, projectID)
 }
 
-func (s *projectService) PageProjectReportByProjectID(ctx context.Context, userID string, projectID int64, pagination *types.Pagination) ([]*types.ProjectReport, int64, error) {
+func (s *projectService) PageProjectReportByProjectID(ctx context.Context, userID int64, projectID int64, pagination *types.Pagination) ([]*types.ProjectReport, int64, error) {
 	bound, err := s.projectRepo.ExistsUserProject(ctx, userID, projectID)
 	if err != nil {
 		return nil, 0, err
@@ -334,7 +334,7 @@ func (s *projectService) PageProjectReportByProjectID(ctx context.Context, userI
 	return s.projectRepo.PageProjectReportByProjectID(ctx, pagination, projectID)
 }
 
-func (s *projectService) GetProjectReportDetailByID(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, error) {
+func (s *projectService) GetProjectReportDetailByID(ctx context.Context, userID int64, reportID int64) (*types.ProjectReport, error) {
 	return s.loadOwnedProjectReport(ctx, userID, reportID)
 }
 
@@ -345,7 +345,7 @@ func (s *projectService) GetProjectReportByID(ctx context.Context, reportID int6
 // ---------- ProjectReportItem ----------
 
 // loadOwnedProjectReport 读取报告并校验其所属项目已绑定到当前用户。
-func (s *projectService) loadOwnedProjectReport(ctx context.Context, userID string, reportID int64) (*types.ProjectReport, error) {
+func (s *projectService) loadOwnedProjectReport(ctx context.Context, userID int64, reportID int64) (*types.ProjectReport, error) {
 	report, err := s.projectRepo.GetProjectReportByID(ctx, reportID)
 	if err != nil {
 		return nil, err
@@ -363,7 +363,7 @@ func (s *projectService) loadOwnedProjectReport(ctx context.Context, userID stri
 }
 
 // loadOwnedProjectReportItem 读取条目并校验其所属报告归属当前用户。
-func (s *projectService) loadOwnedProjectReportItem(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, *types.ProjectReport, error) {
+func (s *projectService) loadOwnedProjectReportItem(ctx context.Context, userID int64, itemID int64) (*types.ProjectReportItem, *types.ProjectReport, error) {
 	item, err := s.projectRepo.GetProjectReportItemByID(ctx, itemID)
 	if err != nil {
 		return nil, nil, err
@@ -377,7 +377,7 @@ func (s *projectService) loadOwnedProjectReportItem(ctx context.Context, userID 
 	return item, report, nil
 }
 
-func (s *projectService) ListProjectReportItemsByReportID(ctx context.Context, userID string, reportID int64) ([]*types.ProjectReportItem, error) {
+func (s *projectService) ListProjectReportItemsByReportID(ctx context.Context, userID int64, reportID int64) ([]*types.ProjectReportItem, error) {
 	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
 	if err != nil {
 		return nil, err
@@ -393,7 +393,7 @@ func (s *projectService) ListProjectReportItemsByReportID(ctx context.Context, u
 	return items, nil
 }
 
-func (s *projectService) AddProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error {
+func (s *projectService) AddProjectReportItem(ctx context.Context, userID int64, item *types.ProjectReportItem) error {
 	if item == nil {
 		return errors.New("project report item is nil")
 	}
@@ -438,7 +438,7 @@ func (s *projectService) AddProjectReportItem(ctx context.Context, userID string
 	return nil
 }
 
-func (s *projectService) UpdateProjectReportItem(ctx context.Context, userID string, item *types.ProjectReportItem) error {
+func (s *projectService) UpdateProjectReportItem(ctx context.Context, userID int64, item *types.ProjectReportItem) error {
 	if item == nil {
 		return errors.New("project report item is nil")
 	}
@@ -480,7 +480,7 @@ func (s *projectService) UpdateProjectReportItem(ctx context.Context, userID str
 }
 
 // ReorderProjectReportItems 持久化拖拽结果：批量更新条目的父节点与同级顺序。
-func (s *projectService) ReorderProjectReportItems(ctx context.Context, userID string, reportID int64, orders []types.ProjectReportItemOrder) error {
+func (s *projectService) ReorderProjectReportItems(ctx context.Context, userID int64, reportID int64, orders []types.ProjectReportItemOrder) error {
 	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
 	if err != nil {
 		return err
@@ -540,7 +540,7 @@ func (s *projectService) validateProjectReportItemParent(ctx context.Context, re
 	return nil
 }
 
-func (s *projectService) DeleteProjectReportItem(ctx context.Context, userID string, itemID int64) error {
+func (s *projectService) DeleteProjectReportItem(ctx context.Context, userID int64, itemID int64) error {
 	item, _, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
 	if err != nil {
 		return err
@@ -574,7 +574,7 @@ func collectProjectReportItemSubtree(items []*types.ProjectReportItem, rootID in
 	return ids
 }
 
-func (s *projectService) GetProjectReportItemDetailByID(ctx context.Context, userID string, itemID int64) (*types.ProjectReportItem, error) {
+func (s *projectService) GetProjectReportItemDetailByID(ctx context.Context, userID int64, itemID int64) (*types.ProjectReportItem, error) {
 	item, _, err := s.loadOwnedProjectReportItem(ctx, userID, itemID)
 	if err != nil {
 		return nil, err
@@ -861,7 +861,7 @@ func (s *projectService) projectReportDir(report *types.ProjectReport) (string, 
 
 // GetProjectReportFile 读取报告工作目录下的自身 markdown 文件（output.md）。
 // 文件不存在时返回空字符串（前端按空内容展示，而非报错）。
-func (s *projectService) GetProjectReportFile(ctx context.Context, userID string, reportID int64) (string, error) {
+func (s *projectService) GetProjectReportFile(ctx context.Context, userID int64, reportID int64) (string, error) {
 	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
 	if err != nil {
 		return "", err
@@ -884,7 +884,7 @@ func (s *projectService) GetProjectReportFile(ctx context.Context, userID string
 
 // UpdateProjectReportFile 覆写报告工作目录下的自身 markdown 文件（output.md）。
 // 目录不存在时自动创建。
-func (s *projectService) UpdateProjectReportFile(ctx context.Context, userID string, reportID int64, content string) error {
+func (s *projectService) UpdateProjectReportFile(ctx context.Context, userID int64, reportID int64, content string) error {
 	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
 	if err != nil {
 		return err
@@ -911,7 +911,7 @@ func (s *projectService) storageBaseDir() string {
 
 // ---------- Literature ----------
 
-func (s *projectService) AddLiterature(ctx context.Context, userID string, literature *types.Literature, content string) (*types.Literature, string, error) {
+func (s *projectService) AddLiterature(ctx context.Context, userID int64, literature *types.Literature, content string) (*types.Literature, string, error) {
 	if literature == nil {
 		return nil, "", errors.New("literature is nil")
 	}
@@ -947,7 +947,7 @@ func (s *projectService) AddLiterature(ctx context.Context, userID string, liter
 	return literature, content, nil
 }
 
-func (s *projectService) UpdateLiterature(ctx context.Context, userID string, literature *types.Literature, content string) error {
+func (s *projectService) UpdateLiterature(ctx context.Context, userID int64, literature *types.Literature, content string) error {
 	if literature == nil {
 		return errors.New("literature is nil")
 	}
@@ -975,7 +975,7 @@ func (s *projectService) UpdateLiterature(ctx context.Context, userID string, li
 	return s.writeLiteratureFile(projectID, literature.ID, content)
 }
 
-func (s *projectService) DeleteLiterature(ctx context.Context, userID string, literatureID int64) error {
+func (s *projectService) DeleteLiterature(ctx context.Context, userID int64, literatureID int64) error {
 	if _, err := s.projectRepo.GetLiteratureByID(ctx, literatureID); err != nil {
 		return err
 	}
@@ -996,7 +996,7 @@ func (s *projectService) DeleteLiterature(ctx context.Context, userID string, li
 }
 
 // GetLiteratureDetailByID 返回文献元信息及其全文文件内容。
-func (s *projectService) GetLiteratureDetailByID(ctx context.Context, userID string, literatureID int64) (*types.LiteratureDetail, error) {
+func (s *projectService) GetLiteratureDetailByID(ctx context.Context, userID int64, literatureID int64) (*types.LiteratureDetail, error) {
 	literature, err := s.projectRepo.GetLiteratureByID(ctx, literatureID)
 	if err != nil {
 		return nil, err
@@ -1022,7 +1022,7 @@ func (s *projectService) GetLiteratureDetailByID(ctx context.Context, userID str
 	return &types.LiteratureDetail{Literature: literature, Content: content}, nil
 }
 
-func (s *projectService) ListLiteratureByProjectID(ctx context.Context, userID string) ([]*types.Literature, error) {
+func (s *projectService) ListLiteratureByProjectID(ctx context.Context, userID int64) ([]*types.Literature, error) {
 	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -1031,7 +1031,7 @@ func (s *projectService) ListLiteratureByProjectID(ctx context.Context, userID s
 	return s.projectRepo.ListLiteratureByProjectID(ctx, project.ID)
 }
 
-func (s *projectService) PageLiteratureByProjectID(ctx context.Context, userID string, pagination *types.Pagination) ([]*types.Literature, int64, error) {
+func (s *projectService) PageLiteratureByProjectID(ctx context.Context, userID int64, pagination *types.Pagination) ([]*types.Literature, int64, error) {
 	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
 	if err != nil {
 		return nil, 0, err
@@ -1040,7 +1040,7 @@ func (s *projectService) PageLiteratureByProjectID(ctx context.Context, userID s
 	return s.projectRepo.PageLiteratureByProjectID(ctx, pagination, project.ID)
 }
 
-func (s *projectService) BindLiteratureToProject(ctx context.Context, userID string, literatureID int64) error {
+func (s *projectService) BindLiteratureToProject(ctx context.Context, userID int64, literatureID int64) error {
 	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
 	if err != nil {
 		return err
@@ -1066,7 +1066,7 @@ func (s *projectService) BindLiteratureToProject(ctx context.Context, userID str
 	})
 }
 
-func (s *projectService) UnbindLiteratureFromProject(ctx context.Context, userID string, literatureID int64) error {
+func (s *projectService) UnbindLiteratureFromProject(ctx context.Context, userID int64, literatureID int64) error {
 	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
 	if err != nil {
 		return err
@@ -1083,7 +1083,7 @@ func (s *projectService) UnbindLiteratureFromProject(ctx context.Context, userID
 	return s.projectRepo.DeleteProjectLiterature(ctx, project.ID, literatureID)
 }
 
-func (s *projectService) PageLiteraturePool(ctx context.Context, userID string, pagination *types.Pagination) ([]*types.LiteraturePoolItem, int64, error) {
+func (s *projectService) PageLiteraturePool(ctx context.Context, userID int64, pagination *types.Pagination) ([]*types.LiteraturePoolItem, int64, error) {
 	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
 	if err != nil {
 		return nil, 0, err
@@ -1095,7 +1095,7 @@ func (s *projectService) PageLiteraturePool(ctx context.Context, userID string, 
 // requireLiteratureAccess verifies the literature is bound to the current user's
 // active project. It returns gorm.ErrRecordNotFound when there is no active
 // project or the binding does not exist.
-func (s *projectService) requireLiteratureAccess(ctx context.Context, userID string, literatureID int64) error {
+func (s *projectService) requireLiteratureAccess(ctx context.Context, userID int64, literatureID int64) error {
 	project, err := s.projectRepo.GetActiveProjectByUserID(ctx, userID)
 	if err != nil {
 		return err

@@ -170,7 +170,7 @@ func TestGormConversationRepositoryRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	repo := NewGormConversationRepository(newGormTestDB(t))
 
-	conv := agent.NewConversation("user-1", agent.ProviderMock, "model-x")
+	conv := agent.NewConversation(1, agent.ProviderMock, "model-x")
 	conv.Messages = []agent.Message{
 		{Role: agent.RoleUser, Content: "你好"},
 		{Role: agent.RoleAssistant, Content: "你好，有什么可以帮你？"},
@@ -209,12 +209,12 @@ func TestGormConversationRepositoryRoundTrip(t *testing.T) {
 	}
 
 	// Page 按 user 过滤 + 降序。
-	conv2 := agent.NewConversation("user-2", agent.ProviderMock, "model-x")
+	conv2 := agent.NewConversation(2, agent.ProviderMock, "model-x")
 	conv2.Messages = []agent.Message{{Role: agent.RoleUser, Content: "hi"}}
 	if err := repo.Create(ctx, conv2); err != nil {
 		t.Fatalf("Create conv2: %v", err)
 	}
-	page, total, err := repo.Page(ctx, "user-1", 0, 10)
+	page, total, err := repo.Page(ctx, 1, 0, 10)
 	if err != nil || total != 1 || len(page) != 1 {
 		t.Fatalf("Page user-1: total=%d len=%d err=%v", total, len(page), err)
 	}
@@ -229,7 +229,7 @@ func TestGormMemoryRepositoryRoundTrip(t *testing.T) {
 	db := newGormTestDB(t)
 	repo := NewGormMemoryRepository(db)
 
-	m := agent.NewMemory("user-1", "sess-1", agent.MemoryKindFact, "用户喜欢用 Go")
+	m := agent.NewMemory(1, "sess-1", agent.MemoryKindFact, "用户喜欢用 Go")
 	m.Importance = 8
 	m.Metadata = map[string]any{"source": "extractor", "n": 42}
 
@@ -249,7 +249,7 @@ func TestGormMemoryRepositoryRoundTrip(t *testing.T) {
 	}
 
 	// 检索命中。
-	hits, err := repo.Search(ctx, "user-1", "Go", 10)
+	hits, err := repo.Search(ctx, 1, "Go", 10)
 	if err != nil || len(hits) != 1 || hits[0].ID != m.ID {
 		t.Fatalf("Search = %d (err=%v), want 1", len(hits), err)
 	}

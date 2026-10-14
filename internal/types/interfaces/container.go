@@ -17,7 +17,7 @@ type ContainerService interface {
 	GetContainerImageUsage(ctx context.Context, imageID int64) (*types.ContainerImageUsage, error)
 	// TransitionContainerAndEnqueueOutbox(ctx context.Context, instance *types.ContainerInstance, to types.ContainerStatus, eventType string) error
 	// GetMaxConcurrency() int
-	RecreateAppSessionContainer(ctx context.Context, userID string, appSessionID int64) error
+	RecreateAppSessionContainer(ctx context.Context, userID int64, appSessionID int64) error
 
 	CreateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error
 	GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error)
@@ -44,14 +44,14 @@ type ContainerService interface {
 	GetContainerTemplateDefinitionByID(ctx context.Context, id int64) (*types.ContainerTemplateDefinition, error)
 	UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
 
-	CreateAppSessionByTemplate(ctx context.Context, userID string, projectID int64, containerTemplateID int64, name string) (*types.AppSession, error)
-	CreateAppSessionByTemplateForAnalysisNode(ctx context.Context, userID string, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error)
-	StartAppSession(ctx context.Context, userID string, appSessionID int64) error
-	StopAppSession(ctx context.Context, userID string, appSessionID int64) error
-	DeleteAppSession(ctx context.Context, userID string, appSessionID int64) error
-	GetAppSessionByID(ctx context.Context, userID string, appSessionID int64) (*types.AppSession, error)
-	ListAppSessionByUserID(ctx context.Context, userID string) ([]*types.AppSession, error)
-	PageAppSessionByUserID(ctx context.Context, userID string, pagination *types.Pagination, query *types.AppSessionPageQuery) (*types.PageResult, error)
+	CreateAppSessionByTemplate(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string) (*types.AppSession, error)
+	CreateAppSessionByTemplateForAnalysisNode(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error)
+	StartAppSession(ctx context.Context, userID int64, appSessionID int64) error
+	StopAppSession(ctx context.Context, userID int64, appSessionID int64) error
+	DeleteAppSession(ctx context.Context, userID int64, appSessionID int64) error
+	GetAppSessionByID(ctx context.Context, userID int64, appSessionID int64) (*types.AppSession, error)
+	ListAppSessionByUserID(ctx context.Context, userID int64) ([]*types.AppSession, error)
+	PageAppSessionByUserID(ctx context.Context, userID int64, pagination *types.Pagination, query *types.AppSessionPageQuery) (*types.PageResult, error)
 	ListContainerInstanceByOwnerTypeAndOwnerIDs(ctx context.Context, ownerType types.ContainerOwnerType, ownerIDs []int64) ([]*types.ContainerInstance, error)
 	DeleteContainerInstancesByOwnerTypeAndOwnerIDs(ctx context.Context, ownerType types.ContainerOwnerType, ownerIDs []int64) error
 
@@ -99,7 +99,7 @@ type ContainerRepository interface {
 	UpdateAppSession(ctx context.Context, item *types.AppSession) error
 	DeleteAppSession(ctx context.Context, id int64) error
 	ListAppSession(ctx context.Context) ([]*types.AppSession, error)
-	PageAppSessionByUserID(ctx context.Context, userID string, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error)
+	PageAppSessionByUserID(ctx context.Context, userID int64, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error)
 
 	CreateContainerInstance(ctx context.Context, item *types.ContainerInstance) error
 	GetContainerInstanceByID(ctx context.Context, id int64) (*types.ContainerInstance, error)

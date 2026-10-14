@@ -1454,7 +1454,7 @@ func (h *AgentHandler) CancelTask(c *gin.Context) {
 //
 // 事件通过 AgentService.Subscribe（EventBus）分发，WS 只是通知层；
 // 历史恢复请使用 GetTaskEvents。任务到达终态时自动取消订阅，避免泄漏。
-func (h *AgentHandler) attachTaskStream(userID string, taskID int64) {
+func (h *AgentHandler) attachTaskStream(userID int64, taskID int64) {
 	if h.svc == nil || h.hub == nil {
 		return
 	}

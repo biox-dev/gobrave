@@ -55,12 +55,12 @@ func (m *PermissionManager) Page(ctx context.Context, offset, limit int, taskID 
 }
 
 // Approve 批准权限请求，返回更新后的权限请求；并唤醒正在等待的 Agent。
-func (m *PermissionManager) Approve(ctx context.Context, id int64, by string) (*PermissionRequest, error) {
+func (m *PermissionManager) Approve(ctx context.Context, id int64, by int64) (*PermissionRequest, error) {
 	return m.resolve(ctx, id, PermissionApproved, DecisionAllow, by)
 }
 
 // Deny 拒绝权限请求，返回更新后的权限请求；并唤醒正在等待的 Agent。
-func (m *PermissionManager) Deny(ctx context.Context, id int64, by string) (*PermissionRequest, error) {
+func (m *PermissionManager) Deny(ctx context.Context, id int64, by int64) (*PermissionRequest, error) {
 	return m.resolve(ctx, id, PermissionDenied, DecisionDeny, by)
 }
 
@@ -116,7 +116,7 @@ func (m *PermissionManager) Wait(ctx context.Context, id int64) (PermissionDecis
 
 // resolve 是 Approve / Deny 的公共实现：校验状态 → 持久化 → 唤醒 waiter。
 // 返回更新后的权限请求，供上层广播“权限已决策”事件。
-func (m *PermissionManager) resolve(ctx context.Context, id int64, status PermissionStatus, decision PermissionDecision, by string) (*PermissionRequest, error) {
+func (m *PermissionManager) resolve(ctx context.Context, id int64, status PermissionStatus, decision PermissionDecision, by int64) (*PermissionRequest, error) {
 	m.mu.Lock()
 	p, err := m.repo.Get(ctx, id)
 	if err != nil {

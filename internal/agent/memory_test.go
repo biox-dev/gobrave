@@ -25,7 +25,7 @@ func TestMemoryManagerSearch(t *testing.T) {
 	mgr := newTestMemoryManager(t, MemoryConfig{})
 
 	save := func(kind MemoryKind, content string, importance int) *Memory {
-		m := NewMemory("user-1", "", kind, content)
+		m := NewMemory(1, "", kind, content)
 		m.Importance = importance
 		if err := mgr.Save(ctx, m); err != nil {
 			t.Fatalf("Save: %v", err)
@@ -39,7 +39,7 @@ func TestMemoryManagerSearch(t *testing.T) {
 	_ = b
 	save(MemoryKindEvent, "上周发布了 v1.0", 3)
 
-	hits, err := mgr.Retrieve(ctx, "user-1", "Go", 10)
+	hits, err := mgr.Retrieve(ctx, 1, "Go", 10)
 	if err != nil {
 		t.Fatalf("Retrieve: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestMemoryManagerSearch(t *testing.T) {
 func TestInjectMemory(t *testing.T) {
 	ctx := context.Background()
 	mgr := newTestMemoryManager(t, MemoryConfig{})
-	m := NewMemory("user-1", "", MemoryKindFact, "用户偏爱简洁的 Go 答案")
+	m := NewMemory(1, "", MemoryKindFact, "用户偏爱简洁的 Go 答案")
 	if err := mgr.Save(ctx, m); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestInjectMemory(t *testing.T) {
 	svc := NewService(ServiceConfig{Memory: mgr})
 
 	req := Request{
-		UserID:       "user-1",
+		UserID:       1,
 		SystemPrompt: "你是助手",
 		Messages:     []Message{{Role: RoleUser, Content: "请用 Go 简洁地介绍"}},
 	}
@@ -75,7 +75,7 @@ func TestInjectMemory(t *testing.T) {
 	}
 
 	// 无 UserID 时不应注入。
-	if got := svc.InjectMemoryForTest(ctx, "你是助手", ""); got != "你是助手" {
+	if got := svc.InjectMemoryForTest(ctx, "你是助手", 0); got != "你是助手" {
 		t.Fatalf("expected no injection without userID, got %q", got)
 	}
 }
@@ -93,11 +93,11 @@ func TestExtractMemory(t *testing.T) {
 	mgr := newTestMemoryManager(t, MemoryConfig{Extractor: extractor})
 	svc := NewService(ServiceConfig{Memory: mgr})
 
-	task := NewTask(Request{UserID: "user-1", SessionID: "sess-1"})
+	task := NewTask(Request{UserID: 1, SessionID: "sess-1"})
 	req := task.Request
 	svc.ExtractMemoryForTest(ctx, task, req, &Result{Content: "done"})
 
-	mems, _, err := mgr.List(ctx, "user-1", 0, 10)
+	mems, _, err := mgr.List(ctx, 1, 0, 10)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestMockMemoryExtractor(t *testing.T) {
 	mgr := newTestMemoryManager(t, MemoryConfig{Extractor: MockMemoryExtractor()})
 
 	turn := MemoryTurn{
-		UserID:    "user-1",
+		UserID:    1,
 		SessionID: "sess-1",
 		Request:   Request{Messages: []Message{{Role: RoleUser, Content: "介绍一下 Go"}}},
 		Result:    &Result{Content: "Go 是一门编译型语言"},
@@ -126,7 +126,7 @@ func TestMockMemoryExtractor(t *testing.T) {
 		t.Fatalf("Extract = %d memories, want 1", len(mems))
 	}
 	m := mems[0]
-	if m.Kind != MemoryKindSummary || m.UserID != "user-1" || m.SessionID != "sess-1" {
+	if m.Kind != MemoryKindSummary || m.UserID != 1 || m.SessionID != "sess-1" {
 		t.Fatalf("unexpected memory: %+v", m)
 	}
 	if !strings.Contains(m.Content, "介绍一下 Go") || !strings.Contains(m.Content, "编译型语言") {

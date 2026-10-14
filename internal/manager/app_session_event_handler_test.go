@@ -10,7 +10,7 @@ import (
 func TestAppSessionEventHandler_Handle_UpdatesToRunningOnContainerStarted(t *testing.T) {
 	repo := newMockContainerRepo()
 	ctx := context.TODO()
-	session := &types.AppSession{ID: 1001, UserID: "u1", Status: "CREATING"}
+	session := &types.AppSession{ID: 1001, UserID: 1, Status: "CREATING"}
 	if err := repo.CreateAppSession(ctx, session); err != nil {
 		t.Fatalf("seed app session failed: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestAppSessionEventHandler_Handle_UpdatesToRunningOnContainerStarted(t *tes
 func TestAppSessionEventHandler_Handle_UpdatesToStoppedOnContainerStopped(t *testing.T) {
 	repo := newMockContainerRepo()
 	ctx := context.TODO()
-	session := &types.AppSession{ID: 1002, UserID: "u1", Status: "RUNNING"}
+	session := &types.AppSession{ID: 1002, UserID: 1, Status: "RUNNING"}
 	if err := repo.CreateAppSession(ctx, session); err != nil {
 		t.Fatalf("seed app session failed: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestAppSessionEventHandler_Handle_UpdatesToStoppedOnContainerStopped(t *tes
 func TestAppSessionEventHandler_Handle_UpdatesToFailedOnContainerFailure(t *testing.T) {
 	repo := newMockContainerRepo()
 	ctx := context.TODO()
-	session := &types.AppSession{ID: 1003, UserID: "u1", Status: "CREATING"}
+	session := &types.AppSession{ID: 1003, UserID: 1, Status: "CREATING"}
 	if err := repo.CreateAppSession(ctx, session); err != nil {
 		t.Fatalf("seed app session failed: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestAppSessionEventHandler_Handle_UpdatesToFailedOnContainerFailure(t *test
 func TestAppSessionEventHandler_Handle_IgnoresNonAppSessionOwner(t *testing.T) {
 	repo := newMockContainerRepo()
 	ctx := context.TODO()
-	session := &types.AppSession{ID: 1004, UserID: "u1", Status: "CREATING"}
+	session := &types.AppSession{ID: 1004, UserID: 1, Status: "CREATING"}
 	if err := repo.CreateAppSession(ctx, session); err != nil {
 		t.Fatalf("seed app session failed: %v", err)
 	}

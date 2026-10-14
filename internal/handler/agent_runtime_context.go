@@ -95,7 +95,7 @@ func NewRuntimeContextResolver(
 // AgentService 依据 Profile 模板渲染（见 applyProfile / RenderSystemPrompt）。
 //
 // env 为 nil 或 type 为空时，回退到当前用户激活项目的默认工作目录。
-func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID string, env map[string]any) (*RuntimeContext, error) {
+func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env map[string]any) (*RuntimeContext, error) {
 	if r.projectSvc == nil {
 		return nil, fmt.Errorf("project service is not initialized")
 	}
@@ -234,7 +234,7 @@ type RuntimeContextInfo struct {
 //
 // 与 Resolve 共享同一套解析逻辑：先用 env 解析出 SystemPromptVars，再按当前用户选中的
 // Profile（profileID）解析其系统提示词模板，用变量渲染出真正的系统提示词。
-func (r *RuntimeContextResolver) Describe(ctx context.Context, userID string, profileID int64, env map[string]any) (*RuntimeContextInfo, error) {
+func (r *RuntimeContextResolver) Describe(ctx context.Context, userID int64, profileID int64, env map[string]any) (*RuntimeContextInfo, error) {
 	rc, err := r.Resolve(ctx, userID, env)
 	if err != nil {
 		return nil, err
@@ -257,8 +257,8 @@ func (r *RuntimeContextResolver) Describe(ctx context.Context, userID string, pr
 }
 
 // resolveDefaultWorkingDirectory 返回当前用户激活项目的默认工作目录及其项目名（作为展示标签）。
-func (r *RuntimeContextResolver) resolveDefaultWorkingDirectory(ctx context.Context, userID string) (string, string, error) {
-	project, err := r.projectSvc.GetActiveProjectByUserID(ctx, strings.TrimSpace(userID))
+func (r *RuntimeContextResolver) resolveDefaultWorkingDirectory(ctx context.Context, userID int64) (string, string, error) {
+	project, err := r.projectSvc.GetActiveProjectByUserID(ctx, userID)
 	if err != nil {
 		return "", "", err
 	}

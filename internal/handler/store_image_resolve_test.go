@@ -48,7 +48,7 @@ func getStoreImage(t *testing.T, baseDir string, store *types.Store) *httptest.R
 		cfg:          &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}},
 	}
 	engine.GET("/api/v1/store/:storeId/image", func(c *gin.Context) {
-		c.Set(types.UserIDContextKey.String(), "test-user")
+		c.Set(types.UserIDContextKey.String(), int64(1))
 		h.GetStoreImage(c)
 	})
 

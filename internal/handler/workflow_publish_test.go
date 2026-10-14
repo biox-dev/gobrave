@@ -258,7 +258,7 @@ type publishStubProjectService struct {
 	project *types.Project
 }
 
-func (s publishStubProjectService) GetActiveProjectByUserID(_ context.Context, _ string) (*types.Project, error) {
+func (s publishStubProjectService) GetActiveProjectByUserID(_ context.Context, _ int64) (*types.Project, error) {
 	return s.project, nil
 }
 
@@ -302,7 +302,7 @@ func servePublishScript(t *testing.T, h *WorkflowHandler, body string) *httptest
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	engine.POST("/api/v1/workflow/publish-script", func(c *gin.Context) {
-		c.Set(types.UserIDContextKey.String(), "test-user")
+		c.Set(types.UserIDContextKey.String(), int64(1))
 		h.PublishScript(c)
 	})
 

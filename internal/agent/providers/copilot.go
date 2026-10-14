@@ -289,7 +289,7 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 //
 //	ToolInvocation → agent.ToolCall → 输出 tool_call 事件 → 执行 → tool.Result
 //	  → 输出 tool_result 事件 → copilot.ToolResult → 回传给模型
-func (a *copilotAgent) buildTools(rt agent.Runtime, userID string) []copilot.Tool {
+func (a *copilotAgent) buildTools(rt agent.Runtime, userID int64) []copilot.Tool {
 	out := make([]copilot.Tool, 0)
 
 	if a.opts.Tools != nil {
@@ -320,7 +320,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, userID string) []copilot.Too
 
 // askUserTool 构建 ask_user 工具：解析模型入参 → Runtime.AskUser 阻塞等待作答 →
 // 把答案（JSON）作为工具结果回填给模型。无 UI 时 Runtime 返回错误，转为失败结果。
-func (a *copilotAgent) askUserTool(rt agent.Runtime, userID string) copilot.Tool {
+func (a *copilotAgent) askUserTool(rt agent.Runtime, userID int64) copilot.Tool {
 	def := agent.AskUserToolDefinition()
 	return copilot.Tool{
 		Name:        def.Name,
@@ -362,7 +362,7 @@ func toCopilotToolResult(res tool.Result) copilot.ToolResult {
 
 // permissionHandler 将 Copilot 的权限请求映射为 agent.Operation，并通过 Runtime 请求权限，
 // 阻塞等待策略 / UI 决策后再把结果翻译回 Copilot 的 PermissionDecision。
-func (a *copilotAgent) permissionHandler(ctx context.Context, rt agent.Runtime, userID string) copilot.PermissionHandlerFunc {
+func (a *copilotAgent) permissionHandler(ctx context.Context, rt agent.Runtime, userID int64) copilot.PermissionHandlerFunc {
 	return func(request copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilotrpc.PermissionDecision, error) {
 		op := toOperation(request)
 

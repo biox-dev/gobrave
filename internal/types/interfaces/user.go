@@ -17,7 +17,7 @@ type UserService interface {
 	// LoginWithOIDC exchanges the callback code, auto-provisions users if needed, and completes login
 	// LoginWithOIDC(ctx context.Context, code, redirectURI string) (*types.OIDCCallbackResponse, error)
 	// GetUserByID gets a user by ID
-	GetUserByID(ctx context.Context, id string) (*types.User, error)
+	GetUserByID(ctx context.Context, id int64) (*types.User, error)
 	// GetUserByEmail gets a user by email
 	GetUserByEmail(ctx context.Context, email string) (*types.User, error)
 	// GetUserByUsername gets a user by username
@@ -27,11 +27,11 @@ type UserService interface {
 	// UpdateUser updates user information
 	UpdateUser(ctx context.Context, user *types.User) error
 	// DeleteUser deletes a user
-	DeleteUser(ctx context.Context, id string) error
+	DeleteUser(ctx context.Context, id int64) error
 	// ChangePassword changes user password
-	ChangePassword(ctx context.Context, userID string, oldPassword, newPassword string) error
+	ChangePassword(ctx context.Context, userID int64, oldPassword, newPassword string) error
 	// ValidatePassword validates user password
-	ValidatePassword(ctx context.Context, userID string, password string) error
+	ValidatePassword(ctx context.Context, userID int64, password string) error
 	// GenerateTokens generates access and refresh tokens for user
 	GenerateTokens(ctx context.Context, user *types.User) (accessToken, refreshToken string, err error)
 	// ValidateToken validates an access token
@@ -51,7 +51,7 @@ type UserRepository interface {
 	// CreateUser creates a user
 	CreateUser(ctx context.Context, user *types.User) error
 	// GetUserByID gets a user by ID
-	GetUserByID(ctx context.Context, id string) (*types.User, error)
+	GetUserByID(ctx context.Context, id int64) (*types.User, error)
 	// GetUserByEmail gets a user by email
 	GetUserByEmail(ctx context.Context, email string) (*types.User, error)
 	// GetUserByUsername gets a user by username
@@ -61,7 +61,7 @@ type UserRepository interface {
 	// UpdateUser updates a user
 	UpdateUser(ctx context.Context, user *types.User) error
 	// DeleteUser deletes a user
-	DeleteUser(ctx context.Context, id string) error
+	DeleteUser(ctx context.Context, id int64) error
 	// ListUsers lists users with pagination
 	ListUsers(ctx context.Context, offset, limit int) ([]*types.User, error)
 	// SearchUsers searches users by username or email
@@ -75,7 +75,7 @@ type AuthTokenRepository interface {
 	// GetTokenByValue gets a token by its value
 	GetTokenByValue(ctx context.Context, tokenValue string) (*types.AuthToken, error)
 	// GetTokensByUserID gets all tokens for a user
-	GetTokensByUserID(ctx context.Context, userID string) ([]*types.AuthToken, error)
+	GetTokensByUserID(ctx context.Context, userID int64) ([]*types.AuthToken, error)
 	// UpdateToken updates a token
 	UpdateToken(ctx context.Context, token *types.AuthToken) error
 	// DeleteToken deletes a token
@@ -83,5 +83,5 @@ type AuthTokenRepository interface {
 	// DeleteExpiredTokens deletes all expired tokens
 	DeleteExpiredTokens(ctx context.Context) error
 	// RevokeTokensByUserID revokes all tokens for a user
-	RevokeTokensByUserID(ctx context.Context, userID string) error
+	RevokeTokensByUserID(ctx context.Context, userID int64) error
 }

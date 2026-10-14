@@ -52,7 +52,7 @@ type Profile struct {
 	// Name 仅作为展示名使用，不参与任何查询。
 	Name         string `json:"name" gorm:"column:name;type:varchar(128)"`
 	Description  string `json:"description" gorm:"column:description;type:text"`
-	UserID       string `json:"user_id" gorm:"column:user_id;type:varchar(64);index:idx_agent_profiles_user"`
+	UserID       int64  `json:"user_id,string" gorm:"column:user_id;type:bigint;index:idx_agent_profiles_user"`
 	IsDefault    bool   `json:"is_default" gorm:"column:is_default"`
 	IsBuiltin    bool   `json:"is_builtin" gorm:"column:is_builtin"`
 	SystemPrompt string `json:"system_prompt" gorm:"column:system_prompt;type:text"`
@@ -218,15 +218,15 @@ func (m *ProfileManager) Resolve(ctx context.Context, id int64) (*Profile, error
 }
 
 // List 返回内置 Profile 与指定用户自定义 Profile 的合并列表（按名称升序）。
-func (m *ProfileManager) List(ctx context.Context, userID string) ([]*Profile, error) {
+func (m *ProfileManager) List(ctx context.Context, userID int64) ([]*Profile, error) {
 	builtins, err := m.repo.ListBuiltin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := append([]*Profile(nil), builtins...)
 
-	if uid := strings.TrimSpace(userID); uid != "" {
-		userProfiles, err := m.repo.ListByUser(ctx, uid)
+	if userID != 0 {
+		userProfiles, err := m.repo.ListByUser(ctx, userID)
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +238,7 @@ func (m *ProfileManager) List(ctx context.Context, userID string) ([]*Profile, e
 
 // Get 按 ID 返回 Profile。内置 Profile 全局共享（任意用户可读），
 // 自定义 Profile 仅限其所属用户读取。
-func (m *ProfileManager) Get(ctx context.Context, userID string, id int64) (*Profile, error) {
+func (m *ProfileManager) Get(ctx context.Context, userID int64, id int64) (*Profile, error) {
 	p, err := m.repo.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -246,7 +246,7 @@ func (m *ProfileManager) Get(ctx context.Context, userID string, id int64) (*Pro
 	if p.IsBuiltin {
 		return p, nil
 	}
-	if strings.TrimSpace(p.UserID) != strings.TrimSpace(userID) {
+	if p.UserID != userID {
 		return nil, ErrProfileNotFound
 	}
 	return p, nil
@@ -291,7 +291,7 @@ func (m *ProfileManager) Save(ctx context.Context, p *Profile) error {
 }
 
 // Delete 删除某用户的自定义 Profile；内置 Profile 不可删除。
-func (m *ProfileManager) Delete(ctx context.Context, userID string, id int64) error {
+func (m *ProfileManager) Delete(ctx context.Context, userID int64, id int64) error {
 	// 内置 Profile（负数 ID）不可删除。
 	if IsBuiltinProfileID(id) {
 		return ErrProfileNotFound
@@ -300,7 +300,7 @@ func (m *ProfileManager) Delete(ctx context.Context, userID string, id int64) er
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(p.UserID) != strings.TrimSpace(userID) {
+	if p.UserID != userID {
 		return ErrProfileNotFound
 	}
 	return m.repo.Delete(ctx, id)

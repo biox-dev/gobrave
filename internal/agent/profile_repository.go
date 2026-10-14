@@ -12,11 +12,11 @@ type ProfileRepository interface {
 	Update(ctx context.Context, profile *Profile) error
 	Delete(ctx context.Context, id int64) error
 	// ListByUser 返回某用户全部自定义 Profile（按名称升序）。
-	ListByUser(ctx context.Context, userID string) ([]*Profile, error)
+	ListByUser(ctx context.Context, userID int64) ([]*Profile, error)
 	// ListBuiltin 返回全部内置 Profile（按名称升序）。
 	ListBuiltin(ctx context.Context) ([]*Profile, error)
 	// GetDefault 返回某用户的默认自定义 Profile；不存在时返回 (nil, nil)。
-	GetDefault(ctx context.Context, userID string) (*Profile, error)
+	GetDefault(ctx context.Context, userID int64) (*Profile, error)
 	// ClearDefault 清除某用户除 exceptID 外的默认标记。
-	ClearDefault(ctx context.Context, userID string, exceptID int64) error
+	ClearDefault(ctx context.Context, userID int64, exceptID int64) error
 }

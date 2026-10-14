@@ -98,7 +98,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	// Create a default project for the new user and activate it
 	if err := h.projectService.CreateDefaultProjectForUser(ctx, user.ID, user.Username); err != nil {
-		logger.Errorf(ctx, "Failed to create default project for user %s: %v", user.ID, err)
+		logger.Errorf(ctx, "Failed to create default project for user %d: %v", user.ID, err)
 		// Don't fail registration — the user is already created
 	}
 
@@ -356,7 +356,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	logger.Infof(ctx, "User profile updated: %s", user.ID)
+	logger.Infof(ctx, "User profile updated: %d", user.ID)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Profile updated",
@@ -408,7 +408,7 @@ func (h *AuthHandler) UpdateAgentConfig(c *gin.Context) {
 		return
 	}
 
-	logger.Infof(ctx, "User agent config updated: %s", user.ID)
+	logger.Infof(ctx, "User agent config updated: %d", user.ID)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Agent config updated",

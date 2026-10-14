@@ -25,7 +25,7 @@ func (r *projectRepository) AddUserProject(ctx context.Context, up *types.UserPr
 	return r.db.WithContext(ctx).Create(up).Error
 }
 
-func (r *projectRepository) ExistsUserProject(ctx context.Context, userID string, projectID int64) (bool, error) {
+func (r *projectRepository) ExistsUserProject(ctx context.Context, userID int64, projectID int64) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&types.UserProject{}).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
@@ -33,7 +33,7 @@ func (r *projectRepository) ExistsUserProject(ctx context.Context, userID string
 	return count > 0, err
 }
 
-func (r *projectRepository) GetUserProject(ctx context.Context, userID string, projectID int64) (*types.UserProject, error) {
+func (r *projectRepository) GetUserProject(ctx context.Context, userID int64, projectID int64) (*types.UserProject, error) {
 	up := &types.UserProject{}
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
@@ -55,7 +55,7 @@ func (r *projectRepository) GetUserProjectByShareCode(ctx context.Context, share
 	return up, nil
 }
 
-func (r *projectRepository) UpdateProjectSharing(ctx context.Context, userID string, projectID int64, enabled bool, shareCode string) error {
+func (r *projectRepository) UpdateProjectSharing(ctx context.Context, userID int64, projectID int64, enabled bool, shareCode string) error {
 	return r.db.WithContext(ctx).
 		Model(&types.UserProject{}).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
@@ -65,13 +65,13 @@ func (r *projectRepository) UpdateProjectSharing(ctx context.Context, userID str
 		}).Error
 }
 
-func (r *projectRepository) DeleteUserProject(ctx context.Context, userID string, projectID int64) error {
+func (r *projectRepository) DeleteUserProject(ctx context.Context, userID int64, projectID int64) error {
 	return r.db.WithContext(ctx).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
 		Delete(&types.UserProject{}).Error
 }
 
-func (r *projectRepository) GetActiveProjectByUserID(ctx context.Context, userID string) (*types.Project, error) {
+func (r *projectRepository) GetActiveProjectByUserID(ctx context.Context, userID int64) (*types.Project, error) {
 	project := &types.Project{}
 	err := r.db.WithContext(ctx).
 		Table("t_project AS p").
@@ -91,7 +91,7 @@ func (r *projectRepository) GetActiveProjectByUserID(ctx context.Context, userID
 	return project, nil
 }
 
-func (r *projectRepository) ActivateUserProject(ctx context.Context, userID string, projectID int64) error {
+func (r *projectRepository) ActivateUserProject(ctx context.Context, userID int64, projectID int64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var count int64
 		if err := tx.Model(&types.UserProject{}).
@@ -119,7 +119,7 @@ func (r *projectRepository) ActivateUserProject(ctx context.Context, userID stri
 	})
 }
 
-func (r *projectRepository) ListProjectByUserID(ctx context.Context, userID string) ([]*types.ProjectListItem, error) {
+func (r *projectRepository) ListProjectByUserID(ctx context.Context, userID int64) ([]*types.ProjectListItem, error) {
 	projects := make([]*types.ProjectListItem, 0)
 	err := r.db.WithContext(ctx).
 		Table("t_project AS p").

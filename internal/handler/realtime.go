@@ -2,13 +2,14 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/realtime"
+	"github.com/gin-gonic/gin"
 )
 
 type RealtimeHandler struct {
@@ -17,10 +18,10 @@ type RealtimeHandler struct {
 }
 
 type pushRealtimeRequest struct {
-	UserID         string `json:"user_id" binding:"required"`
-	Data           any    `json:"data" binding:"required"`
-	WaitAck        bool   `json:"wait_ack"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
+	UserID         int64 `json:"user_id,string" binding:"required"`
+	Data           any   `json:"data" binding:"required"`
+	WaitAck        bool  `json:"wait_ack"`
+	TimeoutSeconds int   `json:"timeout_seconds"`
 }
 
 func NewRealtimeHandler(hub *realtime.Hub, cfg *config.Config) *RealtimeHandler {
@@ -79,7 +80,7 @@ func (h *RealtimeHandler) Push(c *gin.Context) {
 		if req.TimeoutSeconds > 0 {
 			timeout = time.Duration(req.TimeoutSeconds) * time.Second
 		}
-		result := h.hub.PushMessageWaitAck(strings.TrimSpace(req.UserID), req.Data, timeout)
+		result := h.hub.PushMessageWaitAck(req.UserID, req.Data, timeout)
 		if !result.OK && result.Error != "" {
 			c.Error(errors.NewBadRequestError("push failed").WithDetails(result.Error))
 			return
@@ -88,11 +89,11 @@ func (h *RealtimeHandler) Push(c *gin.Context) {
 		return
 	}
 
-	if err := h.hub.PushMessage(strings.TrimSpace(req.UserID), req.Data); err != nil {
+	if err := h.hub.PushMessage(req.UserID, req.Data); err != nil {
 		c.Error(errors.NewBadRequestError("push failed").WithDetails(err.Error()))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "user_id": strings.TrimSpace(req.UserID)})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "user_id": strconv.FormatInt(req.UserID, 10)})
 }
 
 func (h *RealtimeHandler) Stats(c *gin.Context) {

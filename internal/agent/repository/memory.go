@@ -47,7 +47,7 @@ func (r *gormMemoryRepository) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&agent.Memory{}).Error
 }
 
-func (r *gormMemoryRepository) ListByUser(ctx context.Context, userID string, offset, limit int, kinds ...agent.MemoryKind) ([]*agent.Memory, int64, error) {
+func (r *gormMemoryRepository) ListByUser(ctx context.Context, userID int64, offset, limit int, kinds ...agent.MemoryKind) ([]*agent.Memory, int64, error) {
 	q := r.db.WithContext(ctx).Model(&agent.Memory{}).Where("user_id = ?", userID)
 	if len(kinds) > 0 {
 		q = q.Where("kind IN ?", kinds)
@@ -65,7 +65,7 @@ func (r *gormMemoryRepository) ListByUser(ctx context.Context, userID string, of
 	return mems, total, nil
 }
 
-func (r *gormMemoryRepository) Search(ctx context.Context, userID, query string, limit int) ([]*agent.Memory, error) {
+func (r *gormMemoryRepository) Search(ctx context.Context, userID int64, query string, limit int) ([]*agent.Memory, error) {
 	q := r.db.WithContext(ctx).Model(&agent.Memory{}).Where("user_id = ?", userID)
 	if strings.TrimSpace(query) != "" {
 		q = q.Where("content LIKE ?", "%"+query+"%")

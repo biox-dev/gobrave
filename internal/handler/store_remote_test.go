@@ -107,7 +107,7 @@ func postPublishStoreRemote(t *testing.T, h *StoreHandler, body string) *httptes
 	engine := gin.New()
 	engine.Use(middleware.ErrorHandler())
 	engine.POST("/api/v1/store/publish-remote", func(c *gin.Context) {
-		c.Set(types.UserIDContextKey.String(), "test-user")
+		c.Set(types.UserIDContextKey.String(), int64(1))
 		h.PublishStoreRemote(c)
 	})
 

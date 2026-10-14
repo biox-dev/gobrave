@@ -79,7 +79,7 @@ func (h *AISummaryEventHandler) Handle(evt event.Event) {
 			if strings.Contains(err.Error(), "no_client_for_user:") {
 				continue
 			}
-			logger.Warnf(ctx, "[AISummaryEventHandler] push ai summary event failed user_id=%s summary_id=%d status=%s err=%v", userID, e.SummaryID, e.Status, err)
+			logger.Warnf(ctx, "[AISummaryEventHandler] push ai summary event failed user_id=%d summary_id=%d status=%s err=%v", userID, e.SummaryID, e.Status, err)
 		}
 	}
 }
@@ -112,8 +112,8 @@ func (h *AISummaryEventHandler) resolveProjectID(ctx context.Context, ownerType 
 	return 0, nil
 }
 
-func (h *AISummaryEventHandler) listProjectUserIDs(ctx context.Context, projectID int64) ([]string, error) {
-	rows := make([]string, 0)
+func (h *AISummaryEventHandler) listProjectUserIDs(ctx context.Context, projectID int64) ([]int64, error) {
+	rows := make([]int64, 0)
 	err := h.db.WithContext(ctx).
 		Model(&types.UserProject{}).
 		Distinct("user_id").

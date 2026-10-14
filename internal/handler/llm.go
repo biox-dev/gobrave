@@ -244,7 +244,7 @@ type llmConversationListQuery struct {
 }
 
 type llmBridgeSession struct {
-	userID    string
+	userID    int64
 	sessionID int64
 	cancel    context.CancelFunc
 
@@ -746,14 +746,13 @@ func (h *LLMHandler) onBridgeInboundMessage(msg realtime.InboundMessage) {
 }
 
 func (h *LLMHandler) startBridgeSession(parent context.Context,
-	userID string,
+	userID int64,
 	sessionID int64,
 	prompt, model string,
 	env map[string]any) error {
-	userID = strings.TrimSpace(userID)
 	prompt = strings.TrimSpace(prompt)
 	model = strings.TrimSpace(model)
-	if userID == "" {
+	if userID == 0 {
 		return fmt.Errorf("user_id is required")
 	}
 	if sessionID == 0 {
@@ -872,7 +871,7 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 	h.pushBridgeEvent(session.userID, session.sessionID, "completed", gin.H{"content": finalContent.String(), "model": resolvedModel})
 }
 
-func (h *LLMHandler) pushBridgeEvent(userID string, sessionID int64, event string, data any) {
+func (h *LLMHandler) pushBridgeEvent(userID int64, sessionID int64, event string, data any) {
 	payload := gin.H{
 		"type":        "llm.event",
 		"session_id":  strconv.FormatInt(sessionID, 10),
@@ -881,24 +880,24 @@ func (h *LLMHandler) pushBridgeEvent(userID string, sessionID int64, event strin
 		"require_ack": false,
 	}
 	if err := h.hub.PushMessage(userID, payload); err != nil {
-		logger.Warnf(context.Background(), "[LLM] push bridge event failed user_id=%s session_id=%d event=%s err=%v", userID, sessionID, event, err)
+		logger.Warnf(context.Background(), "[LLM] push bridge event failed user_id=%d session_id=%d event=%s err=%v", userID, sessionID, event, err)
 	}
 }
 
-func (h *LLMHandler) acceptBridgeDecision(userID string, decision copilotWSPermissionDecision) {
+func (h *LLMHandler) acceptBridgeDecision(userID int64, decision copilotWSPermissionDecision) {
 	key := bridgeSessionKey(userID, decision.SessionID)
 	h.bridgeMu.RLock()
 	session, ok := h.bridgeSessions[key]
 
 	h.bridgeMu.RUnlock()
 	if !ok {
-		logger.Errorf(context.Background(), "[LLM] accept bridge decision failed user_id=%s session_id=%d request_id=%s", userID, decision.SessionID, decision.RequestID)
+		logger.Errorf(context.Background(), "[LLM] accept bridge decision failed user_id=%d session_id=%d request_id=%s", userID, decision.SessionID, decision.RequestID)
 		return
 	}
 	session.acceptDecision(strings.TrimSpace(decision.RequestID), llmPermissionDecision{approved: decision.Approved, reason: decision.Reason})
 }
 
-func (h *LLMHandler) stopBridgeSession(userID string, sessionID int64) {
+func (h *LLMHandler) stopBridgeSession(userID int64, sessionID int64) {
 	key := bridgeSessionKey(userID, sessionID)
 	h.bridgeMu.RLock()
 	session, ok := h.bridgeSessions[key]
@@ -909,7 +908,7 @@ func (h *LLMHandler) stopBridgeSession(userID string, sessionID int64) {
 	session.cancel()
 }
 
-func (h *LLMHandler) removeBridgeSession(userID string, sessionID int64) {
+func (h *LLMHandler) removeBridgeSession(userID int64, sessionID int64) {
 	key := bridgeSessionKey(userID, sessionID)
 	h.bridgeMu.Lock()
 	session, ok := h.bridgeSessions[key]
@@ -922,13 +921,13 @@ func (h *LLMHandler) removeBridgeSession(userID string, sessionID int64) {
 	}
 }
 
-func bridgeSessionKey(userID string, sessionID int64) string {
-	return strings.TrimSpace(userID) + "::" + strconv.FormatInt(sessionID, 10)
+func bridgeSessionKey(userID int64, sessionID int64) string {
+	return strconv.FormatInt(userID, 10) + "::" + strconv.FormatInt(sessionID, 10)
 }
 
-func buildCopilotSessionID(userID string, sessionID int64) string {
-	trimmedUserID := strings.TrimSpace(userID)
-	if trimmedUserID == "" {
+func buildCopilotSessionID(userID int64, sessionID int64) string {
+	trimmedUserID := strconv.FormatInt(userID, 10)
+	if userID == 0 {
 		trimmedUserID = "anonymous"
 	}
 

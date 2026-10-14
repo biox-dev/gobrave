@@ -310,7 +310,7 @@ func (r *containerRepository) ListAppSession(ctx context.Context) ([]*types.AppS
 	return items, nil
 }
 
-func (r *containerRepository) PageAppSessionByUserID(ctx context.Context, userID string, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error) {
+func (r *containerRepository) PageAppSessionByUserID(ctx context.Context, userID int64, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}

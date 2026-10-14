@@ -70,7 +70,7 @@ func serveGitDiff(t *testing.T, serve func(c *gin.Context), route, requestPath s
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	engine.GET(route, func(c *gin.Context) {
-		c.Set(types.UserIDContextKey.String(), "test-user")
+		c.Set(types.UserIDContextKey.String(), int64(1))
 		serve(c)
 	})
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -49,11 +48,11 @@ func (s *storeService) ListStore(ctx context.Context) ([]*types.Store, error) {
 	return s.storeRepo.ListStore(ctx)
 }
 
-func (s *storeService) PageStore(ctx context.Context, userID string, pagination *types.Pagination, query *types.StorePageQuery) (*types.PageResult, error) {
+func (s *storeService) PageStore(ctx context.Context, userID int64, pagination *types.Pagination, query *types.StorePageQuery) (*types.PageResult, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
-	if strings.TrimSpace(userID) == "" {
+	if userID == 0 {
 		return nil, fmt.Errorf("user id is required")
 	}
 	if query == nil {

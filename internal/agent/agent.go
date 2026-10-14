@@ -78,7 +78,7 @@ type Request struct {
 	// SessionID 可选：会话标识，用于把多次调用关联到同一会话（与权限 / 任务联动）。
 	SessionID string `json:"session_id"`
 	// UserID 可选：发起调用的用户，用于记忆（memory）的归属隔离与检索。
-	UserID string `json:"user_id,omitempty"`
+	UserID int64 `json:"user_id,omitempty,string"`
 	// ProfileID 可选：AgentProfile ID，AgentService 据此解析系统提示词、技能与上下文注入开关。
 	ProfileID int64 `json:"profile_id,omitempty,string"`
 	// Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。
@@ -215,12 +215,12 @@ type Runtime interface {
 	Emit(ctx context.Context, event StreamEvent) error
 	// RequestPermission 创建权限请求并阻塞等待决策（allow / deny）。
 	// userID 用于按用户读取其自定义的许可策略（空表示无用户，走默认策略）。
-	RequestPermission(ctx context.Context, userID string, operation Operation) (PermissionDecision, error)
+	RequestPermission(ctx context.Context, userID int64, operation Operation) (PermissionDecision, error)
 	// WaitPermission 等待一个已存在权限请求（permissionID）的决策。
 	WaitPermission(ctx context.Context, permissionID int64) (PermissionDecision, error)
 	// AskUser 向用户提问并阻塞等待作答（提问卡片由 UI 渲染）。
 	// userID 用于提问归属；无 UI 的独立调用返回 ErrNoUserInputResolver。
-	AskUser(ctx context.Context, userID string, input AskUserInput) (AskUserAnswer, error)
+	AskUser(ctx context.Context, userID int64, input AskUserInput) (AskUserAnswer, error)
 }
 
 // Agent 是统一 Agent 调用接口。

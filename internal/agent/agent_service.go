@@ -268,7 +268,7 @@ func (s *AgentService) transitionTask(ctx context.Context, task *Task, next Task
 }
 
 // ApprovePermission 批准权限请求（供 UI / HTTP 层调用）。
-func (s *AgentService) ApprovePermission(ctx context.Context, id int64, by string) error {
+func (s *AgentService) ApprovePermission(ctx context.Context, id int64, by int64) error {
 	p, err := s.perms.Approve(ctx, id, by)
 	if err != nil {
 		return err
@@ -278,7 +278,7 @@ func (s *AgentService) ApprovePermission(ctx context.Context, id int64, by strin
 }
 
 // DenyPermission 拒绝权限请求（供 UI / HTTP 层调用）。
-func (s *AgentService) DenyPermission(ctx context.Context, id int64, by string) error {
+func (s *AgentService) DenyPermission(ctx context.Context, id int64, by int64) error {
 	p, err := s.perms.Deny(ctx, id, by)
 	if err != nil {
 		return err
@@ -311,7 +311,7 @@ func (s *AgentService) GetPendingPermissions(ctx context.Context, taskID int64) 
 }
 
 // AnswerQuestion 提交用户对一次提问的作答（供 UI / HTTP 层调用）。
-func (s *AgentService) AnswerQuestion(ctx context.Context, id int64, answer AskUserAnswer, by string) error {
+func (s *AgentService) AnswerQuestion(ctx context.Context, id int64, answer AskUserAnswer, by int64) error {
 	q, err := s.questions.Answer(ctx, id, answer, by)
 	if err != nil {
 		return err
@@ -429,7 +429,7 @@ func (s *AgentService) DeleteMemory(ctx context.Context, id string) error {
 }
 
 // ListMemory 分页查询某用户的记忆；kinds 为空表示全部类别。
-func (s *AgentService) ListMemory(ctx context.Context, userID string, offset, limit int, kinds ...MemoryKind) ([]*Memory, int64, error) {
+func (s *AgentService) ListMemory(ctx context.Context, userID int64, offset, limit int, kinds ...MemoryKind) ([]*Memory, int64, error) {
 	if s.memory == nil {
 		return nil, 0, ErrMemoryNotConfigured
 	}
@@ -437,7 +437,7 @@ func (s *AgentService) ListMemory(ctx context.Context, userID string, offset, li
 }
 
 // RetrieveMemory 检索与 query 相关的记忆。
-func (s *AgentService) RetrieveMemory(ctx context.Context, userID, query string, limit int) ([]*Memory, error) {
+func (s *AgentService) RetrieveMemory(ctx context.Context, userID int64, query string, limit int) ([]*Memory, error) {
 	if s.memory == nil {
 		return nil, ErrMemoryNotConfigured
 	}
@@ -447,7 +447,7 @@ func (s *AgentService) RetrieveMemory(ctx context.Context, userID, query string,
 // ---- Profile 调用面（供 HTTP / 上层业务管理 Agent Profile） ----
 
 // ListProfiles 返回内置与当前用户自定义的 Profile 列表（合并视图）。
-func (s *AgentService) ListProfiles(ctx context.Context, userID string) ([]*Profile, error) {
+func (s *AgentService) ListProfiles(ctx context.Context, userID int64) ([]*Profile, error) {
 	if s.profiles == nil {
 		return nil, ErrProfileNotFound
 	}
@@ -455,7 +455,7 @@ func (s *AgentService) ListProfiles(ctx context.Context, userID string) ([]*Prof
 }
 
 // GetProfile 按 ID 返回 Profile（内置 Profile 全局共享、任意用户可读）。
-func (s *AgentService) GetProfile(ctx context.Context, userID string, id int64) (*Profile, error) {
+func (s *AgentService) GetProfile(ctx context.Context, userID int64, id int64) (*Profile, error) {
 	if s.profiles == nil {
 		return nil, ErrProfileNotFound
 	}
@@ -483,7 +483,7 @@ func (s *AgentService) SaveProfile(ctx context.Context, profile *Profile) error 
 }
 
 // DeleteProfile 删除用户自定义 Profile（内置 Profile 不可删除）。
-func (s *AgentService) DeleteProfile(ctx context.Context, userID string, id int64) error {
+func (s *AgentService) DeleteProfile(ctx context.Context, userID int64, id int64) error {
 	if s.profiles == nil {
 		return ErrProfileNotFound
 	}
@@ -494,7 +494,7 @@ func (s *AgentService) DeleteProfile(ctx context.Context, userID string, id int6
 // 返回真正的系统提示词（供 DescribeEnv 等前端展示 / 调试场景使用）。
 //
 // Profile 不存在或未配置系统提示词时返回空串、nil 错误。
-func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID string, profileID int64, vars map[string]any) (*Profile, string, error) {
+func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID int64, profileID int64, vars map[string]any) (*Profile, string, error) {
 	if s.profiles == nil {
 		return nil, "", nil
 	}
@@ -559,7 +559,7 @@ func applyProfileOverrides(req Request, profile *Profile) Request {
 //
 // 处理顺序：渲染 Profile 模板 → 注入技能指令 → 按 Profile.Context 开关注入记忆。
 // 模板渲染失败时退回原始模板，保证调用仍可进行。
-func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *Profile, vars map[string]any, userID string, selectedSkills []string) string {
+func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *Profile, vars map[string]any, userID int64, selectedSkills []string) string {
 	if profile == nil {
 		return ""
 	}
@@ -592,8 +592,8 @@ func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *P
 // injectMemory 检索相关记忆并把记忆背景块追加到系统提示词尾部。
 //
 // 未配置记忆、userID 为空、或检索不到相关记忆时，原样返回 prompt。
-func (s *AgentService) injectMemory(ctx context.Context, prompt, userID string) string {
-	if s.memory == nil || strings.TrimSpace(userID) == "" {
+func (s *AgentService) injectMemory(ctx context.Context, prompt string, userID int64) string {
+	if s.memory == nil || userID == 0 {
 		return prompt
 	}
 	mems, err := s.memory.Retrieve(ctx, userID, "", defaultMemoryRetrieveLimit)
@@ -618,7 +618,7 @@ func appendPromptBlock(prompt, block string) string {
 //
 // 提取器未配置或提取失败时静默跳过（记忆提取是尽力而为的旁路，不应影响任务结果）。
 func (s *AgentService) extractMemory(ctx context.Context, task *Task, req Request, result *Result) {
-	if s.memory == nil || strings.TrimSpace(req.UserID) == "" {
+	if s.memory == nil || req.UserID == 0 {
 		return
 	}
 	mems, err := s.memory.Extract(ctx, MemoryTurn{

@@ -30,7 +30,7 @@ func (r *collectRuntime) Emit(_ context.Context, ev agent.StreamEvent) error {
 	return nil
 }
 
-func (r *collectRuntime) RequestPermission(_ context.Context, _ string, _ agent.Operation) (agent.PermissionDecision, error) {
+func (r *collectRuntime) RequestPermission(_ context.Context, _ int64, _ agent.Operation) (agent.PermissionDecision, error) {
 	return agent.DecisionAllow, nil
 }
 
@@ -38,7 +38,7 @@ func (r *collectRuntime) WaitPermission(context.Context, int64) (agent.Permissio
 	return agent.DecisionAllow, nil
 }
 
-func (r *collectRuntime) AskUser(context.Context, string, agent.AskUserInput) (agent.AskUserAnswer, error) {
+func (r *collectRuntime) AskUser(context.Context, int64, agent.AskUserInput) (agent.AskUserAnswer, error) {
 	return agent.AskUserAnswer{}, nil
 }
 
@@ -46,14 +46,14 @@ func (r *collectRuntime) AskUser(context.Context, string, agent.AskUserInput) (a
 type denyRuntime struct{}
 
 func (denyRuntime) Emit(context.Context, agent.StreamEvent) error { return nil }
-func (denyRuntime) RequestPermission(context.Context, string, agent.Operation) (agent.PermissionDecision, error) {
+func (denyRuntime) RequestPermission(context.Context, int64, agent.Operation) (agent.PermissionDecision, error) {
 	return agent.DecisionDeny, nil
 }
 func (denyRuntime) WaitPermission(context.Context, int64) (agent.PermissionDecision, error) {
 	return agent.DecisionDeny, nil
 }
 
-func (denyRuntime) AskUser(context.Context, string, agent.AskUserInput) (agent.AskUserAnswer, error) {
+func (denyRuntime) AskUser(context.Context, int64, agent.AskUserInput) (agent.AskUserAnswer, error) {
 	return agent.AskUserAnswer{}, nil
 }
 

@@ -344,8 +344,8 @@ func (t *ContainerTemplate) ToExport(image *ContainerImage) *ContainerTemplateEx
 type AppSession struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	UserID    string `json:"user_id" gorm:"type:varchar(36);index;not null"`
-	ProjectID int64  `json:"project_id,string" gorm:"column:project_id;type:bigint"`
+	UserID    int64 `json:"user_id,string" gorm:"type:bigint;index;not null"`
+	ProjectID int64 `json:"project_id,string" gorm:"column:project_id;type:bigint"`
 
 	// ProjectID string `json:"project_id" gorm:"type:varchar(36);index;not null"`
 

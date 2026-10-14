@@ -205,7 +205,7 @@ func (w *ContainerCreateWorker) buildAppSessionVariables(ctx context.Context, se
 
 	set.add("APP_SESSION_ID", strconv.FormatInt(session.ID, 10))
 	set.add("APPSESSION_ID", strconv.FormatInt(session.ID, 10))
-	set.add("SYS_USER_ID", session.UserID)
+	set.add("SYS_USER_ID", strconv.FormatInt(session.UserID, 10))
 
 	workspacePath := session.WorkspacePath
 	if workspacePath == "" && in.ownerCtx.projectID != 0 && in.baseDir != "" && in.ownerCtx.project != nil {
@@ -214,9 +214,9 @@ func (w *ContainerCreateWorker) buildAppSessionVariables(ctx context.Context, se
 	}
 	set.add("WORKSPACE_PATH", workspacePath)
 
-	userDir := fmt.Sprintf("%s/user/%s", in.baseDir, session.UserID)
+	userDir := fmt.Sprintf("%s/user/%d", in.baseDir, session.UserID)
 	set.add("USER_DIR", userDir)
-	userConfigDir := fmt.Sprintf("%s/user/%s/.config", in.baseDir, session.UserID)
+	userConfigDir := fmt.Sprintf("%s/user/%d/.config", in.baseDir, session.UserID)
 	set.add("USER_CONFIG_DIR", userConfigDir)
 
 	if in.ownerCtx.node != nil && w.workflowService != nil {

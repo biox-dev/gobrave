@@ -51,7 +51,7 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 		return nil, err
 	}
 
-	userID := strings.TrimSpace(req.UserID)
+	userID := req.UserID
 	// 把 opencode 的工具权限请求委托给 gobrave 的 Runtime（策略 / 持久化 / UI）。
 	sdkOpts.PermissionHandler = a.permissionHandler(rt, userID)
 	// 把 gobrave 的工具注册为 opencode 的宿主工具，与内置工具共用同一套 tool-call 循环。
@@ -173,7 +173,7 @@ func (a *customAgent) modelAPIKey(modelKey string) string {
 //	SDK 权限请求 → agent.Operation → rt.RequestPermission → 回译为 SDK 决策
 //
 // 与 copilot.go 的 permissionHandler 同构；错误一律映射为拒绝（安全默认）。
-func (a *customAgent) permissionHandler(rt agent.Runtime, userID string) opencodesdk.PermissionHandler {
+func (a *customAgent) permissionHandler(rt agent.Runtime, userID int64) opencodesdk.PermissionHandler {
 	return func(ctx context.Context, p opencodesdk.PermissionRequest) opencodesdk.PermissionDecision {
 		op := permissionToOperation(p)
 		decision, err := rt.RequestPermission(ctx, userID, op)
@@ -337,7 +337,7 @@ func toSDKRole(role string) opencodesdk.Role {
 //
 // 注意：工具调用 / 结果的时间线事件由 opencode 记录进消息流后经 emitToolEvents 统一发出，
 // 因此这里只负责执行，不重复发事件（避免与快照事件重复落库）。
-func (a *customAgent) buildHostTools(rt agent.Runtime, userID string) []opencodesdk.HostTool {
+func (a *customAgent) buildHostTools(rt agent.Runtime, userID int64) []opencodesdk.HostTool {
 	out := make([]opencodesdk.HostTool, 0)
 
 	if a.opts.Tools != nil {
@@ -360,7 +360,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, userID string) []opencode
 
 // askUserHostTool 构建 ask_user 宿主工具：解析模型入参 → Runtime.AskUser 阻塞等待作答 →
 // 把答案（JSON）作为工具结果回填给模型。无 UI 时 Runtime 返回错误，转为失败结果。
-func (a *customAgent) askUserHostTool(rt agent.Runtime, userID string) opencodesdk.HostTool {
+func (a *customAgent) askUserHostTool(rt agent.Runtime, userID int64) opencodesdk.HostTool {
 	def := agent.AskUserToolDefinition()
 	return hostTool(def.Name, def.Description, def.InputSchema,
 		func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {

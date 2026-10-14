@@ -61,9 +61,9 @@ func (r *gormConversationRepository) Update(ctx context.Context, conv *agent.Con
 	})
 }
 
-func (r *gormConversationRepository) Page(ctx context.Context, userID string, offset, limit int) ([]*agent.Conversation, int64, error) {
+func (r *gormConversationRepository) Page(ctx context.Context, userID int64, offset, limit int) ([]*agent.Conversation, int64, error) {
 	q := r.db.WithContext(ctx).Model(&agent.Conversation{})
-	if userID != "" {
+	if userID != 0 {
 		q = q.Where("user_id = ?", userID)
 	}
 

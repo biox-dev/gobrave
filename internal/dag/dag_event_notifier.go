@@ -95,7 +95,7 @@ func (n *DagRuntimeEventNotifier) Handle(evt event.Event) {
 			if strings.Contains(err.Error(), "no_client_for_user:") {
 				continue
 			}
-			logger.Warnf(ctx, "[Realtime] push dag event failed user_id=%s analysis_id=%d event=%s err=%v", userID, runtimeEvent.AnalysisID, runtimeEvent.Name, err)
+			logger.Warnf(ctx, "[Realtime] push dag event failed user_id=%d analysis_id=%d event=%s err=%v", userID, runtimeEvent.AnalysisID, runtimeEvent.Name, err)
 		}
 	}
 }
@@ -116,8 +116,8 @@ func (n *DagRuntimeEventNotifier) shouldNotify(eventName string) bool {
 	}
 }
 
-func (n *DagRuntimeEventNotifier) listProjectUserIDs(ctx context.Context, projectID int64) ([]string, error) {
-	rows := make([]string, 0)
+func (n *DagRuntimeEventNotifier) listProjectUserIDs(ctx context.Context, projectID int64) ([]int64, error) {
+	rows := make([]int64, 0)
 	err := n.db.WithContext(ctx).
 		Model(&types.UserProject{}).
 		Distinct("user_id").

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 type oidcAuthorizationState struct {
@@ -125,7 +127,7 @@ func (s *userService) Register(ctx context.Context, req *types.RegisterRequest) 
 
 	// Create user
 	user := &types.User{
-		ID:           uuid.New().String(),
+		ID:           utils.GenerateID(),
 		Username:     req.Username,
 		Email:        req.Email,
 		PasswordHash: string(hashedPassword),
@@ -321,7 +323,7 @@ func (s *userService) Login(ctx context.Context, req *types.LoginRequest) (*type
 // }
 
 // GetUserByID gets a user by ID
-func (s *userService) GetUserByID(ctx context.Context, id string) (*types.User, error) {
+func (s *userService) GetUserByID(ctx context.Context, id int64) (*types.User, error) {
 	return s.userRepo.GetUserByID(ctx, id)
 }
 
@@ -347,12 +349,13 @@ func (s *userService) UpdateUser(ctx context.Context, user *types.User) error {
 }
 
 // DeleteUser deletes a user
-func (s *userService) DeleteUser(ctx context.Context, id string) error {
+// DeleteUser deletes a user
+func (s *userService) DeleteUser(ctx context.Context, id int64) error {
 	return s.userRepo.DeleteUser(ctx, id)
 }
 
 // ChangePassword changes user password
-func (s *userService) ChangePassword(ctx context.Context, userID string, oldPassword, newPassword string) error {
+func (s *userService) ChangePassword(ctx context.Context, userID int64, oldPassword, newPassword string) error {
 	user, err := s.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
 		return err
@@ -377,7 +380,7 @@ func (s *userService) ChangePassword(ctx context.Context, userID string, oldPass
 }
 
 // ValidatePassword validates user password
-func (s *userService) ValidatePassword(ctx context.Context, userID string, password string) error {
+func (s *userService) ValidatePassword(ctx context.Context, userID int64, password string) error {
 	user, err := s.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
 		return err
@@ -452,6 +455,37 @@ func (s *userService) GenerateTokens(
 	return accessToken, refreshToken, nil
 }
 
+// claimUserID extracts the numeric user ID from JWT claims.
+//
+// JWT/JSON numbers decode as float64, so the claim is accepted as float64,
+// int64, json.Number or a numeric string to stay tolerant of legacy tokens.
+func claimUserID(claims jwt.MapClaims) (int64, bool) {
+	raw, ok := claims["user_id"]
+	if !ok {
+		return 0, false
+	}
+	switch v := raw.(type) {
+	case float64:
+		return int64(v), true
+	case int64:
+		return v, true
+	case json.Number:
+		id, err := v.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return id, true
+	case string:
+		id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return id, true
+	default:
+		return 0, false
+	}
+}
+
 // ValidateToken validates an access token
 func (s *userService) ValidateToken(ctx context.Context, tokenString string) (*types.User, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
@@ -470,7 +504,7 @@ func (s *userService) ValidateToken(ctx context.Context, tokenString string) (*t
 		return nil, errors.New("invalid token claims")
 	}
 
-	userID, ok := claims["user_id"].(string)
+	userID, ok := claimUserID(claims)
 	if !ok {
 		return nil, errors.New("invalid user ID in token")
 	}
@@ -510,7 +544,7 @@ func (s *userService) RefreshToken(
 		return "", "", errors.New("not a refresh token")
 	}
 
-	userID, ok := claims["user_id"].(string)
+	userID, ok := claimUserID(claims)
 	if !ok {
 		return "", "", errors.New("invalid user ID in token")
 	}

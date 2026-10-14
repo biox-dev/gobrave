@@ -40,8 +40,8 @@ func NewAgentProjectContextProvider(
 var _ ProjectContextProvider = (*AgentProjectContextProvider)(nil)
 
 // ProjectContext 实现 ProjectContextProvider。
-func (p *AgentProjectContextProvider) ProjectContext(ctx context.Context, userID string) (string, error) {
-	if p == nil || p.projects == nil || p.analyses == nil || strings.TrimSpace(userID) == "" {
+func (p *AgentProjectContextProvider) ProjectContext(ctx context.Context, userID int64) (string, error) {
+	if p == nil || p.projects == nil || p.analyses == nil || userID == 0 {
 		return "", nil
 	}
 

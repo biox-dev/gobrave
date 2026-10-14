@@ -53,7 +53,7 @@ func TestProfileManagerUserDefault(t *testing.T) {
 
 	custom := &Profile{
 		Name:         "我的写作助手",
-		UserID:       "u1",
+		UserID:       1,
 		IsDefault:    true,
 		SystemPrompt: "写作",
 		Context:      ContextConfig{InjectMemory: true},
@@ -81,7 +81,7 @@ func TestProfileManagerDeleteBuiltin(t *testing.T) {
 	m := newTestProfileManager(t)
 	ctx := context.Background()
 
-	if err := m.Delete(ctx, "", BuiltinDefaultProfileID); err == nil {
+	if err := m.Delete(ctx, 0, BuiltinDefaultProfileID); err == nil {
 		t.Fatalf("delete builtin should fail")
 	}
 }

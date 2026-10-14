@@ -141,7 +141,7 @@ func postReDownloadStore(t *testing.T, h *StoreHandler, body string) *httptest.R
 	engine := gin.New()
 	engine.Use(middleware.ErrorHandler())
 	engine.POST("/api/v1/store/redownload", func(c *gin.Context) {
-		c.Set(types.UserIDContextKey.String(), "test-user")
+		c.Set(types.UserIDContextKey.String(), int64(1))
 		h.ReDownloadStore(c)
 	})
 

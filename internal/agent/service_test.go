@@ -101,7 +101,7 @@ func TestServiceFullPermissionFlow(t *testing.T) {
 	}
 
 	// 批准权限。
-	if err := svc.ApprovePermission(ctx, permID, "tester"); err != nil {
+	if err := svc.ApprovePermission(ctx, permID, 1); err != nil {
 		t.Fatalf("ApprovePermission: %v", err)
 	}
 
@@ -188,7 +188,7 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 		}
 	}
 
-	if err := svc.DenyPermission(ctx, permID, "tester"); err != nil {
+	if err := svc.DenyPermission(ctx, permID, 1); err != nil {
 		t.Fatalf("DenyPermission: %v", err)
 	}
 

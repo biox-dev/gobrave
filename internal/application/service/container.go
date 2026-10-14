@@ -571,16 +571,16 @@ func (s *containerService) upsertContainerImage(ctx context.Context, export *typ
 	return img.ID, nil
 }
 
-func (s *containerService) CreateAppSessionByTemplate(ctx context.Context, userID string, projectID int64, containerTemplateID int64, name string) (*types.AppSession, error) {
+func (s *containerService) CreateAppSessionByTemplate(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string) (*types.AppSession, error) {
 	return s.createAppSessionByTemplate(ctx, userID, projectID, containerTemplateID, name, 0, "")
 }
 
-func (s *containerService) CreateAppSessionByTemplateForAnalysisNode(ctx context.Context, userID string, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error) {
+func (s *containerService) CreateAppSessionByTemplateForAnalysisNode(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error) {
 	return s.createAppSessionByTemplate(ctx, userID, projectID, containerTemplateID, name, analysisNodeID, workspacePath)
 }
 
-func (s *containerService) createAppSessionByTemplate(ctx context.Context, userID string, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error) {
-	if strings.TrimSpace(userID) == "" {
+func (s *containerService) createAppSessionByTemplate(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error) {
+	if userID == 0 {
 		return nil, fmt.Errorf("user id is required")
 	}
 	if projectID == 0 {
@@ -626,7 +626,7 @@ func (s *containerService) createAppSessionByTemplate(ctx context.Context, userI
 	return session, nil
 }
 
-func (s *containerService) StartAppSession(ctx context.Context, userID string, appSessionID int64) error {
+func (s *containerService) StartAppSession(ctx context.Context, userID int64, appSessionID int64) error {
 	session, err := s.ensureOwnedAppSession(ctx, userID, appSessionID)
 	if err != nil {
 		return err
@@ -658,7 +658,7 @@ func (s *containerService) StartAppSession(ctx context.Context, userID string, a
 	return s.containerRepo.UpdateAppSession(ctx, session)
 }
 
-func (s *containerService) StopAppSession(ctx context.Context, userID string, appSessionID int64) error {
+func (s *containerService) StopAppSession(ctx context.Context, userID int64, appSessionID int64) error {
 	session, err := s.ensureOwnedAppSession(ctx, userID, appSessionID)
 	if err != nil {
 		return err
@@ -685,7 +685,7 @@ func (s *containerService) StopAppSession(ctx context.Context, userID string, ap
 	return nil
 }
 
-func (s *containerService) DeleteAppSession(ctx context.Context, userID string, appSessionID int64) error {
+func (s *containerService) DeleteAppSession(ctx context.Context, userID int64, appSessionID int64) error {
 	session, err := s.ensureOwnedAppSession(ctx, userID, appSessionID)
 	if err != nil {
 		return err
@@ -704,11 +704,11 @@ func (s *containerService) DeleteAppSession(ctx context.Context, userID string, 
 	return s.containerRepo.DeleteAppSession(ctx, session.ID)
 }
 
-func (s *containerService) GetAppSessionByID(ctx context.Context, userID string, appSessionID int64) (*types.AppSession, error) {
+func (s *containerService) GetAppSessionByID(ctx context.Context, userID int64, appSessionID int64) (*types.AppSession, error) {
 	return s.ensureOwnedAppSession(ctx, userID, appSessionID)
 }
 
-func (s *containerService) ListAppSessionByUserID(ctx context.Context, userID string) ([]*types.AppSession, error) {
+func (s *containerService) ListAppSessionByUserID(ctx context.Context, userID int64) ([]*types.AppSession, error) {
 	items, err := s.containerRepo.ListAppSession(ctx)
 	if err != nil {
 		return nil, err
@@ -722,7 +722,7 @@ func (s *containerService) ListAppSessionByUserID(ctx context.Context, userID st
 	return filtered, nil
 }
 
-func (s *containerService) PageAppSessionByUserID(ctx context.Context, userID string, pagination *types.Pagination, query *types.AppSessionPageQuery) (*types.PageResult, error) {
+func (s *containerService) PageAppSessionByUserID(ctx context.Context, userID int64, pagination *types.Pagination, query *types.AppSessionPageQuery) (*types.PageResult, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -800,7 +800,7 @@ func (s *containerService) PageOutboxEvent(ctx context.Context, pagination *type
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-func (s *containerService) ensureOwnedAppSession(ctx context.Context, userID string, appSessionID int64) (*types.AppSession, error) {
+func (s *containerService) ensureOwnedAppSession(ctx context.Context, userID int64, appSessionID int64) (*types.AppSession, error) {
 	session, err := s.containerRepo.GetAppSessionByID(ctx, appSessionID)
 	if err != nil {
 		return nil, err
@@ -810,7 +810,7 @@ func (s *containerService) ensureOwnedAppSession(ctx context.Context, userID str
 	}
 	return session, nil
 }
-func (s *containerService) RecreateAppSessionContainer(ctx context.Context, userID string, appSessionID int64) error {
+func (s *containerService) RecreateAppSessionContainer(ctx context.Context, userID int64, appSessionID int64) error {
 	session, err := s.ensureOwnedAppSession(ctx, userID, appSessionID)
 	if err != nil {
 		return err

@@ -155,8 +155,8 @@ type userAgentConfigProvider struct {
 	repo interfaces.UserRepository
 }
 
-func (p userAgentConfigProvider) GetAgentConfig(ctx context.Context, userID string) (agent.UserAgentConfig, error) {
-	if strings.TrimSpace(userID) == "" {
+func (p userAgentConfigProvider) GetAgentConfig(ctx context.Context, userID int64) (agent.UserAgentConfig, error) {
+	if userID == 0 {
 		return agent.UserAgentConfig{}, nil
 	}
 	user, err := p.repo.GetUserByID(ctx, userID)

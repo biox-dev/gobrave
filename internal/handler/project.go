@@ -267,8 +267,8 @@ func (h *ProjectHandler) UpdateProjectSharing(c *gin.Context) {
 
 // addProjectToUserRequest is the request body for AddProjectToUser.
 type addProjectToUserRequest struct {
-	UserID    string `json:"user_id" binding:"required"`
-	ProjectID int64  `json:"project_id,string" binding:"required"`
+	UserID    int64 `json:"user_id,string" binding:"required"`
+	ProjectID int64 `json:"project_id,string" binding:"required"`
 }
 
 // AddProjectToUser godoc
@@ -905,17 +905,17 @@ func (h *ProjectHandler) UpdateProjectReportFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "project report file updated successfully"})
 }
 
-func getCurrentUserID(c *gin.Context) (string, bool) {
+func getCurrentUserID(c *gin.Context) (int64, bool) {
 	userIDVal, exists := c.Get(types.UserIDContextKey.String())
 	if !exists {
 		c.Error(errors.NewUnauthorizedError("missing user identity"))
-		return "", false
+		return 0, false
 	}
 
-	userID, ok := userIDVal.(string)
-	if !ok || userID == "" {
+	userID, ok := userIDVal.(int64)
+	if !ok || userID == 0 {
 		c.Error(errors.NewUnauthorizedError("invalid user identity"))
-		return "", false
+		return 0, false
 	}
 
 	return userID, true

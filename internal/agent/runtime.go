@@ -33,7 +33,7 @@ func (r *standaloneRuntime) Emit(ctx context.Context, event StreamEvent) error {
 	return nil
 }
 
-func (r *standaloneRuntime) RequestPermission(ctx context.Context, userID string, operation Operation) (PermissionDecision, error) {
+func (r *standaloneRuntime) RequestPermission(ctx context.Context, userID int64, operation Operation) (PermissionDecision, error) {
 	decision := r.policy.Check(ctx, userID, operation)
 	if decision == DecisionAsk {
 		// 无 UI 可确认：宽松放行，避免阻塞无任务语义的调用。
@@ -47,7 +47,7 @@ func (r *standaloneRuntime) WaitPermission(context.Context, int64) (PermissionDe
 }
 
 // AskUser 在无 UI 的独立调用中无法向用户提问，直接返回错误，由工具层转为失败结果。
-func (r *standaloneRuntime) AskUser(context.Context, string, AskUserInput) (AskUserAnswer, error) {
+func (r *standaloneRuntime) AskUser(context.Context, int64, AskUserInput) (AskUserAnswer, error) {
 	return AskUserAnswer{}, ErrNoUserInputResolver
 }
 
@@ -102,7 +102,7 @@ func (r *taskRuntime) Emit(ctx context.Context, event StreamEvent) error {
 	return nil
 }
 
-func (r *taskRuntime) RequestPermission(ctx context.Context, userID string, operation Operation) (PermissionDecision, error) {
+func (r *taskRuntime) RequestPermission(ctx context.Context, userID int64, operation Operation) (PermissionDecision, error) {
 	// 1) 通知 UI：Agent 请求了对某个操作的权限确认。
 	// _ = r.Emit(ctx, StreamEvent{Type: StreamEventPermission, Content: marshalOperation(operation)})
 
@@ -172,7 +172,7 @@ func (r *taskRuntime) WaitPermission(ctx context.Context, permissionID int64) (P
 //
 // 与 RequestPermission 同构：持久化 pending 提问后，Agent 阻塞在 QuestionManager.Wait，
 // 用户在 UI 作答 → AnswerQuestion 更新 DB 并唤醒 Agent → 这里返回答案继续执行。
-func (r *taskRuntime) AskUser(ctx context.Context, _ string, input AskUserInput) (AskUserAnswer, error) {
+func (r *taskRuntime) AskUser(ctx context.Context, _ int64, input AskUserInput) (AskUserAnswer, error) {
 	// 无人值守执行（同步调用 / 无 UI）：没人会作答，快速失败而不是永久阻塞在 Wait 上。
 	if r.autoApprove {
 		return AskUserAnswer{}, ErrNoUserInputResolver

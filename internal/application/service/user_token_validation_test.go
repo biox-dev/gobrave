@@ -18,7 +18,7 @@ type mockUserRepo struct {
 }
 
 func (m *mockUserRepo) CreateUser(ctx context.Context, user *types.User) error { return nil }
-func (m *mockUserRepo) GetUserByID(ctx context.Context, id string) (*types.User, error) {
+func (m *mockUserRepo) GetUserByID(ctx context.Context, id int64) (*types.User, error) {
 	if m.userByID != nil && m.userByID.ID == id {
 		return m.userByID, nil
 	}
@@ -37,7 +37,7 @@ func (m *mockUserRepo) GetUserByTenantID(ctx context.Context, tenantID uint64) (
 	return nil, errors.New("not implemented")
 }
 func (m *mockUserRepo) UpdateUser(ctx context.Context, user *types.User) error { return nil }
-func (m *mockUserRepo) DeleteUser(ctx context.Context, id string) error        { return nil }
+func (m *mockUserRepo) DeleteUser(ctx context.Context, id int64) error         { return nil }
 func (m *mockUserRepo) ListUsers(ctx context.Context, offset, limit int) ([]*types.User, error) {
 	return []*types.User{}, nil
 }
@@ -71,7 +71,7 @@ func (m *mockTokenRepo) GetTokenByValue(ctx context.Context, tokenValue string) 
 	return token, nil
 }
 
-func (m *mockTokenRepo) GetTokensByUserID(ctx context.Context, userID string) ([]*types.AuthToken, error) {
+func (m *mockTokenRepo) GetTokensByUserID(ctx context.Context, userID int64) ([]*types.AuthToken, error) {
 	var out []*types.AuthToken
 	for _, token := range m.tokens {
 		if token.UserID == userID {
@@ -91,7 +91,7 @@ func (m *mockTokenRepo) UpdateToken(ctx context.Context, token *types.AuthToken)
 
 func (m *mockTokenRepo) DeleteToken(ctx context.Context, id string) error { return nil }
 func (m *mockTokenRepo) DeleteExpiredTokens(ctx context.Context) error    { return nil }
-func (m *mockTokenRepo) RevokeTokensByUserID(ctx context.Context, userID string) error {
+func (m *mockTokenRepo) RevokeTokensByUserID(ctx context.Context, userID int64) error {
 	for _, token := range m.tokens {
 		if token.UserID == userID {
 			token.IsRevoked = true
@@ -115,7 +115,7 @@ func newTestUser(t *testing.T) *types.User {
 
 	now := time.Now()
 	return &types.User{
-		ID:           "u-1",
+		ID:           1,
 		Username:     "tester",
 		Email:        "tester@example.com",
 		PasswordHash: string(hash),

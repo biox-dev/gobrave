@@ -55,7 +55,7 @@ type PermissionRequest struct {
 	CreatedAt  time.Time  `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt  time.Time  `json:"updated_at" gorm:"column:updated_at"`
 	ResolvedAt *time.Time `json:"resolved_at,omitempty" gorm:"column:resolved_at"`
-	ResolvedBy *string    `json:"resolved_by,omitempty" gorm:"column:resolved_by;type:varchar(64)"`
+	ResolvedBy *int64     `json:"resolved_by,string,omitempty" gorm:"column:resolved_by;type:bigint"`
 }
 
 // TableName 返回权限请求表的表名。

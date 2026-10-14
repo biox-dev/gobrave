@@ -9,5 +9,5 @@ import "context"
 // 仅作为保留能力定义，供后续按需接入。
 type ProjectContextProvider interface {
 	// ProjectContext 返回当前用户激活项目下的上下文文本块；无可用内容时返回空串。
-	ProjectContext(ctx context.Context, userID string) (string, error)
+	ProjectContext(ctx context.Context, userID int64) (string, error)
 }

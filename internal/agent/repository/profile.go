@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent"
 	"gorm.io/gorm"
@@ -47,10 +46,10 @@ func (r *gormProfileRepository) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&agent.Profile{}).Error
 }
 
-func (r *gormProfileRepository) ListByUser(ctx context.Context, userID string) ([]*agent.Profile, error) {
+func (r *gormProfileRepository) ListByUser(ctx context.Context, userID int64) ([]*agent.Profile, error) {
 	var profiles []*agent.Profile
 	if err := r.db.WithContext(ctx).
-		Where("user_id = ?", strings.TrimSpace(userID)).
+		Where("user_id = ?", userID).
 		Order("name ASC").
 		Find(&profiles).Error; err != nil {
 		return nil, err
@@ -69,10 +68,10 @@ func (r *gormProfileRepository) ListBuiltin(ctx context.Context) ([]*agent.Profi
 	return profiles, nil
 }
 
-func (r *gormProfileRepository) GetDefault(ctx context.Context, userID string) (*agent.Profile, error) {
+func (r *gormProfileRepository) GetDefault(ctx context.Context, userID int64) (*agent.Profile, error) {
 	var p agent.Profile
 	if err := r.db.WithContext(ctx).
-		Where("user_id = ? AND is_default = ?", strings.TrimSpace(userID), true).
+		Where("user_id = ? AND is_default = ?", userID, true).
 		First(&p).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -82,8 +81,8 @@ func (r *gormProfileRepository) GetDefault(ctx context.Context, userID string) (
 	return &p, nil
 }
 
-func (r *gormProfileRepository) ClearDefault(ctx context.Context, userID string, exceptID int64) error {
+func (r *gormProfileRepository) ClearDefault(ctx context.Context, userID int64, exceptID int64) error {
 	return r.db.WithContext(ctx).Model(&agent.Profile{}).
-		Where("user_id = ? AND is_default = ? AND id <> ?", strings.TrimSpace(userID), true, exceptID).
+		Where("user_id = ? AND is_default = ? AND id <> ?", userID, true, exceptID).
 		Update("is_default", false).Error
 }

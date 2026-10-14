@@ -73,7 +73,7 @@ func TestQuestionManagerAnswerFlow(t *testing.T) {
 		RequestID: "ask_001",
 		Answers:   []QuestionAnswer{{ID: "analysis_type", Value: "differential_expression"}},
 	}
-	resolved, err := mgr.Answer(ctx, q.ID, answer, "tester")
+	resolved, err := mgr.Answer(ctx, q.ID, answer, 1)
 	if err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestQuestionManagerAnswerFlow(t *testing.T) {
 	}
 
 	// 重复作答应报 ErrQuestionNotPending。
-	if _, err := mgr.Answer(ctx, q.ID, answer, "tester"); !errors.Is(err, ErrQuestionNotPending) {
+	if _, err := mgr.Answer(ctx, q.ID, answer, 1); !errors.Is(err, ErrQuestionNotPending) {
 		t.Fatalf("second Answer err = %v, want ErrQuestionNotPending", err)
 	}
 }

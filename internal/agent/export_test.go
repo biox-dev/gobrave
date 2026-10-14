@@ -6,7 +6,7 @@ import "context"
 // 未导出内部方法。它不参与生产构建（仅在 go test 编译包 agent 时生效）。
 
 // InjectMemoryForTest 暴露 AgentService.injectMemory 供外部测试调用。
-func (s *AgentService) InjectMemoryForTest(ctx context.Context, prompt, userID string) string {
+func (s *AgentService) InjectMemoryForTest(ctx context.Context, prompt string, userID int64) string {
 	return s.injectMemory(ctx, prompt, userID)
 }
 

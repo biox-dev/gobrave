@@ -321,7 +321,7 @@ func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, id int64) (*ty
 		profileID = agent.BuiltinSummaryProfileID
 	}
 
-	profile, systemPrompt, err := s.agentSvc.RenderSystemPrompt(ctx, "", profileID, content.SystemPromptVars)
+	profile, systemPrompt, err := s.agentSvc.RenderSystemPrompt(ctx, 0, profileID, content.SystemPromptVars)
 	if err != nil {
 		return nil, err
 	}

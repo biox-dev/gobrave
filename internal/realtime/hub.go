@@ -25,7 +25,7 @@ const (
 
 type PushAckResult struct {
 	OK        bool   `json:"ok"`
-	UserID    string `json:"user_id"`
+	UserID    int64  `json:"user_id,string"`
 	Acked     int    `json:"acked"`
 	Total     int    `json:"total"`
 	Delivered int    `json:"delivered"`
@@ -34,15 +34,15 @@ type PushAckResult struct {
 }
 
 type Stats struct {
-	Transport             string         `json:"transport"`
-	MaxConnectionsPerUser int            `json:"max_connections_per_user"`
-	Users                 int            `json:"users"`
-	TotalConnections      int            `json:"total_connections"`
-	ConnectionsByUser     map[string]int `json:"connections_by_user"`
+	Transport             string        `json:"transport"`
+	MaxConnectionsPerUser int           `json:"max_connections_per_user"`
+	Users                 int           `json:"users"`
+	TotalConnections      int           `json:"total_connections"`
+	ConnectionsByUser     map[int64]int `json:"connections_by_user"`
 }
 
 type InboundMessage struct {
-	UserID     string          `json:"user_id"`
+	UserID     int64           `json:"user_id,string"`
 	ClientID   string          `json:"client_id"`
 	Transport  Transport       `json:"transport"`
 	Payload    map[string]any  `json:"payload"`
@@ -59,7 +59,7 @@ type Hub struct {
 	upgrader websocket.Upgrader
 
 	mu            sync.RWMutex
-	clientsByUser map[string][]*client
+	clientsByUser map[int64][]*client
 	clientByID    map[string]*client
 
 	inboundMu   sync.RWMutex
@@ -68,7 +68,7 @@ type Hub struct {
 
 type client struct {
 	id        string
-	userID    string
+	userID    int64
 	transport Transport
 	createdAt time.Time
 
@@ -140,7 +140,7 @@ func NewHub(cfg *config.Config) *Hub {
 				return true
 			},
 		},
-		clientsByUser: make(map[string][]*client),
+		clientsByUser: make(map[int64][]*client),
 		clientByID:    make(map[string]*client),
 		inboundSubs:   make(map[string]func(InboundMessage)),
 	}
@@ -187,7 +187,7 @@ func (h *Hub) Stats() Stats {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	connectionsByUser := make(map[string]int, len(h.clientsByUser))
+	connectionsByUser := make(map[int64]int, len(h.clientsByUser))
 	total := 0
 	for userID, clients := range h.clientsByUser {
 		connectionsByUser[userID] = len(clients)
@@ -203,7 +203,7 @@ func (h *Hub) Stats() Stats {
 	}
 }
 
-func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, userID string) error {
+func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, userID int64) error {
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return err
@@ -233,7 +233,7 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, userID str
 	return nil
 }
 
-func (h *Hub) HandleSSE(w http.ResponseWriter, r *http.Request, userID string) error {
+func (h *Hub) HandleSSE(w http.ResponseWriter, r *http.Request, userID int64) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return errors.New("streaming unsupported")
@@ -288,27 +288,27 @@ func (h *Hub) HandleSSE(w http.ResponseWriter, r *http.Request, userID string) e
 	}
 }
 
-func (h *Hub) PushMessage(userID string, data any) error {
-	if strings.TrimSpace(userID) == "" {
+func (h *Hub) PushMessage(userID int64, data any) error {
+	if userID == 0 {
 		return errors.New("user_id is required")
 	}
 	clients := h.snapshotUserClients(userID)
 	if len(clients) == 0 {
-		return fmt.Errorf("no_client_for_user:%s", userID)
+		return fmt.Errorf("no_client_for_user:%d", userID)
 	}
 
 	for _, c := range clients {
 		if err := h.sendWithoutAck(c, data); err != nil {
-			logger.Warnf(context.Background(), "[Realtime] push message failed user_id=%s client_id=%s err=%v", userID, c.id, err)
+			logger.Warnf(context.Background(), "[Realtime] push message failed user_id=%d client_id=%s err=%v", userID, c.id, err)
 			h.unregisterClient(c.id)
 		}
 	}
 	return nil
 }
 
-func (h *Hub) PushMessageWaitAck(userID string, data any, timeout time.Duration) PushAckResult {
+func (h *Hub) PushMessageWaitAck(userID int64, data any, timeout time.Duration) PushAckResult {
 	result := PushAckResult{UserID: userID}
-	if strings.TrimSpace(userID) == "" {
+	if userID == 0 {
 		result.Error = "user_id is required"
 		return result
 	}
@@ -444,7 +444,7 @@ func (h *Hub) registerClient(c *client) {
 	totalForUser = len(clients)
 	h.mu.Unlock()
 
-	logger.Infof(context.Background(), "[Realtime] client registered total=%d user_id=%s client_id=%s transport=%s", totalForUser, c.userID, c.id, c.transport)
+	logger.Infof(context.Background(), "[Realtime] client registered total=%d user_id=%d client_id=%s transport=%s", totalForUser, c.userID, c.id, c.transport)
 	if evicted != nil {
 		// Reuse the unified unregister path so eviction and normal disconnect
 		// share the same cleanup behavior.
@@ -478,7 +478,7 @@ func (h *Hub) unregisterClient(clientID string) {
 	c.close()
 }
 
-func (h *Hub) snapshotUserClients(userID string) []*client {
+func (h *Hub) snapshotUserClients(userID int64) []*client {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	clients := h.clientsByUser[userID]
