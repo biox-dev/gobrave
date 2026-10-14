@@ -359,12 +359,14 @@ func RegisterWorkflowRoutes(r *gin.RouterGroup, handler *handler.WorkflowHandler
 	r.POST("/workflow/:workflowId/readme", handler.SaveWorkflowReadme)
 }
 
-// RegisterGitRoutes 注册组件目录的只读 git 接口（见 handler.GitHandler）。
-// 目前只有「本地变化 diff」，后续的 git 操作（提交历史等）在此按同样的
-// /<resource>/:<id>/git-xxx 形式扩展。
+// RegisterGitRoutes 注册组件目录的 git 接口（见 handler.GitHandler）。
+// 目前有「本地变化 diff」与「撤回单个文件改动」，后续的 git 操作（提交历史等）
+// 在此按同样的 /<resource>/:<id>/git-xxx 形式扩展。
 func RegisterGitRoutes(r *gin.RouterGroup, handler *handler.GitHandler) {
 	r.GET("/script/:scriptId/git-diff", handler.GetScriptDiff)
 	r.GET("/workflow/:workflowId/git-diff", handler.GetWorkflowDiff)
+	r.POST("/script/:scriptId/git-revert-file", handler.RevertScriptFile)
+	r.POST("/workflow/:workflowId/git-revert-file", handler.RevertWorkflowFile)
 }
 
 func RegisterSettingRoutes(r *gin.RouterGroup, handler *handler.SettingHandler) {

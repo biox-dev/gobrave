@@ -13,10 +13,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// GitHandler 暴露组件目录（脚本/工作流本地工作区仓库）的只读 git 能力。
+// GitHandler 暴露组件目录（脚本/工作流本地工作区仓库）的 git 能力。
 //
-// 目前只有「查看本地变化 diff」两个接口（script / workflow），
-// 后续的 git 操作（提交历史 git log、单文件 diff、回滚等）都在本 handler 里扩展：
+// 目前有「查看本地变化 diff」与「撤回单个文件的未提交改动」两组接口（script / workflow），
+// 后续的 git 操作（提交历史 git log、单文件 diff 等）都在本 handler 里扩展：
 // 目录定位复用下方 resolveXxxTarget，读操作复用 internal/utils 里的 git 能力，
 // 不在 WorkflowHandler 里继续堆 git 相关逻辑。
 //
@@ -67,6 +67,19 @@ type gitDiffResponse struct {
 	ID     string `json:"id"`
 	utils.GitDiffResult
 	GitState *utils.GitSyncState `json:"git_state,omitempty"`
+}
+
+// gitRevertFileRequest 是「撤回单个文件改动」的请求体：路径相对仓库根目录（"/" 分隔）。
+type gitRevertFileRequest struct {
+	Path string `json:"path"`
+}
+
+// gitRevertFileResponse 是「撤回单个文件改动」的响应。
+type gitRevertFileResponse struct {
+	Entity   string `json:"entity"`
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	Reverted bool   `json:"reverted"`
 }
 
 // storageBaseDir 返回配置中的 storage.base_dir（cfg 可能为 nil）。
@@ -154,6 +167,45 @@ func (h *GitHandler) storeDirByID(c *gin.Context, storeID int64) (string, error)
 	return utils.GetWorkflowOrScriptStoreDir(h.storageBaseDir(), store.PathName), nil
 }
 
+// revertFile 把组件目录里的单个文件回退到本地 HEAD，并按结果返回统一响应或错误。
+//
+// 「不是 git 仓库」「路径非法」属于请求上下文问题，分别转 409 / 400；
+// 「文件没有可撤回的内容」转 404，与 other 接口的错误约定保持一致。
+func (h *GitHandler) revertFile(c *gin.Context, target *gitComponentTarget, relPath string) {
+	switch err := utils.RevertWorktreeFile(target.LocalDir, relPath); {
+	case err == nil:
+		c.JSON(http.StatusOK, gitRevertFileResponse{
+			Entity:   target.Entity,
+			ID:       target.ID,
+			Path:     strings.TrimSpace(relPath),
+			Reverted: true,
+		})
+	case stderrs.Is(err, utils.ErrGitPathInvalid):
+		c.Error(errors.NewValidationError("invalid file path").WithDetails(err.Error()))
+	case stderrs.Is(err, utils.ErrGitRepoNotInitialized):
+		c.Error(errors.NewConflictError("local directory is not a git repository"))
+	case stderrs.Is(err, utils.ErrGitFileAbsent):
+		c.Error(errors.NewNotFoundError("no local change to revert for this file"))
+	default:
+		c.Error(errors.NewInternalServerError("failed to revert file").WithDetails(err.Error()))
+	}
+}
+
+// bindRevertFilePath 解析请求体并返回规整后的文件路径。
+func bindRevertFilePath(c *gin.Context) (string, bool) {
+	var req gitRevertFileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body"))
+		return "", false
+	}
+	relPath := strings.TrimSpace(req.Path)
+	if relPath == "" {
+		c.Error(errors.NewValidationError("file path is required"))
+		return "", false
+	}
+	return relPath, true
+}
+
 // respondGitDiff 汇总本地变化并返回。
 func respondGitDiff(c *gin.Context, target *gitComponentTarget) {
 	diff := utils.ReadGitDiff(target.LocalDir, target.StoreDir)
@@ -237,4 +289,90 @@ func (h *GitHandler) GetWorkflowDiff(c *gin.Context) {
 		return
 	}
 	respondGitDiff(c, target)
+}
+
+// RevertScriptFile godoc
+// @Summary      撤回脚本单个文件的未提交改动
+// @Description  按脚本主键定位脚本目录，把指定文件恢复为本地 HEAD 版本（等同于 git checkout HEAD -- <path>）；文件为工作区新增时删除该文件。仅影响该文件，不产生提交
+// @Tags         Git
+// @Accept       json
+// @Produce      json
+// @Param        scriptId  path      string                   true  "脚本主键 ID"
+// @Param        body      body      handler.gitRevertFileRequest  true  "相对仓库根目录的文件路径"
+// @Success      200       {object}  handler.gitRevertFileResponse
+// @Failure      400       {object}  errors.AppError
+// @Failure      401       {object}  errors.AppError
+// @Failure      404       {object}  errors.AppError
+// @Failure      409       {object}  errors.AppError
+// @Failure      500       {object}  errors.AppError
+// @Security     Bearer
+// @Router       /script/{scriptId}/git-revert-file [post]
+func (h *GitHandler) RevertScriptFile(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+	if h.storageBaseDir() == "" {
+		c.Error(errors.NewInternalServerError("storage base dir is not configured"))
+		return
+	}
+
+	scriptID, err := parseScriptIDParam(c)
+	if err != nil {
+		c.Error(errors.NewValidationError(err.Error()))
+		return
+	}
+	relPath, ok := bindRevertFilePath(c)
+	if !ok {
+		return
+	}
+
+	target, err := h.resolveScriptTarget(c, scriptID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	h.revertFile(c, target, relPath)
+}
+
+// RevertWorkflowFile godoc
+// @Summary      撤回工作流单个文件的未提交改动
+// @Description  按工作流主键定位 workflow 目录，把指定文件恢复为本地 HEAD 版本（等同于 git checkout HEAD -- <path>）；文件为工作区新增时删除该文件。仅影响该文件，不产生提交
+// @Tags         Git
+// @Accept       json
+// @Produce      json
+// @Param        workflowId  path      string                        true  "工作流主键 ID"
+// @Param        body        body      handler.gitRevertFileRequest  true  "相对仓库根目录的文件路径"
+// @Success      200         {object}  handler.gitRevertFileResponse
+// @Failure      400         {object}  errors.AppError
+// @Failure      401         {object}  errors.AppError
+// @Failure      404         {object}  errors.AppError
+// @Failure      409         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
+// @Security     Bearer
+// @Router       /workflow/{workflowId}/git-revert-file [post]
+func (h *GitHandler) RevertWorkflowFile(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+	if h.storageBaseDir() == "" {
+		c.Error(errors.NewInternalServerError("storage base dir is not configured"))
+		return
+	}
+
+	workflowID, err := parseWorkflowIDParam(c)
+	if err != nil {
+		c.Error(errors.NewValidationError(err.Error()))
+		return
+	}
+	relPath, ok := bindRevertFilePath(c)
+	if !ok {
+		return
+	}
+
+	target, err := h.resolveWorkflowTarget(c, workflowID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	h.revertFile(c, target, relPath)
 }
