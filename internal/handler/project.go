@@ -803,6 +803,99 @@ func (h *ProjectHandler) GetProjectReportContent(c *gin.Context) {
 	})
 }
 
+type projectReportFileRequest struct {
+	ReportID int64 `form:"report_id" binding:"required"`
+}
+
+// GetProjectReportFile godoc
+// @Summary      查询报告自身文件
+// @Description  读取报告工作目录下的自身 markdown 文件（output.md）内容
+// @Tags         项目
+// @Produce      json
+// @Param        report_id  query     int64  true  "报告ID"
+// @Success      200        {object}  map[string]interface{}
+// @Failure      400        {object}  errors.AppError
+// @Failure      401        {object}  errors.AppError
+// @Failure      404        {object}  errors.AppError
+// @Failure      500        {object}  errors.AppError
+// @Security     Bearer
+// @Router       /project/project-report-file [get]
+func (h *ProjectHandler) GetProjectReportFile(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req projectReportFileRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	content, err := h.projectService.GetProjectReportFile(ctx, userID, req.ReportID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("project report not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get project report file").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"report_id": strconv.FormatInt(req.ReportID, 10),
+		"filename":  types.DefaultProjectReportFilename,
+		"content":   content,
+	})
+}
+
+type updateProjectReportFileRequest struct {
+	ReportID int64  `json:"report_id,string" binding:"required"`
+	Content  string `json:"content"`
+}
+
+// UpdateProjectReportFile godoc
+// @Summary      更新报告自身文件
+// @Description  覆写报告工作目录下的自身 markdown 文件（output.md）内容
+// @Tags         项目
+// @Accept       json
+// @Produce      json
+// @Param        request  body      updateProjectReportFileRequest  true  "请求参数"
+// @Success      200      {object}  map[string]string               "更新成功"
+// @Failure      400      {object}  errors.AppError                 "参数错误"
+// @Failure      401      {object}  errors.AppError                 "未认证"
+// @Failure      404      {object}  errors.AppError                 "报告不存在"
+// @Failure      500      {object}  errors.AppError                 "服务器错误"
+// @Security     Bearer
+// @Router       /project/update-project-report-file [post]
+func (h *ProjectHandler) UpdateProjectReportFile(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req updateProjectReportFileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if err := h.projectService.UpdateProjectReportFile(ctx, userID, req.ReportID, req.Content); err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("project report not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to update project report file").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "project report file updated successfully"})
+}
+
 func getCurrentUserID(c *gin.Context) (string, bool) {
 	userIDVal, exists := c.Get(types.UserIDContextKey.String())
 	if !exists {

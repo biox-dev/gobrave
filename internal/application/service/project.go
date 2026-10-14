@@ -232,7 +232,37 @@ func (s *projectService) AddProjectReport(ctx context.Context, userID string, re
 	}
 	report.UpdatedAt = now
 
-	return s.projectRepo.AddProjectReport(ctx, report)
+	if err := s.projectRepo.AddProjectReport(ctx, report); err != nil {
+		return err
+	}
+
+	// 新增报告时同步创建报告工作目录与其自身 markdown 文件，
+	// 保证前端可以立即打开「报告文件」查看/编辑页；已存在时不覆盖。
+	s.ensureProjectReportFile(report)
+
+	return nil
+}
+
+// ensureProjectReportFile 确保报告工作目录与自身 markdown 文件存在。
+// 目录或文件已存在时不覆盖，任何失败都视为 best-effort 忽略。
+func (s *projectService) ensureProjectReportFile(report *types.ProjectReport) {
+	dir, err := s.projectReportDir(report)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+
+	file := filepath.Join(dir, types.DefaultProjectReportFilename)
+	if _, statErr := os.Stat(file); statErr == nil {
+		return
+	}
+	title := strings.TrimSpace(report.Title)
+	if title == "" {
+		title = "Report"
+	}
+	_ = os.WriteFile(file, []byte(fmt.Sprintf("# %s\n", title)), 0o644)
 }
 
 func (s *projectService) UpdateProjectReport(ctx context.Context, userID string, report *types.ProjectReport) error {
@@ -275,7 +305,7 @@ func (s *projectService) DeleteProjectReport(ctx context.Context, userID string,
 		return err
 	}
 
-	// Best-effort cleanup of the per-report directory.
+	// 删除报告工作目录（含报告自身文件 output.md）；best-effort，失败不影响删除结果。
 	if dir, dirErr := s.projectReportDir(report); dirErr == nil {
 		_ = os.RemoveAll(dir)
 	}
@@ -793,6 +823,48 @@ func (s *projectService) projectReportDir(report *types.ProjectReport) (string, 
 		return "", errors.New("storage base dir is empty")
 	}
 	return utils.GetProjectReportDir(baseDir, report.ProjectID, strconv.FormatInt(report.ID, 10)), nil
+}
+
+// GetProjectReportFile 读取报告工作目录下的自身 markdown 文件（output.md）。
+// 文件不存在时返回空字符串（前端按空内容展示，而非报错）。
+func (s *projectService) GetProjectReportFile(ctx context.Context, userID string, reportID int64) (string, error) {
+	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
+	if err != nil {
+		return "", err
+	}
+
+	dir, err := s.projectReportDir(report)
+	if err != nil {
+		return "", err
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, types.DefaultProjectReportFilename))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return string(data), nil
+}
+
+// UpdateProjectReportFile 覆写报告工作目录下的自身 markdown 文件（output.md）。
+// 目录不存在时自动创建。
+func (s *projectService) UpdateProjectReportFile(ctx context.Context, userID string, reportID int64, content string) error {
+	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
+	if err != nil {
+		return err
+	}
+
+	dir, err := s.projectReportDir(report)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(filepath.Join(dir, types.DefaultProjectReportFilename), []byte(content), 0o644)
 }
 
 // storageBaseDir 返回去除首尾空白后的 storage.base_dir，未配置时返回空串。

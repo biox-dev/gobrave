@@ -38,6 +38,10 @@ type ProjectService interface {
 	GetProjectReportItemContent(ctx context.Context, itemID int64) (*types.ProjectReportItemContent, error)
 	// GetProjectReportContent 汇总报告下所有条目，按顺序拼接成正文，仅返回拼接后的内容。
 	GetProjectReportContent(ctx context.Context, reportID int64) (string, error)
+	// GetProjectReportFile 读取报告工作目录下的自身 markdown 文件（output.md）内容。
+	GetProjectReportFile(ctx context.Context, userID string, reportID int64) (string, error)
+	// UpdateProjectReportFile 覆写报告工作目录下的自身 markdown 文件（output.md）内容。
+	UpdateProjectReportFile(ctx context.Context, userID string, reportID int64, content string) error
 
 	// Literature (参考文献) business capabilities.
 	AddLiterature(ctx context.Context, userID string, literature *types.Literature) (*types.Literature, error)
