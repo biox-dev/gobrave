@@ -393,13 +393,12 @@ func (h *ProjectHandler) DeleteUserProject(c *gin.Context) {
 }
 
 type addProjectReportRequest struct {
-	ProjectID int64  `json:"project_id,string" binding:"required"`
-	Title     string `json:"title" binding:"required"`
+	Title string `json:"title" binding:"required"`
 }
 
 // AddProjectReport godoc
 // @Summary      添加项目报告
-// @Description  向指定项目添加报告记录
+// @Description  向当前用户激活项目添加报告记录，项目ID由后端根据当前用户解析，前端无需传入
 // @Tags         项目
 // @Accept       json
 // @Produce      json
@@ -407,7 +406,7 @@ type addProjectReportRequest struct {
 // @Success      200      {object}  types.ProjectReport      "创建成功"
 // @Failure      400      {object}  errors.AppError          "参数错误"
 // @Failure      401      {object}  errors.AppError          "未认证"
-// @Failure      404      {object}  errors.AppError          "项目未关联当前用户"
+// @Failure      404      {object}  errors.AppError          "未找到激活项目"
 // @Failure      500      {object}  errors.AppError          "服务器错误"
 // @Security     Bearer
 // @Router       /project/add-project-report [post]
@@ -425,8 +424,19 @@ func (h *ProjectHandler) AddProjectReport(c *gin.Context) {
 		return
 	}
 
+	// 项目ID统一由后端根据当前用户解析，前端无须传 project_id。
+	project, err := h.projectService.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("active project not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get active project").WithDetails(err.Error()))
+		return
+	}
+
 	report := &types.ProjectReport{
-		ProjectID: req.ProjectID,
+		ProjectID: project.ID,
 		Title:     req.Title,
 	}
 
@@ -443,14 +453,13 @@ func (h *ProjectHandler) AddProjectReport(c *gin.Context) {
 }
 
 type updateProjectReportRequest struct {
-	ID        int64  `json:"id,string" binding:"required"`
-	ProjectID int64  `json:"project_id,string" binding:"required"`
-	Title     string `json:"title" binding:"required"`
+	ID    int64  `json:"id,string" binding:"required"`
+	Title string `json:"title" binding:"required"`
 }
 
 // UpdateProjectReport godoc
 // @Summary      更新项目报告
-// @Description  按报告ID更新指定项目下的报告
+// @Description  按报告ID更新当前用户激活项目下的报告，项目ID由后端根据当前用户解析，前端无需传入
 // @Tags         项目
 // @Accept       json
 // @Produce      json
@@ -458,7 +467,7 @@ type updateProjectReportRequest struct {
 // @Success      200      {object}  map[string]string           "更新成功"
 // @Failure      400      {object}  errors.AppError             "参数错误"
 // @Failure      401      {object}  errors.AppError             "未认证"
-// @Failure      404      {object}  errors.AppError             "项目或报告不存在"
+// @Failure      404      {object}  errors.AppError             "激活项目或报告不存在"
 // @Failure      500      {object}  errors.AppError             "服务器错误"
 // @Security     Bearer
 // @Router       /project/update-project-report [post]
@@ -476,9 +485,20 @@ func (h *ProjectHandler) UpdateProjectReport(c *gin.Context) {
 		return
 	}
 
+	// 项目ID统一由后端根据当前用户解析，前端无须传 project_id。
+	project, err := h.projectService.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("active project not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to get active project").WithDetails(err.Error()))
+		return
+	}
+
 	if err := h.projectService.UpdateProjectReport(ctx, userID, &types.ProjectReport{
 		ID:        req.ID,
-		ProjectID: req.ProjectID,
+		ProjectID: project.ID,
 		Title:     req.Title,
 	}); err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {

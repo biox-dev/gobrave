@@ -8166,7 +8166,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "向指定项目添加报告记录",
+                "description": "向当前用户激活项目添加报告记录，项目ID由后端根据当前用户解析，前端无需传入",
                 "consumes": [
                     "application/json"
                 ],
@@ -8208,7 +8208,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "项目未关联当前用户",
+                        "description": "未找到激活项目",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -9799,7 +9799,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按报告ID更新指定项目下的报告",
+                "description": "按报告ID更新当前用户激活项目下的报告，项目ID由后端根据当前用户解析，前端无需传入",
                 "consumes": [
                     "application/json"
                 ],
@@ -9844,7 +9844,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "项目或报告不存在",
+                        "description": "激活项目或报告不存在",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -13450,14 +13450,9 @@ const docTemplate = `{
         "handler.addProjectReportRequest": {
             "type": "object",
             "required": [
-                "project_id",
                 "title"
             ],
             "properties": {
-                "project_id": {
-                    "type": "string",
-                    "example": "0"
-                },
                 "title": {
                     "type": "string"
                 }
@@ -15106,15 +15101,10 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "id",
-                "project_id",
                 "title"
             ],
             "properties": {
                 "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "project_id": {
                     "type": "string",
                     "example": "0"
                 },
