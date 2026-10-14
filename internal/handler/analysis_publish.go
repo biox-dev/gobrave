@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -214,6 +215,9 @@ func (h *AnalysisHandler) publishAISummaryToDoc(ctx context.Context, summaryID i
 
 	var summaryDir string
 	var entry string
+	// projectID 用于定位摘要正文文件（见 utils.GetAISummaryFile）；
+	// 优先取所属对象（Analysis / AnalysisNode）的项目，回退到摘要记录上的 ProjectID。
+	var projectID int64
 	switch summary.OwnerType {
 	case types.SummaryOwnerAnalysisNode:
 		node, err := h.copyAnalysisNodeOutput(ctx, summary.OwnerID, projectDocDir)
@@ -222,8 +226,10 @@ func (h *AnalysisHandler) publishAISummaryToDoc(ctx context.Context, summaryID i
 		}
 		summaryDir = filepath.Join(projectDocDir, fmt.Sprint(node.ID))
 		entry = fmt.Sprintf("./%d/%d.md", node.ID, summary.ID)
+		projectID = node.ProjectID
 	case types.SummaryOwnerAnalysis:
-		if _, err := h.analysisService.GetAnalysisByID(ctx, summary.OwnerID); err != nil {
+		analysis, err := h.analysisService.GetAnalysisByID(ctx, summary.OwnerID)
+		if err != nil {
 			return errors.NewInternalServerError("failed to get analysis").WithDetails(err.Error())
 		}
 		if _, err := h.copyAnalysisNodesOutput(ctx, summary.OwnerID, projectDocDir); err != nil {
@@ -231,15 +237,28 @@ func (h *AnalysisHandler) publishAISummaryToDoc(ctx context.Context, summaryID i
 		}
 		summaryDir = filepath.Join(projectDocDir, fmt.Sprint(summary.OwnerID))
 		entry = fmt.Sprintf("./%d/%d.md", summary.OwnerID, summary.ID)
+		projectID = analysis.ProjectID
 	default:
 		return errors.NewInternalServerError(fmt.Sprintf("unsupported ai summary owner type: %s", summary.OwnerType))
+	}
+	if projectID == 0 {
+		projectID = summary.ProjectID
 	}
 
 	if err := os.MkdirAll(summaryDir, 0o755); err != nil {
 		return errors.NewInternalServerError("failed to create ai summary dir").WithDetails(err.Error())
 	}
+
+	// 摘要正文不再落库，从文件读取（文件缺失时视为空正文）。
+	// projectID 是数值主键，需换成存储目录使用的字符串标识（t_project.project_id）。
+	projectCode := manager.ResolveProjectCode(ctx, h.projectRepo, projectID)
+	content, err := utils.ReadAISummaryFile(h.config.Storage.BaseDir, projectCode, summary.ID)
+	if err != nil {
+		return errors.NewInternalServerError("failed to read ai summary content").WithDetails(err.Error())
+	}
+
 	summaryMdPath := filepath.Join(summaryDir, fmt.Sprintf("%d.md", summary.ID))
-	if err := os.WriteFile(summaryMdPath, []byte(summary.Content), 0o644); err != nil {
+	if err := os.WriteFile(summaryMdPath, []byte(content), 0o644); err != nil {
 		return errors.NewInternalServerError("failed to write ai summary to project doc dir").WithDetails(err.Error())
 	}
 

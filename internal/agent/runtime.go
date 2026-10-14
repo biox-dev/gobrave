@@ -56,10 +56,33 @@ type taskRuntime struct {
 	svc     *AgentService
 	taskID  int64
 	handler StreamHandler
+	// autoApprove 为真表示“无人值守”执行：权限 ask 降级为 allow，不落 pending、
+	// 不进入 waiting_permission、不阻塞等待人工决策（见 WithAutoApprove）。
+	autoApprove bool
 }
 
-func NewTaskRuntime(svc *AgentService, taskID int64, handler StreamHandler) Runtime {
-	return &taskRuntime{svc: svc, taskID: taskID, handler: handler}
+// RuntimeOption 定制 TaskRuntime 的行为（如权限是否自动放行）。
+type RuntimeOption func(*taskRuntime)
+
+// WithAutoApprove 开关「无人值守权限放行」。
+//
+// 开启后：策略判定为 ask（需人工确认）的操作直接按 allow 放行，既不持久化 pending
+// 权限请求，也不把任务置为 waiting_permission；策略明确判定为 deny 的操作仍然拒绝。
+// 关闭（默认）时完全保留原有行为：ask → 持久化 pending → 阻塞等待 UI 决策。
+//
+// 适用场景：没有 UI 承接权限确认的同步调用（RunTaskSync / RunTaskSyncByID）。
+func WithAutoApprove(auto bool) RuntimeOption {
+	return func(r *taskRuntime) { r.autoApprove = auto }
+}
+
+func NewTaskRuntime(svc *AgentService, taskID int64, handler StreamHandler, opts ...RuntimeOption) Runtime {
+	r := &taskRuntime{svc: svc, taskID: taskID, handler: handler}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(r)
+		}
+	}
+	return r
 }
 
 func (r *taskRuntime) Emit(ctx context.Context, event StreamEvent) error {
@@ -92,7 +115,13 @@ func (r *taskRuntime) RequestPermission(ctx context.Context, userID string, oper
 		return DecisionAllow, nil
 	}
 
-	// 3) 持久化 pending 权限请求。
+	// 3) 无人值守执行（同步调用 / 无 UI）：ask 降级为 allow，直接放行——
+	// 不产生 pending 权限请求，也不阻塞等待人工决策。策略 deny 已在上面拒绝。
+	if r.autoApprove {
+		return DecisionAllow, nil
+	}
+
+	// 4) 持久化 pending 权限请求。
 	task, err := r.svc.tasks.Get(ctx, r.taskID)
 	if err != nil {
 		return "", err
@@ -102,20 +131,20 @@ func (r *taskRuntime) RequestPermission(ctx context.Context, userID string, oper
 		return "", err
 	}
 
-	// 4) 任务进入等待权限状态，并广播事件。
+	// 5) 任务进入等待权限状态，并广播事件。
 	if err := r.svc.transitionTask(ctx, task, TaskWaitingPermission, ""); err != nil {
 		return "", err
 	}
 	r.svc.emitEvent(ctx, r.taskID, EventPermissionCreated, perm)
 
-	// 5) 阻塞等待 UI 决策。
+	// 6) 阻塞等待 UI 决策。
 	decision, err := r.svc.perms.Wait(ctx, perm.ID)
 	if err != nil {
 		r.emitPermissionResult(ctx, fmt.Sprintf("error: %v", err))
 		return "", err
 	}
 
-	// 6) 恢复任务为 running（deny 时 Agent 会返回错误，由 execute 置为 failed）。
+	// 7) 恢复任务为 running（deny 时 Agent 会返回错误，由 execute 置为 failed）。
 	_ = r.svc.transitionTask(ctx, task, TaskRunning, "")
 	// r.emitPermissionResult(ctx, string(decision))
 	return decision, nil
@@ -144,6 +173,11 @@ func (r *taskRuntime) WaitPermission(ctx context.Context, permissionID int64) (P
 // 与 RequestPermission 同构：持久化 pending 提问后，Agent 阻塞在 QuestionManager.Wait，
 // 用户在 UI 作答 → AnswerQuestion 更新 DB 并唤醒 Agent → 这里返回答案继续执行。
 func (r *taskRuntime) AskUser(ctx context.Context, _ string, input AskUserInput) (AskUserAnswer, error) {
+	// 无人值守执行（同步调用 / 无 UI）：没人会作答，快速失败而不是永久阻塞在 Wait 上。
+	if r.autoApprove {
+		return AskUserAnswer{}, ErrNoUserInputResolver
+	}
+
 	task, err := r.svc.tasks.Get(ctx, r.taskID)
 	if err != nil {
 		return AskUserAnswer{}, err

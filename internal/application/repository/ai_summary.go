@@ -39,8 +39,8 @@ func (r *aiSummaryRepository) ListAISummariesByOwner(ctx context.Context, ownerT
 	return items, nil
 }
 
-// aiSummaryPageColumns 是分页列表需要查询的列：显式排除 content（longtext），
-// 避免列表接口把大字段读入内存并返回给前端。
+// aiSummaryPageColumns 是分页列表需要查询的列。正文（content）保存在文件里，
+// 不在表中，因此这里不会被选中，避免列表接口把大字段读入内存并返回给前端。
 var aiSummaryPageColumns = []string{
 	"id", "owner_id", "owner_type", "project_id",
 	"title", "status", "profile_id", "profile", "task_id", "created_at", "updated_at",
@@ -80,13 +80,13 @@ func (r *aiSummaryRepository) UpdateAISummary(ctx context.Context, item *types.A
 		return gorm.ErrRecordNotFound
 	}
 
-	// 用 map 整体替换：零值（如清空 content / profile_id）也需要写库。
+	// 用 map 整体替换：零值（如清空 profile_id）也需要写库。
+	// 注意：摘要正文（content）不落库，由调用方写入 GetAISummaryFile 指定的文件。
 	updates := map[string]any{
 		"owner_id":   item.OwnerID,
 		"owner_type": item.OwnerType,
 		"project_id": item.ProjectID,
 		"title":      item.Title,
-		"content":    item.Content,
 		"status":     item.Status,
 		"profile_id": item.ProfileID,
 		"profile":    item.Profile,

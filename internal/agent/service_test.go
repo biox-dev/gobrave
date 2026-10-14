@@ -253,6 +253,68 @@ func TestRecoverInterruptedTask(t *testing.T) {
 	}
 }
 
+// TestServiceSyncRunAutoApprovesPermission 演示同步执行（RunTaskSyncByID）的无人值守权限语义：
+// 没有 UI 承接确认，因此 write（默认策略 ask）被自动放行——任务直接完成，
+// 既不产生 pending 权限请求，也不进入 waiting_permission。
+func TestServiceSyncRunAutoApprovesPermission(t *testing.T) {
+	svc := newTestService(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 测试库未播种内置 Profile，这里建一个自定义 Profile 固定 Provider=mock
+	// （内置默认 Profile 的 Provider 是 copilot）。
+	profile := &agent.Profile{Name: "sync-auto-approve-test", Provider: agent.ProviderMock}
+	if err := svc.SaveProfile(ctx, profile); err != nil {
+		t.Fatalf("SaveProfile: %v", err)
+	}
+
+	task, err := svc.CreateTask(ctx, agent.Request{
+		Provider:   agent.ProviderMock,
+		ProfileID:  profile.ID,
+		WorkingDir: "/tmp",
+		Env:        map[string]string{"MOCK_PERMISSION_DEMO": "true"},
+		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	result, err := svc.RunTaskSyncByID(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("RunTaskSyncByID: %v", err)
+	}
+	if result == nil || result.TaskID != task.ID {
+		t.Fatalf("result = %+v, want TaskID %d", result, task.ID)
+	}
+	if !strings.Contains(result.Content, "[permission=allow]") {
+		t.Fatalf("content = %q, want auto-approved permission marker", result.Content)
+	}
+
+	got, err := svc.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != agent.TaskCompleted {
+		t.Fatalf("task status = %s, want completed", got.Status)
+	}
+
+	// 无人值守：不应留下任何待确认权限。
+	pending, err := svc.GetPendingPermissions(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetPendingPermissions: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("pending permissions = %d, want 0", len(pending))
+	}
+	_, total, err := svc.PagePermissions(ctx, 0, 10, task.ID)
+	if err != nil {
+		t.Fatalf("PagePermissions: %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("permission requests = %d, want 0", total)
+	}
+}
+
 // ---- helpers ----
 
 func readEvent(t *testing.T, ctx context.Context, ch <-chan agent.AgentEvent) agent.AgentEvent {

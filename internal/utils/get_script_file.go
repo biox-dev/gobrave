@@ -50,6 +50,17 @@ func GetProjectReportDir(baseDir, projectId, reportID string) string {
 	return filepath.Join(projectDir, "report", reportID)
 
 }
+
+func GetAISummaryDir(baseDir, projectId string, summaryID int64) string {
+	projectDir := GetProjectDir(baseDir, projectId)
+	return filepath.Join(projectDir, "AiSummary", fmt.Sprintf("%d", summaryID))
+}
+
+func GetAISummaryFile(baseDir, projectId string, summaryID int64) string {
+	summaryDir := GetAISummaryDir(baseDir, projectId, summaryID)
+	return filepath.Join(summaryDir, "summary.md")
+
+}
 func GetProjectLiteratureDir(baseDir, projectId, literatureID string) string {
 	projectDir := GetProjectDir(baseDir, projectId)
 	return filepath.Join(projectDir, "literature", literatureID)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -736,11 +737,47 @@ func (s *projectService) aiSummaryMarkdown(ctx context.Context, item *types.Proj
 	if err != nil {
 		return nil, err
 	}
+
+	// 摘要正文保存在文件里（见 utils.GetAISummaryFile），不存在时按空正文处理。
+	// 存储目录用项目字符串标识（t_project.project_id），由数值主键解析得到。
+	var content string
+	if projectCode := manager.ResolveProjectCode(ctx, s.projectRepo, s.resolveSummaryProjectID(ctx, summary)); projectCode != "" {
+		content, err = utils.ReadAISummaryFile(s.storageBaseDir(), projectCode, summary.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &types.ProjectReportItemContent{
 		Title:   sectionTitle(item.Title, summary.Title),
 		Prefix:  resolveSummaryOwnerURLPrefix(ctx, s.analysisRepo, s.storageBaseDir(), summary.OwnerType, summary.OwnerID),
-		Content: summary.Content,
+		Content: content,
 	}, nil
+}
+
+// resolveSummaryProjectID 返回摘要所属对象的项目 ID：优先使用摘要记录上已持久化的
+// ProjectID，缺失时回退到所属对象（Analysis / AnalysisNode）解析。
+func (s *projectService) resolveSummaryProjectID(ctx context.Context, summary *types.AISummary) int64 {
+	if summary == nil {
+		return 0
+	}
+	if summary.ProjectID != 0 {
+		return summary.ProjectID
+	}
+	if s.analysisRepo == nil {
+		return 0
+	}
+	switch summary.OwnerType {
+	case types.SummaryOwnerAnalysisNode:
+		if node, err := s.analysisRepo.GetAnalysisNodeByID(ctx, summary.OwnerID); err == nil {
+			return node.ProjectID
+		}
+	case types.SummaryOwnerAnalysis:
+		if analysis, err := s.analysisRepo.GetAnalysisByID(ctx, summary.OwnerID); err == nil {
+			return analysis.ProjectID
+		}
+	}
+	return 0
 }
 
 func (s *projectService) analysisNodeMarkdown(ctx context.Context, item *types.ProjectReportItem) (*types.ProjectReportItemContent, error) {

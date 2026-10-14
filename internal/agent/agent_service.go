@@ -136,26 +136,34 @@ func (s *AgentService) StartTask(ctx context.Context, taskID int64, handler Stre
 // 供需要一次性拿到结果的业务（如 AISummaryWorker）使用，替代直接调用 agent.Client.Invoke。
 // 与 RunTask / StartTask 不同，它不启动 goroutine，直接在调用方同步执行。
 //
+// 同步执行没有 UI 承接权限确认，因此默认无人值守：权限 ask 直接放行（见 RunTaskSyncByID）。
+// 如需保留原有的人工确认语义，可传 WithAutoApprove(false)。
+//
 // 若调用方需要在任务创建后、执行前拿到 taskID（例如把摘要记录立即关联到任务），
 // 请改用 CreateTask + RunTaskSyncByID 的两步形式。
-func (s *AgentService) RunTaskSync(ctx context.Context, req Request) (*Result, error) {
+func (s *AgentService) RunTaskSync(ctx context.Context, req Request, opts ...RuntimeOption) (*Result, error) {
 	task, err := s.CreateTask(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return s.RunTaskSyncByID(ctx, task.ID)
+	return s.RunTaskSyncByID(ctx, task.ID, opts...)
 }
 
 // RunTaskSyncByID 同步执行已创建的任务，返回聚合结果。
 //
 // 与 RunTaskSync 的区别在于任务创建被前置：调用方可以先 CreateTask 拿到 taskID 并完成
 // 关联（例如 AISummaryWorker 在生成前把摘要与任务绑定），再调用本方法执行。
-func (s *AgentService) RunTaskSyncByID(ctx context.Context, taskID int64) (*Result, error) {
+//
+// 权限：同步执行没有 UI 承接权限确认，默认以「无人值守」方式执行——策略判定为 ask 的操作
+// 直接放行，不会持久化 pending 权限请求、也不会把任务置为 waiting_permission 阻塞等待；
+// 策略明确 deny 的操作仍会被拒绝。调用方可用 opts 覆盖（如 WithAutoApprove(false) 恢复人工确认）。
+func (s *AgentService) RunTaskSyncByID(ctx context.Context, taskID int64, opts ...RuntimeOption) (*Result, error) {
 	task, err := s.tasks.Get(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
-	rt := NewTaskRuntime(s, taskID, nil)
+	// 默认开启自动放行；显式传入的 opts 顺序在后，可覆盖该默认值。
+	rt := NewTaskRuntime(s, taskID, nil, append([]RuntimeOption{WithAutoApprove(true)}, opts...)...)
 	result, err := s.run(ctx, task, rt)
 	if result != nil {
 		result.TaskID = taskID

@@ -41,8 +41,11 @@ type AISummary struct {
 	// ProjectID 摘要所属项目 ID（t_project.id），创建时由创建者的激活项目推导。
 	ProjectID int64  `json:"project_id,string" gorm:"column:project_id;type:bigint;index:idx_ai_summaries_project"`
 	Title     string `json:"title" gorm:"column:title;type:varchar(255)"`
-	// Content AI 生成的摘要内容。
-	Content string `json:"content" gorm:"column:content;type:longtext"`
+	// Content AI 生成的摘要内容。正文不再落库，而是以文件形式存放在
+	// GetAISummaryFile（<baseDir>/data/<projectId>/AiSummary/<summaryId>/summary.md）。
+	// 读取详情 / 列表时由 aiSummaryService 按需从文件填充；写入（生成、编辑、失败）
+	// 由 AISummaryWorker / aiSummaryService 落盘。非持久化字段。
+	Content string `json:"content" gorm:"-"`
 	// Status 生成状态：生成中 / 生成成功 / 生成失败。
 	Status SummaryStatus `json:"status" gorm:"column:status;type:varchar(32);default:generating"`
 	// ProfileID 生成该摘要使用的 Agent Profile ID（agent_profiles.id），用于按 ID 解析 Profile。

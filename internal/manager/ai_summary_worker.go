@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 // OutboxEventTypeAISummaryGenerateRequest 是 AI 摘要生成请求的 outbox 事件类型。
@@ -22,25 +25,31 @@ var _ event.Handler = (*AISummaryWorker)(nil)
 type AISummaryWorker struct {
 	summaryRepo   interfaces.AISummaryRepository
 	containerRepo interfaces.ContainerRepository
+	projectRepo   interfaces.ProjectRepository
 	bus           event.Bus
 	agentService  *agent.AgentService
 	content       AISummaryContentProvider
+	cfg           *config.Config
 }
 
 // NewAISummaryWorker 创建 AISummaryWorker。
 func NewAISummaryWorker(
 	summaryRepo interfaces.AISummaryRepository,
 	containerRepo interfaces.ContainerRepository,
+	projectRepo interfaces.ProjectRepository,
 	bus event.Bus,
 	agentService *agent.AgentService,
 	content AISummaryContentProvider,
+	cfg *config.Config,
 ) *AISummaryWorker {
 	return &AISummaryWorker{
 		summaryRepo:   summaryRepo,
 		containerRepo: containerRepo,
+		projectRepo:   projectRepo,
 		bus:           bus,
 		agentService:  agentService,
 		content:       content,
+		cfg:           cfg,
 	}
 }
 
@@ -136,7 +145,16 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 		return fmt.Errorf("agent run task: %w", err)
 	}
 
-	summary.Content = result.Content
+	// 摘要正文落盘到 GetAISummaryFile（data/<projectCode>/AiSummary/<summaryId>/summary.md）。
+	// summary.ProjectID 是数值主键，需换成存储目录使用的字符串标识（t_project.project_id）。
+	projectCode := ResolveProjectCode(ctx, w.projectRepo, summary.ProjectID)
+	if projectCode == "" {
+		return fmt.Errorf("resolve project code failed, project_id=%d", summary.ProjectID)
+	}
+	if err := utils.WriteAISummaryFile(w.storageBaseDir(), projectCode, summary.ID, result.Content); err != nil {
+		return fmt.Errorf("write summary file: %w", err)
+	}
+
 	summary.Status = types.SummaryStatusSuccess
 	if content.Title != "" {
 		summary.Title = content.Title
@@ -153,7 +171,7 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	return nil
 }
 
-// markFailed 将错误信息写入摘要内容，置为失败状态并发布状态事件。
+// markFailed 将错误信息写入摘要正文文件，置为失败状态并发布状态事件。
 func (w *AISummaryWorker) markFailed(ctx context.Context, summaryID int64, err error) {
 	summary, gerr := w.summaryRepo.GetAISummaryByID(ctx, summaryID)
 	if gerr != nil {
@@ -161,12 +179,53 @@ func (w *AISummaryWorker) markFailed(ctx context.Context, summaryID int64, err e
 		return
 	}
 
-	summary.Content = err.Error()
+	// 摘要可能在解析出所属项目之前就失败，这里按所属对象解析一次，保证失败原因也能落盘。
+	projectID := w.resolveProjectID(ctx, summary)
+	if projectID == 0 {
+		logger.Warnf(ctx, "[AISummaryWorker] resolve project id for failed summary failed, summary_id=%d", summary.ID)
+	} else {
+		summary.ProjectID = projectID
+		projectCode := ResolveProjectCode(ctx, w.projectRepo, projectID)
+		if projectCode == "" {
+			logger.Warnf(ctx, "[AISummaryWorker] resolve project code for failed summary failed, summary_id=%d", summary.ID)
+		} else if werr := utils.WriteAISummaryFile(w.storageBaseDir(), projectCode, summary.ID, err.Error()); werr != nil {
+			logger.Errorf(ctx, "[AISummaryWorker] write failed summary file failed, summary_id=%d err=%v", summary.ID, werr)
+		}
+	}
+
 	summary.Status = types.SummaryStatusFailed
 	if uerr := w.summaryRepo.UpdateAISummary(ctx, summary); uerr != nil {
 		logger.Errorf(ctx, "[AISummaryWorker] update summary failed status failed, summary_id=%d err=%v", summary.ID, uerr)
 	}
 	w.publishStatus(ctx, summary)
+}
+
+// resolveProjectID 返回摘要所属对象的项目 ID：优先使用摘要记录上已持久化的
+// ProjectID，缺失（例如尚未生成完成）时回退到所属对象（Analysis / AnalysisNode）解析。
+func (w *AISummaryWorker) resolveProjectID(ctx context.Context, summary *types.AISummary) int64 {
+	if summary == nil {
+		return 0
+	}
+	if summary.ProjectID != 0 {
+		return summary.ProjectID
+	}
+	if w.content == nil {
+		return 0
+	}
+	content, err := w.content.Resolve(ctx, summary.OwnerType, summary.OwnerID)
+	if err != nil {
+		logger.Warnf(ctx, "[AISummaryWorker] resolve summary owner failed, summary_id=%d err=%v", summary.ID, err)
+		return 0
+	}
+	return content.ProjectID
+}
+
+// storageBaseDir 返回去除首尾空白后的 storage.base_dir，未配置时返回空串。
+func (w *AISummaryWorker) storageBaseDir() string {
+	if w.cfg == nil || w.cfg.Storage == nil {
+		return ""
+	}
+	return strings.TrimSpace(w.cfg.Storage.BaseDir)
 }
 
 // publishStatus 发布摘要状态变更事件，供 AISummaryEventHandler 推送到前端。

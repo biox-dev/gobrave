@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent"
@@ -17,6 +18,7 @@ import (
 type aiSummaryService struct {
 	summaryRepo   interfaces.AISummaryRepository
 	containerRepo interfaces.ContainerRepository
+	projectRepo   interfaces.ProjectRepository
 	content       manager.AISummaryContentProvider
 	// analysisRepo 用于解析摘要所属对象的输出目录，以补充响应中的 URL 前缀。
 	analysisRepo interfaces.AnalysisRepository
@@ -28,6 +30,7 @@ type aiSummaryService struct {
 func NewAISummaryService(
 	summaryRepo interfaces.AISummaryRepository,
 	containerRepo interfaces.ContainerRepository,
+	projectRepo interfaces.ProjectRepository,
 	content manager.AISummaryContentProvider,
 	analysisRepo interfaces.AnalysisRepository,
 	cfg *config.Config,
@@ -36,6 +39,7 @@ func NewAISummaryService(
 	return &aiSummaryService{
 		summaryRepo:   summaryRepo,
 		containerRepo: containerRepo,
+		projectRepo:   projectRepo,
 		content:       content,
 		analysisRepo:  analysisRepo,
 		cfg:           cfg,
@@ -76,9 +80,15 @@ func (s *aiSummaryService) RegenerateAISummary(ctx context.Context, id int64) (*
 	}
 
 	summary.Status = types.SummaryStatusPending
-	summary.Content = "" // 清空旧内容，等待重新生成
 	if err := s.summaryRepo.UpdateAISummary(ctx, summary); err != nil {
 		return nil, err
+	}
+
+	// 删除旧的正文文件，等待重新生成（正文不再落库）。
+	if projectCode := s.resolveSummaryProjectCode(ctx, summary); projectCode != "" {
+		if err := utils.DeleteAISummaryFile(s.storageBaseDir(), projectCode, summary.ID); err != nil {
+			logger.Warnf(ctx, "[AISummary] delete summary file failed, summary_id=%d err=%v", summary.ID, err)
+		}
 	}
 
 	if err := s.enqueueGeneration(ctx, summary.ID); err != nil {
@@ -102,8 +112,8 @@ func (s *aiSummaryService) enqueueGeneration(ctx context.Context, summaryID int6
 	})
 }
 
-// GetAISummaryByID 按摘要 ID 查询详情，并填充 Prefix（所属对象输出目录对应的
-// /data-analysis URL 前缀），供前端渲染 content 中的相对图片/链接。
+// GetAISummaryByID 按摘要 ID 查询详情，从文件填充正文（content），并填充 Prefix
+// （所属对象输出目录对应的 /data-analysis URL 前缀），供前端渲染正文中的相对图片/链接。
 func (s *aiSummaryService) GetAISummaryByID(ctx context.Context, id int64) (*types.AISummary, error) {
 	summary, err := s.summaryRepo.GetAISummaryByID(ctx, id)
 	if err != nil {
@@ -111,11 +121,12 @@ func (s *aiSummaryService) GetAISummaryByID(ctx context.Context, id int64) (*typ
 	}
 
 	summary.Prefix = s.resolveOwnerURLPrefix(ctx, summary.OwnerType, summary.OwnerID)
+	summary.Content = s.readSummaryContent(ctx, summary)
 	return summary, nil
 }
 
-// ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表，并为每个 item 补充
-// 所属对象输出目录对应的 /data-analysis URL 前缀。
+// ListAISummariesByOwner 按所属对象类型与 ID 查询摘要列表，为每个 item 从文件填充正文
+// 并补充所属对象输出目录对应的 /data-analysis URL 前缀。
 func (s *aiSummaryService) ListAISummariesByOwner(ctx context.Context, ownerType types.SummaryOwnerType, ownerID int64) ([]*types.AISummary, error) {
 	items, err := s.summaryRepo.ListAISummariesByOwner(ctx, ownerType, ownerID)
 	if err != nil {
@@ -123,13 +134,12 @@ func (s *aiSummaryService) ListAISummariesByOwner(ctx context.Context, ownerType
 	}
 
 	prefix := s.resolveOwnerURLPrefix(ctx, ownerType, ownerID)
-	if prefix == "" {
-		return items, nil
-	}
 	for _, item := range items {
-		if item != nil {
-			item.Prefix = prefix
+		if item == nil {
+			continue
 		}
+		item.Prefix = prefix
+		item.Content = s.readSummaryContent(ctx, item)
 	}
 
 	return items, nil
@@ -187,7 +197,57 @@ func resolveSummaryOwnerURLPrefix(ctx context.Context, analysisRepo interfaces.A
 	return utils.GetAnalysisURLPrefix(baseDir, outputDir)
 }
 
+// storageBaseDir 返回去除首尾空白后的 storage.base_dir，未配置时返回空串。
+func (s *aiSummaryService) storageBaseDir() string {
+	if s.cfg == nil || s.cfg.Storage == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.cfg.Storage.BaseDir)
+}
+
+// readSummaryContent 按摘要所属项目读取正文文件（见 utils.GetAISummaryFile），
+// 文件不存在或项目无法解析时返回空串（前端按空内容展示，而非报错）。
+func (s *aiSummaryService) readSummaryContent(ctx context.Context, summary *types.AISummary) string {
+	projectCode := s.resolveSummaryProjectCode(ctx, summary)
+	if projectCode == "" {
+		return ""
+	}
+	content, err := utils.ReadAISummaryFile(s.storageBaseDir(), projectCode, summary.ID)
+	if err != nil {
+		logger.Warnf(ctx, "[AISummary] read summary file failed, summary_id=%d err=%v", summary.ID, err)
+		return ""
+	}
+	return content
+}
+
+// resolveSummaryProjectCode 返回摘要所属项目在磁盘目录中使用的字符串标识
+// （t_project.project_id，见 types.Project.ProjectID），数值主键经 ResolveProjectCode 转换。
+func (s *aiSummaryService) resolveSummaryProjectCode(ctx context.Context, summary *types.AISummary) string {
+	return manager.ResolveProjectCode(ctx, s.projectRepo, s.resolveSummaryProjectID(ctx, summary))
+}
+
+// resolveSummaryProjectID 返回摘要所属对象的项目数值主键（t_project.id）：优先使用摘要记录上
+// 已持久化的 ProjectID，缺失（例如尚未生成完成）时回退到所属对象（Analysis / AnalysisNode）解析。
+func (s *aiSummaryService) resolveSummaryProjectID(ctx context.Context, summary *types.AISummary) int64 {
+	if summary == nil {
+		return 0
+	}
+	if summary.ProjectID != 0 {
+		return summary.ProjectID
+	}
+	if s.content == nil {
+		return 0
+	}
+	content, err := s.content.Resolve(ctx, summary.OwnerType, summary.OwnerID)
+	if err != nil {
+		logger.Warnf(ctx, "[AISummary] resolve summary owner failed, summary_id=%d err=%v", summary.ID, err)
+		return 0
+	}
+	return content.ProjectID
+}
+
 // UpdateAISummary 按摘要 ID 更新标题、内容与 Agent Profile，nil 表示不修改对应字段。
+// 摘要正文（content）写入文件（见 utils.GetAISummaryFile），不再落库。
 func (s *aiSummaryService) UpdateAISummary(ctx context.Context, id int64, title, content *string, profileID *int64, profile *string) (*types.AISummary, error) {
 	summary, err := s.summaryRepo.GetAISummaryByID(ctx, id)
 	if err != nil {
@@ -198,6 +258,14 @@ func (s *aiSummaryService) UpdateAISummary(ctx context.Context, id int64, title,
 		summary.Title = *title
 	}
 	if content != nil {
+		projectCode := s.resolveSummaryProjectCode(ctx, summary)
+		if projectCode == "" {
+			return nil, fmt.Errorf("resolve summary project code failed, summary_id=%d", summary.ID)
+		}
+		if err := utils.WriteAISummaryFile(s.storageBaseDir(), projectCode, summary.ID, *content); err != nil {
+			return nil, fmt.Errorf("write summary file: %w", err)
+		}
+		// 供响应回显（非持久化字段）。
 		summary.Content = *content
 	}
 	if profileID != nil {
@@ -214,9 +282,28 @@ func (s *aiSummaryService) UpdateAISummary(ctx context.Context, id int64, title,
 	return summary, nil
 }
 
-// DeleteAISummary 按摘要 ID 删除摘要记录。
+// DeleteAISummary 按摘要 ID 删除摘要记录，并删除对应的正文文件（见 utils.GetAISummaryFile）。
+// 删除记录前先解析所属项目（记录删除后无法再解析）；文件删除失败仅告警，
+// 不影响记录删除的结果。
 func (s *aiSummaryService) DeleteAISummary(ctx context.Context, id int64) error {
-	return s.summaryRepo.DeleteAISummary(ctx, id)
+	summary, err := s.summaryRepo.GetAISummaryByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	projectCode := s.resolveSummaryProjectCode(ctx, summary)
+
+	if err := s.summaryRepo.DeleteAISummary(ctx, id); err != nil {
+		return err
+	}
+
+	if projectCode != "" {
+		if err := utils.DeleteAISummaryFile(s.storageBaseDir(), projectCode, id); err != nil {
+			logger.Warnf(ctx, "[AISummary] delete summary file failed, summary_id=%d err=%v", id, err)
+		}
+	}
+
+	return nil
 }
 
 // GetAISummaryInput 按摘要 ID 解析生成该摘要时交给 LLM 的输入信息。
