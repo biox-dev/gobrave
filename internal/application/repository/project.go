@@ -76,7 +76,7 @@ func (r *projectRepository) GetActiveProjectByUserID(ctx context.Context, userID
 	err := r.db.WithContext(ctx).
 		Table("t_project AS p").
 		Select("p.*").
-		Joins("INNER JOIN user_project up ON up.project_id = p.project_id").
+		Joins("INNER JOIN user_project up ON up.project_id = p.id").
 		Where("up.user_id = ? AND up.is_active = ?", userID, true).
 		Order("up.id DESC").
 		Limit(1).
@@ -124,7 +124,7 @@ func (r *projectRepository) ListProjectByUserID(ctx context.Context, userID stri
 	err := r.db.WithContext(ctx).
 		Table("t_project AS p").
 		Select("p.*, up.share_code, up.share_enabled").
-		Joins("INNER JOIN user_project up ON up.project_id = p.project_id").
+		Joins("INNER JOIN user_project up ON up.project_id = p.id").
 		Where("up.user_id = ?", userID).
 		Order("p.id DESC").
 		Scan(&projects).Error

@@ -434,7 +434,7 @@ func (r *dataRepository) ListFileByProjectIDViaAnalysisNode(ctx context.Context,
 		`).
 		Joins("JOIN t_project AS p ON p.id = an.project_id").
 		Joins("JOIN go_file AS f ON f.analysis_node_id = an.id").
-		Where("p.project_id = ?", projectID).
+		Where("p.id = ?", projectID).
 		Order("f.id DESC").
 		Find(&items).Error
 	if err != nil {
@@ -460,7 +460,7 @@ func (r *dataRepository) PageFileByProjectIDViaAnalysisNode(ctx context.Context,
 			Table("analysis_nodes AS an").
 			Joins("JOIN t_project AS p ON p.id = an.project_id").
 			Joins("JOIN go_file AS f ON f.analysis_node_id = an.id").
-			Where("p.project_id = ?", projectID)
+			Where("p.id = ?", projectID)
 	}
 
 	if err := buildQuery().Select("COUNT(DISTINCT f.id)").Scan(&total).Error; err != nil {
