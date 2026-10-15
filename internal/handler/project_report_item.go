@@ -134,7 +134,7 @@ type addProjectReportItemRequest struct {
 
 // AddProjectReportItem godoc
 // @Summary      添加报告条目
-// @Description  向指定报告添加条目。OwnerType 为 analysis/analysis_node/ai_summary 时需提供 OwnerID；OwnerType 为 custom（章节占位/自定义内容）时只需提供 title。parent_id 为 0 时挂到根节点。
+// @Description  向指定报告添加条目。OwnerType 为 analysis/analysis_node/ai_summary 时需提供 OwnerID；同一报告下相同的 owner_type + owner_id 不能重复添加（重复时返回 409）。OwnerType 为 custom（章节占位/自定义内容）时只需提供 title。parent_id 为 0 时挂到根节点。
 // @Tags         项目
 // @Accept       json
 // @Produce      json
@@ -143,6 +143,7 @@ type addProjectReportItemRequest struct {
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError  "同一报告下已存在相同的 owner_type + owner_id 条目"
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
 // @Router       /project/add-project-report-item [post]
@@ -175,6 +176,12 @@ func (h *ProjectHandler) AddProjectReportItem(c *gin.Context) {
 			c.Error(errors.NewNotFoundError("project report not found"))
 			return
 		}
+		// 服务层已明确 HTTP 语义（例如 409 重复添加）时直接透传，避免被降级成 400。
+		var appErr *errors.AppError
+		if stderrs.As(err, &appErr) {
+			c.Error(appErr)
+			return
+		}
 		c.Error(errors.NewBadRequestError("failed to add project report item").WithDetails(err.Error()))
 		return
 	}
@@ -194,7 +201,7 @@ type updateProjectReportItemRequest struct {
 
 // UpdateProjectReportItem godoc
 // @Summary      更新报告条目
-// @Description  更新条目的排序、父节点或 owner 绑定
+// @Description  更新条目的排序、父节点或 owner 绑定；若变更 owner 后与同报告内其他条目重复则返回 409
 // @Tags         项目
 // @Accept       json
 // @Produce      json
@@ -203,6 +210,7 @@ type updateProjectReportItemRequest struct {
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError  "同一报告下已存在相同的 owner_type + owner_id 条目"
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
 // @Router       /project/update-project-report-item [post]
@@ -232,6 +240,12 @@ func (h *ProjectHandler) UpdateProjectReportItem(c *gin.Context) {
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			c.Error(errors.NewNotFoundError("project report item not found"))
+			return
+		}
+		// 服务层已明确 HTTP 语义（例如 409 重复）时直接透传。
+		var appErr *errors.AppError
+		if stderrs.As(err, &appErr) {
+			c.Error(appErr)
 			return
 		}
 		c.Error(errors.NewBadRequestError("failed to update project report item").WithDetails(err.Error()))

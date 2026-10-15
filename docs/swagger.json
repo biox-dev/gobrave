@@ -8222,7 +8222,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "向指定报告添加条目。OwnerType 为 analysis/analysis_node/ai_summary 时需提供 OwnerID；OwnerType 为 custom（章节占位/自定义内容）时只需提供 title。parent_id 为 0 时挂到根节点。",
+                "description": "向指定报告添加条目。OwnerType 为 analysis/analysis_node/ai_summary 时需提供 OwnerID；同一报告下相同的 owner_type + owner_id 不能重复添加（重复时返回 409）。OwnerType 为 custom（章节占位/自定义内容）时只需提供 title。parent_id 为 0 时挂到根节点。",
                 "consumes": [
                     "application/json"
                 ],
@@ -8265,6 +8265,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "同一报告下已存在相同的 owner_type + owner_id 条目",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -9924,7 +9930,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "更新条目的排序、父节点或 owner 绑定",
+                "description": "更新条目的排序、父节点或 owner 绑定；若变更 owner 后与同报告内其他条目重复则返回 409",
                 "consumes": [
                     "application/json"
                 ],
@@ -9970,6 +9976,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "同一报告下已存在相同的 owner_type + owner_id 条目",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }

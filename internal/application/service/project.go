@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/config"
+	apperrors "github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -417,6 +418,16 @@ func (s *projectService) AddProjectReportItem(ctx context.Context, userID int64,
 		// 其他引用类型的标题/正文由 owner 推导，不落库。
 		item.Title = ""
 		item.Content = ""
+
+		// 同一报告下同一 owner 引用（owner_type + owner_id）只允许出现一次，避免重复添加。
+		// custom 类型不引用外部记录（OwnerID 恒为 0），不受此限制。
+		exists, err := s.projectRepo.ExistsProjectReportItemOwner(ctx, item.ProjectReportID, ownerType, item.OwnerID, 0)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return apperrors.NewConflictError(fmt.Sprintf("project report item already exists for %s %d", ownerType, item.OwnerID))
+		}
 	}
 
 	if err := s.validateProjectReportItemParent(ctx, item.ProjectReportID, item.ID, item.ParentID); err != nil {
@@ -469,6 +480,15 @@ func (s *projectService) UpdateProjectReportItem(ctx context.Context, userID int
 		// 其他引用类型不存储标题与内容（由 owner 推导）。
 		stored.Title = ""
 		stored.Content = ""
+
+		// 变更 owner 引用后仍不允许与同报告内的其他条目重复（排除自身）。
+		exists, err := s.projectRepo.ExistsProjectReportItemOwner(ctx, stored.ProjectReportID, stored.OwnerType, stored.OwnerID, stored.ID)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return apperrors.NewConflictError(fmt.Sprintf("project report item already exists for %s %d", stored.OwnerType, stored.OwnerID))
+		}
 	}
 	stored.ParentID = item.ParentID
 	if err := s.validateProjectReportItemParent(ctx, stored.ProjectReportID, stored.ID, stored.ParentID); err != nil {

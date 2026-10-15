@@ -303,6 +303,28 @@ func (r *projectRepository) ListProjectReportItemsByReportID(ctx context.Context
 	return items, nil
 }
 
+// ExistsProjectReportItemOwner 判断同一报告下是否已存在相同 owner_type + owner_id 的条目。
+// 用于阻止同一条 owner 记录被重复添加到同一报告；excludeItemID > 0 时排除该条目自身（更新场景）。
+func (r *projectRepository) ExistsProjectReportItemOwner(ctx context.Context, reportID int64, ownerType types.ProjectReportItemOwnerType, ownerID int64, excludeItemID int64) (bool, error) {
+	if reportID <= 0 || ownerID <= 0 || ownerType == "" {
+		return false, nil
+	}
+
+	query := r.db.WithContext(ctx).
+		Model(&types.ProjectReportItem{}).
+		Where("project_report_id = ? AND owner_type = ? AND owner_id = ?", reportID, ownerType, ownerID)
+	if excludeItemID > 0 {
+		query = query.Where("id <> ?", excludeItemID)
+	}
+
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
 // ReorderProjectReportItems 在一个事务中批量更新条目的 parent_id 与 sort_order。
 func (r *projectRepository) ReorderProjectReportItems(ctx context.Context, reportID int64, orders []types.ProjectReportItemOrder) error {
 	if len(orders) == 0 {

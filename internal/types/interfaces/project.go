@@ -82,6 +82,9 @@ type ProjectRepository interface {
 	DeleteProjectReportItemsByIDs(ctx context.Context, itemIDs []int64) error
 	DeleteProjectReportItemsByReportID(ctx context.Context, reportID int64) error
 	ListProjectReportItemsByReportID(ctx context.Context, reportID int64) ([]*types.ProjectReportItem, error)
+	// ExistsProjectReportItemOwner 判断同一报告下是否已存在相同 owner 引用（owner_type + owner_id）的条目。
+	// excludeItemID 为需要排除的条目主键（更新场景排除自身），传 0 表示不排除。
+	ExistsProjectReportItemOwner(ctx context.Context, reportID int64, ownerType types.ProjectReportItemOwnerType, ownerID int64, excludeItemID int64) (bool, error)
 	ReorderProjectReportItems(ctx context.Context, reportID int64, orders []types.ProjectReportItemOrder) error
 
 	// Literature data access methods.
