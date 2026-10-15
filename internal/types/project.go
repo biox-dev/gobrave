@@ -2,7 +2,6 @@ package types
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -162,22 +161,21 @@ type ProjectReportItemOrder struct {
 }
 
 // ProjectReportItemContent 是 ProjectReportItem 渲染后的内容片段。
-// Title 为展示标题，Content 为正文，Prefix 为正文中相对资源（图片/链接）的
-// /data-analysis URL 前缀，渲染时拼接到相对图片路径前。
+// Title 为展示标题，Content 为正文。
+//
+// 正文里的图片一律是以数据目录为根的绝对路径（如 /34/analysis_node/100/200/output/a.png）：
+// 节点完成时会把 output.md 里的相对图片路径改写掉（见 dag.NodeCompletionCoordinator），
+// 展示侧只需统一补上 /data-analysis 前缀，因此这里不再需要 Prefix。
 type ProjectReportItemContent struct {
 	Title     string                     `json:"title"`
-	Prefix    string                     `json:"prefix"`
 	Content   string                     `json:"content"`
 	OwnerType ProjectReportItemOwnerType `json:"owner_type"`
 }
 
-// markdownImagePattern 匹配 markdown 图片语法 ![alt](url)。
-var markdownImagePattern = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
-
 // Render 将片段渲染为 markdown 小节；正文为空时返回空串。
-// Prefix 作为正文中相对图片资源的 URL 前缀，会拼接到每个 img 的相对路径前。
+// 正文已包含可供展示的图片绝对路径，渲染时不再做任何路径改写。
 func (c ProjectReportItemContent) Render() string {
-	content := c.withImagePrefix(c.Content)
+	content := c.Content
 	if strings.TrimSpace(content) == "" {
 		return ""
 	}
@@ -186,44 +184,4 @@ func (c ProjectReportItemContent) Render() string {
 		title = "Untitled"
 	}
 	return fmt.Sprintf("# %s\n\n%s\n\n", title, content)
-}
-
-// withImagePrefix 为 markdown 内容中相对图片路径拼上 Prefix。
-// Prefix 为空时原样返回；已是绝对路径/URL 的图片保持不变。
-func (c ProjectReportItemContent) withImagePrefix(content string) string {
-	prefix := strings.TrimSpace(c.Prefix)
-	if prefix == "" {
-		return content
-	}
-
-	return markdownImagePattern.ReplaceAllStringFunc(content, func(match string) string {
-		sub := markdownImagePattern.FindStringSubmatch(match)
-		if len(sub) != 3 {
-			return match
-		}
-		alt, url := sub[1], strings.TrimSpace(sub[2])
-		if !isRelativeResourceURL(url) {
-			return match
-		}
-		return fmt.Sprintf("![%s](%s%s)", alt, prefix, strings.TrimPrefix(url, "./"))
-	})
-}
-
-// isRelativeResourceURL 判断 url 是否为需要拼前缀的相对路径。
-// 绝对 URL（带 scheme）、协议相对地址、根路径、锚点与 data URI 均视为非相对。
-func isRelativeResourceURL(url string) bool {
-	if url == "" {
-		return false
-	}
-	if strings.HasPrefix(url, "/") || strings.HasPrefix(url, "#") {
-		return false
-	}
-	if strings.Contains(url, "://") {
-		return false
-	}
-	lower := strings.ToLower(url)
-	if strings.HasPrefix(lower, "data:") || strings.HasPrefix(lower, "mailto:") {
-		return false
-	}
-	return true
 }

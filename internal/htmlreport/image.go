@@ -119,6 +119,13 @@ func assetFilePath(baseDir, urlPath string) (string, bool) {
 		}
 	}
 
+	// 报告正文里的图片是以数据目录为根的绝对路径（如 /34/analysis_node/100/200/output/a.png，
+	// 见 dag.NodeCompletionCoordinator 对 output.md 的改写与 utils.GetAnalysisURLPrefix）：
+	// 展示侧统一补 /data-analysis 前缀，这里没有前缀可用，直接按 <baseDir>/data 下的路径解析。
+	if strings.HasPrefix(urlPath, "/") {
+		return safeJoin(filepath.Join(baseDir, "data"), urlPath)
+	}
+
 	return "", false
 }
 

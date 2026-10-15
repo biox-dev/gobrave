@@ -16,6 +16,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -29,6 +30,9 @@ type NodeCompletionCoordinator struct {
 	outputResolver nodeOutputResolver
 	runtime        *RuntimeEngine
 	bus            event.Bus
+	// cfg 用于推导存储根目录（storage.base_dir），节点成功后需要把 output.md 里的
+	// 相对图片路径改写成“从数据目录开始”的绝对路径。
+	cfg *config.Config
 	// cleanup         NodeFailureCleanupFunc
 	deleteOnSuccess bool
 	pollInterval    time.Duration
@@ -77,6 +81,7 @@ func NewNodeCompletionCoordinator(
 		outputResolver: newFileSystemNodeOutputResolver(),
 		runtime:        runtime,
 		bus:            bus,
+		cfg:            cfg,
 		// cleanup:         cleanup,
 		deleteOnSuccess: deleteOnSuccess,
 		pollInterval:    pollInterval,
@@ -85,6 +90,59 @@ func NewNodeCompletionCoordinator(
 		graceInterval:   nodeOutputsGraceInterval,
 		inFlight:        make(map[int64]struct{}),
 	}
+}
+
+// baseDir 返回存储根目录（源于注入的 Config，而非直接注入字符串）。
+func (c *NodeCompletionCoordinator) baseDir() string {
+	if c == nil || c.cfg == nil || c.cfg.Storage == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.cfg.Storage.BaseDir)
+}
+
+// rewriteNodeOutputMarkdownImages 把节点输出目录下 output.md 里的相对图片路径改写成
+// 以数据目录为根的绝对路径（形如 /34/analysis_node/100/200/output/a.png）。
+//
+// 这样可以只改写一次：报告聚合、AI 摘要、前端渲染都不再需要各自维护图片前缀，
+// /data-analysis 前缀由前端统一补上。output.md 不存在时静默跳过，写入失败只记日志，
+// 改写本身不影响节点的成败。
+func (c *NodeCompletionCoordinator) rewriteNodeOutputMarkdownImages(ctx context.Context, node *types.AnalysisNode) {
+	if node == nil {
+		return
+	}
+	dir := strings.TrimSpace(node.OutputDir)
+	if dir == "" {
+		return
+	}
+
+	path := filepath.Join(dir, types.DefaultProjectReportFilename)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		// output.md 只是可选的报告产物，未生成时不需要处理。
+		if !errors.Is(err, os.ErrNotExist) {
+			logger.Warnf(ctx, "[NodeCompletionCoordinator] read node output markdown failed, analysis_id=%d node_id=%s path=%s err=%v", node.AnalysisID, node.NodeID, path, err)
+		}
+		return
+	}
+
+	baseDir := c.baseDir()
+	if baseDir == "" {
+		// 没有 storage.base_dir 就推不出“以数据目录为根”的路径，宁可保留相对路径，
+		// 也不要把本机磁盘绝对路径写进 output.md。
+		logger.Warnf(ctx, "[NodeCompletionCoordinator] skip rewriting node output markdown, storage base dir is empty, analysis_id=%d node_id=%s path=%s", node.AnalysisID, node.NodeID, path)
+		return
+	}
+
+	prefix := utils.GetAnalysisURLPrefix(baseDir, dir)
+	rewritten := utils.PrefixMarkdownImageURLs(string(content), prefix)
+	if rewritten == string(content) {
+		return
+	}
+	if err := os.WriteFile(path, []byte(rewritten), 0o644); err != nil {
+		logger.Warnf(ctx, "[NodeCompletionCoordinator] rewrite node output markdown images failed, analysis_id=%d node_id=%s path=%s err=%v", node.AnalysisID, node.NodeID, path, err)
+		return
+	}
+	logger.Infof(ctx, "[NodeCompletionCoordinator] rewrote node output markdown image paths, analysis_id=%d node_id=%s path=%s prefix=%s", node.AnalysisID, node.NodeID, path, prefix)
 }
 
 // func buildNodeFailureCleanup(
@@ -291,6 +349,13 @@ func (c *NodeCompletionCoordinator) reconcileContainer(ctx context.Context, inst
 		// a real node failure from a read-visibility race on the shared workspace.
 		c.logOutputValidationDiagnosis(ctx, node, inst, outputErrors)
 		c.scheduleOutputVisibilityPostMortem(node, inst)
+	}
+
+	// 节点产出可用时把 output.md 里的相对图片路径改写成以数据目录为根的绝对路径：
+	// 改写发生在产物落定的同一处，之后所有展示端（报告聚合/HTML 导出/AI 摘要）
+	// 都不再需要按条目拼接图片前缀。
+	if finalStatus == StatusDone {
+		c.rewriteNodeOutputMarkdownImages(ctx, node)
 	}
 
 	// When the node's declared outputs resolved without error, mirror the file

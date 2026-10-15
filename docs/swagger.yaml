@@ -768,8 +768,6 @@ definitions:
         items:
           $ref: '#/definitions/types.AISummary'
         type: array
-      url_prefix:
-        type: string
     type: object
   handler.VisualizationNodeTreeItem:
     properties:

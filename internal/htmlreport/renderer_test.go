@@ -7,6 +7,27 @@ import (
 	"testing"
 )
 
+func TestRenderInlinesDataRelativeImage(t *testing.T) {
+	baseDir := t.TempDir()
+	// 报告正文里的图片以数据目录为根（/data-analysis 前缀由前端补），
+	// 导出 HTML 时必须仍能定位到 <baseDir>/data 下的真实文件。
+	writeTestImage(t, filepath.Join(baseDir, "data", "34", "analysis_node", "100", "200", "output", "a.png"), "png-bytes")
+
+	doc, err := New().Render(Options{
+		Title:        "Report",
+		Markdown:     "![a](/34/analysis_node/100/200/output/a.png)",
+		InlineImages: true,
+		BaseDir:      baseDir,
+	})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	if !strings.Contains(string(doc), "data:image/png;base64,") {
+		t.Fatalf("expected data-relative image to be inlined as data URI, got:\n%s", string(doc))
+	}
+}
+
 func TestRenderKeepsOriginalURLsWhenNotInlining(t *testing.T) {
 	doc, err := New().Render(Options{
 		Title:        "Report",

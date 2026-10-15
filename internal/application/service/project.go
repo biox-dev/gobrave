@@ -747,7 +747,6 @@ func (s *projectService) aiSummaryMarkdown(ctx context.Context, item *types.Proj
 
 	return &types.ProjectReportItemContent{
 		Title:   sectionTitle(item.Title, summary.Title),
-		Prefix:  resolveSummaryOwnerURLPrefix(ctx, s.analysisRepo, s.storageBaseDir(), summary.OwnerType, summary.OwnerID),
 		Content: content,
 	}, nil
 }
@@ -792,7 +791,6 @@ func (s *projectService) analysisNodeMarkdown(ctx context.Context, item *types.P
 	}
 	return &types.ProjectReportItemContent{
 		Title:   sectionTitle(item.Title, node.NodeName),
-		Prefix:  utils.GetAnalysisURLPrefix(s.storageBaseDir(), node.OutputDir),
 		Content: content,
 	}, nil
 }
@@ -820,7 +818,6 @@ func (s *projectService) analysisMarkdown(ctx context.Context, item *types.Proje
 	}
 	return &types.ProjectReportItemContent{
 		Title:   sectionTitle(item.Title, analysis.AnalysisName),
-		Prefix:  utils.GetAnalysisURLPrefix(s.storageBaseDir(), analysis.WorkspaceDir),
 		Content: builder.String(),
 	}, nil
 }

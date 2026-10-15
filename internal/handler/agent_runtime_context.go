@@ -231,17 +231,21 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 }
 
 // ProjectReportItemVar 是暴露给 pongo2 模板遍历的项目报告条目变量。
-// 每个条目只包含名称（Name）与内容（Content）两个字段：
+// 每个条目包含名称（Name）、内容（Content）与来源类型（OwnerType）：
 //   - analysis / analysis_node：名称取 AnalysisName / NodeName，内容为输出目录；
 //   - ai_summary：名称取摘要标题，内容为摘要文件路径（见 utils.GetAISummaryFile）；
 //   - custom：名称取用户编辑的标题，内容为用户编辑的正文。
 //
+// OwnerType 为条目原始来源类型（types.ProjectReportItemOwnerType），供模板按来源
+// 区分处理（如 {{ if eq item.OwnerType "ai_summary" }}）。
+//
 // 字段刻意不加 json tag：SystemPromptVars 会随 agent_tasks.request 一起 JSON 往返，
-// 不加 tag 时字段名即 JSON 键（Name/Content），无论内存态还是反序列化后，
-// 模板都能统一用 {{ item.Name }} / {{ item.Content }} 访问。
+// 不加 tag 时字段名即 JSON 键（Name/Content/OwnerType），无论内存态还是反序列化后，
+// 模板都能统一用 {{ item.Name }} / {{ item.Content }} / {{ item.OwnerType }} 访问。
 type ProjectReportItemVar struct {
-	Name    string
-	Content string
+	Name      string
+	Content   string
+	OwnerType types.ProjectReportItemOwnerType
 }
 
 // resolveProjectReportItemVars 读取报告下的全部条目并解析为模板变量列表。
@@ -268,7 +272,7 @@ func (r *RuntimeContextResolver) resolveProjectReportItemVars(ctx context.Contex
 			logger.Warnf(ctx, "[RuntimeContext] skip project report item, item_id=%d owner_type=%s owner_id=%d", item.ID, item.OwnerType, item.OwnerID)
 			continue
 		}
-		result = append(result, ProjectReportItemVar{Name: name, Content: content})
+		result = append(result, ProjectReportItemVar{Name: name, Content: content, OwnerType: item.OwnerType})
 	}
 	return result, nil
 }

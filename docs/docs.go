@@ -13245,9 +13245,6 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/types.AISummary"
                     }
-                },
-                "url_prefix": {
-                    "type": "string"
                 }
             }
         },

@@ -87,7 +87,6 @@ type VisualizationNodeFileResponse struct {
 	Result       VisualizationResultResponse `json:"result"`
 	Status       string                      `json:"status"`
 	ServerStatus string                      `json:"server_status"`
-	UrlPrefix    string                      `json:"url_prefix"`
 	Summaries    []*types.AISummary          `json:"summaries"`
 }
 
@@ -1712,7 +1711,6 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 		Result:       result,
 		Status:       analysisNode.Status,
 		ServerStatus: analysisNode.ServerStatus,
-		UrlPrefix:    prefix,
 		// Summaries:    summaries,
 	})
 }

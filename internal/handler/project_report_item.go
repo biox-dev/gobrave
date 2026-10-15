@@ -426,19 +426,16 @@ func (h *ProjectHandler) GetProjectReportItemContent(c *gin.Context) {
 	}
 
 	title := ""
-	prefix := ""
 	content := ""
 	ownerType := ""
 	if section != nil {
 		title = section.Title
-		prefix = section.Prefix
 		content = section.Render()
 		ownerType = string(section.OwnerType)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"title":      title,
-		"prefix":     prefix,
 		"content":    content,
 		"owner_type": ownerType,
 	})
