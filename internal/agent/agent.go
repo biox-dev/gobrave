@@ -25,6 +25,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
 // Provider 名称常量。新增第三方 Agent 或自研 Agent 时在此登记一个唯一名称。
@@ -83,15 +85,21 @@ type Request struct {
 	ProfileID int64 `json:"profile_id,omitempty,string"`
 	// Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。
 	Skills []string `json:"skills,omitempty"`
-	// SystemPromptVars 是渲染 Profile 系统提示词模板所用的变量（业务上下文）。
+	// RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录）。
 	//
-	// 调用方（HTTP Handler）解析 env(type,id) 后把变量放进这里，AgentService 在
-	// applyProfile 中用它与 Profile.SystemPrompt（pongo2 模板）合成最终系统提示词。
-	SystemPromptVars map[string]any `json:"system_prompt_vars,omitempty"`
+	// 由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到
+	// 配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供
+	// builtin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。
+	//
+	// 它只承载可序列化的业务事实，并随 Request 一起被 JSON 序列化进 agent_tasks.request
+	// （Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用
+	// （见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如
+	// AnalysisNodeRunner）不在此处，而由 agent.Options 承载。
+	RuntimeContext *tool.RuntimeContext `json:"runtime_context,omitempty"`
 	// SystemPrompt 是最终发送给 Provider 的系统提示词。
 	//
 	// 注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +
-	// SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。
+	// RuntimeContext.SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。
 	SystemPrompt string `json:"system_prompt,omitempty"`
 	// Messages 对话上下文（不含 SystemPrompt）。
 	Messages []Message `json:"messages"`

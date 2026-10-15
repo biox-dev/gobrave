@@ -11,5 +11,6 @@ import "github.com/biox-dev/gobrave/internal/agent/tool"
 func All() []tool.Tool {
 	return []tool.Tool{
 		GetWeather(),
+		RunAnalysisNode(),
 	}
 }

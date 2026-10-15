@@ -55,7 +55,7 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 	// 把 opencode 的工具权限请求委托给 gobrave 的 Runtime（策略 / 持久化 / UI）。
 	sdkOpts.PermissionHandler = a.permissionHandler(rt, userID)
 	// 把 gobrave 的工具注册为 opencode 的宿主工具，与内置工具共用同一套 tool-call 循环。
-	sdkOpts.Tools = a.buildHostTools(rt, userID)
+	sdkOpts.Tools = a.buildHostTools(rt, req)
 
 	sdkClient, err := opencodesdk.NewClient(ctx, sdkOpts)
 	if err != nil {
@@ -226,6 +226,8 @@ func permissionToOperation(p opencodesdk.PermissionRequest) agent.Operation {
 		return agent.Operation{Type: agent.OperationRead, Path: path, Description: desc, Metadata: meta}
 	case "fetch":
 		return agent.Operation{Type: agent.OperationNetwork, Description: desc, Metadata: meta}
+	case "analysis_node", "analysisnode":
+		return agent.Operation{Type: agent.OperationAnalysisNode, Description: desc, Metadata: meta}
 	default:
 		return agent.Operation{Type: agent.OperationExecute, Description: desc, Metadata: meta}
 	}
@@ -349,8 +351,14 @@ func toSDKRole(role string) opencodesdk.Role {
 //
 // 注意：工具调用 / 结果的时间线事件由 opencode 记录进消息流后经 emitToolEvents 统一发出，
 // 因此这里只负责执行，不重复发事件（避免与快照事件重复落库）。
-func (a *customAgent) buildHostTools(rt agent.Runtime, userID int64) []opencodesdk.HostTool {
+func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []opencodesdk.HostTool {
 	out := make([]opencodesdk.HostTool, 0)
+
+	// 工具执行上下文 = 本轮业务事实（SystemPromptVars 等，来自请求）+ 进程级服务能力
+	// （AnalysisNodeRunner，来自 Options）。二者分开注入：前者可序列化、随请求来，后者不可
+	// 序列化、进程内复用（见 tool.WithAnalysisNodeRunner）。
+	rc := agent.ToolRuntimeContextFromRequest(req)
+	runner := a.opts.AnalysisNodeRunner
 
 	if a.opts.Tools != nil {
 		exec := tool.NewExecutor(a.opts.Tools)
@@ -358,6 +366,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, userID int64) []opencodes
 			name := def.Name
 			ht := hostTool(def.Name, def.Description, def.InputSchema,
 				func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
+					ctx = agent.WithToolRuntime(ctx, rc, runner)
 					res := exec.Execute(ctx, tool.Call{ID: call.ID, Name: name, Arguments: json.RawMessage(call.Input)})
 					return opencodesdk.HostToolResult{Content: res.Content, IsError: res.IsError}
 				})
@@ -372,7 +381,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, userID int64) []opencodes
 	}
 
 	// ask_user：宿主工具，阻塞等待用户在 UI 作答后把答案回填给模型。
-	out = append(out, a.askUserHostTool(rt, userID))
+	out = append(out, a.askUserHostTool(rt, req.UserID))
 
 	return out
 }

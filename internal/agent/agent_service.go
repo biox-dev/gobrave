@@ -187,7 +187,7 @@ func (s *AgentService) execute(ctx context.Context, task *Task, rt Runtime) {
 // 异步（execute）与同步（RunTaskSync）共享这一执行路径。
 func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result, error) {
 	// 应用 Agent Profile：按 ID 解析 Profile → 覆盖模型 / Agent / 技能 → 渲染最终系统提示词。
-	// 最终系统提示词由 applyProfile 依据 Profile.SystemPrompt 模板 + SystemPromptVars
+	// 最终系统提示词由 applyProfile 依据 Profile.SystemPrompt 模板 + RuntimeContext.SystemPromptVars
 	// 渲染，并按 Profile.Context 开关注入记忆。
 	profile, err := s.profiles.Resolve(ctx, task.Request.ProfileID)
 	if err != nil {
@@ -195,7 +195,9 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	}
 
 	task.Request = applyProfileOverrides(task.Request, profile)
-	task.Request.SystemPrompt = s.GetSystemSpromptByProfile(ctx, profile, task.Request.SystemPromptVars, task.Request.UserID, task.Request.Skills)
+	// 系统提示词模板变量取自 Request.RuntimeContext（随 Request 一起持久化进
+	// agent_tasks.request，任务从 DB 恢复后依然可用）。
+	task.Request.SystemPrompt = s.GetSystemSpromptByProfile(ctx, profile, task.Request.RuntimeContext.Vars(), task.Request.UserID, task.Request.Skills)
 	// Profile 可能依据 Profile.Model 覆盖请求级模型，同步回任务持久化字段。
 	task.Model = task.Request.Model
 	if err := s.transitionTask(ctx, task, TaskRunning, ""); err != nil {
@@ -295,8 +297,8 @@ func (s *AgentService) GetTask(ctx context.Context, id int64) (*Task, error) {
 // GetTaskRequest 按任务 ID 加载任务，返回任务持久化的 Request 内容。
 //
 // 供 UI 调试 / 审计使用。注意：这里返回的是任务创建时的原始请求，未应用 Agent Profile；
-// 真正发送给 Provider 的系统提示词在任务执行时由 run 经 resolveProfile / applyProfile
-// 渲染（Profile 模板 + SystemPromptVars + 背景注入）。
+// 真正发送给 Provider 的系统提示词在任务执行时由 run 经 applyProfile 渲染
+// （Profile 模板 + RuntimeContext.SystemPromptVars + 背景注入）。
 func (s *AgentService) GetTaskRequest(ctx context.Context, taskID int64) (*Request, error) {
 	task, err := s.tasks.Get(ctx, taskID)
 	if err != nil {
@@ -550,7 +552,7 @@ func applyProfileOverrides(req Request, profile *Profile) Request {
 //
 // 入参：
 //   - profile：已解析的 Agent Profile（为 nil 时返回空提示词，表示不附加系统提示词）；
-//   - vars：渲染 Profile.SystemPrompt（pongo2 模板）所用的变量，通常为 Request.SystemPromptVars；
+//   - vars：渲染 Profile.SystemPrompt（pongo2 模板）所用的变量，通常为 RuntimeContext.SystemPromptVars；
 //   - userID：记忆的归属用户（为空时不注入背景）；
 //   - selectedSkills：本轮启用的技能名（为空表示全部）；据此把技能指令正文注入提示词。
 //

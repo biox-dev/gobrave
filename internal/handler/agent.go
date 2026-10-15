@@ -270,14 +270,14 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		}
 	}
 	task, conv, err := h.conv.CreateTurn(c.Request.Context(), agent.TurnInput{
-		UserID:           userID,
-		ConversationID:   conversationID,
-		Message:          req.Message,
-		Provider:         req.Provider,
-		Model:            req.Model,
-		SystemPromptVars: rc.SystemPromptVars,
-		ProfileID:        profileID,
-		WorkingDir:       workingDir,
+		UserID:         userID,
+		ConversationID: conversationID,
+		Message:        req.Message,
+		Provider:       req.Provider,
+		Model:          req.Model,
+		RuntimeContext: rc,
+		ProfileID:      profileID,
+		WorkingDir:     workingDir,
 	})
 	if err != nil {
 		handleAgentError(c, err, "failed to create conversation turn")

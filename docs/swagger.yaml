@@ -42,6 +42,7 @@ definitions:
       updated_at:
         type: string
       user_id:
+        example: "0"
         type: string
     type: object
   agent.Memory:
@@ -68,6 +69,7 @@ definitions:
       updated_at:
         type: string
       user_id:
+        example: "0"
         type: string
     type: object
   agent.MemoryKind:
@@ -115,6 +117,12 @@ definitions:
       content:
         description: write
         type: string
+      description:
+        description: |-
+          Description 是人类可读的操作摘要（如 "Execute command: ls -la" /
+          "Replace content in file /a/b.go"）。Provider 有更精确的描述时填入，
+          供 UI 在批准前展示；为空时前端回退到 Path / Command / Content。
+        type: string
       id:
         type: string
       metadata:
@@ -135,8 +143,10 @@ definitions:
     - move
     - execute
     - network
+    - analysis_node
     type: string
     x-enum-comments:
+      OperationAnalysisNode: 运行分析节点（区别于直接执行 shell / 脚本）
       OperationDelete: 删除文件
       OperationExecute: 执行命令 / 脚本
       OperationMove: 移动 / 重命名文件
@@ -150,6 +160,7 @@ definitions:
     - 移动 / 重命名文件
     - 执行命令 / 脚本
     - 网络访问
+    - 运行分析节点（区别于直接执行 shell / 脚本）
     x-enum-varnames:
     - OperationRead
     - OperationWrite
@@ -157,6 +168,7 @@ definitions:
     - OperationMove
     - OperationExecute
     - OperationNetwork
+    - OperationAnalysisNode
   agent.PermissionDecision:
     enum:
     - allow
@@ -187,6 +199,7 @@ definitions:
       resolved_at:
         type: string
       resolved_by:
+        example: "0"
         type: string
       session_id:
         type: string
@@ -264,8 +277,6 @@ definitions:
         type: string
       updated_at:
         type: string
-      user_id:
-        type: string
     type: object
   agent.Question:
     properties:
@@ -341,6 +352,7 @@ definitions:
       resolved_at:
         type: string
       resolved_by:
+        example: "0"
         type: string
       session_id:
         type: string
@@ -401,6 +413,20 @@ definitions:
       provider:
         description: Provider 可选：强制指定 Provider 名称；为空则使用 Client 的默认 Provider。
         type: string
+      runtime_context:
+        allOf:
+        - $ref: '#/definitions/tool.RuntimeContext'
+        description: |-
+          RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录）。
+
+          由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到
+          配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供
+          builtin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。
+
+          它只承载可序列化的业务事实，并随 Request 一起被 JSON 序列化进 agent_tasks.request
+          （Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用
+          （见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如
+          AnalysisNodeRunner）不在此处，而由 agent.Options 承载。
       session_id:
         description: SessionID 可选：会话标识，用于把多次调用关联到同一会话（与权限 / 任务联动）。
         type: string
@@ -417,18 +443,11 @@ definitions:
           SystemPrompt 是最终发送给 Provider 的系统提示词。
 
           注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +
-          SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。
+          RuntimeContext.SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。
         type: string
-      system_prompt_vars:
-        additionalProperties: {}
-        description: |-
-          SystemPromptVars 是渲染 Profile 系统提示词模板所用的变量（业务上下文）。
-
-          调用方（HTTP Handler）解析 env(type,id) 后把变量放进这里，AgentService 在
-          applyProfile 中用它与 Profile.SystemPrompt（pongo2 模板）合成最终系统提示词。
-        type: object
       user_id:
         description: UserID 可选：发起调用的用户，用于记忆（memory）的归属隔离与检索。
+        example: "0"
         type: string
       working_dir:
         description: WorkingDir 可选：Agent 执行的工作目录。
@@ -910,6 +929,7 @@ definitions:
         example: "0"
         type: string
       user_id:
+        example: "0"
         type: string
     required:
     - project_id
@@ -2148,6 +2168,26 @@ definitions:
       user_invocable:
         type: boolean
     type: object
+  tool.RuntimeContext:
+    properties:
+      label:
+        description: Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。
+        type: string
+      system_prompt_vars:
+        additionalProperties: {}
+        description: |-
+          SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量
+          （如 analysis_node_id / workspace_directory / script_file_path 等）。
+        type: object
+      type:
+        description: |-
+          Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，
+          为空表示默认工作区）。
+        type: string
+      working_dir:
+        description: WorkingDir 是 Agent 执行工作目录。
+        type: string
+    type: object
   types.AISummary:
     properties:
       content:
@@ -2443,6 +2483,7 @@ definitions:
       updated_at:
         type: string
       user_id:
+        example: "0"
         type: string
       workspace_path:
         type: string
@@ -3221,6 +3262,7 @@ definitions:
         type: string
       id:
         description: Unique identifier of the user
+        example: "0"
         type: string
       is_active:
         description: |-
@@ -3871,7 +3913,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 仅能删除当前用户的自定义 Profile；内置 Profile 不可删除
+      description: 仅能删除自定义 Profile；内置 Profile 不可删除
       parameters:
       - description: Profile ID
         in: body
@@ -3905,7 +3947,7 @@ paths:
       - Agent
   /agent/profile/get:
     get:
-      description: 按 ID 返回单个 Profile：内置 Profile 全局共享（任意用户可读），自定义 Profile 仅限其所属用户
+      description: 按 ID 返回单个 Profile（全局可见）
       parameters:
       - description: Profile ID
         in: query
@@ -3938,7 +3980,7 @@ paths:
       - Agent
   /agent/profile/list:
     get:
-      description: 返回内置与当前用户自定义的全部 Profile（合并视图），包含系统提示词、技能与上下文注入开关
+      description: 返回全部 Profile（全局可见），包含系统提示词、技能与上下文注入开关
       produces:
       - application/json
       responses:
@@ -3961,7 +4003,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: ID 为空时新建，否则更新；UserID 由当前登录用户注入，自定义 Profile 仅能管理自己的，内置 Profile 可编辑（不可删除）
+      description: ID 为空时新建，否则更新；内置 Profile 可编辑（不可删除）
       parameters:
       - description: Profile 内容
         in: body

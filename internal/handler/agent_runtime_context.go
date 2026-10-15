@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -49,16 +50,14 @@ func normalizeEnvType(typ string) string {
 }
 
 // RuntimeContext 是解析后的运行时上下文。
-type RuntimeContext struct {
-	Type  string // 归一化后的业务类型（为空表示默认工作区）
-	Label string // 人类可读的上下文名称（如节点名 / 报告标题），用于前端展示
-	// SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量。
-	//
-	// 例如 workspace_directory / script_file_path / output_directory / output_file 等；
-	// AgentService 用它与 Profile.SystemPrompt 模板合成真正的系统提示词。
-	SystemPromptVars map[string]any
-	WorkingDir       string // Agent 执行工作目录
-}
+//
+// 直接复用 tool.RuntimeContext：它只承载可序列化的业务事实（渲染 Profile 系统提示词模板
+// 所需的 SystemPromptVars 与工作目录），随 TurnInput → agent.Request.RuntimeContext 一路
+// 传递到工具执行期，并随 Request 一起序列化进 agent_tasks.request 持久化（重启后可恢复）。
+//
+// 工具执行期所需的服务能力（如 AnalysisNodeRunner）不在此结构内：它是进程级静态依赖，
+// 改由 agent.Options 注入（见 buildAgentClient），避免服务对象被序列化进 agent_tasks。
+type RuntimeContext = tool.RuntimeContext
 
 // RuntimeContextResolver 把「业务 env(type,id) → 系统提示词 + 工作目录」的解析逻辑
 // 从具体 Handler 中抽离出来，供 LLM 桥接（LLMHandler）与 Agent 会话（AgentHandler）

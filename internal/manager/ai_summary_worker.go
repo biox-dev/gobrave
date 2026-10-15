@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -122,8 +123,12 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	}
 
 	task, err := w.agentService.CreateTask(ctx, agent.Request{
-		WorkingDir:       content.WorkingDir,
-		SystemPromptVars: content.SystemPromptVars,
+		WorkingDir: content.WorkingDir,
+		// 系统提示词模板变量与工作目录统一由运行时上下文承载（可持久化到 agent_tasks）。
+		RuntimeContext: &tool.RuntimeContext{
+			SystemPromptVars: content.SystemPromptVars,
+			WorkingDir:       content.WorkingDir,
+		},
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: "请根据系统提示词完成对应的任务"},
 		},

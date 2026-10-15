@@ -724,7 +724,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "仅能删除当前用户的自定义 Profile；内置 Profile 不可删除",
+                "description": "仅能删除自定义 Profile；内置 Profile 不可删除",
                 "consumes": [
                     "application/json"
                 ],
@@ -781,7 +781,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按 ID 返回单个 Profile：内置 Profile 全局共享（任意用户可读），自定义 Profile 仅限其所属用户",
+                "description": "按 ID 返回单个 Profile（全局可见）",
                 "produces": [
                     "application/json"
                 ],
@@ -833,7 +833,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "返回内置与当前用户自定义的全部 Profile（合并视图），包含系统提示词、技能与上下文注入开关",
+                "description": "返回全部 Profile（全局可见），包含系统提示词、技能与上下文注入开关",
                 "produces": [
                     "application/json"
                 ],
@@ -867,7 +867,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "ID 为空时新建，否则更新；UserID 由当前登录用户注入，自定义 Profile 仅能管理自己的，内置 Profile 可编辑（不可删除）",
+                "description": "ID 为空时新建，否则更新；内置 Profile 可编辑（不可删除）",
                 "consumes": [
                     "application/json"
                 ],
@@ -12305,7 +12305,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "user_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -12343,7 +12344,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "user_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -12406,6 +12408,10 @@ const docTemplate = `{
                     "description": "write",
                     "type": "string"
                 },
+                "description": {
+                    "description": "Description 是人类可读的操作摘要（如 \"Execute command: ls -la\" /\n\"Replace content in file /a/b.go\"）。Provider 有更精确的描述时填入，\n供 UI 在批准前展示；为空时前端回退到 Path / Command / Content。",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -12431,9 +12437,11 @@ const docTemplate = `{
                 "delete",
                 "move",
                 "execute",
-                "network"
+                "network",
+                "analysis_node"
             ],
             "x-enum-comments": {
+                "OperationAnalysisNode": "运行分析节点（区别于直接执行 shell / 脚本）",
                 "OperationDelete": "删除文件",
                 "OperationExecute": "执行命令 / 脚本",
                 "OperationMove": "移动 / 重命名文件",
@@ -12447,7 +12455,8 @@ const docTemplate = `{
                 "删除文件",
                 "移动 / 重命名文件",
                 "执行命令 / 脚本",
-                "网络访问"
+                "网络访问",
+                "运行分析节点（区别于直接执行 shell / 脚本）"
             ],
             "x-enum-varnames": [
                 "OperationRead",
@@ -12455,7 +12464,8 @@ const docTemplate = `{
                 "OperationDelete",
                 "OperationMove",
                 "OperationExecute",
-                "OperationNetwork"
+                "OperationNetwork",
+                "OperationAnalysisNode"
             ]
         },
         "agent.PermissionDecision": {
@@ -12498,7 +12508,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "resolved_by": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "session_id": {
                     "type": "string"
@@ -12594,9 +12605,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_at": {
-                    "type": "string"
-                },
-                "user_id": {
                     "type": "string"
                 }
             }
@@ -12707,7 +12715,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "resolved_by": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "session_id": {
                     "type": "string"
@@ -12788,6 +12797,14 @@ const docTemplate = `{
                     "description": "Provider 可选：强制指定 Provider 名称；为空则使用 Client 的默认 Provider。",
                     "type": "string"
                 },
+                "runtime_context": {
+                    "description": "RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录）。\n\n由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到\n配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供\nbuiltin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。\n\n它只承载可序列化的业务事实，并随 Request 一起被 JSON 序列化进 agent_tasks.request\n（Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用\n（见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如\nAnalysisNodeRunner）不在此处，而由 agent.Options 承载。",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/tool.RuntimeContext"
+                        }
+                    ]
+                },
                 "session_id": {
                     "description": "SessionID 可选：会话标识，用于把多次调用关联到同一会话（与权限 / 任务联动）。",
                     "type": "string"
@@ -12804,17 +12821,13 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "system_prompt": {
-                    "description": "SystemPrompt 是最终发送给 Provider 的系统提示词。\n\n注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +\nSystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。",
+                    "description": "SystemPrompt 是最终发送给 Provider 的系统提示词。\n\n注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +\nRuntimeContext.SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。",
                     "type": "string"
-                },
-                "system_prompt_vars": {
-                    "description": "SystemPromptVars 是渲染 Profile 系统提示词模板所用的变量（业务上下文）。\n\n调用方（HTTP Handler）解析 env(type,id) 后把变量放进这里，AgentService 在\napplyProfile 中用它与 Profile.SystemPrompt（pongo2 模板）合成最终系统提示词。",
-                    "type": "object",
-                    "additionalProperties": {}
                 },
                 "user_id": {
                     "description": "UserID 可选：发起调用的用户，用于记忆（memory）的归属隔离与检索。",
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "working_dir": {
                     "description": "WorkingDir 可选：Agent 执行的工作目录。",
@@ -13470,7 +13483,8 @@ const docTemplate = `{
                     "example": "0"
                 },
                 "user_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -15264,6 +15278,28 @@ const docTemplate = `{
                 }
             }
         },
+        "tool.RuntimeContext": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "description": "Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。",
+                    "type": "string"
+                },
+                "system_prompt_vars": {
+                    "description": "SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量\n（如 analysis_node_id / workspace_directory / script_file_path 等）。",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "type": {
+                    "description": "Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，\n为空表示默认工作区）。",
+                    "type": "string"
+                },
+                "working_dir": {
+                    "description": "WorkingDir 是 Agent 执行工作目录。",
+                    "type": "string"
+                }
+            }
+        },
         "types.AISummary": {
             "type": "object",
             "properties": {
@@ -15664,7 +15700,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "user_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "workspace_path": {
                     "type": "string"
@@ -16760,7 +16797,8 @@ const docTemplate = `{
                 },
                 "id": {
                     "description": "Unique identifier of the user",
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "is_active": {
                     "description": "Tenant ID that the user belongs to\nTenantID uint64 ` + "`" + `json:\"tenant_id\"  gorm:\"index\"` + "`" + `\nWhether the user is active",

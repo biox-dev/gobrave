@@ -24,7 +24,7 @@ func TestBuildTools(t *testing.T) {
 	reg := tool.NewRegistryWith(newEchoTool())
 	a := &copilotAgent{opts: agent.Options{Tools: reg}}
 
-	tools := a.buildTools(nil, 0)
+	tools := a.buildTools(nil, agent.Request{})
 	// echo（注册表工具）+ ask_user（内置提问工具）。
 	if len(tools) != 2 {
 		t.Fatalf("tools = %d, want 2", len(tools))
@@ -61,7 +61,7 @@ func TestBuildToolsNilRegistry(t *testing.T) {
 	a := &copilotAgent{opts: agent.Options{}}
 
 	// 无注册表工具时仍应暴露内置 ask_user 工具。
-	tools := a.buildTools(nil, 0)
+	tools := a.buildTools(nil, agent.Request{})
 	if len(tools) != 1 || tools[0].Name != agent.AskUserToolName {
 		t.Fatalf("tools = %v, want single %q", tools, agent.AskUserToolName)
 	}

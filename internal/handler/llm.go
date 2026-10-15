@@ -1,5 +1,6 @@
 package handler
 
+// 后续废弃
 import (
 	"context"
 	"encoding/json"
@@ -821,12 +822,12 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 	})
 
 	// Build a provider-agnostic request and stream through the unified Agent client.
-	// 注意：本桥接直接调用 Client，不经过 AgentService.applyProfile，因此这里只能携带
-	// 系统提示词模板变量；渲染后的系统提示词由 AgentService 路径负责。
+	// 注意：本桥接直接调用 Client，不经过 AgentService.applyProfile，因此这里只携带运行时
+	// 上下文（含 SystemPromptVars）；渲染后的系统提示词由 AgentService 路径负责。
 	req := agent.Request{
-		Model:            resolvedModel,
-		SystemPromptVars: runtimeCtx.SystemPromptVars,
-		WorkingDir:       runtimeCtx.WorkingDir,
+		Model:          resolvedModel,
+		RuntimeContext: runtimeCtx,
+		WorkingDir:     runtimeCtx.WorkingDir,
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: prompt},
 		},

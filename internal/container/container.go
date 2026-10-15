@@ -119,7 +119,10 @@ func buildSkillStore(cfg *config.Config) *skill.Store {
 // 模型提供商配置表（按模型名索引）从 config.agent.providers 映射进 Options.Providers，
 // 供 Provider 在每次调用时按 Profile.Model 解析出 base_url / api_key 等 LLM 配置。
 // 使用哪个 Agent（Provider）由 Profile.Provider 决定。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry) *agent.Client {
+//
+// runner 是「运行分析节点」的进程级静态服务能力，注入 Options 后由 Provider 在执行工具时
+// 注入工具 ctx（与可序列化的 RuntimeContext 分开，避免服务对象被序列化进 DB）。
+func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner) *agent.Client {
 	opts := agent.Options{}
 
 	if cfg != nil && cfg.Agent != nil {
@@ -137,9 +140,11 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry) *agent.Clien
 		opts.Providers = providers
 	}
 
-	// 注册框架内置工具（get_weather 等），供 Provider 的 tool-call 链路使用。
-	// 后续新增内置工具时在 builtin.All() 中追加即可，无需改动此处。
+	// 注册框架内置工具（get_weather / run_analysis_node 等），供 Provider 的
+	// tool-call 链路使用。后续新增内置工具时在 builtin.All() 中追加即可，无需改动此处。
 	opts.Tools = tool.NewRegistryWith(builtin.All()...)
+	// 进程级服务能力：run_analysis_node 等 builtin 工具在执行期通过它触发节点运行。
+	opts.AnalysisNodeRunner = runner
 
 	return agent.NewClient(registry, opts)
 }
@@ -269,8 +274,11 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	}))
 	must(container.Provide(buildSkillRegistry))
 	must(container.Provide(buildSkillStore))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry) *agent.Client {
-		return buildAgentClient(cfg, registry)
+	// 分析节点运行器：把「运行分析节点 + 读取日志」能力暴露给内置工具 run_analysis_node，
+	// 经 RuntimeContextResolver 注入 RuntimeContext 后传到工具执行期。
+	must(container.Provide(newAnalysisNodeRunner))
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner) *agent.Client {
+		return buildAgentClient(cfg, registry, runner)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。

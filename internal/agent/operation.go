@@ -9,12 +9,13 @@ import "context"
 type OperationType string
 
 const (
-	OperationRead    OperationType = "read"    // 读取文件
-	OperationWrite   OperationType = "write"   // 写入 / 修改文件
-	OperationDelete  OperationType = "delete"  // 删除文件
-	OperationMove    OperationType = "move"    // 移动 / 重命名文件
-	OperationExecute OperationType = "execute" // 执行命令 / 脚本
-	OperationNetwork OperationType = "network" // 网络访问
+	OperationRead         OperationType = "read"          // 读取文件
+	OperationWrite        OperationType = "write"         // 写入 / 修改文件
+	OperationDelete       OperationType = "delete"        // 删除文件
+	OperationMove         OperationType = "move"          // 移动 / 重命名文件
+	OperationExecute      OperationType = "execute"       // 执行命令 / 脚本
+	OperationNetwork      OperationType = "network"       // 网络访问
+	OperationAnalysisNode OperationType = "analysis_node" // 运行分析节点（区别于直接执行 shell / 脚本）
 )
 
 // Operation 描述 Agent 想要执行的一个原子操作。
@@ -81,7 +82,7 @@ type PermissionPolicy interface {
 
 // defaultPermissionPolicy 是框架默认策略：
 //   - network：直接允许；
-//   - read / write / delete / move / execute：需要人工确认；
+//   - read / write / delete / move / execute / analysis_node：需要人工确认；
 //   - 未知类型：保守地要求人工确认。
 type defaultPermissionPolicy struct{}
 
@@ -92,7 +93,7 @@ func (defaultPermissionPolicy) Check(_ context.Context, _ int64, operation Opera
 	switch operation.Type {
 	case OperationNetwork:
 		return DecisionAllow
-	case OperationRead, OperationWrite, OperationDelete, OperationMove, OperationExecute:
+	case OperationRead, OperationWrite, OperationDelete, OperationMove, OperationExecute, OperationAnalysisNode:
 		return DecisionAsk
 	default:
 		return DecisionAsk

@@ -56,6 +56,17 @@ func (r *Registry) Has(name string) bool {
 	return ok
 }
 
+// Definition 按名称返回工具的定义（含 Permission 元信息）。
+//
+// 供上层在执行前读取工具声明的授权动作（如构建权限解析器）使用。
+func (r *Registry) Definition(name string) (Definition, bool) {
+	t, ok := r.Get(name)
+	if !ok {
+		return Definition{}, false
+	}
+	return t.Definition(), true
+}
+
 // List 返回全部工具定义（按名称升序），供暴露给模型。
 func (r *Registry) List() []Definition {
 	r.mu.RLock()

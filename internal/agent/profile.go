@@ -93,9 +93,9 @@ func BuiltinProfiles() []*Profile {
 			Description: "默认配置：不附加领域提示词；注入记忆。",
 			IsDefault:   true,
 			IsBuiltin:   true,
-			// SystemPrompt 为 pongo2 模板：调用方通过 Request.SystemPromptVars 提供变量，
-			// AgentService.applyProfile 渲染后写入真正的系统提示词。
-			SystemPrompt: "{% if workspace_directory %}workspace_directory: {{ workspace_directory }}{% endif %}",
+			// SystemPrompt 为 pongo2 模板：调用方通过 RuntimeContext.SystemPromptVars
+			// 提供变量，AgentService 渲染后写入真正的系统提示词。
+			SystemPrompt: "{% if workspace_directory %}workspace_directory: {{ workspace_directory }}{% endif %}{% if analysis_node_id %}\n## Analysis Node ID: {{ analysis_node_id }}\n运行当前分析节点请调用 run_analysis_node 工具。{% endif %}",
 			Model:        "deepseek-v4-flash",
 			Provider:     ProviderCopilot,
 			Context:      ContextConfig{InjectMemory: true},
@@ -108,7 +108,9 @@ func BuiltinProfiles() []*Profile {
 			Description: "用于撰写生物信息学分析代码：强调代码规范、可复现性与执行约束。",
 			IsBuiltin:   true,
 			SystemPrompt: `你是一名生物信息学数据分析工程师。请输出规范、可复现的分析代码，明确依赖与输入输出；如需执行，优先使用运行时提供的工具，而不是直接调用 shell / Rscript / python 等命令。
-{% if workspace_directory %}workspace_directory: {{ workspace_directory }}{% endif %}{% if script_file_path %}
+{% if workspace_directory %}workspace_directory: {{ workspace_directory }}{% endif %}{% if analysis_node_id %}
+## Analysis Node ID: {{ analysis_node_id }}
+如需运行当前分析节点，请调用 run_analysis_node 工具（analysis_node_id 可留空以运行当前节点）；该工具会等待节点完成后返回执行日志。{% endif %}{% if script_file_path %}
 script_file_path: {{ script_file_path }}
 params_file_path: {{ params_file_path }}
 io_schema_path: {{ io_schema_path }}

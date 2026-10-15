@@ -51,6 +51,16 @@ type Options struct {
 	// Provider 据此向模型暴露工具定义（tool.List()），并通过 ToolRunner /
 	// tool.Executor 执行模型发起的工具调用。为 nil 表示本次调用不启用工具。
 	Tools *tool.Registry `json:"-"`
+
+	// AnalysisNodeRunner 是「运行分析节点」的进程级静态服务能力（可为 nil）。
+	//
+	// 它不是进程/请求状态，只在构建 Client 时注入一次，由 Provider 在执行工具前
+	// 注入工具执行 ctx（见 agent.WithToolRuntimeContext / WithAnalysisNodeRunner），
+	// 供 builtin 的 run_analysis_node 工具使用。
+	//
+	// 注意：该能力不放 RuntimeContext —— RuntimeContext 会随 agent.Request 序列化
+	// 入库，而服务对象不可序列化。
+	AnalysisNodeRunner tool.AnalysisNodeRunner `json:"-"`
 }
 
 // Registry 负责注册与解析 Provider。

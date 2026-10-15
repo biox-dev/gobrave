@@ -255,7 +255,7 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 		WorkingDirectory:    firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
 		Streaming:           copilot.Bool(true),
 		OnPermissionRequest: a.permissionHandler(ctx, rt, req.UserID),
-		Tools:               a.buildTools(rt, req.UserID),
+		Tools:               a.buildTools(rt, req),
 	}
 
 	system := strings.TrimSpace(req.SystemPrompt)
@@ -289,11 +289,18 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 //
 //	ToolInvocation → agent.ToolCall → 输出 tool_call 事件 → 执行 → tool.Result
 //	  → 输出 tool_result 事件 → copilot.ToolResult → 回传给模型
-func (a *copilotAgent) buildTools(rt agent.Runtime, userID int64) []copilot.Tool {
+func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot.Tool {
 	out := make([]copilot.Tool, 0)
 
+	// 工具执行上下文 = 本轮业务事实（SystemPromptVars 等，来自请求）+ 进程级服务能力
+	// （AnalysisNodeRunner，来自 Options）。二者分开注入：前者可序列化、随请求来，后者不可
+	// 序列化、进程内复用。
+	// 注意：copilot provider 计划废弃，此处仅保持与新 API 兼容。
+	rc := agent.ToolRuntimeContextFromRequest(req)
+	runner := a.opts.AnalysisNodeRunner
+
 	if a.opts.Tools != nil {
-		runner := agent.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt).SetUserID(userID)
+		runnerExec := agent.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt).SetUserID(req.UserID)
 		defs := a.opts.Tools.List()
 		for _, def := range defs {
 			name := def.Name
@@ -302,7 +309,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, userID int64) []copilot.Tool
 				Description: def.Description,
 				Parameters:  def.InputSchema,
 				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
-					res := runner.Run(inv.TraceContext, agent.ToolCall{
+					res := runnerExec.Run(agent.WithToolRuntime(inv.TraceContext, rc, runner), agent.ToolCall{
 						ID:        inv.ToolCallID,
 						Name:      name,
 						Arguments: inv.Arguments,
@@ -314,7 +321,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, userID int64) []copilot.Tool
 	}
 
 	// ask_user：内置提问工具，阻塞等待用户在 UI 作答后把答案回填给模型。
-	out = append(out, a.askUserTool(rt, userID))
+	out = append(out, a.askUserTool(rt, req.UserID))
 	return out
 }
 
