@@ -28,6 +28,9 @@ type GetWeatherOutput struct {
 //
 // 同一城市返回确定的温度，便于测试断言。后续接入真实天气服务时，只需替换
 // mockWeather 的内部实现，工具定义与签名保持不变。
+//
+// 该工具需要访问外部天气服务，因此声明 network（fetch）授权：上层在执行前会
+// 先走权限门禁（Runtime.RequestPermission → OperationNetwork）。
 func GetWeather() tool.Tool {
 	return tool.NewFunc("get_weather", "查询指定城市的天气（当前为模拟数据）",
 		tool.Schema("获取天气的入参", map[string]any{
@@ -36,7 +39,7 @@ func GetWeather() tool.Tool {
 		}, "city"),
 		func(_ context.Context, in GetWeatherInput) (GetWeatherOutput, error) {
 			return mockWeather(in), nil
-		})
+		}).WithPermission("fetch", "", "查询外部天气服务")
 }
 
 // conditions 是模拟的天气状况集合。

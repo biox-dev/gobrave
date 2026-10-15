@@ -32,6 +32,11 @@ type Operation struct {
 	// execute
 	Command string `json:"command,omitempty"`
 
+	// Description 是人类可读的操作摘要（如 "Execute command: ls -la" /
+	// "Replace content in file /a/b.go"）。Provider 有更精确的描述时填入，
+	// 供 UI 在批准前展示；为空时前端回退到 Path / Command / Content。
+	Description string `json:"description,omitempty"`
+
 	// Metadata 承载操作相关的扩展信息（如命令参数、网络地址等）。
 	Metadata map[string]any `json:"metadata,omitempty"`
 }

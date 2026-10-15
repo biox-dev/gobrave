@@ -387,18 +387,24 @@ func (a *copilotAgent) permissionHandler(ctx context.Context, rt agent.Runtime, 
 }
 
 // toOperation 将 Copilot 的权限请求映射为框架内的 Operation 描述。
+//
+// Description 填人类可读摘要（Intent），便于 UI 在批准前展示操作意图；
+// Path / Command / Content 仍按类型填充，前端为空时回退到这些字段。
 func toOperation(request copilot.PermissionRequest) agent.Operation {
 	switch request.Kind() {
 	case copilot.PermissionRequestKindRead:
 		if r, ok := request.(*copilot.PermissionRequestRead); ok {
 			return agent.Operation{Type: agent.OperationRead, Path: r.Path,
-				Metadata: map[string]any{"intention": r.Intention},
+				Description: r.Intention,
+				Metadata:    map[string]any{"intention": r.Intention},
 			}
 		}
 	case copilot.PermissionRequestKindWrite:
 		if w, ok := request.(*copilot.PermissionRequestWrite); ok {
 			return agent.Operation{Type: agent.OperationWrite, Path: w.FileName,
-				Content: w.Diff}
+				Content:     w.Diff,
+				Description: fmt.Sprintf("Write file %s", w.FileName),
+			}
 		}
 	case copilot.PermissionRequestKindShell:
 		if s, ok := request.(*copilot.PermissionRequestShell); ok {
@@ -406,9 +412,14 @@ func toOperation(request copilot.PermissionRequest) agent.Operation {
 			if s.HasWriteFileRedirection {
 				typ = agent.OperationWrite
 			}
+			desc := s.Intention
+			if strings.TrimSpace(desc) == "" {
+				desc = s.FullCommandText
+			}
 			return agent.Operation{
-				Type:    typ,
-				Command: s.FullCommandText,
+				Type:        typ,
+				Command:     s.FullCommandText,
+				Description: desc,
 				Metadata: map[string]any{
 					"paths":        s.PossiblePaths,
 					"intention":    s.Intention,
@@ -418,15 +429,21 @@ func toOperation(request copilot.PermissionRequest) agent.Operation {
 		}
 	case copilot.PermissionRequestKindURL:
 		if u, ok := request.(*copilot.PermissionRequestURL); ok {
+			desc := u.Intention
+			if strings.TrimSpace(desc) == "" {
+				desc = fmt.Sprintf("Fetch URL %s", u.URL)
+			}
 			return agent.Operation{
-				Type:     agent.OperationNetwork,
-				Metadata: map[string]any{"url": u.URL, "intention": u.Intention},
+				Type:        agent.OperationNetwork,
+				Description: desc,
+				Metadata:    map[string]any{"url": u.URL, "intention": u.Intention},
 			}
 		}
 	}
 	return agent.Operation{
-		Type:     agent.OperationExecute,
-		Metadata: map[string]any{"kind": string(request.Kind())},
+		Type:        agent.OperationExecute,
+		Description: string(request.Kind()),
+		Metadata:    map[string]any{"kind": string(request.Kind())},
 	}
 }
 

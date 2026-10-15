@@ -25,13 +25,29 @@ var (
 	ErrInvalidArguments = errors.New("tool: invalid arguments")
 )
 
+// Permission 描述一个工具执行所需的授权动作。
+//
+// 它是工具自带的“权限元信息”，由上层（ToolRunner / Provider）在调用前消费，
+// 映射为 Runtime 的 Operation 以走统一的权限门禁。tool 包本身不执行权限判定，
+// 因此这里只做声明，不依赖 agent 包。
+type Permission struct {
+	// Action 是授权动作：execute / write / read / fetch / delete ...
+	Action string
+	// PathFrom 可选：从入参 JSON 中取路径的字段名（如 "path" / "file_path"）。
+	PathFrom string
+	// Description 可选：展示给用户的授权描述；为空时由上层生成默认描述。
+	Description string
+}
+
 // Definition 描述一个工具，用于暴露给模型（function calling 的 tool 定义）。
 //
 // InputSchema 是参数的 JSON Schema（object 类型），模型据此生成调用参数。
+// Permission 为 nil 表示该工具免授权（与内置只读工具语义一致）。
 type Definition struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	InputSchema map[string]any `json:"input_schema"`
+	Permission  *Permission    `json:"permission,omitempty"`
 }
 
 // Tool 是可被 Agent 调用的一个工具。
@@ -61,11 +77,25 @@ type Func[In, Out any] struct {
 //   - description：用途描述（模型据此判断何时使用）；
 //   - inputSchema：In 的 JSON Schema（可用 Schema 构造器生成）；
 //   - fn：实际执行逻辑。
+//
+// 需要授权时，用 WithPermission 链式声明（如 NewFunc(...).WithPermission(...)）。
 func NewFunc[In, Out any](name, description string, inputSchema map[string]any, fn func(context.Context, In) (Out, error)) *Func[In, Out] {
 	return &Func[In, Out]{
 		def: Definition{Name: name, Description: description, InputSchema: inputSchema},
 		fn:  fn,
 	}
+}
+
+// WithPermission 声明工具的授权动作（链式），返回自身便于继续链式调用。
+//
+// 声明后，上层在执行该工具前会先走权限门禁（Runtime.RequestPermission）。
+func (f *Func[In, Out]) WithPermission(action, pathFrom, description string) *Func[In, Out] {
+	f.def.Permission = &Permission{
+		Action:      action,
+		PathFrom:    pathFrom,
+		Description: description,
+	}
+	return f
 }
 
 // Definition 实现 Tool。

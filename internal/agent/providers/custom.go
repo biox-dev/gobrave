@@ -185,11 +185,13 @@ func (a *customAgent) permissionHandler(rt agent.Runtime, userID int64) opencode
 }
 
 // permissionToOperation 把 opencode 的权限请求映射为框架内的 Operation 描述。
+//
+// Description 走 Operation 的一等字段（而非 Metadata），便于 UI 统一展示“这个操作
+// 到底要做什么”——opencode 会填入如 "Execute command: ls -la"、
+// "Replace content in file /a/b.go"、"Fetch content from URL: https://..." 等摘要。
+// diff / file_path 仍放在 Metadata（仅 edit / write 才有，供批准前查看改动）。
 func permissionToOperation(p opencodesdk.PermissionRequest) agent.Operation {
 	meta := map[string]any{"tool": p.ToolName}
-	if p.Description != "" {
-		meta["description"] = p.Description
-	}
 	// opencode 的 edit / write 工具会把 unified diff 放进权限请求的 params，
 	// 透传到 Operation.Metadata，使用户能在批准前先看 diff（而非批准后看 Tool Result）。
 	if diff, filePath := diffFromParams(p.Params); diff != "" {
@@ -199,23 +201,33 @@ func permissionToOperation(p opencodesdk.PermissionRequest) agent.Operation {
 		}
 	}
 
+	desc := strings.TrimSpace(p.Description)
+	path := strings.TrimSpace(p.Path)
+	if path == "" {
+		// opencode 部分工具把路径放在 params 里（Path 为空），从 diff 参数中回填。
+		if _, filePath := diffFromParams(p.Params); filePath != "" {
+			path = filePath
+		}
+	}
+
 	switch strings.ToLower(strings.TrimSpace(p.Action)) {
 	case "execute":
 		return agent.Operation{
-			Type:     agent.OperationExecute,
-			Command:  commandFromParams(p.Params, p.Description),
-			Metadata: meta,
+			Type:        agent.OperationExecute,
+			Command:     commandFromParams(p.Params, p.Description),
+			Description: desc,
+			Metadata:    meta,
 		}
 	case "write", "create", "update", "edit":
-		return agent.Operation{Type: agent.OperationWrite, Path: p.Path, Metadata: meta}
+		return agent.Operation{Type: agent.OperationWrite, Path: path, Description: desc, Metadata: meta}
 	case "delete":
-		return agent.Operation{Type: agent.OperationDelete, Path: p.Path, Metadata: meta}
+		return agent.Operation{Type: agent.OperationDelete, Path: path, Description: desc, Metadata: meta}
 	case "read":
-		return agent.Operation{Type: agent.OperationRead, Path: p.Path, Metadata: meta}
+		return agent.Operation{Type: agent.OperationRead, Path: path, Description: desc, Metadata: meta}
 	case "fetch":
-		return agent.Operation{Type: agent.OperationNetwork, Metadata: meta}
+		return agent.Operation{Type: agent.OperationNetwork, Description: desc, Metadata: meta}
 	default:
-		return agent.Operation{Type: agent.OperationExecute, Metadata: meta}
+		return agent.Operation{Type: agent.OperationExecute, Description: desc, Metadata: meta}
 	}
 }
 
@@ -344,11 +356,18 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, userID int64) []opencodes
 		exec := tool.NewExecutor(a.opts.Tools)
 		for _, def := range a.opts.Tools.List() {
 			name := def.Name
-			out = append(out, hostTool(def.Name, def.Description, def.InputSchema,
+			ht := hostTool(def.Name, def.Description, def.InputSchema,
 				func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
 					res := exec.Execute(ctx, tool.Call{ID: call.ID, Name: name, Arguments: json.RawMessage(call.Input)})
 					return opencodesdk.HostToolResult{Content: res.Content, IsError: res.IsError}
-				}))
+				})
+			// 工具自带权限元信息（tool.Definition.Permission）时，声明为 opencode 宿主工具的
+			// 授权动作：执行前会走权限门禁 → SDK PermissionHandler → Runtime.RequestPermission。
+			// 未声明的工具默认免授权（与内置只读工具语义一致）。
+			if def.Permission != nil {
+				ht = withPermission(ht, def.Permission.Action, def.Permission.PathFrom, def.Permission.Description)
+			}
+			out = append(out, ht)
 		}
 	}
 
@@ -389,6 +408,17 @@ func hostTool(name, description string, schema map[string]any, run func(ctx cont
 			return run(ctx, call), nil
 		},
 	}
+}
+
+// withPermission 声明宿主工具的授权动作（链式），配置后该工具执行前会走
+// opencode 的权限门禁 → SDK PermissionHandler → Runtime.RequestPermission。
+func withPermission(t opencodesdk.HostTool, action, pathFrom, description string) opencodesdk.HostTool {
+	t.Permission = &opencodesdk.HostToolPermission{
+		Action:      action,
+		PathFrom:    pathFrom,
+		Description: description,
+	}
+	return t
 }
 
 // splitInputSchema 把 gobrave 的完整 object JSON Schema 拆分为 opencode 宿主工具所需的
