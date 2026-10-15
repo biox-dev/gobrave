@@ -50,7 +50,7 @@ func RunAnalysisNode() tool.Tool {
 		"运行指定（或当前上下文）的分析节点，等待其完成后返回节点的执行日志。用于触发一次计算并检查其运行输出。",
 		tool.Schema("运行分析节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("要运行的分析节点 ID（字符串以保精度）。留空则运行当前上下文中的分析节点。"),
-			"timeout_seconds":  tool.IntegerProperty("等待节点完成的超时（秒），默认 600。"),
+			// "timeout_seconds":  tool.IntegerProperty("等待节点完成的超时（秒），默认 600。"),
 		}),
 		func(ctx context.Context, in RunAnalysisNodeInput) (RunAnalysisNodeOutput, error) {
 			rc := tool.RuntimeContextFrom(ctx)
