@@ -77,18 +77,19 @@ type agentEventsQuery struct {
 }
 
 type chatRequest struct {
-	ConversationID string         `json:"conversation_id"`            // 为空则新建会话
-	Message        string         `json:"message" binding:"required"` // 本轮用户输入
-	Provider       string         `json:"provider"`
-	Model          string         `json:"model"`
-	ProfileID      int64          `json:"profile_id,string"` // AgentProfile ID（为空取默认；实际以当前用户配置为准）
-	WorkingDir     string         `json:"working_dir"`
-	Env            map[string]any `json:"env"` // 业务上下文 {id,type}，用于解析系统提示词模板变量与工作目录
+	ConversationID string `json:"conversation_id"`            // 为空则新建会话
+	Message        string `json:"message" binding:"required"` // 本轮用户输入
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	ProfileID      int64  `json:"profile_id,string"` // AgentProfile ID（为空取默认；实际以当前用户配置为准）
+	WorkingDir     string `json:"working_dir"`
 }
 
-type describeEnvRequest struct {
-	Env map[string]any `json:"env"` // 业务上下文 {id,type}
-}
+// describeEnvRequest 是解析业务上下文的请求体（无字段）。
+//
+// 业务上下文（llmEnv）不再由前端传入：它由业务页面通过 /auth/agent-env 写入当前
+// 用户记录（AgentConfig.EnvID / EnvType），后端直接读取当前登录用户的配置解析。
+type describeEnvRequest struct{}
 
 // ---- 分页请求结构（沿用 types.Pagination，与 Analysis 的分页接口保持一致） ----
 
@@ -249,9 +250,11 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	// Profile 只能来自当前登录用户，忽略请求体中的 profile。
 	profileID := user.AgentConfig.ProfileID
 
-	// 解析业务上下文（llmEnv）→ 系统提示词模板变量 + 工作目录。
+	// 业务上下文（llmEnv）同样只能来自当前登录用户：由业务页面调用 /auth/agent-env
+	// 写入 user.AgentConfig.EnvID / EnvType，这里读取用户配置解析（不再接收请求体 env）。
+	// 解析结果 → 系统提示词模板变量 + 工作目录。
 	// 系统提示词本身不在这里拼装：它由 AgentService 依据 Profile 模板 + 这些变量渲染。
-	rc, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), userID, req.Env)
+	rc, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), userID, user.AgentConfig.Env())
 	if rcErr != nil {
 		handleAgentError(c, rcErr, "failed to resolve runtime context")
 		return
@@ -301,11 +304,10 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 
 // DescribeEnv godoc
 // @Summary      解析当前对话的业务上下文
-// @Description  根据 env{id,type} 返回人类可读的上下文名称与工作目录，供前端展示当前对话环境
+// @Description  读取当前登录用户的 AgentConfig.EnvID/EnvType，返回人类可读的上下文名称与工作目录，供前端展示当前对话环境
 // @Tags         Agent
 // @Accept       json
 // @Produce      json
-// @Param        request  body      handler.describeEnvRequest  true  "业务上下文"
 // @Success      200      {object}  RuntimeContextInfo
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
@@ -315,12 +317,6 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 func (h *AgentHandler) DescribeEnv(c *gin.Context) {
 	user, ok := getCurrentUser(c)
 	if !ok {
-		return
-	}
-
-	var req describeEnvRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
 		return
 	}
 
@@ -334,7 +330,8 @@ func (h *AgentHandler) DescribeEnv(c *gin.Context) {
 	if profileID == 0 {
 		profileID = agent.BuiltinDefaultProfileID
 	}
-	info, err := h.runtimeCtx.Describe(c.Request.Context(), user.ID, profileID, req.Env)
+	// 业务上下文（llmEnv）从当前用户配置读取，不再接收前端传入的 env。
+	info, err := h.runtimeCtx.Describe(c.Request.Context(), user.ID, profileID, user.AgentConfig.Env())
 	if err != nil {
 		handleAgentError(c, err, "failed to describe runtime env")
 		return

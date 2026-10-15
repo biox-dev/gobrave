@@ -185,7 +185,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "根据 env{id,type} 返回人类可读的上下文名称与工作目录，供前端展示当前对话环境",
+                "description": "读取当前登录用户的 AgentConfig.EnvID/EnvType，返回人类可读的上下文名称与工作目录，供前端展示当前对话环境",
                 "consumes": [
                     "application/json"
                 ],
@@ -196,17 +196,6 @@ const docTemplate = `{
                     "Agent"
                 ],
                 "summary": "解析当前对话的业务上下文",
-                "parameters": [
-                    {
-                        "description": "业务上下文",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.describeEnvRequest"
-                        }
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -2726,7 +2715,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "修改当前登录用户的 Agent 配置（Profile + 权限策略）",
+                "description": "修改当前登录用户的 Agent 配置（Profile + 权限策略 + 当前业务上下文）",
                 "consumes": [
                     "application/json"
                 ],
@@ -2746,10 +2735,70 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "properties": {
+                                "env_id": {
+                                    "type": "string"
+                                },
+                                "env_type": {
+                                    "type": "string"
+                                },
                                 "permissions": {
                                     "type": "object"
                                 },
-                                "profile": {
+                                "profile_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "更新成功",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/agent-env": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "只修改当前登录用户的 AgentConfig.EnvID / EnvType，用于业务页面进入时绑定当前上下文；不触碰 Profile 与权限",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "认证"
+                ],
+                "summary": "更新当前用户的业务上下文（llmEnv）",
+                "parameters": [
+                    {
+                        "description": "业务上下文",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "env_id": {
+                                    "type": "string"
+                                },
+                                "env_type": {
                                     "type": "string"
                                 }
                             }
@@ -13126,6 +13175,14 @@ const docTemplate = `{
         "agent.UserAgentConfig": {
             "type": "object",
             "properties": {
+                "env_id": {
+                    "description": "EnvID 是业务上下文对象 ID（如 project report id / analysis node id / analysis id）。",
+                    "type": "string"
+                },
+                "env_type": {
+                    "description": "EnvType 是业务上下文类型（见 handler 的 EnvType* 枚举，如 \"projectReport\" / \"analysisNode\"）。",
+                    "type": "string"
+                },
                 "permissions": {
                     "type": "object",
                     "additionalProperties": {
@@ -13987,11 +14044,6 @@ const docTemplate = `{
                     "description": "为空则新建会话",
                     "type": "string"
                 },
-                "env": {
-                    "description": "业务上下文 {id,type}，用于解析系统提示词模板变量与工作目录",
-                    "type": "object",
-                    "additionalProperties": {}
-                },
                 "message": {
                     "description": "本轮用户输入",
                     "type": "string"
@@ -14365,16 +14417,6 @@ const docTemplate = `{
                 "project_id": {
                     "type": "string",
                     "example": "0"
-                }
-            }
-        },
-        "handler.describeEnvRequest": {
-            "type": "object",
-            "properties": {
-                "env": {
-                    "description": "业务上下文 {id,type}",
-                    "type": "object",
-                    "additionalProperties": {}
                 }
             }
         },

@@ -366,13 +366,13 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 
 // UpdateAgentConfig godoc
 // @Summary      更新当前用户的 Agent 配置
-// @Description  修改当前登录用户的 Agent 配置（Profile + 权限策略）
+// @Description  修改当前登录用户的 Agent 配置（Profile + 权限策略 + 当前业务上下文）
 // @Tags         认证
 // @Accept       json
 // @Produce      json
-// @Param        request  body      object{profile=string,permissions=object}  true  "Agent 配置"
-// @Success      200      {object}  map[string]interface{}                     "更新成功"
-// @Failure      400      {object}  errors.AppError                            "请求参数错误"
+// @Param        request  body      object{profile_id=string,permissions=object,env_id=string,env_type=string}  true  "Agent 配置"
+// @Success      200      {object}  map[string]interface{}                                                     "更新成功"
+// @Failure      400      {object}  errors.AppError                                                            "请求参数错误"
 // @Security     Bearer
 // @Router       /auth/agent-config [post]
 func (h *AuthHandler) UpdateAgentConfig(c *gin.Context) {
@@ -389,6 +389,9 @@ func (h *AuthHandler) UpdateAgentConfig(c *gin.Context) {
 	var req struct {
 		ProfileID   int64                                            `json:"profile_id,string"`
 		Permissions map[agent.OperationType]agent.PermissionDecision `json:"permissions"`
+		// EnvID / EnvType 为当前业务上下文（llmEnv）。EnvType 为空表示清空上下文。
+		EnvID   string `json:"env_id"`
+		EnvType string `json:"env_type"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logger.Error(ctx, "Failed to parse agent config update request", err)
@@ -401,6 +404,8 @@ func (h *AuthHandler) UpdateAgentConfig(c *gin.Context) {
 	if req.Permissions != nil {
 		user.AgentConfig.Permissions = req.Permissions
 	}
+	user.AgentConfig.EnvID = strings.TrimSpace(req.EnvID)
+	user.AgentConfig.EnvType = strings.TrimSpace(req.EnvType)
 	if err := h.userService.UpdateUser(ctx, user); err != nil {
 		logger.Errorf(ctx, "Failed to update user agent config: %v", err)
 		appErr := errors.NewInternalServerError("Failed to update agent config").WithDetails(err.Error())
@@ -412,6 +417,57 @@ func (h *AuthHandler) UpdateAgentConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Agent config updated",
+		"user":    user.ToUserInfo(),
+	})
+}
+
+// UpdateAgentEnv godoc
+// @Summary      更新当前用户的业务上下文（llmEnv）
+// @Description  只修改当前登录用户的 AgentConfig.EnvID / EnvType，用于业务页面进入时绑定当前上下文；不触碰 Profile 与权限
+// @Tags         认证
+// @Accept       json
+// @Produce      json
+// @Param        request  body      object{env_id=string,env_type=string}  true  "业务上下文"
+// @Success      200      {object}  map[string]interface{}                 "更新成功"
+// @Failure      400      {object}  errors.AppError                        "请求参数错误"
+// @Security     Bearer
+// @Router       /auth/agent-env [post]
+func (h *AuthHandler) UpdateAgentEnv(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	user, err := h.userService.GetCurrentUser(ctx)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to get current user: %v", err)
+		appErr := errors.NewUnauthorizedError("Failed to get user information").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	var req struct {
+		EnvID   string `json:"env_id"`
+		EnvType string `json:"env_type"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Error(ctx, "Failed to parse agent env update request", err)
+		appErr := errors.NewValidationError("Invalid agent env update request").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	// 只改业务上下文，Profile 与权限保持不变。
+	user.AgentConfig.EnvID = strings.TrimSpace(req.EnvID)
+	user.AgentConfig.EnvType = strings.TrimSpace(req.EnvType)
+	if err := h.userService.UpdateUser(ctx, user); err != nil {
+		logger.Errorf(ctx, "Failed to update user agent env: %v", err)
+		appErr := errors.NewInternalServerError("Failed to update agent env").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	logger.Infof(ctx, "User agent env updated: %d env_type=%s", user.ID, user.AgentConfig.EnvType)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Agent env updated",
 		"user":    user.ToUserInfo(),
 	})
 }

@@ -517,6 +517,14 @@ definitions:
     - TaskCanceled
   agent.UserAgentConfig:
     properties:
+      env_id:
+        description: EnvID 是业务上下文对象 ID（如 project report id / analysis node id / analysis
+          id）。
+        type: string
+      env_type:
+        description: EnvType 是业务上下文类型（见 handler 的 EnvType* 枚举，如 "projectReport" /
+          "analysisNode"）。
+        type: string
       permissions:
         additionalProperties:
           $ref: '#/definitions/agent.PermissionDecision'
@@ -1144,10 +1152,6 @@ definitions:
       conversation_id:
         description: 为空则新建会话
         type: string
-      env:
-        additionalProperties: {}
-        description: 业务上下文 {id,type}，用于解析系统提示词模板变量与工作目录
-        type: object
       message:
         description: 本轮用户输入
         type: string
@@ -1411,13 +1415,6 @@ definitions:
         type: string
     required:
     - project_id
-    type: object
-  handler.describeEnvRequest:
-    properties:
-      env:
-        additionalProperties: {}
-        description: 业务上下文 {id,type}
-        type: object
     type: object
   handler.getSettingResponse:
     properties:
@@ -3631,14 +3628,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 根据 env{id,type} 返回人类可读的上下文名称与工作目录，供前端展示当前对话环境
-      parameters:
-      - description: 业务上下文
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.describeEnvRequest'
+      description: 读取当前登录用户的 AgentConfig.EnvID/EnvType，返回人类可读的上下文名称与工作目录，供前端展示当前对话环境
       produces:
       - application/json
       responses:
@@ -5240,7 +5230,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 修改当前登录用户的 Agent 配置（Profile + 权限策略）
+      description: 修改当前登录用户的 Agent 配置（Profile + 权限策略 + 当前业务上下文）
       parameters:
       - description: Agent 配置
         in: body
@@ -5248,9 +5238,13 @@ paths:
         required: true
         schema:
           properties:
+            env_id:
+              type: string
+            env_type:
+              type: string
             permissions:
               type: object
-            profile:
+            profile_id:
               type: string
           type: object
       produces:
@@ -5268,6 +5262,41 @@ paths:
       security:
       - Bearer: []
       summary: 更新当前用户的 Agent 配置
+      tags:
+      - 认证
+  /auth/agent-env:
+    post:
+      consumes:
+      - application/json
+      description: 只修改当前登录用户的 AgentConfig.EnvID / EnvType，用于业务页面进入时绑定当前上下文；不触碰 Profile
+        与权限
+      parameters:
+      - description: 业务上下文
+        in: body
+        name: request
+        required: true
+        schema:
+          properties:
+            env_id:
+              type: string
+            env_type:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 更新当前用户的业务上下文（llmEnv）
       tags:
       - 认证
   /auth/change-password:
