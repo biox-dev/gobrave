@@ -9,6 +9,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/dag"
+	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -18,12 +19,20 @@ import (
 // 的业务能力暴露给内置工具 run_analysis_node。
 //
 // 它与 AnalysisHandler.RunAnalysisNodeWithID / LLMHandler.runAnalysisNodeByID 语义一致：
-// 重置节点状态 → 提交异步执行 → 轮询等待终态 → 读取 command.log 内容。
+// 重置节点状态 → 提交异步执行 → **订阅节点完成事件**等待终态 → 读取 command.log 内容。
+//
+// 等待终态不再依赖高频轮询：NodeCompletionCoordinator 在完成节点后会通过共享 event.Bus
+// 发布 dag.node.completed / dag.node.failed（见 publishNodeResult），这里经进程级唯一的
+// EventRouter 订阅这些事件，事件到达即读取节点终态。为兜底「事件已发布但本 runner 尚未
+// 注册 sink」以及订阅之外的异常路径，仍保留一个低频（见 reconcileInterval）状态兜底轮询。
 type analysisNodeRunner struct {
 	analysisSvc      interfaces.AnalysisService
 	nodeOrchestrator interfaces.NodeOrchestrator
+	// router 是进程级运行时事件路由器；订阅它即可收到 NodeCompletionCoordinator
+	// publishNodeResult 发出的节点完成 / 失败事件。为 nil 时退化为纯状态轮询。
+	router *dagruntime.EventRouter
 
-	// pollInterval 是轮询节点状态的间隔（默认 3s）。
+	// pollInterval 是状态兜底轮询的间隔；正常路径由事件唤醒，轮询仅用于兜底。
 	pollInterval time.Duration
 	// defaultTimeout 是未显式指定超时时的默认等待时长（默认 10 分钟）。
 	defaultTimeout time.Duration
@@ -31,16 +40,22 @@ type analysisNodeRunner struct {
 	maxLogBytes int
 }
 
+// reconcileInterval 是订阅到事件之外的兜底状态轮询间隔。事件路径负责及时唤醒，
+// 这个间隔只用于事件丢失 / 订阅注册与运行存在竞态时的兜底，因此可以放得很长。
+const reconcileInterval = 5 * time.Minute
+
 // newAnalysisNodeRunner 构建分析节点运行器并注入内置工具体系。
 func newAnalysisNodeRunner(
 	analysisSvc interfaces.AnalysisService,
 	nodeOrchestrator interfaces.NodeOrchestrator,
+	router *dagruntime.EventRouter,
 ) tool.AnalysisNodeRunner {
 	return &analysisNodeRunner{
 		analysisSvc:      analysisSvc,
 		nodeOrchestrator: nodeOrchestrator,
-		pollInterval:     3 * time.Second,
-		defaultTimeout:   10 * time.Minute,
+		router:           router,
+		pollInterval:     reconcileInterval,
+		defaultTimeout:   60 * time.Minute,
 		maxLogBytes:      12000,
 	}
 }
@@ -99,9 +114,53 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	return r.waitForCompletion(ctx, nodeID, logPath, timeout)
 }
 
-// waitForCompletion 轮询节点状态直至终态或超时，返回最终结果（含日志）。
+// waitForCompletion 等待节点进入终态或超时，返回最终结果（含日志）。
+//
+// 终态判定有两条通道，谁先到谁先返回：
+//  1. 事件（主路径）：订阅 EventRouter 上针对本节点 analysis_node_id 的
+//     dag.node.completed / dag.node.failed 事件（即 NodeCompletionCoordinator.
+//     publishNodeResult 发出的那两条），收到后立即读取节点并判定终态。
+//  2. 状态兜底轮询（次路径）：按 pollInterval 读取节点状态，仅在事件丢失 /
+//     订阅注册与运行存在竞态时兜底。
+//
+// 每次被唤醒都会重新读取节点并检查终态，因此事件只是「提前唤醒信号」，最终是否结束
+// 仍以节点持久化状态为准，避免把事件与状态不一致的情形误判为已完成。
 func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64, logPath string, timeout time.Duration) (tool.AnalysisNodeRunResult, error) {
 	deadline := time.Now().Add(timeout)
+
+	node, err := r.analysisSvc.GetAnalysisNodeByID(ctx, nodeID)
+	if err != nil {
+		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to get analysis node: %w", err)
+	}
+	analysisID := node.AnalysisID
+	// 注意：AnalysisNode.ID 是主键（int64），而 AnalysisNode.AnalysisNodeID 是业务
+	// 字符串 ID；RuntimeEvent.AnalysisNodeID 的类型是 int64，NodeCompletionCoordinator.
+	// publishNodeResult 填入的正是 node.ID，因此这里也按主键匹配。
+	primaryKey := node.ID
+
+	// 订阅 NodeCompletionCoordinator.publishNodeResult 发出的节点完成 / 失败事件。
+	// 过滤器只放行本节点的这两类事件，避免无关节点 / 事件唤醒本 runner。
+	var (
+		nodeEvents <-chan dagruntime.RuntimeEvent
+		unsub      func()
+	)
+	if r.router != nil {
+		sink := r.router.RegisterWithFilter(analysisID, func(evt dagruntime.RuntimeEvent) bool {
+			if evt.AnalysisNodeID != primaryKey {
+				return false
+			}
+			switch strings.TrimSpace(evt.Name) {
+			case dagruntime.EventNodeCompleted, dagruntime.EventNodeFailed:
+				return true
+			default:
+				return false
+			}
+		})
+		nodeEvents = sink.Events()
+		unsub = func() { r.router.Unregister(analysisID) }
+		defer unsub()
+	}
+
 	ticker := time.NewTicker(r.pollInterval)
 	defer ticker.Stop()
 
@@ -113,16 +172,21 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 				Status: "canceled",
 				Log:    readAnalysisNodeLog(logPath, r.maxLogBytes),
 			}, ctx.Err()
+		case <-nodeEvents:
+			// 节点完成事件到达：读取最新状态并判定终态（见下方 done 分支的兜底）。
 		case <-ticker.C:
-			node, err := r.analysisSvc.GetAnalysisNodeByID(ctx, nodeID)
-			if err != nil {
-				logger.Warnf(ctx, "[analysisNodeRunner] failed to get node %d: %v", nodeID, err)
-				continue
-			}
+			// 兜底轮询：仅用于事件未送达时的最终判定。
+		}
+
+		node, err := r.analysisSvc.GetAnalysisNodeByID(ctx, nodeID)
+		if err != nil {
+			// 读取失败不应直接放弃：事件路径可能已把节点推进到终态，交由下一轮
+			// 事件 / 兜底轮询重试；超时兜底仍在循环尾部生效。
+			logger.Warnf(ctx, "[analysisNodeRunner] failed to get node %d: %v", nodeID, err)
+		} else {
 			if lp := strings.TrimSpace(node.LogPath); lp != "" {
 				logPath = lp
 			}
-
 			status := strings.ToLower(strings.TrimSpace(node.Status))
 			if isAnalysisNodeTerminal(status) {
 				log := readAnalysisNodeLog(logPath, r.maxLogBytes)
@@ -142,14 +206,14 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 				}
 				return result, nil
 			}
+		}
 
-			if time.Now().After(deadline) {
-				return tool.AnalysisNodeRunResult{
-					NodeID: nodeID,
-					Status: "timeout",
-					Log:    readAnalysisNodeLog(logPath, r.maxLogBytes),
-				}, fmt.Errorf("timeout after %s waiting for analysis node to complete", timeout)
-			}
+		if time.Now().After(deadline) {
+			return tool.AnalysisNodeRunResult{
+				NodeID: nodeID,
+				Status: "timeout",
+				Log:    readAnalysisNodeLog(logPath, r.maxLogBytes),
+			}, fmt.Errorf("timeout after %s waiting for analysis node to complete", timeout)
 		}
 	}
 }

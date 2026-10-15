@@ -276,6 +276,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(buildSkillStore))
 	// 分析节点运行器：把「运行分析节点 + 读取日志」能力暴露给内置工具 run_analysis_node，
 	// 经 RuntimeContextResolver 注入 RuntimeContext 后传到工具执行期。
+	// 注入 EventRouter 后，等待节点完成改为订阅 NodeCompletionCoordinator 发布的
+	// dag.node.completed / dag.node.failed 事件，仅保留低频状态轮询兜底。
 	must(container.Provide(newAnalysisNodeRunner))
 	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner) *agent.Client {
 		return buildAgentClient(cfg, registry, runner)
