@@ -2,7 +2,6 @@ package prepare
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -129,12 +128,12 @@ func (QmdScriptBuilder) Name() string { return "qmd" }
 func (QmdScriptBuilder) Build(node *types.AnalysisNode, scriptPath, scriptWorkspacePath string, _ string, _ map[string]any) (string, error) {
 	// quarto preview chapter_5.qmd --to md --no-watch-inputs --no-browse
 	// 判断node.WorkspaceDir 是否存在 main.qmd文件，不存在创建 链接 ln -s scriptPath main.qmd
-	mainFile := filepath.Join(node.WorkspaceDir, "main.qmd")
-	if _, err := os.Stat(mainFile); os.IsNotExist(err) {
-		if err := os.Symlink(scriptPath, mainFile); err != nil {
-			return "", fmt.Errorf("failed to create symlink for main.qmd: %w", err)
-		}
-	}
+	// mainFile := filepath.Join(node.WorkspaceDir, "main.qmd")
+	// if _, err := os.Stat(mainFile); os.IsNotExist(err) {
+	// 	if err := os.Symlink(scriptPath, mainFile); err != nil {
+	// 		return "", fmt.Errorf("failed to create symlink for main.qmd: %w", err)
+	// 	}
+	// }
 	envFile := utils.GetAnalysisNodeEnvFile(node.WorkspaceDir)
 
 	outputFileName := "output.md"

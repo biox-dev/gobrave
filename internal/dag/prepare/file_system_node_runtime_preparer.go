@@ -125,28 +125,18 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	// script_dir 仅用于构造 run script，不写入 params.json。
 	paramsPayload["script_dir"] = scriptDir
 
+	// 软链脚本：若已存在但目标失效（或指向其它脚本），先删除再重建。
 	scriptWorkspacePath := filepath.Join(node.WorkspaceDir, scriptFile)
-	if _, err := os.Lstat(scriptWorkspacePath); err != nil {
-		if os.IsNotExist(err) {
-			if err := os.Symlink(scriptPath, scriptWorkspacePath); err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
+	if err := ensureSymlink(scriptWorkspacePath, scriptPath); err != nil {
+		return fmt.Errorf("symlink script %s -> %s failed: %w", scriptWorkspacePath, scriptPath, err)
 	}
 
-	// synlink io_schema.json
+	// synlink io_schema.json：同样在目标失效或指向错误时重建。
 	ioSchemaPath := filepath.Join(scriptDir, "io_schema.json")
 	scriptWorkspaceIoSchemaPath := filepath.Join(node.WorkspaceDir, "io_schema.json")
 	if _, err := os.Lstat(ioSchemaPath); err == nil {
-		if _, err := os.Lstat(scriptWorkspaceIoSchemaPath); err != nil {
-
-			if os.IsNotExist(err) {
-				if err := os.Symlink(ioSchemaPath, scriptWorkspaceIoSchemaPath); err != nil {
-					return err
-				}
-			}
+		if err := ensureSymlink(scriptWorkspaceIoSchemaPath, ioSchemaPath); err != nil {
+			return fmt.Errorf("symlink io_schema %s -> %s failed: %w", scriptWorkspaceIoSchemaPath, ioSchemaPath, err)
 		}
 	}
 	// 在 node.WorkspaceDir/env.sh 中写入
@@ -518,6 +508,40 @@ func mainFileByScriptType(scriptType string) string {
 	default:
 		return "main.sh"
 	}
+}
+
+// ensureSymlink 确保 linkPath 是一个指向 targetPath 的有效软链：
+//   - 链接不存在：创建软链；
+//   - 链接已存在、目标有效且指向 targetPath：保持不变；
+//   - 链接已失效（目标不存在）或指向其它目标：删除后重建；
+//   - 链接位置上已存在普通文件/目录：不覆盖，直接返回 nil（避免误删用户文件）。
+func ensureSymlink(linkPath, targetPath string) error {
+	info, err := os.Lstat(linkPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return os.Symlink(targetPath, linkPath)
+		}
+		return err
+	}
+
+	// 已存在的普通文件/目录不是软链，保持原有语义，不做覆盖。
+	if info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+
+	// 校验软链：指向的目标路径一致，且目标仍然存在，才算有效。
+	current, err := os.Readlink(linkPath)
+	if err == nil && current == targetPath {
+		if _, statErr := os.Stat(linkPath); statErr == nil {
+			return nil
+		}
+	}
+
+	// 失效链接或指向错误路径，删除后重建。
+	if err := os.Remove(linkPath); err != nil {
+		return err
+	}
+	return os.Symlink(targetPath, linkPath)
 }
 
 func cleanDirContents(outputDir, prefix string) error {
