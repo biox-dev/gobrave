@@ -232,20 +232,28 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 
 // ProjectReportItemVar 是暴露给 pongo2 模板遍历的项目报告条目变量。
 // 每个条目包含名称（Name）、内容（Content）与来源类型（OwnerType）：
-//   - analysis / analysis_node：名称取 AnalysisName / NodeName，内容为输出目录；
+//   - analysis / analysis_node：名称取 AnalysisName / NodeName，内容为
+//     Analysis 工作目录 / 节点输出目录下的 output.md 文件路径；
 //   - ai_summary：名称取摘要标题，内容为摘要文件路径（见 utils.GetAISummaryFile）；
 //   - custom：名称取用户编辑的标题，内容为用户编辑的正文。
 //
-// OwnerType 为条目原始来源类型（types.ProjectReportItemOwnerType），供模板按来源
-// 区分处理（如 {{ if eq item.OwnerType "ai_summary" }}）。
+// OwnerType 为条目原始来源类型（取值见 types.ProjectReportItemOwnerType），供模板按来源
+// 区分处理（如 {% if item.OwnerType == "ai_summary" %}）。
 //
 // 字段刻意不加 json tag：SystemPromptVars 会随 agent_tasks.request 一起 JSON 往返，
 // 不加 tag 时字段名即 JSON 键（Name/Content/OwnerType），无论内存态还是反序列化后，
 // 模板都能统一用 {{ item.Name }} / {{ item.Content }} / {{ item.OwnerType }} 访问。
+//
+// OwnerType 特意声明为 string，而不是 types.ProjectReportItemOwnerType：pongo2 的
+// `==` 最终走 Go 的接口相等比较（见 pongo2.Value.EqualValueTo，仅整数/时间有特例），
+// 动态类型不同即判定不相等，具名字符串类型永远不等于字符串字面量。一旦这里保留具名
+// 类型，内存态渲染时 {% if item.OwnerType == "custom" %} 恒为假，循环体整段不输出；
+// 而经 JSON 往返后的副本（agent_tasks 恢复）却变回 string 又能命中，同一模板出现
+// 「首次不输出、恢复后正常」的诡异差异。构建时用 string(...) 显式转换即规避此坑。
 type ProjectReportItemVar struct {
 	Name      string
 	Content   string
-	OwnerType types.ProjectReportItemOwnerType
+	OwnerType string
 }
 
 // resolveProjectReportItemVars 读取报告下的全部条目并解析为模板变量列表。
@@ -272,9 +280,18 @@ func (r *RuntimeContextResolver) resolveProjectReportItemVars(ctx context.Contex
 			logger.Warnf(ctx, "[RuntimeContext] skip project report item, item_id=%d owner_type=%s owner_id=%d", item.ID, item.OwnerType, item.OwnerID)
 			continue
 		}
-		result = append(result, ProjectReportItemVar{Name: name, Content: content, OwnerType: item.OwnerType})
+		result = append(result, ProjectReportItemVar{Name: name, Content: content, OwnerType: string(item.OwnerType)})
 	}
 	return result, nil
+}
+
+// outputMarkdownPath 拼接 owner（Analysis / AnalysisNode）输出目录下的 output.md 路径。
+// 目录为空时返回空串，避免模板拿到悬空的 "output.md"（与 utils 派生路径的空值口径一致）。
+func outputMarkdownPath(dir string) string {
+	if strings.TrimSpace(dir) == "" {
+		return ""
+	}
+	return filepath.Join(dir, types.DefaultProjectReportFilename)
 }
 
 // resolveProjectReportItemVar 按 owner 类型解析单个报告条目的名称与内容
@@ -287,14 +304,17 @@ func (r *RuntimeContextResolver) resolveProjectReportItemVar(ctx context.Context
 		if err != nil {
 			return "", "", false
 		}
-		return analysis.AnalysisName, analysis.WorkspaceDir, true
+		// 内容给到 Analysis 工作目录下的 output.md，而不是目录本身：报告撰写
+		// 模板需要的是可直接读取的结果文件路径（与 ai_summary 条目的口径一致）。
+		return analysis.AnalysisName, outputMarkdownPath(analysis.WorkspaceDir), true
 
 	case types.ProjectReportItemOwnerAnalysisNode:
 		node, err := r.analysisSvc.GetAnalysisNodeByID(ctx, item.OwnerID)
 		if err != nil {
 			return "", "", false
 		}
-		return node.NodeName, node.OutputDir, true
+		// 同上：节点输出目录下的 output.md。
+		return node.NodeName, outputMarkdownPath(node.OutputDir), true
 
 	case types.ProjectReportItemOwnerAISummary:
 		if r.summarySvc == nil {
