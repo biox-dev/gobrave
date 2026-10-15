@@ -389,14 +389,22 @@ func (r *analysisRepository) ListAnalysisNodesByProjectIDAndStatus(ctx context.C
 	return r.resolveNodes(items), nil
 }
 
+// analysisNodeWithScriptName 是 PageAnalysisNodesByProjectID 的查询载体：
+// analysis_nodes 的全部列，外加按 script_id join pipeline_components 取到的脚本名称。
+// 内嵌 AnalysisNode 让 gorm 复用其列映射，ScriptName 只在这个 join 查询里出现。
+type analysisNodeWithScriptName struct {
+	types.AnalysisNode
+	ScriptName string `gorm:"column:script_name"`
+}
+
 func (r *analysisRepository) PageAnalysisNodesByProjectID(ctx context.Context, pagination *types.Pagination, projectID, scriptID, analysisID int64) ([]*types.AnalysisNode, int64, error) {
-	items := make([]*types.AnalysisNode, 0)
-	query := r.db.WithContext(ctx).Model(&types.AnalysisNode{}).Where("project_id = ?", projectID)
+	// join 之后 analysis_nodes 与 pipeline_components 都有 project_id 列，条件必须带表名前缀。
+	query := r.db.WithContext(ctx).Table("analysis_nodes").Where("analysis_nodes.project_id = ?", projectID)
 	if scriptID != 0 {
-		query = query.Where("script_id = ?", scriptID)
+		query = query.Where("analysis_nodes.script_id = ?", scriptID)
 	}
 	if analysisID != 0 {
-		query = query.Where("analysis_id = ?", analysisID)
+		query = query.Where("analysis_nodes.analysis_id = ?", analysisID)
 	}
 
 	var total int64
@@ -408,12 +416,25 @@ func (r *analysisRepository) PageAnalysisNodesByProjectID(ctx context.Context, p
 		pagination = &types.Pagination{}
 	}
 
-	err := query.Order("created_at DESC").Order("id DESC").
+	// script_id 指向 pipeline_components 主键，join 出脚本名称（数据库列 component_name）。
+	rows := make([]analysisNodeWithScriptName, 0)
+	err := query.
+		Select("analysis_nodes.*, pc.component_name AS script_name").
+		Joins("LEFT JOIN pipeline_components AS pc ON pc.id = analysis_nodes.script_id").
+		Order("analysis_nodes.created_at DESC").
+		Order("analysis_nodes.id DESC").
 		Offset(pagination.Offset()).
 		Limit(pagination.Limit()).
-		Find(&items).Error
+		Find(&rows).Error
 	if err != nil {
 		return nil, 0, err
+	}
+
+	items := make([]*types.AnalysisNode, 0, len(rows))
+	for i := range rows {
+		node := rows[i].AnalysisNode
+		node.ScriptName = rows[i].ScriptName
+		items = append(items, &node)
 	}
 
 	return r.resolveNodes(items), total, nil

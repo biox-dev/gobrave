@@ -956,7 +956,7 @@ func excludeInputNames(items []any, names any) []any {
 
 func buildScriptVisItem(baseDir string, projectID int64, script *types.Script) map[string]any {
 	node := map[string]any{
-		"name":         script.ComponentName,
+		"name":         script.Name,
 		"id":           script.ScriptID,
 		"script_id":    script.ScriptID,
 		"node_id":      script.ScriptID + "_1",

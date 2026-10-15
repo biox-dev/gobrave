@@ -321,7 +321,7 @@ func (h *WorkflowHandler) PublishScript(c *gin.Context) {
 
 	store := &types.Store{
 		StoreType: "script",
-		Name:      script.ComponentName,
+		Name:      script.Name,
 		Origin:    "local",
 		// URL:         req.Url,
 		// Status:   "done",

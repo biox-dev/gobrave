@@ -260,7 +260,11 @@ type AnalysisNode struct {
 	NodeName   string `json:"node_name" gorm:"column:node_name;type:varchar(255)"`
 	SampleID   string `json:"sample_id" gorm:"column:sample_id;type:varchar(255)"`
 	// ScriptID       string `json:"script_id" gorm:"column:script_id;type:varchar(255)"`
-	ScriptID               int64     `json:"script_id,string" gorm:"column:script_id;type:bigint"`
+	ScriptID int64 `json:"script_id,string" gorm:"column:script_id;type:bigint"`
+	// ScriptName 不是 analysis_nodes 的列，而是按 ScriptID join pipeline_components
+	// 取到的脚本名称（component_name 列）。只有显式 join 的查询才会填充，
+	// 因此用 gorm:"-" 排除在 schema 之外，避免其他查询误选该列。
+	ScriptName             string    `json:"script_name" gorm:"-"`
 	InputsPatterns         JSONMap   `json:"inputs_patterns" gorm:"column:inputs_patterns;type:json"`
 	ResolvedInputs         JSONMap   `json:"resolved_inputs" gorm:"column:resolved_inputs;type:json"`
 	OutputPatterns         JSONMap   `json:"output_patterns" gorm:"column:output_patterns;type:json"`

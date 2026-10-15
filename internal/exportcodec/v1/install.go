@@ -48,6 +48,11 @@ func (c *Codec) InstallScript(ctx context.Context, req exportcodec.ScriptInstall
 	if err := json.Unmarshal(scriptBytes, installScript); err != nil {
 		return nil, fmt.Errorf("failed to parse script body: %w", err)
 	}
+	// 兼容历史导出文件：旧版 script.json 的名称键是 component_name，新版是 name。
+	// 不兜底的话，重装旧产物会把已有脚本的名称写成空串。
+	if installScript.Name == "" {
+		installScript.Name = scriptNameFromExportMap(payload.Script)
+	}
 
 	installScript.ID = 0
 	installScript.ScriptID = req.ScriptID
@@ -63,7 +68,7 @@ func (c *Codec) InstallScript(ctx context.Context, req exportcodec.ScriptInstall
 	installScript.UpdatedAt = utils.GetCurrentTime()
 
 	if req.CreateMode {
-		installScript.ComponentName = fmt.Sprintf("%s_Copy", installScript.ComponentName)
+		installScript.Name = fmt.Sprintf("%s_Copy", installScript.Name)
 		installScript.StoreID = 0
 		if err := c.workflowService.CreateScript(ctx, installScript); err != nil {
 			return nil, fmt.Errorf("failed to install script: %w", err)
@@ -179,6 +184,10 @@ func (c *Codec) InstallWorkflow(ctx context.Context, req exportcodec.WorkflowIns
 		installScript := &types.Script{}
 		if unmarshalErr := json.Unmarshal(scriptBytes, installScript); unmarshalErr != nil {
 			return nil, fmt.Errorf("failed to parse script body: %w", unmarshalErr)
+		}
+		// 同 InstallScript：兼容旧版 workflow.json 快照里的 component_name 键。
+		if installScript.Name == "" {
+			installScript.Name = scriptNameFromExportMap(scriptMap)
 		}
 
 		installScript.ID = 0
@@ -351,4 +360,16 @@ func (c *Codec) upsertContainerTemplateDefinition(ctx context.Context, definitio
 		return err
 	}
 	return c.containerService.UpdateContainerTemplateDefinition(ctx, definition)
+}
+
+// scriptNameFromExportMap 从导出文件的 script map 里取名称。
+// 新版导出写 name（types.Script 的 json tag），旧版写 component_name（数据库列名），
+// 两个键都尝试，保证重装历史产物时不会把脚本名称清空。
+func scriptNameFromExportMap(script map[string]any) string {
+	for _, key := range []string{"name", "component_name"} {
+		if value, ok := script[key].(string); ok && strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

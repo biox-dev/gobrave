@@ -249,7 +249,7 @@ func (s publishStubWorkflowService) UpdateScript(_ context.Context, _ *types.Scr
 func (s publishStubWorkflowService) GenerateScriptJSONByScriptID(_ context.Context, _ int64) (*types.ScriptJSONExportResponse, error) {
 	return &types.ScriptJSONExportResponse{
 		ScriptID: s.script.ScriptID,
-		Script:   map[string]any{"script_id": s.script.ScriptID, "name": s.script.ComponentName},
+		Script:   map[string]any{"script_id": s.script.ScriptID, "name": s.script.Name},
 	}, nil
 }
 
@@ -334,7 +334,7 @@ func TestPublishScriptAlreadyUpToDate(t *testing.T) {
 	writeTestFile(t, filepath.Join(scriptDir, "main.R"), "print('v1')\n")
 	mustGitRepo(t, scriptDir)
 
-	wfService := publishStubWorkflowService{script: &types.Script{ID: 1, ScriptID: "s1", ProjectID: 7, ComponentName: "comp"}}
+	wfService := publishStubWorkflowService{script: &types.Script{ID: 1, ScriptID: "s1", ProjectID: 7, Name: "comp"}}
 	reg := exportcodec.NewRegistry()
 	reg.Register(exportcodecv1.NewCodec(wfService, nil, utils.GitIdentity{Name: "test", Email: "test@example.com"}))
 

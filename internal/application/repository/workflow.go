@@ -173,8 +173,8 @@ func (r *workflowRepository) PageScript(ctx context.Context, pagination *types.P
 			db = db.Where("component_id = ?", scriptID)
 		}
 
-		if componentName := query.GetComponentName(); componentName != "" {
-			db = db.Where("component_name LIKE ?", "%"+componentName+"%")
+		if name := query.GetName(); name != "" {
+			db = db.Where("component_name LIKE ?", "%"+name+"%")
 		}
 
 		if scriptType := query.GetScriptType(); scriptType != "" {
@@ -368,25 +368,21 @@ func (r *workflowRepository) UpdateScript(ctx context.Context, script *types.Scr
 	}
 
 	updates := map[string]any{
-		"component_id":          script.ScriptID,
-		"install_key":           script.InstallKey,
-		"component_type":        script.ComponentType,
-		"component_name":        script.ComponentName,
+		"component_id":   script.ScriptID,
+		"install_key":    script.InstallKey,
+		"component_type": script.ComponentType,
+		// 数据库列名仍为 component_name，只有 Go 侧字段改名为 Name。
+		"component_name":        script.Name,
 		"description":           script.Description,
 		"component_ids":         script.ComponentIDs,
 		"img":                   script.Img,
 		"container_template_id": script.ContainerTemplateID,
-		"tools_container_id":    script.ToolsContainerID,
-		"prompt":                script.Prompt,
-		"sub_container_id":      script.SubContainerID,
 		"tags":                  script.Tags,
 		"file_type":             script.FileType,
 		"script_type":           script.ScriptType,
 		"category":              script.Category,
 		// "content":               script.Content,
 		"order_index": script.OrderIndex,
-		"position":    script.Position,
-		"edges":       script.Edges,
 		// "url":                   script.URL,
 		"store_id": script.StoreID,
 		// "version":               script.Version,

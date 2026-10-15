@@ -13,7 +13,7 @@ type ScriptPageQuery struct {
 
 	ScriptID string `json:"script_id,omitempty"`
 
-	ComponentName string `json:"component_name,omitempty"`
+	Name string `json:"name,omitempty"`
 
 	ScriptType string `json:"script_type,omitempty"`
 
@@ -39,11 +39,11 @@ func (q *ScriptPageQuery) GetScriptID() string {
 	return strings.TrimSpace(q.ScriptID)
 }
 
-func (q *ScriptPageQuery) GetComponentName() string {
+func (q *ScriptPageQuery) GetName() string {
 	if q == nil {
 		return ""
 	}
-	return strings.TrimSpace(q.ComponentName)
+	return strings.TrimSpace(q.Name)
 }
 
 func (q *ScriptPageQuery) GetScriptType() string {
@@ -91,7 +91,8 @@ func (q *ScriptPageQuery) GetSortColumn() string {
 		return "id"
 	case "script_id", "component_id":
 		return "component_id"
-	case "component_name":
+	case "name", "component_name":
+		// 排序仍落到数据库列 component_name。
 		return "component_name"
 	case "script_type":
 		return "script_type"

@@ -134,7 +134,7 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 					return nil, fmt.Errorf("failed to get script file by script id: %w", err)
 				}
 				if s, sErr := r.workflowSvc.GetScriptByID(ctx, id); sErr == nil {
-					label = s.ComponentName
+					label = s.Name
 				}
 				vars["script_workspace_directory"] = dir
 

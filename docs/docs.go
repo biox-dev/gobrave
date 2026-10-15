@@ -13977,9 +13977,6 @@ const docTemplate = `{
                 "component_ids": {
                     "type": "string"
                 },
-                "component_name": {
-                    "type": "string"
-                },
                 "container_template_id": {
                     "type": "string",
                     "example": "0"
@@ -13988,9 +13985,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "description": {
-                    "type": "string"
-                },
-                "edges": {
                     "type": "string"
                 },
                 "file_type": {
@@ -14009,25 +14003,16 @@ const docTemplate = `{
                 "io_schema": {
                     "type": "string"
                 },
+                "name": {
+                    "type": "string"
+                },
                 "order_index": {
                     "type": "integer"
-                },
-                "position": {
-                    "type": "string"
-                },
-                "prompt": {
-                    "type": "string"
                 },
                 "script_type": {
                     "type": "string"
                 },
-                "sub_container_id": {
-                    "type": "string"
-                },
                 "tags": {
-                    "type": "string"
-                },
-                "tools_container_id": {
                     "type": "string"
                 }
             }
@@ -15586,6 +15571,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0"
                 },
+                "script_name": {
+                    "description": "ScriptName 不是 analysis_nodes 的列，而是按 ScriptID join pipeline_components\n取到的脚本名称（component_name 列）。只有显式 join 的查询才会填充，\n因此用 gorm:\"-\" 排除在 schema 之外，避免其他查询误选该列。",
+                    "type": "string"
+                },
                 "server_status": {
                     "type": "string"
                 },
@@ -16488,9 +16477,6 @@ const docTemplate = `{
                 "component_ids": {
                     "type": "string"
                 },
-                "component_name": {
-                    "type": "string"
-                },
                 "component_type": {
                     "type": "string"
                 },
@@ -16503,9 +16489,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "description": {
-                    "type": "string"
-                },
-                "edges": {
                     "type": "string"
                 },
                 "file_type": {
@@ -16522,19 +16505,17 @@ const docTemplate = `{
                 "install_key": {
                     "type": "string"
                 },
+                "name": {
+                    "description": "Name 是组件名称。Go / JSON 侧统一叫 name（列名暂不改动，仍为 component_name），\n因此这里必须显式指定 column，避免 gorm 按字段名推导出 name 列。",
+                    "type": "string"
+                },
                 "order_index": {
                     "description": "Content        string ` + "`" + `json:\"content\" gorm:\"type:text\"` + "`" + `",
                     "type": "integer"
                 },
-                "position": {
-                    "type": "string"
-                },
                 "project_id": {
                     "type": "string",
                     "example": "0"
-                },
-                "prompt": {
-                    "type": "string"
                 },
                 "script_type": {
                     "type": "string"
@@ -16543,14 +16524,8 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0"
                 },
-                "sub_container_id": {
-                    "description": "IOSchema            string ` + "`" + `json:\"io_schema\" gorm:\"column:io_schema;type:longtext\"` + "`" + `",
-                    "type": "string"
-                },
                 "tags": {
-                    "type": "string"
-                },
-                "tools_container_id": {
+                    "description": "IOSchema            string ` + "`" + `json:\"io_schema\" gorm:\"column:io_schema;type:longtext\"` + "`" + `",
                     "type": "string"
                 },
                 "updated_at": {
@@ -16562,9 +16537,6 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "category": {
-                    "type": "string"
-                },
-                "component_name": {
                     "type": "string"
                 },
                 "container_template_id": {
@@ -16585,6 +16557,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "keywords": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 },
                 "project_id": {
@@ -16620,9 +16595,6 @@ const docTemplate = `{
                 "component_ids": {
                     "type": "string"
                 },
-                "component_name": {
-                    "type": "string"
-                },
                 "component_type": {
                     "type": "string"
                 },
@@ -16635,9 +16607,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "description": {
-                    "type": "string"
-                },
-                "edges": {
                     "type": "string"
                 },
                 "file_type": {
@@ -16666,19 +16635,17 @@ const docTemplate = `{
                     "description": "IOSchema 实时读取自脚本目录的 io_schema.json（不再是数据库字段）。",
                     "type": "string"
                 },
+                "name": {
+                    "description": "Name 是组件名称。Go / JSON 侧统一叫 name（列名暂不改动，仍为 component_name），\n因此这里必须显式指定 column，避免 gorm 按字段名推导出 name 列。",
+                    "type": "string"
+                },
                 "order_index": {
                     "description": "Content        string ` + "`" + `json:\"content\" gorm:\"type:text\"` + "`" + `",
                     "type": "integer"
                 },
-                "position": {
-                    "type": "string"
-                },
                 "project_id": {
                     "type": "string",
                     "example": "0"
-                },
-                "prompt": {
-                    "type": "string"
                 },
                 "script_path": {
                     "type": "string"
@@ -16694,14 +16661,8 @@ const docTemplate = `{
                     "description": "StoreVersion string ` + "`" + `json:\"store_version\"` + "`" + `",
                     "type": "string"
                 },
-                "sub_container_id": {
-                    "description": "IOSchema            string ` + "`" + `json:\"io_schema\" gorm:\"column:io_schema;type:longtext\"` + "`" + `",
-                    "type": "string"
-                },
                 "tags": {
-                    "type": "string"
-                },
-                "tools_container_id": {
+                    "description": "IOSchema            string ` + "`" + `json:\"io_schema\" gorm:\"column:io_schema;type:longtext\"` + "`" + `",
                     "type": "string"
                 },
                 "updated_at": {

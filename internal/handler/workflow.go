@@ -62,23 +62,18 @@ type createScriptRequest struct {
 	ID                  int64  `json:"id,string"`
 	ScriptID            string `json:"component_id"`
 	InstallKey          string `json:"install_key"`
-	ComponentName       string `json:"component_name"`
+	Name                string `json:"name"`
 	Description         string `json:"description"`
 	ComponentIDs        string `json:"component_ids"`
 	Img                 string `json:"img"`
 	ContainerTemplateID int64  `json:"container_template_id,string"`
-	ToolsContainerID    string `json:"tools_container_id"`
-	Prompt              string `json:"prompt"`
 	IOSchema            string `json:"io_schema"`
-	SubContainerID      string `json:"sub_container_id"`
 	Tags                string `json:"tags"`
 	FileType            string `json:"file_type"`
 	ScriptType          string `json:"script_type"`
 	Category            string `json:"category"`
 	Content             string `json:"content"`
 	OrderIndex          int    `json:"order_index"`
-	Position            string `json:"position"`
-	Edges               string `json:"edges"`
 }
 
 type createWorkflowRequest struct {
@@ -244,22 +239,17 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 		item.ProjectID = projectID
 		item.ScriptID = firstNonEmpty(req.ScriptID, existing.ScriptID)
 		item.InstallKey = firstNonEmpty(req.InstallKey, existing.InstallKey)
-		item.ComponentName = firstNonEmpty(req.ComponentName, existing.ComponentName)
+		item.Name = firstNonEmpty(req.Name, existing.Name)
 		item.Description = firstNonEmpty(req.Description, existing.Description)
 		item.ComponentIDs = firstNonEmpty(req.ComponentIDs, existing.ComponentIDs)
 		item.Img = firstNonEmpty(req.Img, existing.Img)
 		item.ContainerTemplateID = firstNonZeroInt64(req.ContainerTemplateID, existing.ContainerTemplateID)
-		item.ToolsContainerID = firstNonEmpty(req.ToolsContainerID, existing.ToolsContainerID)
-		item.Prompt = firstNonEmpty(req.Prompt, existing.Prompt)
-		item.SubContainerID = firstNonEmpty(req.SubContainerID, existing.SubContainerID)
 		item.Tags = firstNonEmpty(req.Tags, existing.Tags)
 		item.FileType = firstNonEmpty(req.FileType, existing.FileType)
 		item.ScriptType = firstNonEmpty(req.ScriptType, existing.ScriptType)
 		item.Category = firstNonEmpty(req.Category, existing.Category)
 		// item.Content = firstNonEmpty(req.Content, existing.Content)
 		item.OrderIndex = firstNonZeroInt(req.OrderIndex, existing.OrderIndex)
-		item.Position = firstNonEmpty(req.Position, existing.Position)
-		item.Edges = firstNonEmpty(req.Edges, existing.Edges)
 	} else {
 		scriptID := req.ScriptID
 		if scriptID == "" {
@@ -270,22 +260,17 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 			ProjectID:           projectID,
 			InstallKey:          req.InstallKey,
 			ComponentType:       "script",
-			ComponentName:       req.ComponentName,
+			Name:                req.Name,
 			Description:         req.Description,
 			ComponentIDs:        req.ComponentIDs,
 			Img:                 req.Img,
 			ContainerTemplateID: req.ContainerTemplateID,
-			ToolsContainerID:    req.ToolsContainerID,
-			Prompt:              req.Prompt,
-			SubContainerID:      req.SubContainerID,
 			Tags:                req.Tags,
 			FileType:            req.FileType,
 			ScriptType:          req.ScriptType,
 			Category:            req.Category,
 			// Content:             req.Content,
 			OrderIndex: req.OrderIndex,
-			Position:   req.Position,
-			Edges:      req.Edges,
 		}
 	}
 
