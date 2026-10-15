@@ -876,6 +876,20 @@ func (s *projectService) projectReportDir(report *types.ProjectReport) (string, 
 	return utils.GetProjectReportDir(baseDir, report.ProjectID, strconv.FormatInt(report.ID, 10)), nil
 }
 
+// projectReportDirByID 按报告主键解析报告工作目录（内部先做归属校验）。
+// 供报告目录的 git 能力（diff / 提交 / 撤回）复用，避免每个入口重复校验与拼路径。
+func (s *projectService) projectReportDirByID(ctx context.Context, userID int64, reportID int64) (*types.ProjectReport, string, error) {
+	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
+	if err != nil {
+		return nil, "", err
+	}
+	dir, err := s.projectReportDir(report)
+	if err != nil {
+		return nil, "", err
+	}
+	return report, dir, nil
+}
+
 // GetProjectReportFile 读取报告工作目录下的自身 markdown 文件（output.md）。
 // 文件不存在时返回空字符串（前端按空内容展示，而非报错）。
 func (s *projectService) GetProjectReportFile(ctx context.Context, userID int64, reportID int64) (string, error) {
@@ -889,6 +903,9 @@ func (s *projectService) GetProjectReportFile(ctx context.Context, userID int64,
 		return "", err
 	}
 
+	// 报告文件所在目录从第一次读取起就纳入版本管理（best-effort：失败不影响读取）。
+	s.ensureProjectReportGitRepo(dir)
+
 	data, err := os.ReadFile(filepath.Join(dir, types.DefaultProjectReportFilename))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -900,7 +917,8 @@ func (s *projectService) GetProjectReportFile(ctx context.Context, userID int64,
 }
 
 // UpdateProjectReportFile 覆写报告工作目录下的自身 markdown 文件（output.md）。
-// 目录不存在时自动创建。
+// 目录不存在时自动创建；目录尚不是 git 仓库时就地初始化（不自动提交，
+// 由前端显式触发「提交」），因此保存后报告目录始终处于「有未提交改动」状态。
 func (s *projectService) UpdateProjectReportFile(ctx context.Context, userID int64, reportID int64, content string) error {
 	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
 	if err != nil {
@@ -915,7 +933,103 @@ func (s *projectService) UpdateProjectReportFile(ctx context.Context, userID int
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(dir, types.DefaultProjectReportFilename), []byte(content), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, types.DefaultProjectReportFilename), []byte(content), 0o644); err != nil {
+		return err
+	}
+
+	s.ensureProjectReportGitRepo(dir)
+	return nil
+}
+
+// ensureProjectReportGitRepo 确保报告工作目录是一个 git 仓库，并在「本次刚初始化」时
+// 补一次基线提交：
+//
+//   - 目录本来不是仓库（首次保存/首次读取，或历史遗留的普通文件目录）：初始化为仓库后
+//     立即把当前内容提交为根提交。这样前端首次就能看到「已初始化 + 干净」的状态，
+//     后续编辑才会呈现为「未提交改动」；否则首次初始化会把既有文件全当成未跟踪改动，
+//     「撤回」也就没有可回退的基线。
+//   - 目录已经是仓库：no-op，不做任何提交。
+//
+// 全过程 best-effort：报告文件的读写不应因为 git 操作失败而失败。
+func (s *projectService) ensureProjectReportGitRepo(dir string) {
+	repo, created, err := utils.EnsureReportWorktreeGitRepo(dir)
+	if err != nil || !created {
+		return
+	}
+
+	name, email := config.ResolveGitIdentity(s.cfg)
+	_, _ = utils.CommitAll(repo, "init project report", utils.GitIdentity{Name: name, Email: email})
+}
+
+// ---------- ProjectReport git (报告工作目录的版本管理) ----------
+
+// GetProjectReportGitDiff 返回报告工作目录的本地变化：工作区相对本地 HEAD 的未提交改动。
+// 报告没有发布目标，因此不返回「未发布提交」段落。
+func (s *projectService) GetProjectReportGitDiff(ctx context.Context, userID int64, reportID int64) (*types.ProjectReportGitDiff, error) {
+	report, dir, err := s.projectReportDirByID(ctx, userID, reportID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 读取时同样保证目录已初始化，否则「首次打开报告文件」会看到未初始化状态而无法查看变化。
+	s.ensureProjectReportGitRepo(dir)
+
+	diff := utils.ReadGitDiff(dir, "")
+	state := utils.ReadReportWorktreeGitState(dir)
+
+	return &types.ProjectReportGitDiff{
+		ReportID:    strconv.FormatInt(report.ID, 10),
+		ProjectID:   strconv.FormatInt(report.ProjectID, 10),
+		RepoDir:     diff.RepoDir,
+		Initialized: diff.Initialized,
+		HeadCommit:  diff.HeadCommit,
+		HasChanges:  diff.HasChanges,
+		Worktree:    diff.Worktree,
+		GitState:    state,
+	}, nil
+}
+
+// CommitProjectReport 把报告工作目录的所有改动提交为一个 commit（等同 git add -A + commit）。
+// 目录尚不是仓库时先初始化；没有改动时不产生空提交（Committed=false）。
+func (s *projectService) CommitProjectReport(ctx context.Context, userID int64, reportID int64, message string) (*types.ProjectReportCommitResult, error) {
+	report, dir, err := s.projectReportDirByID(ctx, userID, reportID)
+	if err != nil {
+		return nil, err
+	}
+
+	repo, _, err := utils.EnsureReportWorktreeGitRepo(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	name, email := config.ResolveGitIdentity(s.cfg)
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = fmt.Sprintf("update project report %d", report.ID)
+	}
+
+	committed, err := utils.CommitAll(repo, message, utils.GitIdentity{Name: name, Email: email})
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.ProjectReportCommitResult{
+		ReportID:      strconv.FormatInt(report.ID, 10),
+		ProjectID:     strconv.FormatInt(report.ProjectID, 10),
+		Committed:     committed,
+		Commit:        strings.TrimSpace(utils.ReadReportWorktreeGitState(dir).Commit),
+		CommitMessage: message,
+	}, nil
+}
+
+// RevertProjectReportFile 撤回报告工作目录里单个文件的未提交改动（恢复为本地 HEAD 版本）。
+// relPath 是相对报告目录的路径（当前只有 output.md）。
+func (s *projectService) RevertProjectReportFile(ctx context.Context, userID int64, reportID int64, relPath string) error {
+	_, dir, err := s.projectReportDirByID(ctx, userID, reportID)
+	if err != nil {
+		return err
+	}
+	return utils.RevertWorktreeFile(dir, relPath)
 }
 
 // storageBaseDir 返回去除首尾空白后的 storage.base_dir，未配置时返回空串。

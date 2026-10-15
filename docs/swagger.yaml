@@ -48,6 +48,7 @@ definitions:
   agent.Memory:
     properties:
       content:
+        description: Content 可能是整段会话 / 任务摘要或长事实，64KB 的 text 会触发 1406，这里用 longtext。
         type: string
       created_at:
         type: string
@@ -1727,6 +1728,26 @@ definitions:
       updated_at:
         type: string
     type: object
+  handler.projectReportGitCommitRequest:
+    properties:
+      message:
+        type: string
+      report_id:
+        example: "0"
+        type: string
+    required:
+    - report_id
+    type: object
+  handler.projectReportGitRevertFileRequest:
+    properties:
+      path:
+        type: string
+      report_id:
+        example: "0"
+        type: string
+    required:
+    - report_id
+    type: object
   handler.projectReportItemDTO:
     properties:
       content:
@@ -3003,6 +3024,50 @@ definitions:
       updated_at:
         type: string
     type: object
+  types.ProjectReportCommitResult:
+    properties:
+      commit:
+        description: Commit 提交后的 HEAD hash。
+        type: string
+      commit_message:
+        description: CommitMessage 本次提交实际使用的 message（入参为空时为后端默认文案）。
+        type: string
+      committed:
+        description: Committed 本次是否真的产生了新提交（工作区干净时为 false，不产生空提交）。
+        type: boolean
+      project_id:
+        type: string
+      report_id:
+        type: string
+    type: object
+  types.ProjectReportGitDiff:
+    properties:
+      git_state:
+        allOf:
+        - $ref: '#/definitions/utils.ReportWorktreeGitState'
+        description: GitState 实时的本地 git 状态（是否初始化 / 是否有未提交改动）。
+      has_changes:
+        description: HasChanges 工作区是否有未提交改动。
+        type: boolean
+      head_commit:
+        description: HeadCommit 本地 HEAD 提交 hash（尚无提交时为空）。
+        type: string
+      initialized:
+        description: Initialized 报告目录是否已是 git 仓库；false 时没有可展示的 diff。
+        type: boolean
+      project_id:
+        type: string
+      repo_dir:
+        description: RepoDir 是报告工作目录（绝对路径）。
+        type: string
+      report_id:
+        description: ReportID / ProjectID 是报告与项目的数值主键（对外统一为字符串）。
+        type: string
+      worktree:
+        allOf:
+        - $ref: '#/definitions/utils.GitDiffSection'
+        description: Worktree 工作区相对本地 HEAD 的未提交改动（含未跟踪文件）。
+    type: object
   types.RegisterRequest:
     properties:
       email:
@@ -3440,6 +3505,17 @@ definitions:
         type: string
       store_initialized:
         description: StoreInitialized 发布目标是否已是一个 git 仓库（即是否已发布过）。
+        type: boolean
+    type: object
+  utils.ReportWorktreeGitState:
+    properties:
+      commit:
+        type: string
+      dir:
+        type: string
+      dirty:
+        type: boolean
+      initialized:
         type: boolean
     type: object
 info:
@@ -8836,6 +8912,46 @@ paths:
       summary: 绑定文献到激活项目
       tags:
       - 项目
+  /project/commit-project-report:
+    post:
+      consumes:
+      - application/json
+      description: 把报告工作目录下的所有改动提交为一个 commit（等同 git add -A + commit）；目录尚不是仓库时先初始化，无改动时不产生空提交
+      parameters:
+      - description: 报告ID与可选 commit message
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.projectReportGitCommitRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.ProjectReportCommitResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 提交报告工作目录的改动
+      tags:
+      - 项目
   /project/create-project:
     post:
       consumes:
@@ -9436,6 +9552,45 @@ paths:
       summary: 查询报告自身文件
       tags:
       - 项目
+  /project/project-report-git-diff:
+    get:
+      description: 按报告ID定位报告工作目录（本地 git 仓库），返回工作区相对 HEAD 的未提交改动（含未跟踪文件）；非 git 仓库时
+        initialized 为 false 且无变化
+      parameters:
+      - description: 报告ID
+        format: int64
+        in: query
+        name: report_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.ProjectReportGitDiff'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 获取报告工作目录的本地变化
+      tags:
+      - 项目
   /project/project-report-html:
     get:
       description: 将当前用户报告聚合为独立 HTML 文档；inline_images=true 时图片以 base64 内嵌（自包含），false
@@ -9596,6 +9751,51 @@ paths:
       security:
       - Bearer: []
       summary: 重排报告条目树
+      tags:
+      - 项目
+  /project/revert-project-report-file:
+    post:
+      consumes:
+      - application/json
+      description: 按报告ID定位报告工作目录，把指定文件恢复为本地 HEAD 版本（等同 git checkout HEAD -- <path>）；文件为工作区新增时删除该文件。仅影响该文件，不产生提交
+      parameters:
+      - description: 报告ID与相对报告目录的文件路径
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.projectReportGitRevertFileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 撤回报告目录单个文件的未提交改动
       tags:
       - 项目
   /project/unbind-literature:

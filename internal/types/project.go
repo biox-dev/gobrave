@@ -160,6 +160,41 @@ type ProjectReportItemOrder struct {
 	SortOrder int
 }
 
+// ProjectReportGitDiff 是报告工作目录（<baseDir>/data/<projectId>/report/<reportId>）的本地变化。
+//
+// 报告没有发布目标（store），因此只有「工作区相对本地 HEAD 的未提交改动」这一段，
+// 不包含组件目录 diff 里的 Unpublished。字段命名与前端 git 组件保持一致，
+// 便于报告与组件共用同一套 diff 视图与操作按钮。
+type ProjectReportGitDiff struct {
+	// ReportID / ProjectID 是报告与项目的数值主键（对外统一为字符串）。
+	ReportID  string `json:"report_id"`
+	ProjectID string `json:"project_id"`
+	// RepoDir 是报告工作目录（绝对路径）。
+	RepoDir string `json:"repo_dir"`
+	// Initialized 报告目录是否已是 git 仓库；false 时没有可展示的 diff。
+	Initialized bool `json:"initialized"`
+	// HeadCommit 本地 HEAD 提交 hash（尚无提交时为空）。
+	HeadCommit string `json:"head_commit,omitempty"`
+	// HasChanges 工作区是否有未提交改动。
+	HasChanges bool `json:"has_changes"`
+	// Worktree 工作区相对本地 HEAD 的未提交改动（含未跟踪文件）。
+	Worktree utils.GitDiffSection `json:"worktree"`
+	// GitState 实时的本地 git 状态（是否初始化 / 是否有未提交改动）。
+	GitState utils.ReportWorktreeGitState `json:"git_state"`
+}
+
+// ProjectReportCommitResult 是「提交报告工作目录改动」的结果。
+type ProjectReportCommitResult struct {
+	ReportID  string `json:"report_id"`
+	ProjectID string `json:"project_id"`
+	// Committed 本次是否真的产生了新提交（工作区干净时为 false，不产生空提交）。
+	Committed bool `json:"committed"`
+	// Commit 提交后的 HEAD hash。
+	Commit string `json:"commit,omitempty"`
+	// CommitMessage 本次提交实际使用的 message（入参为空时为后端默认文案）。
+	CommitMessage string `json:"commit_message"`
+}
+
 // ProjectReportItemContent 是 ProjectReportItem 渲染后的内容片段。
 // Title 为展示标题，Content 为正文。
 //

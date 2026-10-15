@@ -8470,6 +8470,69 @@
                 }
             }
         },
+        "/project/commit-project-report": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "把报告工作目录下的所有改动提交为一个 commit（等同 git add -A + commit）；目录尚不是仓库时先初始化，无改动时不产生空提交",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "提交报告工作目录的改动",
+                "parameters": [
+                    {
+                        "description": "报告ID与可选 commit message",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.projectReportGitCommitRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.ProjectReportCommitResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/project/create-project": {
             "post": {
                 "security": [
@@ -9409,6 +9472,65 @@
                 }
             }
         },
+        "/project/project-report-git-diff": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按报告ID定位报告工作目录（本地 git 仓库），返回工作区相对 HEAD 的未提交改动（含未跟踪文件）；非 git 仓库时 initialized 为 false 且无变化",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "获取报告工作目录的本地变化",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "报告ID",
+                        "name": "report_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.ProjectReportGitDiff"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/project/project-report-html": {
             "get": {
                 "security": [
@@ -9646,6 +9768,76 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/project/revert-project-report-file": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按报告ID定位报告工作目录，把指定文件恢复为本地 HEAD 版本（等同 git checkout HEAD -- \u003cpath\u003e）；文件为工作区新增时删除该文件。仅影响该文件，不产生提交",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "撤回报告目录单个文件的未提交改动",
+                "parameters": [
+                    {
+                        "description": "报告ID与相对报告目录的文件路径",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.projectReportGitRevertFileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -12319,6 +12511,7 @@
             "type": "object",
             "properties": {
                 "content": {
+                    "description": "Content 可能是整段会话 / 任务摘要或长事实，64KB 的 text 会触发 1406，这里用 longtext。",
                     "type": "string"
                 },
                 "created_at": {
@@ -14632,6 +14825,36 @@
                 }
             }
         },
+        "handler.projectReportGitCommitRequest": {
+            "type": "object",
+            "required": [
+                "report_id"
+            ],
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "report_id": {
+                    "type": "string",
+                    "example": "0"
+                }
+            }
+        },
+        "handler.projectReportGitRevertFileRequest": {
+            "type": "object",
+            "required": [
+                "report_id"
+            ],
+            "properties": {
+                "path": {
+                    "type": "string"
+                },
+                "report_id": {
+                    "type": "string",
+                    "example": "0"
+                }
+            }
+        },
         "handler.projectReportItemDTO": {
             "type": "object",
             "properties": {
@@ -16434,6 +16657,73 @@
                 }
             }
         },
+        "types.ProjectReportCommitResult": {
+            "type": "object",
+            "properties": {
+                "commit": {
+                    "description": "Commit 提交后的 HEAD hash。",
+                    "type": "string"
+                },
+                "commit_message": {
+                    "description": "CommitMessage 本次提交实际使用的 message（入参为空时为后端默认文案）。",
+                    "type": "string"
+                },
+                "committed": {
+                    "description": "Committed 本次是否真的产生了新提交（工作区干净时为 false，不产生空提交）。",
+                    "type": "boolean"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "report_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.ProjectReportGitDiff": {
+            "type": "object",
+            "properties": {
+                "git_state": {
+                    "description": "GitState 实时的本地 git 状态（是否初始化 / 是否有未提交改动）。",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/utils.ReportWorktreeGitState"
+                        }
+                    ]
+                },
+                "has_changes": {
+                    "description": "HasChanges 工作区是否有未提交改动。",
+                    "type": "boolean"
+                },
+                "head_commit": {
+                    "description": "HeadCommit 本地 HEAD 提交 hash（尚无提交时为空）。",
+                    "type": "string"
+                },
+                "initialized": {
+                    "description": "Initialized 报告目录是否已是 git 仓库；false 时没有可展示的 diff。",
+                    "type": "boolean"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "repo_dir": {
+                    "description": "RepoDir 是报告工作目录（绝对路径）。",
+                    "type": "string"
+                },
+                "report_id": {
+                    "description": "ReportID / ProjectID 是报告与项目的数值主键（对外统一为字符串）。",
+                    "type": "string"
+                },
+                "worktree": {
+                    "description": "Worktree 工作区相对本地 HEAD 的未提交改动（含未跟踪文件）。",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/utils.GitDiffSection"
+                        }
+                    ]
+                }
+            }
+        },
         "types.RegisterRequest": {
             "type": "object",
             "required": [
@@ -17035,6 +17325,23 @@
                 },
                 "store_initialized": {
                     "description": "StoreInitialized 发布目标是否已是一个 git 仓库（即是否已发布过）。",
+                    "type": "boolean"
+                }
+            }
+        },
+        "utils.ReportWorktreeGitState": {
+            "type": "object",
+            "properties": {
+                "commit": {
+                    "type": "string"
+                },
+                "dir": {
+                    "type": "string"
+                },
+                "dirty": {
+                    "type": "boolean"
+                },
+                "initialized": {
                     "type": "boolean"
                 }
             }

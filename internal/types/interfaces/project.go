@@ -41,7 +41,14 @@ type ProjectService interface {
 	// GetProjectReportFile 读取报告工作目录下的自身 markdown 文件（output.md）内容。
 	GetProjectReportFile(ctx context.Context, userID int64, reportID int64) (string, error)
 	// UpdateProjectReportFile 覆写报告工作目录下的自身 markdown 文件（output.md）内容。
+	// 目录尚不是 git 仓库时会就地初始化（不自动提交），保证报告目录始终处于版本管理下。
 	UpdateProjectReportFile(ctx context.Context, userID int64, reportID int64, content string) error
+	// GetProjectReportGitDiff 返回报告工作目录的本地未提交改动（报告没有发布目标）。
+	GetProjectReportGitDiff(ctx context.Context, userID int64, reportID int64) (*types.ProjectReportGitDiff, error)
+	// CommitProjectReport 把报告工作目录的所有改动提交为一个 commit（无改动时不产生空提交）。
+	CommitProjectReport(ctx context.Context, userID int64, reportID int64, message string) (*types.ProjectReportCommitResult, error)
+	// RevertProjectReportFile 撤回报告工作目录里单个文件的未提交改动（恢复为本地 HEAD 版本）。
+	RevertProjectReportFile(ctx context.Context, userID int64, reportID int64, relPath string) error
 
 	// Literature (参考文献) business capabilities.
 	AddLiterature(ctx context.Context, userID int64, literature *types.Literature, content string) (*types.Literature, string, error)
