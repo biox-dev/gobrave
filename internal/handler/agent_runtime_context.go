@@ -162,6 +162,7 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 				vars["io_schema_path"] = ioSchemaPath
 				vars["output_directory"] = node.OutputDir
 				vars["script_type"] = script.ScriptType
+				vars["analysis_node_id"] = strconv.FormatInt(node.ID, 10)
 
 			case EnvTypeAnalysis:
 				analysis, analysisErr := r.analysisSvc.GetAnalysisByID(ctx, id)
