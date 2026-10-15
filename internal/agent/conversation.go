@@ -65,15 +65,16 @@ func (c *Conversation) BeforeCreate(_ *gorm.DB) error {
 // 与 Conversation 的关系（ConversationID 外键）由 Repository 自行维护，
 // 不使用 GORM 的 HasMany / Preload 关联机制。
 type ConversationMessage struct {
-	ID             int64     `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	ConversationID int64     `json:"conversation_id,string" gorm:"column:conversation_id;type:bigint;index"`
-	Seq            int       `json:"seq" gorm:"column:seq;index"`
-	Role           string    `json:"role" gorm:"column:role;type:varchar(32)"`
-	Kind           string    `json:"kind,omitempty" gorm:"column:kind;type:varchar(32);index"`
-	TaskID         int64     `json:"task_id,string,omitempty" gorm:"column:task_id;type:bigint;index"`
-	Content        string    `json:"content" gorm:"column:content;type:text"`
-	Data           any       `json:"data,omitempty" gorm:"serializer:json"`
-	CreatedAt      time.Time `json:"created_at" gorm:"column:created_at"`
+	ID             int64  `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
+	ConversationID int64  `json:"conversation_id,string" gorm:"column:conversation_id;type:bigint;index"`
+	Seq            int    `json:"seq" gorm:"column:seq;index"`
+	Role           string `json:"role" gorm:"column:role;type:varchar(32)"`
+	Kind           string `json:"kind,omitempty" gorm:"column:kind;type:varchar(32);index"`
+	TaskID         int64  `json:"task_id,string,omitempty" gorm:"column:task_id;type:bigint;index"`
+	// Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。
+	Content   string    `json:"content" gorm:"column:content;type:longtext"`
+	Data      any       `json:"data,omitempty" gorm:"serializer:json"`
+	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
 }
 
 // TableName 返回会话消息表的表名。

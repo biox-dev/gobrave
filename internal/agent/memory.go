@@ -39,7 +39,8 @@ type Memory struct {
 	UserID    int64      `json:"user_id,string" gorm:"column:user_id;type:bigint;index:idx_agent_memories_user_kind,priority:1"`
 	SessionID string     `json:"session_id,omitempty" gorm:"column:session_id;type:varchar(64);index"`
 	Kind      MemoryKind `json:"kind" gorm:"column:kind;type:varchar(32);index:idx_agent_memories_user_kind,priority:2"`
-	Content   string     `json:"content" gorm:"column:content;type:text"`
+	// Content 可能是整段会话 / 任务摘要或长事实，64KB 的 text 会触发 1406，这里用 longtext。
+	Content string `json:"content" gorm:"column:content;type:longtext"`
 
 	// Importance 表示记忆重要度（0-10），检索排序时权重更高。
 	Importance int `json:"importance" gorm:"column:importance"`
