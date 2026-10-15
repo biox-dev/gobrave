@@ -11,6 +11,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -67,6 +68,8 @@ type RuntimeContextResolver struct {
 	projectSvc  interfaces.ProjectService
 	workflowSvc interfaces.WorkflowService
 	analysisSvc interfaces.AnalysisService
+	// summarySvc 用于解析项目报告中的 AI 摘要条目（标题 + 摘要文件路径）。
+	summarySvc interfaces.AISummaryService
 	// agentSvc 用于在 Describe 中按用户 Profile 渲染真正的系统提示词（可为空）。
 	agentSvc *agent.AgentService
 }
@@ -77,6 +80,7 @@ func NewRuntimeContextResolver(
 	projectSvc interfaces.ProjectService,
 	workflowSvc interfaces.WorkflowService,
 	analysisSvc interfaces.AnalysisService,
+	summarySvc interfaces.AISummaryService,
 	agentSvc *agent.AgentService,
 ) *RuntimeContextResolver {
 	return &RuntimeContextResolver{
@@ -84,6 +88,7 @@ func NewRuntimeContextResolver(
 		projectSvc:  projectSvc,
 		workflowSvc: workflowSvc,
 		analysisSvc: analysisSvc,
+		summarySvc:  summarySvc,
 		agentSvc:    agentSvc,
 	}
 }
@@ -185,6 +190,12 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 				// 科研报告撰写提示词由 Profile 模板负责组织，这里只提供变量（输出文件路径等）。
 				vars["output_file"] = outputFile
 				vars["report_title"] = report.Title
+				// project_report_items 是报告条目列表，供 pongo2 模板遍历（每个条目仅含 name/content）。
+				itemVars, itemErr := r.resolveProjectReportItemVars(ctx, userID, report)
+				if itemErr != nil {
+					return nil, itemErr
+				}
+				vars["project_report_items"] = itemVars
 
 			default:
 				return nil, fmt.Errorf("unsupported runtime env type: %s", envType)
@@ -217,6 +228,92 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 		SystemPromptVars: vars,
 		WorkingDir:       workingDir,
 	}, nil
+}
+
+// ProjectReportItemVar 是暴露给 pongo2 模板遍历的项目报告条目变量。
+// 每个条目只包含名称（Name）与内容（Content）两个字段：
+//   - analysis / analysis_node：名称取 AnalysisName / NodeName，内容为输出目录；
+//   - ai_summary：名称取摘要标题，内容为摘要文件路径（见 utils.GetAISummaryFile）；
+//   - custom：名称取用户编辑的标题，内容为用户编辑的正文。
+//
+// 字段刻意不加 json tag：SystemPromptVars 会随 agent_tasks.request 一起 JSON 往返，
+// 不加 tag 时字段名即 JSON 键（Name/Content），无论内存态还是反序列化后，
+// 模板都能统一用 {{ item.Name }} / {{ item.Content }} 访问。
+type ProjectReportItemVar struct {
+	Name    string
+	Content string
+}
+
+// resolveProjectReportItemVars 读取报告下的全部条目并解析为模板变量列表。
+// 单个条目解析失败（owner 记录缺失等）时跳过该条目并记录告警，
+// 避免一个失效引用导致整份报告上下文不可用。
+func (r *RuntimeContextResolver) resolveProjectReportItemVars(ctx context.Context, userID int64, report *types.ProjectReport) ([]ProjectReportItemVar, error) {
+	if report == nil {
+		return nil, nil
+	}
+
+	items, err := r.projectSvc.ListProjectReportItemsByReportID(ctx, userID, report.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list project report items: %w", err)
+	}
+
+	baseDir := r.storageBaseDir()
+	result := make([]ProjectReportItemVar, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		name, content, ok := r.resolveProjectReportItemVar(ctx, baseDir, report, item)
+		if !ok {
+			logger.Warnf(ctx, "[RuntimeContext] skip project report item, item_id=%d owner_type=%s owner_id=%d", item.ID, item.OwnerType, item.OwnerID)
+			continue
+		}
+		result = append(result, ProjectReportItemVar{Name: name, Content: content})
+	}
+	return result, nil
+}
+
+// resolveProjectReportItemVar 按 owner 类型解析单个报告条目的名称与内容
+// （名称与内容的口径见 ProjectReportItemVar）。返回 ok=false 表示无法解析
+// （owner 缺失、服务不可用或 owner 类型不支持）。
+func (r *RuntimeContextResolver) resolveProjectReportItemVar(ctx context.Context, baseDir string, report *types.ProjectReport, item *types.ProjectReportItem) (string, string, bool) {
+	switch item.OwnerType {
+	case types.ProjectReportItemOwnerAnalysis:
+		analysis, err := r.analysisSvc.GetAnalysisByID(ctx, item.OwnerID)
+		if err != nil {
+			return "", "", false
+		}
+		return analysis.AnalysisName, analysis.WorkspaceDir, true
+
+	case types.ProjectReportItemOwnerAnalysisNode:
+		node, err := r.analysisSvc.GetAnalysisNodeByID(ctx, item.OwnerID)
+		if err != nil {
+			return "", "", false
+		}
+		return node.NodeName, node.OutputDir, true
+
+	case types.ProjectReportItemOwnerAISummary:
+		if r.summarySvc == nil {
+			return "", "", false
+		}
+		summary, err := r.summarySvc.GetAISummaryByID(ctx, item.OwnerID)
+		if err != nil {
+			return "", "", false
+		}
+		// 摘要文件路径需要项目 ID：优先用摘要记录上的 ProjectID，
+		// 尚未回填时回退到报告所属项目，保证路径仍可定位。
+		projectID := summary.ProjectID
+		if projectID == 0 && report != nil {
+			projectID = report.ProjectID
+		}
+		return summary.Title, utils.GetAISummaryFile(baseDir, projectID, summary.ID), true
+
+	case types.ProjectReportItemOwnerCustom:
+		return item.Title, item.Content, true
+
+	default:
+		return "", "", false
+	}
 }
 
 // RuntimeContextInfo 是用于前端展示的轻量上下文描述。
