@@ -61,6 +61,12 @@ type Options struct {
 	// 注意：该能力不放 RuntimeContext —— RuntimeContext 会随 agent.Request 序列化
 	// 入库，而服务对象不可序列化。
 	AnalysisNodeRunner tool.AnalysisNodeRunner `json:"-"`
+
+	// FileReader 是「按 go_file 主键 ID 读取文件（含表格预览）」的进程级静态服务能力（可为 nil）。
+	//
+	// 与 AnalysisNodeRunner 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前
+	// 注入工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 read_file_by_id 工具使用。
+	FileReader tool.FileReader `json:"-"`
 }
 
 // Registry 负责注册与解析 Provider。

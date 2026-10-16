@@ -144,6 +144,66 @@ func AnalysisNodeRunnerFrom(ctx context.Context) AnalysisNodeRunner {
 	return runner
 }
 
+// FileReader 抽象「按 go_file 主键 ID 读取文件」的业务能力。
+//
+// 它把「file_id → 文件元信息（含 path）+ 内容预览」的业务细节收敛在上层实现
+// （见 container），tool 包只负责把它暴露给模型。对 tsv / csv / xlsx（全部 sheet）
+// 会解析出列信息与前若干行数据；其它格式只返回文件路径。
+//
+// 与 AnalysisNodeRunner 一样，它是进程级静态依赖（一次注入、所有请求共用），
+// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithFileReader 注入工具执行 ctx。
+type FileReader interface {
+	// ReadFileByID 按 go_file 主键 ID 读取文件，返回文件元信息与内容预览。
+	//
+	// fileID 非法（<=0）或文件不存在时返回错误。
+	ReadFileByID(ctx context.Context, fileID int64) (FileReadResult, error)
+}
+
+// FileReadResult 是一次「按 ID 读取文件」的结果。
+//
+// 对 tsv / csv / xlsx：Sheets 承载每个 sheet 的列名与预览行；对其它格式：
+// Sheets 为空，仅 FilePath 有效。
+type FileReadResult struct {
+	FileID   int64          `json:"file_id"`
+	FileName string         `json:"file_name,omitempty"`
+	FilePath string         `json:"file_path"`
+	Format   string         `json:"format,omitempty"`
+	Sheets   []FileSheetTab `json:"sheets,omitempty"`
+	Message  string         `json:"message,omitempty"`
+}
+
+// FileSheetTab 是单个 sheet / 数据表的内容预览。
+type FileSheetTab struct {
+	Name    string           `json:"name"`
+	Columns []string         `json:"columns,omitempty"`
+	Rows    []map[string]any `json:"rows,omitempty"`
+}
+
+// fileReaderKey 是 FileReader 在 context 中的私有键类型。
+//
+// 与 analysisNodeRunnerKey 分开承载：均为不可序列化的进程级服务，来源与生命周期一致
+// （均来自 agent.Options），但职责不同，故各自独立存放。
+type fileReaderKey struct{}
+
+// WithFileReader 把「按 ID 读取文件」的服务能力注入 context，供 builtin 工具执行期读取。
+//
+// 传入 nil 时返回原 context（不注入）。
+func WithFileReader(ctx context.Context, reader FileReader) context.Context {
+	if ctx == nil || reader == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, fileReaderKey{}, reader)
+}
+
+// FileReaderFrom 取出注入的「按 ID 读取文件」服务能力；未注入时返回 nil。
+func FileReaderFrom(ctx context.Context) FileReader {
+	if ctx == nil {
+		return nil
+	}
+	reader, _ := ctx.Value(fileReaderKey{}).(FileReader)
+	return reader
+}
+
 // toString 把任意值尽力转为去空白的字符串。
 func toString(v any) string {
 	switch s := v.(type) {

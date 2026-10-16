@@ -12,5 +12,6 @@ func All() []tool.Tool {
 	return []tool.Tool{
 		GetWeather(),
 		RunAnalysisNode(),
+		ReadFileByID(),
 	}
 }

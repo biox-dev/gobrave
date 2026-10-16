@@ -122,7 +122,8 @@ func buildSkillStore(cfg *config.Config) *skill.Store {
 //
 // runner 是「运行分析节点」的进程级静态服务能力，注入 Options 后由 Provider 在执行工具时
 // 注入工具 ctx（与可序列化的 RuntimeContext 分开，避免服务对象被序列化进 DB）。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner) *agent.Client {
+// fileReader 同理，承载「按文件 ID 读取内容预览」的能力，供 read_file_by_id 工具使用。
+func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader) *agent.Client {
 	opts := agent.Options{}
 
 	if cfg != nil && cfg.Agent != nil {
@@ -145,6 +146,8 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	opts.Tools = tool.NewRegistryWith(builtin.All()...)
 	// 进程级服务能力：run_analysis_node 等 builtin 工具在执行期通过它触发节点运行。
 	opts.AnalysisNodeRunner = runner
+	// 进程级服务能力：read_file_by_id 等 builtin 工具在执行期通过它按文件 ID 读取内容预览。
+	opts.FileReader = fileReader
 
 	return agent.NewClient(registry, opts)
 }
@@ -279,8 +282,11 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 注入 EventRouter 后，等待节点完成改为订阅 NodeCompletionCoordinator 发布的
 	// dag.node.completed / dag.node.failed 事件，仅保留低频状态轮询兜底。
 	must(container.Provide(newAnalysisNodeRunner))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner) *agent.Client {
-		return buildAgentClient(cfg, registry, runner)
+	// 文件读取器：把「按 go_file 主键 ID 读取文件（含表格预览）」能力暴露给内置工具
+	// read_file_by_id，由 Provider 在执行工具前注入工具 ctx。
+	must(container.Provide(newFileReader))
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader) *agent.Client {
+		return buildAgentClient(cfg, registry, runner, fileReader)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。

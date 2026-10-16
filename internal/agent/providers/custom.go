@@ -359,6 +359,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 	// 序列化、进程内复用（见 tool.WithAnalysisNodeRunner）。
 	rc := agent.ToolRuntimeContextFromRequest(req)
 	runner := a.opts.AnalysisNodeRunner
+	fileReader := a.opts.FileReader
 
 	if a.opts.Tools != nil {
 		exec := tool.NewExecutor(a.opts.Tools)
@@ -366,7 +367,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 			name := def.Name
 			ht := hostTool(def.Name, def.Description, def.InputSchema,
 				func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
-					ctx = agent.WithToolRuntime(ctx, rc, runner)
+					ctx = agent.WithToolRuntime(ctx, rc, runner, fileReader)
 					res := exec.Execute(ctx, tool.Call{ID: call.ID, Name: name, Arguments: json.RawMessage(call.Input)})
 					return opencodesdk.HostToolResult{Content: res.Content, IsError: res.IsError}
 				})

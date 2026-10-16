@@ -298,6 +298,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 	// 注意：copilot provider 计划废弃，此处仅保持与新 API 兼容。
 	rc := agent.ToolRuntimeContextFromRequest(req)
 	runner := a.opts.AnalysisNodeRunner
+	fileReader := a.opts.FileReader
 
 	if a.opts.Tools != nil {
 		runnerExec := agent.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt).SetUserID(req.UserID)
@@ -309,7 +310,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 				Description: def.Description,
 				Parameters:  def.InputSchema,
 				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
-					res := runnerExec.Run(agent.WithToolRuntime(inv.TraceContext, rc, runner), agent.ToolCall{
+					res := runnerExec.Run(agent.WithToolRuntime(inv.TraceContext, rc, runner, fileReader), agent.ToolCall{
 						ID:        inv.ToolCallID,
 						Name:      name,
 						Arguments: inv.Arguments,
