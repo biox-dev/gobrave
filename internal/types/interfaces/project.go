@@ -27,6 +27,7 @@ type ProjectService interface {
 	GetProjectReportDetailByID(ctx context.Context, userID int64, reportID int64) (*types.ProjectReport, error)
 	GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error)
 	// ProjectReportItem business capabilities.
+	// ListProjectReportItemsByReportID 返回报告下全部条目，按树的前序遍历展开（与前端 tree 顺序一致）。
 	ListProjectReportItemsByReportID(ctx context.Context, userID int64, reportID int64) ([]*types.ProjectReportItem, error)
 	AddProjectReportItem(ctx context.Context, userID int64, item *types.ProjectReportItem) error
 	UpdateProjectReportItem(ctx context.Context, userID int64, item *types.ProjectReportItem) error
@@ -88,6 +89,8 @@ type ProjectRepository interface {
 	DeleteProjectReportItem(ctx context.Context, itemID int64) error
 	DeleteProjectReportItemsByIDs(ctx context.Context, itemIDs []int64) error
 	DeleteProjectReportItemsByReportID(ctx context.Context, reportID int64) error
+	// ListProjectReportItemsByReportID 按全局 sort_order 返回原始条目（未按树展开），
+	// 需要 tree 顺序时由 service 层调用 flattenProjectReportItems 重排。
 	ListProjectReportItemsByReportID(ctx context.Context, reportID int64) ([]*types.ProjectReportItem, error)
 	// ExistsProjectReportItemOwner 判断同一报告下是否已存在相同 owner 引用（owner_type + owner_id）的条目。
 	// excludeItemID 为需要排除的条目主键（更新场景排除自身），传 0 表示不排除。

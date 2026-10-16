@@ -378,6 +378,9 @@ func (s *projectService) loadOwnedProjectReportItem(ctx context.Context, userID 
 	return item, report, nil
 }
 
+// ListProjectReportItemsByReportID 返回报告下的全部条目，顺序与前端 tree 展示一致：
+// 按树的先序遍历展开（父节点紧随其后跟子节点，同级按 sort_order 升序），
+// 而不是仓库层那种全局 sort_order 排序（会把子孙节点与其父节点拆散）。
 func (s *projectService) ListProjectReportItemsByReportID(ctx context.Context, userID int64, reportID int64) ([]*types.ProjectReportItem, error) {
 	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
 	if err != nil {
@@ -388,6 +391,10 @@ func (s *projectService) ListProjectReportItemsByReportID(ctx context.Context, u
 	if err != nil {
 		return nil, err
 	}
+
+	// 仓库层按全局 sort_order 返回，这里重排为树的前序遍历（展开态），
+	// 保证调用方（报告正文拼接、Agent 报告上下文等）拿到的是「与 tree 相同顺序」的扁平列表。
+	items = flattenProjectReportItems(items)
 	for _, item := range items {
 		item.Title = s.projectReportItemTitle(ctx, item)
 	}

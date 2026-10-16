@@ -31,6 +31,8 @@ type stubProjectRepo struct {
 	ownerSeen bool
 	added     []*types.ProjectReportItem
 	ownerHit  []types.ProjectReportItemOwnerType
+	// items 模拟仓储层按全局 sort_order 返回的原始条目列表。
+	items []*types.ProjectReportItem
 }
 
 func (r *stubProjectRepo) GetProjectReportByID(_ context.Context, reportID int64) (*types.ProjectReport, error) {
@@ -58,6 +60,13 @@ func (r *stubProjectRepo) ExistsProjectReportItemOwner(
 func (r *stubProjectRepo) AddProjectReportItem(_ context.Context, item *types.ProjectReportItem) error {
 	r.added = append(r.added, item)
 	return nil
+}
+
+func (r *stubProjectRepo) ListProjectReportItemsByReportID(_ context.Context, reportID int64) ([]*types.ProjectReportItem, error) {
+	if r.report == nil || r.report.ID != reportID {
+		return nil, apperrors.NewNotFoundError("project report not found")
+	}
+	return r.items, nil
 }
 
 func newProjectReportItemTestService(repo *stubProjectRepo) *projectService {
@@ -144,5 +153,40 @@ func TestAddProjectReportItemCustomNotDeduplicated(t *testing.T) {
 	}
 	if repo.added[0].Title != "Section" || repo.added[0].Content != "text" {
 		t.Fatalf("custom item title/content must be persisted, got %q/%q", repo.added[0].Title, repo.added[0].Content)
+	}
+}
+
+// TestListProjectReportItemsByReportIDUsesTreeOrder 确认服务层把仓储的「全局 sort_order」原始列表
+// 重排为树的前序遍历（父节点紧跟其子节点），与前端 tree 的展开顺序一致。
+func TestListProjectReportItemsByReportIDUsesTreeOrder(t *testing.T) {
+	repo := &stubProjectRepo{
+		report: &types.ProjectReport{ID: 42, ProjectID: 7},
+		// 模拟仓储按 sort_order 升序返回：子节点(0) 排在父节点(5) 之前，与树序不同。
+		items: []*types.ProjectReportItem{
+			{ID: 20, ProjectReportID: 42, ParentID: 10, SortOrder: 0, OwnerType: types.ProjectReportItemOwnerCustom, Title: "R2 child"},
+			{ID: 11, ProjectReportID: 42, SortOrder: 0, OwnerType: types.ProjectReportItemOwnerCustom, Title: "R1"},
+			{ID: 10, ProjectReportID: 42, SortOrder: 5, OwnerType: types.ProjectReportItemOwnerCustom, Title: "R2"},
+		},
+	}
+	svc := newProjectReportItemTestService(repo)
+
+	items, err := svc.ListProjectReportItemsByReportID(context.Background(), 1, 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := make([]int64, 0, len(items))
+	for _, item := range items {
+		got = append(got, item.ID)
+	}
+
+	want := []int64{11, 10, 20}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d items in tree order, got %v", len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected tree order %v, got %v", want, got)
+		}
 	}
 }
