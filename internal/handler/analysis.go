@@ -858,6 +858,13 @@ func (h *AnalysisHandler) RunAnalysisNodeWithID(ctx context.Context, analsyisNod
 		return errors.NewBadRequestError(fmt.Sprintf("analysis node is already %s, please wait for it to finish", node.Status))
 	}
 
+	// 与 SaveAnalysisNodeControllerWithScript 保持一致：提交前按脚本最新的 io_schema
+	// 刷新节点的输入/输出模式，避免节点记录里的 patterns 落后于脚本定义。
+	_, scriptIOSchema, err := h.workflowService.GetScriptFormJSONByID(ctx, node.ScriptID)
+	if err != nil {
+		return errors.NewInternalServerError("failed to get script io schema").WithDetails(err.Error())
+	}
+
 	if err := h.analysisRepo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
 		"status":                   dagruntime.StatusReady,
 		"server_status":            "",
@@ -869,6 +876,8 @@ func (h *AnalysisHandler) RunAnalysisNodeWithID(ctx context.Context, analsyisNod
 		"job_id":                   "",
 		"started_at":               nil,
 		"finished_at":              nil,
+		"inputs_patterns":          types.JSONMap(utils.FormatIOSchemaItems(scriptIOSchema["inputs"])),
+		"output_patterns":          types.JSONMap(utils.FormatIOSchemaItems(scriptIOSchema["outputs"])),
 		"output_validation_errors": types.JSONSlice{},
 		"updated_at":               time.Now().UTC(),
 	}); err != nil {
