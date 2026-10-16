@@ -9,5 +9,5 @@ package analysisform
 const (
 	// CollectedAssaySelect is the table picker over upstream results that projects
 	// one form field per collected column.
-	CollectedAssaySelect = "CollectedAssaySelect"
+	FileSelect = "FileSelect"
 )
