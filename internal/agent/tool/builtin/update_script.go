@@ -28,7 +28,7 @@ type UpdateScriptInput struct {
 //
 // 除更新后的元数据外，回传脚本主文件与 io_schema.json 路径，便于模型继续读写脚本内容。
 type UpdateScriptOutput struct {
-	ScriptID       int64  `json:"script_id"`
+	ScriptID       int64  `json:"script_id,string"`
 	ScriptName     string `json:"script_name,omitempty"`
 	Description    string `json:"description,omitempty"`
 	ScriptType     string `json:"script_type,omitempty"`

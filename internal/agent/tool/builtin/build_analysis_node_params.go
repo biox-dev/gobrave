@@ -27,8 +27,8 @@ type BuildAnalysisNodeParamsInput struct {
 // ParamsJSON 是写入 params.json 的实际正文：模型据此确认 io_schema 参数到运行期参数的
 // 映射是否正确，随后可直接调用 run_analysis_node 以这份参数运行脚本。
 type BuildAnalysisNodeParamsOutput struct {
-	AnalysisNodeID int64          `json:"analysis_node_id"`
-	ScriptID       int64          `json:"script_id,omitempty"`
+	AnalysisNodeID int64          `json:"analysis_node_id,string"`
+	ScriptID       int64          `json:"script_id,string,omitempty"`
 	WorkspaceDir   string         `json:"workspace_dir,omitempty"`
 	ParamsPath     string         `json:"params_path,omitempty"`
 	CommandPath    string         `json:"command_path,omitempty"`

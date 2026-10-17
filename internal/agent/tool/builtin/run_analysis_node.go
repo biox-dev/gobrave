@@ -34,7 +34,7 @@ type RunAnalysisNodeInput struct {
 //   - LogPath：本次执行的 command.log（Log 字段被截断时可据此读取完整日志）；
 //   - RequestParam / ParamsJSON：本次实际生效的请求参数与 params.json 正文。
 type RunAnalysisNodeOutput struct {
-	AnalysisNodeID int64 `json:"analysis_node_id"`
+	AnalysisNodeID int64 `json:"analysis_node_id,string"`
 
 	Status       string `json:"status"`                  // 节点终态（success / failed / timeout ...）
 	Success      bool   `json:"success"`                 // 是否为成功终态

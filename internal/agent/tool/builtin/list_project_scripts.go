@@ -21,7 +21,7 @@ type ListProjectScriptsInput struct{}
 // ScriptFilePath / IOSchemaPath 由 utils.GetScriptFile / utils.WorkflowIOSchemaPath 推导，
 // 模型可直接按这两个路径读写脚本主文件与 io_schema.json。
 type ProjectScriptItem struct {
-	ScriptID       int64  `json:"script_id"`
+	ScriptID       int64  `json:"script_id,string"`
 	ScriptName     string `json:"script_name"`
 	Description    string `json:"description,omitempty"`
 	ScriptType     string `json:"script_type,omitempty"`
@@ -31,7 +31,7 @@ type ProjectScriptItem struct {
 
 // ListProjectScriptsOutput 是 list_project_scripts 工具返回给模型的结果。
 type ListProjectScriptsOutput struct {
-	ProjectID int64               `json:"project_id"`
+	ProjectID int64               `json:"project_id,string"`
 	Total     int                 `json:"total"`
 	Scripts   []ProjectScriptItem `json:"scripts"`
 	Message   string              `json:"message,omitempty"`
@@ -49,7 +49,7 @@ type ListProjectScriptsOutput struct {
 func ListProjectScripts() tool.Tool {
 	return tool.NewFunc(
 		ListProjectScriptsToolName,
-		"列出当前激活项目下的全部分析脚本。返回每个脚本的 script_id、name（脚本名称）、description（描述）、script_file_path（脚本主文件路径，可直接读写）与 io_schema_path（脚本输入输出契约 io_schema.json 的路径）。需要查看某个脚本的细节时，再用 get_script 按 script_id 查询。所属项目取自当前会话上下文，无需传入。",
+		"列出当前激活项目下的全部分析脚本。返回每个脚本的 script_id（字符串形式，避免大整数精度丢失，可直接传给 get_script）、name（脚本名称）、description（描述）、script_file_path（脚本主文件路径，可直接读写）与 io_schema_path（脚本输入输出契约 io_schema.json 的路径）。需要查看某个脚本的细节时，再用 get_script 按 script_id 查询。所属项目取自当前会话上下文，无需传入。",
 		tool.Schema("列出当前项目全部脚本的入参（无需参数）", map[string]any{}),
 		func(ctx context.Context, _ ListProjectScriptsInput) (ListProjectScriptsOutput, error) {
 			projectID, err := requireProjectID(ctx, ListProjectScriptsToolName)

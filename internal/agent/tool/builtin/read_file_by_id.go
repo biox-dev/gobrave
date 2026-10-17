@@ -25,7 +25,7 @@ type ReadFileByIDInput struct {
 // 无论格式如何都会返回 FilePath；对 tsv / csv / xlsx（全部 sheet）额外返回每个 sheet
 // 的列名（Columns）与前若干行预览数据（Rows）。
 type ReadFileByIDOutput struct {
-	FileID   int64              `json:"file_id"`
+	FileID   int64              `json:"file_id,string"`
 	FileName string             `json:"file_name,omitempty"`
 	FilePath string             `json:"file_path"`
 	Format   string             `json:"format,omitempty"`

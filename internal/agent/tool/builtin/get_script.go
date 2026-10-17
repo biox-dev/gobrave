@@ -23,7 +23,7 @@ type GetScriptInput struct {
 // ScriptFilePath / IOSchemaPath 由 utils.GetScriptFile / utils.WorkflowIOSchemaPath 推导，
 // 模型可直接按这两个路径读写脚本主文件与 io_schema.json。
 type GetScriptOutput struct {
-	ScriptID       int64  `json:"script_id"`
+	ScriptID       int64  `json:"script_id,string"`
 	ScriptName     string `json:"script_name"`
 	Description    string `json:"description,omitempty"`
 	ScriptType     string `json:"script_type,omitempty"`

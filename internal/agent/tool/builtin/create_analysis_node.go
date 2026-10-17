@@ -25,9 +25,9 @@ type CreateAnalysisNodeInput struct {
 //   - ScriptFilePath：脚本主文件（如 main.R），由 utils.GetScriptFile 推导；
 //   - IOSchemaPath：脚本目录下的 io_schema.json（节点 patterns 的来源）。
 type CreateAnalysisNodeOutput struct {
-	AnalysisNodeID int64          `json:"analysis_node_id"`
+	AnalysisNodeID int64          `json:"analysis_node_id,string,omitempty"`
 	NodeName       string         `json:"node_name,omitempty"`
-	ScriptID       int64          `json:"script_id,omitempty"`
+	ScriptID       int64          `json:"script_id,string,omitempty"`
 	ScriptName     string         `json:"script_name,omitempty"`
 	ScriptType     string         `json:"script_type,omitempty"`
 	ScriptFilePath string         `json:"script_file_path,omitempty"`

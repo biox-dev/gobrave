@@ -39,7 +39,7 @@ type CreateScriptInput struct {
 // 需要运行脚本时，再用 create_analysis_node 建节点（节点 ID / 工作目录 / params.json
 // 路径由该工具返回）。
 type CreateScriptOutput struct {
-	ScriptID       int64  `json:"script_id"`
+	ScriptID       int64  `json:"script_id,string"`
 	ScriptKey      string `json:"script_key,omitempty"`
 	ScriptName     string `json:"script_name,omitempty"`
 	ScriptFilePath string `json:"script_file_path,omitempty"`
@@ -49,7 +49,7 @@ type CreateScriptOutput struct {
 
 	// ContainerTemplateID / ContainerTemplateName 是实际生效的容器模板：
 	// 未传 container_template_id 时为系统默认模板。
-	ContainerTemplateID   int64  `json:"container_template_id,omitempty"`
+	ContainerTemplateID   int64  `json:"container_template_id,string,omitempty"`
 	ContainerTemplateName string `json:"container_template_name,omitempty"`
 
 	Error string `json:"error,omitempty"`

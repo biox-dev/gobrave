@@ -23,9 +23,9 @@ type GetAnalysisNodeInput struct {
 // WorkspaceDir 是节点根目录（绝对路径），ParamsPath 由它派生；RequestParam 是节点上
 // 已保存的请求参数（键为脚本 io_schema inputs 的 name）。
 type GetAnalysisNodeOutput struct {
-	AnalysisNodeID int64          `json:"analysis_node_id"`
+	AnalysisNodeID int64          `json:"analysis_node_id,string"`
 	NodeName       string         `json:"node_name"`
-	ScriptID       int64          `json:"script_id,omitempty"`
+	ScriptID       int64          `json:"script_id,string,omitempty"`
 	WorkspaceDir   string         `json:"workspace_dir"`
 	ParamsPath     string         `json:"params_path"`
 	RequestParam   map[string]any `json:"request_param,omitempty"`

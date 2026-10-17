@@ -22,9 +22,9 @@ type UpdateAnalysisNodeInput struct {
 
 // UpdateAnalysisNodeOutput 是 update_analysis_node 工具返回给模型的结果。
 type UpdateAnalysisNodeOutput struct {
-	AnalysisNodeID int64    `json:"analysis_node_id"`
+	AnalysisNodeID int64    `json:"analysis_node_id,string"`
 	NodeName       string   `json:"node_name,omitempty"`
-	ScriptID       int64    `json:"script_id,omitempty"`
+	ScriptID       int64    `json:"script_id,string,omitempty"`
 	WorkspaceDir   string   `json:"workspace_dir,omitempty"`
 	ParamsPath     string   `json:"params_path,omitempty"`
 	Changed        []string `json:"changed,omitempty"`
