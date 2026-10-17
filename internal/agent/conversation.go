@@ -325,7 +325,7 @@ func shouldIncludeInPrompt(m Message) bool {
 		return true
 	case RoleAssistant:
 		switch m.Kind {
-		case "", MessageKindAssistant, MessageKindAssistantFinal:
+		case "", MessageKindAssistant, MessageKindAssistantFinal, MessageKindToolCall, MessageKindToolResult:
 			return true
 		default:
 			return false

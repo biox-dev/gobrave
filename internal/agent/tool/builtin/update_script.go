@@ -12,20 +12,14 @@ import (
 // UpdateScriptToolName 是「更新脚本基本信息」工具名。
 const UpdateScriptToolName = "update_script"
 
-// scriptIDVarKey 是运行时上下文 SystemPromptVars 中承载脚本主键 ID 的键。
-//
-// 供模型在脚本上下文里省略 script_id 时回退使用（与 run_analysis_node 回退
-// analysis_node_id 的口径一致）；分析节点上下文下工具可通过其脚本反查。
-const scriptIDVarKey = "script_id"
-
 // UpdateScriptInput 是 update_script 工具的入参。
 //
 // 只开放 name / description 两个元数据字段：脚本内容由模型直接写文件，io_schema 与
 // 容器模板有各自的维护入口，不在本工具职责内。
 //
-// ScriptID 允许为空：此时回退到运行时上下文的 script_id 变量。
+// ScriptID 为必填：模型必须显式给出要更新的脚本 ID，不再从运行时上下文回退。
 type UpdateScriptInput struct {
-	ScriptID    string `json:"script_id"`   // 脚本主键 ID（字符串以保精度），可选
+	ScriptID    string `json:"script_id"`   // 脚本主键 ID（必填，字符串以保精度）
 	Name        string `json:"name"`        // 新脚本名称，留空表示不修改
 	Description string `json:"description"` // 新脚本描述，留空表示不修改
 }
@@ -48,7 +42,7 @@ type UpdateScriptOutput struct {
 // UpdateScript 返回一个「更新脚本 name / description」工具。
 //
 // 行为：
-//   - 未传 script_id 时，回退到运行时上下文的 script_id（脚本上下文注入）；
+//   - script_id 为必填，缺省直接报错；
 //   - 只覆盖本次给出的字段，未给出的字段保持数据库原值；
 //   - 项目归属取自 RuntimeContext.ProjectID，脚本必须属于当前激活项目，否则报错；
 //   - 回传更新后的名称 / 描述与脚本主文件、io_schema.json 路径。
@@ -57,12 +51,12 @@ type UpdateScriptOutput struct {
 func UpdateScript() tool.Tool {
 	return tool.NewFunc(
 		UpdateScriptToolName,
-		"更新已有分析脚本的基本信息（name / description）。只改元数据，不修改脚本内容（脚本内容请直接写脚本主文件）、io_schema 与容器模板；未给出的字段保持原值。脚本默认取当前会话上下文（script / analysisNode 上下文）中的脚本，也可显式传 script_id。返回更新后的名称、描述与脚本主文件路径。",
+		"更新已有分析脚本的基本信息（name / description）。script_id 必填。只改元数据，不修改脚本内容（脚本内容请直接写脚本主文件）、io_schema 与容器模板；未给出的字段保持原值。返回更新后的名称、描述与脚本主文件路径。",
 		tool.Schema("更新脚本基本信息的入参", map[string]any{
-			"script_id":   tool.StringProperty("脚本主键 ID（整数，字符串以保精度）。留空时使用当前上下文的脚本。"),
+			"script_id":   tool.StringProperty("脚本主键 ID（必填，整数，字符串以保精度）。"),
 			"name":        tool.StringProperty("新的脚本名称（同一项目下应唯一，由业务侧校验）。留空表示不修改名称。"),
 			"description": tool.StringProperty("新的脚本描述。留空表示不修改描述（如需清空描述请明确说明，本工具不会把空串当作清空）。"),
-		}),
+		}, "script_id"),
 		func(ctx context.Context, in UpdateScriptInput) (UpdateScriptOutput, error) {
 			rc := tool.RuntimeContextFrom(ctx)
 			if rc == nil || rc.ProjectID <= 0 {
@@ -80,9 +74,9 @@ func UpdateScript() tool.Tool {
 				return UpdateScriptOutput{}, fmt.Errorf("update_script: script updater is not available in this runtime")
 			}
 
-			scriptID, err := resolveScriptRef(rc, in)
+			scriptID, err := parseScriptID(in.ScriptID)
 			if err != nil {
-				return UpdateScriptOutput{}, err
+				return UpdateScriptOutput{}, fmt.Errorf("update_script: %w", err)
 			}
 
 			updateInput := tool.ScriptUpdateInput{
@@ -114,23 +108,18 @@ func UpdateScript() tool.Tool {
 	).WithPermission("write", "", "更新脚本名称 / 描述（写库）")
 }
 
-// resolveScriptRef 解析要更新的脚本引用：优先工具入参，其次运行时上下文的 script_id
-// 变量（脚本上下文注入）。都解析不到时返回描述性错误，提示模型显式传入。
-func resolveScriptRef(rc *tool.RuntimeContext, in UpdateScriptInput) (int64, error) {
-	if idStr := strings.TrimSpace(in.ScriptID); idStr != "" {
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("update_script: invalid script_id %q: %w", idStr, err)
-		}
-		if id <= 0 {
-			return 0, fmt.Errorf("update_script: script_id must be a positive integer")
-		}
-		return id, nil
+// parseScriptID 解析必填的脚本 ID：为空或非法时返回错误。
+func parseScriptID(raw string) (int64, error) {
+	idStr := strings.TrimSpace(raw)
+	if idStr == "" {
+		return 0, fmt.Errorf("script_id is required")
 	}
-	if idStr := rc.SystemPromptVar(scriptIDVarKey); idStr != "" {
-		if id, err := strconv.ParseInt(idStr, 10, 64); err == nil && id > 0 {
-			return id, nil
-		}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid script_id %q: %w", idStr, err)
 	}
-	return 0, fmt.Errorf("update_script: script_id is required (pass it explicitly; the current context does not identify a script)")
+	if id <= 0 {
+		return 0, fmt.Errorf("script_id must be a positive integer")
+	}
+	return id, nil
 }
