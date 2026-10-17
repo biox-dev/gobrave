@@ -19,6 +19,7 @@ func All() []tool.Tool {
 		GetAnalysisNode(),
 		BuildAnalysisNodeParams(),
 		RunAnalysisNode(),
+		UpdateAnalysisNode(),
 		ReadFileByID(),
 		SaveMemory(),
 	}

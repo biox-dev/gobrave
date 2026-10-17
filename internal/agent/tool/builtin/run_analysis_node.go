@@ -34,14 +34,15 @@ type RunAnalysisNodeInput struct {
 //   - LogPath：本次执行的 command.log（Log 字段被截断时可据此读取完整日志）；
 //   - RequestParam / ParamsJSON：本次实际生效的请求参数与 params.json 正文。
 type RunAnalysisNodeOutput struct {
-	AnalysisNodeID int64  `json:"analysis_node_id"`
-	Status         string `json:"status"`                  // 节点终态（success / failed / timeout ...）
-	Success        bool   `json:"success"`                 // 是否为成功终态
-	Log            string `json:"log,omitempty"`           // 节点执行日志（command.log 内容）
-	LogPath        string `json:"log_path,omitempty"`      // 节点 command.log 绝对路径（Log 截断时可读全文）
-	WorkspaceDir   string `json:"workspace_dir,omitempty"` // 节点根目录
-	CommandPath    string `json:"command_path,omitempty"`  // 本次执行的 run.sh 路径
-	ParamsPath     string `json:"params_path,omitempty"`   // 本次运行的 params.json 路径
+	AnalysisNodeID int64 `json:"analysis_node_id"`
+
+	Status       string `json:"status"`                  // 节点终态（success / failed / timeout ...）
+	Success      bool   `json:"success"`                 // 是否为成功终态
+	Log          string `json:"log,omitempty"`           // 节点执行日志（command.log 内容）
+	LogPath      string `json:"log_path,omitempty"`      // 节点 command.log 绝对路径（Log 截断时可读全文）
+	WorkspaceDir string `json:"workspace_dir,omitempty"` // 节点根目录
+	CommandPath  string `json:"command_path,omitempty"`  // 本次执行的 run.sh 路径
+	ParamsPath   string `json:"params_path,omitempty"`   // 本次运行的 params.json 路径
 	// RequestParam 是本次运行实际生效的请求参数（键为 io_schema inputs 的 name），
 	// 取自节点记录并在运行前按 io_schema 解析校验。
 	RequestParam map[string]any `json:"request_param,omitempty"`

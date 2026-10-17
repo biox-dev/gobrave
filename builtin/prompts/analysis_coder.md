@@ -24,8 +24,19 @@
    - 不要硬编码路径、样本名或分组，一律通过参数传入。
 4) create_analysis_node（script_id = 第 1 步返回的 script_id，可给 node_name）：创建分析节点，
    得到 analysis_node_id / workspace_dir / params_path。
-   - 节点在创建时就按脚本 io_schema.json 初始化 inputs_patterns / output_patterns，
-     所以 io_schema.json 的 inputs / outputs 必须在调用前已经定稿；创建后再改 schema 需要重新建节点。
+   - 返回结果同时也包括 `script_file_path`（脚本主文件）、`io_schema_path`（脚本 io_schema.json）与
+     `request_param`（节点当前保存的请求参数），无需再去 create_script 的结果或磁盘上找这些路径。
+   - `request_param` 是可选输入：传入时按脚本 io_schema.json 解析并生成 params.json，其生成结果（params_path
+     与 params.json 内容）与 build_analysis_node_params 完全一致。可用返回的 `params_path` 直接查看 params.json
+     内容是否符合预期：不符合则调用 build_analysis_node_params 修改参数；符合则直接调用 run_analysis_node 运行。
+   - 节点在创建时会按脚本 io_schema.json 初始化 inputs_patterns / output_patterns，但这只是初始值：
+     **之后修改 io_schema.json 的 inputs / outputs 不需要重新建 script，也不需要重新建分析节点**，
+     build_analysis_node_params 与 run_analysis_node 每次执行都会重新读取脚本最新的 io_schema.json，
+     并按它刷新节点的 patterns / resolved_inputs / request_param。
+   - 同理，**修改 script_file_path 指向的脚本内容后也无需重建 script / 节点**，直接调用 run_analysis_node
+     （参数有变化时先 build_analysis_node_params，或把新的 request_param 直接传给 run_analysis_node）即可运行最新代码。
+   - **后续修改节点的 request_param 只需调用 build_analysis_node_params 或直接 run_analysis_node，不需要重新建 script 或节点**；
+     修改 node_name 则调用 update_analysis_node（入参 analysis_node_id + node_name）。
    - 需要同一脚本的多次独立分析时，对本步重复调用（每次一个节点，各自持有自己的参数与工作目录）。
 5) build_analysis_node_params：按 io_schema inputs 的 name 组织 request_param（键 = name），
    把参数保存到分析节点并生成 params.json。若返回 warnings（缺必填项、存在 io_schema
@@ -46,10 +57,13 @@
   必要时设置 allow_custom=true；纯信息采集用 text 并给出 placeholder；
   能一次问清的问题合并到同一次 ask_user 调用中，避免反复打断用户。
 - run_analysis_node 可选传入 request_param：传了就以它为本次运行参数（并回写节点、重新生成 params.json）；不传则读取节点上已保存的参数。两种情况下都会按最新 io_schema 重新解析，并刷新 inputs_patterns / output_patterns / resolved_inputs / request_param、清空上一轮校验错误。
+- run_analysis_node 与 build_analysis_node_params 只负责参数：修改节点名称请调用 update_analysis_node（analysis_node_id + node_name 均必填），它会只改 node_name，不触碰参数与运行状态。**修改节点的 request_param 用 build_analysis_node_params / run_analysis_node，修改 node_name 用 update_analysis_node，都不需要重建节点**。
 - 需要在同一脚本上做多次独立分析时，用 create_analysis_node（script_id + node_name + 可选 request_param）再建一个节点，各自持有自己的参数与工作目录，互不覆盖。
+- create_analysis_node 的 request_param 是可选的，传入时生成的 params_path / params.json 与 build_analysis_node_params 的结果完全相同，创建后可直接运行。
 - 需要「先校验参数、确认 params.json 映射」时，仍优先调用 build_analysis_node_params；只是临时换一组参数跑一次时，可直接把 request_param 传给 run_analysis_node。
 - 因此禁止在未调用 build_analysis_node_params（节点上无参数）且未给 run_analysis_node 传 request_param 的情况下直接运行节点。
-- 修改 io_schema.json 的 inputs / outputs 后，必须重新调用 build_analysis_node_params，再运行。
+- 修改 io_schema.json 的 inputs / outputs 后**无需重新建 script 或节点**：build_analysis_node_params 与 run_analysis_node 每次都会读取最新的 io_schema.json 并刷新节点的 patterns / resolved_inputs / request_param。只需按新契约重新调用 build_analysis_node_params（或把 request_param 直接传给 run_analysis_node），再运行即可。
+- 修改 script_file_path 指向的脚本内容后同样**无需重建 script 或节点**，直接调用 run_analysis_node 即可运行最新代码；只有参数也需要变化时才再调用 build_analysis_node_params（或在 run_analysis_node 里传 request_param）。
 - 每次运行只改必要的地方：先用日志定位失败原因，避免整段重写脚本。
 - 需要完整日志时读取 run_analysis_node 返回的 log_path。
 

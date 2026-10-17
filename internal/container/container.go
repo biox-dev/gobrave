@@ -124,9 +124,10 @@ func buildSkillStore(cfg *config.Config) *skill.Store {
 // 注入工具 ctx（与可序列化的 RuntimeContext 分开，避免服务对象被序列化进 DB）。
 // fileReader 同理，承载「按文件 ID 读取内容预览」的能力，供 read_file_by_id 工具使用。
 // paramsBuilder 承载「按 io_schema 生成节点参数」的能力，供 build_analysis_node_params 工具使用。
+// nodeUpdater 承载「更新分析节点名称」的能力，供 update_analysis_node 工具使用。
 // envUpdater 承载「写回用户业务上下文（EnvID / EnvType）」的能力，供 create_script 工具使用。
 // memorySaver 承载「保存一条用户长期记忆」的能力，供 save_memory 工具使用。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser) *agent.Client {
+func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser) *agent.Client {
 	opts := agent.Options{}
 
 	if cfg != nil && cfg.Agent != nil {
@@ -155,6 +156,8 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	opts.ScriptCreator = scriptCreator
 	// 进程级服务能力：build_analysis_node_params 工具在执行期通过它按 io_schema 生成 params.json。
 	opts.AnalysisNodeParamsBuilder = paramsBuilder
+	// 进程级服务能力：update_analysis_node 工具在执行期通过它更新分析节点名称。
+	opts.AnalysisNodeUpdater = nodeUpdater
 	// 进程级服务能力：create_script 工具在执行期通过它把当前用户业务上下文切到新分析节点。
 	opts.AgentEnvUpdater = envUpdater
 	// 进程级服务能力：save_memory 工具在执行期通过它把注意事项写入用户长期记忆。
@@ -316,6 +319,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 分析节点参数生成器：把「按脚本 io_schema 解析 request_param → 刷新节点 → 写出
 	// params.json」能力暴露给内置工具 build_analysis_node_params。
 	must(container.Provide(newAnalysisNodeParamsBuilder))
+	// 分析节点名称更新器：把「更新分析节点 node_name」能力暴露给内置工具 update_analysis_node。
+	must(container.Provide(newAnalysisNodeUpdater))
 	// 项目资源浏览器：把「列出项目脚本 / 按 ID 查看脚本 / 按 ID 查看分析节点」能力暴露给
 	// 内置只读工具 list_project_scripts / get_script / get_analysis_node。
 	must(container.Provide(newProjectResourceBrowser))
@@ -330,8 +335,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser) *agent.Client {
-		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, envUpdater, memorySaver, browser)
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser) *agent.Client {
+		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。

@@ -425,8 +425,66 @@ func ScriptUpdaterFrom(ctx context.Context) ScriptUpdater {
 	return updater
 }
 
-// ProjectResourceBrowser 抽象「浏览项目内的脚本 / 分析节点」的业务能力。
+// AnalysisNodeUpdater 抽象「更新已有分析节点基本信息（node_name）」的业务能力。
 //
+// 它只覆盖节点名称这一个元数据字段，不触碰节点的参数、patterns 与运行状态
+// （参数由 build_analysis_node_params / run_analysis_node 负责），因此实现是「读改写」：
+// 先按 analysis_node_id 读出节点，只覆盖 node_name 再回写。
+//
+// 与 ScriptUpdater 一样，它是进程级静态依赖（一次注入、所有请求共用），
+// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithAnalysisNodeUpdater 注入工具执行 ctx。
+type AnalysisNodeUpdater interface {
+	// UpdateAnalysisNodeInfo 更新分析节点的 node_name，返回更新后的关键信息。
+	//
+	// projectID 取自 RuntimeContext.ProjectID（当前用户激活项目）：节点必须属于该项目，
+	// 否则返回错误（避免模型改到别的项目的节点）。
+	UpdateAnalysisNodeInfo(ctx context.Context, input AnalysisNodeUpdateInput) (AnalysisNodeUpdateResult, error)
+}
+
+// AnalysisNodeUpdateInput 是「更新分析节点基本信息」的入参。
+type AnalysisNodeUpdateInput struct {
+	// ProjectID 是节点所属项目（取自 RuntimeContext.ProjectID）。
+	ProjectID int64 `json:"project_id,string"`
+	// AnalysisNodeID 是分析节点主键，必须为正数。
+	AnalysisNodeID int64 `json:"analysis_node_id,string"`
+	// NodeName 为 nil 表示不修改；非 nil 时覆盖节点名称。
+	NodeName *string `json:"node_name,omitempty"`
+}
+
+// AnalysisNodeUpdateResult 是「更新分析节点基本信息」的结果（回传给模型）。
+type AnalysisNodeUpdateResult struct {
+	AnalysisNodeID int64  `json:"analysis_node_id,string"`
+	NodeName       string `json:"node_name"`
+	ScriptID       int64  `json:"script_id,string"`
+	WorkspaceDir   string `json:"workspace_dir,omitempty"`
+	ParamsPath     string `json:"params_path,omitempty"`
+	// Changed 列出本次实际被修改的字段名（node_name），便于模型确认。
+	Changed []string `json:"changed,omitempty"`
+}
+
+// analysisNodeUpdaterKey 是 AnalysisNodeUpdater 在 context 中的私有键类型。
+type analysisNodeUpdaterKey struct{}
+
+// WithAnalysisNodeUpdater 把「更新分析节点基本信息」的服务能力注入 context，供 builtin 工具执行期读取。
+//
+// 传入 nil 时返回原 context（不注入）。
+func WithAnalysisNodeUpdater(ctx context.Context, updater AnalysisNodeUpdater) context.Context {
+	if ctx == nil || updater == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, analysisNodeUpdaterKey{}, updater)
+}
+
+// AnalysisNodeUpdaterFrom 取出注入的「更新分析节点基本信息」服务能力；未注入时返回 nil。
+func AnalysisNodeUpdaterFrom(ctx context.Context) AnalysisNodeUpdater {
+	if ctx == nil {
+		return nil
+	}
+	updater, _ := ctx.Value(analysisNodeUpdaterKey{}).(AnalysisNodeUpdater)
+	return updater
+}
+
+// ProjectResourceBrowser 抽象「浏览项目内的脚本 / 分析节点」的业务能力。//
 // 供内置工具 list_project_scripts / get_script / get_analysis_node 使用：三者都是纯只读
 // 查询，统一由同一份业务实现承载（见 container.projectResourceBrowser），避免为每个工具
 // 各建一个注入点。
@@ -641,11 +699,12 @@ type AnalysisNodeParamsInput struct {
 // ParamsPath 与 ParamsJSON 是核心产物：ParamsJSON 是写入文件的 params.json 正文，
 // 模型据此确认「io_schema 参数确实被正确映射」，无需再读盘。
 type AnalysisNodeParamsResult struct {
-	AnalysisNodeID int64  `json:"analysis_node_id,string"`
-	ScriptID       int64  `json:"script_id,string"`
-	WorkspaceDir   string `json:"workspace_dir"`
-	ParamsPath     string `json:"params_path"`
-	CommandPath    string `json:"command_path,omitempty"`
+	AnalysisNodeID int64 `json:"analysis_node_id,string"`
+	ScriptID       int64 `json:"script_id,string"`
+
+	WorkspaceDir string `json:"workspace_dir"`
+	ParamsPath   string `json:"params_path"`
+	CommandPath  string `json:"command_path,omitempty"`
 	// ParamsJSON 是写入 params.json 的实际内容（缩进后的 JSON 文本）。
 	ParamsJSON string `json:"params_json"`
 	// ResolvedInputs 是按脚本表单解析后的结构化输入（即写入 params.json 的主体）。

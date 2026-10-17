@@ -41,13 +41,14 @@ func WithToolRuntimeContext(ctx context.Context, rc *tool.RuntimeContext) contex
 //
 // 归属用户不再作为参数单独注入：RuntimeContext.UserID 就是请求级用户事实的唯一来源，
 // 工具通过 tool.RuntimeContextFrom(ctx).UserID 读取（见 save_memory）。
-func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver) context.Context {
+func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver) context.Context {
 	ctx = WithToolRuntimeContext(ctx, rc)
 	ctx = tool.WithAnalysisNodeRunner(ctx, runner)
 	ctx = tool.WithFileReader(ctx, reader)
 	ctx = tool.WithScriptCreator(ctx, creator)
 	ctx = tool.WithScriptUpdater(ctx, scriptUpdaterFromCreator(creator))
 	ctx = tool.WithAnalysisNodeParamsBuilder(ctx, paramsBuilder)
+	ctx = tool.WithAnalysisNodeUpdater(ctx, nodeUpdater)
 	ctx = tool.WithAgentEnvUpdater(ctx, envUpdater)
 	return tool.WithMemorySaver(ctx, memorySaver)
 }

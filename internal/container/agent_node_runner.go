@@ -172,7 +172,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("script %d has no io_schema inputs, nothing to build", node.ScriptID)
 	}
 	requestParamBytes := built.Node.RequestParam
-	resolvedInputs := cloneParamsMap(map[string]any(built.Node.ResolvedInputs))
+	resolvedInputs := built.Node.ResolvedInputs
 	inputsPatterns := built.Node.InputsPatterns
 	outputPatterns := built.Node.OutputPatterns
 
