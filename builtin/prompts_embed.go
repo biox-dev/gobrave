@@ -16,3 +16,15 @@ var PromptFiles embed.FS
 
 // PromptFSRoot 是 PromptFiles 中提示词目录的相对路径。
 const PromptFSRoot = "prompts"
+
+// SkillFiles 内嵌 builtin/skills 下的全部内置技能，路径形如
+// "skills/analysis-script-workflow/SKILL.md"。
+//
+// 与 PromptFiles 一样：二进制自带一份兜底副本，运行期优先读磁盘，
+// 便于直接修改部署目录里的技能文件而无需重新构建。
+//
+//go:embed skills
+var SkillFiles embed.FS
+
+// SkillFSRoot 是 SkillFiles 中内置技能目录的相对路径。
+const SkillFSRoot = "skills"

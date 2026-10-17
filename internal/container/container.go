@@ -115,6 +115,26 @@ func buildSkillStore(cfg *config.Config) *skill.Store {
 	return skill.NewStore(resolveSkillsDir(cfg))
 }
 
+// ensureBuiltinSkills 在启动时把内置技能写入用户技能目录（$BaseDir/.skills）。
+//
+// 每次都覆盖写入，保证磁盘上的内置技能与代码中的定义一致；写入失败只记录日志，
+// 不阻断启动（技能缺失不影响主流程，可随下次重启重新写入）。
+func ensureBuiltinSkills(cfg *config.Config) error {
+	dir := resolveSkillsDir(cfg)
+	if dir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		logger.Warnf(context.Background(), "[Container] Failed to create skills directory: %v", err)
+		return err
+	}
+	if err := skill.EnsureBuiltinSkills(dir); err != nil {
+		logger.Warnf(context.Background(), "[Container] Failed to write builtin skills: %v", err)
+		return err
+	}
+	return nil
+}
+
 // buildAgentClient 根据配置构建 Agent 调用门面。
 // 模型提供商配置表（按模型名索引）从 config.agent.providers 映射进 Options.Providers，
 // 供 Provider 在每次调用时按 Profile.Model 解析出 base_url / api_key 等 LLM 配置。
@@ -301,6 +321,11 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	}))
 	must(container.Provide(buildSkillRegistry))
 	must(container.Provide(buildSkillStore))
+	// 启动时把内置技能覆盖写入技能目录，确保磁盘上的内置技能与代码定义一致；
+	// 必须在上面的 buildSkillRegistry 之后执行，使新写入的技能能被本次启动发现。
+	must(container.Invoke(func(cfg *config.Config) error {
+		return ensureBuiltinSkills(cfg)
+	}))
 	// 分析节点运行器：把「运行分析节点 + 读取日志」能力暴露给内置工具 run_analysis_node，
 	// 经 RuntimeContextResolver 注入 RuntimeContext 后传到工具执行期。
 	// 注入 EventRouter 后，等待节点完成改为订阅 NodeCompletionCoordinator 发布的

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
@@ -151,11 +152,17 @@ func BuiltinProfiles() []*Profile {
 			Description:  "用于撰写生物信息学分析代码：强调代码规范、可复现性与执行约束。",
 			IsBuiltin:    true,
 			SystemPrompt: mustReadBuiltinPrompt(BuiltinPromptAnalysisCoder),
-			Context:      ContextConfig{InjectMemory: true},
-			CreatedAt:    now,
-			Model:        "deepseek-v4-flash",
-			Provider:     ProviderCustom,
-			UpdatedAt:    now,
+			// 创建脚本 / io_schema 契约 / 失败迭代流程，以及分析节点内写改脚本的约定，
+			// 均已抽取为内置技能（见 skill.Builtin*SkillName），这里显式启用，模型按需 get_skill 加载。
+			Skills: []string{
+				skill.BuiltinAnalysisScriptSkillName,
+				skill.BuiltinAnalysisNodeScriptSkillName,
+			},
+			Context:   ContextConfig{InjectMemory: true},
+			CreatedAt: now,
+			Model:     "deepseek-v4-flash",
+			Provider:  ProviderCustom,
+			UpdatedAt: now,
 		},
 		{
 			ID:           BuiltinArticleWriterID,
