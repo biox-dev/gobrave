@@ -108,6 +108,13 @@ type Options struct {
 	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 list_project_scripts /
 	// get_script / get_analysis_node 三个只读工具使用。
 	ProjectResourceBrowser tool.ProjectResourceBrowser `json:"-"`
+
+	// Skills 是技能注册表（可为 nil）。
+	//
+	// 它既用于把技能元信息（name / description）注入系统提示词，也由 Provider 注入
+	// 工具执行 ctx（见 agent.WithToolRuntime），供 get_skill / load_skill_resource 工具
+	// 在执行期按名称解析技能并读取指令与附属资源。
+	Skills tool.SkillResolver `json:"-"`
 }
 
 // Registry 负责注册与解析 Provider。

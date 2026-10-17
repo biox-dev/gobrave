@@ -5,7 +5,10 @@
 // 的 tool-call 链路，无需改动上层注册逻辑。
 package builtin
 
-import "github.com/biox-dev/gobrave/internal/agent/tool"
+import (
+	"github.com/biox-dev/gobrave/internal/agent/skill"
+	"github.com/biox-dev/gobrave/internal/agent/tool"
+)
 
 // All 返回框架内置的全部工具。新增内置工具时在此追加。
 func All() []tool.Tool {
@@ -22,5 +25,8 @@ func All() []tool.Tool {
 		UpdateAnalysisNode(),
 		ReadFileByID(),
 		SaveMemory(),
+		// 技能：指令正文与附属资源都按需通过工具加载（渐进式披露）。
+		skill.GetSkill(),
+		skill.LoadSkillResource(),
 	}
 }

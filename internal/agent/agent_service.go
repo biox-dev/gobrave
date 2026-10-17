@@ -562,7 +562,8 @@ func applyProfileOverrides(req Request, profile *Profile) Request {
 //   - profile：已解析的 Agent Profile（为 nil 时返回空提示词，表示不附加系统提示词）；
 //   - vars：渲染 Profile.SystemPrompt（pongo2 模板）所用的变量，通常为 RuntimeContext.SystemPromptVars；
 //   - userID：记忆的归属用户（为空时不注入背景）；
-//   - selectedSkills：本轮启用的技能名（为空表示全部）；据此把技能指令正文注入提示词。
+//   - selectedSkills：本轮启用的技能名（为空表示全部）；据此把技能元信息（name /
+//     description）注入提示词，正文由模型调用 get_skill 工具按需加载。
 //
 // 处理顺序：渲染 Profile 模板 → 注入技能指令 → 按 Profile.Context 开关注入记忆。
 // 模板渲染失败时退回原始模板，保证调用仍可进行。
@@ -604,8 +605,8 @@ func (s *AgentService) buildSystemPrompt(ctx context.Context, profile *Profile, 
 		}
 	}
 
-	// 2) 技能指令正文：把本轮可用技能的说明注入提示词，使模型感知技能语义。
-	// 技能的工具暴露由各 Provider 负责（见 providers），此处只负责上下文注入。
+	// 2) 技能元信息：把本轮可用技能的名称与描述注入提示词，使模型知道有哪些技能、
+	// 何时该调用 get_skill；正文与附属资源由技能工具在执行期按需加载（见 providers）。
 	if s.skills != nil && len(selectedSkills) > 0 {
 		prompt = appendPromptBlock(prompt, s.skills.PromptBlock(selectedSkills...))
 	}

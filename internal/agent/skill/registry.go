@@ -4,13 +4,16 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
 // promptHeader 是注入系统提示词的技能说明前言。
 const promptHeader = "# Skills\n\n" +
 	"The following skills are available. When a user's request matches a skill's\n" +
-	"description, read its SKILL.md at the given location and follow the\n" +
-	"instructions before proceeding.\n\n"
+	"description, call the `get_skill` tool with the skill name to load its\n" +
+	"instructions and follow them before proceeding. Use `load_skill_resource`\n" +
+	"to read a skill's reference docs, scripts, templates or schemas.\n\n"
 
 // Registry 持有一组已发现的技能，提供按名解析与提示词注入。
 //
@@ -78,6 +81,25 @@ func (r *Registry) Get(name string) (*Skill, bool) {
 	s, ok := r.byName[strings.TrimSpace(name)]
 	return s, ok
 }
+
+// Resolver 返回实现 tool.SkillResolver 的视图，供技能工具（get_skill /
+// load_skill_resource）在执行期按名称解析技能。
+func (r *Registry) Resolver() tool.SkillResolver { return registryResolver{r: r} }
+
+// registryResolver 把 *Registry 适配为 tool.SkillResolver（返回 tool.SkillResource 接口）。
+type registryResolver struct{ r *Registry }
+
+// Get 实现 tool.SkillResolver。
+func (rr registryResolver) Get(name string) (tool.SkillResource, bool) {
+	s, ok := rr.r.Get(name)
+	if !ok || s == nil {
+		return nil, false
+	}
+	return s, true
+}
+
+// Names 实现 tool.SkillResolver。
+func (rr registryResolver) Names() []string { return rr.r.Names() }
 
 // Has 报告指定技能是否已注册。
 func (r *Registry) Has(name string) bool {

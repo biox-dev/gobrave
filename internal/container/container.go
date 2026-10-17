@@ -127,7 +127,9 @@ func buildSkillStore(cfg *config.Config) *skill.Store {
 // nodeUpdater 承载「更新分析节点名称」的能力，供 update_analysis_node 工具使用。
 // envUpdater 承载「写回用户业务上下文（EnvID / EnvType）」的能力，供 create_script 工具使用。
 // memorySaver 承载「保存一条用户长期记忆」的能力，供 save_memory 工具使用。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser) *agent.Client {
+// skills 是技能注册表：既提供系统提示词的技能元信息，也供 get_skill /
+// load_skill_resource 工具在执行期读取技能指令与附属资源。
+func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry) *agent.Client {
 	opts := agent.Options{}
 
 	if cfg != nil && cfg.Agent != nil {
@@ -165,6 +167,11 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	// 进程级服务能力：list_project_scripts / get_script / get_analysis_node 等只读浏览工具
 	// 在执行期通过它按当前项目读取脚本与分析节点。
 	opts.ProjectResourceBrowser = browser
+	// 进程级服务能力：get_skill / load_skill_resource 工具在执行期通过它按名称解析技能，
+	// 读取 SKILL.md 指令正文与技能目录内的附属资源。
+	if skills != nil {
+		opts.Skills = skills.Resolver()
+	}
 
 	return agent.NewClient(registry, opts)
 }
@@ -335,8 +342,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser) *agent.Client {
-		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser)
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry) *agent.Client {
+		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser, skills)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。

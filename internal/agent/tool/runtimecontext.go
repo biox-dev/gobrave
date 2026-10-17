@@ -553,6 +553,61 @@ func ProjectResourceBrowserFrom(ctx context.Context) ProjectResourceBrowser {
 	return browser
 }
 
+// SkillResolver 抽象「按名称解析技能」的能力，供技能工具（get_skill /
+// load_skill_resource）在执行期读取技能指令与附属资源。
+//
+// 声明为接口而不是直接依赖 skill 包，是为了避免 tool ← skill 的循环引用：
+// skill 包用它自己的 *Registry 实现本接口，并由 Provider 在构建工具执行 ctx 时注入
+// （见 agent.WithToolRuntime / skill.RegistryFrom）。
+type SkillResolver interface {
+	// Get 按名称解析技能；不存在时 ok 为 false。
+	Get(name string) (SkillResource, bool)
+	// Names 返回全部可用技能名（用于错误提示）。
+	Names() []string
+}
+
+// SkillResource 是技能工具执行期需要的最小技能视图。
+type SkillResource interface {
+	// SkillInfo 返回技能的元信息与指令正文（SKILL.md 内容）。
+	SkillInfo() SkillInfo
+	// SkillVersion 返回技能版本（manifest.json 优先，回退 frontmatter version）。
+	SkillVersion() string
+	// SkillResources 返回技能目录下的附属资源相对路径（已排序）。
+	SkillResources() []string
+	// ReadSkillResource 读取技能目录内的附属资源（相对路径），返回内容与绝对路径。
+	ReadSkillResource(path string) (content string, absPath string, err error)
+}
+
+// SkillInfo 是技能的最小元信息 + 指令正文。
+type SkillInfo struct {
+	Name         string
+	Description  string
+	SkillPath    string
+	SkillFile    string
+	Instructions string
+}
+
+// skillResolverKey 是 SkillResolver 在 context 中的私有键类型。
+type skillResolverKey struct{}
+
+// WithSkillResolver 把「按名称解析技能」的能力注入 context，供 get_skill /
+// load_skill_resource 工具执行期读取。传入 nil 时返回原 context（不注入）。
+func WithSkillResolver(ctx context.Context, resolver SkillResolver) context.Context {
+	if ctx == nil || resolver == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, skillResolverKey{}, resolver)
+}
+
+// SkillResolverFrom 取出注入的技能解析能力；未注入时返回 nil。
+func SkillResolverFrom(ctx context.Context) SkillResolver {
+	if ctx == nil {
+		return nil
+	}
+	resolver, _ := ctx.Value(skillResolverKey{}).(SkillResolver)
+	return resolver
+}
+
 // ScriptCreateInput 是「创建脚本」的入参（不创建分析节点）。
 type ScriptCreateInput struct {
 	// ProjectID 是脚本所属项目（取自 RuntimeContext.ProjectID）。

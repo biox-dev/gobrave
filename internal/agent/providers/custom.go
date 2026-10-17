@@ -350,8 +350,11 @@ func toSDKRole(role string) opencodesdk.Role {
 // opencode 自带完整的 tool-call 循环：模型发起调用后，opencode 会在其内部循环中调用
 // 对应 Handler，再把结果回填给模型——Provider 无需自己驱动循环。
 //
-// 技能不是工具：技能只把元信息注入系统提示词（见 AgentService.GetSystemSpromptByProfile），
-// 模型按 location 自行读取 SKILL.md 正文，因此不在此注册。
+// 技能以两种方式参与：
+//   - 元信息（name / description）由 AgentService 注入系统提示词（见
+//     GetSystemSpromptByProfile），让模型知道有哪些技能可用；
+//   - 技能的加载通过普通工具完成：get_skill / load_skill_resource 在 builtin.All() 中注册，
+//     执行时从工具 ctx 取出技能注册表（a.opts.Skills），因此这里只负责注入注册表。
 //
 // 注意：工具调用 / 结果的时间线事件由 opencode 记录进消息流后经 emitToolEvents 统一发出，
 // 因此这里只负责执行，不重复发事件（避免与快照事件重复落库）。
@@ -370,6 +373,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 	envUpdater := a.opts.AgentEnvUpdater
 	memorySaver := a.opts.MemorySaver
 	browser := a.opts.ProjectResourceBrowser
+	skills := a.opts.Skills
 
 	if a.opts.Tools != nil {
 		exec := tool.NewExecutor(a.opts.Tools)
@@ -379,6 +383,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 				func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
 					ctx = agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver)
 					ctx = agent.WithProjectResourceBrowser(ctx, browser)
+					ctx = agent.WithSkills(ctx, skills)
 					res := exec.Execute(ctx, tool.Call{ID: call.ID, Name: name, Arguments: json.RawMessage(call.Input)})
 					return opencodesdk.HostToolResult{Content: res.Content, IsError: res.IsError}
 				})

@@ -4,13 +4,15 @@
 // 声明 name / description 等元信息，正文是指令内容。技能只做「上下文注入」，不是
 // 可执行工具——采用渐进式披露（progressive disclosure）：
 //
-//   - 仅把技能元信息（name / description / location）以 XML 注入系统提示词；
-//   - 正文（Instructions）不注入，模型判断需要时按 location 自行读取 SKILL.md 文件。
+//   - 仅把技能元信息（name / description）以 XML 注入系统提示词；
+//   - 正文（Instructions）不注入，模型判断需要时调用 get_skill 工具加载；
+//   - 技能目录下的参考文档 / 脚本 / 模板等附属资源通过 load_skill_resource 工具按需读取。
 //
 // 设计参考 crush/internal/skills 与 opencode/internal/skills。
 package skill
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -20,6 +22,8 @@ import (
 	"strings"
 
 	yaml "github.com/goccy/go-yaml"
+
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
 const (
@@ -46,6 +50,7 @@ var (
 type Skill struct {
 	Name                   string `yaml:"name" json:"name"`
 	Description            string `yaml:"description" json:"description"`
+	ManifestVersion        string `yaml:"version,omitempty" json:"version,omitempty"`
 	UserInvocable          bool   `yaml:"user-invocable" json:"user_invocable"`
 	DisableModelInvocation bool   `yaml:"disable-model-invocation" json:"disable_model_invocation"`
 
@@ -136,6 +141,7 @@ func ParseContent(content []byte) (*Skill, error) {
 type frontmatter struct {
 	Name                   string `yaml:"name"`
 	Description            string `yaml:"description"`
+	Version                string `yaml:"version,omitempty"`
 	UserInvocable          bool   `yaml:"user-invocable,omitempty"`
 	DisableModelInvocation bool   `yaml:"disable-model-invocation,omitempty"`
 }
@@ -147,6 +153,7 @@ func (s *Skill) Marshal() ([]byte, error) {
 	head, err := yaml.Marshal(frontmatter{
 		Name:                   s.Name,
 		Description:            s.Description,
+		Version:                s.ManifestVersion,
 		UserInvocable:          s.UserInvocable,
 		DisableModelInvocation: s.DisableModelInvocation,
 	})
@@ -294,8 +301,9 @@ func sortSkills(skills []*Skill) {
 
 // ToPromptXML 生成注入系统提示词的 <available_skills> XML。
 //
-// 仅包含元信息（name / description / location），刻意不含指令正文——正文由模型
-// 按需读取，避免一次性塞满上下文。DisableModelInvocation 的技能会被排除。
+// 仅包含元信息（name / description），刻意不含指令正文与文件路径——正文与附属资源
+// 都由模型通过工具（get_skill / load_skill_resource）按需加载，避免一次性塞满
+// 上下文。DisableModelInvocation 的技能会被排除。
 func ToPromptXML(skills []*Skill) string {
 	if len(skills) == 0 {
 		return ""
@@ -310,28 +318,188 @@ func ToPromptXML(skills []*Skill) string {
 		sb.WriteString("  <skill>\n")
 		fmt.Fprintf(&sb, "    <name>%s</name>\n", escape(s.Name))
 		fmt.Fprintf(&sb, "    <description>%s</description>\n", escape(s.Description))
-		fmt.Fprintf(&sb, "    <location>%s</location>\n", escape(s.SkillFilePath))
 		sb.WriteString("  </skill>\n")
 	}
 	sb.WriteString("</available_skills>")
 	return sb.String()
 }
 
-// FormatInvocation 生成把技能正文加载到上下文时的 XML 块。
-func (s *Skill) FormatInvocation() string {
-	var sb strings.Builder
-	sb.WriteString("<loaded_skill>\n")
-	fmt.Fprintf(&sb, "  <name>%s</name>\n", escape(s.Name))
-	fmt.Fprintf(&sb, "  <description>%s</description>\n", escape(s.Description))
-	fmt.Fprintf(&sb, "  <location>%s</location>\n", escape(s.SkillFilePath))
-	sb.WriteString("  <instructions>\n")
-	sb.WriteString(escape(s.Instructions))
-	sb.WriteString("\n  </instructions>\n")
-	sb.WriteString("</loaded_skill>")
-	return sb.String()
-}
-
 // escape 转义会破坏提示词 XML 结构的字符。
 func escape(s string) string {
 	return promptEscaper.Replace(s)
+}
+
+// 技能附属资源相关常量。
+const (
+	// ManifestFileName 是技能目录下声明版本等元信息的可选清单文件。
+	ManifestFileName = "manifest.json"
+	// MaxResourceBytes 是 load_skill_resource 单次返回的资源大小上限。
+	MaxResourceBytes = 256 * 1024
+)
+
+// Manifest 是技能目录下 manifest.json 的结构（全部字段可选）。
+//
+// 现有实现只使用 version（供 get_skill 的版本选择与展示）。
+type Manifest struct {
+	Version string `json:"version"`
+}
+
+// ManifestPath 返回技能目录下 manifest.json 的路径。
+func (s *Skill) ManifestPath() string {
+	if s == nil || s.Path == "" {
+		return ""
+	}
+	return filepath.Join(s.Path, ManifestFileName)
+}
+
+// Version 返回技能版本：优先取 manifest.json 中的 version，缺失时回退到
+// SKILL.md frontmatter 的 version 字段；都没有则返回空串。
+func (s *Skill) Version() string {
+	if s == nil {
+		return ""
+	}
+	if v := s.manifestVersion(); v != "" {
+		return v
+	}
+	return strings.TrimSpace(s.ManifestVersion)
+}
+
+// manifestVersion 读取 manifest.json 中声明的版本；文件缺失或非法时返回空串。
+func (s *Skill) manifestVersion() string {
+	path := s.ManifestPath()
+	if path == "" {
+		return ""
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var m Manifest
+	if err := json.Unmarshal(content, &m); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(m.Version)
+}
+
+// ListResources 递归列出技能目录下的附属资源（相对技能目录的斜杠路径，已排序）。
+//
+// SKILL.md 与 manifest.json 属于技能描述本身，不在资源列表内。
+func (s *Skill) ListResources() []string {
+	if s == nil || s.Path == "" {
+		return nil
+	}
+	var out []string
+	_ = filepath.WalkDir(s.Path, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(s.Path, path)
+		if relErr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == SkillFileName || rel == ManifestFileName {
+			return nil
+		}
+		out = append(out, rel)
+		return nil
+	})
+	slices.Sort(out)
+	return out
+}
+
+// ResolveResource 把技能目录内的相对路径解析为绝对路径，并拒绝目录穿越。
+//
+// 只允许访问技能目录内部的文件；越界、绝对路径或不存在都会返回错误。
+func (s *Skill) ResolveResource(rel string) (string, error) {
+	if s == nil || s.Path == "" {
+		return "", errors.New("skill path is not available")
+	}
+	rel = strings.TrimSpace(rel)
+	if rel == "" {
+		return "", errors.New("path is required")
+	}
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path %q must be relative to the skill directory", rel)
+	}
+
+	root, err := filepath.Abs(s.Path)
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return "", err
+	}
+	if !isWithin(root, abs) {
+		return "", fmt.Errorf("path %q escapes the skill directory", rel)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%q is a directory, not a resource file", rel)
+	}
+	return abs, nil
+}
+
+// ReadResource 读取技能附属资源文件内容（大小上限 MaxResourceBytes）。
+func (s *Skill) ReadResource(rel string) (string, string, error) {
+	abs, err := s.ResolveResource(rel)
+	if err != nil {
+		return "", "", err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", "", err
+	}
+	if info.Size() > MaxResourceBytes {
+		return "", "", fmt.Errorf("resource %q is too large (%d bytes, limit %d)", rel, info.Size(), MaxResourceBytes)
+	}
+	content, err := os.ReadFile(abs)
+	if err != nil {
+		return "", "", err
+	}
+	return string(content), abs, nil
+}
+
+// isWithin 报告 path 是否位于 root 目录之内（含 root 自身）。
+func isWithin(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// 以下方法实现 tool.SkillResource，供 get_skill / load_skill_resource 工具在
+// 执行期读取技能指令与附属资源（skill 包依赖 tool 包，反向通过接口解耦）。
+
+// SkillInfo 返回技能的最小元信息与指令正文。
+func (s *Skill) SkillInfo() tool.SkillInfo {
+	if s == nil {
+		return tool.SkillInfo{}
+	}
+	return tool.SkillInfo{
+		Name:         s.Name,
+		Description:  s.Description,
+		SkillPath:    s.Path,
+		SkillFile:    s.SkillFilePath,
+		Instructions: s.Instructions,
+	}
+}
+
+// SkillVersion 返回技能版本（manifest.json 优先，回退 frontmatter version）。
+func (s *Skill) SkillVersion() string { return s.Version() }
+
+// SkillResources 返回技能目录下的附属资源相对路径（不含 SKILL.md / manifest.json）。
+func (s *Skill) SkillResources() []string { return s.ListResources() }
+
+// ReadSkillResource 读取技能目录内的附属资源，返回内容与绝对路径。
+func (s *Skill) ReadSkillResource(path string) (string, string, error) {
+	return s.ReadResource(path)
 }
