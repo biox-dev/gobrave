@@ -301,7 +301,7 @@ func canTransitionQuestion(from, to QuestionStatus) bool {
 func AskUserToolDefinition() tool.Definition {
 	return tool.Definition{
 		Name:        AskUserToolName,
-		Description: "当需要用户在多个方案间做决策、或需要补充关键信息才能继续时，调用本工具向用户提问。支持单选、多选与文本输入；一次可提出多个问题，界面按一题一页逐题作答（可返回上一题修改）。所有必答问题作答完成后才会把汇总结果返回给你。",
+		Description: "当需要用户在多个方案间做决策、或需要补充关键信息才能继续时，调用本工具向用户提问。支持单选、多选与文本输入；一次可提出多个问题，界面按一题一页逐题作答（可返回上一题修改）。所有必答问题作答完成后才会把汇总结果返回给你。注意：选择题请把能想到的常见选项都给全（一般 3~6 个），无法穷举时务必设置 allow_custom=true 允许用户自行输入；本题的参考答案不要写进选项描述，避免直接泄露答案。",
 		InputSchema: askUserInputSchema(),
 	}
 }
@@ -323,13 +323,14 @@ func askUserInputSchema() map[string]any {
 			"id":           map[string]any{"type": "string", "description": "问题标识，答案按此 ID 回填"},
 			"type":         map[string]any{"type": "string", "enum": []string{QuestionTypeSingleChoice, QuestionTypeMultipleChoice, QuestionTypeText}},
 			"title":        map[string]any{"type": "string", "description": "问题文本"},
-			"description":  map[string]any{"type": "string", "description": "问题补充说明"},
+			"description":  map[string]any{"type": "string", "description": "问题补充说明（不要用来透露参考答案）"},
 			"required":     map[string]any{"type": "boolean", "description": "是否必答"},
-			"allow_custom": map[string]any{"type": "boolean", "description": "是否允许用户自定义输入"},
+			"allow_custom": map[string]any{"type": "boolean", "description": "是否允许用户自定义输入；选择题无法穷举所有可能时务必设为 true"},
 			"placeholder":  map[string]any{"type": "string", "description": "自定义 / 文本输入的占位提示"},
 			"options": map[string]any{
-				"type":  "array",
-				"items": optionSchema,
+				"type":        "array",
+				"description": "选项列表（choice 类型）；尽量把常见可能都列出来，用 description 简要说明选项含义，不要写出正确答案",
+				"items":       optionSchema,
 			},
 		},
 		"required": []string{"id", "type", "title"},

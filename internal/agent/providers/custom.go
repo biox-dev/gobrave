@@ -404,7 +404,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 }
 
 // askUserHostTool 构建 ask_user 宿主工具：解析模型入参 → Runtime.AskUser 阻塞等待作答 →
-// 把答案（JSON）作为工具结果回填给模型。无 UI 时 Runtime 返回错误，转为失败结果。
+// 把答案回填给模型。无 UI 时 Runtime 返回错误，转为失败结果。
 func (a *customAgent) askUserHostTool(rt agent.Runtime, userID int64) opencodesdk.HostTool {
 	def := agent.AskUserToolDefinition()
 	return hostTool(def.Name, def.Description, def.InputSchema,
@@ -417,9 +417,108 @@ func (a *customAgent) askUserHostTool(rt agent.Runtime, userID int64) opencodesd
 			if err != nil {
 				return opencodesdk.HostToolResult{Content: err.Error(), IsError: true}
 			}
-			content, _ := json.Marshal(answer)
-			return opencodesdk.HostToolResult{Content: string(content)}
+			// Metadata 承载结构化答案（opencode 会以对象形式回填给模型，
+			// 避免被二次序列化成 JSON 字符串导致模型“复述”该串并继续流式输出）。
+			// Content 同时给出人类可读摘要，便于模型直接理解用户选择。
+			return opencodesdk.HostToolResult{
+				Content:  formatAskUserAnswer(in, answer),
+				Metadata: answer,
+			}
 		})
+}
+
+// formatAskUserAnswer 把用户作答格式化为人类可读摘要（作为 ask_user 工具结果文本）。
+//
+// 按问题声明顺序逐题输出「问题标题 → 用户选择 / 输入」，让模型直接读懂作答内容；
+// 结构化答案同时放在 HostToolResult.Metadata 中。
+func formatAskUserAnswer(in agent.AskUserInput, answer agent.AskUserAnswer) string {
+	byID := make(map[string]agent.QuestionAnswer, len(answer.Answers))
+	for _, ans := range answer.Answers {
+		if ans.ID != "" {
+			byID[ans.ID] = ans
+		}
+	}
+
+	var b strings.Builder
+	if title := strings.TrimSpace(in.Title); title != "" {
+		b.WriteString(title)
+		b.WriteString("\n")
+	}
+	written := 0
+	for _, q := range in.Questions {
+		ans, ok := byID[q.ID]
+		if !ok {
+			continue
+		}
+		text := formatQuestionAnswer(ans)
+		if text == "" {
+			continue
+		}
+		if written > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("- ")
+		b.WriteString(strings.TrimSpace(q.Title))
+		b.WriteString(": ")
+		b.WriteString(text)
+		written++
+	}
+	// questions 未声明但作答中出现的答案（模型自定义 ID）原样追加。
+	for _, ans := range answer.Answers {
+		if _, known := byID[ans.ID]; !known {
+			continue
+		}
+		declared := false
+		for _, q := range in.Questions {
+			if q.ID == ans.ID {
+				declared = true
+				break
+			}
+		}
+		if declared {
+			continue
+		}
+		text := formatQuestionAnswer(ans)
+		if text == "" {
+			continue
+		}
+		if written > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("- ")
+		b.WriteString(ans.ID)
+		b.WriteString(": ")
+		b.WriteString(text)
+		written++
+	}
+	if written == 0 {
+		if data, err := json.Marshal(answer); err == nil {
+			return string(data)
+		}
+		return "用户未作有效选择"
+	}
+	return b.String()
+}
+
+// formatQuestionAnswer 把单个答案拼接为文本（多选用逗号分隔，自定义输入用括号标注）。
+func formatQuestionAnswer(ans agent.QuestionAnswer) string {
+	parts := make([]string, 0, 3)
+	parts = append(parts, ans.Values...)
+	if value := strings.TrimSpace(ans.Value); value != "" {
+		parts = append(parts, value)
+	}
+	text := strings.Join(parts, ", ")
+	if custom := strings.TrimSpace(ans.Custom); custom != "" {
+		// 自定义输入与选项值重复（选择题选了自定义）时只保留一次。
+		if text == "" || text != custom {
+			if text == "" {
+				text = custom
+			} else {
+				text += "（自定义：" + custom + "）"
+			}
+		}
+	}
+	return text
 }
 
 // hostTool 组装单个 opencode 宿主工具：拆解入参 JSON Schema 并绑定执行回调。
