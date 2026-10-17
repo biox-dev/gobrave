@@ -52,6 +52,14 @@ func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.A
 	return tool.WithMemorySaver(ctx, memorySaver)
 }
 
+// WithProjectResourceBrowser 把「浏览项目内脚本 / 分析节点」的服务能力注入工具执行 ctx。
+//
+// 该能力只被 list_project_scripts / get_script / get_analysis_node 等只读浏览工具使用，
+// 由 Provider 在执行工具前调用（见 buildHostTools）；browser 为 nil 时原样返回 ctx。
+func WithProjectResourceBrowser(ctx context.Context, browser tool.ProjectResourceBrowser) context.Context {
+	return tool.WithProjectResourceBrowser(ctx, browser)
+}
+
 // scriptUpdaterFromCreator 从创建器里取出「更新脚本基本信息」能力。
 //
 // 同一份脚本业务能力（container.scriptCreator）同时实现创建与更新，Options 只需暴露

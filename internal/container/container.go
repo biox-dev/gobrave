@@ -126,7 +126,7 @@ func buildSkillStore(cfg *config.Config) *skill.Store {
 // paramsBuilder 承载「按 io_schema 生成节点参数」的能力，供 build_analysis_node_params 工具使用。
 // envUpdater 承载「写回用户业务上下文（EnvID / EnvType）」的能力，供 create_script 工具使用。
 // memorySaver 承载「保存一条用户长期记忆」的能力，供 save_memory 工具使用。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver) *agent.Client {
+func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser) *agent.Client {
 	opts := agent.Options{}
 
 	if cfg != nil && cfg.Agent != nil {
@@ -159,6 +159,9 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	opts.AgentEnvUpdater = envUpdater
 	// 进程级服务能力：save_memory 工具在执行期通过它把注意事项写入用户长期记忆。
 	opts.MemorySaver = memorySaver
+	// 进程级服务能力：list_project_scripts / get_script / get_analysis_node 等只读浏览工具
+	// 在执行期通过它按当前项目读取脚本与分析节点。
+	opts.ProjectResourceBrowser = browser
 
 	return agent.NewClient(registry, opts)
 }
@@ -312,6 +315,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 分析节点参数生成器：把「按脚本 io_schema 解析 request_param → 刷新节点 → 写出
 	// params.json」能力暴露给内置工具 build_analysis_node_params。
 	must(container.Provide(newAnalysisNodeParamsBuilder))
+	// 项目资源浏览器：把「列出项目脚本 / 按 ID 查看脚本 / 按 ID 查看分析节点」能力暴露给
+	// 内置只读工具 list_project_scripts / get_script / get_analysis_node。
+	must(container.Provide(newProjectResourceBrowser))
 	// 用户业务上下文写回器：把「更新 user.AgentConfig.EnvID / EnvType」能力暴露给内置工具
 	// create_script，使其创建分析节点后把当前上下文切到新节点。
 	must(container.Provide(newAgentEnvUpdater))
@@ -323,8 +329,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver) *agent.Client {
-		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, envUpdater, memorySaver)
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser) *agent.Client {
+		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, envUpdater, memorySaver, browser)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。

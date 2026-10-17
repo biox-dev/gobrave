@@ -93,6 +93,13 @@ type Options struct {
 	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 save_memory 工具把「遇到的
 	// 可复现错误 / 注意事项」写入用户长期记忆，后续轮次随背景注入回到系统提示词。
 	MemorySaver tool.MemorySaver `json:"-"`
+
+	// ProjectResourceBrowser 是「浏览项目内脚本 / 分析节点」的进程级静态服务能力（可为 nil）。
+	//
+	// 与 FileReader 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
+	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 list_project_scripts /
+	// get_script / get_analysis_node 三个只读工具使用。
+	ProjectResourceBrowser tool.ProjectResourceBrowser `json:"-"`
 }
 
 // Registry 负责注册与解析 Provider。

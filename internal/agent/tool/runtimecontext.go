@@ -378,6 +378,76 @@ func ScriptUpdaterFrom(ctx context.Context) ScriptUpdater {
 	return updater
 }
 
+// ProjectResourceBrowser 抽象「浏览项目内的脚本 / 分析节点」的业务能力。
+//
+// 供内置工具 list_project_scripts / get_script / get_analysis_node 使用：三者都是纯只读
+// 查询，统一由同一份业务实现承载（见 container.projectResourceBrowser），避免为每个工具
+// 各建一个注入点。
+//
+// 与 ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），因此不放入
+// RuntimeContext，而由 agent.Options 承载，经 WithProjectResourceBrowser 注入工具执行 ctx。
+type ProjectResourceBrowser interface {
+	// ListScriptsByProject 返回指定项目下的全部脚本（item_type/pipeline 中 component_type=script）。
+	//
+	// 结果按 id 倒序，不分页（项目内脚本数量有限）；projectID 必须为正数。
+	ListScriptsByProject(ctx context.Context, projectID int64) ([]ScriptBrief, error)
+
+	// GetScriptByID 按主键读取脚本（必须属于当前激活项目，否则返回错误）。
+	//
+	// projectID 取自 RuntimeContext.ProjectID，scriptID 是 pipeline_components 主键。
+	GetScriptByID(ctx context.Context, projectID int64, scriptID int64) (ScriptBrief, error)
+
+	// GetAnalysisNodeByID 按主键读取分析节点（必须属于当前激活项目，否则返回错误）。
+	//
+	// 返回的 WorkspaceDir 是绝对路径，ParamsPath 由 WorkspaceDir 派生。
+	GetAnalysisNodeByID(ctx context.Context, projectID int64, nodeID int64) (AnalysisNodeBrief, error)
+}
+
+// ScriptBrief 是脚本的只读摘要（工具回传给模型的最小字段集）。
+//
+// ScriptFilePath / IOSchemaPath 由 utils.GetScriptFile / utils.WorkflowIOSchemaPath 推导，
+// 模型可直接按这两个路径读写脚本主文件与 io_schema.json。
+type ScriptBrief struct {
+	ScriptID       int64  `json:"script_id"`
+	ScriptName     string `json:"script_name"`
+	Description    string `json:"description,omitempty"`
+	ScriptType     string `json:"script_type,omitempty"`
+	ScriptFilePath string `json:"script_file_path"`
+	IOSchemaPath   string `json:"io_schema_path"`
+}
+
+// AnalysisNodeBrief 是分析节点的只读摘要（工具回传给模型的最小字段集）。
+type AnalysisNodeBrief struct {
+	AnalysisNodeID int64          `json:"analysis_node_id"`
+	NodeName       string         `json:"node_name"`
+	ScriptID       int64          `json:"script_id,omitempty"`
+	WorkspaceDir   string         `json:"workspace_dir"`
+	ParamsPath     string         `json:"params_path"`
+	RequestParam   map[string]any `json:"request_param,omitempty"`
+}
+
+// projectResourceBrowserKey 是 ProjectResourceBrowser 在 context 中的私有键类型。
+type projectResourceBrowserKey struct{}
+
+// WithProjectResourceBrowser 把「浏览项目内脚本 / 分析节点」的服务能力注入 context。
+//
+// 传入 nil 时返回原 context（不注入）。
+func WithProjectResourceBrowser(ctx context.Context, browser ProjectResourceBrowser) context.Context {
+	if ctx == nil || browser == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, projectResourceBrowserKey{}, browser)
+}
+
+// ProjectResourceBrowserFrom 取出注入的「浏览项目内脚本 / 分析节点」服务能力；未注入时返回 nil。
+func ProjectResourceBrowserFrom(ctx context.Context) ProjectResourceBrowser {
+	if ctx == nil {
+		return nil
+	}
+	browser, _ := ctx.Value(projectResourceBrowserKey{}).(ProjectResourceBrowser)
+	return browser
+}
+
 // ScriptCreateInput 是「创建脚本 + 分析节点」的入参。
 type ScriptCreateInput struct {
 	// ProjectID 是脚本所属项目（取自 RuntimeContext.ProjectID）。

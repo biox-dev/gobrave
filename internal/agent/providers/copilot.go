@@ -303,6 +303,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 	paramsBuilder := a.opts.AnalysisNodeParamsBuilder
 	envUpdater := a.opts.AgentEnvUpdater
 	memorySaver := a.opts.MemorySaver
+	browser := a.opts.ProjectResourceBrowser
 
 	if a.opts.Tools != nil {
 		userID := req.RequestUserID()
@@ -315,7 +316,8 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 				Description: def.Description,
 				Parameters:  def.InputSchema,
 				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
-					res := runnerExec.Run(agent.WithToolRuntime(inv.TraceContext, rc, runner, fileReader, scriptCreator, paramsBuilder, envUpdater, memorySaver), agent.ToolCall{
+					ctx := agent.WithProjectResourceBrowser(inv.TraceContext, browser)
+					res := runnerExec.Run(agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, paramsBuilder, envUpdater, memorySaver), agent.ToolCall{
 						ID:        inv.ToolCallID,
 						Name:      name,
 						Arguments: inv.Arguments,
