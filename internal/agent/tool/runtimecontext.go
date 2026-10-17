@@ -37,6 +37,9 @@ type RuntimeContext struct {
 	// Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，
 	// 为空表示默认工作区）。
 	Type string `json:"type,omitempty"`
+	// ProjectID 是本次调用所属项目的 ID（当前用户激活项目），供工具在执行期做项目级
+	// 数据定位。0 表示未知（未解析到激活项目）。
+	ProjectID int64 `json:"project_id,omitempty,string"`
 	// Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。
 	Label string `json:"label,omitempty"`
 	// SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量
@@ -56,9 +59,18 @@ type RuntimeContext struct {
 type AnalysisNodeRunner interface {
 	// RunAnalysisNode 触发分析节点执行并阻塞等待其进入终态，返回执行日志内容。
 	//
+	// requestParam 是本次运行的请求参数（键为脚本 io_schema inputs 的 name），可选：
+	// 非空时以它为准（并回写节点记录），为空时回退到 AnalysisNode 记录上已保存的
+	// request_param。
+	//
+	// 实现必须在每次运行前按 analysisform.BuildParseAnalysisResult 解析 request_param：
+	// 先把解析结果（request_param / resolved_inputs / inputs_patterns / output_patterns）
+	// 回写到 AnalysisNode，清空上一轮 input_validation_errors / output_validation_errors，
+	// 再重新生成 params.json，最后提交运行。
+	//
 	// timeoutSeconds <= 0 时由实现选取默认超时。节点运行失败（非成功终态 /
 	// 超时）时返回错误，同时返回已读取到的日志片段（可能为空）。
-	RunAnalysisNode(ctx context.Context, nodeID int64, timeoutSeconds int) (AnalysisNodeRunResult, error)
+	RunAnalysisNode(ctx context.Context, nodeID int64, requestParam map[string]any, timeoutSeconds int) (AnalysisNodeRunResult, error)
 }
 
 // AnalysisNodeRunResult 是一次分析节点执行的结果。
@@ -67,6 +79,32 @@ type AnalysisNodeRunResult struct {
 	Status  string `json:"status"`  // 节点终态（如 success / failed / timeout）
 	Log     string `json:"log"`     // 节点 command.log 的内容
 	Success bool   `json:"success"` // 是否为成功终态
+
+	// WorkspaceDir 是节点根目录（绝对路径），节点的 params.json / run.sh / output /
+	// command.log 全部由它派生，方便模型在该目录下定位产物。
+	WorkspaceDir string `json:"workspace_dir,omitempty"`
+	// CommandPath 是本次运行实际执行的 run.sh 绝对路径，便于模型读脚本复核参数。
+	CommandPath string `json:"command_path,omitempty"`
+	// ParamsPath 是节点 params.json 的绝对路径（本次运行的输入参数）。
+	ParamsPath string `json:"params_path,omitempty"`
+	// LogPath 是节点命令日志 command.log 的绝对路径。Log 会按 maxLogBytes 截断，
+	// 模型可在需要完整日志时用 read_file 类工具按该路径读取。
+	LogPath string `json:"log_path,omitempty"`
+	// ParamsJSON 是本次运行实际使用的 params.json 正文（运行前由 runner 重新生成），
+	// 便于模型确认脚本实际拿到的参数，无需再读盘。
+	ParamsJSON string `json:"params_json,omitempty"`
+	// RequestParam 是本次运行使用的请求参数（键为 io_schema inputs 的 name）。
+	// 传入 request_param 时为本次入参，未传时从节点记录的 request_param 反解而来。
+	RequestParam map[string]any `json:"request_param,omitempty"`
+	// ResolvedInputs 是按脚本 io_schema 解析 request_param 后的结构化输入。
+	ResolvedInputs map[string]any `json:"resolved_inputs,omitempty"`
+	// InputValidationErrors / OutputValidationErrors 是本次运行前写回节点的校验错误
+	// 快照（运行前会被清空，由编排器在运行期重新填充）。
+	InputValidationErrors  []any `json:"input_validation_errors,omitempty"`
+	OutputValidationErrors []any `json:"output_validation_errors,omitempty"`
+	// ParamsWarnings 是参数解析阶段发现的非致命问题（如缺少必填输入、
+	// 存在 io_schema 未声明的键）。
+	ParamsWarnings []string `json:"params_warnings,omitempty"`
 }
 
 // SystemPromptVar 从 RuntimeContext.SystemPromptVars 中取一个字符串值。
@@ -204,6 +242,85 @@ func FileReaderFrom(ctx context.Context) FileReader {
 	return reader
 }
 
+// ScriptCreator 抽象「创建脚本 + 独立分析节点」的业务能力。
+//
+// 一个脚本对应一个可独立运行的节点：创建时落库 Script（pipeline_components）与
+// AnalysisNode（analysis_nodes），并准备好脚本目录（主文件 / io_schema.json）与
+// 节点工作目录（params.json / run.sh 等）。这些细节收敛在上层实现（见 container），
+// tool 包只负责把能力暴露给模型。
+//
+// 与 AnalysisNodeRunner / FileReader 一样，它是进程级静态依赖（一次注入、所有请求共用），
+// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithScriptCreator 注入工具执行 ctx。
+type ScriptCreator interface {
+	// CreateScriptWithNode 创建脚本及其独立分析节点，返回新节点的 ID 与产物路径。
+	//
+	// projectID 取自 RuntimeContext.ProjectID（当前用户激活项目），必须为正数。
+	// input.ContainerTemplateID 为空（0）时由实现解析系统默认容器模板；
+	// 没有配置默认模板时返回错误，提示用户先到容器模板页设置默认模板。
+	CreateScriptWithNode(ctx context.Context, input ScriptCreateInput) (ScriptCreateResult, error)
+}
+
+// ScriptCreateInput 是「创建脚本 + 分析节点」的入参。
+type ScriptCreateInput struct {
+	// ProjectID 是脚本所属项目（取自 RuntimeContext.ProjectID）。
+	ProjectID int64 `json:"project_id,string"`
+	// 以下为 Script 字段。
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// ContainerTemplateID 为 0 时表示未指定，由实现解析系统默认容器模板。
+	ContainerTemplateID int64  `json:"container_template_id,string"`
+	ScriptType          string `json:"script_type"`
+	// Inputs / Outputs 是脚本的输入输出契约（io_schema.json 的 inputs / outputs）。
+	// 非空时由实现写入脚本目录的 io_schema.json，并用它初始化分析节点的
+	// inputs_patterns / output_patterns；为空时实现回落默认 schema。
+	// 每一项至少应包含 name / type，可选 label / required / description 等字段。
+	Inputs  []map[string]any `json:"inputs,omitempty"`
+	Outputs []map[string]any `json:"outputs,omitempty"`
+	// 以下为 AnalysisNode 字段。
+	NodeName string `json:"node_name"`
+}
+
+// ScriptCreateResult 是「创建脚本 + 分析节点」的结果（回传给模型）。
+type ScriptCreateResult struct {
+	ScriptID int64 `json:"script_id,string"`
+	// ScriptKey 是 Script.ScriptID（组件业务 ID，脚本目录名）。
+	ScriptKey      string `json:"script_key"`
+	ScriptName     string `json:"script_name"`
+	ScriptFilePath string `json:"script_file_path"`
+	IOSchemaPath   string `json:"io_schema_path"`
+
+	// ContainerTemplateID 是脚本最终使用的容器模板 ID（未显式指定时为解析出的默认模板）。
+	ContainerTemplateID   int64  `json:"container_template_id,string"`
+	ContainerTemplateName string `json:"container_template_name,omitempty"`
+
+	AnalysisNodeID int64  `json:"analysis_node_id,string"`
+	NodeName       string `json:"node_name"`
+	WorkspaceDir   string `json:"workspace_dir"`
+	ParamsPath     string `json:"params_path"`
+}
+
+// scriptCreatorKey 是 ScriptCreator 在 context 中的私有键类型。
+type scriptCreatorKey struct{}
+
+// WithScriptCreator 把「创建脚本 + 分析节点」的服务能力注入 context，供 builtin 工具执行期读取。
+//
+// 传入 nil 时返回原 context（不注入）。
+func WithScriptCreator(ctx context.Context, creator ScriptCreator) context.Context {
+	if ctx == nil || creator == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, scriptCreatorKey{}, creator)
+}
+
+// ScriptCreatorFrom 取出注入的「创建脚本 + 分析节点」服务能力；未注入时返回 nil。
+func ScriptCreatorFrom(ctx context.Context) ScriptCreator {
+	if ctx == nil {
+		return nil
+	}
+	creator, _ := ctx.Value(scriptCreatorKey{}).(ScriptCreator)
+	return creator
+}
+
 // toString 把任意值尽力转为去空白的字符串。
 func toString(v any) string {
 	switch s := v.(type) {
@@ -216,4 +333,74 @@ func toString(v any) string {
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%v", v))
 	}
+}
+
+// AnalysisNodeParamsBuilder 抽象「按脚本 io_schema 解析请求参数 → 落库并生成 params.json」
+// 的业务能力。
+//
+// 模型依据 io_schema.json 拼出 request_param 后调用该能力：上层按脚本表单
+// （analysisform.BuildParseAnalysisResult）把 request_param 解析成结构化配方，
+// 用它刷新分析节点的 inputs_patterns / output_patterns / resolved_inputs /
+// request_param，再通过 NodeRuntimePreparer.Prepare 把配方写成节点 params.json /
+// run.sh / env.sh，使 run_analysis_node 能直接以这份参数运行脚本。
+//
+// 与 AnalysisNodeRunner / ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），
+// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithAnalysisNodeParamsBuilder
+// 注入工具执行 ctx。
+type AnalysisNodeParamsBuilder interface {
+	// BuildAnalysisNodeParams 为指定分析节点生成运行期参数文件并落库。
+	//
+	// analysisNodeID <= 0 或 requestParam 为空时返回错误；projectID > 0 时用于校验节点归属，
+	// 避免模型把参数写到别的项目的节点上。
+	BuildAnalysisNodeParams(ctx context.Context, input AnalysisNodeParamsInput) (AnalysisNodeParamsResult, error)
+}
+
+// AnalysisNodeParamsInput 是「生成分析节点参数」的入参。
+type AnalysisNodeParamsInput struct {
+	// AnalysisNodeID 是目标分析节点主键。
+	AnalysisNodeID int64 `json:"analysis_node_id,string"`
+	// ProjectID 是当前激活项目 ID（>0 时校验节点归属）。
+	ProjectID int64 `json:"project_id,string"`
+	// RequestParam 是模型依据 io_schema.json 生成的请求参数，键为 io_schema 中的 name。
+	RequestParam map[string]any `json:"request_param"`
+}
+
+// AnalysisNodeParamsResult 是「生成分析节点参数」的结果（回传给模型）。
+//
+// ParamsPath 与 ParamsJSON 是核心产物：ParamsJSON 是写入文件的 params.json 正文，
+// 模型据此确认「io_schema 参数确实被正确映射」，无需再读盘。
+type AnalysisNodeParamsResult struct {
+	AnalysisNodeID int64  `json:"analysis_node_id,string"`
+	ScriptID       int64  `json:"script_id,string"`
+	WorkspaceDir   string `json:"workspace_dir"`
+	ParamsPath     string `json:"params_path"`
+	CommandPath    string `json:"command_path,omitempty"`
+	// ParamsJSON 是写入 params.json 的实际内容（缩进后的 JSON 文本）。
+	ParamsJSON string `json:"params_json"`
+	// ResolvedInputs 是按脚本表单解析后的结构化输入（即写入 params.json 的主体）。
+	ResolvedInputs map[string]any `json:"resolved_inputs,omitempty"`
+	// Warnings 是解析过程中发现的非致命问题（如 io_schema 参数未被提供）。
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// analysisNodeParamsBuilderKey 是 AnalysisNodeParamsBuilder 在 context 中的私有键类型。
+type analysisNodeParamsBuilderKey struct{}
+
+// WithAnalysisNodeParamsBuilder 把「生成分析节点参数」的服务能力注入 context，供 builtin 工具执行期读取。
+//
+// 传入 nil 时返回原 context（不注入）。
+func WithAnalysisNodeParamsBuilder(ctx context.Context, builder AnalysisNodeParamsBuilder) context.Context {
+	if ctx == nil || builder == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, analysisNodeParamsBuilderKey{}, builder)
+}
+
+// AnalysisNodeParamsBuilderFrom 取出注入的「生成分析节点参数」服务能力；未注入时返回 nil。
+func AnalysisNodeParamsBuilderFrom(ctx context.Context) AnalysisNodeParamsBuilder {
+	if ctx == nil {
+		return nil
+	}
+	builder, _ := ctx.Value(analysisNodeParamsBuilderKey{}).(AnalysisNodeParamsBuilder)
+	return builder
 }

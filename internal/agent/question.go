@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
@@ -38,6 +39,8 @@ var (
 	ErrInvalidQuestionTransition = errors.New("agent: invalid question state transition")
 	// ErrNoUserInputResolver 表示当前 Runtime 无法向用户提问（无 UI）。
 	ErrNoUserInputResolver = errors.New("agent: no user input resolver in runtime")
+	// ErrUnknownQuestionID 表示提交的答案引用了本次提问不存在的问题 ID。
+	ErrUnknownQuestionID = errors.New("agent: unknown question id")
 )
 
 // AskUserToolName 是 ask_user 工具名（模型据此发起调用）。
@@ -83,9 +86,130 @@ const (
 )
 
 // AskUserAnswer 是用户对一次提问的全部作答，也是 ask_user 工具回传给模型的结果。
+//
+// 一次提问可包含多个问题，界面通常按「一题一页」逐题作答：前端在翻页 / 提交时
+// 只回传已完成的问题，并附带 AnsweredIDs（本次已作答的问题 ID）。服务端据此把
+// 本轮作答合并进暂存进度，直到所有必答问题都有答案才真正唤醒 Agent；因此
+// AnsweredIDs 让「已作答」与「当前值恰为空」两种情形可以区分。
 type AskUserAnswer struct {
-	RequestID string           `json:"request_id,omitempty"`
-	Answers   []QuestionAnswer `json:"answers"`
+	RequestID   string           `json:"request_id,omitempty"`
+	Answers     []QuestionAnswer `json:"answers"`
+	AnsweredIDs []string         `json:"answered_ids,omitempty"` // 本次已作答的问题 ID（用于逐题提交合并）
+}
+
+// AnsweredQuestions 返回已作答的问题 ID 集合（显式 AnsweredIDs 优先，缺省时取
+// Answers 中出现在 questions 里的 ID）。
+func (a AskUserAnswer) AnsweredQuestions(questions []Question) map[string]bool {
+	set := make(map[string]bool, len(a.AnsweredIDs)+len(a.Answers))
+	for _, id := range a.AnsweredIDs {
+		if id != "" {
+			set[id] = true
+		}
+	}
+	for _, ans := range a.Answers {
+		if ans.ID == "" {
+			continue
+		}
+		for _, q := range questions {
+			if q.ID == ans.ID {
+				set[ans.ID] = true
+				break
+			}
+		}
+	}
+	return set
+}
+
+// Merge 把本次作答合并进已有作答（按问题 ID 覆盖），返回合并结果。
+//
+// base 为 nil 时以本题作答为基础。合并保持 questions 的顺序，未出现在本次作答中的
+// 问题沿用 base 中的答案；AnsweredIDs 取并集。
+func (a AskUserAnswer) Merge(base *AskUserAnswer, questions []Question) AskUserAnswer {
+	out := AskUserAnswer{RequestID: a.RequestID}
+	if out.RequestID == "" && base != nil {
+		out.RequestID = base.RequestID
+	}
+
+	byID := make(map[string]QuestionAnswer, len(a.Answers))
+	for _, ans := range a.Answers {
+		if ans.ID != "" {
+			byID[ans.ID] = ans
+		}
+	}
+	if base != nil {
+		for _, ans := range base.Answers {
+			if _, ok := byID[ans.ID]; !ok && ans.ID != "" {
+				byID[ans.ID] = ans
+			}
+		}
+	}
+
+	seen := make(map[string]bool, len(byID))
+	for _, q := range questions {
+		if ans, ok := byID[q.ID]; ok {
+			out.Answers = append(out.Answers, ans)
+			seen[q.ID] = true
+		}
+	}
+	// 不在 questions 声明中的答案（模型自定义 ID 等）保持原样追加。
+	for id, ans := range byID {
+		if !seen[id] {
+			out.Answers = append(out.Answers, ans)
+		}
+	}
+
+	answered := a.AnsweredQuestions(questions)
+	if base != nil {
+		for id := range base.AnsweredQuestions(questions) {
+			answered[id] = true
+		}
+	}
+	out.AnsweredIDs = make([]string, 0, len(answered))
+	for id := range answered {
+		out.AnsweredIDs = append(out.AnsweredIDs, id)
+	}
+	return out
+}
+
+// IsComplete 判断是否所有必答问题都已在作答中给出答案。
+//
+// 文本题以 Value 非空为准；选择题以 Value / Values / Custom 任一非空为准。
+// 所有问题都不是必答时，只要作答集合非空即视为完成。
+func (a AskUserAnswer) IsComplete(questions []Question) bool {
+	answered := a.AnsweredQuestions(questions)
+	byID := make(map[string]QuestionAnswer, len(a.Answers))
+	for _, ans := range a.Answers {
+		byID[ans.ID] = ans
+	}
+	hasRequired := false
+	for _, q := range questions {
+		if !q.Required {
+			continue
+		}
+		hasRequired = true
+		ans, ok := byID[q.ID]
+		if !ok {
+			return false
+		}
+		if !answerFilled(q, ans) {
+			return false
+		}
+	}
+	if !hasRequired {
+		return len(answered) > 0
+	}
+	return true
+}
+
+// answerFilled 判断单个问题的答案是否有实际内容。
+func answerFilled(q Question, ans QuestionAnswer) bool {
+	if q.Type == QuestionTypeText {
+		return strings.TrimSpace(ans.Value) != "" || strings.TrimSpace(ans.Custom) != ""
+	}
+	if len(ans.Values) > 0 {
+		return true
+	}
+	return strings.TrimSpace(ans.Value) != "" || strings.TrimSpace(ans.Custom) != ""
 }
 
 // QuestionAnswer 是单个问题的答案。
@@ -177,7 +301,7 @@ func canTransitionQuestion(from, to QuestionStatus) bool {
 func AskUserToolDefinition() tool.Definition {
 	return tool.Definition{
 		Name:        AskUserToolName,
-		Description: "当需要用户在多个方案间做决策、或需要补充关键信息才能继续时，调用本工具向用户提问。支持单选、多选与文本输入；一次可提出多个问题。",
+		Description: "当需要用户在多个方案间做决策、或需要补充关键信息才能继续时，调用本工具向用户提问。支持单选、多选与文本输入；一次可提出多个问题，界面按一题一页逐题作答（可返回上一题修改）。所有必答问题作答完成后才会把汇总结果返回给你。",
 		InputSchema: askUserInputSchema(),
 	}
 }
@@ -218,7 +342,8 @@ func askUserInputSchema() map[string]any {
 			"description": map[string]any{"type": "string", "description": "补充说明"},
 			"questions": map[string]any{
 				"type":        "array",
-				"description": "需要用户回答的问题列表",
+				"minItems":    1,
+				"description": "需要用户回答的问题列表（可多个；界面按一题一页逐题作答，所有必答题完成后一次性返回全部答案）",
 				"items":       questionSchema,
 			},
 		},

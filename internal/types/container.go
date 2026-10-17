@@ -152,6 +152,10 @@ type ContainerTemplateDefinition struct {
 	// DisplayName 为空时，对外名称回退到 ContainerTemplateConfig.Name。
 	DisplayName string `json:"display_name" gorm:"type:varchar(255)"`
 
+	// IsDefault 标记「默认容器模板」：只能有一行处于默认状态，由服务层在写入时互斥维护。
+	// 创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。
+	IsDefault bool `json:"is_default" gorm:"not null;default:false;index"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -182,6 +186,8 @@ type ContainerTemplate struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Image       *ContainerImage `json:"image,omitempty"`
+	// IsDefault 原样取自绑定行 ContainerTemplateDefinition.IsDefault。
+	IsDefault bool `json:"is_default"`
 
 	Command string  `json:"command"`
 	CPU     float64 `json:"cpu"`
@@ -213,6 +219,7 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 		SpecID:    binding.SpecID,
 		ImageID:   binding.ImageID,
 		Image:     image,
+		IsDefault: binding.IsDefault,
 		CreatedAt: binding.CreatedAt,
 		UpdatedAt: binding.UpdatedAt,
 	}

@@ -204,6 +204,13 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 		}
 	}
 
+	// 当前用户激活项目：既作为 RuntimeContext.ProjectID（供工具定位项目级数据），
+	// 也是默认工作目录的兜底来源。
+	var projectID int64
+	if project, pErr := r.projectSvc.GetActiveProjectByUserID(ctx, userID); pErr == nil && project != nil {
+		projectID = project.ID
+	}
+
 	if strings.TrimSpace(workingDir) == "" {
 		dir, lbl, err := r.resolveDefaultWorkingDirectory(ctx, userID)
 		if err != nil {
@@ -224,6 +231,7 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 
 	return &RuntimeContext{
 		Type:             rtcType,
+		ProjectID:        projectID,
 		Label:            label,
 		SystemPromptVars: vars,
 		WorkingDir:       workingDir,

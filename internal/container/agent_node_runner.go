@@ -2,24 +2,29 @@ package container
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/dag"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
+	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 // analysisNodeRunner 实现 tool.AnalysisNodeRunner：把「运行分析节点并等待完成、读取日志」
 // 的业务能力暴露给内置工具 run_analysis_node。
 //
-// 它与 AnalysisHandler.RunAnalysisNodeWithID / LLMHandler.runAnalysisNodeByID 语义一致：
-// 重置节点状态 → 提交异步执行 → **订阅节点完成事件**等待终态 → 读取 command.log 内容。
+// 与 AnalysisHandler.RunAnalysisNodeWithID / LLMHandler.runAnalysisNodeByID 语义一致：
+// 按最新 io_schema 刷新 patterns → 重置节点状态 → 提交异步执行 → **订阅节点完成事件**
+// 等待终态 → 读取 command.log 内容。
 //
 // 等待终态不再依赖高频轮询：NodeCompletionCoordinator 在完成节点后会通过共享 event.Bus
 // 发布 dag.node.completed / dag.node.failed（见 publishNodeResult），这里经进程级唯一的
@@ -28,6 +33,13 @@ import (
 type analysisNodeRunner struct {
 	analysisSvc      interfaces.AnalysisService
 	nodeOrchestrator interfaces.NodeOrchestrator
+	// workflowSvc 用于读取脚本 latest io_schema.json（解析 request_param 与刷新 patterns）。
+	workflowSvc interfaces.WorkflowService
+	// analysisRepo / dataSvc / preparer 用于复用 applyAnalysisNodeParams 解析参数并生成
+	// params.json（与 build_analysis_node_params 工具同一实现，不经过 paramsBuilder 工具层）。
+	analysisRepo interfaces.AnalysisRepository
+	dataSvc      interfaces.DataService
+	preparer     prepare.NodeRuntimePreparer
 	// router 是进程级运行时事件路由器；订阅它即可收到 NodeCompletionCoordinator
 	// publishNodeResult 发出的节点完成 / 失败事件。为 nil 时退化为纯状态轮询。
 	router *dagruntime.EventRouter
@@ -48,11 +60,19 @@ const reconcileInterval = 5 * time.Minute
 func newAnalysisNodeRunner(
 	analysisSvc interfaces.AnalysisService,
 	nodeOrchestrator interfaces.NodeOrchestrator,
+	workflowSvc interfaces.WorkflowService,
+	analysisRepo interfaces.AnalysisRepository,
+	dataSvc interfaces.DataService,
+	preparer prepare.NodeRuntimePreparer,
 	router *dagruntime.EventRouter,
 ) tool.AnalysisNodeRunner {
 	return &analysisNodeRunner{
 		analysisSvc:      analysisSvc,
 		nodeOrchestrator: nodeOrchestrator,
+		workflowSvc:      workflowSvc,
+		analysisRepo:     analysisRepo,
+		dataSvc:          dataSvc,
+		preparer:         preparer,
 		router:           router,
 		pollInterval:     reconcileInterval,
 		defaultTimeout:   60 * time.Minute,
@@ -61,7 +81,13 @@ func newAnalysisNodeRunner(
 }
 
 // RunAnalysisNode 触发分析节点执行并阻塞等待其进入终态，返回执行日志内容。
-func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, timeoutSeconds int) (tool.AnalysisNodeRunResult, error) {
+//
+// 运行前解析本次参数：requestParam 非空时以它为准，否则回退到节点已保存的
+// request_param；两者都为空则直接报错。随后按脚本最新的 io_schema.json 解析，并把
+// request_param / resolved_inputs / inputs_patterns / output_patterns 一次性回写节点、
+// 清空上一轮的 input_validation_errors / output_validation_errors，再重新生成
+// params.json。解析失败则不提交运行（避免用过期 / 空参数跑出误导性结果）。
+func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, requestParam map[string]any, timeoutSeconds int) (tool.AnalysisNodeRunResult, error) {
 	if nodeID <= 0 {
 		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("invalid analysis node id")
 	}
@@ -82,26 +108,116 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	// 防重复提交：节点已在运行中时直接拒绝，避免并发触发。
 	if node.Status == dag.StatusRunning || node.Status == dag.StatusSubmitted || node.Status == dag.StatusStopping {
 		return tool.AnalysisNodeRunResult{
-			NodeID: nodeID,
-			Status: node.Status,
-			Log:    readAnalysisNodeLog(node.LogPath, r.maxLogBytes),
+			NodeID:       nodeID,
+			Status:       node.Status,
+			Log:          readAnalysisNodeLog(node.LogPath, r.maxLogBytes),
+			WorkspaceDir: node.WorkspaceDir,
+			CommandPath:  node.CommandPath,
+			ParamsPath:   node.ParamsPath,
+			LogPath:      node.LogPath,
+			ParamsJSON:   readParamsJSON(node.ParamsPath),
+			RequestParam: decodeRequestParam(node.RequestParam),
 		}, fmt.Errorf("analysis node is already %s", node.Status)
 	}
 
-	// 重置节点状态（与 RunAnalysisNodeWithID 一致），再提交异步执行。
+	// 1) 确定本次运行的 request_param：入参优先，为空时回退到节点已保存的；两者都空则
+	// 直接报错（最终 request_param 不能为空，避免用空参数跑出误导性结果）。
+	effectiveRequestParam := requestParam
+	if len(effectiveRequestParam) == 0 {
+		effectiveRequestParam = decodeRequestParam(node.RequestParam)
+	}
+	if len(effectiveRequestParam) == 0 {
+		return tool.AnalysisNodeRunResult{
+			NodeID:       nodeID,
+			Status:       "params_failed",
+			WorkspaceDir: node.WorkspaceDir,
+			CommandPath:  node.CommandPath,
+			ParamsPath:   node.ParamsPath,
+			LogPath:      node.LogPath,
+		}, fmt.Errorf("request_param is required: pass request_param to run_analysis_node or build node params with build_analysis_node_params first")
+	}
+
+	// 2) 读取脚本表单，按表单解析 request_param。
+	if r.analysisRepo == nil || r.workflowSvc == nil {
+		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("required services are not configured")
+	}
+
+	formJSONWrap, scriptIOSchema, err := r.workflowSvc.GetScriptFormJSONByID(ctx, node.ScriptID)
+	if err != nil {
+		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to load script form (io_schema.json): %w", err)
+	}
+	if len(formJSONWrap) == 0 {
+		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("script %d has no io_schema inputs, nothing to build", node.ScriptID)
+	}
+	resolvedInputs, err := analysisform.BuildParseAnalysisResult(ctx, r.dataSvc, effectiveRequestParam, formJSONWrap)
+	if err != nil {
+		return tool.AnalysisNodeRunResult{
+			NodeID:       nodeID,
+			Status:       "params_failed",
+			RequestParam: effectiveRequestParam,
+		}, fmt.Errorf("failed to build params.json: %w", err)
+	}
+	if resolvedInputs == nil {
+		resolvedInputs = map[string]any{}
+	}
+
+	// 3) 刷新节点的 patterns / resolved_inputs / request_param，并清空上一轮校验错误。
+	requestParamBytes, err := json.Marshal(effectiveRequestParam)
+	if err != nil {
+		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to serialize request_param: %w", err)
+	}
+	inputsPatterns := utils.FormatIOSchemaItems(scriptIOSchema["inputs"])
+	outputPatterns := utils.FormatIOSchemaItems(scriptIOSchema["outputs"])
 	if err := r.analysisSvc.UpdateAnalysisNodeByID(ctx, node.ID, map[string]any{
-		"status":                   dag.StatusReady,
-		"server_status":            "",
-		"cache_hit":                false,
-		"rerun_reason":             "node rerun requested by agent tool",
-		"error_message":            "",
-		"exit_code":                0,
-		"pid":                      0,
-		"job_id":                   "",
-		"started_at":               nil,
-		"finished_at":              nil,
+		"inputs_patterns":          types.JSONMap(inputsPatterns),
+		"output_patterns":          types.JSONMap(outputPatterns),
+		"resolved_inputs":          types.JSONMap(cloneParamsMap(resolvedInputs)),
+		"request_param":            string(requestParamBytes),
+		"input_validation_errors":  types.JSONSlice{},
 		"output_validation_errors": types.JSONSlice{},
-		"updated_at":               time.Now().UTC(),
+	}); err != nil {
+		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to update analysis node %d: %w", node.ID, err)
+	}
+
+	// 4) 用刚写入的字段重新生成 params.json / run.sh / env.sh。
+	if r.preparer == nil {
+		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("node runtime preparer is not configured")
+	}
+	node.InputsPatterns = types.JSONMap(inputsPatterns)
+	node.OutputPatterns = types.JSONMap(outputPatterns)
+	node.ResolvedInputs = types.JSONMap(cloneParamsMap(resolvedInputs))
+	node.RequestParam = string(requestParamBytes)
+	node.HydrateDerivedPaths()
+	if err := r.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
+		return tool.AnalysisNodeRunResult{
+			NodeID:         nodeID,
+			Status:         "params_failed",
+			WorkspaceDir:   node.WorkspaceDir,
+			CommandPath:    node.CommandPath,
+			ParamsPath:     node.ParamsPath,
+			RequestParam:   effectiveRequestParam,
+			ResolvedInputs: resolvedInputs,
+		}, fmt.Errorf("failed to build params.json: %w", err)
+	}
+	warnings := missingIOSchemaWarnings(formJSONWrap, effectiveRequestParam)
+	if extra := unknownIOSchemaWarnings(formJSONWrap, effectiveRequestParam); len(extra) > 0 {
+		warnings = append(warnings, extra...)
+	}
+
+	// 5) 重置节点状态（与 RunAnalysisNodeWithID 一致），再提交异步执行。
+	// 校验错误已在参数解析阶段清空，这里不再重复写入。
+	if err := r.analysisSvc.UpdateAnalysisNodeByID(ctx, node.ID, map[string]any{
+		"status":        dag.StatusReady,
+		"server_status": "",
+		"cache_hit":     false,
+		"rerun_reason":  "node rerun requested by agent tool",
+		"error_message": "",
+		"exit_code":     0,
+		"pid":           0,
+		"job_id":        "",
+		"started_at":    nil,
+		"finished_at":   nil,
+		"updated_at":    time.Now().UTC(),
 	}); err != nil {
 		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to reset analysis node status: %w", err)
 	}
@@ -111,7 +227,57 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	}
 
 	logPath := strings.TrimSpace(node.LogPath)
-	return r.waitForCompletion(ctx, nodeID, logPath, timeout)
+	result, runErr := r.waitForCompletion(ctx, nodeID, logPath, timeout)
+	// 参数与提示信息以本次解析结果为准（无论成功 / 失败 / 超时都回传本次生效的参数）。
+	if result.RequestParam == nil {
+		result.RequestParam = effectiveRequestParam
+	}
+	if result.ResolvedInputs == nil {
+		result.ResolvedInputs = resolvedInputs
+	}
+	if len(result.ParamsWarnings) == 0 {
+		result.ParamsWarnings = warnings
+	}
+	// 参数解析阶段已清空上一轮的校验错误；这里回传本次运行前落库的快照。
+	if result.InputValidationErrors == nil && len(node.InputValidationErrors) > 0 {
+		result.InputValidationErrors = []any(node.InputValidationErrors)
+	}
+	if result.OutputValidationErrors == nil && len(node.OutputValidationErrors) > 0 {
+		result.OutputValidationErrors = []any(node.OutputValidationErrors)
+	}
+	return result, runErr
+}
+
+// readParamsJSON 读取节点 params.json 正文；读取失败或为空时返回空字符串（不视为错误）。
+func readParamsJSON(paramsPath string) string {
+	paramsPath = strings.TrimSpace(paramsPath)
+	if paramsPath == "" {
+		return ""
+	}
+	data, err := os.ReadFile(paramsPath)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// decodeRequestParam 把节点上保存的 request_param JSON 文本反解成 map。
+//
+// 节点字段为字符串（AnalysisNode.RequestParam），运行前未传参时用它回退「节点已保存的
+// 参数」；内容为空 / 非法 JSON 时返回 nil。
+func decodeRequestParam(raw string) map[string]any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" || raw == "null" {
+		return nil
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // waitForCompletion 等待节点进入终态或超时，返回最终结果（含日志）。
@@ -133,6 +299,11 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to get analysis node: %w", err)
 	}
 	analysisID := node.AnalysisID
+	// 运行期路径全部由节点的 WorkspaceDir 派生，这里先取一份，保证取消 / 超时等
+	// 非终态返回也能告诉模型文件在哪。
+	workspaceDir := strings.TrimSpace(node.WorkspaceDir)
+	commandPath := strings.TrimSpace(node.CommandPath)
+	paramsPath := strings.TrimSpace(node.ParamsPath)
 	// 注意：AnalysisNode.ID 是主键（int64），而 AnalysisNode.AnalysisNodeID 是业务
 	// 字符串 ID；RuntimeEvent.AnalysisNodeID 的类型是 int64，NodeCompletionCoordinator.
 	// publishNodeResult 填入的正是 node.ID，因此这里也按主键匹配。
@@ -168,9 +339,14 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 		select {
 		case <-ctx.Done():
 			return tool.AnalysisNodeRunResult{
-				NodeID: nodeID,
-				Status: "canceled",
-				Log:    readAnalysisNodeLog(logPath, r.maxLogBytes),
+				NodeID:       nodeID,
+				Status:       "canceled",
+				Log:          readAnalysisNodeLog(logPath, r.maxLogBytes),
+				WorkspaceDir: workspaceDir,
+				CommandPath:  commandPath,
+				ParamsPath:   paramsPath,
+				LogPath:      logPath,
+				ParamsJSON:   readParamsJSON(paramsPath),
 			}, ctx.Err()
 		case <-nodeEvents:
 			// 节点完成事件到达：读取最新状态并判定终态（见下方 done 分支的兜底）。
@@ -187,15 +363,30 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 			if lp := strings.TrimSpace(node.LogPath); lp != "" {
 				logPath = lp
 			}
+			// 节点详情里带的是已还原的绝对路径，优先以它为准（repository 读取时会 hydrate）。
+			if v := strings.TrimSpace(node.WorkspaceDir); v != "" {
+				workspaceDir = v
+			}
+			if v := strings.TrimSpace(node.CommandPath); v != "" {
+				commandPath = v
+			}
+			if v := strings.TrimSpace(node.ParamsPath); v != "" {
+				paramsPath = v
+			}
 			status := strings.ToLower(strings.TrimSpace(node.Status))
 			if isAnalysisNodeTerminal(status) {
 				log := readAnalysisNodeLog(logPath, r.maxLogBytes)
 				success := isAnalysisNodeSuccess(status)
 				result := tool.AnalysisNodeRunResult{
-					NodeID:  nodeID,
-					Status:  node.Status,
-					Log:     log,
-					Success: success,
+					NodeID:       nodeID,
+					Status:       node.Status,
+					Log:          log,
+					Success:      success,
+					WorkspaceDir: node.WorkspaceDir,
+					CommandPath:  node.CommandPath,
+					ParamsPath:   node.ParamsPath,
+					LogPath:      logPath,
+					ParamsJSON:   readParamsJSON(node.ParamsPath),
 				}
 				if !success {
 					msg := strings.TrimSpace(node.ErrorMessage)
@@ -210,9 +401,14 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 
 		if time.Now().After(deadline) {
 			return tool.AnalysisNodeRunResult{
-				NodeID: nodeID,
-				Status: "timeout",
-				Log:    readAnalysisNodeLog(logPath, r.maxLogBytes),
+				NodeID:       nodeID,
+				Status:       "timeout",
+				Log:          readAnalysisNodeLog(logPath, r.maxLogBytes),
+				WorkspaceDir: workspaceDir,
+				CommandPath:  commandPath,
+				ParamsPath:   paramsPath,
+				LogPath:      logPath,
+				ParamsJSON:   readParamsJSON(paramsPath),
 			}, fmt.Errorf("timeout after %s waiting for analysis node to complete", timeout)
 		}
 	}

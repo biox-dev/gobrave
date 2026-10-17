@@ -201,10 +201,81 @@ func containerTemplateSpecFromReadModel(tpl *types.ContainerTemplate) *types.Con
 // DisplayName 故意留空：读模型里的 Name 可能是配置名，写入绑定行会把配置名误固化成展示名。
 func containerTemplateDefinitionFromReadModel(tpl *types.ContainerTemplate) *types.ContainerTemplateDefinition {
 	return &types.ContainerTemplateDefinition{
-		ID:      tpl.ID,
-		SpecID:  tpl.SpecID,
-		ImageID: tpl.ImageID,
+		ID:        tpl.ID,
+		SpecID:    tpl.SpecID,
+		ImageID:   tpl.ImageID,
+		IsDefault: tpl.IsDefault,
 	}
+}
+
+// applyDefaultFlag 把「某绑定行为默认」写入库：先清空其它行的默认标记，再置位目标行。
+// 默认模板必须全局唯一（创建脚本未指定 container_template_id 时依赖它取默认值）。
+// definitionID 为 0 表示不改变默认标记。
+func (s *containerService) applyDefaultFlag(ctx context.Context, tx interfaces.ContainerRepository, definitionID int64) error {
+	if definitionID == 0 {
+		return nil
+	}
+	if err := tx.ClearContainerTemplateDefinitionDefault(ctx); err != nil {
+		return err
+	}
+	return tx.UpdateContainerTemplateDefinition(ctx, &types.ContainerTemplateDefinition{ID: definitionID, IsDefault: true})
+}
+
+// GetDefaultContainerTemplate 返回默认容器模板（对外读模型）；没有默认行时返回 (nil, nil)。
+func (s *containerService) GetDefaultContainerTemplate(ctx context.Context) (*types.ContainerTemplate, error) {
+	definition, err := s.containerRepo.GetDefaultContainerTemplateDefinition(ctx)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return s.containerRepo.GetContainerTemplateByID(ctx, definition.ID)
+}
+
+// SetDefaultContainerTemplate 把指定绑定行设为唯一默认模板。
+func (s *containerService) SetDefaultContainerTemplate(ctx context.Context, definitionID int64) error {
+	if definitionID <= 0 {
+		return fmt.Errorf("container template definition id is required")
+	}
+	if _, err := s.containerRepo.GetContainerTemplateDefinitionByID(ctx, definitionID); err != nil {
+		return err
+	}
+	return s.containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+		return s.applyDefaultFlag(ctx, tx, definitionID)
+	})
+}
+
+// EnsureDefaultContainerTemplate 在没有任何默认模板时，把库里最早的绑定行设为默认。
+//
+// 仅在服务启动时调用（存量数据没有默认标记，否则 create_script 无法解析默认值）。
+// 已存在默认行时不做任何改动，因此不会覆盖用户在 UI 上的选择。
+func EnsureDefaultContainerTemplate(ctx context.Context, containerRepo interfaces.ContainerRepository) error {
+	if containerRepo == nil {
+		return nil
+	}
+	s := &containerService{containerRepo: containerRepo}
+
+	defaultDefinition, err := containerRepo.GetDefaultContainerTemplateDefinition(ctx)
+	if err == nil && defaultDefinition != nil {
+		return nil
+	}
+	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	templates, err := containerRepo.ListContainerTemplate(ctx)
+	if err != nil {
+		return err
+	}
+	if len(templates) == 0 {
+		return nil
+	}
+
+	candidateID := templates[len(templates)-1].ID // ListContainerTemplate 按 id DESC 返回，末尾是最早的一条
+	return containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+		return s.applyDefaultFlag(ctx, tx, candidateID)
+	})
 }
 
 // createContainerTemplate 写入"共享配置 + 镜像绑定"，并回填 tpl.ID / tpl.SpecID。
@@ -231,7 +302,7 @@ func (s *containerService) createContainerTemplate(ctx context.Context, tpl *typ
 		if definition.DisplayName != "" {
 			tpl.Name = definition.DisplayName
 		}
-		return nil
+		return s.applyDefaultFlag(ctx, s.containerRepo, definition.ID)
 	}
 
 	spec := containerTemplateSpecFromReadModel(tpl)
@@ -241,7 +312,10 @@ func (s *containerService) createContainerTemplate(ctx context.Context, tpl *typ
 			return err
 		}
 		definition.SpecID = spec.ID
-		return tx.CreateContainerTemplateDefinition(ctx, definition)
+		if err := tx.CreateContainerTemplateDefinition(ctx, definition); err != nil {
+			return err
+		}
+		return s.applyDefaultFlag(ctx, tx, definition.ID)
 	})
 	if err != nil {
 		return err
@@ -283,7 +357,15 @@ func (s *containerService) updateContainerTemplate(ctx context.Context, tpl *typ
 		if err := tx.UpdateContainerTemplateSpec(ctx, spec); err != nil {
 			return err
 		}
-		return tx.UpdateContainerTemplateDefinition(ctx, definition)
+		if err := tx.UpdateContainerTemplateDefinition(ctx, definition); err != nil {
+			return err
+		}
+		// IsDefault 不在上面的通用更新里处理（它是全局互斥状态，需要先清空其它行）；
+		// 只有请求显式要求「这个模板为默认」时才走 set-default 流程。
+		if tpl.IsDefault {
+			return s.applyDefaultFlag(ctx, tx, binding.ID)
+		}
+		return nil
 	})
 }
 

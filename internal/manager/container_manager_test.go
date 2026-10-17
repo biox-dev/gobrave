@@ -10,6 +10,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 type mockContainerRepo struct {
@@ -170,6 +171,27 @@ func (m *mockContainerRepo) DeleteContainerTemplateDefinition(ctx context.Contex
 	delete(m.definitions, id)
 	delete(m.templates, id)
 	return nil
+}
+
+// ClearContainerTemplateDefinitionDefault 清空全部绑定行的默认标记（与 DB 实现语义一致）。
+func (m *mockContainerRepo) ClearContainerTemplateDefinitionDefault(ctx context.Context) error {
+	for id, item := range m.definitions {
+		item.IsDefault = false
+		m.refreshTemplateCache(item)
+		delete(m.definitions, id)
+		m.definitions[id] = item
+	}
+	return nil
+}
+
+// GetDefaultContainerTemplateDefinition 返回默认绑定行；没有时返回 gorm.ErrRecordNotFound。
+func (m *mockContainerRepo) GetDefaultContainerTemplateDefinition(ctx context.Context) (*types.ContainerTemplateDefinition, error) {
+	for _, item := range m.definitions {
+		if item.IsDefault {
+			return item, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (m *mockContainerRepo) ListContainerTemplateDefinitionBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplateDefinition, error) {

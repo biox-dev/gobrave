@@ -123,7 +123,8 @@ func buildSkillStore(cfg *config.Config) *skill.Store {
 // runner 是「运行分析节点」的进程级静态服务能力，注入 Options 后由 Provider 在执行工具时
 // 注入工具 ctx（与可序列化的 RuntimeContext 分开，避免服务对象被序列化进 DB）。
 // fileReader 同理，承载「按文件 ID 读取内容预览」的能力，供 read_file_by_id 工具使用。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader) *agent.Client {
+// paramsBuilder 承载「按 io_schema 生成节点参数」的能力，供 build_analysis_node_params 工具使用。
+func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder) *agent.Client {
 	opts := agent.Options{}
 
 	if cfg != nil && cfg.Agent != nil {
@@ -148,6 +149,10 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	opts.AnalysisNodeRunner = runner
 	// 进程级服务能力：read_file_by_id 等 builtin 工具在执行期通过它按文件 ID 读取内容预览。
 	opts.FileReader = fileReader
+	// 进程级服务能力：create_script 工具在执行期通过它创建脚本与独立分析节点。
+	opts.ScriptCreator = scriptCreator
+	// 进程级服务能力：build_analysis_node_params 工具在执行期通过它按 io_schema 生成 params.json。
+	opts.AnalysisNodeParamsBuilder = paramsBuilder
 
 	return agent.NewClient(registry, opts)
 }
@@ -285,8 +290,12 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 文件读取器：把「按 go_file 主键 ID 读取文件（含表格预览）」能力暴露给内置工具
 	// read_file_by_id，由 Provider 在执行工具前注入工具 ctx。
 	must(container.Provide(newFileReader))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader) *agent.Client {
-		return buildAgentClient(cfg, registry, runner, fileReader)
+	must(container.Provide(newScriptCreator))
+	// 分析节点参数生成器：把「按脚本 io_schema 解析 request_param → 刷新节点 → 写出
+	// params.json」能力暴露给内置工具 build_analysis_node_params。
+	must(container.Provide(newAnalysisNodeParamsBuilder))
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder) *agent.Client {
+		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。
@@ -311,6 +320,11 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 系统启动时同步内置 Profile 到数据库（按 ID 判断：不存在则新增、已存在则更新）。
 	must(container.Invoke(func(repo agent.ProfileRepository) error {
 		return agent.EnsureBuiltinProfiles(ctx, repo)
+	}))
+	// 启动时补齐默认容器模板：存量数据没有 is_default 标记，若没有任何默认为 create_script
+	// 兜底选一条最早的绑定行，避免「创建脚本提示未配置默认容器模板」。
+	must(container.Invoke(func(containerRepo interfaces.ContainerRepository) error {
+		return service.EnsureDefaultContainerTemplate(ctx, containerRepo)
 	}))
 
 	must(container.Provide(func(

@@ -111,6 +111,113 @@ func TestQuestionManagerAnswerFlow(t *testing.T) {
 	}
 }
 
+// TestQuestionManagerPartialAnswer 覆盖：多问题逐题作答时，未答完全部必答题保持
+// pending 并保留暂存进度，答完后才唤醒等待方且答案完整。
+func TestQuestionManagerPartialAnswer(t *testing.T) {
+	ctx := context.Background()
+	mgr := newTestQuestionManager(t)
+
+	q, err := mgr.Create(ctx, 9, "", AskUserInput{
+		Title: "两个问题",
+		Questions: []Question{
+			{ID: "analysis_type", Type: QuestionTypeSingleChoice, Title: "类型", Required: true,
+				Options: []QuestionOption{{Label: "a", Value: "a"}, {Label: "b", Value: "b"}}},
+			{ID: "group_column", Type: QuestionTypeText, Title: "分组列", Required: true},
+			{ID: "note", Type: QuestionTypeText, Title: "备注"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// 先作答第一题：仍为 pending，进度已持久化。
+	got, err := mgr.Answer(ctx, q.ID, AskUserAnswer{
+		Answers:     []QuestionAnswer{{ID: "analysis_type", Value: "a"}},
+		AnsweredIDs: []string{"analysis_type"},
+	}, 1)
+	if err != nil {
+		t.Fatalf("Answer#1: %v", err)
+	}
+	if got.Status != QuestionPending {
+		t.Fatalf("status = %s, want pending", got.Status)
+	}
+	if got.Answer == nil || len(got.Answer.Answers) != 1 {
+		t.Fatalf("progress = %+v, want 1 answer", got.Answer)
+	}
+	if got.ResolvedAt != nil {
+		t.Fatalf("ResolvedAt should be nil while pending")
+	}
+
+	// 等待方在答完全部必答题前不应被唤醒。
+	waited := make(chan AskUserAnswer, 1)
+	go func() {
+		ans, err := mgr.Wait(ctx, q.ID)
+		if err != nil {
+			waited <- AskUserAnswer{}
+			return
+		}
+		waited <- ans
+	}()
+	select {
+	case <-waited:
+		t.Fatalf("Wait returned before all required questions were answered")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// 作答第二题（必答）：迁移到 answered 并唤醒等待方，答案包含两题。
+	got, err = mgr.Answer(ctx, q.ID, AskUserAnswer{
+		Answers:     []QuestionAnswer{{ID: "group_column", Value: "group"}},
+		AnsweredIDs: []string{"group_column"},
+	}, 2)
+	if err != nil {
+		t.Fatalf("Answer#2: %v", err)
+	}
+	if got.Status != QuestionAnswered {
+		t.Fatalf("status = %s, want answered", got.Status)
+	}
+	if got.Answer == nil || len(got.Answer.Answers) != 2 {
+		t.Fatalf("merged answers = %+v, want 2", got.Answer)
+	}
+
+	select {
+	case ans := <-waited:
+		if len(ans.Answers) != 2 {
+			t.Fatalf("waited answers = %+v, want 2", ans)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Wait not woken after all required answered")
+	}
+
+	// 已完结的提问不能再作答。
+	if _, err := mgr.Answer(ctx, q.ID, AskUserAnswer{Answers: []QuestionAnswer{{ID: "analysis_type", Value: "b"}}}, 3); !errors.Is(err, ErrQuestionNotPending) {
+		t.Fatalf("err = %v, want ErrQuestionNotPending", err)
+	}
+}
+
+// TestQuestionManagerUnknownQuestionID 覆盖：提交不存在的问题 ID 被拒绝且状态不变。
+func TestQuestionManagerUnknownQuestionID(t *testing.T) {
+	ctx := context.Background()
+	mgr := newTestQuestionManager(t)
+
+	q, err := mgr.Create(ctx, 10, "", demoAskInput())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, err = mgr.Answer(ctx, q.ID, AskUserAnswer{
+		Answers: []QuestionAnswer{{ID: "not_exists", Value: "x"}},
+	}, 1)
+	if !errors.Is(err, ErrUnknownQuestionID) {
+		t.Fatalf("err = %v, want ErrUnknownQuestionID", err)
+	}
+	got, err := mgr.Get(ctx, q.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != QuestionPending {
+		t.Fatalf("status = %s, want pending", got.Status)
+	}
+}
+
 // TestQuestionManagerCancel 覆盖：取消未作答的提问会唤醒等待方并返回 ErrQuestionCanceled。
 func TestQuestionManagerCancel(t *testing.T) {
 	ctx := context.Background()

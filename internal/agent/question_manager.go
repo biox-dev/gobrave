@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -53,7 +54,13 @@ func (m *QuestionManager) Page(ctx context.Context, offset, limit int, taskID in
 	return m.repo.Page(ctx, offset, limit, taskID, statuses...)
 }
 
-// Answer 提交用户作答，返回更新后的提问请求；并唤醒正在等待的 Agent。
+// Answer 提交用户作答，返回更新后的提问请求。
+//
+// 支持「一题一页」的逐题作答：本次作答会合并进 q.Answer 作为暂存进度并持久化，
+// 提问保持 pending；直到所有必答问题都有答案，才迁移到 answered 并唤醒 Agent。
+// 因此用户可以在未全部答完时翻页、回看并修改之前的答案，界面刷新后进度也不丢失。
+//
+// 提交的问题 ID 必须属于本次提问（防止误把答案提交到别的提问）。
 func (m *QuestionManager) Answer(ctx context.Context, id int64, answer AskUserAnswer, by int64) (*QuestionRequest, error) {
 	m.mu.Lock()
 	q, err := m.repo.Get(ctx, id)
@@ -65,30 +72,67 @@ func (m *QuestionManager) Answer(ctx context.Context, id int64, answer AskUserAn
 		m.mu.Unlock()
 		return nil, ErrQuestionNotPending
 	}
-	if !q.TransitionTo(QuestionAnswered) {
+	if err := validateAnswerIDs(q.Questions, answer); err != nil {
 		m.mu.Unlock()
-		return nil, ErrInvalidQuestionTransition
+		return nil, err
 	}
-	now := time.Now()
-	q.Answer = &answer
-	q.ResolvedAt = &now
-	q.ResolvedBy = &by
+
+	merged := answer.Merge(q.Answer, q.Questions)
+	q.Answer = &merged
+
+	var completed bool
+	if merged.IsComplete(q.Questions) {
+		if !q.TransitionTo(QuestionAnswered) {
+			m.mu.Unlock()
+			return nil, ErrInvalidQuestionTransition
+		}
+		now := time.Now()
+		q.ResolvedAt = &now
+		q.ResolvedBy = &by
+		completed = true
+	}
 	if err := m.repo.Update(ctx, q); err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
 
-	ch, ok := m.waiters[id]
-	if ok {
+	var ch chan AskUserAnswer
+	if completed {
+		ch = m.waiters[id]
 		delete(m.waiters, id)
 	}
 	m.mu.Unlock()
 
-	// 唤醒阻塞中的 Agent（非阻塞投递，避免无人等待时卡住）。
-	if ok {
-		ch <- answer
+	// 全部必答问题作答完成：唤醒阻塞中的 Agent。
+	if ch != nil {
+		ch <- merged
 	}
 	return q, nil
+}
+
+// validateAnswerIDs 校验本次提交的问题 ID 都属于该提问的 questions。
+func validateAnswerIDs(questions []Question, answer AskUserAnswer) error {
+	known := make(map[string]bool, len(questions))
+	for _, q := range questions {
+		known[q.ID] = true
+	}
+	check := func(id string) error {
+		if id == "" || known[id] {
+			return nil
+		}
+		return fmt.Errorf("%w: %q", ErrUnknownQuestionID, id)
+	}
+	for _, ans := range answer.Answers {
+		if err := check(ans.ID); err != nil {
+			return err
+		}
+	}
+	for _, id := range answer.AnsweredIDs {
+		if err := check(id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Cancel 取消一个待作答的提问（任务被取消等）；被取消的等待返回 ErrQuestionCanceled。

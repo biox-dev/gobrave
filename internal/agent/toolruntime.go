@@ -28,10 +28,12 @@ func WithToolRuntimeContext(ctx context.Context, rc *tool.RuntimeContext) contex
 // WithToolRuntime 把「运行时上下文（业务事实）+ 进程级服务能力」一次性注入工具执行 ctx。
 //
 // 二者来源与生命周期不同：RuntimeContext 来自请求（可序列化），服务能力（AnalysisNodeRunner /
-// FileReader）来自 Options（不可序列化、进程级复用），因此分开注入、互不影响。
-// 任一为 nil 时跳过对应注入。
-func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader) context.Context {
+// FileReader / ScriptCreator / AnalysisNodeParamsBuilder）来自 Options（不可序列化、进程级复用），
+// 因此分开注入、互不影响。任一为 nil 时跳过对应注入。
+func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder) context.Context {
 	ctx = WithToolRuntimeContext(ctx, rc)
 	ctx = tool.WithAnalysisNodeRunner(ctx, runner)
-	return tool.WithFileReader(ctx, reader)
+	ctx = tool.WithFileReader(ctx, reader)
+	ctx = tool.WithScriptCreator(ctx, creator)
+	return tool.WithAnalysisNodeParamsBuilder(ctx, paramsBuilder)
 }

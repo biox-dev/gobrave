@@ -494,37 +494,6 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		return
 	}
 
-	scriptID, ok := req.RequestParam["script_id"].(string)
-	if !ok || strings.TrimSpace(scriptID) == "" {
-		c.Error(errors.NewValidationError("request_param.script_id is required and must be a string"))
-		return
-	}
-
-	scriptIDInt, err := strconv.ParseInt(scriptID, 10, 64)
-	if err != nil {
-		c.Error(errors.NewValidationError("request_param.script_id must be a valid integer string").WithDetails(err.Error()))
-		return
-	}
-
-	formJSONWrap, scriptIOSchema, err := h.workflowService.GetScriptFormJSONByID(c.Request.Context(), scriptIDInt)
-
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to get form JSON").WithDetails(err.Error()))
-		return
-	}
-
-	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
-		return
-	}
-	if !req.Save {
-		c.JSON(http.StatusOK, gin.H{
-			"params": parseAnalysisResult,
-		})
-		return
-	}
-
 	activeProject, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
 	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
@@ -566,6 +535,47 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("failed to query analysis node").WithDetails(err.Error()))
 			return
 		}
+	}
+
+	// script_id 的来源取决于节点是否已存在：更新已有节点时以节点记录的 ScriptID 为准，
+	// 避免前端漏传/篡改 script_id 导致节点被改绑到其它脚本；新建节点时才从 request_param 取。
+	var scriptIDInt int64
+	if existing != nil {
+		scriptIDInt = existing.ScriptID
+	} else {
+		scriptIDStr, ok := req.RequestParam["script_id"].(string)
+		if !ok || strings.TrimSpace(scriptIDStr) == "" {
+			c.Error(errors.NewValidationError("request_param.script_id is required and must be a string"))
+			return
+		}
+		parsed, parseErr := strconv.ParseInt(strings.TrimSpace(scriptIDStr), 10, 64)
+		if parseErr != nil || parsed <= 0 {
+			c.Error(errors.NewValidationError("request_param.script_id must be a valid integer string").WithDetails(fmt.Sprint(parseErr)))
+			return
+		}
+		scriptIDInt = parsed
+	}
+	if scriptIDInt <= 0 {
+		c.Error(errors.NewValidationError("script_id is required"))
+		return
+	}
+
+	formJSONWrap, scriptIOSchema, err := h.workflowService.GetScriptFormJSONByID(c.Request.Context(), scriptIDInt)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to get form JSON").WithDetails(err.Error()))
+		return
+	}
+
+	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
+		return
+	}
+	if !req.Save {
+		c.JSON(http.StatusOK, gin.H{
+			"params": parseAnalysisResult,
+		})
+		return
 	}
 
 	nodePrimaryID := requestedNodeID
@@ -633,7 +643,7 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		CreationSource:         "standalone",
 	}
 	if strings.TrimSpace(node.NodeName) == "" || strings.TrimSpace(node.NodeName) == "<nil>" {
-		node.NodeName = scriptID
+		node.NodeName = strconv.FormatInt(scriptIDInt, 10)
 	}
 
 	if existing != nil {

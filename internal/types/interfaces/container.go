@@ -29,6 +29,12 @@ type ContainerService interface {
 	PageContainerTemplate(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
 	ImportContainerTemplate(ctx context.Context, item *types.ContainerTemplateExport) (*types.ContainerTemplateExport, error)
 
+	// ===== 默认容器模板（go_container_template_definition.is_default）=====
+	// GetDefaultContainerTemplate 返回默认模板；没有默认行时返回 (nil, nil)，由调用方给用户提示。
+	GetDefaultContainerTemplate(ctx context.Context) (*types.ContainerTemplate, error)
+	// SetDefaultContainerTemplate 把某个绑定行设为唯一默认（先清空其它行的默认标记）。
+	SetDefaultContainerTemplate(ctx context.Context, definitionID int64) error
+
 	// ===== 容器模板：按主键直接 upsert 两层实体（安装 script.json / workflow.json 用）=====
 	// 安装侧拿到的导出内容已经是拆开的 ContainerTemplateSpec / ContainerTemplateDefinition
 	// （各自带主键），不能走 CreateContainerTemplate/UpdateContainerTemplate 那套读模型逻辑：
@@ -84,6 +90,10 @@ type ContainerRepository interface {
 	GetContainerTemplateDefinitionByID(ctx context.Context, id int64) (*types.ContainerTemplateDefinition, error)
 	UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
 	DeleteContainerTemplateDefinition(ctx context.Context, id int64) error
+	// ClearContainerTemplateDefinitionDefault 把全部绑定行的 is_default 置为 false（写入新默认前的互斥清理）。
+	ClearContainerTemplateDefinitionDefault(ctx context.Context) error
+	// GetDefaultContainerTemplateDefinition 返回当前标记为默认的绑定行；没有默认行时返回 gorm.ErrRecordNotFound。
+	GetDefaultContainerTemplateDefinition(ctx context.Context) (*types.ContainerTemplateDefinition, error)
 	ListContainerTemplateDefinitionBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplateDefinition, error)
 	// ListContainerTemplateDefinitionByImageIDs 用于镜像目录的引用查询（引用数 / 引用模板）。
 	ListContainerTemplateDefinitionByImageIDs(ctx context.Context, imageIDs []int64) ([]*types.ContainerTemplateDefinition, error)

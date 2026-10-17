@@ -283,6 +283,8 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	r.GET("/container/template/list", handler.ListContainerTemplate)
 	r.POST("/container/template/list-by-page", handler.PageContainerTemplate)
 	r.POST("/container/template/list-by-spec", handler.ListContainerTemplateBySpec)
+	r.GET("/container/template/default", handler.GetDefaultContainerTemplate)
+	r.POST("/container/template/set-default", handler.SetDefaultContainerTemplate)
 	r.POST("/container/template/export", handler.ExportContainerTemplate)
 	r.POST("/container/template/import", handler.ImportContainerTemplate)
 

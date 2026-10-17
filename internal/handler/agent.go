@@ -1519,6 +1519,7 @@ func handleAgentError(c *gin.Context, err error, internalMsg string) {
 		stderrs.Is(err, agent.ErrQuestionNotPending),
 		stderrs.Is(err, agent.ErrInvalidPermissionTransition),
 		stderrs.Is(err, agent.ErrInvalidQuestionTransition),
+		stderrs.Is(err, agent.ErrUnknownQuestionID),
 		stderrs.Is(err, agent.ErrTaskAlreadyRunning):
 		c.Error(errors.NewConflictError(err.Error()))
 	default:
