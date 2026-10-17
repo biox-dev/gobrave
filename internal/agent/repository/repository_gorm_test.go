@@ -34,7 +34,7 @@ func TestGormTaskRepositoryRoundTrip(t *testing.T) {
 
 	task := agent.NewTask(agent.Request{
 		Provider:   agent.ProviderMock,
-		SessionID:  "sess-1",
+		SessionID:  1001,
 		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hi"}},
 		Env:        map[string]string{"K": "V"},
 		WorkingDir: "/tmp",
@@ -229,7 +229,7 @@ func TestGormMemoryRepositoryRoundTrip(t *testing.T) {
 	db := newGormTestDB(t)
 	repo := NewGormMemoryRepository(db)
 
-	m := agent.NewMemory(1, "sess-1", agent.MemoryKindFact, "用户喜欢用 Go")
+	m := agent.NewMemory(1, 1002, 1001, agent.MemoryKindFact, "用户喜欢用 Go")
 	m.Importance = 8
 	m.Metadata = map[string]any{"source": "extractor", "n": 42}
 

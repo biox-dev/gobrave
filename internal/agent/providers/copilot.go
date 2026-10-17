@@ -254,7 +254,7 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 		Model:               model,
 		WorkingDirectory:    firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
 		Streaming:           copilot.Bool(true),
-		OnPermissionRequest: a.permissionHandler(ctx, rt, req.UserID),
+		OnPermissionRequest: a.permissionHandler(ctx, rt, req.RequestUserID()),
 		Tools:               a.buildTools(rt, req),
 	}
 
@@ -301,9 +301,12 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 	fileReader := a.opts.FileReader
 	scriptCreator := a.opts.ScriptCreator
 	paramsBuilder := a.opts.AnalysisNodeParamsBuilder
+	envUpdater := a.opts.AgentEnvUpdater
+	memorySaver := a.opts.MemorySaver
 
 	if a.opts.Tools != nil {
-		runnerExec := agent.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt).SetUserID(req.UserID)
+		userID := req.RequestUserID()
+		runnerExec := agent.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt).SetUserID(userID)
 		defs := a.opts.Tools.List()
 		for _, def := range defs {
 			name := def.Name
@@ -312,7 +315,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 				Description: def.Description,
 				Parameters:  def.InputSchema,
 				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
-					res := runnerExec.Run(agent.WithToolRuntime(inv.TraceContext, rc, runner, fileReader, scriptCreator, paramsBuilder), agent.ToolCall{
+					res := runnerExec.Run(agent.WithToolRuntime(inv.TraceContext, rc, runner, fileReader, scriptCreator, paramsBuilder, envUpdater, memorySaver), agent.ToolCall{
 						ID:        inv.ToolCallID,
 						Name:      name,
 						Arguments: inv.Arguments,
@@ -324,7 +327,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 	}
 
 	// ask_user：内置提问工具，阻塞等待用户在 UI 作答后把答案回填给模型。
-	out = append(out, a.askUserTool(rt, req.UserID))
+	out = append(out, a.askUserTool(rt, req.RequestUserID()))
 	return out
 }
 

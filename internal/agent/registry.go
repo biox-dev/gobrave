@@ -79,6 +79,20 @@ type Options struct {
 	// 与 ScriptCreator 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
 	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 build_analysis_node_params 工具使用。
 	AnalysisNodeParamsBuilder tool.AnalysisNodeParamsBuilder `json:"-"`
+
+	// AgentEnvUpdater 是「把用户当前业务上下文（llmEnv）写回用户记录」的进程级静态服务能力（可为 nil）。
+	//
+	// 与 ScriptCreator 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
+	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script 工具在创建
+	// 新分析节点后把当前上下文切换过去（EnvID = 新节点 ID，EnvType = analysisNode）。
+	AgentEnvUpdater tool.AgentEnvUpdater `json:"-"`
+
+	// MemorySaver 是「保存用户长期记忆」的进程级静态服务能力（可为 nil）。
+	//
+	// 与 ScriptCreator 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
+	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 save_memory 工具把「遇到的
+	// 可复现错误 / 注意事项」写入用户长期记忆，后续轮次随背景注入回到系统提示词。
+	MemorySaver tool.MemorySaver `json:"-"`
 }
 
 // Registry 负责注册与解析 Provider。

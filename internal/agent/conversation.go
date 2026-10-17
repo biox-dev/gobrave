@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -199,12 +198,14 @@ func (s *ConversationService) CreateTurn(ctx context.Context, in TurnInput) (*Ta
 	}
 
 	// 用完整历史组装请求（快照，避免后续 assistant 回复混入本轮 prompt）。
+	// 用户 / 会话事实统一由 RuntimeContext 承载：这里把会话 ID 与该轮用户写入上下文，
+	// 使权限策略、ask_user 归属与记忆检索都能从同一处读取。
+	rc := withRequestFacts(in.RuntimeContext, in.UserID, conv.ID)
 	req := Request{
 		Provider:       in.Provider,
 		Model:          in.Model,
-		SessionID:      strconv.FormatInt(conv.ID, 10),
-		UserID:         in.UserID,
-		RuntimeContext: in.RuntimeContext,
+		SessionID:      conv.ID,
+		RuntimeContext: rc,
 		ProfileID:      in.ProfileID,
 		Messages:       promptMessagesForRequest(conv.Messages),
 		WorkingDir:     in.WorkingDir,

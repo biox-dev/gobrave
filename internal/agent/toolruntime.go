@@ -17,6 +17,14 @@ func ToolRuntimeContextFromRequest(req Request) *tool.RuntimeContext {
 	return req.RuntimeContext
 }
 
+// withRequestFacts 在请求级上下文上补齐「用户 + 会话」事实，返回新的 RuntimeContext。
+//
+// 用户 ID 与 SessionID 不属于某个业务 env，而是「一次调用」的属性，因此在组装 Request
+// 时统一写入 RuntimeContext（它是请求级事实的唯一载体，见 Request.RequestUserID）。
+func withRequestFacts(rc *tool.RuntimeContext, userID int64, sessionID int64) *tool.RuntimeContext {
+	return tool.WithUserIDForContext(rc, userID, sessionID)
+}
+
 // WithToolRuntimeContext 把运行时上下文注入工具执行 ctx；rc 为 nil 时原样返回 ctx。
 func WithToolRuntimeContext(ctx context.Context, rc *tool.RuntimeContext) context.Context {
 	if rc == nil {
@@ -28,12 +36,17 @@ func WithToolRuntimeContext(ctx context.Context, rc *tool.RuntimeContext) contex
 // WithToolRuntime 把「运行时上下文（业务事实）+ 进程级服务能力」一次性注入工具执行 ctx。
 //
 // 二者来源与生命周期不同：RuntimeContext 来自请求（可序列化），服务能力（AnalysisNodeRunner /
-// FileReader / ScriptCreator / AnalysisNodeParamsBuilder）来自 Options（不可序列化、进程级复用），
-// 因此分开注入、互不影响。任一为 nil 时跳过对应注入。
-func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder) context.Context {
+// FileReader / ScriptCreator / AnalysisNodeParamsBuilder / AgentEnvUpdater / MemorySaver）来自 Options
+// （不可序列化、进程级复用），因此分开注入、互不影响。任一为 nil 时跳过对应注入。
+//
+// 归属用户不再作为参数单独注入：RuntimeContext.UserID 就是请求级用户事实的唯一来源，
+// 工具通过 tool.RuntimeContextFrom(ctx).UserID 读取（见 save_memory）。
+func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver) context.Context {
 	ctx = WithToolRuntimeContext(ctx, rc)
 	ctx = tool.WithAnalysisNodeRunner(ctx, runner)
 	ctx = tool.WithFileReader(ctx, reader)
 	ctx = tool.WithScriptCreator(ctx, creator)
-	return tool.WithAnalysisNodeParamsBuilder(ctx, paramsBuilder)
+	ctx = tool.WithAnalysisNodeParamsBuilder(ctx, paramsBuilder)
+	ctx = tool.WithAgentEnvUpdater(ctx, envUpdater)
+	return tool.WithMemorySaver(ctx, memorySaver)
 }

@@ -10,6 +10,9 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/utils"
+	"gorm.io/gorm"
 )
 
 // MemoryKind 描述记忆的类别，用于检索排序与前端展示。
@@ -32,12 +35,13 @@ var (
 
 // Memory 是一条可跨轮次 / 跨会话检索的持久化记忆。
 //
-// UserID 是记忆的主归属维度（长期记忆按用户隔离）；SessionID 可选，用于把记忆
-// 与某个具体会话关联（例如该会话的摘要）。
+// UserID 是记忆的主归属维度（长期记忆按用户隔离）；ProjectID / SessionID 可选，
+// 用于把记忆与某个具体项目 / 会话关联（例如该会话的摘要），检索时优先命中。
 type Memory struct {
-	ID        string     `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	ID        int64      `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
 	UserID    int64      `json:"user_id,string" gorm:"column:user_id;type:bigint;index:idx_agent_memories_user_kind,priority:1"`
-	SessionID string     `json:"session_id,omitempty" gorm:"column:session_id;type:varchar(64);index"`
+	ProjectID int64      `json:"project_id,omitempty,string" gorm:"column:project_id;type:bigint;index"`
+	SessionID int64      `json:"session_id,omitempty,string" gorm:"column:session_id;type:bigint;index"`
 	Kind      MemoryKind `json:"kind" gorm:"column:kind;type:varchar(32);index:idx_agent_memories_user_kind,priority:2"`
 	// Content 可能是整段会话 / 任务摘要或长事实，64KB 的 text 会触发 1406，这里用 longtext。
 	Content string `json:"content" gorm:"column:content;type:longtext"`
@@ -55,12 +59,20 @@ type Memory struct {
 // TableName 返回记忆表的表名。
 func (Memory) TableName() string { return "agent_memories" }
 
-// NewMemory 构建一条记忆；ID 为空时由 Save 分配。
-func NewMemory(userID int64, sessionID string, kind MemoryKind, content string) *Memory {
+// BeforeCreate 在写入数据库前用雪花 ID 初始化主键。
+func (m *Memory) BeforeCreate(_ *gorm.DB) error {
+	if m.ID == 0 {
+		m.ID = utils.GenerateID()
+	}
+	return nil
+}
+
+// NewMemory 构建一条记忆；主键（ID）由持久化层的 BeforeCreate 在首次写入时分配。
+func NewMemory(userID int64, projectID int64, sessionID int64, kind MemoryKind, content string) *Memory {
 	now := time.Now()
 	return &Memory{
-		ID:        newID("mem"),
 		UserID:    userID,
+		ProjectID: projectID,
 		SessionID: sessionID,
 		Kind:      kind,
 		Content:   content,
@@ -74,41 +86,24 @@ func NewMemory(userID int64, sessionID string, kind MemoryKind, content string) 
 // 实现见 internal/agent/repository 子包（基于 GORM 的数据库实现）。
 type MemoryRepository interface {
 	Create(ctx context.Context, memory *Memory) error
-	Get(ctx context.Context, id string) (*Memory, error)
+	Get(ctx context.Context, id int64) (*Memory, error)
 	Update(ctx context.Context, memory *Memory) error
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, id int64) error
 	// ListByUser 分页查询某用户的记忆（按 UpdatedAt 降序）；kinds 为空表示全部类别。
 	ListByUser(ctx context.Context, userID int64, offset, limit int, kinds ...MemoryKind) ([]*Memory, int64, error)
+	// ListByUserContext 分页查询某用户的记忆，并优先返回 projectID / sessionID 匹配的记录。
+	// projectID <= 0 / sessionID <= 0 时退化为普通的分页查询。
+	ListByUserContext(ctx context.Context, userID int64, projectID int64, sessionID int64, offset, limit int, kinds ...MemoryKind) ([]*Memory, int64, error)
 	// Search 按关键词检索某用户的记忆（返回按相关度 + 重要度排序）。
 	// 基础实现为子串 / LIKE 匹配，可被更高级的检索器（向量 / 语义）替换。
 	Search(ctx context.Context, userID int64, query string, limit int) ([]*Memory, error)
 }
 
-// MemoryRetriever 从记忆中检索与查询相关的内容。
-//
-// 与 Repository.Search 的区别：Retriever 是可插拔的「检索策略」抽象，
-// 默认实现退化为关键词匹配（委托 Repository.Search）；后续可接入向量检索 / 语义检索，
-// 而无须改动 AgentService 的注入逻辑。
-type MemoryRetriever interface {
-	// Retrieve 返回与 query 相关的记忆，按相关度降序，最多 limit 条。
-	Retrieve(ctx context.Context, userID int64, query string, limit int) ([]*Memory, error)
-}
-
-// keywordMemoryRetriever 是默认检索器：直接委托 Repository.Search 做关键词匹配。
-type keywordMemoryRetriever struct {
-	repo MemoryRepository
-}
-
-func (r keywordMemoryRetriever) Retrieve(ctx context.Context, userID int64, query string, limit int) ([]*Memory, error) {
-	// return r.repo.Search(ctx, userID, query, limit)
-	memories, _, err := r.repo.ListByUser(ctx, userID, 0, limit)
-	return memories, err
-}
-
 // MemoryTurn 描述一轮已完成执行的上下文，供 MemoryExtractor 提取记忆。
 type MemoryTurn struct {
 	UserID    int64
-	SessionID string
+	ProjectID int64
+	SessionID int64
 	Request   Request
 	Result    *Result
 }
@@ -144,7 +139,7 @@ func MockMemoryExtractor() MemoryExtractor {
 		answer := truncateRunes(turn.Result.Content, 200)
 		content := "用户问：" + query + "\n回答：" + answer
 		return []*Memory{
-			NewMemory(turn.UserID, turn.SessionID, MemoryKindSummary, content),
+			NewMemory(turn.UserID, turn.ProjectID, turn.SessionID, MemoryKindSummary, content),
 		}, nil
 	})
 }
@@ -161,8 +156,20 @@ func truncateRunes(s string, max int) string {
 // MemoryConfig 是 MemoryManager 的依赖配置。
 type MemoryConfig struct {
 	Repo      MemoryRepository
-	Retriever MemoryRetriever
 	Extractor MemoryExtractor
+}
+
+// MemoryQuery 描述一次记忆检索的上下文。
+//
+// UserID 是归属用户（必填）；ProjectID / SessionID 是可选的业务上下文，用于优先
+// 返回同项目 / 同会话的记忆。Text 为关键词；为空时退化为按上下文 + 更新时间读取。
+type MemoryQuery struct {
+	UserID    int64
+	ProjectID int64
+	SessionID int64
+	// Text 是检索关键词；为空时退化为「按上下文 + 更新时间」的分页读取。
+	Text  string
+	Limit int
 }
 
 // MemoryManager 负责记忆的创建、查询、检索与提取编排。
@@ -171,31 +178,25 @@ type MemoryConfig struct {
 // 不直接感知 Repository / Retriever / Extractor 的具体实现。
 type MemoryManager struct {
 	repo      MemoryRepository
-	retriever MemoryRetriever
 	extractor MemoryExtractor
 }
 
-// NewMemoryManager 创建记忆管理器；未提供的依赖使用安全默认值。
+// NewMemoryManager 创建记忆管理器。
 func NewMemoryManager(cfg MemoryConfig) *MemoryManager {
-	// 仅在配置了 Repo 时为默认检索器注入仓库；未配置 Repo 时由调用方负责注入检索器。
-	if cfg.Retriever == nil && cfg.Repo != nil {
-		cfg.Retriever = keywordMemoryRetriever{repo: cfg.Repo}
-	}
 	return &MemoryManager{
 		repo:      cfg.Repo,
-		retriever: cfg.Retriever,
 		extractor: cfg.Extractor,
 	}
 }
 
-// Save 创建或更新一条记忆：ID 为空时分配新 ID 并创建，否则更新。
+// Save 创建或更新一条记忆：ID 为 0（新建）时交给 Repository 创建，主键在写入前由
+// BeforeCreate 分配；否则更新。
 func (m *MemoryManager) Save(ctx context.Context, memory *Memory) error {
 	if memory == nil {
 		return nil
 	}
 	now := time.Now()
-	if memory.ID == "" {
-		memory.ID = newID("mem")
+	if memory.ID == 0 {
 		memory.CreatedAt = now
 		memory.UpdatedAt = now
 		return m.repo.Create(ctx, memory)
@@ -205,7 +206,7 @@ func (m *MemoryManager) Save(ctx context.Context, memory *Memory) error {
 }
 
 // Get 按 ID 查询记忆。
-func (m *MemoryManager) Get(ctx context.Context, id string) (*Memory, error) {
+func (m *MemoryManager) Get(ctx context.Context, id int64) (*Memory, error) {
 	return m.repo.Get(ctx, id)
 }
 
@@ -214,9 +215,17 @@ func (m *MemoryManager) List(ctx context.Context, userID int64, offset, limit in
 	return m.repo.ListByUser(ctx, userID, offset, limit, kinds...)
 }
 
-// Retrieve 检索与 query 相关的记忆，并刷新这些记忆的访问时间（Touch）。
-func (m *MemoryManager) Retrieve(ctx context.Context, userID int64, query string, limit int) ([]*Memory, error) {
-	mems, err := m.retriever.Retrieve(ctx, userID, query, limit)
+// Retrieve 按「业务上下文 + 关键词」检索记忆，并刷新这些记忆的访问时间（Touch）。
+//
+// ProjectID / SessionID 用于优先返回当前项目 / 会话下的记忆；Text 为关键词，
+// 为空时退化为按上下文 + 更新时间读取。
+func (m *MemoryManager) Retrieve(ctx context.Context, q MemoryQuery) ([]*Memory, error) {
+	limit := q.Limit
+	if limit <= 0 {
+		limit = defaultMemoryRetrieveLimit
+	}
+
+	mems, _, err := m.repo.ListByUserContext(ctx, q.UserID, q.ProjectID, q.SessionID, 0, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -227,12 +236,12 @@ func (m *MemoryManager) Retrieve(ctx context.Context, userID int64, query string
 }
 
 // Delete 删除记忆。
-func (m *MemoryManager) Delete(ctx context.Context, id string) error {
+func (m *MemoryManager) Delete(ctx context.Context, id int64) error {
 	return m.repo.Delete(ctx, id)
 }
 
 // Touch 更新记忆的最近访问时间（用于淘汰 / 排序策略）。
-func (m *MemoryManager) Touch(ctx context.Context, id string) error {
+func (m *MemoryManager) Touch(ctx context.Context, id int64) error {
 	mem, err := m.repo.Get(ctx, id)
 	if err != nil {
 		return err

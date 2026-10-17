@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/skill"
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
 
@@ -196,8 +197,9 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 
 	task.Request = applyProfileOverrides(task.Request, profile)
 	// 系统提示词模板变量取自 Request.RuntimeContext（随 Request 一起持久化进
-	// agent_tasks.request，任务从 DB 恢复后依然可用）。
-	task.Request.SystemPrompt = s.GetSystemSpromptByProfile(ctx, profile, task.Request.RuntimeContext.Vars(), task.Request.UserID, task.Request.Skills)
+	// agent_tasks.request，任务从 DB 恢复后依然可用）；同时把运行时上下文传给记忆注入，
+	// 使当前项目 / 会话下的记忆优先出现。
+	task.Request.SystemPrompt = s.GetSystemPromptByProfileWithContext(ctx, profile, task.Request.RuntimeContext, task.Request.Skills)
 	// Profile 可能依据 Profile.Model 覆盖请求级模型，同步回任务持久化字段。
 	task.Model = task.Request.Model
 	if err := s.transitionTask(ctx, task, TaskRunning, ""); err != nil {
@@ -407,7 +409,7 @@ func (s *AgentService) SaveMemory(ctx context.Context, memory *Memory) error {
 }
 
 // GetMemory 按 ID 查询单条记忆。
-func (s *AgentService) GetMemory(ctx context.Context, id string) (*Memory, error) {
+func (s *AgentService) GetMemory(ctx context.Context, id int64) (*Memory, error) {
 	if s.memory == nil {
 		return nil, ErrMemoryNotConfigured
 	}
@@ -415,7 +417,7 @@ func (s *AgentService) GetMemory(ctx context.Context, id string) (*Memory, error
 }
 
 // DeleteMemory 删除记忆，并广播记忆事件。
-func (s *AgentService) DeleteMemory(ctx context.Context, id string) error {
+func (s *AgentService) DeleteMemory(ctx context.Context, id int64) error {
 	if s.memory == nil {
 		return ErrMemoryNotConfigured
 	}
@@ -443,7 +445,7 @@ func (s *AgentService) RetrieveMemory(ctx context.Context, userID int64, query s
 	if s.memory == nil {
 		return nil, ErrMemoryNotConfigured
 	}
-	return s.memory.Retrieve(ctx, userID, query, limit)
+	return s.memory.Retrieve(ctx, MemoryQuery{UserID: userID, Text: query, Limit: limit})
 }
 
 // ---- Profile 调用面（供 HTTP / 上层业务管理 Agent Profile） ----
@@ -501,7 +503,13 @@ func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID int64, pro
 	if err != nil || profile == nil {
 		return nil, "", nil
 	}
-	systemPrompt := s.GetSystemSpromptByProfile(ctx, profile, vars, userID, profile.Skills)
+	// 只提供用户 ID（无业务上下文）：补一个仅含用户事实的 RuntimeContext，
+	// 使记忆注入能按用户维度检索。
+	var rc *tool.RuntimeContext
+	if userID > 0 {
+		rc = &tool.RuntimeContext{UserID: userID}
+	}
+	systemPrompt := s.GetSystemPromptByProfileWithContext(ctx, profile, rc, profile.Skills)
 
 	// return RenderSystemPromptTemplate(profile.SystemPrompt, vars)
 	return profile, systemPrompt, nil
@@ -558,7 +566,29 @@ func applyProfileOverrides(req Request, profile *Profile) Request {
 //
 // 处理顺序：渲染 Profile 模板 → 注入技能指令 → 按 Profile.Context 开关注入记忆。
 // 模板渲染失败时退回原始模板，保证调用仍可进行。
-func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *Profile, vars map[string]any, userID int64, selectedSkills []string) string {
+// GetSystemSpromptByProfile 按 Profile 渲染系统提示词，并按需注入技能说明与记忆背景。
+//
+// vars 是模板变量（来自 RuntimeContext.SystemPromptVars）；记忆注入的用户 / 上下文维度
+// 需要 RuntimeContext，因此没有业务场景的调用请使用
+// GetSystemPromptByProfileWithContext（或 RenderSystemPrompt）。
+func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *Profile, vars map[string]any, selectedSkills []string) string {
+	return s.buildSystemPrompt(ctx, profile, vars, nil, selectedSkills)
+}
+
+// GetSystemPromptByProfileWithContext 按 Profile 渲染系统提示词，并带上本次调用的
+// 运行时上下文（模板变量 / 项目 / 会话 / 归属用户），使记忆注入优先命中所属上下文。
+//
+// rc 可为 nil（此时不做记忆注入，也不渲染模板变量之外的内容）。
+func (s *AgentService) GetSystemPromptByProfileWithContext(ctx context.Context, profile *Profile, rc *tool.RuntimeContext, selectedSkills []string) string {
+	var vars map[string]any
+	if rc != nil {
+		vars = rc.Vars()
+	}
+	return s.buildSystemPrompt(ctx, profile, vars, rc, selectedSkills)
+}
+
+// buildSystemPrompt 是系统提示词渲染的单一实现：模板渲染 → 技能说明 → 记忆背景。
+func (s *AgentService) buildSystemPrompt(ctx context.Context, profile *Profile, vars map[string]any, rc *tool.RuntimeContext, selectedSkills []string) string {
 	if profile == nil {
 		return ""
 	}
@@ -581,21 +611,32 @@ func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *P
 	}
 
 	// 3) 背景注入：按 Profile 声明的开关执行。
+	// 用户 / 项目 / 会话维度全部取自 RuntimeContext，rc 为 nil 时跳过注入。
 	if profile.Context.InjectMemory {
-		prompt = s.injectMemory(ctx, prompt, userID)
+		prompt = s.injectMemoryWithContext(ctx, prompt, rc)
 	}
 
 	return prompt
 }
 
-// injectMemory 检索相关记忆并把记忆背景块追加到系统提示词尾部。
+// injectMemoryWithContext 按「用户 + 业务上下文」检索记忆并注入系统提示词。
 //
-// 未配置记忆、userID 为空、或检索不到相关记忆时，原样返回 prompt。
-func (s *AgentService) injectMemory(ctx context.Context, prompt string, userID int64) string {
-	if s.memory == nil || userID == 0 {
+// 归属用户、项目、会话全部取自 RuntimeContext（它是请求级事实的唯一来源，见
+// Request.RequestUserID）：当前项目 / 当前会话下写入的注意事项（如 save_memory 记录的
+// 工具使用避坑点）优先被注入，其余记忆作为补充；仓库不支持上下文优先时自动退化为
+// 普通检索。
+//
+// rc 为 nil 或 UserID 为空（后台任务等无用户场景）时不做注入，原样返回 prompt。
+func (s *AgentService) injectMemoryWithContext(ctx context.Context, prompt string, rc *tool.RuntimeContext) string {
+	if s.memory == nil || rc == nil || rc.UserID == 0 {
 		return prompt
 	}
-	mems, err := s.memory.Retrieve(ctx, userID, "", defaultMemoryRetrieveLimit)
+	mems, err := s.memory.Retrieve(ctx, MemoryQuery{
+		UserID:    rc.UserID,
+		ProjectID: rc.ProjectID,
+		SessionID: rc.SessionID,
+		Limit:     defaultMemoryRetrieveLimit,
+	})
 	if err != nil || len(mems) == 0 {
 		return prompt
 	}
@@ -617,12 +658,14 @@ func appendPromptBlock(prompt, block string) string {
 //
 // 提取器未配置或提取失败时静默跳过（记忆提取是尽力而为的旁路，不应影响任务结果）。
 func (s *AgentService) extractMemory(ctx context.Context, task *Task, req Request, result *Result) {
-	if s.memory == nil || req.UserID == 0 {
+	userID := req.RequestUserID()
+	if s.memory == nil || userID == 0 {
 		return
 	}
 	mems, err := s.memory.Extract(ctx, MemoryTurn{
-		UserID:    req.UserID,
-		SessionID: req.SessionID,
+		UserID:    userID,
+		ProjectID: req.RuntimeContext.ProjectID,
+		SessionID: req.RequestSessionID(),
 		Request:   req,
 		Result:    result,
 	})

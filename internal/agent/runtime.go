@@ -4,10 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 )
 
 // ErrNoPermissionResolver 表示当前 Runtime 没有绑定权限解析器（无法等待人工决策）。
 var ErrNoPermissionResolver = errors.New("agent: no permission resolver in runtime")
+
+// sessionRef 把 Task 上的 int64 会话主键转为权限 / 提问子系统使用的字符串会话标识；
+// 0 表示不关联会话。
+func sessionRef(sessionID int64) string {
+	if sessionID <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(sessionID, 10)
+}
 
 // NewStandaloneRuntime 返回一个独立于任务上下文的 Runtime，用于 Client.Invoke / Client.Stream
 // 这类“无任务、无 UI”的一次性调用。
@@ -126,7 +136,7 @@ func (r *taskRuntime) RequestPermission(ctx context.Context, userID int64, opera
 	if err != nil {
 		return "", err
 	}
-	perm, err := r.svc.perms.Create(ctx, r.taskID, task.SessionID, operation)
+	perm, err := r.svc.perms.Create(ctx, r.taskID, sessionRef(task.SessionID), operation)
 	if err != nil {
 		return "", err
 	}
@@ -182,7 +192,7 @@ func (r *taskRuntime) AskUser(ctx context.Context, _ int64, input AskUserInput) 
 	if err != nil {
 		return AskUserAnswer{}, err
 	}
-	question, err := r.svc.questions.Create(ctx, r.taskID, task.SessionID, input)
+	question, err := r.svc.questions.Create(ctx, r.taskID, sessionRef(task.SessionID), input)
 	if err != nil {
 		return AskUserAnswer{}, err
 	}

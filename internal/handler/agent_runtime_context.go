@@ -232,6 +232,9 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 	return &RuntimeContext{
 		Type:             rtcType,
 		ProjectID:        projectID,
+		// 归属用户是请求级事实：用户 ID 与业务 env 无关，但必须随上下文一路传播，
+		// 权限策略、ask_user 归属、记忆检索与提取都从这里读取（见 agent.RequestUserID）。
+		UserID:           userID,
 		Label:            label,
 		SystemPromptVars: vars,
 		WorkingDir:       workingDir,

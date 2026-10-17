@@ -160,7 +160,7 @@ func requestDemoQuestion(ctx context.Context, rt agent.Runtime, req agent.Reques
 			},
 		},
 	}
-	return rt.AskUser(ctx, req.UserID, input)
+	return rt.AskUser(ctx, req.RequestUserID(), input)
 }
 
 // requestDemoPermission 构造一个 write 操作并通过 Runtime 请求权限。
@@ -171,7 +171,7 @@ func requestDemoPermission(ctx context.Context, rt agent.Runtime, req agent.Requ
 		Content: "[mock] demo write content",
 	}
 
-	decision, err := rt.RequestPermission(ctx, req.UserID, op)
+	decision, err := rt.RequestPermission(ctx, req.RequestUserID(), op)
 	if err != nil {
 		return "", err
 	}

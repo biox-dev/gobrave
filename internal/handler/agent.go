@@ -11,6 +11,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/realtime"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -133,10 +134,21 @@ type agentMemoryPageRequest struct {
 	Kinds []agent.MemoryKind `json:"kinds"`
 }
 
+// memoryIDQuery 是单条记忆的查询参数；记忆 ID 是雪花 ID（int64）。
+type memoryIDQuery struct {
+	ID int64 `form:"id,string" binding:"required"`
+}
+
+// memoryIDBody 是单条记忆的删除请求体；记忆 ID 是雪花 ID（int64）。
+type memoryIDBody struct {
+	ID int64 `json:"id,string" binding:"required"`
+}
+
 // memorySaveRequest 是创建 / 更新记忆的请求体；UserID 由当前登录用户注入。
 type memorySaveRequest struct {
-	ID         string           `json:"id"`         // 为空则新建，否则更新
-	SessionID  string           `json:"session_id"` // 可选：关联会话
+	ID         int64            `json:"id,string"`         // 为 0 则新建，否则更新
+	ProjectID  int64            `json:"project_id,string"` // 可选：关联项目
+	SessionID  int64            `json:"session_id,string"` // 可选：关联会话
 	Kind       agent.MemoryKind `json:"kind" binding:"required"`
 	Content    string           `json:"content" binding:"required"`
 	Importance int              `json:"importance"`
@@ -199,8 +211,10 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 		return
 	}
 
-	// UserID 以当前登录用户为准，供权限策略按用户读取许可配置。
-	req.UserID = userID
+	// 用户 ID 以当前登录用户为准，供权限策略按用户读取许可配置。
+	// 用户 / 会话事实统一由 RuntimeContext 承载（见 agent.RequestUserID），
+	// 因此这里把它写进上下文（保留调用方已有的业务上下文）。
+	req.RuntimeContext = tool.WithUserIDForContext(req.RuntimeContext, userID, req.SessionID)
 
 	// 1) 先创建任务拿到 taskID（此时仅发布 task.created）。
 	task, err := h.svc.CreateTask(c.Request.Context(), req)
@@ -1052,7 +1066,7 @@ func (h *AgentHandler) SaveMemory(c *gin.Context) {
 	}
 
 	var memory *agent.Memory
-	if req.ID != "" {
+	if req.ID != 0 {
 		// 更新：先加载既有记录，保留 CreatedAt / LastAccessedAt 等只读字段。
 		existing, err := h.svc.GetMemory(c.Request.Context(), req.ID)
 		if err != nil {
@@ -1063,6 +1077,7 @@ func (h *AgentHandler) SaveMemory(c *gin.Context) {
 			c.Error(errors.NewNotFoundError("record not found"))
 			return
 		}
+		existing.ProjectID = req.ProjectID
 		existing.SessionID = req.SessionID
 		existing.Kind = req.Kind
 		existing.Content = req.Content
@@ -1072,6 +1087,7 @@ func (h *AgentHandler) SaveMemory(c *gin.Context) {
 	} else {
 		memory = &agent.Memory{
 			UserID:     userID,
+			ProjectID:  req.ProjectID,
 			SessionID:  req.SessionID,
 			Kind:       req.Kind,
 			Content:    req.Content,
@@ -1103,7 +1119,7 @@ func (h *AgentHandler) GetMemory(c *gin.Context) {
 		return
 	}
 
-	var q taskIDQuery
+	var q memoryIDQuery
 	if err := c.ShouldBindQuery(&q); err != nil {
 		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
 		return
@@ -1127,7 +1143,7 @@ func (h *AgentHandler) GetMemory(c *gin.Context) {
 // @Tags         Agent
 // @Accept       json
 // @Produce      json
-// @Param        request  body      taskIDBody  true  "记忆 ID"
+// @Param        request  body      memoryIDBody  true  "记忆 ID"
 // @Success      200      {object}  gin.H
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
@@ -1140,7 +1156,7 @@ func (h *AgentHandler) DeleteMemory(c *gin.Context) {
 		return
 	}
 
-	var body taskIDBody
+	var body memoryIDBody
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
 		return
@@ -1161,7 +1177,7 @@ func (h *AgentHandler) DeleteMemory(c *gin.Context) {
 		handleAgentError(c, err, "failed to delete agent memory")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": strconv.FormatInt(body.ID, 10)})
 }
 
 // PageMemory godoc

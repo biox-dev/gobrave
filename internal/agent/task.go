@@ -43,7 +43,7 @@ var (
 // 与 pending 的 PermissionRequest 重建运行态（见 Recovery）。
 type Task struct {
 	ID         int64      `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	SessionID  string     `json:"session_id,omitempty" gorm:"column:session_id;type:varchar(64);index"`
+	SessionID  int64      `json:"session_id,string,omitempty" gorm:"column:session_id;type:bigint;index"`
 	Provider   string     `json:"provider" gorm:"column:provider;type:varchar(64)"`
 	Model      string     `json:"model,omitempty" gorm:"column:model;type:varchar(128)"`
 	Status     TaskStatus `json:"status" gorm:"column:status;type:varchar(32);index"`

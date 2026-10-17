@@ -40,6 +40,16 @@ type RuntimeContext struct {
 	// ProjectID 是本次调用所属项目的 ID（当前用户激活项目），供工具在执行期做项目级
 	// 数据定位。0 表示未知（未解析到激活项目）。
 	ProjectID int64 `json:"project_id,omitempty,string"`
+	// UserID 是本次调用发起用户的 ID（请求级事实，由上层按 Request.UserID 注入）。
+	//
+	// 供需要「按用户隔离数据」的工具（如 save_memory 写长期记忆）在
+	// RuntimeContext 内直接取到归属用户；0 表示未知（未注入）。
+	UserID int64 `json:"user_id,omitempty,string"`
+	// SessionID 是本次调用所属的会话 ID（请求级事实，由上层按 Request.SessionID 注入）。
+	//
+	// 它是会话主键（雪花 ID），0 表示未知（未注入）。供记忆检索 / 写入把记忆与
+	// 会话关联（例如把某轮踩坑经验记在当次会话下）。
+	SessionID int64 `json:"session_id,omitempty,string"`
 	// Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。
 	Label string `json:"label,omitempty"`
 	// SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量
@@ -127,6 +137,41 @@ func (rc *RuntimeContext) Vars() map[string]any {
 	return rc.SystemPromptVars
 }
 
+// UserID 返回本次调用的用户 ID；上下文为 nil 时返回 0。
+func (rc *RuntimeContext) UserIDValue() int64 {
+	if rc == nil {
+		return 0
+	}
+	return rc.UserID
+}
+
+// WithUserIDForContext 返回一个补齐了用户 / 会话事实的 RuntimeContext 副本。
+//
+// RuntimeContext 由 Handler 的 RuntimeContextResolver 产出，是请求级业务事实的载体；
+// 用户与会话 ID 都是「一次调用」的属性（不属于某个业务 env），因此允许调用方在产出后
+// 追加：rc 为 nil 且 userID / sessionID 都为空时返回 nil（表示本轮确实没有上下文）。
+//
+// 参数均为 0 时不覆盖已有值（增量补齐语义）。
+func WithUserIDForContext(rc *RuntimeContext, userID int64, sessionID int64) *RuntimeContext {
+	if rc == nil && userID <= 0 && sessionID <= 0 {
+		return nil
+	}
+	if rc != nil && (userID <= 0 || rc.UserID == userID) && (sessionID <= 0 || rc.SessionID == sessionID) {
+		return rc
+	}
+	var cp RuntimeContext
+	if rc != nil {
+		cp = *rc
+	}
+	if userID > 0 {
+		cp.UserID = userID
+	}
+	if sessionID > 0 {
+		cp.SessionID = sessionID
+	}
+	return &cp
+}
+
 // runtimeContextKey 是 RuntimeContext 在 context 中的私有键类型。
 type runtimeContextKey struct{}
 
@@ -154,6 +199,14 @@ func RuntimeContextFrom(ctx context.Context) *RuntimeContext {
 // 返回值会做 TrimSpace；上下文未注入 / 键不存在 / 值为空时返回空字符串。
 func SystemPromptVar(ctx context.Context, key string) string {
 	return RuntimeContextFrom(ctx).SystemPromptVar(key)
+}
+
+// UserIDFrom 取出注入的运行时上下文中的用户 ID；未注入时返回 0。
+//
+// 用户 ID 不再单独存一个 context 键：RuntimeContext.UserID 就是请求级用户事实的唯一来源，
+// 工具统一通过本函数读取（如 create_script 写回用户业务上下文、save_memory 归属记忆）。
+func UserIDFrom(ctx context.Context) int64 {
+	return RuntimeContextFrom(ctx).UserIDValue()
 }
 
 // analysisNodeRunnerKey 是 AnalysisNodeRunner 在 context 中的私有键类型。
@@ -321,6 +374,45 @@ func ScriptCreatorFrom(ctx context.Context) ScriptCreator {
 	return creator
 }
 
+// AgentEnvUpdater 抽象「把用户当前业务上下文（llmEnv）写回用户记录」的业务能力。
+//
+// 业务页面进入时由前端调用 /auth/agent-env 写入 user.AgentConfig.EnvID / EnvType；
+// 而 create_script 这类「在 Agent 会话内新建了业务对象」的工具，需要把上下文就地切到
+// 新对象上（新分析节点），否则后续对话仍停留在旧上下文 / 默认工作目录。该能力让工具
+// 无需依赖具体的 user service / repository。
+//
+// 与 ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），
+// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithAgentEnvUpdater 注入工具执行 ctx。
+type AgentEnvUpdater interface {
+	// UpdateAgentEnv 把指定用户的 AgentConfig.EnvID / EnvType 覆盖为给定值。
+	//
+	// 只改业务上下文，不触碰 Profile 与权限策略。envType 为空表示清空上下文；
+	// 非法 envType（不属于 handler 约定的枚举）由实现决定是否报错。
+	UpdateAgentEnv(ctx context.Context, userID int64, envID string, envType string) error
+}
+
+// agentEnvUpdaterKey 是 AgentEnvUpdater 在 context 中的私有键类型。
+type agentEnvUpdaterKey struct{}
+
+// WithAgentEnvUpdater 把「更新用户业务上下文」的服务能力注入 context，供 builtin 工具执行期读取。
+//
+// 传入 nil 时返回原 context（不注入）。
+func WithAgentEnvUpdater(ctx context.Context, updater AgentEnvUpdater) context.Context {
+	if ctx == nil || updater == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, agentEnvUpdaterKey{}, updater)
+}
+
+// AgentEnvUpdaterFrom 取出注入的「更新用户业务上下文」服务能力；未注入时返回 nil。
+func AgentEnvUpdaterFrom(ctx context.Context) AgentEnvUpdater {
+	if ctx == nil {
+		return nil
+	}
+	updater, _ := ctx.Value(agentEnvUpdaterKey{}).(AgentEnvUpdater)
+	return updater
+}
+
 // toString 把任意值尽力转为去空白的字符串。
 func toString(v any) string {
 	switch s := v.(type) {
@@ -403,4 +495,73 @@ func AnalysisNodeParamsBuilderFrom(ctx context.Context) AnalysisNodeParamsBuilde
 	}
 	builder, _ := ctx.Value(analysisNodeParamsBuilderKey{}).(AnalysisNodeParamsBuilder)
 	return builder
+}
+
+// MemorySaver 抽象「创建 / 更新一条用户长期记忆」的业务能力。
+//
+// 它把记忆域（agent.Memory / MemoryManager）的持久化细节收敛在上层实现（见 container），
+// tool 包只负责把能力暴露给模型：模型在遭遇可复现的错误后，把「下次如何绕开」的注意事项
+// 写入记忆，后续调用会随背景注入出现在系统提示词里。
+//
+// 与 AnalysisNodeRunner / ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），
+// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithMemorySaver 注入工具执行 ctx。
+type MemorySaver interface {
+	// SaveMemory 创建或更新一条记忆。
+	//
+	// input.ID > 0 表示更新该条记忆（不存在时返回错误），为 0 表示新建；新建时主键由
+	// 持久化层的 agent.Memory.BeforeCreate 统一分配（雪花 ID）。
+	SaveMemory(ctx context.Context, input MemorySaveInput) (MemorySaveResult, error)
+}
+
+// MemorySaveInput 是「保存一条记忆」的入参。
+//
+// UserID 是记忆归属用户（长期记忆按用户隔离），由调用方从 RuntimeContext / context 取得，
+// 不由模型填写，避免模型把记忆写到别的用户名下。
+type MemorySaveInput struct {
+	UserID int64 `json:"user_id,string"`
+	// ID 为 0 表示新建（主键由 Memory.BeforeCreate 分配）；> 0 表示更新既有记忆。
+	ID int64 `json:"id,omitempty,string"`
+	// SessionID 可选：把记忆与某个具体会话关联（会话主键，0 表示不关联）。
+	SessionID int64 `json:"session_id,omitempty,string"`
+	// ProjectID 可选：记忆所属项目（写入 Metadata["project_id"]），用于上下文优先检索。
+	ProjectID int64 `json:"project_id,omitempty,string"`
+	// Kind 是记忆类别（fact / summary / note / event），非法值由实现兜底为 note。
+	Kind string `json:"kind,omitempty"`
+	// Content 是记忆正文（注意事项 / 事实 / 摘要）。
+	Content string `json:"content"`
+	// Importance 是重要度（0-10），用于检索排序。
+	Importance int `json:"importance,omitempty"`
+	// Metadata 是扩展信息（来源、标签等）。
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// MemorySaveResult 是「保存一条记忆」的结果（回传给模型）。
+type MemorySaveResult struct {
+	ID         int64  `json:"id,string"`
+	Kind       string `json:"kind"`
+	Importance int    `json:"importance"`
+	// Created 标识本次是新建（true）还是更新既有记忆（false）。
+	Created bool `json:"created"`
+}
+
+// memorySaverKey 是 MemorySaver 在 context 中的私有键类型。
+type memorySaverKey struct{}
+
+// WithMemorySaver 把「保存长期记忆」的服务能力注入 context，供 builtin 工具执行期读取。
+//
+// 传入 nil 时返回原 context（不注入）。
+func WithMemorySaver(ctx context.Context, saver MemorySaver) context.Context {
+	if ctx == nil || saver == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, memorySaverKey{}, saver)
+}
+
+// MemorySaverFrom 取出注入的「保存长期记忆」服务能力；未注入时返回 nil。
+func MemorySaverFrom(ctx context.Context) MemorySaver {
+	if ctx == nil {
+		return nil
+	}
+	saver, _ := ctx.Value(memorySaverKey{}).(MemorySaver)
+	return saver
 }

@@ -124,7 +124,9 @@ func buildSkillStore(cfg *config.Config) *skill.Store {
 // 注入工具 ctx（与可序列化的 RuntimeContext 分开，避免服务对象被序列化进 DB）。
 // fileReader 同理，承载「按文件 ID 读取内容预览」的能力，供 read_file_by_id 工具使用。
 // paramsBuilder 承载「按 io_schema 生成节点参数」的能力，供 build_analysis_node_params 工具使用。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder) *agent.Client {
+// envUpdater 承载「写回用户业务上下文（EnvID / EnvType）」的能力，供 create_script 工具使用。
+// memorySaver 承载「保存一条用户长期记忆」的能力，供 save_memory 工具使用。
+func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver) *agent.Client {
 	opts := agent.Options{}
 
 	if cfg != nil && cfg.Agent != nil {
@@ -153,6 +155,10 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	opts.ScriptCreator = scriptCreator
 	// 进程级服务能力：build_analysis_node_params 工具在执行期通过它按 io_schema 生成 params.json。
 	opts.AnalysisNodeParamsBuilder = paramsBuilder
+	// 进程级服务能力：create_script 工具在执行期通过它把当前用户业务上下文切到新分析节点。
+	opts.AgentEnvUpdater = envUpdater
+	// 进程级服务能力：save_memory 工具在执行期通过它把注意事项写入用户长期记忆。
+	opts.MemorySaver = memorySaver
 
 	return agent.NewClient(registry, opts)
 }
@@ -294,8 +300,19 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 分析节点参数生成器：把「按脚本 io_schema 解析 request_param → 刷新节点 → 写出
 	// params.json」能力暴露给内置工具 build_analysis_node_params。
 	must(container.Provide(newAnalysisNodeParamsBuilder))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder) *agent.Client {
-		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder)
+	// 用户业务上下文写回器：把「更新 user.AgentConfig.EnvID / EnvType」能力暴露给内置工具
+	// create_script，使其创建分析节点后把当前上下文切到新节点。
+	must(container.Provide(newAgentEnvUpdater))
+	// 记忆管理器以具体类型提供一次：既供 AgentService 使用，也供 memorySaver（save_memory 工具）
+	// 复用同一个实例，避免记忆域出现两份独立的状态入口。
+	must(container.Provide(func(mems agent.MemoryRepository) *agent.MemoryManager {
+		return agent.NewMemoryManager(agent.MemoryConfig{Repo: mems}) // Extractor: agent.MockMemoryExtractor(),
+	}))
+	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
+	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
+	must(container.Provide(newMemorySaver))
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver) *agent.Client {
+		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, envUpdater, memorySaver)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。
@@ -333,7 +350,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		perms agent.PermissionRepository,
 		questions agent.QuestionRepository,
 		events agent.EventRepository,
-		mems agent.MemoryRepository,
+		mems *agent.MemoryManager,
 		profiles agent.ProfileRepository,
 		skills *skill.Registry,
 		userRepo interfaces.UserRepository,
@@ -345,7 +362,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 			Perms:     agent.NewPermissionManager(perms),
 			Questions: agent.NewQuestionManager(questions),
 			Events:    events,
-			Memory:    agent.NewMemoryManager(agent.MemoryConfig{Repo: mems}), // Extractor: agent.MockMemoryExtractor(),
+			Memory:    mems,
 			Profiles:  agent.NewProfileManager(profiles),
 			Skills:    skills,
 			Policy:    agent.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),

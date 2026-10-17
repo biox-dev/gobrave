@@ -51,7 +51,7 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 		return nil, err
 	}
 
-	userID := req.UserID
+	userID := req.RequestUserID()
 	// 把 opencode 的工具权限请求委托给 gobrave 的 Runtime（策略 / 持久化 / UI）。
 	sdkOpts.PermissionHandler = a.permissionHandler(rt, userID)
 	// 把 gobrave 的工具注册为 opencode 的宿主工具，与内置工具共用同一套 tool-call 循环。
@@ -319,13 +319,17 @@ func buildRunRequest(req agent.Request) opencodesdk.RunRequest {
 		history = append(history, opencodesdk.InputMessage{Role: toSDKRole(t.role), Content: t.content})
 	}
 
-	return opencodesdk.RunRequest{
-		SessionID:    strings.TrimSpace(req.SessionID),
+	ret := opencodesdk.RunRequest{
 		SessionTitle: "gobrave-opencode",
 		Prompt:       prompt,
 		System:       strings.TrimSpace(req.SystemPrompt),
 		History:      history,
 	}
+	// SessionID 在 agent.Request 中是 int64 会话主键，SDK 侧用字符串标识会话。
+	if req.SessionID > 0 {
+		ret.SessionID = strconv.FormatInt(req.SessionID, 10)
+	}
+	return ret
 }
 
 func toSDKRole(role string) opencodesdk.Role {
@@ -362,6 +366,8 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 	fileReader := a.opts.FileReader
 	scriptCreator := a.opts.ScriptCreator
 	paramsBuilder := a.opts.AnalysisNodeParamsBuilder
+	envUpdater := a.opts.AgentEnvUpdater
+	memorySaver := a.opts.MemorySaver
 
 	if a.opts.Tools != nil {
 		exec := tool.NewExecutor(a.opts.Tools)
@@ -369,7 +375,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 			name := def.Name
 			ht := hostTool(def.Name, def.Description, def.InputSchema,
 				func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
-					ctx = agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, paramsBuilder)
+					ctx = agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, paramsBuilder, envUpdater, memorySaver)
 					res := exec.Execute(ctx, tool.Call{ID: call.ID, Name: name, Arguments: json.RawMessage(call.Input)})
 					return opencodesdk.HostToolResult{Content: res.Content, IsError: res.IsError}
 				})
@@ -384,7 +390,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 	}
 
 	// ask_user：宿主工具，阻塞等待用户在 UI 作答后把答案回填给模型。
-	out = append(out, a.askUserHostTool(rt, req.UserID))
+	out = append(out, a.askUserHostTool(rt, req.RequestUserID()))
 
 	return out
 }

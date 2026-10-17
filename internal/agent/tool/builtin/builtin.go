@@ -15,5 +15,6 @@ func All() []tool.Tool {
 		BuildAnalysisNodeParams(),
 		RunAnalysisNode(),
 		ReadFileByID(),
+		SaveMemory(),
 	}
 }
