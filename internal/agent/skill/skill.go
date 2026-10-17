@@ -53,6 +53,13 @@ type Skill struct {
 	ManifestVersion        string `yaml:"version,omitempty" json:"version,omitempty"`
 	UserInvocable          bool   `yaml:"user-invocable" json:"user_invocable"`
 	DisableModelInvocation bool   `yaml:"disable-model-invocation" json:"disable_model_invocation"`
+	// DisableRender 为 true 时，get_skill / load_skill_resource 原样返回技能文本，
+	// 不按本轮 RuntimeContext 的业务变量做 pongo2 模板渲染。
+	//
+	// 零值（false）表示启用渲染：技能正文 / 附属资源中出现 {{ var }} 时会用当前场景
+	// 变量替换；但若技能文本本身含有不希望被替换的花括号（如代码示例中的模板语法），
+	// 将该开关置为 true 即可关闭渲染。
+	DisableRender bool `yaml:"disable-render" json:"disable_render"`
 
 	// 以下字段不参与 frontmatter 解析，由加载过程填充。
 	Instructions  string `yaml:"-" json:"instructions,omitempty"`    // 指令正文
@@ -144,6 +151,7 @@ type frontmatter struct {
 	Version                string `yaml:"version,omitempty"`
 	UserInvocable          bool   `yaml:"user-invocable,omitempty"`
 	DisableModelInvocation bool   `yaml:"disable-model-invocation,omitempty"`
+	DisableRender          bool   `yaml:"disable-render,omitempty"`
 }
 
 // Marshal 把技能序列化为 SKILL.md 内容（YAML frontmatter + 正文）。
@@ -156,6 +164,7 @@ func (s *Skill) Marshal() ([]byte, error) {
 		Version:                s.ManifestVersion,
 		UserInvocable:          s.UserInvocable,
 		DisableModelInvocation: s.DisableModelInvocation,
+		DisableRender:          s.DisableRender,
 	})
 	if err != nil {
 		return nil, err
@@ -485,11 +494,12 @@ func (s *Skill) SkillInfo() tool.SkillInfo {
 		return tool.SkillInfo{}
 	}
 	return tool.SkillInfo{
-		Name:         s.Name,
-		Description:  s.Description,
-		SkillPath:    s.Path,
-		SkillFile:    s.SkillFilePath,
-		Instructions: s.Instructions,
+		Name:          s.Name,
+		Description:   s.Description,
+		SkillPath:     s.Path,
+		SkillFile:     s.SkillFilePath,
+		Instructions:  s.Instructions,
+		DisableRender: s.DisableRender,
 	}
 }
 

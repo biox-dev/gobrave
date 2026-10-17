@@ -2,9 +2,8 @@ package agent
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/flosch/pongo2/v6"
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
 // RenderSystemPromptTemplate 用 vars 渲染 AgentProfile 的系统提示词模板。
@@ -14,24 +13,13 @@ import (
 // 渲染为空串（配合 {% if %} 可让整行按需出现），因此调用方无需保证变量齐全。
 //
 // template 为空时返回空串；模板语法错误或渲染失败时返回错误。
+//
+// 渲染实现位于 tool.RenderTemplate（统一模板语法）；技能工具（get_skill /
+// load_skill_resource）也复用它，以避免 skill → agent 的循环引用。
 func RenderSystemPromptTemplate(template string, vars map[string]any) (string, error) {
-	if strings.TrimSpace(template) == "" {
-		return "", nil
-	}
-
-	tpl, err := pongo2.FromString(template)
+	rendered, err := tool.RenderTemplate(template, vars)
 	if err != nil {
-		return "", fmt.Errorf("agent: parse system prompt template: %w", err)
-	}
-
-	ctx := pongo2.Context{}
-	for k, v := range vars {
-		ctx[k] = v
-	}
-
-	rendered, err := tpl.Execute(ctx)
-	if err != nil {
-		return "", fmt.Errorf("agent: render system prompt template: %w", err)
+		return "", fmt.Errorf("agent: %w", err)
 	}
 	return rendered, nil
 }

@@ -383,7 +383,9 @@ type skillSaveRequest struct {
 	Description            string `json:"description" binding:"required"`
 	UserInvocable          bool   `json:"user_invocable"`
 	DisableModelInvocation bool   `json:"disable_model_invocation"`
-	Instructions           string `json:"instructions"`
+	// DisableRender 为 true 时，技能文本（指令正文 / 附属资源）不做 pongo2 模板渲染。
+	DisableRender bool   `json:"disable_render"`
+	Instructions  string `json:"instructions"`
 }
 
 // GetSkill godoc
@@ -449,6 +451,7 @@ func (h *AgentHandler) SaveSkill(c *gin.Context) {
 		Description:            strings.TrimSpace(req.Description),
 		UserInvocable:          req.UserInvocable,
 		DisableModelInvocation: req.DisableModelInvocation,
+		DisableRender:          req.DisableRender,
 		Instructions:           req.Instructions,
 	}
 	// Path 参与校验（name 需与目录名一致）；此处先按目标目录名设定，再落盘。

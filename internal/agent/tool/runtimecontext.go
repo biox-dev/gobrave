@@ -585,6 +585,9 @@ type SkillInfo struct {
 	SkillPath    string
 	SkillFile    string
 	Instructions string
+	// DisableRender 为 true 时，技能文本（指令正文 / 附属资源）按原文返回，
+	// 不做 pongo2 模板渲染（见 skill.Skill.DisableRender）。
+	DisableRender bool
 }
 
 // skillResolverKey 是 SkillResolver 在 context 中的私有键类型。

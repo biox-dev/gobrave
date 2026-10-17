@@ -252,6 +252,70 @@ func runTool(t *testing.T, ctx context.Context, tl tool.Tool, args string) []byt
 	return out
 }
 
+// TestSkillTemplateRenderSwitch 校验 frontmatter 的 disable-render 开关：
+// 默认渲染 {{ var }}（变量取自 RuntimeContext），开关打开后原样返回。
+func TestSkillTemplateRenderSwitch(t *testing.T) {
+	const tpl = "---\nname: tpl-skill\ndescription: templated\n---\nworkspace: {{ workspace_directory }}\n"
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "tpl-skill", tpl)
+
+	s, err := Parse(path)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if s.DisableRender {
+		t.Fatalf("disable-render should default to false")
+	}
+
+	ctx := tool.WithRuntimeContext(context.Background(), &tool.RuntimeContext{
+		SystemPromptVars: map[string]any{"workspace_directory": "/w/demo"},
+	})
+	ctx = tool.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
+
+	var got GetSkillOutput
+	if err := json.Unmarshal(runTool(t, ctx, GetSkill(), `{"name":"tpl-skill"}`), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !strings.Contains(got.Instructions, "workspace: /w/demo") {
+		t.Fatalf("instructions should be rendered: %q", got.Instructions)
+	}
+
+	// 打开开关后不再渲染。
+	s.DisableRender = true
+	ctx = tool.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
+	if err := json.Unmarshal(runTool(t, ctx, GetSkill(), `{"name":"tpl-skill"}`), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !strings.Contains(got.Instructions, "{{ workspace_directory }}") {
+		t.Fatalf("instructions should be verbatim when rendering is disabled: %q", got.Instructions)
+	}
+
+	// 附属资源同样遵循该开关。
+	resDir := filepath.Join(filepath.Dir(path), "references")
+	if err := os.MkdirAll(resDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(resDir, "vars.md"), []byte("dir={{ workspace_directory }}"), 0o644); err != nil {
+		t.Fatalf("write resource: %v", err)
+	}
+	var res LoadSkillResourceOutput
+	if err := json.Unmarshal(runTool(t, ctx, LoadSkillResource(), `{"name":"tpl-skill","path":"references/vars.md"}`), &res); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if res.Content != "dir={{ workspace_directory }}" {
+		t.Fatalf("resource should be verbatim when rendering is disabled: %q", res.Content)
+	}
+
+	s.DisableRender = false
+	ctx = tool.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
+	if err := json.Unmarshal(runTool(t, ctx, LoadSkillResource(), `{"name":"tpl-skill","path":"references/vars.md"}`), &res); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if res.Content != "dir=/w/demo" {
+		t.Fatalf("resource should be rendered: %q", res.Content)
+	}
+}
+
 func TestDeduplicateAndFilter(t *testing.T) {
 	a1 := &Skill{Name: "dup", Description: "builtin"}
 	a2 := &Skill{Name: "dup", Description: "user"}

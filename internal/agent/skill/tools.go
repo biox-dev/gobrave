@@ -85,13 +85,22 @@ func GetSkill() tool.Tool {
 			}
 
 			info := s.SkillInfo()
+
+			// SKILL.md 正文同样是 pongo2 模板：用本轮 RuntimeContext 的业务变量渲染，
+			// 使技能能按当前场景（如 workspace_directory / analysis_node_id）生成差异化指令。
+			// frontmatter 的 disable-render: true 会关闭该渲染，按原文返回。
+			instructions, err := renderSkillTemplate(ctx, info.Instructions, info.DisableRender)
+			if err != nil {
+				return GetSkillOutput{Name: info.Name, Error: err.Error()}, nil
+			}
+
 			return GetSkillOutput{
 				Name:         info.Name,
 				Description:  info.Description,
 				Version:      s.SkillVersion(),
 				SkillPath:    info.SkillPath,
 				Resources:    s.SkillResources(),
-				Instructions: info.Instructions,
+				Instructions: instructions,
 			}, nil
 		},
 	)
@@ -138,6 +147,14 @@ func LoadSkillResource() tool.Tool {
 				return out, nil
 			}
 
+			// 附属资源（参考文档 / 脚本 / 模板等）按同一套 pongo2 变量渲染，
+			// 与 get_skill 的指令正文保持一致；技能关闭渲染时则原样返回。
+			content, err = renderSkillTemplate(ctx, content, s.SkillInfo().DisableRender)
+			if err != nil {
+				out.Error = err.Error()
+				return out, nil
+			}
+
 			out.Name = s.SkillInfo().Name
 			out.AbsPath = abs
 			out.Content = content
@@ -171,6 +188,21 @@ func resolveSkill(resolver tool.SkillResolver, name, version string) (tool.Skill
 		return nil, fmt.Errorf("skill %q version %q is not available (current version: %q)", name, version, got)
 	}
 	return s, nil
+}
+
+// renderSkillTemplate 用本轮业务变量渲染技能文本（SKILL.md 正文 / 附属资源）中的 pongo2 模板。
+//
+// 变量取自 tool.RuntimeContextFrom(ctx).SystemPromptVars —— 与 Agent Profile 系统提示词
+// 使用同一套变量与同一份渲染实现（tool.RenderTemplate / agent.RenderSystemPromptTemplate）。
+// 未注入 RuntimeContext 时沿用空变量，未定义的占位符按 pongo2 默认行为渲染为空串，
+// 因此无业务上下文的场景不受影响。
+//
+// disabled 为 true（技能 frontmatter 的 disable-render: true）时跳过渲染，原样返回文本。
+func renderSkillTemplate(ctx context.Context, text string, disabled bool) (string, error) {
+	if disabled {
+		return text, nil
+	}
+	return tool.RenderRuntimeTemplate(ctx, text)
 }
 
 // normalizeResourcePath 清理资源路径（统一分隔符、去掉前导 ./ 与 /）。
