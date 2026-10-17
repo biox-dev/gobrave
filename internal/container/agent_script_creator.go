@@ -173,6 +173,9 @@ type scriptCreator struct {
 }
 
 // newScriptCreator 构建「创建脚本 + 分析节点」执行器并注入内置工具体系。
+//
+// 返回值同时实现 tool.ScriptCreator 与 tool.ScriptUpdater：创建与更新共享同一份脚本
+// 业务服务依赖，故由同一个对象承载（Options.ScriptCreator 一处注入即可）。
 func newScriptCreator(
 	workflowSvc interfaces.WorkflowService,
 	analysisRepo interfaces.AnalysisRepository,
@@ -180,7 +183,7 @@ func newScriptCreator(
 	containerRepo interfaces.ContainerRepository,
 	preparer prepare.NodeRuntimePreparer,
 	cfg *config.Config,
-) tool.ScriptCreator {
+) *scriptCreator {
 	return &scriptCreator{
 		workflowSvc:   workflowSvc,
 		analysisRepo:  analysisRepo,

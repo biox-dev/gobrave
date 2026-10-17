@@ -313,6 +313,71 @@ type ScriptCreator interface {
 	CreateScriptWithNode(ctx context.Context, input ScriptCreateInput) (ScriptCreateResult, error)
 }
 
+// ScriptUpdater 抽象「更新已有脚本基本信息（name / description）」的业务能力。
+//
+// 它只覆盖脚本名称与描述这两个元数据字段，不触碰脚本内容（脚本主文件由模型直接读写）、
+// io_schema 与容器模板，因此实现必须是「读改写」：先按 script_id 读出完整 Script 记录，
+// 只覆盖请求中给出的字段，再整体回写，避免把未提交的字段写成零值
+// （workflowRepository.UpdateScript 是整体替换语义）。
+//
+// 与 ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），
+// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithScriptUpdater 注入工具执行 ctx。
+type ScriptUpdater interface {
+	// UpdateScriptInfo 更新脚本的 name / description，返回更新后的关键信息。
+	//
+	// projectID 取自 RuntimeContext.ProjectID（当前用户激活项目）：脚本必须属于该项目，
+	// 否则返回错误（避免模型改到别的项目的脚本）。
+	// scriptID 是 Script 主键（int64），必须为正数。
+	// name / description 为指针：nil 表示「不修改该字段」，非 nil 时按值覆盖
+	// （description 允许被显式置为空字符串以清空描述）。
+	UpdateScriptInfo(ctx context.Context, input ScriptUpdateInput) (ScriptUpdateResult, error)
+}
+
+// ScriptUpdateInput 是「更新脚本基本信息」的入参。
+type ScriptUpdateInput struct {
+	// ProjectID 是脚本所属项目（取自 RuntimeContext.ProjectID）。
+	ProjectID int64 `json:"project_id,string"`
+	// ScriptID 是 Script 主键（pipeline_components.id），必须为正数。
+	ScriptID int64 `json:"script_id,string"`
+	// Name / Description 为 nil 表示不修改；非 nil 时覆盖对应字段。
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+// ScriptUpdateResult 是「更新脚本基本信息」的结果（回传给模型）。
+type ScriptUpdateResult struct {
+	ScriptID       int64  `json:"script_id,string"`
+	ScriptName     string `json:"script_name"`
+	Description    string `json:"description,omitempty"`
+	ScriptType     string `json:"script_type,omitempty"`
+	ScriptFilePath string `json:"script_file_path,omitempty"`
+	IOSchemaPath   string `json:"io_schema_path,omitempty"`
+	// Changed 列出本次实际被修改的字段名（name / description），便于模型确认。
+	Changed []string `json:"changed,omitempty"`
+}
+
+// scriptUpdaterKey 是 ScriptUpdater 在 context 中的私有键类型。
+type scriptUpdaterKey struct{}
+
+// WithScriptUpdater 把「更新脚本基本信息」的服务能力注入 context，供 builtin 工具执行期读取。
+//
+// 传入 nil 时返回原 context（不注入）。
+func WithScriptUpdater(ctx context.Context, updater ScriptUpdater) context.Context {
+	if ctx == nil || updater == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, scriptUpdaterKey{}, updater)
+}
+
+// ScriptUpdaterFrom 取出注入的「更新脚本基本信息」服务能力；未注入时返回 nil。
+func ScriptUpdaterFrom(ctx context.Context) ScriptUpdater {
+	if ctx == nil {
+		return nil
+	}
+	updater, _ := ctx.Value(scriptUpdaterKey{}).(ScriptUpdater)
+	return updater
+}
+
 // ScriptCreateInput 是「创建脚本 + 分析节点」的入参。
 type ScriptCreateInput struct {
 	// ProjectID 是脚本所属项目（取自 RuntimeContext.ProjectID）。

@@ -12,20 +12,15 @@ import (
 // RunAnalysisNodeToolName 是「运行分析节点」工具名。
 const RunAnalysisNodeToolName = "run_analysis_node"
 
-// analysisNodeIDVarKey 是运行时上下文 SystemPromptVars 中承载分析节点 ID 的键，
-// 与 RuntimeContext.SystemPromptVars["analysis_node_id"] 保持一致。
-const analysisNodeIDVarKey = "analysis_node_id"
-
 // RunAnalysisNodeInput 是 run_analysis_node 工具的入参。
 //
-// AnalysisNodeID 允许为空：此时回退到当前运行时上下文（系统提示词里的 ## Analysis Node ID）
-// 承载的分析节点，使模型在 analysisNode 上下文里无需显式传 ID 即可运行「当前节点」。
+// AnalysisNodeID 为必填：模型必须显式给出要运行的分析节点 ID，不再从运行时上下文回退。
 //
 // RequestParam 可选：非空时以它为本次运行的请求参数（并回写节点记录），为空时回退到
 // AnalysisNode 上已保存的 request_param。两种情况下都由 AnalysisNodeRunner 按脚本最新
 // io_schema.json 解析、回写节点并重新生成 params.json。
 type RunAnalysisNodeInput struct {
-	AnalysisNodeID string         `json:"analysis_node_id"` // 分析节点 ID（字符串以保精度）；为空时使用当前上下文节点
+	AnalysisNodeID string         `json:"analysis_node_id"` // 分析节点 ID（必填，字符串以保精度）
 	RequestParam   map[string]any `json:"request_param"`    // 本次运行的请求参数，可选；为空时用节点已保存的 request_param
 	TimeoutSeconds int            `json:"timeout_seconds"`  // 等待完成的超时（秒），可选，默认 600
 }
@@ -68,7 +63,7 @@ type RunAnalysisNodeOutput struct {
 // RunAnalysisNode 返回一个「运行分析节点」工具。
 //
 // 行为：
-//   - 解析入参 analysis_node_id（缺省时回退到运行时上下文里的 analysis_node_id）；
+//   - 解析必填入参 analysis_node_id；
 //   - 把运行交给 AnalysisNodeRunner：runner 以本次传入的 request_param 为准（未传时回退到
 //     节点上已保存的 request_param），按脚本最新 io_schema.json 解析并回写节点
 //     （request_param / resolved_inputs / patterns / 清空校验错误），然后重新生成
@@ -85,22 +80,22 @@ type RunAnalysisNodeOutput struct {
 func RunAnalysisNode() tool.Tool {
 	return tool.NewFunc(
 		RunAnalysisNodeToolName,
-		"运行指定（或当前上下文）的分析节点，等待其完成后返回节点状态、执行日志（log；截断时用 log_path 读取完整日志）、params_path、params.json 正文与本次生效的 request_param。可选传入 request_param（键为脚本 io_schema 的 name）覆盖本次运行参数；不传则使用节点上已保存的 request_param。运行前会按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param 并清空上一轮 input_validation_errors / output_validation_errors。",
+		"运行指定分析节点（analysis_node_id 必填），等待其完成后返回节点状态、执行日志（log；截断时用 log_path 读取完整日志）、params_path、params.json 正文与本次生效的 request_param。可选传入 request_param（键为脚本 io_schema 的 name）覆盖本次运行参数；不传则使用节点上已保存的 request_param。运行前会按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param 并清空上一轮 input_validation_errors / output_validation_errors。",
 		tool.Schema("运行分析节点的入参", map[string]any{
-			"analysis_node_id": tool.StringProperty("要运行的分析节点 ID（字符串以保精度）。留空则运行当前上下文中的分析节点。"),
+			"analysis_node_id": tool.StringProperty("要运行的分析节点 ID（必填，字符串以保精度）。"),
 			"request_param": map[string]any{
 				"type":        "object",
 				"description": "本次运行的请求参数对象，键为脚本 io_schema.json inputs 中各条目的 name。留空则使用节点上已保存的 request_param。",
 			},
 			"timeout_seconds": tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600。"),
-		}),
+		}, "analysis_node_id"),
 		func(ctx context.Context, in RunAnalysisNodeInput) (RunAnalysisNodeOutput, error) {
 			rc := tool.RuntimeContextFrom(ctx)
 			if rc == nil {
 				return RunAnalysisNodeOutput{}, fmt.Errorf("run_analysis_node: runtime context is not available in this tool execution")
 			}
 
-			nodeID, err := resolveAnalysisNodeID(rc, in.AnalysisNodeID)
+			nodeID, err := parseAnalysisNodeID(in.AnalysisNodeID)
 			if err != nil {
 				return RunAnalysisNodeOutput{}, err
 			}
@@ -138,23 +133,19 @@ func RunAnalysisNode() tool.Tool {
 	).WithPermission("analysis_node", "", "运行分析节点（解析参数、触发计算并读取日志）")
 }
 
-// resolveAnalysisNodeID 解析要运行的分析节点 ID：优先取工具入参，为空时回退到运行时
-// 上下文的系统提示词变量 analysis_node_id（即系统提示词里的 ## Analysis Node ID）。
-func resolveAnalysisNodeID(rc *tool.RuntimeContext, raw string) (int64, error) {
+// parseAnalysisNodeID 解析必填的分析节点 ID：为空或非法时返回错误。
+func parseAnalysisNodeID(raw string) (int64, error) {
 	idStr := strings.TrimSpace(raw)
 	if idStr == "" {
-		idStr = rc.SystemPromptVar(analysisNodeIDVarKey)
-	}
-	if idStr == "" {
-		return 0, fmt.Errorf("run_analysis_node: analysis_node_id is required (pass it explicitly or run inside an analysisNode context)")
+		return 0, fmt.Errorf("analysis_node_id is required")
 	}
 
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("run_analysis_node: invalid analysis_node_id %q: %w", idStr, err)
+		return 0, fmt.Errorf("invalid analysis_node_id %q: %w", idStr, err)
 	}
 	if id <= 0 {
-		return 0, fmt.Errorf("run_analysis_node: analysis_node_id must be a positive integer")
+		return 0, fmt.Errorf("analysis_node_id must be a positive integer")
 	}
 	return id, nil
 }

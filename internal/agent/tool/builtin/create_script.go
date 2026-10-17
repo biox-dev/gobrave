@@ -15,10 +15,6 @@ const CreateScriptToolName = "create_script"
 // DefaultScriptType 是 create_script 未指定 script_type 时使用的脚本类型。
 const DefaultScriptType = "qmd"
 
-// AgentEnvTypeAnalysisNode 是写入用户 AgentConfig.EnvType 的分析节点上下文类型，
-// 与 handler.EnvTypeAnalysisNode（agent_runtime_context.go）/ 前端 LLMEnvType.AnalysisNode 一致。
-const AgentEnvTypeAnalysisNode = "analysisNode"
-
 // CreateScriptInput 是 create_script 工具的入参。
 //
 // ProjectID 不由模型提供：它取自 RuntimeContext.ProjectID（当前用户激活项目），
@@ -60,15 +56,6 @@ type CreateScriptOutput struct {
 	NodeName       string `json:"node_name,omitempty"`
 	WorkspaceDir   string `json:"workspace_dir,omitempty"`
 	ParamsPath     string `json:"params_path,omitempty"`
-
-	// EnvID / EnvType 是创建成功后写入当前用户 AgentConfig 的业务上下文：
-	// EnvID 为新分析节点 ID，EnvType 固定为 analysisNode。后续对话据此解析工作目录。
-	EnvID   string `json:"env_id,omitempty"`
-	EnvType string `json:"env_type,omitempty"`
-	// EnvUpdated 表示业务上下文是否已成功写入用户记录；false 时 EnvError 说明原因
-	// （脚本与节点本身仍已创建成功）。
-	EnvUpdated bool   `json:"env_updated"`
-	EnvError   string `json:"env_error,omitempty"`
 
 	Error string `json:"error,omitempty"`
 }
@@ -159,39 +146,9 @@ func CreateScript() tool.Tool {
 				ParamsPath:            result.ParamsPath,
 			}
 
-			// 把当前用户的业务上下文切到刚创建的分析节点上：后续对话（下一轮 Chat 读取
-			// user.AgentConfig.EnvID/EnvType 解析 RuntimeContext）与工具调用都会直接定位到
-			// 新节点的工作目录 / params.json / io_schema.json，而不是旧上下文或默认目录。
-			// 更新失败不影响脚本创建结果，只在输出里带上告警供模型提示用户。
-			if result.AnalysisNodeID > 0 {
-				out.EnvID = strconv.FormatInt(result.AnalysisNodeID, 10)
-				out.EnvType = AgentEnvTypeAnalysisNode
-				if envErr := bindUserEnv(ctx, out.EnvID, out.EnvType); envErr != nil {
-					out.EnvError = envErr.Error()
-				} else {
-					out.EnvUpdated = true
-				}
-			}
-
 			return out, nil
 		},
 	).WithPermission("write", "", "创建脚本及其分析节点（写库并初始化脚本 / 节点目录）")
-}
-
-// bindUserEnv 把当前调用用户的业务上下文写回用户记录（EnvID / EnvType）。
-//
-// 依赖 tool.AgentEnvUpdater（进程级服务能力）与 tool.UserIDFrom（请求级用户 ID），
-// 二者任一缺失时返回描述性错误，由调用方以 EnvError 形式回传给模型。
-func bindUserEnv(ctx context.Context, envID, envType string) error {
-	updater := tool.AgentEnvUpdaterFrom(ctx)
-	if updater == nil {
-		return fmt.Errorf("agent env updater is not available in this runtime")
-	}
-	userID := tool.UserIDFrom(ctx)
-	if userID <= 0 {
-		return fmt.Errorf("current user id is not available in this runtime")
-	}
-	return updater.UpdateAgentEnv(ctx, userID, envID, envType)
 }
 
 // ioItemsSchema 构造 io_schema inputs / outputs 的 JSON Schema（对象数组）。

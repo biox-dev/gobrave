@@ -13,8 +13,7 @@ const BuildAnalysisNodeParamsToolName = "build_analysis_node_params"
 
 // BuildAnalysisNodeParamsInput 是 build_analysis_node_params 工具的入参。
 //
-// AnalysisNodeID 允许为空：此时回退到当前运行时上下文（系统提示词里的 ## Analysis Node ID）
-// 承载的分析节点，使模型在 analysisNode 上下文里无需显式传 ID 即可为「当前节点」生成参数。
+// AnalysisNodeID 为必填：模型必须显式给出要生成参数的分析节点 ID，不再从运行时上下文回退。
 //
 // RequestParam 的键必须与脚本 io_schema.json 中的 name 一一对应；它是对象而不是字符串，
 // 因此这里声明为 map，由工具框架直接把模型生成的 JSON 对象反序列化进来。
@@ -55,19 +54,19 @@ func BuildAnalysisNodeParams() tool.Tool {
 		BuildAnalysisNodeParamsToolName,
 		"根据脚本的 io_schema.json 生成分析节点的运行参数：把 request_param（键为 io_schema 中的 name）解析成节点结构化的输入/输出和解析后输入，刷新节点记录并写出 params.json。返回 params_path 与 params.json 的实际内容。生成后可直接调用 run_analysis_node 以这份参数运行脚本。",
 		tool.Schema("生成分析节点参数的入参", map[string]any{
-			"analysis_node_id": tool.StringProperty("要生成参数的分析节点 ID（字符串以保精度）。留空则使用当前上下文中的分析节点。"),
+			"analysis_node_id": tool.StringProperty("要生成参数的分析节点 ID（必填，字符串以保精度）。"),
 			"request_param": map[string]any{
 				"type":        "object",
 				"description": "按脚本 io_schema.json 的 inputs 生成的请求参数对象，键为各输入条目的 name，值为该输入的实际取值（如文件 ID、枚举值、数值等）。",
 			},
-		}, "request_param"),
+		}, "analysis_node_id", "request_param"),
 		func(ctx context.Context, in BuildAnalysisNodeParamsInput) (BuildAnalysisNodeParamsOutput, error) {
 			rc := tool.RuntimeContextFrom(ctx)
 			if rc == nil {
 				return BuildAnalysisNodeParamsOutput{}, fmt.Errorf("build_analysis_node_params: runtime context is not available in this tool execution")
 			}
 
-			nodeID, err := resolveAnalysisNodeID(rc, in.AnalysisNodeID)
+			nodeID, err := parseAnalysisNodeID(in.AnalysisNodeID)
 			if err != nil {
 				return BuildAnalysisNodeParamsOutput{}, wrapToolNameError(BuildAnalysisNodeParamsToolName, err)
 			}

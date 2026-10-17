@@ -296,7 +296,19 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 文件读取器：把「按 go_file 主键 ID 读取文件（含表格预览）」能力暴露给内置工具
 	// read_file_by_id，由 Provider 在执行工具前注入工具 ctx。
 	must(container.Provide(newFileReader))
-	must(container.Provide(newScriptCreator))
+	// 脚本业务能力：*scriptCreator 同时实现 tool.ScriptCreator（create_script）与
+	// tool.ScriptUpdater（update_script）。dig 按构造函数返回类型注册，这里显式声明接口
+	// 返回类型，避免只注册成具体类型导致上层注入 tool.ScriptCreator 时找不到依赖。
+	must(container.Provide(func(
+		workflowSvc interfaces.WorkflowService,
+		analysisRepo interfaces.AnalysisRepository,
+		projectRepo interfaces.ProjectRepository,
+		containerRepo interfaces.ContainerRepository,
+		preparer prepare.NodeRuntimePreparer,
+		cfg *config.Config,
+	) tool.ScriptCreator {
+		return newScriptCreator(workflowSvc, analysisRepo, projectRepo, containerRepo, preparer, cfg)
+	}))
 	// 分析节点参数生成器：把「按脚本 io_schema 解析 request_param → 刷新节点 → 写出
 	// params.json」能力暴露给内置工具 build_analysis_node_params。
 	must(container.Provide(newAnalysisNodeParamsBuilder))

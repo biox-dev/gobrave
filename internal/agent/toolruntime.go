@@ -46,7 +46,17 @@ func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.A
 	ctx = tool.WithAnalysisNodeRunner(ctx, runner)
 	ctx = tool.WithFileReader(ctx, reader)
 	ctx = tool.WithScriptCreator(ctx, creator)
+	ctx = tool.WithScriptUpdater(ctx, scriptUpdaterFromCreator(creator))
 	ctx = tool.WithAnalysisNodeParamsBuilder(ctx, paramsBuilder)
 	ctx = tool.WithAgentEnvUpdater(ctx, envUpdater)
 	return tool.WithMemorySaver(ctx, memorySaver)
+}
+
+// scriptUpdaterFromCreator 从创建器里取出「更新脚本基本信息」能力。
+//
+// 同一份脚本业务能力（container.scriptCreator）同时实现创建与更新，Options 只需暴露
+// ScriptCreator 一个字段；未实现 ScriptUpdater 时返回 nil（工具执行期会报能力缺失）。
+func scriptUpdaterFromCreator(creator tool.ScriptCreator) tool.ScriptUpdater {
+	updater, _ := creator.(tool.ScriptUpdater)
+	return updater
 }
