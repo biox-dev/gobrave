@@ -191,18 +191,24 @@ func IsBuiltinProfileID(id int64) bool {
 
 // EnsureBuiltinProfiles 把内置 Profile 同步到仓库（数据库初始化工具）。
 //
-// 系统启动时调用：按 ID 判断，记录不存在则新增、已存在则跳过，从而允许管理端
-// 对内置 Profile 的修改在重启后得以保留。repo 为空时无操作。
+// 系统启动时调用：按 ID 判断，记录不存在则新增，已存在则更新为代码中的最新定义
+// （内置 Profile 以代码为准，管理端对内置 Profile 的修改会在重启后被覆盖）。
+// repo 为空时无操作。
 func EnsureBuiltinProfiles(ctx context.Context, repo ProfileRepository) error {
 	if repo == nil {
 		return nil
 	}
 	for _, p := range BuiltinProfiles() {
-		_, err := repo.Get(ctx, p.ID)
+		existing, err := repo.Get(ctx, p.ID)
 		switch {
 		case err == nil:
-			// 已存在则跳过：内置 Profile 允许被修改，启动时不再覆盖。
-			continue
+			// 已存在则更新：保留原 CreatedAt，其余字段以代码定义为准。
+			if existing != nil {
+				p.CreatedAt = existing.CreatedAt
+			}
+			if err := repo.Update(ctx, p); err != nil {
+				return err
+			}
 		case errors.Is(err, ErrProfileNotFound):
 			if err := repo.Create(ctx, p); err != nil {
 				return err
