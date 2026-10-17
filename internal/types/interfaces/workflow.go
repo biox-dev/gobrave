@@ -15,6 +15,9 @@ type WorkflowService interface {
 	// GetScriptFormJSONByID 返回脚本表单配置（io_schema.inputs）以及脚本目录下 io_schema.json 的
 	// 完整内容；需要 outputs / scatter / gather 等的调用方复用第二个返回值，避免重复读盘。
 	GetScriptFormJSONByID(ctx context.Context, scriptID int64) ([]any, map[string]any, error)
+	// GetScriptFormJSONByScript 与 GetScriptFormJSONByID 同口径，但直接接收已加载的脚本对象，
+	// 避免调用方手上已有 *types.Script 时再查一次库。
+	GetScriptFormJSONByScript(ctx context.Context, script *types.Script) ([]any, map[string]any, error)
 	// 后续废除
 	// GetFormJSONByScriptID(ctx context.Context, scriptID string) ([]any, error)
 	GetWorkflowByID(ctx context.Context, id int64) (*types.Workflow, error)

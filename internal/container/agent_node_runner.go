@@ -10,13 +10,13 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/analysisform"
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/dag"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
-	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 // analysisNodeRunner 实现 tool.AnalysisNodeRunner：把「运行分析节点并等待完成、读取日志」
@@ -43,6 +43,8 @@ type analysisNodeRunner struct {
 	// router 是进程级运行时事件路由器；订阅它即可收到 NodeCompletionCoordinator
 	// publishNodeResult 发出的节点完成 / 失败事件。为 nil 时退化为纯状态轮询。
 	router *dagruntime.EventRouter
+	// cfg 用于推导节点工作目录（与保存独立节点同口径）。
+	cfg *config.Config
 
 	// pollInterval 是状态兜底轮询的间隔；正常路径由事件唤醒，轮询仅用于兜底。
 	pollInterval time.Duration
@@ -65,6 +67,7 @@ func newAnalysisNodeRunner(
 	dataSvc interfaces.DataService,
 	preparer prepare.NodeRuntimePreparer,
 	router *dagruntime.EventRouter,
+	cfg *config.Config,
 ) tool.AnalysisNodeRunner {
 	return &analysisNodeRunner{
 		analysisSvc:      analysisSvc,
@@ -74,6 +77,7 @@ func newAnalysisNodeRunner(
 		dataSvc:          dataSvc,
 		preparer:         preparer,
 		router:           router,
+		cfg:              cfg,
 		pollInterval:     reconcileInterval,
 		defaultTimeout:   60 * time.Minute,
 		maxLogBytes:      12000,
@@ -137,19 +141,25 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		}, fmt.Errorf("request_param is required: pass request_param to run_analysis_node or build node params with build_analysis_node_params first")
 	}
 
-	// 2) 读取脚本表单，按表单解析 request_param。
+	// 2) 读取脚本，按表单把 request_param 解析成节点记录（patterns / resolved_inputs / request_param）。
 	if r.analysisRepo == nil || r.workflowSvc == nil {
 		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("required services are not configured")
 	}
 
-	formJSONWrap, scriptIOSchema, err := r.workflowSvc.GetScriptFormJSONByID(ctx, node.ScriptID)
+	script, err := r.workflowSvc.GetScriptByID(ctx, node.ScriptID)
 	if err != nil {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to load script form (io_schema.json): %w", err)
+		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to load script %d: %w", node.ScriptID, err)
 	}
-	if len(formJSONWrap) == 0 {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("script %d has no io_schema inputs, nothing to build", node.ScriptID)
-	}
-	resolvedInputs, err := analysisform.BuildParseAnalysisResult(ctx, r.dataSvc, effectiveRequestParam, formJSONWrap)
+
+	// 与 create_analysis_node / 保存独立节点同一构建口径（含读取脚本表单）：只取其中的 patterns /
+	// resolved_inputs / request_param 刷新到本节点，状态、工作目录等仍以节点已有记录为准。
+	built, err := analysisform.NewAnalysisNodeFromScript(ctx, r.dataSvc, r.workflowSvc, script, analysisform.AnalysisNodeSpec{
+		ProjectID:    node.ProjectID,
+		RequestParam: effectiveRequestParam,
+		NodeName:     node.NodeName,
+		Executor:     node.Executor,
+		BaseDir:      r.storageBaseDir(),
+	})
 	if err != nil {
 		return tool.AnalysisNodeRunResult{
 			NodeID:       nodeID,
@@ -157,22 +167,21 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 			RequestParam: effectiveRequestParam,
 		}, fmt.Errorf("failed to build params.json: %w", err)
 	}
-	if resolvedInputs == nil {
-		resolvedInputs = map[string]any{}
+	formJSONWrap := built.ScriptFormJSON
+	if len(formJSONWrap) == 0 {
+		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("script %d has no io_schema inputs, nothing to build", node.ScriptID)
 	}
+	requestParamBytes := built.Node.RequestParam
+	resolvedInputs := cloneParamsMap(map[string]any(built.Node.ResolvedInputs))
+	inputsPatterns := built.Node.InputsPatterns
+	outputPatterns := built.Node.OutputPatterns
 
 	// 3) 刷新节点的 patterns / resolved_inputs / request_param，并清空上一轮校验错误。
-	requestParamBytes, err := json.Marshal(effectiveRequestParam)
-	if err != nil {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to serialize request_param: %w", err)
-	}
-	inputsPatterns := utils.FormatIOSchemaItems(scriptIOSchema["inputs"])
-	outputPatterns := utils.FormatIOSchemaItems(scriptIOSchema["outputs"])
 	if err := r.analysisSvc.UpdateAnalysisNodeByID(ctx, node.ID, map[string]any{
-		"inputs_patterns":          types.JSONMap(inputsPatterns),
-		"output_patterns":          types.JSONMap(outputPatterns),
-		"resolved_inputs":          types.JSONMap(cloneParamsMap(resolvedInputs)),
-		"request_param":            string(requestParamBytes),
+		"inputs_patterns":          inputsPatterns,
+		"output_patterns":          outputPatterns,
+		"resolved_inputs":          resolvedInputs,
+		"request_param":            requestParamBytes,
 		"input_validation_errors":  types.JSONSlice{},
 		"output_validation_errors": types.JSONSlice{},
 	}); err != nil {
@@ -183,10 +192,10 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	if r.preparer == nil {
 		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("node runtime preparer is not configured")
 	}
-	node.InputsPatterns = types.JSONMap(inputsPatterns)
-	node.OutputPatterns = types.JSONMap(outputPatterns)
-	node.ResolvedInputs = types.JSONMap(cloneParamsMap(resolvedInputs))
-	node.RequestParam = string(requestParamBytes)
+	node.InputsPatterns = inputsPatterns
+	node.OutputPatterns = outputPatterns
+	node.ResolvedInputs = resolvedInputs
+	node.RequestParam = requestParamBytes
 	node.HydrateDerivedPaths()
 	if err := r.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
 		return tool.AnalysisNodeRunResult{
@@ -414,8 +423,17 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 	}
 }
 
+// storageBaseDir 返回存储根目录（容忍 cfg/Storage 为空）。
+func (r *analysisNodeRunner) storageBaseDir() string {
+	if r == nil || r.cfg == nil || r.cfg.Storage == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.cfg.Storage.BaseDir)
+}
+
 // isAnalysisNodeTerminal 判断节点状态是否为终态。
 func isAnalysisNodeTerminal(status string) bool {
+
 	switch status {
 	case "done", "failed", "skipped", "cached", "stopped":
 		return true

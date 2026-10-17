@@ -68,10 +68,11 @@ type Options struct {
 	// 注入工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 read_file_by_id 工具使用。
 	FileReader tool.FileReader `json:"-"`
 
-	// ScriptCreator 是「创建脚本 + 分析节点」的进程级静态服务能力（可为 nil）。
+	// ScriptCreator 是「创建脚本 / 为脚本创建分析节点」的进程级静态服务能力（可为 nil）。
 	//
 	// 与 FileReader 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
-	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script 工具使用。
+	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script /
+	// create_analysis_node 工具使用。
 	ScriptCreator tool.ScriptCreator `json:"-"`
 
 	// AnalysisNodeParamsBuilder 是「按 io_schema 生成分析节点参数」的进程级静态服务能力（可为 nil）。
@@ -83,8 +84,8 @@ type Options struct {
 	// AgentEnvUpdater 是「把用户当前业务上下文（llmEnv）写回用户记录」的进程级静态服务能力（可为 nil）。
 	//
 	// 与 ScriptCreator 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
-	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script 工具在创建
-	// 新分析节点后把当前上下文切换过去（EnvID = 新节点 ID，EnvType = analysisNode）。
+	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_analysis_node 工具在
+	// 创建新分析节点后把当前上下文切换过去（EnvID = 新节点 ID，EnvType = analysisNode）。
 	AgentEnvUpdater tool.AgentEnvUpdater `json:"-"`
 
 	// MemorySaver 是「保存用户长期记忆」的进程级静态服务能力（可为 nil）。

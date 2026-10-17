@@ -670,6 +670,15 @@ func (s *workflowService) GetScriptFormJSONByID(ctx context.Context, scriptID in
 	if err != nil {
 		return nil, nil, err
 	}
+	return s.GetScriptFormJSONByScript(ctx, script)
+}
+
+// GetScriptFormJSONByScript 与 GetScriptFormJSONByID 同实现，只是接收已加载的脚本对象，
+// 避免调用方手上已有 *types.Script 时再按 ID 查一次库。
+func (s *workflowService) GetScriptFormJSONByScript(ctx context.Context, script *types.Script) ([]any, map[string]any, error) {
+	if script == nil || script.ID <= 0 {
+		return nil, nil, fmt.Errorf("script is required")
+	}
 
 	formJSONWrap := make([]interface{}, 0)
 

@@ -12,6 +12,7 @@ func All() []tool.Tool {
 	return []tool.Tool{
 		GetWeather(),
 		CreateScript(),
+		CreateAnalysisNode(),
 		UpdateScript(),
 		ListProjectScripts(),
 		GetScript(),

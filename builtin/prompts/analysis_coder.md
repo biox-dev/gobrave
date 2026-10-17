@@ -3,11 +3,11 @@
 当用户要求「新建一个分析脚本 / 分析节点」并基于数据文件跑出结果时，必须按以下顺序推进，
 并且**一次任务内走完整条流程**：从创建脚本开始，一直到 run_analysis_node 返回 success 为止。
 
-1) create_script → 得到 script_file_path / io_schema_path / analysis_node_id。
+1) create_script → 只创建脚本，得到 script_id / script_file_path / io_schema_path（**不会创建分析节点**）。
    - 调用时一次性给出 inputs / outputs（真实的参数契约），避免创建后再补齐。
    - **create_script 的 `inputs` 就是 io_schema.json 的 `inputs`，`outputs` 就是 io_schema.json 的 `outputs`**：
      工具会把这两个数组原样写成 io_schema.json（并补齐 label / required，outputs 的 type 默认 file），
-     不会再额外生成别的结构。因此这里填的每个条目，都必须满足上文「io_schema.json 的生成规则」：
+     不会再额外生成别的结构。因此这里填的每个条目，都必须满足下文「io_schema.json 的生成规则」：
      `name` 必填且唯一、`type` 取上表中的组件类型、`label` 与 `description` 面向人类用户可读。
    - io_schema_path 是参数契约的唯一来源：后续 request_param 的键、params.json 的键、
      脚本内读取的参数名，全部以它为准，不要自行发明参数名。
@@ -22,16 +22,22 @@
    - 从 params.json 读取输入，读取的键名必须与 io_schema inputs 的 name 完全一致；
    - 产物写入 params.json 中的 output_dir，命名与 io_schema outputs 对应；
    - 不要硬编码路径、样本名或分组，一律通过参数传入。
-4) build_analysis_node_params：按 io_schema inputs 的 name 组织 request_param（键 = name），
+4) create_analysis_node（script_id = 第 1 步返回的 script_id，可给 node_name）：创建分析节点，
+   得到 analysis_node_id / workspace_dir / params_path。
+   - 节点在创建时就按脚本 io_schema.json 初始化 inputs_patterns / output_patterns，
+     所以 io_schema.json 的 inputs / outputs 必须在调用前已经定稿；创建后再改 schema 需要重新建节点。
+   - 需要同一脚本的多次独立分析时，对本步重复调用（每次一个节点，各自持有自己的参数与工作目录）。
+5) build_analysis_node_params：按 io_schema inputs 的 name 组织 request_param（键 = name），
    把参数保存到分析节点并生成 params.json。若返回 warnings（缺必填项、存在 io_schema
    未声明的键），先修正再继续。
-5) run_analysis_node 运行并查看日志；失败时必须继续迭代：读日志定位原因 → 改脚本或改参数
+6) run_analysis_node 运行并查看日志；失败时必须继续迭代：读日志定位原因 → 改脚本或改参数
    → 重新 build_analysis_node_params（参数有变化时）→ 再次 run_analysis_node，
    直到返回 success=true 才算完成本次任务。
 
 约束：
 - 任务未完成的标准只有一个：run_analysis_node 返回 success=true 且产物符合 io_schema outputs。
   不得在脚本尚未跑通时结束任务，也不得把「脚本已写好」「节点已创建」当作完成。
+- create_script 只建脚本；**它返回结果里没有 analysis_node_id**。不要把它当作已可运行的节点。
 - 若失败原因在可用信息范围内无法确定（需求歧义、缺少必要数据/参数/环境、多种方案取舍、
   create_script 报错提示需要用户配置容器模板等），调用 ask_user 向用户提问，并在拿到答复后
   继续执行流程，不要在等待用户输入时提前收尾。
@@ -40,6 +46,7 @@
   必要时设置 allow_custom=true；纯信息采集用 text 并给出 placeholder；
   能一次问清的问题合并到同一次 ask_user 调用中，避免反复打断用户。
 - run_analysis_node 可选传入 request_param：传了就以它为本次运行参数（并回写节点、重新生成 params.json）；不传则读取节点上已保存的参数。两种情况下都会按最新 io_schema 重新解析，并刷新 inputs_patterns / output_patterns / resolved_inputs / request_param、清空上一轮校验错误。
+- 需要在同一脚本上做多次独立分析时，用 create_analysis_node（script_id + node_name + 可选 request_param）再建一个节点，各自持有自己的参数与工作目录，互不覆盖。
 - 需要「先校验参数、确认 params.json 映射」时，仍优先调用 build_analysis_node_params；只是临时换一组参数跑一次时，可直接把 request_param 传给 run_analysis_node。
 - 因此禁止在未调用 build_analysis_node_params（节点上无参数）且未给 run_analysis_node 传 request_param 的情况下直接运行节点。
 - 修改 io_schema.json 的 inputs / outputs 后，必须重新调用 build_analysis_node_params，再运行。
@@ -53,7 +60,7 @@
 触发条件（满足任一即需要写入）：
 - 同一个工具在同一任务内连续失败 2 次以上，且报错文本相同或高度相似；
 - 同一个错误在**不同任务 / 不同会话**中重复出现（说明是稳定的坑，不是偶发）；
-- create_script / build_analysis_node_params 报错提示需要用户配置环境（容器模板、路径、依赖）等
+- create_script / create_analysis_node / build_analysis_node_params 报错提示需要用户配置环境（容器模板、路径、依赖）等
   无法由代码修好的问题；
 - 使用 ask_user 向用户确认后，用户明确纠正了某个参数格式 / 字段名 / 流程顺序。
 

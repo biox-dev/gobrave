@@ -295,22 +295,69 @@ func FileReaderFrom(ctx context.Context) FileReader {
 	return reader
 }
 
-// ScriptCreator 抽象「创建脚本 + 独立分析节点」的业务能力。
+// ScriptCreator 抽象「创建脚本」与「为脚本创建分析节点」两件独立的事。
 //
-// 一个脚本对应一个可独立运行的节点：创建时落库 Script（pipeline_components）与
-// AnalysisNode（analysis_nodes），并准备好脚本目录（主文件 / io_schema.json）与
-// 节点工作目录（params.json / run.sh 等）。这些细节收敛在上层实现（见 container），
+// 职责刻意拆开（脚本与节点是两个独立资源）：
+//   - CreateScript 只落库 Script（pipeline_components）并初始化脚本目录
+//     （主文件 / io_schema.json），不创建任何分析节点；
+//   - CreateAnalysisNode 为已有脚本创建一个独立分析节点，并准备工作目录
+//     （params.json / run.sh 等）。
+//
+// 这样模型可以先把脚本与 io_schema.json 写好，再决定要建几个节点；不需要节点的
+// 场景（只写脚本）也不必凭空造一个节点。这些细节收敛在上层实现（见 container），
 // tool 包只负责把能力暴露给模型。
 //
 // 与 AnalysisNodeRunner / FileReader 一样，它是进程级静态依赖（一次注入、所有请求共用），
 // 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithScriptCreator 注入工具执行 ctx。
 type ScriptCreator interface {
-	// CreateScriptWithNode 创建脚本及其独立分析节点，返回新节点的 ID 与产物路径。
+	// CreateScript 创建脚本并初始化脚本目录，返回脚本 ID 与主文件 / io_schema.json 路径。
 	//
 	// projectID 取自 RuntimeContext.ProjectID（当前用户激活项目），必须为正数。
 	// input.ContainerTemplateID 为空（0）时由实现解析系统默认容器模板；
 	// 没有配置默认模板时返回错误，提示用户先到容器模板页设置默认模板。
-	CreateScriptWithNode(ctx context.Context, input ScriptCreateInput) (ScriptCreateResult, error)
+	CreateScript(ctx context.Context, input ScriptCreateInput) (ScriptCreateResult, error)
+
+	// CreateAnalysisNode 为已有脚本创建一个独立分析节点（create_analysis_node）。
+	//
+	// 脚本必须属于 input.ProjectID；request_param 非空时按脚本 io_schema 解析出
+	// resolved_inputs 并写出 params.json，为空时节点只按 io_schema 初始化 patterns。
+	//
+	// 节点在创建时必然要落地 inputs_patterns / output_patterns，因此 io_schema.json
+	// 必须已经写好（先 CreateScript，或至少已写入一份契约）；缺失时返回错误。
+	CreateAnalysisNode(ctx context.Context, input AnalysisNodeCreateInput) (AnalysisNodeCreateResult, error)
+}
+
+// AnalysisNodeCreateInput 是「为已有脚本创建分析节点」的入参。
+type AnalysisNodeCreateInput struct {
+	// ProjectID 是脚本所属项目（取自 RuntimeContext.ProjectID），用于校验脚本归属。
+	ProjectID int64 `json:"project_id,string"`
+	// ScriptID 是 Script 主键（pipeline_components.id）。
+	ScriptID int64 `json:"script_id,string"`
+	// NodeName 为节点名称，为空时回落脚本名称。
+	NodeName string `json:"node_name,omitempty"`
+	// RequestParam 是初始请求参数（键为 io_schema inputs 的 name）；为空时节点只带 patterns。
+	RequestParam map[string]any `json:"request_param,omitempty"`
+}
+
+// AnalysisNodeCreateResult 是「为已有脚本创建分析节点」的结果（回传给模型）。
+//
+// 除节点自身的路径之外，把脚本在磁盘上的关键路径（ScriptFilePath / IOSchemaPath）
+// 一并回传：节点建成后通常需要紧接着改脚本内容或补参数契约，模型无需再调
+// get_script / read_file 定位这些文件。
+type AnalysisNodeCreateResult struct {
+	AnalysisNodeID int64  `json:"analysis_node_id,string"`
+	NodeName       string `json:"node_name"`
+	ScriptID       int64  `json:"script_id,string"`
+	// ScriptName / ScriptType 是脚本的基本信息（便于模型确认节点绑定哪个脚本）。
+	ScriptName string `json:"script_name,omitempty"`
+	ScriptType string `json:"script_type,omitempty"`
+	// ScriptFilePath 是脚本主文件（如 main.R）的绝对路径，由 utils.GetScriptFile 推导。
+	ScriptFilePath string `json:"script_file_path,omitempty"`
+	// IOSchemaPath 是脚本目录下 io_schema.json 的绝对路径（节点 patterns 的来源）。
+	IOSchemaPath string         `json:"io_schema_path,omitempty"`
+	WorkspaceDir string         `json:"workspace_dir"`
+	ParamsPath   string         `json:"params_path"`
+	RequestParam map[string]any `json:"request_param,omitempty"`
 }
 
 // ScriptUpdater 抽象「更新已有脚本基本信息（name / description）」的业务能力。
@@ -448,7 +495,7 @@ func ProjectResourceBrowserFrom(ctx context.Context) ProjectResourceBrowser {
 	return browser
 }
 
-// ScriptCreateInput 是「创建脚本 + 分析节点」的入参。
+// ScriptCreateInput 是「创建脚本」的入参（不创建分析节点）。
 type ScriptCreateInput struct {
 	// ProjectID 是脚本所属项目（取自 RuntimeContext.ProjectID）。
 	ProjectID int64 `json:"project_id,string"`
@@ -459,16 +506,16 @@ type ScriptCreateInput struct {
 	ContainerTemplateID int64  `json:"container_template_id,string"`
 	ScriptType          string `json:"script_type"`
 	// Inputs / Outputs 是脚本的输入输出契约（io_schema.json 的 inputs / outputs）。
-	// 非空时由实现写入脚本目录的 io_schema.json，并用它初始化分析节点的
-	// inputs_patterns / output_patterns；为空时实现回落默认 schema。
+	// 非空时由实现写入脚本目录的 io_schema.json；为空时实现回落默认 schema。
 	// 每一项至少应包含 name / type，可选 label / required / description 等字段。
 	Inputs  []map[string]any `json:"inputs,omitempty"`
 	Outputs []map[string]any `json:"outputs,omitempty"`
-	// 以下为 AnalysisNode 字段。
-	NodeName string `json:"node_name"`
 }
 
-// ScriptCreateResult 是「创建脚本 + 分析节点」的结果（回传给模型）。
+// ScriptCreateResult 是「创建脚本」的结果（回传给模型）。
+//
+// 只包含脚本自身的产物路径：模型据此直接编辑脚本主文件与 io_schema.json，
+// 之后再按需调用 create_analysis_node 创建节点。
 type ScriptCreateResult struct {
 	ScriptID int64 `json:"script_id,string"`
 	// ScriptKey 是 Script.ScriptID（组件业务 ID，脚本目录名）。
@@ -476,15 +523,12 @@ type ScriptCreateResult struct {
 	ScriptName     string `json:"script_name"`
 	ScriptFilePath string `json:"script_file_path"`
 	IOSchemaPath   string `json:"io_schema_path"`
+	// ScriptType 是实际生效的脚本类型（未传时为默认类型）。
+	ScriptType string `json:"script_type,omitempty"`
 
 	// ContainerTemplateID 是脚本最终使用的容器模板 ID（未显式指定时为解析出的默认模板）。
 	ContainerTemplateID   int64  `json:"container_template_id,string"`
 	ContainerTemplateName string `json:"container_template_name,omitempty"`
-
-	AnalysisNodeID int64  `json:"analysis_node_id,string"`
-	NodeName       string `json:"node_name"`
-	WorkspaceDir   string `json:"workspace_dir"`
-	ParamsPath     string `json:"params_path"`
 }
 
 // scriptCreatorKey 是 ScriptCreator 在 context 中的私有键类型。

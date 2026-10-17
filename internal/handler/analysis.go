@@ -27,7 +27,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -560,17 +559,33 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		return
 	}
 
-	formJSONWrap, scriptIOSchema, err := h.workflowService.GetScriptFormJSONByID(c.Request.Context(), scriptIDInt)
+	// 构建节点需要脚本对象（名称 / 归属项目）：直接查一次，脚本表单由构建函数内部读取。
+	script, err := h.workflowService.GetScriptByID(c.Request.Context(), scriptIDInt)
 	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to get form JSON").WithDetails(err.Error()))
+		c.Error(errors.NewInternalServerError("failed to get script").WithDetails(err.Error()))
 		return
 	}
 
-	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
+	nodeName := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_name"]))
+	executorName := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["executor"]))
+	// 未指定名称时沿用原逻辑：用脚本 ID 兜底。
+	if nodeName == "" || nodeName == "<nil>" {
+		nodeName = strconv.FormatInt(scriptIDInt, 10)
+	}
+	// 预览与保存共用同一次构建：request_param 为空时不解析参数，节点 ResolvedInputs 为空。
+	built, err := analysisform.NewAnalysisNodeFromScript(c.Request.Context(), h.dataService, h.workflowService, script, analysisform.AnalysisNodeSpec{
+		ProjectID:      projectID,
+		NodeName:       nodeName,
+		RequestParam:   req.RequestParam,
+		Executor:       executorName,
+		CreationSource: analysisform.NodeCreationSourceStandalone,
+		BaseDir:        standaloneStorageBaseDir(h.config),
+	})
 	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
+		c.Error(errors.NewInternalServerError("failed to build analysis node").WithDetails(err.Error()))
 		return
 	}
+	parseAnalysisResult := map[string]any(built.Node.ResolvedInputs)
 	if !req.Save {
 		c.JSON(http.StatusOK, gin.H{
 			"params": parseAnalysisResult,
@@ -578,76 +593,21 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		return
 	}
 
-	nodePrimaryID := requestedNodeID
-	if existing == nil {
-		nodePrimaryID = int64(utils.GenerateID())
-	}
-
-	analysisNodeKey := ""
-	if existing != nil {
-		analysisNodeKey = strings.TrimSpace(existing.AnalysisNodeID)
-	}
-	if analysisNodeKey == "" {
-		analysisNodeKey = fmt.Sprintf("node-%d", nodePrimaryID)
-	}
-
-	nodeID := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["node_id"]))
-	if nodeID == "" || nodeID == "<nil>" {
-		nodeID = "node-" + uuid.NewString()
-	}
-
-	executorName := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["executor"]))
-	if executorName == "" || executorName == "<nil>" {
-		executorName = "local"
-	}
-
-	artifacts := h.buildStandaloneNodeArtifactPaths(projectID, scriptIDInt, nodePrimaryID)
-	// requestParam add AnalysisNodeID
-	req.RequestParam["analysis_node_id"] = nodePrimaryID
-
-	requestParamBytes, err := json.Marshal(req.RequestParam)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to serialize request_param").WithDetails(err.Error()))
-		return
-	}
-
-	node := &types.AnalysisNode{
-		ID:             nodePrimaryID,
-		AnalysisNodeID: analysisNodeKey,
-		ProjectID:      activeProject.ID,
-		// AnalysisID:             "-",
-		NodeID:          nodeID,
-		NodeName:        strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_name"])),
-		ScriptID:        scriptIDInt,
-		InputsPatterns:  types.JSONMap(utils.FormatIOSchemaItems(scriptIOSchema["inputs"])),
-		ResolvedInputs:  types.JSONMap(cloneAnyMapForNode(parseAnalysisResult)),
-		OutputPatterns:  types.JSONMap(utils.FormatIOSchemaItems(scriptIOSchema["outputs"])),
-		ResolvedOutputs: types.JSONMap{},
-		// Params:                 types.JSONMap(cloneAnyMapForNode(parseAnalysisResult)),
-		RequestParam:           string(requestParamBytes),
-		Status:                 dagruntime.StatusReady,
-		Executor:               executorName,
-		Retry:                  0,
-		MaxRetry:               3,
-		CacheHit:               false,
-		UpstreamIDs:            types.JSONSlice{},
-		DownstreamIDs:          types.JSONSlice{},
-		InputValidationErrors:  types.JSONSlice{},
-		OutputValidationErrors: types.JSONSlice{},
-		LogPath:                artifacts.LogPath,
-		WorkspaceDir:           artifacts.WorkspaceDir,
-		OutputDir:              artifacts.OutputDir,
-		CacheDir:               artifacts.CacheDir,
-		CommandPath:            artifacts.CommandPath,
-		ParamsPath:             artifacts.ParamsPath,
-		CreationSource:         "standalone",
-	}
-	if strings.TrimSpace(node.NodeName) == "" || strings.TrimSpace(node.NodeName) == "<nil>" {
-		node.NodeName = strconv.FormatInt(scriptIDInt, 10)
-	}
-
+	node := built.Node
+	// 保存既有节点时保持原主键 / 业务 ID / 工作目录，只覆盖面向上层的字段。
 	if existing != nil {
 		node.ID = existing.ID
+		node.AnalysisNodeID = strings.TrimSpace(existing.AnalysisNodeID)
+		if node.AnalysisNodeID == "" {
+			node.AnalysisNodeID = fmt.Sprintf("node-%d", node.ID)
+		}
+		if dir := strings.TrimSpace(existing.WorkspaceDir); dir != "" {
+			node.WorkspaceDir = dir
+			node.HydrateDerivedPaths()
+		}
+	}
+
+	if existing != nil {
 		if err := h.analysisRepo.UpdateAnalysisNodeByAnalysisNodeID(c.Request.Context(), node.AnalysisNodeID, map[string]any{
 			"project_id": node.ProjectID,
 			// "analysis_id":              node.AnalysisID,
@@ -905,47 +865,14 @@ func (h *AnalysisHandler) RunAnalysisNodeWithID(ctx context.Context, analsyisNod
 	return nil
 }
 
-type standaloneNodeArtifacts struct {
-	ID           int64
-	WorkspaceDir string
-	OutputDir    string
-	CacheDir     string
-	ParamsPath   string
-	CommandPath  string
-	projectDir   string
-	LogPath      string
-}
-
-func (h *AnalysisHandler) buildStandaloneNodeArtifactPaths(
-	projectID int64,
-	scriptID int64,
-	analysisNodeID int64,
-) *standaloneNodeArtifacts {
-	baseDir := "."
-	if h != nil && h.config != nil && h.config.Storage != nil {
-		if v := strings.TrimSpace(h.config.Storage.BaseDir); v != "" {
-			baseDir = v
+// standaloneStorageBaseDir 返回存储根目录（供独立节点构建时推导工作目录）；未配置时为 "."。
+func standaloneStorageBaseDir(cfg *config.Config) string {
+	if cfg != nil && cfg.Storage != nil {
+		if v := strings.TrimSpace(cfg.Storage.BaseDir); v != "" {
+			return v
 		}
 	}
-	analsyisNodeDir := utils.GetAnalysisNodeDir(baseDir, projectID, fmt.Sprint(scriptID))
-	projectDir := utils.GetProjectDir(baseDir, projectID)
-	workspaceDir := filepath.Join(analsyisNodeDir, strconv.FormatInt(analysisNodeID, 10))
-	outputDir := utils.GetAnalysisNodeOutputDir(workspaceDir) //filepath.Join(workspaceDir, "output")
-	cacheDir := utils.GetAnalysisNodeCacheDir(workspaceDir)   //filepath.Join(workspaceDir, "cache")
-	paramsPath := filepath.Join(workspaceDir, "params.json")
-	commandPath := filepath.Join(workspaceDir, "run.sh")
-	logPath := filepath.Join(workspaceDir, "command.log")
-
-	return &standaloneNodeArtifacts{
-		ID:           analysisNodeID,
-		WorkspaceDir: workspaceDir,
-		OutputDir:    outputDir,
-		CacheDir:     cacheDir,
-		projectDir:   projectDir,
-		ParamsPath:   paramsPath,
-		CommandPath:  commandPath,
-		LogPath:      logPath,
-	}
+	return "."
 }
 
 // regenerateNodeRunScript rebuilds the run script for an existing analysis node

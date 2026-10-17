@@ -11,8 +11,8 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
+	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/config"
-	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -150,8 +150,8 @@ func defaultScriptInitContent(scriptType string) string {
 	}
 }
 
-// scriptCreator 实现 tool.ScriptCreator：把「创建脚本 + 独立分析节点」的业务能力
-// 暴露给内置工具 create_script。
+// scriptCreator 实现 tool.ScriptCreator：把「创建脚本」与「为脚本创建独立分析节点」
+// 两个业务能力暴露给内置工具 create_script / create_analysis_node。
 //
 // 与 AnalysisHandler.SaveAnalysisNodeControllerWithScript 的独立节点分支保持同一口径：
 // Script 落 pipeline_components，AnalysisNode 落 analysis_nodes（analysis_id=0 表示
@@ -167,20 +167,24 @@ type scriptCreator struct {
 	projectRepo  interfaces.ProjectRepository
 	// containerRepo 用于解析默认容器模板（create_script 未传 container_template_id 时）。
 	containerRepo interfaces.ContainerRepository
+	// dataSvc 用于按脚本表单解析 request_param（构建分析节点时）。
+	dataSvc interfaces.DataService
 	// preparer 负责写节点 params.json / run.sh / env.sh，并软链脚本与 io_schema.json。
 	preparer prepare.NodeRuntimePreparer
 	cfg      *config.Config
 }
 
-// newScriptCreator 构建「创建脚本 + 分析节点」执行器并注入内置工具体系。
+// newScriptCreator 构建「创建脚本 / 创建分析节点」执行器并注入内置工具体系。
 //
-// 返回值同时实现 tool.ScriptCreator 与 tool.ScriptUpdater：创建与更新共享同一份脚本
-// 业务服务依赖，故由同一个对象承载（Options.ScriptCreator 一处注入即可）。
+// 返回值同时实现 tool.ScriptCreator（create_script / create_analysis_node）与
+// tool.ScriptUpdater：创建与更新共享同一份脚本业务服务依赖，故由同一个对象承载
+// （Options.ScriptCreator 一处注入即可）。
 func newScriptCreator(
 	workflowSvc interfaces.WorkflowService,
 	analysisRepo interfaces.AnalysisRepository,
 	projectRepo interfaces.ProjectRepository,
 	containerRepo interfaces.ContainerRepository,
+	dataSvc interfaces.DataService,
 	preparer prepare.NodeRuntimePreparer,
 	cfg *config.Config,
 ) *scriptCreator {
@@ -189,17 +193,21 @@ func newScriptCreator(
 		analysisRepo:  analysisRepo,
 		projectRepo:   projectRepo,
 		containerRepo: containerRepo,
+		dataSvc:       dataSvc,
 		preparer:      preparer,
 		cfg:           cfg,
 	}
 }
 
-// CreateScriptWithNode 创建脚本及其独立分析节点，返回节点 ID 与关键产物路径。
-func (c *scriptCreator) CreateScriptWithNode(ctx context.Context, in tool.ScriptCreateInput) (tool.ScriptCreateResult, error) {
+// CreateScript 只创建脚本（不创建分析节点），返回脚本 ID 与关键路径。
+//
+// 步骤：解析默认容器模板 → 落库 Script → 初始化脚本目录（主文件 + io_schema.json）。
+// 分析节点由 CreateAnalysisNode 单独创建，因此这里不需要任何节点名称 / 节点目录。
+func (c *scriptCreator) CreateScript(ctx context.Context, in tool.ScriptCreateInput) (tool.ScriptCreateResult, error) {
 	if in.ProjectID <= 0 {
 		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: project_id is required")
 	}
-	if c.workflowSvc == nil || c.analysisRepo == nil || c.projectRepo == nil {
+	if c.workflowSvc == nil || c.projectRepo == nil {
 		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: required services are not configured")
 	}
 	name := strings.TrimSpace(in.Name)
@@ -209,10 +217,6 @@ func (c *scriptCreator) CreateScriptWithNode(ctx context.Context, in tool.Script
 	scriptType := strings.ToLower(strings.TrimSpace(in.ScriptType))
 	if scriptType == "" {
 		scriptType = builtin.DefaultScriptType
-	}
-	nodeName := strings.TrimSpace(in.NodeName)
-	if nodeName == "" {
-		nodeName = name
 	}
 
 	// 未显式指定容器模板时回落到系统默认模板；没有默认模板则直接报错，
@@ -259,8 +263,6 @@ func (c *scriptCreator) CreateScriptWithNode(ctx context.Context, in tool.Script
 	}
 
 	// 2) 初始化脚本目录：主文件 + io_schema.json。
-	// io_schema 在这里一次性定稿：未传 inputs / outputs 时回落默认 schema，传入时用它初始化
-	// 节点的 inputs_patterns / output_patterns，保证「脚本契约」与「节点记录」从一开始就一致。
 	ioSchemaJSON, err := buildIOSchemaJSON(in.Inputs, in.Outputs)
 	if err != nil {
 		return tool.ScriptCreateResult{}, err
@@ -279,70 +281,101 @@ func (c *scriptCreator) CreateScriptWithNode(ctx context.Context, in tool.Script
 		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: failed to write io_schema.json: %w", err)
 	}
 
-	// 3) 落库独立分析节点（analysis_id = 0），与 handler 侧独立节点口径一致。
-	ioSchema, err := utils.ReadScriptIOSchema(baseDir, project.ID, script.ScriptID)
-	if err != nil {
-		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: failed to read io_schema.json: %w", err)
-	}
-
-	nodeID := int64(utils.GenerateID())
-	workspaceDir := filepath.Join(utils.GetAnalysisNodeDir(baseDir, project.ID, fmt.Sprintf("%d", script.ID)), fmt.Sprintf("%d", nodeID))
-	layout := utils.NodeLayoutFor(workspaceDir)
-
-	node := &types.AnalysisNode{
-		ID:                     nodeID,
-		AnalysisNodeID:         "node-" + uuid.NewString(),
-		ProjectID:              project.ID,
-		NodeID:                 "node-" + uuid.NewString(),
-		NodeName:               nodeName,
-		ScriptID:               script.ID,
-		InputsPatterns:         types.JSONMap(utils.FormatIOSchemaItems(ioSchema["inputs"])),
-		OutputPatterns:         types.JSONMap(utils.FormatIOSchemaItems(ioSchema["outputs"])),
-		ResolvedInputs:         types.JSONMap{},
-		ResolvedOutputs:        types.JSONMap{},
-		RequestParam:           "{}",
-		Status:                 dagruntime.StatusReady,
-		Executor:               "local",
-		MaxRetry:               3,
-		UpstreamIDs:            types.JSONSlice{},
-		DownstreamIDs:          types.JSONSlice{},
-		InputValidationErrors:  types.JSONSlice{},
-		OutputValidationErrors: types.JSONSlice{},
-		WorkspaceDir:           workspaceDir,
-		CreationSource:         "agent",
-	}
-	if err := c.analysisRepo.CreateAnalysisNodes(ctx, []*types.AnalysisNode{node}); err != nil {
-		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: failed to create analysis node: %w", err)
-	}
-
-	// 4) 准备节点运行期文件（params.json / run.sh / env.sh 与软链）。
-	if c.preparer != nil {
-		// 派生路径由 WorkspaceDir 推导，preparer 依赖它们写盘。
-		node.HydrateDerivedPaths()
-		if err := c.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
-			return tool.ScriptCreateResult{}, fmt.Errorf("create_script: failed to prepare node workspace: %w", err)
-		}
-	}
-
-	result := tool.ScriptCreateResult{
+	return tool.ScriptCreateResult{
 		ScriptID:              script.ID,
 		ScriptKey:             script.ScriptID,
 		ScriptName:            script.Name,
 		ScriptFilePath:        scriptFilePath,
 		IOSchemaPath:          utils.ScriptIOSchemaPath(baseDir, project.ID, script.ScriptID),
+		ScriptType:            script.ScriptType,
 		ContainerTemplateID:   containerTemplateID,
 		ContainerTemplateName: containerTemplateName,
-		AnalysisNodeID:        node.ID,
-		NodeName:              node.NodeName,
-		WorkspaceDir:          workspaceDir,
-		ParamsPath:            layout.ParamsPath,
+	}, nil
+}
+
+// CreateAnalysisNode 为已有脚本创建一个独立分析节点（create_analysis_node）。
+//
+// 与 handler 保存独立节点保持同一口径：脚本必须属于 project_id，request_param 非空时
+// 按其解析 resolved_inputs 并写入节点 params.json。节点的 inputs_patterns /
+// output_patterns 取自脚本 io_schema.json，因此该文件必须已经存在（由 CreateScript
+// 初始化，或模型已经写好）——缺失时直接报错，而不是带空契约建出一个跑不通的节点。
+func (c *scriptCreator) CreateAnalysisNode(ctx context.Context, in tool.AnalysisNodeCreateInput) (tool.AnalysisNodeCreateResult, error) {
+	if in.ProjectID <= 0 {
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: project_id is required")
 	}
-	if c.preparer != nil {
-		// prepare 后以节点重新推导的路径为准（与磁盘实际布局一致）。
-		result.WorkspaceDir = node.WorkspaceDir
-		result.ParamsPath = node.ParamsPath
+	if in.ScriptID <= 0 {
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: script_id is required")
+	}
+	if c.workflowSvc == nil || c.analysisRepo == nil {
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: required services are not configured")
+	}
+
+	script, err := c.workflowSvc.GetScriptByID(ctx, in.ScriptID)
+	if err != nil {
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: failed to get script %d: %w", in.ScriptID, err)
+	}
+	if script == nil || script.ID == 0 {
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: script %d not found", in.ScriptID)
+	}
+	if script.ProjectID != in.ProjectID {
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: script %d belongs to project %d, not the active project %d", script.ID, script.ProjectID, in.ProjectID)
+	}
+
+	node, err := c.createNode(ctx, script, in.RequestParam, in.NodeName)
+	if err != nil {
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: %w", err)
+	}
+
+	// 脚本侧路径由脚本目录派生（与 create_script / update_script 同口径）：
+	// 建好节点后模型经常要紧接着改脚本或 io_schema，这里一并回传免得多查一次。
+	result := tool.AnalysisNodeCreateResult{
+		AnalysisNodeID: node.ID,
+		NodeName:       node.NodeName,
+		ScriptID:       script.ID,
+		ScriptName:     script.Name,
+		ScriptType:     script.ScriptType,
+		WorkspaceDir:   node.WorkspaceDir,
+		ParamsPath:     node.ParamsPath,
+		RequestParam:   in.RequestParam,
+	}
+	if baseDir := c.storageBaseDir(); baseDir != "" {
+		scriptDir, scriptFile, _ := utils.GetScriptFile(baseDir, script.ProjectID, script.ScriptType, script.ScriptID)
+		result.ScriptFilePath = filepath.Join(scriptDir, scriptFile)
+		result.IOSchemaPath = utils.ScriptIOSchemaPath(baseDir, script.ProjectID, script.ScriptID)
 	}
 	return result, nil
+}
+
+// createNode 按脚本契约构建、落库并准备工作目录，返回最终节点。
+//
+// 构建逻辑（含读取脚本表单）收敛在 analysisform.NewAnalysisNodeFromScript（前端保存 /
+// create_script / create_analysis_node 共用），这里只负责落库与生成运行期文件。
+// io_schema.json 缺失时 NewAnalysisNodeFromScript 会返回读取错误，因此调用方无需再校验。
+func (c *scriptCreator) createNode(ctx context.Context, script *types.Script, requestParam map[string]any, nodeName string) (*types.AnalysisNode, error) {
+	built, err := analysisform.NewAnalysisNodeFromScript(ctx, c.dataSvc, c.workflowSvc, script, analysisform.AnalysisNodeSpec{
+		ProjectID:      script.ProjectID,
+		NodeName:       nodeName,
+		RequestParam:   requestParam,
+		CreationSource: analysisform.NodeCreationSourceAgent,
+		BaseDir:        c.storageBaseDir(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	node := built.Node
+
+	if err := c.analysisRepo.CreateAnalysisNodes(ctx, []*types.AnalysisNode{node}); err != nil {
+		return nil, fmt.Errorf("failed to create analysis node: %w", err)
+	}
+
+	// 运行期文件（params.json / run.sh / env.sh 与软链）；有 request_param 时 params.json 即已就绪。
+	if c.preparer != nil {
+		node.HydrateDerivedPaths()
+		if err := c.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
+			return nil, fmt.Errorf("failed to prepare node workspace: %w", err)
+		}
+	}
+	return node, nil
 }
 
 // resolveDefaultContainerTemplate 返回系统默认容器模板（is_default = true 的绑定行）。

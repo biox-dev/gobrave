@@ -15,7 +15,7 @@ const CreateScriptToolName = "create_script"
 // DefaultScriptType 是 create_script 未指定 script_type 时使用的脚本类型。
 const DefaultScriptType = "qmd"
 
-// CreateScriptInput 是 create_script 工具的入参。
+// CreateScriptInput 是 create_script 工具的入参（只创建脚本，不创建分析节点）。
 //
 // ProjectID 不由模型提供：它取自 RuntimeContext.ProjectID（当前用户激活项目），
 // 避免模型把脚本写到别的项目里。
@@ -26,18 +26,18 @@ type CreateScriptInput struct {
 	ScriptType          string `json:"script_type"`           // 脚本类型：qmd（默认）/ r / python / shell / jupyter
 	// Inputs / Outputs 是脚本的输入输出契约（写入 io_schema.json 的 inputs / outputs）。
 	// 为空时使用系统的默认 schema。
-	Inputs   []map[string]any `json:"inputs"`
-	Outputs  []map[string]any `json:"outputs"`
-	NodeName string           `json:"node_name"` // 分析节点名称（AnalysisNode.NodeName）
+	Inputs  []map[string]any `json:"inputs"`
+	Outputs []map[string]any `json:"outputs"`
 }
 
 // CreateScriptOutput 是 create_script 工具返回给模型的结果。
 //
-// 除 ID 之外，把新脚本 / 新节点在磁盘上的关键路径一并返回，模型可直接读写：
+// 除 ID 之外，把新脚本在磁盘上的关键路径一并返回，模型可直接读写：
 //   - ScriptFilePath：脚本主文件（如 main.R），由 utils.GetScriptFile 推导；
-//   - IOSchemaPath：脚本目录下的 io_schema.json，由 utils.ScriptIOSchemaPath 推导；
-//   - WorkspaceDir：节点工作目录；
-//   - ParamsPath：节点 params.json 路径。
+//   - IOSchemaPath：脚本目录下的 io_schema.json，由 utils.ScriptIOSchemaPath 推导。
+//
+// 需要运行脚本时，再用 create_analysis_node 建节点（节点 ID / 工作目录 / params.json
+// 路径由该工具返回）。
 type CreateScriptOutput struct {
 	ScriptID       int64  `json:"script_id"`
 	ScriptKey      string `json:"script_key,omitempty"`
@@ -52,42 +52,34 @@ type CreateScriptOutput struct {
 	ContainerTemplateID   int64  `json:"container_template_id,omitempty"`
 	ContainerTemplateName string `json:"container_template_name,omitempty"`
 
-	AnalysisNodeID int64  `json:"analysis_node_id"`
-	NodeName       string `json:"node_name,omitempty"`
-	WorkspaceDir   string `json:"workspace_dir,omitempty"`
-	ParamsPath     string `json:"params_path,omitempty"`
-
 	Error string `json:"error,omitempty"`
 }
 
-// CreateScript 返回一个「创建脚本 + 分析节点」工具。
+// CreateScript 返回一个「创建脚本」工具（只建脚本，不建分析节点）。
 //
 // 行为：
 //   - 从 RuntimeContext 取当前项目 ID（缺失时直接报错，避免写到错误项目）；
 //   - script_type 为空时按 DefaultScriptType（qmd）处理；
 //   - container_template_id 为空时由 ScriptCreator 解析系统默认容器模板，
 //     没有默认模板时回到模型一个错误提示，让用户先去容器模板页配置默认模板；
-//   - inputs / outputs 非空时写入脚本目录的 io_schema.json，并用它初始化节点的
-//     inputs_patterns / output_patterns（否则回落默认 schema），保证「脚本契约」与
-//     「节点记录」从创建那一刻就一致，无需事后再改 schema 重建节点；
-//   - 通过注入的 ScriptCreator 落库 Script 与 AnalysisNode，并初始化脚本目录（主文件、
-//     io_schema.json）与节点工作目录（params.json 等）；
-//   - 把新脚本主文件路径、io_schema.json 路径、节点工作目录与 params.json 路径回传给模型。
+//   - inputs / outputs 非空时写入脚本目录的 io_schema.json（这是脚本的参数契约，
+//     之后 create_analysis_node 会按它初始化节点的 inputs_patterns / output_patterns）；
+//   - 通过注入的 ScriptCreator 落库 Script 并初始化脚本目录（主文件、io_schema.json）；
+//   - 把新脚本主文件路径与 io_schema.json 路径回传给模型。
 //
 // 该工具会创建业务数据（写库 + 写盘），因此声明 write 授权：上层在执行前会先走权限门禁。
 func CreateScript() tool.Tool {
 	return tool.NewFunc(
 		CreateScriptToolName,
-		"创建一个新的分析脚本，同时为该脚本创建可独立运行的默认分析节点。返回脚本主文件路径、io_schema.json 路径、节点工作目录与 params.json 路径，可直接用于后续编写脚本内容。所属项目取自当前会话上下文，无需传入。请在调用时一次性给出 inputs / outputs（脚本输入输出契约，参数名将与 params.json 的键、脚本内读取的参数名一一对应；不传则使用默认 input1/output）。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。",
-		tool.Schema("创建脚本及其分析节点的入参", map[string]any{
+		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径，可据此编写脚本内容、补充参数契约。所属项目取自当前会话上下文，无需传入。请在调用时一次性给出 inputs / outputs（脚本输入输出契约，参数名将与 params.json 的键、脚本内读取的参数名一一对应；不传则使用默认 input1/output）。需要运行脚本时，再调用 create_analysis_node（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。",
+		tool.Schema("创建脚本的入参", map[string]any{
 			"name":                  tool.StringProperty("脚本名称（同名脚本在同一项目下应唯一，由业务侧校验）。"),
 			"description":           tool.StringProperty("脚本用途描述（可选），用于说明该脚本做什么。"),
 			"container_template_id": tool.StringProperty("容器运行配置 ID（整数，字符串以保精度）。为空时使用系统默认容器模板。"),
 			"script_type":           tool.StringProperty("脚本类型：qmd（默认）/ r / python / shell / jupyter（决定主文件名与初始化模板）。"),
 			"inputs":                ioItemsSchema("脚本输入契约列表（io_schema.json 的 inputs）。name 即 params.json 中的参数名，脚本内需按该名取参数；type 常见值：BaseInput / file / string / number / boolean 等。"),
 			"outputs":               ioItemsSchema("脚本输出契约列表（io_schema.json 的 outputs）。name 为输出名，type 通常为 file。"),
-			"node_name":             tool.StringProperty("分析节点名称（用于在节点列表中展示）。"),
-		}, "name", "node_name"),
+		}, "name"),
 		func(ctx context.Context, in CreateScriptInput) (CreateScriptOutput, error) {
 			rc := tool.RuntimeContextFrom(ctx)
 			if rc == nil || rc.ProjectID <= 0 {
@@ -102,10 +94,6 @@ func CreateScript() tool.Tool {
 			if scriptType == "" {
 				scriptType = DefaultScriptType
 			}
-			nodeName := strings.TrimSpace(in.NodeName)
-			if nodeName == "" {
-				nodeName = name
-			}
 
 			containerTemplateID, err := parseContainerTemplateID(in.ContainerTemplateID)
 			if err != nil {
@@ -117,7 +105,7 @@ func CreateScript() tool.Tool {
 				return CreateScriptOutput{}, fmt.Errorf("create_script: script creator is not available in this runtime")
 			}
 
-			result, err := creator.CreateScriptWithNode(ctx, tool.ScriptCreateInput{
+			result, err := creator.CreateScript(ctx, tool.ScriptCreateInput{
 				ProjectID:           rc.ProjectID,
 				Name:                name,
 				Description:         strings.TrimSpace(in.Description),
@@ -125,7 +113,6 @@ func CreateScript() tool.Tool {
 				ScriptType:          scriptType,
 				Inputs:              normalizeIOSchemaItems(in.Inputs),
 				Outputs:             normalizeIOSchemaItems(in.Outputs),
-				NodeName:            nodeName,
 			})
 			if err != nil {
 				return CreateScriptOutput{Error: err.Error()}, nil
@@ -140,15 +127,11 @@ func CreateScript() tool.Tool {
 				ScriptType:            scriptType,
 				ContainerTemplateID:   result.ContainerTemplateID,
 				ContainerTemplateName: result.ContainerTemplateName,
-				AnalysisNodeID:        result.AnalysisNodeID,
-				NodeName:              result.NodeName,
-				WorkspaceDir:          result.WorkspaceDir,
-				ParamsPath:            result.ParamsPath,
 			}
 
 			return out, nil
 		},
-	).WithPermission("write", "", "创建脚本及其分析节点（写库并初始化脚本 / 节点目录）")
+	).WithPermission("write", "", "创建脚本（写库并初始化脚本目录）")
 }
 
 // ioItemsSchema 构造 io_schema inputs / outputs 的 JSON Schema（对象数组）。

@@ -151,7 +151,7 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	opts.AnalysisNodeRunner = runner
 	// 进程级服务能力：read_file_by_id 等 builtin 工具在执行期通过它按文件 ID 读取内容预览。
 	opts.FileReader = fileReader
-	// 进程级服务能力：create_script 工具在执行期通过它创建脚本与独立分析节点。
+	// 进程级服务能力：create_script / create_analysis_node 工具在执行期通过它创建脚本与分析节点。
 	opts.ScriptCreator = scriptCreator
 	// 进程级服务能力：build_analysis_node_params 工具在执行期通过它按 io_schema 生成 params.json。
 	opts.AnalysisNodeParamsBuilder = paramsBuilder
@@ -307,10 +307,11 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		analysisRepo interfaces.AnalysisRepository,
 		projectRepo interfaces.ProjectRepository,
 		containerRepo interfaces.ContainerRepository,
+		dataSvc interfaces.DataService,
 		preparer prepare.NodeRuntimePreparer,
 		cfg *config.Config,
 	) tool.ScriptCreator {
-		return newScriptCreator(workflowSvc, analysisRepo, projectRepo, containerRepo, preparer, cfg)
+		return newScriptCreator(workflowSvc, analysisRepo, projectRepo, containerRepo, dataSvc, preparer, cfg)
 	}))
 	// 分析节点参数生成器：把「按脚本 io_schema 解析 request_param → 刷新节点 → 写出
 	// params.json」能力暴露给内置工具 build_analysis_node_params。
