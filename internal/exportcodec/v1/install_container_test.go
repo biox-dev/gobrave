@@ -113,7 +113,7 @@ func TestInstallContainerAssetsUpsertsByID(t *testing.T) {
 	c := &Codec{containerService: svc}
 
 	images := []types.ContainerImageExport{
-		{ID: 101, Name: "new-101", FullName: "docker.io/a/b:1", PullPolicy: types.PullPolicyNever},
+		{ID: 101, Name: "new-101", FullName: "docker.io/a/b:1"},
 		{ID: 100, Name: "new-100", FullName: "docker.io/a/c:2", Size: 42},
 	}
 	specs := []types.ContainerTemplateSpec{
@@ -134,8 +134,9 @@ func TestInstallContainerAssetsUpsertsByID(t *testing.T) {
 	if got := svc.images[101].Name; got != "new-101" {
 		t.Errorf("existing image not updated: name = %q", got)
 	}
-	if got := svc.images[101].PullPolicy; got != types.PullPolicyNever {
-		t.Errorf("existing image pull_policy = %q, want %q", got, types.PullPolicyNever)
+	// 导出文件不含 pull_policy：更新时保留库里原有的拉取策略。
+	if got := svc.images[101].PullPolicy; got != types.PullPolicyAlways {
+		t.Errorf("existing image pull_policy = %q, want %q (kept)", got, types.PullPolicyAlways)
 	}
 	if got := svc.images[100]; got == nil || got.Name != "new-100" || got.Size != 42 {
 		t.Errorf("missing image not created correctly: %+v", got)

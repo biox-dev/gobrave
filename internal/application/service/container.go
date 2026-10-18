@@ -212,10 +212,11 @@ func (s *containerService) ExportContainerTemplate(ctx context.Context, definiti
 	}
 
 	bundle := types.NewContainerTemplateBundle()
-	// 导出格式不含时间字段。
+	// 导出格式不含时间字段与 is_default（默认模板是本地状态，不随资产导出）。
 	exportedDefinition := *definition
 	exportedDefinition.CreatedAt = nil
 	exportedDefinition.UpdatedAt = nil
+	exportedDefinition.IsDefault = false
 	bundle.ContainerTemplateDefinitions = append(bundle.ContainerTemplateDefinitions, exportedDefinition)
 
 	spec, err := s.containerRepo.GetContainerTemplateSpecByID(ctx, definition.SpecID)
@@ -683,10 +684,8 @@ func (s *containerService) upsertContainerImage(ctx context.Context, export *typ
 		return image.ID, nil
 	}
 
-	pullPolicy := export.PullPolicy
-	if strings.TrimSpace(pullPolicy) == "" {
-		pullPolicy = types.PullPolicyIfNotPresent
-	}
+	// 导出文件不含 pull_policy：新增时按默认值 IfNotPresent，更新时保留库里的原值。
+	pullPolicy := types.PullPolicyIfNotPresent
 
 	id := export.ID
 	if id == 0 {
@@ -703,9 +702,12 @@ func (s *containerService) upsertContainerImage(ctx context.Context, export *typ
 	}
 
 	if img.ID != 0 {
-		_, err := s.containerRepo.GetContainerImageByID(ctx, img.ID)
+		existing, err := s.containerRepo.GetContainerImageByID(ctx, img.ID)
 		switch {
 		case err == nil:
+			if existing != nil && existing.PullPolicy != "" {
+				img.PullPolicy = existing.PullPolicy
+			}
 			if err := s.containerRepo.UpdateContainerImage(ctx, img); err != nil {
 				return 0, err
 			}

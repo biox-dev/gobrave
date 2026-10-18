@@ -155,7 +155,8 @@ type ContainerTemplateDefinition struct {
 
 	// IsDefault 标记「默认容器模板」：只能有一行处于默认状态，由服务层在写入时互斥维护。
 	// 创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。
-	IsDefault bool `json:"is_default" gorm:"not null;default:false;index"`
+	// 导出时会置为 false（omitempty 使其不出现在导出文件里）。
+	IsDefault bool `json:"is_default,omitempty" gorm:"not null;default:false;index"`
 
 	// 指针类型是为了让导出可以显式清空（omitempty 也因此生效）；接口响应仍会带上时间字段。
 	CreatedAt *time.Time `json:"created_at,omitempty"`
@@ -257,14 +258,14 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 	return tpl
 }
 
-// ContainerImageExport 是 ContainerImage 的导出结构，包含 ID，不含时间字段。
+// ContainerImageExport 是 ContainerImage 的导出结构，包含 ID，不含时间字段与 pull_policy
+// （拉取策略属于运行环境配置，不随资产导出）。
 type ContainerImageExport struct {
 	ID          int64  `json:"id,string"`
 	Name        string `json:"name"`
 	FullName    string `json:"full_name"`
 	Description string `json:"description"`
 	Size        int64  `json:"size"`
-	PullPolicy  string `json:"pull_policy"`
 }
 
 func (t *ContainerImage) ToExport() *ContainerImageExport {
@@ -277,7 +278,6 @@ func (t *ContainerImage) ToExport() *ContainerImageExport {
 		FullName:    t.FullName,
 		Description: t.Description,
 		Size:        t.Size,
-		PullPolicy:  t.PullPolicy,
 	}
 }
 
@@ -322,11 +322,11 @@ func (t *ContainerTemplate) ToExport(spec *ContainerTemplateSpec, image *Contain
 	}
 
 	bundle := NewContainerTemplateBundle()
+	// 导出格式不含时间字段与 is_default（默认模板是本地状态，不随资产导出）。
 	bundle.ContainerTemplateDefinitions = append(bundle.ContainerTemplateDefinitions, ContainerTemplateDefinition{
-		ID:        t.ID,
-		SpecID:    t.SpecID,
-		ImageID:   t.ImageID,
-		IsDefault: t.IsDefault,
+		ID:      t.ID,
+		SpecID:  t.SpecID,
+		ImageID: t.ImageID,
 	})
 	if spec != nil {
 		exportedSpec := *spec

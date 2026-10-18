@@ -155,6 +155,13 @@ func TestExportContainerTemplateReturnsFlatBundle(t *testing.T) {
 	if strings.Contains(string(raw), "\"created_at\"") || strings.Contains(string(raw), "\"updated_at\"") {
 		t.Fatalf("bundle export must not contain timestamps: %s", raw)
 	}
+	// 导出不含 is_default 与 pull_policy。
+	if strings.Contains(string(raw), "\"is_default\"") {
+		t.Fatalf("bundle export must not contain is_default: %s", raw)
+	}
+	if strings.Contains(string(raw), "\"pull_policy\"") {
+		t.Fatalf("bundle export must not contain pull_policy: %s", raw)
+	}
 }
 
 // TestImportContainerTemplateUpsertsByID 覆盖导入的「id 已存在则更新，不存在则按同一 id 新增」语义：

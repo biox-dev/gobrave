@@ -177,25 +177,25 @@ func InstallContainerAssets(ctx context.Context, svc ContainerAssetService, imag
 }
 
 // upsertContainerImage 按主键更新镜像，主键不存在则按同一主键新增（保持引用关系）。
+// 导出文件不含 pull_policy，新增时按默认值 IfNotPresent；更新时保留库里的原值。
 func upsertContainerImage(ctx context.Context, svc ContainerAssetService, export *types.ContainerImageExport) error {
-	pullPolicy := export.PullPolicy
-	if pullPolicy == "" {
-		pullPolicy = types.PullPolicyIfNotPresent
-	}
 	item := &types.ContainerImage{
 		ID:          export.ID,
 		Name:        export.Name,
 		FullName:    export.FullName,
 		Description: export.Description,
 		Size:        export.Size,
-		PullPolicy:  pullPolicy,
+		PullPolicy:  types.PullPolicyIfNotPresent,
 	}
 
-	if _, err := svc.GetContainerImageByID(ctx, item.ID); err != nil {
+	if existing, err := svc.GetContainerImageByID(ctx, item.ID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return svc.CreateContainerImage(ctx, item)
 		}
 		return err
+	} else if existing != nil && existing.PullPolicy != "" {
+		// 更新时不要用默认值覆盖库里已有的拉取策略。
+		item.PullPolicy = existing.PullPolicy
 	}
 	return svc.UpdateContainerImage(ctx, item)
 }
