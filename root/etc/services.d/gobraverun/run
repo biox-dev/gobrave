@@ -1,0 +1,17 @@
+#!/usr/bin/with-contenv bash
+
+export HOME="${GOBRAVE_HOME:-/config}"
+export SHELL=/bin/bash
+export GOBRAVE_BASE_DIR="${GOBRAVE_BASE_DIR:-$HOME/.gobrave}"
+port="${GOBRAVE_PORT:-8082}"
+
+# git 操作（初始化脚本仓库 / 克隆项目）均在持久化的数据目录中执行。
+cd "$HOME"
+
+app_args=(--config "$HOME/config.yml")
+if [[ -f /app/config.yml && ! -f "$HOME/config.yml" ]]; then
+	app_args=(--config /app/config.yml)
+fi
+app_args+=(--host 0.0.0.0 --port "$port")
+
+exec s6-setuidgid abc /app/gobrave "${app_args[@]}"

@@ -1,0 +1,14 @@
+#!/usr/bin/with-contenv bash
+
+home="${GOBRAVE_HOME:-/config}"
+base_dir="${GOBRAVE_BASE_DIR:-$home/.gobrave}"
+
+# The base image ships abc with /bin/false as its shell.
+usermod -s /bin/bash abc
+
+chown -R "${PUID:-1000}:${PGID:-1000}" "$home"
+
+# 让 git 在容器内正常工作（仓库归属受信的 abc 用户）。
+runuser -u abc -- git config --global --add safe.directory '*'
+runuser -u abc -- git config --global user.name "gobrave"
+runuser -u abc -- git config --global user.email "gobrave@123.com"
