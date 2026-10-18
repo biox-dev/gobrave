@@ -75,8 +75,8 @@ type Message struct {
 type Request struct {
 	// Provider 可选：强制指定 Provider 名称；为空则使用 Client 的默认 Provider。
 	Provider string `json:"provider"`
-	// Model 可选：模型名称，为空时由 Provider 自行决定。
-	Model string `json:"model"`
+	// ModelID 可选：模型标识（对应 config.agent.providers 的 key），为空时由 Provider 自行决定。
+	ModelID string `json:"model_id"`
 	// SessionID 可选：会话主键（雪花 ID），用于把多次调用关联到同一会话（与权限 / 任务联动）。
 	SessionID int64 `json:"session_id,string,omitempty"`
 	// ProfileID 可选：AgentProfile ID，AgentService 据此解析系统提示词、技能与上下文注入开关。

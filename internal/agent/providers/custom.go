@@ -133,39 +133,57 @@ func (a *customAgent) buildSDKOptions(req agent.Request) (opencodesdk.Options, e
 		return opencodesdk.Options{}, fmt.Errorf("custom provider: working dir is required")
 	}
 
-	model := firstNonEmpty(
-		strings.TrimSpace(req.Model),
-		strings.TrimSpace(a.opts.Extra["opencode_model"]),
-	)
-	if model == "" {
+	modelID := strings.TrimSpace(req.ModelID)
+	if modelID == "" {
 		return opencodesdk.Options{}, fmt.Errorf("custom provider: model is required")
 	}
 
-	apiKey := firstNonEmpty(a.modelAPIKey(model), strings.TrimSpace(a.opts.Extra["opencode_api_key"]))
+	// 本次调用的模型配置：按模型名从配置表解析（未命中则走内置参数 / 内置模型表）。
+	var pc agent.ModelProviderConfig
+	if resolved := a.opts.ResolveProvider(modelID); resolved != nil {
+		pc = *resolved
+	}
 
+	// 模型参数一律取自模型配置；未命中时留空，由 opencode 内置模型表兜底。
 	maxTokens := int64(req.MaxTokens)
 	if maxTokens <= 0 {
-		maxTokens = parseInt64(strings.TrimSpace(a.opts.Extra["opencode_max_tokens"]))
+		maxTokens = pc.DefaultMaxTokens
 	}
 
 	return opencodesdk.Options{
-		WorkingDir:      workingDir,
-		Debug:           isTrue(a.opts.Extra["opencode_debug"]),
-		Provider:        strings.TrimSpace(a.opts.Extra["opencode_provider"]),
-		APIKey:          apiKey,
-		Model:           model,
-		MaxTokens:       maxTokens,
-		ReasoningEffort: strings.TrimSpace(a.opts.Extra["opencode_reasoning_effort"]),
+		WorkingDir:          workingDir,
+		Debug:               isTrue(a.opts.Extra["opencode_debug"]),
+		Provider:            providerType(pc),
+		BaseURL:             strings.TrimSpace(pc.BaseURL),
+		APIKey:              strings.TrimSpace(pc.APIKey),
+		APIModel:            strings.TrimSpace(pc.APIModel),
+		ModelID:             modelID,
+		Name:                strings.TrimSpace(pc.Name),
+		ContextWindow:       pc.ContextWindow,
+		DefaultMaxTokens:    pc.DefaultMaxTokens,
+		MaxTokens:           maxTokens,
+		CanReason:           pc.CanReason,
+		SupportsAttachments: pc.SupportsAttachments,
+		CostPer1MIn:         pc.CostPer1MIn,
+		CostPer1MOut:        pc.CostPer1MOut,
+		CostPer1MInCached:   pc.CostPer1MInCached,
+		CostPer1MOutCached:  pc.CostPer1MOutCached,
+		ReasoningEffort:     strings.TrimSpace(pc.ReasoningEffort),
 	}, nil
 }
 
-// modelAPIKey 返回本次调用模型对应的 api_key（未命中自定义提供商时为空）。
-func (a *customAgent) modelAPIKey(modelKey string) string {
-	pc := a.opts.ResolveProvider(modelKey)
-	if pc == nil {
-		return ""
+// providerType 返回模型配置中的厂商类型（openai / anthropic / deepseek …）。
+//
+// 依次回退：Provider 字段 → Extra["provider"] → Extra["type"]。
+// 仅当显式配置时才透传，未配置时返回空，由类库按模型表推断。
+func providerType(pc agent.ModelProviderConfig) string {
+	if name := strings.TrimSpace(pc.Provider); name != "" {
+		return name
 	}
-	return strings.TrimSpace(pc.APIKey)
+	if name := strings.TrimSpace(pc.Extra["provider"]); name != "" {
+		return name
+	}
+	return strings.TrimSpace(pc.Extra["type"])
 }
 
 // permissionHandler 把 opencode SDK 的工具权限请求桥接到 gobrave 的 Runtime：

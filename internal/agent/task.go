@@ -77,7 +77,7 @@ func NewTask(req Request) *Task {
 	return &Task{
 		SessionID:  req.SessionID,
 		Provider:   req.Provider,
-		Model:      req.Model,
+		Model:      req.ModelID,
 		Status:     TaskCreated,
 		WorkingDir: req.WorkingDir,
 		Request:    req,

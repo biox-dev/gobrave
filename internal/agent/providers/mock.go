@@ -38,7 +38,7 @@ type mockAgent struct {
 func (a *mockAgent) Name() string { return agent.ProviderMock }
 
 func (a *mockAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
-	content := fmt.Sprintf("[mock:%s] %s", req.Model, lastUserPrompt(req))
+	content := fmt.Sprintf("[mock:%s] %s", req.ModelID, lastUserPrompt(req))
 
 	if demoPermission(req) {
 		decision, err := requestDemoPermission(ctx, rt, req)
@@ -66,7 +66,7 @@ func (a *mockAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runt
 }
 
 func (a *mockAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
-	full := fmt.Sprintf("[mock:%s] %s", req.Model, lastUserPrompt(req))
+	full := fmt.Sprintf("[mock:%s] %s", req.ModelID, lastUserPrompt(req))
 
 	// 按固定块切分模拟流式输出，通过 Runtime.Emit 对外输出事件。
 	const chunkSize = 8

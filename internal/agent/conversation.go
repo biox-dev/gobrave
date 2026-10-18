@@ -203,7 +203,7 @@ func (s *ConversationService) CreateTurn(ctx context.Context, in TurnInput) (*Ta
 	rc := withRequestFacts(in.RuntimeContext, in.UserID, conv.ID)
 	req := Request{
 		Provider:       in.Provider,
-		Model:          in.Model,
+		ModelID:        in.Model,
 		SessionID:      conv.ID,
 		RuntimeContext: rc,
 		ProfileID:      in.ProfileID,

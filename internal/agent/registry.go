@@ -21,12 +21,43 @@ type Provider interface {
 // ModelProviderConfig 描述一个「模型提供商」的连接配置（base_url / api_key / 类型等）。
 //
 // 与 config.ModelProviderConfig 一一对应，由容器启动时从配置映射而来。Provider 在每次
-// 调用时按 Profile 指定的模型名（req.Model）从此表解析出本次调用所需的 LLM 配置。
+// 调用时按 Profile 指定的模型名（req.ModelID）从此表解析出本次调用所需的 LLM 配置。
+//
+// Provider 是模型厂商类型（openai / anthropic / deepseek / gemini …），决定 Agent 类库
+// 走哪条 SDK 客户端；APIModel 是发给厂商的真实模型名；其余为模型能力元信息。
 type ModelProviderConfig struct {
-	Model   string            `json:"model"`
-	BaseURL string            `json:"base_url"`
-	APIKey  string            `json:"api_key"`
-	Extra   map[string]string `json:"extra"`
+	// ModelID 是模型标识（配置表的 key），与 API 模型名分离。
+	ModelID string `json:"model_id"`
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+
+	// Provider 是模型厂商类型（openai / anthropic / deepseek / gemini …）。
+	Provider string `json:"provider"`
+	// APIModel 是发给厂商的真实模型名；为空时回退 ModelID。
+	APIModel string `json:"api_model"`
+	// Name 是模型展示名；为空时回退 ModelID。
+	Name string `json:"name"`
+
+	// ContextWindow 模型上下文窗口（token）；0 表示未知。
+	ContextWindow int64 `json:"context_window"`
+	// DefaultMaxTokens 模型默认最大输出 token；0 表示未知。
+	DefaultMaxTokens int64 `json:"default_max_tokens"`
+	// CanReason 表示模型支持推理 / 思考过程。
+	CanReason bool `json:"can_reason"`
+	// SupportsAttachments 表示模型支持图片等附件。
+	SupportsAttachments bool `json:"supports_attachments"`
+
+	// CostPer1MIn / CostPer1MOut 每百万输入 / 输出 token 价格（美元）。
+	CostPer1MIn  float64 `json:"cost_per_1m_in"`
+	CostPer1MOut float64 `json:"cost_per_1m_out"`
+	// CostPer1MInCached / CostPer1MOutCached 命中缓存的输入 / 输出价格。
+	CostPer1MInCached  float64 `json:"cost_per_1m_in_cached"`
+	CostPer1MOutCached float64 `json:"cost_per_1m_out_cached"`
+
+	// ReasoningEffort 推理强度（openai 系 low / medium / high），空表示不指定。
+	ReasoningEffort string `json:"reasoning_effort"`
+
+	Extra map[string]string `json:"extra"`
 }
 
 // Options 是构建 Agent 实例所需的通用配置；具体 Provider 按需读取。

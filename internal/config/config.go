@@ -158,13 +158,44 @@ type AgentConfig struct {
 // ModelProviderConfig 描述一个「模型提供商」的连接配置（base_url / api_key / 类型等）。
 // 与具体 Agent 无关，可被多个 Agent 共享。
 //
-// 其余可选参数（如 bearer_token、type、wire_api）统一放在 Extra 中，
-// 避免为每个 Agent 的特殊需求单独增加结构体字段。
+// Provider 是模型厂商类型（openai / anthropic / deepseek / gemini …），
+// APIModel 是发给厂商的真实模型名（为空时回退 ModelID）。
+// ContextWindow / DefaultMaxTokens / CanReason / SupportsAttachments 是模型能力元信息，
+// 供 Agent 类库替代内置模型表。其余可选参数（如 bearer_token、wire_api）仍放在 Extra 中。
 type ModelProviderConfig struct {
-	Model   string            `yaml:"model" json:"model"`
-	BaseURL string            `yaml:"base_url" json:"base_url"`
-	APIKey  string            `yaml:"api_key" json:"api_key"`
-	Extra   map[string]string `yaml:"extra" json:"extra"`
+	// ModelID 是模型标识（配置表的 key），与 API 模型名分离。
+	ModelID string `yaml:"model_id" json:"model_id"`
+	BaseURL string `yaml:"base_url" json:"base_url"`
+	APIKey  string `yaml:"api_key" json:"api_key"`
+
+	// Provider 是模型厂商类型（openai / anthropic / deepseek / gemini …）。
+	Provider string `yaml:"provider" json:"provider"`
+	// APIModel 是发给厂商的真实模型名；为空时回退 ModelID。
+	APIModel string `yaml:"api_model" json:"api_model"`
+	// Name 是模型展示名（供前端 / TUI 显示）；为空时回退 ModelID。
+	Name string `yaml:"name" json:"name"`
+
+	// ContextWindow 模型上下文窗口（token）；0 表示未知。
+	ContextWindow int64 `yaml:"context_window" json:"context_window"`
+	// DefaultMaxTokens 模型默认最大输出 token；0 表示未知。
+	DefaultMaxTokens int64 `yaml:"default_max_tokens" json:"default_max_tokens"`
+	// CanReason 表示模型支持推理 / 思考过程。
+	CanReason bool `yaml:"can_reason" json:"can_reason"`
+	// SupportsAttachments 表示模型支持图片等附件。
+	SupportsAttachments bool `yaml:"supports_attachments" json:"supports_attachments"`
+
+	// CostPer1MIn / CostPer1MOut 是每百万输入 / 输出 token 的价格（美元）。
+	// 仅用于会话费用统计与 TUI 展示，不参与请求。
+	CostPer1MIn  float64 `yaml:"cost_per_1m_in" json:"cost_per_1m_in"`
+	CostPer1MOut float64 `yaml:"cost_per_1m_out" json:"cost_per_1m_out"`
+	// CostPer1MInCached / CostPer1MOutCached 是命中缓存的输入 / 输出价格。
+	CostPer1MInCached  float64 `yaml:"cost_per_1m_in_cached" json:"cost_per_1m_in_cached"`
+	CostPer1MOutCached float64 `yaml:"cost_per_1m_out_cached" json:"cost_per_1m_out_cached"`
+
+	// ReasoningEffort 推理强度（openai 系 low / medium / high），空表示不指定。
+	ReasoningEffort string `yaml:"reasoning_effort" json:"reasoning_effort"`
+
+	Extra map[string]string `yaml:"extra" json:"extra"`
 }
 
 type RealtimeConfig struct {

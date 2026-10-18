@@ -483,7 +483,7 @@ func (a *copilotAgent) providerConfig(modelKey string) *copilot.ProviderConfig {
 	}
 
 	// 实际发给 BYOK 服务的模型 ID：优先取配置里的 model，回退到模型 key。
-	modelID := strings.TrimSpace(pc.Model)
+	modelID := strings.TrimSpace(pc.ModelID)
 	if modelID == "" {
 		modelID = strings.TrimSpace(modelKey)
 	}
@@ -503,7 +503,7 @@ func (a *copilotAgent) providerConfig(modelKey string) *copilot.ProviderConfig {
 
 // resolveModel 解析本次调用使用的模型名（Profile 指定的模型 key）。
 func (a *copilotAgent) resolveModel(req agent.Request) (string, error) {
-	model := strings.TrimSpace(req.Model)
+	model := strings.TrimSpace(req.ModelID)
 	if model == "" {
 		return "", fmt.Errorf("copilot: model is required (set it via Profile.Model)")
 	}

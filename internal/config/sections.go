@@ -208,9 +208,9 @@ func normalizeAgentConfig(a *AgentConfig) error {
 			return fmt.Errorf("agent provider name must not be empty")
 		}
 
-		pc.Model = strings.TrimSpace(pc.Model)
-		if pc.Model == "" {
-			pc.Model = key
+		pc.ModelID = strings.TrimSpace(pc.ModelID)
+		if pc.ModelID == "" {
+			pc.ModelID = key
 		}
 		pc.BaseURL = strings.TrimSpace(pc.BaseURL)
 		pc.APIKey = strings.TrimSpace(pc.APIKey)

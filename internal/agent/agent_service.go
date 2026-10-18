@@ -201,7 +201,7 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	// 使当前项目 / 会话下的记忆优先出现。
 	task.Request.SystemPrompt = s.GetSystemPromptByProfileWithContext(ctx, profile, task.Request.RuntimeContext, task.Request.Skills)
 	// Profile 可能依据 Profile.Model 覆盖请求级模型，同步回任务持久化字段。
-	task.Model = task.Request.Model
+	task.Model = task.Request.ModelID
 	if err := s.transitionTask(ctx, task, TaskRunning, ""); err != nil {
 		return nil, err
 	}
@@ -538,9 +538,9 @@ func applyProfileOverrides(req Request, profile *Profile) Request {
 		return req
 	}
 
-	// 模型选择：Profile 指定了模型时，以 Profile 为准（req.Model 作为兜底）。
+	// 模型选择：Profile 指定了模型时，以 Profile 为准（req.ModelID 作为兜底）。
 	if model := strings.TrimSpace(profile.Model); model != "" {
-		req.Model = model
+		req.ModelID = model
 	}
 
 	// Agent（Provider）选择：Profile 指定了 Agent 时，以 Profile 为准。
