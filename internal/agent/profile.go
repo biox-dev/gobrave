@@ -141,7 +141,7 @@ func BuiltinProfiles() []*Profile {
 			// 模板正文来自内置提示词文件（builtin/prompts/default.md），见 mustReadBuiltinPrompt。
 			SystemPrompt: mustReadBuiltinPrompt(BuiltinPromptDefault),
 			Model:        "deepseek-v4-flash",
-			Provider:     ProviderCopilot,
+			Provider:     ProviderCustom,
 			Context:      ContextConfig{InjectMemory: true},
 			CreatedAt:    now,
 			UpdatedAt:    now,
