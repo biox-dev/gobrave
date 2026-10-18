@@ -26,6 +26,7 @@ type projectService struct {
 	projectRepo  interfaces.ProjectRepository
 	analysisRepo interfaces.AnalysisRepository
 	summaryRepo  interfaces.AISummaryRepository
+	dataRepo     interfaces.DataRepository
 	cfg          *config.Config
 }
 
@@ -33,12 +34,14 @@ func NewProjectService(
 	projectRepo interfaces.ProjectRepository,
 	analysisRepo interfaces.AnalysisRepository,
 	summaryRepo interfaces.AISummaryRepository,
+	dataRepo interfaces.DataRepository,
 	cfg *config.Config,
 ) interfaces.ProjectService {
 	return &projectService{
 		projectRepo:  projectRepo,
 		analysisRepo: analysisRepo,
 		summaryRepo:  summaryRepo,
+		dataRepo:     dataRepo,
 		cfg:          cfg,
 	}
 }
@@ -171,7 +174,46 @@ func (s *projectService) CreateDefaultProjectForUser(ctx context.Context, userID
 		return fmt.Errorf("failed to link user to project: %w", err)
 	}
 
+	// Create the default dataset and bind it to the new project so the user can
+	// use the data features right away.
+	if err := s.createDefaultDatasetForProject(ctx, project.ID, username); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// createDefaultDatasetForProject creates the initial dataset of a project and
+// binds it through go_project_dataset. The ProjectDataset PK is left zero so
+// that BeforeCreate generates it.
+func (s *projectService) createDefaultDatasetForProject(ctx context.Context, projectID int64, username string) error {
+	if s.dataRepo == nil {
+		return nil
+	}
+
+	dataset := &types.Dataset{
+		ID:          utils.GenerateID(),
+		DatasetName: fmt.Sprintf("%s's Dataset", username),
+		Description: "Default dataset",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	return s.dataRepo.WithTransaction(ctx, func(tx interfaces.DataRepository) error {
+		if err := tx.CreateDataset(ctx, dataset); err != nil {
+			return fmt.Errorf("failed to create default dataset: %w", err)
+		}
+
+		if err := tx.CreateProjectDataset(ctx, &types.ProjectDataset{
+			ProjectID: projectID,
+			DatasetID: dataset.ID,
+			CreatedAt: time.Now(),
+		}); err != nil {
+			return fmt.Errorf("failed to bind default dataset to project: %w", err)
+		}
+
+		return nil
+	})
 }
 
 func (s *projectService) CreateProjectForUser(ctx context.Context, userID int64, project *types.Project) (*types.Project, error) {
