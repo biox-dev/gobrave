@@ -1,6 +1,6 @@
 ---
 name: analysis-script-workflow
-description: 创建 / 修改生物信息学分析脚本并跑通分析节点的固定流程：create_script → 确认 io_schema 契约 → 写脚本 → create_analysis_node → build_analysis_node_params → run_analysis_node，包含 io_schema.json 生成规则、FileSelect 输入输出写法与失败迭代约束。用户要求新建分析脚本 / 分析节点、修改脚本或运行节点时使用。
+description: 创建 / 修改生物信息学分析脚本并跑通分析节点的固定流程：create_script → 确认 io_schema 契约 → 写脚本 → create_analysis_node → build_analysis_node_params → run_analysis_node，包含 io_schema.json 生成规则、FileSelect 输入输出写法、生物分组不明确时必须先 ask_user 询问用户，以及失败迭代约束。用户要求新建分析脚本 / 分析节点、修改脚本或运行节点时使用。
 user-invocable: true
 ---
 
@@ -8,6 +8,10 @@ user-invocable: true
 
 当用户要求「新建一个分析脚本 / 分析节点」并基于数据文件跑出结果时，必须按以下顺序推进，
 并且**一次任务内走完整条流程**：从创建脚本开始，一直到 run_analysis_node 返回 success 为止。
+
+0) 先判断分组是否明确：分组（实验组 / 对照组、处理组、疾病组等）是所有分析的前提。
+   若无法从用户需求与数据结构中确定分组列与各组的生物学含义，**必须先调用 ask_user 向用户提问**，
+   拿到答复后再进入第 1 步；不得先猜一个分组把流程跑完（详见「生物分组不明确时必须先 ask_user」）。
 
 1) create_script → 只创建脚本，得到 script_id / script_file_path / io_schema_path（**不会创建分析节点**）。
    - 调用时一次性给出 inputs / outputs（真实的参数契约），避免创建后再补齐。
@@ -19,6 +23,10 @@ user-invocable: true
      脚本内读取的参数名，全部以它为准，不要自行发明参数名。
 2) 先确认契约：结合用户需求与 read_file_by_id 拿到的数据结构（列名 / 维度 / 分组字段），
    把 io_schema.json 的 inputs / outputs 改成真实契约。
+   - **在确定分组字段（biological grouping）之前，必须先判断分组信息是否明确**：
+     若数据里存在多个可能作为分组的列、分组标签含义不明确（如 `Group1/Group2`、`A/B`、数字编码 `1/2`）、
+     分组列缺失、或用户未说明哪个是实验组 / 对照组，**禁止自行猜测分组**，必须先调用 ask_user 询问用户，
+     拿到明确答复后再继续（详见下文「生物分组不明确时必须先 ask_user」）。
    - inputs 的 name 就是 params.json 里的键，也是脚本里取参数用的名字；
    - 输出项按实际产物命名（通常 type 为 file）；
    - io_schema.json 也用于给人类用户渲染表单，因此 label / description 要写清楚含义；
@@ -58,6 +66,9 @@ user-invocable: true
 - 若失败原因在可用信息范围内无法确定（需求歧义、缺少必要数据/参数/环境、多种方案取舍、
   create_script 报错提示需要用户配置容器模板等），调用 ask_user 向用户提问，并在拿到答复后
   继续执行流程，不要在等待用户输入时提前收尾。
+- **生物分组不明确时禁止自行假设**：只要无法从用户需求与数据结构中确定「用哪一列分组、各组代表什么、
+  哪组是对照组」，就必须先调用 ask_user 提问（问题里写出真实候选列名与取值），拿到答复后再写脚本、
+  组参数并运行；不得先跑一个猜测的分组结果再向用户确认。详见「生物分组不明确时必须先 ask_user」。
 - ask_user 使用要点：questions[].id 用稳定的英文短标识（如 analysis_type、group_column）；
   选项类问题用 single_choice / multiple_choice 并给出 2-5 个 option（label + value），
   必要时设置 allow_custom=true；纯信息采集用 text 并给出 placeholder；
@@ -72,6 +83,37 @@ user-invocable: true
 - 修改 script_file_path 指向的脚本内容后同样**无需重建 script 或节点**，直接调用 run_analysis_node 即可运行最新代码；只有参数也需要变化时才再调用 build_analysis_node_params（或在 run_analysis_node 里传 request_param）。
 - 每次运行只改必要的地方：先用日志定位失败原因，避免整段重写脚本。
 - 需要完整日志时读取 run_analysis_node 返回的 log_path。
+
+### 生物分组不明确时必须先 ask_user
+
+分组是所有下游分析（差异分析、聚类、富集、生存分析等）的前提，猜错会让整条结果链失效。
+因此在写脚本 / 组参数之前，**先判断分组是否明确**；不明确时**必须先调用 ask_user 提问**，
+拿到用户答复后再继续流程，不得凭经验假设。
+
+判断为「分组不明确」的典型情形（满足任一即需要提问）：
+
+- 数据里存在多个候选分组列（如同时有 `group` / `condition` / `timepoint` / `cluster` / `celltype`），
+  无法确定该用哪一列；
+- 分组取值是抽象标签或编码（`Group1/Group2`、`A/B/C`、`0/1/2`、`cluster0/cluster1`），
+  看不出哪组是对照、哪组是处理，也看不出分组的生物学含义；
+- 用户需求涉及「实验组 / 对照组」「处理 / 未处理」「疾病 / 正常」「不同时间点或剂量」等对比，
+  但数据中找不到对应字段或字段取值对应不上；
+- 样本名里隐含分组（如 `Ctrl_1`、`KO_2`、`treat_3`），需要从样本名解析才能得到分组；
+- 只有单个分组列但存在空值 / 拼写不一致 / 大小写混用（`WT`、`wt`、`WT_`），或分组数量与用户描述不符；
+- 有多个分组维度同时存在，需要确认做比较的是哪一个（主分组列），其它维度是否作为协变量 / 批次。
+
+提问要求：
+
+- 提问前先用 `read_file_by_id` / 查看数据结构，把**真实的候选列名与取值**写进问题里，
+  不要让用户从零描述（例如：「检测到 `group` 列取值为 `A/B`，哪一组是对照组？」）；
+- `questions[].id` 使用稳定英文短标识，如 `group_column`、`group_levels`、`control_group`、`batch_column`；
+- 选项类问题用 `single_choice` / `multiple_choice`，option 用「label（人类可读）+ value（真实列名 / 取值）」，
+  候选分组列直接作为 option 列出，必要时设 `allow_custom=true` 让用户补充；
+- 样本名解析场景用 `text`，给 `placeholder` 说明期望格式（如 `Ctrl_1 → Control`）；
+- 分组列、对照 / 处理组、是否多批次纠正等**能一次问清的问题合并到同一次 ask_user 调用**，不要反复打断；
+- 拿到答复后：把分组列作为 `BaseSelect`（或固定取值时用 `BaseSelect` + `data`）写进 io_schema inputs，
+  脚本里通过 `params$<分组参数名>` 读取，不硬编码分组取值；若用户答复后仍有关键歧义，可再问一次，
+  但不要跳过提问直接假设。
 
 ### 遇到重复性错误时写入 memory
 
