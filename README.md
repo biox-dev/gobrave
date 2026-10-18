@@ -186,6 +186,14 @@ docker run -d -p 8082:8082 --name gobrave gobrave:latest
 docker run --rm -p 8082:8082  -it registry.cn-hangzhou.aliyuncs.com/wybioinfo/gobrave 
 ```
 
+```bash
+docker run --rm -p 8082:8082 \
+  -v /home/admin/gobrave_docker:/config \
+  -e PUID=$(id -u) -e PGID=$(id -g) \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  registry.cn-hangzhou.aliyuncs.com/wybioinfo/gobrave
+```
+
 ### Run with Command-Line Database Configuration
 
 You can override database settings directly via CLI flags — no config file needed. Timezone is fixed to **UTC** in all database DSNs.
