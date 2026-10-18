@@ -420,6 +420,17 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Invoke(func(repo agent.ProfileRepository) error {
 		return agent.EnsureBuiltinProfiles(ctx, repo)
 	}))
+	// 系统启动时导入内置容器模板（builtin/container_templates/*.json）：
+	// 复用 InstallContainerAssets 按主键 upsert（镜像 → 运行配置 → 绑定行），
+	// 因此每次启动都会把内置模板刷新成代码里的最新定义；文件里 is_default=true 的
+	// 绑定行会被设为唯一默认模板（先于下面的 EnsureDefaultContainerTemplate 执行）。
+	// 导入失败只记录日志，不阻断启动（与内置技能一致）。
+	must(container.Invoke(func(containerService interfaces.ContainerService) error {
+		if err := service.InstallBuiltinContainerTemplates(ctx, containerService); err != nil {
+			logger.Warnf(ctx, "[Container] Failed to install builtin container templates: %v", err)
+		}
+		return nil
+	}))
 	// 启动时补齐默认容器模板：存量数据没有 is_default 标记，若没有任何默认为 create_script
 	// 兜底选一条最早的绑定行，避免「创建脚本提示未配置默认容器模板」。
 	must(container.Invoke(func(containerRepo interfaces.ContainerRepository) error {

@@ -1,0 +1,46 @@
+{
+  "container_images": [
+    {
+      "id": "202606160001",
+      "name": "rocker-tidyverse-r",
+      "full_name": "registry.cn-hangzhou.aliyuncs.com/wybioinfo/rocker-tidyverse-r:4.6.0",
+      "description": "https://rocker-project.org/images/versioned/rstudio.html\nhttps://www.bioconductor.org/help/docker/\nhttps://hub.docker.com/r/bioconductor/tidyverse/tags",
+      "size": 0
+    }
+  ],
+  "container_template_specs": [
+    {
+      "id": "202606160002",
+      "name": "rstudio",
+      "description": "https://rocker-project.org/images/versioned/rstudio.html\nhttps://www.bioconductor.org/help/docker/\nhttps://hub.docker.com/r/bioconductor/tidyverse/tags",
+      "command": "/init",
+      "cpu": 0,
+      "memory": 0,
+      "work_dir": "",
+      "port": 8787,
+      "app_type": "rstudio",
+      "env": {
+        "USERID": "$USERID",
+        "GROUPID": "$GROUPID",
+        "R_SCRIPT": "$SCRIPT_FILE",
+        "R_LIBS_USER": "$R_PACKAGE_DIR",
+        "DISABLE_AUTH": true,
+        "R_USER_WORKDIR": "$WORKSPACE_PATH",
+        "POSIT_ASSISTANT_ENABLED": 0,
+        "RSTUDIO_DISABLE_CHECK_FOR_UPDATES": 1
+      },
+      "mounts": {},
+      "scheduling_constraint": null,
+      "labels": null,
+      "change_uid": false
+    }
+  ],
+  "container_template_definitions": [
+    {
+      "id": "202606160002",
+      "spec_id": "202606160002",
+      "image_id": "202606160001",
+      "display_name": ""
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-// Package builtin 打包随二进制分发的内置静态资源（目前是内置提示词）。
+// Package builtin 打包随二进制分发的内置静态资源（内置提示词、内置技能与内置容器模板）。
 //
 // 为什么用 //go:embed 而不是只在运行时读磁盘：多阶段构建的镜像里通常只拷贝
 // 二进制本身，builtin/prompts 不会出现在运行目录；用 embed 后提示词随二进制
@@ -28,3 +28,17 @@ var SkillFiles embed.FS
 
 // SkillFSRoot 是 SkillFiles 中内置技能目录的相对路径。
 const SkillFSRoot = "skills"
+
+// ContainerTemplateFiles 内嵌 builtin/container_templates 下的全部内置容器模板，
+// 路径形如 "container_templates/rstudio-tidyverse-r.json"。
+//
+// 每个文件就是一个导出格式的容器资产包（container_images /
+// container_template_specs / container_template_definitions 三个平铺列表），
+// 启动时由 service.InstallBuiltinContainerTemplates 逐个导入数据库。
+// 与提示词 / 技能一致：运行期优先读磁盘，缺失时回退到内嵌副本。
+//
+//go:embed container_templates
+var ContainerTemplateFiles embed.FS
+
+// ContainerTemplateFSRoot 是 ContainerTemplateFiles 中内置容器模板目录的相对路径。
+const ContainerTemplateFSRoot = "container_templates"
