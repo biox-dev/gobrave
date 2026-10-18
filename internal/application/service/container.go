@@ -8,6 +8,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/config"
 	apperrors "github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/exportcodec"
 	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -195,6 +196,48 @@ func containerTemplateSpecFromReadModel(tpl *types.ContainerTemplate) *types.Con
 		Labels:               tpl.Labels,
 		ChangeUID:            tpl.ChangeUID,
 	}
+}
+
+// ExportContainerTemplate 导出单条容器模板，返回统一平铺格式（与 script.json / workflow.json 相同）：
+// container_images / container_template_specs / container_template_definitions 各一条。
+// 三个列表都不含时间字段，可直接交给 ImportContainerTemplate 原样导入。
+func (s *containerService) ExportContainerTemplate(ctx context.Context, definitionID int64) (*types.ContainerTemplateBundle, error) {
+	if definitionID == 0 {
+		return nil, fmt.Errorf("container template id is required")
+	}
+
+	definition, err := s.containerRepo.GetContainerTemplateDefinitionByID(ctx, definitionID)
+	if err != nil {
+		return nil, err
+	}
+
+	bundle := types.NewContainerTemplateBundle()
+	// 导出格式不含时间字段。
+	exportedDefinition := *definition
+	exportedDefinition.CreatedAt = nil
+	exportedDefinition.UpdatedAt = nil
+	bundle.ContainerTemplateDefinitions = append(bundle.ContainerTemplateDefinitions, exportedDefinition)
+
+	spec, err := s.containerRepo.GetContainerTemplateSpecByID(ctx, definition.SpecID)
+	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if spec != nil {
+		exportedSpec := *spec
+		exportedSpec.CreatedAt = nil
+		exportedSpec.UpdatedAt = nil
+		bundle.ContainerTemplateSpecs = append(bundle.ContainerTemplateSpecs, exportedSpec)
+	}
+
+	image, err := s.containerRepo.GetContainerImageByID(ctx, definition.ImageID)
+	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if image != nil {
+		bundle.ContainerImages = append(bundle.ContainerImages, *image.ToExport())
+	}
+
+	return bundle, nil
 }
 
 // containerTemplateDefinitionFromReadModel 从对外模板抽出"配置 × 镜像 绑定"字段。
@@ -456,70 +499,82 @@ func (s *containerService) PageContainerTemplate(ctx context.Context, pagination
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-// ImportContainerTemplate 按导出结构导入容器模板。
-// 模板：有 id 则存在更新、不存在新增；无 id 则直接新增。
-// 内嵌镜像：有 id 则存在更新、不存在新增；无 id 则直接新增。
-func (s *containerService) ImportContainerTemplate(ctx context.Context, item *types.ContainerTemplateExport) (*types.ContainerTemplateExport, error) {
-	if item == nil {
-		return nil, fmt.Errorf("container template is required")
-	}
-	if item.Image == nil {
-		return nil, fmt.Errorf("container image is required")
-	}
-
-	imageID, err := s.upsertContainerImage(ctx, item.Image)
-	if err != nil {
-		return nil, err
-	}
-	if imageID == 0 {
-		return nil, fmt.Errorf("container image id is required")
+// ImportContainerTemplate 导入统一平铺格式（与 script.json / workflow.json 相同）：
+// container_images / container_template_specs / container_template_definitions。
+//
+// 三张表都按主键 upsert（id 已存在则更新，不存在则按同一 id 新增），顺序固定为
+// 「镜像 → 运行配置 → 绑定行」；导入完成后把所有绑定行去重汇总成返回值。
+// is_default=true 的绑定行额外走互斥的默认标记流程。
+func (s *containerService) ImportContainerTemplate(ctx context.Context, bundle *types.ContainerTemplateBundle) (*types.ContainerTemplateBundle, error) {
+	if bundle == nil {
+		return nil, fmt.Errorf("container template bundle is required")
 	}
 
-	tpl := &types.ContainerTemplate{
-		ID:          item.ID,
-		Name:        item.Name,
-		Description: item.Description,
-		ImageID:     imageID,
-		Command:     item.Command,
-		CPU:         item.CPU,
-		Memory:      item.Memory,
-		WorkDir:     item.WorkDir,
-		Port:        item.Port,
-		AppType:     item.AppType,
-		Env:         item.Env,
-		Mounts:      item.Mounts,
-		// Volumes:              item.Volumes,
-		SchedulingConstraint: item.SchedulingConstraint,
-		Labels:               item.Labels,
-		ChangeUID:            item.ChangeUID,
-	}
-
-	if item.ID != 0 {
-		_, err := s.containerRepo.GetContainerTemplateDefinitionByID(ctx, item.ID)
-		switch {
-		case err == nil:
-			if err := s.updateContainerTemplate(ctx, tpl); err != nil {
-				return nil, err
-			}
-		case stderrs.Is(err, gorm.ErrRecordNotFound):
-			if err := s.createContainerTemplate(ctx, tpl); err != nil {
-				return nil, err
-			}
-		default:
-			return nil, err
-		}
-	} else {
-		if err := s.createContainerTemplate(ctx, tpl); err != nil {
-			return nil, err
-		}
-	}
-
-	image, err := s.containerRepo.GetContainerImageByID(ctx, imageID)
-	if err != nil {
+	if _, err := exportcodec.InstallContainerAssets(ctx, s.containerRepo,
+		bundle.ContainerImages, bundle.ContainerTemplateSpecs, bundle.ContainerTemplateDefinitions); err != nil {
 		return nil, err
 	}
 
-	return tpl.ToExport(image), nil
+	for _, definition := range bundle.ContainerTemplateDefinitions {
+		if definition.IsDefault {
+			if err := s.applyDefaultFlag(ctx, s.containerRepo, definition.ID); err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
+
+	result := types.NewContainerTemplateBundle()
+	seen := make(map[int64]struct{}, len(bundle.ContainerTemplateDefinitions))
+	for _, definition := range bundle.ContainerTemplateDefinitions {
+		if _, exists := seen[definition.ID]; exists {
+			continue
+		}
+		seen[definition.ID] = struct{}{}
+
+		exported, err := s.ExportContainerTemplate(ctx, definition.ID)
+		if err != nil {
+			return nil, err
+		}
+		result.ContainerTemplateDefinitions = append(result.ContainerTemplateDefinitions, exported.ContainerTemplateDefinitions...)
+		result.ContainerTemplateSpecs = appendUniqueSpecs(result.ContainerTemplateSpecs, exported.ContainerTemplateSpecs)
+		result.ContainerImages = appendUniqueImages(result.ContainerImages, exported.ContainerImages)
+	}
+	return result, nil
+}
+
+// appendUniqueSpecs 按主键把 src 里尚未出现的运行配置追加到 dst。
+func appendUniqueSpecs(dst, src []types.ContainerTemplateSpec) []types.ContainerTemplateSpec {
+	for _, item := range src {
+		exists := false
+		for _, kept := range dst {
+			if kept.ID == item.ID {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			dst = append(dst, item)
+		}
+	}
+	return dst
+}
+
+// appendUniqueImages 按主键把 src 里尚未出现的镜像追加到 dst。
+func appendUniqueImages(dst, src []types.ContainerImageExport) []types.ContainerImageExport {
+	for _, item := range src {
+		exists := false
+		for _, kept := range dst {
+			if kept.ID == item.ID {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			dst = append(dst, item)
+		}
+	}
+	return dst
 }
 
 // ===== 容器模板：按主键直接 upsert 两层实体（供 script.json / workflow.json 安装使用）=====
@@ -613,9 +668,19 @@ func (s *containerService) UpdateContainerTemplateDefinition(ctx context.Context
 	return s.containerRepo.UpdateContainerTemplateDefinition(ctx, item)
 }
 
-func (s *containerService) upsertContainerImage(ctx context.Context, export *types.ContainerImageExport) (int64, error) {
+// upsertContainerImage 按主键 upsert 镜像：fallbackID 为绑定行里携带的引用 id。
+// 优先用 export.ID，其次用 fallbackID；都为 0 时视为新建（由 BeforeCreate 分配新 id）。
+// 镜像不存在时按同一 id 新建，保证绑定行的 image_id 不会变成悬空引用。
+func (s *containerService) upsertContainerImage(ctx context.Context, export *types.ContainerImageExport, fallbackID int64) (int64, error) {
 	if export == nil {
-		return 0, nil
+		if fallbackID == 0 {
+			return 0, nil
+		}
+		image, err := s.containerRepo.GetContainerImageByID(ctx, fallbackID)
+		if err != nil {
+			return 0, err
+		}
+		return image.ID, nil
 	}
 
 	pullPolicy := export.PullPolicy
@@ -623,8 +688,13 @@ func (s *containerService) upsertContainerImage(ctx context.Context, export *typ
 		pullPolicy = types.PullPolicyIfNotPresent
 	}
 
+	id := export.ID
+	if id == 0 {
+		id = fallbackID
+	}
+
 	img := &types.ContainerImage{
-		ID:          export.ID,
+		ID:          id,
 		Name:        export.Name,
 		FullName:    export.FullName,
 		Description: export.Description,
@@ -632,8 +702,8 @@ func (s *containerService) upsertContainerImage(ctx context.Context, export *typ
 		PullPolicy:  pullPolicy,
 	}
 
-	if export.ID != 0 {
-		_, err := s.containerRepo.GetContainerImageByID(ctx, export.ID)
+	if img.ID != 0 {
+		_, err := s.containerRepo.GetContainerImageByID(ctx, img.ID)
 		switch {
 		case err == nil:
 			if err := s.containerRepo.UpdateContainerImage(ctx, img); err != nil {
@@ -641,7 +711,7 @@ func (s *containerService) upsertContainerImage(ctx context.Context, export *typ
 			}
 			return img.ID, nil
 		case stderrs.Is(err, gorm.ErrRecordNotFound):
-			// 不存在，继续走新增
+			// 不存在，继续走新增（沿用导出文件里的主键，保持引用关系）
 		default:
 			return 0, err
 		}
@@ -651,6 +721,47 @@ func (s *containerService) upsertContainerImage(ctx context.Context, export *typ
 		return 0, err
 	}
 	return img.ID, nil
+}
+
+// upsertContainerTemplateSpec 按主键 upsert 共享运行配置：fallbackID 为绑定行里携带的引用 id。
+// 优先用 item.ID，其次用 fallbackID；都为 0 时视为新建（由 BeforeCreate 分配新 id）。
+// item 为 nil 时只做存在性校验，直接返回 fallbackID。
+func (s *containerService) upsertContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec, fallbackID int64) (int64, error) {
+	if item == nil {
+		if fallbackID == 0 {
+			return 0, nil
+		}
+		spec, err := s.containerRepo.GetContainerTemplateSpecByID(ctx, fallbackID)
+		if err != nil {
+			return 0, err
+		}
+		return spec.ID, nil
+	}
+
+	spec := *item
+	if spec.ID == 0 {
+		spec.ID = fallbackID
+	}
+
+	if spec.ID != 0 {
+		_, err := s.containerRepo.GetContainerTemplateSpecByID(ctx, spec.ID)
+		switch {
+		case err == nil:
+			if err := s.containerRepo.UpdateContainerTemplateSpec(ctx, &spec); err != nil {
+				return 0, err
+			}
+			return spec.ID, nil
+		case stderrs.Is(err, gorm.ErrRecordNotFound):
+			// 不存在，继续走新增（沿用导出文件里的主键，保持引用关系）
+		default:
+			return 0, err
+		}
+	}
+
+	if err := s.containerRepo.CreateContainerTemplateSpec(ctx, &spec); err != nil {
+		return 0, err
+	}
+	return spec.ID, nil
 }
 
 func (s *containerService) CreateAppSessionByTemplate(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string) (*types.AppSession, error) {

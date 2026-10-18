@@ -11,6 +11,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/exportcodec"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -322,12 +323,7 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 	}
 
 	scripts := make([]map[string]any, 0, len(scriptIDs))
-	containerTemplateSpecs := make([]map[string]any, 0)
-	containerTemplateDefinitions := make([]map[string]any, 0)
-	containerImages := make([]map[string]any, 0)
-	seenSpecIDs := make(map[int64]struct{})
-	seenDefinitionIDs := make(map[int64]struct{})
-	seenImageIDs := make(map[int64]struct{})
+	containerAssets := exportcodec.NewContainerAssetBundle()
 	for _, scriptID := range scriptIDs {
 		script, scriptErr := s.workflowRepo.GetScriptByScriptID(ctx, workflow.ProjectID, scriptID)
 		if scriptErr != nil {
@@ -345,9 +341,7 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 
 		// 脚本只保存 container_template_id（绑定行主键），导出的容器资产由绑定行反查：
 		// 绑定行 → 运行配置（spec_id）→ 镜像（image_id），三者各自按主键去重。
-		if assetErr := s.collectScriptContainerAssets(ctx, script.ContainerTemplateID,
-			&containerTemplateSpecs, &containerTemplateDefinitions, &containerImages,
-			seenSpecIDs, seenDefinitionIDs, seenImageIDs); assetErr != nil {
+		if assetErr := s.collectScriptContainerAssets(ctx, script.ContainerTemplateID, containerAssets); assetErr != nil {
 			return nil, assetErr
 		}
 
@@ -355,13 +349,11 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 	}
 
 	exportPayload := &types.WorkflowJSONExportResponse{
-		WorkflowID:                   workflow.WorkflowID,
-		Workflow:                     workflowMap,
-		Scripts:                      scripts,
-		ContainerTemplateSpecs:       containerTemplateSpecs,
-		ContainerTemplateDefinitions: containerTemplateDefinitions,
-		ContainerImages:              containerImages,
+		WorkflowID: workflow.WorkflowID,
+		Workflow:   workflowMap,
+		Scripts:    scripts,
 	}
+	containerAssets.AttachTo(&exportPayload.ContainerTemplateSpecs, &exportPayload.ContainerTemplateDefinitions, &exportPayload.ContainerImages)
 
 	exportDir := filepath.Join(storageBaseDir, "pipeline", "tools", workflow.WorkflowID)
 	if err := os.MkdirAll(exportDir, 0o755); err != nil {
@@ -393,41 +385,30 @@ func (s *workflowService) GenerateScriptJSONByScriptID(ctx context.Context, scri
 	}
 	omitExportFields(scriptMap, exportOmitWorkflowScriptFields)
 
-	containerTemplateSpecs := make([]map[string]any, 0)
-	containerTemplateDefinitions := make([]map[string]any, 0)
-	containerImages := make([]map[string]any, 0)
+	containerAssets := exportcodec.NewContainerAssetBundle()
 	// 脚本只保存 container_template_id（绑定行主键），导出的容器资产由绑定行反查：
 	// 绑定行 → 运行配置（spec_id）→ 镜像（image_id）。
-	if assetErr := s.collectScriptContainerAssets(ctx, script.ContainerTemplateID,
-		&containerTemplateSpecs, &containerTemplateDefinitions, &containerImages,
-		make(map[int64]struct{}), make(map[int64]struct{}), make(map[int64]struct{})); assetErr != nil {
+	if assetErr := s.collectScriptContainerAssets(ctx, script.ContainerTemplateID, containerAssets); assetErr != nil {
 		return nil, assetErr
 	}
 
-	return &types.ScriptJSONExportResponse{
-		ScriptID:                     script.ScriptID,
-		Script:                       scriptMap,
-		ContainerTemplateSpecs:       containerTemplateSpecs,
-		ContainerTemplateDefinitions: containerTemplateDefinitions,
-		ContainerImages:              containerImages,
-	}, nil
+	payload := &types.ScriptJSONExportResponse{
+		ScriptID: script.ScriptID,
+		Script:   scriptMap,
+	}
+	containerAssets.AttachTo(&payload.ContainerTemplateSpecs, &payload.ContainerTemplateDefinitions, &payload.ContainerImages)
+	return payload, nil
 }
 
-// collectScriptContainerAssets 收集脚本引用的一整套容器资产：绑定行 → 运行配置 → 镜像。
+// collectScriptContainerAssets 把脚本引用的一整套容器资产收进 bundle：绑定行 → 运行配置 → 镜像。
 //
-// 三个列表各自按主键去重（同一绑定行被多个脚本引用、同一运行配置被多个绑定行引用、
-// 同一镜像被多个绑定行引用时都不会重复导出），顺序固定为「先绑定行、再配置、最后镜像」，
-// 与安装侧的依赖顺序一致（绑定行引用配置与镜像）。
+// 三张表各自按主键去重（同一绑定行被多个脚本引用、同一运行配置被多个绑定行引用、
+// 同一镜像被多个绑定行引用时都不会重复导出）。
 //
 // templateID 是脚本的 container_template_id，即 go_container_template_definition 的主键；
 // 绑定行已被删除等取不到的情况只跳过，不阻断导出。
-func (s *workflowService) collectScriptContainerAssets(
-	ctx context.Context,
-	templateID int64,
-	specs, definitions, images *[]map[string]any,
-	seenSpecIDs, seenDefinitionIDs, seenImageIDs map[int64]struct{},
-) error {
-	if templateID == 0 {
+func (s *workflowService) collectScriptContainerAssets(ctx context.Context, templateID int64, bundle *exportcodec.ContainerAssetBundle) error {
+	if templateID == 0 || bundle == nil {
 		return nil
 	}
 
@@ -436,116 +417,40 @@ func (s *workflowService) collectScriptContainerAssets(
 		return nil
 	}
 
-	if _, exists := seenDefinitionIDs[definition.ID]; !exists {
-		definitionMap, mapErr := buildContainerTemplateDefinitionExportMap(definition)
-		if mapErr != nil {
-			return mapErr
-		}
-		seenDefinitionIDs[definition.ID] = struct{}{}
-		*definitions = append(*definitions, definitionMap)
+	if !bundle.HasDefinition(definition.ID) {
+		bundle.Definitions = append(bundle.Definitions, *definition)
 	}
 
-	if specErr := s.collectContainerTemplateSpecExportMap(ctx, definition.SpecID, specs, seenSpecIDs); specErr != nil {
-		return specErr
-	}
-
-	return s.collectContainerImageExportMap(ctx, definition.ImageID, images, seenImageIDs)
-}
-
-// buildContainerTemplateSpecExportMap 把容器运行配置转成导出用的 JSON map。
-// 运行配置只描述「怎么跑」，不含任何镜像引用（镜像由绑定行通过 image_id 承载）。
-func buildContainerTemplateSpecExportMap(spec *types.ContainerTemplateSpec) (map[string]any, error) {
-	if spec == nil {
-		return nil, nil
-	}
-	specMap, err := structToMap(spec)
-	if err != nil {
-		return nil, err
-	}
-	omitExportFields(specMap, exportOmitFields)
-	return specMap, nil
-}
-
-// buildContainerTemplateDefinitionExportMap 把「运行配置 × 镜像」绑定行转成导出用的 JSON map。
-// 绑定行是脚本 container_template_id 指向的实体，主键必须原样导出，spec_id / image_id 保持引用关系。
-func buildContainerTemplateDefinitionExportMap(definition *types.ContainerTemplateDefinition) (map[string]any, error) {
-	if definition == nil {
-		return nil, nil
-	}
-	definitionMap, err := structToMap(definition)
-	if err != nil {
-		return nil, err
-	}
-	omitExportFields(definitionMap, exportOmitFields)
-	return definitionMap, nil
-}
-
-// buildContainerImageExportMap 把容器镜像转成导出用的 JSON map。
-//
-// 镜像使用 ContainerImageExport（本就不含 created_at / updated_at），
-// 这里仍统一走 exportOmitFields，与运行配置、绑定行、脚本的导出口径保持一致：
-// 任何「每次保存都会变化」的字段（目前是 updated_at）都不进导出文件，
-// 避免无意义的 git diff；后续若 ContainerImageExport 加回时间字段也能自动被剔除。
-func buildContainerImageExportMap(image *types.ContainerImage) (map[string]any, error) {
-	if image == nil {
-		return nil, nil
-	}
-
-	imageMap, err := structToMap(image.ToExport())
-	if err != nil {
-		return nil, err
-	}
-	omitExportFields(imageMap, exportOmitFields)
-	return imageMap, nil
-}
-
-// collectContainerImageExportMap 按主键去重地收集导出用的容器镜像：
-// 首次遇到 imageID 时查询镜像并追加到 images，已收集过则直接返回（去重）。
-// 镜像已被删除等取不到镜像的情况只跳过，不阻断导出。
-func (s *workflowService) collectContainerImageExportMap(ctx context.Context, imageID int64, images *[]map[string]any, seen map[int64]struct{}) error {
-	if imageID == 0 {
-		return nil
-	}
-	if _, exists := seen[imageID]; exists {
-		return nil
-	}
-
-	image, err := s.containerRepo.GetContainerImageByID(ctx, imageID)
-	if err != nil || image == nil {
-		return nil
-	}
-
-	imageMap, err := buildContainerImageExportMap(image)
-	if err != nil {
+	if err := s.collectTemplateSpec(ctx, definition.SpecID, bundle); err != nil {
 		return err
 	}
-	seen[imageID] = struct{}{}
-	*images = append(*images, imageMap)
-	return nil
+
+	return s.collectContainerImage(ctx, definition.ImageID, bundle)
 }
 
-// collectContainerTemplateSpecExportMap 按主键去重地收集导出用的容器运行配置：
-// 首次遇到 specID 时查询并追加到 specs，已收集过则直接返回（去重）。
-// 运行配置已被删除等取不到的情况只跳过，不阻断导出。
-func (s *workflowService) collectContainerTemplateSpecExportMap(ctx context.Context, specID int64, specs *[]map[string]any, seen map[int64]struct{}) error {
-	if specID == 0 {
+// collectTemplateSpec 按主键去重地把运行配置收进 bundle（取不到时只跳过）。
+func (s *workflowService) collectTemplateSpec(ctx context.Context, specID int64, bundle *exportcodec.ContainerAssetBundle) error {
+	if specID == 0 || bundle.HasSpec(specID) {
 		return nil
 	}
-	if _, exists := seen[specID]; exists {
-		return nil
-	}
-
 	spec, err := s.containerRepo.GetContainerTemplateSpecByID(ctx, specID)
 	if err != nil || spec == nil {
 		return nil
 	}
+	bundle.Specs = append(bundle.Specs, *spec)
+	return nil
+}
 
-	specMap, err := buildContainerTemplateSpecExportMap(spec)
-	if err != nil {
-		return err
+// collectContainerImage 按主键去重地把镜像收进 bundle（取不到时只跳过）。
+func (s *workflowService) collectContainerImage(ctx context.Context, imageID int64, bundle *exportcodec.ContainerAssetBundle) error {
+	if imageID == 0 || bundle.HasImage(imageID) {
+		return nil
 	}
-	seen[specID] = struct{}{}
-	*specs = append(*specs, specMap)
+	image, err := s.containerRepo.GetContainerImageByID(ctx, imageID)
+	if err != nil || image == nil {
+		return nil
+	}
+	bundle.Images = append(bundle.Images, *image.ToExport())
 	return nil
 }
 

@@ -869,12 +869,14 @@ func (h *ContainerHandler) ListContainerTemplateBySpec(c *gin.Context) {
 
 // ExportContainerTemplate godoc
 // @Summary      导出容器模板
-// @Description  按 ContainerTemplate 导出为 JSON 字符串，ImageID 转为内嵌 ContainerImage 对象，均不含时间字段
+// @Description  导出单条容器模板为统一的平铺格式（与 script.json / workflow.json 完全相同）：
+// @Description  container_images / container_template_specs / container_template_definitions 三个列表，
+// @Description  三者通过主键互相引用（definition.spec_id / image_id），且都不含时间字段。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
-// @Param        request  body      types.ContainerTemplate  true  "请求参数"
-// @Success      200      {object}  map[string]string
+// @Param        request  body      idBody  true  "请求参数"
+// @Success      200      {object}  types.ContainerTemplateBundle
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
@@ -886,7 +888,7 @@ func (h *ContainerHandler) ExportContainerTemplate(c *gin.Context) {
 		return
 	}
 
-	var req types.ContainerTemplate
+	var req idBody
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
@@ -896,31 +898,26 @@ func (h *ContainerHandler) ExportContainerTemplate(c *gin.Context) {
 		return
 	}
 
-	tpl, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ID)
+	bundle, err := h.containerService.ExportContainerTemplate(c.Request.Context(), req.ID)
 	if err != nil {
-		handleDataError(c, err, "failed to get container template")
+		handleDataError(c, err, "failed to export container template")
 		return
 	}
 
-	image, err := h.containerService.GetContainerImageByID(c.Request.Context(), tpl.ImageID)
-	if err != nil {
-		handleDataError(c, err, "failed to get container image")
-		return
-	}
-
-	export := tpl.ToExport(image)
-
-	c.JSON(http.StatusOK, export)
+	c.JSON(http.StatusOK, bundle)
 }
 
 // ImportContainerTemplate godoc
 // @Summary      导入容器模板
-// @Description  按导出结构导入 ContainerTemplate，ImageID 转为内嵌 ContainerImage 对象，均不含时间字段
+// @Description  导入统一平铺格式（与 /container/template/export、script.json / workflow.json 同构）：
+// @Description  container_images / container_template_specs / container_template_definitions。
+// @Description  三张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为
+// @Description  「镜像 → 运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
-// @Param        request  body      types.ContainerTemplateExport  true  "请求参数"
-// @Success      200      {object}  types.ContainerTemplateExport
+// @Param        request  body      types.ContainerTemplateBundle  true  "请求参数"
+// @Success      200      {object}  types.ContainerTemplateBundle
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
@@ -932,19 +929,23 @@ func (h *ContainerHandler) ImportContainerTemplate(c *gin.Context) {
 		return
 	}
 
-	var req types.ContainerTemplateExport
+	var req types.ContainerTemplateBundle
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
+	if len(req.ContainerImages) == 0 && len(req.ContainerTemplateSpecs) == 0 && len(req.ContainerTemplateDefinitions) == 0 {
+		c.Error(errors.NewValidationError("container_images / container_template_specs / container_template_definitions are all empty"))
+		return
+	}
 
-	item, err := h.containerService.ImportContainerTemplate(c.Request.Context(), &req)
+	bundle, err := h.containerService.ImportContainerTemplate(c.Request.Context(), &req)
 	if err != nil {
 		handleDataError(c, err, "failed to import container template")
 		return
 	}
 
-	c.JSON(http.StatusOK, item)
+	c.JSON(http.StatusOK, bundle)
 }
 
 // CreateAppSession godoc

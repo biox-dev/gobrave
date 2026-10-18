@@ -3,14 +3,12 @@ package v1
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/exportcodec"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/utils"
-	"gorm.io/gorm"
 )
 
 // InstallScript 解析 req.Raw（内部调用 DecodeScript）并把导出内容持久化到数据库。
@@ -242,124 +240,17 @@ func (c *Codec) InstallWorkflow(ctx context.Context, req exportcodec.WorkflowIns
 
 // installContainerAssets 按导出内容创建/更新容器镜像、运行配置与绑定行，返回各自处理的数量。
 //
-// 导出格式（GenerateScriptJSONByScriptID / GenerateWorkflowJSONByWorkflowID）把容器资产拆成
-// 三个独立列表：container_images 是镜像本体，container_template_specs 是共享运行配置
-// （ContainerTemplateSpec），container_template_definitions 是「运行配置 × 镜像」绑定行
-// （ContainerTemplateDefinition：spec_id 指向配置、image_id 指向镜像）。脚本的
-// container_template_id 引用的就是绑定行主键，因此安装顺序必须是：
-//  1. 先按主键 upsert 镜像：绑定行要引用它，且 service 层会校验镜像存在；
-//  2. 再按主键 upsert 运行配置：绑定行的 spec_id 引用它；
-//  3. 最后按主键 upsert 绑定行：主键原样保留，脚本的 container_template_id 引用因此仍然成立。
-//
-// 三个列表都只做「按主键 upsert」：「有 id 且已存在」→ 更新；「有 id 但不存在」→ 新增；
-// 导出文件里没有的本地行保持不动（安装不会删除本地已有数据）。
-// id 为空视为导出文件损坏直接报错（id 是这些实体之间唯一的引用键，随便补一个新 id 会让引用断链）。
-func (c *Codec) installContainerAssets(ctx context.Context, imageMaps, specMaps, definitionMaps []map[string]any) (int, int, int, error) {
-	if len(imageMaps) == 0 && len(specMaps) == 0 && len(definitionMaps) == 0 {
-		return 0, 0, 0, nil
-	}
-	if c.containerService == nil {
-		return 0, 0, 0, errors.New("container service is not configured")
-	}
-
-	for _, imageMap := range imageMaps {
-		imageExport := &types.ContainerImageExport{}
-		if err := decodeExportMap(imageMap, imageExport); err != nil {
-			return 0, 0, 0, fmt.Errorf("invalid container image in export file: %w", err)
-		}
-		if imageExport.ID == 0 {
-			return 0, 0, 0, errors.New("container image id is required in export file")
-		}
-		if err := c.upsertContainerImage(ctx, imageExport); err != nil {
-			return 0, 0, 0, fmt.Errorf("failed to install container image %d: %w", imageExport.ID, err)
-		}
-	}
-
-	for _, specMap := range specMaps {
-		spec := &types.ContainerTemplateSpec{}
-		if err := decodeExportMap(specMap, spec); err != nil {
-			return 0, 0, 0, fmt.Errorf("invalid container template spec in export file: %w", err)
-		}
-		if spec.ID == 0 {
-			return 0, 0, 0, errors.New("container template spec id is required in export file")
-		}
-		if err := c.upsertContainerTemplateSpec(ctx, spec); err != nil {
-			return 0, 0, 0, fmt.Errorf("failed to install container template spec %d: %w", spec.ID, err)
-		}
-	}
-
-	for _, definitionMap := range definitionMaps {
-		definition := &types.ContainerTemplateDefinition{}
-		if err := decodeExportMap(definitionMap, definition); err != nil {
-			return 0, 0, 0, fmt.Errorf("invalid container template definition in export file: %w", err)
-		}
-		if definition.ID == 0 {
-			return 0, 0, 0, errors.New("container template definition id is required in export file")
-		}
-		if err := c.upsertContainerTemplateDefinition(ctx, definition); err != nil {
-			return 0, 0, 0, fmt.Errorf("failed to install container template definition %d: %w", definition.ID, err)
-		}
-	}
-
-	return len(imageMaps), len(specMaps), len(definitionMaps), nil
-}
-
-// decodeExportMap 把导出文件里的 map 还原成强类型结构（与安装 workflow/script 体同一套做法）。
-func decodeExportMap(item map[string]any, out any) error {
-	raw, err := json.Marshal(item)
+// 导出格式把容器资产拆成三个平铺列表（container_images / container_template_specs /
+// container_template_definitions），三者通过主键互相引用：绑定行 spec_id 指向运行配置、
+// image_id 指向镜像，而绑定行主键就是脚本 container_template_id 引用的值。
+// 具体安装逻辑（upsert 顺序、id 校验、按主键新增/更新）由 exportcodec.InstallContainerAssets
+// 统一实现，script.json 与 workflow.json 共用同一份代码。
+func (c *Codec) installContainerAssets(ctx context.Context, images []types.ContainerImageExport, specs []types.ContainerTemplateSpec, definitions []types.ContainerTemplateDefinition) (int, int, int, error) {
+	result, err := exportcodec.InstallContainerAssets(ctx, c.containerService, images, specs, definitions)
 	if err != nil {
-		return err
+		return 0, 0, 0, err
 	}
-	return json.Unmarshal(raw, out)
-}
-
-// upsertContainerImage 按主键更新镜像，主键不存在则新增。
-// 导出结构（ContainerImageExport）不含时间字段，这里也不动镜像的 created_at。
-func (c *Codec) upsertContainerImage(ctx context.Context, imageExport *types.ContainerImageExport) error {
-	item := &types.ContainerImage{
-		ID:          imageExport.ID,
-		Name:        imageExport.Name,
-		FullName:    imageExport.FullName,
-		Description: imageExport.Description,
-		Size:        imageExport.Size,
-		PullPolicy:  imageExport.PullPolicy,
-	}
-	if strings.TrimSpace(item.PullPolicy) == "" {
-		item.PullPolicy = types.PullPolicyIfNotPresent
-	}
-
-	if _, err := c.containerService.GetContainerImageByID(ctx, item.ID); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.containerService.CreateContainerImage(ctx, item)
-		}
-		return err
-	}
-	return c.containerService.UpdateContainerImage(ctx, item)
-}
-
-// upsertContainerTemplateSpec 按主键更新共享运行配置，主键不存在则新增。
-// 导出结构不含时间字段，这里不动该配置的 created_at。
-func (c *Codec) upsertContainerTemplateSpec(ctx context.Context, spec *types.ContainerTemplateSpec) error {
-	if _, err := c.containerService.GetContainerTemplateSpecByID(ctx, spec.ID); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.containerService.CreateContainerTemplateSpec(ctx, spec)
-		}
-		return err
-	}
-	return c.containerService.UpdateContainerTemplateSpec(ctx, spec)
-}
-
-// upsertContainerTemplateDefinition 按主键更新「运行配置 × 镜像」绑定行，主键不存在则新增。
-// 绑定行的 spec_id / image_id 指向同一批 container_template_specs / container_images 的主键，
-// 因此调用方必须先导入镜像与运行配置（见 installContainerAssets 的顺序约束）。
-func (c *Codec) upsertContainerTemplateDefinition(ctx context.Context, definition *types.ContainerTemplateDefinition) error {
-	if _, err := c.containerService.GetContainerTemplateDefinitionByID(ctx, definition.ID); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.containerService.CreateContainerTemplateDefinition(ctx, definition)
-		}
-		return err
-	}
-	return c.containerService.UpdateContainerTemplateDefinition(ctx, definition)
+	return result.ImageCount, result.SpecCount, result.DefinitionCount, nil
 }
 
 // scriptNameFromExportMap 从导出文件的 script map 里取名称。

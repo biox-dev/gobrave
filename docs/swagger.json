@@ -5007,7 +5007,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.ContainerTemplateExport"
+                            "$ref": "#/definitions/types.ContainerTemplateBundle"
                         }
                     }
                 ],
@@ -5015,7 +5015,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/types.ContainerTemplateExport"
+                            "$ref": "#/definitions/types.ContainerTemplateBundle"
                         }
                     },
                     "400": {
@@ -16243,72 +16243,26 @@
                 }
             }
         },
-        "types.ContainerTemplateExport": {
+        "types.ContainerTemplateBundle": {
             "type": "object",
             "properties": {
-                "app_type": {
-                    "type": "string"
-                },
-                "change_uid": {
-                    "type": "boolean"
-                },
-                "command": {
-                    "type": "string"
-                },
-                "cpu": {
-                    "type": "number"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "env": {
+                "container_images": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "$ref": "#/definitions/types.ContainerImageExport"
                     }
                 },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "image": {
-                    "$ref": "#/definitions/types.ContainerImageExport"
-                },
-                "labels": {
+                "container_template_definitions": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "$ref": "#/definitions/types.ContainerTemplateDefinition"
                     }
                 },
-                "memory": {
-                    "type": "integer"
-                },
-                "mounts": {
+                "container_template_specs": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "$ref": "#/definitions/types.ContainerTemplateSpec"
                     }
-                },
-                "name": {
-                    "type": "string"
-                },
-                "port": {
-                    "type": "integer"
-                },
-                "scheduling_constraint": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "volumes": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "work_dir": {
-                    "type": "string"
                 }
             }
         },

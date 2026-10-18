@@ -2697,51 +2697,20 @@ definitions:
       work_dir:
         type: string
     type: object
-  types.ContainerTemplateExport:
+  types.ContainerTemplateBundle:
     properties:
-      app_type:
-        type: string
-      change_uid:
-        type: boolean
-      command:
-        type: string
-      cpu:
-        type: number
-      description:
-        type: string
-      env:
+      container_images:
         items:
-          type: integer
+          $ref: '#/definitions/types.ContainerImageExport'
         type: array
-      id:
-        example: "0"
-        type: string
-      image:
-        $ref: '#/definitions/types.ContainerImageExport'
-      labels:
+      container_template_definitions:
         items:
-          type: integer
+          $ref: '#/definitions/types.ContainerTemplateDefinition'
         type: array
-      memory:
-        type: integer
-      mounts:
+      container_template_specs:
         items:
-          type: integer
+          $ref: '#/definitions/types.ContainerTemplateSpec'
         type: array
-      name:
-        type: string
-      port:
-        type: integer
-      scheduling_constraint:
-        items:
-          type: integer
-        type: array
-      volumes:
-        items:
-          type: integer
-        type: array
-      work_dir:
-        type: string
     type: object
   types.ContainerTemplateSpec:
     properties:
@@ -6609,23 +6578,24 @@ paths:
     post:
       consumes:
       - application/json
-      description: 按 ContainerTemplate 导出为 JSON 字符串，ImageID 转为内嵌 ContainerImage 对象，均不含时间字段
+      description: |-
+        导出单条容器模板为统一的平铺格式（与 script.json / workflow.json 完全相同）：
+        container_images / container_template_specs / container_template_definitions 三个列表，
+        三者通过主键互相引用（definition.spec_id / image_id），且都不含时间字段。
       parameters:
       - description: 请求参数
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/types.ContainerTemplate'
+          $ref: '#/definitions/handler.idBody'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/types.ContainerTemplateBundle'
         "400":
           description: Bad Request
           schema:
@@ -6688,21 +6658,25 @@ paths:
     post:
       consumes:
       - application/json
-      description: 按导出结构导入 ContainerTemplate，ImageID 转为内嵌 ContainerImage 对象，均不含时间字段
+      description: |-
+        导入统一平铺格式（与 /container/template/export、script.json / workflow.json 同构）：
+        container_images / container_template_specs / container_template_definitions。
+        三张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为
+        「镜像 → 运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。
       parameters:
       - description: 请求参数
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/types.ContainerTemplateExport'
+          $ref: '#/definitions/types.ContainerTemplateBundle'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/types.ContainerTemplateExport'
+            $ref: '#/definitions/types.ContainerTemplateBundle'
         "400":
           description: Bad Request
           schema:

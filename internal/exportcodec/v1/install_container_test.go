@@ -112,15 +112,15 @@ func TestInstallContainerAssetsUpsertsByID(t *testing.T) {
 	svc.images[101] = &types.ContainerImage{ID: 101, Name: "old-101", PullPolicy: types.PullPolicyAlways}
 	c := &Codec{containerService: svc}
 
-	images := []map[string]any{
-		{"id": "101", "name": "new-101", "full_name": "docker.io/a/b:1", "pull_policy": types.PullPolicyNever},
-		{"id": "100", "name": "new-100", "full_name": "docker.io/a/c:2", "size": float64(42)},
+	images := []types.ContainerImageExport{
+		{ID: 101, Name: "new-101", FullName: "docker.io/a/b:1", PullPolicy: types.PullPolicyNever},
+		{ID: 100, Name: "new-100", FullName: "docker.io/a/c:2", Size: 42},
 	}
-	specs := []map[string]any{
-		{"id": "300", "name": "spec-300", "command": "R -e 1", "cpu": float64(2), "port": float64(8787)},
+	specs := []types.ContainerTemplateSpec{
+		{ID: 300, Name: "spec-300", Command: "R -e 1", CPU: 2, Port: 8787},
 	}
-	definitions := []map[string]any{
-		{"id": "200", "spec_id": "300", "image_id": "100"},
+	definitions := []types.ContainerTemplateDefinition{
+		{ID: 200, SpecID: 300, ImageID: 100},
 	}
 
 	imageCount, specCount, definitionCount, err := c.installContainerAssets(context.Background(), images, specs, definitions)
@@ -184,19 +184,19 @@ func TestInstallContainerAssetsRequiresID(t *testing.T) {
 	}
 
 	// 有内容但没有 containerService（DI 未装配）时不能静默跳过。
-	if _, _, _, err := (&Codec{}).installContainerAssets(context.Background(), nil, nil, []map[string]any{{"id": "1"}}); err == nil {
+	if _, _, _, err := (&Codec{}).installContainerAssets(context.Background(), nil, nil, []types.ContainerTemplateDefinition{{ID: 1}}); err == nil {
 		t.Fatal("nil container service: want error, got nil")
 	}
 
 	svc := newFakeContainerService()
 	c := &Codec{containerService: svc}
-	if _, _, _, err := c.installContainerAssets(context.Background(), nil, []map[string]any{{"name": "no-id"}}, nil); err == nil {
+	if _, _, _, err := c.installContainerAssets(context.Background(), nil, []types.ContainerTemplateSpec{{Name: "no-id"}}, nil); err == nil {
 		t.Fatal("spec without id: want error, got nil")
 	}
-	if _, _, _, err := c.installContainerAssets(context.Background(), nil, nil, []map[string]any{{"name": "no-id"}}); err == nil {
+	if _, _, _, err := c.installContainerAssets(context.Background(), nil, nil, []types.ContainerTemplateDefinition{{SpecID: 1, ImageID: 1}}); err == nil {
 		t.Fatal("definition without id: want error, got nil")
 	}
-	if _, _, _, err := c.installContainerAssets(context.Background(), []map[string]any{{"name": "no-id"}}, nil, nil); err == nil {
+	if _, _, _, err := c.installContainerAssets(context.Background(), []types.ContainerImageExport{{Name: "no-id"}}, nil, nil); err == nil {
 		t.Fatal("image without id: want error, got nil")
 	}
 	if len(svc.calls) != 0 {
@@ -211,8 +211,8 @@ func TestInstallContainerAssetsFailsWhenImageMissing(t *testing.T) {
 
 	_, _, _, err := c.installContainerAssets(context.Background(),
 		nil,
-		[]map[string]any{{"id": "300", "name": "spec-300"}},
-		[]map[string]any{{"id": "200", "spec_id": "300", "image_id": "999"}},
+		[]types.ContainerTemplateSpec{{ID: 300, Name: "spec-300"}},
+		[]types.ContainerTemplateDefinition{{ID: 200, SpecID: 300, ImageID: 999}},
 	)
 	if err == nil {
 		t.Fatal("definition referencing missing image: want error, got nil")

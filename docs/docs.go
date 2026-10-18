@@ -4872,7 +4872,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按 ContainerTemplate 导出为 JSON 字符串，ImageID 转为内嵌 ContainerImage 对象，均不含时间字段",
+                "description": "导出真实完整的容器模板结构：{ definition: 绑定行, spec: 共享运行配置, image: 镜像 }，\n三层实体都包含主键，便于原样导入；spec / image 带 id 时导入会复用/更新，不带则可新建。",
                 "consumes": [
                     "application/json"
                 ],
@@ -4890,7 +4890,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.ContainerTemplate"
+                            "$ref": "#/definitions/handler.idBody"
                         }
                     }
                 ],
@@ -4898,10 +4898,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/types.ContainerTemplateBundle"
                         }
                     },
                     "400": {
@@ -4996,7 +4993,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按导出结构导入 ContainerTemplate，ImageID 转为内嵌 ContainerImage 对象，均不含时间字段",
+                "description": "导入导出得到的完整结构 { definition, spec, image }（与 /container/template/export 同构）。\nspec / image 带 id 时按主键 upsert（存在则更新），id 为 0 / 缺省时新建并分配新 id；\ndefinition.id 为 0 时新建绑定行，否则按主键 upsert。绑定行的 spec_id / image_id 会自动对齐到最终 id。\ndefinition.is_default 为 true 时同时把它设为唯一默认模板。",
                 "consumes": [
                     "application/json"
                 ],
@@ -5014,7 +5011,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.ContainerTemplateExport"
+                            "$ref": "#/definitions/types.ContainerTemplateBundle"
                         }
                     }
                 ],
@@ -5022,7 +5019,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/types.ContainerTemplateExport"
+                            "$ref": "#/definitions/types.ContainerTemplateBundle"
                         }
                     },
                     "400": {
@@ -16250,72 +16247,26 @@ const docTemplate = `{
                 }
             }
         },
-        "types.ContainerTemplateExport": {
+        "types.ContainerTemplateBundle": {
             "type": "object",
             "properties": {
-                "app_type": {
-                    "type": "string"
-                },
-                "change_uid": {
-                    "type": "boolean"
-                },
-                "command": {
-                    "type": "string"
-                },
-                "cpu": {
-                    "type": "number"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "env": {
+                "container_images": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "$ref": "#/definitions/types.ContainerImageExport"
                     }
                 },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "image": {
-                    "$ref": "#/definitions/types.ContainerImageExport"
-                },
-                "labels": {
+                "container_template_definitions": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "$ref": "#/definitions/types.ContainerTemplateDefinition"
                     }
                 },
-                "memory": {
-                    "type": "integer"
-                },
-                "mounts": {
+                "container_template_specs": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "$ref": "#/definitions/types.ContainerTemplateSpec"
                     }
-                },
-                "name": {
-                    "type": "string"
-                },
-                "port": {
-                    "type": "integer"
-                },
-                "scheduling_constraint": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "volumes": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "work_dir": {
-                    "type": "string"
                 }
             }
         },

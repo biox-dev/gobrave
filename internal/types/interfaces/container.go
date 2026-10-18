@@ -27,7 +27,11 @@ type ContainerService interface {
 	// ListContainerTemplateBySpecID 列出同一套共享运行配置下绑定不同镜像的所有对外模板。
 	ListContainerTemplateBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplate, error)
 	PageContainerTemplate(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
-	ImportContainerTemplate(ctx context.Context, item *types.ContainerTemplateExport) (*types.ContainerTemplateExport, error)
+	// ExportContainerTemplate 导出统一平铺格式（container_images / container_template_specs /
+	// container_template_definitions），与 script.json / workflow.json 的容器资产结构完全一致。
+	ExportContainerTemplate(ctx context.Context, definitionID int64) (*types.ContainerTemplateBundle, error)
+	// ImportContainerTemplate 导入统一平铺格式：三张表按主键 upsert，顺序为镜像 → 运行配置 → 绑定行。
+	ImportContainerTemplate(ctx context.Context, bundle *types.ContainerTemplateBundle) (*types.ContainerTemplateBundle, error)
 
 	// ===== 默认容器模板（go_container_template_definition.is_default）=====
 	// GetDefaultContainerTemplate 返回默认模板；没有默认行时返回 (nil, nil)，由调用方给用户提示。
