@@ -24,6 +24,27 @@ func ResolveExternalPath(relativePath string) (string, error) {
 	return filepath.Abs(relativePath)
 }
 
+// ResolveExecutableRelativePath resolves relativePath against the directory of
+// the running executable (not the current working directory).
+// If BRAVE_CONFIG_DIR is set, it is resolved relative to it instead;
+// absolute paths are returned unchanged.
+func ResolveExecutableRelativePath(relativePath string) (string, error) {
+	if filepath.IsAbs(relativePath) {
+		return filepath.Abs(relativePath)
+	}
+
+	if baseDir := strings.TrimSpace(os.Getenv(configDir)); baseDir != "" {
+		return filepath.Abs(filepath.Join(baseDir, relativePath))
+	}
+
+	executablePath, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Abs(filepath.Join(filepath.Dir(executablePath), relativePath))
+}
+
 // ResolveConfiguredPath resolves storage path by this rule:
 // - when configuredPath is empty, use executableDir/defaultRelativeToExecutable
 // - otherwise, use configuredPath directly.

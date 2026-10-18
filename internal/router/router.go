@@ -577,9 +577,9 @@ func serveFrontendStatic(r *gin.Engine, cfg *config.Config) {
 		}
 	}
 
-	// 优先使用外部的 web 目录，不存在时回退到 frontend/web。
+	// 优先使用相对于可执行文件的 web 目录，不存在时回退到 frontend/web。
 	for _, candidate := range []string{"web", filepath.Join("frontend", "web")} {
-		absDir, err := utils.ResolveExternalPath(candidate)
+		absDir, err := utils.ResolveExecutableRelativePath(candidate)
 		if err != nil {
 			continue
 		}
