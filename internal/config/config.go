@@ -499,7 +499,9 @@ func defaultConfig() *Config {
 			},
 		},
 		Agent: &AgentConfig{
-			Providers: map[string]ModelProviderConfig{},
+			// 内置默认模型配置表：即使 config.yml 未配置 agent 段，也能在可视化配置页
+			// 直接看到「厂商 / 模型 / api_key」，填完 API Key 即可使用。
+			Providers: defaultBuiltinModelProviders(),
 		},
 		Container: DefaultContainerConfig(),
 		DebugConfig: &DebugConfig{
@@ -592,6 +594,13 @@ func LoadConfig() (*Config, error) {
 	cfg.LLM.Provider.BaseURL = strings.TrimSpace(cfg.LLM.Provider.BaseURL)
 	cfg.LLM.Provider.APIKey = strings.TrimSpace(cfg.LLM.Provider.APIKey)
 	cfg.LLM.Provider.BearerToken = strings.TrimSpace(cfg.LLM.Provider.BearerToken)
+
+	if cfg.Agent == nil {
+		cfg.Agent = &AgentConfig{}
+	}
+	// 模型提供商配置表：以内置默认表为底，config.yml 中的条目按字段覆盖。
+	// 这样「只填 provider + api_key」的极简配置也能补齐 base_url / 能力元信息。
+	cfg.Agent.Providers = mergeModelProviderTable(defaultBuiltinModelProviders(), cfg.Agent.Providers)
 
 	cfg.Realtime.Transport = normalizeRealtimeTransport(cfg.Realtime.Transport)
 	if cfg.Realtime.MaxConnectionsPerUser <= 0 {

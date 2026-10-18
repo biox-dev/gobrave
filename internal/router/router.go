@@ -386,6 +386,9 @@ func RegisterSettingRoutes(r *gin.RouterGroup, handler *handler.SettingHandler) 
 func RegisterConfigRoutes(r *gin.RouterGroup, handler *handler.ConfigHandler) {
 	r.GET("/config/file/get", handler.GetConfigFile)
 	r.POST("/config/file/section/update", handler.UpdateConfigSection)
+	// 模型厂商 / 模型选项：供 AI Agent 配置页的「厂商 + 模型 + API Key」表单使用，
+	// 避免前端硬编码厂商类型与 base_url。
+	r.GET("/config/model/providers", handler.GetModelProviderOptions)
 }
 
 func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler) {

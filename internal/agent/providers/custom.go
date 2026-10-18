@@ -150,15 +150,36 @@ func (a *customAgent) buildSDKOptions(req agent.Request) (opencodesdk.Options, e
 		maxTokens = pc.DefaultMaxTokens
 	}
 
+	// opencode SDK 要求显式给出厂商类型：配置表未命中（或条目里没写 provider）时，
+	// 用模型名前缀做一次「厂商推断」，避免「选了模型却没选厂商」直接报错。
+	providerName := providerType(pc)
+	if providerName == "" {
+		providerName = inferProviderFromModel(modelID)
+	}
+	if providerName == "" {
+		return opencodesdk.Options{}, fmt.Errorf(
+			"custom provider: provider (vendor) is required for model %q; configure it in agent.providers", modelID)
+	}
+
+	// APIModel（发给厂商的真实模型名）为空时回退 ModelID；ModelID 为空时回退配置表的 key。
+	apiModel := strings.TrimSpace(pc.APIModel)
+	if apiModel == "" {
+		apiModel = modelID
+	}
+	displayName := strings.TrimSpace(pc.Name)
+	if displayName == "" {
+		displayName = modelID
+	}
+
 	return opencodesdk.Options{
 		WorkingDir:          workingDir,
 		Debug:               isTrue(a.opts.Extra["opencode_debug"]),
-		Provider:            providerType(pc),
+		Provider:            providerName,
 		BaseURL:             strings.TrimSpace(pc.BaseURL),
 		APIKey:              strings.TrimSpace(pc.APIKey),
-		APIModel:            strings.TrimSpace(pc.APIModel),
-		ModelID:             modelID,
-		Name:                strings.TrimSpace(pc.Name),
+		APIModel:            apiModel,
+		ModelID:             firstNonEmpty(strings.TrimSpace(pc.ModelID), modelID),
+		Name:                displayName,
 		ContextWindow:       pc.ContextWindow,
 		DefaultMaxTokens:    pc.DefaultMaxTokens,
 		MaxTokens:           maxTokens,
@@ -172,18 +193,42 @@ func (a *customAgent) buildSDKOptions(req agent.Request) (opencodesdk.Options, e
 	}, nil
 }
 
+// inferProviderFromModel 在未显式配置厂商类型时，按模型名前缀推断厂商。
+//
+// 仅作兜底：配置表中的 provider 字段（或 extra.provider / extra.type）始终优先。
+// 推断不出来时返回空串，由调用方报出可读的错误（而不是让 opencode 抛出难懂的 panic）。
+func inferProviderFromModel(modelID string) string {
+	name := strings.ToLower(strings.TrimSpace(modelID))
+	switch {
+	case name == "":
+		return ""
+	case strings.HasPrefix(name, "gpt-"), strings.HasPrefix(name, "o1"), strings.HasPrefix(name, "o3"), strings.HasPrefix(name, "o4"):
+		return "openai"
+	case strings.HasPrefix(name, "claude-"):
+		return "anthropic"
+	case strings.HasPrefix(name, "deepseek-"):
+		return "deepseek"
+	case strings.HasPrefix(name, "gemini-"):
+		return "gemini"
+	case strings.HasPrefix(name, "grok-"):
+		return "xai"
+	default:
+		return ""
+	}
+}
+
 // providerType 返回模型配置中的厂商类型（openai / anthropic / deepseek …）。
 //
 // 依次回退：Provider 字段 → Extra["provider"] → Extra["type"]。
-// 仅当显式配置时才透传，未配置时返回空，由类库按模型表推断。
+// 仅当显式配置时才透传，未配置时返回空，由调用方按模型名前缀推断（见 inferProviderFromModel）。
 func providerType(pc agent.ModelProviderConfig) string {
 	if name := strings.TrimSpace(pc.Provider); name != "" {
-		return name
+		return strings.ToLower(name)
 	}
 	if name := strings.TrimSpace(pc.Extra["provider"]); name != "" {
-		return name
+		return strings.ToLower(name)
 	}
-	return strings.TrimSpace(pc.Extra["type"])
+	return strings.ToLower(strings.TrimSpace(pc.Extra["type"]))
 }
 
 // permissionHandler 把 opencode SDK 的工具权限请求桥接到 gobrave 的 Runtime：

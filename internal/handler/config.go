@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
@@ -42,6 +43,60 @@ type updateConfigSectionResponse struct {
 	Section    string `json:"section"`
 	// Value 是落盘并归一化后的配置段内容，前端可用它刷新表单。
 	Value any `json:"value"`
+}
+
+// modelProviderOptionsResponse 是模型厂商 / 模型选项接口的响应。
+//
+// 前端据此渲染「厂商下拉框 → 模型下拉框 → API Key 输入框」，选择厂商与模型后
+// 其余参数（base_url / 上下文窗口 / 最大输出 / 价格等）由后端预置补齐。
+type modelProviderOptionsResponse struct {
+	// Vendors 是内置厂商目录（按 UI 展示顺序）。
+	Vendors []config.ModelVendorPreset `json:"vendors"`
+	// Defaults 是预置模型的能力元信息（key 为模型名，值为不含凭据的默认配置）。
+	// 前端不需要它也能工作：保存时后端会按厂商 + 模型自动补齐。
+	Defaults map[string]config.ModelProviderConfig `json:"defaults"`
+	// Providers 是当前生效的模型配置表（已按预置补齐，含已保存的 api_key）。
+	Providers map[string]config.ModelProviderConfig `json:"providers"`
+}
+
+// GetModelProviderOptions godoc
+// @Summary      获取模型厂商与模型选项
+// @Description  返回内置模型厂商目录（含默认 base_url 与常见模型）、预置模型参数，以及当前生效的 agent.providers
+// @Tags         系统配置
+// @Produce      json
+// @Success      200  {object}  modelProviderOptionsResponse
+// @Failure      401  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /config/model/providers [get]
+func (h *ConfigHandler) GetModelProviderOptions(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	vendors := config.ModelVendors()
+
+	// 预置模型能力元信息：把厂商目录里声明的常见模型逐个展开成默认配置。
+	defaults := make(map[string]config.ModelProviderConfig)
+	for _, vendor := range vendors {
+		for _, model := range vendor.Models {
+			key := strings.ToLower(strings.TrimSpace(model))
+			if key == "" {
+				continue
+			}
+			defaults[key] = config.DefaultModelProviderConfig(vendor.Type, key)
+		}
+	}
+
+	providers := map[string]config.ModelProviderConfig{}
+	if h.cfg != nil && h.cfg.Agent != nil {
+		providers = h.cfg.Agent.Providers
+	}
+
+	c.JSON(http.StatusOK, modelProviderOptionsResponse{
+		Vendors:   vendors,
+		Defaults:  defaults,
+		Providers: providers,
+	})
 }
 
 // GetConfigFile godoc

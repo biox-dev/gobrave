@@ -193,9 +193,12 @@ func containsString(values []string, target string) bool {
 
 // normalizeAgentConfig 归一化 AI Agent 的模型提供商配置。
 //
-// providers 的 key 是模型名（与 Profile.model 对应），落盘时统一去掉首尾空白；
-// 值中的 model 为空时回退到 key，避免出现「有 key 无 model」的无效条目。
-// 未填 api_key 且 provider 依赖鉴权的校验交给运行时，这里只做结构层面的清理。
+// providers 的 key 是模型名（与 Profile.model 对应），统一转为小写并去掉首尾空白；
+// 值中的 model_id 为空时回退到 key，provider 为空时回退到 extra.type / extra.provider。
+//
+// 然后以「厂商预置表」为底做合并（见 DefaultModelProviderConfig / MergeModelProviderConfig）：
+// 用户只需要给出 provider（厂商类型）+ model/api_model（模型名）+ api_key，其余
+// base_url / 上下文窗口 / 最大输出 / 是否支持推理 / 价格等元信息自动补齐。
 func normalizeAgentConfig(a *AgentConfig) error {
 	if a == nil {
 		return fmt.Errorf("agent config is required")
@@ -203,7 +206,7 @@ func normalizeAgentConfig(a *AgentConfig) error {
 
 	providers := make(map[string]ModelProviderConfig, len(a.Providers))
 	for name, pc := range a.Providers {
-		key := strings.TrimSpace(name)
+		key := strings.ToLower(strings.TrimSpace(name))
 		if key == "" {
 			return fmt.Errorf("agent provider name must not be empty")
 		}
@@ -212,16 +215,41 @@ func normalizeAgentConfig(a *AgentConfig) error {
 		if pc.ModelID == "" {
 			pc.ModelID = key
 		}
+		pc.Provider = strings.ToLower(strings.TrimSpace(pc.Provider))
+		pc.APIModel = strings.TrimSpace(pc.APIModel)
 		pc.BaseURL = strings.TrimSpace(pc.BaseURL)
 		pc.APIKey = strings.TrimSpace(pc.APIKey)
+		pc.Name = strings.TrimSpace(pc.Name)
+		pc.ReasoningEffort = strings.ToLower(strings.TrimSpace(pc.ReasoningEffort))
 		if len(pc.Extra) == 0 {
 			pc.Extra = nil
 		} else {
 			extra := make(map[string]string, len(pc.Extra))
 			for k, v := range pc.Extra {
-				extra[strings.TrimSpace(k)] = strings.TrimSpace(v)
+				extra[strings.ToLower(strings.TrimSpace(k))] = strings.TrimSpace(v)
 			}
 			pc.Extra = extra
+		}
+
+		// 厂商类型回退：provider 字段 → extra.provider → extra.type。
+		if pc.Provider == "" {
+			pc.Provider = strings.ToLower(strings.TrimSpace(pc.Extra["provider"]))
+		}
+		if pc.Provider == "" {
+			pc.Provider = strings.ToLower(strings.TrimSpace(pc.Extra["type"]))
+		}
+		if pc.Provider == "" {
+			return fmt.Errorf("agent provider %q: provider (vendor) is required", key)
+		}
+		if _, ok := FindModelVendor(pc.Provider); !ok {
+			return fmt.Errorf("agent provider %q: unsupported vendor %q, expected one of %s",
+				key, pc.Provider, strings.Join(modelVendorTypes(), ", "))
+		}
+
+		// 模型能力元信息：厂商预置表兜底，用户显式填写的字段优先。
+		pc = MergeModelProviderConfig(DefaultModelProviderConfig(pc.Provider, key), pc)
+		if pc.APIModel == "" {
+			pc.APIModel = pc.ModelID
 		}
 
 		if _, ok := providers[key]; ok {
@@ -232,4 +260,14 @@ func normalizeAgentConfig(a *AgentConfig) error {
 	a.Providers = providers
 
 	return nil
+}
+
+// modelVendorTypes 返回内置厂商类型列表（用于错误提示）。
+func modelVendorTypes() []string {
+	vendors := ModelVendors()
+	types := make([]string, 0, len(vendors))
+	for _, v := range vendors {
+		types = append(types, v.Type)
+	}
+	return types
 }

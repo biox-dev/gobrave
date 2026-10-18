@@ -109,21 +109,23 @@ llm:
 
 # AI Agent 调用框架配置。用于灵活切换第三方 Agent 与后续自研 Agent。
 agent:
-  # 模型提供商配置表（key 为模型名，与 Profile.model 对应）。
+  # 模型提供商配置表（key 为模型名，与 Profile.model 对应，统一小写）。
   # 一次请求使用的模型由 Profile.model 指定，据此在此表中查找 base_url / api_key 等 LLM 配置。
+  #
+  # 极简写法：只填 provider（厂商类型）+ api_model（真实模型名）+ api_key，
+  # 其余参数（base_url / context_window / default_max_tokens / can_reason /
+  # supports_attachments / 价格）由内置厂商预置表自动补齐。
+  # 可视化配置页的「模型厂商 → 模型 → API Key」表单即按此写法保存，
+  # 厂商与模型选项由 GET /api/v1/config/model/providers 下发。
   providers:
     deepseek-v4-flash:
-      model: "deepseek-v4-flash"
-      base_url: "https://api.deepseek.com/anthropic"
+      provider: "deepseek"
+      api_model: "deepseek-v4-flash"
       api_key: "sk-xxxxxxxxxxxxxxx"
-      bearer_token: ""
-      extra: { type: "anthropic" }
     deepseek-v4-pro:
-      model: "deepseek-v4-pro"
-      base_url: "https://api.deepseek.com/anthropic"
+      provider: "deepseek"
+      api_model: "deepseek-v4-pro"
       api_key: "sk-xxxxxxxxxxxxxxx"
-      bearer_token: ""
-      extra: { type: "anthropic" }
 
 container:
   # 启动时注册的容器运行时列表（可同时注册多个，例如 [docker, k8s]）。
