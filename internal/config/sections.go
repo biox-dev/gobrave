@@ -47,6 +47,17 @@ var sections = []*Section{
 		},
 		normalizeContainerConfig,
 	),
+	newSection(
+		"agent",
+		"AI Agent",
+		func(c *Config) *AgentConfig {
+			if c.Agent == nil {
+				c.Agent = &AgentConfig{Providers: map[string]ModelProviderConfig{}}
+			}
+			return c.Agent
+		},
+		normalizeAgentConfig,
+	),
 }
 
 // RegisteredSections 返回所有已注册的可视化配置段。
@@ -178,4 +189,49 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeAgentConfig 归一化 AI Agent 的模型提供商配置。
+//
+// providers 的 key 是模型名（与 Profile.model 对应），落盘时统一去掉首尾空白；
+// 值中的 model 为空时回退到 key，避免出现「有 key 无 model」的无效条目。
+// 未填 api_key 且 provider 依赖鉴权的校验交给运行时，这里只做结构层面的清理。
+func normalizeAgentConfig(a *AgentConfig) error {
+	if a == nil {
+		return fmt.Errorf("agent config is required")
+	}
+
+	providers := make(map[string]ModelProviderConfig, len(a.Providers))
+	for name, pc := range a.Providers {
+		key := strings.TrimSpace(name)
+		if key == "" {
+			return fmt.Errorf("agent provider name must not be empty")
+		}
+
+		pc.Model = strings.TrimSpace(pc.Model)
+		if pc.Model == "" {
+			pc.Model = key
+		}
+		pc.BaseURL = strings.TrimSpace(pc.BaseURL)
+		pc.APIKey = strings.TrimSpace(pc.APIKey)
+		pc.BearerToken = strings.TrimSpace(pc.BearerToken)
+		pc.WorkingDir = strings.TrimSpace(pc.WorkingDir)
+		if len(pc.Extra) == 0 {
+			pc.Extra = nil
+		} else {
+			extra := make(map[string]string, len(pc.Extra))
+			for k, v := range pc.Extra {
+				extra[strings.TrimSpace(k)] = strings.TrimSpace(v)
+			}
+			pc.Extra = extra
+		}
+
+		if _, ok := providers[key]; ok {
+			return fmt.Errorf("duplicate agent provider %q", key)
+		}
+		providers[key] = pc
+	}
+	a.Providers = providers
+
+	return nil
 }

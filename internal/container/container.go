@@ -135,8 +135,31 @@ func ensureBuiltinSkills(cfg *config.Config) error {
 	return nil
 }
 
+// agentProviders 把 config.agent.providers 映射为 agent 层的模型提供商配置表。
+//
+// 每次调用都基于当前生效的 config.Config 重新生成，因此可视化配置页保存 agent 段后，
+// 下一次 Agent 请求即可使用新的 base_url / api_key，无需重启进程。
+// key 统一小写（与 Provider 内部按模型名查找的方式一致）。
+func agentProviders(cfg *config.Config) map[string]agent.ModelProviderConfig {
+	if cfg == nil || cfg.Agent == nil || len(cfg.Agent.Providers) == 0 {
+		return nil
+	}
+	providers := make(map[string]agent.ModelProviderConfig, len(cfg.Agent.Providers))
+	for name, pc := range cfg.Agent.Providers {
+		providers[strings.ToLower(strings.TrimSpace(name))] = agent.ModelProviderConfig{
+			Model:       pc.Model,
+			BaseURL:     pc.BaseURL,
+			APIKey:      pc.APIKey,
+			BearerToken: pc.BearerToken,
+			WorkingDir:  pc.WorkingDir,
+			Extra:       pc.Extra,
+		}
+	}
+	return providers
+}
+
 // buildAgentClient 根据配置构建 Agent 调用门面。
-// 模型提供商配置表（按模型名索引）从 config.agent.providers 映射进 Options.Providers，
+// 模型提供商配置表（按模型名索引）由 config.agent.providers 实时映射进 Options.Providers，
 // 供 Provider 在每次调用时按 Profile.Model 解析出 base_url / api_key 等 LLM 配置。
 // 使用哪个 Agent（Provider）由 Profile.Provider 决定。
 //
@@ -152,19 +175,12 @@ func ensureBuiltinSkills(cfg *config.Config) error {
 func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry) *agent.Client {
 	opts := agent.Options{}
 
-	if cfg != nil && cfg.Agent != nil {
-		providers := make(map[string]agent.ModelProviderConfig, len(cfg.Agent.Providers))
-		for name, pc := range cfg.Agent.Providers {
-			providers[strings.ToLower(strings.TrimSpace(name))] = agent.ModelProviderConfig{
-				Model:       pc.Model,
-				BaseURL:     pc.BaseURL,
-				APIKey:      pc.APIKey,
-				BearerToken: pc.BearerToken,
-				WorkingDir:  pc.WorkingDir,
-				Extra:       pc.Extra,
-			}
+	// 模型提供商配置表按需实时生成：可视化配置页保存 agent 段后，内存中的 cfg 会被立即更新，
+	// 下一次请求即可读到新的 providers，无需重启进程。
+	if cfg != nil {
+		opts.ProviderSource = func() map[string]agent.ModelProviderConfig {
+			return agentProviders(cfg)
 		}
-		opts.Providers = providers
 	}
 
 	// 注册框架内置工具（get_weather / run_analysis_node 等），供 Provider 的

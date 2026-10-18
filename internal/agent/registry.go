@@ -44,7 +44,18 @@ type Options struct {
 	//
 	// Provider 据此按请求解析出的模型名查找 base_url / api_key / 类型等 LLM 配置，
 	// 用于构建 session / provider 配置。为 nil 表示无自定义模型提供商。
+	//
+	// 注意：这是「启动时的快照」，仅用于静态场景（测试、一次性构造）。
+	// 需要热更新的场景请改用 ProviderSource，Client 会在每次请求时调用它，
+	// 因此修改 config.agent.providers 无需重启即可生效。
 	Providers map[string]ModelProviderConfig `json:"-"`
+
+	// ProviderSource 是模型提供商配置表的动态来源（可为 nil）。
+	//
+	// 非 nil 时优先于 Providers：Client 会在构建 Agent 实例之前调用它，
+	// 由调用方（通常是 container 层）按当前生效的配置实时生成快照，
+	// 使可视化配置页保存的 agent 段无需重启即可在下一次请求生效。
+	ProviderSource func() map[string]ModelProviderConfig `json:"-"`
 
 	// Tools 是本次调用可用的工具注册表。
 	//

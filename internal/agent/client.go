@@ -25,6 +25,16 @@ func NewClient(registry *Registry, opts Options) *Client {
 	}
 }
 
+// SetProviders 更新默认 Options 中的模型提供商配置表快照（热更新，无需重启）。
+//
+// 仅在未设置 ProviderSource 时生效：设置了动态来源时每次请求都会重新读取配置，
+// 这里的快照不会被使用。
+func (c *Client) SetProviders(providers map[string]ModelProviderConfig) {
+	c.mu.Lock()
+	c.defaultOptions.Providers = providers
+	c.mu.Unlock()
+}
+
 // Invoke 执行一次性任务：解析 Provider → Agent.Invoke。
 // 内部使用 standalone Runtime（无任务上下文，事件丢弃、权限宽松放行）。
 // func (c *Client) Invoke(ctx context.Context, req Request) (*Result, error) {
@@ -62,10 +72,18 @@ func (c *Client) StreamRuntime(ctx context.Context, req Request, rt Runtime) (*R
 }
 
 // options 返回默认 Options 的快照。
+//
+// 若配置了 ProviderSource（动态来源），则每次调用都重新生成模型提供商配置表，
+// 使 agent 段的配置修改无需重启即可在下一次请求生效。
 func (c *Client) options() Options {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.defaultOptions
+	opts := c.defaultOptions
+	c.mu.RUnlock()
+
+	if opts.ProviderSource != nil {
+		opts.Providers = opts.ProviderSource()
+	}
+	return opts
 }
 
 // resolve 解析请求应使用的 Agent 实例。
