@@ -88,7 +88,7 @@ COPY assets/ /app/assets/
 
 # s6-overlay 启动脚本（cont-init.d 初始化 + services.d 守护进程）
 COPY root/ /
-RUN chmod +x /etc/cont-init.d/10-gobrave /etc/services.d/gobrave/run
+RUN chmod +x /etc/cont-init.d/10-gobrave /etc/services.d/gobraverun/run
 
 WORKDIR /config
 
