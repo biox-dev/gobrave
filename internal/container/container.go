@@ -420,22 +420,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Invoke(func(repo agent.ProfileRepository) error {
 		return agent.EnsureBuiltinProfiles(ctx, repo)
 	}))
-	// 系统启动时导入内置容器模板（builtin/container_templates/*.json）：
-	// 复用 InstallContainerAssets 按主键 upsert（镜像 → 运行配置 → 绑定行），
-	// 因此每次启动都会把内置模板刷新成代码里的最新定义；文件里 is_default=true 的
-	// 绑定行会被设为唯一默认模板（先于下面的 EnsureDefaultContainerTemplate 执行）。
-	// 导入失败只记录日志，不阻断启动（与内置技能一致）。
-	must(container.Invoke(func(containerService interfaces.ContainerService) error {
-		if err := service.InstallBuiltinContainerTemplates(ctx, containerService); err != nil {
-			logger.Warnf(ctx, "[Container] Failed to install builtin container templates: %v", err)
-		}
-		return nil
-	}))
-	// 启动时补齐默认容器模板：存量数据没有 is_default 标记，若没有任何默认为 create_script
-	// 兜底选一条最早的绑定行，避免「创建脚本提示未配置默认容器模板」。
-	must(container.Invoke(func(containerRepo interfaces.ContainerRepository) error {
-		return service.EnsureDefaultContainerTemplate(ctx, containerRepo)
-	}))
+	// 说明：默认容器模板的兜底（EnsureDefaultContainerTemplate）只在下面的
+	// InstallBuiltinContainerTemplates 之后执行一次，避免在内置模板导入前
+	// 抢先选中一条旧的绑定行作为默认。
 
 	must(container.Provide(func(
 		client *agent.Client,
@@ -574,6 +561,25 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(newSchedulerRegistry))
 	must(container.Provide(service.NewWorkflowService))
 	must(container.Provide(service.NewContainerService))
+	// 系统启动时导入内置容器模板（builtin/container_templates/*.json）：
+	// 复用 InstallContainerAssets 按主键 upsert（镜像 → 运行配置 → 绑定行），
+	// 因此每次启动都会把内置模板刷新成代码里的最新定义；文件里 is_default=true 的
+	// 绑定行会被设为唯一默认模板。
+	//
+	// 必须放在 service.NewContainerService 之后：dig 在 Invoke 时立即解析
+	// interfaces.ContainerService，提前调用会报 “missing type” 并 panic。
+	// 导入失败只记录日志，不阻断启动（与内置技能一致）。
+	must(container.Invoke(func(containerService interfaces.ContainerService) error {
+		if err := service.InstallBuiltinContainerTemplates(ctx, containerService); err != nil {
+			logger.Warnf(ctx, "[Container] Failed to install builtin container templates: %v", err)
+		}
+		return nil
+	}))
+	// 内置模板导入可能写入新的绑定行：再兜底一次默认模板，保证导入后仍有默认模板可用
+	// （已存在默认行时该函数不做任何改动，不会覆盖用户在 UI 上的选择）。
+	must(container.Invoke(func(containerRepo interfaces.ContainerRepository) error {
+		return service.EnsureDefaultContainerTemplate(ctx, containerRepo)
+	}))
 	must(container.Provide(service.NewLLMService))
 	must(container.Provide(service.NewAISummaryService))
 	must(container.Provide(service.NewSheetFileService))
@@ -581,7 +587,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 新增一个版本 = 新写一个 exportcodec 子包 + 这里多 Register 一行，
 	// handler 侧只做 exportCodecs.Get(version)，不需要任何 switch version。
 	// Codec 实现直接持有 WorkflowService（写侧按主键生成导出 payload，安装侧 upsert
-	// workflow/script 行）、ContainerService（安装侧 upsert 容器资产）与 git 提交身份
+	// workflow/script 行）、container/template/default（安装侧 upsert 容器资产）与 git 提交身份
 	// （写侧落盘后自行提交目录改动，见 utils.CommitDirChanges）。
 	must(container.Provide(func(cfg *config.Config, workflowService interfaces.WorkflowService, containerService interfaces.ContainerService) *exportcodec.Registry {
 		reg := exportcodec.NewRegistry()
