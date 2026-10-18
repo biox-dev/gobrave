@@ -147,12 +147,10 @@ func agentProviders(cfg *config.Config) map[string]agent.ModelProviderConfig {
 	providers := make(map[string]agent.ModelProviderConfig, len(cfg.Agent.Providers))
 	for name, pc := range cfg.Agent.Providers {
 		providers[strings.ToLower(strings.TrimSpace(name))] = agent.ModelProviderConfig{
-			Model:       pc.Model,
-			BaseURL:     pc.BaseURL,
-			APIKey:      pc.APIKey,
-			BearerToken: pc.BearerToken,
-			WorkingDir:  pc.WorkingDir,
-			Extra:       pc.Extra,
+			Model:   pc.Model,
+			BaseURL: pc.BaseURL,
+			APIKey:  pc.APIKey,
+			Extra:   pc.Extra,
 		}
 	}
 	return providers

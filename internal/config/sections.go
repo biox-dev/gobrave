@@ -214,8 +214,6 @@ func normalizeAgentConfig(a *AgentConfig) error {
 		}
 		pc.BaseURL = strings.TrimSpace(pc.BaseURL)
 		pc.APIKey = strings.TrimSpace(pc.APIKey)
-		pc.BearerToken = strings.TrimSpace(pc.BearerToken)
-		pc.WorkingDir = strings.TrimSpace(pc.WorkingDir)
 		if len(pc.Extra) == 0 {
 			pc.Extra = nil
 		} else {

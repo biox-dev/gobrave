@@ -23,12 +23,10 @@ type Provider interface {
 // 与 config.ModelProviderConfig 一一对应，由容器启动时从配置映射而来。Provider 在每次
 // 调用时按 Profile 指定的模型名（req.Model）从此表解析出本次调用所需的 LLM 配置。
 type ModelProviderConfig struct {
-	Model       string            `json:"model"`
-	BaseURL     string            `json:"base_url"`
-	APIKey      string            `json:"api_key"`
-	BearerToken string            `json:"bearer_token"`
-	WorkingDir  string            `json:"working_dir"`
-	Extra       map[string]string `json:"extra"`
+	Model   string            `json:"model"`
+	BaseURL string            `json:"base_url"`
+	APIKey  string            `json:"api_key"`
+	Extra   map[string]string `json:"extra"`
 }
 
 // Options 是构建 Agent 实例所需的通用配置；具体 Provider 按需读取。
@@ -40,20 +38,10 @@ type Options struct {
 	WorkingDir string            `json:"working_dir"`
 	Extra      map[string]string `json:"extra"`
 
-	// Providers 是模型提供商配置表（key 为模型名，与 Profile.Model 对应）。
+	// ProviderSource 是模型提供商配置表的来源（可为 nil）。
 	//
-	// Provider 据此按请求解析出的模型名查找 base_url / api_key / 类型等 LLM 配置，
-	// 用于构建 session / provider 配置。为 nil 表示无自定义模型提供商。
-	//
-	// 注意：这是「启动时的快照」，仅用于静态场景（测试、一次性构造）。
-	// 需要热更新的场景请改用 ProviderSource，Client 会在每次请求时调用它，
-	// 因此修改 config.agent.providers 无需重启即可生效。
-	Providers map[string]ModelProviderConfig `json:"-"`
-
-	// ProviderSource 是模型提供商配置表的动态来源（可为 nil）。
-	//
-	// 非 nil 时优先于 Providers：Client 会在构建 Agent 实例之前调用它，
-	// 由调用方（通常是 container 层）按当前生效的配置实时生成快照，
+	// Provider 在每次调用时通过 ResolveProvider 按模型名从这里实时查询；
+	// 由调用方（通常是 container 层）按当前生效的配置生成快照，
 	// 使可视化配置页保存的 agent 段无需重启即可在下一次请求生效。
 	ProviderSource func() map[string]ModelProviderConfig `json:"-"`
 
@@ -126,6 +114,24 @@ type Options struct {
 	// 工具执行 ctx（见 agent.WithToolRuntime），供 get_skill / load_skill_resource 工具
 	// 在执行期按名称解析技能并读取指令与附属资源。
 	Skills tool.SkillResolver `json:"-"`
+}
+
+// ResolveProvider 按模型名从 ProviderSource 解析本次调用的模型提供商配置。
+//
+// 未配置 ProviderSource 或未命中模型名时返回 nil（走官方 API / 默认配置）。
+func (o Options) ResolveProvider(modelKey string) *ModelProviderConfig {
+	if o.ProviderSource == nil {
+		return nil
+	}
+	key := strings.ToLower(strings.TrimSpace(modelKey))
+	if key == "" {
+		return nil
+	}
+	pc, ok := o.ProviderSource()[key]
+	if !ok {
+		return nil
+	}
+	return &pc
 }
 
 // Registry 负责注册与解析 Provider。

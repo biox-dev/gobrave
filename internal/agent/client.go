@@ -25,16 +25,6 @@ func NewClient(registry *Registry, opts Options) *Client {
 	}
 }
 
-// SetProviders 更新默认 Options 中的模型提供商配置表快照（热更新，无需重启）。
-//
-// 仅在未设置 ProviderSource 时生效：设置了动态来源时每次请求都会重新读取配置，
-// 这里的快照不会被使用。
-func (c *Client) SetProviders(providers map[string]ModelProviderConfig) {
-	c.mu.Lock()
-	c.defaultOptions.Providers = providers
-	c.mu.Unlock()
-}
-
 // Invoke 执行一次性任务：解析 Provider → Agent.Invoke。
 // 内部使用 standalone Runtime（无任务上下文，事件丢弃、权限宽松放行）。
 // func (c *Client) Invoke(ctx context.Context, req Request) (*Result, error) {
@@ -49,7 +39,7 @@ func (c *Client) Stream(ctx context.Context, req Request, handler StreamHandler)
 
 // InvokeRuntime 使用调用方提供的 Runtime 执行一次性任务（供 AgentService 任务模式使用）。
 func (c *Client) InvokeRuntime(ctx context.Context, req Request, rt Runtime) (*Result, error) {
-	a, err := c.resolve(req.Provider, c.options())
+	a, err := c.resolve(req.Provider)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +51,7 @@ func (c *Client) InvokeRuntime(ctx context.Context, req Request, rt Runtime) (*R
 
 // StreamRuntime 使用调用方提供的 Runtime 执行流式请求（供 AgentService 任务模式使用）。
 func (c *Client) StreamRuntime(ctx context.Context, req Request, rt Runtime) (*Result, error) {
-	a, err := c.resolve(req.Provider, c.options())
+	a, err := c.resolve(req.Provider)
 	if err != nil {
 		return nil, err
 	}
@@ -73,24 +63,22 @@ func (c *Client) StreamRuntime(ctx context.Context, req Request, rt Runtime) (*R
 
 // options 返回默认 Options 的快照。
 //
-// 若配置了 ProviderSource（动态来源），则每次调用都重新生成模型提供商配置表，
-// 使 agent 段的配置修改无需重启即可在下一次请求生效。
+// 其中的 ProviderSource 是函数而非快照，因此 Provider 在调用时能读到最新配置。
 func (c *Client) options() Options {
 	c.mu.RLock()
 	opts := c.defaultOptions
 	c.mu.RUnlock()
-
-	if opts.ProviderSource != nil {
-		opts.Providers = opts.ProviderSource()
-	}
 	return opts
 }
 
 // resolve 解析请求应使用的 Agent 实例。
-func (c *Client) resolve(provider string, opts Options) (Agent, error) {
+//
+// 模型提供商配置不在此时解析：Options 只携带 ProviderSource，由 Provider 在每次调用时
+// 通过 ResolveProvider(模型名) 实时查询，因此修改 agent 段无需重启即可生效。
+func (c *Client) resolve(provider string) (Agent, error) {
 	name := strings.TrimSpace(provider)
 	if name == "" {
 		name = DefaultProvider
 	}
-	return c.registry.Resolve(name, opts)
+	return c.registry.Resolve(name, c.options())
 }

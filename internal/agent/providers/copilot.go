@@ -465,11 +465,11 @@ func toOperation(request copilot.PermissionRequest) agent.Operation {
 	}
 }
 
-// providerConfig 按模型 key 从模型提供商配置表解析 BYOK Provider 配置；
+// providerConfig 返回本次调用的 BYOK Provider 配置；
 // 未命中或未配置 BaseURL 时返回 nil，走官方 Copilot API。
 func (a *copilotAgent) providerConfig(modelKey string) *copilot.ProviderConfig {
-	pc, ok := a.opts.Providers[strings.ToLower(strings.TrimSpace(modelKey))]
-	if !ok {
+	pc := a.opts.ResolveProvider(modelKey)
+	if pc == nil {
 		return nil
 	}
 	baseURL := strings.TrimSpace(pc.BaseURL)
@@ -492,7 +492,7 @@ func (a *copilotAgent) providerConfig(modelKey string) *copilot.ProviderConfig {
 		Type:        providerType,
 		BaseURL:     baseURL,
 		APIKey:      strings.TrimSpace(pc.APIKey),
-		BearerToken: strings.TrimSpace(pc.BearerToken),
+		BearerToken: strings.TrimSpace(pc.Extra["bearer_token"]),
 		ModelID:     modelID,
 	}
 	if wireAPI := strings.TrimSpace(pc.Extra["wire_api"]); wireAPI != "" {

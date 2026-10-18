@@ -157,13 +157,14 @@ type AgentConfig struct {
 
 // ModelProviderConfig 描述一个「模型提供商」的连接配置（base_url / api_key / 类型等）。
 // 与具体 Agent 无关，可被多个 Agent 共享。
+//
+// 其余可选参数（如 bearer_token、type、wire_api）统一放在 Extra 中，
+// 避免为每个 Agent 的特殊需求单独增加结构体字段。
 type ModelProviderConfig struct {
-	Model       string            `yaml:"model" json:"model"`
-	BaseURL     string            `yaml:"base_url" json:"base_url"`
-	APIKey      string            `yaml:"api_key" json:"api_key"`
-	BearerToken string            `yaml:"bearer_token" json:"bearer_token"`
-	WorkingDir  string            `yaml:"working_dir" json:"working_dir"`
-	Extra       map[string]string `yaml:"extra" json:"extra"`
+	Model   string            `yaml:"model" json:"model"`
+	BaseURL string            `yaml:"base_url" json:"base_url"`
+	APIKey  string            `yaml:"api_key" json:"api_key"`
+	Extra   map[string]string `yaml:"extra" json:"extra"`
 }
 
 type RealtimeConfig struct {

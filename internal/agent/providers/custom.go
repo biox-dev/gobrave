@@ -159,10 +159,10 @@ func (a *customAgent) buildSDKOptions(req agent.Request) (opencodesdk.Options, e
 	}, nil
 }
 
-// modelAPIKey 按模型 key 从模型提供商配置表解析 api_key。
+// modelAPIKey 返回本次调用模型对应的 api_key（未命中自定义提供商时为空）。
 func (a *customAgent) modelAPIKey(modelKey string) string {
-	pc, ok := a.opts.Providers[strings.ToLower(strings.TrimSpace(modelKey))]
-	if !ok {
+	pc := a.opts.ResolveProvider(modelKey)
+	if pc == nil {
 		return ""
 	}
 	return strings.TrimSpace(pc.APIKey)
