@@ -205,40 +205,7 @@ func (s *containerService) ExportContainerTemplate(ctx context.Context, definiti
 	if definitionID == 0 {
 		return nil, fmt.Errorf("container template id is required")
 	}
-
-	definition, err := s.containerRepo.GetContainerTemplateDefinitionByID(ctx, definitionID)
-	if err != nil {
-		return nil, err
-	}
-
-	bundle := types.NewContainerTemplateBundle()
-	// 导出格式不含时间字段与 is_default（默认模板是本地状态，不随资产导出）。
-	exportedDefinition := *definition
-	exportedDefinition.CreatedAt = nil
-	exportedDefinition.UpdatedAt = nil
-	exportedDefinition.IsDefault = false
-	bundle.ContainerTemplateDefinitions = append(bundle.ContainerTemplateDefinitions, exportedDefinition)
-
-	spec, err := s.containerRepo.GetContainerTemplateSpecByID(ctx, definition.SpecID)
-	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	if spec != nil {
-		exportedSpec := *spec
-		exportedSpec.CreatedAt = nil
-		exportedSpec.UpdatedAt = nil
-		bundle.ContainerTemplateSpecs = append(bundle.ContainerTemplateSpecs, exportedSpec)
-	}
-
-	image, err := s.containerRepo.GetContainerImageByID(ctx, definition.ImageID)
-	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	if image != nil {
-		bundle.ContainerImages = append(bundle.ContainerImages, *image.ToExport())
-	}
-
-	return bundle, nil
+	return exportcodec.ExportContainerAssets(ctx, s.containerRepo, definitionID)
 }
 
 // containerTemplateDefinitionFromReadModel 从对外模板抽出"配置 × 镜像 绑定"字段。
@@ -537,45 +504,9 @@ func (s *containerService) ImportContainerTemplate(ctx context.Context, bundle *
 		if err != nil {
 			return nil, err
 		}
-		result.ContainerTemplateDefinitions = append(result.ContainerTemplateDefinitions, exported.ContainerTemplateDefinitions...)
-		result.ContainerTemplateSpecs = appendUniqueSpecs(result.ContainerTemplateSpecs, exported.ContainerTemplateSpecs)
-		result.ContainerImages = appendUniqueImages(result.ContainerImages, exported.ContainerImages)
+		exportcodec.Merge(result, exported)
 	}
 	return result, nil
-}
-
-// appendUniqueSpecs 按主键把 src 里尚未出现的运行配置追加到 dst。
-func appendUniqueSpecs(dst, src []types.ContainerTemplateSpec) []types.ContainerTemplateSpec {
-	for _, item := range src {
-		exists := false
-		for _, kept := range dst {
-			if kept.ID == item.ID {
-				exists = true
-				break
-			}
-		}
-		if !exists {
-			dst = append(dst, item)
-		}
-	}
-	return dst
-}
-
-// appendUniqueImages 按主键把 src 里尚未出现的镜像追加到 dst。
-func appendUniqueImages(dst, src []types.ContainerImageExport) []types.ContainerImageExport {
-	for _, item := range src {
-		exists := false
-		for _, kept := range dst {
-			if kept.ID == item.ID {
-				exists = true
-				break
-			}
-		}
-		if !exists {
-			dst = append(dst, item)
-		}
-	}
-	return dst
 }
 
 // ===== 容器模板：按主键直接 upsert 两层实体（供 script.json / workflow.json 安装使用）=====

@@ -323,7 +323,7 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 	}
 
 	scripts := make([]map[string]any, 0, len(scriptIDs))
-	containerAssets := exportcodec.NewContainerAssetBundle()
+	containerAssets := types.NewContainerTemplateBundle()
 	for _, scriptID := range scriptIDs {
 		script, scriptErr := s.workflowRepo.GetScriptByScriptID(ctx, workflow.ProjectID, scriptID)
 		if scriptErr != nil {
@@ -339,21 +339,24 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 		}
 		omitExportFields(scriptMap, exportOmitWorkflowScriptFields)
 
-		// 脚本只保存 container_template_id（绑定行主键），导出的容器资产由绑定行反查：
-		// 绑定行 → 运行配置（spec_id）→ 镜像（image_id），三者各自按主键去重。
-		if assetErr := s.collectScriptContainerAssets(ctx, script.ContainerTemplateID, containerAssets); assetErr != nil {
+		// 脚本只保存 container_template_id（绑定行主键），容器资产由绑定行反查；同名资产按主键去重。
+		assets, assetErr := exportcodec.ExportContainerAssets(ctx, s.containerRepo, script.ContainerTemplateID)
+		if assetErr != nil {
 			return nil, assetErr
 		}
+		exportcodec.Merge(containerAssets, assets)
 
 		scripts = append(scripts, scriptMap)
 	}
 
 	exportPayload := &types.WorkflowJSONExportResponse{
-		WorkflowID: workflow.WorkflowID,
-		Workflow:   workflowMap,
-		Scripts:    scripts,
+		WorkflowID:                   workflow.WorkflowID,
+		Workflow:                     workflowMap,
+		Scripts:                      scripts,
+		ContainerTemplateSpecs:       containerAssets.ContainerTemplateSpecs,
+		ContainerTemplateDefinitions: containerAssets.ContainerTemplateDefinitions,
+		ContainerImages:              containerAssets.ContainerImages,
 	}
-	containerAssets.AttachTo(&exportPayload.ContainerTemplateSpecs, &exportPayload.ContainerTemplateDefinitions, &exportPayload.ContainerImages)
 
 	exportDir := filepath.Join(storageBaseDir, "pipeline", "tools", workflow.WorkflowID)
 	if err := os.MkdirAll(exportDir, 0o755); err != nil {
@@ -385,73 +388,19 @@ func (s *workflowService) GenerateScriptJSONByScriptID(ctx context.Context, scri
 	}
 	omitExportFields(scriptMap, exportOmitWorkflowScriptFields)
 
-	containerAssets := exportcodec.NewContainerAssetBundle()
-	// 脚本只保存 container_template_id（绑定行主键），导出的容器资产由绑定行反查：
-	// 绑定行 → 运行配置（spec_id）→ 镜像（image_id）。
-	if assetErr := s.collectScriptContainerAssets(ctx, script.ContainerTemplateID, containerAssets); assetErr != nil {
-		return nil, assetErr
+	containerAssets, err := exportcodec.ExportContainerAssets(ctx, s.containerRepo, script.ContainerTemplateID)
+	if err != nil {
+		return nil, err
 	}
 
 	payload := &types.ScriptJSONExportResponse{
-		ScriptID: script.ScriptID,
-		Script:   scriptMap,
+		ScriptID:                     script.ScriptID,
+		Script:                       scriptMap,
+		ContainerTemplateSpecs:       containerAssets.ContainerTemplateSpecs,
+		ContainerTemplateDefinitions: containerAssets.ContainerTemplateDefinitions,
+		ContainerImages:              containerAssets.ContainerImages,
 	}
-	containerAssets.AttachTo(&payload.ContainerTemplateSpecs, &payload.ContainerTemplateDefinitions, &payload.ContainerImages)
 	return payload, nil
-}
-
-// collectScriptContainerAssets 把脚本引用的一整套容器资产收进 bundle：绑定行 → 运行配置 → 镜像。
-//
-// 三张表各自按主键去重（同一绑定行被多个脚本引用、同一运行配置被多个绑定行引用、
-// 同一镜像被多个绑定行引用时都不会重复导出）。
-//
-// templateID 是脚本的 container_template_id，即 go_container_template_definition 的主键；
-// 绑定行已被删除等取不到的情况只跳过，不阻断导出。
-func (s *workflowService) collectScriptContainerAssets(ctx context.Context, templateID int64, bundle *exportcodec.ContainerAssetBundle) error {
-	if templateID == 0 || bundle == nil {
-		return nil
-	}
-
-	definition, err := s.containerRepo.GetContainerTemplateDefinitionByID(ctx, templateID)
-	if err != nil || definition == nil {
-		return nil
-	}
-
-	if !bundle.HasDefinition(definition.ID) {
-		bundle.Definitions = append(bundle.Definitions, *definition)
-	}
-
-	if err := s.collectTemplateSpec(ctx, definition.SpecID, bundle); err != nil {
-		return err
-	}
-
-	return s.collectContainerImage(ctx, definition.ImageID, bundle)
-}
-
-// collectTemplateSpec 按主键去重地把运行配置收进 bundle（取不到时只跳过）。
-func (s *workflowService) collectTemplateSpec(ctx context.Context, specID int64, bundle *exportcodec.ContainerAssetBundle) error {
-	if specID == 0 || bundle.HasSpec(specID) {
-		return nil
-	}
-	spec, err := s.containerRepo.GetContainerTemplateSpecByID(ctx, specID)
-	if err != nil || spec == nil {
-		return nil
-	}
-	bundle.Specs = append(bundle.Specs, *spec)
-	return nil
-}
-
-// collectContainerImage 按主键去重地把镜像收进 bundle（取不到时只跳过）。
-func (s *workflowService) collectContainerImage(ctx context.Context, imageID int64, bundle *exportcodec.ContainerAssetBundle) error {
-	if imageID == 0 || bundle.HasImage(imageID) {
-		return nil
-	}
-	image, err := s.containerRepo.GetContainerImageByID(ctx, imageID)
-	if err != nil || image == nil {
-		return nil
-	}
-	bundle.Images = append(bundle.Images, *image.ToExport())
-	return nil
 }
 
 func (s *workflowService) CreateWorkflow(ctx context.Context, workflow *types.Workflow) error {

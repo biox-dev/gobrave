@@ -22,93 +22,15 @@ import (
 //   - 导出不写 created_at / updated_at（主键才是引用键，时间戳只会产生无意义的 git diff）；
 //   - 安装顺序固定为「镜像 → 运行配置 → 绑定行」，三者都按主键 upsert。
 //
-// 本文件只放这两件事：导出侧去重收集（ContainerAssetBundle）与安装侧落库（InstallContainerAssets），
-// script.json 与 workflow.json 共用同一份实现。
+// 本文件只放这两件事：导出侧按绑定行取资产（ExportContainerAssets）与安装侧落库（InstallContainerAssets），
+// script.json、workflow.json 与容器模板导出共用同一份实现。
 
-// ContainerAssetBundle 是导出侧收集容器资产的统一载体。
+// ContainerAssetService 是导出 / 安装容器资产所需的最小服务能力。
 //
-// workflowService 遍历脚本时用它去重收集（同一镜像 / 运行配置 / 绑定行只收一次），
-// 最后一次性写入 payload，保证 script.json 与 workflow.json 的容器资产口径完全一致。
-type ContainerAssetBundle struct {
-	Images      []types.ContainerImageExport
-	Specs       []types.ContainerTemplateSpec
-	Definitions []types.ContainerTemplateDefinition
-}
-
-// NewContainerAssetBundle 返回空 bundle（切片非 nil，序列化为 [] 而不是 null）。
-func NewContainerAssetBundle() *ContainerAssetBundle {
-	return &ContainerAssetBundle{
-		Images:      make([]types.ContainerImageExport, 0),
-		Specs:       make([]types.ContainerTemplateSpec, 0),
-		Definitions: make([]types.ContainerTemplateDefinition, 0),
-	}
-}
-
-// IsEmpty 判断 bundle 是否没有任何容器资产。
-func (b *ContainerAssetBundle) IsEmpty() bool {
-	return b == nil || (len(b.Images) == 0 && len(b.Specs) == 0 && len(b.Definitions) == 0)
-}
-
-// HasDefinition 判断绑定行是否已收集（按主键去重）。
-func (b *ContainerAssetBundle) HasDefinition(id int64) bool {
-	if b == nil {
-		return false
-	}
-	for i := range b.Definitions {
-		if b.Definitions[i].ID == id {
-			return true
-		}
-	}
-	return false
-}
-
-// HasSpec 判断运行配置是否已收集（按主键去重）。
-func (b *ContainerAssetBundle) HasSpec(id int64) bool {
-	if b == nil {
-		return false
-	}
-	for i := range b.Specs {
-		if b.Specs[i].ID == id {
-			return true
-		}
-	}
-	return false
-}
-
-// HasImage 判断镜像是否已收集（按主键去重）。
-func (b *ContainerAssetBundle) HasImage(id int64) bool {
-	if b == nil {
-		return false
-	}
-	for i := range b.Images {
-		if b.Images[i].ID == id {
-			return true
-		}
-	}
-	return false
-}
-
-// AttachTo 把 bundle 的三个列表写入 script.json / workflow.json 的对应字段（剔除时间字段）。
-// bundle 为 nil 时写成空切片；目标字段必须非 nil。
-func (b *ContainerAssetBundle) AttachTo(specs *[]types.ContainerTemplateSpec, definitions *[]types.ContainerTemplateDefinition, images *[]types.ContainerImageExport) {
-	if specs == nil || definitions == nil || images == nil {
-		return
-	}
-	if b == nil {
-		*specs = make([]types.ContainerTemplateSpec, 0)
-		*definitions = make([]types.ContainerTemplateDefinition, 0)
-		*images = make([]types.ContainerImageExport, 0)
-		return
-	}
-	*specs = omitSpecTimestamps(b.Specs)
-	*definitions = omitDefinitionTimestamps(b.Definitions)
-	*images = b.Images
-}
-
-// ContainerAssetService 是安装容器资产所需的最小服务能力。
-//
-// 定义成小接口而不是直接依赖 interfaces.ContainerService：
-// 既避免 exportcodec 与 interfaces 互相引用，也让安装逻辑易于单测。
+// 定义成小接口而不是直接依赖 interfaces.ContainerRepository，
+// 既避免 exportcodec 与 interfaces 互相引用，也让逻辑易于单测。
+// 这里列出的是导出侧要用的读取方法；安装侧只用到 Create / Update 方法，
+// 合并成一个接口是因为 repository 实现本来就同时具备。
 type ContainerAssetService interface {
 	CreateContainerImage(ctx context.Context, item *types.ContainerImage) error
 	GetContainerImageByID(ctx context.Context, id int64) (*types.ContainerImage, error)
@@ -121,6 +43,103 @@ type ContainerAssetService interface {
 	CreateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
 	GetContainerTemplateDefinitionByID(ctx context.Context, id int64) (*types.ContainerTemplateDefinition, error)
 	UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
+}
+
+// ExportContainerAssets 按绑定行导出整套容器资产，返回统一平铺格式。
+//
+// 与 containerService.ExportContainerTemplate 同一逻辑：definitionID 就是绑定行主键
+// （脚本的 container_template_id），按「绑定行 → 运行配置 → 镜像」各取一条；
+// 取不到（绑定行已删除、spec / image 缺失）时只跳过，不当作错误。
+// 返回的绑定行固定 is_default=false 且不含时间字段，可原样写入 script.json / workflow.json。
+func ExportContainerAssets(ctx context.Context, svc ContainerAssetService, definitionID int64) (*types.ContainerTemplateBundle, error) {
+	if definitionID == 0 || svc == nil {
+		return types.NewContainerTemplateBundle(), nil
+	}
+
+	definition, err := svc.GetContainerTemplateDefinitionByID(ctx, definitionID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return types.NewContainerTemplateBundle(), nil
+		}
+		return nil, err
+	}
+
+	bundle := types.NewContainerTemplateBundle()
+	exportedDefinition := *definition
+	exportedDefinition.CreatedAt = nil
+	exportedDefinition.UpdatedAt = nil
+	exportedDefinition.IsDefault = false
+	bundle.ContainerTemplateDefinitions = append(bundle.ContainerTemplateDefinitions, exportedDefinition)
+
+	spec, err := svc.GetContainerTemplateSpecByID(ctx, definition.SpecID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if spec != nil {
+		exportedSpec := *spec
+		exportedSpec.CreatedAt = nil
+		exportedSpec.UpdatedAt = nil
+		bundle.ContainerTemplateSpecs = append(bundle.ContainerTemplateSpecs, exportedSpec)
+	}
+
+	image, err := svc.GetContainerImageByID(ctx, definition.ImageID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if image != nil {
+		bundle.ContainerImages = append(bundle.ContainerImages, *image.ToExport())
+	}
+
+	return bundle, nil
+}
+
+// Merge 把 other 里尚未出现的资产按主键追加到 b（用于多脚本导出时去重汇总）。
+func Merge(b, other *types.ContainerTemplateBundle) {
+	if b == nil || other == nil {
+		return
+	}
+	for _, definition := range other.ContainerTemplateDefinitions {
+		if !hasDefinition(b, definition.ID) {
+			b.ContainerTemplateDefinitions = append(b.ContainerTemplateDefinitions, definition)
+		}
+	}
+	for _, spec := range other.ContainerTemplateSpecs {
+		if !hasSpec(b, spec.ID) {
+			b.ContainerTemplateSpecs = append(b.ContainerTemplateSpecs, spec)
+		}
+	}
+	for _, image := range other.ContainerImages {
+		if !hasImage(b, image.ID) {
+			b.ContainerImages = append(b.ContainerImages, image)
+		}
+	}
+}
+
+func hasDefinition(b *types.ContainerTemplateBundle, id int64) bool {
+	for _, item := range b.ContainerTemplateDefinitions {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSpec(b *types.ContainerTemplateBundle, id int64) bool {
+	for _, item := range b.ContainerTemplateSpecs {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func hasImage(b *types.ContainerTemplateBundle, id int64) bool {
+	for _, item := range b.ContainerImages {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // ContainerAssetInstallResult 是安装容器资产的结果（按主键 upsert 的数量）。
@@ -220,26 +239,4 @@ func upsertContainerTemplateDefinition(ctx context.Context, svc ContainerAssetSe
 		return err
 	}
 	return svc.UpdateContainerTemplateDefinition(ctx, definition)
-}
-
-// omitSpecTimestamps 返回剔除时间字段的副本（导出文件不写 created_at / updated_at）。
-func omitSpecTimestamps(items []types.ContainerTemplateSpec) []types.ContainerTemplateSpec {
-	out := make([]types.ContainerTemplateSpec, len(items))
-	for i, item := range items {
-		item.CreatedAt = nil
-		item.UpdatedAt = nil
-		out[i] = item
-	}
-	return out
-}
-
-// omitDefinitionTimestamps 返回剔除时间字段的副本。
-func omitDefinitionTimestamps(items []types.ContainerTemplateDefinition) []types.ContainerTemplateDefinition {
-	out := make([]types.ContainerTemplateDefinition, len(items))
-	for i, item := range items {
-		item.CreatedAt = nil
-		item.UpdatedAt = nil
-		out[i] = item
-	}
-	return out
 }

@@ -49,10 +49,10 @@ func (s *stubContainerRepo) GetContainerTemplateDefinitionByID(_ context.Context
 	return definition, nil
 }
 
-// TestCollectScriptContainerAssetsDeduplicates 覆盖脚本导出容器资产的三段链路：
+// TestExportContainerAssetsDeduplicates 覆盖脚本导出容器资产的三段链路：
 // container_template_id（绑定行主键）→ 绑定行 + spec_id 运行配置 + image_id 镜像。
-// 三者各自按主键去重，且引用关系（spec_id / image_id）保持原样。
-func TestCollectScriptContainerAssetsDeduplicates(t *testing.T) {
+// 多个脚本引用同一绑定行时按主键去重，且引用关系（spec_id / image_id）保持原样。
+func TestExportContainerAssetsDeduplicates(t *testing.T) {
 	repo := &stubContainerRepo{
 		images: map[int64]*types.ContainerImage{
 			100: {ID: 100, Name: "rocker/rstudio", FullName: "docker.io/rocker/rstudio:4.4", PullPolicy: types.PullPolicyIfNotPresent},
@@ -61,42 +61,49 @@ func TestCollectScriptContainerAssetsDeduplicates(t *testing.T) {
 			300: {ID: 300, Name: "spec-300", Command: "R -e 1", Port: 8787},
 		},
 		definitions: map[int64]*types.ContainerTemplateDefinition{
-			200: {ID: 200, SpecID: 300, ImageID: 100},
+			200: {ID: 200, SpecID: 300, ImageID: 100, IsDefault: true},
 		},
 	}
-	svc := &workflowService{containerRepo: repo}
 
-	bundle := exportcodec.NewContainerAssetBundle()
+	bundle := types.NewContainerTemplateBundle()
 	// 两个脚本引用同一绑定行：绑定行 / 运行配置 / 镜像都只导出一份。
 	for i := 0; i < 2; i++ {
-		if err := svc.collectScriptContainerAssets(context.Background(), 200, bundle); err != nil {
-			t.Fatalf("collectScriptContainerAssets: %v", err)
+		assets, err := exportcodec.ExportContainerAssets(context.Background(), repo, 200)
+		if err != nil {
+			t.Fatalf("ExportContainerAssets: %v", err)
 		}
+		exportcodec.Merge(bundle, assets)
 	}
 
-	if len(bundle.Definitions) != 1 || len(bundle.Specs) != 1 || len(bundle.Images) != 1 {
-		t.Fatalf("lens = (%d, %d, %d), want (1, 1, 1)", len(bundle.Definitions), len(bundle.Specs), len(bundle.Images))
+	if len(bundle.ContainerTemplateDefinitions) != 1 || len(bundle.ContainerTemplateSpecs) != 1 || len(bundle.ContainerImages) != 1 {
+		t.Fatalf("lens = (%d, %d, %d), want (1, 1, 1)",
+			len(bundle.ContainerTemplateDefinitions), len(bundle.ContainerTemplateSpecs), len(bundle.ContainerImages))
 	}
-	definition := bundle.Definitions[0]
+	definition := bundle.ContainerTemplateDefinitions[0]
 	if definition.ID != 200 || definition.SpecID != 300 || definition.ImageID != 100 {
 		t.Fatalf("definition refs = %#v", definition)
 	}
-	if bundle.Specs[0].ID != 300 || bundle.Specs[0].Name != "spec-300" {
-		t.Fatalf("spec = %#v", bundle.Specs[0])
+	if definition.IsDefault {
+		t.Fatalf("exported definition must not carry is_default")
 	}
-	if bundle.Images[0].ID != 100 {
-		t.Fatalf("image = %#v", bundle.Images[0])
+	if bundle.ContainerTemplateSpecs[0].ID != 300 || bundle.ContainerTemplateSpecs[0].Name != "spec-300" {
+		t.Fatalf("spec = %#v", bundle.ContainerTemplateSpecs[0])
+	}
+	if bundle.ContainerImages[0].ID != 100 {
+		t.Fatalf("image = %#v", bundle.ContainerImages[0])
 	}
 
-	// container_template_id 为 0（脚本未绑定模板）与绑定行已删除都应跳过，不报错也不追加。
-	if err := svc.collectScriptContainerAssets(context.Background(), 0, bundle); err != nil {
-		t.Fatalf("templateID 0 should be skipped: %v", err)
+	// container_template_id 为 0（脚本未绑定模板）与绑定行已删除都应返回空 bundle，不报错也不追加。
+	for _, templateID := range []int64{0, 999} {
+		assets, err := exportcodec.ExportContainerAssets(context.Background(), repo, templateID)
+		if err != nil {
+			t.Fatalf("templateID %d should be skipped: %v", templateID, err)
+		}
+		exportcodec.Merge(bundle, assets)
 	}
-	if err := svc.collectScriptContainerAssets(context.Background(), 999, bundle); err != nil {
-		t.Fatalf("missing definition should be skipped: %v", err)
-	}
-	if len(bundle.Definitions) != 1 || len(bundle.Specs) != 1 || len(bundle.Images) != 1 {
-		t.Fatalf("lens = (%d, %d, %d), want (1, 1, 1) after skipped lookups", len(bundle.Definitions), len(bundle.Specs), len(bundle.Images))
+	if len(bundle.ContainerTemplateDefinitions) != 1 || len(bundle.ContainerTemplateSpecs) != 1 || len(bundle.ContainerImages) != 1 {
+		t.Fatalf("lens = (%d, %d, %d), want (1, 1, 1) after skipped lookups",
+			len(bundle.ContainerTemplateDefinitions), len(bundle.ContainerTemplateSpecs), len(bundle.ContainerImages))
 	}
 }
 
