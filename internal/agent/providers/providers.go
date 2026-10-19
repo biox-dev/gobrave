@@ -1,7 +1,7 @@
 // Package providers 提供 agent.Provider 的内置实现。
 //
-// 目前除 mock 外均为占位实现：真实调用后续按 Provider 逐个接入
-// （例如 copilot 可复用现有 copilot-sdk 的 bridge 逻辑）。
+// custom 为 gobrave 原生 Agent（见 internal/agent/native）；copilot 基于
+// copilot-sdk；claude_code / codex 仍为占位实现，后续按需接入。
 package providers
 
 import "github.com/biox-dev/gobrave/internal/agent"

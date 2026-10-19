@@ -69,6 +69,18 @@ func (r *Registry) Definition(name string) (Definition, bool) {
 
 // List 返回全部工具定义（按名称升序），供暴露给模型。
 func (r *Registry) List() []Definition {
+	tools := r.Tools()
+	out := make([]Definition, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, t.Definition())
+	}
+	return out
+}
+
+// Tools 返回全部工具实例（按名称升序）。
+//
+// 供需要重新组合工具集合的调用方使用（如 Provider 在内置工具之外追加 ask_user）。
+func (r *Registry) Tools() []Tool {
 	r.mu.RLock()
 	tools := make([]Tool, 0, len(r.tools))
 	for _, t := range r.tools {
@@ -79,11 +91,7 @@ func (r *Registry) List() []Definition {
 	sort.Slice(tools, func(i, j int) bool {
 		return tools[i].Definition().Name < tools[j].Definition().Name
 	})
-	out := make([]Definition, 0, len(tools))
-	for _, t := range tools {
-		out = append(out, t.Definition())
-	}
-	return out
+	return tools
 }
 
 // Names 返回全部工具名（升序），便于调试 / 校验。

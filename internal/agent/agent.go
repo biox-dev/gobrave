@@ -36,7 +36,7 @@ const (
 	ProviderClaudeCode = "claude_code" // Anthropic Claude Code CLI
 	ProviderCodex      = "codex"       // OpenAI Codex CLI
 	ProviderCopilot    = "copilot"     // GitHub Copilot CLI
-	ProviderCustom     = "custom"      // 预留：后续自研 Agent
+	ProviderCustom     = "custom"      // 自研 Agent（内置 LLM 协议客户端 + 工具循环）
 )
 
 // DefaultProvider 是未配置时的兜底 Provider。
