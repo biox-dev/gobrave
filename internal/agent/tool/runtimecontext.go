@@ -145,6 +145,14 @@ func (rc *RuntimeContext) UserIDValue() int64 {
 	return rc.UserID
 }
 
+// SessionID 返回本次调用所属的会话 ID；上下文为 nil 时返回 0。
+func (rc *RuntimeContext) SessionIDValue() int64 {
+	if rc == nil {
+		return 0
+	}
+	return rc.SessionID
+}
+
 // WithUserIDForContext 返回一个补齐了用户 / 会话事实的 RuntimeContext 副本。
 //
 // RuntimeContext 由 Handler 的 RuntimeContextResolver 产出，是请求级业务事实的载体；
@@ -207,6 +215,13 @@ func SystemPromptVar(ctx context.Context, key string) string {
 // 工具统一通过本函数读取（如 create_script 写回用户业务上下文、save_memory 归属记忆）。
 func UserIDFrom(ctx context.Context) int64 {
 	return RuntimeContextFrom(ctx).UserIDValue()
+}
+
+// SessionIDFrom 取出注入的运行时上下文中的会话 ID（0 表示未注入）。
+//
+// 文件历史（history.Service）按会话维度记录版本，工具统一通过本函数取当前会话。
+func SessionIDFrom(ctx context.Context) int64 {
+	return RuntimeContextFrom(ctx).SessionIDValue()
 }
 
 // analysisNodeRunnerKey 是 AnalysisNodeRunner 在 context 中的私有键类型。

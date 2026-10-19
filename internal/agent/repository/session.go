@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/biox-dev/gobrave/internal/agent/history"
 	"github.com/biox-dev/gobrave/internal/agent/message"
 	"github.com/biox-dev/gobrave/internal/agent/session"
 	"gorm.io/gorm"
@@ -37,10 +38,13 @@ func (r *gormSessionStore) Update(ctx context.Context, s *session.Session) error
 	return r.db.WithContext(ctx).Save(s).Error
 }
 
-// Delete 删除会话，并级联清理其消息。
+// Delete 删除会话，并级联清理其消息与文件历史。
 func (r *gormSessionStore) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("session_id = ?", id).Delete(&message.Message{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("session_id = ?", id).Delete(&history.File{}).Error; err != nil {
 			return err
 		}
 		return tx.Where("id = ?", id).Delete(&session.Session{}).Error

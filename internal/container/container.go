@@ -16,6 +16,7 @@ import (
 	// "github.com/minebiome/ai-agent-go/internal/grpcserver"
 	// "github.com/minebiome/ai-agent-go/internal/handler"
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/history"
 	"github.com/biox-dev/gobrave/internal/agent/message"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
 	agentrepository "github.com/biox-dev/gobrave/internal/agent/repository"
@@ -457,6 +458,10 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	}))
 	must(container.Provide(func(db *gorm.DB) message.Service {
 		return message.NewService(agentrepository.NewGormMessageStore(db))
+	}))
+	// Provide history.Service：会话内文件版本历史（Write / Edit / Patch 落版本）。
+	must(container.Provide(func(db *gorm.DB) history.Service {
+		return history.NewService(agentrepository.NewGormHistoryStore(db))
 	}))
 	// Provide ChatService：多轮对话编排层（复用 AgentService 的任务状态机）。
 	must(container.Provide(func(svc *agent.AgentService, sessions session.Service, messages message.Service) *agent.ChatService {
@@ -955,6 +960,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&agent.AgentEvent{},
 		&session.Session{},
 		&message.Message{},
+		&history.File{},
 		&agent.Memory{},
 		&agent.Profile{},
 	// &types.Trace{},
