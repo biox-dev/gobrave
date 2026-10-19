@@ -208,7 +208,8 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 // memorySaver 承载「保存一条用户长期记忆」的能力，供 save_memory 工具使用。
 // skills 是技能注册表：既提供系统提示词的技能元信息，也供 get_skill /
 // load_skill_resource 工具在执行期读取技能指令与附属资源。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager) *agent.Client {
+// sessions / messages 是会话与消息服务：供 custom Provider 为子 Agent 创建子会话并落库。
+func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager, sessions session.Service, messages message.Service) *agent.Client {
 	opts := agent.Options{}
 
 	// 模型提供商配置表按需实时生成：可视化配置页保存 agent 段后，内存中的 cfg 会被立即更新，
@@ -253,6 +254,10 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	opts.FileHistory = files
 	// LSP 客户端管理器：diagnostics / view / edit / write / patch 在执行期通过 Clients() 取客户端。
 	opts.LSP = lspMgr
+	// 会话 / 消息服务：custom Provider 通过它们为子 Agent 创建子会话（ParentSessionID = 父会话）
+	// 并写入子 Agent 的 reasoning / tool_call / tool_result / 最终回答。
+	opts.Sessions = sessions
+	opts.Messages = messages
 
 	return agent.NewClient(registry, opts)
 }
@@ -428,8 +433,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager) *agent.Client {
-		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser, skills, files, lspMgr)
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager, sessions session.Service, messages message.Service) *agent.Client {
+		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。

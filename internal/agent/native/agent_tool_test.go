@@ -282,3 +282,125 @@ func TestAgentToolRejectsPromptAndPromptsTogether(t *testing.T) {
 		t.Fatal("expected error when both prompt and prompts are provided")
 	}
 }
+
+// eventClient 会先发 thinking / content 增量，再发 complete，用于覆盖 reasoning 落库。
+type eventClient struct{ content string }
+
+func (c *eventClient) Stream(context.Context, []provider.Message, []provider.Tool) <-chan provider.Event {
+	ch := make(chan provider.Event, 3)
+	ch <- provider.Event{Type: provider.EventThinkingDelta, Thinking: "先查工具注册"}
+	ch <- provider.Event{Type: provider.EventContentDelta, Content: c.content}
+	ch <- provider.Event{Type: provider.EventComplete, Response: &provider.Response{Content: c.content}}
+	close(ch)
+	return ch
+}
+
+type fakeSubAgentMessage struct {
+	sessionID int64
+	role      string
+	kind      string
+	content   string
+}
+
+// fakeSubAgentStore 记录子会话 / 消息写入，用于断言落库行为。
+type fakeSubAgentStore struct {
+	mu       sync.Mutex
+	created  []SubAgentSessionInfo
+	messages []fakeSubAgentMessage
+}
+
+func (s *fakeSubAgentStore) CreateChildSession(_ context.Context, info SubAgentSessionInfo) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.created = append(s.created, info)
+	return 999, nil
+}
+
+func (s *fakeSubAgentStore) AppendUserMessage(_ context.Context, sessionID int64, content string) error {
+	return s.add(sessionID, "user", "user", content)
+}
+
+func (s *fakeSubAgentStore) AppendReasoning(_ context.Context, sessionID int64, content string, _ any) error {
+	return s.add(sessionID, "assistant", "reasoning", content)
+}
+
+func (s *fakeSubAgentStore) AppendToolCall(_ context.Context, sessionID int64, _ any) error {
+	return s.add(sessionID, "assistant", "tool_call", "tool")
+}
+
+func (s *fakeSubAgentStore) AppendToolResult(_ context.Context, sessionID int64, _ any) error {
+	return s.add(sessionID, "assistant", "tool_result", "tool_result")
+}
+
+func (s *fakeSubAgentStore) AppendFinalMessage(_ context.Context, sessionID int64, content string) error {
+	return s.add(sessionID, "assistant", "assistant_final", content)
+}
+
+func (s *fakeSubAgentStore) add(sessionID int64, role, kind, content string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messages = append(s.messages, fakeSubAgentMessage{sessionID: sessionID, role: role, kind: kind, content: content})
+	return nil
+}
+
+func TestAgentToolPersistsChildSessionAndMessages(t *testing.T) {
+	store := &fakeSubAgentStore{}
+	agentTool := NewAgentTool(AgentToolConfig{
+		NewClient: func(context.Context) (provider.Client, error) {
+			return &eventClient{content: "结论：工具在 registry.go 注册"}, nil
+		},
+		SessionStore: store,
+		Provider:     "custom",
+		Model:        "test-model",
+	})
+
+	ctx := tool.WithRuntimeContext(context.Background(), &tool.RuntimeContext{SessionID: 42, UserID: 7})
+	out, err := agentTool.Execute(ctx, json.RawMessage(`{"prompt":"查工具注册位置"}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if out != "结论：工具在 registry.go 注册" {
+		t.Fatalf("Execute() = %v", out)
+	}
+
+	if len(store.created) != 1 {
+		t.Fatalf("child sessions created = %d, want 1", len(store.created))
+	}
+	info := store.created[0]
+	if info.ParentSessionID != 42 || info.UserID != 7 || info.Provider != "custom" || info.Model != "test-model" {
+		t.Fatalf("unexpected child session info: %+v", info)
+	}
+	if info.Title != "查工具注册位置" {
+		t.Fatalf("child session title = %q", info.Title)
+	}
+
+	kinds := make(map[string]bool)
+	for _, m := range store.messages {
+		if m.sessionID != 999 {
+			t.Fatalf("message written to session %d, want 999", m.sessionID)
+		}
+		kinds[m.kind] = true
+	}
+	for _, want := range []string{"user", "reasoning", "assistant_final"} {
+		if !kinds[want] {
+			t.Fatalf("missing %q message: %+v", want, store.messages)
+		}
+	}
+}
+
+func TestAgentToolSkipsPersistenceWithoutParentSession(t *testing.T) {
+	store := &fakeSubAgentStore{}
+	agentTool := NewAgentTool(AgentToolConfig{
+		NewClient: func(context.Context) (provider.Client, error) {
+			return &fakeClient{responses: []*provider.Response{{Content: "ok"}}}, nil
+		},
+		SessionStore: store,
+	})
+
+	if _, err := agentTool.Execute(context.Background(), json.RawMessage(`{"prompt":"hi"}`)); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(store.created) != 0 || len(store.messages) != 0 {
+		t.Fatalf("expected no persistence without parent session: created=%d messages=%d", len(store.created), len(store.messages))
+	}
+}

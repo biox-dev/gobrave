@@ -172,6 +172,14 @@ func (a *customAgent) newAgentTool(req agent.Request, rt agent.Runtime) tool.Too
 		PrepareToolContext: prepare,
 		WorkingDir:         workingDir,
 		SystemPrompt:       native.TaskAgentSystemPrompt,
+		// 子会话落库：有父会话时创建 ParentSessionID = 父会话的子会话，并把子 Agent 的
+		// reasoning / tool_call / tool_result / 最终回答写入 agent_messages。
+		SessionStore: newSubAgentSessionStore(a.opts.Sessions, a.opts.Messages),
+		Provider:     strings.TrimSpace(req.Provider),
+		Model:        strings.TrimSpace(req.ModelID),
+		// 回退值：工具执行 ctx 缺少 RuntimeContext 时也能拿到父会话 / 用户。
+		ParentSessionID: req.RequestSessionID(),
+		UserID:          req.RequestUserID(),
 	})
 }
 

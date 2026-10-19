@@ -9,6 +9,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
+	"github.com/biox-dev/gobrave/internal/agent/logging"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/coder"
 )
@@ -102,6 +103,52 @@ type AgentToolConfig struct {
 	// MaxConcurrency 是批量模式下默认的并发子 Agent 数；<=0 时使用 defaultAgentConcurrency，
 	// 超过 MaxAgentConcurrency 时按上限截断。
 	MaxConcurrency int
+	// SessionStore 把子 Agent 的会话与消息写入数据库；为 nil 时子 Agent 不落库（旧行为）。
+	//
+	// 只有当父请求带有会话 ID（tool.SessionIDFrom(ctx) > 0）时才会创建子会话；
+	// 落库失败只记日志，不会影响子 Agent 的执行与结果回填。
+	SessionStore SubAgentSessionStore
+	// Provider / Model 是写入子会话的溯源信息（可为空）。
+	Provider string
+	Model    string
+	// ParentSessionID / UserID 是父请求的会话与用户 ID（回退值）。
+	//
+	// 正常情况下从工具执行 ctx 的 RuntimeContext 读取；ctx 没有时用这里的值，
+	// 保证 Request.SessionID 设置了但 RuntimeContext 缺失的场景也能落库。
+	ParentSessionID int64
+	UserID          int64
+}
+
+// SubAgentSessionInfo 是创建子会话所需的信息。
+type SubAgentSessionInfo struct {
+	// ParentSessionID 是父会话 ID（写入 agent_sessions.parent_session_id）。
+	ParentSessionID int64
+	// Title 是子会话标题（优先使用子任务名，否则截取 prompt 首行）。
+	Title string
+	// UserID 是会话归属用户（从父请求的 RuntimeContext 读取）。
+	UserID int64
+	// Provider / Model 记录本次子 Agent 使用的 Provider 与模型。
+	Provider string
+	Model    string
+}
+
+// SubAgentSessionStore 是子 Agent 的会话 / 消息持久化端口。
+//
+// 由 Provider 用 session.Service + message.Service 实现（见 providers.subAgentSessionStore），
+// native 包只按语义调用，不直接依赖 session / message 的具体类型。
+type SubAgentSessionStore interface {
+	// CreateChildSession 创建 ParentSessionID = info.ParentSessionID 的子会话并返回会话 ID。
+	CreateChildSession(ctx context.Context, info SubAgentSessionInfo) (int64, error)
+	// AppendUserMessage 追加子任务的 user 消息。
+	AppendUserMessage(ctx context.Context, sessionID int64, content string) error
+	// AppendReasoning 追加完整思考块。
+	AppendReasoning(ctx context.Context, sessionID int64, content string, data any) error
+	// AppendToolCall 追加一次工具调用。
+	AppendToolCall(ctx context.Context, sessionID int64, data any) error
+	// AppendToolResult 追加一次工具结果。
+	AppendToolResult(ctx context.Context, sessionID int64, data any) error
+	// AppendFinalMessage 追加子 Agent 的最终回答（或错误信息）。
+	AppendFinalMessage(ctx context.Context, sessionID int64, content string) error
 }
 
 // TaskAgentTools 返回子 Agent 的只读工具集合（对齐 opencode TaskAgentTools）。
@@ -231,7 +278,7 @@ func (t *agentTool) runBatch(ctx context.Context, tasks []AgentTaskParams, concu
 	return formatAgentBatch(results)
 }
 
-// runTask 构建并运行一个子 Agent，返回其最终回答。
+// runTask 构建并运行一个子 Agent，返回其最终回答（可同时写入子会话）。
 func (t *agentTool) runTask(ctx context.Context, task AgentTaskParams) agentRunResult {
 	result := agentRunResult{name: task.Name}
 
@@ -251,23 +298,156 @@ func (t *agentTool) runTask(ctx context.Context, task AgentTaskParams) agentRunR
 		Tools:              t.tools(),
 		PrepareToolContext: t.cfg.PrepareToolContext,
 	}
-	// 子 Agent 使用独立的 Runtime：默认丢弃流式事件，避免子 Agent 的增量 / 工具调用
-	// 混入父 Agent 的时间线；无 UI 场景下权限策略走默认策略。
+
+	// 子会话（有父会话且注入了 SessionStore 时才创建）+ 记录型 Runtime。
+	sessionID, rt := t.sessionRuntime(ctx, task)
+
 	answer, err := sub.Run(ctx, agent.Request{
 		Messages:     []agent.Message{{Role: agent.RoleUser, Content: task.Prompt}},
 		SystemPrompt: systemPrompt,
 		WorkingDir:   t.cfg.WorkingDir,
-	}, agent.NewStandaloneRuntime(nil))
+	}, rt)
 	if err != nil {
 		result.err = fmt.Errorf("error generating agent: %s", err)
+		t.appendFinal(ctx, sessionID, "error: "+result.err.Error())
 		return result
 	}
 	if answer == nil || strings.TrimSpace(answer.Content) == "" {
 		result.err = fmt.Errorf("no response from agent")
+		t.appendFinal(ctx, sessionID, "error: "+result.err.Error())
 		return result
 	}
 	result.content = answer.Content
+	t.appendFinal(ctx, sessionID, answer.Content)
 	return result
+}
+
+// sessionRuntime 为一次子 Agent 执行准备 Runtime：
+//
+//   - 未注入 SessionStore / 父请求没有会话 ID：返回 (0, standalone)，不落库；
+//   - 否则创建 ParentSessionID = 父会话的子会话，写入 user 消息，并返回把
+//     reasoning / tool_call / tool_result 写入该子会话的 recordingRuntime。
+//
+// 会话创建失败属于旁路故障：只记日志并退回 standalone，不影响子 Agent 执行。
+func (t *agentTool) sessionRuntime(ctx context.Context, task AgentTaskParams) (int64, agent.Runtime) {
+	standalone := agent.NewStandaloneRuntime(nil)
+	if t.cfg.SessionStore == nil {
+		return 0, standalone
+	}
+	parentSessionID := tool.SessionIDFrom(ctx)
+	if parentSessionID <= 0 {
+		parentSessionID = t.cfg.ParentSessionID
+	}
+	if parentSessionID <= 0 {
+		return 0, standalone
+	}
+
+	userID := tool.UserIDFrom(ctx)
+	if userID <= 0 {
+		userID = t.cfg.UserID
+	}
+
+	sessionID, err := t.cfg.SessionStore.CreateChildSession(ctx, SubAgentSessionInfo{
+		ParentSessionID: parentSessionID,
+		Title:           subAgentSessionTitle(task),
+		UserID:          userID,
+		Provider:        t.cfg.Provider,
+		Model:           t.cfg.Model,
+	})
+	if err != nil || sessionID <= 0 {
+		logging.Warn("sub-agent: create child session failed", "parentSessionID", parentSessionID, "err", err)
+		return 0, standalone
+	}
+	if err := t.cfg.SessionStore.AppendUserMessage(ctx, sessionID, task.Prompt); err != nil {
+		logging.Warn("sub-agent: append user message failed", "sessionID", sessionID, "err", err)
+	}
+	return sessionID, &recordingRuntime{store: t.cfg.SessionStore, sessionID: sessionID, fallback: standalone}
+}
+
+// appendFinal 把子 Agent 的最终回答（或错误）写入子会话；未落库时直接跳过。
+func (t *agentTool) appendFinal(ctx context.Context, sessionID int64, content string) {
+	if sessionID <= 0 || t.cfg.SessionStore == nil {
+		return
+	}
+	if err := t.cfg.SessionStore.AppendFinalMessage(ctx, sessionID, content); err != nil {
+		logging.Warn("sub-agent: append final message failed", "sessionID", sessionID, "err", err)
+	}
+}
+
+// recordingRuntime 把子 Agent 的关键完整块事件写成子会话消息。
+//
+// 增量事件（text / reasoning_delta）与 message 块不落库：最终回答由 appendFinal 统一写入，
+// 与 ChatService 对父会话的投影规则保持一致（reasoning / tool_call / tool_result / final）。
+// 权限与提问委托给无 UI 的 standalone Runtime（子 Agent 只读，正常不会触发）。
+type recordingRuntime struct {
+	store     SubAgentSessionStore
+	sessionID int64
+	fallback  agent.Runtime
+}
+
+func (r *recordingRuntime) Emit(ctx context.Context, event agent.StreamEvent) error {
+	var err error
+	switch event.Type {
+	case agent.StreamEventReasoning:
+		err = r.store.AppendReasoning(ctx, r.sessionID, reasoningContent(event.Data), event.Data)
+	case agent.StreamEventToolCall:
+		err = r.store.AppendToolCall(ctx, r.sessionID, event.Data)
+	case agent.StreamEventToolResult:
+		err = r.store.AppendToolResult(ctx, r.sessionID, event.Data)
+	default:
+		return nil
+	}
+	if err != nil {
+		logging.Warn("sub-agent: persist message failed", "sessionID", r.sessionID, "event", event.Type, "err", err)
+	}
+	return err
+}
+
+func (r *recordingRuntime) RequestPermission(ctx context.Context, userID int64, op agent.Operation) (agent.PermissionDecision, error) {
+	return r.fallback.RequestPermission(ctx, userID, op)
+}
+
+func (r *recordingRuntime) WaitPermission(ctx context.Context, permissionID int64) (agent.PermissionDecision, error) {
+	return r.fallback.WaitPermission(ctx, permissionID)
+}
+
+func (r *recordingRuntime) AskUser(ctx context.Context, userID int64, input agent.AskUserInput) (agent.AskUserAnswer, error) {
+	return r.fallback.AskUser(ctx, userID, input)
+}
+
+// reasoningContent 从 reasoning 事件体中提取文本。
+func reasoningContent(data any) string {
+	switch v := data.(type) {
+	case agent.ReasoningBlock:
+		return v.Content
+	case *agent.ReasoningBlock:
+		if v != nil {
+			return v.Content
+		}
+	case map[string]any:
+		content, _ := v["content"].(string)
+		return content
+	}
+	return ""
+}
+
+// subAgentSessionTitle 生成子会话标题：优先子任务名，否则取 prompt 首行前 60 个字符。
+func subAgentSessionTitle(task AgentTaskParams) string {
+	if name := strings.TrimSpace(task.Name); name != "" {
+		return name
+	}
+	prompt := strings.TrimSpace(task.Prompt)
+	if idx := strings.IndexAny(prompt, "\r\n"); idx >= 0 {
+		prompt = strings.TrimSpace(prompt[:idx])
+	}
+	runes := []rune(prompt)
+	if len(runes) > 60 {
+		prompt = string(runes[:60]) + "…"
+	}
+	if prompt == "" {
+		return "Sub Agent Session"
+	}
+	return prompt
 }
 
 // concurrency 解析本次批量执行的并发上限：入参 > 配置 > 默认值，并截断到上限。

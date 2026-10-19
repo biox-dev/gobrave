@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/history"
 	"github.com/biox-dev/gobrave/internal/agent/message"
 	"github.com/biox-dev/gobrave/internal/agent/session"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -24,7 +25,7 @@ func newGormTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &agent.AgentEvent{}, &session.Session{}, &message.Message{}, &agent.Memory{}); err != nil {
+	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &agent.AgentEvent{}, &session.Session{}, &message.Message{}, &agent.Memory{}, &history.File{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return db
@@ -209,6 +210,12 @@ func TestGormSessionAndMessageStores(t *testing.T) {
 	}
 	if titleSess.ParentSessionID != sess.ID || titleSess.Title != session.TitleSessionTitle || titleSess.ID == 0 {
 		t.Fatalf("unexpected title session: %+v", titleSess)
+	}
+	// 子会话（带 parent_session_id）不进入会话列表。
+	if _, err := sessions.Create(ctx, session.CreateParams{
+		UserID: 1, ParentSessionID: sess.ID, Provider: agent.ProviderMock, Model: "model-x",
+	}); err != nil {
+		t.Fatalf("Create child session: %v", err)
 	}
 
 	// 更新会话当前轮次任务。

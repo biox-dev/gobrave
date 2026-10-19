@@ -8,6 +8,8 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/history"
 	lspmanager "github.com/biox-dev/gobrave/internal/agent/lsp/manager"
+	"github.com/biox-dev/gobrave/internal/agent/message"
+	"github.com/biox-dev/gobrave/internal/agent/session"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -160,6 +162,14 @@ type Options struct {
 	// 由上层启动并持有各语言的 LSP 客户端；Provider 在每次调用前通过 `LSP.Clients()`
 	// 取当前客户端快照注入工具执行 ctx，供 diagnostics / view / edit / write / patch 使用。
 	LSP *lspmanager.Manager `json:"-"`
+
+	// Sessions / Messages 是会话与消息的持久化服务（可为 nil）。
+	//
+	// custom Provider 用它们为子 Agent 创建子会话（ParentSessionID = 父会话）并写入
+	// 子 Agent 的 reasoning / tool_call / tool_result / 最终回答；任一为 nil 时子 Agent
+	// 不落库，只把最终结果回填给父 Agent（旧行为）。
+	Sessions session.Service `json:"-"`
+	Messages message.Service `json:"-"`
 }
 
 // ResolveProvider 按模型名从 ProviderSource 解析本次调用的模型提供商配置。
