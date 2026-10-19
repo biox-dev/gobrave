@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/lsp/logging"
+	"github.com/biox-dev/gobrave/internal/agent/logging"
 )
 
 // Write writes an LSP message to the given writer

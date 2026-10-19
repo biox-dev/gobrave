@@ -34,6 +34,9 @@ const (
 	BuiltinPromptAnalysisCoder = "analysis_coder" // builtin/prompts/analysis_coder.md
 	BuiltinPromptArticleWriter = "article_writer" // builtin/prompts/article_writer.md
 	BuiltinPromptSummary       = "summary"        // builtin/prompts/summary.md
+	// BuiltinPromptBaseCoder 是所有 Profile 共用的基础编码提示词（拷自 opencode 的
+	// baseAnthropicCoderPrompt），作为系统提示词的前置部分统一注入，见 buildSystemPrompt。
+	BuiltinPromptBaseCoder = "base_coder" // builtin/prompts/base_coder.md
 )
 
 // builtinPromptDir 是内置提示词目录的绝对路径（相对工作目录解析）。

@@ -304,6 +304,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 	nodeUpdater := a.opts.AnalysisNodeUpdater
 	envUpdater := a.opts.AgentEnvUpdater
 	memorySaver := a.opts.MemorySaver
+	files := a.opts.FileHistory
 	browser := a.opts.ProjectResourceBrowser
 	skills := a.opts.Skills
 
@@ -320,7 +321,10 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
 					ctx := agent.WithProjectResourceBrowser(inv.TraceContext, browser)
 					ctx = agent.WithSkills(ctx, skills)
-					res := runnerExec.Run(agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver), agent.ToolCall{
+					if a.opts.LSP != nil {
+						ctx = agent.WithLSPClients(ctx, a.opts.LSP.Clients())
+					}
+					res := runnerExec.Run(agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, files), agent.ToolCall{
 						ID:        inv.ToolCallID,
 						Name:      name,
 						Arguments: inv.Arguments,

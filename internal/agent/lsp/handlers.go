@@ -3,7 +3,7 @@ package lsp
 import (
 	"encoding/json"
 
-	"github.com/biox-dev/gobrave/internal/agent/lsp/logging"
+	"github.com/biox-dev/gobrave/internal/agent/logging"
 	"github.com/biox-dev/gobrave/internal/agent/lsp/protocol"
 	"github.com/biox-dev/gobrave/internal/agent/lsp/util"
 )

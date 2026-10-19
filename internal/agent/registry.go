@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/biox-dev/gobrave/internal/agent/history"
+	lspmanager "github.com/biox-dev/gobrave/internal/agent/lsp/manager"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -145,6 +147,19 @@ type Options struct {
 	// 工具执行 ctx（见 agent.WithToolRuntime），供 get_skill / load_skill_resource 工具
 	// 在执行期按名称解析技能并读取指令与附属资源。
 	Skills tool.SkillResolver `json:"-"`
+
+	// FileHistory 是会话内文件版本历史服务（可为 nil）。
+	//
+	// 从 opencode internal/history 迁移而来，供 edit / write / patch 工具记录文件版本。
+	// 与其它服务能力一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前
+	// 注入工具执行 ctx（见 agent.WithToolRuntime → tool.WithFileHistory）。
+	FileHistory history.Service `json:"-"`
+
+	// LSP 是 LSP 客户端管理器（可为 nil）。
+	//
+	// 由上层启动并持有各语言的 LSP 客户端；Provider 在每次调用前通过 `LSP.Clients()`
+	// 取当前客户端快照注入工具执行 ctx，供 diagnostics / view / edit / write / patch 使用。
+	LSP *lspmanager.Manager `json:"-"`
 }
 
 // ResolveProvider 按模型名从 ProviderSource 解析本次调用的模型提供商配置。

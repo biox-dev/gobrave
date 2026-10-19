@@ -17,6 +17,7 @@ import (
 	// "github.com/minebiome/ai-agent-go/internal/handler"
 	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/history"
+	lspmanager "github.com/biox-dev/gobrave/internal/agent/lsp/manager"
 	"github.com/biox-dev/gobrave/internal/agent/message"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
 	agentrepository "github.com/biox-dev/gobrave/internal/agent/repository"
@@ -24,6 +25,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
+	"github.com/biox-dev/gobrave/internal/agent/tool/coder"
 	"github.com/biox-dev/gobrave/internal/application/repository"
 	"github.com/biox-dev/gobrave/internal/application/service"
 	"github.com/biox-dev/gobrave/internal/config"
@@ -185,7 +187,7 @@ func agentProviders(cfg *config.Config) map[string]agent.ModelProviderConfig {
 // memorySaver 承载「保存一条用户长期记忆」的能力，供 save_memory 工具使用。
 // skills 是技能注册表：既提供系统提示词的技能元信息，也供 get_skill /
 // load_skill_resource 工具在执行期读取技能指令与附属资源。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry) *agent.Client {
+func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager) *agent.Client {
 	opts := agent.Options{}
 
 	// 模型提供商配置表按需实时生成：可视化配置页保存 agent 段后，内存中的 cfg 会被立即更新，
@@ -196,9 +198,10 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 		}
 	}
 
-	// 注册框架内置工具（get_weather / run_analysis_node 等），供 Provider 的
-	// tool-call 链路使用。后续新增内置工具时在 builtin.All() 中追加即可，无需改动此处。
-	opts.Tools = tool.NewRegistryWith(builtin.All()...)
+	// 注册框架内置工具（get_weather / run_analysis_node 等）+ 从 opencode 迁移的 coder 工具
+	// （bash / edit / view / write / patch / glob / grep / ls / fetch / sourcegraph / diagnostics）。
+	// 后续新增内置工具时在 builtin.All() / coder.All() 中追加即可，无需改动此处。
+	opts.Tools = tool.NewRegistryWith(append(builtin.All(), coder.All()...)...)
 	// 进程级服务能力：run_analysis_node 等 builtin 工具在执行期通过它触发节点运行。
 	opts.AnalysisNodeRunner = runner
 	// 进程级服务能力：read_file_by_id 等 builtin 工具在执行期通过它按文件 ID 读取内容预览。
@@ -221,6 +224,10 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	if skills != nil {
 		opts.Skills = skills.Resolver()
 	}
+	// 会话内文件版本历史：edit / write / patch 工具在每次写入时记录一个版本。
+	opts.FileHistory = files
+	// LSP 客户端管理器：diagnostics / view / edit / write / patch 在执行期通过 Clients() 取客户端。
+	opts.LSP = lspMgr
 
 	return agent.NewClient(registry, opts)
 }
@@ -396,8 +403,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry) *agent.Client {
-		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser, skills)
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager) *agent.Client {
+		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser, skills, files, lspMgr)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。
@@ -462,6 +469,11 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// Provide history.Service：会话内文件版本历史（Write / Edit / Patch 落版本）。
 	must(container.Provide(func(db *gorm.DB) history.Service {
 		return history.NewService(agentrepository.NewGormHistoryStore(db))
+	}))
+	// Provide LSP 客户端管理器：diagnostics / view / edit / write / patch 通过它取 LSP 客户端。
+	// 具体语言服务由上层按需调用 Manager.Start(ctx, servers) 启动（gobrave 暂无全局 LSP 配置）。
+	must(container.Provide(func() *lspmanager.Manager {
+		return lspmanager.NewManager()
 	}))
 	// Provide ChatService：多轮对话编排层（复用 AgentService 的任务状态机）。
 	must(container.Provide(func(svc *agent.AgentService, sessions session.Service, messages message.Service) *agent.ChatService {

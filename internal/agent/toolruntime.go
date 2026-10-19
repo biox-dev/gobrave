@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 
+	"github.com/biox-dev/gobrave/internal/agent/history"
+	"github.com/biox-dev/gobrave/internal/agent/lsp"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -36,12 +38,12 @@ func WithToolRuntimeContext(ctx context.Context, rc *tool.RuntimeContext) contex
 // WithToolRuntime 把「运行时上下文（业务事实）+ 进程级服务能力」一次性注入工具执行 ctx。
 //
 // 二者来源与生命周期不同：RuntimeContext 来自请求（可序列化），服务能力（AnalysisNodeRunner /
-// FileReader / ScriptCreator / AnalysisNodeParamsBuilder / AgentEnvUpdater / MemorySaver / Skills）来自 Options
+// FileReader / ScriptCreator / AnalysisNodeParamsBuilder / AgentEnvUpdater / MemorySaver / FileHistory / Skills）来自 Options
 // （不可序列化、进程级复用），因此分开注入、互不影响。任一为 nil 时跳过对应注入。
 //
 // 归属用户不再作为参数单独注入：RuntimeContext.UserID 就是请求级用户事实的唯一来源，
 // 工具通过 tool.RuntimeContextFrom(ctx).UserID 读取（见 save_memory）。
-func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver) context.Context {
+func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, files history.Service) context.Context {
 	ctx = WithToolRuntimeContext(ctx, rc)
 	ctx = tool.WithAnalysisNodeRunner(ctx, runner)
 	ctx = tool.WithFileReader(ctx, reader)
@@ -50,7 +52,15 @@ func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.A
 	ctx = tool.WithAnalysisNodeParamsBuilder(ctx, paramsBuilder)
 	ctx = tool.WithAnalysisNodeUpdater(ctx, nodeUpdater)
 	ctx = tool.WithAgentEnvUpdater(ctx, envUpdater)
-	return tool.WithMemorySaver(ctx, memorySaver)
+	ctx = tool.WithMemorySaver(ctx, memorySaver)
+	return tool.WithFileHistory(ctx, files)
+}
+
+// WithLSPClients 把 LSP 客户端集合注入工具执行 ctx，供 diagnostics / view / edit / write / patch 使用。
+//
+// clients 来自 lsp/manager.Manager.Clients()；为空时原样返回 ctx。
+func WithLSPClients(ctx context.Context, clients map[string]*lsp.Client) context.Context {
+	return tool.WithLSPClients(ctx, clients)
 }
 
 // WithSkills 把技能解析能力注入工具执行 ctx，供 get_skill / load_skill_resource 工具使用。

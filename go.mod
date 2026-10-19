@@ -3,6 +3,9 @@ module github.com/biox-dev/gobrave
 go 1.25.6
 
 require (
+	github.com/JohannesKaufmann/html-to-markdown v1.6.0
+	github.com/PuerkitoBio/goquery v1.9.2
+	github.com/aymanbagabas/go-udiff v0.2.0
 	github.com/biox-dev/opencode v0.0.0-20261018074859-62a010e1f0ef
 	github.com/bmatcuk/doublestar/v4 v4.8.1
 	github.com/bwmarrin/snowflake v0.3.0
@@ -50,11 +53,9 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.7.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.10.0 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.2.2 // indirect
-	github.com/JohannesKaufmann/html-to-markdown v1.6.0 // indirect
 	github.com/KyleBanks/depth v1.2.1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.5 // indirect
-	github.com/PuerkitoBio/goquery v1.9.2 // indirect
 	github.com/alecthomas/chroma/v2 v2.19.0 // indirect
 	github.com/andybalholm/cascadia v1.3.2 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.4.0 // indirect
@@ -73,7 +74,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.30.3 // indirect
 	github.com/aws/smithy-go v1.20.3 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
-	github.com/aymanbagabas/go-udiff v0.2.0 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect

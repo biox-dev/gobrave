@@ -1,7 +1,8 @@
-// Package logging 是 opencode internal/logging 在 LSP 使用面上的最小替代。
+// Package logging 是 opencode internal/logging 的最小替代。
 //
-// opencode 的 lsp 包只用到 Debug / Warn / Error / ErrorPersist / RecoverPanic，
-// 这里把它们桥接到 gobrave 的 logrus logger，避免为 LSP 再引入一套日志设施。
+// 迁移过来的 opencode 代码（lsp 包、tool/coder 工具）只用到
+// Debug / Warn / Error / ErrorPersist / RecoverPanic，这里把它们桥接到
+// gobrave 的 logrus logger，避免为迁移代码再引入一套日志设施。
 package logging
 
 import (

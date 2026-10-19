@@ -594,14 +594,18 @@ func (s *AgentService) buildSystemPrompt(ctx context.Context, profile *Profile, 
 		return ""
 	}
 
-	// 1) 系统提示词：只来源于 Profile —— 用调用方传入的变量渲染 Profile 的模板。
-	var prompt string
+	// 0) 基础编码提示词：所有 Profile 共用，固定置于系统提示词最前面
+	// （内容来自 builtin/prompts/base_coder.md）。
+	prompt := strings.TrimSpace(mustReadBuiltinPrompt(BuiltinPromptBaseCoder))
+
+	// 1) 系统提示词：来源于 Profile —— 用调用方传入的变量渲染 Profile 的模板，
+	// 拼接在基础编码提示词之后。
 	if tpl := strings.TrimSpace(profile.SystemPrompt); tpl != "" {
 		rendered, err := RenderSystemPromptTemplate(profile.SystemPrompt, vars)
 		if err != nil {
-			prompt = tpl
+			prompt = appendPromptBlock(prompt, tpl)
 		} else {
-			prompt = rendered
+			prompt = appendPromptBlock(prompt, rendered)
 		}
 	}
 

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/agent/logging"
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
-	"github.com/biox-dev/gobrave/internal/agent/lsp/logging"
 	"github.com/biox-dev/gobrave/internal/agent/lsp/watcher"
 )
 

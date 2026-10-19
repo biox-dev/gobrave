@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent/lsp/logging"
+	"github.com/biox-dev/gobrave/internal/agent/logging"
 	"github.com/biox-dev/gobrave/internal/agent/lsp/protocol"
 )
 

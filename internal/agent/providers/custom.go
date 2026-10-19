@@ -435,6 +435,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 	nodeUpdater := a.opts.AnalysisNodeUpdater
 	envUpdater := a.opts.AgentEnvUpdater
 	memorySaver := a.opts.MemorySaver
+	files := a.opts.FileHistory
 	browser := a.opts.ProjectResourceBrowser
 	skills := a.opts.Skills
 
@@ -444,9 +445,12 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 			name := def.Name
 			ht := hostTool(def.Name, def.Description, def.InputSchema,
 				func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
-					ctx = agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver)
+					ctx = agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, files)
 					ctx = agent.WithProjectResourceBrowser(ctx, browser)
 					ctx = agent.WithSkills(ctx, skills)
+					if a.opts.LSP != nil {
+						ctx = agent.WithLSPClients(ctx, a.opts.LSP.Clients())
+					}
 					res := exec.Execute(ctx, tool.Call{ID: call.ID, Name: name, Arguments: json.RawMessage(call.Input)})
 					return opencodesdk.HostToolResult{Content: res.Content, IsError: res.IsError}
 				})
