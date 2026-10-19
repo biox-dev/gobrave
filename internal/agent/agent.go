@@ -26,6 +26,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/agent/message"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -41,35 +42,29 @@ const (
 // DefaultProvider 是未配置时的兜底 Provider。
 const DefaultProvider = ProviderMock
 
-// MessageRole 常量。
+// Message 是对话消息的类型别名：持久化模型与 Agent 请求消息统一到 message 包。
+type Message = message.Message
+
+// MessageRole 常量（别名到 message 包）。
 const (
-	RoleSystem    = "system"
-	RoleUser      = "user"
-	RoleAssistant = "assistant"
-	RoleTool      = "tool"
+	RoleSystem    = message.RoleSystem
+	RoleUser      = message.RoleUser
+	RoleAssistant = message.RoleAssistant
+	RoleTool      = message.RoleTool
 )
 
-// MessageKind 定义会话层可回放的消息类型。
+// MessageKind 定义会话层可回放的消息类型（别名到 message 包）。
 const (
-	MessageKindUser           = "user"
-	MessageKindAssistant      = "assistant"
-	MessageKindAssistantFinal = "assistant_final"
-	MessageKindReasoning      = "reasoning"
-	MessageKindToolCall       = "tool_call"
-	MessageKindToolResult     = "tool_result"
+	MessageKindUser           = message.KindUser
+	MessageKindAssistant      = message.KindAssistant
+	MessageKindAssistantFinal = message.KindAssistantFinal
+	MessageKindReasoning      = message.KindReasoning
+	MessageKindToolCall       = message.KindToolCall
+	MessageKindToolResult     = message.KindToolResult
 )
 
 // ErrNotImplemented 表示某个 Provider 尚未实现真实调用。
 var ErrNotImplemented = errors.New("agent: provider not implemented yet")
-
-// Message 是一条对话消息。
-type Message struct {
-	Role    string `json:"role"`    // system / user / assistant / tool
-	Content string `json:"content"` // 文本内容
-	Kind    string `json:"kind,omitempty"`
-	TaskID  int64  `json:"task_id,string,omitempty"`
-	Data    any    `json:"data,omitempty"`
-}
 
 // Request 描述一次 Agent 调用请求，与具体 Provider 无关。
 type Request struct {

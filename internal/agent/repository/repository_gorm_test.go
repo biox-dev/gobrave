@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/message"
+	"github.com/biox-dev/gobrave/internal/agent/session"
 	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/ncruces/go-sqlite3/gormlite"
 	"gorm.io/gorm"
@@ -22,7 +24,7 @@ func newGormTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &agent.AgentEvent{}, &agent.Conversation{}, &agent.ConversationMessage{}, &agent.Memory{}); err != nil {
+	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &agent.AgentEvent{}, &session.Session{}, &message.Message{}, &agent.Memory{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return db
@@ -166,60 +168,63 @@ func TestGormEventRepositorySequence(t *testing.T) {
 	}
 }
 
-func TestGormConversationRepositoryRoundTrip(t *testing.T) {
+func TestGormSessionAndMessageStores(t *testing.T) {
 	ctx := context.Background()
-	repo := NewGormConversationRepository(newGormTestDB(t))
+	db := newGormTestDB(t)
+	sessions := session.NewService(NewGormSessionStore(db))
+	messages := message.NewService(NewGormMessageStore(db))
 
-	conv := agent.NewConversation(1, agent.ProviderMock, "model-x")
-	conv.Messages = []agent.Message{
-		{Role: agent.RoleUser, Content: "你好"},
-		{Role: agent.RoleAssistant, Content: "你好，有什么可以帮你？"},
-	}
-	if err := repo.Create(ctx, conv); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	got, err := repo.Get(ctx, conv.ID)
+	sess, err := sessions.Create(ctx, session.CreateParams{UserID: 1, Provider: agent.ProviderMock, Model: "model-x"})
 	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if len(got.Messages) != 2 || got.Messages[0].Role != agent.RoleUser || got.Messages[0].Content != "你好" {
-		t.Fatalf("messages not preserved: %+v", got.Messages)
-	}
-	if got.Messages[1].Role != agent.RoleAssistant {
-		t.Fatalf("assistant role not preserved: %+v", got.Messages[1])
+		t.Fatalf("Create session: %v", err)
 	}
 
-	// 追加消息后 Update，应正确重建消息列表。
-	got.Messages = append(got.Messages, agent.Message{Role: agent.RoleUser, Content: "第二句"})
-	if err := repo.Update(ctx, got); err != nil {
-		t.Fatalf("Update: %v", err)
+	// 消息按会话自动分配 Seq。
+	if _, err := messages.Create(ctx, message.CreateParams{SessionID: sess.ID, Role: message.RoleUser, Kind: message.KindUser, Content: "你好"}); err != nil {
+		t.Fatalf("Create user message: %v", err)
 	}
-	reloaded, err := repo.Get(ctx, conv.ID)
-	if err != nil {
-		t.Fatalf("Get after update: %v", err)
-	}
-	if len(reloaded.Messages) != 3 || reloaded.Messages[2].Content != "第二句" {
-		t.Fatalf("updated messages mismatch: %+v", reloaded.Messages)
+	if _, err := messages.Create(ctx, message.CreateParams{SessionID: sess.ID, Role: message.RoleAssistant, Kind: message.KindAssistantFinal, Content: "你好，有什么可以帮你？"}); err != nil {
+		t.Fatalf("Create assistant message: %v", err)
 	}
 
-	// 不存在返回 ErrConversationNotFound。
-	if _, err := repo.Get(ctx, 0); !errors.Is(err, agent.ErrConversationNotFound) {
-		t.Fatalf("expected ErrConversationNotFound, got %v", err)
+	msgs, err := messages.List(ctx, sess.ID)
+	if err != nil || len(msgs) != 2 {
+		t.Fatalf("List messages: len=%d err=%v", len(msgs), err)
+	}
+	if msgs[0].Seq != 0 || msgs[1].Seq != 1 || msgs[0].Content != "你好" {
+		t.Fatalf("messages not preserved: %+v", msgs)
 	}
 
-	// Page 按 user 过滤 + 降序。
-	conv2 := agent.NewConversation(2, agent.ProviderMock, "model-x")
-	conv2.Messages = []agent.Message{{Role: agent.RoleUser, Content: "hi"}}
-	if err := repo.Create(ctx, conv2); err != nil {
-		t.Fatalf("Create conv2: %v", err)
+	// 更新会话当前轮次任务。
+	sess.CurrentTaskID = 12345
+	if _, err := sessions.Save(ctx, sess); err != nil {
+		t.Fatalf("Save session: %v", err)
 	}
-	page, total, err := repo.Page(ctx, 1, 0, 10)
+	got, err := sessions.Get(ctx, sess.ID)
+	if err != nil || got.CurrentTaskID != 12345 {
+		t.Fatalf("session not updated: %+v err=%v", got, err)
+	}
+
+	// 不存在返回 session.ErrNotFound。
+	if _, err := sessions.Get(ctx, 0); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("expected session.ErrNotFound, got %v", err)
+	}
+
+	// List 按 user 过滤。
+	if _, err := sessions.Create(ctx, session.CreateParams{UserID: 2, Provider: agent.ProviderMock, Model: "model-x"}); err != nil {
+		t.Fatalf("Create session 2: %v", err)
+	}
+	page, total, err := sessions.List(ctx, session.ListParams{UserID: 1, Offset: 0, Limit: 10})
 	if err != nil || total != 1 || len(page) != 1 {
-		t.Fatalf("Page user-1: total=%d len=%d err=%v", total, len(page), err)
+		t.Fatalf("List user-1: total=%d len=%d err=%v", total, len(page), err)
 	}
-	if len(page[0].Messages) != 3 {
-		t.Fatalf("page[0] messages not loaded: %+v", page[0].Messages)
+
+	// 删除会话应级联清理消息。
+	if err := sessions.Delete(ctx, sess.ID); err != nil {
+		t.Fatalf("Delete session: %v", err)
+	}
+	if msgs, err := messages.List(ctx, sess.ID); err != nil || len(msgs) != 0 {
+		t.Fatalf("messages not cascaded: len=%d err=%v", len(msgs), err)
 	}
 }
 

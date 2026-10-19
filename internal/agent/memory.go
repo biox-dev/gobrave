@@ -1,6 +1,6 @@
 // Package agent 中的 memory 层：Agent 的「长期记忆」子系统。
 //
-// 与 conversation.go 中的「短期上下文」（单次会话的多轮历史）不同，memory 负责跨轮次、
+// 与 chat.go 中的「短期上下文」（单次会话的多轮历史）不同，memory 负责跨轮次、
 // 跨会话、跨任务的持久化记忆，例如用户偏好、已确认的事实、任务摘要等。它遵循与权限
 // 子系统一致的架构原则：Repository 是状态源，Manager 负责编排，检索 / 提取可插拔。
 package agent

@@ -16,8 +16,10 @@ import (
 	// "github.com/minebiome/ai-agent-go/internal/grpcserver"
 	// "github.com/minebiome/ai-agent-go/internal/handler"
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/message"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
 	agentrepository "github.com/biox-dev/gobrave/internal/agent/repository"
+	"github.com/biox-dev/gobrave/internal/agent/session"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
@@ -448,10 +450,17 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 			Policy:    agent.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
 		})
 	}))
-	// Provide ConversationService：多轮对话编排层（复用 AgentService 的任务状态机）。
-	// 使用数据库 Repository，使会话历史跨进程重启持久化。
-	must(container.Provide(func(svc *agent.AgentService, db *gorm.DB) *agent.ConversationService {
-		return agent.NewConversationService(svc, agentrepository.NewGormConversationRepository(db))
+	// Provide session.Service / message.Service：会话与消息的增删改查（参考 opencode 分层）。
+	// 使用数据库 Store，使会话历史跨进程重启持久化。
+	must(container.Provide(func(db *gorm.DB) session.Service {
+		return session.NewService(agentrepository.NewGormSessionStore(db))
+	}))
+	must(container.Provide(func(db *gorm.DB) message.Service {
+		return message.NewService(agentrepository.NewGormMessageStore(db))
+	}))
+	// Provide ChatService：多轮对话编排层（复用 AgentService 的任务状态机）。
+	must(container.Provide(func(svc *agent.AgentService, sessions session.Service, messages message.Service) *agent.ChatService {
+		return agent.NewChatService(svc, sessions, messages)
 	}))
 	must(container.Provide(manager.NewAISummaryContentProvider))
 	must(container.Provide(manager.NewAISummaryWorker))
@@ -944,8 +953,8 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&agent.PermissionRequest{},
 		&agent.QuestionRequest{},
 		&agent.AgentEvent{},
-		&agent.Conversation{},
-		&agent.ConversationMessage{},
+		&session.Session{},
+		&message.Message{},
 		&agent.Memory{},
 		&agent.Profile{},
 	// &types.Trace{},

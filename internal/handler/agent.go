@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	"github.com/biox-dev/gobrave/internal/agent/message"
+	"github.com/biox-dev/gobrave/internal/agent/session"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/errors"
@@ -26,7 +28,7 @@ import (
 //   - AgentService / Repository 是真正的 state。
 type AgentHandler struct {
 	svc  *agent.AgentService
-	conv *agent.ConversationService
+	chat *agent.ChatService
 	hub  *realtime.Hub
 
 	skills     *skill.Registry
@@ -39,10 +41,10 @@ type AgentHandler struct {
 }
 
 // NewAgentHandler 创建 AgentHandler。
-func NewAgentHandler(svc *agent.AgentService, conv *agent.ConversationService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry, skillStore *skill.Store) *AgentHandler {
+func NewAgentHandler(svc *agent.AgentService, chat *agent.ChatService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry, skillStore *skill.Store) *AgentHandler {
 	return &AgentHandler{
 		svc:        svc,
-		conv:       conv,
+		chat:       chat,
 		hub:        hub,
 		skills:     skills,
 		skillStore: skillStore,
@@ -78,12 +80,13 @@ type agentEventsQuery struct {
 }
 
 type chatRequest struct {
-	ConversationID string `json:"conversation_id"`            // 为空则新建会话
-	Message        string `json:"message" binding:"required"` // 本轮用户输入
-	Provider       string `json:"provider"`
-	Model          string `json:"model"`
-	ProfileID      int64  `json:"profile_id,string"` // AgentProfile ID（为空取默认；实际以当前用户配置为准）
-	WorkingDir     string `json:"working_dir"`
+	// SessionID 对应前端的 conversation_id（保持 API 兼容），为空则新建会话。
+	SessionID  string `json:"conversation_id"`
+	Message    string `json:"message" binding:"required"` // 本轮用户输入
+	Provider   string `json:"provider"`
+	Model      string `json:"model"`
+	ProfileID  int64  `json:"profile_id,string"` // AgentProfile ID（为空取默认；实际以当前用户配置为准）
+	WorkingDir string `json:"working_dir"`
 }
 
 // describeEnvRequest 是解析业务上下文的请求体（无字段）。
@@ -276,19 +279,19 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	workingDir := rc.WorkingDir
 
 	// 1) 准备一轮：追加 user 消息、组装历史、创建任务（复用 AgentService 状态机）。
-	// 新的对话 ConversationID 可能为空字符串，表示新建会话（TurnInput.ConversationID == 0）。
-	var conversationID int64
-	if strings.TrimSpace(req.ConversationID) != "" {
+	// 新的对话 conversation_id 可能为空字符串，表示新建会话（TurnInput.SessionID == 0）。
+	var sessionID int64
+	if strings.TrimSpace(req.SessionID) != "" {
 		var err error
-		conversationID, err = parseAgentID(req.ConversationID)
+		sessionID, err = parseAgentID(req.SessionID)
 		if err != nil {
 			c.Error(errors.NewValidationError("invalid conversation_id").WithDetails(err.Error()))
 			return
 		}
 	}
-	task, conv, err := h.conv.CreateTurn(c.Request.Context(), agent.TurnInput{
+	task, sess, err := h.chat.CreateTurn(c.Request.Context(), agent.TurnInput{
 		UserID:         userID,
-		ConversationID: conversationID,
+		SessionID:      sessionID,
 		Message:        req.Message,
 		Provider:       req.Provider,
 		Model:          req.Model,
@@ -305,14 +308,14 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	h.attachTaskStream(userID, task.ID)
 
 	// 3) 启动执行（异步，assistant 回复在轮次结束时自动写回会话历史）。
-	if err := h.conv.StartTurn(c.Request.Context(), task.ID); err != nil {
+	if err := h.chat.StartTurn(c.Request.Context(), task.ID); err != nil {
 		handleAgentError(c, err, "failed to start conversation turn")
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"task_id":         strconv.FormatInt(task.ID, 10),
-		"conversation_id": strconv.FormatInt(conv.ID, 10),
+		"conversation_id": strconv.FormatInt(sess.ID, 10),
 	})
 }
 
@@ -877,37 +880,54 @@ func (h *AgentHandler) PageTasks(c *gin.Context) {
 	})
 }
 
-type conversationPageRequest struct {
+type sessionPageRequest struct {
 	types.Pagination
 }
 
-// PageConversations godoc
+// sessionDetail 是会话详情响应：会话字段平铺 + 消息列表（保持原 conversation 响应结构）。
+type sessionDetail struct {
+	session.Session
+	Messages []message.Message `json:"messages"`
+}
+
+// PageSessions godoc
 // @Summary      分页查询当前用户的会话
 // @Tags         Agent
 // @Accept       json
 // @Produce      json
-// @Param        request  body      handler.conversationPageRequest  true  "分页请求参数"
+// @Param        request  body      handler.sessionPageRequest  true  "分页请求参数"
 // @Success      200      {object}  map[string]interface{}
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /agent/conversation/page [post]
-func (h *AgentHandler) PageConversations(c *gin.Context) {
+// @Router       /agent/session/page [post]
+func (h *AgentHandler) PageSessions(c *gin.Context) {
 	userID, ok := getCurrentUserID(c)
 	if !ok {
 		return
 	}
 
-	var req conversationPageRequest
+	var req sessionPageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
 		return
 	}
 
-	items, total, err := h.conv.PageConversations(c.Request.Context(), userID, req.Offset(), req.Limit())
+	sessions, total, err := h.chat.ListSessions(c.Request.Context(), userID, req.Offset(), req.Limit())
 	if err != nil {
-		handleAgentError(c, err, "failed to page conversations")
+		handleAgentError(c, err, "failed to page sessions")
 		return
+	}
+
+	// 会话列表按原 API 结构附带消息（Session 本身不内嵌 Messages）。
+	items := make([]sessionDetail, 0, len(sessions))
+	for _, sess := range sessions {
+		msgs, err := h.chat.ListMessages(c.Request.Context(), sess.ID)
+		if err != nil {
+			handleAgentError(c, err, "failed to load session messages")
+			return
+		}
+		items = append(items, sessionDetail{Session: sess, Messages: msgs})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -918,18 +938,18 @@ func (h *AgentHandler) PageConversations(c *gin.Context) {
 	})
 }
 
-// GetConversation godoc
+// GetSession godoc
 // @Summary      获取会话（含完整历史消息）
 // @Tags         Agent
 // @Produce      json
 // @Param        id   query     string  true  "会话 ID"
-// @Success      200  {object}  agent.Conversation
+// @Success      200  {object}  handler.sessionDetail
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
 // @Security     Bearer
-// @Router       /agent/conversation/get [get]
-func (h *AgentHandler) GetConversation(c *gin.Context) {
+// @Router       /agent/session/get [get]
+func (h *AgentHandler) GetSession(c *gin.Context) {
 	userID, ok := getCurrentUserID(c)
 	if !ok {
 		return
@@ -946,17 +966,17 @@ func (h *AgentHandler) GetConversation(c *gin.Context) {
 		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
 		return
 	}
-	conv, err := h.conv.GetConversation(c.Request.Context(), id)
+	sess, msgs, err := h.chat.GetSession(c.Request.Context(), id)
 	if err != nil {
-		handleAgentError(c, err, "failed to get conversation")
+		handleAgentError(c, err, "failed to get session")
 		return
 	}
 	// 校验归属，防止越权访问他人会话。
-	if conv.UserID != userID {
+	if sess.UserID != userID {
 		c.Error(errors.NewNotFoundError("record not found"))
 		return
 	}
-	c.JSON(http.StatusOK, conv)
+	c.JSON(http.StatusOK, sessionDetail{Session: sess, Messages: msgs})
 }
 
 // PagePermissions godoc
@@ -1532,7 +1552,7 @@ func handleAgentError(c *gin.Context, err error, internalMsg string) {
 	switch {
 	case stderrs.Is(err, agent.ErrTaskNotFound), stderrs.Is(err, agent.ErrPermissionNotFound),
 		stderrs.Is(err, agent.ErrQuestionNotFound),
-		stderrs.Is(err, agent.ErrConversationNotFound), stderrs.Is(err, agent.ErrMemoryNotFound):
+		stderrs.Is(err, session.ErrNotFound), stderrs.Is(err, agent.ErrMemoryNotFound):
 		c.Error(errors.NewNotFoundError("record not found"))
 	case stderrs.Is(err, agent.ErrPermissionNotPending),
 		stderrs.Is(err, agent.ErrQuestionNotPending),
