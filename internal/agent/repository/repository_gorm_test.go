@@ -195,6 +195,22 @@ func TestGormSessionAndMessageStores(t *testing.T) {
 		t.Fatalf("messages not preserved: %+v", msgs)
 	}
 
+	// 子会话：task session 以 toolCallID 作为 ID，title session 关联父会话。
+	taskSess, err := sessions.CreateTaskSession(ctx, 7777777, sess.ID, "task session")
+	if err != nil {
+		t.Fatalf("CreateTaskSession: %v", err)
+	}
+	if taskSess.ID != 7777777 || taskSess.ParentSessionID != sess.ID || taskSess.Title != "task session" {
+		t.Fatalf("unexpected task session: %+v", taskSess)
+	}
+	titleSess, err := sessions.CreateTitleSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("CreateTitleSession: %v", err)
+	}
+	if titleSess.ParentSessionID != sess.ID || titleSess.Title != session.TitleSessionTitle || titleSess.ID == 0 {
+		t.Fatalf("unexpected title session: %+v", titleSess)
+	}
+
 	// 更新会话当前轮次任务。
 	sess.CurrentTaskID = 12345
 	if _, err := sessions.Save(ctx, sess); err != nil {
