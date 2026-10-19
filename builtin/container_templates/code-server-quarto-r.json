@@ -1,35 +1,49 @@
 {
   "container_images": [
     {
-      "id": "202606160001",
-      "name": "rocker-tidyverse-r",
-      "full_name": "registry.cn-hangzhou.aliyuncs.com/wybioinfo/rocker-tidyverse-r:4.6.0",
-      "description": "https://rocker-project.org/images/versioned/rstudio.html\nhttps://www.bioconductor.org/help/docker/\nhttps://hub.docker.com/r/bioconductor/tidyverse/tags",
+      "id": "2089923441674162176",
+      "name": "code-server-quarto-r",
+      "full_name": "registry.cn-hangzhou.aliyuncs.com/wybioinfo/code-server-quarto-r",
+      "description": "",
       "size": 0
     }
   ],
   "container_template_specs": [
     {
-      "id": "202606160002",
-      "name": "rstudio",
-      "description": "https://rocker-project.org/images/versioned/rstudio.html\nhttps://www.bioconductor.org/help/docker/\nhttps://hub.docker.com/r/bioconductor/tidyverse/tags",
-      "command": "/init",
+      "id": "2089923556677783552",
+      "name": "code-server-quarto-r",
+      "description": "",
+      "command": "",
       "cpu": 0,
       "memory": 0,
       "work_dir": "",
-      "port": 8787,
-      "app_type": "rstudio",
+      "port": 8443,
+      "app_type": "code-server",
       "env": {
-        "USERID": "$USERID",
-        "GROUPID": "$GROUPID",
-        "R_SCRIPT": "$SCRIPT_FILE",
+        "PGID": "$DOCKER_GROUPID",
+        "PUID": "$USERID",
         "R_LIBS_USER": "$R_PACKAGE_DIR",
-        "DISABLE_AUTH": true,
-        "R_USER_WORKDIR": "$WORKSPACE_PATH",
-        "POSIT_ASSISTANT_ENABLED": 0,
-        "RSTUDIO_DISABLE_CHECK_FOR_UPDATES": 1
+        "PYTHONUSERBASE": "$PYTHON_PACKAGE_DIR",
+        "ANTHROPIC_MODEL": "deepseek-v4-pro[1m]",
+        "CONDA_ENVS_PATH": "$CONDA_PACKAGE_DIR",
+        "DEFAULT_WORKSPACE": "$WORKSPACE_PATH"
       },
-      "mounts": {},
+      "mounts": [
+        {
+          "mode": "rw",
+          "type": "file",
+          "owner": "app_session",
+          "source": "$USER_CONFIG_DIR/code-server/settings.json",
+          "target": "/config/data/User/settings.json"
+        },
+        {
+          "mode": "rw",
+          "type": "file",
+          "owner": "app_session",
+          "source": "$USER_CONFIG_DIR/code-server/continue_config.yaml",
+          "target": "/config/.continue/config.yaml"
+        }
+      ],
       "scheduling_constraint": null,
       "labels": null,
       "change_uid": false
@@ -37,9 +51,9 @@
   ],
   "container_template_definitions": [
     {
-      "id": "202606160002",
-      "spec_id": "202606160002",
-      "image_id": "202606160001",
+      "id": "2089923556677783552",
+      "spec_id": "2089923556677783552",
+      "image_id": "2089923441674162176",
       "display_name": ""
     }
   ]
