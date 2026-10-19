@@ -72,7 +72,6 @@ func (v *viewTool) Definition() tool.Definition {
 			"offset":    tool.IntegerProperty("The line number to start reading from (0-based)"),
 			"limit":     tool.IntegerProperty("The number of lines to read (defaults to 2000)"),
 		}, "file_path"),
-		Permission: &tool.Permission{Action: "read", PathFrom: "file_path"},
 	}
 }
 

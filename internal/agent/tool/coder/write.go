@@ -12,6 +12,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/logging"
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/tool/coder/diff"
 )
 
 type WriteParams struct {
@@ -79,7 +80,6 @@ func (w *writeTool) Definition() tool.Definition {
 			"file_path": tool.StringProperty("The path to the file to write"),
 			"content":   tool.StringProperty("The content to write to the file"),
 		}, "file_path", "content"),
-		Permission: &tool.Permission{Action: "write", PathFrom: "file_path"},
 	}
 }
 
@@ -132,6 +132,17 @@ func (w *writeTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 		if readErr == nil {
 			oldContent = string(oldBytes)
 		}
+	}
+
+	diffText, _, _ := diff.GenerateDiff(oldContent, params.Content, filePath)
+	if err := tool.RequirePermission(ctx, tool.PermissionRequest{
+		ToolName:    WriteToolName,
+		Action:      "write",
+		Description: fmt.Sprintf("Create file %s", filePath),
+		Params:      WritePermissionsParams{FilePath: filePath, Diff: diffText},
+		Path:        permissionPath(ctx, filePath),
+	}); err != nil {
+		return nil, err
 	}
 
 	sid := sessionID(ctx)

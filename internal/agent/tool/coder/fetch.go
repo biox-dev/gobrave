@@ -76,7 +76,6 @@ func (t *fetchTool) Definition() tool.Definition {
 			},
 			"timeout": tool.NumberProperty("Optional timeout in seconds (max 120)"),
 		}, "url", "format"),
-		Permission: &tool.Permission{Action: "network"},
 	}
 }
 
@@ -96,6 +95,16 @@ func (t *fetchTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 	}
 	if !strings.HasPrefix(params.URL, "http://") && !strings.HasPrefix(params.URL, "https://") {
 		return nil, toolError("URL must start with http:// or https://")
+	}
+
+	if err := tool.RequirePermission(ctx, tool.PermissionRequest{
+		ToolName:    FetchToolName,
+		Action:      "fetch",
+		Description: fmt.Sprintf("Fetch content from URL: %s", params.URL),
+		Params:      params,
+		Path:        workingDir(ctx),
+	}); err != nil {
+		return nil, err
 	}
 
 	client := t.client

@@ -107,7 +107,6 @@ func (e *editTool) Definition() tool.Definition {
 			"old_string": tool.StringProperty("The text to replace"),
 			"new_string": tool.StringProperty("The text to replace it with"),
 		}, "file_path", "old_string", "new_string"),
-		Permission: &tool.Permission{Action: "write", PathFrom: "file_path"},
 	}
 }
 
@@ -174,6 +173,15 @@ func (e *editTool) createNewFile(ctx context.Context, filePath, content string) 
 		content,
 		filePath,
 	)
+	if err := tool.RequirePermission(ctx, tool.PermissionRequest{
+		ToolName:    EditToolName,
+		Action:      "write",
+		Description: fmt.Sprintf("Create file %s", filePath),
+		Params:      EditPermissionsParams{FilePath: filePath, Diff: diff},
+		Path:        permissionPath(ctx, filePath),
+	}); err != nil {
+		return ToolResponse{}, err
+	}
 
 	err = os.WriteFile(filePath, []byte(content), 0o644)
 	if err != nil {
@@ -259,6 +267,15 @@ func (e *editTool) deleteContent(ctx context.Context, filePath, oldString string
 		newContent,
 		filePath,
 	)
+	if err := tool.RequirePermission(ctx, tool.PermissionRequest{
+		ToolName:    EditToolName,
+		Action:      "write",
+		Description: fmt.Sprintf("Delete content from file %s", filePath),
+		Params:      EditPermissionsParams{FilePath: filePath, Diff: diff},
+		Path:        permissionPath(ctx, filePath),
+	}); err != nil {
+		return ToolResponse{}, err
+	}
 
 	err = os.WriteFile(filePath, []byte(newContent), 0o644)
 	if err != nil {
@@ -354,6 +371,15 @@ func (e *editTool) replaceContent(ctx context.Context, filePath, oldString, newS
 		newContent,
 		filePath,
 	)
+	if err := tool.RequirePermission(ctx, tool.PermissionRequest{
+		ToolName:    EditToolName,
+		Action:      "write",
+		Description: fmt.Sprintf("Replace content in file %s", filePath),
+		Params:      EditPermissionsParams{FilePath: filePath, Diff: diff},
+		Path:        permissionPath(ctx, filePath),
+	}); err != nil {
+		return ToolResponse{}, err
+	}
 
 	err = os.WriteFile(filePath, []byte(newContent), 0o644)
 	if err != nil {

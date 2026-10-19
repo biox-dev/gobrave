@@ -17,6 +17,12 @@ type BashParams struct {
 	Timeout int    `json:"timeout"`
 }
 
+// BashPermissionsParams 是 bash 工具授权请求携带的参数（对齐 opencode）。
+type BashPermissionsParams struct {
+	Command string `json:"command"`
+	Timeout int    `json:"timeout"`
+}
+
 // BashOutput 是 bash 工具的结果（回传给模型）。
 type BashOutput struct {
 	Output   string `json:"output"`
@@ -38,6 +44,31 @@ var bannedCommands = []string{
 	"alias", "curl", "curlie", "wget", "axel", "aria2c",
 	"nc", "telnet", "lynx", "w3m", "links", "httpie", "xh",
 	"http-prompt", "chrome", "firefox", "safari",
+}
+
+// safeReadOnlyCommands 是不需要授权即可执行的只读命令（对齐 opencode）。
+var safeReadOnlyCommands = []string{
+	"ls", "echo", "pwd", "date", "cal", "uptime", "whoami", "id", "groups", "env", "printenv", "set", "unset", "which", "type", "whereis",
+	"whatis", "uname", "hostname", "df", "du", "free", "top", "ps", "kill", "killall", "nice", "nohup", "time", "timeout",
+
+	"git status", "git log", "git diff", "git show", "git branch", "git tag", "git remote", "git ls-files", "git ls-remote",
+	"git rev-parse", "git config --get", "git config --list", "git describe", "git blame", "git grep", "git shortlog",
+
+	"go version", "go help", "go list", "go env", "go doc", "go vet", "go fmt", "go mod", "go test", "go build", "go run", "go install", "go clean",
+}
+
+// isSafeReadOnlyCommand 报告命令是否为无需授权的只读命令。
+func isSafeReadOnlyCommand(command string) bool {
+	cmdLower := strings.ToLower(command)
+	for _, safe := range safeReadOnlyCommands {
+		if !strings.HasPrefix(cmdLower, strings.ToLower(safe)) {
+			continue
+		}
+		if len(cmdLower) == len(safe) || cmdLower[len(safe)] == ' ' || cmdLower[len(safe)] == '-' {
+			return true
+		}
+	}
+	return false
 }
 
 func bashDescription() string {
@@ -203,10 +234,6 @@ func (b *bashTool) Definition() tool.Definition {
 			"command": tool.StringProperty("The command to execute"),
 			"timeout": tool.NumberProperty("Optional timeout in milliseconds (max 600000)"),
 		}, "command"),
-		Permission: &tool.Permission{
-			Action:      "execute",
-			Description: "execute a shell command",
-		},
 	}
 }
 
@@ -231,6 +258,18 @@ func (b *bashTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 	for _, banned := range bannedCommands {
 		if strings.EqualFold(baseCmd, banned) {
 			return nil, toolError(fmt.Sprintf("command '%s' is not allowed", baseCmd))
+		}
+	}
+
+	if !isSafeReadOnlyCommand(params.Command) {
+		if err := tool.RequirePermission(ctx, tool.PermissionRequest{
+			ToolName:    BashToolName,
+			Action:      "execute",
+			Description: fmt.Sprintf("Execute command: %s", params.Command),
+			Params:      BashPermissionsParams{Command: params.Command, Timeout: params.Timeout},
+			Path:        workingDir(ctx),
+		}); err != nil {
+			return nil, err
 		}
 	}
 

@@ -57,7 +57,6 @@ func (d *diagnosticsTool) Definition() tool.Definition {
 		InputSchema: tool.Schema("diagnostics 工具入参", map[string]any{
 			"file_path": tool.StringProperty("The path to the file to get diagnostics for (leave empty for project diagnostics)"),
 		}),
-		Permission: &tool.Permission{Action: "read", PathFrom: "file_path"},
 	}
 }
 

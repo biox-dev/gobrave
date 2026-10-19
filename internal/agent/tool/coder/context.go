@@ -3,6 +3,8 @@ package coder
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/history"
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
@@ -39,6 +41,16 @@ func fileHistory(ctx context.Context) history.Service {
 // lspClients 返回注入的 LSP 客户端集合。
 func lspClients(ctx context.Context) map[string]*lsp.Client {
 	return tool.LSPClientsFrom(ctx)
+}
+
+// permissionPath 返回文件操作的授权范围（对齐 opencode）：
+// 文件位于工作目录内时收敛到工作目录，否则取文件所在目录。
+func permissionPath(ctx context.Context, filePath string) string {
+	root := workingDir(ctx)
+	if strings.HasPrefix(filePath, root) {
+		return root
+	}
+	return filepath.Dir(filePath)
 }
 
 // toolError 把可读错误信息包装为工具执行错误（由上层转成失败结果回传模型）。

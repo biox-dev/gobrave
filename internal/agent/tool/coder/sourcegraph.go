@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
 type SourcegraphParams struct {
@@ -142,7 +143,6 @@ func (t *sourcegraphTool) Definition() tool.Definition {
 			"context_window": tool.NumberProperty("The context around the match to return (default: 10 lines)"),
 			"timeout":        tool.NumberProperty("Optional timeout in seconds (max 120)"),
 		}, "query"),
-		Permission: &tool.Permission{Action: "network"},
 	}
 }
 

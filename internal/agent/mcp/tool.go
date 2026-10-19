@@ -93,12 +93,6 @@ func (t *Tool) Definition() tool.Definition {
 			"properties": t.server.Tool.InputSchema.Properties,
 			"required":   required,
 		},
-		// MCP 工具的行为由外部服务决定（可能读写文件 / 访问网络），
-		// 因此统一声明为 execute，让上层按用户权限策略走确认流程。
-		Permission: &tool.Permission{
-			Action:      "execute",
-			Description: fmt.Sprintf("execute MCP tool %s", name),
-		},
 	}
 }
 
@@ -110,6 +104,18 @@ func (t *Tool) Execute(ctx context.Context, args json.RawMessage) (any, error) {
 	var arguments map[string]any
 	if err := json.Unmarshal(args, &arguments); err != nil {
 		return nil, fmt.Errorf("mcp: invalid arguments: %w", err)
+	}
+
+	// MCP 工具的行为由外部服务决定（可能读写文件 / 访问网络），
+	// 执行前统一请求 execute 授权（工具名与 Definition 保持一致）。
+	name := fmt.Sprintf("%s_%s", t.server.Name, t.server.Tool.Name)
+	if err := tool.RequirePermission(ctx, tool.PermissionRequest{
+		ToolName:    name,
+		Action:      "execute",
+		Description: fmt.Sprintf("execute MCP tool %s", name),
+		Params:      arguments,
+	}); err != nil {
+		return nil, err
 	}
 
 	c, err := newClient(t.server.Config)

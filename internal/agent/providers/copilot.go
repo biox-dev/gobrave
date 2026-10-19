@@ -319,7 +319,8 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 				Description: def.Description,
 				Parameters:  def.InputSchema,
 				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
-					ctx := agent.WithProjectResourceBrowser(inv.TraceContext, browser)
+					ctx := agent.WithToolPermission(inv.TraceContext, rt, userID)
+					ctx = agent.WithProjectResourceBrowser(ctx, browser)
 					ctx = agent.WithSkills(ctx, skills)
 					if a.opts.LSP != nil {
 						ctx = agent.WithLSPClients(ctx, a.opts.LSP.Clients())

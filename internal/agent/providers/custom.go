@@ -51,9 +51,8 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 		return nil, err
 	}
 
-	userID := req.RequestUserID()
-	// 把 opencode 的工具权限请求委托给 gobrave 的 Runtime（策略 / 持久化 / UI）。
-	sdkOpts.PermissionHandler = a.permissionHandler(rt, userID)
+	// 工具权限不再经 opencode SDK 委托：每个工具在执行期通过 ctx 中的
+	// PermissionRequester 自行调用 Runtime.RequestPermission（见 WithToolPermission）。
 	// 把 gobrave 的工具注册为 opencode 的宿主工具，与内置工具共用同一套 tool-call 循环。
 	sdkOpts.Tools = a.buildHostTools(rt, req)
 
@@ -231,106 +230,6 @@ func providerType(pc agent.ModelProviderConfig) string {
 	return strings.ToLower(strings.TrimSpace(pc.Extra["type"]))
 }
 
-// permissionHandler 把 opencode SDK 的工具权限请求桥接到 gobrave 的 Runtime：
-//
-//	SDK 权限请求 → agent.Operation → rt.RequestPermission → 回译为 SDK 决策
-//
-// 与 copilot.go 的 permissionHandler 同构；错误一律映射为拒绝（安全默认）。
-func (a *customAgent) permissionHandler(rt agent.Runtime, userID int64) opencodesdk.PermissionHandler {
-	return func(ctx context.Context, p opencodesdk.PermissionRequest) opencodesdk.PermissionDecision {
-		op := permissionToOperation(p)
-		decision, err := rt.RequestPermission(ctx, userID, op)
-		if err != nil || decision != agent.DecisionAllow {
-			return opencodesdk.PermissionDeny
-		}
-		return opencodesdk.PermissionAllow
-	}
-}
-
-// permissionToOperation 把 opencode 的权限请求映射为框架内的 Operation 描述。
-//
-// Description 走 Operation 的一等字段（而非 Metadata），便于 UI 统一展示“这个操作
-// 到底要做什么”——opencode 会填入如 "Execute command: ls -la"、
-// "Replace content in file /a/b.go"、"Fetch content from URL: https://..." 等摘要。
-// diff / file_path 仍放在 Metadata（仅 edit / write 才有，供批准前查看改动）。
-func permissionToOperation(p opencodesdk.PermissionRequest) agent.Operation {
-	meta := map[string]any{"tool": p.ToolName}
-	// opencode 的 edit / write 工具会把 unified diff 放进权限请求的 params，
-	// 透传到 Operation.Metadata，使用户能在批准前先看 diff（而非批准后看 Tool Result）。
-	if diff, filePath := diffFromParams(p.Params); diff != "" {
-		meta["diff"] = diff
-		if filePath != "" {
-			meta["file_path"] = filePath
-		}
-	}
-
-	desc := strings.TrimSpace(p.Description)
-	path := strings.TrimSpace(p.Path)
-	if path == "" {
-		// opencode 部分工具把路径放在 params 里（Path 为空），从 diff 参数中回填。
-		if _, filePath := diffFromParams(p.Params); filePath != "" {
-			path = filePath
-		}
-	}
-
-	switch strings.ToLower(strings.TrimSpace(p.Action)) {
-	case "execute":
-		return agent.Operation{
-			Type:        agent.OperationExecute,
-			Command:     commandFromParams(p.Params, p.Description),
-			Description: desc,
-			Metadata:    meta,
-		}
-	case "write", "create", "update", "edit":
-		return agent.Operation{Type: agent.OperationWrite, Path: path, Description: desc, Metadata: meta}
-	case "delete":
-		return agent.Operation{Type: agent.OperationDelete, Path: path, Description: desc, Metadata: meta}
-	case "read":
-		return agent.Operation{Type: agent.OperationRead, Path: path, Description: desc, Metadata: meta}
-	case "fetch":
-		return agent.Operation{Type: agent.OperationNetwork, Description: desc, Metadata: meta}
-	case "analysis_node", "analysisnode":
-		return agent.Operation{Type: agent.OperationAnalysisNode, Description: desc, Metadata: meta}
-	default:
-		return agent.Operation{Type: agent.OperationExecute, Description: desc, Metadata: meta}
-	}
-}
-
-// commandFromParams 尽力从权限参数中抽取命令文本，失败时回退到描述。
-func commandFromParams(params any, fallback string) string {
-	if data, err := json.Marshal(params); err == nil {
-		var m map[string]any
-		if json.Unmarshal(data, &m) == nil {
-			if cmd, ok := m["command"].(string); ok && cmd != "" {
-				return cmd
-			}
-		}
-	}
-	return fallback
-}
-
-// diffFromParams 尽力从权限参数中抽取 file_path / diff（opencode edit / write 工具）。
-//
-// gobrave 无法 import opencode 的 internal tools 包做类型断言，因此与 commandFromParams
-// 一样走 JSON 往返；字段名沿用 EditPermissionsParams / WritePermissionsParams 的 json tag。
-func diffFromParams(params any) (diff, filePath string) {
-	data, err := json.Marshal(params)
-	if err != nil {
-		return "", ""
-	}
-	var m map[string]any
-	if json.Unmarshal(data, &m) != nil {
-		return "", ""
-	}
-	if d, ok := m["diff"].(string); ok {
-		diff = d
-	}
-	if p, ok := m["file_path"].(string); ok {
-		filePath = p
-	}
-	return diff, filePath
-}
-
 func isTrue(value string) bool {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -445,6 +344,7 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 			name := def.Name
 			ht := hostTool(def.Name, def.Description, def.InputSchema,
 				func(ctx context.Context, call opencodesdk.HostToolCall) opencodesdk.HostToolResult {
+					ctx = agent.WithToolPermission(ctx, rt, req.RequestUserID())
 					ctx = agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, files)
 					ctx = agent.WithProjectResourceBrowser(ctx, browser)
 					ctx = agent.WithSkills(ctx, skills)
@@ -454,12 +354,8 @@ func (a *customAgent) buildHostTools(rt agent.Runtime, req agent.Request) []open
 					res := exec.Execute(ctx, tool.Call{ID: call.ID, Name: name, Arguments: json.RawMessage(call.Input)})
 					return opencodesdk.HostToolResult{Content: res.Content, IsError: res.IsError}
 				})
-			// 工具自带权限元信息（tool.Definition.Permission）时，声明为 opencode 宿主工具的
-			// 授权动作：执行前会走权限门禁 → SDK PermissionHandler → Runtime.RequestPermission。
-			// 未声明的工具默认免授权（与内置只读工具语义一致）。
-			if def.Permission != nil {
-				ht = withPermission(ht, def.Permission.Action, def.Permission.PathFrom, def.Permission.Description)
-			}
+			// 授权由工具自身在 Execute 中调用 tool.RequirePermission 完成，
+			// 这里不再向 opencode 宿主工具声明权限动作。
 			out = append(out, ht)
 		}
 	}
@@ -600,17 +496,6 @@ func hostTool(name, description string, schema map[string]any, run func(ctx cont
 			return run(ctx, call), nil
 		},
 	}
-}
-
-// withPermission 声明宿主工具的授权动作（链式），配置后该工具执行前会走
-// opencode 的权限门禁 → SDK PermissionHandler → Runtime.RequestPermission。
-func withPermission(t opencodesdk.HostTool, action, pathFrom, description string) opencodesdk.HostTool {
-	t.Permission = &opencodesdk.HostToolPermission{
-		Action:      action,
-		PathFrom:    pathFrom,
-		Description: description,
-	}
-	return t
 }
 
 // splitInputSchema 把 gobrave 的完整 object JSON Schema 拆分为 opencode 宿主工具所需的

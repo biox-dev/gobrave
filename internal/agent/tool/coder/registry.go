@@ -5,8 +5,8 @@
 //   - 全部实现 gobrave 的 tool.Tool（Definition + Execute），可直接注册进 tool.Registry；
 //   - 工具的依赖（文件历史 / LSP 客户端 / 工作目录 / 会话 ID）在执行期从 ctx 读取，
 //     因此工具本身无状态，可在注册表里单例复用；
-//   - opencode 的 permission.Service 交互不再保留：授权动作改为通过
-//     tool.Definition.Permission 声明，由上层 ToolRunner / Provider 统一走权限门禁。
+//   - 权限请求与 opencode internal/llm/tools 对齐：工具在真正读写 / 执行前自行调用
+//     tool.RequirePermission，由 ctx 中的 PermissionRequester 桥接到 Runtime。
 package coder
 
 import "github.com/biox-dev/gobrave/internal/agent/tool"

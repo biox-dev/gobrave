@@ -73,9 +73,6 @@ func (p *patchTool) Definition() tool.Definition {
 		InputSchema: tool.Schema("patch 工具入参", map[string]any{
 			"patch_text": tool.StringProperty("The full patch text that describes all changes to be made"),
 		}, "patch_text"),
-		// patch 涉及多个文件，无法从单个入参路径推导授权范围；
-		// 声明为 write 动作，让上层按工具名统一走权限门禁。
-		Permission: &tool.Permission{Action: "write"},
 	}
 }
 
@@ -158,6 +155,45 @@ func (p *patchTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 	}
 
 	sid := sessionID(ctx)
+
+	// 对齐 opencode：逐个变更文件请求授权（create / update / delete）。
+	for path, change := range commit.Changes {
+		oldContent := ""
+		if change.OldContent != nil {
+			oldContent = *change.OldContent
+		}
+		newContent := ""
+		if change.NewContent != nil {
+			newContent = *change.NewContent
+		}
+
+		var action, description string
+		switch change.Type {
+		case diff.ActionAdd:
+			action = "create"
+			description = fmt.Sprintf("Create file %s", path)
+		case diff.ActionUpdate:
+			action = "update"
+			description = fmt.Sprintf("Update file %s", path)
+		case diff.ActionDelete:
+			action = "delete"
+			description = fmt.Sprintf("Delete file %s", path)
+			newContent = ""
+		default:
+			continue
+		}
+
+		patchDiff, _, _ := diff.GenerateDiff(oldContent, newContent, path)
+		if err := tool.RequirePermission(ctx, tool.PermissionRequest{
+			ToolName:    PatchToolName,
+			Action:      action,
+			Description: description,
+			Params:      EditPermissionsParams{FilePath: path, Diff: patchDiff},
+			Path:        filepath.Dir(absPath(path)),
+		}); err != nil {
+			return nil, err
+		}
+	}
 
 	// Apply the changes to the filesystem
 	err = diff.ApplyCommit(commit, func(path string, content string) error {

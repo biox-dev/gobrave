@@ -6,8 +6,9 @@
 //   - 如何组织它们（Registry 按名注册 / 解析）；
 //   - 如何调用它们（Executor 解析工具 → 校验参数 → 套用中间件 → 执行）。
 //
-// 上层 internal/agent 通过 ToolRunner 把工具执行桥接到 Runtime（事件流 + 权限门禁），
-// 因此本包不依赖 agent，避免循环引用。
+// 上层 internal/agent 通过 ToolRunner 把工具执行事件桥接到 Runtime；权限则由工具
+// 在执行期通过 ctx 中的 PermissionRequester 自行请求（见 permission.go）。因此本包
+// 不依赖 agent，避免循环引用。
 package tool
 
 import (
@@ -25,29 +26,15 @@ var (
 	ErrInvalidArguments = errors.New("tool: invalid arguments")
 )
 
-// Permission 描述一个工具执行所需的授权动作。
-//
-// 它是工具自带的“权限元信息”，由上层（ToolRunner / Provider）在调用前消费，
-// 映射为 Runtime 的 Operation 以走统一的权限门禁。tool 包本身不执行权限判定，
-// 因此这里只做声明，不依赖 agent 包。
-type Permission struct {
-	// Action 是授权动作：execute / write / read / fetch / delete ...
-	Action string
-	// PathFrom 可选：从入参 JSON 中取路径的字段名（如 "path" / "file_path"）。
-	PathFrom string
-	// Description 可选：展示给用户的授权描述；为空时由上层生成默认描述。
-	Description string
-}
-
 // Definition 描述一个工具，用于暴露给模型（function calling 的 tool 定义）。
 //
 // InputSchema 是参数的 JSON Schema（object 类型），模型据此生成调用参数。
-// Permission 为 nil 表示该工具免授权（与内置只读工具语义一致）。
+// 这里只承载模型可见的元信息；授权动作由工具在执行期自行调用
+// RequestPermission（见 permission.go）声明，不再作为定义元数据透传给 Provider。
 type Definition struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	InputSchema map[string]any `json:"input_schema"`
-	Permission  *Permission    `json:"permission,omitempty"`
 }
 
 // Tool 是可被 Agent 调用的一个工具。
@@ -86,14 +73,19 @@ func NewFunc[In, Out any](name, description string, inputSchema map[string]any, 
 	}
 }
 
-// WithPermission 声明工具的授权动作（链式），返回自身便于继续链式调用。
+// WithPermission 为工具声明授权动作（链式），返回自身便于继续链式调用。
 //
-// 声明后，上层在执行该工具前会先走权限门禁（Runtime.RequestPermission）。
+// 声明后，工具在解析出入参后、执行前会调用 RequestPermission；被拒绝时返回
+// ErrPermissionDenied。pathFrom 指定从入参中取授权路径的字段名（可为空）。
 func (f *Func[In, Out]) WithPermission(action, pathFrom, description string) *Func[In, Out] {
-	f.def.Permission = &Permission{
-		Action:      action,
-		PathFrom:    pathFrom,
-		Description: description,
+	inner := f.fn
+	name := f.def.Name
+	f.fn = func(ctx context.Context, in In) (Out, error) {
+		var zero Out
+		if err := RequirePermission(ctx, permissionRequestFor(ctx, name, action, pathFrom, description, in)); err != nil {
+			return zero, err
+		}
+		return inner(ctx, in)
 	}
 	return f
 }
