@@ -3,7 +3,11 @@ package native
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
@@ -123,5 +127,158 @@ func TestTaskAgentToolsAreReadOnly(t *testing.T) {
 		if names[forbidden] {
 			t.Fatalf("TaskAgentTools() must not expose %q", forbidden)
 		}
+	}
+}
+
+// concurrencyProbe 记录并发峰值，用于证明多个子 Agent 确实同时在跑。
+type concurrencyProbe struct {
+	mu      sync.Mutex
+	current int
+	max     int
+}
+
+func (p *concurrencyProbe) enter() {
+	p.mu.Lock()
+	p.current++
+	if p.current > p.max {
+		p.max = p.current
+	}
+	p.mu.Unlock()
+}
+
+func (p *concurrencyProbe) leave() {
+	p.mu.Lock()
+	p.current--
+	p.mu.Unlock()
+}
+
+func (p *concurrencyProbe) peak() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.max
+}
+
+// barrierClient 会在 Stream 开始时登记，并阻塞到 release 关闭后才返回回答；
+// 只有真正并发执行时，多个 Stream 才能同时到达 barrier。
+type barrierClient struct {
+	probe   *concurrencyProbe
+	started *sync.WaitGroup
+	release <-chan struct{}
+}
+
+func (b *barrierClient) Stream(ctx context.Context, messages []provider.Message, _ []provider.Tool) <-chan provider.Event {
+	b.probe.enter()
+	defer b.probe.leave()
+
+	b.started.Done()
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+	}
+
+	answer := "answer"
+	if len(messages) > 0 {
+		answer += ":" + messages[len(messages)-1].Content
+	}
+	ch := make(chan provider.Event, 1)
+	ch <- provider.Event{Type: provider.EventComplete, Response: &provider.Response{Content: answer}}
+	close(ch)
+	return ch
+}
+
+func TestAgentToolRunsBatchConcurrently(t *testing.T) {
+	probe := &concurrencyProbe{}
+	release := make(chan struct{})
+	var started sync.WaitGroup
+	started.Add(2)
+
+	var closed sync.Once
+	closeRelease := func() { closed.Do(func() { close(release) }) }
+	// 两个子 Agent 都进入 Stream 后才放行；若退化为串行执行，由 watchdog 兜底避免测试挂死。
+	go func() {
+		started.Wait()
+		closeRelease()
+	}()
+	watchdog := time.AfterFunc(2*time.Second, closeRelease)
+	defer watchdog.Stop()
+
+	agentTool := NewAgentTool(AgentToolConfig{
+		NewClient: func(context.Context) (provider.Client, error) {
+			return &barrierClient{probe: probe, started: &started, release: release}, nil
+		},
+	})
+
+	out, err := agentTool.Execute(context.Background(), json.RawMessage(
+		`{"prompts":[{"name":"alpha","prompt":"task alpha"},{"name":"beta","prompt":"task beta"}]}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	text, ok := out.(string)
+	if !ok {
+		t.Fatalf("Execute() = %T, want string", out)
+	}
+	if probe.peak() < 2 {
+		t.Fatalf("peak concurrency = %d, want >= 2", probe.peak())
+	}
+	alphaIdx := strings.Index(text, "## alpha")
+	betaIdx := strings.Index(text, "## beta")
+	if alphaIdx < 0 || betaIdx < 0 || alphaIdx > betaIdx {
+		t.Fatalf("batch result not merged in requested order:\n%s", text)
+	}
+	if !strings.Contains(text, "answer:task alpha") || !strings.Contains(text, "answer:task beta") {
+		t.Fatalf("batch result missing sub-agent answers:\n%s", text)
+	}
+}
+
+// promptErrorClient 对指定 prompt 返回错误事件，其余 prompt 正常回答。
+type promptErrorClient struct{ failOn string }
+
+func (c *promptErrorClient) Stream(_ context.Context, messages []provider.Message, _ []provider.Tool) <-chan provider.Event {
+	ch := make(chan provider.Event, 1)
+	prompt := ""
+	if len(messages) > 0 {
+		prompt = messages[len(messages)-1].Content
+	}
+	if prompt == c.failOn {
+		ch <- provider.Event{Type: provider.EventError, Error: errors.New("sub-agent failed")}
+	} else {
+		ch <- provider.Event{Type: provider.EventComplete, Response: &provider.Response{Content: "ok:" + prompt}}
+	}
+	close(ch)
+	return ch
+}
+
+func TestAgentToolBatchKeepsGoingAfterFailure(t *testing.T) {
+	agentTool := NewAgentTool(AgentToolConfig{
+		NewClient: func(context.Context) (provider.Client, error) {
+			return &promptErrorClient{failOn: "b"}, nil
+		},
+	})
+
+	out, err := agentTool.Execute(context.Background(), json.RawMessage(
+		`{"prompts":[{"name":"good","prompt":"a"},{"name":"bad","prompt":"b"}],"max_concurrency":2}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	text, _ := out.(string)
+	if !strings.Contains(text, "## good") || !strings.Contains(text, "ok:a") {
+		t.Fatalf("missing successful sub-agent result:\n%s", text)
+	}
+	if !strings.Contains(text, "## bad") || !strings.Contains(text, "[error]") || !strings.Contains(text, "sub-agent failed") {
+		t.Fatalf("missing failed sub-agent error:\n%s", text)
+	}
+}
+
+func TestAgentToolRejectsPromptAndPromptsTogether(t *testing.T) {
+	agentTool := NewAgentTool(AgentToolConfig{
+		NewClient: func(context.Context) (provider.Client, error) {
+			t.Fatal("NewClient must not be called for invalid params")
+			return nil, nil
+		},
+	})
+	_, err := agentTool.Execute(context.Background(), json.RawMessage(
+		`{"prompt":"a","prompts":[{"prompt":"b"}]}`))
+	if err == nil {
+		t.Fatal("expected error when both prompt and prompts are provided")
 	}
 }

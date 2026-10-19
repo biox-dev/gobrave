@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
@@ -118,41 +119,111 @@ func (c *Config) streamOnce(ctx context.Context, history []provider.Message, too
 	return nil, thinking.String(), fmt.Errorf("native agent: stream ended without completion")
 }
 
-// executeTools 逐个执行工具调用，并把调用 / 结果作为完整块事件下发。
+// maxConcurrentAgentCalls 限制同一轮内并发执行的子 Agent 调用数。
+//
+// 只对 agent 工具生效：子 Agent 彼此独立且只读；其它工具仍顺序执行，避免同一文件上的
+// 写操作互相覆盖。
+const maxConcurrentAgentCalls = 4
+
+// executeTools 执行本轮的多个工具调用。
+//
+//   - agent 工具调用彼此独立，允许并发执行，缩短多子 Agent 场景的总耗时；
+//   - 其它工具保持顺序执行，避免 bash / edit / write 等写操作互相干扰；
+//   - 结果按模型给出的调用顺序回填（与 tool_call_id 一一对应），并发完成顺序不影响语义。
 func (c *Config) executeTools(ctx context.Context, executor *tool.Executor, calls []provider.ToolCall, rt agent.Runtime) []provider.ToolResult {
-	results := make([]provider.ToolResult, 0, len(calls))
+	results := make([]provider.ToolResult, len(calls))
+
+	// 先按顺序下发全部 tool_call 事件，保证时间线里调用顺序与模型输出一致。
 	for _, call := range calls {
 		_ = rt.Emit(ctx, agent.StreamEvent{
 			Type: agent.StreamEventToolCall,
 			Data: agent.ToolCall{ID: call.ID, Name: call.Name, Arguments: call.Input},
 		})
+	}
 
-		toolCtx := ctx
-		if c.PrepareToolContext != nil {
-			toolCtx = c.PrepareToolContext(ctx)
+	agentCalls := 0
+	for _, call := range calls {
+		if call.Name == AgentToolName {
+			agentCalls++
 		}
-		res := executor.Execute(toolCtx, tool.Call{
-			ID:        call.ID,
-			Name:      call.Name,
-			Arguments: json.RawMessage(call.Input),
-		})
+	}
 
-		_ = rt.Emit(ctx, agent.StreamEvent{
-			Type: agent.StreamEventToolResult,
-			Data: map[string]any{
-				"tool_call_id": call.ID,
-				"name":         call.Name,
-				"content":      res.Content,
-				"is_error":     res.IsError,
-			},
-		})
-		results = append(results, provider.ToolResult{
-			ToolCallID: call.ID,
-			Content:    res.Content,
-			IsError:    res.IsError,
-		})
+	// 并发执行 agent 调用；完成一个就通知主协程下发该调用的结果事件。
+	done := make(chan int, agentCalls)
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrentAgentCalls)
+	for i, call := range calls {
+		if call.Name != AgentToolName {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, call provider.ToolCall) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				results[i] = provider.ToolResult{
+					ToolCallID: call.ID,
+					Content:    "Tool execution canceled by user",
+					IsError:    true,
+				}
+				done <- i
+				return
+			}
+			results[i] = c.executeTool(ctx, executor, call)
+			done <- i
+		}(i, call)
+	}
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	// 主协程顺序执行其它工具，并即时下发它们的结果事件。
+	for i, call := range calls {
+		if call.Name == AgentToolName {
+			continue
+		}
+		results[i] = c.executeTool(ctx, executor, call)
+		c.emitToolResult(ctx, rt, call, results[i])
+	}
+	// 子 Agent 结果按完成顺序下发（tool_call_id 仍能正确对应）。
+	for i := range done {
+		c.emitToolResult(ctx, rt, calls[i], results[i])
 	}
 	return results
+}
+
+// executeTool 执行单个工具调用（注入工具执行上下文）。
+func (c *Config) executeTool(ctx context.Context, executor *tool.Executor, call provider.ToolCall) provider.ToolResult {
+	toolCtx := ctx
+	if c.PrepareToolContext != nil {
+		toolCtx = c.PrepareToolContext(ctx)
+	}
+	res := executor.Execute(toolCtx, tool.Call{
+		ID:        call.ID,
+		Name:      call.Name,
+		Arguments: json.RawMessage(call.Input),
+	})
+	return provider.ToolResult{
+		ToolCallID: call.ID,
+		Content:    res.Content,
+		IsError:    res.IsError,
+	}
+}
+
+// emitToolResult 下发一次完整的工具结果事件。
+func (c *Config) emitToolResult(ctx context.Context, rt agent.Runtime, call provider.ToolCall, res provider.ToolResult) {
+	_ = rt.Emit(ctx, agent.StreamEvent{
+		Type: agent.StreamEventToolResult,
+		Data: map[string]any{
+			"tool_call_id": call.ID,
+			"name":         call.Name,
+			"content":      res.Content,
+			"is_error":     res.IsError,
+		},
+	})
 }
 
 // requestMessages 把请求历史转换为模型消息：只保留 user / assistant 文本。
