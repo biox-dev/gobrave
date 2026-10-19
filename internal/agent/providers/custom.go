@@ -66,7 +66,7 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 
 	nativeAgent := &native.Config{
 		Client:             client,
-		Tools:              a.toolRegistry(rt, req.RequestUserID()),
+		Tools:              a.toolRegistry(req, rt),
 		PrepareToolContext: a.toolContext(req, rt),
 	}
 	return nativeAgent.Run(ctx, req, rt)
@@ -133,18 +133,46 @@ func (a *customAgent) llmOptions(req agent.Request) (provider.Options, error) {
 	}, nil
 }
 
-// toolRegistry 组合本次调用可用的工具：注册表工具 + 内置 ask_user。
+// toolRegistry 组合本次调用可用的工具：注册表工具 + 内置 ask_user + 子 Agent 工具。
 //
 // ask_user 依赖 Runtime 阻塞等待用户作答，因此只在有 Runtime 时注册。
-func (a *customAgent) toolRegistry(rt agent.Runtime, userID int64) *tool.Registry {
+func (a *customAgent) toolRegistry(req agent.Request, rt agent.Runtime) *tool.Registry {
 	items := make([]tool.Tool, 0)
 	if a.opts.Tools != nil {
 		items = append(items, a.opts.Tools.Tools()...)
 	}
 	if rt != nil {
-		items = append(items, askUserTool(rt, userID))
+		items = append(items, askUserTool(rt, req.RequestUserID()))
 	}
+	// 子 Agent 工具（迁移自 opencode NewAgentTool）：模型可把「多轮检索」委派给
+	// 只读子 Agent，避免父 Agent 上下文被大量中间结果占满。
+	items = append(items, a.newAgentTool(req, rt))
 	return tool.NewRegistryWith(items...)
+}
+
+// newAgentTool 构建 agent 工具：复用父请求的模型 / 厂商配置启动一个只读子 Agent。
+//
+// 与 opencode NewAgentTool 的差异：gobrave 没有会话服务，子 Agent 不再创建 task
+// 会话，而是同步运行原生 Agent 循环并直接返回最终回答（见 native.NewAgentTool）。
+func (a *customAgent) newAgentTool(req agent.Request, rt agent.Runtime) tool.Tool {
+	prepare := a.toolContext(req, rt)
+	workingDir := firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
+	return native.NewAgentTool(native.AgentToolConfig{
+		// 子 Agent 沿用父请求的模型 / 厂商配置，只替换系统提示词；配置错误在执行期
+		// 转为工具失败结果，由父 Agent 决定是否重试。
+		NewClient: func(context.Context) (provider.Client, error) {
+			subReq := req
+			subReq.SystemPrompt = native.TaskAgentSystemPrompt
+			llmOpts, err := a.llmOptions(subReq)
+			if err != nil {
+				return nil, err
+			}
+			return provider.New(llmOpts)
+		},
+		PrepareToolContext: prepare,
+		WorkingDir:         workingDir,
+		SystemPrompt:       native.TaskAgentSystemPrompt,
+	})
 }
 
 // toolContext 返回工具执行前的 ctx 装饰函数：注入权限、请求事实与进程级服务能力。
