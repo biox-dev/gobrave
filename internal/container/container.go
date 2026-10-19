@@ -18,6 +18,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/history"
 	lspmanager "github.com/biox-dev/gobrave/internal/agent/lsp/manager"
+	"github.com/biox-dev/gobrave/internal/agent/mcp"
 	"github.com/biox-dev/gobrave/internal/agent/message"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
 	agentrepository "github.com/biox-dev/gobrave/internal/agent/repository"
@@ -173,6 +174,26 @@ func agentProviders(cfg *config.Config) map[string]agent.ModelProviderConfig {
 	return providers
 }
 
+// buildMCPTools 连接配置中的外部 MCP 服务并返回其工具。
+//
+// 未配置 mcp.servers（或总开关关闭）时返回 nil。单个服务连接失败只记录日志
+// 并跳过，不会阻断进程启动；工具在进程内缓存，修改配置后需重启生效。
+func buildMCPTools(cfg *config.Config) []tool.Tool {
+	if cfg == nil {
+		return nil
+	}
+	servers := mcp.ServersFromConfig(cfg.MCP)
+	if len(servers) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.MCP.Timeout())
+	defer cancel()
+
+	tools := mcp.NewManager(servers).Tools(ctx)
+	logger.GetLogger(ctx).Infof("mcp: 已注册 %d 个 MCP 工具（服务数 %d）", len(tools), len(servers))
+	return tools
+}
+
 // buildAgentClient 根据配置构建 Agent 调用门面。
 // 模型提供商配置表（按模型名索引）由 config.agent.providers 实时映射进 Options.Providers，
 // 供 Provider 在每次调用时按 Profile.Model 解析出 base_url / api_key 等 LLM 配置。
@@ -202,6 +223,10 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	// （bash / edit / view / write / patch / glob / grep / ls / fetch / sourcegraph / diagnostics）。
 	// 后续新增内置工具时在 builtin.All() / coder.All() 中追加即可，无需改动此处。
 	opts.Tools = tool.NewRegistryWith(append(builtin.All(), coder.All()...)...)
+	// 外部 MCP 服务提供的工具：工具名为 <服务名>_<工具名>，与内置工具同池调度（权限门禁复用）。
+	for _, t := range buildMCPTools(cfg) {
+		opts.Tools.Register(t)
+	}
 	// 进程级服务能力：run_analysis_node 等 builtin 工具在执行期通过它触发节点运行。
 	opts.AnalysisNodeRunner = runner
 	// 进程级服务能力：read_file_by_id 等 builtin 工具在执行期通过它按文件 ID 读取内容预览。

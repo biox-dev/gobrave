@@ -574,8 +574,14 @@ func SanitizeForLogArray(input []string) []string {
 // AllowedStdioCommands defines the whitelist of allowed commands for MCP stdio transport
 // These are the standard MCP server launchers that are considered safe
 var AllowedStdioCommands = map[string]bool{
-	"uvx": true, // Python package runner (uv)
-	"npx": true, // Node.js package runner
+	"uvx":     true, // Python package runner (uv)
+	"uv":      true, // Python package manager
+	"npx":     true, // Node.js package runner
+	"node":    true, // Node.js runtime
+	"python":  true, // Python runtime
+	"python3": true, // Python 3 runtime
+	"deno":    true, // Deno runtime
+	"bun":     true, // Bun runtime
 }
 
 // DangerousArgPatterns contains patterns that indicate potentially dangerous arguments

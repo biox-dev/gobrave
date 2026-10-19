@@ -99,6 +99,7 @@ type Config struct {
 	Realtime    *RealtimeConfig  `yaml:"realtime" json:"realtime"`
 	LLM         *LLMConfig       `yaml:"llm" json:"llm"`
 	Agent       *AgentConfig     `yaml:"agent" json:"agent"`
+	MCP         *MCPConfig       `yaml:"mcp" json:"mcp"`
 	Container   *ContainerConfig `yaml:"container" json:"container"`
 	DebugConfig *DebugConfig     `yaml:"debug" json:"debug"`
 	User        *UserConfig      `yaml:"user"  json:"user"`
@@ -503,6 +504,7 @@ func defaultConfig() *Config {
 			// 直接看到「厂商 / 模型 / api_key」，填完 API Key 即可使用。
 			Providers: defaultBuiltinModelProviders(),
 		},
+		MCP:       DefaultMCPConfig(),
 		Container: DefaultContainerConfig(),
 		DebugConfig: &DebugConfig{
 			EnableDagOrchestrator: false,

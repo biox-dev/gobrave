@@ -127,6 +127,32 @@ agent:
       api_model: "deepseek-v4-pro"
       api_key: "sk-xxxxxxxxxxxxxxx"
 
+# 外部 MCP（Model Context Protocol）服务。
+# 启用后，服务启动时会连接各 MCP 服务并把其工具注册到 Agent 工具表，
+# 工具名为 <服务名>_<工具名>（例如 filesystem_read_file），与内置工具共用权限门禁。
+# 注意：工具在进程内缓存，修改本段后需重启进程生效。
+mcp:
+  # 总开关；false 时不会连接任何 MCP 服务。
+  enabled: true
+  # 启动时发现工具的超时时间（秒），超时后跳过该服务，不影响进程启动。
+  timeout_seconds: 60
+  servers:
+    # 示例：Node.js 官方 filesystem 服务（stdio）。
+    # stdio 的命令白名单：uvx / uv / npx / node / python / python3 / deno / bun；
+    # 参数中禁止 shell 链式调用、命令替换、绝对路径二进制等危险写法，
+    # 环境变量禁止 PATH / NODE_OPTIONS / LD_PRELOAD 等敏感变量。
+    filesystem:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    # 示例：SSE 服务。
+    # remote:
+    #   type: sse
+    #   url: "http://127.0.0.1:3001/sse"
+    #   headers:
+    #     Authorization: "Bearer <token>"
+    # 单个服务可用 enabled: false 关闭。
+
 container:
   # 启动时注册的容器运行时列表（可同时注册多个，例如 [docker, k8s]）。
   # 留空时回退到 default_runtime 指定的单一运行时。

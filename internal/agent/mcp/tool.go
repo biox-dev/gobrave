@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -166,12 +168,33 @@ func listTools(ctx context.Context, name string, cfg Server) ([]MCPServer, error
 func newClient(cfg Server) (client.MCPClient, error) {
 	switch cfg.Type {
 	case TypeStdio:
+		// stdio 会启动外部进程，执行前必须通过命令/参数/环境变量的白名单校验。
+		if err := utils.ValidateStdioConfig(cfg.Command, cfg.Args, envMap(cfg.Env)); err != nil {
+			return nil, fmt.Errorf("mcp: invalid stdio config: %w", err)
+		}
 		return client.NewStdioMCPClient(cfg.Command, cfg.Env, cfg.Args...)
 	case TypeSSE:
 		return client.NewSSEMCPClient(cfg.URL, client.WithHeaders(cfg.Headers))
 	default:
 		return nil, fmt.Errorf("mcp: invalid server type %q", cfg.Type)
 	}
+}
+
+// envMap 把 KEY=VALUE 切片还原为 map（供 stdio 配置校验使用）。
+func envMap(env []string) map[string]string {
+	if len(env) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(env))
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			out[entry] = ""
+			continue
+		}
+		out[key] = value
+	}
+	return out
 }
 
 // initialize 完成 MCP 握手。

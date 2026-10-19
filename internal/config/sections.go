@@ -58,6 +58,17 @@ var sections = []*Section{
 		},
 		normalizeAgentConfig,
 	),
+	newSection(
+		"mcp",
+		"MCP",
+		func(c *Config) *MCPConfig {
+			if c.MCP == nil {
+				c.MCP = DefaultMCPConfig()
+			}
+			return c.MCP
+		},
+		normalizeMCPConfig,
+	),
 }
 
 // RegisteredSections 返回所有已注册的可视化配置段。
