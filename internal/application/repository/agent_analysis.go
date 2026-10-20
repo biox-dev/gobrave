@@ -51,6 +51,24 @@ func (r *agentAnalysisRepository) GetAgentAnalysisByID(ctx context.Context, id i
 	return r.resolve(item), nil
 }
 
+func (r *agentAnalysisRepository) ListAgentAnalysisByProjectID(ctx context.Context, projectID int64) ([]*types.AgentAnalysis, error) {
+	items := make([]*types.AgentAnalysis, 0)
+	if err := r.db.WithContext(ctx).
+		Where("project_id = ?", projectID).
+		Order("created_at DESC").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		r.resolve(item)
+	}
+	return items, nil
+}
+
+func (r *agentAnalysisRepository) DeleteAgentAnalysis(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.AgentAnalysis{}).Error
+}
+
 func (r *agentAnalysisRepository) UpdateAgentAnalysisByID(ctx context.Context, id int64, values map[string]any) error {
 	if len(values) == 0 {
 		return nil

@@ -27,27 +27,28 @@ import (
 
 type RouterParams struct {
 	dig.In
-	Config           *config.Config
-	UserService      interfaces.UserService
-	ProjectService   interfaces.ProjectService
-	AuthHandler      *handler.AuthHandler
-	ProjectHandler   *handler.ProjectHandler
-	DataHandler      *handler.DataHandler
-	StoreHandler     *handler.StoreHandler
-	ContainerHandler *handler.ContainerHandler
-	AnalysisHandler  *handler.AnalysisHandler
-	WorkflowHandler  *handler.WorkflowHandler
-	GitHandler       *handler.GitHandler
-	SettingHandler   *handler.SettingHandler
-	ConfigHandler    *handler.ConfigHandler
-	SheetHandler     *handler.SheetHandler
-	UploadHandler    *handler.UploadHandler
-	FileHandler      *handler.FileHandler
-	ProxyHandler     *handler.ProxyHandler
-	RealtimeHandler  *handler.RealtimeHandler
-	LLMHandler       *handler.LLMHandler
-	AISummaryHandler *handler.AISummaryHandler
-	AgentHandler     *handler.AgentHandler
+	Config               *config.Config
+	UserService          interfaces.UserService
+	ProjectService       interfaces.ProjectService
+	AuthHandler          *handler.AuthHandler
+	ProjectHandler       *handler.ProjectHandler
+	DataHandler          *handler.DataHandler
+	StoreHandler         *handler.StoreHandler
+	ContainerHandler     *handler.ContainerHandler
+	AgentAnalysisHandler *handler.AgentAnalysisHandler
+	AnalysisHandler      *handler.AnalysisHandler
+	WorkflowHandler      *handler.WorkflowHandler
+	GitHandler           *handler.GitHandler
+	SettingHandler       *handler.SettingHandler
+	ConfigHandler        *handler.ConfigHandler
+	SheetHandler         *handler.SheetHandler
+	UploadHandler        *handler.UploadHandler
+	FileHandler          *handler.FileHandler
+	ProxyHandler         *handler.ProxyHandler
+	RealtimeHandler      *handler.RealtimeHandler
+	LLMHandler           *handler.LLMHandler
+	AISummaryHandler     *handler.AISummaryHandler
+	AgentHandler         *handler.AgentHandler
 }
 
 func NewRouter(params RouterParams) *gin.Engine {
@@ -99,6 +100,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterDataRoutes(v1, params.DataHandler)
 		RegisterStoreRoutes(v1, params.StoreHandler)
 		RegisterContainerRoutes(v1, params.ContainerHandler)
+		RegisterAgentAnalysisRoutes(v1, params.AgentAnalysisHandler)
 		RegisterAnalysisRoutes(v1, params.AnalysisHandler)
 		RegisterWorkflowRoutes(v1, params.WorkflowHandler)
 		RegisterGitRoutes(v1, params.GitHandler)
@@ -311,6 +313,16 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	r.POST("/container/outbox/list-by-page", handler.PageOutboxEvent)
 	r.GET("/container/runtime/monitoring/list", handler.ListRuntimeMonitoringSnapshot)
 	r.GET("/container/queue/status", handler.GetQueueStatus)
+}
+
+func RegisterAgentAnalysisRoutes(r *gin.RouterGroup, handler *handler.AgentAnalysisHandler) {
+	r.POST("/container/agent-analysis/create", handler.CreateAgentAnalysis)
+	r.GET("/container/agent-analysis/list", handler.ListAgentAnalysis)
+	r.GET("/container/agent-analysis/get", handler.GetAgentAnalysis)
+	r.POST("/container/agent-analysis/update", handler.UpdateAgentAnalysis)
+	r.POST("/container/agent-analysis/delete", handler.DeleteAgentAnalysis)
+	// WebSocket：xterm.js -> Go -> kubectl exec -it / docker exec -it
+	r.GET("/container/agent-analysis/terminal", handler.AgentAnalysisTerminal)
 }
 
 func RegisterStoreRoutes(r *gin.RouterGroup, handler *handler.StoreHandler) {

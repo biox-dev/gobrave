@@ -506,6 +506,35 @@ func (m *ContainerManager) Describe(ctx context.Context, id int64) (*containerru
 	return describer.Describe(ctx, inst.RuntimeID)
 }
 
+// OpenTerminal 为运行中的容器实例打开一条交互式终端（kubectl exec -it / docker exec -it）。
+//
+// 只有容器实例处于 running 状态时才允许连接：命令结束、容器退出后终端也随之不可用。
+func (m *ContainerManager) OpenTerminal(ctx context.Context, id int64, opts containerruntime.TerminalOptions) (containerruntime.TerminalSession, error) {
+	inst, err := m.containerRepo.GetContainerInstanceByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if inst.Status != types.ContainerRunning {
+		return nil, fmt.Errorf("container instance %d is not running (status=%s)", id, inst.Status)
+	}
+
+	rt, err := m.getRuntimeByInstance(inst)
+	if err != nil {
+		return nil, err
+	}
+
+	terminal, ok := rt.(containerruntime.RuntimeTerminal)
+	if !ok {
+		return nil, fmt.Errorf("runtime %s does not support interactive terminals", inst.RuntimeName)
+	}
+	if len(opts.Command) == 0 {
+		opts.Command = []string{"/bin/bash", "-l"}
+	}
+	opts.TTY = true
+
+	return terminal.OpenTerminal(ctx, inst.RuntimeID, opts)
+}
+
 // func (m *ContainerManager) OnRuntimeEvent(e RuntimeEvent) {
 
 // 	inst := m.repo.FindByRuntimeID(e.RuntimeID)

@@ -19,6 +19,7 @@ type RunAgentAnalysisInput struct {
 	Name           string `json:"name"`            // 任务名称（也用作容器资源名）
 	TemplateID     string `json:"template_id"`     // 容器模板 ID（字符串以保精度）
 	Command        string `json:"command"`         // 要执行的 shell 命令
+	WorkspaceDir   string `json:"workspace_dir"`   // 工作目录（可选，为空时使用默认目录）
 	TimeoutSeconds int    `json:"timeout_seconds"` // 等待完成的超时（秒），可选
 }
 
@@ -55,6 +56,7 @@ func RunAgentAnalysis() tool.Tool {
 			"name":            tool.StringProperty("任务名称（简短英文/数字，也用作容器资源名）。"),
 			"template_id":     tool.StringProperty("容器模板 ID（整数，字符串以保精度），必须是已存在的容器模板。"),
 			"command":         tool.StringProperty("要执行的 shell 命令（多行可用换行分隔）。命令会写入工作目录的 run.sh 后执行，工作目录即项目目录下的 agent-analysis/<任务 ID>。"),
+			"workspace_dir":   tool.StringProperty("工作目录（可选）。为空时使用默认目录 <projectDir>/agent-analysis/<任务 ID>；非空时必须是 storage.base_dir 下的路径。"),
 			"timeout_seconds": tool.IntegerProperty("等待任务完成的超时（秒），可选，默认 1800。"),
 		}, "name", "template_id", "command"),
 		func(ctx context.Context, in RunAgentAnalysisInput) (RunAgentAnalysisOutput, error) {
@@ -89,6 +91,7 @@ func RunAgentAnalysis() tool.Tool {
 				Name:           name,
 				TemplateID:     templateID,
 				Command:        command,
+				WorkspaceDir:   strings.TrimSpace(in.WorkspaceDir),
 				TimeoutSeconds: in.TimeoutSeconds,
 			})
 

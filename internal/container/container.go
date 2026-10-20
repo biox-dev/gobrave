@@ -544,6 +544,13 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		dig.As(new(event.Handler)),
 		dig.Group("event_handlers"),
 	))
+	// AgentAnalysis 状态同步：容器 running / stopped / failed -> 任务状态，
+	// 驱动页面上的 Attach 按钮与任务列表。
+	must(container.Provide(
+		manager.NewAgentAnalysisEventHandler,
+		dig.As(new(event.Handler)),
+		dig.Group("event_handlers"),
+	))
 	must(container.Provide(
 		manager.NewAISummaryEventHandler,
 		dig.As(new(event.Handler)),
@@ -625,6 +632,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(newSchedulerRegistry))
 	must(container.Provide(service.NewWorkflowService))
 	must(container.Provide(service.NewContainerService))
+	// AgentAnalysis 业务服务：创建 / 查询 / 更新 / 删除 Agent 容器任务。
+	// 它同时被 HTTP handler 与内置工具 run_agent_analysis（经 agentAnalysisRunner）复用。
+	must(container.Provide(service.NewAgentAnalysisService))
 	// 系统启动时导入内置容器模板（builtin/container_templates/*.json）：
 	// 复用 InstallContainerAssets 按主键 upsert（镜像 → 运行配置 → 绑定行），
 	// 因此每次启动都会把内置模板刷新成代码里的最新定义；文件里 is_default=true 的
@@ -686,6 +696,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(handler.NewDataHandler))
 	must(container.Provide(handler.NewStoreHandler))
 	must(container.Provide(handler.NewContainerHandler))
+	// AgentAnalysis 页面与 WebSocket 终端。
+	must(container.Provide(handler.NewAgentAnalysisHandler))
 	must(container.Provide(handler.NewAnalysisHandler))
 	must(container.Provide(handler.NewWorkflowHandler))
 	must(container.Provide(handler.NewGitHandler))

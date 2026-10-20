@@ -5,17 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
-	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
-	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -39,10 +36,10 @@ var errAgentAnalysisTimeout = errors.New("timeout waiting for agent analysis con
 // 容器创建完全复用现有异步链路：CreateByTemplate 只入队，由 OutboxDispatcher
 // 分发到 ContainerCreateWorker.handleCreateRequest 真正创建并启动容器。
 type agentAnalysisRunner struct {
+	service       interfaces.AgentAnalysisService
 	repo          interfaces.AgentAnalysisRepository
 	containerRepo interfaces.ContainerRepository
 	containerMgr  *manager.ContainerManager
-	cfg           *config.Config
 
 	pollInterval   time.Duration
 	defaultTimeout time.Duration
@@ -51,16 +48,16 @@ type agentAnalysisRunner struct {
 
 // newAgentAnalysisRunner 构建 AgentAnalysis 执行器并注入内置工具体系。
 func newAgentAnalysisRunner(
+	service interfaces.AgentAnalysisService,
 	repo interfaces.AgentAnalysisRepository,
 	containerRepo interfaces.ContainerRepository,
 	containerMgr *manager.ContainerManager,
-	cfg *config.Config,
 ) tool.AgentAnalysisRunner {
 	return &agentAnalysisRunner{
+		service:        service,
 		repo:           repo,
 		containerRepo:  containerRepo,
 		containerMgr:   containerMgr,
-		cfg:            cfg,
 		pollInterval:   agentAnalysisPollInterval,
 		defaultTimeout: defaultAgentAnalysisTimeout,
 		maxLogBytes:    agentAnalysisMaxLogBytes,
@@ -86,55 +83,28 @@ func (r *agentAnalysisRunner) RunAgentAnalysis(ctx context.Context, in tool.Agen
 	if command == "" {
 		return result, fmt.Errorf("command is required")
 	}
-	if r.repo == nil || r.containerRepo == nil || r.containerMgr == nil {
+	if r.repo == nil || r.containerRepo == nil || r.containerMgr == nil || r.service == nil {
 		return result, fmt.Errorf("agent analysis services are not configured")
 	}
 
-	baseDir := r.storageBaseDir()
-	if baseDir == "" {
-		return result, fmt.Errorf("storage.base_dir is not configured")
-	}
-
-	item := &types.AgentAnalysis{
-		ID:         utils.GenerateID(),
-		ProjectID:  in.ProjectID,
-		Name:       name,
-		TemplateID: in.TemplateID,
-		Command:    command,
-		Status:     types.AgentAnalysisPending,
-	}
-	item.WorkspaceDir = utils.GetAgentAnalysisDir(baseDir, item.ProjectID, item.ID)
-	item.HydrateDerivedPaths()
-
-	if err := writeAgentAnalysisRunScript(item.WorkspaceDir, command); err != nil {
-		return result, fmt.Errorf("prepare agent analysis workspace: %w", err)
-	}
-	if err := r.repo.CreateAgentAnalysis(ctx, item); err != nil {
-		return result, fmt.Errorf("create agent analysis %d: %w", item.ID, err)
+	item, err := r.service.CreateAgentAnalysis(ctx, interfaces.AgentAnalysisCreateInput{
+		ProjectID:    in.ProjectID,
+		Name:         name,
+		TemplateID:   in.TemplateID,
+		Command:      command,
+		WorkspaceDir: in.WorkspaceDir,
+	})
+	if err != nil {
+		return result, err
 	}
 
 	result = tool.AgentAnalysisResult{
-		AgentAnalysisID: item.ID,
-		Status:          item.Status,
-		WorkspaceDir:    item.WorkspaceDir,
-		CommandPath:     item.CommandPath,
-		LogPath:         item.LogPath,
-	}
-
-	// CreateByTemplate 只落库并写入 outbox；真正的 runtime.Create/Start 由
-	// ContainerCreateWorker.handleCreateRequest 异步完成。
-	inst, err := r.containerMgr.CreateByTemplate(ctx, item.TemplateID, types.ContainerOwnerAgentAnalysis, item.ID, item.Name)
-	if err != nil {
-		r.persistResult(ctx, item, nil, types.AgentAnalysisFailed, err)
-		result.Status = types.AgentAnalysisFailed
-		result.Log = readAgentAnalysisLog(item.LogPath, r.maxLogBytes)
-		return result, fmt.Errorf("enqueue agent analysis container: %w", err)
-	}
-
-	item.ContainerInstanceID = inst.ID
-	result.ContainerInstanceID = inst.ID
-	if err := r.repo.UpdateAgentAnalysisByID(ctx, item.ID, map[string]any{"container_instance_id": inst.ID}); err != nil {
-		logger.Warnf(ctx, "[agentAnalysisRunner] persist container instance failed, agent_analysis_id=%d instance_id=%d err=%v", item.ID, inst.ID, err)
+		AgentAnalysisID:     item.ID,
+		ContainerInstanceID: item.ContainerInstanceID,
+		Status:              item.Status,
+		WorkspaceDir:        item.WorkspaceDir,
+		CommandPath:         item.CommandPath,
+		LogPath:             item.LogPath,
 	}
 
 	timeout := r.defaultTimeout
@@ -272,15 +242,6 @@ func isAgentAnalysisTerminal(status types.ContainerStatus) bool {
 	return false
 }
 
-// writeAgentAnalysisRunScript 创建工作目录并写入 run.sh。
-func writeAgentAnalysisRunScript(workspaceDir, command string) error {
-	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
-		return err
-	}
-	script := "#!/usr/bin/env bash\nset -euo pipefail\n\n" + strings.TrimSpace(command) + "\n"
-	return os.WriteFile(filepath.Join(workspaceDir, "run.sh"), []byte(script), 0o755)
-}
-
 // readAgentAnalysisLog 读取 tee 落盘的命令日志；不存在或不可读时返回空串。
 func readAgentAnalysisLog(logPath string, maxBytes int) string {
 	logPath = strings.TrimSpace(logPath)
@@ -299,12 +260,4 @@ func truncateLog(text string, maxBytes int) string {
 		return text
 	}
 	return "...(truncated)\n" + text[len(text)-maxBytes:]
-}
-
-// storageBaseDir 返回存储根目录（容忍 cfg/Storage 为空）。
-func (r *agentAnalysisRunner) storageBaseDir() string {
-	if r == nil || r.cfg == nil || r.cfg.Storage == nil {
-		return ""
-	}
-	return strings.TrimSpace(r.cfg.Storage.BaseDir)
 }

@@ -271,6 +271,8 @@ type AgentAnalysisInput struct {
 	TemplateID int64
 	// Command 是要执行的 shell 命令，由实现写入 WorkspaceDir/run.sh。
 	Command string
+	// WorkspaceDir 是任务工作目录；为空时由实现使用默认目录。
+	WorkspaceDir string
 	// TimeoutSeconds <= 0 时使用实现默认超时。
 	TimeoutSeconds int
 }

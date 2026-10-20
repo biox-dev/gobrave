@@ -58,10 +58,11 @@ func WithKubernetesRuntimeMonitor(monitor KubernetesRuntimeMonitor) KubernetesRu
 }
 
 type KubernetesRuntime struct {
-	name      string
-	namespace string
-	clientset kubernetes.Interface
-	monitor   KubernetesRuntimeMonitor
+	name       string
+	namespace  string
+	clientset  kubernetes.Interface
+	restConfig *rest.Config
+	monitor    KubernetesRuntimeMonitor
 
 	handler containerruntime.RuntimeEventHandler
 }
@@ -94,7 +95,7 @@ func NewKubernetesRuntimeWithOptions(cfg KubernetesRuntimeConfig, opts ...Kubern
 		return nil, fmt.Errorf("init kubernetes client: %w", err)
 	}
 
-	runtime := &KubernetesRuntime{name: runtimeName, namespace: namespace, clientset: cs}
+	runtime := &KubernetesRuntime{name: runtimeName, namespace: namespace, clientset: cs, restConfig: restCfg}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(runtime)
