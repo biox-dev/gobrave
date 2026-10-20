@@ -191,10 +191,11 @@ func (b *projectResourceBrowser) ListContainerTemplates(ctx context.Context) ([]
 // toScriptBrief 把 Script 记录转换成工具回传的摘要（补齐磁盘路径）。
 func (b *projectResourceBrowser) toScriptBrief(baseDir string, script *types.Script) tool.ScriptBrief {
 	brief := tool.ScriptBrief{
-		ScriptID:    script.ID,
-		ScriptName:  script.Name,
-		Description: script.Description,
-		ScriptType:  script.ScriptType,
+		ScriptID:            script.ID,
+		ContainerTemplateID: script.ContainerTemplateID,
+		ScriptName:          script.Name,
+		Description:         script.Description,
+		ScriptType:          script.ScriptType,
 	}
 	if baseDir == "" {
 		return brief

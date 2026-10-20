@@ -85,10 +85,13 @@ type AnalysisNodeRunner interface {
 
 // AnalysisNodeRunResult 是一次分析节点执行的结果。
 type AnalysisNodeRunResult struct {
-	NodeID  int64  `json:"analysis_node_id"`
-	Status  string `json:"status"`  // 节点终态（如 success / failed / timeout）
-	Log     string `json:"log"`     // 节点 command.log 的内容
-	Success bool   `json:"success"` // 是否为成功终态
+	NodeID int64 `json:"analysis_node_id"`
+	// ScriptID 是该节点绑定的脚本 ID：运行后用它配合 get_script / 脚本路径定位
+	// 本次实际执行的脚本，无需再额外查节点。
+	ScriptID int64  `json:"script_id,omitempty"`
+	Status   string `json:"status"`  // 节点终态（如 success / failed / timeout）
+	Log      string `json:"log"`     // 节点 command.log 的内容
+	Success  bool   `json:"success"` // 是否为成功终态
 
 	// WorkspaceDir 是节点根目录（绝对路径），节点的 params.json / run.sh / output /
 	// command.log 全部由它派生，方便模型在该目录下定位产物。
@@ -598,12 +601,16 @@ type ProjectResourceBrowser interface {
 // ScriptFilePath / IOSchemaPath 由 utils.GetScriptFile / utils.WorkflowIOSchemaPath 推导，
 // 模型可直接按这两个路径读写脚本主文件与 io_schema.json。
 type ScriptBrief struct {
-	ScriptID       int64  `json:"script_id"`
-	ScriptName     string `json:"script_name"`
-	Description    string `json:"description,omitempty"`
-	ScriptType     string `json:"script_type,omitempty"`
-	ScriptFilePath string `json:"script_file_path"`
-	IOSchemaPath   string `json:"io_schema_path"`
+	ScriptID int64 `json:"script_id"`
+	// ContainerTemplateID 是脚本绑定的容器模板 ID（go_container_template_definition 主键，
+	// 即对外 ContainerTemplate.ID），可直接用于 list_container_templates 的查询结果对账 /
+	// 运行配置核对；0 表示脚本尚未绑定容器模板。
+	ContainerTemplateID int64  `json:"container_template_id,omitempty"`
+	ScriptName          string `json:"script_name"`
+	Description         string `json:"description,omitempty"`
+	ScriptType          string `json:"script_type,omitempty"`
+	ScriptFilePath      string `json:"script_file_path"`
+	IOSchemaPath        string `json:"io_schema_path"`
 }
 
 // AnalysisNodeBrief 是分析节点的只读摘要（工具回传给模型的最小字段集）。

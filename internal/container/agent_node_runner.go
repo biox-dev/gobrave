@@ -91,7 +91,7 @@ func newAnalysisNodeRunner(
 // request_param / resolved_inputs / inputs_patterns / output_patterns 一次性回写节点、
 // 清空上一轮的 input_validation_errors / output_validation_errors，再重新生成
 // params.json。解析失败则不提交运行（避免用过期 / 空参数跑出误导性结果）。
-func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, requestParam map[string]any, timeoutSeconds int) (tool.AnalysisNodeRunResult, error) {
+func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, requestParam map[string]any, timeoutSeconds int) (result tool.AnalysisNodeRunResult, runErr error) {
 	if nodeID <= 0 {
 		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("invalid analysis node id")
 	}
@@ -108,6 +108,15 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	if err != nil {
 		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to get analysis node: %w", err)
 	}
+
+	// 节点已取到：把绑定的 script_id 统一回填到所有返回分支（含错误 / 超时分支），
+	// 避免调用方只拿到日志却不知道对应哪个脚本。
+	scriptID := node.ScriptID
+	defer func() {
+		if result.ScriptID == 0 {
+			result.ScriptID = scriptID
+		}
+	}()
 
 	// 防重复提交：节点已在运行中时直接拒绝，避免并发触发。
 	if node.Status == dag.StatusRunning || node.Status == dag.StatusSubmitted || node.Status == dag.StatusStopping {
@@ -236,7 +245,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	}
 
 	logPath := strings.TrimSpace(node.LogPath)
-	result, runErr := r.waitForCompletion(ctx, nodeID, logPath, timeout)
+	result, runErr = r.waitForCompletion(ctx, nodeID, logPath, timeout)
 	// 参数与提示信息以本次解析结果为准（无论成功 / 失败 / 超时都回传本次生效的参数）。
 	if result.RequestParam == nil {
 		result.RequestParam = effectiveRequestParam
@@ -308,6 +317,7 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to get analysis node: %w", err)
 	}
 	analysisID := node.AnalysisID
+	scriptID := node.ScriptID
 	// 运行期路径全部由节点的 WorkspaceDir 派生，这里先取一份，保证取消 / 超时等
 	// 非终态返回也能告诉模型文件在哪。
 	workspaceDir := strings.TrimSpace(node.WorkspaceDir)
@@ -349,6 +359,7 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 		case <-ctx.Done():
 			return tool.AnalysisNodeRunResult{
 				NodeID:       nodeID,
+				ScriptID:     scriptID,
 				Status:       "canceled",
 				Log:          readAnalysisNodeLog(logPath, r.maxLogBytes),
 				WorkspaceDir: workspaceDir,
@@ -388,6 +399,7 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 				success := isAnalysisNodeSuccess(status)
 				result := tool.AnalysisNodeRunResult{
 					NodeID:       nodeID,
+					ScriptID:     node.ScriptID,
 					Status:       node.Status,
 					Log:          log,
 					Success:      success,
@@ -411,6 +423,7 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 		if time.Now().After(deadline) {
 			return tool.AnalysisNodeRunResult{
 				NodeID:       nodeID,
+				ScriptID:     scriptID,
 				Status:       "timeout",
 				Log:          readAnalysisNodeLog(logPath, r.maxLogBytes),
 				WorkspaceDir: workspaceDir,
