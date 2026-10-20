@@ -186,11 +186,23 @@ docker run -d -p 8082:8082 --name gobrave gobrave:latest
 docker run --rm -p 8082:8082  -it registry.cn-hangzhou.aliyuncs.com/wybioinfo/gobrave 
 ```
 
+Usage in Linux:
 ```bash
 docker run --rm -p 8082:8082 \
   -v /home/admin/gobrave_docker:/config \
   -e PUID=$(id -u) -e PGID=$(id -g) \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  registry.cn-hangzhou.aliyuncs.com/wybioinfo/gobrave
+```
+
+Usage in Windows:
+```bash
+docker run --rm -p 8082:8082 `
+  -e PUID=0 `
+  -e PGID=0 `
+  -e GOBRAVE_BASE_DIR=/config/gobrave `
+  -v /config:/config `
+  -v /var/run/docker.sock:/var/run/docker.sock `
   registry.cn-hangzhou.aliyuncs.com/wybioinfo/gobrave
 ```
 
