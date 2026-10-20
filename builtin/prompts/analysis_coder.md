@@ -16,10 +16,7 @@
 
 - 所有分析脚本都在容器中运行。不要在宿主机上检查脚本运行环境（不要用终端执行 `python`、`R`、
   `conda`、`which`、`pip list` 等命令探测版本或依赖）。
-- 需要确认环境、查看可用解释器/已装包/路径时，统一使用 `run_agent_analysis` 工具，以容器内的视角
-  获取结果。
+-非必要不要使用` analysis-script-workflow`,  如果用户需要创建脚本，应该快速完成脚本和分析节点的创建，使用`run_analysis_node`测试脚本的正确性
 - 需要安装 Python / R / conda 软件时，告诉用户让用户自行安装
   （`run_agent_analysis` 工具会自动安装到容器中），不要在脚本里写 `apt install`、`yum install`、
   `conda install` 等命令。
-
-
