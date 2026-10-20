@@ -141,12 +141,9 @@ type SubAgentSessionStore interface {
 	CreateChildSession(ctx context.Context, info SubAgentSessionInfo) (int64, error)
 	// AppendUserMessage 追加子任务的 user 消息。
 	AppendUserMessage(ctx context.Context, sessionID int64, content string) error
-	// AppendReasoning 追加完整思考块。
-	AppendReasoning(ctx context.Context, sessionID int64, content string, data any) error
-	// AppendToolCall 追加一次工具调用。
-	AppendToolCall(ctx context.Context, sessionID int64, data any) error
-	// AppendToolResult 追加一次工具结果。
-	AppendToolResult(ctx context.Context, sessionID int64, data any) error
+	// AppendEvent 把一条流式事件投影为子会话消息（投影规则由实现方决定，通常复用
+	// agent.ProjectTimelineEvent；不产生消息的事件直接忽略）。
+	AppendEvent(ctx context.Context, sessionID int64, event agent.StreamEvent) error
 	// AppendFinalMessage 追加子 Agent 的最终回答（或错误信息）。
 	AppendFinalMessage(ctx context.Context, sessionID int64, content string) error
 }
@@ -374,10 +371,10 @@ func (t *agentTool) appendFinal(ctx context.Context, sessionID int64, content st
 	}
 }
 
-// recordingRuntime 把子 Agent 的关键完整块事件写成子会话消息。
+// recordingRuntime 把子 Agent 的流式事件交给 SubAgentSessionStore 投影落库。
 //
-// 增量事件（text / reasoning_delta）与 message 块不落库：最终回答由 appendFinal 统一写入，
-// 与 ChatService 对父会话的投影规则保持一致（reasoning / tool_call / tool_result / final）。
+// 投影规则由实现方复用 agent.ProjectTimelineEvent（reasoning / tool_call / tool_result
+// 产生消息，增量与生命周期事件忽略）；最终回答由 appendFinal 统一写入。
 // 权限与提问委托给无 UI 的 standalone Runtime（子 Agent 只读，正常不会触发）。
 type recordingRuntime struct {
 	store     SubAgentSessionStore
@@ -386,17 +383,7 @@ type recordingRuntime struct {
 }
 
 func (r *recordingRuntime) Emit(ctx context.Context, event agent.StreamEvent) error {
-	var err error
-	switch event.Type {
-	case agent.StreamEventReasoning:
-		err = r.store.AppendReasoning(ctx, r.sessionID, reasoningContent(event.Data), event.Data)
-	case agent.StreamEventToolCall:
-		err = r.store.AppendToolCall(ctx, r.sessionID, event.Data)
-	case agent.StreamEventToolResult:
-		err = r.store.AppendToolResult(ctx, r.sessionID, event.Data)
-	default:
-		return nil
-	}
+	err := r.store.AppendEvent(ctx, r.sessionID, event)
 	if err != nil {
 		logging.Warn("sub-agent: persist message failed", "sessionID", r.sessionID, "event", event.Type, "err", err)
 	}
@@ -413,22 +400,6 @@ func (r *recordingRuntime) WaitPermission(ctx context.Context, permissionID int6
 
 func (r *recordingRuntime) AskUser(ctx context.Context, userID int64, input agent.AskUserInput) (agent.AskUserAnswer, error) {
 	return r.fallback.AskUser(ctx, userID, input)
-}
-
-// reasoningContent 从 reasoning 事件体中提取文本。
-func reasoningContent(data any) string {
-	switch v := data.(type) {
-	case agent.ReasoningBlock:
-		return v.Content
-	case *agent.ReasoningBlock:
-		if v != nil {
-			return v.Content
-		}
-	case map[string]any:
-		content, _ := v["content"].(string)
-		return content
-	}
-	return ""
 }
 
 // subAgentSessionTitle 生成子会话标题：优先子任务名，否则取 prompt 首行前 60 个字符。

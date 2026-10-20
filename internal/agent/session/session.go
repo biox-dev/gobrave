@@ -11,6 +11,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -19,6 +20,9 @@ import (
 
 // ErrNotFound 表示会话不存在。
 var ErrNotFound = errors.New("session: not found")
+
+// ErrInvalidParentSession 表示创建子会话时父会话 ID 无效。
+var ErrInvalidParentSession = errors.New("session: parent session id is required")
 
 // Session 是一次多轮对话的持久化对象。
 //
@@ -65,6 +69,16 @@ type CreateParams struct {
 	Model           string
 }
 
+// ChildSessionParams 是创建子会话的入参（父会话必填，主键由雪花 ID 生成）。
+type ChildSessionParams struct {
+	// ParentSessionID 是父会话 ID，必须 > 0。
+	ParentSessionID int64
+	Title           string
+	UserID          int64
+	Provider        string
+	Model           string
+}
+
 // ListParams 是会话分页查询的入参。
 type ListParams struct {
 	UserID int64 // 0 表示全部用户
@@ -88,6 +102,10 @@ type Service interface {
 	CreateTitleSession(ctx context.Context, parentSessionID int64) (Session, error)
 	// CreateTaskSession 以 toolCallID 作为会话 ID 创建子任务会话。
 	CreateTaskSession(ctx context.Context, toolCallID, parentSessionID int64, title string) (Session, error)
+	// CreateChildSession 创建 ParentSessionID 指向父会话的子会话（主键由雪花 ID 生成）。
+	//
+	// 推荐用于子 Agent / 其它“附属会话”场景：不复用外部 ID 作为主键，避免厂商标识污染与会话主键冲突。
+	CreateChildSession(ctx context.Context, params ChildSessionParams) (Session, error)
 	Get(ctx context.Context, id int64) (Session, error)
 	List(ctx context.Context, params ListParams) ([]Session, int64, error)
 	Save(ctx context.Context, session Session) (Session, error)
@@ -126,6 +144,20 @@ func (s *service) CreateTaskSession(ctx context.Context, toolCallID, parentSessi
 		ID:              toolCallID,
 		ParentSessionID: parentSessionID,
 		Title:           title,
+	})
+}
+
+// CreateChildSession 创建 ParentSessionID 指向父会话的子会话。
+func (s *service) CreateChildSession(ctx context.Context, params ChildSessionParams) (Session, error) {
+	if params.ParentSessionID <= 0 {
+		return Session{}, fmt.Errorf("%w: %d", ErrInvalidParentSession, params.ParentSessionID)
+	}
+	return s.Create(ctx, CreateParams{
+		ParentSessionID: params.ParentSessionID,
+		Title:           params.Title,
+		UserID:          params.UserID,
+		Provider:        params.Provider,
+		Model:           params.Model,
 	})
 }
 

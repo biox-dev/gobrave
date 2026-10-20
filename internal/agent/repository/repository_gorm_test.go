@@ -212,10 +212,14 @@ func TestGormSessionAndMessageStores(t *testing.T) {
 		t.Fatalf("unexpected title session: %+v", titleSess)
 	}
 	// 子会话（带 parent_session_id）不进入会话列表。
-	if _, err := sessions.Create(ctx, session.CreateParams{
-		UserID: 1, ParentSessionID: sess.ID, Provider: agent.ProviderMock, Model: "model-x",
-	}); err != nil {
-		t.Fatalf("Create child session: %v", err)
+	childSess, err := sessions.CreateChildSession(ctx, session.ChildSessionParams{
+		ParentSessionID: sess.ID, Title: "sub agent", UserID: 1, Provider: agent.ProviderMock, Model: "model-x",
+	})
+	if err != nil || childSess.ParentSessionID != sess.ID || childSess.ID == 0 || childSess.Title != "sub agent" {
+		t.Fatalf("CreateChildSession: %+v err=%v", childSess, err)
+	}
+	if _, err := sessions.CreateChildSession(ctx, session.ChildSessionParams{Title: "orphan"}); !errors.Is(err, session.ErrInvalidParentSession) {
+		t.Fatalf("CreateChildSession without parent: err=%v, want ErrInvalidParentSession", err)
 	}
 
 	// 更新会话当前轮次任务。

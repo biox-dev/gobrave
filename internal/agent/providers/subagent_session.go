@@ -2,10 +2,9 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/message"
 	"github.com/biox-dev/gobrave/internal/agent/native"
 	"github.com/biox-dev/gobrave/internal/agent/session"
@@ -32,7 +31,7 @@ func newSubAgentSessionStore(sessions session.Service, messages message.Service)
 
 // CreateChildSession 实现 native.SubAgentSessionStore。
 func (s subAgentSessionStore) CreateChildSession(ctx context.Context, info native.SubAgentSessionInfo) (int64, error) {
-	sess, err := s.sessions.Create(ctx, session.CreateParams{
+	sess, err := s.sessions.CreateChildSession(ctx, session.ChildSessionParams{
 		ParentSessionID: info.ParentSessionID,
 		Title:           info.Title,
 		UserID:          info.UserID,
@@ -47,31 +46,17 @@ func (s subAgentSessionStore) CreateChildSession(ctx context.Context, info nativ
 
 // AppendUserMessage 实现 native.SubAgentSessionStore。
 func (s subAgentSessionStore) AppendUserMessage(ctx context.Context, sessionID int64, content string) error {
-	_, err := s.messages.Create(ctx, message.CreateParams{
-		SessionID: sessionID,
-		Role:      message.RoleUser,
-		Kind:      message.KindUser,
-		Content:   content,
-	})
-	return err
+	return s.append(ctx, sessionID, message.RoleUser, message.KindUser, content, nil)
 }
 
-// AppendReasoning 实现 native.SubAgentSessionStore。
-func (s subAgentSessionStore) AppendReasoning(ctx context.Context, sessionID int64, content string, data any) error {
-	if content = strings.TrimSpace(content); content == "" {
+// AppendEvent 实现 native.SubAgentSessionStore：复用父会话同一条投影规则。
+func (s subAgentSessionStore) AppendEvent(ctx context.Context, sessionID int64, event agent.StreamEvent) error {
+	params, ok := agent.ProjectTimelineEvent(sessionID, 0, event)
+	if !ok {
 		return nil
 	}
-	return s.append(ctx, sessionID, message.RoleAssistant, message.KindReasoning, content, data)
-}
-
-// AppendToolCall 实现 native.SubAgentSessionStore。
-func (s subAgentSessionStore) AppendToolCall(ctx context.Context, sessionID int64, data any) error {
-	return s.append(ctx, sessionID, message.RoleAssistant, message.KindToolCall, subAgentEventSummary("tool", data), data)
-}
-
-// AppendToolResult 实现 native.SubAgentSessionStore。
-func (s subAgentSessionStore) AppendToolResult(ctx context.Context, sessionID int64, data any) error {
-	return s.append(ctx, sessionID, message.RoleAssistant, message.KindToolResult, subAgentEventSummary("tool_result", data), data)
+	_, err := s.messages.Create(ctx, params)
+	return err
 }
 
 // AppendFinalMessage 实现 native.SubAgentSessionStore。
@@ -91,13 +76,4 @@ func (s subAgentSessionStore) append(ctx context.Context, sessionID int64, role,
 		Data:      data,
 	})
 	return err
-}
-
-// subAgentEventSummary 把工具调用 / 结果事件序列化为消息正文（与 ChatService 一致）。
-func subAgentEventSummary(prefix string, data any) string {
-	b, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Sprintf("%s event", prefix)
-	}
-	return string(b)
 }

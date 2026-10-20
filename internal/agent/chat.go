@@ -2,8 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 
@@ -276,37 +274,12 @@ func (s *ChatService) appendTimelineMessages(ctx context.Context, sessionID, tas
 		if !ok {
 			continue
 		}
-		switch se.Type {
-		case StreamEventReasoning:
-			if content, ok := reasoningBlockContent(se.Data); ok && strings.TrimSpace(content) != "" {
-				s.appendMessage(ctx, message.CreateParams{
-					SessionID: sessionID,
-					Role:      message.RoleAssistant,
-					Kind:      message.KindReasoning,
-					TaskID:    taskID,
-					Content:   content,
-					Data:      se.Data,
-				})
-			}
-		case StreamEventToolCall:
-			s.appendMessage(ctx, message.CreateParams{
-				SessionID: sessionID,
-				Role:      message.RoleAssistant,
-				Kind:      message.KindToolCall,
-				TaskID:    taskID,
-				Content:   timelineEventSummary("tool", se.Data),
-				Data:      se.Data,
-			})
-		case StreamEventToolResult:
-			s.appendMessage(ctx, message.CreateParams{
-				SessionID: sessionID,
-				Role:      message.RoleAssistant,
-				Kind:      message.KindToolResult,
-				TaskID:    taskID,
-				Content:   timelineEventSummary("tool_result", se.Data),
-				Data:      se.Data,
-			})
-		case StreamEventMessage:
+		// 投影规则（reasoning / tool_call / tool_result → 消息）与子 Agent 会话共用。
+		if params, ok := ProjectTimelineEvent(sessionID, taskID, se); ok {
+			s.appendMessage(ctx, params)
+			continue
+		}
+		if se.Type == StreamEventMessage {
 			if content, ok := messageBlockContent(se.Data); ok && strings.TrimSpace(content) != "" {
 				final = content
 			}
@@ -342,31 +315,6 @@ func streamEventFromPayload(payload any) (StreamEvent, bool) {
 	default:
 		return StreamEvent{}, false
 	}
-}
-
-func reasoningBlockContent(data any) (string, bool) {
-	switch v := data.(type) {
-	case ReasoningBlock:
-		return v.Content, true
-	case *ReasoningBlock:
-		if v == nil {
-			return "", false
-		}
-		return v.Content, true
-	case map[string]any:
-		content, ok := v["content"].(string)
-		return content, ok
-	default:
-		return "", false
-	}
-}
-
-func timelineEventSummary(prefix string, data any) string {
-	b, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Sprintf("%s event", prefix)
-	}
-	return string(b)
 }
 
 // ListSessions 分页查询会话；userID 为 0 表示全部用户。

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
@@ -320,16 +321,12 @@ func (s *fakeSubAgentStore) AppendUserMessage(_ context.Context, sessionID int64
 	return s.add(sessionID, "user", "user", content)
 }
 
-func (s *fakeSubAgentStore) AppendReasoning(_ context.Context, sessionID int64, content string, _ any) error {
-	return s.add(sessionID, "assistant", "reasoning", content)
-}
-
-func (s *fakeSubAgentStore) AppendToolCall(_ context.Context, sessionID int64, _ any) error {
-	return s.add(sessionID, "assistant", "tool_call", "tool")
-}
-
-func (s *fakeSubAgentStore) AppendToolResult(_ context.Context, sessionID int64, _ any) error {
-	return s.add(sessionID, "assistant", "tool_result", "tool_result")
+func (s *fakeSubAgentStore) AppendEvent(_ context.Context, sessionID int64, event agent.StreamEvent) error {
+	params, ok := agent.ProjectTimelineEvent(sessionID, 0, event)
+	if !ok {
+		return nil
+	}
+	return s.add(sessionID, params.Role, params.Kind, params.Content)
 }
 
 func (s *fakeSubAgentStore) AppendFinalMessage(_ context.Context, sessionID int64, content string) error {
