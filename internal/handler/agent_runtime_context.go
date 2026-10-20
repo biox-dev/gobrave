@@ -230,8 +230,8 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 	vars["workspace_label"] = label
 
 	return &RuntimeContext{
-		Type:             rtcType,
-		ProjectID:        projectID,
+		Type:      rtcType,
+		ProjectID: projectID,
 		// 归属用户是请求级事实：用户 ID 与业务 env 无关，但必须随上下文一路传播，
 		// 权限策略、ask_user 归属、记忆检索与提取都从这里读取（见 agent.RequestUserID）。
 		UserID:           userID,
@@ -360,6 +360,10 @@ type RuntimeContextInfo struct {
 	Vars         map[string]any `json:"vars,omitempty"`              // 渲染系统提示词模板所用的变量
 	ProfileName  string         `json:"profile_name,omitempty"`      // 用于渲染系统提示词的 Profile 名称
 	ProfileID    int64          `json:"profile_id,omitempty,string"` // 用于渲染系统提示词的 Profile ID
+	// Skills 是 Profile 启用的技能名列表（见 Profile.Skills）。
+	// 不加 omitempty：空数组表示「不限制技能」（Profile 未配置技能时使用全部技能），
+	// 与「没有 Profile」区分开，前端据此展示 Skills 区域。
+	Skills []string `json:"skills"`
 }
 
 // Describe 解析 env 并返回用于前端展示的上下文描述。
@@ -377,15 +381,26 @@ func (r *RuntimeContextResolver) Describe(ctx context.Context, userID int64, pro
 		return nil, err
 	}
 
-	return &RuntimeContextInfo{
+	info := &RuntimeContextInfo{
 		Type:         rc.Type,
 		Label:        rc.Label,
 		WorkingDir:   rc.WorkingDir,
 		SystemPrompt: systemPrompt,
 		Vars:         rc.SystemPromptVars,
-		ProfileName:  profile.Name,
-		ProfileID:    profile.ID,
-	}, nil
+	}
+
+	// Profile 可能解析失败（未配置 ProfileManager 等），此时只返回上下文事实。
+	if profile != nil {
+		info.ProfileName = profile.Name
+		info.ProfileID = profile.ID
+		// Profile.Skills 为 nil/空表示不限制技能（本轮使用全部技能）。
+		info.Skills = profile.Skills
+		if info.Skills == nil {
+			info.Skills = []string{}
+		}
+	}
+
+	return info, nil
 }
 
 // resolveDefaultWorkingDirectory 返回当前用户激活项目的默认工作目录及其项目名（作为展示标签）。

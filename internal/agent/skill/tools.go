@@ -74,36 +74,46 @@ func GetSkill() tool.Tool {
 			"version": tool.StringProperty("可选：技能版本（精确匹配）。留空表示使用当前已安装版本。"),
 		}, "name"),
 		func(ctx context.Context, in GetSkillInput) (GetSkillOutput, error) {
-			resolver := tool.SkillResolverFrom(ctx)
-			if resolver == nil {
-				return GetSkillOutput{}, fmt.Errorf("%s: skill registry is not available in this runtime", GetSkillToolName)
-			}
-
-			s, err := resolveSkill(resolver, in.Name, in.Version)
-			if err != nil {
-				return GetSkillOutput{Name: strings.TrimSpace(in.Name), Error: err.Error()}, nil
-			}
-
-			info := s.SkillInfo()
-
-			// SKILL.md 正文同样是 pongo2 模板：用本轮 RuntimeContext 的业务变量渲染，
-			// 使技能能按当前场景（如 workspace_directory / analysis_node_id）生成差异化指令。
-			// frontmatter 的 disable-render: true 会关闭该渲染，按原文返回。
-			instructions, err := renderSkillTemplate(ctx, info.Instructions, info.DisableRender)
-			if err != nil {
-				return GetSkillOutput{Name: info.Name, Error: err.Error()}, nil
-			}
-
-			return GetSkillOutput{
-				Name:         info.Name,
-				Description:  info.Description,
-				Version:      s.SkillVersion(),
-				SkillPath:    info.SkillPath,
-				Resources:    s.SkillResources(),
-				Instructions: instructions,
-			}, nil
+			return ResolveSkillOutput(ctx, tool.SkillResolverFrom(ctx), in.Name, in.Version)
 		},
 	)
+}
+
+// ResolveSkillOutput 是「按名称获取技能内容」的单一实现（get_skill 工具与 HTTP 接口共用）。
+//
+// 它解析技能并用 ctx 中注入的 RuntimeContext 变量渲染指令正文，保证工具执行期与
+// 前端 / 调试接口看到的技能内容一致。
+//
+// 返回 error 仅表示调用方环境缺失（如未注入 SkillResolver）；技能不存在、版本不匹配、
+// 渲染失败等业务错误通过 GetSkillOutput.Error 返回（与工具反馈给模型的口径一致）。
+func ResolveSkillOutput(ctx context.Context, resolver tool.SkillResolver, name, version string) (GetSkillOutput, error) {
+	if resolver == nil {
+		return GetSkillOutput{}, fmt.Errorf("%s: skill registry is not available in this runtime", GetSkillToolName)
+	}
+
+	s, err := resolveSkill(resolver, name, version)
+	if err != nil {
+		return GetSkillOutput{Name: strings.TrimSpace(name), Error: err.Error()}, nil
+	}
+
+	info := s.SkillInfo()
+
+	// SKILL.md 正文同样是 pongo2 模板：用本轮 RuntimeContext 的业务变量渲染，
+	// 使技能能按当前场景（如 workspace_directory / analysis_node_id）生成差异化指令。
+	// frontmatter 的 disable-render: true 会关闭该渲染，按原文返回。
+	instructions, err := renderSkillTemplate(ctx, info.Instructions, info.DisableRender)
+	if err != nil {
+		return GetSkillOutput{Name: info.Name, Error: err.Error()}, nil
+	}
+
+	return GetSkillOutput{
+		Name:         info.Name,
+		Description:  info.Description,
+		Version:      s.SkillVersion(),
+		SkillPath:    info.SkillPath,
+		Resources:    s.SkillResources(),
+		Instructions: instructions,
+	}, nil
 }
 
 // LoadSkillResource 返回「加载技能附属资源」工具。

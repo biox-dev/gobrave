@@ -425,6 +425,57 @@ func (h *AgentHandler) GetSkill(c *gin.Context) {
 	c.JSON(http.StatusOK, s)
 }
 
+// ResolveSkill godoc
+// @Summary      按名称解析 Agent 技能（含模板渲染）
+// @Description  与 get_skill 工具同一实现：按名称解析技能，并用当前用户业务上下文（llmEnv）解析出的变量渲染指令正文
+// @Tags         Agent
+// @Produce      json
+// @Param        id   query     string  true  "技能名"
+// @Success      200  {object}  skill.GetSkillOutput
+// @Failure      400  {object}  errors.AppError
+// @Failure      401  {object}  errors.AppError
+// @Failure      404  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/skill/resolve [get]
+func (h *AgentHandler) ResolveSkill(c *gin.Context) {
+	user, ok := getCurrentUser(c)
+	if !ok {
+		return
+	}
+
+	var q taskIDQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if h.skills == nil {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+
+	// 业务上下文（llmEnv）与 DescribeEnv 同一来源：当前用户配置的 EnvID / EnvType。
+	// 解析出的 SystemPromptVars 随 RuntimeContext 注入 ctx，供技能正文的 pongo2 模板
+	// 按当前场景渲染（与 get_skill 工具执行期使用同一套变量与渲染实现）。
+	ctx := c.Request.Context()
+	if h.runtimeCtx != nil {
+		rc, err := h.runtimeCtx.Resolve(ctx, user.ID, user.AgentConfig.Env())
+		if err != nil {
+			handleAgentError(c, err, "failed to resolve runtime context")
+			return
+		}
+		ctx = tool.WithRuntimeContext(ctx, rc)
+	}
+
+	// version 留空：HTTP 接口使用当前已安装版本（与 get_skill 不传 version 时一致）。
+	out, err := skill.ResolveSkillOutput(ctx, h.skills.Resolver(), q.ID, "")
+	if err != nil {
+		handleAgentError(c, err, "failed to resolve agent skill")
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
 // SaveSkill godoc
 // @Summary      创建或更新 Agent 技能
 // @Description  把技能写回 $BaseDir/.skills/<name>/SKILL.md 并热更新内存注册表，程序运行中即时生效

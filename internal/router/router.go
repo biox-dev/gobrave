@@ -485,6 +485,7 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 
 	r.GET("/agent/skill/list", handler.ListSkills)
 	r.GET("/agent/skill/get", handler.GetSkill)
+	r.GET("/agent/skill/resolve", handler.ResolveSkill)
 	r.POST("/agent/skill/save", handler.SaveSkill)
 	r.POST("/agent/skill/delete", handler.DeleteSkill)
 
