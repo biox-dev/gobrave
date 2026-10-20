@@ -368,6 +368,40 @@ func (r *dataRepository) PageFileByProjectID(ctx context.Context, pagination *ty
 	return items, total, nil
 }
 
+// ListFileByDatasetID returns the files bound to one dataset through
+// go_dataset_file, newest binding first (same read model as the project page).
+func (r *dataRepository) ListFileByDatasetID(ctx context.Context, datasetID int64) ([]*types.FileWithDatasetInfo, error) {
+	items := make([]*types.FileWithDatasetInfo, 0)
+	err := r.db.WithContext(ctx).
+		Table("go_dataset_file AS dataset_file").
+		Select(`
+			file.id,
+			file.id AS file_id,
+			file.analysis_node_id,
+			file.file_name,
+			file.path,
+			file.format,
+			file.size,
+			file.md5,
+			file.storage,
+			file.description,
+			file.created_at,
+			file.updated_at,
+			dataset.id AS dataset_id,
+			dataset.dataset_name,
+			file.role
+		`).
+		Joins("JOIN go_dataset AS dataset ON dataset.id = dataset_file.dataset_id").
+		Joins("JOIN go_file AS file ON file.id = dataset_file.file_id").
+		Where("dataset_file.dataset_id = ?", datasetID).
+		Order("dataset_file.id DESC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error) {
 	items := make([]*types.FileWithDatasetInfo, 0)
 	query := r.db.WithContext(ctx).
@@ -506,6 +540,19 @@ func (r *dataRepository) ExistsDatasetFile(ctx context.Context, datasetID, fileI
 	var count int64
 	err := r.db.WithContext(ctx).Model(&types.DatasetFile{}).
 		Where("dataset_id = ? AND file_id = ?", datasetID, fileID).
+		Count(&count).Error
+	return count > 0, err
+}
+
+// ExistsFileByPathInDataset reports whether a file with the given physical path
+// is already bound to the dataset. Paths are compared exactly as stored on
+// go_file.path, which is the same value the directory importer writes.
+func (r *dataRepository) ExistsFileByPathInDataset(ctx context.Context, datasetID int64, path string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Table("go_dataset_file AS df").
+		Joins("JOIN go_file AS f ON f.id = df.file_id").
+		Where("df.dataset_id = ? AND f.path = ?", datasetID, path).
 		Count(&count).Error
 	return count > 0, err
 }

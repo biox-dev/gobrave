@@ -5,8 +5,10 @@ import (
 	stderrs "errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -117,6 +119,162 @@ func (s *dataService) ensureDatasetDir(projectID int64, datasetID int64) error {
 		return fmt.Errorf("failed to create dataset directory %q: %w", dir, err)
 	}
 	return nil
+}
+
+// datasetDir resolves the absolute dataset workspace directory
+// (utils.GetDatasetDir) for an existing dataset and project.
+func (s *dataService) datasetDir(ctx context.Context, datasetID int64, projectID int64) (string, error) {
+	if datasetID == 0 {
+		return "", gorm.ErrRecordNotFound
+	}
+	if projectID == 0 {
+		return "", fmt.Errorf("project id is required")
+	}
+
+	if _, err := s.dataRepo.GetDatasetByID(ctx, datasetID); err != nil {
+		return "", err
+	}
+
+	baseDir := strings.TrimSpace(s.baseDir)
+	if baseDir == "" {
+		return "", fmt.Errorf("storage base dir is required")
+	}
+
+	absBaseDir, err := utils.ResolveExternalPath(baseDir)
+	if err != nil {
+		return "", err
+	}
+
+	return utils.GetDatasetDir(absBaseDir, projectID, datasetID), nil
+}
+
+// ListDatasetDirFiles returns the dataset workspace directory path and every
+// regular file found under it, recursively. Each entry is flagged with whether
+// it is already bound to the dataset (go_file.path +
+// go_dataset_file.dataset_id), which is what the batch import skips on.
+func (s *dataService) ListDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64) (string, []*types.DatasetDirFile, error) {
+	dir, err := s.datasetDir(ctx, datasetID, projectID)
+	if err != nil {
+		return "", nil, err
+	}
+
+	items := make([]*types.DatasetDirFile, 0)
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// The directory is provisioned lazily; an absent one simply has no files.
+			return dir, items, nil
+		}
+		return "", nil, err
+	}
+	if !info.IsDir() {
+		return "", nil, fmt.Errorf("dataset path %q is not a directory", dir)
+	}
+
+	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		// Symlinks can point outside the dataset directory; skip them so the
+		// importer never registers a path that escaped GetDatasetDir.
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+
+		fileInfo, err := entry.Info()
+		if err != nil {
+			return err
+		}
+
+		relativePath, err := filepath.Rel(dir, path)
+		if err != nil {
+			relativePath = entry.Name()
+		}
+
+		added, err := s.dataRepo.ExistsFileByPathInDataset(ctx, datasetID, path)
+		if err != nil {
+			return err
+		}
+
+		items = append(items, &types.DatasetDirFile{
+			Name:         entry.Name(),
+			RelativePath: filepath.ToSlash(relativePath),
+			Path:         path,
+			Format:       strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
+			Size:         fileInfo.Size(),
+			ModTime:      fileInfo.ModTime().Format(time.RFC3339),
+			Added:        added,
+		})
+		return nil
+	})
+	if err != nil {
+		return "", nil, err
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].RelativePath < items[j].RelativePath
+	})
+
+	return dir, items, nil
+}
+
+// ImportDatasetDirFiles registers every file under the dataset workspace
+// directory that is not yet bound to the dataset. A file counts as existing when
+// the same go_file.path is already linked to the dataset through
+// go_dataset_file, so re-running the import is idempotent.
+func (s *dataService) ImportDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64, role string) (*types.ImportDatasetDirFilesResult, error) {
+	_, files, err := s.ListDatasetDirFiles(ctx, datasetID, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	role = strings.TrimSpace(role)
+	if role == "" {
+		role = "DEFAULT"
+	}
+
+	result := &types.ImportDatasetDirFilesResult{Total: len(files)}
+	for _, item := range files {
+		if item.Added {
+			result.Skipped++
+			continue
+		}
+
+		_, err := s.AddFileToDataset(ctx, &types.AddFileToDatasetRequest{
+			DatasetID: datasetID,
+			ProjectID: projectID,
+			Path:      item.Path,
+			Role:      role,
+			FileName:  item.Name,
+			Source:    "analysis",
+		})
+		if err != nil {
+			if stderrs.Is(err, ErrDatasetFileAlreadyAdded) {
+				result.Skipped++
+				continue
+			}
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", item.RelativePath, err))
+			continue
+		}
+		result.Imported++
+	}
+
+	return result, nil
+}
+
+// ListDatasetFiles returns every file bound to one dataset.
+func (s *dataService) ListDatasetFiles(ctx context.Context, datasetID int64) ([]*types.FileWithDatasetInfo, error) {
+	if datasetID == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	if _, err := s.dataRepo.GetDatasetByID(ctx, datasetID); err != nil {
+		return nil, err
+	}
+	return s.dataRepo.ListFileByDatasetID(ctx, datasetID)
 }
 
 func (s *dataService) GetDatasetByID(ctx context.Context, id int64) (*types.Dataset, error) {

@@ -79,6 +79,18 @@ type analysisNodeIDQuery struct {
 	AnalysisNodeID int64 `form:"analysis_node_id" binding:"required"`
 }
 
+// datasetIDQuery addresses a resource by its owning dataset (int64 PK).
+type datasetIDQuery struct {
+	DatasetID int64 `form:"dataset_id" binding:"required"`
+}
+
+// importDatasetDirFilesRequest imports every physical file under the dataset
+// workspace directory into go_file/go_dataset_file. role defaults to DEFAULT.
+type importDatasetDirFilesRequest struct {
+	DatasetID int64  `json:"dataset_id,string" binding:"required"`
+	Role      string `json:"role"`
+}
+
 func handleDataError(c *gin.Context, err error, internalMsg string) {
 	if stderrs.Is(err, gorm.ErrRecordNotFound) {
 		c.Error(errors.NewNotFoundError("record not found"))
@@ -349,6 +361,120 @@ func (h *DataHandler) EnsureDatasetDir(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"path": dir})
+}
+
+// ListDatasetDirFiles godoc
+// @Summary      列出数据集目录文件
+// @Description  返回数据集工作目录（utils.GetDatasetDir）路径及其下所有文件；added 表示该文件已通过 path + dataset_id 绑定到数据集
+// @Tags         数据管理
+// @Produce      json
+// @Param        dataset_id  query     integer  true  "数据集 ID"
+// @Success      200         {object}  types.DatasetDirFilesResponse
+// @Failure      400         {object}  errors.AppError
+// @Failure      401         {object}  errors.AppError
+// @Failure      404         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/dataset/dir-files [get]
+func (h *DataHandler) ListDatasetDirFiles(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req datasetIDQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project")
+		return
+	}
+
+	dir, files, err := h.dataService.ListDatasetDirFiles(c.Request.Context(), req.DatasetID, project.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to list dataset dir files")
+		return
+	}
+
+	c.JSON(http.StatusOK, types.DatasetDirFilesResponse{Path: dir, Files: files})
+}
+
+// ImportDatasetDirFiles godoc
+// @Summary      批量导入数据集目录文件
+// @Description  将数据集工作目录（utils.GetDatasetDir）下尚未绑定的文件注册为 go_file 并绑定到数据集；按 path + dataset_id 判重
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      importDatasetDirFilesRequest  true  "请求参数"
+// @Success      200      {object}  types.ImportDatasetDirFilesResult
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/dataset/import-dir-files [post]
+func (h *DataHandler) ImportDatasetDirFiles(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req importDatasetDirFilesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project")
+		return
+	}
+
+	result, err := h.dataService.ImportDatasetDirFiles(c.Request.Context(), req.DatasetID, project.ID, req.Role)
+	if err != nil {
+		handleDataError(c, err, "failed to import dataset dir files")
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// ListDatasetFiles godoc
+// @Summary      列出数据集文件
+// @Description  返回绑定到指定数据集的所有文件（go_dataset_file -> go_file）
+// @Tags         数据管理
+// @Produce      json
+// @Param        dataset_id  query     integer  true  "数据集 ID"
+// @Success      200         {array}   types.FileWithDatasetInfo
+// @Failure      400         {object}  errors.AppError
+// @Failure      401         {object}  errors.AppError
+// @Failure      404         {object}  errors.AppError
+// @Failure      500         {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/dataset/files [get]
+func (h *DataHandler) ListDatasetFiles(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req datasetIDQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	items, err := h.dataService.ListDatasetFiles(c.Request.Context(), req.DatasetID)
+	if err != nil {
+		handleDataError(c, err, "failed to list dataset files")
+		return
+	}
+
+	c.JSON(http.StatusOK, items)
 }
 
 // GetDataset godoc

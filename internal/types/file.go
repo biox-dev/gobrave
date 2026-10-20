@@ -145,3 +145,42 @@ type FileByProjectRoleGroup struct {
 
 	Items []*FileWithDatasetInfo `json:"items"`
 }
+
+// DatasetDirFile describes one physical file discovered under a dataset's
+// workspace directory (utils.GetDatasetDir). It is the read model of
+// /data/dataset/dir-files and the input of the batch directory import.
+type DatasetDirFile struct {
+	// Name is the file's base name.
+	Name string `json:"name"`
+	// RelativePath is the path relative to the dataset directory, using "/" as
+	// the separator so the value is stable across platforms.
+	RelativePath string `json:"relative_path"`
+	// Path is the absolute path stored on go_file.path when the file is
+	// imported.
+	Path string `json:"path"`
+	// Format is the lower-cased extension without the leading dot.
+	Format string `json:"format"`
+	Size   int64  `json:"size"`
+	// ModTime is the physical file's modification time.
+	ModTime string `json:"mod_time"`
+	// Added reports whether a file with this path is already bound to the
+	// dataset (go_file.path + go_dataset_file.dataset_id).
+	Added bool `json:"added"`
+}
+
+// DatasetDirFilesResponse is the payload of /data/dataset/dir-files: the
+// dataset workspace directory path plus every file found in it.
+type DatasetDirFilesResponse struct {
+	Path  string            `json:"path"`
+	Files []*DatasetDirFile `json:"files"`
+}
+
+// ImportDatasetDirFilesResult summarizes a batch import of the dataset
+// directory: one entry per discovered file is either imported or skipped.
+type ImportDatasetDirFilesResult struct {
+	Total    int      `json:"total"`
+	Imported int      `json:"imported"`
+	Skipped  int      `json:"skipped"`
+	Failed   int      `json:"failed"`
+	Errors   []string `json:"errors,omitempty"`
+}

@@ -13,6 +13,17 @@ type DataService interface {
 	// EnsureDatasetDir verifies the dataset exists and creates its workspace
 	// directory (utils.GetDatasetDir) when missing, returning the path.
 	EnsureDatasetDir(ctx context.Context, datasetID int64, projectID int64) (string, error)
+	// ListDatasetDirFiles returns the dataset workspace directory path
+	// (utils.GetDatasetDir) and every physical file found under it (recursively),
+	// flagging the ones already bound to the dataset.
+	ListDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64) (string, []*types.DatasetDirFile, error)
+	// ImportDatasetDirFiles registers every file under the dataset workspace
+	// directory that is not yet bound to the dataset (matched by
+	// go_file.path + go_dataset_file.dataset_id).
+	ImportDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64, role string) (*types.ImportDatasetDirFilesResult, error)
+	// ListDatasetFiles returns every file bound to one dataset (go_dataset_file ->
+	// go_file), newest binding first.
+	ListDatasetFiles(ctx context.Context, datasetID int64) ([]*types.FileWithDatasetInfo, error)
 	GetDatasetByID(ctx context.Context, id int64) (*types.Dataset, error)
 	UpdateDataset(ctx context.Context, dataset *types.Dataset) error
 	DeleteDataset(ctx context.Context, id int64) error
@@ -122,12 +133,19 @@ type DataRepository interface {
 	ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error)
 	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID int64) ([]*types.FileWithDatasetInfo, error)
 	PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.FileWithDatasetInfo, int64, error)
+	// ListFileByDatasetID returns the files bound to one dataset through
+	// go_dataset_file, ordered by binding id (newest first).
+	ListFileByDatasetID(ctx context.Context, datasetID int64) ([]*types.FileWithDatasetInfo, error)
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
 	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error)
 	ListFileByAnalysisNodeID(ctx context.Context, analysisNodeID int64) ([]*types.File, error)
 
 	CreateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error
 	ExistsDatasetFile(ctx context.Context, datasetID, fileID int64) (bool, error)
+	// ExistsFileByPathInDataset reports whether a file with the given physical
+	// path is already bound to the dataset (go_file.path +
+	// go_dataset_file.dataset_id).
+	ExistsFileByPathInDataset(ctx context.Context, datasetID int64, path string) (bool, error)
 	WithTransaction(ctx context.Context, fn func(DataRepository) error) error
 	GetDatasetFileByID(ctx context.Context, id int64) (*types.DatasetFile, error)
 	DeleteDatasetFile(ctx context.Context, id int64) error
