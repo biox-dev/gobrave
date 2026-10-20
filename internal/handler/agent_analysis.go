@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -121,6 +122,40 @@ func (h *AgentAnalysisHandler) GetAgentAnalysis(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, item)
+}
+
+// AgentAnalysisLog 返回任务的命令日志。
+//
+// 日志文件由 runner 通过 `bash ./run.sh 2>&1 | tee command.log` 生成，
+// 路径即 types.AgentAnalysis.LogPath（WorkspaceDir/command.log）。
+func (h *AgentAnalysisHandler) AgentAnalysisLog(c *gin.Context) {
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Query("id")), 10, 64)
+	if err != nil || id <= 0 {
+		c.Error(errors.NewValidationError("invalid agent analysis id"))
+		return
+	}
+	item, ok := h.getOwnedAgentAnalysis(c, id)
+	if !ok {
+		return
+	}
+
+	logPath := strings.TrimSpace(item.LogPath)
+	if logPath == "" {
+		c.Error(errors.NewNotFoundError("log_path is empty"))
+		return
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.Error(errors.NewNotFoundError("log file not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to read log file").WithDetails(err.Error()))
+		return
+	}
+
+	c.Data(http.StatusOK, "text/plain; charset=utf-8", logBytes)
 }
 
 // UpdateAgentAnalysis 更新 Name / TemplateID / Command / WorkspaceDir。
