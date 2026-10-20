@@ -84,8 +84,8 @@ func (r *agentAnalysisRunner) RunAgentAnalysis(ctx context.Context, in tool.Agen
 		return result, fmt.Errorf("agent analysis services are not configured")
 	}
 
-	// template_id 可选：未指定时回退到系统默认容器模板（is_default 的绑定行）。
-	templateID := in.TemplateID
+	// container_template_id 可选：未指定时回退到系统默认容器模板（is_default 的绑定行）。
+	templateID := in.ContainerTemplateID
 	if templateID <= 0 {
 		resolved, resolveErr := r.resolveDefaultContainerTemplateID(ctx)
 		if resolveErr != nil {
@@ -148,18 +148,18 @@ func (r *agentAnalysisRunner) RunAgentAnalysis(ctx context.Context, in tool.Agen
 
 // resolveDefaultContainerTemplateID 返回系统默认容器模板（is_default = true 的绑定行）主键。
 //
-// 模型未指定 template_id 时回退到默认模板；没有默认模板时返回带用户指引导的错误：
+// 模型未指定 container_template_id 时回退到默认模板；没有默认模板时返回带用户指引导的错误：
 // 模型会把错误原文回给用户，用户据此到「容器模板」页设置默认模板后重试。
 func (r *agentAnalysisRunner) resolveDefaultContainerTemplateID(ctx context.Context) (int64, error) {
 	definition, err := r.containerRepo.GetDefaultContainerTemplateDefinition(ctx)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 0, fmt.Errorf("no template_id was provided and no default container template is configured; please ask the user to open the Container Template page and set one template as default")
+			return 0, fmt.Errorf("no container_template_id was provided and no default container template is configured; please ask the user to open the Container Template page and set one template as default")
 		}
 		return 0, fmt.Errorf("failed to resolve default container template: %w", err)
 	}
 	if definition == nil || definition.ID <= 0 {
-		return 0, fmt.Errorf("no template_id was provided and no default container template is configured; please ask the user to open the Container Template page and set one template as default")
+		return 0, fmt.Errorf("no container_template_id was provided and no default container template is configured; please ask the user to open the Container Template page and set one template as default")
 	}
 	return definition.ID, nil
 }

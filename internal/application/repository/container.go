@@ -149,7 +149,22 @@ func (r *containerRepository) GetContainerTemplateDefinitionByID(ctx context.Con
 }
 
 func (r *containerRepository) UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {
-	return r.db.WithContext(ctx).Model(&types.ContainerTemplateDefinition{}).Where("id = ?", item.ID).Updates(item).Error
+	if item == nil || item.ID == 0 {
+		return errors.New("container template definition id is required")
+	}
+	// 先按零值规则更新其余字段（is_default 等不受影响）。
+	if err := r.db.WithContext(ctx).
+		Model(&types.ContainerTemplateDefinition{}).
+		Where("id = ?", item.ID).
+		Updates(item).Error; err != nil {
+		return err
+	}
+	// display_name 需要支持「清空」：GORM 的 Updates(struct) 会跳过零值字段，
+	// 所以这里单独写一次，保证空字符串也能落库。
+	return r.db.WithContext(ctx).
+		Model(&types.ContainerTemplateDefinition{}).
+		Where("id = ?", item.ID).
+		Update("display_name", item.DisplayName).Error
 }
 
 func (r *containerRepository) DeleteContainerTemplateDefinition(ctx context.Context, id int64) error {

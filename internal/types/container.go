@@ -189,6 +189,10 @@ type ContainerTemplate struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Image       *ContainerImage `json:"image,omitempty"`
+	// DisplayName 原样取自绑定行 ContainerTemplateDefinition.DisplayName（不做回退）。
+	// Name 才是对外展示名：DisplayName 非空时覆盖共享配置名，否则回退到 spec.Name。
+	// 编辑表单必须读写 DisplayName，否则会把回退出来的配置名误固化成绑定行展示名。
+	DisplayName string `json:"display_name"`
 	// IsDefault 原样取自绑定行 ContainerTemplateDefinition.IsDefault。
 	IsDefault bool `json:"is_default"`
 
@@ -230,6 +234,8 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 	if binding.UpdatedAt != nil {
 		tpl.UpdatedAt = *binding.UpdatedAt
 	}
+
+	tpl.DisplayName = binding.DisplayName
 
 	if spec != nil {
 		tpl.Name = spec.Name
@@ -322,11 +328,13 @@ func (t *ContainerTemplate) ToExport(spec *ContainerTemplateSpec, image *Contain
 	}
 
 	bundle := NewContainerTemplateBundle()
-	// 导出格式不含时间字段与 is_default（默认模板是本地状态，不随资产导出）。
+	// 导出格式不含时间字段与 is_default（默认模板是本地状态，不随资产导出），
+	// 但展示名属于资产本身，必须原样带出，否则导入后展示名会丢失。
 	bundle.ContainerTemplateDefinitions = append(bundle.ContainerTemplateDefinitions, ContainerTemplateDefinition{
-		ID:      t.ID,
-		SpecID:  t.SpecID,
-		ImageID: t.ImageID,
+		ID:          t.ID,
+		SpecID:      t.SpecID,
+		ImageID:     t.ImageID,
+		DisplayName: t.DisplayName,
 	})
 	if spec != nil {
 		exportedSpec := *spec

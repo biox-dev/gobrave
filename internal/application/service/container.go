@@ -209,13 +209,14 @@ func (s *containerService) ExportContainerTemplate(ctx context.Context, definiti
 }
 
 // containerTemplateDefinitionFromReadModel 从对外模板抽出"配置 × 镜像 绑定"字段。
-// DisplayName 故意留空：读模型里的 Name 可能是配置名，写入绑定行会把配置名误固化成展示名。
+// 只搬 DisplayName：读模型里的 Name 可能是配置名的回退值，直接写入会把配置名
+// 误固化成展示名，所以 DisplayName 必须由请求显式携带（为空表示回退到配置名）。
 func containerTemplateDefinitionFromReadModel(tpl *types.ContainerTemplate) *types.ContainerTemplateDefinition {
 	return &types.ContainerTemplateDefinition{
-		ID:        tpl.ID,
-		SpecID:    tpl.SpecID,
-		ImageID:   tpl.ImageID,
-		IsDefault: tpl.IsDefault,
+		ID:          tpl.ID,
+		SpecID:      tpl.SpecID,
+		ImageID:     tpl.ImageID,
+		DisplayName: strings.TrimSpace(tpl.DisplayName),
 	}
 }
 
@@ -229,7 +230,14 @@ func (s *containerService) applyDefaultFlag(ctx context.Context, tx interfaces.C
 	if err := tx.ClearContainerTemplateDefinitionDefault(ctx); err != nil {
 		return err
 	}
-	return tx.UpdateContainerTemplateDefinition(ctx, &types.ContainerTemplateDefinition{ID: definitionID, IsDefault: true})
+	// 先读出整行再置位：绑定行的更新是整行语义（display_name 支持显式清空），
+	// 只传 ID + IsDefault 会把其它字段覆盖成零值。
+	binding, err := tx.GetContainerTemplateDefinitionByID(ctx, definitionID)
+	if err != nil {
+		return err
+	}
+	binding.IsDefault = true
+	return tx.UpdateContainerTemplateDefinition(ctx, binding)
 }
 
 // GetDefaultContainerTemplate 返回默认容器模板（对外读模型）；没有默认行时返回 (nil, nil)。
@@ -360,6 +368,8 @@ func (s *containerService) updateContainerTemplate(ctx context.Context, tpl *typ
 
 	spec := containerTemplateSpecFromReadModel(tpl)
 	spec.ID = binding.SpecID
+	// display_name 归绑定行所有：请求没带 name 时不要用空值覆盖共享配置名
+	// （UpdateContainerTemplateSpec 会跳过零值，这里保持 Name 默认为空即可）。
 	definition := containerTemplateDefinitionFromReadModel(tpl)
 	definition.ID = binding.ID
 	definition.SpecID = binding.SpecID
