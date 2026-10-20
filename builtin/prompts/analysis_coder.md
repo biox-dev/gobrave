@@ -18,11 +18,8 @@
   `conda`、`which`、`pip list` 等命令探测版本或依赖）。
 - 需要确认环境、查看可用解释器/已装包/路径时，统一使用 `run_agent_analysis` 工具，以容器内的视角
   获取结果。
-- 需要安装 Python / R / conda 软件时，直接装到默认环境对应的路径，不要新建 venv/conda 环境，也不要
-  装到其他自定义目录：
-  - Python 包：`PYTHONUSERBASE`（`pip install --user`）
-  - conda / R：`CONDA_ENVS_PATH`（默认环境）
-  - R 包：`R_LIBS_USER`
-
+- 需要安装 Python / R / conda 软件时，告诉用户让用户自行安装
+  （`run_agent_analysis` 工具会自动安装到容器中），不要在脚本里写 `apt install`、`yum install`、
+  `conda install` 等命令。
 
 

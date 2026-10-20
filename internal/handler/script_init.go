@@ -6,29 +6,14 @@ func GetDefaultIOSchame() string {
 {
     "inputs": [
         {
-            "label": "input1",
-            "name": "input1",
-            "type": "BaseInput",
-            "required": true
-        },
-        {
-            "label": "input2",
-            "name": "input2",
+            "label": "input",
+            "name": "input",
             "type": "BaseInput",
             "required": true
         }
     ],
     "outputs": [
-        {
-            "name": "tsv",
-            "type": "file"
-        },   {
-            "name": "plot",
-            "type": "file"
-        }
-    ],
-    "params": [
-     
+
     ],
     "resources": {
         "cpu": 4,
