@@ -65,6 +65,36 @@ func (r *agentAnalysisRepository) ListAgentAnalysisByProjectID(ctx context.Conte
 	return items, nil
 }
 
+func (r *agentAnalysisRepository) PageAgentAnalysisByProjectID(ctx context.Context, projectID int64, pagination *types.Pagination) ([]*types.AgentAnalysis, int64, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	buildQuery := func() *gorm.DB {
+		return r.db.WithContext(ctx).
+			Model(&types.AgentAnalysis{}).
+			Where("project_id = ?", projectID)
+	}
+
+	var total int64
+	if err := buildQuery().Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]*types.AgentAnalysis, 0)
+	if err := buildQuery().
+		Order("created_at DESC").
+		Offset(pagination.Offset()).
+		Limit(pagination.Limit()).
+		Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	for _, item := range items {
+		r.resolve(item)
+	}
+	return items, total, nil
+}
+
 func (r *agentAnalysisRepository) DeleteAgentAnalysis(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.AgentAnalysis{}).Error
 }

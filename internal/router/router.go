@@ -318,6 +318,7 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 func RegisterAgentAnalysisRoutes(r *gin.RouterGroup, handler *handler.AgentAnalysisHandler) {
 	r.POST("/container/agent-analysis/create", handler.CreateAgentAnalysis)
 	r.GET("/container/agent-analysis/list", handler.ListAgentAnalysis)
+	r.POST("/container/agent-analysis/list-by-page", handler.PageAgentAnalysis)
 	r.GET("/container/agent-analysis/get", handler.GetAgentAnalysis)
 	r.POST("/container/agent-analysis/update", handler.UpdateAgentAnalysis)
 	r.POST("/container/agent-analysis/rerun", handler.RerunAgentAnalysis)

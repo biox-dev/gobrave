@@ -12,6 +12,8 @@ type AgentAnalysisRepository interface {
 	GetAgentAnalysisByID(ctx context.Context, id int64) (*types.AgentAnalysis, error)
 	// ListAgentAnalysisByProjectID 按项目列出任务，最新的在前。
 	ListAgentAnalysisByProjectID(ctx context.Context, projectID int64) ([]*types.AgentAnalysis, error)
+	// PageAgentAnalysisByProjectID 按项目分页列出任务，最新的在前。
+	PageAgentAnalysisByProjectID(ctx context.Context, projectID int64, pagination *types.Pagination) ([]*types.AgentAnalysis, int64, error)
 	// UpdateAgentAnalysisByID 只更新给定列，避免覆盖并发写入的其它字段。
 	UpdateAgentAnalysisByID(ctx context.Context, id int64, values map[string]any) error
 	DeleteAgentAnalysis(ctx context.Context, id int64) error
@@ -42,6 +44,7 @@ type AgentAnalysisService interface {
 	CreateAgentAnalysis(ctx context.Context, input AgentAnalysisCreateInput) (*types.AgentAnalysis, error)
 	GetAgentAnalysis(ctx context.Context, id int64) (*types.AgentAnalysis, error)
 	ListAgentAnalysisByProjectID(ctx context.Context, projectID int64) ([]*types.AgentAnalysis, error)
+	PageAgentAnalysisByProjectID(ctx context.Context, projectID int64, pagination *types.Pagination) ([]*types.AgentAnalysis, int64, error)
 	UpdateAgentAnalysis(ctx context.Context, id int64, input AgentAnalysisUpdateInput) (*types.AgentAnalysis, error)
 	// RerunAgentAnalysis 用当前模板 / 命令重新创建一个容器实例，并重置任务状态。
 	RerunAgentAnalysis(ctx context.Context, id int64) (*types.AgentAnalysis, error)

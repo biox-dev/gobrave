@@ -110,6 +110,36 @@ func (h *AgentAnalysisHandler) ListAgentAnalysis(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
+type agentAnalysisPageRequest struct {
+	types.Pagination
+}
+
+// PageAgentAnalysis 分页列出当前项目下的 AgentAnalysis，最新的在前。
+func (h *AgentAnalysisHandler) PageAgentAnalysis(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil || project == nil {
+		c.Error(errors.NewValidationError("project not found").WithDetails(errString(err)))
+		return
+	}
+
+	var req agentAnalysisPageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	items, total, err := h.service.PageAgentAnalysisByProjectID(c.Request.Context(), project.ID, &req.Pagination)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to page agent analysis").WithDetails(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, types.NewPageResult(total, &req.Pagination, items))
+}
+
 // GetAgentAnalysis 按 ID 查询当前项目的 AgentAnalysis。
 func (h *AgentAnalysisHandler) GetAgentAnalysis(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Query("id")), 10, 64)

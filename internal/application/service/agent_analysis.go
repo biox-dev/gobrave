@@ -110,6 +110,10 @@ func (s *agentAnalysisService) ListAgentAnalysisByProjectID(ctx context.Context,
 	return s.repo.ListAgentAnalysisByProjectID(ctx, projectID)
 }
 
+func (s *agentAnalysisService) PageAgentAnalysisByProjectID(ctx context.Context, projectID int64, pagination *types.Pagination) ([]*types.AgentAnalysis, int64, error) {
+	return s.repo.PageAgentAnalysisByProjectID(ctx, projectID, pagination)
+}
+
 func (s *agentAnalysisService) UpdateAgentAnalysis(ctx context.Context, id int64, input interfaces.AgentAnalysisUpdateInput) (*types.AgentAnalysis, error) {
 	item, err := s.repo.GetAgentAnalysisByID(ctx, id)
 	if err != nil {
