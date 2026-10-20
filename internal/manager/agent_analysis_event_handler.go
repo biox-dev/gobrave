@@ -48,6 +48,15 @@ func (h *AgentAnalysisEventHandler) Handle(evt event.Event) {
 		return
 	}
 
+	// 重新运行后旧容器的退出事件不应该覆盖新容器实例的状态。
+	if item.ContainerInstanceID != 0 && item.ContainerInstanceID != inst.ID {
+		return
+	}
+	// 手动停止后保持 canceled，不被之后的 stopped 事件覆盖。
+	if item.Status == types.AgentAnalysisCanceled {
+		return
+	}
+
 	now := time.Now().UTC()
 	updates := map[string]any{}
 	switch normalized {

@@ -156,6 +156,45 @@ func (h *AgentAnalysisHandler) UpdateAgentAnalysis(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
+// RerunAgentAnalysis 用当前模板与命令重新创建一个容器实例。
+// 只有已结束（done / failed / timeout / canceled）的任务可以重跑。
+func (h *AgentAnalysisHandler) RerunAgentAnalysis(c *gin.Context) {
+	var req idBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+	if _, ok := h.getOwnedAgentAnalysis(c, req.ID); !ok {
+		return
+	}
+
+	item, err := h.service.RerunAgentAnalysis(c.Request.Context(), req.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
+// StopAgentAnalysis 停止正在运行的容器，并把任务标记为 canceled。
+func (h *AgentAnalysisHandler) StopAgentAnalysis(c *gin.Context) {
+	var req idBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+	if _, ok := h.getOwnedAgentAnalysis(c, req.ID); !ok {
+		return
+	}
+
+	item, err := h.service.StopAgentAnalysis(c.Request.Context(), req.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
 // DeleteAgentAnalysis 删除任务并提交容器删除请求。
 func (h *AgentAnalysisHandler) DeleteAgentAnalysis(c *gin.Context) {
 	var req idBody

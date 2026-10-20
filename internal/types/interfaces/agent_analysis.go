@@ -36,11 +36,17 @@ type AgentAnalysisUpdateInput struct {
 	WorkspaceDir *string
 }
 
-// AgentAnalysisService 提供 AgentAnalysis 的创建 / 查询 / 更新 / 删除。
+// AgentAnalysisService 提供 AgentAnalysis 的创建 / 查询 / 更新 / 删除，
+// 以及重新运行 / 停止其容器。
 type AgentAnalysisService interface {
 	CreateAgentAnalysis(ctx context.Context, input AgentAnalysisCreateInput) (*types.AgentAnalysis, error)
 	GetAgentAnalysis(ctx context.Context, id int64) (*types.AgentAnalysis, error)
 	ListAgentAnalysisByProjectID(ctx context.Context, projectID int64) ([]*types.AgentAnalysis, error)
 	UpdateAgentAnalysis(ctx context.Context, id int64, input AgentAnalysisUpdateInput) (*types.AgentAnalysis, error)
+	// RerunAgentAnalysis 用当前模板 / 命令重新创建一个容器实例，并重置任务状态。
+	RerunAgentAnalysis(ctx context.Context, id int64) (*types.AgentAnalysis, error)
+	// StopAgentAnalysis 停止（或取消尚未创建的）容器，并把任务标记为 canceled。
+	StopAgentAnalysis(ctx context.Context, id int64) (*types.AgentAnalysis, error)
+	// DeleteAgentAnalysis 删除任务记录，同时提交容器删除请求。
 	DeleteAgentAnalysis(ctx context.Context, id int64) error
 }

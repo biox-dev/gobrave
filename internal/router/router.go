@@ -320,6 +320,8 @@ func RegisterAgentAnalysisRoutes(r *gin.RouterGroup, handler *handler.AgentAnaly
 	r.GET("/container/agent-analysis/list", handler.ListAgentAnalysis)
 	r.GET("/container/agent-analysis/get", handler.GetAgentAnalysis)
 	r.POST("/container/agent-analysis/update", handler.UpdateAgentAnalysis)
+	r.POST("/container/agent-analysis/rerun", handler.RerunAgentAnalysis)
+	r.POST("/container/agent-analysis/stop", handler.StopAgentAnalysis)
 	r.POST("/container/agent-analysis/delete", handler.DeleteAgentAnalysis)
 	// WebSocket：xterm.js -> Go -> kubectl exec -it / docker exec -it
 	r.GET("/container/agent-analysis/terminal", handler.AgentAnalysisTerminal)
