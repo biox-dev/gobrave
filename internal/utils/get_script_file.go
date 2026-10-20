@@ -51,6 +51,12 @@ func GetProjectDir(baseDir string, projectID int64) string {
 	return filepath.Join(baseDir, "data", projectDirName(projectID))
 }
 
+// GetAgentAnalysisDir 返回 AgentAnalysis 的默认工作目录：
+// <baseDir>/data/<projectId>/agent-analysis/<agentAnalysisId>。
+func GetAgentAnalysisDir(baseDir string, projectID int64, agentAnalysisID int64) string {
+	return filepath.Join(GetProjectDir(baseDir, projectID), "agent-analysis", fmt.Sprintf("%d", agentAnalysisID))
+}
+
 func GetProjectReportDir(baseDir string, projectID int64, reportID string) string {
 	projectDir := GetProjectDir(baseDir, projectID)
 	return filepath.Join(projectDir, "report", reportID)

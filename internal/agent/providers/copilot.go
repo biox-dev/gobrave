@@ -299,6 +299,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 	// 注意：copilot provider 计划废弃，此处仅保持与新 API 兼容。
 	rc := agent.ToolRuntimeContextFromRequest(req)
 	runner := a.opts.AnalysisNodeRunner
+	agentAnalysisRunner := a.opts.AgentAnalysisRunner
 	fileReader := a.opts.FileReader
 	scriptCreator := a.opts.ScriptCreator
 	paramsBuilder := a.opts.AnalysisNodeParamsBuilder
@@ -323,6 +324,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 					ctx := agent.WithToolPermission(inv.TraceContext, rt, userID)
 					ctx = agent.WithProjectResourceBrowser(ctx, browser)
 					ctx = agent.WithSkills(ctx, skills)
+					ctx = agent.WithAgentAnalysisRunner(ctx, agentAnalysisRunner)
 					if a.opts.LSP != nil {
 						ctx = agent.WithLSPClients(ctx, a.opts.LSP.Clients())
 					}

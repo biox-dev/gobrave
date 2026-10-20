@@ -201,6 +201,8 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 //
 // runner 是「运行分析节点」的进程级静态服务能力，注入 Options 后由 Provider 在执行工具时
 // 注入工具 ctx（与可序列化的 RuntimeContext 分开，避免服务对象被序列化进 DB）。
+// agentAnalysisRunner 是「创建并等待 AgentAnalysis 容器任务」的同类能力，
+// 供 run_agent_analysis 工具使用。
 // fileReader 同理，承载「按文件 ID 读取内容预览」的能力，供 read_file_by_id 工具使用。
 // paramsBuilder 承载「按 io_schema 生成节点参数」的能力，供 build_analysis_node_params 工具使用。
 // nodeUpdater 承载「更新分析节点名称」的能力，供 update_analysis_node 工具使用。
@@ -209,7 +211,7 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 // skills 是技能注册表：既提供系统提示词的技能元信息，也供 get_skill /
 // load_skill_resource 工具在执行期读取技能指令与附属资源。
 // sessions / messages 是会话与消息服务：供 custom Provider 为子 Agent 创建子会话并落库。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager, sessions session.Service, messages message.Service) *agent.Client {
+func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, agentAnalysisRunner tool.AgentAnalysisRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager, sessions session.Service, messages message.Service) *agent.Client {
 	opts := agent.Options{}
 
 	// 模型提供商配置表按需实时生成：可视化配置页保存 agent 段后，内存中的 cfg 会被立即更新，
@@ -230,6 +232,8 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	}
 	// 进程级服务能力：run_analysis_node 等 builtin 工具在执行期通过它触发节点运行。
 	opts.AnalysisNodeRunner = runner
+	// 进程级服务能力：run_agent_analysis 工具在执行期通过它创建并等待 AgentAnalysis 容器任务。
+	opts.AgentAnalysisRunner = agentAnalysisRunner
 	// 进程级服务能力：read_file_by_id 等 builtin 工具在执行期通过它按文件 ID 读取内容预览。
 	opts.FileReader = fileReader
 	// 进程级服务能力：create_script / create_analysis_node 工具在执行期通过它创建脚本与分析节点。
@@ -360,6 +364,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(repository.NewDataRepository))
 	must(container.Provide(repository.NewStoreRepository))
 	must(container.Provide(repository.NewAnalysisRepository))
+	must(container.Provide(repository.NewAgentAnalysisRepository))
 	must(container.Provide(repository.NewWorkflowRepository))
 	must(container.Provide(repository.NewContainerRepository))
 	must(container.Provide(repository.NewLLMRepository))
@@ -397,6 +402,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 注入 EventRouter 后，等待节点完成改为订阅 NodeCompletionCoordinator 发布的
 	// dag.node.completed / dag.node.failed 事件，仅保留低频状态轮询兜底。
 	must(container.Provide(newAnalysisNodeRunner))
+	// AgentAnalysis 执行器：把「创建一次性容器任务 + 等待结束 + 读取日志」能力暴露给
+	// 内置工具 run_agent_analysis，由 Provider 在执行工具前注入工具 ctx。
+	must(container.Provide(newAgentAnalysisRunner))
 	// 文件读取器：把「按 go_file 主键 ID 读取文件（含表格预览）」能力暴露给内置工具
 	// read_file_by_id，由 Provider 在执行工具前注入工具 ctx。
 	must(container.Provide(newFileReader))
@@ -433,8 +441,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager, sessions session.Service, messages message.Service) *agent.Client {
-		return buildAgentClient(cfg, registry, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
+	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, agentAnalysisRunner tool.AgentAnalysisRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager, sessions session.Service, messages message.Service) *agent.Client {
+		return buildAgentClient(cfg, registry, runner, agentAnalysisRunner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。
@@ -984,6 +992,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.Analysis{},
 		&types.AnalysisNode{},
 		&types.AnalysisEdge{},
+		&types.AgentAnalysis{},
 		&types.AuthToken{},
 		&types.ContainerImage{},
 		&types.ContainerTemplateSpec{},

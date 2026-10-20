@@ -160,6 +160,13 @@ func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.A
 	return tool.WithFileHistory(ctx, files)
 }
 
+// WithAgentAnalysisRunner 把「创建并等待 AgentAnalysis 容器任务」的服务能力注入工具执行 ctx。
+//
+// runner 为 nil 时原样返回 ctx。
+func WithAgentAnalysisRunner(ctx context.Context, runner tool.AgentAnalysisRunner) context.Context {
+	return tool.WithAgentAnalysisRunner(ctx, runner)
+}
+
 // WithLSPClients 把 LSP 客户端集合注入工具执行 ctx，供 diagnostics / view / edit / write / patch 使用。
 //
 // clients 来自 lsp/manager.Manager.Clients()；为空时原样返回 ctx。

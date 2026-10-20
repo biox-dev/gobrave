@@ -202,10 +202,10 @@ func parseContainerTemplateID(raw string) (int64, error) {
 	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("create_script: invalid container_template_id %q: %w", idStr, err)
+		return 0, fmt.Errorf("invalid container_template_id %q: %w", idStr, err)
 	}
 	if id < 0 {
-		return 0, fmt.Errorf("create_script: container_template_id must not be negative")
+		return 0, fmt.Errorf("container_template_id must not be negative")
 	}
 	return id, nil
 }

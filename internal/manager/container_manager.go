@@ -974,7 +974,28 @@ func applyDagNodeTaskSpec(spec *types.ContainerSpec, logPath string) {
 	spec.Command = []string{"-c", script}
 }
 
+// applyDagNodeRuntimeSpec 按 DAG 节点的约定覆盖容器启动命令（bash ./run.sh）与运行用户。
 func (m *ContainerManager) applyDagNodeRuntimeSpec(spec *types.ContainerSpec, resolveVars map[string]string) {
+	m.applyTaskRuntimeSpec(spec, resolveVars)
+}
+
+// applyAgentAnalysisRuntimeSpec 按 AgentAnalysis 的约定覆盖容器启动命令与运行用户。
+//
+// 与 DAG 节点一致：命令统一走 bash ./run.sh，输出 tee 到 LOG_PATH；但工作目录
+// 始终以 AgentAnalysis 的 WorkspaceDir 为准（模板里的 WorkDir 不参与）。
+func (m *ContainerManager) applyAgentAnalysisRuntimeSpec(spec *types.ContainerSpec, resolveVars map[string]string) {
+	m.applyTaskRuntimeSpec(spec, resolveVars)
+	if spec == nil {
+		return
+	}
+	if workspacePath := strings.TrimSpace(resolveVars["WORKSPACE_PATH"]); workspacePath != "" {
+		spec.WorkDir = workspacePath
+	}
+}
+
+// applyTaskRuntimeSpec 是 DAG 节点与 AgentAnalysis 共用的任务型启动约定：
+// 统一入口为 bash ./run.sh、输出 tee 到 LOG_PATH，并按运行时映射运行用户。
+func (m *ContainerManager) applyTaskRuntimeSpec(spec *types.ContainerSpec, resolveVars map[string]string) {
 	if spec == nil {
 		return
 	}

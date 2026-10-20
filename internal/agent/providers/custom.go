@@ -220,6 +220,7 @@ func (a *customAgent) toolContext(req agent.Request, rt agent.Runtime) func(cont
 			services.MemorySaver,
 			services.FileHistory,
 		)
+		ctx = agent.WithAgentAnalysisRunner(ctx, services.AgentAnalysisRunner)
 		ctx = agent.WithProjectResourceBrowser(ctx, services.ProjectResourceBrowser)
 		ctx = agent.WithSkills(ctx, services.Skills)
 		if services.LSP != nil {

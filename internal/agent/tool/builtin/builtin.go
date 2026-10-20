@@ -26,6 +26,7 @@ func All() []tool.Tool {
 		BuildAnalysisNodeParams(),
 		RunAnalysisNode(),
 		UpdateAnalysisNode(),
+		RunAgentAnalysis(),
 		ReadFileByID(),
 		SaveMemory(),
 		// 技能：指令正文与附属资源都按需通过工具加载（渐进式披露）。

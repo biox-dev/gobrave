@@ -250,6 +250,64 @@ func AnalysisNodeRunnerFrom(ctx context.Context) AnalysisNodeRunner {
 	return runner
 }
 
+// AgentAnalysisRunner 抽象「创建 AgentAnalysis 容器任务并等待其结束」的业务能力。
+//
+// 与 AnalysisNodeRunner 一样，它是进程级静态依赖（一次注入、所有请求共用），
+// 由 agent.Options 承载并在执行工具前注入 ctx。
+type AgentAnalysisRunner interface {
+	// RunAgentAnalysis 创建一条 AgentAnalysis 记录（工作目录、run.sh），
+	// 通过 ContainerManager.CreateByTemplate 入队容器创建请求，等待容器进入终态，
+	// 返回状态、退出码与命令日志。超时 / 取消时返回错误。
+	RunAgentAnalysis(ctx context.Context, in AgentAnalysisInput) (AgentAnalysisResult, error)
+}
+
+// AgentAnalysisInput 是一次 AgentAnalysis 工具调用的入参。
+type AgentAnalysisInput struct {
+	// ProjectID 取自 RuntimeContext.ProjectID（当前用户激活项目）。
+	ProjectID int64
+	// Name 是任务名称（同时用作容器资源名）。
+	Name string
+	// TemplateID 是模型选择的容器模板。
+	TemplateID int64
+	// Command 是要执行的 shell 命令，由实现写入 WorkspaceDir/run.sh。
+	Command string
+	// TimeoutSeconds <= 0 时使用实现默认超时。
+	TimeoutSeconds int
+}
+
+// AgentAnalysisResult 是一次 AgentAnalysis 的执行结果。
+type AgentAnalysisResult struct {
+	AgentAnalysisID     int64  `json:"agent_analysis_id"`
+	ContainerInstanceID int64  `json:"container_instance_id,omitempty"`
+	Status              string `json:"status"`
+	Success             bool   `json:"success"`
+	ExitCode            int    `json:"exit_code"`
+	Log                 string `json:"log,omitempty"`
+	LogPath             string `json:"log_path,omitempty"`
+	WorkspaceDir        string `json:"workspace_dir,omitempty"`
+	CommandPath         string `json:"command_path,omitempty"`
+}
+
+// agentAnalysisRunnerKey 是 AgentAnalysisRunner 在 context 中的私有键类型。
+type agentAnalysisRunnerKey struct{}
+
+// WithAgentAnalysisRunner 把「创建并等待 AgentAnalysis 容器任务」的能力注入 ctx。
+func WithAgentAnalysisRunner(ctx context.Context, runner AgentAnalysisRunner) context.Context {
+	if ctx == nil || runner == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, agentAnalysisRunnerKey{}, runner)
+}
+
+// AgentAnalysisRunnerFrom 取出注入的 AgentAnalysis 执行能力；未注入时返回 nil。
+func AgentAnalysisRunnerFrom(ctx context.Context) AgentAnalysisRunner {
+	if ctx == nil {
+		return nil
+	}
+	runner, _ := ctx.Value(agentAnalysisRunnerKey{}).(AgentAnalysisRunner)
+	return runner
+}
+
 // FileReader 抽象「按 go_file 主键 ID 读取文件」的业务能力。
 //
 // 它把「file_id → 文件元信息（含 path）+ 内容预览」的业务细节收敛在上层实现
