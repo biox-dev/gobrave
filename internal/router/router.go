@@ -27,28 +27,27 @@ import (
 
 type RouterParams struct {
 	dig.In
-	Config               *config.Config
-	UserService          interfaces.UserService
-	ProjectService       interfaces.ProjectService
-	AuthHandler          *handler.AuthHandler
-	ProjectHandler       *handler.ProjectHandler
-	DataHandler          *handler.DataHandler
-	StoreHandler         *handler.StoreHandler
-	ContainerHandler     *handler.ContainerHandler
-	AgentAnalysisHandler *handler.AgentAnalysisHandler
-	AnalysisHandler      *handler.AnalysisHandler
-	WorkflowHandler      *handler.WorkflowHandler
-	GitHandler           *handler.GitHandler
-	SettingHandler       *handler.SettingHandler
-	ConfigHandler        *handler.ConfigHandler
-	SheetHandler         *handler.SheetHandler
-	UploadHandler        *handler.UploadHandler
-	FileHandler          *handler.FileHandler
-	ProxyHandler         *handler.ProxyHandler
-	RealtimeHandler      *handler.RealtimeHandler
-	LLMHandler           *handler.LLMHandler
-	AISummaryHandler     *handler.AISummaryHandler
-	AgentHandler         *handler.AgentHandler
+	Config           *config.Config
+	UserService      interfaces.UserService
+	ProjectService   interfaces.ProjectService
+	AuthHandler      *handler.AuthHandler
+	ProjectHandler   *handler.ProjectHandler
+	DataHandler      *handler.DataHandler
+	StoreHandler     *handler.StoreHandler
+	ContainerHandler *handler.ContainerHandler
+	AnalysisHandler  *handler.AnalysisHandler
+	WorkflowHandler  *handler.WorkflowHandler
+	GitHandler       *handler.GitHandler
+	SettingHandler   *handler.SettingHandler
+	ConfigHandler    *handler.ConfigHandler
+	SheetHandler     *handler.SheetHandler
+	UploadHandler    *handler.UploadHandler
+	FileHandler      *handler.FileHandler
+	ProxyHandler     *handler.ProxyHandler
+	RealtimeHandler  *handler.RealtimeHandler
+	LLMHandler       *handler.LLMHandler
+	AISummaryHandler *handler.AISummaryHandler
+	AgentHandler     *handler.AgentHandler
 }
 
 func NewRouter(params RouterParams) *gin.Engine {
@@ -100,7 +99,6 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterDataRoutes(v1, params.DataHandler)
 		RegisterStoreRoutes(v1, params.StoreHandler)
 		RegisterContainerRoutes(v1, params.ContainerHandler)
-		RegisterAgentAnalysisRoutes(v1, params.AgentAnalysisHandler)
 		RegisterAnalysisRoutes(v1, params.AnalysisHandler)
 		RegisterWorkflowRoutes(v1, params.WorkflowHandler)
 		RegisterGitRoutes(v1, params.GitHandler)
@@ -318,21 +316,6 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	r.GET("/container/queue/status", handler.GetQueueStatus)
 }
 
-func RegisterAgentAnalysisRoutes(r *gin.RouterGroup, handler *handler.AgentAnalysisHandler) {
-	r.POST("/container/agent-analysis/create", handler.CreateAgentAnalysis)
-	r.GET("/container/agent-analysis/list", handler.ListAgentAnalysis)
-	r.POST("/container/agent-analysis/list-by-page", handler.PageAgentAnalysis)
-	r.GET("/container/agent-analysis/get", handler.GetAgentAnalysis)
-	r.POST("/container/agent-analysis/update", handler.UpdateAgentAnalysis)
-	r.POST("/container/agent-analysis/rerun", handler.RerunAgentAnalysis)
-	r.POST("/container/agent-analysis/stop", handler.StopAgentAnalysis)
-	r.POST("/container/agent-analysis/delete", handler.DeleteAgentAnalysis)
-	// 命令日志（WorkspaceDir/command.log），text/plain。
-	r.GET("/container/agent-analysis/log", handler.AgentAnalysisLog)
-	// WebSocket：xterm.js -> Go -> kubectl exec -it / docker exec -it
-	r.GET("/container/agent-analysis/terminal", handler.AgentAnalysisTerminal)
-}
-
 func RegisterStoreRoutes(r *gin.RouterGroup, handler *handler.StoreHandler) {
 	r.POST("/store/create", handler.CreateStore)
 	r.POST("/store/download", handler.DownloadStore)
@@ -424,6 +407,8 @@ func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler
 	r.POST("/analysis/controller", handler.SaveAnalysisController)
 	r.POST("/analysis/controller-script", handler.SaveAnalysisNodeControllerWithScript)
 	r.POST("/analysis/:analysisNodeId/run-node", handler.RunAnalysisNode)
+	// WebSocket：xterm.js -> Go -> kubectl exec -it / docker exec -it
+	r.GET("/analysis/node/:analysisNodeId/terminal", handler.AnalysisNodeTerminal)
 	r.POST("/script/:scriptId/run-analysis-nodes", handler.RunAnalysisNodeByScriptID)
 	r.POST("/fast-api/analysis-controller", handler.SaveAnalysisController)
 	r.POST("/analysis/stop/:analysisId", handler.StopAnalysis)

@@ -671,7 +671,7 @@ func newTestManagerWithWorker(repo *mockContainerRepo, rt *dockerMockRuntime) (*
 	mgr := NewContainerManager(repo, nil, projectRepo, nil, reg, nil, NewDefaultContainerRuntimeResolver(), nil, nil)
 	// The worker performs the create transition through the manager, so it must be
 	// given the same one instead of a nil dependency.
-	worker := NewContainerCreateWorker(repo, projectRepo, nil, nil, nil, reg, NewDefaultContainerRuntimeResolver(), mgr, nil)
+	worker := NewContainerCreateWorker(repo, projectRepo, nil, nil, reg, NewDefaultContainerRuntimeResolver(), mgr, nil)
 	return mgr, worker
 }
 

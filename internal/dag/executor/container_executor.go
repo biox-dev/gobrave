@@ -44,17 +44,21 @@ func (e *ContainerExecutor) Execute(ctx context.Context, node *types.AnalysisNod
 	// 	return e.fallback.Execute(ctx, node)
 	// }
 
-	scriptID := node.ScriptID
-	if scriptID == 0 {
-		return nil, fmt.Errorf("Container executor requires script_id")
-	}
+	containerTemplateID := node.ContainerTemplateID
+	if containerTemplateID <= 0 {
+		scriptID := node.ScriptID
+		if scriptID == 0 {
+			return nil, fmt.Errorf("Container executor requires script_id or container_template_id")
+		}
 
-	scriptItem, err := e.workflowRepo.GetScriptByID(ctx, scriptID)
-	if err != nil {
-		return nil, fmt.Errorf("load script failed: %w", err)
-	}
-	if scriptItem.ContainerTemplateID == 0 {
-		return nil, fmt.Errorf("script container_template_id is required: script_id=%d", scriptID)
+		scriptItem, err := e.workflowRepo.GetScriptByID(ctx, scriptID)
+		if err != nil {
+			return nil, fmt.Errorf("load script failed: %w", err)
+		}
+		if scriptItem.ContainerTemplateID == 0 {
+			return nil, fmt.Errorf("script container_template_id is required: script_id=%d", scriptID)
+		}
+		containerTemplateID = scriptItem.ContainerTemplateID
 	}
 
 	if node.ID == 0 {
@@ -65,7 +69,7 @@ func (e *ContainerExecutor) Execute(ctx context.Context, node *types.AnalysisNod
 	inst, err := e.containerMgr.CreateByTemplate(
 		ctx,
 
-		scriptItem.ContainerTemplateID,
+		containerTemplateID,
 		types.ContainerOwnerDagNode,
 		int64(node.ID),
 		instanceName,

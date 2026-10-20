@@ -18,8 +18,10 @@ import (
 const (
 	// NodeCreationSourceStandalone 是前端「独立节点」入口创建的节点。
 	NodeCreationSourceStandalone = "standalone"
-	// NodeCreationSourceAgent 是 Agent 工具（create_analysis_node）创建的节点。
+	// NodeCreationSourceAgent 是 Agent 工具（create_analysis_node）为脚本创建的节点。
 	NodeCreationSourceAgent = "agent"
+	// NodeCreationSourceAgentSession 是 Agent 会话（run_agent_analysis）直接创建的命令节点。
+	NodeCreationSourceAgentSession = "agent_session"
 )
 
 // nodeExecutionStatusReady 与 dagruntime.StatusReady 同名同值。
@@ -161,6 +163,74 @@ func NewAnalysisNodeFromScript(
 	}
 	result.Node = node
 	return result, nil
+}
+
+// CommandNodeSpec 描述「由 Agent 会话构建一个命令型分析节点」所需的事实。
+//
+// 命令节点没有脚本：容器模板与 run.sh 正文都由节点自身承载，因此不需要 io_schema。
+type CommandNodeSpec struct {
+	// ProjectID 是节点所属项目（必须为正数）。
+	ProjectID int64
+	// ContainerTemplateID 是该节点使用的容器模板（go_container_template_definition 主键）。
+	ContainerTemplateID int64
+	// Command 是写入 run.sh 的 shell 命令（由 LLM 生成）。
+	Command string
+	// NodeName 是节点名称，为空时回落到 "agent-analysis"。
+	NodeName string
+	// BaseDir 是存储根目录（为空时用 "."）。
+	BaseDir string
+}
+
+// NewAnalysisNodeFromCommand 由 Agent 会话的「容器模板 + 命令」构建一个尚未落库的命令节点。
+//
+// 与脚本节点共用同一套派生口径：工作目录仍为 joinNodeWorkspace(...)，其余路径由它派生，
+// 状态 ready、executor container，运行 / 停止完全复用通用节点链路。
+func NewAnalysisNodeFromCommand(spec CommandNodeSpec) (*types.AnalysisNode, error) {
+	if spec.ProjectID <= 0 {
+		return nil, fmt.Errorf("project id is required")
+	}
+	if spec.ContainerTemplateID <= 0 {
+		return nil, fmt.Errorf("container_template_id is required")
+	}
+	command := strings.TrimSpace(spec.Command)
+	if command == "" {
+		return nil, fmt.Errorf("command is required")
+	}
+	nodeName := strings.TrimSpace(spec.NodeName)
+	if nodeName == "" {
+		nodeName = "agent-analysis"
+	}
+
+	node := &types.AnalysisNode{
+		ID:                     int64(utils.GenerateID()),
+		AnalysisNodeID:         "node-" + uuid.NewString(),
+		ProjectID:              spec.ProjectID,
+		NodeID:                 "node-" + uuid.NewString(),
+		NodeName:               nodeName,
+		ContainerTemplateID:    spec.ContainerTemplateID,
+		Command:                command,
+		InputsPatterns:         types.JSONMap{},
+		OutputPatterns:         types.JSONMap{},
+		ResolvedInputs:         types.JSONMap{},
+		ResolvedOutputs:        types.JSONMap{},
+		RequestParam:           "{}",
+		Status:                 nodeExecutionStatusReady,
+		Executor:               "container",
+		Retry:                  0,
+		MaxRetry:               3,
+		UpstreamIDs:            types.JSONSlice{},
+		DownstreamIDs:          types.JSONSlice{},
+		InputValidationErrors:  types.JSONSlice{},
+		OutputValidationErrors: types.JSONSlice{},
+		CreationSource:         NodeCreationSourceAgentSession,
+	}
+	baseDir := strings.TrimSpace(spec.BaseDir)
+	if baseDir == "" {
+		baseDir = "."
+	}
+	node.WorkspaceDir = joinNodeWorkspace(baseDir, spec.ProjectID, 0, node.ID)
+	node.HydrateDerivedPaths()
+	return node, nil
 }
 
 // joinNodeWorkspace 返回 <base_dir>/data/<project>/analysis_node/<script_id>/<node_id>。

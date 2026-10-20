@@ -23,6 +23,7 @@ import (
 	scheduler "github.com/biox-dev/gobrave/internal/dag/scheduler"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -37,6 +38,8 @@ type AnalysisHandler struct {
 	workflowService  interfaces.WorkflowService
 	dataService      interfaces.DataService
 	containerService interfaces.ContainerService
+	containerRepo    interfaces.ContainerRepository
+	containerManager *manager.ContainerManager
 	analysisRepo     interfaces.AnalysisRepository
 	// schedulers resolves the orchestrator that owns an analysis from its
 	// persisted analysis.scheduler_mode, so save / stop / snapshot never hardcode a
@@ -189,6 +192,8 @@ func NewAnalysisHandler(
 	workflowService interfaces.WorkflowService,
 	dataService interfaces.DataService,
 	containerService interfaces.ContainerService,
+	containerRepo interfaces.ContainerRepository,
+	containerManager *manager.ContainerManager,
 	analysisRepo interfaces.AnalysisRepository,
 	schedulers *scheduler.Registry,
 	nodeOrchestrator interfaces.NodeOrchestrator,
@@ -202,6 +207,8 @@ func NewAnalysisHandler(
 		workflowService:  workflowService,
 		dataService:      dataService,
 		containerService: containerService,
+		containerRepo:    containerRepo,
+		containerManager: containerManager,
 		analysisRepo:     analysisRepo,
 		projectRepo:      projectRepo,
 		schedulers:       schedulers,
@@ -826,6 +833,34 @@ func (h *AnalysisHandler) RunAnalysisNodeWithID(ctx context.Context, analsyisNod
 	// Guard against double-submission: skip if node is already in an active state
 	if node.Status == dagruntime.StatusRunning || node.Status == dagruntime.StatusSubmitted || node.Status == dagruntime.StatusStopping {
 		return errors.NewBadRequestError(fmt.Sprintf("analysis node is already %s, please wait for it to finish", node.Status))
+	}
+
+	// 命令节点（Agent 创建、无脚本）没有 io_schema：run.sh 由节点自身的 Command 生成，
+	// 准备后直接提交即可，不需要刷新 patterns。
+	if node.IsCommandNode() {
+		if err := h.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
+			return errors.NewInternalServerError("failed to prepare command node").WithDetails(err.Error())
+		}
+		if err := h.analysisRepo.UpdateAnalysisNodeByAnalysisNodeID(ctx, node.AnalysisNodeID, map[string]any{
+			"status":                   dagruntime.StatusReady,
+			"server_status":            "",
+			"cache_hit":                false,
+			"rerun_reason":             "node rerun requested by user",
+			"error_message":            "",
+			"exit_code":                0,
+			"pid":                      0,
+			"job_id":                   "",
+			"started_at":               nil,
+			"finished_at":              nil,
+			"output_validation_errors": types.JSONSlice{},
+			"updated_at":               time.Now().UTC(),
+		}); err != nil {
+			return errors.NewInternalServerError("failed to reset analysis node status").WithDetails(err.Error())
+		}
+		if err := h.nodeOrchestrator.StartAsync(ctx, analsyisNodeId); err != nil {
+			return errors.NewInternalServerError("failed to submit analysis node").WithDetails(err.Error())
+		}
+		return nil
 	}
 
 	// 与 SaveAnalysisNodeControllerWithScript 保持一致：提交前按脚本最新的 io_schema

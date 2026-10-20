@@ -39,7 +39,6 @@ var runtimeVariableDefinitions = map[string]types.RuntimeVariableDefinition{
 	"OUTPUT_DIR":         {Name: "OUTPUT_DIR", Category: types.RuntimeVariableCategoryDagNode, Description: "节点输出目录", Source: types.RuntimeVariableSourceDB},
 	"COMMAND_PATH":       {Name: "COMMAND_PATH", Category: types.RuntimeVariableCategoryDagNode, Description: "命令脚本路径", Source: types.RuntimeVariableSourceDB},
 	"LOG_PATH":           {Name: "LOG_PATH", Category: types.RuntimeVariableCategoryDagNode, Description: "节点日志路径", Source: types.RuntimeVariableSourceDB},
-	"AGENT_ANALYSIS_ID":  {Name: "AGENT_ANALYSIS_ID", Category: types.RuntimeVariableCategoryWorkspace, Description: "AgentAnalysis ID", Source: types.RuntimeVariableSourceDB},
 }
 
 // RuntimeVariableSet 是一组已求值的运行时变量，可派生扁平 map 或分类列表。
@@ -130,7 +129,6 @@ func (w *ContainerCreateWorker) buildRuntimeVariables(
 	w.buildProjectVariables(ctx, set, in)
 	w.buildAppSessionVariables(ctx, set, in)
 	w.buildDagNodeVariables(ctx, set, in)
-	w.buildAgentAnalysisVariables(ctx, set, in)
 
 	return set
 }
@@ -255,23 +253,4 @@ func (w *ContainerCreateWorker) buildDagNodeVariables(ctx context.Context, set *
 	set.add("LOG_PATH", logPath)
 
 	ensureDirs(ctx, []string{node.WorkspaceDir, node.OutputDir})
-}
-
-// buildAgentAnalysisVariables 负责 AgentAnalysis 相关变量。
-//
-// AgentAnalysis 没有脚本 / params.json 契约：工作目录、run.sh 与命令日志就是它的
-// 全部运行期路径，容器启动命令直接复用 applyDagNodeTaskSpec 的 bash ./run.sh 形式。
-func (w *ContainerCreateWorker) buildAgentAnalysisVariables(ctx context.Context, set *RuntimeVariableSet, in *runtimeVariableBuildInput) {
-	if in.ownerCtx == nil || in.ownerCtx.agentAnalysis == nil {
-		return
-	}
-	item := in.ownerCtx.agentAnalysis
-
-	set.add("AGENT_ANALYSIS_ID", strconv.FormatInt(item.ID, 10))
-	set.add("WORKSPACE_PATH", item.WorkspaceDir)
-	set.add("WORKSPACE_DIR", item.WorkspaceDir)
-	set.add("COMMAND_PATH", item.CommandPath)
-	set.add("LOG_PATH", item.LogPath)
-
-	ensureDirs(ctx, []string{item.WorkspaceDir})
 }

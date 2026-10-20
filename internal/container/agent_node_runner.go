@@ -133,6 +133,28 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		}, fmt.Errorf("analysis node is already %s", node.Status)
 	}
 
+	// 命令节点（Agent 创建、无脚本）没有 io_schema / request_param：run.sh 已由节点
+	// 自身的 Command 生成，准备后直接按通用节点链路运行即可。
+	if node.IsCommandNode() {
+		if len(requestParam) > 0 {
+			return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("analysis node %d is a command node and does not accept request_param", nodeID)
+		}
+		if r.preparer == nil {
+			return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("node runtime preparer is not configured")
+		}
+		node.HydrateDerivedPaths()
+		if err := r.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
+			return tool.AnalysisNodeRunResult{
+				NodeID:       nodeID,
+				Status:       "params_failed",
+				WorkspaceDir: node.WorkspaceDir,
+				CommandPath:  node.CommandPath,
+				ParamsPath:   node.ParamsPath,
+			}, fmt.Errorf("failed to prepare command node: %w", err)
+		}
+		return r.resetAndRun(ctx, node, timeout)
+	}
+
 	// 1) 确定本次运行的 request_param：入参优先，为空时回退到节点已保存的；两者都空则
 	// 直接报错（最终 request_param 不能为空，避免用空参数跑出误导性结果）。
 	effectiveRequestParam := requestParam
@@ -223,29 +245,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	}
 
 	// 5) 重置节点状态（与 RunAnalysisNodeWithID 一致），再提交异步执行。
-	// 校验错误已在参数解析阶段清空，这里不再重复写入。
-	if err := r.analysisSvc.UpdateAnalysisNodeByID(ctx, node.ID, map[string]any{
-		"status":        dag.StatusReady,
-		"server_status": "",
-		"cache_hit":     false,
-		"rerun_reason":  "node rerun requested by agent tool",
-		"error_message": "",
-		"exit_code":     0,
-		"pid":           0,
-		"job_id":        "",
-		"started_at":    nil,
-		"finished_at":   nil,
-		"updated_at":    time.Now().UTC(),
-	}); err != nil {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to reset analysis node status: %w", err)
-	}
-
-	if err := r.nodeOrchestrator.StartAsync(ctx, nodeID); err != nil {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to submit analysis node: %w", err)
-	}
-
-	logPath := strings.TrimSpace(node.LogPath)
-	result, runErr = r.waitForCompletion(ctx, nodeID, logPath, timeout)
+	result, runErr = r.resetAndRun(ctx, node, timeout)
 	// 参数与提示信息以本次解析结果为准（无论成功 / 失败 / 超时都回传本次生效的参数）。
 	if result.RequestParam == nil {
 		result.RequestParam = effectiveRequestParam
@@ -264,6 +264,33 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		result.OutputValidationErrors = []any(node.OutputValidationErrors)
 	}
 	return result, runErr
+}
+
+// resetAndRun 把节点重置为 ready 并提交异步执行，然后等待终态。
+//
+// 校验错误由调用方在参数解析阶段清空，这里只负责运行态字段与状态。
+func (r *analysisNodeRunner) resetAndRun(ctx context.Context, node *types.AnalysisNode, timeout time.Duration) (tool.AnalysisNodeRunResult, error) {
+	if err := r.analysisSvc.UpdateAnalysisNodeByID(ctx, node.ID, map[string]any{
+		"status":        dag.StatusReady,
+		"server_status": "",
+		"cache_hit":     false,
+		"rerun_reason":  "node rerun requested by agent tool",
+		"error_message": "",
+		"exit_code":     0,
+		"pid":           0,
+		"job_id":        "",
+		"started_at":    nil,
+		"finished_at":   nil,
+		"updated_at":    time.Now().UTC(),
+	}); err != nil {
+		return tool.AnalysisNodeRunResult{NodeID: node.ID}, fmt.Errorf("failed to reset analysis node status: %w", err)
+	}
+
+	if err := r.nodeOrchestrator.StartAsync(ctx, node.ID); err != nil {
+		return tool.AnalysisNodeRunResult{NodeID: node.ID}, fmt.Errorf("failed to submit analysis node: %w", err)
+	}
+
+	return r.waitForCompletion(ctx, node.ID, strings.TrimSpace(node.LogPath), timeout)
 }
 
 // readParamsJSON 读取节点 params.json 正文；读取失败或为空时返回空字符串（不视为错误）。

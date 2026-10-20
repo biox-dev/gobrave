@@ -444,10 +444,9 @@ func (t *AppSession) BeforeCreate(_ *gorm.DB) error {
 type ContainerOwnerType string
 
 const (
-	ContainerOwnerDagNode       ContainerOwnerType = "dag_node"
-	ContainerOwnerAppSession    ContainerOwnerType = "app_session"
-	ContainerOwnerService       ContainerOwnerType = "service"
-	ContainerOwnerAgentAnalysis ContainerOwnerType = "agent_analysis"
+	ContainerOwnerDagNode    ContainerOwnerType = "dag_node"
+	ContainerOwnerAppSession ContainerOwnerType = "app_session"
+	ContainerOwnerService    ContainerOwnerType = "service"
 )
 
 type ContainerStatus string

@@ -72,6 +72,9 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if node == nil {
 		return fmt.Errorf("analysis node is nil")
 	}
+	if node.IsCommandNode() {
+		return p.prepareCommandNode(ctx, node)
+	}
 	script, err := p.workflowRepo.GetScriptByID(ctx, node.ScriptID)
 	if err != nil {
 		return fmt.Errorf("load script failed: %w", err)
@@ -157,6 +160,59 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 
 	return nil
 }
+
+// prepareCommandNode 为 Agent 命令节点准备运行期文件。
+//
+// 命令节点没有脚本 / io_schema：params.json 只带公共路径参数，run.sh 直接由
+// node.Command 生成，因此不需要脚本软链与 RunScriptBuilder。
+func (p *FileSystemNodeRuntimePreparer) prepareCommandNode(ctx context.Context, node *types.AnalysisNode) error {
+	project, err := p.projectRepo.GetProjectByID(ctx, node.ProjectID)
+	if err != nil {
+		return fmt.Errorf("load project failed: %w", err)
+	}
+	if err := os.MkdirAll(node.WorkspaceDir, 0o755); err != nil {
+		return fmt.Errorf("create workspace dir failed: %w", err)
+	}
+	if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
+		return fmt.Errorf("create output dir failed: %w", err)
+	}
+	if err := os.MkdirAll(node.CacheDir, 0o755); err != nil {
+		return fmt.Errorf("create cache dir failed: %w", err)
+	}
+
+	paramsPayload := cloneAnyMapForNode(map[string]interface{}(node.ResolvedInputs))
+	paramsPayload["project_dir"] = utils.GetProjectDir(p.baseDir(), project.ID)
+	paramsPayload["output_dir"] = node.OutputDir
+	paramsPayload["node_cached_dir"] = node.CacheDir
+	if err := writeJSONAtomic(node.ParamsPath, paramsPayload, 0o644); err != nil {
+		return fmt.Errorf("write params json failed: %w", err)
+	}
+
+	projectDir := utils.GetProjectDir(p.baseDir(), project.ID)
+	if err := p.WriteEnvFile(ctx, utils.GetAnalysisNodeEnvFile(node.WorkspaceDir), node, projectDir); err != nil {
+		return fmt.Errorf("write env.sh failed: %w", err)
+	}
+
+	command := strings.TrimSpace(node.Command)
+	if command == "" {
+		return fmt.Errorf("command is required for command node %d", node.ID)
+	}
+	if !strings.HasSuffix(command, "\n") {
+		command += "\n"
+	}
+	if err := writeTextAtomic(node.CommandPath, command, 0o755); err != nil {
+		return fmt.Errorf("write run.sh failed: %w", err)
+	}
+
+	if !shouldSkipCleanOutput(ctx) {
+		prefix := filepath.Join(p.baseDir(), "data", strconv.FormatInt(project.ID, 10))
+		if err := cleanDirContents(node.OutputDir, prefix); err != nil {
+			return fmt.Errorf("clean output dir failed: %w", err)
+		}
+	}
+	return nil
+}
+
 func (p *FileSystemNodeRuntimePreparer) WriteEnvFile(ctx context.Context, envFilePath string, node *types.AnalysisNode, scriptDir string) error {
 	content := fmt.Sprintf("export PATH=%s:$PATH\n", scriptDir)
 	content += `

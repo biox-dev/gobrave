@@ -201,7 +201,7 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 //
 // runner 是「运行分析节点」的进程级静态服务能力，注入 Options 后由 Provider 在执行工具时
 // 注入工具 ctx（与可序列化的 RuntimeContext 分开，避免服务对象被序列化进 DB）。
-// agentAnalysisRunner 是「创建并等待 AgentAnalysis 容器任务」的同类能力，
+// agentAnalysisRunner 是「创建并等待命令型分析节点」的同类能力，
 // 供 run_agent_analysis 工具使用。
 // fileReader 同理，承载「按文件 ID 读取内容预览」的能力，供 read_file_by_id 工具使用。
 // paramsBuilder 承载「按 io_schema 生成节点参数」的能力，供 build_analysis_node_params 工具使用。
@@ -364,7 +364,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(repository.NewDataRepository))
 	must(container.Provide(repository.NewStoreRepository))
 	must(container.Provide(repository.NewAnalysisRepository))
-	must(container.Provide(repository.NewAgentAnalysisRepository))
 	must(container.Provide(repository.NewWorkflowRepository))
 	must(container.Provide(repository.NewContainerRepository))
 	must(container.Provide(repository.NewLLMRepository))
@@ -402,7 +401,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 注入 EventRouter 后，等待节点完成改为订阅 NodeCompletionCoordinator 发布的
 	// dag.node.completed / dag.node.failed 事件，仅保留低频状态轮询兜底。
 	must(container.Provide(newAnalysisNodeRunner))
-	// AgentAnalysis 执行器：把「创建一次性容器任务 + 等待结束 + 读取日志」能力暴露给
+	// 命令型分析节点执行器：把「创建命令节点 + 等待结束 + 读取日志」能力暴露给
 	// 内置工具 run_agent_analysis，由 Provider 在执行工具前注入工具 ctx。
 	must(container.Provide(newAgentAnalysisRunner))
 	// 文件读取器：把「按 go_file 主键 ID 读取文件（含表格预览）」能力暴露给内置工具
@@ -544,13 +543,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		dig.As(new(event.Handler)),
 		dig.Group("event_handlers"),
 	))
-	// AgentAnalysis 状态同步：容器 running / stopped / failed -> 任务状态，
-	// 驱动页面上的 Attach 按钮与任务列表。
-	must(container.Provide(
-		manager.NewAgentAnalysisEventHandler,
-		dig.As(new(event.Handler)),
-		dig.Group("event_handlers"),
-	))
+	// AgentAnalysis 状态同步已删除：命令型节点使用通用 AnalysisNode 生命周期。
 	must(container.Provide(
 		manager.NewAISummaryEventHandler,
 		dig.As(new(event.Handler)),
@@ -632,9 +625,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(newSchedulerRegistry))
 	must(container.Provide(service.NewWorkflowService))
 	must(container.Provide(service.NewContainerService))
-	// AgentAnalysis 业务服务：创建 / 查询 / 更新 / 删除 Agent 容器任务。
-	// 它同时被 HTTP handler 与内置工具 run_agent_analysis（经 agentAnalysisRunner）复用。
-	must(container.Provide(service.NewAgentAnalysisService))
 	// 系统启动时导入内置容器模板（builtin/container_templates/*.json）：
 	// 复用 InstallContainerAssets 按主键 upsert（镜像 → 运行配置 → 绑定行），
 	// 因此每次启动都会把内置模板刷新成代码里的最新定义；文件里 is_default=true 的
@@ -696,8 +686,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(handler.NewDataHandler))
 	must(container.Provide(handler.NewStoreHandler))
 	must(container.Provide(handler.NewContainerHandler))
-	// AgentAnalysis 页面与 WebSocket 终端。
-	must(container.Provide(handler.NewAgentAnalysisHandler))
 	must(container.Provide(handler.NewAnalysisHandler))
 	must(container.Provide(handler.NewWorkflowHandler))
 	must(container.Provide(handler.NewGitHandler))
@@ -1004,7 +992,6 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.Analysis{},
 		&types.AnalysisNode{},
 		&types.AnalysisEdge{},
-		&types.AgentAnalysis{},
 		&types.AuthToken{},
 		&types.ContainerImage{},
 		&types.ContainerTemplateSpec{},

@@ -72,14 +72,13 @@ var _ event.Handler = (*ContainerCreateWorker)(nil)
 // from the event bus. For creation requests it executes rt.Create + rt.Start,
 // and updates the active create request count while the request is being handled.
 type ContainerCreateWorker struct {
-	containerService  interfaces.ContainerService
-	repo              interfaces.ContainerRepository
-	projectRepo       interfaces.ProjectRepository
-	analysisRepo      interfaces.AnalysisRepository
-	agentAnalysisRepo interfaces.AgentAnalysisRepository
-	workflowService   interfaces.WorkflowService
-	reg               *containerruntime.Registry
-	res               ContainerRuntimeResolver
+	containerService interfaces.ContainerService
+	repo             interfaces.ContainerRepository
+	projectRepo      interfaces.ProjectRepository
+	analysisRepo     interfaces.AnalysisRepository
+	workflowService  interfaces.WorkflowService
+	reg              *containerruntime.Registry
+	res              ContainerRuntimeResolver
 	// img              *ImageManager
 	containerManager *ContainerManager
 	cfg              *config.Config
@@ -91,7 +90,6 @@ func NewContainerCreateWorker(
 	repo interfaces.ContainerRepository,
 	projectRepo interfaces.ProjectRepository,
 	analysisRepo interfaces.AnalysisRepository,
-	agentAnalysisRepo interfaces.AgentAnalysisRepository,
 	workflowService interfaces.WorkflowService,
 	reg *containerruntime.Registry,
 	res ContainerRuntimeResolver,
@@ -101,13 +99,12 @@ func NewContainerCreateWorker(
 ) *ContainerCreateWorker {
 
 	return &ContainerCreateWorker{
-		repo:              repo,
-		projectRepo:       projectRepo,
-		analysisRepo:      analysisRepo,
-		agentAnalysisRepo: agentAnalysisRepo,
-		workflowService:   workflowService,
-		reg:               reg,
-		res:               res,
+		repo:            repo,
+		projectRepo:     projectRepo,
+		analysisRepo:    analysisRepo,
+		workflowService: workflowService,
+		reg:             reg,
+		res:             res,
 		// img:              img,
 		containerManager: containerManager,
 		cfg:              cfg,
@@ -438,8 +435,6 @@ func (w *ContainerCreateWorker) executeCreate(
 	switch inst.OwnerType {
 	case types.ContainerOwnerDagNode:
 		w.containerManager.applyDagNodeRuntimeSpec(spec, resolveVars)
-	case types.ContainerOwnerAgentAnalysis:
-		w.containerManager.applyAgentAnalysisRuntimeSpec(spec, resolveVars)
 	}
 
 	if w.res != nil {
@@ -730,11 +725,10 @@ func (w *ContainerCreateWorker) getRuntimeByInstance(inst *types.ContainerInstan
 // }
 
 type ownerRuntimeContext struct {
-	session       *types.AppSession
-	node          *types.AnalysisNode
-	agentAnalysis *types.AgentAnalysis
-	project       *types.Project
-	projectID     int64
+	session   *types.AppSession
+	node      *types.AnalysisNode
+	project   *types.Project
+	projectID int64
 }
 
 func (w *ContainerCreateWorker) loadOwnerRuntimeContext(ctx context.Context, ownerType types.ContainerOwnerType, ownerID int64) *ownerRuntimeContext {
@@ -776,14 +770,6 @@ func (w *ContainerCreateWorker) loadOwnerRuntimeContext(ctx context.Context, own
 			}
 		}
 
-	case types.ContainerOwnerAgentAnalysis:
-		if w.agentAnalysisRepo != nil {
-			agentAnalysis, err := w.agentAnalysisRepo.GetAgentAnalysisByID(ctx, ownerID)
-			if err == nil && agentAnalysis != nil {
-				ownerCtx.agentAnalysis = agentAnalysis
-				ownerCtx.projectID = agentAnalysis.ProjectID
-			}
-		}
 	}
 
 	if ownerCtx.projectID != 0 && w.projectRepo != nil {
@@ -873,8 +859,6 @@ func (w *ContainerCreateWorker) buildRuntimeResourceName(ownerType types.Contain
 		prefix = "dag-node"
 	case types.ContainerOwnerService:
 		prefix = "service"
-	case types.ContainerOwnerAgentAnalysis:
-		prefix = "agent-analysis"
 	}
 
 	name := strings.TrimSpace(fallbackName)

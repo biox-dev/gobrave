@@ -299,6 +299,14 @@ func (s *analysisService) DeleteAnalysisNode(ctx context.Context, id int64) erro
 	if id <= 0 {
 		return fmt.Errorf("invalid analysis node id: %d", id)
 	}
+	// 节点对应的容器实例（OwnerType=dag_node）尽力清理，避免删除节点后容器继续占用资源。
+	if s.containerService != nil {
+		if err := s.containerService.DeleteContainerInstancesByOwnerTypeAndOwnerIDs(
+			ctx, types.ContainerOwnerDagNode, []int64{id},
+		); err != nil {
+			logger.Warnf(ctx, "[AnalysisService] failed to delete containers for analysis node id=%d, err=%v", id, err)
+		}
+	}
 	return s.analysisRepo.DeleteAnalysisNodeByID(ctx, id)
 }
 

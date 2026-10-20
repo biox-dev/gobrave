@@ -253,14 +253,13 @@ func AnalysisNodeRunnerFrom(ctx context.Context) AnalysisNodeRunner {
 	return runner
 }
 
-// AgentAnalysisRunner 抽象「创建 AgentAnalysis 容器任务并等待其结束」的业务能力。
+// AgentAnalysisRunner 抽象「创建命令型分析节点并等待其结束」的业务能力。
 //
 // 与 AnalysisNodeRunner 一样，它是进程级静态依赖（一次注入、所有请求共用），
 // 由 agent.Options 承载并在执行工具前注入 ctx。
 type AgentAnalysisRunner interface {
-	// RunAgentAnalysis 创建一条 AgentAnalysis 记录（工作目录、run.sh），
-	// 通过 ContainerManager.CreateByTemplate 入队容器创建请求，等待容器进入终态，
-	// 返回状态、退出码与命令日志。超时 / 取消时返回错误。
+	// RunAgentAnalysis 创建一条命令型 AnalysisNode（工作目录、run.sh、容器模板），
+	// 复用通用节点链路运行到终态，返回状态、退出码与命令日志。超时 / 取消时返回错误。
 	RunAgentAnalysis(ctx context.Context, in AgentAnalysisInput) (AgentAnalysisResult, error)
 }
 
@@ -268,19 +267,19 @@ type AgentAnalysisRunner interface {
 type AgentAnalysisInput struct {
 	// ProjectID 取自 RuntimeContext.ProjectID（当前用户激活项目）。
 	ProjectID int64
-	// Name 是任务名称（同时用作容器资源名）。
+	// Name 是任务名称（同时用作节点名称与容器资源名）。
 	Name string
 	// ContainerTemplateID 是模型选择的容器模板；<=0 表示未指定，由实现回退到系统默认模板。
 	ContainerTemplateID int64
-	// Command 是要执行的 shell 命令，由实现写入 WorkspaceDir/run.sh。
+	// Command 是要执行的 shell 命令，由实现写入节点工作目录的 run.sh。
 	Command string
-	// WorkspaceDir 是任务工作目录；为空时由实现使用默认目录。
-	WorkspaceDir string
 	// TimeoutSeconds <= 0 时使用实现默认超时。
 	TimeoutSeconds int
 }
 
 // AgentAnalysisResult 是一次 AgentAnalysis 的执行结果。
+//
+// AgentAnalysisID 是命令型 AnalysisNode 的主键（历史字段名保持不变，便于工具输出兼容）。
 type AgentAnalysisResult struct {
 	AgentAnalysisID     int64  `json:"agent_analysis_id"`
 	ContainerInstanceID int64  `json:"container_instance_id,omitempty"`
