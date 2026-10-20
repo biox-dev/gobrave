@@ -11,6 +11,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
 	"github.com/biox-dev/gobrave/internal/agent/native"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/logger"
 )
 
 // NewCustom 创建原生 Agent Provider。
@@ -55,13 +56,16 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 		defer cancel()
 	}
 
-	llmOpts, err := a.llmOptions(req)
+	llmOpts, err := a.llmOptions(ctx, req)
 	if err != nil {
+		logger.Errorf(ctx, "custom provider: resolve llm options failed (model=%s session=%d): %v", req.ModelID, req.RequestSessionID(), err)
 		return nil, err
 	}
 	client, err := provider.New(llmOpts)
 	if err != nil {
-		return nil, fmt.Errorf("custom provider: %w", err)
+		err = fmt.Errorf("custom provider: create client: %w", err)
+		logger.Errorf(ctx, "custom provider: %v", err)
+		return nil, err
 	}
 
 	nativeAgent := &native.Config{
@@ -69,19 +73,28 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 		Tools:              a.toolRegistry(req, rt),
 		PrepareToolContext: a.toolContext(req, rt),
 	}
-	return nativeAgent.Run(ctx, req, rt)
+	result, err := nativeAgent.Run(ctx, req, rt)
+	if err != nil {
+		logger.Errorf(ctx, "custom provider: agent run failed (model=%s session=%d): %v", req.ModelID, req.RequestSessionID(), err)
+		return nil, err
+	}
+	return result, nil
 }
 
 // llmOptions 把 gobrave 请求 + 配置表解析为一次 LLM 调用参数。
-func (a *customAgent) llmOptions(req agent.Request) (provider.Options, error) {
+func (a *customAgent) llmOptions(ctx context.Context, req agent.Request) (provider.Options, error) {
 	workingDir := firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
 	if workingDir == "" {
-		return provider.Options{}, fmt.Errorf("custom provider: working dir is required")
+		err := fmt.Errorf("custom provider: working dir is required")
+		logger.Errorf(ctx, "%v (session=%d)", err, req.RequestSessionID())
+		return provider.Options{}, err
 	}
 
 	modelKey := strings.TrimSpace(req.ModelID)
 	if modelKey == "" {
-		return provider.Options{}, fmt.Errorf("custom provider: model is required")
+		err := fmt.Errorf("custom provider: model is required")
+		logger.Errorf(ctx, "%v (session=%d)", err, req.RequestSessionID())
+		return provider.Options{}, err
 	}
 
 	// 模型配置按模型名解析；未命中时凭模型名前缀推断厂商，其余字段走默认值。
@@ -95,8 +108,10 @@ func (a *customAgent) llmOptions(req agent.Request) (provider.Options, error) {
 		providerName = inferProviderFromModel(modelKey)
 	}
 	if providerName == "" {
-		return provider.Options{}, fmt.Errorf(
+		err := fmt.Errorf(
 			"custom provider: provider (vendor) is required for model %q; configure it in agent.providers", modelKey)
+		logger.Errorf(ctx, "%v (session=%d)", err, req.RequestSessionID())
+		return provider.Options{}, err
 	}
 
 	apiModel := firstNonEmpty(strings.TrimSpace(pc.APIModel), modelKey)
@@ -160,14 +175,20 @@ func (a *customAgent) newAgentTool(req agent.Request, rt agent.Runtime) tool.Too
 	return native.NewAgentTool(native.AgentToolConfig{
 		// 子 Agent 沿用父请求的模型 / 厂商配置，只替换系统提示词；配置错误在执行期
 		// 转为工具失败结果，由父 Agent 决定是否重试。
-		NewClient: func(context.Context) (provider.Client, error) {
+		NewClient: func(ctx context.Context) (provider.Client, error) {
 			subReq := req
 			subReq.SystemPrompt = native.TaskAgentSystemPrompt
-			llmOpts, err := a.llmOptions(subReq)
+			llmOpts, err := a.llmOptions(ctx, subReq)
 			if err != nil {
+				logger.Errorf(ctx, "custom provider: sub-agent llm options failed (model=%s session=%d): %v", subReq.ModelID, subReq.RequestSessionID(), err)
 				return nil, err
 			}
-			return provider.New(llmOpts)
+			client, err := provider.New(llmOpts)
+			if err != nil {
+				logger.Errorf(ctx, "custom provider: sub-agent client creation failed (model=%s session=%d): %v", subReq.ModelID, subReq.RequestSessionID(), err)
+				return nil, err
+			}
+			return client, nil
 		},
 		PrepareToolContext: prepare,
 		WorkingDir:         workingDir,

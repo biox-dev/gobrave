@@ -33,6 +33,9 @@ const (
 	KindReasoning      = "reasoning"
 	KindToolCall       = "tool_call"
 	KindToolResult     = "tool_result"
+	// KindError 是一条可回放的错误消息（任务执行失败时由 ChatService 写入），
+	// 前端据此用错误样式稳定展示，而不是只依赖临时流式事件。
+	KindError = "error"
 )
 
 // Message 是一条会话消息，以独立表持久化。

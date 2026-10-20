@@ -169,7 +169,7 @@ func (s *ChatService) StartTurn(ctx context.Context, taskID int64) error {
 		case StreamEventDone:
 			s.finishTurn(taskID, "")
 		case StreamEventError:
-			s.finishTurn(taskID, "stream error")
+			s.finishTurn(taskID, streamErrorText(ev))
 		}
 		return nil
 	}
@@ -181,12 +181,10 @@ func (s *ChatService) StartTurn(ctx context.Context, taskID int64) error {
 	return nil
 }
 
-// finishTurn 在本轮结束时收尾：把 assistant 回复写回历史，释放会话锁并清理中间态。
+// finishTurn 在本轮结束时收尾：把 assistant 回复与错误信息写回历史，释放会话锁并清理中间态。
 //
 // 幂等（基于 turns 中的登记），可安全处理 done / error / 启动失败任一终态。
 func (s *ChatService) finishTurn(taskID int64, errMsg string) {
-	_ = errMsg
-
 	// 幂等：先从登记表中“领取”本轮状态，保证 done / error / 启动失败 任一终态只收尾一次。
 	// Provider 可能已自行补发 error 事件、run 又补发一次，若重复收尾会导致 assistant 消息
 	// 重复追加、并对同一 sync.Mutex 二次 Unlock（panic）。
@@ -201,7 +199,7 @@ func (s *ChatService) finishTurn(taskID int64, errMsg string) {
 	}
 
 	ctx := context.Background()
-	final := s.appendTimelineMessages(ctx, ts.sessionID, taskID)
+	final, timelineErr := s.appendTimelineMessages(ctx, ts.sessionID, taskID)
 	if strings.TrimSpace(final) == "" {
 		final = ts.text.String()
 	}
@@ -215,6 +213,21 @@ func (s *ChatService) finishTurn(taskID int64, errMsg string) {
 			Kind:      message.KindAssistantFinal,
 			TaskID:    taskID,
 			Content:   final,
+		})
+	}
+
+	// 错误信息写入会话历史（kind=error），确保 UI 在本轮终态、刷新或切换会话后
+	// 仍能稳定展示，而不是只依赖临时的 stream error 事件。
+	if strings.TrimSpace(timelineErr) != "" {
+		errMsg = timelineErr
+	}
+	if strings.TrimSpace(errMsg) != "" {
+		_, _ = s.messages.Create(ctx, message.CreateParams{
+			SessionID: ts.sessionID,
+			Role:      message.RoleAssistant,
+			Kind:      message.KindError,
+			TaskID:    taskID,
+			Content:   errMsg,
 		})
 	}
 
@@ -255,23 +268,31 @@ func shouldIncludeInPrompt(m message.Message) bool {
 	}
 }
 
-// appendTimelineMessages 从任务事件流投影会话历史，并返回最终 assistant 文本。
-func (s *ChatService) appendTimelineMessages(ctx context.Context, sessionID, taskID int64) string {
+// appendTimelineMessages 从任务事件流投影会话历史，并返回最终 assistant 文本与错误文本。
+func (s *ChatService) appendTimelineMessages(ctx context.Context, sessionID, taskID int64) (string, string) {
 	if s.agent == nil || sessionID == 0 || taskID == 0 {
-		return ""
+		return "", ""
 	}
 	events, err := s.agent.GetEvents(ctx, taskID, 0)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 
-	var final string
+	var final, errText string
 	for _, ev := range events {
 		if ev == nil || ev.Type != EventStream {
 			continue
 		}
 		se, ok := streamEventFromPayload(ev.Payload)
 		if !ok {
+			continue
+		}
+		// 错误事件不参与消息投影：由 finishTurn 在 assistant 正文之后统一写入历史，
+		// 避免错误气泡出现在已有回复之前。
+		if se.Type == StreamEventError {
+			if text := streamErrorText(se); text != "" {
+				errText = text
+			}
 			continue
 		}
 		// 投影规则（reasoning / tool_call / tool_result → 消息）与子 Agent 会话共用。
@@ -285,7 +306,19 @@ func (s *ChatService) appendTimelineMessages(ctx context.Context, sessionID, tas
 			}
 		}
 	}
-	return final
+	return final, errText
+}
+
+// streamErrorText 提取错误事件的展示文本：优先 Content（可序列化、可落库），
+// 回退 Err，最后使用通用兜底文案。
+func streamErrorText(event StreamEvent) string {
+	if text := strings.TrimSpace(event.Content); text != "" {
+		return text
+	}
+	if event.Err != nil {
+		return event.Err.Error()
+	}
+	return "stream error"
 }
 
 func (s *ChatService) appendMessage(ctx context.Context, params message.CreateParams) {

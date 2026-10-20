@@ -208,7 +208,8 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.R
 	case res := <-resultCh:
 		if res.err != nil {
 			_ = session.Abort(context.Background())
-			_ = rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventError, Err: res.err})
+			// Err 不参与 JSON 序列化；同时写入 Content，保证错误文本能下发到 UI。
+			_ = rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventError, Content: res.err.Error(), Err: res.err})
 			return nil, res.err
 		}
 		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {

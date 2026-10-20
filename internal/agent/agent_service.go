@@ -9,6 +9,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
 
@@ -192,7 +193,7 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	// 渲染，并按 Profile.Context 开关注入记忆。
 	profile, err := s.profiles.Resolve(ctx, task.Request.ProfileID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve profile %d: %w", task.Request.ProfileID, err)
+		return s.failTask(ctx, task, rt, fmt.Errorf("resolve profile %d: %w", task.Request.ProfileID, err))
 	}
 
 	task.Request = applyProfileOverrides(task.Request, profile)
@@ -203,12 +204,11 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	// Profile 可能依据 Profile.Model 覆盖请求级模型，同步回任务持久化字段。
 	task.Model = task.Request.ModelID
 	if err := s.transitionTask(ctx, task, TaskRunning, ""); err != nil {
-		return nil, err
+		return s.failTask(ctx, task, rt, fmt.Errorf("start task %d: %w", task.ID, err))
 	}
 
 	if s.client == nil {
-		_ = s.transitionTask(ctx, task, TaskFailed, "no agent client configured")
-		return nil, fmt.Errorf("agent: no client configured")
+		return s.failTask(ctx, task, rt, fmt.Errorf("agent: no client configured"))
 	}
 
 	var result *Result
@@ -221,23 +221,34 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 
 	switch {
 	case err != nil:
-		// 流式调用异常结束（含 CancelTask 触发的 context 取消）时补发一个 error 流事件：
-		// 会话轮次（ChatService）依赖 done/error 流事件在 finishTurn 中释放会话级锁，
-		// 若不补发，取消会导致该会话锁永久泄漏，后续轮次将永久阻塞。
-		if rt != nil {
-			_ = rt.Emit(ctx, StreamEvent{Type: StreamEventError, Err: err})
-		}
-		_ = s.transitionTask(ctx, task, TaskFailed, err.Error())
-		return nil, err
+		return s.failTask(ctx, task, rt, err)
 	case result == nil:
-		_ = s.transitionTask(ctx, task, TaskFailed, "agent returned empty result")
-		return nil, fmt.Errorf("agent: empty result")
+		return s.failTask(ctx, task, rt, fmt.Errorf("agent: empty result"))
 	default:
 		_ = s.transitionTask(ctx, task, TaskCompleted, "")
 		// 任务成功完成后，从本轮执行中提取值得长期记住的记忆。
 		s.extractMemory(ctx, task, task.Request, result)
 		return result, nil
 	}
+}
+
+// failTask 统一处理任务失败：记录日志 → 补发可序列化的 error 流事件 → 置为 failed。
+//
+// 为什么所有失败路径都走这里：会话轮次（ChatService）依赖 done/error 流事件在
+// finishTurn 中释放会话级锁并落库错误；若某条路径直接 return err，UI 会一直停留在
+// 「运行中」且历史里看不到错误。StreamEvent.Err 带有 json:"-" 无法下发到前端，
+// 因此这里同时写入 Content，事件落库 / WS 推送后前端可直接稳定展示。
+func (s *AgentService) failTask(ctx context.Context, task *Task, rt Runtime, err error) (*Result, error) {
+	if err == nil {
+		err = fmt.Errorf("agent: unknown error")
+	}
+	logger.Errorf(ctx, "agent: task %d failed (provider=%s model=%s session=%d): %v",
+		task.ID, task.Request.Provider, task.Request.ModelID, task.Request.RequestSessionID(), err)
+	if rt != nil {
+		_ = rt.Emit(ctx, StreamEvent{Type: StreamEventError, Content: err.Error(), Err: err})
+	}
+	_ = s.transitionTask(ctx, task, TaskFailed, err.Error())
+	return nil, err
 }
 
 // transitionTask 加载任务 → 校验状态迁移 → 保存 → 广播状态事件。

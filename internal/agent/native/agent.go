@@ -17,6 +17,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/google/uuid"
 )
 
@@ -34,7 +35,9 @@ type Config struct {
 // Run 执行一次完整请求：模型流式输出 → 执行工具 → 回填结果 → 继续，直至模型不再调用工具。
 func (c *Config) Run(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
 	if c.Client == nil {
-		return nil, fmt.Errorf("native agent: provider client is required")
+		err := fmt.Errorf("native agent: provider client is required")
+		logger.Errorf(ctx, "native agent: %v", err)
+		return nil, err
 	}
 	if rt == nil {
 		rt = agent.NewStandaloneRuntime(nil)
@@ -48,6 +51,7 @@ func (c *Config) Run(ctx context.Context, req agent.Request, rt agent.Runtime) (
 	for i := 0; i < maxIterations; i++ {
 		response, thinking, err := c.streamOnce(ctx, history, tools, rt)
 		if err != nil {
+			logger.Errorf(ctx, "native agent: iteration %d failed: %v", i+1, err)
 			return nil, err
 		}
 
@@ -85,7 +89,9 @@ func (c *Config) Run(ctx context.Context, req agent.Request, rt agent.Runtime) (
 		history = append(history, provider.Message{Role: provider.RoleTool, ToolResults: results})
 	}
 
-	return nil, fmt.Errorf("native agent: exceeded %d tool iterations", maxIterations)
+	err := fmt.Errorf("native agent: exceeded %d tool iterations", maxIterations)
+	logger.Errorf(ctx, "native agent: %v", err)
+	return nil, err
 }
 
 // streamOnce 执行一轮模型调用，转发增量事件并返回聚合结果。
@@ -106,17 +112,24 @@ func (c *Config) streamOnce(ctx context.Context, history []provider.Message, too
 			}
 		case provider.EventError:
 			if event.Error == nil {
-				return nil, thinking.String(), fmt.Errorf("native agent: provider returned empty error")
+				err := fmt.Errorf("native agent: provider returned empty error")
+				logger.Errorf(ctx, "native agent: %v", err)
+				return nil, thinking.String(), err
 			}
+			logger.Errorf(ctx, "native agent: provider stream error: %v", event.Error)
 			return nil, thinking.String(), event.Error
 		case provider.EventComplete:
 			if event.Response == nil {
-				return nil, thinking.String(), fmt.Errorf("native agent: provider returned empty response")
+				err := fmt.Errorf("native agent: provider returned empty response")
+				logger.Errorf(ctx, "native agent: %v", err)
+				return nil, thinking.String(), err
 			}
 			return event.Response, thinking.String(), nil
 		}
 	}
-	return nil, thinking.String(), fmt.Errorf("native agent: stream ended without completion")
+	err := fmt.Errorf("native agent: stream ended without completion")
+	logger.Errorf(ctx, "native agent: %v", err)
+	return nil, thinking.String(), err
 }
 
 // maxConcurrentAgentCalls 限制同一轮内并发执行的子 Agent 调用数。
@@ -206,11 +219,23 @@ func (c *Config) executeTool(ctx context.Context, executor *tool.Executor, call 
 		Name:      call.Name,
 		Arguments: json.RawMessage(call.Input),
 	})
+	if res.IsError {
+		logger.Errorf(ctx, "native agent: tool %q failed: %s", call.Name, truncateLog(res.Content, 2000))
+	}
 	return provider.ToolResult{
 		ToolCallID: call.ID,
 		Content:    res.Content,
 		IsError:    res.IsError,
 	}
+}
+
+// truncateLog 截断过长的错误文本，避免工具输出把日志刷爆。
+func truncateLog(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "…(truncated)"
 }
 
 // emitToolResult 下发一次完整的工具结果事件。
