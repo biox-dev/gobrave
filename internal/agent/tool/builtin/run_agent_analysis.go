@@ -16,7 +16,8 @@ const RunAgentAnalysisToolName = "run_agent_analysis"
 // ProjectID 不由模型提供：它取自 RuntimeContext.ProjectID（当前用户激活项目），
 // 避免把任务写到别的项目下。
 type RunAgentAnalysisInput struct {
-	Name           string `json:"name"`            // 任务名称（也用作容器资源名）
+	Name string `json:"name"` // 任务名称（也用作容器资源名）
+	// TemplateID 可选：为空时使用系统默认容器模板（is_default）。
 	TemplateID     string `json:"template_id"`     // 容器模板 ID（字符串以保精度）
 	Command        string `json:"command"`         // 要执行的 shell 命令
 	WorkspaceDir   string `json:"workspace_dir"`   // 工作目录（可选，为空时使用默认目录）
@@ -51,14 +52,14 @@ type RunAgentAnalysisOutput struct {
 func RunAgentAnalysis() tool.Tool {
 	return tool.NewFunc(
 		RunAgentAnalysisToolName,
-		"创建并运行一个一次性的容器任务（AgentAnalysis）：给定任务名称、容器模板 ID 与一段 shell 命令，系统在项目目录下生成独立工作目录与 run.sh，提交容器执行并等待结束，返回状态、退出码与命令日志。所属项目取自当前会话上下文，无需传入。",
+		"创建并运行一个一次性的容器任务（AgentAnalysis）：给定任务名称、一段 shell 命令（容器模板 ID 可选，留空时使用系统默认模板），系统在项目目录下生成独立工作目录与 run.sh，提交容器执行并等待结束，返回状态、退出码与命令日志。所属项目取自当前会话上下文，无需传入。",
 		tool.Schema("创建 AgentAnalysis 容器任务的入参", map[string]any{
 			"name":            tool.StringProperty("任务名称（简短英文/数字，也用作容器资源名）。"),
-			"template_id":     tool.StringProperty("容器模板 ID（整数，字符串以保精度），必须是已存在的容器模板。"),
+			"template_id":     tool.StringProperty("容器模板 ID（整数，字符串以保精度），必须是已存在的容器模板。可选：留空时使用系统默认容器模板（is_default）。"),
 			"command":         tool.StringProperty("要执行的 shell 命令（多行可用换行分隔）。命令会写入工作目录的 run.sh 后执行，工作目录即项目目录下的 agent-analysis/<任务 ID>。"),
 			"workspace_dir":   tool.StringProperty("工作目录（可选）。为空时使用默认目录 <projectDir>/agent-analysis/<任务 ID>；非空时必须是 storage.base_dir 下的路径。"),
 			"timeout_seconds": tool.IntegerProperty("等待任务完成的超时（秒），可选，默认 1800。"),
-		}, "name", "template_id", "command"),
+		}, "name", "command"),
 		func(ctx context.Context, in RunAgentAnalysisInput) (RunAgentAnalysisOutput, error) {
 			rc := tool.RuntimeContextFrom(ctx)
 			if rc == nil || rc.ProjectID <= 0 {
@@ -69,12 +70,10 @@ func RunAgentAnalysis() tool.Tool {
 			if name == "" {
 				return RunAgentAnalysisOutput{}, fmt.Errorf("run_agent_analysis: name is required")
 			}
+			// template_id 可选：为空时解析为 0，由 runner 回退到系统默认容器模板。
 			templateID, err := parseContainerTemplateID(in.TemplateID)
 			if err != nil {
 				return RunAgentAnalysisOutput{}, fmt.Errorf("run_agent_analysis: %w", err)
-			}
-			if templateID <= 0 {
-				return RunAgentAnalysisOutput{}, fmt.Errorf("run_agent_analysis: template_id is required")
 			}
 			command := strings.TrimSpace(in.Command)
 			if command == "" {

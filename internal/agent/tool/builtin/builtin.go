@@ -23,6 +23,7 @@ func All() []tool.Tool {
 		ListProjectScripts(),
 		GetScript(),
 		GetAnalysisNode(),
+		ListContainerTemplates(),
 		BuildAnalysisNodeParams(),
 		RunAnalysisNode(),
 		UpdateAnalysisNode(),

@@ -267,7 +267,7 @@ type AgentAnalysisInput struct {
 	ProjectID int64
 	// Name 是任务名称（同时用作容器资源名）。
 	Name string
-	// TemplateID 是模型选择的容器模板。
+	// TemplateID 是模型选择的容器模板；<=0 表示未指定，由实现回退到系统默认模板。
 	TemplateID int64
 	// Command 是要执行的 shell 命令，由实现写入 WorkspaceDir/run.sh。
 	Command string
@@ -559,10 +559,14 @@ func AnalysisNodeUpdaterFrom(ctx context.Context) AnalysisNodeUpdater {
 	return updater
 }
 
-// ProjectResourceBrowser 抽象「浏览项目内的脚本 / 分析节点」的业务能力。//
-// 供内置工具 list_project_scripts / get_script / get_analysis_node 使用：三者都是纯只读
-// 查询，统一由同一份业务实现承载（见 container.projectResourceBrowser），避免为每个工具
-// 各建一个注入点。
+// ProjectResourceBrowser 抽象「浏览项目脚本 / 分析节点 / 容器模板」的业务能力。
+//
+// 供内置工具 list_project_scripts / get_script / get_analysis_node /
+// list_container_templates 使用：它们都是纯只读查询，统一由同一份业务实现承载
+// （见 container.projectResourceBrowser），避免为每个工具各建一个注入点。
+//
+// 注意：脚本 / 分析节点按当前激活项目隔离，而容器模板是全局资产（不属于某个项目），
+// 因此 ListContainerTemplates 不需要 projectID 参数。
 //
 // 与 ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），因此不放入
 // RuntimeContext，而由 agent.Options 承载，经 WithProjectResourceBrowser 注入工具执行 ctx。
@@ -581,6 +585,12 @@ type ProjectResourceBrowser interface {
 	//
 	// 返回的 WorkspaceDir 是绝对路径，ParamsPath 由 WorkspaceDir 派生。
 	GetAnalysisNodeByID(ctx context.Context, projectID int64, nodeID int64) (AnalysisNodeBrief, error)
+
+	// ListContainerTemplates 返回全部可运行容器模板（容器模板是全局资产，不按项目隔离）。
+	//
+	// 每一项对应一行 go_container_template_definition（ID 即对外的容器模板 ID），
+	// Name / Description 取自该绑定行关联的 go_container_template_spec。
+	ListContainerTemplates(ctx context.Context) ([]ContainerTemplateBrief, error)
 }
 
 // ScriptBrief 是脚本的只读摘要（工具回传给模型的最小字段集）。
@@ -604,6 +614,18 @@ type AnalysisNodeBrief struct {
 	WorkspaceDir   string         `json:"workspace_dir"`
 	ParamsPath     string         `json:"params_path"`
 	RequestParam   map[string]any `json:"request_param,omitempty"`
+}
+
+// ContainerTemplateBrief 是容器模板的只读摘要（工具回传给模型的最小字段集）。
+//
+// DefinitionID 是 go_container_template_definition 主键（即对外 ContainerTemplate.ID，
+// 也是 script.container_template_id / app_session.container_template_id 引用的值）；
+// SpecID 是它关联的 go_container_template_spec 主键；Name / Description 取自该共享配置。
+type ContainerTemplateBrief struct {
+	DefinitionID int64  `json:"definition_id"`
+	SpecID       int64  `json:"spec_id"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
 }
 
 // projectResourceBrowserKey 是 ProjectResourceBrowser 在 context 中的私有键类型。
