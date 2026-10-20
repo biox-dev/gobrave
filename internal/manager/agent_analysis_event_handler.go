@@ -2,13 +2,16 @@ package manager
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/realtime"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"gorm.io/gorm"
 )
 
 var _ event.Handler = (*AgentAnalysisEventHandler)(nil)
@@ -20,10 +23,12 @@ var _ event.Handler = (*AgentAnalysisEventHandler)(nil)
 type AgentAnalysisEventHandler struct {
 	repo          interfaces.AgentAnalysisRepository
 	containerRepo interfaces.ContainerRepository
+	db            *gorm.DB
+	hub           *realtime.Hub
 }
 
-func NewAgentAnalysisEventHandler(repo interfaces.AgentAnalysisRepository, containerRepo interfaces.ContainerRepository) *AgentAnalysisEventHandler {
-	return &AgentAnalysisEventHandler{repo: repo, containerRepo: containerRepo}
+func NewAgentAnalysisEventHandler(repo interfaces.AgentAnalysisRepository, containerRepo interfaces.ContainerRepository, db *gorm.DB, hub *realtime.Hub) *AgentAnalysisEventHandler {
+	return &AgentAnalysisEventHandler{repo: repo, containerRepo: containerRepo, db: db, hub: hub}
 }
 
 func (h *AgentAnalysisEventHandler) Handle(evt event.Event) {
@@ -85,6 +90,78 @@ func (h *AgentAnalysisEventHandler) Handle(evt event.Event) {
 
 	if err := h.repo.UpdateAgentAnalysisByID(ctx, item.ID, updates); err != nil {
 		logger.Warnf(ctx, "[AgentAnalysisEventHandler] update agent analysis failed, agent_analysis_id=%d event=%s err=%v", item.ID, ce.Event, err)
+		return
+	}
+
+	h.notifyStatusChanged(ctx, item, normalized)
+}
+
+// notifyStatusChanged 把状态变更推送给项目用户，前端据此刷新 AgentAnalysis 列表。
+func (h *AgentAnalysisEventHandler) notifyStatusChanged(ctx context.Context, item *types.AgentAnalysis, normalizedEvent string) {
+	if h.hub == nil || item == nil || item.ProjectID == 0 {
+		return
+	}
+
+	userIDs, err := h.listProjectUserIDs(ctx, item.ProjectID)
+	if err != nil {
+		logger.Warnf(ctx, "[AgentAnalysisEventHandler] load project users failed project_id=%d err=%v", item.ProjectID, err)
+		return
+	}
+	if len(userIDs) == 0 {
+		return
+	}
+
+	id := strconv.FormatInt(item.ID, 10)
+	msg := map[string]any{
+		"action": "component.invoke",
+		"payload": map[string]any{
+			"category": "agent-analysis",
+			"id":       id,
+			"method":   agentAnalysisRealtimeMethod(normalizedEvent),
+			"args": map[string]any{
+				"id":         id,
+				"project_id": strconv.FormatInt(item.ProjectID, 10),
+				"status":     normalizedEvent,
+			},
+		},
+	}
+
+	for _, userID := range userIDs {
+		if err := h.hub.PushMessage(userID, msg); err != nil {
+			if strings.Contains(err.Error(), "no_client_for_user:") {
+				continue
+			}
+			logger.Warnf(ctx, "[AgentAnalysisEventHandler] push agent analysis event failed user_id=%d agent_analysis_id=%d event=%s err=%v", userID, item.ID, normalizedEvent, err)
+		}
+	}
+}
+
+func (h *AgentAnalysisEventHandler) listProjectUserIDs(ctx context.Context, projectID int64) ([]int64, error) {
+	rows := make([]int64, 0)
+	err := h.db.WithContext(ctx).
+		Model(&types.UserProject{}).
+		Distinct("user_id").
+		Where("project_id = ?", projectID).
+		Pluck("user_id", &rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// agentAnalysisRealtimeMethod 把容器事件映射成前端组件方法名。
+func agentAnalysisRealtimeMethod(normalizedEvent string) string {
+	switch normalizedEvent {
+	case "creating", "starting":
+		return "analysisSubmitted"
+	case "running":
+		return "analysisStarted"
+	case "failed":
+		return "analysisFailed"
+	case "stopped":
+		return "analysisDone"
+	default:
+		return "refresh"
 	}
 }
 
