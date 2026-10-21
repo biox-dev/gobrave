@@ -1905,6 +1905,78 @@ func (h *AnalysisHandler) UpdateAnalysisNodeCommand(c *gin.Context) {
 	})
 }
 
+// AnalysisNodeResolvedIOResponse 是节点 resolved_inputs / resolved_outputs 的读写响应。
+type AnalysisNodeResolvedIOResponse struct {
+	AnalysisNodeID  string        `json:"analysis_node_id"`
+	ResolvedInputs  types.JSONMap `json:"resolved_inputs"`
+	ResolvedOutputs types.JSONMap `json:"resolved_outputs"`
+	UpdatedAt       time.Time     `json:"updated_at"`
+}
+
+// updateAnalysisNodeResolvedIORequest 的字段用指针区分「未提供」与「显式清空为 {}」。
+type updateAnalysisNodeResolvedIORequest struct {
+	ResolvedInputs  *map[string]any `json:"resolved_inputs"`
+	ResolvedOutputs *map[string]any `json:"resolved_outputs"`
+}
+
+// UpdateAnalysisNodeResolvedIO godoc
+// @Summary      更新分析节点 resolved_inputs / resolved_outputs
+// @Description  直接覆盖 analysis_nodes.resolved_inputs / resolved_outputs（未提供的字段保持不变），用于人工修正节点输入输出契约
+// @Tags         分析
+// @Accept       json
+// @Produce      json
+// @Param        analysisNodeId  path      string                                      true  "分析节点 ID"
+// @Param        request         body      handler.updateAnalysisNodeResolvedIORequest  true  "IO 内容"
+// @Success      200             {object}  handler.AnalysisNodeResolvedIOResponse
+// @Failure      400             {object}  errors.AppError
+// @Failure      401             {object}  errors.AppError
+// @Failure      404             {object}  errors.AppError
+// @Failure      500             {object}  errors.AppError
+// @Security     Bearer
+// @Router       /analysis/{analysisNodeId}/resolved-io [post]
+func (h *AnalysisHandler) UpdateAnalysisNodeResolvedIO(c *gin.Context) {
+	analysisNode := h.GetAnalysisNode(c)
+	if analysisNode == nil {
+		return
+	}
+
+	var req updateAnalysisNodeResolvedIORequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	resolvedInputs := analysisNode.ResolvedInputs
+	resolvedOutputs := analysisNode.ResolvedOutputs
+	values := make(map[string]any, 3)
+	if req.ResolvedInputs != nil {
+		resolvedInputs = types.JSONMap(*req.ResolvedInputs)
+		values["resolved_inputs"] = resolvedInputs
+	}
+	if req.ResolvedOutputs != nil {
+		resolvedOutputs = types.JSONMap(*req.ResolvedOutputs)
+		values["resolved_outputs"] = resolvedOutputs
+	}
+	if len(values) == 0 {
+		c.Error(errors.NewValidationError("resolved_inputs or resolved_outputs is required"))
+		return
+	}
+
+	now := time.Now().UTC()
+	values["updated_at"] = now
+	if err := h.analysisService.UpdateAnalysisNodeByID(c.Request.Context(), analysisNode.ID, values); err != nil {
+		c.Error(errors.NewInternalServerError("failed to update analysis node IO").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, AnalysisNodeResolvedIOResponse{
+		AnalysisNodeID:  strconv.FormatInt(analysisNode.ID, 10),
+		ResolvedInputs:  resolvedInputs,
+		ResolvedOutputs: resolvedOutputs,
+		UpdatedAt:       now,
+	})
+}
+
 // ListAnalysisTree godoc
 // @Summary      分析树列表
 // @Description  兼容 Python /list-analysis-tree，按 workflow(relation) 分组返回分析树，子节点 key 使用 analysis_id
