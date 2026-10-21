@@ -15,13 +15,18 @@ import (
 )
 
 // NodeCreationSource 是分析节点的来源标记（analysis_nodes.creation_source）。
+//
+// 节点类型只有三种，统一引用 types 中的规范取值，避免各处再写字面量：
+//   - agent：Agent 会话直接创建的命令节点（无脚本）；
+//   - script：由脚本契约创建的节点（前端独立节点 / create_script_analysis）；
+//   - scheduler：由 DAG 调度器按流程物化的节点。
 const (
-	// NodeCreationSourceStandalone 是前端「独立节点」入口创建的节点。
-	NodeCreationSourceStandalone = "standalone"
-	// NodeCreationSourceAgent 是 Agent 工具（create_script_analysis）为脚本创建的节点。
-	NodeCreationSourceAgent = "agent"
-	// NodeCreationSourceAgentSession 是 Agent 会话（create_agent_analysis）直接创建的命令节点。
-	NodeCreationSourceAgentSession = "agent_session"
+	// NodeCreationSourceAgent 是 Agent 会话（create_agent_analysis）直接创建的命令节点。
+	NodeCreationSourceAgent = types.AnalysisNodeCreationSourceAgent
+	// NodeCreationSourceScript 是由脚本契约创建的节点（前端独立节点 / create_script_analysis）。
+	NodeCreationSourceScript = types.AnalysisNodeCreationSourceScript
+	// NodeCreationSourceScheduler 是 DAG 调度器物化的节点。
+	NodeCreationSourceScheduler = types.AnalysisNodeCreationSourceScheduler
 )
 
 // nodeExecutionStatusReady 与 dagruntime.StatusReady 同名同值。
@@ -44,7 +49,7 @@ type AnalysisNodeSpec struct {
 	NodeName string
 	// Executor 为空时为 local。
 	Executor string
-	// CreationSource 是节点来源（standalone / agent），为空时按 standalone。
+	// CreationSource 是节点来源（agent / script / scheduler），为空时按 script。
 	CreationSource string
 	// BaseDir 是存储根目录，用于推导节点工作目录（为空时用 "."）。
 	BaseDir string
@@ -117,7 +122,8 @@ func NewAnalysisNodeFromScript(
 	}
 	creationSource := strings.TrimSpace(spec.CreationSource)
 	if creationSource == "" {
-		creationSource = NodeCreationSourceStandalone
+		// 由脚本构建的节点默认归为 script 类型。
+		creationSource = NodeCreationSourceScript
 	}
 
 	node := &types.AnalysisNode{
@@ -222,7 +228,8 @@ func NewAnalysisNodeFromCommand(spec CommandNodeSpec) (*types.AnalysisNode, erro
 		DownstreamIDs:          types.JSONSlice{},
 		InputValidationErrors:  types.JSONSlice{},
 		OutputValidationErrors: types.JSONSlice{},
-		CreationSource:         NodeCreationSourceAgentSession,
+		// 命令节点由 Agent 会话直接创建，类型固定为 agent。
+		CreationSource: NodeCreationSourceAgent,
 	}
 	baseDir := strings.TrimSpace(spec.BaseDir)
 	if baseDir == "" {

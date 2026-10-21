@@ -115,7 +115,7 @@ func (c *scriptNodeCreator) createNode(ctx context.Context, script *types.Script
 		ProjectID:      script.ProjectID,
 		NodeName:       nodeName,
 		RequestParam:   requestParam,
-		CreationSource: analysisform.NodeCreationSourceAgent,
+		CreationSource: analysisform.NodeCreationSourceScript,
 		BaseDir:        c.storageBaseDir(),
 	})
 	if err != nil {

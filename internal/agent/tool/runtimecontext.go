@@ -518,9 +518,9 @@ func ScriptUpdaterFrom(ctx context.Context) ScriptUpdater {
 
 // AnalysisNodeUpdater 抽象「更新已有分析节点」的业务能力。
 //
-// 按节点类型拆成两个入口：
-//   - UpdateAgentAnalysis：更新命令型节点（node_name / command / container_template_id）；
-//   - UpdateScriptAnalysis：更新脚本型节点（node_name / request_param）。
+// 按节点类型拆成两个入口（节点类型取自 analysis_nodes.creation_source，只有三种）：
+//   - UpdateAgentAnalysis：更新 agent 节点（命令节点，无脚本），可改 node_name / command / container_template_id；
+//   - UpdateScriptAnalysis：更新 script / scheduler 节点（绑定脚本），可改 node_name / request_param。
 //
 // 实现是「读改写」：先按 analysis_node_id 读出节点，只覆盖请求中给出的字段再回写；
 // 命令 / 参数的变更还会重新生成 run.sh / params.json 等运行期文件。
@@ -528,21 +528,21 @@ func ScriptUpdaterFrom(ctx context.Context) ScriptUpdater {
 // 与 ScriptUpdater 一样，它是进程级静态依赖（一次注入、所有请求共用），
 // 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithAnalysisNodeUpdater 注入工具执行 ctx。
 type AnalysisNodeUpdater interface {
-	// UpdateAgentAnalysis 更新命令型（Agent 创建、无脚本）分析节点。
+	// UpdateAgentAnalysis 更新 agent 节点（命令节点，无脚本）。
 	//
 	// 可更新 node_name / command / container_template_id；未给出的字段保持原值。
-	// command 变更后会重新生成 run.sh。节点必须属于 projectID。
+	// command 变更后会重新生成 run.sh。节点必须属于 projectID，且节点类型必须为 agent。
 	UpdateAgentAnalysis(ctx context.Context, input AgentAnalysisUpdateInput) (AgentAnalysisUpdateResult, error)
 
-	// UpdateScriptAnalysis 更新脚本型分析节点。
+	// UpdateScriptAnalysis 更新 script / scheduler 节点（绑定脚本）。
 	//
 	// 可更新 node_name / request_param；request_param 非 nil 时按脚本最新 io_schema 重新解析
 	// resolved_inputs 并重新生成 params.json（空对象表示清空参数）。
-	// 节点必须属于 projectID，且节点必须已绑定脚本。
+	// 节点必须属于 projectID，且节点必须绑定脚本（类型为 script 或 scheduler）。
 	UpdateScriptAnalysis(ctx context.Context, input ScriptAnalysisUpdateInput) (ScriptAnalysisUpdateResult, error)
 }
 
-// AgentAnalysisUpdateInput 是「更新命令型分析节点」的入参。
+// AgentAnalysisUpdateInput 是「更新 agent 节点」的入参。
 //
 // 所有可选字段用指针表示：nil 表示不修改，非 nil 时按值覆盖。
 type AgentAnalysisUpdateInput struct {
@@ -558,7 +558,7 @@ type AgentAnalysisUpdateInput struct {
 	ContainerTemplateID *int64 `json:"container_template_id,omitempty,string"`
 }
 
-// AgentAnalysisUpdateResult 是「更新命令型分析节点」的结果（回传给模型）。
+// AgentAnalysisUpdateResult 是「更新 agent 节点」的结果（回传给模型）。
 type AgentAnalysisUpdateResult struct {
 	AnalysisNodeID      int64  `json:"analysis_node_id,string"`
 	NodeName            string `json:"node_name"`
@@ -571,7 +571,7 @@ type AgentAnalysisUpdateResult struct {
 	Changed []string `json:"changed,omitempty"`
 }
 
-// ScriptAnalysisUpdateInput 是「更新脚本型分析节点」的入参。
+// ScriptAnalysisUpdateInput 是「更新 script / scheduler 节点」的入参。
 //
 // 所有可选字段用指针 / nil map 表示：nil 表示不修改，非 nil 时按值覆盖。
 // RequestParam 为「已提供但为空对象」时表示清空节点参数。
@@ -586,7 +586,7 @@ type ScriptAnalysisUpdateInput struct {
 	RequestParam map[string]any `json:"request_param,omitempty"`
 }
 
-// ScriptAnalysisUpdateResult 是「更新脚本型分析节点」的结果（回传给模型）。
+// ScriptAnalysisUpdateResult 是「更新 script / scheduler 节点」的结果（回传给模型）。
 type ScriptAnalysisUpdateResult struct {
 	AnalysisNodeID int64          `json:"analysis_node_id,string"`
 	NodeName       string         `json:"node_name"`
@@ -676,12 +676,18 @@ type ScriptBrief struct {
 
 // AnalysisNodeBrief 是分析节点的只读摘要（工具回传给模型的最小字段集）。
 type AnalysisNodeBrief struct {
-	AnalysisNodeID int64          `json:"analysis_node_id"`
-	NodeName       string         `json:"node_name"`
-	ScriptID       int64          `json:"script_id,omitempty"`
-	WorkspaceDir   string         `json:"workspace_dir"`
-	ParamsPath     string         `json:"params_path"`
-	RequestParam   map[string]any `json:"request_param,omitempty"`
+	AnalysisNodeID int64  `json:"analysis_node_id"`
+	NodeName       string `json:"node_name"`
+	// CreationSource 是落库的 creation_source 原值（agent / script / scheduler）。
+	CreationSource string `json:"creation_source,omitempty"`
+	// NodeType 是归一化后的节点类型（agent / script / scheduler）。
+	NodeType string `json:"node_type,omitempty"`
+	// NodeTypeDescription 是节点类型的中文说明（含可用的更新 / 运行工具指引）。
+	NodeTypeDescription string         `json:"node_type_description,omitempty"`
+	ScriptID            int64          `json:"script_id,omitempty"`
+	WorkspaceDir        string         `json:"workspace_dir"`
+	ParamsPath          string         `json:"params_path"`
+	RequestParam        map[string]any `json:"request_param,omitempty"`
 }
 
 // ContainerTemplateBrief 是容器模板的只读摘要（工具回传给模型的最小字段集）。

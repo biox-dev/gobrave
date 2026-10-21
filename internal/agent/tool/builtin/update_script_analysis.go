@@ -13,7 +13,7 @@ const UpdateScriptAnalysisToolName = "update_script_analysis"
 
 // UpdateScriptAnalysisInput 是 update_script_analysis 工具的入参。
 //
-// AnalysisNodeID 为必填：模型必须显式给出要更新的脚本型节点 ID。
+// AnalysisNodeID 为必填：模型必须显式给出要更新的脚本节点 ID。
 // 其余字段均可选：留空表示不修改对应字段；至少需要给出一个可更新字段。
 //
 // RequestParam 的键必须与脚本 io_schema.json 中的 name 一一对应。字段缺省时保持原值；
@@ -38,21 +38,25 @@ type UpdateScriptAnalysisOutput struct {
 	Error          string         `json:"error,omitempty"`
 }
 
-// UpdateScriptAnalysis 返回一个「更新脚本型分析节点」工具。
+// UpdateScriptAnalysis 返回一个「更新脚本节点」工具。
+//
+// 适用节点类型：仅 creation_source=script 或 scheduler（get_analysis_node 返回
+// node_type=script / scheduler）的节点，即绑定脚本、参数由脚本 io_schema 解析的节点；
+// agent 类型（无脚本的命令节点）请改用 update_agent_analysis。
 //
 // 行为：
 //   - analysis_node_id 必填；node_name / request_param 至少给出一个；
 //   - 项目归属取自 RuntimeContext.ProjectID，节点必须属于当前激活项目；
 //   - 只更新给出的字段，未给出的保持原值；
 //   - request_param 非 nil 时按脚本最新 io_schema.json 重新解析并刷新节点参数，
-//     重新生成 params.json；空对象表示清空参数。
+//     重新生成 params.json 并清空节点输出目录（output）；空对象表示清空参数。
 //
 // 该工具会写库并重写 params.json，因此声明 write 授权。
 func UpdateScriptAnalysis() tool.Tool {
 	return tool.NewFunc(
 		UpdateScriptAnalysisToolName,
-		"更新脚本型分析节点。analysis_node_id 必填；可选给出 node_name / request_param，至少给出一个；未给出的字段保持原值。request_param 的键为脚本 io_schema.json inputs 中各条目的 name，给出时会按 io_schema 重新解析并生成 params.json（显式传空对象表示清空参数）。若节点是命令型节点请改用 update_agent_analysis。",
-		tool.Schema("更新脚本型分析节点的入参", map[string]any{
+		"更新脚本节点（creation_source=script 或 scheduler，绑定脚本，参数按脚本 io_schema 解析）。仅适用于 get_analysis_node 返回 node_type=script / scheduler 的节点；agent 类型（无脚本的命令节点）请改用 update_agent_analysis。analysis_node_id 必填；可选给出 node_name / request_param，至少给出一个；未给出的字段保持原值。request_param 的键为脚本 io_schema.json inputs 中各条目的 name，给出时会按 io_schema 重新解析并生成 params.json 并清空节点输出目录（output）（显式传空对象表示清空参数）。",
+		tool.Schema("更新 script / scheduler 节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("要更新的分析节点 ID（必填，整数，字符串以保精度）。"),
 			"node_name":        tool.StringProperty("新的节点名称，留空表示不修改。"),
 			"request_param": map[string]any{
@@ -110,5 +114,5 @@ func UpdateScriptAnalysis() tool.Tool {
 				Changed:        result.Changed,
 			}, nil
 		},
-	).WithPermission("write", "", "更新脚本型分析节点（写库并重建 params.json）")
+	).WithPermission("write", "", "更新脚本节点（script / scheduler；写库并重建 params.json）")
 }

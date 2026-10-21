@@ -166,7 +166,7 @@ func (b *NodeBuilder) Probe(req ProbeRequest) *types.AnalysisNode {
 }
 
 // creationSourceScheduler marks rows produced by this orchestrator.
-const creationSourceScheduler = "scheduler"
+const creationSourceScheduler = types.AnalysisNodeCreationSourceScheduler
 
 // mergeUpstreamInputs injects the resolved outputs of successful upstream nodes
 // into the downstream resolved_inputs payload.

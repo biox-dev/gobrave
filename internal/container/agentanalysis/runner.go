@@ -89,7 +89,7 @@ func NewNodeRunner(
 // request_param；两者都为空则直接报错。随后按脚本最新的 io_schema.json 解析，并把
 // request_param / resolved_inputs / inputs_patterns / output_patterns 一次性回写节点、
 // 清空上一轮的 input_validation_errors / output_validation_errors，再重新生成
-// params.json。解析失败则不提交运行（避免用过期 / 空参数跑出误导性结果）。
+// params.json 并清空节点输出目录。解析失败则不提交运行（避免用过期 / 空参数跑出误导性结果）。
 func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, requestParam map[string]any, timeoutSeconds int) (result tool.AnalysisNodeRunResult, runErr error) {
 	if nodeID <= 0 {
 		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("invalid analysis node id")
@@ -142,7 +142,9 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 			return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("node runtime preparer is not configured")
 		}
 		node.HydrateDerivedPaths()
-		if err := r.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
+		// 不携带 prepare.WithSkipCleanOutput：运行前清空 output，避免上一轮残留文件
+		// 被当作本轮结果（尤其是命令节点输出校验 / 后续节点读取）。
+		if err := r.preparer.Prepare(ctx, node); err != nil {
 			return tool.AnalysisNodeRunResult{
 				NodeID:       nodeID,
 				Status:       "params_failed",
@@ -227,7 +229,8 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	node.ResolvedInputs = resolvedInputs
 	node.RequestParam = requestParamBytes
 	node.HydrateDerivedPaths()
-	if err := r.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
+	// 不携带 prepare.WithSkipCleanOutput：运行前清空 output，保证本次结果不复用上一轮残留文件。
+	if err := r.preparer.Prepare(ctx, node); err != nil {
 		return tool.AnalysisNodeRunResult{
 			NodeID:         nodeID,
 			Status:         "params_failed",

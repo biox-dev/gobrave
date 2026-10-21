@@ -585,7 +585,7 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		NodeName:       nodeName,
 		RequestParam:   req.RequestParam,
 		Executor:       executorName,
-		CreationSource: analysisform.NodeCreationSourceStandalone,
+		CreationSource: analysisform.NodeCreationSourceScript,
 		BaseDir:        standaloneStorageBaseDir(h.config),
 	})
 	if err != nil {
@@ -703,7 +703,7 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// RunAnalysisNodeByScriptID 批量运行 script 下所有 creation_source=standalone 的 analysis node
+// RunAnalysisNodeByScriptID 批量运行 script 下所有 creation_source=script 的 analysis node
 func (h *AnalysisHandler) RunAnalysisNodeByScriptID(c *gin.Context) {
 	userID, ok := getCurrentUserID(c)
 	if !ok {

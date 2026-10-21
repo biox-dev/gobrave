@@ -47,6 +47,9 @@ func NewAgentAnalysisRunner(
 }
 
 // CreateAgentAnalysis 创建命令型 AnalysisNode，并按 Run 决定是否运行到终态。
+//
+// Prepare 未携带 prepare.WithSkipCleanOutput，因此每次创建都会清理节点输出目录，
+// 避免上一轮运行的残留文件干扰本次执行结果。
 func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in tool.AgentAnalysisInput) (tool.AgentAnalysisResult, error) {
 	var result tool.AgentAnalysisResult
 
@@ -87,7 +90,7 @@ func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in tool.Agen
 	if err := r.analysisRepo.CreateAnalysisNodes(ctx, []*types.AnalysisNode{node}); err != nil {
 		return result, fmt.Errorf("create analysis node: %w", err)
 	}
-	if err := r.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
+	if err := r.preparer.Prepare(ctx, node); err != nil {
 		return result, fmt.Errorf("prepare node workspace: %w", err)
 	}
 

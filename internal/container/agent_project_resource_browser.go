@@ -136,12 +136,15 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 	}
 
 	return tool.AnalysisNodeBrief{
-		AnalysisNodeID: node.ID,
-		NodeName:       node.NodeName,
-		ScriptID:       node.ScriptID,
-		WorkspaceDir:   node.WorkspaceDir,
-		ParamsPath:     node.ParamsPath,
-		RequestParam:   agentanalysis.DecodeRequestParam(node.RequestParam),
+		AnalysisNodeID:      node.ID,
+		NodeName:            node.NodeName,
+		CreationSource:      node.CreationSource,
+		NodeType:            node.NodeType(),
+		NodeTypeDescription: node.NodeTypeDescription(),
+		ScriptID:            node.ScriptID,
+		WorkspaceDir:        node.WorkspaceDir,
+		ParamsPath:          node.ParamsPath,
+		RequestParam:        agentanalysis.DecodeRequestParam(node.RequestParam),
 	}, nil
 }
 

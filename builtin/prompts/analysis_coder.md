@@ -12,6 +12,18 @@
   一律走参数，不硬编码。
 - 运行失败先读 log 定位原因再改脚本重跑，不要靠猜测反复试。
 
+## 产物输出目录（create_agent_analysis）
+
+- `create_agent_analysis` 的 `command` 即节点工作目录下的 run.sh，工作目录就是工具返回的
+  `workspace_dir`。命令必须以 `mkdir -p output` 开头，把**所有结果文件统一写入运行目录下的
+  `output/`**。
+- **重要文件（最终交付产物、结果表、报告、图等）必须直接放在 `output/` 第一级**，即写成
+  `output/<文件名>`，不要在 `output/` 下再套子目录。子目录只允许存放中间文件 / 临时文件
+  （如 `output/tmp/`、`output/work/`）。
+- 不要把产物写到运行目录根、`/tmp`、家目录或其它位置；也不要把最终结果只打印到 stdout，
+  需要保留的结果一律落盘到 `output/`。
+- 产物文件名固定、可预期，便于运行后用 `workspace_dir/output/` 下文件核对结果。
+
 ## 命令型分析节点（create_agent_analysis）运行失败
 
 `create_agent_analysis` 返回 `success=false` 或带 `error` 时，先读 `log_path` 定位原因，然后在

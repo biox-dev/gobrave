@@ -504,7 +504,7 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 			CommandPath:            commandPath,
 			CacheDir:               cacheDir,
 			ParamsPath:             paramsPath,
-			CreationSource:         "scheduler",
+			CreationSource:         types.AnalysisNodeCreationSourceScheduler,
 		}
 		if strings.TrimSpace(node.Status) == "" {
 			node.Status = dagruntime.StatusPending

@@ -338,6 +338,70 @@ func (t *AnalysisNode) IsCommandNode() bool {
 	return t != nil && t.ScriptID <= 0 && t.ContainerTemplateID > 0
 }
 
+// analysis_nodes.creation_source 取值：节点类型只有这三种。
+//
+// 取值在节点创建时由创建方写入，之后不再变化：
+//   - agent：Agent 会话直接创建的命令型节点（无脚本，run.sh 由 Agent 生成）；
+//   - script：由脚本契约创建的节点（前端独立节点 / create_script_analysis）；
+//   - scheduler：由 DAG 调度器按流程物化的节点（绑定脚本）。
+const (
+	// AnalysisNodeCreationSourceAgent 是 Agent 命令节点（无脚本）。
+	AnalysisNodeCreationSourceAgent = "agent"
+	// AnalysisNodeCreationSourceScript 是脚本节点（绑定脚本，参数按 io_schema 解析）。
+	AnalysisNodeCreationSourceScript = "script"
+	// AnalysisNodeCreationSourceScheduler 是 DAG 调度器物化的节点（绑定脚本）。
+	AnalysisNodeCreationSourceScheduler = "scheduler"
+)
+
+// NodeType 返回节点的归一化类型：agent / script / scheduler。
+//
+// 优先读取 creation_source（三种规范值）；同时兼容历史取值：
+//   - standalone（前端独立节点）视为 script；
+//   - agent_session（Agent 命令节点）视为 agent；
+//   - 旧 create_script_analysis 曾把脚本节点标记为 agent，这里按「绑定脚本」纠正为 script。
+//
+// creation_source 为空或未知时按节点形状推断；仍无法判定时返回空串。
+func (t *AnalysisNode) NodeType() string {
+	if t == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(t.CreationSource)) {
+	case AnalysisNodeCreationSourceScheduler:
+		return AnalysisNodeCreationSourceScheduler
+	case AnalysisNodeCreationSourceScript, "standalone":
+		return AnalysisNodeCreationSourceScript
+	case AnalysisNodeCreationSourceAgent, "agent_session":
+		// 历史数据：脚本节点曾被标记为 agent，按形状归一为 script。
+		if t.ScriptID > 0 {
+			return AnalysisNodeCreationSourceScript
+		}
+		return AnalysisNodeCreationSourceAgent
+	}
+
+	// creation_source 缺失或未知：按节点形状推断。
+	if t.IsCommandNode() {
+		return AnalysisNodeCreationSourceAgent
+	}
+	if t.ScriptID > 0 {
+		return AnalysisNodeCreationSourceScript
+	}
+	return ""
+}
+
+// NodeTypeDescription 返回节点类型的中文说明，便于工具结果直接回给模型。
+func (t *AnalysisNode) NodeTypeDescription() string {
+	switch t.NodeType() {
+	case AnalysisNodeCreationSourceAgent:
+		return "Agent 命令节点（无脚本，run.sh 由 Agent 生成）"
+	case AnalysisNodeCreationSourceScript:
+		return "脚本节点（绑定脚本，参数按脚本 io_schema 解析）"
+	case AnalysisNodeCreationSourceScheduler:
+		return "调度器节点（由 DAG 调度器按流程物化，绑定脚本）"
+	default:
+		return "未知节点类型"
+	}
+}
+
 func (t *AnalysisNode) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()

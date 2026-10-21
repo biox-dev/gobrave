@@ -8,7 +8,6 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/analysisform"
-	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
@@ -17,7 +16,8 @@ import (
 //
 // 可更新字段：node_name / request_param；未给出的字段保持原值。
 // request_param 非 nil 时按脚本最新 io_schema 重新解析 resolved_inputs，刷新
-// inputs_patterns / output_patterns 并清空上一轮校验错误，最后重新生成 params.json。
+// inputs_patterns / output_patterns 并清空上一轮校验错误，最后重新生成 params.json，
+// 同时清空节点输出目录（旧参数的结果已失效）。
 // 传入空对象（{}）表示清空节点参数。
 func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in tool.ScriptAnalysisUpdateInput) (tool.ScriptAnalysisUpdateResult, error) {
 	result := tool.ScriptAnalysisUpdateResult{AnalysisNodeID: in.AnalysisNodeID}
@@ -39,8 +39,9 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in tool.
 	if err != nil {
 		return result, err
 	}
-	if node.ScriptID <= 0 {
-		return result, fmt.Errorf("update_script_analysis: analysis node %d has no script bound; use update_agent_analysis instead", node.ID)
+	nodeType := node.NodeType()
+	if node.ScriptID <= 0 || (nodeType != types.AnalysisNodeCreationSourceScript && nodeType != types.AnalysisNodeCreationSourceScheduler) {
+		return result, fmt.Errorf("update_script_analysis: analysis node %d is a %s node; only script / scheduler nodes (with a bound script) can be updated with this tool, use update_agent_analysis for agent nodes", node.ID, node.NodeTypeDescription())
 	}
 
 	update := make(map[string]any, 6)
@@ -113,7 +114,9 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in tool.
 			return result, fmt.Errorf("update_script_analysis: node runtime preparer is not configured")
 		}
 		node.HydrateDerivedPaths()
-		if err := u.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
+		// 不携带 prepare.WithSkipCleanOutput：参数变更后旧输出已失效，重建运行期文件时
+		// 一并清空 output，避免后续把上一轮结果当成新参数的结果。
+		if err := u.preparer.Prepare(ctx, node); err != nil {
 			return result, fmt.Errorf("update_script_analysis: node %d updated but failed to regenerate runtime files: %w", node.ID, err)
 		}
 	}

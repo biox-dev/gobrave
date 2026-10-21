@@ -17,7 +17,8 @@ import (
 //
 // Both V2 and V3 stamp the same value so downstream tooling (and the legacy
 // imported rows) can tell scheduler-generated nodes apart from other producers.
-const CreationSourceScheduler = "scheduler"
+// 取值统一引用 types 中的规范常量（analysis_nodes.creation_source）。
+const CreationSourceScheduler = types.AnalysisNodeCreationSourceScheduler
 
 // Spec is the scheduler-neutral description of one process instance to persist.
 //

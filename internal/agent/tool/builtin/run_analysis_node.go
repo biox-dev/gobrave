@@ -63,14 +63,19 @@ type RunAnalysisNodeOutput struct {
 
 // RunAnalysisNode 返回一个「运行分析节点」工具。
 //
+// 适用节点类型：全部三种（creation_source = agent / script / scheduler），
+// 即 get_analysis_node 返回的 node_type 为 agent / script / scheduler 均可运行。
+//
 // 行为：
 //   - 解析必填入参 analysis_node_id；
-//   - 同时支持 create_agent_analysis 创建的命令型节点与 create_script_analysis
-//     创建的脚本型节点：
-//     命令型节点按节点自身的 run.sh 运行；脚本型节点使用节点上已保存的 request_param，
-//     按脚本最新 io_schema.json 解析并回写节点，然后重新生成 params.json 再提交运行；
+//   - agent 命令节点（create_agent_analysis 创建、无脚本）：按节点自身的 run.sh 运行；
+//   - script / scheduler 脚本节点（create_script_analysis / 前端独立节点 / DAG 调度器）：
+//     使用节点上已保存的 request_param，按脚本最新 io_schema.json 解析并回写节点，
+//     然后重新生成 params.json 再提交运行；
 //   - 等待节点进入终态，返回执行日志、params_path、params.json 正文与本次生效的
 //     request_param。
+//
+// 运行前会清空节点输出目录（output），因此返回结果只包含本次运行的产物。
 //
 // 本工具不接受 request_param：脚本型节点需要改参数时，先调用 build_analysis_node_params；
 // 想直接运行节点上已保存的参数，直接调用本工具即可。
@@ -81,7 +86,7 @@ type RunAnalysisNodeOutput struct {
 func RunAnalysisNode() tool.Tool {
 	return tool.NewFunc(
 		RunAnalysisNodeToolName,
-		"运行指定分析节点（analysis_node_id 必填），同时支持 create_agent_analysis 创建的命令型节点与 create_script_analysis 创建的脚本型节点，等待其完成后返回节点状态、绑定的 script_id、执行日志（log；截断时用 log_path 读取完整日志）、params_path、params.json 正文与本次生效的 request_param。命令型节点直接运行节点自身的 run.sh；脚本型节点使用节点上已保存的 request_param（修改参数请先调用 build_analysis_node_params），运行前会按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param 并清空上一轮 input_validation_errors / output_validation_errors。",
+		"运行指定分析节点（analysis_node_id 必填），可运行所有节点类型（creation_source = agent / script / scheduler，即 get_analysis_node 返回的 node_type 均可）。等待其完成后返回节点状态、绑定的 script_id、执行日志（log；截断时用 log_path 读取完整日志）、params_path、params.json 正文与本次生效的 request_param。agent 命令节点（无脚本）直接运行节点自身的 run.sh；script / scheduler 脚本节点使用节点上已保存的 request_param（修改参数请先调用 update_script_analysis 或 build_analysis_node_params），运行前会按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param 并清空上一轮 input_validation_errors / output_validation_errors；运行前还会清空节点输出目录（output），因此输出只包含本次运行的产物。",
 		tool.Schema("运行分析节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("要运行的分析节点 ID（必填，字符串以保精度）。"),
 			"timeout_seconds":  tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600。"),

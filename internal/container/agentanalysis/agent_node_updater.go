@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
-	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/types"
 	"gorm.io/gorm"
 )
@@ -15,7 +14,8 @@ import (
 // UpdateAgentAnalysis 更新命令型（Agent 创建、无脚本）分析节点。
 //
 // 可更新字段：node_name / command / container_template_id；未给出的字段保持原值。
-// 命令变更后重新生成 run.sh / env.sh / params.json，保证下一次运行使用新命令。
+// 命令变更后重新生成 run.sh / env.sh / params.json，并清空节点输出目录（旧命令的结果
+// 已失效），保证下一次运行使用新命令且不复用上一轮残留产物。
 func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in tool.AgentAnalysisUpdateInput) (tool.AgentAnalysisUpdateResult, error) {
 	result := tool.AgentAnalysisUpdateResult{AnalysisNodeID: in.AnalysisNodeID}
 
@@ -36,8 +36,8 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in tool.A
 	if err != nil {
 		return result, err
 	}
-	if node.ScriptID > 0 {
-		return result, fmt.Errorf("update_agent_analysis: analysis node %d is a script node; use update_script_analysis instead", node.ID)
+	if node.NodeType() != types.AnalysisNodeCreationSourceAgent {
+		return result, fmt.Errorf("update_agent_analysis: analysis node %d is a %s node; only agent (command) nodes can be updated with this tool, use update_script_analysis for script / scheduler nodes", node.ID, node.NodeTypeDescription())
 	}
 
 	update := make(map[string]any, 3)
@@ -95,7 +95,9 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in tool.A
 			return result, fmt.Errorf("update_agent_analysis: node runtime preparer is not configured")
 		}
 		node.HydrateDerivedPaths()
-		if err := u.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
+		// 不携带 prepare.WithSkipCleanOutput：命令变更后旧输出已失效，重建运行期文件时
+		// 一并清空 output，避免后续把上一轮结果当成新命令的结果。
+		if err := u.preparer.Prepare(ctx, node); err != nil {
 			return result, fmt.Errorf("update_agent_analysis: node %d updated but failed to regenerate runtime files: %w", node.ID, err)
 		}
 	}
