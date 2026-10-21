@@ -759,17 +759,6 @@ definitions:
         description: Exists 为 false 表示 run.sh 尚未生成（节点还没被 prepare 过）。
         type: boolean
     type: object
-  handler.AnalysisNodeResolvedIOResponse:
-    properties:
-      analysis_node_id:
-        type: string
-      resolved_inputs:
-        $ref: '#/definitions/types.JSONMap'
-      resolved_outputs:
-        $ref: '#/definitions/types.JSONMap'
-      updated_at:
-        type: string
-    type: object
   handler.EditNodeParamsResponse:
     properties:
       analysis_id:
@@ -2168,15 +2157,6 @@ definitions:
     properties:
       content:
         type: string
-    type: object
-  handler.updateAnalysisNodeResolvedIORequest:
-    properties:
-      resolved_inputs:
-        additionalProperties: {}
-        type: object
-      resolved_outputs:
-        additionalProperties: {}
-        type: object
     type: object
   handler.updateConfigSectionRequest:
     properties:
@@ -5322,51 +5302,6 @@ paths:
       security:
       - Bearer: []
       summary: 保存分析节点 run.sh
-      tags:
-      - 分析
-  /analysis/{analysisNodeId}/resolved-io:
-    post:
-      consumes:
-      - application/json
-      description: 直接覆盖 analysis_nodes.resolved_inputs / resolved_outputs（未提供的字段保持不变），用于人工修正节点输入输出契约
-      parameters:
-      - description: 分析节点 ID
-        in: path
-        name: analysisNodeId
-        required: true
-        type: string
-      - description: IO 内容
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.updateAnalysisNodeResolvedIORequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/handler.AnalysisNodeResolvedIOResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 更新分析节点 resolved_inputs / resolved_outputs
       tags:
       - 分析
   /analysis/delete/{analysisId}:

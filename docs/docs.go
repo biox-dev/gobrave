@@ -2886,76 +2886,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/analysis/{analysisNodeId}/resolved-io": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "直接覆盖 analysis_nodes.resolved_inputs / resolved_outputs（未提供的字段保持不变），用于人工修正节点输入输出契约",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "分析"
-                ],
-                "summary": "更新分析节点 resolved_inputs / resolved_outputs",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "分析节点 ID",
-                        "name": "analysisNodeId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "IO 内容",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.updateAnalysisNodeResolvedIORequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handler.AnalysisNodeResolvedIOResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
         "/auth/agent-config": {
             "post": {
                 "security": [
@@ -14034,23 +13964,6 @@ const docTemplate = `{
                 }
             }
         },
-        "handler.AnalysisNodeResolvedIOResponse": {
-            "type": "object",
-            "properties": {
-                "analysis_node_id": {
-                    "type": "string"
-                },
-                "resolved_inputs": {
-                    "$ref": "#/definitions/types.JSONMap"
-                },
-                "resolved_outputs": {
-                    "$ref": "#/definitions/types.JSONMap"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
         "handler.EditNodeParamsResponse": {
             "type": "object",
             "properties": {
@@ -16064,19 +15977,6 @@ const docTemplate = `{
             "properties": {
                 "content": {
                     "type": "string"
-                }
-            }
-        },
-        "handler.updateAnalysisNodeResolvedIORequest": {
-            "type": "object",
-            "properties": {
-                "resolved_inputs": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "resolved_outputs": {
-                    "type": "object",
-                    "additionalProperties": {}
                 }
             }
         },
