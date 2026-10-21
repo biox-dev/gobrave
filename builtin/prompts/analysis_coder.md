@@ -44,8 +44,9 @@
 
 - 直接修改返回的 `command_path`（节点工作目录下的 run.sh）文件内容，再调用 `run_analysis_node`
   （`analysis_node_id` 用返回的 `agent_analysis_id`）重新运行；节点每次运行都会执行最新的 run.sh。
-- 或调用 `update_agent_analysis`（`analysis_node_id` + 新的 `command`）更新命令（会重写 run.sh），
-  再用 `run_analysis_node` 运行。
+- 或调用 `update_agent_analysis`（`analysis_node_id` + 新的 `command`）更新命令（会重写 run.sh）；
+  它默认更新后立即运行并返回 status / success / log，无需再调用 `run_analysis_node`
+  （只想更新、稍后再运行时传 `run=false`）。
 
 两种方式都不需要重建节点；只有需要改节点名称或容器模板时才用 `update_agent_analysis` 的
 `node_name` / `container_template_id`。

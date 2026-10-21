@@ -97,7 +97,8 @@ Before executing the command, please follow these steps:
 4. Failure Handling（失败处理）:
  - 返回 success=false 或带 error 时，先读 log_path 定位原因，再修复后重新运行，不要反复新建节点。
  - 修复方式二选一：直接修改 command_path 指向的 run.sh，再调用 run_analysis_node；或调用
-   update_agent_analysis 更新 command（会重写 run.sh），再用 run_analysis_node 运行。
+   update_agent_analysis 更新 command（会重写 run.sh），默认更新后立即运行，无需再调用
+   run_analysis_node（只想更新不运行时传 run=false）。
 
 5. Usage notes:
  - name 必填，简短英文 / 数字，同时用作容器资源名。

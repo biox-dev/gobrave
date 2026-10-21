@@ -86,7 +86,7 @@ type RunAnalysisNodeOutput struct {
 func RunAnalysisNode() tool.Tool {
 	return tool.NewFunc(
 		RunAnalysisNodeToolName,
-		"运行指定分析节点（analysis_node_id 必填），可运行所有节点类型（creation_source = agent / script / scheduler，即 get_analysis_node 返回的 node_type 均可）。等待其完成后返回节点状态、绑定的 script_id、执行日志（log；截断时用 log_path 读取完整日志）、params_path、params.json 正文与本次生效的 request_param。agent 命令节点（无脚本）直接运行节点自身的 run.sh；script / scheduler 脚本节点使用节点上已保存的 request_param（修改参数请先调用 update_script_analysis 或 build_analysis_node_params），运行前会按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param 并清空上一轮 input_validation_errors / output_validation_errors；运行前还会清空节点输出目录（output），因此输出只包含本次运行的产物。",
+		"运行指定分析节点（analysis_node_id 必填），可运行所有节点类型（creation_source = agent / script / scheduler，即 get_analysis_node 返回的 node_type 均可）。等待其完成后返回节点状态、绑定的 script_id、执行日志（log；截断时用 log_path 读取完整日志）、params_path、params.json 正文与本次生效的 request_param。agent 命令节点（无脚本）直接运行节点自身的 run.sh；script / scheduler 脚本节点使用节点上已保存的 request_param（修改参数请用 build_analysis_node_params；update_script_analysis 默认更新后运行，适合「改参数并立即运行」），运行前会按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param 并清空上一轮 input_validation_errors / output_validation_errors；运行前还会清空节点输出目录（output），因此输出只包含本次运行的产物。",
 		tool.Schema("运行分析节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("要运行的分析节点 ID（必填，字符串以保精度）。"),
 			"timeout_seconds":  tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600。"),
