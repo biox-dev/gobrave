@@ -1645,12 +1645,17 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to get analysis node").WithDetails(err.Error()))
 		return
 	}
-	script, err := h.workflowService.GetScriptByID(c.Request.Context(), analysisNode.ScriptID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to get script").WithDetails(err.Error()))
-		return
+	// 命令节点（Agent 创建、无脚本）没有 script / script_type：可视化按普通文件扫描，
+	// 容器信息改从节点自带的 ContainerTemplateID 读取。
+	scriptType := ""
+	if !analysisNode.IsCommandNode() {
+		script, err := h.workflowService.GetScriptByID(c.Request.Context(), analysisNode.ScriptID)
+		if err != nil {
+			c.Error(errors.NewInternalServerError("failed to get script").WithDetails(err.Error()))
+			return
+		}
+		scriptType = script.ScriptType
 	}
-	scriptType := script.ScriptType
 
 	nodePayload, err := h.buildVisualizationNodePayload(c, analysisNode)
 	if err != nil {
@@ -2073,6 +2078,12 @@ func (h *AnalysisHandler) buildVisualizationNodePayload(c *gin.Context, analysis
 	// int64 主键统一转字符串，避免前端 JS 精度丢失。
 	nodeMap["analysis_id"] = strconv.FormatInt(analysisNode.AnalysisID, 10)
 
+	// 命令节点没有脚本：容器信息直接取节点上的 ContainerTemplateID。
+	if analysisNode.IsCommandNode() {
+		nodeMap["script_id"] = ""
+		return h.attachContainerTemplateInfoToNode(c, analysisNode.ContainerTemplateID, nodeMap), nil
+	}
+
 	// TODO
 	script, err := h.workflowService.GetScriptByID(c.Request.Context(), analysisNode.ScriptID)
 	if err != nil {
@@ -2084,6 +2095,42 @@ func (h *AnalysisHandler) buildVisualizationNodePayload(c *gin.Context, analysis
 	nodeMap["script_id"] = strconv.FormatInt(script.ID, 10)
 
 	return h.attachContainerInfoToNode(c, script.ID, nodeMap)
+}
+
+func (h *AnalysisHandler) attachContainerTemplateInfoToNode(c *gin.Context, templateID int64, node map[string]interface{}) map[string]interface{} {
+	if h.containerService == nil || templateID <= 0 {
+		return node
+	}
+
+	tpl, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), templateID)
+	if err != nil || tpl == nil {
+		// 模板缺失（历史节点可能已删除模板）时保持节点 payload 原样，避免详情页整体 500。
+		return node
+	}
+
+	containerImage := ""
+	if tpl.Image != nil {
+		containerImage = strings.TrimSpace(tpl.Image.FullName)
+		if containerImage == "" {
+			containerImage = strings.TrimSpace(tpl.Image.Name)
+		}
+	}
+	status := "pending"
+	if tpl.ImageID > 0 && containerImage != "" {
+		status = "exist"
+	}
+
+	name := strings.TrimSpace(tpl.DisplayName)
+	if name == "" {
+		name = strings.TrimSpace(tpl.Name)
+	}
+
+	node["container_id"] = strconv.FormatInt(templateID, 10)
+	node["container_name"] = name
+	node["container_image"] = containerImage
+	node["image_id"] = strconv.FormatInt(tpl.ImageID, 10)
+	node["image_status"] = status
+	return node
 }
 
 func (h *AnalysisHandler) attachContainerInfoToNode(c *gin.Context, scriptID int64, node map[string]interface{}) (map[string]interface{}, error) {

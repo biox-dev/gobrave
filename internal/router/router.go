@@ -406,6 +406,8 @@ func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler
 	r.GET("/analysis/:analysisNodeId/node-logs", handler.AnalysisNodeLogs)
 	r.POST("/analysis/controller", handler.SaveAnalysisController)
 	r.POST("/analysis/controller-script", handler.SaveAnalysisNodeControllerWithScript)
+	// 手动创建命令型分析节点（无脚本，等价于 run_agent_analysis 的建节点部分）。
+	r.POST("/analysis/command-node/create", handler.CreateCommandAnalysisNode)
 	r.POST("/analysis/:analysisNodeId/run-node", handler.RunAnalysisNode)
 	// WebSocket：xterm.js -> Go -> kubectl exec -it / docker exec -it
 	r.GET("/analysis/node/:analysisNodeId/terminal", handler.AnalysisNodeTerminal)
