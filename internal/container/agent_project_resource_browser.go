@@ -9,6 +9,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/container/agentanalysis"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -140,7 +141,7 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 		ScriptID:       node.ScriptID,
 		WorkspaceDir:   node.WorkspaceDir,
 		ParamsPath:     node.ParamsPath,
-		RequestParam:   decodeRequestParam(node.RequestParam),
+		RequestParam:   agentanalysis.DecodeRequestParam(node.RequestParam),
 	}, nil
 }
 

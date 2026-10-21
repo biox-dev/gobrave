@@ -302,6 +302,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 	agentAnalysisRunner := a.opts.AgentAnalysisRunner
 	fileReader := a.opts.FileReader
 	scriptCreator := a.opts.ScriptCreator
+	nodeCreator := a.opts.AnalysisNodeCreator
 	paramsBuilder := a.opts.AnalysisNodeParamsBuilder
 	nodeUpdater := a.opts.AnalysisNodeUpdater
 	envUpdater := a.opts.AgentEnvUpdater
@@ -328,7 +329,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 					if a.opts.LSP != nil {
 						ctx = agent.WithLSPClients(ctx, a.opts.LSP.Clients())
 					}
-					res := runnerExec.Run(agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, files), agent.ToolCall{
+					res := runnerExec.Run(agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, files), agent.ToolCall{
 						ID:        inv.ToolCallID,
 						Name:      name,
 						Arguments: inv.Arguments,

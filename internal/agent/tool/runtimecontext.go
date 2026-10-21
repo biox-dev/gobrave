@@ -377,13 +377,12 @@ func FileReaderFrom(ctx context.Context) FileReader {
 	return reader
 }
 
-// ScriptCreator 抽象「创建脚本」与「为脚本创建分析节点」两件独立的事。
+// ScriptCreator 抽象「创建脚本」的业务能力（create_script）。
 //
-// 职责刻意拆开（脚本与节点是两个独立资源）：
+// 职责刻意与节点创建拆开（脚本与节点是两个独立资源）：
 //   - CreateScript 只落库 Script（pipeline_components）并初始化脚本目录
 //     （主文件 / io_schema.json），不创建任何分析节点；
-//   - CreateAnalysisNode 为已有脚本创建一个独立分析节点，并准备工作目录
-//     （params.json / run.sh 等）。
+//   - 为脚本创建节点由 AnalysisNodeCreator 负责（见 create_script_analysis）。
 //
 // 这样模型可以先把脚本与 io_schema.json 写好，再决定要建几个节点；不需要节点的
 // 场景（只写脚本）也不必凭空造一个节点。这些细节收敛在上层实现（见 container），
@@ -398,15 +397,6 @@ type ScriptCreator interface {
 	// input.ContainerTemplateID 为空（0）时由实现解析系统默认容器模板；
 	// 没有配置默认模板时返回错误，提示用户先到容器模板页设置默认模板。
 	CreateScript(ctx context.Context, input ScriptCreateInput) (ScriptCreateResult, error)
-
-	// CreateAnalysisNode 为已有脚本创建一个独立分析节点（create_script_analysis）。
-	//
-	// 脚本必须属于 input.ProjectID；request_param 非空时按脚本 io_schema 解析出
-	// resolved_inputs 并写出 params.json，为空时节点只按 io_schema 初始化 patterns。
-	//
-	// 节点在创建时必然要落地 inputs_patterns / output_patterns，因此 io_schema.json
-	// 必须已经写好（先 CreateScript，或至少已写入一份契约）；缺失时返回错误。
-	CreateAnalysisNode(ctx context.Context, input AnalysisNodeCreateInput) (AnalysisNodeCreateResult, error)
 }
 
 // AnalysisNodeCreateInput 是「为已有脚本创建分析节点」的入参。
@@ -440,6 +430,25 @@ type AnalysisNodeCreateResult struct {
 	WorkspaceDir string         `json:"workspace_dir"`
 	ParamsPath   string         `json:"params_path"`
 	RequestParam map[string]any `json:"request_param,omitempty"`
+}
+
+// AnalysisNodeCreator 抽象「为已有脚本创建独立分析节点」的业务能力
+// （create_script_analysis）。
+//
+// 它属于分析节点域（而非脚本域）：脚本必须已存在且 io_schema.json 已写好，
+// 创建时落地节点的 inputs_patterns / output_patterns 并准备好工作目录。
+//
+// 与 ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），
+// 由 agent.Options 承载，经 WithAnalysisNodeCreator 注入工具执行 ctx。
+type AnalysisNodeCreator interface {
+	// CreateAnalysisNode 为已有脚本创建一个独立分析节点。
+	//
+	// 脚本必须属于 input.ProjectID；request_param 非空时按脚本 io_schema 解析出
+	// resolved_inputs 并写出 params.json，为空时节点只按 io_schema 初始化 patterns。
+	//
+	// 节点在创建时必然要落地 inputs_patterns / output_patterns，因此 io_schema.json
+	// 必须已经写好（先 CreateScript，或至少已写入一份契约）；缺失时返回错误。
+	CreateAnalysisNode(ctx context.Context, input AnalysisNodeCreateInput) (AnalysisNodeCreateResult, error)
 }
 
 // ScriptUpdater 抽象「更新已有脚本基本信息（name / description）」的业务能力。
@@ -768,12 +777,33 @@ func WithScriptCreator(ctx context.Context, creator ScriptCreator) context.Conte
 	return context.WithValue(ctx, scriptCreatorKey{}, creator)
 }
 
-// ScriptCreatorFrom 取出注入的「创建脚本 + 分析节点」服务能力；未注入时返回 nil。
+// ScriptCreatorFrom 取出注入的「创建脚本」服务能力；未注入时返回 nil。
 func ScriptCreatorFrom(ctx context.Context) ScriptCreator {
 	if ctx == nil {
 		return nil
 	}
 	creator, _ := ctx.Value(scriptCreatorKey{}).(ScriptCreator)
+	return creator
+}
+
+// analysisNodeCreatorKey 是 AnalysisNodeCreator 在 context 中的私有键类型。
+type analysisNodeCreatorKey struct{}
+
+// WithAnalysisNodeCreator 把「为已有脚本创建分析节点」的服务能力注入 context，
+// 供 builtin 的 create_script_analysis 工具执行期读取。传入 nil 时返回原 context。
+func WithAnalysisNodeCreator(ctx context.Context, creator AnalysisNodeCreator) context.Context {
+	if ctx == nil || creator == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, analysisNodeCreatorKey{}, creator)
+}
+
+// AnalysisNodeCreatorFrom 取出注入的「为已有脚本创建分析节点」服务能力；未注入时返回 nil。
+func AnalysisNodeCreatorFrom(ctx context.Context) AnalysisNodeCreator {
+	if ctx == nil {
+		return nil
+	}
+	creator, _ := ctx.Value(analysisNodeCreatorKey{}).(AnalysisNodeCreator)
 	return creator
 }
 

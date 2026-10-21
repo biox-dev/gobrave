@@ -108,12 +108,17 @@ type Options struct {
 	// 注入工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 read_file_by_id 工具使用。
 	FileReader tool.FileReader `json:"-"`
 
-	// ScriptCreator 是「创建脚本 / 为脚本创建分析节点」的进程级静态服务能力（可为 nil）。
+	// ScriptCreator 是「创建脚本」的进程级静态服务能力（可为 nil）。
 	//
 	// 与 FileReader 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
-	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script /
-	// create_script_analysis 工具使用。
+	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script 工具使用。
 	ScriptCreator tool.ScriptCreator `json:"-"`
+
+	// AnalysisNodeCreator 是「为已有脚本创建分析节点」的进程级静态服务能力（可为 nil）。
+	//
+	// 与 ScriptCreator 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
+	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script_analysis 工具使用。
+	AnalysisNodeCreator tool.AnalysisNodeCreator `json:"-"`
 
 	// AnalysisNodeParamsBuilder 是「按 io_schema 生成分析节点参数」的进程级静态服务能力（可为 nil）。
 	//

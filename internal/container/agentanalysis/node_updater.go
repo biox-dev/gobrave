@@ -1,4 +1,4 @@
-package container
+package agentanalysis
 
 import (
 	"context"
@@ -20,8 +20,8 @@ type analysisNodeUpdater struct {
 	analysisSvc interfaces.AnalysisService
 }
 
-// newAnalysisNodeUpdater 构建「更新分析节点基本信息」执行器并注入内置工具体系。
-func newAnalysisNodeUpdater(analysisSvc interfaces.AnalysisService) tool.AnalysisNodeUpdater {
+// NewNodeUpdater 构建「更新分析节点基本信息」执行器并注入内置工具体系。
+func NewNodeUpdater(analysisSvc interfaces.AnalysisService) tool.AnalysisNodeUpdater {
 	return &analysisNodeUpdater{analysisSvc: analysisSvc}
 }
 

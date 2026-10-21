@@ -214,6 +214,7 @@ func (a *customAgent) toolContext(req agent.Request, rt agent.Runtime) func(cont
 			services.AnalysisNodeRunner,
 			services.FileReader,
 			services.ScriptCreator,
+			services.AnalysisNodeCreator,
 			services.AnalysisNodeParamsBuilder,
 			services.AnalysisNodeUpdater,
 			services.AgentEnvUpdater,

@@ -1,4 +1,4 @@
-package container
+package agentanalysis
 
 import (
 	"context"
@@ -29,8 +29,8 @@ type agentRunAnalysis struct {
 	cfg           *config.Config
 }
 
-// newAgentAnalysisRunner 构建 create_agent_analysis 工具的执行器。
-func newAgentAnalysisRunner(
+// NewAgentAnalysisRunner 构建 create_agent_analysis 工具的执行器。
+func NewAgentAnalysisRunner(
 	analysisRepo interfaces.AnalysisRepository,
 	containerRepo interfaces.ContainerRepository,
 	preparer prepare.NodeRuntimePreparer,

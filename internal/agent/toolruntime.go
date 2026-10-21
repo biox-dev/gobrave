@@ -142,16 +142,17 @@ func WithToolRuntimeContext(ctx context.Context, rc *tool.RuntimeContext) contex
 // WithToolRuntime 把「运行时上下文（业务事实）+ 进程级服务能力」一次性注入工具执行 ctx。
 //
 // 二者来源与生命周期不同：RuntimeContext 来自请求（可序列化），服务能力（AnalysisNodeRunner /
-// FileReader / ScriptCreator / AnalysisNodeParamsBuilder / AgentEnvUpdater / MemorySaver / FileHistory / Skills）来自 Options
+// FileReader / ScriptCreator / AnalysisNodeCreator / AnalysisNodeParamsBuilder / AgentEnvUpdater / MemorySaver / FileHistory / Skills）来自 Options
 // （不可序列化、进程级复用），因此分开注入、互不影响。任一为 nil 时跳过对应注入。
 //
 // 归属用户不再作为参数单独注入：RuntimeContext.UserID 就是请求级用户事实的唯一来源，
 // 工具通过 tool.RuntimeContextFrom(ctx).UserID 读取（见 save_memory）。
-func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, files history.Service) context.Context {
+func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, nodeCreator tool.AnalysisNodeCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, files history.Service) context.Context {
 	ctx = WithToolRuntimeContext(ctx, rc)
 	ctx = tool.WithAnalysisNodeRunner(ctx, runner)
 	ctx = tool.WithFileReader(ctx, reader)
 	ctx = tool.WithScriptCreator(ctx, creator)
+	ctx = tool.WithAnalysisNodeCreator(ctx, nodeCreator)
 	ctx = tool.WithScriptUpdater(ctx, scriptUpdaterFromCreator(creator))
 	ctx = tool.WithAnalysisNodeParamsBuilder(ctx, paramsBuilder)
 	ctx = tool.WithAnalysisNodeUpdater(ctx, nodeUpdater)

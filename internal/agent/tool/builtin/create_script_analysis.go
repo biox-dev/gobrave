@@ -85,9 +85,9 @@ func CreateScriptAnalysis() tool.Tool {
 				return CreateScriptAnalysisOutput{}, fmt.Errorf("create_script_analysis: %w", err)
 			}
 
-			creator := tool.ScriptCreatorFrom(ctx)
+			creator := tool.AnalysisNodeCreatorFrom(ctx)
 			if creator == nil {
-				return CreateScriptAnalysisOutput{}, fmt.Errorf("create_script_analysis: script creator is not available in this runtime")
+				return CreateScriptAnalysisOutput{}, fmt.Errorf("create_script_analysis: analysis node creator is not available in this runtime")
 			}
 
 			result, err := creator.CreateAnalysisNode(ctx, tool.AnalysisNodeCreateInput{

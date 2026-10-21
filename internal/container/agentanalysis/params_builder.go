@@ -1,4 +1,4 @@
-package container
+package agentanalysis
 
 import (
 	"context"
@@ -39,8 +39,8 @@ type analysisNodeParamsBuilder struct {
 	cfg          *config.Config
 }
 
-// newAnalysisNodeParamsBuilder 构建「生成分析节点参数」执行器并注入内置工具体系。
-func newAnalysisNodeParamsBuilder(
+// NewParamsBuilder 构建「生成分析节点参数」执行器并注入内置工具体系。
+func NewParamsBuilder(
 	analysisSvc interfaces.AnalysisService,
 	analysisRepo interfaces.AnalysisRepository,
 	workflowSvc interfaces.WorkflowService,
