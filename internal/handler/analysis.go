@@ -1783,6 +1783,128 @@ func (h *AnalysisHandler) AnalysisNodeParams(c *gin.Context) {
 	c.JSON(http.StatusOK, params)
 }
 
+// AnalysisNodeCommandResponse 是节点 run.sh（command_path）的读写响应。
+type AnalysisNodeCommandResponse struct {
+	AnalysisNodeID string `json:"analysis_node_id"`
+	CommandPath    string `json:"command_path"`
+	Content        string `json:"content"`
+	// Exists 为 false 表示 run.sh 尚未生成（节点还没被 prepare 过）。
+	Exists bool `json:"exists"`
+}
+
+type updateAnalysisNodeCommandRequest struct {
+	Content string `json:"content"`
+}
+
+// GetAnalysisNodeCommand godoc
+// @Summary      读取分析节点 run.sh
+// @Description  返回 AnalysisNode.command_path 的绝对路径与内容；文件尚未生成时 exists=false
+// @Tags         分析
+// @Produce      json
+// @Param        analysisNodeId  path      string  true  "分析节点 ID"
+// @Success      200             {object}  handler.AnalysisNodeCommandResponse
+// @Failure      400             {object}  errors.AppError
+// @Failure      401             {object}  errors.AppError
+// @Failure      404             {object}  errors.AppError
+// @Failure      500             {object}  errors.AppError
+// @Security     Bearer
+// @Router       /analysis/{analysisNodeId}/command [get]
+func (h *AnalysisHandler) GetAnalysisNodeCommand(c *gin.Context) {
+	analysisNode := h.GetAnalysisNode(c)
+	if analysisNode == nil {
+		return
+	}
+
+	commandPath := strings.TrimSpace(analysisNode.CommandPath)
+	if commandPath == "" {
+		c.Error(errors.NewValidationError("command_path is empty"))
+		return
+	}
+
+	content, err := os.ReadFile(commandPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusOK, AnalysisNodeCommandResponse{
+				AnalysisNodeID: strconv.FormatInt(analysisNode.ID, 10),
+				CommandPath:    commandPath,
+				Content:        "",
+				Exists:         false,
+			})
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to read command file").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, AnalysisNodeCommandResponse{
+		AnalysisNodeID: strconv.FormatInt(analysisNode.ID, 10),
+		CommandPath:    commandPath,
+		Content:        string(content),
+		Exists:         true,
+	})
+}
+
+// UpdateAnalysisNodeCommand godoc
+// @Summary      保存分析节点 run.sh
+// @Description  把内容写入 AnalysisNode.command_path；命令节点同时回写 node.command，使其在下次运行时不被旧命令覆盖
+// @Tags         分析
+// @Accept       json
+// @Produce      json
+// @Param        analysisNodeId  path      string                              true  "分析节点 ID"
+// @Param        request         body      handler.updateAnalysisNodeCommandRequest  true  "run.sh 内容"
+// @Success      200             {object}  handler.AnalysisNodeCommandResponse
+// @Failure      400             {object}  errors.AppError
+// @Failure      401             {object}  errors.AppError
+// @Failure      404             {object}  errors.AppError
+// @Failure      500             {object}  errors.AppError
+// @Security     Bearer
+// @Router       /analysis/{analysisNodeId}/command [post]
+func (h *AnalysisHandler) UpdateAnalysisNodeCommand(c *gin.Context) {
+	analysisNode := h.GetAnalysisNode(c)
+	if analysisNode == nil {
+		return
+	}
+
+	var req updateAnalysisNodeCommandRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	commandPath := strings.TrimSpace(analysisNode.CommandPath)
+	if commandPath == "" {
+		c.Error(errors.NewValidationError("command_path is empty"))
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(commandPath), 0o755); err != nil {
+		c.Error(errors.NewInternalServerError("failed to create command dir").WithDetails(err.Error()))
+		return
+	}
+	if err := os.WriteFile(commandPath, []byte(req.Content), 0o755); err != nil {
+		c.Error(errors.NewInternalServerError("failed to write command file").WithDetails(err.Error()))
+		return
+	}
+
+	// 命令节点的 run.sh 正文就是 node.Command（prepareCommandNode 原样写盘），
+	// 因此同步回库，避免下一次运行又被旧的 command 覆盖。
+	if analysisNode.IsCommandNode() {
+		if err := h.analysisService.UpdateAnalysisNodeByID(c.Request.Context(), analysisNode.ID, map[string]any{
+			"command": req.Content,
+		}); err != nil {
+			c.Error(errors.NewInternalServerError("failed to update node command").WithDetails(err.Error()))
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, AnalysisNodeCommandResponse{
+		AnalysisNodeID: strconv.FormatInt(analysisNode.ID, 10),
+		CommandPath:    commandPath,
+		Content:        req.Content,
+		Exists:         true,
+	})
+}
+
 // ListAnalysisTree godoc
 // @Summary      分析树列表
 // @Description  兼容 Python /list-analysis-tree，按 workflow(relation) 分组返回分析树，子节点 key 使用 analysis_id

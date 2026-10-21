@@ -1,7 +1,86 @@
 basePath: /api/v1
 definitions:
+  agent.AgentEvent:
+    properties:
+      created_at:
+        type: string
+      id:
+        example: "0"
+        type: string
+      payload: {}
+      sequence:
+        type: integer
+      task_id:
+        example: "0"
+        type: string
+      type:
+        $ref: '#/definitions/agent.AgentEventType'
+    type: object
+  agent.AgentEventType:
+    enum:
+    - task.created
+    - task.started
+    - task.waiting
+    - task.completed
+    - task.failed
+    - task.canceled
+    - permission.created
+    - permission.resolved
+    - question.created
+    - question.resolved
+    - memory.saved
+    - memory.deleted
+    - stream
+    type: string
+    x-enum-comments:
+      EventMemoryDeleted: 记忆已删除（Payload 为 Memory）
+      EventMemorySaved: 记忆已保存（Payload 为 Memory）
+      EventPermissionCreated: 新增待确认权限
+      EventPermissionResolved: 权限已被批准 / 拒绝
+      EventQuestionCreated: 新增待作答提问（Payload 为 QuestionRequest）
+      EventQuestionResolved: 提问已作答 / 取消（Payload 为 QuestionRequest）
+      EventStream: 透传的流式事件（Payload 为 StreamEvent）
+      EventTaskCanceled: 任务取消
+      EventTaskCompleted: 任务完成
+      EventTaskCreated: 任务已创建
+      EventTaskFailed: 任务失败
+      EventTaskStarted: 任务开始执行
+      EventTaskWaiting: 任务进入等待权限状态
+    x-enum-descriptions:
+    - 任务已创建
+    - 任务开始执行
+    - 任务进入等待权限状态
+    - 任务完成
+    - 任务失败
+    - 任务取消
+    - 新增待确认权限
+    - 权限已被批准 / 拒绝
+    - 新增待作答提问（Payload 为 QuestionRequest）
+    - 提问已作答 / 取消（Payload 为 QuestionRequest）
+    - 记忆已保存（Payload 为 Memory）
+    - 记忆已删除（Payload 为 Memory）
+    - 透传的流式事件（Payload 为 StreamEvent）
+    x-enum-varnames:
+    - EventTaskCreated
+    - EventTaskStarted
+    - EventTaskWaiting
+    - EventTaskCompleted
+    - EventTaskFailed
+    - EventTaskCanceled
+    - EventPermissionCreated
+    - EventPermissionResolved
+    - EventQuestionCreated
+    - EventQuestionResolved
+    - EventMemorySaved
+    - EventMemoryDeleted
+    - EventStream
   agent.AskUserAnswer:
     properties:
+      answered_ids:
+        description: 本次已作答的问题 ID（用于逐题提交合并）
+        items:
+          type: string
+        type: array
       answers:
         items:
           $ref: '#/definitions/agent.QuestionAnswer'
@@ -14,37 +93,6 @@ definitions:
       inject_memory:
         type: boolean
     type: object
-  agent.Conversation:
-    properties:
-      created_at:
-        type: string
-      current_task_id:
-        description: |-
-          CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；
-          轮次结束时置空。供前端刷新 / 切换会话时恢复实时流。
-        example: "0"
-        type: string
-      id:
-        example: "0"
-        type: string
-      messages:
-        description: |-
-          Messages 保存完整历史（system 提示词之外的 user/assistant 消息）。
-          关系由 Repository 自行维护（独立表 agent_conversation_messages），
-          不使用 GORM 的 HasMany 关联，因此标记为 gorm:"-"。
-        items:
-          $ref: '#/definitions/agent.Message'
-        type: array
-      model:
-        type: string
-      provider:
-        type: string
-      updated_at:
-        type: string
-      user_id:
-        example: "0"
-        type: string
-    type: object
   agent.Memory:
     properties:
       content:
@@ -53,6 +101,7 @@ definitions:
       created_at:
         type: string
       id:
+        example: "0"
         type: string
       importance:
         description: Importance 表示记忆重要度（0-10），检索排序时权重更高。
@@ -65,7 +114,11 @@ definitions:
         additionalProperties: {}
         description: Metadata 承载扩展信息（来源、标签等），由序列化为 JSON 持久化。
         type: object
+      project_id:
+        example: "0"
+        type: string
       session_id:
+        example: "0"
         type: string
       updated_at:
         type: string
@@ -98,13 +151,22 @@ definitions:
   agent.Message:
     properties:
       content:
-        description: 文本内容
+        description: Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。
+        type: string
+      created_at:
         type: string
       data: {}
+      id:
+        example: "0"
+        type: string
       kind:
         type: string
       role:
-        description: system / user / assistant / tool
+        type: string
+      seq:
+        type: integer
+      session_id:
+        example: "0"
         type: string
       task_id:
         example: "0"
@@ -404,8 +466,9 @@ definitions:
         items:
           $ref: '#/definitions/agent.Message'
         type: array
-      model:
-        description: Model 可选：模型名称，为空时由 Provider 自行决定。
+      model_id:
+        description: ModelID 可选：模型标识（对应 config.agent.providers 的 key），为空时由 Provider
+          自行决定。
         type: string
       profile_id:
         description: ProfileID 可选：AgentProfile ID，AgentService 据此解析系统提示词、技能与上下文注入开关。
@@ -418,18 +481,22 @@ definitions:
         allOf:
         - $ref: '#/definitions/tool.RuntimeContext'
         description: |-
-          RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录）。
+          RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录 / 归属用户）。
 
           由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到
           配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供
           builtin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。
+
+          它同时是「请求级用户事实」的唯一来源：UserID / SessionID 都在这里，
+          权限策略、ask_user 归属、记忆检索与提取统一从它读取（见 RequestUserID）。
 
           它只承载可序列化的业务事实，并随 Request 一起被 JSON 序列化进 agent_tasks.request
           （Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用
           （见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如
           AnalysisNodeRunner）不在此处，而由 agent.Options 承载。
       session_id:
-        description: SessionID 可选：会话标识，用于把多次调用关联到同一会话（与权限 / 任务联动）。
+        description: SessionID 可选：会话主键（雪花 ID），用于把多次调用关联到同一会话（与权限 / 任务联动）。
+        example: "0"
         type: string
       skills:
         description: Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。
@@ -445,10 +512,6 @@ definitions:
 
           注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +
           RuntimeContext.SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。
-        type: string
-      user_id:
-        description: UserID 可选：发起调用的用户，用于记忆（memory）的归属隔离与检索。
-        example: "0"
         type: string
       working_dir:
         description: WorkingDir 可选：Agent 执行的工作目录。
@@ -475,6 +538,7 @@ definitions:
         - $ref: '#/definitions/agent.Request'
         description: Request 保存原始请求，用于恢复时重建上下文。
       session_id:
+        example: "0"
         type: string
       started_at:
         type: string
@@ -531,6 +595,78 @@ definitions:
         type: object
       profile_id:
         example: "0"
+        type: string
+    type: object
+  config.ModelProviderConfig:
+    properties:
+      api_key:
+        type: string
+      api_model:
+        description: APIModel 是发给厂商的真实模型名；为空时回退 ModelID。
+        type: string
+      base_url:
+        type: string
+      can_reason:
+        description: CanReason 表示模型支持推理 / 思考过程。
+        type: boolean
+      context_window:
+        description: ContextWindow 模型上下文窗口（token）；0 表示未知。
+        type: integer
+      cost_per_1m_in:
+        description: |-
+          CostPer1MIn / CostPer1MOut 是每百万输入 / 输出 token 的价格（美元）。
+          仅用于会话费用统计与 TUI 展示，不参与请求。
+        type: number
+      cost_per_1m_in_cached:
+        description: CostPer1MInCached / CostPer1MOutCached 是命中缓存的输入 / 输出价格。
+        type: number
+      cost_per_1m_out:
+        type: number
+      cost_per_1m_out_cached:
+        type: number
+      default_max_tokens:
+        description: DefaultMaxTokens 模型默认最大输出 token；0 表示未知。
+        type: integer
+      extra:
+        additionalProperties:
+          type: string
+        type: object
+      model_id:
+        description: ModelID 是模型标识（配置表的 key），与 API 模型名分离。
+        type: string
+      name:
+        description: Name 是模型展示名（供前端 / TUI 显示）；为空时回退 ModelID。
+        type: string
+      provider:
+        description: Provider 是模型厂商类型（openai / anthropic / deepseek / gemini …）。
+        type: string
+      reasoning_effort:
+        description: ReasoningEffort 推理强度（openai 系 low / medium / high），空表示不指定。
+        type: string
+      supports_attachments:
+        description: SupportsAttachments 表示模型支持图片等附件。
+        type: boolean
+    type: object
+  config.ModelVendorPreset:
+    properties:
+      api_model_prefix:
+        description: |-
+          APIModelPrefix 是该厂商常见的模型名前缀，用于自动补全 APIModel
+          （例如 deepseek 的 deepseek-v4-flash 直接就是真实模型名，前缀即模型名本身）。
+        type: string
+      base_url:
+        description: BaseURL 是厂商默认 API 基地址；留空表示由 SDK 决定（如 azure / bedrock）。
+        type: string
+      models:
+        description: Models 是常见模型名（可为空，用户也可以自行填写）。
+        items:
+          type: string
+        type: array
+      name:
+        description: Name 是展示名（UI 下拉框使用）。
+        type: string
+      type:
+        description: Type 是厂商类型，写入 ModelProviderConfig.Provider（决定 SDK 走哪条客户端）。
         type: string
     type: object
   containerruntime.RuntimeDescription:
@@ -603,86 +739,24 @@ definitions:
   gin.H:
     additionalProperties: {}
     type: object
-  github_com_biox-dev_gobrave_internal_agent.AgentEvent:
-    properties:
-      created_at:
-        type: string
-      id:
-        example: "0"
-        type: string
-      payload: {}
-      sequence:
-        type: integer
-      task_id:
-        example: "0"
-        type: string
-      type:
-        $ref: '#/definitions/github_com_biox-dev_gobrave_internal_agent.AgentEventType'
-    type: object
-  github_com_biox-dev_gobrave_internal_agent.AgentEventType:
-    enum:
-    - task.created
-    - task.started
-    - task.waiting
-    - task.completed
-    - task.failed
-    - task.canceled
-    - permission.created
-    - permission.resolved
-    - question.created
-    - question.resolved
-    - memory.saved
-    - memory.deleted
-    - stream
-    type: string
-    x-enum-comments:
-      EventMemoryDeleted: 记忆已删除（Payload 为 Memory）
-      EventMemorySaved: 记忆已保存（Payload 为 Memory）
-      EventPermissionCreated: 新增待确认权限
-      EventPermissionResolved: 权限已被批准 / 拒绝
-      EventQuestionCreated: 新增待作答提问（Payload 为 QuestionRequest）
-      EventQuestionResolved: 提问已作答 / 取消（Payload 为 QuestionRequest）
-      EventStream: 透传的流式事件（Payload 为 StreamEvent）
-      EventTaskCanceled: 任务取消
-      EventTaskCompleted: 任务完成
-      EventTaskCreated: 任务已创建
-      EventTaskFailed: 任务失败
-      EventTaskStarted: 任务开始执行
-      EventTaskWaiting: 任务进入等待权限状态
-    x-enum-descriptions:
-    - 任务已创建
-    - 任务开始执行
-    - 任务进入等待权限状态
-    - 任务完成
-    - 任务失败
-    - 任务取消
-    - 新增待确认权限
-    - 权限已被批准 / 拒绝
-    - 新增待作答提问（Payload 为 QuestionRequest）
-    - 提问已作答 / 取消（Payload 为 QuestionRequest）
-    - 记忆已保存（Payload 为 Memory）
-    - 记忆已删除（Payload 为 Memory）
-    - 透传的流式事件（Payload 为 StreamEvent）
-    x-enum-varnames:
-    - EventTaskCreated
-    - EventTaskStarted
-    - EventTaskWaiting
-    - EventTaskCompleted
-    - EventTaskFailed
-    - EventTaskCanceled
-    - EventPermissionCreated
-    - EventPermissionResolved
-    - EventQuestionCreated
-    - EventQuestionResolved
-    - EventMemorySaved
-    - EventMemoryDeleted
-    - EventStream
   gorm.DeletedAt:
     properties:
       time:
         type: string
       valid:
         description: Valid is true if Time is not NULL
+        type: boolean
+    type: object
+  handler.AnalysisNodeCommandResponse:
+    properties:
+      analysis_node_id:
+        type: string
+      command_path:
+        type: string
+      content:
+        type: string
+      exists:
+        description: Exists 为 false 表示 run.sh 尚未生成（节点还没被 prepare 过）。
         type: boolean
     type: object
   handler.EditNodeParamsResponse:
@@ -748,6 +822,14 @@ definitions:
       profile_name:
         description: 用于渲染系统提示词的 Profile 名称
         type: string
+      skills:
+        description: |-
+          Skills 是 Profile 启用的技能名列表（见 Profile.Skills）。
+          不加 omitempty：空数组表示「不限制技能」（Profile 未配置技能时使用全部技能），
+          与「没有 Profile」区分开，前端据此展示 Skills 区域。
+        items:
+          type: string
+        type: array
       system_prompt:
         description: 用当前用户 Profile 模板渲染后的真实系统提示词
         type: string
@@ -1150,7 +1232,7 @@ definitions:
   handler.chatRequest:
     properties:
       conversation_id:
-        description: 为空则新建会话
+        description: SessionID 对应前端的 conversation_id（保持 API 兼容），为空则新建会话。
         type: string
       message:
         description: 本轮用户输入
@@ -1226,18 +1308,6 @@ definitions:
         type: integer
     type: object
   handler.containerTemplateSpecPageRequest:
-    properties:
-      page:
-        description: Page
-        minimum: 1
-        type: integer
-      page_size:
-        description: Page size
-        maximum: 1000
-        minimum: 1
-        type: integer
-    type: object
-  handler.conversationPageRequest:
     properties:
       page:
         description: Page
@@ -1466,6 +1536,16 @@ definitions:
     required:
     - id
     type: object
+  handler.importDatasetDirFilesRequest:
+    properties:
+      dataset_id:
+        example: "0"
+        type: string
+      role:
+        type: string
+    required:
+    - dataset_id
+    type: object
   handler.listAnalysisTreeChild:
     properties:
       analysis_id:
@@ -1571,6 +1651,14 @@ definitions:
         minimum: 1
         type: integer
     type: object
+  handler.memoryIDBody:
+    properties:
+      id:
+        example: "0"
+        type: string
+    required:
+    - id
+    type: object
   handler.memoryRetrieveRequest:
     properties:
       limit:
@@ -1585,7 +1673,8 @@ definitions:
       content:
         type: string
       id:
-        description: 为空则新建，否则更新
+        description: 为 0 则新建，否则更新
+        example: "0"
         type: string
       importance:
         type: integer
@@ -1594,12 +1683,37 @@ definitions:
       metadata:
         additionalProperties: {}
         type: object
+      project_id:
+        description: 可选：关联项目
+        example: "0"
+        type: string
       session_id:
         description: 可选：关联会话
+        example: "0"
         type: string
     required:
     - content
     - kind
+    type: object
+  handler.modelProviderOptionsResponse:
+    properties:
+      defaults:
+        additionalProperties:
+          $ref: '#/definitions/config.ModelProviderConfig'
+        description: |-
+          Defaults 是预置模型的能力元信息（key 为模型名，值为不含凭据的默认配置）。
+          前端不需要它也能工作：保存时后端会按厂商 + 模型自动补齐。
+        type: object
+      providers:
+        additionalProperties:
+          $ref: '#/definitions/config.ModelProviderConfig'
+        description: Providers 是当前生效的模型配置表（已按预置补齐，含已保存的 api_key）。
+        type: object
+      vendors:
+        description: Vendors 是内置厂商目录（按 UI 展示顺序）。
+        items:
+          $ref: '#/definitions/config.ModelVendorPreset'
+        type: array
     type: object
   handler.outboxEventPageRequest:
     properties:
@@ -1939,11 +2053,59 @@ definitions:
         description: WorkflowID 是 workflow 表主键（int64），兼容 JSON 字符串（"123"）与数字（123）两种写法。
         type: integer
     type: object
+  handler.sessionDetail:
+    properties:
+      created_at:
+        type: string
+      current_task_id:
+        description: |-
+          CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；
+          轮次结束时置空。供前端刷新 / 切换会话时恢复实时流。
+        example: "0"
+        type: string
+      id:
+        example: "0"
+        type: string
+      messages:
+        items:
+          $ref: '#/definitions/message.Message'
+        type: array
+      model:
+        type: string
+      parent_session_id:
+        description: ParentSessionID 指向父会话（如子任务会话 / 标题生成会话），0 表示顶层会话。
+        example: "0"
+        type: string
+      provider:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        example: "0"
+        type: string
+    type: object
+  handler.sessionPageRequest:
+    properties:
+      page:
+        description: Page
+        minimum: 1
+        type: integer
+      page_size:
+        description: Page size
+        maximum: 1000
+        minimum: 1
+        type: integer
+    type: object
   handler.skillSaveRequest:
     properties:
       description:
         type: string
       disable_model_invocation:
+        type: boolean
+      disable_render:
+        description: DisableRender 为 true 时，技能文本（指令正文 / 附属资源）不做 pongo2 模板渲染。
         type: boolean
       id:
         type: string
@@ -1990,6 +2152,11 @@ definitions:
         type: string
     required:
     - id
+    type: object
+  handler.updateAnalysisNodeCommandRequest:
+    properties:
+      content:
+        type: string
     type: object
   handler.updateConfigSectionRequest:
     properties:
@@ -2154,11 +2321,63 @@ definitions:
       format:
         type: string
     type: object
+  message.Message:
+    properties:
+      content:
+        description: Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。
+        type: string
+      created_at:
+        type: string
+      data: {}
+      id:
+        example: "0"
+        type: string
+      kind:
+        type: string
+      role:
+        type: string
+      seq:
+        type: integer
+      session_id:
+        example: "0"
+        type: string
+      task_id:
+        example: "0"
+        type: string
+    type: object
+  skill.GetSkillOutput:
+    properties:
+      description:
+        type: string
+      error:
+        type: string
+      instructions:
+        type: string
+      name:
+        type: string
+      resources:
+        items:
+          type: string
+        type: array
+      skill_path:
+        type: string
+      version:
+        type: string
+    type: object
   skill.Skill:
     properties:
       description:
         type: string
       disable_model_invocation:
+        type: boolean
+      disable_render:
+        description: |-
+          DisableRender 为 true 时，get_skill / load_skill_resource 原样返回技能文本，
+          不按本轮 RuntimeContext 的业务变量做 pongo2 模板渲染。
+
+          零值（false）表示启用渲染：技能正文 / 附属资源中出现 {{ var }} 时会用当前场景
+          变量替换；但若技能文本本身含有不希望被替换的花括号（如代码示例中的模板语法），
+          将该开关置为 true 即可关闭渲染。
         type: boolean
       instructions:
         description: 以下字段不参与 frontmatter 解析，由加载过程填充。
@@ -2173,11 +2392,27 @@ definitions:
         type: string
       user_invocable:
         type: boolean
+      version:
+        type: string
     type: object
   tool.RuntimeContext:
     properties:
       label:
         description: Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。
+        type: string
+      project_id:
+        description: |-
+          ProjectID 是本次调用所属项目的 ID（当前用户激活项目），供工具在执行期做项目级
+          数据定位。0 表示未知（未解析到激活项目）。
+        example: "0"
+        type: string
+      session_id:
+        description: |-
+          SessionID 是本次调用所属的会话 ID（请求级事实，由上层按 Request.SessionID 注入）。
+
+          它是会话主键（雪花 ID），0 表示未知（未注入）。供记忆检索 / 写入把记忆与
+          会话关联（例如把某轮踩坑经验记在当次会话下）。
+        example: "0"
         type: string
       system_prompt_vars:
         additionalProperties: {}
@@ -2189,6 +2424,14 @@ definitions:
         description: |-
           Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，
           为空表示默认工作区）。
+        type: string
+      user_id:
+        description: |-
+          UserID 是本次调用发起用户的 ID（请求级事实，由上层按 Request.UserID 注入）。
+
+          供需要「按用户隔离数据」的工具（如 save_memory 写长期记忆）在
+          RuntimeContext 内直接取到归属用户；0 表示未知（未注入）。
+        example: "0"
         type: string
       working_dir:
         description: WorkingDir 是 Agent 执行工作目录。
@@ -2322,9 +2565,22 @@ definitions:
         type: string
       cache_hit:
         type: boolean
+      command:
+        description: |-
+          Command 是 Agent 命令节点的 run.sh 正文（由 LLM 生成），普通脚本节点不使用。
+          运行前由 NodeRuntimePreparer 写入 node.CommandPath，因此重跑口径与其它节点一致。
+        type: string
       command_md5:
         type: string
       command_path:
+        type: string
+      container_template_id:
+        description: |-
+          ContainerTemplateID 是节点级容器模板（go_container_template_definition 主键）。
+
+          由 Agent 创建的「命令节点」没有脚本，直接用它启动容器；由脚本创建的节点保持 0，
+          沿用脚本绑定的 container_template_id（见 dag/executor.ContainerExecutor）。
+        example: "0"
         type: string
       cpu:
         type: integer
@@ -2595,8 +2851,6 @@ definitions:
         type: string
       name:
         type: string
-      pull_policy:
-        type: string
       size:
         type: integer
     type: object
@@ -2659,6 +2913,12 @@ definitions:
         type: string
       description:
         type: string
+      display_name:
+        description: |-
+          DisplayName 原样取自绑定行 ContainerTemplateDefinition.DisplayName（不做回退）。
+          Name 才是对外展示名：DisplayName 非空时覆盖共享配置名，否则回退到 spec.Name。
+          编辑表单必须读写 DisplayName，否则会把回退出来的配置名误固化成绑定行展示名。
+        type: string
       env:
         items:
           type: integer
@@ -2671,6 +2931,9 @@ definitions:
       image_id:
         example: "0"
         type: string
+      is_default:
+        description: IsDefault 原样取自绑定行 ContainerTemplateDefinition.IsDefault。
+        type: boolean
       labels:
         items:
           type: integer
@@ -2712,6 +2975,32 @@ definitions:
           $ref: '#/definitions/types.ContainerTemplateSpec'
         type: array
     type: object
+  types.ContainerTemplateDefinition:
+    properties:
+      created_at:
+        description: 指针类型是为了让导出可以显式清空（omitempty 也因此生效）；接口响应仍会带上时间字段。
+        type: string
+      display_name:
+        description: DisplayName 为空时，对外名称回退到 ContainerTemplateConfig.Name。
+        type: string
+      id:
+        example: "0"
+        type: string
+      image_id:
+        example: "0"
+        type: string
+      is_default:
+        description: |-
+          IsDefault 标记「默认容器模板」：只能有一行处于默认状态，由服务层在写入时互斥维护。
+          创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。
+          导出时会置为 false（omitempty 使其不出现在导出文件里）。
+        type: boolean
+      spec_id:
+        example: "0"
+        type: string
+      updated_at:
+        type: string
+    type: object
   types.ContainerTemplateSpec:
     properties:
       app_type:
@@ -2723,6 +3012,7 @@ definitions:
       cpu:
         type: number
       created_at:
+        description: 指针类型是为了让导出可以显式清空（omitempty 也因此生效）；接口响应仍会带上时间字段。
         type: string
       description:
         type: string
@@ -2795,6 +3085,44 @@ definitions:
         type: string
       id:
         example: "0"
+        type: string
+    type: object
+  types.DatasetDirFile:
+    properties:
+      added:
+        description: |-
+          Added reports whether a file with this path is already bound to the
+          dataset (go_file.path + go_dataset_file.dataset_id).
+        type: boolean
+      format:
+        description: Format is the lower-cased extension without the leading dot.
+        type: string
+      mod_time:
+        description: ModTime is the physical file's modification time.
+        type: string
+      name:
+        description: Name is the file's base name.
+        type: string
+      path:
+        description: |-
+          Path is the absolute path stored on go_file.path when the file is
+          imported.
+        type: string
+      relative_path:
+        description: |-
+          RelativePath is the path relative to the dataset directory, using "/" as
+          the separator so the value is stable across platforms.
+        type: string
+      size:
+        type: integer
+    type: object
+  types.DatasetDirFilesResponse:
+    properties:
+      files:
+        items:
+          $ref: '#/definitions/types.DatasetDirFile'
+        type: array
+      path:
         type: string
     type: object
   types.DatasetFile:
@@ -2920,6 +3248,21 @@ definitions:
       files_updated:
         type: integer
       rows:
+        type: integer
+    type: object
+  types.ImportDatasetDirFilesResult:
+    properties:
+      errors:
+        items:
+          type: string
+        type: array
+      failed:
+        type: integer
+      imported:
+        type: integer
+      skipped:
+        type: integer
+      total:
         type: integer
     type: object
   types.JSONMap:
@@ -3529,70 +3872,6 @@ paths:
       summary: 多轮对话
       tags:
       - Agent
-  /agent/conversation/get:
-    get:
-      parameters:
-      - description: 会话 ID
-        in: query
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/agent.Conversation'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 获取会话（含完整历史消息）
-      tags:
-      - Agent
-  /agent/conversation/page:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: 分页请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.conversationPageRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 分页查询当前用户的会话
-      tags:
-      - Agent
   /agent/env/describe:
     post:
       consumes:
@@ -3664,7 +3943,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/handler.taskIDBody'
+          $ref: '#/definitions/handler.memoryIDBody'
       produces:
       - application/json
       responses:
@@ -4117,6 +4396,70 @@ paths:
       summary: 分页查询提问请求
       tags:
       - Agent
+  /agent/session/get:
+    get:
+      parameters:
+      - description: 会话 ID
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.sessionDetail'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 获取会话（含完整历史消息）
+      tags:
+      - Agent
+  /agent/session/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 分页请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.sessionPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 分页查询当前用户的会话
+      tags:
+      - Agent
   /agent/skill/delete:
     post:
       consumes:
@@ -4201,6 +4544,39 @@ paths:
       security:
       - Bearer: []
       summary: 查看 Agent 技能
+      tags:
+      - Agent
+  /agent/skill/resolve:
+    get:
+      description: 与 get_skill 工具同一实现：按名称解析技能，并用当前用户业务上下文（llmEnv）解析出的变量渲染指令正文
+      parameters:
+      - description: 技能名
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/skill.GetSkillOutput'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 按名称解析 Agent 技能（含模板渲染）
       tags:
       - Agent
   /agent/skill/save:
@@ -4326,7 +4702,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/github_com_biox-dev_gobrave_internal_agent.AgentEvent'
+              $ref: '#/definitions/agent.AgentEvent'
             type: array
         "400":
           description: Bad Request
@@ -4845,6 +5221,87 @@ paths:
       security:
       - Bearer: []
       summary: 分析运行时快照
+      tags:
+      - 分析
+  /analysis/{analysisNodeId}/command:
+    get:
+      description: 返回 AnalysisNode.command_path 的绝对路径与内容；文件尚未生成时 exists=false
+      parameters:
+      - description: 分析节点 ID
+        in: path
+        name: analysisNodeId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.AnalysisNodeCommandResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 读取分析节点 run.sh
+      tags:
+      - 分析
+    post:
+      consumes:
+      - application/json
+      description: 把内容写入 AnalysisNode.command_path；命令节点同时回写 node.command，使其在下次运行时不被旧命令覆盖
+      parameters:
+      - description: 分析节点 ID
+        in: path
+        name: analysisNodeId
+        required: true
+        type: string
+      - description: run.sh 内容
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.updateAnalysisNodeCommandRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.AnalysisNodeCommandResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 保存分析节点 run.sh
       tags:
       - 分析
   /analysis/delete/{analysisId}:
@@ -5543,6 +6000,25 @@ paths:
       security:
       - Bearer: []
       summary: 更新一个配置段
+      tags:
+      - 系统配置
+  /config/model/providers:
+    get:
+      description: 返回内置模型厂商目录（含默认 base_url 与常见模型）、预置模型参数，以及当前生效的 agent.providers
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.modelProviderOptionsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 获取模型厂商与模型选项
       tags:
       - 系统配置
   /container/app-session/create:
@@ -6530,6 +7006,32 @@ paths:
       summary: 创建容器模板
       tags:
       - 容器管理
+  /container/template/default:
+    get:
+      description: |-
+        返回 is_default=true 的容器模板（ContainerTemplate 读模型）；没有默认模板时返回 data=null。
+        create_script 未显式指定 container_template_id 时会使用这一条。
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 获取默认容器模板
+      tags:
+      - 容器管理
   /container/template/delete:
     post:
       consumes:
@@ -6764,7 +7266,6 @@ paths:
     post:
       consumes:
       - application/json
-      description: 列出同一套 ContainerTemplateSpec 下绑定不同镜像的所有对外模板（一个配置 × 多个镜像）
       parameters:
       - description: 请求参数
         in: body
@@ -6799,7 +7300,48 @@ paths:
             $ref: '#/definitions/errors.AppError'
       security:
       - Bearer: []
-      summary: 按共享配置列出容器模板
+      summary: 按共享配置列出容器模板// @Description  列出同一套 ContainerTemplateSpec 下绑定不同镜像的所有对外模板（一个配置
+        × 多个镜像）
+      tags:
+      - 容器管理
+  /container/template/set-default:
+    post:
+      consumes:
+      - application/json
+      description: 按绑定行 ID（ContainerTemplateDefinition.ID）把该模板设为唯一默认模板，并清空其它模板的默认标记。
+      parameters:
+      - description: 请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.idBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.ContainerTemplate'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 设置默认容器模板
       tags:
       - 容器管理
   /container/template/update:
@@ -7634,6 +8176,44 @@ paths:
       summary: 删除数据集
       tags:
       - 数据管理
+  /data/dataset/dir-files:
+    get:
+      description: 返回数据集工作目录（utils.GetDatasetDir）路径及其下所有文件；added 表示该文件已通过 path + dataset_id
+        绑定到数据集
+      parameters:
+      - description: 数据集 ID
+        in: query
+        name: dataset_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.DatasetDirFilesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 列出数据集目录文件
+      tags:
+      - 数据管理
   /data/dataset/ensure-dir:
     post:
       consumes:
@@ -7676,6 +8256,45 @@ paths:
       summary: 创建数据集目录
       tags:
       - 数据管理
+  /data/dataset/files:
+    get:
+      description: 返回绑定到指定数据集的所有文件（go_dataset_file -> go_file）
+      parameters:
+      - description: 数据集 ID
+        in: query
+        name: dataset_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/types.FileWithDatasetInfo'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 列出数据集文件
+      tags:
+      - 数据管理
   /data/dataset/get:
     get:
       description: 按 ID 查询 Dataset 详情
@@ -7711,6 +8330,47 @@ paths:
       security:
       - Bearer: []
       summary: 获取数据集
+      tags:
+      - 数据管理
+  /data/dataset/import-dir-files:
+    post:
+      consumes:
+      - application/json
+      description: 将数据集工作目录（utils.GetDatasetDir）下尚未绑定的文件注册为 go_file 并绑定到数据集；按 path
+        + dataset_id 判重
+      parameters:
+      - description: 请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.importDatasetDirFilesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.ImportDatasetDirFilesResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 批量导入数据集目录文件
       tags:
       - 数据管理
   /data/dataset/list:

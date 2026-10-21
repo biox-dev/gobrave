@@ -76,108 +76,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/agent/conversation/get": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Agent"
-                ],
-                "summary": "获取会话（含完整历史消息）",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "会话 ID",
-                        "name": "id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/agent.Conversation"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/agent/conversation/page": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Agent"
-                ],
-                "summary": "分页查询当前用户的会话",
-                "parameters": [
-                    {
-                        "description": "分页请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.conversationPageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
         "/agent/env/describe": {
             "post": {
                 "security": [
@@ -299,7 +197,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/handler.taskIDBody"
+                            "$ref": "#/definitions/handler.memoryIDBody"
                         }
                     }
                 ],
@@ -1013,6 +911,108 @@ const docTemplate = `{
                 }
             }
         },
+        "/agent/session/get": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "获取会话（含完整历史消息）",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "会话 ID",
+                        "name": "id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.sessionDetail"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/session/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "分页查询当前用户的会话",
+                "parameters": [
+                    {
+                        "description": "分页请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.sessionPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/agent/skill/delete": {
             "post": {
                 "security": [
@@ -1143,6 +1143,58 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/skill/resolve": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "与 get_skill 工具同一实现：按名称解析技能，并用当前用户业务上下文（llmEnv）解析出的变量渲染指令正文",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "按名称解析 Agent 技能（含模板渲染）",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "技能名",
+                        "name": "id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/skill.GetSkillOutput"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -1350,7 +1402,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_agent.AgentEvent"
+                                "$ref": "#/definitions/agent.AgentEvent"
                             }
                         }
                     },
@@ -2708,6 +2760,132 @@ const docTemplate = `{
                 }
             }
         },
+        "/analysis/{analysisNodeId}/command": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回 AnalysisNode.command_path 的绝对路径与内容；文件尚未生成时 exists=false",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "分析"
+                ],
+                "summary": "读取分析节点 run.sh",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "分析节点 ID",
+                        "name": "analysisNodeId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.AnalysisNodeCommandResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "把内容写入 AnalysisNode.command_path；命令节点同时回写 node.command，使其在下次运行时不被旧命令覆盖",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "分析"
+                ],
+                "summary": "保存分析节点 run.sh",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "分析节点 ID",
+                        "name": "analysisNodeId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "run.sh 内容",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.updateAnalysisNodeCommandRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.AnalysisNodeCommandResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/agent-config": {
             "post": {
                 "security": [
@@ -3251,6 +3429,37 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/config/model/providers": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回内置模型厂商目录（含默认 base_url 与常见模型）、预置模型参数，以及当前生效的 agent.providers",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "系统配置"
+                ],
+                "summary": "获取模型厂商与模型选项",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.modelProviderOptionsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -4799,6 +5008,44 @@ const docTemplate = `{
                 }
             }
         },
+        "/container/template/default": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回 is_default=true 的容器模板（ContainerTemplate 读模型）；没有默认模板时返回 data=null。\ncreate_script 未显式指定 container_template_id 时会使用这一条。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "获取默认容器模板",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/container/template/delete": {
             "post": {
                 "security": [
@@ -4872,7 +5119,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "导出真实完整的容器模板结构：{ definition: 绑定行, spec: 共享运行配置, image: 镜像 }，\n三层实体都包含主键，便于原样导入；spec / image 带 id 时导入会复用/更新，不带则可新建。",
+                "description": "导出单条容器模板为统一的平铺格式（与 script.json / workflow.json 完全相同）：\ncontainer_images / container_template_specs / container_template_definitions 三个列表，\n三者通过主键互相引用（definition.spec_id / image_id），且都不含时间字段。",
                 "consumes": [
                     "application/json"
                 ],
@@ -4993,7 +5240,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "导入导出得到的完整结构 { definition, spec, image }（与 /container/template/export 同构）。\nspec / image 带 id 时按主键 upsert（存在则更新），id 为 0 / 缺省时新建并分配新 id；\ndefinition.id 为 0 时新建绑定行，否则按主键 upsert。绑定行的 spec_id / image_id 会自动对齐到最终 id。\ndefinition.is_default 为 true 时同时把它设为唯一默认模板。",
+                "description": "导入统一平铺格式（与 /container/template/export、script.json / workflow.json 同构）：\ncontainer_images / container_template_specs / container_template_definitions。\n三张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为\n「镜像 → 运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。",
                 "consumes": [
                     "application/json"
                 ],
@@ -5154,7 +5401,6 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "列出同一套 ContainerTemplateSpec 下绑定不同镜像的所有对外模板（一个配置 × 多个镜像）",
                 "consumes": [
                     "application/json"
                 ],
@@ -5164,7 +5410,7 @@ const docTemplate = `{
                 "tags": [
                     "容器管理"
                 ],
-                "summary": "按共享配置列出容器模板",
+                "summary": "按共享配置列出容器模板// @Description  列出同一套 ContainerTemplateSpec 下绑定不同镜像的所有对外模板（一个配置 × 多个镜像）",
                 "parameters": [
                     {
                         "description": "请求参数",
@@ -5184,6 +5430,69 @@ const docTemplate = `{
                             "items": {
                                 "$ref": "#/definitions/types.ContainerTemplate"
                             }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/template/set-default": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按绑定行 ID（ContainerTemplateDefinition.ID）把该模板设为唯一默认模板，并清空其它模板的默认标记。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "设置默认容器模板",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.idBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.ContainerTemplate"
                         }
                     },
                     "400": {
@@ -6517,6 +6826,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/data/dataset/dir-files": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回数据集工作目录（utils.GetDatasetDir）路径及其下所有文件；added 表示该文件已通过 path + dataset_id 绑定到数据集",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "列出数据集目录文件",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "数据集 ID",
+                        "name": "dataset_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.DatasetDirFilesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/data/dataset/ensure-dir": {
             "post": {
                 "security": [
@@ -6583,6 +6950,67 @@ const docTemplate = `{
                 }
             }
         },
+        "/data/dataset/files": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回绑定到指定数据集的所有文件（go_dataset_file -\u003e go_file）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "列出数据集文件",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "数据集 ID",
+                        "name": "dataset_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/types.FileWithDatasetInfo"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/data/dataset/get": {
             "get": {
                 "security": [
@@ -6612,6 +7040,69 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/types.Dataset"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/data/dataset/import-dir-files": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "将数据集工作目录（utils.GetDatasetDir）下尚未绑定的文件注册为 go_file 并绑定到数据集；按 path + dataset_id 判重",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "批量导入数据集目录文件",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.importDatasetDirFilesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.ImportDatasetDirFilesResult"
                         }
                     },
                     "400": {
@@ -12501,9 +12992,102 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "agent.AgentEvent": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "payload": {},
+                "sequence": {
+                    "type": "integer"
+                },
+                "task_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "type": {
+                    "$ref": "#/definitions/agent.AgentEventType"
+                }
+            }
+        },
+        "agent.AgentEventType": {
+            "type": "string",
+            "enum": [
+                "task.created",
+                "task.started",
+                "task.waiting",
+                "task.completed",
+                "task.failed",
+                "task.canceled",
+                "permission.created",
+                "permission.resolved",
+                "question.created",
+                "question.resolved",
+                "memory.saved",
+                "memory.deleted",
+                "stream"
+            ],
+            "x-enum-comments": {
+                "EventMemoryDeleted": "记忆已删除（Payload 为 Memory）",
+                "EventMemorySaved": "记忆已保存（Payload 为 Memory）",
+                "EventPermissionCreated": "新增待确认权限",
+                "EventPermissionResolved": "权限已被批准 / 拒绝",
+                "EventQuestionCreated": "新增待作答提问（Payload 为 QuestionRequest）",
+                "EventQuestionResolved": "提问已作答 / 取消（Payload 为 QuestionRequest）",
+                "EventStream": "透传的流式事件（Payload 为 StreamEvent）",
+                "EventTaskCanceled": "任务取消",
+                "EventTaskCompleted": "任务完成",
+                "EventTaskCreated": "任务已创建",
+                "EventTaskFailed": "任务失败",
+                "EventTaskStarted": "任务开始执行",
+                "EventTaskWaiting": "任务进入等待权限状态"
+            },
+            "x-enum-descriptions": [
+                "任务已创建",
+                "任务开始执行",
+                "任务进入等待权限状态",
+                "任务完成",
+                "任务失败",
+                "任务取消",
+                "新增待确认权限",
+                "权限已被批准 / 拒绝",
+                "新增待作答提问（Payload 为 QuestionRequest）",
+                "提问已作答 / 取消（Payload 为 QuestionRequest）",
+                "记忆已保存（Payload 为 Memory）",
+                "记忆已删除（Payload 为 Memory）",
+                "透传的流式事件（Payload 为 StreamEvent）"
+            ],
+            "x-enum-varnames": [
+                "EventTaskCreated",
+                "EventTaskStarted",
+                "EventTaskWaiting",
+                "EventTaskCompleted",
+                "EventTaskFailed",
+                "EventTaskCanceled",
+                "EventPermissionCreated",
+                "EventPermissionResolved",
+                "EventQuestionCreated",
+                "EventQuestionResolved",
+                "EventMemorySaved",
+                "EventMemoryDeleted",
+                "EventStream"
+            ]
+        },
         "agent.AskUserAnswer": {
             "type": "object",
             "properties": {
+                "answered_ids": {
+                    "description": "本次已作答的问题 ID（用于逐题提交合并）",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "answers": {
                     "type": "array",
                     "items": {
@@ -12523,43 +13107,6 @@ const docTemplate = `{
                 }
             }
         },
-        "agent.Conversation": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "current_task_id": {
-                    "description": "CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；\n轮次结束时置空。供前端刷新 / 切换会话时恢复实时流。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "messages": {
-                    "description": "Messages 保存完整历史（system 提示词之外的 user/assistant 消息）。\n关系由 Repository 自行维护（独立表 agent_conversation_messages），\n不使用 GORM 的 HasMany 关联，因此标记为 gorm:\"-\"。",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/agent.Message"
-                    }
-                },
-                "model": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "user_id": {
-                    "type": "string",
-                    "example": "0"
-                }
-            }
-        },
         "agent.Memory": {
             "type": "object",
             "properties": {
@@ -12571,7 +13118,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "importance": {
                     "description": "Importance 表示记忆重要度（0-10），检索排序时权重更高。",
@@ -12588,8 +13136,13 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "project_id": {
+                    "type": "string",
+                    "example": "0"
+                },
                 "session_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "updated_at": {
                     "type": "string"
@@ -12631,16 +13184,29 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "content": {
-                    "description": "文本内容",
+                    "description": "Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。",
+                    "type": "string"
+                },
+                "created_at": {
                     "type": "string"
                 },
                 "data": {},
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
                 "kind": {
                     "type": "string"
                 },
                 "role": {
-                    "description": "system / user / assistant / tool",
                     "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "session_id": {
+                    "type": "string",
+                    "example": "0"
                 },
                 "task_id": {
                     "type": "string",
@@ -13035,8 +13601,8 @@ const docTemplate = `{
                         "$ref": "#/definitions/agent.Message"
                     }
                 },
-                "model": {
-                    "description": "Model 可选：模型名称，为空时由 Provider 自行决定。",
+                "model_id": {
+                    "description": "ModelID 可选：模型标识（对应 config.agent.providers 的 key），为空时由 Provider 自行决定。",
                     "type": "string"
                 },
                 "profile_id": {
@@ -13049,7 +13615,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "runtime_context": {
-                    "description": "RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录）。\n\n由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到\n配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供\nbuiltin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。\n\n它只承载可序列化的业务事实，并随 Request 一起被 JSON 序列化进 agent_tasks.request\n（Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用\n（见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如\nAnalysisNodeRunner）不在此处，而由 agent.Options 承载。",
+                    "description": "RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录 / 归属用户）。\n\n由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到\n配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供\nbuiltin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。\n\n它同时是「请求级用户事实」的唯一来源：UserID / SessionID 都在这里，\n权限策略、ask_user 归属、记忆检索与提取统一从它读取（见 RequestUserID）。\n\n它只承载可序列化的业务事实，并随 Request 一起被 JSON 序列化进 agent_tasks.request\n（Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用\n（见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如\nAnalysisNodeRunner）不在此处，而由 agent.Options 承载。",
                     "allOf": [
                         {
                             "$ref": "#/definitions/tool.RuntimeContext"
@@ -13057,8 +13623,9 @@ const docTemplate = `{
                     ]
                 },
                 "session_id": {
-                    "description": "SessionID 可选：会话标识，用于把多次调用关联到同一会话（与权限 / 任务联动）。",
-                    "type": "string"
+                    "description": "SessionID 可选：会话主键（雪花 ID），用于把多次调用关联到同一会话（与权限 / 任务联动）。",
+                    "type": "string",
+                    "example": "0"
                 },
                 "skills": {
                     "description": "Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。",
@@ -13074,11 +13641,6 @@ const docTemplate = `{
                 "system_prompt": {
                     "description": "SystemPrompt 是最终发送给 Provider 的系统提示词。\n\n注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +\nRuntimeContext.SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。",
                     "type": "string"
-                },
-                "user_id": {
-                    "description": "UserID 可选：发起调用的用户，用于记忆（memory）的归属隔离与检索。",
-                    "type": "string",
-                    "example": "0"
                 },
                 "working_dir": {
                     "description": "WorkingDir 可选：Agent 执行的工作目录。",
@@ -13118,7 +13680,8 @@ const docTemplate = `{
                     ]
                 },
                 "session_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
                 },
                 "started_at": {
                     "type": "string"
@@ -13189,6 +13752,101 @@ const docTemplate = `{
                 "profile_id": {
                     "type": "string",
                     "example": "0"
+                }
+            }
+        },
+        "config.ModelProviderConfig": {
+            "type": "object",
+            "properties": {
+                "api_key": {
+                    "type": "string"
+                },
+                "api_model": {
+                    "description": "APIModel 是发给厂商的真实模型名；为空时回退 ModelID。",
+                    "type": "string"
+                },
+                "base_url": {
+                    "type": "string"
+                },
+                "can_reason": {
+                    "description": "CanReason 表示模型支持推理 / 思考过程。",
+                    "type": "boolean"
+                },
+                "context_window": {
+                    "description": "ContextWindow 模型上下文窗口（token）；0 表示未知。",
+                    "type": "integer"
+                },
+                "cost_per_1m_in": {
+                    "description": "CostPer1MIn / CostPer1MOut 是每百万输入 / 输出 token 的价格（美元）。\n仅用于会话费用统计与 TUI 展示，不参与请求。",
+                    "type": "number"
+                },
+                "cost_per_1m_in_cached": {
+                    "description": "CostPer1MInCached / CostPer1MOutCached 是命中缓存的输入 / 输出价格。",
+                    "type": "number"
+                },
+                "cost_per_1m_out": {
+                    "type": "number"
+                },
+                "cost_per_1m_out_cached": {
+                    "type": "number"
+                },
+                "default_max_tokens": {
+                    "description": "DefaultMaxTokens 模型默认最大输出 token；0 表示未知。",
+                    "type": "integer"
+                },
+                "extra": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "model_id": {
+                    "description": "ModelID 是模型标识（配置表的 key），与 API 模型名分离。",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name 是模型展示名（供前端 / TUI 显示）；为空时回退 ModelID。",
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "Provider 是模型厂商类型（openai / anthropic / deepseek / gemini …）。",
+                    "type": "string"
+                },
+                "reasoning_effort": {
+                    "description": "ReasoningEffort 推理强度（openai 系 low / medium / high），空表示不指定。",
+                    "type": "string"
+                },
+                "supports_attachments": {
+                    "description": "SupportsAttachments 表示模型支持图片等附件。",
+                    "type": "boolean"
+                }
+            }
+        },
+        "config.ModelVendorPreset": {
+            "type": "object",
+            "properties": {
+                "api_model_prefix": {
+                    "description": "APIModelPrefix 是该厂商常见的模型名前缀，用于自动补全 APIModel\n（例如 deepseek 的 deepseek-v4-flash 直接就是真实模型名，前缀即模型名本身）。",
+                    "type": "string"
+                },
+                "base_url": {
+                    "description": "BaseURL 是厂商默认 API 基地址；留空表示由 SDK 决定（如 azure / bedrock）。",
+                    "type": "string"
+                },
+                "models": {
+                    "description": "Models 是常见模型名（可为空，用户也可以自行填写）。",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "description": "Name 是展示名（UI 下拉框使用）。",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "Type 是厂商类型，写入 ModelProviderConfig.Provider（决定 SDK 走哪条客户端）。",
+                    "type": "string"
                 }
             }
         },
@@ -13276,92 +13934,6 @@ const docTemplate = `{
             "type": "object",
             "additionalProperties": {}
         },
-        "github_com_biox-dev_gobrave_internal_agent.AgentEvent": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "payload": {},
-                "sequence": {
-                    "type": "integer"
-                },
-                "task_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "type": {
-                    "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_agent.AgentEventType"
-                }
-            }
-        },
-        "github_com_biox-dev_gobrave_internal_agent.AgentEventType": {
-            "type": "string",
-            "enum": [
-                "task.created",
-                "task.started",
-                "task.waiting",
-                "task.completed",
-                "task.failed",
-                "task.canceled",
-                "permission.created",
-                "permission.resolved",
-                "question.created",
-                "question.resolved",
-                "memory.saved",
-                "memory.deleted",
-                "stream"
-            ],
-            "x-enum-comments": {
-                "EventMemoryDeleted": "记忆已删除（Payload 为 Memory）",
-                "EventMemorySaved": "记忆已保存（Payload 为 Memory）",
-                "EventPermissionCreated": "新增待确认权限",
-                "EventPermissionResolved": "权限已被批准 / 拒绝",
-                "EventQuestionCreated": "新增待作答提问（Payload 为 QuestionRequest）",
-                "EventQuestionResolved": "提问已作答 / 取消（Payload 为 QuestionRequest）",
-                "EventStream": "透传的流式事件（Payload 为 StreamEvent）",
-                "EventTaskCanceled": "任务取消",
-                "EventTaskCompleted": "任务完成",
-                "EventTaskCreated": "任务已创建",
-                "EventTaskFailed": "任务失败",
-                "EventTaskStarted": "任务开始执行",
-                "EventTaskWaiting": "任务进入等待权限状态"
-            },
-            "x-enum-descriptions": [
-                "任务已创建",
-                "任务开始执行",
-                "任务进入等待权限状态",
-                "任务完成",
-                "任务失败",
-                "任务取消",
-                "新增待确认权限",
-                "权限已被批准 / 拒绝",
-                "新增待作答提问（Payload 为 QuestionRequest）",
-                "提问已作答 / 取消（Payload 为 QuestionRequest）",
-                "记忆已保存（Payload 为 Memory）",
-                "记忆已删除（Payload 为 Memory）",
-                "透传的流式事件（Payload 为 StreamEvent）"
-            ],
-            "x-enum-varnames": [
-                "EventTaskCreated",
-                "EventTaskStarted",
-                "EventTaskWaiting",
-                "EventTaskCompleted",
-                "EventTaskFailed",
-                "EventTaskCanceled",
-                "EventPermissionCreated",
-                "EventPermissionResolved",
-                "EventQuestionCreated",
-                "EventQuestionResolved",
-                "EventMemorySaved",
-                "EventMemoryDeleted",
-                "EventStream"
-            ]
-        },
         "gorm.DeletedAt": {
             "type": "object",
             "properties": {
@@ -13370,6 +13942,24 @@ const docTemplate = `{
                 },
                 "valid": {
                     "description": "Valid is true if Time is not NULL",
+                    "type": "boolean"
+                }
+            }
+        },
+        "handler.AnalysisNodeCommandResponse": {
+            "type": "object",
+            "properties": {
+                "analysis_node_id": {
+                    "type": "string"
+                },
+                "command_path": {
+                    "type": "string"
+                },
+                "content": {
+                    "type": "string"
+                },
+                "exists": {
+                    "description": "Exists 为 false 表示 run.sh 尚未生成（节点还没被 prepare 过）。",
                     "type": "boolean"
                 }
             }
@@ -13463,6 +14053,13 @@ const docTemplate = `{
                 "profile_name": {
                     "description": "用于渲染系统提示词的 Profile 名称",
                     "type": "string"
+                },
+                "skills": {
+                    "description": "Skills 是 Profile 启用的技能名列表（见 Profile.Skills）。\n不加 omitempty：空数组表示「不限制技能」（Profile 未配置技能时使用全部技能），\n与「没有 Profile」区分开，前端据此展示 Skills 区域。",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "system_prompt": {
                     "description": "用当前用户 Profile 模板渲染后的真实系统提示词",
@@ -14038,7 +14635,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "conversation_id": {
-                    "description": "为空则新建会话",
+                    "description": "SessionID 对应前端的 conversation_id（保持 API 兼容），为空则新建会话。",
                     "type": "string"
                 },
                 "message": {
@@ -14140,22 +14737,6 @@ const docTemplate = `{
             }
         },
         "handler.containerTemplateSpecPageRequest": {
-            "type": "object",
-            "properties": {
-                "page": {
-                    "description": "Page",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "page_size": {
-                    "description": "Page size",
-                    "type": "integer",
-                    "maximum": 1000,
-                    "minimum": 1
-                }
-            }
-        },
-        "handler.conversationPageRequest": {
             "type": "object",
             "properties": {
                 "page": {
@@ -14494,6 +15075,21 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.importDatasetDirFilesRequest": {
+            "type": "object",
+            "required": [
+                "dataset_id"
+            ],
+            "properties": {
+                "dataset_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "role": {
+                    "type": "string"
+                }
+            }
+        },
         "handler.listAnalysisTreeChild": {
             "type": "object",
             "properties": {
@@ -14650,6 +15246,18 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.memoryIDBody": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                }
+            }
+        },
         "handler.memoryRetrieveRequest": {
             "type": "object",
             "required": [
@@ -14675,8 +15283,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "id": {
-                    "description": "为空则新建，否则更新",
-                    "type": "string"
+                    "description": "为 0 则新建，否则更新",
+                    "type": "string",
+                    "example": "0"
                 },
                 "importance": {
                     "type": "integer"
@@ -14688,9 +15297,41 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "project_id": {
+                    "description": "可选：关联项目",
+                    "type": "string",
+                    "example": "0"
+                },
                 "session_id": {
                     "description": "可选：关联会话",
-                    "type": "string"
+                    "type": "string",
+                    "example": "0"
+                }
+            }
+        },
+        "handler.modelProviderOptionsResponse": {
+            "type": "object",
+            "properties": {
+                "defaults": {
+                    "description": "Defaults 是预置模型的能力元信息（key 为模型名，值为不含凭据的默认配置）。\n前端不需要它也能工作：保存时后端会按厂商 + 模型自动补齐。",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/config.ModelProviderConfig"
+                    }
+                },
+                "providers": {
+                    "description": "Providers 是当前生效的模型配置表（已按预置补齐，含已保存的 api_key）。",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/config.ModelProviderConfig"
+                    }
+                },
+                "vendors": {
+                    "description": "Vendors 是内置厂商目录（按 UI 展示顺序）。",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/config.ModelVendorPreset"
+                    }
                 }
             }
         },
@@ -15190,6 +15831,66 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.sessionDetail": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "current_task_id": {
+                    "description": "CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；\n轮次结束时置空。供前端刷新 / 切换会话时恢复实时流。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/message.Message"
+                    }
+                },
+                "model": {
+                    "type": "string"
+                },
+                "parent_session_id": {
+                    "description": "ParentSessionID 指向父会话（如子任务会话 / 标题生成会话），0 表示顶层会话。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "0"
+                }
+            }
+        },
+        "handler.sessionPageRequest": {
+            "type": "object",
+            "properties": {
+                "page": {
+                    "description": "Page",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "page_size": {
+                    "description": "Page size",
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
+                }
+            }
+        },
         "handler.skillSaveRequest": {
             "type": "object",
             "required": [
@@ -15201,6 +15902,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "disable_model_invocation": {
+                    "type": "boolean"
+                },
+                "disable_render": {
+                    "description": "DisableRender 为 true 时，技能文本（指令正文 / 附属资源）不做 pongo2 模板渲染。",
                     "type": "boolean"
                 },
                 "id": {
@@ -15263,6 +15968,14 @@ const docTemplate = `{
                     "example": "0"
                 },
                 "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "handler.updateAnalysisNodeCommandRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
                     "type": "string"
                 }
             }
@@ -15505,6 +16218,69 @@ const docTemplate = `{
                 }
             }
         },
+        "message.Message": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "description": "Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "data": {},
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "session_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "task_id": {
+                    "type": "string",
+                    "example": "0"
+                }
+            }
+        },
+        "skill.GetSkillOutput": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "instructions": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "skill_path": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "skill.Skill": {
             "type": "object",
             "properties": {
@@ -15512,6 +16288,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "disable_model_invocation": {
+                    "type": "boolean"
+                },
+                "disable_render": {
+                    "description": "DisableRender 为 true 时，get_skill / load_skill_resource 原样返回技能文本，\n不按本轮 RuntimeContext 的业务变量做 pongo2 模板渲染。\n\n零值（false）表示启用渲染：技能正文 / 附属资源中出现 {{ var }} 时会用当前场景\n变量替换；但若技能文本本身含有不希望被替换的花括号（如代码示例中的模板语法），\n将该开关置为 true 即可关闭渲染。",
                     "type": "boolean"
                 },
                 "instructions": {
@@ -15531,6 +16311,9 @@ const docTemplate = `{
                 },
                 "user_invocable": {
                     "type": "boolean"
+                },
+                "version": {
+                    "type": "string"
                 }
             }
         },
@@ -15541,6 +16324,16 @@ const docTemplate = `{
                     "description": "Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。",
                     "type": "string"
                 },
+                "project_id": {
+                    "description": "ProjectID 是本次调用所属项目的 ID（当前用户激活项目），供工具在执行期做项目级\n数据定位。0 表示未知（未解析到激活项目）。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "session_id": {
+                    "description": "SessionID 是本次调用所属的会话 ID（请求级事实，由上层按 Request.SessionID 注入）。\n\n它是会话主键（雪花 ID），0 表示未知（未注入）。供记忆检索 / 写入把记忆与\n会话关联（例如把某轮踩坑经验记在当次会话下）。",
+                    "type": "string",
+                    "example": "0"
+                },
                 "system_prompt_vars": {
                     "description": "SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量\n（如 analysis_node_id / workspace_directory / script_file_path 等）。",
                     "type": "object",
@@ -15549,6 +16342,11 @@ const docTemplate = `{
                 "type": {
                     "description": "Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，\n为空表示默认工作区）。",
                     "type": "string"
+                },
+                "user_id": {
+                    "description": "UserID 是本次调用发起用户的 ID（请求级事实，由上层按 Request.UserID 注入）。\n\n供需要「按用户隔离数据」的工具（如 save_memory 写长期记忆）在\nRuntimeContext 内直接取到归属用户；0 表示未知（未注入）。",
+                    "type": "string",
+                    "example": "0"
                 },
                 "working_dir": {
                     "description": "WorkingDir 是 Agent 执行工作目录。",
@@ -15719,11 +16517,20 @@ const docTemplate = `{
                 "cache_hit": {
                     "type": "boolean"
                 },
+                "command": {
+                    "description": "Command 是 Agent 命令节点的 run.sh 正文（由 LLM 生成），普通脚本节点不使用。\n运行前由 NodeRuntimePreparer 写入 node.CommandPath，因此重跑口径与其它节点一致。",
+                    "type": "string"
+                },
                 "command_md5": {
                     "type": "string"
                 },
                 "command_path": {
                     "type": "string"
+                },
+                "container_template_id": {
+                    "description": "ContainerTemplateID 是节点级容器模板（go_container_template_definition 主键）。\n\n由 Agent 创建的「命令节点」没有脚本，直接用它启动容器；由脚本创建的节点保持 0，\n沿用脚本绑定的 container_template_id（见 dag/executor.ContainerExecutor）。",
+                    "type": "string",
+                    "example": "0"
                 },
                 "cpu": {
                     "type": "integer"
@@ -16095,9 +16902,6 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
-                "pull_policy": {
-                    "type": "string"
-                },
                 "size": {
                     "type": "integer"
                 }
@@ -16191,6 +16995,10 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
+                "display_name": {
+                    "description": "DisplayName 原样取自绑定行 ContainerTemplateDefinition.DisplayName（不做回退）。\nName 才是对外展示名：DisplayName 非空时覆盖共享配置名，否则回退到 spec.Name。\n编辑表单必须读写 DisplayName，否则会把回退出来的配置名误固化成绑定行展示名。",
+                    "type": "string"
+                },
                 "env": {
                     "type": "array",
                     "items": {
@@ -16207,6 +17015,10 @@ const docTemplate = `{
                 "image_id": {
                     "type": "string",
                     "example": "0"
+                },
+                "is_default": {
+                    "description": "IsDefault 原样取自绑定行 ContainerTemplateDefinition.IsDefault。",
+                    "type": "boolean"
                 },
                 "labels": {
                     "type": "array",
@@ -16270,6 +17082,38 @@ const docTemplate = `{
                 }
             }
         },
+        "types.ContainerTemplateDefinition": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "description": "指针类型是为了让导出可以显式清空（omitempty 也因此生效）；接口响应仍会带上时间字段。",
+                    "type": "string"
+                },
+                "display_name": {
+                    "description": "DisplayName 为空时，对外名称回退到 ContainerTemplateConfig.Name。",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "image_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "is_default": {
+                    "description": "IsDefault 标记「默认容器模板」：只能有一行处于默认状态，由服务层在写入时互斥维护。\n创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。\n导出时会置为 false（omitempty 使其不出现在导出文件里）。",
+                    "type": "boolean"
+                },
+                "spec_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "types.ContainerTemplateSpec": {
             "type": "object",
             "properties": {
@@ -16286,6 +17130,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "created_at": {
+                    "description": "指针类型是为了让导出可以显式清空（omitempty 也因此生效）；接口响应仍会带上时间字段。",
                     "type": "string"
                 },
                 "description": {
@@ -16394,6 +17239,52 @@ const docTemplate = `{
                 "id": {
                     "type": "string",
                     "example": "0"
+                }
+            }
+        },
+        "types.DatasetDirFile": {
+            "type": "object",
+            "properties": {
+                "added": {
+                    "description": "Added reports whether a file with this path is already bound to the\ndataset (go_file.path + go_dataset_file.dataset_id).",
+                    "type": "boolean"
+                },
+                "format": {
+                    "description": "Format is the lower-cased extension without the leading dot.",
+                    "type": "string"
+                },
+                "mod_time": {
+                    "description": "ModTime is the physical file's modification time.",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name is the file's base name.",
+                    "type": "string"
+                },
+                "path": {
+                    "description": "Path is the absolute path stored on go_file.path when the file is\nimported.",
+                    "type": "string"
+                },
+                "relative_path": {
+                    "description": "RelativePath is the path relative to the dataset directory, using \"/\" as\nthe separator so the value is stable across platforms.",
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                }
+            }
+        },
+        "types.DatasetDirFilesResponse": {
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.DatasetDirFile"
+                    }
+                },
+                "path": {
+                    "type": "string"
                 }
             }
         },
@@ -16555,6 +17446,29 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "rows": {
+                    "type": "integer"
+                }
+            }
+        },
+        "types.ImportDatasetDirFilesResult": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "imported": {
+                    "type": "integer"
+                },
+                "skipped": {
+                    "type": "integer"
+                },
+                "total": {
                     "type": "integer"
                 }
             }

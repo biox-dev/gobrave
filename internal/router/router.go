@@ -404,6 +404,9 @@ func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler
 	r.POST("/analysis/parse-params", handler.ParseParams)
 	r.GET("/analysis/:analysisNodeId/node-params", handler.AnalysisNodeParams)
 	r.GET("/analysis/:analysisNodeId/node-logs", handler.AnalysisNodeLogs)
+	// run.sh（analysis_nodes.command_path）查看 / 编辑。
+	r.GET("/analysis/:analysisNodeId/command", handler.GetAnalysisNodeCommand)
+	r.POST("/analysis/:analysisNodeId/command", handler.UpdateAnalysisNodeCommand)
 	r.POST("/analysis/controller", handler.SaveAnalysisController)
 	r.POST("/analysis/controller-script", handler.SaveAnalysisNodeControllerWithScript)
 	// 手动创建命令型分析节点（无脚本，等价于 create_agent_analysis 的建节点部分）。
