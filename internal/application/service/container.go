@@ -58,8 +58,8 @@ func (s *containerService) ExportContainerTemplate(ctx context.Context, definiti
 }
 
 // containerTemplateDefinitionFromReadModel 从对外模板抽出绑定行字段。
-// 只搬 DisplayName：读模型里的 Name 可能是配置名的回退值，直接写入会把配置名
-// 误固化成展示名，所以 DisplayName 必须由请求显式携带（为空表示回退到配置名）。
+// 只搬 DisplayName / DefinitionDescription：读模型里的 Name / Description 可能是配置名的回退值，
+// 直接写入会把配置信息误固化成绑定行内容，所以这两个字段必须由请求显式携带。
 func containerTemplateDefinitionFromReadModel(tpl *types.ContainerTemplate) *types.ContainerTemplateDefinition {
 	return &types.ContainerTemplateDefinition{
 		ID:          tpl.ID,
@@ -67,6 +67,7 @@ func containerTemplateDefinitionFromReadModel(tpl *types.ContainerTemplate) *typ
 		ImageName:   strings.TrimSpace(tpl.ImageName),
 		PullPolicy:  normalizePullPolicy(tpl.PullPolicy),
 		DisplayName: strings.TrimSpace(tpl.DisplayName),
+		Description: strings.TrimSpace(tpl.DefinitionDescription),
 	}
 }
 

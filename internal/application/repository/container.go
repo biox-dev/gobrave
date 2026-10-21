@@ -100,12 +100,15 @@ func (r *containerRepository) UpdateContainerTemplateDefinition(ctx context.Cont
 		Updates(item).Error; err != nil {
 		return err
 	}
-	// display_name 需要支持「清空」：GORM 的 Updates(struct) 会跳过零值字段，
+	// display_name / description 需要支持「清空」：GORM 的 Updates(struct) 会跳过零值字段，
 	// 所以这里单独写一次，保证空字符串也能落库。
 	return r.db.WithContext(ctx).
 		Model(&types.ContainerTemplateDefinition{}).
 		Where("id = ?", item.ID).
-		Update("display_name", item.DisplayName).Error
+		Updates(map[string]any{
+			"display_name": item.DisplayName,
+			"description":  item.Description,
+		}).Error
 }
 
 func (r *containerRepository) DeleteContainerTemplateDefinition(ctx context.Context, id int64) error {

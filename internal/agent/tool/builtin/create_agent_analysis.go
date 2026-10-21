@@ -50,6 +50,8 @@ type CreateAgentAnalysisOutput struct {
 func createAgentAnalysisDescription() string {
 	return `创建一个命令型分析节点：给定节点名称与一段 shell 命令（container_template_id 可选，留空时使用系统默认容器模板），系统在节点工作目录下生成 run.sh。run 可选，默认 true：为 true 时立即提交容器执行并等待结束，返回状态、退出码与命令日志；为 false 时只创建节点不运行，之后可用 run_analysis_node 再运行该节点。所属项目取自当前会话上下文，无需传入。
 
+Reference chips（界面插入的引用）：用户消息里可能出现 @container:<id>（选中的容器模板）、@dataset:<id>（选中的数据集）、@file:<id>（文件）。遇到 @container:<id> 时，直接把冒号后的 ID 作为 container_template_id 传入，不要丢弃或改写；需要确认模板用途时先调用 get_container_template（返回 display_name 与 description）。遇到 @dataset:<id> 时可用 get_dataset 获取其工作目录绝对路径，并在 command 中直接使用该路径。
+
 Before executing the command, please follow these steps:
 
 1. Directory Verification（目录校验）:
@@ -122,7 +124,7 @@ func CreateAgentAnalysis() tool.Tool {
 		createAgentAnalysisDescription(),
 		tool.Schema("创建命令型分析节点的入参", map[string]any{
 			"name":                  tool.StringProperty("节点名称（简短英文/数字，也用作容器资源名）。"),
-			"container_template_id": tool.StringProperty("容器模板 ID（整数，字符串以保精度），必须是已存在的容器模板。可选：留空时使用系统默认容器模板（is_default）。"),
+			"container_template_id": tool.StringProperty("容器模板 ID（整数，字符串以保精度），必须是已存在的容器模板；可直接使用用户消息里的 @container:<id>（冒号后的 ID）。可选：留空时使用系统默认容器模板（is_default）。"),
 			"command":               tool.StringProperty("要执行的 shell 命令（多行可用换行分隔）。命令会写入节点工作目录的 run.sh 后执行。"),
 			"run":                   tool.BooleanProperty("是否在创建后立即运行，可选，默认 true。传 false 时只创建节点并生成 run.sh，不提交运行。"),
 			"timeout_seconds":       tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 1800；run=false 时忽略。"),

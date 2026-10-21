@@ -45,7 +45,7 @@ type ListContainerTemplatesOutput struct {
 func ListContainerTemplates() tool.Tool {
 	return tool.NewFunc(
 		ListContainerTemplatesToolName,
-		"列出系统中全部可运行的容器模板（ContainerTemplateDefinition）。返回每个模板的 id（字符串形式，避免大整数精度丢失，即绑定行主键，可直接用于 container_template_id 引用）、spec_id（关联的共享运行配置 ID）、name（ContainerTemplateSpec 的名称）与 description（ContainerTemplateSpec 的描述）。容器模板是全局资产，不需要传入项目或分页参数。",
+		"列出系统中全部可运行的容器模板（ContainerTemplateDefinition）。返回每个模板的 id（字符串形式，避免大整数精度丢失，即绑定行主键，可直接用于 container_template_id 引用）、spec_id（关联的共享运行配置 ID）、name（ContainerTemplateSpec 的名称）与 description（ContainerTemplateSpec 的描述）。容器模板是全局资产，不需要传入项目或分页参数。已知具体模板 ID（如用户消息里的 @container:<id>）时，改用 get_container_template 查看该模板自身的 display_name 与 description。",
 		tool.Schema("列出全部容器模板的入参（无需参数）", map[string]any{}),
 		func(ctx context.Context, _ ListContainerTemplatesInput) (ListContainerTemplatesOutput, error) {
 			browser := tool.ProjectResourceBrowserFrom(ctx)

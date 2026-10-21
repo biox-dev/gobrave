@@ -24,6 +24,8 @@ func All() []tool.Tool {
 		GetScript(),
 		GetAnalysisNode(),
 		ListContainerTemplates(),
+		GetContainerTemplate(),
+		GetDataset(),
 		BuildAnalysisNodeParams(),
 		RunAnalysisNode(),
 		UpdateAgentAnalysis(),

@@ -655,6 +655,19 @@ type ProjectResourceBrowser interface {
 	// 每一项对应一行 go_container_template_definition（ID 即对外的容器模板 ID），
 	// Name / Description 取自该绑定行关联的 go_container_template_spec。
 	ListContainerTemplates(ctx context.Context) ([]ContainerTemplateBrief, error)
+
+	// GetContainerTemplateByID 按主键读取一个可运行容器模板（绑定行 + 绑定的共享运行配置）。
+	//
+	// 用于解析用户输入里的 @container:<id> 引用：返回绑定行自己的 DisplayName 与
+	// Description（longtext），以及 spec / image 等运行信息。容器模板是全局资产，
+	// 不按项目隔离。
+	GetContainerTemplateByID(ctx context.Context, containerTemplateID int64) (ContainerTemplateDetail, error)
+
+	// GetDatasetByID 按主键读取数据集（必须属于当前激活项目，否则返回错误）。
+	//
+	// 用于解析用户输入里的 @dataset:<id> 引用：返回数据集名称 / 描述与其工作目录的
+	// 绝对路径（utils.GetDatasetDir），模型可直接按该路径读取 / 写入数据集文件。
+	GetDatasetByID(ctx context.Context, projectID int64, datasetID int64) (DatasetBrief, error)
 }
 
 // ScriptBrief 是脚本的只读摘要（工具回传给模型的最小字段集）。
@@ -700,6 +713,33 @@ type ContainerTemplateBrief struct {
 	SpecID       int64  `json:"spec_id"`
 	Name         string `json:"name"`
 	Description  string `json:"description,omitempty"`
+}
+
+// ContainerTemplateDetail 是单个容器模板的只读详情（供 get_container_template 回传）。
+//
+// DisplayName / Description 原样取自绑定行 go_container_template_definition 自身
+// （Description 为 longtext）；SpecName 取自关联的共享运行配置，便于模型区分
+// 「模板展示名」与「运行配置名」。
+type ContainerTemplateDetail struct {
+	DefinitionID int64  `json:"definition_id"`
+	SpecID       int64  `json:"spec_id"`
+	DisplayName  string `json:"display_name"`
+	Description  string `json:"description"`
+	ImageName    string `json:"image_name,omitempty"`
+	PullPolicy   string `json:"pull_policy,omitempty"`
+	IsDefault    bool   `json:"is_default"`
+	SpecName     string `json:"spec_name,omitempty"`
+}
+
+// DatasetBrief 是数据集的只读摘要（供 get_dataset 回传）。
+//
+// Path 是数据集工作目录的绝对路径（utils.GetDatasetDir），模型可直接在该目录下
+// 读取 / 写入文件。
+type DatasetBrief struct {
+	DatasetID   int64  `json:"dataset_id"`
+	DatasetName string `json:"dataset_name"`
+	Description string `json:"description,omitempty"`
+	Path        string `json:"path"`
 }
 
 // projectResourceBrowserKey 是 ProjectResourceBrowser 在 context 中的私有键类型。

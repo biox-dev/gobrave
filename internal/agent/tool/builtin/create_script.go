@@ -71,11 +71,11 @@ type CreateScriptOutput struct {
 func CreateScript() tool.Tool {
 	return tool.NewFunc(
 		CreateScriptToolName,
-		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径，可据此编写脚本内容、补充参数契约。所属项目取自当前会话上下文，无需传入。请在调用时一次性给出 inputs / outputs（脚本输入输出契约，参数名将与 params.json 的键、脚本内读取的参数名一一对应；不传则使用默认 input1/output）。需要运行脚本时，再调用 create_script_analysis（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。",
+		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径，可据此编写脚本内容、补充参数契约。所属项目取自当前会话上下文，无需传入。请在调用时一次性给出 inputs / outputs（脚本输入输出契约，参数名将与 params.json 的键、脚本内读取的参数名一一对应；不传则使用默认 input1/output）。需要运行脚本时，再调用 create_script_analysis（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。\n\n用户消息里可能出现界面插入的引用 chip：@container:<id> 表示用户选中的容器模板（对应 container_template_id），@dataset:<id> 表示用户选中的数据集，@file:<id> 表示文件。遇到 @container:<id> 时，直接把冒号后的 ID 作为 container_template_id 传入，不要丢弃或改写；需要确认该模板的展示名 / 描述时先调用 get_container_template；遇到 @dataset:<id> 时可用 get_dataset 获取其工作目录路径。",
 		tool.Schema("创建脚本的入参", map[string]any{
 			"name":                  tool.StringProperty("脚本名称（同名脚本在同一项目下应唯一，由业务侧校验）。"),
 			"description":           tool.StringProperty("脚本用途描述（可选），用于说明该脚本做什么。"),
-			"container_template_id": tool.StringProperty("容器运行配置 ID（整数，字符串以保精度）。为空时使用系统默认容器模板。"),
+			"container_template_id": tool.StringProperty("容器运行配置 ID（整数，字符串以保精度）；可直接使用用户消息里的 @container:<id>（冒号后的 ID）。为空时使用系统默认容器模板。"),
 			"script_type":           tool.StringProperty("脚本类型：qmd（默认）/ r / python / shell / jupyter（决定主文件名与初始化模板）。"),
 			"inputs":                ioItemsSchema("脚本输入契约列表（io_schema.json 的 inputs）。name 即 params.json 中的参数名，脚本内需按该名取参数；type 常见值：BaseInput / file / string / number / boolean 等。"),
 			"outputs":               ioItemsSchema("脚本输出契约列表（io_schema.json 的 outputs）。name 为输出名，type 通常为 file。"),
@@ -195,8 +195,12 @@ func normalizeIOSchemaItems(items []map[string]any) []map[string]any {
 }
 
 // parseContainerTemplateID 解析 container_template_id；为空时返回 0（由业务侧解析默认模板）。
+// 容错处理用户 / 模型可能带上的 "@container:" 前缀（如 "@container:2109711590457610240"）。
 func parseContainerTemplateID(raw string) (int64, error) {
 	idStr := strings.TrimSpace(raw)
+	if idx := strings.Index(idStr, "@container:"); idx >= 0 {
+		idStr = strings.TrimSpace(idStr[idx+len("@container:"):])
+	}
 	if idStr == "" {
 		return 0, nil
 	}

@@ -78,6 +78,11 @@ type ContainerTemplateDefinition struct {
 	// DisplayName 为空时，对外名称回退到 ContainerTemplateConfig.Name。
 	DisplayName string `json:"display_name" gorm:"type:varchar(255)"`
 
+	// Description 是绑定行自身的描述（长文本），与共享运行配置 ContainerTemplateSpec.Description
+	// 相互独立：spec 描述“怎么跑”，这里描述“这个可运行模板是做什么的 / 适用什么场景”。
+	// Agent 工具 get_container_template 会把 DisplayName 与 Description 一起回传给模型。
+	Description string `json:"description" gorm:"type:longtext"`
+
 	// IsDefault 标记「默认容器模板」：只能有一行处于默认状态，由服务层在写入时互斥维护。
 	// 创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。
 	// 导出时会置为 false（omitempty 使其不出现在导出文件里）。
@@ -119,6 +124,9 @@ type ContainerTemplate struct {
 	// Name 才是对外展示名：DisplayName 非空时覆盖共享配置名，否则回退到 spec.Name。
 	// 编辑表单必须读写 DisplayName，否则会把回退出来的配置名误固化成绑定行展示名。
 	DisplayName string `json:"display_name"`
+	// DefinitionDescription 原样取自绑定行 ContainerTemplateDefinition.Description（长文本）。
+	// 与 Description（共享运行配置 spec 的描述）相互独立，编辑表单需读写本字段。
+	DefinitionDescription string `json:"definition_description"`
 	// IsDefault 原样取自绑定行 ContainerTemplateDefinition.IsDefault。
 	IsDefault bool `json:"is_default"`
 
@@ -166,6 +174,7 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 	}
 
 	tpl.DisplayName = binding.DisplayName
+	tpl.DefinitionDescription = binding.Description
 
 	if spec != nil {
 		tpl.Name = spec.Name
@@ -237,6 +246,7 @@ func (t *ContainerTemplate) ToExport(spec *ContainerTemplateSpec) *ContainerTemp
 		ImageName:   t.ImageName,
 		PullPolicy:  t.PullPolicy,
 		DisplayName: t.DisplayName,
+		Description: t.DefinitionDescription,
 	})
 	if spec != nil {
 		exportedSpec := *spec

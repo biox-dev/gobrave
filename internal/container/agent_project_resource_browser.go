@@ -22,7 +22,9 @@ import (
 //   - list_project_scripts：按 RuntimeContext.ProjectID 列出全部脚本；
 //   - get_script：按 script_id 查看脚本名称 / 描述 / 主文件路径 / io_schema.json 路径；
 //   - get_analysis_node：按 analysis_node_id 查看节点名称 / 工作目录 / params.json / 参数；
-//   - list_container_templates：列出全部容器模板（definition ID + spec 的 name / description）。
+//   - list_container_templates：列出全部容器模板（definition ID + spec 的 name / description）；
+//   - get_container_template：按 @container:<id> 引用查看绑定行的 display_name / description；
+//   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径。
 //
 // 路径口径与 create_script / update_script 完全一致：脚本主文件走
 // utils.GetScriptFile，io_schema 走 utils.WorkflowIOSchemaPath（工作流与脚本共用同一份
@@ -34,15 +36,17 @@ type projectResourceBrowser struct {
 	workflowSvc  interfaces.WorkflowService
 	analysisRepo interfaces.AnalysisRepository
 	containerSvc interfaces.ContainerService
+	dataSvc      interfaces.DataService
 	cfg          *config.Config
 }
 
-// newProjectResourceBrowser 构建「浏览项目内脚本 / 分析节点 / 容器模板」执行器并注入内置工具体系。
-func newProjectResourceBrowser(workflowSvc interfaces.WorkflowService, analysisRepo interfaces.AnalysisRepository, containerSvc interfaces.ContainerService, cfg *config.Config) tool.ProjectResourceBrowser {
+// newProjectResourceBrowser 构建「浏览项目内脚本 / 分析节点 / 容器模板 / 数据集」执行器并注入内置工具体系。
+func newProjectResourceBrowser(workflowSvc interfaces.WorkflowService, analysisRepo interfaces.AnalysisRepository, containerSvc interfaces.ContainerService, dataSvc interfaces.DataService, cfg *config.Config) tool.ProjectResourceBrowser {
 	return &projectResourceBrowser{
 		workflowSvc:  workflowSvc,
 		analysisRepo: analysisRepo,
 		containerSvc: containerSvc,
+		dataSvc:      dataSvc,
 		cfg:          cfg,
 	}
 }
@@ -190,6 +194,107 @@ func (b *projectResourceBrowser) ListContainerTemplates(ctx context.Context) ([]
 		out = append(out, brief)
 	}
 	return out, nil
+}
+
+// GetContainerTemplateByID 按主键读取单个容器模板（供 get_container_template 解析 @container:<id>）。
+//
+// 返回绑定行自身的 DisplayName / Description（longtext），并额外带上 spec 名称与镜像信息，
+// 便于模型确认“这个模板到底是什么、能不能跑当前任务”。
+func (b *projectResourceBrowser) GetContainerTemplateByID(ctx context.Context, containerTemplateID int64) (tool.ContainerTemplateDetail, error) {
+	if containerTemplateID <= 0 {
+		return tool.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: container_template_id is required")
+	}
+	if b.containerSvc == nil {
+		return tool.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: required services are not configured")
+	}
+
+	tpl, err := b.containerSvc.GetContainerTemplateByID(ctx, containerTemplateID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return tool.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: container template %d not found", containerTemplateID)
+		}
+		return tool.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: failed to load container template: %w", err)
+	}
+	if tpl == nil || tpl.ID == 0 {
+		return tool.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: container template %d not found", containerTemplateID)
+	}
+
+	detail := tool.ContainerTemplateDetail{
+		DefinitionID: tpl.ID,
+		SpecID:       tpl.SpecID,
+		DisplayName:  tpl.DisplayName,
+		Description:  tpl.DefinitionDescription,
+		ImageName:    tpl.ImageName,
+		PullPolicy:   tpl.PullPolicy,
+		IsDefault:    tpl.IsDefault,
+	}
+	// 读模型里的 Name 可能是 DisplayName 的回退值，这里按 SpecID 回查共享配置名。
+	if spec, specErr := b.containerSvc.GetContainerTemplateSpecByID(ctx, tpl.SpecID); specErr == nil && spec != nil {
+		detail.SpecName = spec.Name
+	}
+	return detail, nil
+}
+
+// GetDatasetByID 按主键读取数据集（供 get_dataset 解析 @dataset:<id>）。
+//
+// 数据集按当前激活项目隔离：先校验 go_project_dataset 绑定，再返回 utils.GetDatasetDir
+// 推导出的工作目录绝对路径，模型可直接在该目录下读写文件。
+func (b *projectResourceBrowser) GetDatasetByID(ctx context.Context, projectID int64, datasetID int64) (tool.DatasetBrief, error) {
+	if projectID <= 0 {
+		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: project_id is required")
+	}
+	if datasetID <= 0 {
+		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: dataset_id is required")
+	}
+	if b.dataSvc == nil {
+		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: required services are not configured")
+	}
+
+	dataset, err := b.dataSvc.GetDatasetByID(ctx, datasetID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return tool.DatasetBrief{}, fmt.Errorf("get_dataset: dataset %d not found", datasetID)
+		}
+		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: failed to load dataset: %w", err)
+	}
+	if dataset == nil || dataset.ID == 0 {
+		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: dataset %d not found", datasetID)
+	}
+
+	// 校验数据集属于当前激活项目（go_project_dataset 绑定）。
+	bound, err := b.dataSvc.ListDatasetByProjectID(ctx, projectID)
+	if err != nil {
+		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: failed to verify project binding: %w", err)
+	}
+	belongs := false
+	for _, item := range bound {
+		if item != nil && item.ID == datasetID {
+			belongs = true
+			break
+		}
+	}
+	if !belongs {
+		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: dataset %d does not belong to the active project %d", datasetID, projectID)
+	}
+
+	baseDir := ""
+	if b.cfg != nil && b.cfg.Storage != nil {
+		baseDir = strings.TrimSpace(b.cfg.Storage.BaseDir)
+	}
+	if baseDir == "" {
+		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: storage base dir is not configured")
+	}
+	absBaseDir, err := utils.ResolveExternalPath(baseDir)
+	if err != nil {
+		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: failed to resolve storage base dir: %w", err)
+	}
+
+	return tool.DatasetBrief{
+		DatasetID:   dataset.ID,
+		DatasetName: dataset.DatasetName,
+		Description: dataset.Description,
+		Path:        utils.GetDatasetDir(absBaseDir, projectID, datasetID),
+	}, nil
 }
 
 // toScriptBrief 把 Script 记录转换成工具回传的摘要（补齐磁盘路径）。
