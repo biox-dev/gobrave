@@ -104,8 +104,8 @@ Before executing the command, please follow these steps:
  - container_template_id 可选：留空时使用系统默认容器模板；给出时必须是已存在的容器模板。
  - timeout_seconds 可选：等待节点完成的超时（秒）；留空时使用服务端默认超时。
  - command 可多行（换行分隔）；路径、样本名、分组等不要硬编码。
- - 该工具会执行任意 shell 命令（默认即运行），因此声明 execute 授权，与其它命令执行类工具
-   共用许可策略。`
+ - 该工具会创建分析节点（写库并写出 run.sh），默认还会触发一次运行，因此声明 write 授权，
+   与其它业务写入类工具共用许可策略。`
 }
 
 // CreateAgentAnalysis 返回一个「创建命令型分析节点（可选运行）」工具。
@@ -117,7 +117,8 @@ Before executing the command, please follow these steps:
 //     run 为 false 时只创建节点并生成 run.sh，不提交运行；
 //   - 返回节点状态、是否运行、退出码与命令日志。
 //
-// 该工具会执行任意 shell 命令（默认即运行），因此声明 execute 授权，与其它命令执行类工具共用许可策略。
+// 该工具会创建分析节点（写库并写出 run.sh），默认还会触发一次运行，因此声明 write 授权，
+// 与其它业务写入类工具共用许可策略。
 func CreateAgentAnalysis() tool.Tool {
 	return tool.NewFunc(
 		CreateAgentAnalysisToolName,
@@ -186,5 +187,5 @@ func CreateAgentAnalysis() tool.Tool {
 			}
 			return out, nil
 		},
-	).WithPermission("execute", "", "创建命令型分析节点（默认执行 shell 命令）")
+	).WithPermission("write", "", "创建命令型分析节点（默认立即运行该节点）")
 }
