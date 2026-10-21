@@ -168,7 +168,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 			CommandPath:  node.CommandPath,
 			ParamsPath:   node.ParamsPath,
 			LogPath:      node.LogPath,
-		}, fmt.Errorf("request_param is required: pass request_param to run_analysis_node or build node params with build_analysis_node_params first")
+		}, fmt.Errorf("request_param is required: call build_analysis_node_params to save node params before running")
 	}
 
 	// 2) 读取脚本，按表单把 request_param 解析成节点记录（patterns / resolved_inputs / request_param）。

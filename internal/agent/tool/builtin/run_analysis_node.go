@@ -15,14 +15,12 @@ const RunAnalysisNodeToolName = "run_analysis_node"
 // RunAnalysisNodeInput 是 run_analysis_node 工具的入参。
 //
 // AnalysisNodeID 为必填：模型必须显式给出要运行的分析节点 ID，不再从运行时上下文回退。
-//
-// RequestParam 可选：非空时以它为本次运行的请求参数（并回写节点记录），为空时回退到
-// AnalysisNode 上已保存的 request_param。两种情况下都由 AnalysisNodeRunner 按脚本最新
-// io_schema.json 解析、回写节点并重新生成 params.json。
+// 工具不接受 request_param：脚本型节点使用节点上已保存的 request_param（由
+// build_analysis_node_params / create_script_analysis 写入），命令型节点直接运行
+// 节点自身的 run.sh。
 type RunAnalysisNodeInput struct {
-	AnalysisNodeID string         `json:"analysis_node_id"` // 分析节点 ID（必填，字符串以保精度）
-	RequestParam   map[string]any `json:"request_param"`    // 本次运行的请求参数，可选；为空时用节点已保存的 request_param
-	TimeoutSeconds int            `json:"timeout_seconds"`  // 等待完成的超时（秒），可选，默认 600
+	AnalysisNodeID string `json:"analysis_node_id"` // 分析节点 ID（必填，字符串以保精度）
+	TimeoutSeconds int    `json:"timeout_seconds"`  // 等待完成的超时（秒），可选，默认 600
 }
 
 // RunAnalysisNodeOutput 是 run_analysis_node 工具返回给模型的结果。
@@ -46,13 +44,13 @@ type RunAnalysisNodeOutput struct {
 	CommandPath  string `json:"command_path,omitempty"`  // 本次执行的 run.sh 路径
 	ParamsPath   string `json:"params_path,omitempty"`   // 本次运行的 params.json 路径
 	// RequestParam 是本次运行实际生效的请求参数（键为 io_schema inputs 的 name），
-	// 取自节点记录并在运行前按 io_schema 解析校验。
+	// 取自节点记录并在运行前按 io_schema 解析校验；命令型节点无参数（为空）。
 	RequestParam map[string]any `json:"request_param,omitempty"`
 	// ResolvedInputs 是按脚本 io_schema 解析后的结构化输入（已写入节点）。
 	ResolvedInputs map[string]any `json:"resolved_inputs,omitempty"`
 	// ParamsJSON 是本次运行实际使用的 params.json 正文，便于确认脚本拿到的参数。
 	ParamsJSON string `json:"params_json,omitempty"`
-	// ParamsUpdated 表示本次运行前是否解析并更新了节点参数（request_param 非空时）。
+	// ParamsUpdated 表示本次运行前是否按 io_schema 解析并更新了节点参数（命令型节点为 false）。
 	ParamsUpdated bool `json:"params_updated,omitempty"`
 	// InputValidationErrors / OutputValidationErrors 是本次运行前写回节点的校验错误快照
 	// （运行前会被清空，由编排器在运行期重新填充）。
@@ -67,15 +65,15 @@ type RunAnalysisNodeOutput struct {
 //
 // 行为：
 //   - 解析必填入参 analysis_node_id；
-//   - 把运行交给 AnalysisNodeRunner：runner 以本次传入的 request_param 为准（未传时回退到
-//     节点上已保存的 request_param），按脚本最新 io_schema.json 解析并回写节点
-//     （request_param / resolved_inputs / patterns / 清空校验错误），然后重新生成
-//     params.json 再提交运行；
+//   - 同时支持 create_agent_analysis 创建的命令型节点与 create_script_analysis
+//     创建的脚本型节点：
+//     命令型节点按节点自身的 run.sh 运行；脚本型节点使用节点上已保存的 request_param，
+//     按脚本最新 io_schema.json 解析并回写节点，然后重新生成 params.json 再提交运行；
 //   - 等待节点进入终态，返回执行日志、params_path、params.json 正文与本次生效的
 //     request_param。
 //
-// 需要临时换参数直接运行时，可在本次调用里传入 request_param（会持久化到节点）；
-// 只想先试算参数而不运行时，用 build_analysis_node_params。
+// 本工具不接受 request_param：脚本型节点需要改参数时，先调用 build_analysis_node_params；
+// 想直接运行节点上已保存的参数，直接调用本工具即可。
 //
 // 该工具会改变计算状态（触发一次节点运行），因此声明 analysis_node 授权：与直接执行
 // shell / 脚本（execute）区分开，便于按动作粒度配置许可策略（如允许 execute 但限制
@@ -83,14 +81,10 @@ type RunAnalysisNodeOutput struct {
 func RunAnalysisNode() tool.Tool {
 	return tool.NewFunc(
 		RunAnalysisNodeToolName,
-		"运行指定分析节点（analysis_node_id 必填），等待其完成后返回节点状态、绑定的 script_id、执行日志（log；截断时用 log_path 读取完整日志）、params_path、params.json 正文与本次生效的 request_param。可选传入 request_param（键为脚本 io_schema 的 name）覆盖本次运行参数；不传则使用节点上已保存的 request_param。运行前会按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param 并清空上一轮 input_validation_errors / output_validation_errors。",
+		"运行指定分析节点（analysis_node_id 必填），同时支持 create_agent_analysis 创建的命令型节点与 create_script_analysis 创建的脚本型节点，等待其完成后返回节点状态、绑定的 script_id、执行日志（log；截断时用 log_path 读取完整日志）、params_path、params.json 正文与本次生效的 request_param。命令型节点直接运行节点自身的 run.sh；脚本型节点使用节点上已保存的 request_param（修改参数请先调用 build_analysis_node_params），运行前会按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param 并清空上一轮 input_validation_errors / output_validation_errors。",
 		tool.Schema("运行分析节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("要运行的分析节点 ID（必填，字符串以保精度）。"),
-			"request_param": map[string]any{
-				"type":        "object",
-				"description": "本次运行的请求参数对象，键为脚本 io_schema.json inputs 中各条目的 name。留空则使用节点上已保存的 request_param。",
-			},
-			"timeout_seconds": tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600。"),
+			"timeout_seconds":  tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600。"),
 		}, "analysis_node_id"),
 		func(ctx context.Context, in RunAnalysisNodeInput) (RunAnalysisNodeOutput, error) {
 			rc := tool.RuntimeContextFrom(ctx)
@@ -108,8 +102,9 @@ func RunAnalysisNode() tool.Tool {
 				return RunAnalysisNodeOutput{}, fmt.Errorf("run_analysis_node: analysis node runner is not available in this runtime")
 			}
 
-			// 参数解析 / 落库 / 写出 params.json 全部由 runner 完成。
-			result, runErr := runner.RunAnalysisNode(ctx, nodeID, in.RequestParam, in.TimeoutSeconds)
+			// 参数解析 / 落库 / 写出 params.json 全部由 runner 完成；
+			// 传 nil 表示使用节点上已保存的 request_param（命令型节点直接运行自身 run.sh）。
+			result, runErr := runner.RunAnalysisNode(ctx, nodeID, nil, in.TimeoutSeconds)
 
 			out := RunAnalysisNodeOutput{
 				AnalysisNodeID:         nodeID,
