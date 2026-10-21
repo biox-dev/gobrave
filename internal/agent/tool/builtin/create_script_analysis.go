@@ -148,5 +148,18 @@ func CreateScriptAnalysis() tool.Tool {
 			}
 			return out, nil
 		},
-	).WithPermission("write", "", "为已有脚本创建分析节点（默认立即运行该节点）")
+	).WithPermissionPreview("write", "", "为已有脚本创建分析节点（默认立即运行该节点）", previewCreateScriptAnalysis)
+}
+
+// previewCreateScriptAnalysis 生成批准前预览：新节点 params.json 将写入的请求参数
+// （新增文件 diff）。未给出 request_param 时没有可预览的内容。
+func previewCreateScriptAnalysis(_ context.Context, in CreateScriptAnalysisInput) tool.PermissionPreview {
+	if in.RequestParam == nil {
+		return tool.PermissionPreview{}
+	}
+	content := paramsJSONContent(in.RequestParam)
+	if content == "" {
+		return tool.PermissionPreview{}
+	}
+	return textDiffPreview("params.json", "", content)
 }

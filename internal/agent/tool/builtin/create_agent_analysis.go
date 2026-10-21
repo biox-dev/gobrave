@@ -187,5 +187,14 @@ func CreateAgentAnalysis() tool.Tool {
 			}
 			return out, nil
 		},
-	).WithPermission("write", "", "创建命令型分析节点（默认立即运行该节点）")
+	).WithPermissionPreview("write", "", "创建命令型分析节点（默认立即运行该节点）", previewCreateAgentAnalysis)
+}
+
+// previewCreateAgentAnalysis 生成批准前预览：新节点 run.sh 将写入的命令内容（新增文件 diff）。
+func previewCreateAgentAnalysis(_ context.Context, in CreateAgentAnalysisInput) tool.PermissionPreview {
+	command := strings.TrimSpace(in.Command)
+	if command == "" {
+		return tool.PermissionPreview{}
+	}
+	return textDiffPreview("run.sh", "", runScriptContent(command))
 }

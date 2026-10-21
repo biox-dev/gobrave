@@ -114,5 +114,29 @@ func UpdateScriptAnalysis() tool.Tool {
 				Changed:        result.Changed,
 			}, nil
 		},
-	).WithPermission("write", "", "更新脚本节点（script / scheduler；写库并重建 params.json）")
+	).WithPermissionPreview("write", "", "更新脚本节点（script / scheduler；写库并重建 params.json）", previewUpdateScriptAnalysis)
+}
+
+// previewUpdateScriptAnalysis 生成批准前预览：params.json 中请求参数的旧值 → 新值 diff。
+//
+// 未给出 request_param 时没有参数改动可预览（仅改名不会展示 diff）；读取不到节点
+// 当前参数时退化为「覆盖 params.json」的预览，不影响授权流程本身。
+func previewUpdateScriptAnalysis(ctx context.Context, in UpdateScriptAnalysisInput) tool.PermissionPreview {
+	if in.RequestParam == nil {
+		return tool.PermissionPreview{}
+	}
+	after := paramsJSONContent(in.RequestParam)
+	if after == "" {
+		return tool.PermissionPreview{}
+	}
+
+	path := "params.json"
+	before := ""
+	if current, ok := analysisNodeForPreview(ctx, UpdateScriptAnalysisToolName, in.AnalysisNodeID); ok {
+		if current.ParamsPath != "" {
+			path = current.ParamsPath
+		}
+		before = paramsJSONContent(current.RequestParam)
+	}
+	return textDiffPreview(path, before, after)
 }

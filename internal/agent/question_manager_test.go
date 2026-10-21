@@ -276,3 +276,50 @@ func TestAskUserToolDefinition(t *testing.T) {
 		}
 	}
 }
+
+// TestAskUserInputNormalize 覆盖：模型漏填 / 重复 option.value 时补齐并去重。
+//
+// 前端 Radio / Checkbox 以 value 作为选中标识，value 缺失或重复会让所有选项共享
+// 同一个值，表现为「点一个选项，全部选项都被选中」。
+func TestAskUserInputNormalize(t *testing.T) {
+	q := NewQuestionRequest(1, "", AskUserInput{
+		Title: "Roary 泛基因组分析参数确认",
+		Questions: []Question{
+			{
+				ID:    "samples",
+				Type:  QuestionTypeSingleChoice,
+				Title: "使用哪些 GFF 样本？",
+				Options: []QuestionOption{
+					{Label: "全部 17 个 GFF"},
+					{Label: "16 个，排除 OCF-1.gff"},
+					{Label: "16 个，排除 OCF-1.gff"},
+					{Value: "v"},
+					{Label: "", Value: ""},
+				},
+			},
+			{
+				ID:      "note",
+				Type:    QuestionTypeText,
+				Title:   "补充说明",
+				Options: []QuestionOption{{Label: "x", Value: "x"}},
+			},
+		},
+	})
+
+	opts := q.Questions[0].Options
+	want := []string{"全部 17 个 GFF", "16 个，排除 OCF-1.gff", "16 个，排除 OCF-1.gff#2", "v"}
+	if len(opts) != len(want) {
+		t.Fatalf("options = %+v", opts)
+	}
+	for i, opt := range opts {
+		if opt.Value != want[i] {
+			t.Fatalf("options[%d].Value = %q, want %q", i, opt.Value, want[i])
+		}
+		if opt.Label == "" {
+			t.Fatalf("options[%d].Label empty", i)
+		}
+	}
+	if q.Questions[1].Options != nil {
+		t.Fatalf("text question options = %+v, want nil", q.Questions[1].Options)
+	}
+}

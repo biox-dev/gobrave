@@ -696,11 +696,15 @@ type AnalysisNodeBrief struct {
 	// NodeType 是归一化后的节点类型（agent / script / scheduler）。
 	NodeType string `json:"node_type,omitempty"`
 	// NodeTypeDescription 是节点类型的中文说明（含可用的更新 / 运行工具指引）。
-	NodeTypeDescription string         `json:"node_type_description,omitempty"`
-	ScriptID            int64          `json:"script_id,omitempty"`
-	WorkspaceDir        string         `json:"workspace_dir"`
-	ParamsPath          string         `json:"params_path"`
-	RequestParam        map[string]any `json:"request_param,omitempty"`
+	NodeTypeDescription string `json:"node_type_description,omitempty"`
+	ScriptID            int64  `json:"script_id,omitempty"`
+	WorkspaceDir        string `json:"workspace_dir"`
+	CommandPath         string `json:"command_path,omitempty"`
+	ParamsPath          string `json:"params_path"`
+	// Command 是命令型节点（node_type=agent）当前的 run.sh 正文；脚本型节点为空。
+	// 供 update_agent_analysis 在授权前生成 run.sh 的旧值 diff。
+	Command      string         `json:"command,omitempty"`
+	RequestParam map[string]any `json:"request_param,omitempty"`
 }
 
 // ContainerTemplateBrief 是容器模板的只读摘要（工具回传给模型的最小字段集）。

@@ -135,7 +135,7 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 	}
 
 	// 兜底：个别读取路径可能没有填充派生路径，这里按 WorkspaceDir 再推导一次（幂等）。
-	if node.ParamsPath == "" && node.WorkspaceDir != "" {
+	if (node.ParamsPath == "" || node.CommandPath == "") && node.WorkspaceDir != "" {
 		node.HydrateDerivedPaths()
 	}
 
@@ -147,7 +147,9 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 		NodeTypeDescription: node.NodeTypeDescription(),
 		ScriptID:            node.ScriptID,
 		WorkspaceDir:        node.WorkspaceDir,
+		CommandPath:         node.CommandPath,
 		ParamsPath:          node.ParamsPath,
+		Command:             node.Command,
 		RequestParam:        agentanalysis.DecodeRequestParam(node.RequestParam),
 	}, nil
 }

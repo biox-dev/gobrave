@@ -125,5 +125,24 @@ func UpdateAgentAnalysis() tool.Tool {
 				Changed:             result.Changed,
 			}, nil
 		},
-	).WithPermission("write", "", "更新 Agent 命令节点（写库并重建 run.sh）")
+	).WithPermissionPreview("write", "", "更新 Agent 命令节点（写库并重建 run.sh）", previewUpdateAgentAnalysis)
+}
+
+// previewUpdateAgentAnalysis 生成批准前预览：run.sh 旧命令 → 新命令的 diff。
+//
+// 旧命令取自节点当前状态（仅当命令确实要变更时才展示）；读取失败时退化为
+// 「新增 / 覆盖 run.sh」的预览，不影响授权流程本身。
+func previewUpdateAgentAnalysis(ctx context.Context, in UpdateAgentAnalysisInput) tool.PermissionPreview {
+	command := strings.TrimSpace(in.Command)
+	if command == "" {
+		return tool.PermissionPreview{}
+	}
+
+	path := runScriptPath("", "")
+	before := ""
+	if current, ok := analysisNodeForPreview(ctx, UpdateAgentAnalysisToolName, in.AnalysisNodeID); ok {
+		path = runScriptPath(current.CommandPath, current.WorkspaceDir)
+		before = runScriptContent(current.Command)
+	}
+	return textDiffPreview(path, before, runScriptContent(command))
 }

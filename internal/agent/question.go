@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -256,8 +257,61 @@ func (q *QuestionRequest) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// Normalize 规整模型生成的提问内容，使其可以直接渲染与匹配答案。
+//
+// 模型并非总会遵守 JSON Schema：选项常常漏填 value（只给 label），甚至出现
+// 重复 value。前端的 Radio / Checkbox 以 value 作为选中标识，value 缺失或不唯一
+// 时会让所有选项共享同一个值，表现为「点一个选项，全部选项都被选中」。
+// 因此这里统一补齐 value（回退 label / value）并保证同一题内取值唯一。
+func (in *AskUserInput) Normalize() {
+	for qi := range in.Questions {
+		q := &in.Questions[qi]
+		q.ID = strings.TrimSpace(q.ID)
+		q.Type = strings.TrimSpace(q.Type)
+		q.Title = strings.TrimSpace(q.Title)
+		if q.Type == "" {
+			q.Type = QuestionTypeText
+		}
+		if q.Type == QuestionTypeText {
+			q.Options = nil
+			continue
+		}
+
+		seen := make(map[string]bool, len(q.Options))
+		options := make([]QuestionOption, 0, len(q.Options))
+		for _, opt := range q.Options {
+			label := strings.TrimSpace(opt.Label)
+			value := strings.TrimSpace(opt.Value)
+			if label == "" {
+				label = value
+			}
+			if value == "" {
+				value = label
+			}
+			if value == "" {
+				continue
+			}
+			if seen[value] {
+				base := value
+				for n := 2; ; n++ {
+					value = fmt.Sprintf("%s#%d", base, n)
+					if !seen[value] {
+						break
+					}
+				}
+			}
+			seen[value] = true
+			opt.Label = label
+			opt.Value = value
+			options = append(options, opt)
+		}
+		q.Options = options
+	}
+}
+
 // NewQuestionRequest 构建一个 pending 状态的提问请求。
 func NewQuestionRequest(taskID int64, sessionID string, input AskUserInput) *QuestionRequest {
+	input.Normalize()
 	now := time.Now()
 	return &QuestionRequest{
 		TaskID:      taskID,
