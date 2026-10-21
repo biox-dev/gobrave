@@ -236,7 +236,7 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	opts.AgentAnalysisRunner = agentAnalysisRunner
 	// 进程级服务能力：read_file_by_id 等 builtin 工具在执行期通过它按文件 ID 读取内容预览。
 	opts.FileReader = fileReader
-	// 进程级服务能力：create_script / create_analysis_node 工具在执行期通过它创建脚本与分析节点。
+	// 进程级服务能力：create_script / create_script_analysis 工具在执行期通过它创建脚本与分析节点。
 	opts.ScriptCreator = scriptCreator
 	// 进程级服务能力：build_analysis_node_params 工具在执行期通过它按 io_schema 生成 params.json。
 	opts.AnalysisNodeParamsBuilder = paramsBuilder

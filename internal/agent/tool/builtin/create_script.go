@@ -36,7 +36,7 @@ type CreateScriptInput struct {
 //   - ScriptFilePath：脚本主文件（如 main.R），由 utils.GetScriptFile 推导；
 //   - IOSchemaPath：脚本目录下的 io_schema.json，由 utils.ScriptIOSchemaPath 推导。
 //
-// 需要运行脚本时，再用 create_analysis_node 建节点（节点 ID / 工作目录 / params.json
+// 需要运行脚本时，再用 create_script_analysis 建节点（节点 ID / 工作目录 / params.json
 // 路径由该工具返回）。
 type CreateScriptOutput struct {
 	ScriptID       int64  `json:"script_id,string"`
@@ -63,7 +63,7 @@ type CreateScriptOutput struct {
 //   - container_template_id 为空时由 ScriptCreator 解析系统默认容器模板，
 //     没有默认模板时回到模型一个错误提示，让用户先去容器模板页配置默认模板；
 //   - inputs / outputs 非空时写入脚本目录的 io_schema.json（这是脚本的参数契约，
-//     之后 create_analysis_node 会按它初始化节点的 inputs_patterns / output_patterns）；
+//     之后 create_script_analysis 会按它初始化节点的 inputs_patterns / output_patterns）；
 //   - 通过注入的 ScriptCreator 落库 Script 并初始化脚本目录（主文件、io_schema.json）；
 //   - 把新脚本主文件路径与 io_schema.json 路径回传给模型。
 //
@@ -71,7 +71,7 @@ type CreateScriptOutput struct {
 func CreateScript() tool.Tool {
 	return tool.NewFunc(
 		CreateScriptToolName,
-		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径，可据此编写脚本内容、补充参数契约。所属项目取自当前会话上下文，无需传入。请在调用时一次性给出 inputs / outputs（脚本输入输出契约，参数名将与 params.json 的键、脚本内读取的参数名一一对应；不传则使用默认 input1/output）。需要运行脚本时，再调用 create_analysis_node（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。",
+		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径，可据此编写脚本内容、补充参数契约。所属项目取自当前会话上下文，无需传入。请在调用时一次性给出 inputs / outputs（脚本输入输出契约，参数名将与 params.json 的键、脚本内读取的参数名一一对应；不传则使用默认 input1/output）。需要运行脚本时，再调用 create_script_analysis（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。",
 		tool.Schema("创建脚本的入参", map[string]any{
 			"name":                  tool.StringProperty("脚本名称（同名脚本在同一项目下应唯一，由业务侧校验）。"),
 			"description":           tool.StringProperty("脚本用途描述（可选），用于说明该脚本做什么。"),

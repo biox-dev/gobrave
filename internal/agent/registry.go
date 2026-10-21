@@ -112,7 +112,7 @@ type Options struct {
 	//
 	// 与 FileReader 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
 	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script /
-	// create_analysis_node 工具使用。
+	// create_script_analysis 工具使用。
 	ScriptCreator tool.ScriptCreator `json:"-"`
 
 	// AnalysisNodeParamsBuilder 是「按 io_schema 生成分析节点参数」的进程级静态服务能力（可为 nil）。
@@ -131,7 +131,7 @@ type Options struct {
 	// AgentEnvUpdater 是「把用户当前业务上下文（llmEnv）写回用户记录」的进程级静态服务能力（可为 nil）。
 	//
 	// 与 ScriptCreator 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
-	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_analysis_node 工具在
+	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script_analysis 工具在
 	// 创建新分析节点后把当前上下文切换过去（EnvID = 新节点 ID，EnvType = analysisNode）。
 	AgentEnvUpdater tool.AgentEnvUpdater `json:"-"`
 

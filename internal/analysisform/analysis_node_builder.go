@@ -18,7 +18,7 @@ import (
 const (
 	// NodeCreationSourceStandalone 是前端「独立节点」入口创建的节点。
 	NodeCreationSourceStandalone = "standalone"
-	// NodeCreationSourceAgent 是 Agent 工具（create_analysis_node）为脚本创建的节点。
+	// NodeCreationSourceAgent 是 Agent 工具（create_script_analysis）为脚本创建的节点。
 	NodeCreationSourceAgent = "agent"
 	// NodeCreationSourceAgentSession 是 Agent 会话（create_agent_analysis）直接创建的命令节点。
 	NodeCreationSourceAgentSession = "agent_session"

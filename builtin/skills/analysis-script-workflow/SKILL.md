@@ -1,6 +1,6 @@
 ---
 name: analysis-script-workflow
-description: 创建 / 修改生物信息学分析脚本并跑通分析节点的固定流程：create_script → 确认 io_schema 契约 → 写脚本 → create_analysis_node → build_analysis_node_params → run_analysis_node，包含 io_schema.json 生成规则、FileSelect 输入输出写法、生物分组不明确时必须先 ask_user 询问用户，以及失败迭代约束。用户要求新建分析脚本 / 分析节点、修改脚本或运行节点时使用。
+description: 创建 / 修改生物信息学分析脚本并跑通分析节点的固定流程：create_script → 确认 io_schema 契约 → 写脚本 → create_script_analysis → build_analysis_node_params → run_analysis_node，包含 io_schema.json 生成规则、FileSelect 输入输出写法、生物分组不明确时必须先 ask_user 询问用户，以及失败迭代约束。用户要求新建分析脚本 / 分析节点、修改脚本或运行节点时使用。
 user-invocable: true
 ---
 
@@ -36,8 +36,10 @@ user-invocable: true
    - 从 params.json 读取输入，读取的键名必须与 io_schema inputs 的 name 完全一致；
    - 产物写入 params.json 中的 output_dir，命名与 io_schema outputs 对应；
    - 不要硬编码路径、样本名或分组，一律通过参数传入。
-4) create_analysis_node（script_id = 第 1 步返回的 script_id，可给 node_name）：创建分析节点，
+4) create_script_analysis（script_id = 第 1 步返回的 script_id，可给 node_name）：创建分析节点，
    得到 analysis_node_id / workspace_dir / params_path。
+   - **默认 run=true：创建后立即运行该节点并等待结束**，返回 status / success / log / log_path。
+     只想建节点、稍后自己控制运行时机时传 run=false。
    - 返回结果同时也包括 `script_file_path`（脚本主文件）、`io_schema_path`（脚本 io_schema.json）与
      `request_param`（节点当前保存的请求参数），无需再去 create_script 的结果或磁盘上找这些路径。
    - `request_param` 是可选输入：传入时按脚本 io_schema.json 解析并生成 params.json，其生成结果（params_path
@@ -75,8 +77,8 @@ user-invocable: true
   能一次问清的问题合并到同一次 ask_user 调用中，避免反复打断用户。
 - run_analysis_node 可选传入 request_param：传了就以它为本次运行参数（并回写节点、重新生成 params.json）；不传则读取节点上已保存的参数。两种情况下都会按最新 io_schema 重新解析，并刷新 inputs_patterns / output_patterns / resolved_inputs / request_param、清空上一轮校验错误。
 - run_analysis_node 与 build_analysis_node_params 只负责参数：修改节点名称请调用 update_analysis_node（analysis_node_id + node_name 均必填），它会只改 node_name，不触碰参数与运行状态。**修改节点的 request_param 用 build_analysis_node_params / run_analysis_node，修改 node_name 用 update_analysis_node，都不需要重建节点**。
-- 需要在同一脚本上做多次独立分析时，用 create_analysis_node（script_id + node_name + 可选 request_param）再建一个节点，各自持有自己的参数与工作目录，互不覆盖。
-- create_analysis_node 的 request_param 是可选的，传入时生成的 params_path / params.json 与 build_analysis_node_params 的结果完全相同，创建后可直接运行。
+- 需要在同一脚本上做多次独立分析时，用 create_script_analysis（script_id + node_name + 可选 request_param）再建一个节点，各自持有自己的参数与工作目录，互不覆盖。
+- create_script_analysis 的 request_param 是可选的，传入时生成的 params_path / params.json 与 build_analysis_node_params 的结果完全相同；默认创建后即运行（run=true），如只需建节点请传 run=false。
 - 需要「先校验参数、确认 params.json 映射」时，仍优先调用 build_analysis_node_params；只是临时换一组参数跑一次时，可直接把 request_param 传给 run_analysis_node。
 - 因此禁止在未调用 build_analysis_node_params（节点上无参数）且未给 run_analysis_node 传 request_param 的情况下直接运行节点。
 - 修改 io_schema.json 的 inputs / outputs 后**无需重新建 script 或节点**：build_analysis_node_params 与 run_analysis_node 每次都会读取最新的 io_schema.json 并刷新节点的 patterns / resolved_inputs / request_param。只需按新契约重新调用 build_analysis_node_params（或把 request_param 直接传给 run_analysis_node），再运行即可。
@@ -122,7 +124,7 @@ user-invocable: true
 触发条件（满足任一即需要写入）：
 - 同一个工具在同一任务内连续失败 2 次以上，且报错文本相同或高度相似；
 - 同一个错误在**不同任务 / 不同会话**中重复出现（说明是稳定的坑，不是偶发）；
-- create_script / create_analysis_node / build_analysis_node_params 报错提示需要用户配置环境（容器模板、路径、依赖）等
+- create_script / create_script_analysis / build_analysis_node_params 报错提示需要用户配置环境（容器模板、路径、依赖）等
   无法由代码修好的问题；
 - 使用 ask_user 向用户确认后，用户明确纠正了某个参数格式 / 字段名 / 流程顺序。
 

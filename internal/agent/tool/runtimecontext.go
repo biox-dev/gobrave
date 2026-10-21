@@ -399,7 +399,7 @@ type ScriptCreator interface {
 	// 没有配置默认模板时返回错误，提示用户先到容器模板页设置默认模板。
 	CreateScript(ctx context.Context, input ScriptCreateInput) (ScriptCreateResult, error)
 
-	// CreateAnalysisNode 为已有脚本创建一个独立分析节点（create_analysis_node）。
+	// CreateAnalysisNode 为已有脚本创建一个独立分析节点（create_script_analysis）。
 	//
 	// 脚本必须属于 input.ProjectID；request_param 非空时按脚本 io_schema 解析出
 	// resolved_inputs 并写出 params.json，为空时节点只按 io_schema 初始化 patterns。
@@ -739,7 +739,7 @@ type ScriptCreateInput struct {
 // ScriptCreateResult 是「创建脚本」的结果（回传给模型）。
 //
 // 只包含脚本自身的产物路径：模型据此直接编辑脚本主文件与 io_schema.json，
-// 之后再按需调用 create_analysis_node 创建节点。
+// 之后再按需调用 create_script_analysis 创建节点。
 type ScriptCreateResult struct {
 	ScriptID int64 `json:"script_id,string"`
 	// ScriptKey 是 Script.ScriptID（组件业务 ID，脚本目录名）。

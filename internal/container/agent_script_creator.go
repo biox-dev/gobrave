@@ -151,7 +151,7 @@ func defaultScriptInitContent(scriptType string) string {
 }
 
 // scriptCreator 实现 tool.ScriptCreator：把「创建脚本」与「为脚本创建独立分析节点」
-// 两个业务能力暴露给内置工具 create_script / create_analysis_node。
+// 两个业务能力暴露给内置工具 create_script / create_script_analysis。
 //
 // 与 AnalysisHandler.SaveAnalysisNodeControllerWithScript 的独立节点分支保持同一口径：
 // Script 落 pipeline_components，AnalysisNode 落 analysis_nodes（analysis_id=0 表示
@@ -176,7 +176,7 @@ type scriptCreator struct {
 
 // newScriptCreator 构建「创建脚本 / 创建分析节点」执行器并注入内置工具体系。
 //
-// 返回值同时实现 tool.ScriptCreator（create_script / create_analysis_node）与
+// 返回值同时实现 tool.ScriptCreator（create_script / create_script_analysis）与
 // tool.ScriptUpdater：创建与更新共享同一份脚本业务服务依赖，故由同一个对象承载
 // （Options.ScriptCreator 一处注入即可）。
 func newScriptCreator(
@@ -293,7 +293,7 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in tool.ScriptCreateIn
 	}, nil
 }
 
-// CreateAnalysisNode 为已有脚本创建一个独立分析节点（create_analysis_node）。
+// CreateAnalysisNode 为已有脚本创建一个独立分析节点（create_script_analysis）。
 //
 // 与 handler 保存独立节点保持同一口径：脚本必须属于 project_id，request_param 非空时
 // 按其解析 resolved_inputs 并写入节点 params.json。节点的 inputs_patterns /
@@ -301,29 +301,29 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in tool.ScriptCreateIn
 // 初始化，或模型已经写好）——缺失时直接报错，而不是带空契约建出一个跑不通的节点。
 func (c *scriptCreator) CreateAnalysisNode(ctx context.Context, in tool.AnalysisNodeCreateInput) (tool.AnalysisNodeCreateResult, error) {
 	if in.ProjectID <= 0 {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: project_id is required")
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: project_id is required")
 	}
 	if in.ScriptID <= 0 {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: script_id is required")
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: script_id is required")
 	}
 	if c.workflowSvc == nil || c.analysisRepo == nil {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: required services are not configured")
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: required services are not configured")
 	}
 
 	script, err := c.workflowSvc.GetScriptByID(ctx, in.ScriptID)
 	if err != nil {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: failed to get script %d: %w", in.ScriptID, err)
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: failed to get script %d: %w", in.ScriptID, err)
 	}
 	if script == nil || script.ID == 0 {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: script %d not found", in.ScriptID)
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: script %d not found", in.ScriptID)
 	}
 	if script.ProjectID != in.ProjectID {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: script %d belongs to project %d, not the active project %d", script.ID, script.ProjectID, in.ProjectID)
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: script %d belongs to project %d, not the active project %d", script.ID, script.ProjectID, in.ProjectID)
 	}
 
 	node, err := c.createNode(ctx, script, in.RequestParam, in.NodeName)
 	if err != nil {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_analysis_node: %w", err)
+		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: %w", err)
 	}
 
 	// 脚本侧路径由脚本目录派生（与 create_script / update_script 同口径）：
@@ -349,7 +349,7 @@ func (c *scriptCreator) CreateAnalysisNode(ctx context.Context, in tool.Analysis
 // createNode 按脚本契约构建、落库并准备工作目录，返回最终节点。
 //
 // 构建逻辑（含读取脚本表单）收敛在 analysisform.NewAnalysisNodeFromScript（前端保存 /
-// create_script / create_analysis_node 共用），这里只负责落库与生成运行期文件。
+// create_script / create_script_analysis 共用），这里只负责落库与生成运行期文件。
 // io_schema.json 缺失时 NewAnalysisNodeFromScript 会返回读取错误，因此调用方无需再校验。
 func (c *scriptCreator) createNode(ctx context.Context, script *types.Script, requestParam map[string]any, nodeName string) (*types.AnalysisNode, error) {
 	built, err := analysisform.NewAnalysisNodeFromScript(ctx, c.dataSvc, c.workflowSvc, script, analysisform.AnalysisNodeSpec{

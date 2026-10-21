@@ -182,7 +182,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to load script %d: %w", node.ScriptID, err)
 	}
 
-	// 与 create_analysis_node / 保存独立节点同一构建口径（含读取脚本表单）：只取其中的 patterns /
+	// 与 create_script_analysis / 保存独立节点同一构建口径（含读取脚本表单）：只取其中的 patterns /
 	// resolved_inputs / request_param 刷新到本节点，状态、工作目录等仍以节点已有记录为准。
 	built, err := analysisform.NewAnalysisNodeFromScript(ctx, r.dataSvc, r.workflowSvc, script, analysisform.AnalysisNodeSpec{
 		ProjectID:    node.ProjectID,
