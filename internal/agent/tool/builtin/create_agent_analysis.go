@@ -42,6 +42,70 @@ type CreateAgentAnalysisOutput struct {
 	Error        string `json:"error,omitempty"`
 }
 
+// createAgentAnalysisDescription 返回 create_agent_analysis 的工具描述。
+//
+// 与 bash 工具（bashDescription）同风格：把执行步骤、产物目录约定与 outputs.json 的登记
+// 规则直接写进描述，模型只看工具描述就能写出「命令 + output/ 产物 + outputs.json 索引」的
+// 正确用法，而无需额外翻查技能文档。
+func createAgentAnalysisDescription() string {
+	return `创建一个命令型分析节点：给定节点名称与一段 shell 命令（container_template_id 可选，留空时使用系统默认容器模板），系统在节点工作目录下生成 run.sh。run 可选，默认 true：为 true 时立即提交容器执行并等待结束，返回状态、退出码与命令日志；为 false 时只创建节点不运行，之后可用 run_analysis_node 再运行该节点。所属项目取自当前会话上下文，无需传入。
+
+Before executing the command, please follow these steps:
+
+1. Directory Verification（目录校验）:
+ - 节点的 workspace_dir（工具返回）就是命令的运行目录，command 会写入该目录下的 run.sh。
+ - 命令必须以 'mkdir -p output' 开头，把所有需要保留的结果统一写入运行目录下的 output/。
+ - 最终交付产物（结果表、报告等）直接放在 output/ 第一级，即 output/<文件名>；中间文件 / 临时文件
+   放到 output/ 的子目录（如 output/tmp/、output/work/），不要写到运行目录根、/tmp 或家目录。
+ - 产物文件名固定、可预期，便于运行后用 workspace_dir/output/ 下的文件核对结果。
+
+2. Output Processing（重要产物必须登记到 outputs.json）:
+ - 需要用户查看、或可给下游分析节点接着用的表格 / 文本产物，必须写入 output/outputs.json。
+ - 只登记重要产物：csv / tsv / xlsx / txt / json / md / html 等表格或文本结果。
+ - 不要登记图片（png / jpg / jpeg / pdf / svg 等绘图产物），也不要登记日志
+   （command.log、stdout / stderr 输出等）。
+ - 不要登记中间文件、临时文件，也不要登记 outputs.json 自身。
+ - outputs.json 是一个 JSON 对象：key 为语义化、稳定的 snake_case 名称（下游按该名称取产物，
+   如 gene_presence_absence_csv），value 为产物的绝对路径（含文件名）。
+ - 在命令的最后（所有产物都生成之后）写 outputs.json，保证登记的路径真实存在；同一节点只写
+   一个 outputs.json，重复写会覆盖。
+
+ 示例：
+ ~~~bash
+ OD="$PWD/output"
+ mkdir -p "$OD"
+ # ... 生成 "$OD/gene_presence_absence.csv" 等产物 ...
+ cat > "$OD/outputs.json" <<EOF
+ {
+   "gene_presence_absence_csv": "$OD/gene_presence_absence.csv",
+   "gene_presence_absence_Rtab": "$OD/gene_presence_absence.Rtab",
+   "summary_statistics_txt": "$OD/summary_statistics.txt"
+ }
+ EOF
+ ~~~
+
+3. Return Result（运行与返回）:
+ - run=true（默认）时立即执行命令，返回 status、success、exit_code 与命令日志 log。
+ - log 超出长度上限时会截断（保留末尾），完整日志用 log_path 读取；日志只用于排错，不要写进
+   outputs.json。
+ - 同时返回 workspace_dir / command_path / log_path，便于复核产物、命令与日志。
+ - run=false 时只创建节点并生成 run.sh，不产生任何产物；之后用 run_analysis_node 运行，
+   outputs.json 必须由 command 在执行时自行生成。
+
+4. Failure Handling（失败处理）:
+ - 返回 success=false 或带 error 时，先读 log_path 定位原因，再修复后重新运行，不要反复新建节点。
+ - 修复方式二选一：直接修改 command_path 指向的 run.sh，再调用 run_analysis_node；或调用
+   update_agent_analysis 更新 command（会重写 run.sh），再用 run_analysis_node 运行。
+
+5. Usage notes:
+ - name 必填，简短英文 / 数字，同时用作容器资源名。
+ - container_template_id 可选：留空时使用系统默认容器模板；给出时必须是已存在的容器模板。
+ - timeout_seconds 可选：等待节点完成的超时（秒）；留空时使用服务端默认超时。
+ - command 可多行（换行分隔）；路径、样本名、分组等不要硬编码。
+ - 该工具会执行任意 shell 命令（默认即运行），因此声明 execute 授权，与其它命令执行类工具
+   共用许可策略。`
+}
+
 // CreateAgentAnalysis 返回一个「创建命令型分析节点（可选运行）」工具。
 //
 // 行为：
@@ -55,7 +119,7 @@ type CreateAgentAnalysisOutput struct {
 func CreateAgentAnalysis() tool.Tool {
 	return tool.NewFunc(
 		CreateAgentAnalysisToolName,
-		"创建一个命令型分析节点：给定节点名称、一段 shell 命令（container_template_id 可选，留空时使用系统默认模板），系统在分析节点目录下生成 run.sh。run 可选，默认 true：为 true 时立即提交容器执行并等待结束，返回状态、退出码与命令日志；为 false 时只创建节点不运行，之后可用 run_analysis_node 再运行该节点。所属项目取自当前会话上下文，无需传入。",
+		createAgentAnalysisDescription(),
 		tool.Schema("创建命令型分析节点的入参", map[string]any{
 			"name":                  tool.StringProperty("节点名称（简短英文/数字，也用作容器资源名）。"),
 			"container_template_id": tool.StringProperty("容器模板 ID（整数，字符串以保精度），必须是已存在的容器模板。可选：留空时使用系统默认容器模板（is_default）。"),
