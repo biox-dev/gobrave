@@ -2199,9 +2199,12 @@ func (h *AnalysisHandler) buildVisualizationNodePayload(c *gin.Context, analysis
 	nodeMap["server_status"] = analysisNode.ServerStatus
 	// int64 主键统一转字符串，避免前端 JS 精度丢失。
 	nodeMap["analysis_id"] = strconv.FormatInt(analysisNode.AnalysisID, 10)
+	// 命令节点没有脚本，前端据此隐藏「Edit Script / Code」等依赖 script_id 的入口。
+	isCommandNode := analysisNode.IsCommandNode()
+	nodeMap["is_command_node"] = isCommandNode
 
 	// 命令节点没有脚本：容器信息直接取节点上的 ContainerTemplateID。
-	if analysisNode.IsCommandNode() {
+	if isCommandNode {
 		nodeMap["script_id"] = ""
 		return h.attachContainerTemplateInfoToNode(c, analysisNode.ContainerTemplateID, nodeMap), nil
 	}
