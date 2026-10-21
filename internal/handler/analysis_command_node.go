@@ -13,7 +13,7 @@ import (
 
 // createCommandNodeRequest 是「手动创建命令型分析节点」的入参。
 //
-// 与内置工具 run_agent_analysis 的入参保持一致：节点没有脚本，容器模板与 run.sh
+// 与内置工具 create_agent_analysis 的入参保持一致：节点没有脚本，容器模板与 run.sh
 // 正文都由节点自身承载。run=true 时创建后立即提交执行。
 type createCommandNodeRequest struct {
 	Name                string `json:"name" binding:"required"`
@@ -24,7 +24,7 @@ type createCommandNodeRequest struct {
 
 // CreateCommandAnalysisNode 手动创建一个命令型 AnalysisNode（无脚本）。
 //
-// 它等价于 Agent 工具 run_agent_analysis 的「建节点 + 写 run.sh」，只是由用户在
+// 它等价于 Agent 工具 create_agent_analysis 的「建节点 + 写 run.sh」，只是由用户在
 // 分析节点列表里主动触发；节点创建后与普通分析节点共用运行 / 停止 / 日志链路。
 func (h *AnalysisHandler) CreateCommandAnalysisNode(c *gin.Context) {
 	userID, ok := getCurrentUserID(c)

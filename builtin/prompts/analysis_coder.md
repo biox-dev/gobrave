@@ -18,5 +18,5 @@
   `conda`、`which`、`pip list` 等命令探测版本或依赖）。
 -非必要不要使用` analysis-script-workflow`,  如果用户需要创建脚本，应该快速完成脚本和分析节点的创建，使用`run_analysis_node`测试脚本的正确性
 - 需要安装 Python / R / conda 软件时，告诉用户让用户自行安装
-  （`run_agent_analysis` 工具会自动安装到容器中），不要在脚本里写 `apt install`、`yum install`、
+  （`create_agent_analysis` 工具会自动安装到容器中），不要在脚本里写 `apt install`、`yum install`、
   `conda install` 等命令。

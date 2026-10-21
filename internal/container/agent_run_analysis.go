@@ -29,7 +29,7 @@ type agentRunAnalysis struct {
 	cfg           *config.Config
 }
 
-// newAgentAnalysisRunner 构建 run_agent_analysis 工具的执行器。
+// newAgentAnalysisRunner 构建 create_agent_analysis 工具的执行器。
 func newAgentAnalysisRunner(
 	analysisRepo interfaces.AnalysisRepository,
 	containerRepo interfaces.ContainerRepository,
@@ -46,8 +46,8 @@ func newAgentAnalysisRunner(
 	}
 }
 
-// RunAgentAnalysis 创建命令型 AnalysisNode 并运行到终态。
-func (r *agentRunAnalysis) RunAgentAnalysis(ctx context.Context, in tool.AgentAnalysisInput) (tool.AgentAnalysisResult, error) {
+// CreateAgentAnalysis 创建命令型 AnalysisNode，并按 Run 决定是否运行到终态。
+func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in tool.AgentAnalysisInput) (tool.AgentAnalysisResult, error) {
 	var result tool.AgentAnalysisResult
 
 	if in.ProjectID <= 0 {
@@ -91,10 +91,24 @@ func (r *agentRunAnalysis) RunAgentAnalysis(ctx context.Context, in tool.AgentAn
 		return result, fmt.Errorf("prepare node workspace: %w", err)
 	}
 
+	// Run 可选且默认为运行：nil / true 表示创建后立即运行，false 表示只创建节点。
+	if in.Run != nil && !*in.Run {
+		result = tool.AgentAnalysisResult{
+			AgentAnalysisID: node.ID,
+			Status:          node.Status,
+			Ran:             false,
+			WorkspaceDir:    node.WorkspaceDir,
+			CommandPath:     node.CommandPath,
+		}
+		r.fillRuntimeFacts(ctx, node.ID, &result)
+		return result, nil
+	}
+
 	runResult, runErr := r.nodeRunner.RunAnalysisNode(ctx, node.ID, nil, in.TimeoutSeconds)
 	result = tool.AgentAnalysisResult{
 		AgentAnalysisID: node.ID,
 		Status:          runResult.Status,
+		Ran:             true,
 		Success:         runResult.Success,
 		Log:             runResult.Log,
 		LogPath:         runResult.LogPath,

@@ -253,14 +253,15 @@ func AnalysisNodeRunnerFrom(ctx context.Context) AnalysisNodeRunner {
 	return runner
 }
 
-// AgentAnalysisRunner 抽象「创建命令型分析节点并等待其结束」的业务能力。
+// AgentAnalysisRunner 抽象「创建命令型分析节点（可选运行）并等待其结束」的业务能力。
 //
 // 与 AnalysisNodeRunner 一样，它是进程级静态依赖（一次注入、所有请求共用），
 // 由 agent.Options 承载并在执行工具前注入 ctx。
 type AgentAnalysisRunner interface {
-	// RunAgentAnalysis 创建一条命令型 AnalysisNode（工作目录、run.sh、容器模板），
-	// 复用通用节点链路运行到终态，返回状态、退出码与命令日志。超时 / 取消时返回错误。
-	RunAgentAnalysis(ctx context.Context, in AgentAnalysisInput) (AgentAnalysisResult, error)
+	// CreateAgentAnalysis 创建一条命令型 AnalysisNode（工作目录、run.sh、容器模板）；
+	// Run 为 nil / true 时复用通用节点链路运行到终态并返回状态、退出码与命令日志，
+	// Run 为 false 时只创建节点。超时 / 取消时返回错误。
+	CreateAgentAnalysis(ctx context.Context, in AgentAnalysisInput) (AgentAnalysisResult, error)
 }
 
 // AgentAnalysisInput 是一次 AgentAnalysis 工具调用的入参。
@@ -273,6 +274,8 @@ type AgentAnalysisInput struct {
 	ContainerTemplateID int64
 	// Command 是要执行的 shell 命令，由实现写入节点工作目录的 run.sh。
 	Command string
+	// Run 控制创建后是否立即运行：nil / true 表示运行（默认），false 表示只创建节点。
+	Run *bool
 	// TimeoutSeconds <= 0 时使用实现默认超时。
 	TimeoutSeconds int
 }
@@ -284,12 +287,14 @@ type AgentAnalysisResult struct {
 	AgentAnalysisID     int64  `json:"agent_analysis_id"`
 	ContainerInstanceID int64  `json:"container_instance_id,omitempty"`
 	Status              string `json:"status"`
-	Success             bool   `json:"success"`
-	ExitCode            int    `json:"exit_code"`
-	Log                 string `json:"log,omitempty"`
-	LogPath             string `json:"log_path,omitempty"`
-	WorkspaceDir        string `json:"workspace_dir,omitempty"`
-	CommandPath         string `json:"command_path,omitempty"`
+	// Ran 表示是否实际提交了运行（Run=false 时为 false）。
+	Ran          bool   `json:"ran"`
+	Success      bool   `json:"success"`
+	ExitCode     int    `json:"exit_code"`
+	Log          string `json:"log,omitempty"`
+	LogPath      string `json:"log_path,omitempty"`
+	WorkspaceDir string `json:"workspace_dir,omitempty"`
+	CommandPath  string `json:"command_path,omitempty"`
 }
 
 // agentAnalysisRunnerKey 是 AgentAnalysisRunner 在 context 中的私有键类型。

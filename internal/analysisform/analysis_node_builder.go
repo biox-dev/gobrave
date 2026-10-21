@@ -20,7 +20,7 @@ const (
 	NodeCreationSourceStandalone = "standalone"
 	// NodeCreationSourceAgent 是 Agent 工具（create_analysis_node）为脚本创建的节点。
 	NodeCreationSourceAgent = "agent"
-	// NodeCreationSourceAgentSession 是 Agent 会话（run_agent_analysis）直接创建的命令节点。
+	// NodeCreationSourceAgentSession 是 Agent 会话（create_agent_analysis）直接创建的命令节点。
 	NodeCreationSourceAgentSession = "agent_session"
 )
 
@@ -228,7 +228,7 @@ func NewAnalysisNodeFromCommand(spec CommandNodeSpec) (*types.AnalysisNode, erro
 	if baseDir == "" {
 		baseDir = "."
 	}
-	node.WorkspaceDir = joinNodeWorkspace(baseDir, spec.ProjectID, 0, node.ID)
+	node.WorkspaceDir = utils.GetAgentNodeDir(baseDir, spec.ProjectID, node.ID)
 	node.HydrateDerivedPaths()
 	return node, nil
 }
@@ -237,6 +237,10 @@ func NewAnalysisNodeFromCommand(spec CommandNodeSpec) (*types.AnalysisNode, erro
 func joinNodeWorkspace(baseDir string, projectID int64, scriptID int64, nodeID int64) string {
 	return filepath.Join(utils.GetAnalysisNodeDir(baseDir, projectID, strconv.FormatInt(scriptID, 10)), strconv.FormatInt(nodeID, 10))
 }
+
+// func joinAgentNodeWorkspace(baseDir string, projectID int64, , nodeID int64) string {
+// 	return filepath.Join(utils.GetAnalysisNodeDir(baseDir, projectID, strconv.FormatInt(scriptID, 10)), strconv.FormatInt(nodeID, 10))
+// }
 
 // cloneAnyMap 复制一层 map，避免节点记录与解析结果共享同一个底层映射。
 func cloneAnyMap(in map[string]any) map[string]any {

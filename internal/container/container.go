@@ -201,8 +201,8 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 //
 // runner 是「运行分析节点」的进程级静态服务能力，注入 Options 后由 Provider 在执行工具时
 // 注入工具 ctx（与可序列化的 RuntimeContext 分开，避免服务对象被序列化进 DB）。
-// agentAnalysisRunner 是「创建并等待命令型分析节点」的同类能力，
-// 供 run_agent_analysis 工具使用。
+// agentAnalysisRunner 是「创建并（可选）运行命令型分析节点」的同类能力，
+// 供 create_agent_analysis 工具使用。
 // fileReader 同理，承载「按文件 ID 读取内容预览」的能力，供 read_file_by_id 工具使用。
 // paramsBuilder 承载「按 io_schema 生成节点参数」的能力，供 build_analysis_node_params 工具使用。
 // nodeUpdater 承载「更新分析节点名称」的能力，供 update_analysis_node 工具使用。
@@ -232,7 +232,7 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	}
 	// 进程级服务能力：run_analysis_node 等 builtin 工具在执行期通过它触发节点运行。
 	opts.AnalysisNodeRunner = runner
-	// 进程级服务能力：run_agent_analysis 工具在执行期通过它创建并等待 AgentAnalysis 容器任务。
+	// 进程级服务能力：create_agent_analysis 工具在执行期通过它创建（并按需运行）AgentAnalysis 容器任务。
 	opts.AgentAnalysisRunner = agentAnalysisRunner
 	// 进程级服务能力：read_file_by_id 等 builtin 工具在执行期通过它按文件 ID 读取内容预览。
 	opts.FileReader = fileReader
@@ -402,7 +402,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// dag.node.completed / dag.node.failed 事件，仅保留低频状态轮询兜底。
 	must(container.Provide(newAnalysisNodeRunner))
 	// 命令型分析节点执行器：把「创建命令节点 + 等待结束 + 读取日志」能力暴露给
-	// 内置工具 run_agent_analysis，由 Provider 在执行工具前注入工具 ctx。
+	// 内置工具 create_agent_analysis，由 Provider 在执行工具前注入工具 ctx。
 	must(container.Provide(newAgentAnalysisRunner))
 	// 文件读取器：把「按 go_file 主键 ID 读取文件（含表格预览）」能力暴露给内置工具
 	// read_file_by_id，由 Provider 在执行工具前注入工具 ctx。
