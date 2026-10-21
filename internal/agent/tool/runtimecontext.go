@@ -516,40 +516,88 @@ func ScriptUpdaterFrom(ctx context.Context) ScriptUpdater {
 	return updater
 }
 
-// AnalysisNodeUpdater 抽象「更新已有分析节点基本信息（node_name）」的业务能力。
+// AnalysisNodeUpdater 抽象「更新已有分析节点」的业务能力。
 //
-// 它只覆盖节点名称这一个元数据字段，不触碰节点的参数、patterns 与运行状态
-// （参数由 build_analysis_node_params / run_analysis_node 负责），因此实现是「读改写」：
-// 先按 analysis_node_id 读出节点，只覆盖 node_name 再回写。
+// 按节点类型拆成两个入口：
+//   - UpdateAgentAnalysis：更新命令型节点（node_name / command / container_template_id）；
+//   - UpdateScriptAnalysis：更新脚本型节点（node_name / request_param）。
+//
+// 实现是「读改写」：先按 analysis_node_id 读出节点，只覆盖请求中给出的字段再回写；
+// 命令 / 参数的变更还会重新生成 run.sh / params.json 等运行期文件。
 //
 // 与 ScriptUpdater 一样，它是进程级静态依赖（一次注入、所有请求共用），
 // 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithAnalysisNodeUpdater 注入工具执行 ctx。
 type AnalysisNodeUpdater interface {
-	// UpdateAnalysisNodeInfo 更新分析节点的 node_name，返回更新后的关键信息。
+	// UpdateAgentAnalysis 更新命令型（Agent 创建、无脚本）分析节点。
 	//
-	// projectID 取自 RuntimeContext.ProjectID（当前用户激活项目）：节点必须属于该项目，
-	// 否则返回错误（避免模型改到别的项目的节点）。
-	UpdateAnalysisNodeInfo(ctx context.Context, input AnalysisNodeUpdateInput) (AnalysisNodeUpdateResult, error)
+	// 可更新 node_name / command / container_template_id；未给出的字段保持原值。
+	// command 变更后会重新生成 run.sh。节点必须属于 projectID。
+	UpdateAgentAnalysis(ctx context.Context, input AgentAnalysisUpdateInput) (AgentAnalysisUpdateResult, error)
+
+	// UpdateScriptAnalysis 更新脚本型分析节点。
+	//
+	// 可更新 node_name / request_param；request_param 非 nil 时按脚本最新 io_schema 重新解析
+	// resolved_inputs 并重新生成 params.json（空对象表示清空参数）。
+	// 节点必须属于 projectID，且节点必须已绑定脚本。
+	UpdateScriptAnalysis(ctx context.Context, input ScriptAnalysisUpdateInput) (ScriptAnalysisUpdateResult, error)
 }
 
-// AnalysisNodeUpdateInput 是「更新分析节点基本信息」的入参。
-type AnalysisNodeUpdateInput struct {
+// AgentAnalysisUpdateInput 是「更新命令型分析节点」的入参。
+//
+// 所有可选字段用指针表示：nil 表示不修改，非 nil 时按值覆盖。
+type AgentAnalysisUpdateInput struct {
 	// ProjectID 是节点所属项目（取自 RuntimeContext.ProjectID）。
 	ProjectID int64 `json:"project_id,string"`
 	// AnalysisNodeID 是分析节点主键，必须为正数。
 	AnalysisNodeID int64 `json:"analysis_node_id,string"`
-	// NodeName 为 nil 表示不修改；非 nil 时覆盖节点名称。
+	// NodeName 为 nil 表示不修改；非 nil 时覆盖节点名称（不能为空）。
 	NodeName *string `json:"node_name,omitempty"`
+	// Command 为 nil 表示不修改；非 nil 时覆盖 run.sh 正文（不能为空）。
+	Command *string `json:"command,omitempty"`
+	// ContainerTemplateID 为 nil 表示不修改；非 nil 时覆盖节点容器模板（必须为正数）。
+	ContainerTemplateID *int64 `json:"container_template_id,omitempty,string"`
 }
 
-// AnalysisNodeUpdateResult 是「更新分析节点基本信息」的结果（回传给模型）。
-type AnalysisNodeUpdateResult struct {
-	AnalysisNodeID int64  `json:"analysis_node_id,string"`
-	NodeName       string `json:"node_name"`
-	ScriptID       int64  `json:"script_id,string"`
-	WorkspaceDir   string `json:"workspace_dir,omitempty"`
-	ParamsPath     string `json:"params_path,omitempty"`
-	// Changed 列出本次实际被修改的字段名（node_name），便于模型确认。
+// AgentAnalysisUpdateResult 是「更新命令型分析节点」的结果（回传给模型）。
+type AgentAnalysisUpdateResult struct {
+	AnalysisNodeID      int64  `json:"analysis_node_id,string"`
+	NodeName            string `json:"node_name"`
+	Command             string `json:"command,omitempty"`
+	ContainerTemplateID int64  `json:"container_template_id,string,omitempty"`
+	WorkspaceDir        string `json:"workspace_dir,omitempty"`
+	CommandPath         string `json:"command_path,omitempty"`
+	ParamsPath          string `json:"params_path,omitempty"`
+	// Changed 列出本次实际被修改的字段（node_name / command / container_template_id）。
+	Changed []string `json:"changed,omitempty"`
+}
+
+// ScriptAnalysisUpdateInput 是「更新脚本型分析节点」的入参。
+//
+// 所有可选字段用指针 / nil map 表示：nil 表示不修改，非 nil 时按值覆盖。
+// RequestParam 为「已提供但为空对象」时表示清空节点参数。
+type ScriptAnalysisUpdateInput struct {
+	// ProjectID 是节点所属项目（取自 RuntimeContext.ProjectID）。
+	ProjectID int64 `json:"project_id,string"`
+	// AnalysisNodeID 是分析节点主键，必须为正数。
+	AnalysisNodeID int64 `json:"analysis_node_id,string"`
+	// NodeName 为 nil 表示不修改；非 nil 时覆盖节点名称（不能为空）。
+	NodeName *string `json:"node_name,omitempty"`
+	// RequestParam 为 nil 表示不修改；非 nil 时按脚本 io_schema 重新解析并覆盖节点参数。
+	RequestParam map[string]any `json:"request_param,omitempty"`
+}
+
+// ScriptAnalysisUpdateResult 是「更新脚本型分析节点」的结果（回传给模型）。
+type ScriptAnalysisUpdateResult struct {
+	AnalysisNodeID int64          `json:"analysis_node_id,string"`
+	NodeName       string         `json:"node_name"`
+	ScriptID       int64          `json:"script_id,string,omitempty"`
+	WorkspaceDir   string         `json:"workspace_dir,omitempty"`
+	ParamsPath     string         `json:"params_path,omitempty"`
+	CommandPath    string         `json:"command_path,omitempty"`
+	RequestParam   map[string]any `json:"request_param,omitempty"`
+	// Warnings 是参数解析阶段的非致命提示（缺少必填输入 / 存在 io_schema 未声明的键）。
+	Warnings []string `json:"warnings,omitempty"`
+	// Changed 列出本次实际被修改的字段（node_name / request_param）。
 	Changed []string `json:"changed,omitempty"`
 }
 

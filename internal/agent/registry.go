@@ -126,11 +126,11 @@ type Options struct {
 	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 build_analysis_node_params 工具使用。
 	AnalysisNodeParamsBuilder tool.AnalysisNodeParamsBuilder `json:"-"`
 
-	// AnalysisNodeUpdater 是「更新分析节点基本信息（node_name）」的进程级静态服务能力（可为 nil）。
+	// AnalysisNodeUpdater 是「更新分析节点」的进程级静态服务能力（可为 nil）。
 	//
 	// 与 AnalysisNodeParamsBuilder 一样，它只在构建 Client 时注入一次，由 Provider 在执行
-	// 工具前注入工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 update_analysis_node
-	// 工具使用。
+	// 工具前注入工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的
+	// update_agent_analysis / update_script_analysis 工具使用。
 	AnalysisNodeUpdater tool.AnalysisNodeUpdater `json:"-"`
 
 	// AgentEnvUpdater 是「把用户当前业务上下文（llmEnv）写回用户记录」的进程级静态服务能力（可为 nil）。

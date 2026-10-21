@@ -207,7 +207,7 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 // 供 create_agent_analysis 工具使用。
 // fileReader 同理，承载「按文件 ID 读取内容预览」的能力，供 read_file_by_id 工具使用。
 // paramsBuilder 承载「按 io_schema 生成节点参数」的能力，供 build_analysis_node_params 工具使用。
-// nodeUpdater 承载「更新分析节点名称」的能力，供 update_analysis_node 工具使用。
+// nodeUpdater 承载「更新分析节点」的能力，供 update_agent_analysis / update_script_analysis 工具使用。
 // envUpdater 承载「写回用户业务上下文（EnvID / EnvType）」的能力，供 create_script 工具使用。
 // memorySaver 承载「保存一条用户长期记忆」的能力，供 save_memory 工具使用。
 // skills 是技能注册表：既提供系统提示词的技能元信息，也供 get_skill /
@@ -244,7 +244,7 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	opts.AnalysisNodeCreator = nodeCreator
 	// 进程级服务能力：build_analysis_node_params 工具在执行期通过它按 io_schema 生成 params.json。
 	opts.AnalysisNodeParamsBuilder = paramsBuilder
-	// 进程级服务能力：update_analysis_node 工具在执行期通过它更新分析节点名称。
+	// 进程级服务能力：update_agent_analysis / update_script_analysis 工具在执行期通过它更新分析节点。
 	opts.AnalysisNodeUpdater = nodeUpdater
 	// 进程级服务能力：create_script 工具在执行期通过它把当前用户业务上下文切到新分析节点。
 	opts.AgentEnvUpdater = envUpdater
@@ -420,7 +420,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 分析节点参数生成器：把「按脚本 io_schema 解析 request_param → 刷新节点 → 写出
 	// params.json」能力暴露给内置工具 build_analysis_node_params。
 	must(container.Provide(agentanalysis.NewParamsBuilder))
-	// 分析节点名称更新器：把「更新分析节点 node_name」能力暴露给内置工具 update_analysis_node。
+	// 分析节点更新器：把「更新分析节点名称 / 命令型节点 / 脚本型节点」能力暴露给内置工具
+	// update_agent_analysis / update_script_analysis。
 	must(container.Provide(agentanalysis.NewNodeUpdater))
 	// 项目资源浏览器：把「列出项目脚本 / 按 ID 查看脚本 / 按 ID 查看分析节点」能力暴露给
 	// 内置只读工具 list_project_scripts / get_script / get_analysis_node。

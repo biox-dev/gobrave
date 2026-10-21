@@ -12,6 +12,19 @@
   一律走参数，不硬编码。
 - 运行失败先读 log 定位原因再改脚本重跑，不要靠猜测反复试。
 
+## 命令型分析节点（create_agent_analysis）运行失败
+
+`create_agent_analysis` 返回 `success=false` 或带 `error` 时，先读 `log_path` 定位原因，然后在
+原有节点上修复，不要反复新建节点。修复方式二选一：
+
+- 直接修改返回的 `command_path`（节点工作目录下的 run.sh）文件内容，再调用 `run_analysis_node`
+  （`analysis_node_id` 用返回的 `agent_analysis_id`）重新运行；节点每次运行都会执行最新的 run.sh。
+- 或调用 `update_agent_analysis`（`analysis_node_id` + 新的 `command`）更新命令（会重写 run.sh），
+  再用 `run_analysis_node` 运行。
+
+两种方式都不需要重建节点；只有需要改节点名称或容器模板时才用 `update_agent_analysis` 的
+`node_name` / `container_template_id`。
+
 ## 运行环境（容器）
 
 - 所有分析脚本都在容器中运行。不要在宿主机上检查脚本运行环境（不要用终端执行 `python`、`R`、
