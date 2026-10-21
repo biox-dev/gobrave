@@ -4013,363 +4013,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/container/image/create": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "创建 ContainerImage 记录",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "创建容器镜像",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.ContainerImage"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.ContainerImage"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/container/image/delete": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按 ID 删除 ContainerImage 记录；仍被容器模板（配置 × 镜像 绑定行）引用时返回 409 并给出引用清单。",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "删除容器镜像",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.idBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/container/image/get": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按 ID 查询 ContainerImage 详情",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "获取容器镜像",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "主键 ID",
-                        "name": "id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.ContainerImage"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/container/image/list": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "查询 ContainerImage 列表，每项带 usage（引用数 + 引用的模板绑定行）",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "容器镜像列表",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/types.ContainerImageItem"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/container/image/list-by-page": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "分页查询 ContainerImage 列表，每项带 usage（引用数 + 引用的模板绑定行）",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "分页查询容器镜像",
-                "parameters": [
-                    {
-                        "description": "分页请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.containerImagePageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/container/image/update": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按 ID 更新 ContainerImage 记录",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "更新容器镜像",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.ContainerImage"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
         "/container/instance/describe": {
             "get": {
                 "security": [
@@ -4952,7 +4595,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "创建对外容器模板（ContainerTemplate = 共享运行配置 ContainerTemplateSpec × 镜像绑定 ContainerTemplateDefinition）。\nspec_id 为空：用请求体里的运行配置字段新建配置，再建第一条绑定；\nspec_id 非空：复用该配置，只在它下面新增一个 image_id 绑定（同一套配置挂多个镜像）。\n返回组装后的读模型，含 spec_id / image_id / image。",
+                "description": "创建对外容器模板（ContainerTemplate = 共享运行配置 ContainerTemplateSpec × 镜像绑定 ContainerTemplateDefinition）。\nspec_id 为空：用请求体里的运行配置字段新建配置，再建第一条绑定；\nspec_id 非空：复用该配置，只在它下面新增一个镜像绑定（同一套配置挂多个镜像）。\n返回组装后的读模型，含 spec_id / image_name / pull_policy。",
                 "consumes": [
                     "application/json"
                 ],
@@ -5119,7 +4762,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "导出单条容器模板为统一的平铺格式（与 script.json / workflow.json 完全相同）：\ncontainer_images / container_template_specs / container_template_definitions 三个列表，\n三者通过主键互相引用（definition.spec_id / image_id），且都不含时间字段。",
+                "description": "导出单条容器模板为统一的平铺格式（与 script.json / workflow.json 完全相同）：\ncontainer_template_specs / container_template_definitions 两个列表，\n两者通过主键互相引用（definition.spec_id），且都不含时间字段。",
                 "consumes": [
                     "application/json"
                 ],
@@ -5240,7 +4883,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "导入统一平铺格式（与 /container/template/export、script.json / workflow.json 同构）：\ncontainer_images / container_template_specs / container_template_definitions。\n三张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为\n「镜像 → 运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。",
+                "description": "导入统一平铺格式（与 /container/template/export、script.json / workflow.json 同构）：\ncontainer_template_specs / container_template_definitions。\n两张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为\n「运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。",
                 "consumes": [
                     "application/json"
                 ],
@@ -5529,7 +5172,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "按绑定行 ID（ContainerTemplateDefinition.ID）更新：请求体里的运行配置字段写入绑行指向的 ContainerTemplateSpec，\nimage_id 与包目录字段写入绑定行本体。返回组装后的读模型。",
+                "description": "按绑定行 ID（ContainerTemplateDefinition.ID）更新：请求体里的运行配置字段写入绑行指向的 ContainerTemplateSpec，\nimage_name / pull_policy 与包目录字段写入绑定行本体。返回组装后的读模型。",
                 "consumes": [
                     "application/json"
                 ],
@@ -14213,13 +13856,6 @@ const docTemplate = `{
         "handler.WorkflowJSONExportResponse": {
             "type": "object",
             "properties": {
-                "container_images": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": {}
-                    }
-                },
                 "container_template_definitions": {
                     "type": "array",
                     "items": {
@@ -14228,7 +13864,7 @@ const docTemplate = `{
                     }
                 },
                 "container_template_specs": {
-                    "description": "ContainerTemplateSpecs / ContainerTemplateDefinitions / ContainerImages 都是按主键去重后的\n导出列表：绑定行通过 spec_id 引用运行配置、通过 image_id 引用镜像。",
+                    "description": "ContainerTemplateSpecs / ContainerTemplateDefinitions 都是按主键去重后的\n导出列表：绑定行通过 spec_id 引用运行配置，镜像名与拉取策略直接挂在绑定行上。",
                     "type": "array",
                     "items": {
                         "type": "object",
@@ -14673,22 +14309,6 @@ const docTemplate = `{
                     "description": "Sections 以配置段 key 为索引，返回当前生效的配置段值。",
                     "type": "object",
                     "additionalProperties": {}
-                }
-            }
-        },
-        "handler.containerImagePageRequest": {
-            "type": "object",
-            "properties": {
-                "page": {
-                    "description": "Page",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "page_size": {
-                    "description": "Page size",
-                    "type": "integer",
-                    "maximum": 1000,
-                    "minimum": 1
                 }
             }
         },
@@ -16856,124 +16476,6 @@ const docTemplate = `{
                 }
             }
         },
-        "types.ContainerImage": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "full_name": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "pull_policy": {
-                    "type": "string"
-                },
-                "size": {
-                    "type": "integer"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "types.ContainerImageExport": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "full_name": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "size": {
-                    "type": "integer"
-                }
-            }
-        },
-        "types.ContainerImageItem": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "full_name": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "pull_policy": {
-                    "type": "string"
-                },
-                "size": {
-                    "type": "integer"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "usage": {
-                    "$ref": "#/definitions/types.ContainerImageUsage"
-                }
-            }
-        },
-        "types.ContainerImageRef": {
-            "type": "object",
-            "properties": {
-                "definition_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "spec_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "template_name": {
-                    "type": "string"
-                }
-            }
-        },
-        "types.ContainerImageUsage": {
-            "type": "object",
-            "properties": {
-                "image_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "ref_count": {
-                    "type": "integer"
-                },
-                "templates": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.ContainerImageRef"
-                    }
-                }
-            }
-        },
         "types.ContainerTemplate": {
             "type": "object",
             "properties": {
@@ -17009,12 +16511,9 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0"
                 },
-                "image": {
-                    "$ref": "#/definitions/types.ContainerImage"
-                },
-                "image_id": {
-                    "type": "string",
-                    "example": "0"
+                "image_name": {
+                    "description": "ImageName / PullPolicy 原样取自绑定行 ContainerTemplateDefinition。",
+                    "type": "string"
                 },
                 "is_default": {
                     "description": "IsDefault 原样取自绑定行 ContainerTemplateDefinition.IsDefault。",
@@ -17041,6 +16540,9 @@ const docTemplate = `{
                 "port": {
                     "type": "integer"
                 },
+                "pull_policy": {
+                    "type": "string"
+                },
                 "scheduling_constraint": {
                     "type": "array",
                     "items": {
@@ -17062,12 +16564,6 @@ const docTemplate = `{
         "types.ContainerTemplateBundle": {
             "type": "object",
             "properties": {
-                "container_images": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.ContainerImageExport"
-                    }
-                },
                 "container_template_definitions": {
                     "type": "array",
                     "items": {
@@ -17097,13 +16593,17 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0"
                 },
-                "image_id": {
-                    "type": "string",
-                    "example": "0"
+                "image_name": {
+                    "description": "ImageName 是完整镜像名（含 registry / namespace / tag），如 docker.io/rocker/rstudio:4.4。\n同一运行配置下不允许重复绑定同一镜像由服务层校验（不用唯一索引，便于旧数据迁移）。",
+                    "type": "string"
                 },
                 "is_default": {
                     "description": "IsDefault 标记「默认容器模板」：只能有一行处于默认状态，由服务层在写入时互斥维护。\n创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。\n导出时会置为 false（omitempty 使其不出现在导出文件里）。",
                     "type": "boolean"
+                },
+                "pull_policy": {
+                    "description": "PullPolicy 是该绑定行的镜像拉取策略，取值 Always / IfNotPresent / Never，空值按 IfNotPresent 处理。\n落地方式由 runtime 决定：docker 在 create 前按策略决定是否 pull；kubernetes 直接映射为\ncontainer.imagePullPolicy。",
+                    "type": "string"
                 },
                 "spec_id": {
                     "type": "string",

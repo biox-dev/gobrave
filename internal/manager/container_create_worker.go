@@ -343,11 +343,9 @@ func (w *ContainerCreateWorker) executeCreate(
 		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerTemplateNotFound")
 		return err
 	}
-
-	img, err := resolveTemplateImage(ctx, w.repo, tpl)
-	if err != nil {
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerImageNotFound")
-		return err
+	if strings.TrimSpace(tpl.ImageName) == "" {
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerImageNotConfigured")
+		return fmt.Errorf("container template %d does not bind any image", inst.TemplateID)
 	}
 
 	rt, err := w.getRuntimeByInstance(inst)
@@ -406,9 +404,9 @@ func (w *ContainerCreateWorker) executeCreate(
 	}
 
 	spec := &types.ContainerSpec{
-		Image: img.FullName,
-		// 镜像的拉取策略随镜像目录一起下发给 runtime（docker 在 create 前 pull，k8s 设 imagePullPolicy）。
-		PullPolicy:           img.PullPolicy,
+		Image: tpl.ImageName,
+		// 拉取策略随容器模板绑定行一起下发给 runtime（docker 在 create 前 pull，k8s 设 imagePullPolicy）。
+		PullPolicy:           tpl.PullPolicy,
 		Command:              parseCommand(tpl.Command),
 		Env:                  envs,
 		Volumes:              volumes,

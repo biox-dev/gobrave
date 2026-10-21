@@ -33,14 +33,23 @@ func TestBuildContainerRegistersContainerService(t *testing.T) {
 	}()
 	_ = BuildContainer(container, cfg)
 
-	// 内置容器模板必须在启动时落库（内置 JSON 里 in_default=true 的 rstudio 模板）。
+	// 内置容器模板必须在启动时落库（内置 JSON 里 is_default=true 的 rstudio 模板）。
 	if err := container.Invoke(func(db *gorm.DB) error {
-		var images int64
-		if err := db.Model(&types.ContainerImage{}).Count(&images).Error; err != nil {
+		var definitions int64
+		if err := db.Model(&types.ContainerTemplateDefinition{}).Count(&definitions).Error; err != nil {
 			return err
 		}
-		if images != 2 {
-			t.Fatalf("container images = %d, want 2 (builtin templates not installed)", images)
+		if definitions != 2 {
+			t.Fatalf("container template definitions = %d, want 2 (builtin templates not installed)", definitions)
+		}
+
+		var withImage int64
+		if err := db.Model(&types.ContainerTemplateDefinition{}).
+			Where("image_name <> ''").Count(&withImage).Error; err != nil {
+			return err
+		}
+		if withImage != 2 {
+			t.Fatalf("container template definitions with image_name = %d, want 2", withImage)
 		}
 
 		var defaults int64

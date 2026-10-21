@@ -25,65 +25,6 @@ func (r *containerRepository) WithTransaction(ctx context.Context, fn func(inter
 	})
 }
 
-func (r *containerRepository) CreateContainerImage(ctx context.Context, item *types.ContainerImage) error {
-	return r.db.WithContext(ctx).Create(item).Error
-}
-
-func (r *containerRepository) GetContainerImageByID(ctx context.Context, id int64) (*types.ContainerImage, error) {
-	item := &types.ContainerImage{}
-	if err := r.db.WithContext(ctx).Where("id = ?", id).Take(item).Error; err != nil {
-		return nil, err
-	}
-	return item, nil
-}
-
-func (r *containerRepository) UpdateContainerImage(ctx context.Context, item *types.ContainerImage) error {
-	return r.db.WithContext(ctx).Model(&types.ContainerImage{}).Where("id = ?", item.ID).Updates(item).Error
-}
-
-func (r *containerRepository) DeleteContainerImage(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.ContainerImage{}).Error
-}
-
-func (r *containerRepository) ListContainerImage(ctx context.Context) ([]*types.ContainerImage, error) {
-	items := make([]*types.ContainerImage, 0)
-	err := r.db.WithContext(ctx).Order("id DESC").Find(&items).Error
-	if err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-func (r *containerRepository) PageContainerImage(ctx context.Context, pagination *types.Pagination) ([]*types.ContainerImage, int64, error) {
-	if pagination == nil {
-		pagination = &types.Pagination{}
-	}
-
-	items := make([]*types.ContainerImage, 0)
-	var total int64
-
-	if err := r.db.WithContext(ctx).Model(&types.ContainerImage{}).Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	err := r.db.WithContext(ctx).
-		Order("id DESC").
-		Offset(pagination.Offset()).
-		Limit(pagination.Limit()).
-		Find(&items).Error
-	if err != nil {
-		return nil, 0, err
-	}
-
-	if len(items) == 0 {
-		return []*types.ContainerImage{}, total, nil
-	}
-
-	return items, total, nil
-}
-
-// ===== 容器模板：共享运行配置 =====
-
 func (r *containerRepository) CreateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error {
 	return r.db.WithContext(ctx).Create(item).Error
 }
@@ -196,32 +137,19 @@ func (r *containerRepository) ListContainerTemplateDefinitionBySpecID(ctx contex
 	return items, nil
 }
 
-func (r *containerRepository) ListContainerTemplateDefinitionByImageIDs(ctx context.Context, imageIDs []int64) ([]*types.ContainerTemplateDefinition, error) {
-	items := make([]*types.ContainerTemplateDefinition, 0)
-	if len(imageIDs) == 0 {
-		return items, nil
-	}
-	if err := r.db.WithContext(ctx).Where("image_id IN ?", imageIDs).Order("id ASC").Find(&items).Error; err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 // ===== 容器模板：对外读模型组装 =====
 
-// assembleContainerTemplates 批量补齐 spec 与 image 后组装读模型。
-// 不用 JOIN 的原因：三张表的列名有重叠，别名写错容易在不同数据库上踩坑；
-// 这里用两次 IN 查询批量补齐，既避免 N+1，也不需要额外维护一个投影结构体。
+// assembleContainerTemplates 批量补齐 spec 后组装读模型。
+// 不用 JOIN 的原因：两张表的列名有重叠，别名写错容易在不同数据库上踩坑；
+// 这里用一次 IN 查询批量补齐，既避免 N+1，也不需要额外维护一个投影结构体。
 func (r *containerRepository) assembleContainerTemplates(ctx context.Context, definitions []*types.ContainerTemplateDefinition) ([]*types.ContainerTemplate, error) {
 	if len(definitions) == 0 {
 		return []*types.ContainerTemplate{}, nil
 	}
 
 	specIDs := make([]int64, 0, len(definitions))
-	imageIDs := make([]int64, 0, len(definitions))
 	for _, definition := range definitions {
 		specIDs = append(specIDs, definition.SpecID)
-		imageIDs = append(imageIDs, definition.ImageID)
 	}
 
 	specs := make(map[int64]*types.ContainerTemplateSpec, len(specIDs))
@@ -233,23 +161,14 @@ func (r *containerRepository) assembleContainerTemplates(ctx context.Context, de
 		specs[spec.ID] = spec
 	}
 
-	images := make(map[int64]*types.ContainerImage, len(imageIDs))
-	imageItems := make([]*types.ContainerImage, 0, len(imageIDs))
-	if err := r.db.WithContext(ctx).Where("id IN ?", imageIDs).Find(&imageItems).Error; err != nil {
-		return nil, err
-	}
-	for _, image := range imageItems {
-		images[image.ID] = image
-	}
-
 	items := make([]*types.ContainerTemplate, 0, len(definitions))
 	for _, definition := range definitions {
-		items = append(items, types.NewContainerTemplate(specs[definition.SpecID], definition, images[definition.ImageID]))
+		items = append(items, types.NewContainerTemplate(specs[definition.SpecID], definition))
 	}
 	return items, nil
 }
 
-// GetContainerTemplateByID 返回对外容器模板：ID 为绑定行主键，spec/image 缺失时对应字段为 nil。
+// GetContainerTemplateByID 返回对外容器模板：ID 为绑定行主键，spec 缺失时对应字段为零值。
 func (r *containerRepository) GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error) {
 	definition, err := r.GetContainerTemplateDefinitionByID(ctx, id)
 	if err != nil {
@@ -261,12 +180,7 @@ func (r *containerRepository) GetContainerTemplateByID(ctx context.Context, id i
 		return nil, err
 	}
 
-	image, err := r.GetContainerImageByID(ctx, definition.ImageID)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-
-	return types.NewContainerTemplate(spec, definition, image), nil
+	return types.NewContainerTemplate(spec, definition), nil
 }
 
 func (r *containerRepository) ListContainerTemplate(ctx context.Context) ([]*types.ContainerTemplate, error) {

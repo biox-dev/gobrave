@@ -29,13 +29,13 @@ func (c *Codec) InstallScript(ctx context.Context, req exportcodec.ScriptInstall
 		return nil, exportcodec.ErrScriptIDRequired
 	}
 
-	// 先导入容器镜像、运行配置与绑定行：脚本通过 container_template_id 引用绑定行，
-	// 绑定行的 spec_id / image_id 分别引用运行配置与镜像，按主键 upsert 后这些引用在
-	// 安装到当前 project 后依旧成立（见 installContainerAssets）。
-	installedImageCount, installedSpecCount, installedDefinitionCount, assetErr := c.installContainerAssets(
-		ctx, payload.ContainerImages, payload.ContainerTemplateSpecs, payload.ContainerTemplateDefinitions)
+	// 先导入容器运行配置与绑定行：脚本通过 container_template_id 引用绑定行，
+	// 绑定行的 spec_id 引用运行配置，按主键 upsert 后这些引用在安装到当前 project 后依旧成立
+	// （见 installContainerAssets）。
+	installedSpecCount, installedDefinitionCount, assetErr := c.installContainerAssets(
+		ctx, payload.ContainerTemplateSpecs, payload.ContainerTemplateDefinitions)
 	if assetErr != nil {
-		return nil, fmt.Errorf("failed to install container images or templates: %w", assetErr)
+		return nil, fmt.Errorf("failed to install container templates: %w", assetErr)
 	}
 
 	scriptBytes, err := json.Marshal(payload.Script)
@@ -92,7 +92,6 @@ func (c *Codec) InstallScript(ctx context.Context, req exportcodec.ScriptInstall
 	return &exportcodec.ScriptInstallResult{
 		ScriptID:                         installScript.ScriptID,
 		InstalledScriptID:                installScript.ID,
-		ContainerImageCount:              installedImageCount,
 		ContainerTemplateSpecCount:       installedSpecCount,
 		ContainerTemplateDefinitionCount: installedDefinitionCount,
 	}, nil
@@ -101,7 +100,7 @@ func (c *Codec) InstallScript(ctx context.Context, req exportcodec.ScriptInstall
 // InstallWorkflow 解析 req.Raw（内部调用 DecodeWorkflow）并把导出内容持久化到数据库与文件系统。
 //
 // 迁移自 handler.InstallWorkflow 的落库与脚本还原部分：
-//  1. 先按主键 upsert 容器资产（镜像 → 运行配置 → 绑定行，见 installContainerAssets）；
+//  1. 先按主键 upsert 容器资产（运行配置 → 绑定行，见 installContainerAssets）；
 //  2. upsert workflow 行；
 //  3. 逐条 upsert workflow.json 里的 script 行；
 //  4. 把 workflow 目录内的脚本快照还原到本地脚本目录。
@@ -120,13 +119,11 @@ func (c *Codec) InstallWorkflow(ctx context.Context, req exportcodec.WorkflowIns
 		return nil, exportcodec.ErrWorkflowIDRequired
 	}
 
-	// 先导入容器镜像、运行配置与绑定行：脚本通过 container_template_id 引用绑定行，
-	// 绑定行的 spec_id / image_id 分别引用运行配置与镜像，按主键 upsert 后这些引用在
-	// 安装到当前 project 后依旧成立（见 installContainerAssets）。
-	installedImageCount, installedSpecCount, installedDefinitionCount, assetErr := c.installContainerAssets(
-		ctx, payload.ContainerImages, payload.ContainerTemplateSpecs, payload.ContainerTemplateDefinitions)
+	// 先导入容器运行配置与绑定行（顺序见 installContainerAssets）。
+	installedSpecCount, installedDefinitionCount, assetErr := c.installContainerAssets(
+		ctx, payload.ContainerTemplateSpecs, payload.ContainerTemplateDefinitions)
 	if assetErr != nil {
-		return nil, fmt.Errorf("failed to install container images or templates: %w", assetErr)
+		return nil, fmt.Errorf("failed to install container templates: %w", assetErr)
 	}
 
 	wfBytes, err := json.Marshal(payload.Workflow)
@@ -232,25 +229,24 @@ func (c *Codec) InstallWorkflow(ctx context.Context, req exportcodec.WorkflowIns
 		WorkflowID:                       payload.WorkflowID,
 		InstalledWorkflowID:              installWorkflow.ID,
 		InstalledScriptCount:             installedScriptCount,
-		ContainerImageCount:              installedImageCount,
 		ContainerTemplateSpecCount:       installedSpecCount,
 		ContainerTemplateDefinitionCount: installedDefinitionCount,
 	}, nil
 }
 
-// installContainerAssets 按导出内容创建/更新容器镜像、运行配置与绑定行，返回各自处理的数量。
+// installContainerAssets 按导出内容创建/更新容器运行配置与绑定行，返回各自处理的数量。
 //
-// 导出格式把容器资产拆成三个平铺列表（container_images / container_template_specs /
-// container_template_definitions），三者通过主键互相引用：绑定行 spec_id 指向运行配置、
-// image_id 指向镜像，而绑定行主键就是脚本 container_template_id 引用的值。
+// 导出格式把容器资产拆成两个平铺列表（container_template_specs /
+// container_template_definitions），两者通过主键互相引用：绑定行 spec_id 指向运行配置，
+// 而绑定行主键就是脚本 container_template_id 引用的值；镜像名与拉取策略直接存在绑定行上。
 // 具体安装逻辑（upsert 顺序、id 校验、按主键新增/更新）由 exportcodec.InstallContainerAssets
 // 统一实现，script.json 与 workflow.json 共用同一份代码。
-func (c *Codec) installContainerAssets(ctx context.Context, images []types.ContainerImageExport, specs []types.ContainerTemplateSpec, definitions []types.ContainerTemplateDefinition) (int, int, int, error) {
-	result, err := exportcodec.InstallContainerAssets(ctx, c.containerService, images, specs, definitions)
+func (c *Codec) installContainerAssets(ctx context.Context, specs []types.ContainerTemplateSpec, definitions []types.ContainerTemplateDefinition) (int, int, error) {
+	result, err := exportcodec.InstallContainerAssets(ctx, c.containerService, specs, definitions)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, err
 	}
-	return result.ImageCount, result.SpecCount, result.DefinitionCount, nil
+	return result.SpecCount, result.DefinitionCount, nil
 }
 
 // scriptNameFromExportMap 从导出文件的 script map 里取名称。

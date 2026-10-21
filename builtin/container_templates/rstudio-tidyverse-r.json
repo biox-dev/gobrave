@@ -1,13 +1,4 @@
 {
-  "container_images": [
-    {
-      "id": "202606160001",
-      "name": "rocker-tidyverse-r",
-      "full_name": "registry.cn-hangzhou.aliyuncs.com/wybioinfo/rocker-tidyverse-r:4.6.0",
-      "description": "https://rocker-project.org/images/versioned/rstudio.html\nhttps://www.bioconductor.org/help/docker/\nhttps://hub.docker.com/r/bioconductor/tidyverse/tags",
-      "size": 0
-    }
-  ],
   "container_template_specs": [
     {
       "id": "202606160002",
@@ -39,8 +30,10 @@
     {
       "id": "202606160002",
       "spec_id": "202606160002",
-      "image_id": "202606160001",
-      "display_name": ""
+      "image_name": "registry.cn-hangzhou.aliyuncs.com/wybioinfo/rocker-tidyverse-r:4.6.0",
+      "pull_policy": "IfNotPresent",
+      "display_name": "",
+      "is_default": true
     }
   ]
 }

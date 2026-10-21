@@ -51,11 +51,10 @@ type WorkflowJSONExportResponse struct {
 	WorkflowID string           `json:"workflow_id"`
 	Workflow   map[string]any   `json:"workflow"`
 	Scripts    []map[string]any `json:"scripts"`
-	// ContainerTemplateSpecs / ContainerTemplateDefinitions / ContainerImages 都是按主键去重后的
-	// 导出列表：绑定行通过 spec_id 引用运行配置、通过 image_id 引用镜像。
+	// ContainerTemplateSpecs / ContainerTemplateDefinitions 都是按主键去重后的
+	// 导出列表：绑定行通过 spec_id 引用运行配置，镜像名与拉取策略直接挂在绑定行上。
 	ContainerTemplateSpecs       []map[string]any `json:"container_template_specs"`
 	ContainerTemplateDefinitions []map[string]any `json:"container_template_definitions"`
-	ContainerImages              []map[string]any `json:"container_images"`
 }
 
 type createScriptRequest struct {

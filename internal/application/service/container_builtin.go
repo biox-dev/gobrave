@@ -22,11 +22,10 @@ import (
 // 由 go:embed 打包进二进制；系统每次启动都会把它们按主键 upsert 进数据库。
 //
 // 为什么用「导出格式的 JSON 文件」而不是在 Go 代码里硬编码结构体：
-//   - 一个文件就是一份完整的容器资产包（container_images /
-//     container_template_specs / container_template_definitions），
-//     与 script.json / workflow.json 里的容器资产结构完全一致，
+//   - 一个文件就是一份完整的容器资产包（container_template_specs /
+//     container_template_definitions），与 script.json / workflow.json 里的容器资产结构完全一致，
 //     可以直接从「容器模板导出」接口拿到的 JSON 粘贴过来；
-//   - 导入逻辑直接复用 exportcodec.InstallContainerAssets（镜像 → 运行配置 → 绑定行，
+//   - 导入逻辑直接复用 exportcodec.InstallContainerAssets（运行配置 → 绑定行，
 //     按主键 upsert），不再维护第二套写入逻辑；
 //   - 新增内置模板 = 往目录里放一个 JSON 文件，无需改代码。
 //
@@ -68,7 +67,6 @@ func InstallBuiltinContainerTemplates(ctx context.Context, svc interfaces.Contai
 	var firstErr error
 	for _, item := range bundles {
 		if _, err := exportcodec.InstallContainerAssets(ctx, svc,
-			item.Bundle.ContainerImages,
 			item.Bundle.ContainerTemplateSpecs,
 			item.Bundle.ContainerTemplateDefinitions); err != nil {
 			logger.Warnf(ctx, "[Container] Failed to install builtin container template %q: %v", item.Name, err)
@@ -92,8 +90,8 @@ func InstallBuiltinContainerTemplates(ctx context.Context, svc interfaces.Contai
 			break
 		}
 
-		logger.Debugf(ctx, "[Container] Installed builtin container template %q (images=%d specs=%d definitions=%d)",
-			item.Name, len(item.Bundle.ContainerImages), len(item.Bundle.ContainerTemplateSpecs), len(item.Bundle.ContainerTemplateDefinitions))
+		logger.Debugf(ctx, "[Container] Installed builtin container template %q (specs=%d definitions=%d)",
+			item.Name, len(item.Bundle.ContainerTemplateSpecs), len(item.Bundle.ContainerTemplateDefinitions))
 	}
 	return firstErr
 }
@@ -195,9 +193,6 @@ func decodeContainerTemplateBundle(content []byte) (*types.ContainerTemplateBund
 	bundle := types.NewContainerTemplateBundle()
 	if err := json.Unmarshal(content, bundle); err != nil {
 		return nil, err
-	}
-	if bundle.ContainerImages == nil {
-		bundle.ContainerImages = make([]types.ContainerImageExport, 0)
 	}
 	if bundle.ContainerTemplateSpecs == nil {
 		bundle.ContainerTemplateSpecs = make([]types.ContainerTemplateSpec, 0)

@@ -32,8 +32,8 @@ const SkillFSRoot = "skills"
 // ContainerTemplateFiles 内嵌 builtin/container_templates 下的全部内置容器模板，
 // 路径形如 "container_templates/rstudio-tidyverse-r.json"。
 //
-// 每个文件就是一个导出格式的容器资产包（container_images /
-// container_template_specs / container_template_definitions 三个平铺列表），
+// 每个文件就是一个导出格式的容器资产包（container_template_specs /
+// container_template_definitions 两个平铺列表），
 // 启动时由 service.InstallBuiltinContainerTemplates 逐个导入数据库。
 // 与提示词 / 技能一致：运行期优先读磁盘，缺失时回退到内嵌副本。
 //

@@ -272,13 +272,6 @@ func RegisterDataRoutes(r *gin.RouterGroup, handler *handler.DataHandler) {
 }
 
 func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandler) {
-	r.POST("/container/image/create", handler.CreateContainerImage)
-	r.GET("/container/image/get", handler.GetContainerImage)
-	r.POST("/container/image/update", handler.UpdateContainerImage)
-	r.POST("/container/image/delete", handler.DeleteContainerImage)
-	r.GET("/container/image/list", handler.ListContainerImage)
-	r.POST("/container/image/list-by-page", handler.PageContainerImage)
-
 	r.POST("/container/template/create", handler.CreateContainerTemplate)
 	r.GET("/container/template/get", handler.GetContainerTemplate)
 	r.POST("/container/template/update", handler.UpdateContainerTemplate)

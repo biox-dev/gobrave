@@ -934,11 +934,6 @@ definitions:
     type: object
   handler.WorkflowJSONExportResponse:
     properties:
-      container_images:
-        items:
-          additionalProperties: {}
-          type: object
-        type: array
       container_template_definitions:
         items:
           additionalProperties: {}
@@ -946,8 +941,8 @@ definitions:
         type: array
       container_template_specs:
         description: |-
-          ContainerTemplateSpecs / ContainerTemplateDefinitions / ContainerImages 都是按主键去重后的
-          导出列表：绑定行通过 spec_id 引用运行配置、通过 image_id 引用镜像。
+          ContainerTemplateSpecs / ContainerTemplateDefinitions 都是按主键去重后的
+          导出列表：绑定行通过 spec_id 引用运行配置，镜像名与拉取策略直接挂在绑定行上。
         items:
           additionalProperties: {}
           type: object
@@ -1262,18 +1257,6 @@ definitions:
         additionalProperties: {}
         description: Sections 以配置段 key 为索引，返回当前生效的配置段值。
         type: object
-    type: object
-  handler.containerImagePageRequest:
-    properties:
-      page:
-        description: Page
-        minimum: 1
-        type: integer
-      page_size:
-        description: Page size
-        maximum: 1000
-        minimum: 1
-        type: integer
     type: object
   handler.containerInstancePageRequest:
     properties:
@@ -2820,85 +2803,6 @@ definitions:
       updated_at:
         type: string
     type: object
-  types.ContainerImage:
-    properties:
-      created_at:
-        type: string
-      description:
-        type: string
-      full_name:
-        type: string
-      id:
-        example: "0"
-        type: string
-      name:
-        type: string
-      pull_policy:
-        type: string
-      size:
-        type: integer
-      updated_at:
-        type: string
-    type: object
-  types.ContainerImageExport:
-    properties:
-      description:
-        type: string
-      full_name:
-        type: string
-      id:
-        example: "0"
-        type: string
-      name:
-        type: string
-      size:
-        type: integer
-    type: object
-  types.ContainerImageItem:
-    properties:
-      created_at:
-        type: string
-      description:
-        type: string
-      full_name:
-        type: string
-      id:
-        example: "0"
-        type: string
-      name:
-        type: string
-      pull_policy:
-        type: string
-      size:
-        type: integer
-      updated_at:
-        type: string
-      usage:
-        $ref: '#/definitions/types.ContainerImageUsage'
-    type: object
-  types.ContainerImageRef:
-    properties:
-      definition_id:
-        example: "0"
-        type: string
-      spec_id:
-        example: "0"
-        type: string
-      template_name:
-        type: string
-    type: object
-  types.ContainerImageUsage:
-    properties:
-      image_id:
-        example: "0"
-        type: string
-      ref_count:
-        type: integer
-      templates:
-        items:
-          $ref: '#/definitions/types.ContainerImageRef'
-        type: array
-    type: object
   types.ContainerTemplate:
     properties:
       app_type:
@@ -2926,10 +2830,8 @@ definitions:
       id:
         example: "0"
         type: string
-      image:
-        $ref: '#/definitions/types.ContainerImage'
-      image_id:
-        example: "0"
+      image_name:
+        description: ImageName / PullPolicy 原样取自绑定行 ContainerTemplateDefinition。
         type: string
       is_default:
         description: IsDefault 原样取自绑定行 ContainerTemplateDefinition.IsDefault。
@@ -2948,6 +2850,8 @@ definitions:
         type: string
       port:
         type: integer
+      pull_policy:
+        type: string
       scheduling_constraint:
         items:
           type: integer
@@ -2962,10 +2866,6 @@ definitions:
     type: object
   types.ContainerTemplateBundle:
     properties:
-      container_images:
-        items:
-          $ref: '#/definitions/types.ContainerImageExport'
-        type: array
       container_template_definitions:
         items:
           $ref: '#/definitions/types.ContainerTemplateDefinition'
@@ -2986,8 +2886,10 @@ definitions:
       id:
         example: "0"
         type: string
-      image_id:
-        example: "0"
+      image_name:
+        description: |-
+          ImageName 是完整镜像名（含 registry / namespace / tag），如 docker.io/rocker/rstudio:4.4。
+          同一运行配置下不允许重复绑定同一镜像由服务层校验（不用唯一索引，便于旧数据迁移）。
         type: string
       is_default:
         description: |-
@@ -2995,6 +2897,12 @@ definitions:
           创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。
           导出时会置为 false（omitempty 使其不出现在导出文件里）。
         type: boolean
+      pull_policy:
+        description: |-
+          PullPolicy 是该绑定行的镜像拉取策略，取值 Always / IfNotPresent / Never，空值按 IfNotPresent 处理。
+          落地方式由 runtime 决定：docker 在 create 前按策略决定是否 pull；kubernetes 直接映射为
+          container.imagePullPolicy。
+        type: string
       spec_id:
         example: "0"
         type: string
@@ -6370,233 +6278,6 @@ paths:
       summary: 停止应用会话
       tags:
       - 容器管理
-  /container/image/create:
-    post:
-      consumes:
-      - application/json
-      description: 创建 ContainerImage 记录
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/types.ContainerImage'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.ContainerImage'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 创建容器镜像
-      tags:
-      - 容器管理
-  /container/image/delete:
-    post:
-      consumes:
-      - application/json
-      description: 按 ID 删除 ContainerImage 记录；仍被容器模板（配置 × 镜像 绑定行）引用时返回 409 并给出引用清单。
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.idBody'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 删除容器镜像
-      tags:
-      - 容器管理
-  /container/image/get:
-    get:
-      description: 按 ID 查询 ContainerImage 详情
-      parameters:
-      - description: 主键 ID
-        in: query
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.ContainerImage'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 获取容器镜像
-      tags:
-      - 容器管理
-  /container/image/list:
-    get:
-      description: 查询 ContainerImage 列表，每项带 usage（引用数 + 引用的模板绑定行）
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/types.ContainerImageItem'
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 容器镜像列表
-      tags:
-      - 容器管理
-  /container/image/list-by-page:
-    post:
-      consumes:
-      - application/json
-      description: 分页查询 ContainerImage 列表，每项带 usage（引用数 + 引用的模板绑定行）
-      parameters:
-      - description: 分页请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.containerImagePageRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 分页查询容器镜像
-      tags:
-      - 容器管理
-  /container/image/update:
-    post:
-      consumes:
-      - application/json
-      description: 按 ID 更新 ContainerImage 记录
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/types.ContainerImage'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 更新容器镜像
-      tags:
-      - 容器管理
   /container/instance/describe:
     get:
       description: 按 ContainerInstance ID 从运行时获取 inspect/describe 详情（兼容 docker 与 k8s）
@@ -6969,8 +6650,8 @@ paths:
       description: |-
         创建对外容器模板（ContainerTemplate = 共享运行配置 ContainerTemplateSpec × 镜像绑定 ContainerTemplateDefinition）。
         spec_id 为空：用请求体里的运行配置字段新建配置，再建第一条绑定；
-        spec_id 非空：复用该配置，只在它下面新增一个 image_id 绑定（同一套配置挂多个镜像）。
-        返回组装后的读模型，含 spec_id / image_id / image。
+        spec_id 非空：复用该配置，只在它下面新增一个镜像绑定（同一套配置挂多个镜像）。
+        返回组装后的读模型，含 spec_id / image_name / pull_policy。
       parameters:
       - description: 请求参数
         in: body
@@ -7082,8 +6763,8 @@ paths:
       - application/json
       description: |-
         导出单条容器模板为统一的平铺格式（与 script.json / workflow.json 完全相同）：
-        container_images / container_template_specs / container_template_definitions 三个列表，
-        三者通过主键互相引用（definition.spec_id / image_id），且都不含时间字段。
+        container_template_specs / container_template_definitions 两个列表，
+        两者通过主键互相引用（definition.spec_id），且都不含时间字段。
       parameters:
       - description: 请求参数
         in: body
@@ -7162,9 +6843,9 @@ paths:
       - application/json
       description: |-
         导入统一平铺格式（与 /container/template/export、script.json / workflow.json 同构）：
-        container_images / container_template_specs / container_template_definitions。
-        三张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为
-        「镜像 → 运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。
+        container_template_specs / container_template_definitions。
+        两张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为
+        「运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。
       parameters:
       - description: 请求参数
         in: body
@@ -7350,7 +7031,7 @@ paths:
       - application/json
       description: |-
         按绑定行 ID（ContainerTemplateDefinition.ID）更新：请求体里的运行配置字段写入绑行指向的 ContainerTemplateSpec，
-        image_id 与包目录字段写入绑定行本体。返回组装后的读模型。
+        image_name / pull_policy 与包目录字段写入绑定行本体。返回组装后的读模型。
       parameters:
       - description: 请求参数
         in: body

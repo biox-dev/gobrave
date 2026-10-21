@@ -512,11 +512,10 @@ func (h *WorkflowHandler) InstallWorkflow(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":                                       "success",
-		"workflow_id":                                   result.WorkflowID,
-		"installed_workflow_id":                         result.InstalledWorkflowID,
-		"installed_script_count":                        result.InstalledScriptCount,
-		"installed_container_image_count":               result.ContainerImageCount,
+		"message":                "success",
+		"workflow_id":            result.WorkflowID,
+		"installed_workflow_id":  result.InstalledWorkflowID,
+		"installed_script_count": result.InstalledScriptCount,
 		"installed_container_template_spec_count":       result.ContainerTemplateSpecCount,
 		"installed_container_template_definition_count": result.ContainerTemplateDefinitionCount,
 	})
@@ -622,10 +621,9 @@ func (h *WorkflowHandler) InstallScript(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":                         "success",
-		"script_id":                       result.ScriptID,
-		"installed_script_id":             result.InstalledScriptID,
-		"installed_container_image_count": result.ContainerImageCount,
+		"message":             "success",
+		"script_id":           result.ScriptID,
+		"installed_script_id": result.InstalledScriptID,
 		"installed_container_template_spec_count":       result.ContainerTemplateSpecCount,
 		"installed_container_template_definition_count": result.ContainerTemplateDefinitionCount,
 	})

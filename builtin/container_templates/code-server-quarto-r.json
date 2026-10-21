@@ -1,13 +1,4 @@
 {
-  "container_images": [
-    {
-      "id": "2089923441674162176",
-      "name": "code-server-quarto-r",
-      "full_name": "registry.cn-hangzhou.aliyuncs.com/wybioinfo/code-server-quarto-r",
-      "description": "",
-      "size": 0
-    }
-  ],
   "container_template_specs": [
     {
       "id": "2089923556677783552",
@@ -53,7 +44,8 @@
     {
       "id": "2089923556677783552",
       "spec_id": "2089923556677783552",
-      "image_id": "2089923441674162176",
+      "image_name": "registry.cn-hangzhou.aliyuncs.com/wybioinfo/code-server-quarto-r",
+      "pull_policy": "IfNotPresent",
       "display_name": ""
     }
   ]

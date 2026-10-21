@@ -3,11 +3,11 @@
 // v1 的格式约定：
 //
 //   - script.json   = version + script_id + script + container_template_specs
-//   - container_template_definitions + container_images；
+//   - container_template_definitions；
 //   - workflow.json = version + workflow_id + workflow + scripts + container_template_specs
-//   - container_template_definitions + container_images；
-//     （三个容器资产列表均按主键去重：绑定行通过 spec_id 引用运行配置、通过 image_id 引用镜像，
-//     绑定行主键就是脚本 container_template_id 引用的值）
+//   - container_template_definitions；
+//     （两个容器资产列表均按主键去重：绑定行通过 spec_id 引用运行配置，
+//     镜像名与拉取策略直接存在绑定行上，绑定行主键就是脚本 container_template_id 引用的值）
 //   - workflow 目录同时把引用的脚本目录快照到 <workflowDir>/script/<scriptID>，
 //     且排除脚本目录自身的 .git（否则会把脚本仓库塞进 workflow 仓库）。
 //

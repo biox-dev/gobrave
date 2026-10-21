@@ -2233,15 +2233,9 @@ func (h *AnalysisHandler) attachContainerTemplateInfoToNode(c *gin.Context, temp
 		return node
 	}
 
-	containerImage := ""
-	if tpl.Image != nil {
-		containerImage = strings.TrimSpace(tpl.Image.FullName)
-		if containerImage == "" {
-			containerImage = strings.TrimSpace(tpl.Image.Name)
-		}
-	}
+	containerImage := strings.TrimSpace(tpl.ImageName)
 	status := "pending"
-	if tpl.ImageID > 0 && containerImage != "" {
+	if containerImage != "" {
 		status = "exist"
 	}
 
@@ -2253,7 +2247,6 @@ func (h *AnalysisHandler) attachContainerTemplateInfoToNode(c *gin.Context, temp
 	node["container_id"] = strconv.FormatInt(templateID, 10)
 	node["container_name"] = name
 	node["container_image"] = containerImage
-	node["image_id"] = strconv.FormatInt(tpl.ImageID, 10)
 	node["image_status"] = status
 	return node
 }
@@ -2275,24 +2268,14 @@ func (h *AnalysisHandler) attachContainerInfoToNode(c *gin.Context, scriptID int
 	node["container_id"] = strconv.FormatInt(containerID, 10)
 	node["container_name"] = ""
 	node["container_image"] = ""
-	node["image_id"] = ""
 	node["image_status"] = "pending"
 
 	node["container_name"] = strings.TrimSpace(snapshot.ContainerName)
-	if snapshot.ImageID > 0 {
-		// int64 主键转字符串，避免前端 JS 精度丢失。
-		node["image_id"] = strconv.FormatInt(snapshot.ImageID, 10)
-	}
 
-	// go_container_image 已不再持久化 tag/status：镜像全名由 full_name 承载，
-	// 模板只要绑定了镜像即视为可用（"exist"），否则回落为 "pending"。
-	containerImage := strings.TrimSpace(snapshot.ContainerImage)
-	if containerImage == "" {
-		containerImage = strings.TrimSpace(snapshot.ImageName)
-	}
-
+	// 镜像名直接存在容器模板绑定行上：非空即视为模板已绑定镜像（"exist"），否则回落为 "pending"。
+	containerImage := strings.TrimSpace(snapshot.ImageName)
 	status := "pending"
-	if snapshot.ImageID > 0 && containerImage != "" {
+	if containerImage != "" {
 		status = "exist"
 	}
 

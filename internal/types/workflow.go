@@ -87,17 +87,14 @@ func (Workflow) TableName() string {
 }
 
 // ScriptContainerSnapshot is a read model for analysis node visualization.
-// It flattens script -> container template definition/spec -> container image fields via SQL join.
+// It flattens script -> container template definition/spec via SQL join.
 // ContainerID is the go_container_template_definition primary key (the id scripts bind to);
-// the image tag is already part of ContainerImage (go_container_image.full_name), and image
-// status is no longer persisted, so there is no separate tag/status column here.
+// the full image name lives on the definition itself, so there is no separate image table here.
 type ScriptContainerSnapshot struct {
-	ScriptID       string `json:"script_id" gorm:"column:script_id"`
-	ContainerID    int64  `json:"container_id,string" gorm:"column:container_id"`
-	ContainerName  string `json:"container_name" gorm:"column:container_name"`
-	ImageID        int64  `json:"image_id,string" gorm:"column:image_id"`
-	ContainerImage string `json:"container_image" gorm:"column:container_image"`
-	ImageName      string `json:"image_name" gorm:"column:image_name"`
+	ScriptID      string `json:"script_id" gorm:"column:script_id"`
+	ContainerID   int64  `json:"container_id,string" gorm:"column:container_id"`
+	ContainerName string `json:"container_name" gorm:"column:container_name"`
+	ImageName     string `json:"image_name" gorm:"column:image_name"`
 }
 
 type WorkflowJSONExportResponse struct {
@@ -109,13 +106,12 @@ type WorkflowJSONExportResponse struct {
 	WorkflowID string           `json:"workflow_id"`
 	Workflow   map[string]any   `json:"workflow"`
 	Scripts    []map[string]any `json:"scripts"`
-	// 容器资产是三个按主键去重的平铺列表，与 script.json 完全一致。
+	// 容器资产是两个按主键去重的平铺列表，与 script.json 完全一致。
 	// ContainerTemplateSpecs 是运行配置（definition.spec_id 指向它）；
-	// ContainerTemplateDefinitions 是「运行配置 × 镜像」绑定行（主键即脚本 container_template_id）；
-	// ContainerImages 是镜像（definition.image_id 指向它）。三者均不含时间字段。
+	// ContainerTemplateDefinitions 是绑定行（主键即脚本 container_template_id，
+	// 镜像名与拉取策略直接挂在绑定行上）。两者均不含时间字段。
 	ContainerTemplateSpecs       []ContainerTemplateSpec       `json:"container_template_specs"`
 	ContainerTemplateDefinitions []ContainerTemplateDefinition `json:"container_template_definitions"`
-	ContainerImages              []ContainerImageExport        `json:"container_images"`
 }
 
 type WorkflowVersion struct {
@@ -183,10 +179,9 @@ type ScriptJSONExportResponse struct {
 	Version  string         `json:"version"`
 	ScriptID string         `json:"script_id"`
 	Script   map[string]any `json:"script"`
-	// 容器资产与 workflow.json 完全一致：三个按主键去重的平铺列表。
-	// 脚本的 container_template_id 引用的是绑定行主键，绑定行通过 spec_id / image_id
-	// 分别引用运行配置与镜像。三者均不含时间字段。
+	// 容器资产与 workflow.json 完全一致：两个按主键去重的平铺列表。
+	// 脚本的 container_template_id 引用的是绑定行主键，绑定行通过 spec_id 引用运行配置，
+	// 镜像名与拉取策略直接挂在绑定行上。两者均不含时间字段。
 	ContainerTemplateSpecs       []ContainerTemplateSpec       `json:"container_template_specs,omitempty"`
 	ContainerTemplateDefinitions []ContainerTemplateDefinition `json:"container_template_definitions,omitempty"`
-	ContainerImages              []ContainerImageExport        `json:"container_images,omitempty"`
 }

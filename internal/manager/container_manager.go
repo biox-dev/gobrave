@@ -36,7 +36,6 @@ type ContainerManager struct {
 	reg              *containerruntime.Registry
 	bus              event.Bus
 	res              ContainerRuntimeResolver
-	img              *ImageManager
 	cfg              *config.Config
 	monitorOnce      sync.Once
 }
@@ -49,17 +48,10 @@ func NewContainerManager(
 	reg *containerruntime.Registry,
 	bus event.Bus,
 	res ContainerRuntimeResolver,
-	img *ImageManager,
 	cfg *config.Config,
 ) *ContainerManager {
-	// if res == nil {
-	// 	res = NewDefaultContainerRuntimeResolver()
-	// }
-	if img == nil {
-		img = NewImageManager(containerRepo, reg)
-	}
 	return &ContainerManager{
-		containerRepo: containerRepo, projectRepo: projectRepo, analysisRepo: analysisRepo, workflowService: workflowService, reg: reg, bus: bus, res: res, img: img, cfg: cfg}
+		containerRepo: containerRepo, projectRepo: projectRepo, analysisRepo: analysisRepo, workflowService: workflowService, reg: reg, bus: bus, res: res, cfg: cfg}
 }
 
 func (s *ContainerManager) TransitionContainerAndEnqueueOutbox(ctx context.Context, inst *types.ContainerInstance, to types.ContainerStatus, eventType string) error {
@@ -177,9 +169,9 @@ func (m *ContainerManager) CreateByTemplate(
 		return nil, err
 	}
 
-	// 读模型已带出绑定的镜像（tpl.Image），这里只是确保镜像确实存在。
-	if _, err := resolveTemplateImage(ctx, m.containerRepo, tpl); err != nil {
-		return nil, err
+	// 镜像名与拉取策略直接存在容器模板绑定行上，这里只需确保已配置镜像名。
+	if strings.TrimSpace(tpl.ImageName) == "" {
+		return nil, fmt.Errorf("container template %d does not bind any image", templateID)
 	}
 
 	rt, err := m.getRuntime()

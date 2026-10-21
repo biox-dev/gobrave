@@ -355,7 +355,6 @@ func (s *workflowService) GenerateWorkflowJSONByWorkflowID(ctx context.Context, 
 		Scripts:                      scripts,
 		ContainerTemplateSpecs:       containerAssets.ContainerTemplateSpecs,
 		ContainerTemplateDefinitions: containerAssets.ContainerTemplateDefinitions,
-		ContainerImages:              containerAssets.ContainerImages,
 	}
 
 	exportDir := filepath.Join(storageBaseDir, "pipeline", "tools", workflow.WorkflowID)
@@ -398,7 +397,6 @@ func (s *workflowService) GenerateScriptJSONByScriptID(ctx context.Context, scri
 		Script:                       scriptMap,
 		ContainerTemplateSpecs:       containerAssets.ContainerTemplateSpecs,
 		ContainerTemplateDefinitions: containerAssets.ContainerTemplateDefinitions,
-		ContainerImages:              containerAssets.ContainerImages,
 	}
 	return payload, nil
 }
@@ -721,9 +719,9 @@ func structToMap(value any) (map[string]any, error) {
 // updated_at 由数据库自动维护，每次保存都会变化，保留它会产生无意义的 git diff；
 // 后续如需剔除其他字段，直接追加到该列表即可。
 //
-// 注意：该列表同时作用于容器资产（运行配置 / 绑定行 / 镜像）。这些资产的 id 是
-// 实体之间的引用键（绑定行主键被脚本 container_template_id 引用，spec_id / image_id
-// 反过来引用运行配置与镜像），安装侧按主键 upsert 才能保持引用链，因此不能把 id 放进来。
+// 注意：该列表同时作用于容器资产（运行配置 / 绑定行）。这些资产的 id 是
+// 实体之间的引用键（绑定行主键被脚本 container_template_id 引用，spec_id 反过来
+// 引用运行配置），安装侧按主键 upsert 才能保持引用链，因此不能把 id 放进来。
 var exportOmitFields = []string{"updated_at"}
 
 // exportOmitWorkflowScriptFields 是导出 workflow / script 对象时需要剔除的字段。

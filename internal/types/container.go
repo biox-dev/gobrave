@@ -14,88 +14,6 @@ const (
 	PullPolicyNever        = "Never"
 )
 
-type ImageStatus string
-
-const (
-	ImageStatusPending  ImageStatus = "pending"
-	ImageStatusPulling  ImageStatus = "pulling"
-	ImageStatusReady    ImageStatus = "ready"
-	ImageStatusFailed   ImageStatus = "failed"
-	ImageStatusDeleted  ImageStatus = "deleted"
-	ImageStatusDisabled ImageStatus = "disabled"
-)
-
-type ContainerImage struct {
-	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-
-	Name string `json:"name" gorm:"type:varchar(255);not null;index"`
-	// rocker/rstudio
-
-	// Tag string `json:"tag" gorm:"type:varchar(128);not null;index"`
-	// 4.4
-
-	// LibraryVersion string `json:"library_version" gorm:"type:varchar(128);index"`
-	// R 4.4 / Python 3.11
-
-	// Registry string `json:"registry" gorm:"type:varchar(255);not null"`
-	// docker.io
-
-	// Namespace string `json:"namespace" gorm:"type:varchar(255)"`
-	// rocker
-
-	FullName string `json:"full_name" gorm:"type:varchar(512);not null"`
-	// docker.io/rocker/rstudio:4.4
-
-	// Digest string `json:"digest" gorm:"type:varchar(255);index"`
-
-	Description string `json:"description" gorm:"type:text"`
-
-	Size int64 `json:"size"`
-
-	// Status ImageStatus `json:"status" gorm:"type:varchar(32);index;not null;default:pending"`
-
-	PullPolicy string `json:"pull_policy" gorm:"type:varchar(32);index;not null;default:IfNotPresent"`
-
-	// LastPullTime *time.Time `json:"last_pull_time"`
-
-	// LastError string `json:"last_error" gorm:"type:text"`
-
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-func (ContainerImage) TableName() string {
-	return "go_container_image"
-}
-
-func (t *ContainerImage) BeforeCreate(_ *gorm.DB) error {
-	if t.ID == 0 {
-		t.ID = utils.GenerateID()
-	}
-	return nil
-}
-
-// ContainerImageRef 描述一个镜像被哪一个可运行模板（配置 × 镜像 绑定行）引用。
-type ContainerImageRef struct {
-	DefinitionID int64  `json:"definition_id,string"`
-	SpecID       int64  `json:"spec_id,string"`
-	TemplateName string `json:"template_name"`
-}
-
-// ContainerImageUsage 是镜像的绑定引用情况。镜像目录仍可增删改，
-// 但只要还被绑定行引用就不允许删除，避免模板的 image_id 变成空引用。
-type ContainerImageUsage struct {
-	ImageID   int64               `json:"image_id,string"`
-	RefCount  int                 `json:"ref_count"`
-	Templates []ContainerImageRef `json:"templates"`
-}
-
-// ContainerImageItem 是镜像目录的对外读模型：嵌入镜像本体（JSON 平铺，字段不变）+ 绑定引用信息。
-type ContainerImageItem struct {
-	*ContainerImage
-	Usage *ContainerImageUsage `json:"usage,omitempty"`
-}
-
 // ===== 持久化实体：共享的容器运行配置 =====
 
 // ContainerTemplateSpec 只描述"怎么跑"：命令、资源、端口、环境变量、挂载、标签等，
@@ -140,15 +58,22 @@ func (t *ContainerTemplateSpec) BeforeCreate(_ *gorm.DB) error {
 // ===== 持久化实体：运行配置 × 镜像 绑定行 =====
 
 // ContainerTemplateDefinition 一行即"一个可直接运行的容器模板"：共享配置 + 一个具体镜像。
-// 由于每行本身就唯一确定了一个可运行配置，不需要 is_default / sort_order 之类的标记：
-// 同一 SpecID 可绑定多个镜像，同一 ImageID 也可被多个配置绑定（多对多），
-// 且同一 (SpecID, ImageID) 组合唯一。
+// 镜像不再单独建表：完整镜像名与拉取策略直接放在绑定行上，因此一行就唯一确定了一个
+// 可运行配置；同一 SpecID 可绑定多个不同镜像（(SpecID, ImageName) 组合唯一）。
 // 注意：该表主键 ID 就是对外暴露的 ContainerTemplate.ID。
 type ContainerTemplateDefinition struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
-	SpecID  int64 `json:"spec_id,string" gorm:"uniqueIndex:uk_template_spec_image,priority:1;not null"`
-	ImageID int64 `json:"image_id,string" gorm:"uniqueIndex:uk_template_spec_image,priority:2;not null"`
+	SpecID int64 `json:"spec_id,string" gorm:"index;not null"`
+
+	// ImageName 是完整镜像名（含 registry / namespace / tag），如 docker.io/rocker/rstudio:4.4。
+	// 同一运行配置下不允许重复绑定同一镜像由服务层校验（不用唯一索引，便于旧数据迁移）。
+	ImageName string `json:"image_name" gorm:"type:varchar(512);index"`
+
+	// PullPolicy 是该绑定行的镜像拉取策略，取值 Always / IfNotPresent / Never，空值按 IfNotPresent 处理。
+	// 落地方式由 runtime 决定：docker 在 create 前按策略决定是否 pull；kubernetes 直接映射为
+	// container.imagePullPolicy。
+	PullPolicy string `json:"pull_policy" gorm:"type:varchar(32);index;not null;default:IfNotPresent"`
 
 	// DisplayName 为空时，对外名称回退到 ContainerTemplateConfig.Name。
 	DisplayName string `json:"display_name" gorm:"type:varchar(255)"`
@@ -176,19 +101,20 @@ func (t *ContainerTemplateDefinition) BeforeCreate(_ *gorm.DB) error {
 
 // ===== 非持久化读模型：对外容器模板 =====
 
-// ContainerTemplate 不是持久化对象，由 repo 层 JOIN
-// go_container_template_definition + go_container_template_spec + go_container_image 组装返回。
+// ContainerTemplate 不是持久化对象，由 repo 层读取
+// go_container_template_definition + go_container_template_spec 组装返回。
 // ID == ContainerTemplateDefinition.ID：引用方（script.container_template_id /
 // app_session.container_template_id / container_instance.template_id）语义不变，
 // 同时天然锁定了该模板要使用的镜像。
 type ContainerTemplate struct {
-	ID      int64 `json:"id,string"`
-	SpecID  int64 `json:"spec_id,string"`
-	ImageID int64 `json:"image_id,string"`
+	ID     int64 `json:"id,string"`
+	SpecID int64 `json:"spec_id,string"`
 
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Image       *ContainerImage `json:"image,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// ImageName / PullPolicy 原样取自绑定行 ContainerTemplateDefinition。
+	ImageName  string `json:"image_name"`
+	PullPolicy string `json:"pull_policy"`
 	// DisplayName 原样取自绑定行 ContainerTemplateDefinition.DisplayName（不做回退）。
 	// Name 才是对外展示名：DisplayName 非空时覆盖共享配置名，否则回退到 spec.Name。
 	// 编辑表单必须读写 DisplayName，否则会把回退出来的配置名误固化成绑定行展示名。
@@ -214,19 +140,23 @@ type ContainerTemplate struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// NewContainerTemplate 把共享配置、绑定行与镜像组装成对外读模型。spec/image 允许为 nil：
-// 分别表示只取绑定行字段 / 未加载镜像详情。binding 为 nil 时返回 nil。
-func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplateDefinition, image *ContainerImage) *ContainerTemplate {
+// NewContainerTemplate 把共享配置与绑定行组装成对外读模型。spec 允许为 nil（只取绑定行字段）。
+// binding 为 nil 时返回 nil。
+func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplateDefinition) *ContainerTemplate {
 	if binding == nil {
 		return nil
 	}
 
 	tpl := &ContainerTemplate{
-		ID:        binding.ID,
-		SpecID:    binding.SpecID,
-		ImageID:   binding.ImageID,
-		Image:     image,
-		IsDefault: binding.IsDefault,
+		ID:         binding.ID,
+		SpecID:     binding.SpecID,
+		ImageName:  binding.ImageName,
+		PullPolicy: binding.PullPolicy,
+		IsDefault:  binding.IsDefault,
+	}
+	// 历史数据可能没有拉取策略，空值统一按 IfNotPresent 对外暴露。
+	if tpl.PullPolicy == "" {
+		tpl.PullPolicy = PullPolicyIfNotPresent
 	}
 	if binding.CreatedAt != nil {
 		tpl.CreatedAt = *binding.CreatedAt
@@ -264,43 +194,18 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 	return tpl
 }
 
-// ContainerImageExport 是 ContainerImage 的导出结构，包含 ID，不含时间字段与 pull_policy
-// （拉取策略属于运行环境配置，不随资产导出）。
-type ContainerImageExport struct {
-	ID          int64  `json:"id,string"`
-	Name        string `json:"name"`
-	FullName    string `json:"full_name"`
-	Description string `json:"description"`
-	Size        int64  `json:"size"`
-}
-
-func (t *ContainerImage) ToExport() *ContainerImageExport {
-	if t == nil {
-		return nil
-	}
-	return &ContainerImageExport{
-		ID:          t.ID,
-		Name:        t.Name,
-		FullName:    t.FullName,
-		Description: t.Description,
-		Size:        t.Size,
-	}
-}
-
 // ContainerTemplateBundle 是容器模板的导出 / 导入格式，也是 script.json 与 workflow.json
 // 里容器资产部分的结构本身 —— 三处的字段名与语义完全一致，统一在这一处定义：
 //
-//	container_images               []ContainerImageExport
 //	container_template_specs       []ContainerTemplateSpec
 //	container_template_definitions []ContainerTemplateDefinition
 //
-// 三者通过主键互相引用（definition.spec_id → spec.id，definition.image_id → image.id，
-// 而 definition.id 就是脚本 container_template_id 引用的值），因此：
+// 两者通过主键互相引用（definition.spec_id → spec.id），而 definition.id 就是脚本
+// container_template_id 引用的值；镜像名与拉取策略直接挂在绑定行上，因此：
 //   - 导出不写 created_at / updated_at（主键才是引用键，时间戳只会产生无意义的 git diff）；
-//   - 导入按主键 upsert，顺序固定为「镜像 → 运行配置 → 绑定行」
+//   - 导入按主键 upsert，顺序固定为「运行配置 → 绑定行」
 //     （实现见 exportcodec.InstallContainerAssets，script / workflow 复用同一份逻辑）。
 type ContainerTemplateBundle struct {
-	ContainerImages              []ContainerImageExport        `json:"container_images"`
 	ContainerTemplateSpecs       []ContainerTemplateSpec       `json:"container_template_specs"`
 	ContainerTemplateDefinitions []ContainerTemplateDefinition `json:"container_template_definitions"`
 }
@@ -308,32 +213,29 @@ type ContainerTemplateBundle struct {
 // NewContainerTemplateBundle 返回空 bundle（切片非 nil，序列化为 [] 而不是 null）。
 func NewContainerTemplateBundle() *ContainerTemplateBundle {
 	return &ContainerTemplateBundle{
-		ContainerImages:              make([]ContainerImageExport, 0),
 		ContainerTemplateSpecs:       make([]ContainerTemplateSpec, 0),
 		ContainerTemplateDefinitions: make([]ContainerTemplateDefinition, 0),
 	}
 }
 
-// ToExport 把对外读模型（ContainerTemplate = definition + spec + image）还原成统一平铺格式。
-// spec / image 为 nil 时用读模型自身的字段重建（缺完整元数据时按主键再去库里取即可）。
-func (t *ContainerTemplate) ToExport(spec *ContainerTemplateSpec, image *ContainerImage) *ContainerTemplateBundle {
+// ToExport 把对外读模型（ContainerTemplate = definition + spec）还原成统一平铺格式。
+// spec 为 nil 时用读模型自身的字段重建（缺完整元数据时按主键再去库里取即可）。
+func (t *ContainerTemplate) ToExport(spec *ContainerTemplateSpec) *ContainerTemplateBundle {
 	if t == nil {
 		return nil
 	}
 	if spec == nil {
 		spec = t.ToTemplateSpec()
 	}
-	if image == nil {
-		image = t.Image
-	}
 
 	bundle := NewContainerTemplateBundle()
 	// 导出格式不含时间字段与 is_default（默认模板是本地状态，不随资产导出），
-	// 但展示名属于资产本身，必须原样带出，否则导入后展示名会丢失。
+	// 但展示名、镜像名与拉取策略属于资产本身，必须原样带出。
 	bundle.ContainerTemplateDefinitions = append(bundle.ContainerTemplateDefinitions, ContainerTemplateDefinition{
 		ID:          t.ID,
 		SpecID:      t.SpecID,
-		ImageID:     t.ImageID,
+		ImageName:   t.ImageName,
+		PullPolicy:  t.PullPolicy,
 		DisplayName: t.DisplayName,
 	})
 	if spec != nil {
@@ -342,9 +244,6 @@ func (t *ContainerTemplate) ToExport(spec *ContainerTemplateSpec, image *Contain
 		exportedSpec.CreatedAt = nil
 		exportedSpec.UpdatedAt = nil
 		bundle.ContainerTemplateSpecs = append(bundle.ContainerTemplateSpecs, exportedSpec)
-	}
-	if image != nil {
-		bundle.ContainerImages = append(bundle.ContainerImages, *image.ToExport())
 	}
 	return bundle
 }
@@ -571,8 +470,8 @@ type ContainerSpec struct {
 	User                 string
 	Labels               map[string]string
 
-	// PullPolicy 来自镜像目录（ContainerImage.PullPolicy），取值 Always / IfNotPresent / Never，
-	// 空值按 IfNotPresent 处理。落地方式由 runtime 决定：
+	// PullPolicy 来自容器模板绑定行（ContainerTemplateDefinition.PullPolicy），
+	// 取值 Always / IfNotPresent / Never，空值按 IfNotPresent 处理。落地方式由 runtime 决定：
 	// docker 没有 imagePullPolicy 概念，在 create 前按策略决定是否 pull；
 	// kubernetes 直接映射为 container.imagePullPolicy。
 	PullPolicy string

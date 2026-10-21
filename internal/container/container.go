@@ -373,7 +373,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(repository.NewLLMRepository))
 	must(container.Provide(repository.NewAISummaryRepository))
 	must(container.Provide(manager.NewDefaultContainerRuntimeResolver))
-	must(container.Provide(manager.NewImageManager))
 	must(container.Provide(manager.NewContainerManager))
 	must(container.Provide(func(mgr *manager.ContainerManager) dagruntime.NodeContainerOperator {
 		return mgr
@@ -990,7 +989,6 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.AnalysisNode{},
 		&types.AnalysisEdge{},
 		&types.AuthToken{},
-		&types.ContainerImage{},
 		&types.ContainerTemplateSpec{},
 		&types.ContainerTemplateDefinition{},
 		&types.AppSession{},
@@ -1014,6 +1012,12 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 	// &types.RSSSource{},
 	); err != nil {
 		return nil, fmt.Errorf("failed to auto migrate tables: %w", err)
+	}
+
+	// 旧版本把镜像单独存在 go_container_image，绑定行只保存 image_id；
+	// 现在镜像名与拉取策略直接存在绑定行上，这里做一次性数据迁移并删除旧结构。
+	if err := migrateLegacyContainerImages(db); err != nil {
+		return nil, fmt.Errorf("failed to migrate legacy container images: %w", err)
 	}
 
 	// if err := migratePipelineComponentsContainerIDType(db, driver); err != nil {

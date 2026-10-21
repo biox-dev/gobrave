@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -43,10 +42,6 @@ type appSessionIDBody struct {
 
 type appSessionIDQuery struct {
 	ID int64 `form:"id" binding:"required"`
-}
-
-type containerImagePageRequest struct {
-	types.Pagination
 }
 
 type containerTemplatePageRequest struct {
@@ -119,223 +114,12 @@ func NewContainerHandler(containerService interfaces.ContainerService,
 	}
 }
 
-// CreateContainerImage godoc
-// @Summary      创建容器镜像
-// @Description  创建 ContainerImage 记录
-// @Tags         容器管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      types.ContainerImage  true  "请求参数"
-// @Success      200      {object}  types.ContainerImage
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /container/image/create [post]
-func (h *ContainerHandler) CreateContainerImage(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req types.ContainerImage
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	if err := h.containerService.CreateContainerImage(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to create container image")
-		return
-	}
-
-	c.JSON(http.StatusOK, req)
-}
-
-// GetContainerImage godoc
-// @Summary      获取容器镜像
-// @Description  按 ID 查询 ContainerImage 详情
-// @Tags         容器管理
-// @Produce      json
-// @Param        id       query     integer               true  "主键 ID"
-// @Success      200      {object}  types.ContainerImage
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /container/image/get [get]
-func (h *ContainerHandler) GetContainerImage(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req idQuery
-	if err := c.ShouldBindQuery(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
-		return
-	}
-
-	item, err := h.containerService.GetContainerImageByID(c.Request.Context(), req.ID)
-	if err != nil {
-		handleDataError(c, err, "failed to get container image")
-		return
-	}
-
-	c.JSON(http.StatusOK, item)
-}
-
-// UpdateContainerImage godoc
-// @Summary      更新容器镜像
-// @Description  按 ID 更新 ContainerImage 记录
-// @Tags         容器管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      types.ContainerImage  true  "请求参数"
-// @Success      200      {object}  map[string]string
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /container/image/update [post]
-func (h *ContainerHandler) UpdateContainerImage(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req types.ContainerImage
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-	if req.ID == 0 {
-		c.Error(errors.NewValidationError("id is required"))
-		return
-	}
-
-	if err := h.containerService.UpdateContainerImage(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to update container image")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "container image updated successfully"})
-}
-
-// DeleteContainerImage godoc
-// @Summary      删除容器镜像
-// @Description  按 ID 删除 ContainerImage 记录；仍被容器模板（配置 × 镜像 绑定行）引用时返回 409 并给出引用清单。
-// @Tags         容器管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      idBody               true  "请求参数"
-// @Success      200      {object}  map[string]string
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      409      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /container/image/delete [post]
-func (h *ContainerHandler) DeleteContainerImage(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req idBody
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	// 镜像生命周期受绑定行约束：仍被模板引用时不允许删除。
-	usage, err := h.containerService.GetContainerImageUsage(c.Request.Context(), req.ID)
-	if err != nil {
-		handleDataError(c, err, "failed to get container image")
-		return
-	}
-	if usage != nil && usage.RefCount > 0 {
-		details, _ := json.Marshal(usage)
-		c.Error(errors.NewConflictError("container image is still referenced by container templates").WithDetails(string(details)))
-		return
-	}
-
-	if err := h.containerService.DeleteContainerImage(c.Request.Context(), req.ID); err != nil {
-		handleDataError(c, err, "failed to delete container image")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "container image deleted successfully"})
-}
-
-// ListContainerImage godoc
-// @Summary      容器镜像列表
-// @Description  查询 ContainerImage 列表，每项带 usage（引用数 + 引用的模板绑定行）
-// @Tags         容器管理
-// @Produce      json
-// @Success      200      {array}   types.ContainerImageItem
-// @Failure      401      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /container/image/list [get]
-func (h *ContainerHandler) ListContainerImage(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	items, err := h.containerService.ListContainerImage(c.Request.Context())
-	if err != nil {
-		handleDataError(c, err, "failed to list container image")
-		return
-	}
-
-	c.JSON(http.StatusOK, items)
-}
-
-// PageContainerImage godoc
-// @Summary      分页查询容器镜像
-// @Description  分页查询 ContainerImage 列表，每项带 usage（引用数 + 引用的模板绑定行）
-// @Tags         容器管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      containerImagePageRequest  true  "分页请求参数"
-// @Success      200      {object}  map[string]interface{}
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /container/image/list-by-page [post]
-func (h *ContainerHandler) PageContainerImage(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req containerImagePageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	result, err := h.containerService.PageContainerImage(c.Request.Context(), &req.Pagination)
-	if err != nil {
-		handleDataError(c, err, "failed to page container image")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data":      result.Data,
-		"total":     result.Total,
-		"page":      result.Page,
-		"page_size": result.PageSize,
-	})
-}
-
 // CreateContainerTemplate godoc
 // @Summary      创建容器模板
 // @Description  创建对外容器模板（ContainerTemplate = 共享运行配置 ContainerTemplateSpec × 镜像绑定 ContainerTemplateDefinition）。
 // @Description  spec_id 为空：用请求体里的运行配置字段新建配置，再建第一条绑定；
-// @Description  spec_id 非空：复用该配置，只在它下面新增一个 image_id 绑定（同一套配置挂多个镜像）。
-// @Description  返回组装后的读模型，含 spec_id / image_id / image。
+// @Description  spec_id 非空：复用该配置，只在它下面新增一个镜像绑定（同一套配置挂多个镜像）。
+// @Description  返回组装后的读模型，含 spec_id / image_name / pull_policy。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
@@ -357,13 +141,17 @@ func (h *ContainerHandler) CreateContainerTemplate(c *gin.Context) {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
+	if strings.TrimSpace(req.ImageName) == "" {
+		c.Error(errors.NewValidationError("image_name is required"))
+		return
+	}
 
 	if err := h.containerService.CreateContainerTemplate(c.Request.Context(), &req); err != nil {
 		handleDataError(c, err, "failed to create container template")
 		return
 	}
 
-	// 重新读取组装后的读模型，让调用方直接看到生效的 spec_id / image_id / image。
+	// 重新读取组装后的读模型，让调用方直接看到生效的 spec_id / image_name / pull_policy。
 	item, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ID)
 	if err != nil {
 		handleDataError(c, err, "failed to get container template")
@@ -409,7 +197,7 @@ func (h *ContainerHandler) GetContainerTemplate(c *gin.Context) {
 // UpdateContainerTemplate godoc
 // @Summary      更新容器模板
 // @Description  按绑定行 ID（ContainerTemplateDefinition.ID）更新：请求体里的运行配置字段写入绑行指向的 ContainerTemplateSpec，
-// @Description  image_id 与包目录字段写入绑定行本体。返回组装后的读模型。
+// @Description  image_name / pull_policy 与包目录字段写入绑定行本体。返回组装后的读模型。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
@@ -433,6 +221,10 @@ func (h *ContainerHandler) UpdateContainerTemplate(c *gin.Context) {
 	}
 	if req.ID == 0 {
 		c.Error(errors.NewValidationError("id is required"))
+		return
+	}
+	if strings.TrimSpace(req.ImageName) == "" {
+		c.Error(errors.NewValidationError("image_name is required"))
 		return
 	}
 
@@ -870,8 +662,8 @@ func (h *ContainerHandler) ListContainerTemplateBySpec(c *gin.Context) {
 // ExportContainerTemplate godoc
 // @Summary      导出容器模板
 // @Description  导出单条容器模板为统一的平铺格式（与 script.json / workflow.json 完全相同）：
-// @Description  container_images / container_template_specs / container_template_definitions 三个列表，
-// @Description  三者通过主键互相引用（definition.spec_id / image_id），且都不含时间字段。
+// @Description  container_template_specs / container_template_definitions 两个列表，
+// @Description  两者通过主键互相引用（definition.spec_id），且都不含时间字段。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
@@ -910,9 +702,9 @@ func (h *ContainerHandler) ExportContainerTemplate(c *gin.Context) {
 // ImportContainerTemplate godoc
 // @Summary      导入容器模板
 // @Description  导入统一平铺格式（与 /container/template/export、script.json / workflow.json 同构）：
-// @Description  container_images / container_template_specs / container_template_definitions。
-// @Description  三张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为
-// @Description  「镜像 → 运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。
+// @Description  container_template_specs / container_template_definitions。
+// @Description  两张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为
+// @Description  「运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
@@ -934,8 +726,8 @@ func (h *ContainerHandler) ImportContainerTemplate(c *gin.Context) {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
 	}
-	if len(req.ContainerImages) == 0 && len(req.ContainerTemplateSpecs) == 0 && len(req.ContainerTemplateDefinitions) == 0 {
-		c.Error(errors.NewValidationError("container_images / container_template_specs / container_template_definitions are all empty"))
+	if len(req.ContainerTemplateSpecs) == 0 && len(req.ContainerTemplateDefinitions) == 0 {
+		c.Error(errors.NewValidationError("container_template_specs / container_template_definitions are all empty"))
 		return
 	}
 

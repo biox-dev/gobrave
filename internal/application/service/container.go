@@ -27,157 +27,6 @@ func NewContainerService(containerRepo interfaces.ContainerRepository, container
 	return &containerService{containerRepo: containerRepo, containerMgr: containerMgr, cfg: config}
 }
 
-func (s *containerService) CreateContainerImage(ctx context.Context, item *types.ContainerImage) error {
-	return s.containerRepo.CreateContainerImage(ctx, item)
-}
-
-func (s *containerService) GetContainerImageByID(ctx context.Context, id int64) (*types.ContainerImage, error) {
-	return s.containerRepo.GetContainerImageByID(ctx, id)
-}
-
-func (s *containerService) UpdateContainerImage(ctx context.Context, item *types.ContainerImage) error {
-	if _, err := s.containerRepo.GetContainerImageByID(ctx, item.ID); err != nil {
-		return err
-	}
-	return s.containerRepo.UpdateContainerImage(ctx, item)
-}
-
-func (s *containerService) DeleteContainerImage(ctx context.Context, id int64) error {
-	if _, err := s.containerRepo.GetContainerImageByID(ctx, id); err != nil {
-		return err
-	}
-	// 被绑定行引用的镜像不允许删除；handler 已提前拦 409，这里做并发下的兜底校验。
-	usages, err := s.buildImageUsageMap(ctx, []int64{id})
-	if err != nil {
-		return err
-	}
-	if usage, ok := usages[id]; ok && usage.RefCount > 0 {
-		return apperrors.NewConflictError(
-			fmt.Sprintf("container image %d is referenced by %d container template(s)", id, usage.RefCount))
-	}
-	return s.containerRepo.DeleteContainerImage(ctx, id)
-}
-
-// GetContainerImageUsage 返回镜像的绑定引用情况，未绑定时返回空引用集而不是错误。
-func (s *containerService) GetContainerImageUsage(ctx context.Context, imageID int64) (*types.ContainerImageUsage, error) {
-	if _, err := s.containerRepo.GetContainerImageByID(ctx, imageID); err != nil {
-		return nil, err
-	}
-	return s.imageUsage(ctx, imageID)
-}
-
-func (s *containerService) ListContainerImage(ctx context.Context) ([]*types.ContainerImageItem, error) {
-	images, err := s.containerRepo.ListContainerImage(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s.attachImageUsage(ctx, images)
-}
-
-func (s *containerService) PageContainerImage(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error) {
-	if pagination == nil {
-		pagination = &types.Pagination{}
-	}
-
-	images, total, err := s.containerRepo.PageContainerImage(ctx, pagination)
-	if err != nil {
-		return nil, err
-	}
-
-	items, err := s.attachImageUsage(ctx, images)
-	if err != nil {
-		return nil, err
-	}
-
-	return types.NewPageResult(total, pagination, items), nil
-}
-
-// imageUsage 组装单个镜像的引用信息。
-func (s *containerService) imageUsage(ctx context.Context, imageID int64) (*types.ContainerImageUsage, error) {
-	usages, err := s.buildImageUsageMap(ctx, []int64{imageID})
-	if err != nil {
-		return nil, err
-	}
-	if usage, ok := usages[imageID]; ok {
-		return usage, nil
-	}
-	return &types.ContainerImageUsage{ImageID: imageID, Templates: []types.ContainerImageRef{}}, nil
-}
-
-// attachImageUsage 给镜像列表补上绑定引用信息（引用数 + 引用的模板）。
-func (s *containerService) attachImageUsage(ctx context.Context, images []*types.ContainerImage) ([]*types.ContainerImageItem, error) {
-	imageIDs := make([]int64, 0, len(images))
-	for _, image := range images {
-		imageIDs = append(imageIDs, image.ID)
-	}
-
-	usages, err := s.buildImageUsageMap(ctx, imageIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	items := make([]*types.ContainerImageItem, 0, len(images))
-	for _, image := range images {
-		usage, ok := usages[image.ID]
-		if !ok {
-			usage = &types.ContainerImageUsage{ImageID: image.ID, Templates: []types.ContainerImageRef{}}
-		}
-		items = append(items, &types.ContainerImageItem{ContainerImage: image, Usage: usage})
-	}
-	return items, nil
-}
-
-// buildImageUsageMap 按镜像批量组装绑定引用，只返回有引用的镜像。
-// 模板展示名取绑定行的 display_name，为空时回退到共享配置的 name（同配置只查一次）。
-func (s *containerService) buildImageUsageMap(ctx context.Context, imageIDs []int64) (map[int64]*types.ContainerImageUsage, error) {
-	usages := make(map[int64]*types.ContainerImageUsage, len(imageIDs))
-	if len(imageIDs) == 0 {
-		return usages, nil
-	}
-
-	bindings, err := s.containerRepo.ListContainerTemplateDefinitionByImageIDs(ctx, imageIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	specNames := make(map[int64]string, len(bindings))
-	resolved := make(map[int64]bool, len(bindings))
-	for _, binding := range bindings {
-		usage, ok := usages[binding.ImageID]
-		if !ok {
-			usage = &types.ContainerImageUsage{
-				ImageID:   binding.ImageID,
-				Templates: make([]types.ContainerImageRef, 0, 1),
-			}
-			usages[binding.ImageID] = usage
-		}
-
-		name := strings.TrimSpace(binding.DisplayName)
-		if name == "" {
-			if !resolved[binding.SpecID] {
-				spec, err := s.containerRepo.GetContainerTemplateSpecByID(ctx, binding.SpecID)
-				if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
-					return nil, err
-				}
-				if spec != nil {
-					specNames[binding.SpecID] = spec.Name
-				}
-				resolved[binding.SpecID] = true
-			}
-			name = specNames[binding.SpecID]
-		}
-
-		usage.RefCount++
-		usage.Templates = append(usage.Templates, types.ContainerImageRef{
-			DefinitionID: binding.ID,
-			SpecID:       binding.SpecID,
-			TemplateName: name,
-		})
-	}
-
-	return usages, nil
-}
-
 // containerTemplateSpecFromReadModel 从对外模板抽出"怎么跑"的字段，用于写入 go_container_template_spec。
 func containerTemplateSpecFromReadModel(tpl *types.ContainerTemplate) *types.ContainerTemplateSpec {
 	return &types.ContainerTemplateSpec{
@@ -199,8 +48,8 @@ func containerTemplateSpecFromReadModel(tpl *types.ContainerTemplate) *types.Con
 }
 
 // ExportContainerTemplate 导出单条容器模板，返回统一平铺格式（与 script.json / workflow.json 相同）：
-// container_images / container_template_specs / container_template_definitions 各一条。
-// 三个列表都不含时间字段，可直接交给 ImportContainerTemplate 原样导入。
+// container_template_specs / container_template_definitions 各一条。
+// 两个列表都不含时间字段，可直接交给 ImportContainerTemplate 原样导入。
 func (s *containerService) ExportContainerTemplate(ctx context.Context, definitionID int64) (*types.ContainerTemplateBundle, error) {
 	if definitionID == 0 {
 		return nil, fmt.Errorf("container template id is required")
@@ -208,15 +57,26 @@ func (s *containerService) ExportContainerTemplate(ctx context.Context, definiti
 	return exportcodec.ExportContainerAssets(ctx, s.containerRepo, definitionID)
 }
 
-// containerTemplateDefinitionFromReadModel 从对外模板抽出"配置 × 镜像 绑定"字段。
+// containerTemplateDefinitionFromReadModel 从对外模板抽出绑定行字段。
 // 只搬 DisplayName：读模型里的 Name 可能是配置名的回退值，直接写入会把配置名
 // 误固化成展示名，所以 DisplayName 必须由请求显式携带（为空表示回退到配置名）。
 func containerTemplateDefinitionFromReadModel(tpl *types.ContainerTemplate) *types.ContainerTemplateDefinition {
 	return &types.ContainerTemplateDefinition{
 		ID:          tpl.ID,
 		SpecID:      tpl.SpecID,
-		ImageID:     tpl.ImageID,
+		ImageName:   strings.TrimSpace(tpl.ImageName),
+		PullPolicy:  normalizePullPolicy(tpl.PullPolicy),
 		DisplayName: strings.TrimSpace(tpl.DisplayName),
+	}
+}
+
+// normalizePullPolicy 归一化拉取策略：空值与无法识别的值统一按 IfNotPresent 处理。
+func normalizePullPolicy(policy string) string {
+	switch policy {
+	case types.PullPolicyAlways, types.PullPolicyIfNotPresent, types.PullPolicyNever:
+		return policy
+	default:
+		return types.PullPolicyIfNotPresent
 	}
 }
 
@@ -309,7 +169,7 @@ func (s *containerService) createContainerTemplate(ctx context.Context, tpl *typ
 		if err != nil {
 			return err
 		}
-		if err := s.ensureImageNotBound(ctx, tpl.SpecID, tpl.ImageID); err != nil {
+		if err := s.ensureImageNameNotBound(ctx, tpl.SpecID, definition.ImageName); err != nil {
 			return err
 		}
 		if err := s.containerRepo.CreateContainerTemplateDefinition(ctx, definition); err != nil {
@@ -345,15 +205,19 @@ func (s *containerService) createContainerTemplate(ctx context.Context, tpl *typ
 	return nil
 }
 
-// ensureImageNotBound 防止同一套配置重复绑定同一个镜像（DB 里也有唯一索引兜底）。
-func (s *containerService) ensureImageNotBound(ctx context.Context, specID, imageID int64) error {
+// ensureImageNameNotBound 防止同一套配置重复绑定同一个镜像（DB 里也有唯一索引兜底）。
+func (s *containerService) ensureImageNameNotBound(ctx context.Context, specID int64, imageName string) error {
+	imageName = strings.TrimSpace(imageName)
+	if imageName == "" {
+		return fmt.Errorf("image name is required")
+	}
 	bindings, err := s.containerRepo.ListContainerTemplateDefinitionBySpecID(ctx, specID)
 	if err != nil {
 		return err
 	}
 	for _, binding := range bindings {
-		if binding.ImageID == imageID {
-			return fmt.Errorf("image %d is already bound to container template spec %d", imageID, specID)
+		if strings.TrimSpace(binding.ImageName) == imageName {
+			return fmt.Errorf("image %q is already bound to container template spec %d", imageName, specID)
 		}
 	}
 	return nil
@@ -394,7 +258,7 @@ func (s *containerService) CreateContainerTemplate(ctx context.Context, item *ty
 	if item == nil {
 		return fmt.Errorf("container template is required")
 	}
-	if err := s.ensureContainerImageExists(ctx, item.ImageID); err != nil {
+	if err := ensureImageName(item.ImageName); err != nil {
 		return err
 	}
 	return s.createContainerTemplate(ctx, item)
@@ -408,21 +272,16 @@ func (s *containerService) UpdateContainerTemplate(ctx context.Context, item *ty
 	if item == nil || item.ID == 0 {
 		return fmt.Errorf("container template id is required")
 	}
-	if err := s.ensureContainerImageExists(ctx, item.ImageID); err != nil {
+	if err := ensureImageName(item.ImageName); err != nil {
 		return err
 	}
 	return s.updateContainerTemplate(ctx, item)
 }
 
-// ensureContainerImageExists 校验模板/绑定行引用的镜像存在。
-// 镜像缺失统一归一成 gorm.ErrRecordNotFound，调用方（handler）据此返回 400/500，
-// 避免把「悬空 image_id」静默写进库。
-func (s *containerService) ensureContainerImageExists(ctx context.Context, imageID int64) error {
-	if _, err := s.containerRepo.GetContainerImageByID(ctx, imageID); err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			return gorm.ErrRecordNotFound
-		}
-		return err
+// ensureImageName 校验绑定行的镜像名非空（镜像名直接存在绑定行上）。
+func ensureImageName(imageName string) error {
+	if strings.TrimSpace(imageName) == "" {
+		return fmt.Errorf("image name is required")
 	}
 	return nil
 }
@@ -478,10 +337,10 @@ func (s *containerService) PageContainerTemplate(ctx context.Context, pagination
 }
 
 // ImportContainerTemplate 导入统一平铺格式（与 script.json / workflow.json 相同）：
-// container_images / container_template_specs / container_template_definitions。
+// container_template_specs / container_template_definitions。
 //
-// 三张表都按主键 upsert（id 已存在则更新，不存在则按同一 id 新增），顺序固定为
-// 「镜像 → 运行配置 → 绑定行」；导入完成后把所有绑定行去重汇总成返回值。
+// 两张表都按主键 upsert（id 已存在则更新，不存在则按同一 id 新增），顺序固定为
+// 「运行配置 → 绑定行」；导入完成后把所有绑定行去重汇总成返回值。
 // is_default=true 的绑定行额外走互斥的默认标记流程。
 func (s *containerService) ImportContainerTemplate(ctx context.Context, bundle *types.ContainerTemplateBundle) (*types.ContainerTemplateBundle, error) {
 	if bundle == nil {
@@ -489,7 +348,7 @@ func (s *containerService) ImportContainerTemplate(ctx context.Context, bundle *
 	}
 
 	if _, err := exportcodec.InstallContainerAssets(ctx, s.containerRepo,
-		bundle.ContainerImages, bundle.ContainerTemplateSpecs, bundle.ContainerTemplateDefinitions); err != nil {
+		bundle.ContainerTemplateSpecs, bundle.ContainerTemplateDefinitions); err != nil {
 		return nil, err
 	}
 
@@ -575,9 +434,9 @@ func (s *containerService) PageContainerTemplateSpec(ctx context.Context, pagina
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-// CreateContainerTemplateDefinition 新增一条「运行配置 × 镜像」绑定行。
-// 绑定行同时引用运行配置与镜像，因此这里校验镜像存在、且同一套配置下不重复绑定同一镜像
-// （与 CreateContainerTemplate 走同一条不变量，DB 唯一索引 uk_template_spec_image 兜底）。
+// CreateContainerTemplateDefinition 新增一条绑定行。
+// 绑定行带镜像名与拉取策略，因此这里校验镜像名非空、且同一套配置下不重复绑定同一镜像
+// （与 CreateContainerTemplate 走同一条不变量，DB 唯一索引 uk_template_spec_image_name 兜底）。
 func (s *containerService) CreateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {
 	if item == nil {
 		return fmt.Errorf("container template definition is required")
@@ -585,10 +444,12 @@ func (s *containerService) CreateContainerTemplateDefinition(ctx context.Context
 	if item.SpecID == 0 {
 		return fmt.Errorf("container template spec id is required")
 	}
-	if err := s.ensureContainerImageExists(ctx, item.ImageID); err != nil {
+	item.ImageName = strings.TrimSpace(item.ImageName)
+	if err := ensureImageName(item.ImageName); err != nil {
 		return err
 	}
-	if err := s.ensureImageNotBound(ctx, item.SpecID, item.ImageID); err != nil {
+	item.PullPolicy = normalizePullPolicy(item.PullPolicy)
+	if err := s.ensureImageNameNotBound(ctx, item.SpecID, item.ImageName); err != nil {
 		return err
 	}
 	return s.containerRepo.CreateContainerTemplateDefinition(ctx, item)
@@ -599,71 +460,17 @@ func (s *containerService) GetContainerTemplateDefinitionByID(ctx context.Contex
 }
 
 // UpdateContainerTemplateDefinition 按主键更新绑定行（不动 created_at）。
-// 不校验 (spec_id, image_id) 唯一性：更新的是同一行，唯一索引不会冲突。
+// 不校验 (spec_id, image_name) 唯一性：更新的是同一行，唯一索引不会冲突。
 func (s *containerService) UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {
 	if item == nil || item.ID == 0 {
 		return fmt.Errorf("container template definition id is required")
 	}
-	if err := s.ensureContainerImageExists(ctx, item.ImageID); err != nil {
+	item.ImageName = strings.TrimSpace(item.ImageName)
+	if err := ensureImageName(item.ImageName); err != nil {
 		return err
 	}
+	item.PullPolicy = normalizePullPolicy(item.PullPolicy)
 	return s.containerRepo.UpdateContainerTemplateDefinition(ctx, item)
-}
-
-// upsertContainerImage 按主键 upsert 镜像：fallbackID 为绑定行里携带的引用 id。
-// 优先用 export.ID，其次用 fallbackID；都为 0 时视为新建（由 BeforeCreate 分配新 id）。
-// 镜像不存在时按同一 id 新建，保证绑定行的 image_id 不会变成悬空引用。
-func (s *containerService) upsertContainerImage(ctx context.Context, export *types.ContainerImageExport, fallbackID int64) (int64, error) {
-	if export == nil {
-		if fallbackID == 0 {
-			return 0, nil
-		}
-		image, err := s.containerRepo.GetContainerImageByID(ctx, fallbackID)
-		if err != nil {
-			return 0, err
-		}
-		return image.ID, nil
-	}
-
-	// 导出文件不含 pull_policy：新增时按默认值 IfNotPresent，更新时保留库里的原值。
-	pullPolicy := types.PullPolicyIfNotPresent
-
-	id := export.ID
-	if id == 0 {
-		id = fallbackID
-	}
-
-	img := &types.ContainerImage{
-		ID:          id,
-		Name:        export.Name,
-		FullName:    export.FullName,
-		Description: export.Description,
-		Size:        export.Size,
-		PullPolicy:  pullPolicy,
-	}
-
-	if img.ID != 0 {
-		existing, err := s.containerRepo.GetContainerImageByID(ctx, img.ID)
-		switch {
-		case err == nil:
-			if existing != nil && existing.PullPolicy != "" {
-				img.PullPolicy = existing.PullPolicy
-			}
-			if err := s.containerRepo.UpdateContainerImage(ctx, img); err != nil {
-				return 0, err
-			}
-			return img.ID, nil
-		case stderrs.Is(err, gorm.ErrRecordNotFound):
-			// 不存在，继续走新增（沿用导出文件里的主键，保持引用关系）
-		default:
-			return 0, err
-		}
-	}
-
-	if err := s.containerRepo.CreateContainerImage(ctx, img); err != nil {
-		return 0, err
-	}
-	return img.ID, nil
 }
 
 // upsertContainerTemplateSpec 按主键 upsert 共享运行配置：fallbackID 为绑定行里携带的引用 id。

@@ -31,9 +31,11 @@ import (
 // 导出文件格式版本（写入 script.json / workflow.json 顶层 version 字段的取值）。
 const (
 	// VersionV1 是第一版格式：
-	//   - script.json   = script_id + script + container_templates + container_images；
-	//   - workflow.json = workflow_id + workflow + scripts + container_templates + container_images；
-	//     （container_templates / container_images 均为按主键去重后的列表，模板通过 image_id 引用镜像）
+	//   - script.json   = script_id + script + container_template_specs + container_template_definitions；
+	//   - workflow.json = workflow_id + workflow + scripts + container_template_specs
+	//     + container_template_definitions；
+	//     （两个容器资产列表均为按主键去重后的列表，绑定行通过 spec_id 引用运行配置，
+	//     镜像名与拉取策略直接挂在绑定行上）
 	//   - workflow 目录同时把引用的脚本目录快照到 <workflowDir>/script/<scriptID>
 	//     （排除脚本目录自身的 .git）。
 	VersionV1 = "v1"
@@ -228,9 +230,8 @@ type ScriptInstallResult struct {
 	// ScriptID 是落库后的 script_id；InstalledScriptID 是 script 表主键。
 	ScriptID          string
 	InstalledScriptID int64
-	// ContainerImageCount / ContainerTemplateSpecCount / ContainerTemplateDefinitionCount
-	// 分别是本次按主键 upsert 的镜像、运行配置与绑定行数量（导出文件没有对应列表时为 0）。
-	ContainerImageCount              int
+	// ContainerTemplateSpecCount / ContainerTemplateDefinitionCount
+	// 分别是本次按主键 upsert 的运行配置与绑定行数量（导出文件没有对应列表时为 0）。
 	ContainerTemplateSpecCount       int
 	ContainerTemplateDefinitionCount int
 }
@@ -265,9 +266,8 @@ type WorkflowInstallResult struct {
 	InstalledWorkflowID int64
 	// InstalledScriptCount 是本次安装（新增或更新）的 script 行数。
 	InstalledScriptCount int
-	// ContainerImageCount / ContainerTemplateSpecCount / ContainerTemplateDefinitionCount
-	// 分别是本次按主键 upsert 的镜像、运行配置与绑定行数量。
-	ContainerImageCount              int
+	// ContainerTemplateSpecCount / ContainerTemplateDefinitionCount
+	// 分别是本次按主键 upsert 的运行配置与绑定行数量。
 	ContainerTemplateSpecCount       int
 	ContainerTemplateDefinitionCount int
 }

@@ -162,7 +162,8 @@ func (w *ContainerCreateWorker) buildSystemVariables(set *RuntimeVariableSet, in
 // buildPackageVariables 负责 R/Python/Conda 包目录与 Rprofile 路径。
 func (w *ContainerCreateWorker) buildPackageVariables(ctx context.Context, set *RuntimeVariableSet, in *runtimeVariableBuildInput) {
 	baseDir := in.baseDir
-	imageID := in.tpl.ImageID
+	// 包目录按容器模板 ID 隔离（镜像名不再有独立主键，模板 ID 同样一模板一个目录）。
+	templateID := in.tpl.ID
 
 	packageDir := fmt.Sprintf("%s/package", baseDir)
 	profilePath := fmt.Sprintf("%s/Rprofile", packageDir)
@@ -171,13 +172,13 @@ func (w *ContainerCreateWorker) buildPackageVariables(ctx context.Context, set *
 	set.add("PACKAGE_DIR", packageDir)
 	projectDir := fmt.Sprintf("%s/data/%d", in.baseDir, in.ownerCtx.project.ID)
 
-	rPackageDir := fmt.Sprintf("%s/package/R-%d", projectDir, imageID)
+	rPackageDir := fmt.Sprintf("%s/package/R-%d", projectDir, templateID)
 	set.add("R_PACKAGE_DIR", rPackageDir)
 
-	pythonPackageDir := fmt.Sprintf("%s/package/python-%d", projectDir, imageID)
+	pythonPackageDir := fmt.Sprintf("%s/package/python-%d", projectDir, templateID)
 	set.add("PYTHON_PACKAGE_DIR", pythonPackageDir)
 
-	condaPackageDir := fmt.Sprintf("%s/package/conda-%d", projectDir, imageID)
+	condaPackageDir := fmt.Sprintf("%s/package/conda-%d", projectDir, templateID)
 	set.add("CONDA_PACKAGE_DIR", condaPackageDir)
 
 	ensureDirs(ctx, []string{rPackageDir, pythonPackageDir, condaPackageDir})

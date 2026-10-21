@@ -14,7 +14,6 @@ import (
 // 其余方法由嵌入的（nil）接口提供，一旦被测代码走到未实现的方法会直接 panic。
 type fakeBuiltinContainerService struct {
 	interfaces.ContainerService
-	images      map[int64]*types.ContainerImage
 	specs       map[int64]*types.ContainerTemplateSpec
 	definitions map[int64]*types.ContainerTemplateDefinition
 	// defaultID 记录最后一次被设为默认的绑定行（0 表示从未设置）。
@@ -23,31 +22,9 @@ type fakeBuiltinContainerService struct {
 
 func newFakeBuiltinContainerService() *fakeBuiltinContainerService {
 	return &fakeBuiltinContainerService{
-		images:      make(map[int64]*types.ContainerImage),
 		specs:       make(map[int64]*types.ContainerTemplateSpec),
 		definitions: make(map[int64]*types.ContainerTemplateDefinition),
 	}
-}
-
-func (f *fakeBuiltinContainerService) CreateContainerImage(_ context.Context, item *types.ContainerImage) error {
-	clone := *item
-	f.images[item.ID] = &clone
-	return nil
-}
-
-func (f *fakeBuiltinContainerService) GetContainerImageByID(_ context.Context, id int64) (*types.ContainerImage, error) {
-	item, ok := f.images[id]
-	if !ok {
-		return nil, gorm.ErrRecordNotFound
-	}
-	clone := *item
-	return &clone, nil
-}
-
-func (f *fakeBuiltinContainerService) UpdateContainerImage(_ context.Context, item *types.ContainerImage) error {
-	clone := *item
-	f.images[item.ID] = &clone
-	return nil
 }
 
 func (f *fakeBuiltinContainerService) CreateContainerTemplateSpec(_ context.Context, item *types.ContainerTemplateSpec) error {
@@ -111,30 +88,24 @@ func TestInstallBuiltinContainerTemplatesImportsEmbeddedFiles(t *testing.T) {
 	}
 
 	// code-server-quarto-r
-	if image := svc.images[2089923441674162176]; image == nil {
-		t.Fatalf("code-server image not installed: %#v", svc.images)
-	} else if image.Name != "code-server-quarto-r" {
-		t.Fatalf("code-server image name = %q", image.Name)
-	}
 	if spec := svc.specs[2089923556677783552]; spec == nil || spec.Port != 8443 || spec.AppType != "code-server" {
 		t.Fatalf("code-server spec = %#v", spec)
 	}
+	if def := svc.definitions[2089923556677783552]; def == nil || def.ImageName == "" {
+		t.Fatalf("code-server definition = %#v", def)
+	}
 
 	// rstudio-tidyverse-r
-	if image := svc.images[202606160001]; image == nil {
-		t.Fatalf("rstudio image not installed: %#v", svc.images)
-	}
 	definition := svc.definitions[202606160002]
 	if definition == nil {
 		t.Fatalf("rstudio definition not installed: %#v", svc.definitions)
 	}
-	if definition.SpecID != 202606160002 || definition.ImageID != 202606160001 {
-		t.Fatalf("rstudio definition refs = (%d,%d)", definition.SpecID, definition.ImageID)
+	if definition.SpecID != 202606160002 || definition.ImageName != "registry.cn-hangzhou.aliyuncs.com/wybioinfo/rocker-tidyverse-r:4.6.0" {
+		t.Fatalf("rstudio definition = %#v", definition)
 	}
 
-	if len(svc.images) != 2 || len(svc.specs) != 2 || len(svc.definitions) != 2 {
-		t.Fatalf("counts = (%d,%d,%d), want (2,2,2)",
-			len(svc.images), len(svc.specs), len(svc.definitions))
+	if len(svc.specs) != 2 || len(svc.definitions) != 2 {
+		t.Fatalf("counts = (%d,%d), want (2,2)", len(svc.specs), len(svc.definitions))
 	}
 
 	// 只有 rstudio 标记了默认；code-server 的 is_default=false 不应设置默认。
@@ -156,9 +127,8 @@ func TestInstallBuiltinContainerTemplatesIsIdempotent(t *testing.T) {
 		}
 	}
 
-	if len(svc.images) != 2 || len(svc.specs) != 2 || len(svc.definitions) != 2 {
-		t.Fatalf("counts after re-install = (%d,%d,%d), want (2,2,2)",
-			len(svc.images), len(svc.specs), len(svc.definitions))
+	if len(svc.specs) != 2 || len(svc.definitions) != 2 {
+		t.Fatalf("counts after re-install = (%d,%d), want (2,2)", len(svc.specs), len(svc.definitions))
 	}
 }
 

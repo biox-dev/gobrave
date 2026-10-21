@@ -14,7 +14,6 @@ import (
 )
 
 type mockContainerRepo struct {
-	images      map[int64]*types.ContainerImage
 	specs       map[int64]*types.ContainerTemplateSpec
 	definitions map[int64]*types.ContainerTemplateDefinition
 	templates   map[int64]*types.ContainerTemplate
@@ -28,7 +27,6 @@ type mockContainerRepo struct {
 
 func newMockContainerRepo() *mockContainerRepo {
 	return &mockContainerRepo{
-		images:      map[int64]*types.ContainerImage{},
 		specs:       map[int64]*types.ContainerTemplateSpec{},
 		definitions: map[int64]*types.ContainerTemplateDefinition{},
 		templates:   map[int64]*types.ContainerTemplate{},
@@ -49,50 +47,6 @@ func (m *mockContainerRepo) next() int64 {
 func (m *mockContainerRepo) WithTransaction(ctx context.Context, fn func(interfaces.ContainerRepository) error) error {
 	return fn(m)
 }
-
-func (m *mockContainerRepo) CreateContainerImage(ctx context.Context, item *types.ContainerImage) error {
-	if item.ID == 0 {
-		item.ID = m.next()
-	}
-	m.images[item.ID] = item
-	return nil
-}
-
-func (m *mockContainerRepo) GetContainerImageByID(ctx context.Context, id int64) (*types.ContainerImage, error) {
-	item, ok := m.images[id]
-	if !ok {
-		return nil, errors.New("container image not found")
-	}
-	return item, nil
-}
-
-func (m *mockContainerRepo) UpdateContainerImage(ctx context.Context, item *types.ContainerImage) error {
-	m.images[item.ID] = item
-	return nil
-}
-
-func (m *mockContainerRepo) DeleteContainerImage(ctx context.Context, id int64) error {
-	delete(m.images, id)
-	return nil
-}
-
-func (m *mockContainerRepo) ListContainerImage(ctx context.Context) ([]*types.ContainerImage, error) {
-	items := make([]*types.ContainerImage, 0, len(m.images))
-	for _, v := range m.images {
-		items = append(items, v)
-	}
-	return items, nil
-}
-
-func (m *mockContainerRepo) PageContainerImage(ctx context.Context, pagination *types.Pagination) ([]*types.ContainerImage, int64, error) {
-	items, err := m.ListContainerImage(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
-	return items, int64(len(items)), nil
-}
-
-// ===== 容器模板：共享运行配置 =====
 
 func (m *mockContainerRepo) CreateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error {
 	if item.ID == 0 {
@@ -141,7 +95,7 @@ func (m *mockContainerRepo) PageContainerTemplateSpec(ctx context.Context, pagin
 // refreshTemplateCache 在绑定行变动后同步维护读模型缓存，
 // 这样既有测试（直接写 repo.templates）与新链路（写 definition）都能被 GetContainerTemplateByID 读到。
 func (m *mockContainerRepo) refreshTemplateCache(item *types.ContainerTemplateDefinition) {
-	m.templates[item.ID] = types.NewContainerTemplate(m.specs[item.SpecID], item, m.images[item.ImageID])
+	m.templates[item.ID] = types.NewContainerTemplate(m.specs[item.SpecID], item)
 }
 
 func (m *mockContainerRepo) CreateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {
@@ -204,21 +158,6 @@ func (m *mockContainerRepo) ListContainerTemplateDefinitionBySpecID(ctx context.
 	return items, nil
 }
 
-func (m *mockContainerRepo) ListContainerTemplateDefinitionByImageIDs(ctx context.Context, imageIDs []int64) ([]*types.ContainerTemplateDefinition, error) {
-	wanted := make(map[int64]struct{}, len(imageIDs))
-	for _, id := range imageIDs {
-		wanted[id] = struct{}{}
-	}
-
-	items := make([]*types.ContainerTemplateDefinition, 0, len(m.definitions))
-	for _, v := range m.definitions {
-		if _, ok := wanted[v.ImageID]; ok {
-			items = append(items, v)
-		}
-	}
-	return items, nil
-}
-
 // ===== 容器模板：对外读模型 =====
 
 func (m *mockContainerRepo) GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error) {
@@ -229,7 +168,7 @@ func (m *mockContainerRepo) GetContainerTemplateByID(ctx context.Context, id int
 	if !ok {
 		return nil, errors.New("container template not found")
 	}
-	return types.NewContainerTemplate(m.specs[definition.SpecID], definition, m.images[definition.ImageID]), nil
+	return types.NewContainerTemplate(m.specs[definition.SpecID], definition), nil
 }
 
 func (m *mockContainerRepo) ListContainerTemplate(ctx context.Context) ([]*types.ContainerTemplate, error) {
@@ -668,7 +607,7 @@ func newTestManagerWithWorker(repo *mockContainerRepo, rt *dockerMockRuntime) (*
 	reg := containerruntime.NewRegistry()
 	reg.Register("docker", rt)
 	projectRepo := &mockProjectRepo{projects: repo.projects}
-	mgr := NewContainerManager(repo, nil, projectRepo, nil, reg, nil, NewDefaultContainerRuntimeResolver(), nil, nil)
+	mgr := NewContainerManager(repo, nil, projectRepo, nil, reg, nil, NewDefaultContainerRuntimeResolver(), nil)
 	// The worker performs the create transition through the manager, so it must be
 	// given the same one instead of a nil dependency.
 	worker := NewContainerCreateWorker(repo, projectRepo, nil, nil, reg, NewDefaultContainerRuntimeResolver(), mgr, nil)
@@ -685,7 +624,7 @@ func TestContainerManager_QueueStatus_PendingIncludesCreateAndStart(t *testing.T
 		&types.OutboxEvent{Type: OutboxEventTypeStartRequest, Status: "sent"},
 	)
 
-	mgr := NewContainerManager(repo, nil, nil, nil, nil, nil, NewDefaultContainerRuntimeResolver(), nil, nil)
+	mgr := NewContainerManager(repo, nil, nil, nil, nil, nil, NewDefaultContainerRuntimeResolver(), nil)
 	status, err := mgr.QueueStatus(ctx)
 	if err != nil {
 		t.Fatalf("QueueStatus failed: %v", err)
@@ -698,8 +637,7 @@ func TestContainerManager_QueueStatus_PendingIncludesCreateAndStart(t *testing.T
 
 func mustSeedTemplate(t *testing.T, repo *mockContainerRepo) {
 	t.Helper()
-	repo.images[1] = &types.ContainerImage{ID: 1, FullName: "docker.io/library/busybox:latest"}
-	repo.templates[10] = &types.ContainerTemplate{ID: 10, ImageID: 1, Command: "echo ok"}
+	repo.templates[10] = &types.ContainerTemplate{ID: 10, ImageName: "docker.io/library/busybox:latest", Command: "echo ok"}
 }
 
 func TestContainerManager_CreateByTemplate_StaysCreatingUntilStartedEvent(t *testing.T) {
@@ -810,13 +748,12 @@ func TestContainerManager_CreateByTemplate_ResolvesEnvAndVolumes(t *testing.T) {
 	t.Setenv("R_PROFILE", "/home/rstudio/.Rprofile")
 
 	repo := newMockContainerRepo()
-	repo.images[1] = &types.ContainerImage{ID: 1, FullName: "docker.io/library/busybox:latest"}
 	repo.templates[10] = &types.ContainerTemplate{
-		ID:      10,
-		ImageID: 1,
-		Command: "bash -lc echo ok",
-		Env:     datatypes.JSON([]byte(`{"USERID":"$USERID","GROUPID":"$GROUPID","R_SCRIPT":"$SCRIPT_FILE","R_LIBS_USER":"$R_PACKAGE_DIR","DISABLE_AUTH":true,"R_USER_WORKDIR":"$OUTPUT_DIR"}`)),
-		Mounts:  datatypes.JSON([]byte(`[{"source":"/home/rstudio/.Rprofile","target":"/home/rstudio/.Rprofile","mode":"rw"}]`)),
+		ID:        10,
+		ImageName: "docker.io/library/busybox:latest",
+		Command:   "bash -lc echo ok",
+		Env:       datatypes.JSON([]byte(`{"USERID":"$USERID","GROUPID":"$GROUPID","R_SCRIPT":"$SCRIPT_FILE","R_LIBS_USER":"$R_PACKAGE_DIR","DISABLE_AUTH":true,"R_USER_WORKDIR":"$OUTPUT_DIR"}`)),
+		Mounts:    datatypes.JSON([]byte(`[{"source":"/home/rstudio/.Rprofile","target":"/home/rstudio/.Rprofile","mode":"rw"}]`)),
 	}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-9"}
@@ -863,12 +800,11 @@ func TestContainerManager_CreateByTemplate_UsesAppSessionContextVariables(t *tes
 	t.Setenv("USERID", "env-user")
 
 	repo := newMockContainerRepo()
-	repo.images[1] = &types.ContainerImage{ID: 1, FullName: "docker.io/library/busybox:latest"}
 	repo.templates[10] = &types.ContainerTemplate{
-		ID:      10,
-		ImageID: 1,
-		Command: "bash -lc echo ok",
-		Env:     datatypes.JSON([]byte(`{"USERID":"$USERID","SYS_USER_ID":"$SYS_USER_ID","APP_SESSION_ID":"$APP_SESSION_ID"}`)),
+		ID:        10,
+		ImageName: "docker.io/library/busybox:latest",
+		Command:   "bash -lc echo ok",
+		Env:       datatypes.JSON([]byte(`{"USERID":"$USERID","SYS_USER_ID":"$SYS_USER_ID","APP_SESSION_ID":"$APP_SESSION_ID"}`)),
 	}
 	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: 1, ProjectID: 1}
 
@@ -903,12 +839,11 @@ func TestContainerManager_CreateByTemplate_AppSessionMergesProjectVolumes(t *tes
 	ctx := context.Background()
 
 	repo := newMockContainerRepo()
-	repo.images[1] = &types.ContainerImage{ID: 1, FullName: "docker.io/library/busybox:latest"}
 	repo.templates[10] = &types.ContainerTemplate{
-		ID:      10,
-		ImageID: 1,
-		Command: "bash -lc echo ok",
-		Mounts:  datatypes.JSON([]byte(`[{"source":"/template/src","target":"/template/dst","mode":"ro"}]`)),
+		ID:        10,
+		ImageName: "docker.io/library/busybox:latest",
+		Command:   "bash -lc echo ok",
+		Mounts:    datatypes.JSON([]byte(`[{"source":"/template/src","target":"/template/dst","mode":"ro"}]`)),
 	}
 	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: 1, ProjectID: 002}
 	repo.projects[2] = &types.Project{
@@ -945,11 +880,10 @@ func TestContainerManager_CreateByTemplate_DagNodeUsesTaskCommand(t *testing.T) 
 	t.Setenv("LOG_PATH", "/tmp/dag-task.log")
 
 	repo := newMockContainerRepo()
-	repo.images[1] = &types.ContainerImage{ID: 1, FullName: "docker.io/library/busybox:latest"}
 	repo.templates[10] = &types.ContainerTemplate{
-		ID:      10,
-		ImageID: 1,
-		Command: "sleep infinity",
+		ID:        10,
+		ImageName: "docker.io/library/busybox:latest",
+		Command:   "sleep infinity",
 	}
 
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-dag"}
@@ -984,11 +918,10 @@ func TestContainerManager_CreateByTemplate_ParsesSchedulingConstraint(t *testing
 	ctx := context.Background()
 
 	repo := newMockContainerRepo()
-	repo.images[1] = &types.ContainerImage{ID: 1, FullName: "docker.io/library/busybox:latest"}
 	repo.templates[10] = &types.ContainerTemplate{
-		ID:      10,
-		ImageID: 1,
-		Command: "echo ok",
+		ID:        10,
+		ImageName: "docker.io/library/busybox:latest",
+		Command:   "echo ok",
 		SchedulingConstraint: datatypes.JSON([]byte(`{
 			"constraints": [
 				{"type":"node","key":"hostname","operator":"In","values":["worker01","worker02"]},
