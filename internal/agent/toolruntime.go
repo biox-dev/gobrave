@@ -50,7 +50,7 @@ type toolPermissionRequester struct {
 // RequestPermission 实现 tool.PermissionRequester：把工具授权请求映射为 Operation
 // 并交由 Runtime 决策；出错一律按拒绝处理（安全默认）。
 func (r toolPermissionRequester) RequestPermission(ctx context.Context, req tool.PermissionRequest) bool {
-	decision, err := r.rt.RequestPermission(ctx, r.userID, operationFromToolPermission(req))
+	decision, err := r.rt.RequestPermission(ctx, r.userID, operationFromToolPermission(ctx, req))
 	return err == nil && decision == DecisionAllow
 }
 
@@ -58,8 +58,12 @@ func (r toolPermissionRequester) RequestPermission(ctx context.Context, req tool
 //
 // Description 走 Operation 的一等字段（而非 Metadata），便于 UI 统一展示“这个操作
 // 到底要做什么”；diff / file_path 仍放在 Metadata（仅写文件时才有，供批准前查看改动）。
-func operationFromToolPermission(req tool.PermissionRequest) Operation {
+func operationFromToolPermission(ctx context.Context, req tool.PermissionRequest) Operation {
 	meta := map[string]any{"tool": req.ToolName}
+	// 记录发起权限请求的工具调用 ID，供后端重启后的精确重放（见 PermissionManager.FindByToolCall）。
+	if callID := ToolCallIDFromContext(ctx); callID != "" {
+		meta[OperationMetadataToolCallID] = callID
+	}
 	diff, filePath := diffFromParams(req.Params)
 	if diff != "" {
 		meta["diff"] = diff

@@ -1449,6 +1449,42 @@ func (h *AgentHandler) CancelTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
 }
 
+// ResumeTask godoc
+// @Summary      从持久化检查点继续执行 Agent 任务
+// @Description  用于后端重启 / 进程崩溃导致执行循环退出、但任务仍有可恢复检查点的场景。
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      taskIDBody  true  "任务 ID"
+// @Success      200      {object}  gin.H
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/task/resume [post]
+func (h *AgentHandler) ResumeTask(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var body taskIDBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	id, err := parseAgentID(body.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
+	if err := h.svc.ResumeTask(c.Request.Context(), id); err != nil {
+		handleAgentError(c, err, "failed to resume agent task")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
+}
+
 // attachTaskStream 订阅任务事件并推送到指定用户的 WS。
 //
 // 事件通过 AgentService.Subscribe（EventBus）分发，WS 只是通知层；
@@ -1527,7 +1563,8 @@ func handleAgentError(c *gin.Context, err error, internalMsg string) {
 		stderrs.Is(err, agent.ErrInvalidPermissionTransition),
 		stderrs.Is(err, agent.ErrInvalidQuestionTransition),
 		stderrs.Is(err, agent.ErrUnknownQuestionID),
-		stderrs.Is(err, agent.ErrTaskAlreadyRunning):
+		stderrs.Is(err, agent.ErrTaskAlreadyRunning),
+		stderrs.Is(err, agent.ErrTaskNotResumable):
 		c.Error(errors.NewConflictError(err.Error()))
 	default:
 		c.Error(errors.NewInternalServerError(internalMsg).WithDetails(err.Error()))

@@ -16,6 +16,9 @@ type TaskRepository interface {
 	Create(ctx context.Context, task *Task) error
 	Get(ctx context.Context, id int64) (*Task, error)
 	Update(ctx context.Context, task *Task) error
+	// UpdateResumeState 只更新可恢复执行检查点，避免与状态迁移并发时互相覆盖。
+	// state 为 nil 表示清理检查点。
+	UpdateResumeState(ctx context.Context, id int64, state *TaskResumeState) error
 	ListByStatus(ctx context.Context, statuses ...TaskStatus) ([]*Task, error)
 	// Page 分页查询任务（按 CreatedAt 升序）；statuses 为空表示全部状态。
 	Page(ctx context.Context, offset, limit int, statuses ...TaskStatus) ([]*Task, int64, error)
@@ -27,6 +30,9 @@ type PermissionRepository interface {
 	Get(ctx context.Context, id int64) (*PermissionRequest, error)
 	Update(ctx context.Context, permission *PermissionRequest) error
 	ListPendingByTask(ctx context.Context, taskID int64) ([]*PermissionRequest, error)
+	// ListByTask 返回某任务的全部权限请求（按创建时间倒序）。
+	// 恢复执行时据此把已批准的权限与待执行的工具调用精确配对。
+	ListByTask(ctx context.Context, taskID int64) ([]*PermissionRequest, error)
 	// Page 分页查询权限请求（按 CreatedAt 升序）；taskID 为 0 表示全部任务，statuses 为空表示全部状态。
 	Page(ctx context.Context, offset, limit int, taskID int64, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error)
 }
@@ -37,6 +43,8 @@ type QuestionRepository interface {
 	Get(ctx context.Context, id int64) (*QuestionRequest, error)
 	Update(ctx context.Context, question *QuestionRequest) error
 	ListPendingByTask(ctx context.Context, taskID int64) ([]*QuestionRequest, error)
+	// ListByTask 返回某任务的全部提问请求（按创建时间倒序）。
+	ListByTask(ctx context.Context, taskID int64) ([]*QuestionRequest, error)
 	// Page 分页查询提问请求（按 CreatedAt 升序）；taskID 为 0 表示全部任务，statuses 为空表示全部状态。
 	Page(ctx context.Context, offset, limit int, taskID int64, statuses ...QuestionStatus) ([]*QuestionRequest, int64, error)
 }

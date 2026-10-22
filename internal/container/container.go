@@ -742,6 +742,10 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	}))
 
 	// Startup agent task recovery：重启后重建运行态（见 design.md 第 6 / 19 节）。
+	// 先确保 ChatService 已构造：它在构造函数里注册任务终态回调（会话轮次收尾）。
+	// dig 是懒加载的，若不显式 Invoke，Recover 先把 running 任务置为 failed 时
+	// onTaskFinished 尚未注册，会话 CurrentTaskID / 错误消息就不会被清理。
+	must(container.Invoke(func(_ *agent.ChatService) {}))
 	must(container.Invoke(func(svc *agent.AgentService) {
 		if err := svc.Recover(context.Background()); err != nil {
 			logger.Warnf(context.Background(), "[Container] agent task recovery failed: %v", err)

@@ -33,6 +33,8 @@ var (
 	ErrTaskNotFound = errors.New("agent: task not found")
 	// ErrTaskAlreadyRunning 表示任务已经在执行中。
 	ErrTaskAlreadyRunning = errors.New("agent: task already running")
+	// ErrTaskNotResumable 表示任务没有可恢复检查点，或当前状态不允许续跑。
+	ErrTaskNotResumable = errors.New("agent: task not resumable")
 	// ErrInvalidTaskTransition 表示非法的任务状态迁移。
 	ErrInvalidTaskTransition = errors.New("agent: invalid task state transition")
 )
@@ -61,6 +63,13 @@ type Task struct {
 
 	// Request 保存原始请求，用于恢复时重建上下文。
 	Request Request `json:"request,omitempty" gorm:"serializer:json"`
+	// ResumeState 是可恢复执行检查点（Agent 循环的对话历史 / 待执行工具调用）。
+	// 为空表示该任务不可续跑（例如 Provider 未实现检查点，或任务从未开始执行）。
+	// 该列只由 TaskRepository.UpdateResumeState 维护，普通 Update 会显式 Omit，
+	// 避免内存中的旧 Task 快照在状态迁移时把检查点覆盖成 NULL。
+	ResumeState *TaskResumeState `json:"-" gorm:"column:resume_state;type:longtext;serializer:json"`
+	// Resumable 是非持久化派生字段：只要存在检查点就可以被手动 / 自动恢复。
+	Resumable bool `json:"resumable" gorm:"-"`
 	// Error 保存最近一次错误信息（Status == failed 时有效）。
 	Error string `json:"error,omitempty" gorm:"column:error;type:text"`
 
@@ -81,18 +90,26 @@ func (t *Task) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// AfterFind 在从数据库加载任务后派生 Resumable 字段，前端无需感知检查点细节。
+func (t *Task) AfterFind(*gorm.DB) error {
+	t.Resumable = t.ResumeState != nil
+	return nil
+}
+
 // NewTask 基于请求构建一个 created 状态的任务。
 func NewTask(req Request) *Task {
 	now := time.Now()
 	return &Task{
-		SessionID:  req.SessionID,
-		Provider:   req.Provider,
-		Model:      req.ModelID,
-		Status:     TaskCreated,
-		WorkingDir: req.WorkingDir,
-		Request:    req,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		SessionID:   req.SessionID,
+		Provider:    req.Provider,
+		Model:       req.ModelID,
+		Status:      TaskCreated,
+		WorkingDir:  req.WorkingDir,
+		Request:     req,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Resumable:   false,
+		ResumeState: nil,
 	}
 }
 
@@ -104,6 +121,29 @@ func (t *Task) TransitionTo(next TaskStatus) bool {
 	t.Status = next
 	t.UpdatedAt = time.Now()
 	return true
+}
+
+// MarkResumed 把任务从「中断态」重新置为 running。
+//
+// 只允许 failed / waiting_permission / running（无活跃 goroutine 的挂起态）续跑；
+// completed / canceled / created 不允许通过该入口恢复（created 走 StartTask）。
+// 与 TransitionTo 分开是为了保持常规状态机的严格性：failed → running 只允许
+// 在“存在持久化检查点且人工 / 权限审批触发恢复”这一条路径上发生。
+func (t *Task) MarkResumed() bool {
+	switch t.Status {
+	case TaskFailed, TaskWaitingPermission, TaskRunning:
+		now := time.Now()
+		t.Status = TaskRunning
+		t.Error = ""
+		t.FinishedAt = nil
+		t.UpdatedAt = now
+		if t.StartedAt == nil {
+			t.StartedAt = &now
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func canTransitionTask(from, to TaskStatus) bool {

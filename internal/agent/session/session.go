@@ -37,7 +37,8 @@ type Session struct {
 	Provider        string `json:"provider" gorm:"column:provider;type:varchar(64)"`
 	Model           string `json:"model" gorm:"column:model;type:varchar(128)"`
 	// CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；
-	// 轮次结束时置空。供前端刷新 / 切换会话时恢复实时流。
+	// 轮次正常结束时置空。failed 但仍有检查点（可续跑）的任务会保留该指针，
+	// 供前端刷新 / 切换会话时展示「Continue」并从 /agent/task/resume 恢复执行。
 	CurrentTaskID int64     `json:"current_task_id,string" gorm:"column:current_task_id;type:bigint"`
 	CreatedAt     time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt     time.Time `json:"updated_at" gorm:"column:updated_at"`

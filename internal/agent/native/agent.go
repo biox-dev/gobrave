@@ -44,8 +44,14 @@ func (c *Config) Run(ctx context.Context, req agent.Request, rt agent.Runtime) (
 	}
 
 	executor := tool.NewExecutor(c.Tools)
-	history := requestMessages(req)
 	tools := toolDefinitions(c.Tools)
+
+	// 检查点（任务模式下可用）：先尝试从持久化状态恢复未完成的工具往返。
+	cw := newCheckpointWriter(rt)
+	history, resumed := c.restoreCheckpoint(ctx, executor, rt, cw)
+	if !resumed {
+		history = requestMessages(req)
+	}
 
 	var final string
 	for i := 0; i < maxIterations; i++ {
@@ -70,14 +76,14 @@ func (c *Config) Run(ctx context.Context, req agent.Request, rt agent.Runtime) (
 		}
 		final = response.Content
 
-		history = append(history, provider.Message{
-			Role:      provider.RoleAssistant,
-			Content:   response.Content,
-			ToolCalls: response.ToolCalls,
-		})
-
-		// 没有工具调用：本轮结束。
+		// 没有工具调用：本轮结束。正常结束必须清理检查点，避免任务被误判为可续跑。
 		if len(response.ToolCalls) == 0 {
+			history = append(history, provider.Message{
+				Role:      provider.RoleAssistant,
+				Content:   response.Content,
+				ToolCalls: nil,
+			})
+			cw.clear(ctx)
 			_ = rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone})
 			return &agent.Result{
 				Content: final,
@@ -85,13 +91,79 @@ func (c *Config) Run(ctx context.Context, req agent.Request, rt agent.Runtime) (
 			}, nil
 		}
 
-		results := c.executeTools(ctx, executor, response.ToolCalls, rt)
+		// 在「模型已响应、工具尚未执行」这一安全点落检查点：
+		// 若工具在等待权限时进程退出，重启后可据此精确续跑。
+		state := newResumeState(req, history, response)
+		cw.save(ctx, state)
+
+		// 每完成一个工具就把结果合并进检查点：正常重启不会重复执行已完成的工具。
+		results := c.executeTools(ctx, executor, response.ToolCalls, rt, func(_ provider.ToolCall, res provider.ToolResult) {
+			state.MarkToolResult(toResumeToolResult(res))
+			cw.save(ctx, state)
+		})
+
+		history = append(history, provider.Message{
+			Role:      provider.RoleAssistant,
+			Content:   response.Content,
+			ToolCalls: response.ToolCalls,
+		})
 		history = append(history, provider.Message{Role: provider.RoleTool, ToolResults: results})
+		state.CompleteTurn()
+		cw.save(ctx, state)
 	}
 
 	err := fmt.Errorf("native agent: exceeded %d tool iterations", maxIterations)
 	logger.Errorf(ctx, "native agent: %v", err)
 	return nil, err
+}
+
+// restoreCheckpoint 从持久化检查点恢复执行现场。
+//
+// 返回 ok=false 表示没有可用检查点，调用方应使用请求自带的历史重新开始。
+// 有检查点时：
+//   - History 还原为已完成的多轮对话；
+//   - Pending 中的 assistant 响应重新入栈；
+//   - 已完成结果的工具直接复用，未完成的工具重新执行（权限 / 提问会按 tool_call_id 复用决策）。
+func (c *Config) restoreCheckpoint(ctx context.Context, executor *tool.Executor, rt agent.Runtime, cw *checkpointWriter) ([]provider.Message, bool) {
+	if !cw.enabled() {
+		return nil, false
+	}
+	state := cw.load(ctx)
+	if state == nil || state.Version != agent.ResumeStateVersion {
+		return nil, false
+	}
+	// 空检查点没有恢复价值：回退到请求自带历史，避免让模型收到空对话。
+	if state.Pending == nil && len(state.History) == 0 {
+		return nil, false
+	}
+
+	history := fromResumeHistory(state.History)
+	if state.Pending == nil {
+		return history, true
+	}
+
+	logger.Infof(ctx, "native agent: resuming from checkpoint (history=%d, pending_tools=%d)",
+		len(history), len(state.Pending.Assistant.ToolCalls))
+
+	assistant := fromResumeMessage(state.Pending.Assistant)
+	results := make([]provider.ToolResult, 0, len(assistant.ToolCalls))
+	for _, call := range assistant.ToolCalls {
+		if done, ok := state.CompletedResult(call.ID); ok {
+			results = append(results, fromResumeToolResult(done))
+			continue
+		}
+		res := c.executeTool(ctx, executor, call)
+		c.emitToolResult(ctx, rt, call, res)
+		results = append(results, res)
+		state.MarkToolResult(toResumeToolResult(res))
+		cw.save(ctx, state)
+	}
+
+	history = append(history, assistant)
+	history = append(history, provider.Message{Role: provider.RoleTool, ToolResults: results})
+	state.CompleteTurn()
+	cw.save(ctx, state)
+	return history, true
 }
 
 // streamOnce 执行一轮模型调用，转发增量事件并返回聚合结果。
@@ -143,7 +215,8 @@ const maxConcurrentAgentCalls = 4
 //   - agent 工具调用彼此独立，允许并发执行，缩短多子 Agent 场景的总耗时；
 //   - 其它工具保持顺序执行，避免 bash / edit / write 等写操作互相干扰；
 //   - 结果按模型给出的调用顺序回填（与 tool_call_id 一一对应），并发完成顺序不影响语义。
-func (c *Config) executeTools(ctx context.Context, executor *tool.Executor, calls []provider.ToolCall, rt agent.Runtime) []provider.ToolResult {
+//   - onResult 在每个工具完成时回调，用于把结果增量写入持久化检查点（可为 nil）。
+func (c *Config) executeTools(ctx context.Context, executor *tool.Executor, calls []provider.ToolCall, rt agent.Runtime, onResult func(provider.ToolCall, provider.ToolResult)) []provider.ToolResult {
 	results := make([]provider.ToolResult, len(calls))
 
 	// 先按顺序下发全部 tool_call 事件，保证时间线里调用顺序与模型输出一致。
@@ -200,16 +273,25 @@ func (c *Config) executeTools(ctx context.Context, executor *tool.Executor, call
 		}
 		results[i] = c.executeTool(ctx, executor, call)
 		c.emitToolResult(ctx, rt, call, results[i])
+		if onResult != nil {
+			onResult(call, results[i])
+		}
 	}
 	// 子 Agent 结果按完成顺序下发（tool_call_id 仍能正确对应）。
 	for i := range done {
 		c.emitToolResult(ctx, rt, calls[i], results[i])
+		if onResult != nil {
+			onResult(calls[i], results[i])
+		}
 	}
 	return results
 }
 
 // executeTool 执行单个工具调用（注入工具执行上下文）。
 func (c *Config) executeTool(ctx context.Context, executor *tool.Executor, call provider.ToolCall) provider.ToolResult {
+	// 工具调用 ID 贯穿权限 / 提问 / 工具执行全链路：重启恢复时据此复用已落库的决策。
+	ctx = agent.WithToolCallID(ctx, call.ID)
+
 	toolCtx := ctx
 	if c.PrepareToolContext != nil {
 		toolCtx = c.PrepareToolContext(ctx)

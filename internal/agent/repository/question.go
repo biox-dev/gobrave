@@ -53,6 +53,18 @@ func (r *gormQuestionRepository) ListPendingByTask(ctx context.Context, taskID i
 	return questions, nil
 }
 
+// ListByTask 返回任务的全部提问请求（最新在前），供恢复执行时按 tool_call_id 复用已作答结果。
+func (r *gormQuestionRepository) ListByTask(ctx context.Context, taskID int64) ([]*agent.QuestionRequest, error) {
+	var questions []*agent.QuestionRequest
+	if err := r.db.WithContext(ctx).
+		Where("task_id = ?", taskID).
+		Order("created_at DESC").
+		Find(&questions).Error; err != nil {
+		return nil, err
+	}
+	return questions, nil
+}
+
 func (r *gormQuestionRepository) Page(ctx context.Context, offset, limit int, taskID int64, statuses ...agent.QuestionStatus) ([]*agent.QuestionRequest, int64, error) {
 	q := r.db.WithContext(ctx).Model(&agent.QuestionRequest{})
 	if taskID != 0 {

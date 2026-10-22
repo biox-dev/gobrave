@@ -58,6 +58,10 @@ func (r *ToolRunner) SetUserID(userID int64) *ToolRunner {
 //  3. 执行工具；
 //  4. 输出 tool_result 事件并返回结果。
 func (r *ToolRunner) Run(ctx context.Context, call ToolCall) tool.Result {
+	// 工具调用 ID 贯穿「权限 / 提问 / 工具执行」全链路：权限与提问落库时携带它，
+	// 重启恢复时据此把持久化决策与待重放的调用精确配对。
+	ctx = WithToolCallID(ctx, call.ID)
+
 	if r.rt != nil {
 		_ = r.rt.Emit(ctx, StreamEvent{Type: StreamEventToolCall, Data: call})
 	}

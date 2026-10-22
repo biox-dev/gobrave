@@ -73,12 +73,16 @@ func NewChatService(agent *AgentService, sessions session.Service, messages mess
 // onTaskFinished 是任务终态回调：把「轮次收尾」从流事件驱动改为任务状态机驱动。
 //
 // finishTurn 自带幂等（以 turns 中的登记为准），因此事件路径（done / error）先触发时，
-// 这里的重复调用会直接返回。
+// 这里的重复调用会直接返回。后端重启后 turns 为空，此时用 Task.SessionID
+// 从数据库恢复收尾（补错误消息 + 清理 CurrentTaskID），因此回调仍然有效。
 func (s *ChatService) onTaskFinished(_ context.Context, task *Task) {
 	if task == nil {
 		return
 	}
-	s.finishTurn(task.ID, task.Error)
+	// failed 且仍有检查点时不要把 CurrentTaskID 清成 0：会话需要继续指向这个
+	// 中断任务，前端才能展示「Continue」并从 /agent/task/resume 续跑。
+	keepCurrentTask := task.Status == TaskFailed && task.Resumable
+	s.finishTurn(task.ID, task.SessionID, task.Error, keepCurrentTask)
 }
 
 // lockFor 返回会话级锁（惰性创建）。
@@ -176,7 +180,7 @@ func (s *ChatService) StartTurn(ctx context.Context, taskID int64) error {
 	}
 
 	if err := s.agent.StartTask(ctx, taskID); err != nil {
-		s.finishTurn(taskID, err.Error())
+		s.finishTurn(taskID, 0, err.Error(), false)
 		return err
 	}
 	return nil
@@ -184,19 +188,29 @@ func (s *ChatService) StartTurn(ctx context.Context, taskID int64) error {
 
 // finishTurn 在本轮结束时收尾：补写错误消息，释放会话锁并清理中间态。
 //
-// 触发点有两个，全部幂等（以 turns 中的登记为准）：
+// 触发点有两个：
 //   - AgentService 的任务终态回调（onTaskFinished，主路径）；
 //   - StartTask 启动失败。
-func (s *ChatService) finishTurn(taskID int64, errMsg string) {
-	// 幂等：先从登记表中“领取”本轮状态，保证「任务终态回调 / 启动失败」任一来源只收尾一次。
-	// 重复收尾会导致 error 消息重复追加、并对同一 sync.Mutex 二次 Unlock（panic）。
+//
+// 幂等与重启兼容：
+//   - 若 turns 中登记了本轮，先“领取”并释放会话锁；
+//   - 若未登记（后端重启后内存态丢失），仍按 sessionID 做数据库层收尾，
+//     但不释放任何锁（旧进程的锁已随进程消失）；
+//   - 错误消息写入前先查重，避免恢复路径与重复回调产生两条相同错误。
+func (s *ChatService) finishTurn(taskID, sessionID int64, errMsg string, keepCurrentTask bool) {
 	s.mu.Lock()
-	ts, ok := s.turns[taskID]
-	if ok {
+	ts, registered := s.turns[taskID]
+	if registered {
 		delete(s.turns, taskID)
+		sessionID = ts.sessionID
 	}
 	s.mu.Unlock()
-	if !ok {
+
+	// 既没有内存登记、也不知道会话：无从收尾。
+	if sessionID <= 0 {
+		if registered {
+			ts.unlock()
+		}
 		return
 	}
 
@@ -204,9 +218,9 @@ func (s *ChatService) finishTurn(taskID int64, errMsg string) {
 
 	// 时间线（reasoning / message / tool_call / tool_result）与兜底 assistant_final
 	// 已由 AgentService/TimelineRecorder 在轮内写入 agent_messages；这里只补「轮末错误」。
-	if strings.TrimSpace(errMsg) != "" {
+	if strings.TrimSpace(errMsg) != "" && !s.hasTaskErrorMessage(ctx, sessionID, taskID) {
 		_, _ = s.messages.Create(ctx, message.CreateParams{
-			SessionID: ts.sessionID,
+			SessionID: sessionID,
 			Role:      message.RoleAssistant,
 			Kind:      message.KindError,
 			TaskID:    taskID,
@@ -214,13 +228,32 @@ func (s *ChatService) finishTurn(taskID int64, errMsg string) {
 		})
 	}
 
-	// 清理当前活跃轮次（会话可能已被删除，忽略错误）。
-	if sess, err := s.sessions.Get(ctx, ts.sessionID); err == nil {
-		sess.CurrentTaskID = 0
-		_, _ = s.sessions.Save(ctx, sess)
+	// 清理当前活跃轮次（只清理指向本任务的指针，避免误清新一轮）。
+	// 可续跑的 failed 任务保留指针，供前端恢复「Continue」入口。
+	if !keepCurrentTask {
+		if sess, err := s.sessions.Get(ctx, sessionID); err == nil && sess.CurrentTaskID == taskID {
+			sess.CurrentTaskID = 0
+			_, _ = s.sessions.Save(ctx, sess)
+		}
 	}
 
-	ts.unlock()
+	if registered {
+		ts.unlock()
+	}
+}
+
+// hasTaskErrorMessage 判断某任务是否已经写入过 error 消息（恢复路径幂等）。
+func (s *ChatService) hasTaskErrorMessage(ctx context.Context, sessionID, taskID int64) bool {
+	msgs, err := s.messages.List(ctx, sessionID)
+	if err != nil {
+		return false
+	}
+	for _, m := range msgs {
+		if m.TaskID == taskID && m.Kind == message.KindError {
+			return true
+		}
+	}
+	return false
 }
 
 // promptMessagesForRequest 仅挑选可用于下一轮 prompt 的语义消息。

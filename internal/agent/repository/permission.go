@@ -53,6 +53,18 @@ func (r *gormPermissionRepository) ListPendingByTask(ctx context.Context, taskID
 	return perms, nil
 }
 
+// ListByTask 返回任务的全部权限请求（最新在前），供恢复执行时按 tool_call_id 配对。
+func (r *gormPermissionRepository) ListByTask(ctx context.Context, taskID int64) ([]*agent.PermissionRequest, error) {
+	var perms []*agent.PermissionRequest
+	if err := r.db.WithContext(ctx).
+		Where("task_id = ?", taskID).
+		Order("created_at DESC").
+		Find(&perms).Error; err != nil {
+		return nil, err
+	}
+	return perms, nil
+}
+
 func (r *gormPermissionRepository) Page(ctx context.Context, offset, limit int, taskID int64, statuses ...agent.PermissionStatus) ([]*agent.PermissionRequest, int64, error) {
 	q := r.db.WithContext(ctx).Model(&agent.PermissionRequest{})
 	if taskID != 0 {

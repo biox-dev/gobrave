@@ -33,6 +33,14 @@ func (f *fakeTaskRepository) Update(_ context.Context, task *Task) error {
 	return nil
 }
 
+func (f *fakeTaskRepository) UpdateResumeState(_ context.Context, id int64, state *TaskResumeState) error {
+	if task, ok := f.tasks[id]; ok {
+		task.ResumeState = state
+		task.Resumable = state != nil
+	}
+	return nil
+}
+
 func (f *fakeTaskRepository) ListByStatus(_ context.Context, statuses ...TaskStatus) ([]*Task, error) {
 	out := make([]*Task, 0, len(f.tasks))
 	for _, task := range f.tasks {

@@ -468,6 +468,7 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 	r.GET("/agent/task/request", handler.GetTaskRequest)
 	r.GET("/agent/task/permissions", handler.GetPendingPermissions)
 	r.POST("/agent/task/cancel", handler.CancelTask)
+	r.POST("/agent/task/resume", handler.ResumeTask)
 	r.POST("/agent/permission/approve", handler.ApprovePermission)
 	r.POST("/agent/permission/deny", handler.DenyPermission)
 

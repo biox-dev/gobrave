@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/agent/logging"
 	"github.com/biox-dev/gobrave/internal/agent/message"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
@@ -131,19 +133,42 @@ func (s *AgentService) StartTask(ctx context.Context, taskID int64) error {
 	s.timeline.Remember(task.ID, task.SessionID)
 
 	rt := NewTaskRuntime(s, task.ID)
-	execCtx, cancel := context.WithCancel(context.Background())
+	return s.launch(task, rt)
+}
 
-	s.mu.Lock()
-	if _, exists := s.active[taskID]; exists {
-		s.mu.Unlock()
-		cancel()
+// launch 注册活跃执行上下文并在独立 goroutine 中执行任务。
+//
+// 注册与运行解耦：任务执行不依赖调用方 ctx（HTTP 请求结束不应终止任务），
+// 因此这里总是创建独立的 context.Background 派生上下文。
+func (s *AgentService) launch(task *Task, rt Runtime) error {
+	execCtx, _, ok := s.reserveActive(task.ID)
+	if !ok {
 		return ErrTaskAlreadyRunning
 	}
-	s.active[taskID] = cancel
-	s.mu.Unlock()
-
 	go s.execute(execCtx, task, rt)
 	return nil
+}
+
+// reserveActive 原子地占用任务执行槽；已存在活跃 goroutine 时返回 false。
+func (s *AgentService) reserveActive(taskID int64) (context.Context, context.CancelFunc, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.active[taskID]; exists {
+		return nil, nil, false
+	}
+	execCtx, cancel := context.WithCancel(context.Background())
+	s.active[taskID] = cancel
+	return execCtx, cancel, true
+}
+
+// releaseActive 撤销尚未启动的占用（续跑前置校验失败时使用）。
+func (s *AgentService) releaseActive(taskID int64, cancel context.CancelFunc) {
+	if cancel != nil {
+		cancel()
+	}
+	s.mu.Lock()
+	delete(s.active, taskID)
+	s.mu.Unlock()
 }
 
 // RunTaskSync 同步执行一次性任务：创建 → 运行 → 返回聚合结果。
@@ -188,12 +213,27 @@ func (s *AgentService) RunTaskSyncByID(ctx context.Context, taskID int64, opts .
 }
 
 // execute 是异步任务的执行体：清理 active 注册后复用 run 执行任务主体。
+//
+// panic 必须被转成 failed 终态：否则任务会永远停在 running，且 onTaskFinished 不会触发。
+// 检查点仍保留在任务行上，用户可随后通过 ResumeTask 继续。
 func (s *AgentService) execute(ctx context.Context, task *Task, rt Runtime) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.active, task.ID)
 		s.mu.Unlock()
 	}()
+
+	defer logging.RecoverPanic("agent.execute", func() {
+		bg := context.WithoutCancel(ctx)
+		current, err := s.tasks.Get(bg, task.ID)
+		if err != nil || current == nil {
+			return
+		}
+		if isTerminalTaskStatus(current.Status) {
+			return
+		}
+		_ = s.transitionTask(bg, current, TaskFailed, "agent panicked: execution interrupted (resumable)")
+	})
 
 	_, _ = s.run(ctx, task, rt)
 }
@@ -217,8 +257,10 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	task.Request.SystemPrompt = s.GetSystemPromptByProfileWithContext(ctx, profile, task.Request.RuntimeContext, task.Request.Skills)
 	// Profile 可能依据 Profile.Model 覆盖请求级模型，同步回任务持久化字段。
 	task.Model = task.Request.ModelID
-	if err := s.transitionTask(ctx, task, TaskRunning, ""); err != nil {
-		return s.failTask(ctx, task, rt, fmt.Errorf("start task %d: %w", task.ID, err))
+	if task.Status != TaskRunning {
+		if err := s.transitionTask(ctx, task, TaskRunning, ""); err != nil {
+			return s.failTask(ctx, task, rt, fmt.Errorf("start task %d: %w", task.ID, err))
+		}
 	}
 
 	if s.client == nil {
@@ -304,6 +346,24 @@ func (s *AgentService) transitionTask(ctx context.Context, task *Task, next Task
 		if errMsg != "" {
 			task.Error = errMsg
 		}
+		// 正常完成 / 主动取消后不再需要检查点：清理，避免任务被误判为可续跑。
+		// failed 保留检查点：无论是崩溃、panic 还是 Provider 临时错误，用户都可以手动续跑。
+		if next == TaskCompleted || next == TaskCanceled {
+			task.ResumeState = nil
+			task.Resumable = false
+		}
+	}
+
+	// failed 任务可能因为执行期刚写入检查点而具备续跑能力；内存中的 Task 快照
+	// 未必包含最新检查点（Agent 循环通过 UpdateResumeState 单独写库），这里回查一次，
+	// 使 onTaskFinished 能据此决定是否保留会话的 CurrentTaskID。
+	if next == TaskFailed {
+		if task.ResumeState == nil {
+			if latest, err := s.tasks.Get(ctx, task.ID); err == nil {
+				task.ResumeState = latest.ResumeState
+			}
+		}
+		task.Resumable = task.ResumeState != nil
 	}
 
 	if !task.TransitionTo(next) {
@@ -311,6 +371,14 @@ func (s *AgentService) transitionTask(ctx context.Context, task *Task, next Task
 	}
 	if err := s.tasks.Update(ctx, task); err != nil {
 		return err
+	}
+
+	// Update 会 Omit resume_state；终态 completed / canceled 需要显式清理检查点。
+	// failed 保留检查点，供用户手动续跑。
+	if next == TaskCompleted || next == TaskCanceled {
+		if err := s.tasks.UpdateResumeState(ctx, task.ID, nil); err != nil {
+			logger.Warnf(ctx, "[agent] clear resume state for task %d failed: %v", task.ID, err)
+		}
 	}
 
 	// 终态后：清理时间线记录器的会话缓存（避免长期运行下无限增长），并通知上层
@@ -329,22 +397,37 @@ func (s *AgentService) transitionTask(ctx context.Context, task *Task, next Task
 }
 
 // ApprovePermission 批准权限请求（供 UI / HTTP 层调用）。
+//
+// 两种情形：
+//   - 任务仍在本进程执行（存在 waiter）：Approve 会唤醒 Wait，无需额外动作；
+//   - 任务因进程重启而失去 goroutine：批准后立即从持久化检查点真正续跑（ResumeTask）。
 func (s *AgentService) ApprovePermission(ctx context.Context, id int64, by int64) error {
 	p, err := s.perms.Approve(ctx, id, by)
 	if err != nil {
 		return err
 	}
 	s.emitEvent(ctx, p.TaskID, EventPermissionResolved, p)
+
+	if !s.isActive(p.TaskID) {
+		s.resumeAfterUserAction(ctx, p.TaskID, "permission approved")
+	}
 	return nil
 }
 
 // DenyPermission 拒绝权限请求（供 UI / HTTP 层调用）。
+//
+// 若任务已无活跃 goroutine（后端重启），拒绝后直接把等待中的任务置为 failed，
+// 保证会话轮次能正常收尾（onTaskFinished），而不是永远停在 waiting_permission。
 func (s *AgentService) DenyPermission(ctx context.Context, id int64, by int64) error {
 	p, err := s.perms.Deny(ctx, id, by)
 	if err != nil {
 		return err
 	}
 	s.emitEvent(ctx, p.TaskID, EventPermissionResolved, p)
+
+	if !s.isActive(p.TaskID) {
+		s.failWaitingTask(context.WithoutCancel(ctx), p.TaskID, "permission denied by user")
+	}
 	return nil
 }
 
@@ -378,6 +461,11 @@ func (s *AgentService) AnswerQuestion(ctx context.Context, id int64, answer AskU
 		return err
 	}
 	s.emitEvent(ctx, q.TaskID, EventQuestionResolved, q)
+
+	// 与权限同构：只有“本次作答已完成、且没有活跃 goroutine”时才需要真正续跑。
+	if q.Status == QuestionAnswered && !s.isActive(q.TaskID) {
+		s.resumeAfterUserAction(ctx, q.TaskID, "question answered")
+	}
 	return nil
 }
 
@@ -755,26 +843,106 @@ func (s *AgentService) CancelTask(ctx context.Context, taskID int64) error {
 	return s.transitionTask(ctx, task, TaskCanceled, "canceled by user")
 }
 
+// ResumeTask 从持久化检查点续跑任务（供 UI 手动触发，或权限 / 提问决策后自动触发）。
+//
+// 前置条件：
+//   - 任务存在检查点（Provider 在执行期写入）；
+//   - 任务无活跃 goroutine（否则返回 ErrTaskAlreadyRunning）；
+//   - 任务不是 completed / canceled（终态不可续跑）。
+//
+// 执行链：MarkResumed → 持久化 running → 启动 goroutine → Provider 读取检查点，
+// 重放未完成的工具调用（已批准的权限会被 consume 后直接放行），随后继续 Agent 循环。
+func (s *AgentService) ResumeTask(ctx context.Context, taskID int64) error {
+	task, err := s.tasks.Get(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.ResumeState == nil {
+		return ErrTaskNotResumable
+	}
+	if task.Status == TaskCompleted || task.Status == TaskCanceled || task.Status == TaskCreated {
+		return ErrTaskNotResumable
+	}
+
+	// 先占用执行槽：两个并发恢复请求（如双击“继续”）只有一个能成功。
+	execCtx, cancel, ok := s.reserveActive(taskID)
+	if !ok {
+		return ErrTaskAlreadyRunning
+	}
+	launched := false
+	defer func() {
+		if !launched {
+			s.releaseActive(taskID, cancel)
+		}
+	}()
+
+	if !task.MarkResumed() {
+		return ErrTaskNotResumable
+	}
+	if err := s.tasks.Update(ctx, task); err != nil {
+		return err
+	}
+
+	s.timeline.Remember(task.ID, task.SessionID)
+	s.emitEvent(ctx, task.ID, EventTaskStarted, task)
+
+	rt := NewTaskRuntime(s, task.ID)
+	go s.execute(execCtx, task, rt)
+	launched = true
+	return nil
+}
+
+// resumeAfterUserAction 在用户对权限 / 提问作出决策后尝试真正续跑任务。
+//
+// 只有“没有活跃 goroutine”的路径才会走到这里（后端重启 / 进程崩溃）。若任务没有
+// 检查点（Provider 不支持续跑），把等待中的任务置为 failed，避免 UI 永久挂起。
+func (s *AgentService) resumeAfterUserAction(ctx context.Context, taskID int64, reason string) {
+	resumeCtx := context.WithoutCancel(ctx)
+	if err := s.ResumeTask(resumeCtx, taskID); err != nil {
+		if errors.Is(err, ErrTaskAlreadyRunning) {
+			return
+		}
+		logger.Warnf(resumeCtx, "[agent] %s: resume task %d failed: %v", reason, taskID, err)
+		s.failWaitingTask(resumeCtx, taskID, "task cannot be resumed: "+err.Error())
+	}
+}
+
+// failWaitingTask 把仍在等待用户输入、但已经无法续跑的任务落到 failed 终态。
+func (s *AgentService) failWaitingTask(ctx context.Context, taskID int64, reason string) {
+	task, err := s.tasks.Get(ctx, taskID)
+	if err != nil || task == nil {
+		return
+	}
+	if task.Status == TaskWaitingPermission {
+		_ = s.transitionTask(ctx, task, TaskFailed, reason)
+	}
+}
+
 // Recover 在后端重启后重建运行态（见 design.md 第 6 / 19 节）。
 //
-// 当前内存实现下：
-//   - 没有活跃 goroutine 的 running 任务：无法恢复执行，标记为 failed（interrupted）。
-//   - 没有活跃 goroutine 的 waiting_permission 任务：pending 权限已持久化，
-//     UI 仍可通过 GetPendingPermissions 拉取并批准 / 拒绝（更新 DB）；
-//     但 Agent 进程已丢失，真正“恢复执行”依赖各 Provider 的 checkpoint / resume 能力。
+// 行为：
+//   - running 且无活跃 goroutine：执行循环已随进程消失，置为 failed（保留检查点，
+//     用户可通过 ResumeTask 手动续跑；错误信息标注 resumable）；
+//   - waiting_permission 且无活跃 goroutine：保留状态与 pending 权限，等待用户操作；
+//     批准后 ApprovePermission 会自动 ResumeTask，拒绝则直接置为 failed。
 //
-// 轮内时间线（reasoning / tool_call / tool_result）现在由 TimelineRecorder 即时写入
-// agent_messages，恢复时可以据此重建「已经执行到哪一步」；真正的续跑仍待实现
-// （需要基于消息表重建 Request + 对已批准权限做一次性重放）。
+// 注意：running → failed 会触发 onTaskFinished。ChatService 的收尾逻辑不依赖
+// 内存 turns 表（重启后为空），而是用 Task.SessionID 从数据库恢复收尾，因此
+// 会话的 CurrentTaskID / 错误消息仍能被正确清理。
 func (s *AgentService) Recover(ctx context.Context) error {
 	running, err := s.tasks.ListByStatus(ctx, TaskRunning)
 	if err != nil {
 		return err
 	}
 	for _, t := range running {
-		if !s.isActive(t.ID) {
-			_ = s.transitionTask(ctx, t, TaskFailed, "backend restarted: task interrupted")
+		if s.isActive(t.ID) {
+			continue
 		}
+		reason := "backend restarted: task interrupted"
+		if t.ResumeState != nil {
+			reason += " (resumable)"
+		}
+		_ = s.transitionTask(ctx, t, TaskFailed, reason)
 	}
 
 	waiting, err := s.tasks.ListByStatus(ctx, TaskWaitingPermission)
@@ -785,11 +953,61 @@ func (s *AgentService) Recover(ctx context.Context) error {
 		if s.isActive(t.ID) {
 			continue
 		}
-		// 保留 waiting_permission 状态：pending 权限已持久化，等待 UI 重新处理。
-		// 真实恢复执行需 Provider 支持 resume，此处仅保证状态与权限不丢。
-		_ = t
+
+		// 若任务仍有待处理的权限 / 提问：保留 waiting_permission，等待 UI 操作。
+		// 用户体验：批准 → 自动续跑；拒绝 → 直接失败收尾。
+		pendingPerms, perr := s.pendingPermissionCount(ctx, t.ID)
+		pendingQuestions, qerr := s.pendingQuestionCount(ctx, t.ID)
+		if perr != nil || qerr != nil {
+			continue
+		}
+		if pendingPerms > 0 || pendingQuestions > 0 {
+			continue
+		}
+
+		// 没有任何待处理交互却仍在 waiting：说明用户在上次进程退出前已经作出决策，
+		// 但执行循环没能恢复。有检查点时直接自动续跑；否则落到 failed（触发收尾回调），
+		// 避免任务永久悬挂。
+		if t.ResumeState != nil {
+			go func(id int64) {
+				if err := s.ResumeTask(context.Background(), id); err != nil {
+					logger.Warnf(context.Background(), "[agent] recover resume task %d failed: %v", id, err)
+				}
+			}(t.ID)
+			continue
+		}
+		_ = s.transitionTask(ctx, t, TaskFailed, "backend restarted: task was waiting but has no pending permission or question")
 	}
 	return nil
+}
+
+// pendingPermissionCount 统计任务当前的待确认权限数（未配置权限管理器时返回 0）。
+func (s *AgentService) pendingPermissionCount(ctx context.Context, taskID int64) (int, error) {
+	if s.perms == nil {
+		return 0, nil
+	}
+	list, err := s.perms.GetPending(ctx, taskID)
+	if err != nil {
+		return 0, err
+	}
+	return len(list), nil
+}
+
+// pendingQuestionCount 统计任务当前的待作答提问数（未配置提问管理器时返回 0）。
+func (s *AgentService) pendingQuestionCount(ctx context.Context, taskID int64) (int, error) {
+	if s.questions == nil {
+		return 0, nil
+	}
+	list, err := s.questions.GetPending(ctx, taskID)
+	if err != nil {
+		return 0, err
+	}
+	return len(list), nil
+}
+
+// isTerminalTaskStatus 判断任务是否已进入终态。
+func isTerminalTaskStatus(status TaskStatus) bool {
+	return status == TaskCompleted || status == TaskFailed || status == TaskCanceled
 }
 
 func (s *AgentService) isActive(taskID int64) bool {

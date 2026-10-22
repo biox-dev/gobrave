@@ -25,6 +25,13 @@ func newTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	// 内存 SQLite（mode=memory&cache=shared）在不同连接上可能看到不同的库；
+	// 限制单连接，保证 Agent goroutine 与测试主 goroutine 看到同一份 schema/数据。
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
 	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &session.Session{}, &message.Message{}, &agent.Memory{}, &agent.Profile{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
@@ -45,6 +52,11 @@ func newTestServiceWithDB(t *testing.T, extra ...agent.Provider) (*agent.AgentSe
 	registry := agent.NewRegistry(append(agentproviders.All(), extra...)...)
 	client := agent.NewClient(registry, agent.Options{})
 	db := newTestDB(t)
+	// 生产环境由容器启动时调用 EnsureBuiltinProfiles；测试库同样需要内置默认 Profile，
+	// 否则 run 解析 ProfileID=0 会失败。
+	if err := agent.EnsureBuiltinProfiles(context.Background(), agentrepository.NewGormProfileRepository(db)); err != nil {
+		t.Fatalf("seed builtin profiles: %v", err)
+	}
 
 	svc := agent.NewService(agent.ServiceConfig{
 		Client:    client,
@@ -72,8 +84,15 @@ func TestServiceFullPermissionFlow(t *testing.T) {
 	})
 	defer unsub()
 
+	// 测试库的内置默认 Profile 指向 custom；这里固定使用 mock，避免真实 LLM 调用。
+	profile := &agent.Profile{Name: "full-permission-flow", Provider: agent.ProviderMock}
+	if err := svc.SaveProfile(ctx, profile); err != nil {
+		t.Fatalf("SaveProfile: %v", err)
+	}
+
 	req := agent.Request{
 		Provider:   agent.ProviderMock,
+		ProfileID:  profile.ID,
 		Stream:     true,
 		WorkingDir: "/tmp",
 		Env:        map[string]string{"MOCK_PERMISSION_DEMO": "true"},
@@ -151,8 +170,15 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 	})
 	defer unsub()
 
+	// 固定使用 mock Profile，避免内置默认 Profile（custom）发起真实 LLM 调用。
+	profile := &agent.Profile{Name: "deny-permission-flow", Provider: agent.ProviderMock}
+	if err := svc.SaveProfile(ctx, profile); err != nil {
+		t.Fatalf("SaveProfile: %v", err)
+	}
+
 	req := agent.Request{
 		Provider:   agent.ProviderMock,
+		ProfileID:  profile.ID,
 		Stream:     true,
 		WorkingDir: "/tmp",
 		Env:        map[string]string{"MOCK_PERMISSION_DEMO": "true"},

@@ -230,9 +230,12 @@ type QuestionAnswer struct {
 // 与 PermissionRequest 一样遵循“数据库才是状态源”原则：Agent 阻塞等待的只是内存
 // channel，真正的状态保存在 Repository 中，因此浏览器刷新 / 后端重启后仍可恢复。
 type QuestionRequest struct {
-	ID          int64          `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	TaskID      int64          `json:"task_id,string" gorm:"column:task_id;type:bigint;index"`
-	SessionID   string         `json:"session_id,omitempty" gorm:"column:session_id;type:varchar(64)"`
+	ID        int64  `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
+	TaskID    int64  `json:"task_id,string" gorm:"column:task_id;type:bigint;index"`
+	SessionID string `json:"session_id,omitempty" gorm:"column:session_id;type:varchar(64)"`
+	// ToolCallID 是发起本次提问的工具调用 ID（ask_user）。
+	// 重启后据此把“已作答的提问”与待重放的 ask_user 调用精确配对，避免重复创建提问。
+	ToolCallID  string         `json:"tool_call_id,omitempty" gorm:"column:tool_call_id;type:varchar(128);index"`
 	RequestID   string         `json:"request_id,omitempty" gorm:"column:request_id;type:varchar(64)"`
 	Title       string         `json:"title,omitempty" gorm:"column:title;type:text"`
 	Description string         `json:"description,omitempty" gorm:"column:description;type:text"`

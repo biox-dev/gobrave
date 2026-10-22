@@ -54,6 +54,37 @@ func (m *PermissionManager) Page(ctx context.Context, offset, limit int, taskID 
 	return m.repo.Page(ctx, offset, limit, taskID, statuses...)
 }
 
+// FindByToolCall 返回某任务下由指定工具调用发起的权限请求（最新一条）。
+//
+// 恢复执行时，Agent 会重新执行未完成的工具调用；该方法让 Runtime 复用重启前
+// 已经落库的权限决策（approved / denied），而不是再弹一次权限确认。
+// 匹配依据是 Operation.Metadata["tool_call_id"]（创建权限时由 Runtime 自动写入）。
+func (m *PermissionManager) FindByToolCall(ctx context.Context, taskID int64, toolCallID string) (*PermissionRequest, error) {
+	if toolCallID == "" {
+		return nil, nil
+	}
+	list, err := m.repo.ListByTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range list {
+		if p.Operation.Metadata != nil {
+			if id, _ := p.Operation.Metadata[OperationMetadataToolCallID].(string); id == toolCallID {
+				return p, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+// Consume 把已批准的权限请求标记为 consumed（Agent 已据此恢复执行）。
+//
+// 恢复路径会在执行工具前显式调用它：先消费已批准的权限，再执行工具，
+// 保证即使进程再次崩溃，重启后也能识别“该权限已经放行过”。
+func (m *PermissionManager) Consume(ctx context.Context, id int64) error {
+	return m.consume(ctx, id)
+}
+
 // Approve 批准权限请求，返回更新后的权限请求；并唤醒正在等待的 Agent。
 func (m *PermissionManager) Approve(ctx context.Context, id int64, by int64) (*PermissionRequest, error) {
 	return m.resolve(ctx, id, PermissionApproved, DecisionAllow, by)

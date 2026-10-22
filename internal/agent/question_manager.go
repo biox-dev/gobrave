@@ -32,11 +32,36 @@ func NewQuestionManager(repo QuestionRepository) *QuestionManager {
 
 // Create 创建一个 pending 状态的提问请求并返回。
 func (m *QuestionManager) Create(ctx context.Context, taskID int64, sessionID string, input AskUserInput) (*QuestionRequest, error) {
+	return m.CreateForToolCall(ctx, taskID, sessionID, input, "")
+}
+
+// CreateForToolCall 创建提问请求，并记录发起它的工具调用 ID。
+func (m *QuestionManager) CreateForToolCall(ctx context.Context, taskID int64, sessionID string, input AskUserInput, toolCallID string) (*QuestionRequest, error) {
 	q := NewQuestionRequest(taskID, sessionID, input)
+	q.ToolCallID = toolCallID
 	if err := m.repo.Create(ctx, q); err != nil {
 		return nil, err
 	}
 	return q, nil
+}
+
+// FindByToolCall 返回某任务下由指定工具调用发起的提问（最新一条）。
+//
+// 恢复执行时用于复用重启前的提问进度 / 已作答结果，避免重复弹出提问。
+func (m *QuestionManager) FindByToolCall(ctx context.Context, taskID int64, toolCallID string) (*QuestionRequest, error) {
+	if toolCallID == "" {
+		return nil, nil
+	}
+	list, err := m.repo.ListByTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	for _, q := range list {
+		if q.ToolCallID == toolCallID {
+			return q, nil
+		}
+	}
+	return nil, nil
 }
 
 // Get 按 ID 查询提问请求。

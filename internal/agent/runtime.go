@@ -110,6 +110,21 @@ func (r *taskRuntime) Emit(ctx context.Context, event StreamEvent) error {
 }
 
 func (r *taskRuntime) RequestPermission(ctx context.Context, userID int64, operation Operation) (PermissionDecision, error) {
+	// 0) 恢复重放：同一个 tool call 已经在本任务下创建过权限请求（后端重启后重试未完成的工具）。
+	//    复用持久化决策，既不重复弹确认，也不会把已批准的操作再次置为 pending。
+	if callID := ToolCallIDFromContext(ctx); callID != "" {
+		existing, err := r.svc.perms.FindByToolCall(ctx, r.taskID, callID)
+		if err != nil {
+			return "", err
+		}
+		if existing != nil {
+			return r.resolveExistingPermission(ctx, existing)
+		}
+	}
+
+	// 把工具调用 ID 写入 Operation 元数据，供后续恢复路径精确匹配。
+	operation = withToolCallMetadata(ctx, operation)
+
 	// 1) 通知 UI：Agent 请求了对某个操作的权限确认。
 	// _ = r.Emit(ctx, StreamEvent{Type: StreamEventPermission, Content: marshalOperation(operation)})
 
@@ -157,6 +172,75 @@ func (r *taskRuntime) RequestPermission(ctx context.Context, userID int64, opera
 	return decision, nil
 }
 
+// resolveExistingPermission 复用一份已持久化的权限决策（恢复执行专用）。
+//
+// 状态语义与 PermissionManager.Wait 的快路径一致，只是额外负责：
+//   - approved → 先 consume 再放行，保证再次崩溃也不会重复确认；
+//   - pending → 直接等待原请求（不新建），用户点击允许后即可继续；
+//   - denied / expired / canceled → 返回拒绝或错误。
+func (r *taskRuntime) resolveExistingPermission(ctx context.Context, p *PermissionRequest) (PermissionDecision, error) {
+	task, err := r.svc.tasks.Get(ctx, r.taskID)
+	if err != nil {
+		return "", err
+	}
+
+	switch p.Status {
+	case PermissionApproved:
+		if err := r.svc.perms.Consume(ctx, p.ID); err != nil {
+			return "", err
+		}
+		r.restoreRunning(ctx, task)
+		return DecisionAllow, nil
+	case PermissionConsumed:
+		r.restoreRunning(ctx, task)
+		return DecisionAllow, nil
+	case PermissionDenied:
+		r.restoreRunning(ctx, task)
+		return DecisionDeny, nil
+	case PermissionExpired:
+		return DecisionDeny, ErrPermissionExpired
+	case PermissionCanceled:
+		return DecisionDeny, ErrPermissionCanceled
+	case PermissionPending:
+		if task.Status != TaskWaitingPermission {
+			if err := r.svc.transitionTask(ctx, task, TaskWaitingPermission, ""); err != nil {
+				return "", err
+			}
+		}
+		decision, err := r.svc.perms.Wait(ctx, p.ID)
+		if err != nil {
+			r.emitPermissionResult(ctx, fmt.Sprintf("error: %v", err))
+			return "", err
+		}
+		_ = r.svc.transitionTask(ctx, task, TaskRunning, "")
+		return decision, nil
+	default:
+		return DecisionDeny, nil
+	}
+}
+
+// restoreRunning 在恢复路径中把“等待权限”的任务改回 running。
+func (r *taskRuntime) restoreRunning(ctx context.Context, task *Task) {
+	if task != nil && task.Status == TaskWaitingPermission {
+		_ = r.svc.transitionTask(ctx, task, TaskRunning, "")
+	}
+}
+
+// withToolCallMetadata 把当前工具调用 ID 写入 Operation.Metadata（幂等）。
+func withToolCallMetadata(ctx context.Context, operation Operation) Operation {
+	callID := ToolCallIDFromContext(ctx)
+	if callID == "" {
+		return operation
+	}
+	if operation.Metadata == nil {
+		operation.Metadata = make(map[string]any, 1)
+	}
+	if existing, _ := operation.Metadata[OperationMetadataToolCallID].(string); existing == "" {
+		operation.Metadata[OperationMetadataToolCallID] = callID
+	}
+	return operation
+}
+
 // emitPermissionResult 把权限决策结果透传给 UI（StreamEventPermissionResult）。
 func (r *taskRuntime) emitPermissionResult(ctx context.Context, content string) {
 	_ = r.Emit(ctx, StreamEvent{Type: StreamEventPermissionResult, Content: content})
@@ -185,11 +269,24 @@ func (r *taskRuntime) AskUser(ctx context.Context, _ int64, input AskUserInput) 
 		return AskUserAnswer{}, ErrNoUserInputResolver
 	}
 
+	callID := ToolCallIDFromContext(ctx)
+
+	// 恢复重放：该 tool call 已经创建过提问（重启后重新执行 ask_user）。
+	if callID != "" {
+		existing, err := r.svc.questions.FindByToolCall(ctx, r.taskID, callID)
+		if err != nil {
+			return AskUserAnswer{}, err
+		}
+		if existing != nil {
+			return r.resolveExistingQuestion(ctx, existing)
+		}
+	}
+
 	task, err := r.svc.tasks.Get(ctx, r.taskID)
 	if err != nil {
 		return AskUserAnswer{}, err
 	}
-	question, err := r.svc.questions.Create(ctx, r.taskID, sessionRef(task.SessionID), input)
+	question, err := r.svc.questions.CreateForToolCall(ctx, r.taskID, sessionRef(task.SessionID), input, callID)
 	if err != nil {
 		return AskUserAnswer{}, err
 	}
@@ -209,4 +306,72 @@ func (r *taskRuntime) AskUser(ctx context.Context, _ int64, input AskUserInput) 
 	// 恢复任务为 running（后续结果由 run 决定终态）。
 	_ = r.svc.transitionTask(ctx, task, TaskRunning, "")
 	return answer, nil
+}
+
+// resolveExistingQuestion 复用一份已持久化的提问（恢复执行专用）。
+func (r *taskRuntime) resolveExistingQuestion(ctx context.Context, q *QuestionRequest) (AskUserAnswer, error) {
+	task, err := r.svc.tasks.Get(ctx, r.taskID)
+	if err != nil {
+		return AskUserAnswer{}, err
+	}
+
+	switch q.Status {
+	case QuestionAnswered:
+		// 已作答：直接复用，避免重启后重复创建提问。
+		if q.Answer != nil {
+			return *q.Answer, nil
+		}
+		return AskUserAnswer{}, nil
+	case QuestionCanceled:
+		return AskUserAnswer{}, ErrQuestionCanceled
+	case QuestionExpired:
+		return AskUserAnswer{}, ErrQuestionExpired
+	case QuestionPending:
+		if task.Status != TaskWaitingPermission {
+			if err := r.svc.transitionTask(ctx, task, TaskWaitingPermission, ""); err != nil {
+				return AskUserAnswer{}, err
+			}
+		}
+		answer, err := r.svc.questions.Wait(ctx, q.ID)
+		if err != nil {
+			return AskUserAnswer{}, err
+		}
+		_ = r.svc.transitionTask(ctx, task, TaskRunning, "")
+		return answer, nil
+	default:
+		return AskUserAnswer{}, nil
+	}
+}
+
+// ---- CheckpointRuntime：把 Agent 循环的可恢复检查点持久化到任务行 ----
+
+// LoadCheckpoint 读取当前任务的检查点；不存在时返回 nil。
+func (r *taskRuntime) LoadCheckpoint(ctx context.Context) *TaskResumeState {
+	if r.svc == nil || r.svc.tasks == nil {
+		return nil
+	}
+	task, err := r.svc.tasks.Get(ctx, r.taskID)
+	if err != nil {
+		return nil
+	}
+	return task.ResumeState
+}
+
+// SaveCheckpoint 覆盖写入检查点。
+//
+// 检查点写入属于“事后必须完成”的持久化动作：使用 WithoutCancel 解绑 Provider / 工具
+// 的取消信号，避免工具返回后 ctx 被取消导致检查点静默丢失。
+func (r *taskRuntime) SaveCheckpoint(ctx context.Context, state *TaskResumeState) error {
+	if r.svc == nil || r.svc.tasks == nil {
+		return nil
+	}
+	return r.svc.tasks.UpdateResumeState(context.WithoutCancel(ctx), r.taskID, state)
+}
+
+// ClearCheckpoint 清理检查点（任务正常结束 / 取消时）。
+func (r *taskRuntime) ClearCheckpoint(ctx context.Context) error {
+	if r.svc == nil || r.svc.tasks == nil {
+		return nil
+	}
+	return r.svc.tasks.UpdateResumeState(context.WithoutCancel(ctx), r.taskID, nil)
 }
