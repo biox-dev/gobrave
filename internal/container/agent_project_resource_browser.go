@@ -149,7 +149,6 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 		WorkspaceDir:        node.WorkspaceDir,
 		CommandPath:         node.CommandPath,
 		ParamsPath:          node.ParamsPath,
-		Command:             node.Command,
 		RequestParam:        agentanalysis.DecodeRequestParam(node.RequestParam),
 	}, nil
 }

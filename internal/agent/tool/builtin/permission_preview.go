@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
-	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/coder/diff"
+	"github.com/biox-dev/gobrave/internal/dag/prepare"
 )
 
 // 本文件提供「授权前预览」的公共构造。
@@ -17,17 +17,10 @@ import (
 // （file_path / diff）。上层 agent.operationFromToolPermission 会把它们提到
 // Operation.Metadata，前端便能在用户批准前渲染 diff —— 与 coder edit / write 一致。
 
-// runScriptContent 返回与 prepare.prepareCommandNode 落盘的 run.sh 完全一致的内容：
-// 去掉首尾空白后的命令 + 结尾换行（命令为空时返回空串）。
+// runScriptContent 返回写入命令节点 run.sh 的标准正文（与 prepare.WriteCommandRunScript
+// 同一口径）：去掉首尾空白后的命令 + 结尾换行（命令为空时返回空串）。
 func runScriptContent(command string) string {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return ""
-	}
-	if !strings.HasSuffix(command, "\n") {
-		command += "\n"
-	}
-	return command
+	return prepare.RunScriptContent(command)
 }
 
 // runScriptPath 返回命令型节点 run.sh 的展示路径：优先用节点派生路径，

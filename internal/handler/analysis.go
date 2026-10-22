@@ -1846,7 +1846,7 @@ func (h *AnalysisHandler) GetAnalysisNodeCommand(c *gin.Context) {
 
 // UpdateAnalysisNodeCommand godoc
 // @Summary      保存分析节点 run.sh
-// @Description  把内容写入 AnalysisNode.command_path；命令节点同时回写 node.command，使其在下次运行时不被旧命令覆盖
+// @Description  把内容写入 AnalysisNode.command_path（run.sh）；命令节点直接以该文件作为运行脚本，因此无需回写数据库
 // @Tags         分析
 // @Accept       json
 // @Produce      json
@@ -1884,17 +1884,6 @@ func (h *AnalysisHandler) UpdateAnalysisNodeCommand(c *gin.Context) {
 	if err := os.WriteFile(commandPath, []byte(req.Content), 0o755); err != nil {
 		c.Error(errors.NewInternalServerError("failed to write command file").WithDetails(err.Error()))
 		return
-	}
-
-	// 命令节点的 run.sh 正文就是 node.Command（prepareCommandNode 原样写盘），
-	// 因此同步回库，避免下一次运行又被旧的 command 覆盖。
-	if analysisNode.IsCommandNode() {
-		if err := h.analysisService.UpdateAnalysisNodeByID(c.Request.Context(), analysisNode.ID, map[string]any{
-			"command": req.Content,
-		}); err != nil {
-			c.Error(errors.NewInternalServerError("failed to update node command").WithDetails(err.Error()))
-			return
-		}
 	}
 
 	c.JSON(http.StatusOK, AnalysisNodeCommandResponse{

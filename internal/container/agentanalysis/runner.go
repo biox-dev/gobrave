@@ -132,8 +132,8 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		}, fmt.Errorf("analysis node is already %s", node.Status)
 	}
 
-	// 命令节点（Agent 创建、无脚本）没有 io_schema / request_param：run.sh 已由节点
-	// 自身的 Command 生成，准备后直接按通用节点链路运行即可。
+	// 命令节点（Agent 创建、无脚本）没有 io_schema / request_param：run.sh 已由创建 /
+	// 更新入口写入节点目录，这里只重建目录 / params.json / env.sh，然后走通用节点链路运行。
 	if node.IsCommandNode() {
 		if len(requestParam) > 0 {
 			return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("analysis node %d is a command node and does not accept request_param", nodeID)

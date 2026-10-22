@@ -18,9 +18,9 @@ import (
 // agentRunAnalysis 实现 tool.AgentAnalysisRunner：把「名称 + 容器模板 + 命令」的模型请求
 // 转换成一条命令型 AnalysisNode，并复用通用节点链路运行、等待与读取日志。
 //
-// 与脚本节点唯一的区别是：命令节点没有脚本，run.sh 由节点自身的 Command 生成
-// （见 prepare.FileSystemNodeRuntimePreparer.prepareCommandNode），容器模板取节点上的
-// ContainerTemplateID。因此运行 / 停止 / 缓存 / 日志口径与普通分析节点完全一致。
+// 与脚本节点唯一的区别是：命令节点没有脚本，容器模板取节点上的 ContainerTemplateID，
+// run.sh 由本执行器在 Prepare 之后直接写盘（prepare.WriteCommandRunScript）——命令不再
+// 落库，因此运行 / 停止 / 缓存 / 日志口径与普通分析节点完全一致。
 type agentRunAnalysis struct {
 	analysisRepo  interfaces.AnalysisRepository
 	containerRepo interfaces.ContainerRepository
@@ -92,6 +92,10 @@ func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in tool.Agen
 	}
 	if err := r.preparer.Prepare(ctx, node); err != nil {
 		return result, fmt.Errorf("prepare node workspace: %w", err)
+	}
+	// 命令不再落库：Prepare 只建目录 / params.json / env.sh，run.sh 由这里直接写入。
+	if err := prepare.WriteCommandRunScript(node.CommandPath, command); err != nil {
+		return result, fmt.Errorf("write node run.sh: %w", err)
 	}
 
 	// Run 可选且默认为运行：nil / true 表示创建后立即运行，false 表示只创建节点。

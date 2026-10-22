@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/types"
 	"gorm.io/gorm"
 )
@@ -14,8 +15,9 @@ import (
 // UpdateAgentAnalysis 更新命令型（Agent 创建、无脚本）分析节点。
 //
 // 可更新字段：node_name / command / container_template_id；未给出的字段保持原值。
-// 命令变更后重新生成 run.sh / env.sh / params.json，并清空节点输出目录（旧命令的结果
-// 已失效），保证下一次运行使用新命令且不复用上一轮残留产物。
+// command 不再落库（AnalysisNode 没有 Command 字段），而是直接写入节点 run.sh；
+// 命令变更后重新生成 env.sh / params.json，并清空节点输出目录（旧命令的结果已失效），
+// 保证下一次运行使用新命令且不复用上一轮残留产物。
 func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in tool.AgentAnalysisUpdateInput) (tool.AgentAnalysisUpdateResult, error) {
 	result := tool.AgentAnalysisUpdateResult{AnalysisNodeID: in.AnalysisNodeID}
 
@@ -39,10 +41,14 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in tool.A
 	if node.NodeType() != types.AnalysisNodeCreationSourceAgent {
 		return result, fmt.Errorf("update_agent_analysis: analysis node %d is a %s node; only agent (command) nodes can be updated with this tool, use update_script_analysis for script / scheduler nodes", node.ID, node.NodeTypeDescription())
 	}
+	// 派生路径以 WorkspaceDir 为准随时重算，下面比较 / 写入 run.sh 都要用到 CommandPath。
+	node.HydrateDerivedPaths()
 
 	update := make(map[string]any, 3)
 	changed := make([]string, 0, 3)
 	reprepare := false
+	// commandText 记录需要写入 run.sh 的新命令（空串表示本次不改命令）。
+	var commandText string
 
 	if in.NodeName != nil {
 		name := strings.TrimSpace(*in.NodeName)
@@ -61,9 +67,13 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in tool.A
 		if command == "" {
 			return result, fmt.Errorf("update_agent_analysis: command must not be empty")
 		}
-		if command != strings.TrimSpace(node.Command) {
-			update["command"] = command
-			node.Command = command
+		// 命令只存在于 run.sh：与磁盘上的旧正文比较，决定是否需要重建运行期文件。
+		current, readErr := prepare.ReadCommandRunScript(node.CommandPath)
+		if readErr != nil {
+			return result, fmt.Errorf("update_agent_analysis: failed to read run.sh of node %d: %w", node.ID, readErr)
+		}
+		commandText = command
+		if command != strings.TrimSpace(current) {
 			changed = append(changed, "command")
 			reprepare = true
 		}
@@ -102,11 +112,23 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in tool.A
 		}
 	}
 
+	// 命令变更时把新正文直接写入 run.sh（Prepare 只负责目录 / params.json / env.sh）。
+	if commandText != "" {
+		if err := prepare.WriteCommandRunScript(node.CommandPath, commandText); err != nil {
+			return result, fmt.Errorf("update_agent_analysis: node %d updated but failed to write run.sh: %w", node.ID, err)
+		}
+	}
+
 	node.HydrateDerivedPaths()
+	// 回传当前 run.sh 正文（读失败时留空，不影响已经完成的更新）。
+	currentCommand := ""
+	if content, readErr := prepare.ReadCommandRunScript(node.CommandPath); readErr == nil {
+		currentCommand = strings.TrimSpace(content)
+	}
 	return tool.AgentAnalysisUpdateResult{
 		AnalysisNodeID:      node.ID,
 		NodeName:            node.NodeName,
-		Command:             node.Command,
+		Command:             currentCommand,
 		ContainerTemplateID: node.ContainerTemplateID,
 		WorkspaceDir:        node.WorkspaceDir,
 		CommandPath:         node.CommandPath,

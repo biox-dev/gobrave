@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/dag/prepare"
 )
 
 // UpdateAgentAnalysisToolName 是「更新命令型分析节点」工具名。
@@ -56,7 +57,8 @@ type UpdateAgentAnalysisOutput struct {
 //   - analysis_node_id 必填；node_name / command / container_template_id 至少给出一个；
 //   - 项目归属取自 RuntimeContext.ProjectID，节点必须属于当前激活项目；
 //   - 只更新给出的字段，未给出的保持原值；
-//   - command 变更后会重新生成 run.sh / env.sh / params.json，并清空节点输出目录（output）；
+//   - command 会直接写入节点 run.sh（命令不落库），并重建 env.sh / params.json、
+//     清空节点输出目录（output）；
 //   - run 可选且默认为 true：更新成功后立即运行该节点并等待结束，返回状态与执行日志；
 //     run=false 时只更新节点，不提交运行。
 //
@@ -64,7 +66,7 @@ type UpdateAgentAnalysisOutput struct {
 func UpdateAgentAnalysis() tool.Tool {
 	return tool.NewFunc(
 		UpdateAgentAnalysisToolName,
-		"更新 Agent 命令节点（creation_source=agent，无绑定脚本，run.sh 由 Agent 生成），默认更新后运行。仅适用于 get_analysis_node 返回 node_type=agent 的节点；script / scheduler 类型（绑定脚本）请改用 update_script_analysis。analysis_node_id 必填；可选给出 node_name / command / container_template_id，至少给出一个；未给出的字段保持原值。command 变更后会重新生成 run.sh 并清空节点输出目录（output）。run 可选，默认 true：为 true 时更新成功后立即运行该节点并等待结束，返回状态、执行日志与日志路径；为 false 时只更新节点不运行（之后可用 run_analysis_node 运行）。timeout_seconds 可选，默认 600，run=false 时忽略。",
+		"更新 Agent 命令节点（creation_source=agent，无绑定脚本，run.sh 由 Agent 生成），默认更新后运行。仅适用于 get_analysis_node 返回 node_type=agent 的节点；script / scheduler 类型（绑定脚本）请改用 update_script_analysis。analysis_node_id 必填；可选给出 node_name / command / container_template_id，至少给出一个；未给出的字段保持原值。command 会直接写入节点 run.sh（命令不落库），并清空节点输出目录（output）。run 可选，默认 true：为 true 时更新成功后立即运行该节点并等待结束，返回状态、执行日志与日志路径；为 false 时只更新节点不运行（之后可用 run_analysis_node 运行）。timeout_seconds 可选，默认 600，run=false 时忽略。",
 		tool.Schema("更新 agent（命令）节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("要更新的分析节点 ID（必填，整数，字符串以保精度）。"),
 			"node_name":        tool.StringProperty("新的节点名称，留空表示不修改。"),
@@ -177,10 +179,10 @@ func UpdateAgentAnalysis() tool.Tool {
 	).WithPermissionPreview("write", "", "更新 Agent 命令节点（写库并重建 run.sh，默认更新后运行）", previewUpdateAgentAnalysis)
 }
 
-// previewUpdateAgentAnalysis 生成批准前预览：run.sh 旧命令 → 新命令的 diff。
+// previewUpdateAgentAnalysis 生成批准前预览：run.sh 旧内容 → 新内容的 diff。
 //
-// 旧命令取自节点当前状态（仅当命令确实要变更时才展示）；读取失败时退化为
-// 「新增 / 覆盖 run.sh」的预览，不影响授权流程本身。
+// 旧内容直接从磁盘上的 run.sh 读取（命令不再落库）；读取失败时退化为「新增 / 覆盖
+// run.sh」的预览，不影响授权流程本身。
 func previewUpdateAgentAnalysis(ctx context.Context, in UpdateAgentAnalysisInput) tool.PermissionPreview {
 	command := strings.TrimSpace(in.Command)
 	if command == "" {
@@ -191,7 +193,9 @@ func previewUpdateAgentAnalysis(ctx context.Context, in UpdateAgentAnalysisInput
 	before := ""
 	if current, ok := analysisNodeForPreview(ctx, UpdateAgentAnalysisToolName, in.AnalysisNodeID); ok {
 		path = runScriptPath(current.CommandPath, current.WorkspaceDir)
-		before = runScriptContent(current.Command)
+		if content, err := prepare.ReadCommandRunScript(current.CommandPath); err == nil {
+			before = runScriptContent(content)
+		}
 	}
 	return textDiffPreview(path, before, runScriptContent(command))
 }

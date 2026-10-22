@@ -266,9 +266,6 @@ type AnalysisNode struct {
 	// 由 Agent 创建的「命令节点」没有脚本，直接用它启动容器；由脚本创建的节点保持 0，
 	// 沿用脚本绑定的 container_template_id（见 dag/executor.ContainerExecutor）。
 	ContainerTemplateID int64 `json:"container_template_id,string" gorm:"column:container_template_id;type:bigint"`
-	// Command 是 Agent 命令节点的 run.sh 正文（由 LLM 生成），普通脚本节点不使用。
-	// 运行前由 NodeRuntimePreparer 写入 node.CommandPath，因此重跑口径与其它节点一致。
-	Command string `json:"command,omitempty" gorm:"column:command;type:longtext"`
 	// ScriptName 不是 analysis_nodes 的列，而是按 ScriptID join pipeline_components
 	// 取到的脚本名称（component_name 列）。只有显式 join 的查询才会填充，
 	// 因此用 gorm:"-" 排除在 schema 之外，避免其他查询误选该列。
@@ -332,8 +329,9 @@ func (t *AnalysisNode) HydrateDerivedPaths() {
 
 // IsCommandNode 报告该节点是否为 Agent 创建的命令节点。
 //
-// 命令节点没有脚本：它的输入契约、容器模板与 run.sh 全部由节点自身承载
-// （ContainerTemplateID / Command），因此运行期跳过脚本相关的解析与软链。
+// 命令节点没有脚本：它的容器模板由节点自身承载（ContainerTemplateID），run.sh 由
+// 创建 / 更新入口直接写盘（见 prepare.WriteCommandRunScript），因此运行期跳过脚本
+// 相关的解析与软链。
 func (t *AnalysisNode) IsCommandNode() bool {
 	return t != nil && t.ScriptID <= 0 && t.ContainerTemplateID > 0
 }

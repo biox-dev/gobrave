@@ -2816,7 +2816,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "把内容写入 AnalysisNode.command_path；命令节点同时回写 node.command，使其在下次运行时不被旧命令覆盖",
+                "description": "把内容写入 AnalysisNode.command_path（run.sh）；命令节点直接以该文件作为运行脚本，因此无需回写数据库",
                 "consumes": [
                     "application/json"
                 ],
@@ -16129,10 +16129,6 @@
                 },
                 "cache_hit": {
                     "type": "boolean"
-                },
-                "command": {
-                    "description": "Command 是 Agent 命令节点的 run.sh 正文（由 LLM 生成），普通脚本节点不使用。\n运行前由 NodeRuntimePreparer 写入 node.CommandPath，因此重跑口径与其它节点一致。",
-                    "type": "string"
                 },
                 "command_md5": {
                     "type": "string"

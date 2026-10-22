@@ -174,12 +174,14 @@ func NewAnalysisNodeFromScript(
 // CommandNodeSpec 描述「由 Agent 会话构建一个命令型分析节点」所需的事实。
 //
 // 命令节点没有脚本：容器模板与 run.sh 正文都由节点自身承载，因此不需要 io_schema。
+// 注意：Command 不再落库（AnalysisNode 没有 Command 字段），这里只做非空校验；
+// 调用方拿到节点后需自行调用 prepare.WriteCommandRunScript 写入 run.sh。
 type CommandNodeSpec struct {
 	// ProjectID 是节点所属项目（必须为正数）。
 	ProjectID int64
 	// ContainerTemplateID 是该节点使用的容器模板（go_container_template_definition 主键）。
 	ContainerTemplateID int64
-	// Command 是写入 run.sh 的 shell 命令（由 LLM 生成）。
+	// Command 是待写入 run.sh 的 shell 命令（仅用于校验）。
 	Command string
 	// NodeName 是节点名称，为空时回落到 "agent-analysis"。
 	NodeName string
@@ -214,7 +216,6 @@ func NewAnalysisNodeFromCommand(spec CommandNodeSpec) (*types.AnalysisNode, erro
 		NodeID:                 "node-" + uuid.NewString(),
 		NodeName:               nodeName,
 		ContainerTemplateID:    spec.ContainerTemplateID,
-		Command:                command,
 		InputsPatterns:         types.JSONMap{},
 		OutputPatterns:         types.JSONMap{},
 		ResolvedInputs:         types.JSONMap{},
