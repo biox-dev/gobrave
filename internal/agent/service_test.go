@@ -34,19 +34,28 @@ func newTestDB(t *testing.T) *gorm.DB {
 // newTestService 构建一个使用 mock Provider 与数据库仓库（内存 sqlite）的 AgentService。
 func newTestService(t *testing.T) *agent.AgentService {
 	t.Helper()
+	svc, _ := newTestServiceWithDB(t)
+	return svc
+}
+
+// newTestServiceWithDB 与 newTestService 相同，但同时返回底层 DB，便于断言落库结果。
+func newTestServiceWithDB(t *testing.T) (*agent.AgentService, *gorm.DB) {
+	t.Helper()
 	registry := agent.NewRegistry(agentproviders.All()...)
 	client := agent.NewClient(registry, agent.Options{})
 	db := newTestDB(t)
 
-	return agent.NewService(agent.ServiceConfig{
+	svc := agent.NewService(agent.ServiceConfig{
 		Client:    client,
 		Tasks:     agentrepository.NewGormTaskRepository(db),
 		Events:    agentrepository.NewGormEventRepository(db),
+		Messages:  message.NewService(agentrepository.NewGormMessageStore(db)),
 		Perms:     agent.NewPermissionManager(agentrepository.NewGormPermissionRepository(db)),
 		Questions: agent.NewQuestionManager(agentrepository.NewGormQuestionRepository(db)),
 		Memory:    agent.NewMemoryManager(agent.MemoryConfig{Repo: agentrepository.NewGormMemoryRepository(db)}),
 		Profiles:  agent.NewProfileManager(agentrepository.NewGormProfileRepository(db)),
 	})
+	return svc, db
 }
 
 // TestServiceFullPermissionFlow 演示完整链路：
@@ -128,30 +137,13 @@ done:
 		t.Fatalf("task status = %s, want completed", got.Status)
 	}
 
-	// 事件序列校验：sequence 单调递增，且包含权限创建 / 决策 / 流式 / 完成。
+	// 事件流不再落库（持久化已迁到 agent_messages），实时广播已在上面的 Subscribe 中验证。
 	evs, err := svc.GetEvents(ctx, task.ID, 0)
 	if err != nil {
 		t.Fatalf("GetEvents: %v", err)
 	}
-	seen := map[agent.AgentEventType]bool{}
-	for i, e := range evs {
-		if i > 0 && e.Sequence <= evs[i-1].Sequence {
-			t.Fatalf("sequence not increasing: %d then %d", evs[i-1].Sequence, e.Sequence)
-		}
-		seen[e.Type] = true
-	}
-	for _, want := range []agent.AgentEventType{
-		agent.EventTaskCreated,
-		agent.EventTaskStarted,
-		agent.EventTaskWaiting,
-		agent.EventPermissionCreated,
-		agent.EventPermissionResolved,
-		agent.EventStream,
-		agent.EventTaskCompleted,
-	} {
-		if !seen[want] {
-			t.Errorf("missing event type %s (seen=%v)", want, seen)
-		}
+	if len(evs) != 0 {
+		t.Fatalf("agent_events persisted %d rows, want 0 (timeline moved to agent_messages)", len(evs))
 	}
 }
 
@@ -314,6 +306,64 @@ func TestServiceSyncRunAutoApprovesPermission(t *testing.T) {
 	}
 	if total != 0 {
 		t.Fatalf("permission requests = %d, want 0", total)
+	}
+}
+
+// TestTimelineMessagesPersistedDuringRun 验证 agent_messages 在轮内即时落库：
+// 不再依赖「轮末从 agent_events 回放」，tool_call / tool_result 在任务执行过程中
+// 就已经按顺序写入，为 Agent 循环中途退出后的恢复留下事实。
+func TestTimelineMessagesPersistedDuringRun(t *testing.T) {
+	svc, db := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	profile := &agent.Profile{Name: "timeline-persist-test", Provider: agent.ProviderMock}
+	if err := svc.SaveProfile(ctx, profile); err != nil {
+		t.Fatalf("SaveProfile: %v", err)
+	}
+
+	const sessionID int64 = 20241022
+	task, err := svc.CreateTask(ctx, agent.Request{
+		Provider:   agent.ProviderMock,
+		ProfileID:  profile.ID,
+		SessionID:  sessionID,
+		WorkingDir: "/tmp",
+		Env:        map[string]string{"MOCK_TOOL_DEMO": "true"},
+		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.RunTaskSyncByID(ctx, task.ID); err != nil {
+		t.Fatalf("RunTaskSyncByID: %v", err)
+	}
+
+	var rows []message.Message
+	if err := db.Where("session_id = ? AND task_id = ?", sessionID, task.ID).
+		Order("seq ASC").Find(&rows).Error; err != nil {
+		t.Fatalf("query agent_messages: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("no timeline messages persisted for task %d", task.ID)
+	}
+
+	seen := map[string]bool{}
+	for _, row := range rows {
+		seen[row.Kind] = true
+		if row.Seq < 0 {
+			t.Fatalf("message %d has invalid seq %d", row.ID, row.Seq)
+		}
+	}
+	for _, want := range []string{message.KindToolCall, message.KindToolResult} {
+		if !seen[want] {
+			t.Fatalf("missing timeline message kind %q (got %v)", want, seen)
+		}
+	}
+
+	// 事件流不再落库：AgentEvent 只保留实时广播职责。
+	if evs, err := svc.GetEvents(ctx, task.ID, 0); err != nil {
+		t.Fatalf("GetEvents: %v", err)
+	} else if len(evs) != 0 {
+		t.Fatalf("agent_events persisted %d rows, want 0", len(evs))
 	}
 }
 

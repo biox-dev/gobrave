@@ -473,6 +473,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		perms agent.PermissionRepository,
 		questions agent.QuestionRepository,
 		events agent.EventRepository,
+		messages message.Service,
 		mems *agent.MemoryManager,
 		profiles agent.ProfileRepository,
 		skills *skill.Registry,
@@ -485,10 +486,13 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 			Perms:     agent.NewPermissionManager(perms),
 			Questions: agent.NewQuestionManager(questions),
 			Events:    events,
-			Memory:    mems,
-			Profiles:  agent.NewProfileManager(profiles),
-			Skills:    skills,
-			Policy:    agent.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
+			// 时间线消息（agent_messages）由 AgentService 在轮内即时持久化，
+			// 事件流（agent_events）仅保留实时广播职责（后续废除）。
+			Messages: messages,
+			Memory:   mems,
+			Profiles: agent.NewProfileManager(profiles),
+			Skills:   skills,
+			Policy:   agent.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
 		})
 	}))
 	// Provide session.Service / message.Service：会话与消息的增删改查（参考 opencode 分层）。

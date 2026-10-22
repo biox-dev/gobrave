@@ -199,14 +199,15 @@ func (s *ChatService) finishTurn(taskID int64, errMsg string) {
 	}
 
 	ctx := context.Background()
-	final, timelineErr := s.appendTimelineMessages(ctx, ts.sessionID, taskID)
-	if strings.TrimSpace(final) == "" {
-		final = ts.text.String()
+
+	// 轮内时间线（reasoning / tool_call / tool_result）已由 AgentService 的
+	// TimelineRecorder 即时写入 agent_messages（见 timeline.go），这里只补
+	// 「轮末事实」：最终回答与错误，避免重复落库。
+	final := strings.TrimSpace(ts.messageContent)
+	if final == "" {
+		final = strings.TrimSpace(ts.text.String())
 	}
-	if strings.TrimSpace(final) == "" {
-		final = ts.messageContent
-	}
-	if strings.TrimSpace(final) != "" {
+	if final != "" {
 		_, _ = s.messages.Create(ctx, message.CreateParams{
 			SessionID: ts.sessionID,
 			Role:      message.RoleAssistant,
@@ -218,9 +219,6 @@ func (s *ChatService) finishTurn(taskID int64, errMsg string) {
 
 	// 错误信息写入会话历史（kind=error），确保 UI 在本轮终态、刷新或切换会话后
 	// 仍能稳定展示，而不是只依赖临时的 stream error 事件。
-	if strings.TrimSpace(timelineErr) != "" {
-		errMsg = timelineErr
-	}
 	if strings.TrimSpace(errMsg) != "" {
 		_, _ = s.messages.Create(ctx, message.CreateParams{
 			SessionID: ts.sessionID,
@@ -268,47 +266,6 @@ func shouldIncludeInPrompt(m message.Message) bool {
 	}
 }
 
-// appendTimelineMessages 从任务事件流投影会话历史，并返回最终 assistant 文本与错误文本。
-func (s *ChatService) appendTimelineMessages(ctx context.Context, sessionID, taskID int64) (string, string) {
-	if s.agent == nil || sessionID == 0 || taskID == 0 {
-		return "", ""
-	}
-	events, err := s.agent.GetEvents(ctx, taskID, 0)
-	if err != nil {
-		return "", ""
-	}
-
-	var final, errText string
-	for _, ev := range events {
-		if ev == nil || ev.Type != EventStream {
-			continue
-		}
-		se, ok := streamEventFromPayload(ev.Payload)
-		if !ok {
-			continue
-		}
-		// 错误事件不参与消息投影：由 finishTurn 在 assistant 正文之后统一写入历史，
-		// 避免错误气泡出现在已有回复之前。
-		if se.Type == StreamEventError {
-			if text := streamErrorText(se); text != "" {
-				errText = text
-			}
-			continue
-		}
-		// 投影规则（reasoning / tool_call / tool_result → 消息）与子 Agent 会话共用。
-		if params, ok := ProjectTimelineEvent(sessionID, taskID, se); ok {
-			s.appendMessage(ctx, params)
-			continue
-		}
-		if se.Type == StreamEventMessage {
-			if content, ok := messageBlockContent(se.Data); ok && strings.TrimSpace(content) != "" {
-				final = content
-			}
-		}
-	}
-	return final, errText
-}
-
 // streamErrorText 提取错误事件的展示文本：优先 Content（可序列化、可落库），
 // 回退 Err，最后使用通用兜底文案。
 func streamErrorText(event StreamEvent) string {
@@ -319,35 +276,6 @@ func streamErrorText(event StreamEvent) string {
 		return event.Err.Error()
 	}
 	return "stream error"
-}
-
-func (s *ChatService) appendMessage(ctx context.Context, params message.CreateParams) {
-	_, _ = s.messages.Create(ctx, params)
-}
-
-func streamEventFromPayload(payload any) (StreamEvent, bool) {
-	switch p := payload.(type) {
-	case StreamEvent:
-		return p, true
-	case *StreamEvent:
-		if p == nil {
-			return StreamEvent{}, false
-		}
-		return *p, true
-	case map[string]any:
-		t, ok := p["type"].(string)
-		if !ok || strings.TrimSpace(t) == "" {
-			return StreamEvent{}, false
-		}
-		e := StreamEvent{Type: StreamEventType(t)}
-		if content, ok := p["content"].(string); ok {
-			e.Content = content
-		}
-		e.Data = p["data"]
-		return e, true
-	default:
-		return StreamEvent{}, false
-	}
 }
 
 // ListSessions 分页查询会话；userID 为 0 表示全部用户。

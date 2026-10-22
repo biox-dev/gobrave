@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/agent/message"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -31,11 +32,13 @@ type AgentService struct {
 	perms     *PermissionManager
 	questions *QuestionManager
 	events    EventRepository
-	bus       EventBus
-	policy    PermissionPolicy
-	memory    *MemoryManager
-	profiles  *ProfileManager
-	skills    *skill.Registry
+	// timeline 把流式完整块事件即时投影为 agent_messages 记录（替代 AgentEvent 落库）。
+	timeline *TimelineRecorder
+	bus      EventBus
+	policy   PermissionPolicy
+	memory   *MemoryManager
+	profiles *ProfileManager
+	skills   *skill.Registry
 
 	mu     sync.Mutex
 	active map[int64]context.CancelFunc // taskID → 取消函数
@@ -48,11 +51,14 @@ type ServiceConfig struct {
 	Perms     *PermissionManager
 	Questions *QuestionManager
 	Events    EventRepository
-	Bus       EventBus
-	Policy    PermissionPolicy
-	Memory    *MemoryManager
-	Profiles  *ProfileManager
-	Skills    *skill.Registry
+	// Messages 是时间线消息（agent_messages）的持久化服务。注入后事件流不再写入
+	// AgentEvent，改由 TimelineRecorder 在轮内即时投影为 Message（AgentEvent 后续废除）。
+	Messages message.Service
+	Bus      EventBus
+	Policy   PermissionPolicy
+	Memory   *MemoryManager
+	Profiles *ProfileManager
+	Skills   *skill.Registry
 }
 
 // NewService 创建 AgentService，未提供的依赖使用安全的默认值。
@@ -73,6 +79,7 @@ func NewService(cfg ServiceConfig) *AgentService {
 		perms:     cfg.Perms,
 		questions: cfg.Questions,
 		events:    cfg.Events,
+		timeline:  NewTimelineRecorder(cfg.Tasks, cfg.Messages),
 		bus:       cfg.Bus,
 		policy:    cfg.Policy,
 		memory:    cfg.Memory,
@@ -106,6 +113,8 @@ func (s *AgentService) CreateTask(ctx context.Context, req Request) (*Task, erro
 	if err := s.tasks.Create(ctx, task); err != nil {
 		return nil, err
 	}
+	// 预先记住会话归属，使 Emit 热点路径不需要回查任务。
+	s.timeline.Remember(task.ID, task.SessionID)
 	s.emitEvent(ctx, task.ID, EventTaskCreated, task)
 	return task, nil
 }
@@ -116,6 +125,7 @@ func (s *AgentService) StartTask(ctx context.Context, taskID int64, handler Stre
 	if err != nil {
 		return err
 	}
+	s.timeline.Remember(task.ID, task.SessionID)
 
 	rt := NewTaskRuntime(s, task.ID, handler)
 	execCtx, cancel := context.WithCancel(context.Background())
@@ -164,6 +174,7 @@ func (s *AgentService) RunTaskSyncByID(ctx context.Context, taskID int64, opts .
 	if err != nil {
 		return nil, err
 	}
+	s.timeline.Remember(task.ID, task.SessionID)
 	// 默认开启自动放行；显式传入的 opts 顺序在后，可覆盖该默认值。
 	rt := NewTaskRuntime(s, taskID, nil, append([]RuntimeOption{WithAutoApprove(true)}, opts...)...)
 	result, err := s.run(ctx, task, rt)
@@ -278,6 +289,12 @@ func (s *AgentService) transitionTask(ctx context.Context, task *Task, next Task
 		return err
 	}
 
+	// 终态后清理时间线记录器的会话缓存，避免长期运行下无限增长。
+	switch next {
+	case TaskCompleted, TaskFailed, TaskCanceled:
+		s.timeline.Forget(task.ID)
+	}
+
 	s.emitEvent(ctx, task.ID, taskEventType(next), task)
 	return nil
 }
@@ -366,7 +383,8 @@ func (s *AgentService) PageEvents(ctx context.Context, offset, limit int, taskID
 }
 
 // Subscribe 订阅任务事件（taskID 为 0 表示订阅全部任务），返回取消订阅函数。
-// 供 WS / SSE 实时推送层使用；刷新恢复历史请使用 GetEvents。
+// 供 WS / SSE 实时推送层使用；刷新后的历史请从 agent_messages 读取
+// （事件流仅用于实时广播，不再持久化）。
 func (s *AgentService) Subscribe(taskID int64, handler EventHandler) func() {
 	if s.bus == nil {
 		return func() {}
@@ -374,7 +392,8 @@ func (s *AgentService) Subscribe(taskID int64, handler EventHandler) func() {
 	return s.bus.Subscribe(taskID, handler)
 }
 
-// emitEvent 持久化（分配 sequence）并广播一个事件。
+// emitEvent 广播一个事件。持久化不再走 EventRepository：时间线改由
+// TimelineRecorder 在 EventStream 分支即时投影为 agent_messages。
 func (s *AgentService) emitEvent(ctx context.Context, taskID int64, typ AgentEventType, payload any) {
 	s.publish(ctx, taskID, typ, payload, true)
 }
@@ -384,7 +403,7 @@ func (s *AgentService) broadcastEvent(ctx context.Context, taskID int64, typ Age
 	s.publish(ctx, taskID, typ, payload, false)
 }
 
-// publish 是事件的单一出口：构造 AgentEvent，按需持久化，再广播给订阅者。
+// publish 是事件的单一出口：构造 AgentEvent，按需投影为时间线消息，再广播给订阅者。
 func (s *AgentService) publish(ctx context.Context, taskID int64, typ AgentEventType, payload any, persist bool) {
 	// 每个事件都分配唯一 ID：持久化事件由 BeforeCreate 兜底，但广播（不落库）的
 	// 流式增量事件不走 Append，若不在此分配，ID 恒为 0，前端按 id:sequence 去重
@@ -396,8 +415,14 @@ func (s *AgentService) publish(ctx context.Context, taskID int64, typ AgentEvent
 		Payload:   payload,
 		CreatedAt: time.Now(),
 	}
-	if persist && s.events != nil {
-		_ = s.events.Append(ctx, e)
+	// 时间线持久化已从 AgentEvent 迁到 Message（agent_messages）：事件流只保留
+	// 实时广播职责，AgentEvent 后续整体废除。流式事件由 TimelineRecorder 在轮内
+	// 即时投影为 agent_messages 记录（reasoning / tool_call / tool_result）。
+	// if persist && s.events != nil {
+	// 	_ = s.events.Append(ctx, e)
+	// }
+	if persist && typ == EventStream {
+		s.timeline.Record(ctx, taskID, payload)
 	}
 	if s.bus != nil {
 		s.bus.Publish(ctx, *e)
@@ -718,6 +743,10 @@ func (s *AgentService) CancelTask(ctx context.Context, taskID int64) error {
 //   - 没有活跃 goroutine 的 waiting_permission 任务：pending 权限已持久化，
 //     UI 仍可通过 GetPendingPermissions 拉取并批准 / 拒绝（更新 DB）；
 //     但 Agent 进程已丢失，真正“恢复执行”依赖各 Provider 的 checkpoint / resume 能力。
+//
+// 轮内时间线（reasoning / tool_call / tool_result）现在由 TimelineRecorder 即时写入
+// agent_messages，恢复时可以据此重建「已经执行到哪一步」；真正的续跑仍待实现
+// （需要基于消息表重建 Request + 对已批准权限做一次性重放）。
 func (s *AgentService) Recover(ctx context.Context) error {
 	running, err := s.tasks.ListByStatus(ctx, TaskRunning)
 	if err != nil {
