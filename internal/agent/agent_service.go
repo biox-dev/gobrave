@@ -16,7 +16,7 @@ import (
 
 // AgentService 是 Agent 执行架构的编排层（即 design.md 中的 AgentTaskManager）。
 //
-// 它把 Client（Provider 门面）、TaskRepository、PermissionManager、EventRepository、
+// 它把 Client（Provider 门面）、TaskRepository、PermissionManager、
 // EventBus 与 PermissionPolicy 组合成一条完整的调用链路：
 //
 //	RunTask 创建任务 → 启动 goroutine 执行 Agent
@@ -31,8 +31,7 @@ type AgentService struct {
 	tasks     TaskRepository
 	perms     *PermissionManager
 	questions *QuestionManager
-	events    EventRepository
-	// timeline 把流式完整块事件即时投影为 agent_messages 记录（替代 AgentEvent 落库）。
+	// timeline 把流式完整块事件即时投影为 agent_messages 记录。
 	timeline *TimelineRecorder
 	bus      EventBus
 	policy   PermissionPolicy
@@ -54,9 +53,7 @@ type ServiceConfig struct {
 	Tasks     TaskRepository
 	Perms     *PermissionManager
 	Questions *QuestionManager
-	Events    EventRepository
-	// Messages 是时间线消息（agent_messages）的持久化服务。注入后事件流不再写入
-	// AgentEvent，改由 TimelineRecorder 在轮内即时投影为 Message（AgentEvent 后续废除）。
+	// Messages 是时间线消息（agent_messages）的持久化服务。
 	Messages message.Service
 	Bus      EventBus
 	Policy   PermissionPolicy
@@ -82,7 +79,6 @@ func NewService(cfg ServiceConfig) *AgentService {
 		tasks:     cfg.Tasks,
 		perms:     cfg.Perms,
 		questions: cfg.Questions,
-		events:    cfg.Events,
 		timeline:  NewTimelineRecorder(cfg.Tasks, cfg.Messages),
 		bus:       cfg.Bus,
 		policy:    cfg.Policy,
@@ -395,11 +391,6 @@ func (s *AgentService) PageQuestions(ctx context.Context, offset, limit int, tas
 	return s.questions.Page(ctx, offset, limit, taskID, statuses...)
 }
 
-// GetEvents 增量拉取任务事件（after 为上次收到的最大 sequence）。
-func (s *AgentService) GetEvents(ctx context.Context, taskID int64, after int64) ([]*AgentEvent, error) {
-	return s.events.ListByTask(ctx, taskID, after)
-}
-
 // PageTasks 分页查询任务（offset/limit 由上层根据 types.Pagination 计算）。
 func (s *AgentService) PageTasks(ctx context.Context, offset, limit int, statuses ...TaskStatus) ([]*Task, int64, error) {
 	return s.tasks.Page(ctx, offset, limit, statuses...)
@@ -408,11 +399,6 @@ func (s *AgentService) PageTasks(ctx context.Context, offset, limit int, statuse
 // PagePermissions 分页查询权限请求；taskID 为 0 表示全部任务，statuses 为空表示全部状态。
 func (s *AgentService) PagePermissions(ctx context.Context, offset, limit int, taskID int64, statuses ...PermissionStatus) ([]*PermissionRequest, int64, error) {
 	return s.perms.Page(ctx, offset, limit, taskID, statuses...)
-}
-
-// PageEvents 分页查询事件；taskID 为 0 表示全部任务。
-func (s *AgentService) PageEvents(ctx context.Context, offset, limit int, taskID int64) ([]*AgentEvent, int64, error) {
-	return s.events.Page(ctx, taskID, offset, limit)
 }
 
 // Subscribe 订阅任务事件（taskID 为 0 表示订阅全部任务），返回取消订阅函数。
@@ -425,8 +411,8 @@ func (s *AgentService) Subscribe(taskID int64, handler EventHandler) func() {
 	return s.bus.Subscribe(taskID, handler)
 }
 
-// emitEvent 广播一个事件。持久化不再走 EventRepository：时间线改由
-// TimelineRecorder 在 EventStream 分支即时投影为 agent_messages。
+// emitEvent 广播一个事件（不落库）。时间线由 TimelineRecorder 在 EventStream 分支
+// 即时投影为 agent_messages。
 func (s *AgentService) emitEvent(ctx context.Context, taskID int64, typ AgentEventType, payload any) {
 	s.publish(ctx, taskID, typ, payload, true)
 }

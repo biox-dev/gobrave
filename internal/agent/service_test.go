@@ -25,7 +25,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &agent.AgentEvent{}, &session.Session{}, &message.Message{}, &agent.Memory{}, &agent.Profile{}); err != nil {
+	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &session.Session{}, &message.Message{}, &agent.Memory{}, &agent.Profile{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return db
@@ -49,7 +49,6 @@ func newTestServiceWithDB(t *testing.T, extra ...agent.Provider) (*agent.AgentSe
 	svc := agent.NewService(agent.ServiceConfig{
 		Client:    client,
 		Tasks:     agentrepository.NewGormTaskRepository(db),
-		Events:    agentrepository.NewGormEventRepository(db),
 		Messages:  message.NewService(agentrepository.NewGormMessageStore(db)),
 		Perms:     agent.NewPermissionManager(agentrepository.NewGormPermissionRepository(db)),
 		Questions: agent.NewQuestionManager(agentrepository.NewGormQuestionRepository(db)),
@@ -136,15 +135,6 @@ done:
 	}
 	if got.Status != agent.TaskCompleted {
 		t.Fatalf("task status = %s, want completed", got.Status)
-	}
-
-	// 事件流不再落库（持久化已迁到 agent_messages），实时广播已在上面的 Subscribe 中验证。
-	evs, err := svc.GetEvents(ctx, task.ID, 0)
-	if err != nil {
-		t.Fatalf("GetEvents: %v", err)
-	}
-	if len(evs) != 0 {
-		t.Fatalf("agent_events persisted %d rows, want 0 (timeline moved to agent_messages)", len(evs))
 	}
 }
 
@@ -358,13 +348,6 @@ func TestTimelineMessagesPersistedDuringRun(t *testing.T) {
 		if !seen[want] {
 			t.Fatalf("missing timeline message kind %q (got %v)", want, seen)
 		}
-	}
-
-	// 事件流不再落库：AgentEvent 只保留实时广播职责。
-	if evs, err := svc.GetEvents(ctx, task.ID, 0); err != nil {
-		t.Fatalf("GetEvents: %v", err)
-	} else if len(evs) != 0 {
-		t.Fatalf("agent_events persisted %d rows, want 0", len(evs))
 	}
 }
 

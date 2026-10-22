@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/history"
@@ -25,7 +24,7 @@ func newGormTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &agent.AgentEvent{}, &session.Session{}, &message.Message{}, &agent.Memory{}, &history.File{}); err != nil {
+	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &session.Session{}, &message.Message{}, &agent.Memory{}, &history.File{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return db
@@ -122,50 +121,6 @@ func TestGormPermissionRepositoryRoundTrip(t *testing.T) {
 	pending, _ = repo.ListPendingByTask(ctx, 1)
 	if len(pending) != 0 {
 		t.Fatalf("expected no pending after approve, got %d", len(pending))
-	}
-}
-
-func TestGormEventRepositorySequence(t *testing.T) {
-	ctx := context.Background()
-	repo := NewGormEventRepository(newGormTestDB(t))
-
-	// 交错追加两个任务的事件，sequence 应按任务独立递增。
-	for i := 0; i < 3; i++ {
-		if err := repo.Append(ctx, &agent.AgentEvent{TaskID: 1, Type: agent.EventTaskStarted, CreatedAt: time.Now()}); err != nil {
-			t.Fatalf("Append A%d: %v", i, err)
-		}
-		if err := repo.Append(ctx, &agent.AgentEvent{TaskID: 2, Type: agent.EventTaskStarted, CreatedAt: time.Now()}); err != nil {
-			t.Fatalf("Append B%d: %v", i, err)
-		}
-	}
-
-	evsA, err := repo.ListByTask(ctx, 1, 0)
-	if err != nil {
-		t.Fatalf("ListByTask A: %v", err)
-	}
-	evsB, err := repo.ListByTask(ctx, 2, 0)
-	if err != nil {
-		t.Fatalf("ListByTask B: %v", err)
-	}
-	if len(evsA) != 3 || len(evsB) != 3 {
-		t.Fatalf("unexpected counts: A=%d B=%d", len(evsA), len(evsB))
-	}
-	for i, e := range evsA {
-		if e.Sequence != int64(i+1) {
-			t.Fatalf("task-A sequence[%d] = %d, want %d", i, e.Sequence, i+1)
-		}
-	}
-
-	// after 语义：只返回 sequence > after。
-	tail, err := repo.ListByTask(ctx, 1, 1)
-	if err != nil || len(tail) != 2 || tail[0].Sequence != 2 {
-		t.Fatalf("ListByTask after=1: len=%d err=%v firstSeq=%d", len(tail), err, tail[0].Sequence)
-	}
-
-	// Page 全量。
-	page, total, err := repo.Page(ctx, 0, 0, 100)
-	if err != nil || total != 6 || len(page) != 6 {
-		t.Fatalf("Page all: total=%d len=%d err=%v", total, len(page), err)
 	}
 }
 

@@ -2,10 +2,10 @@
 //
 // 架构说明：
 //   - 持久化端口（TaskRepository / PermissionRepository / QuestionRepository /
-//     EventRepository / MemoryRepository / ProfileRepository 接口）定义在 agent 包中，
+//     MemoryRepository / ProfileRepository 接口）定义在 agent 包中，
 //     会话与消息端口（session.Store / message.Store）定义在各自的领域包中，
 //     由消费方（AgentService / ChatService 等编排层）持有，遵循「接口定义在消费侧」。
 //   - 本包作为适配器层，把这些端口的实现落到数据库。因为实现需要引用 agent 包的领域类型
-//     （Task / AgentEvent / PermissionRequest ...），所以本包单向依赖 agent 包；agent 包
+//     （Task / PermissionRequest ...），所以本包单向依赖 agent 包；agent 包
 //     不反向依赖本包，从而避免循环依赖。
 package repository

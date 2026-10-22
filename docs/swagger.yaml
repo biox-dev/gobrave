@@ -1,79 +1,5 @@
 basePath: /api/v1
 definitions:
-  agent.AgentEvent:
-    properties:
-      created_at:
-        type: string
-      id:
-        example: "0"
-        type: string
-      payload: {}
-      sequence:
-        type: integer
-      task_id:
-        example: "0"
-        type: string
-      type:
-        $ref: '#/definitions/agent.AgentEventType'
-    type: object
-  agent.AgentEventType:
-    enum:
-    - task.created
-    - task.started
-    - task.waiting
-    - task.completed
-    - task.failed
-    - task.canceled
-    - permission.created
-    - permission.resolved
-    - question.created
-    - question.resolved
-    - memory.saved
-    - memory.deleted
-    - stream
-    type: string
-    x-enum-comments:
-      EventMemoryDeleted: 记忆已删除（Payload 为 Memory）
-      EventMemorySaved: 记忆已保存（Payload 为 Memory）
-      EventPermissionCreated: 新增待确认权限
-      EventPermissionResolved: 权限已被批准 / 拒绝
-      EventQuestionCreated: 新增待作答提问（Payload 为 QuestionRequest）
-      EventQuestionResolved: 提问已作答 / 取消（Payload 为 QuestionRequest）
-      EventStream: 透传的流式事件（Payload 为 StreamEvent）
-      EventTaskCanceled: 任务取消
-      EventTaskCompleted: 任务完成
-      EventTaskCreated: 任务已创建
-      EventTaskFailed: 任务失败
-      EventTaskStarted: 任务开始执行
-      EventTaskWaiting: 任务进入等待权限状态
-    x-enum-descriptions:
-    - 任务已创建
-    - 任务开始执行
-    - 任务进入等待权限状态
-    - 任务完成
-    - 任务失败
-    - 任务取消
-    - 新增待确认权限
-    - 权限已被批准 / 拒绝
-    - 新增待作答提问（Payload 为 QuestionRequest）
-    - 提问已作答 / 取消（Payload 为 QuestionRequest）
-    - 记忆已保存（Payload 为 Memory）
-    - 记忆已删除（Payload 为 Memory）
-    - 透传的流式事件（Payload 为 StreamEvent）
-    x-enum-varnames:
-    - EventTaskCreated
-    - EventTaskStarted
-    - EventTaskWaiting
-    - EventTaskCompleted
-    - EventTaskFailed
-    - EventTaskCanceled
-    - EventPermissionCreated
-    - EventPermissionResolved
-    - EventQuestionCreated
-    - EventQuestionResolved
-    - EventMemorySaved
-    - EventMemoryDeleted
-    - EventStream
   agent.AskUserAnswer:
     properties:
       answered_ids:
@@ -1025,20 +951,6 @@ definitions:
         type: string
     required:
     - share_code
-    type: object
-  handler.agentEventPageRequest:
-    properties:
-      page:
-        description: Page
-        minimum: 1
-        type: integer
-      page_size:
-        description: Page size
-        maximum: 1000
-        minimum: 1
-        type: integer
-      task_id:
-        type: string
     type: object
   handler.agentMemoryPageRequest:
     properties:
@@ -2810,6 +2722,11 @@ definitions:
         type: number
       created_at:
         type: string
+      definition_description:
+        description: |-
+          DefinitionDescription 原样取自绑定行 ContainerTemplateDefinition.Description（长文本）。
+          与 Description（共享运行配置 spec 的描述）相互独立，编辑表单需读写本字段。
+        type: string
       description:
         type: string
       display_name:
@@ -2874,6 +2791,12 @@ definitions:
     properties:
       created_at:
         description: 指针类型是为了让导出可以显式清空（omitempty 也因此生效）；接口响应仍会带上时间字段。
+        type: string
+      description:
+        description: |-
+          Description 是绑定行自身的描述（长文本），与共享运行配置 ContainerTemplateSpec.Description
+          相互独立：spec 描述“怎么跑”，这里描述“这个可运行模板是做什么的 / 适用什么场景”。
+          Agent 工具 get_container_template 会把 DisplayName 与 Description 一起回传给模型。
         type: string
       display_name:
         description: DisplayName 为空时，对外名称回退到 ContainerTemplateConfig.Name。
@@ -3804,38 +3727,6 @@ paths:
       summary: 解析当前对话的业务上下文
       tags:
       - Agent
-  /agent/event/page:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: 分页请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.agentEventPageRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 分页查询任务事件
-      tags:
-      - Agent
   /agent/memory/delete:
     post:
       consumes:
@@ -4583,41 +4474,6 @@ paths:
       security:
       - Bearer: []
       summary: 创建 Agent 任务
-      tags:
-      - Agent
-  /agent/task/events:
-    get:
-      description: 返回 sequence 大于 after 的事件；浏览器刷新后用此接口恢复历史
-      parameters:
-      - description: 任务 ID
-        in: query
-        name: task_id
-        required: true
-        type: string
-      - description: 上次收到的最大 sequence
-        in: query
-        name: after
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/agent.AgentEvent'
-            type: array
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 增量拉取任务事件
       tags:
       - Agent
   /agent/task/get:

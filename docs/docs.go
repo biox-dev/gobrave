@@ -122,57 +122,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/agent/event/page": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Agent"
-                ],
-                "summary": "分页查询任务事件",
-                "parameters": [
-                    {
-                        "description": "分页请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.agentEventPageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
         "/agent/memory/delete": {
             "post": {
                 "security": [
@@ -1359,61 +1308,6 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/agent/task/events": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "返回 sequence 大于 after 的事件；浏览器刷新后用此接口恢复历史",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Agent"
-                ],
-                "summary": "增量拉取任务事件",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "任务 ID",
-                        "name": "task_id",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "上次收到的最大 sequence",
-                        "name": "after",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/agent.AgentEvent"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -12635,92 +12529,6 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "agent.AgentEvent": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "payload": {},
-                "sequence": {
-                    "type": "integer"
-                },
-                "task_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "type": {
-                    "$ref": "#/definitions/agent.AgentEventType"
-                }
-            }
-        },
-        "agent.AgentEventType": {
-            "type": "string",
-            "enum": [
-                "task.created",
-                "task.started",
-                "task.waiting",
-                "task.completed",
-                "task.failed",
-                "task.canceled",
-                "permission.created",
-                "permission.resolved",
-                "question.created",
-                "question.resolved",
-                "memory.saved",
-                "memory.deleted",
-                "stream"
-            ],
-            "x-enum-comments": {
-                "EventMemoryDeleted": "记忆已删除（Payload 为 Memory）",
-                "EventMemorySaved": "记忆已保存（Payload 为 Memory）",
-                "EventPermissionCreated": "新增待确认权限",
-                "EventPermissionResolved": "权限已被批准 / 拒绝",
-                "EventQuestionCreated": "新增待作答提问（Payload 为 QuestionRequest）",
-                "EventQuestionResolved": "提问已作答 / 取消（Payload 为 QuestionRequest）",
-                "EventStream": "透传的流式事件（Payload 为 StreamEvent）",
-                "EventTaskCanceled": "任务取消",
-                "EventTaskCompleted": "任务完成",
-                "EventTaskCreated": "任务已创建",
-                "EventTaskFailed": "任务失败",
-                "EventTaskStarted": "任务开始执行",
-                "EventTaskWaiting": "任务进入等待权限状态"
-            },
-            "x-enum-descriptions": [
-                "任务已创建",
-                "任务开始执行",
-                "任务进入等待权限状态",
-                "任务完成",
-                "任务失败",
-                "任务取消",
-                "新增待确认权限",
-                "权限已被批准 / 拒绝",
-                "新增待作答提问（Payload 为 QuestionRequest）",
-                "提问已作答 / 取消（Payload 为 QuestionRequest）",
-                "记忆已保存（Payload 为 Memory）",
-                "记忆已删除（Payload 为 Memory）",
-                "透传的流式事件（Payload 为 StreamEvent）"
-            ],
-            "x-enum-varnames": [
-                "EventTaskCreated",
-                "EventTaskStarted",
-                "EventTaskWaiting",
-                "EventTaskCompleted",
-                "EventTaskFailed",
-                "EventTaskCanceled",
-                "EventPermissionCreated",
-                "EventPermissionResolved",
-                "EventQuestionCreated",
-                "EventQuestionResolved",
-                "EventMemorySaved",
-                "EventMemoryDeleted",
-                "EventStream"
-            ]
-        },
         "agent.AskUserAnswer": {
             "type": "object",
             "properties": {
@@ -13984,25 +13792,6 @@ const docTemplate = `{
             ],
             "properties": {
                 "share_code": {
-                    "type": "string"
-                }
-            }
-        },
-        "handler.agentEventPageRequest": {
-            "type": "object",
-            "properties": {
-                "page": {
-                    "description": "Page",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "page_size": {
-                    "description": "Page size",
-                    "type": "integer",
-                    "maximum": 1000,
-                    "minimum": 1
-                },
-                "task_id": {
                     "type": "string"
                 }
             }
@@ -16490,6 +16279,10 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "definition_description": {
+                    "description": "DefinitionDescription 原样取自绑定行 ContainerTemplateDefinition.Description（长文本）。\n与 Description（共享运行配置 spec 的描述）相互独立，编辑表单需读写本字段。",
+                    "type": "string"
+                },
                 "description": {
                     "type": "string"
                 },
@@ -16579,6 +16372,10 @@ const docTemplate = `{
             "properties": {
                 "created_at": {
                     "description": "指针类型是为了让导出可以显式清空（omitempty 也因此生效）；接口响应仍会带上时间字段。",
+                    "type": "string"
+                },
+                "description": {
+                    "description": "Description 是绑定行自身的描述（长文本），与共享运行配置 ContainerTemplateSpec.Description\n相互独立：spec 描述“怎么跑”，这里描述“这个可运行模板是做什么的 / 适用什么场景”。\nAgent 工具 get_container_template 会把 DisplayName 与 Description 一起回传给模型。",
                     "type": "string"
                 },
                 "display_name": {

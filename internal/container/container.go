@@ -450,9 +450,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(db *gorm.DB) agent.QuestionRepository {
 		return agentrepository.NewGormQuestionRepository(db)
 	}))
-	must(container.Provide(func(db *gorm.DB) agent.EventRepository {
-		return agentrepository.NewGormEventRepository(db)
-	}))
 	must(container.Provide(func(db *gorm.DB) agent.MemoryRepository {
 		return agentrepository.NewGormMemoryRepository(db)
 	}))
@@ -472,7 +469,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		tasks agent.TaskRepository,
 		perms agent.PermissionRepository,
 		questions agent.QuestionRepository,
-		events agent.EventRepository,
 		messages message.Service,
 		mems *agent.MemoryManager,
 		profiles agent.ProfileRepository,
@@ -485,9 +481,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 			Tasks:     tasks,
 			Perms:     agent.NewPermissionManager(perms),
 			Questions: agent.NewQuestionManager(questions),
-			Events:    events,
-			// 时间线消息（agent_messages）由 AgentService 在轮内即时持久化，
-			// 事件流（agent_events）仅保留实时广播职责（后续废除）。
+			// 时间线消息（agent_messages）由 AgentService 在轮内即时持久化。
 			Messages: messages,
 			Memory:   mems,
 			Profiles: agent.NewProfileManager(profiles),
@@ -1006,7 +1000,6 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&agent.Task{},
 		&agent.PermissionRequest{},
 		&agent.QuestionRequest{},
-		&agent.AgentEvent{},
 		&session.Session{},
 		&message.Message{},
 		&history.File{},

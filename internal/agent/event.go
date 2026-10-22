@@ -4,9 +4,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/biox-dev/gobrave/internal/utils"
-	"gorm.io/gorm"
 )
 
 // AgentEventType 枚举任务生命周期与实时通知事件。
@@ -31,28 +28,17 @@ const (
 	EventStream             AgentEventType = "stream"              // 透传的流式事件（Payload 为 StreamEvent）
 )
 
-// AgentEvent 是发布到 EventBus 的单个事件，带单调递增的 sequence。
+// AgentEvent 是发布到 EventBus 的实时通知事件。
 //
-// sequence 使事件可被“增量拉取”（如 GET /tasks/{id}/events?after=3），
-// 因此浏览器刷新后无需依赖 WS 历史即可恢复。
+// 它只承担实时推送职责（WS / SSE），**不落库**：任务时间线的持久化由
+// TimelineRecorder 投影到 agent_messages（见 timeline.go）。
+// 前端刷新 / 恢复历史请读会话消息，而不是事件流。
 type AgentEvent struct {
-	ID        int64          `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	TaskID    int64          `json:"task_id,string" gorm:"column:task_id;type:bigint;index:idx_agent_events_task_seq,priority:1"`
-	Sequence  int64          `json:"sequence" gorm:"column:sequence;index:idx_agent_events_task_seq,priority:2"`
-	Type      AgentEventType `json:"type" gorm:"column:type;type:varchar(32)"`
-	Payload   any            `json:"payload,omitempty" gorm:"serializer:json"`
-	CreatedAt time.Time      `json:"created_at" gorm:"column:created_at"`
-}
-
-// TableName 返回任务事件表的表名。
-func (AgentEvent) TableName() string { return "agent_events" }
-
-// BeforeCreate 在写入数据库前用雪花 ID 初始化主键。
-func (e *AgentEvent) BeforeCreate(_ *gorm.DB) error {
-	if e.ID == 0 {
-		e.ID = utils.GenerateID()
-	}
-	return nil
+	ID        int64          `json:"id,string"`
+	TaskID    int64          `json:"task_id,string"`
+	Type      AgentEventType `json:"type"`
+	Payload   any            `json:"payload,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 // EventHandler 是事件订阅回调。
@@ -61,7 +47,8 @@ type EventHandler func(ctx context.Context, event AgentEvent) error
 
 // EventBus 是实时通知层接口：只负责“告诉 UI 状态发生了变化”，不承担状态存储。
 //
-// 数据库（Repository）才是状态源；EventBus 之上可以接 WS / SSE 做实时推送。
+// 状态源是 agent_tasks（任务）与 agent_messages（时间线）；EventBus 之上接
+// WS / SSE 做实时推送。
 type EventBus interface {
 	// Publish 发布一个事件给订阅了该任务（或全部任务）的订阅者。
 	Publish(ctx context.Context, event AgentEvent)

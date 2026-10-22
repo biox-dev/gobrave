@@ -466,7 +466,6 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 	r.POST("/agent/task/create", handler.CreateTask)
 	r.GET("/agent/task/get", handler.GetTask)
 	r.GET("/agent/task/request", handler.GetTaskRequest)
-	r.GET("/agent/task/events", handler.GetTaskEvents)
 	r.GET("/agent/task/permissions", handler.GetPendingPermissions)
 	r.POST("/agent/task/cancel", handler.CancelTask)
 	r.POST("/agent/permission/approve", handler.ApprovePermission)
@@ -478,7 +477,6 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 	r.POST("/agent/task/page", handler.PageTasks)
 	r.POST("/agent/permission/page", handler.PagePermissions)
 	r.POST("/agent/question/page", handler.PageQuestions)
-	r.POST("/agent/event/page", handler.PageEvents)
 
 	r.POST("/agent/session/page", handler.PageSessions)
 	r.GET("/agent/session/get", handler.GetSession)

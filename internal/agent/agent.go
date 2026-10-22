@@ -13,7 +13,7 @@
 //   - Operation / PermissionPolicy：描述“要做什么”以及“能不能做”。
 //   - PermissionManager / PermissionRequest：持久化的权限请求与批准 / 拒绝。
 //   - Task / TaskManager（AgentService）：任务状态机与编排。
-//   - EventBus / AgentEvent：实时通知层（带 sequence，可恢复）。
+//   - EventBus / AgentEvent：实时通知层（不落库；历史时间线见 agent_messages）。
 //   - Repository：持久化抽象（默认提供内存实现，后续可替换为 DB）。
 //
 // 各 Provider 通过 Registry 注册，运行时按名称解析；Client 是统一门面，负责
@@ -149,7 +149,7 @@ type Result struct {
 // 事件分为两类：
 //   - 增量（delta）：text / reasoning_delta，用于前端实时渲染，默认不落库（仅走 WS/SSE 广播）；
 //   - 完整块（block）：turn_start / turn_end / reasoning / message / tool_call / tool_result，
-//     是时间线的 source of truth，会持久化到 EventRepository。
+//     是时间线的 source of truth，由 TimelineRecorder 投影到 agent_messages。
 type StreamEventType string
 
 const (

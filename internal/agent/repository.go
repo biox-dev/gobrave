@@ -40,13 +40,3 @@ type QuestionRepository interface {
 	// Page 分页查询提问请求（按 CreatedAt 升序）；taskID 为 0 表示全部任务，statuses 为空表示全部状态。
 	Page(ctx context.Context, offset, limit int, taskID int64, statuses ...QuestionStatus) ([]*QuestionRequest, int64, error)
 }
-
-// EventRepository 持久化任务事件（带 per-task 单调递增 sequence）。
-type EventRepository interface {
-	// Append 为事件分配 sequence 并追加到任务事件流。
-	Append(ctx context.Context, event *AgentEvent) error
-	// ListByTask 返回任务中 sequence 大于 after 的事件（升序）。
-	ListByTask(ctx context.Context, taskID int64, after int64) ([]*AgentEvent, error)
-	// Page 分页查询事件（按 CreatedAt 升序）；taskID 为 0 表示全部任务。
-	Page(ctx context.Context, taskID int64, offset, limit int) ([]*AgentEvent, int64, error)
-}

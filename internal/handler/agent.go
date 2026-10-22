@@ -74,9 +74,9 @@ type permissionIDBody struct {
 	ID string `json:"id" binding:"required"`
 }
 
-type agentEventsQuery struct {
+// taskIDQueryParams 是仅需 task_id 的查询参数（权限 / 提问等接口复用）。
+type taskIDQueryParams struct {
 	TaskID string `form:"task_id" binding:"required"`
-	After  int64  `form:"after"`
 }
 
 type chatRequest struct {
@@ -124,11 +124,6 @@ type agentQuestionPageRequest struct {
 	types.Pagination
 	TaskID   string                 `json:"task_id"`
 	Statuses []agent.QuestionStatus `json:"statuses"`
-}
-
-type agentEventPageRequest struct {
-	types.Pagination
-	TaskID string `json:"task_id"`
 }
 
 // agentMemoryPageRequest 是记忆分页查询请求；kinds 为空表示全部类别。
@@ -825,42 +820,6 @@ func (h *AgentHandler) GetTaskRequest(c *gin.Context) {
 	c.JSON(http.StatusOK, req)
 }
 
-// GetTaskEvents godoc
-// @Summary      增量拉取任务事件
-// @Description  返回 sequence 大于 after 的事件；浏览器刷新后用此接口恢复历史
-// @Tags         Agent
-// @Produce      json
-// @Param        task_id  query     string  true  "任务 ID"
-// @Param        after    query     int     false "上次收到的最大 sequence"
-// @Success      200      {array}   agent.AgentEvent
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /agent/task/events [get]
-func (h *AgentHandler) GetTaskEvents(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var q agentEventsQuery
-	if err := c.ShouldBindQuery(&q); err != nil {
-		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
-		return
-	}
-
-	taskID, err := parseAgentID(q.TaskID)
-	if err != nil {
-		c.Error(errors.NewValidationError("invalid task_id").WithDetails(err.Error()))
-		return
-	}
-	events, err := h.svc.GetEvents(c.Request.Context(), taskID, q.After)
-	if err != nil {
-		handleAgentError(c, err, "failed to get agent task events")
-		return
-	}
-	c.JSON(http.StatusOK, events)
-}
-
 // GetPendingPermissions godoc
 // @Summary      获取任务待确认权限
 // @Tags         Agent
@@ -876,7 +835,7 @@ func (h *AgentHandler) GetPendingPermissions(c *gin.Context) {
 		return
 	}
 
-	var q agentEventsQuery
+	var q taskIDQueryParams
 	if err := c.ShouldBindQuery(&q); err != nil {
 		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
 		return
@@ -1061,48 +1020,6 @@ func (h *AgentHandler) PagePermissions(c *gin.Context) {
 	items, total, err := h.svc.PagePermissions(c.Request.Context(), req.Offset(), req.Limit(), taskID, req.Statuses...)
 	if err != nil {
 		handleAgentError(c, err, "failed to page agent permissions")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data":      items,
-		"total":     total,
-		"page":      req.GetPage(),
-		"page_size": req.GetPageSize(),
-	})
-}
-
-// PageEvents godoc
-// @Summary      分页查询任务事件
-// @Tags         Agent
-// @Accept       json
-// @Produce      json
-// @Param        request  body      handler.agentEventPageRequest  true  "分页请求参数"
-// @Success      200      {object}  map[string]interface{}
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /agent/event/page [post]
-func (h *AgentHandler) PageEvents(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req agentEventPageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
-		return
-	}
-
-	// task_id 可选：为空表示查询全部任务（taskID == 0）。
-	taskID, err := parseOptionalAgentID(req.TaskID)
-	if err != nil {
-		c.Error(errors.NewValidationError("invalid task_id").WithDetails(err.Error()))
-		return
-	}
-	items, total, err := h.svc.PageEvents(c.Request.Context(), req.Offset(), req.Limit(), taskID)
-	if err != nil {
-		handleAgentError(c, err, "failed to page agent events")
 		return
 	}
 
@@ -1535,7 +1452,7 @@ func (h *AgentHandler) CancelTask(c *gin.Context) {
 // attachTaskStream 订阅任务事件并推送到指定用户的 WS。
 //
 // 事件通过 AgentService.Subscribe（EventBus）分发，WS 只是通知层；
-// 历史恢复请使用 GetTaskEvents。任务到达终态时自动取消订阅，避免泄漏。
+// 历史时间线请从会话消息（agent_messages）读取。任务到达终态时自动取消订阅，避免泄漏。
 func (h *AgentHandler) attachTaskStream(userID int64, taskID int64) {
 	if h.svc == nil || h.hub == nil {
 		return
