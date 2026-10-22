@@ -126,9 +126,11 @@ func TimelineEventSummary(prefix string, data any) string {
 //   - 轮内即时落库：Agent 循环中途退出（进程重启 / panic / 长时间等待权限）时，
 //     已经产生的时间线不会丢，为后续恢复留下事实；
 //   - 投影规则复用 ProjectTimelineEvent，与子 Agent 会话保持同一口径；
-//   - 只有 EventStream 里可投影的完整块（reasoning / tool_call / tool_result）产生消息；
+//   - 只有 EventStream 里可投影的完整块（reasoning / message / tool_call / tool_result）产生消息；
 //     增量（text / reasoning_delta）与生命周期信号（turn_start / done / error ...）不落库；
-//   - Message.Data 保留事件原始结构，后续可从消息表重建结构化工具调用。
+//   - Message.Data 保留事件原始结构，后续可从消息表重建结构化工具调用；
+//   - RecordResult 是「结果兜底」：Provider 没发完整 message 块时，用最终结果补一条
+//     assistant_final，保证刷新 / 恢复后回答不会丢。
 //
 // 不属于本组件职责的两类消息（它们不是事件流的产物，由 ChatService 直接写入）：
 //   - user 消息：CreateTurn 在启动任务前写入；
@@ -141,6 +143,9 @@ type TimelineRecorder struct {
 
 	mu       sync.RWMutex
 	sessions map[int64]int64 // taskID → sessionID（避免每个事件都查一次任务）
+	// sawAssistant 记录该任务是否已落过 assistant 文本块（KindAssistant），
+	// 供 RecordResult 判断是否还需要用最终结果补一条 assistant_final。
+	sawAssistant map[int64]bool
 }
 
 // NewTimelineRecorder 创建时间线记录器；messages 为 nil 时返回 nil（等价于关闭落库）。
@@ -149,9 +154,10 @@ func NewTimelineRecorder(tasks TaskRepository, messages message.Service) *Timeli
 		return nil
 	}
 	return &TimelineRecorder{
-		tasks:    tasks,
-		messages: messages,
-		sessions: make(map[int64]int64),
+		tasks:        tasks,
+		messages:     messages,
+		sessions:     make(map[int64]int64),
+		sawAssistant: make(map[int64]bool),
 	}
 }
 
@@ -175,6 +181,7 @@ func (r *TimelineRecorder) Forget(taskID int64) {
 	}
 	r.mu.Lock()
 	delete(r.sessions, taskID)
+	delete(r.sawAssistant, taskID)
 	r.mu.Unlock()
 }
 
@@ -207,6 +214,49 @@ func (r *TimelineRecorder) Record(ctx context.Context, taskID int64, payload any
 	if _, err := r.messages.Create(persistCtx, params); err != nil {
 		logger.Warnf(persistCtx, "[agent] persist timeline message failed: task=%d kind=%s err=%v",
 			taskID, params.Kind, err)
+		return
+	}
+	if params.Kind == message.KindAssistant {
+		r.mu.Lock()
+		r.sawAssistant[taskID] = true
+		r.mu.Unlock()
+	}
+}
+
+// RecordResult 是「Provider 没有发出完整 message 块」时的兜底：用最终结果补一条
+// assistant_final，保证刷新 / 恢复后回答不会丢。
+//
+// 已经有 KindAssistant 块（Record 落过）时直接跳过，避免历史里出现两份相同文本。
+// 必须在任务进入终态（Forget 清理缓存）之前调用。
+func (r *TimelineRecorder) RecordResult(ctx context.Context, taskID int64, content string) {
+	if r == nil || r.messages == nil || taskID == 0 {
+		return
+	}
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+
+	r.mu.RLock()
+	saw := r.sawAssistant[taskID]
+	r.mu.RUnlock()
+	if saw {
+		return
+	}
+
+	persistCtx := context.WithoutCancel(ctx)
+	sessionID, err := r.sessionID(persistCtx, taskID)
+	if err != nil || sessionID <= 0 {
+		return
+	}
+	if _, err := r.messages.Create(persistCtx, message.CreateParams{
+		SessionID: sessionID,
+		Role:      message.RoleAssistant,
+		Kind:      message.KindAssistantFinal,
+		TaskID:    taskID,
+		Content:   content,
+	}); err != nil {
+		logger.Warnf(persistCtx, "[agent] persist assistant_final failed: task=%d err=%v", taskID, err)
 	}
 }
 

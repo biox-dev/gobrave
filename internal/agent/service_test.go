@@ -81,7 +81,7 @@ func TestServiceFullPermissionFlow(t *testing.T) {
 		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
 	}
 
-	task, err := svc.RunTask(ctx, req, nil)
+	task, err := svc.RunTask(ctx, req)
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
 	}
 
-	task, err := svc.RunTask(ctx, req, nil)
+	task, err := svc.RunTask(ctx, req)
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)
 	}
@@ -412,6 +412,57 @@ func TestAssistantMessageBlockPersistedInTurn(t *testing.T) {
 	}
 }
 
+// TestAssistantFinalFallbackWhenNoMessageBlock 验证「只发增量、不发完整 message 块」的
+// Provider 仍会用最终结果兜底写一条 assistant_final（TimelineRecorder.RecordResult），
+// 刷新 / 恢复后的回答不会丢。
+func TestAssistantFinalFallbackWhenNoMessageBlock(t *testing.T) {
+	svc, db := newTestServiceWithDB(t, deltaOnlyProvider{})
+	ctx := context.Background()
+
+	profile := &agent.Profile{Name: "delta-only-test", Provider: deltaOnlyProviderName}
+	if err := svc.SaveProfile(ctx, profile); err != nil {
+		t.Fatalf("SaveProfile: %v", err)
+	}
+
+	const sessionID int64 = 20241024
+	task, err := svc.CreateTask(ctx, agent.Request{
+		Provider:   deltaOnlyProviderName,
+		ProfileID:  profile.ID,
+		SessionID:  sessionID,
+		WorkingDir: "/tmp",
+		Stream:     true,
+		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.RunTaskSyncByID(ctx, task.ID); err != nil {
+		t.Fatalf("RunTaskSyncByID: %v", err)
+	}
+
+	var rows []message.Message
+	if err := db.Where("session_id = ? AND task_id = ?", sessionID, task.ID).
+		Order("seq ASC").Find(&rows).Error; err != nil {
+		t.Fatalf("query agent_messages: %v", err)
+	}
+
+	var assistant, final []message.Message
+	for _, row := range rows {
+		switch row.Kind {
+		case message.KindAssistant:
+			assistant = append(assistant, row)
+		case message.KindAssistantFinal:
+			final = append(final, row)
+		}
+	}
+	if len(assistant) != 0 {
+		t.Fatalf("assistant blocks = %d, want 0 (provider emits no message block)", len(assistant))
+	}
+	if len(final) != 1 || final[0].Content != "delta answer" {
+		t.Fatalf("assistant_final = %+v, want exactly one with content %q", final, "delta answer")
+	}
+}
+
 // ---- test providers ----
 
 // messageBlockProviderName 是测试专用 Provider 名称。
@@ -446,6 +497,37 @@ func (messageBlockAgent) Stream(ctx context.Context, _ agent.Request, rt agent.R
 		return nil, err
 	}
 	return &agent.Result{Content: "block answer"}, nil
+}
+
+// deltaOnlyProviderName 是「只发增量」测试 Provider 名称。
+const deltaOnlyProviderName = "test-delta-only"
+
+// deltaOnlyProvider 构造一个只发文本增量 + done 的 Agent，用于验证
+// RecordResult 的最终结果兜底。
+type deltaOnlyProvider struct{}
+
+func (deltaOnlyProvider) Name() string { return deltaOnlyProviderName }
+
+func (deltaOnlyProvider) New(agent.Options) (agent.Agent, error) {
+	return deltaOnlyAgent{}, nil
+}
+
+type deltaOnlyAgent struct{}
+
+func (deltaOnlyAgent) Name() string { return deltaOnlyProviderName }
+
+func (deltaOnlyAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+	return deltaOnlyAgent{}.Stream(ctx, req, rt)
+}
+
+func (deltaOnlyAgent) Stream(ctx context.Context, _ agent.Request, rt agent.Runtime) (*agent.Result, error) {
+	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: "delta answer"}); err != nil {
+		return nil, err
+	}
+	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
+		return nil, err
+	}
+	return &agent.Result{Content: "delta answer"}, nil
 }
 
 // ---- helpers ----

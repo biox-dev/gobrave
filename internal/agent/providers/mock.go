@@ -121,6 +121,15 @@ func (a *mockAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runt
 		}
 	}
 
+	// 完整 assistant 消息块：与真实 Provider 对齐（时间线以完整块为准），
+	// 由 TimelineRecorder 在轮内落库为 KindAssistant。
+	if err := rt.Emit(ctx, agent.StreamEvent{
+		Type: agent.StreamEventMessage,
+		Data: agent.MessageBlock{ID: fmt.Sprintf("mock-%d", time.Now().UnixNano()), Content: sb.String()},
+	}); err != nil {
+		return nil, err
+	}
+
 	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
 		return nil, err
 	}

@@ -93,16 +93,19 @@ func NewService(cfg ServiceConfig) *AgentService {
 	}
 }
 
-// RunTask 创建任务并异步执行（流式语义）。
+// RunTask 创建任务并异步执行。
 //
 // 执行与调用方 ctx 解耦：任务在独立 goroutine 中运行，可跨多次 HTTP 请求存活，
 // 通过权限确认 / 取消 / 恢复驱动其生命周期。返回的任务对象用于前端轮询 / 订阅。
-func (s *AgentService) RunTask(ctx context.Context, req Request, handler StreamHandler) (*Task, error) {
+//
+// 事件消费只有两条通路：实时推送走 EventBus（Subscribe），历史落库走
+// TimelineRecorder（agent_messages）；不再接受同步 handler。
+func (s *AgentService) RunTask(ctx context.Context, req Request) (*Task, error) {
 	task, err := s.CreateTask(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.StartTask(ctx, task.ID, handler); err != nil {
+	if err := s.StartTask(ctx, task.ID); err != nil {
 		return nil, err
 	}
 	return task, nil
@@ -124,14 +127,14 @@ func (s *AgentService) CreateTask(ctx context.Context, req Request) (*Task, erro
 }
 
 // StartTask 启动已创建任务的异步执行。
-func (s *AgentService) StartTask(ctx context.Context, taskID int64, handler StreamHandler) error {
+func (s *AgentService) StartTask(ctx context.Context, taskID int64) error {
 	task, err := s.tasks.Get(ctx, taskID)
 	if err != nil {
 		return err
 	}
 	s.timeline.Remember(task.ID, task.SessionID)
 
-	rt := NewTaskRuntime(s, task.ID, handler)
+	rt := NewTaskRuntime(s, task.ID)
 	execCtx, cancel := context.WithCancel(context.Background())
 
 	s.mu.Lock()
@@ -180,7 +183,7 @@ func (s *AgentService) RunTaskSyncByID(ctx context.Context, taskID int64, opts .
 	}
 	s.timeline.Remember(task.ID, task.SessionID)
 	// 默认开启自动放行；显式传入的 opts 顺序在后，可覆盖该默认值。
-	rt := NewTaskRuntime(s, taskID, nil, append([]RuntimeOption{WithAutoApprove(true)}, opts...)...)
+	rt := NewTaskRuntime(s, taskID, append([]RuntimeOption{WithAutoApprove(true)}, opts...)...)
 	result, err := s.run(ctx, task, rt)
 	if result != nil {
 		result.TaskID = taskID
@@ -240,6 +243,9 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	case result == nil:
 		return s.failTask(ctx, task, rt, fmt.Errorf("agent: empty result"))
 	default:
+		// Provider 只发增量（没有完整 message 块）时，用最终结果补一条 assistant_final。
+		// 必须在 transitionTask 之前：终态会 Forget 时间线缓存。
+		s.timeline.RecordResult(ctx, task.ID, result.Content)
 		_ = s.transitionTask(ctx, task, TaskCompleted, "")
 		// 任务成功完成后，从本轮执行中提取值得长期记住的记忆。
 		s.extractMemory(ctx, task, task.Request, result)

@@ -230,7 +230,7 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 	h.attachTaskStream(userID, task.ID)
 
 	// 3) 启动异步执行。
-	if err := h.svc.StartTask(c.Request.Context(), task.ID, nil); err != nil {
+	if err := h.svc.StartTask(c.Request.Context(), task.ID); err != nil {
 		handleAgentError(c, err, "failed to start agent task")
 		return
 	}

@@ -63,9 +63,8 @@ func (r *standaloneRuntime) AskUser(context.Context, int64, AskUserInput) (AskUs
 
 // taskRuntime 是绑定到具体任务的 Runtime：事件持久化 + 广播，权限持久化 + 阻塞等待。
 type taskRuntime struct {
-	svc     *AgentService
-	taskID  int64
-	handler StreamHandler
+	svc    *AgentService
+	taskID int64
 	// autoApprove 为真表示“无人值守”执行：权限 ask 降级为 allow，不落 pending、
 	// 不进入 waiting_permission、不阻塞等待人工决策（见 WithAutoApprove）。
 	autoApprove bool
@@ -85,8 +84,8 @@ func WithAutoApprove(auto bool) RuntimeOption {
 	return func(r *taskRuntime) { r.autoApprove = auto }
 }
 
-func NewTaskRuntime(svc *AgentService, taskID int64, handler StreamHandler, opts ...RuntimeOption) Runtime {
-	r := &taskRuntime{svc: svc, taskID: taskID, handler: handler}
+func NewTaskRuntime(svc *AgentService, taskID int64, opts ...RuntimeOption) Runtime {
+	r := &taskRuntime{svc: svc, taskID: taskID}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(r)
@@ -97,17 +96,15 @@ func NewTaskRuntime(svc *AgentService, taskID int64, handler StreamHandler, opts
 
 func (r *taskRuntime) Emit(ctx context.Context, event StreamEvent) error {
 	// delta / block 分流：
-	//   - 完整块与生命周期事件：持久化 + 广播，作为时间线数据源；
+	//   - 完整块与生命周期事件：投影为时间线消息 + 广播；
 	//   - 纯增量（text / reasoning_delta）：仅广播，用于前端实时渲染，不落库。
 	//
-	// 判断留在 Emit（只有这里能拿到 StreamEvent.Type），但两条分支都走同一个 publish 出口。
+	// 事件只有一个出口（publish）：实时推送走 EventBus，持久化走 TimelineRecorder。
+	// 上层不再注册同步 handler，避免同一事件出现两条消费路径。
 	if isBlockEvent(event.Type) {
 		r.svc.emitEvent(ctx, r.taskID, EventStream, event)
 	} else {
 		r.svc.broadcastEvent(ctx, r.taskID, EventStream, event)
-	}
-	if r.handler != nil {
-		return r.handler(ctx, event)
 	}
 	return nil
 }

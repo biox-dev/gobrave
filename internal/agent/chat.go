@@ -39,12 +39,6 @@ type TurnInput struct {
 type turnState struct {
 	sessionID int64
 	unlock    func()
-
-	// text 累积 assistant 文本增量（只发增量、不发完整 message 块的 Provider 用它兜底）。
-	text strings.Builder
-	// messageContent 是最后一个有正文的完整 assistant 消息；非空表示
-	// TimelineRecorder 已在轮内落库一条 KindAssistant，轮末不再重复写 assistant_final。
-	messageContent string
 }
 
 // ChatService 编排多轮对话：负责历史拼接 + 复用 AgentService 执行每一轮。
@@ -169,51 +163,33 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, sess
 	return task, sess, nil
 }
 
-// StartTurn 启动本轮执行，并注册捕获回调：累积 assistant 文本，在本轮终态时
-// 写回历史并释放会话锁。
+// StartTurn 启动本轮执行。
+//
+// 不再注册流式回调：时间线（reasoning / message / tool_call / tool_result）由
+// AgentService 的 TimelineRecorder 在轮内即时落库，轮次收尾由任务终态回调驱动。
 func (s *ChatService) StartTurn(ctx context.Context, taskID int64) error {
 	s.mu.Lock()
-	ts, ok := s.turns[taskID]
+	_, ok := s.turns[taskID]
 	s.mu.Unlock()
 	if !ok {
 		return session.ErrNotFound
 	}
 
-	handler := func(_ context.Context, ev StreamEvent) error {
-		switch ev.Type {
-		case StreamEventText:
-			ts.text.WriteString(ev.Content)
-		case StreamEventMessage:
-			// 只记录有正文的块，与 ProjectTimelineEvent 的投影口径保持一致：
-			// ts.messageContent 非空 ⇔ TimelineRecorder 已落库一条 KindAssistant。
-			if content, ok := MessageBlockContent(ev.Data); ok && strings.TrimSpace(content) != "" {
-				ts.messageContent = content
-			}
-		case StreamEventDone:
-			s.finishTurn(taskID, "")
-		case StreamEventError:
-			s.finishTurn(taskID, streamErrorText(ev))
-		}
-		return nil
-	}
-
-	if err := s.agent.StartTask(ctx, taskID, handler); err != nil {
+	if err := s.agent.StartTask(ctx, taskID); err != nil {
 		s.finishTurn(taskID, err.Error())
 		return err
 	}
 	return nil
 }
 
-// finishTurn 在本轮结束时收尾：必要时补写兜底回答与错误消息，释放会话锁并清理中间态。
+// finishTurn 在本轮结束时收尾：补写错误消息，释放会话锁并清理中间态。
 //
-// 触发点有三个，全部幂等（以 turns 中的登记为准）：
+// 触发点有两个，全部幂等（以 turns 中的登记为准）：
 //   - AgentService 的任务终态回调（onTaskFinished，主路径）；
-//   - done / error 流事件（Provider 先发事件时提前收尾）；
 //   - StartTask 启动失败。
 func (s *ChatService) finishTurn(taskID int64, errMsg string) {
-	// 幂等：先从登记表中“领取”本轮状态，保证 done / error / 启动失败 任一终态只收尾一次。
-	// Provider 可能已自行补发 error 事件、run 又补发一次，若重复收尾会导致 assistant 消息
-	// 重复追加、并对同一 sync.Mutex 二次 Unlock（panic）。
+	// 幂等：先从登记表中“领取”本轮状态，保证「任务终态回调 / 启动失败」任一来源只收尾一次。
+	// 重复收尾会导致 error 消息重复追加、并对同一 sync.Mutex 二次 Unlock（panic）。
 	s.mu.Lock()
 	ts, ok := s.turns[taskID]
 	if ok {
@@ -226,24 +202,8 @@ func (s *ChatService) finishTurn(taskID int64, errMsg string) {
 
 	ctx := context.Background()
 
-	// 轮内时间线（reasoning / message / tool_call / tool_result）已由 AgentService
-	// 的 TimelineRecorder 即时写入 agent_messages（见 timeline.go）。
-	// assistant 文本块已落库时不再写 assistant_final（否则历史里会有两份相同文本）；
-	// 只有「只发增量、不发完整 message 块」的 Provider（如 mock）才用 ts.text 兜底。
-	if ts.messageContent == "" {
-		if final := strings.TrimSpace(ts.text.String()); final != "" {
-			_, _ = s.messages.Create(ctx, message.CreateParams{
-				SessionID: ts.sessionID,
-				Role:      message.RoleAssistant,
-				Kind:      message.KindAssistantFinal,
-				TaskID:    taskID,
-				Content:   final,
-			})
-		}
-	}
-
-	// 错误信息写入会话历史（kind=error），确保 UI 在本轮终态、刷新或切换会话后
-	// 仍能稳定展示，而不是只依赖临时的 stream error 事件。
+	// 时间线（reasoning / message / tool_call / tool_result）与兜底 assistant_final
+	// 已由 AgentService/TimelineRecorder 在轮内写入 agent_messages；这里只补「轮末错误」。
 	if strings.TrimSpace(errMsg) != "" {
 		_, _ = s.messages.Create(ctx, message.CreateParams{
 			SessionID: ts.sessionID,
@@ -289,18 +249,6 @@ func shouldIncludeInPrompt(m message.Message) bool {
 	default:
 		return false
 	}
-}
-
-// streamErrorText 提取错误事件的展示文本：优先 Content（可序列化、可落库），
-// 回退 Err，最后使用通用兜底文案。
-func streamErrorText(event StreamEvent) string {
-	if text := strings.TrimSpace(event.Content); text != "" {
-		return text
-	}
-	if event.Err != nil {
-		return event.Err.Error()
-	}
-	return "stream error"
 }
 
 // ListSessions 分页查询会话；userID 为 0 表示全部用户。
