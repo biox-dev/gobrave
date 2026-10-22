@@ -42,6 +42,10 @@ type AgentService struct {
 
 	mu     sync.Mutex
 	active map[int64]context.CancelFunc // taskID → 取消函数
+
+	// onTaskFinished 是任务进入终态后的回调（可能为空）。由上层编排层通过
+	// SetTaskFinishedHandler 注册，用于把「轮次收尾」绑定到任务状态机。
+	onTaskFinished TaskFinishedHandler
 }
 
 // ServiceConfig 是 AgentService 的依赖配置。
@@ -262,6 +266,24 @@ func (s *AgentService) failTask(ctx context.Context, task *Task, rt Runtime, err
 	return nil, err
 }
 
+// SetTaskFinishedHandler 注册任务终态回调（completed / failed / canceled）。
+//
+// 典型用法：ChatService 在构造时把自己的「轮次收尾」挂到这里，使会话锁释放、
+// 最终回答落库不再依赖 Provider 是否补发 done / error 流事件。
+// 回调在任务终态写库后、终态事件广播前同步执行；重复注册会覆盖前一个。
+func (s *AgentService) SetTaskFinishedHandler(h TaskFinishedHandler) {
+	s.mu.Lock()
+	s.onTaskFinished = h
+	s.mu.Unlock()
+}
+
+// finishedHandler 返回当前注册的终态回调（无锁读取副本，避免回调内反向调用死锁）。
+func (s *AgentService) finishedHandler() TaskFinishedHandler {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.onTaskFinished
+}
+
 // transitionTask 加载任务 → 校验状态迁移 → 保存 → 广播状态事件。
 func (s *AgentService) transitionTask(ctx context.Context, task *Task, next TaskStatus, errMsg string) error {
 	if task == nil {
@@ -289,10 +311,15 @@ func (s *AgentService) transitionTask(ctx context.Context, task *Task, next Task
 		return err
 	}
 
-	// 终态后清理时间线记录器的会话缓存，避免长期运行下无限增长。
+	// 终态后：清理时间线记录器的会话缓存（避免长期运行下无限增长），并通知上层
+	// 编排层做轮次收尾。回调放在 emitEvent 之前，保证 UI 收到终态事件时
+	// agent_messages 已经是完整的。
 	switch next {
 	case TaskCompleted, TaskFailed, TaskCanceled:
 		s.timeline.Forget(task.ID)
+		if h := s.finishedHandler(); h != nil {
+			h(ctx, task)
+		}
 	}
 
 	s.emitEvent(ctx, task.ID, taskEventType(next), task)

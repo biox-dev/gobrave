@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -35,6 +36,15 @@ var (
 	// ErrInvalidTaskTransition 表示非法的任务状态迁移。
 	ErrInvalidTaskTransition = errors.New("agent: invalid task state transition")
 )
+
+// TaskFinishedHandler 是任务进入终态（completed / failed / canceled）后的回调。
+//
+// 供上层编排层（如 ChatService）把「轮次收尾」绑定到任务状态机，而不是依赖
+// Provider 是否补发了 done / error 流事件：Provider 少发一个事件不应导致会话锁泄漏。
+//
+// 回调在 transitionTask 写完库、广播终态事件之前同步执行，实现方应自行保证幂等
+// （同一任务可能因重试 / 重复收尾被多次调用）。
+type TaskFinishedHandler func(ctx context.Context, task *Task)
 
 // Task 是一次 Agent 调用的持久化对象。
 //

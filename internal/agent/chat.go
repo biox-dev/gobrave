@@ -35,13 +35,16 @@ type TurnInput struct {
 // turnState 记录一轮执行期间的中间态（从 CreateTurn 到本轮结束）。
 //
 // 每轮持有一个 per-session 锁，保证同一会话同一时刻只有一轮在执行；
-// 锁在本轮到达终态（done / error / 启动失败）时释放。
+// 锁在本轮到达终态（done / error / 任务终态回调 / 启动失败）时释放。
 type turnState struct {
 	sessionID int64
 	unlock    func()
 
-	text           strings.Builder // 累积的 assistant 文本增量
-	messageContent string          // 完整 assistant 消息（text 为空时回退）
+	// text 累积 assistant 文本增量（只发增量、不发完整 message 块的 Provider 用它兜底）。
+	text strings.Builder
+	// messageContent 是最后一个有正文的完整 assistant 消息；非空表示
+	// TimelineRecorder 已在轮内落库一条 KindAssistant，轮末不再重复写 assistant_final。
+	messageContent string
 }
 
 // ChatService 编排多轮对话：负责历史拼接 + 复用 AgentService 执行每一轮。
@@ -56,14 +59,32 @@ type ChatService struct {
 }
 
 // NewChatService 创建 ChatService。
+//
+// 构造时把自己的轮次收尾挂到 AgentService 的任务终态回调上：即使 Provider 没有
+// 补发 done / error 事件，任务进入终态也会释放会话锁、写入兜底消息。
 func NewChatService(agent *AgentService, sessions session.Service, messages message.Service) *ChatService {
-	return &ChatService{
+	s := &ChatService{
 		agent:    agent,
 		sessions: sessions,
 		messages: messages,
 		locks:    make(map[int64]*sync.Mutex),
 		turns:    make(map[int64]*turnState),
 	}
+	if agent != nil {
+		agent.SetTaskFinishedHandler(s.onTaskFinished)
+	}
+	return s
+}
+
+// onTaskFinished 是任务终态回调：把「轮次收尾」从流事件驱动改为任务状态机驱动。
+//
+// finishTurn 自带幂等（以 turns 中的登记为准），因此事件路径（done / error）先触发时，
+// 这里的重复调用会直接返回。
+func (s *ChatService) onTaskFinished(_ context.Context, task *Task) {
+	if task == nil {
+		return
+	}
+	s.finishTurn(task.ID, task.Error)
 }
 
 // lockFor 返回会话级锁（惰性创建）。
@@ -163,8 +184,10 @@ func (s *ChatService) StartTurn(ctx context.Context, taskID int64) error {
 		case StreamEventText:
 			ts.text.WriteString(ev.Content)
 		case StreamEventMessage:
-			if mb, ok := messageBlockContent(ev.Data); ok {
-				ts.messageContent = mb
+			// 只记录有正文的块，与 ProjectTimelineEvent 的投影口径保持一致：
+			// ts.messageContent 非空 ⇔ TimelineRecorder 已落库一条 KindAssistant。
+			if content, ok := MessageBlockContent(ev.Data); ok && strings.TrimSpace(content) != "" {
+				ts.messageContent = content
 			}
 		case StreamEventDone:
 			s.finishTurn(taskID, "")
@@ -181,9 +204,12 @@ func (s *ChatService) StartTurn(ctx context.Context, taskID int64) error {
 	return nil
 }
 
-// finishTurn 在本轮结束时收尾：把 assistant 回复与错误信息写回历史，释放会话锁并清理中间态。
+// finishTurn 在本轮结束时收尾：必要时补写兜底回答与错误消息，释放会话锁并清理中间态。
 //
-// 幂等（基于 turns 中的登记），可安全处理 done / error / 启动失败任一终态。
+// 触发点有三个，全部幂等（以 turns 中的登记为准）：
+//   - AgentService 的任务终态回调（onTaskFinished，主路径）；
+//   - done / error 流事件（Provider 先发事件时提前收尾）；
+//   - StartTask 启动失败。
 func (s *ChatService) finishTurn(taskID int64, errMsg string) {
 	// 幂等：先从登记表中“领取”本轮状态，保证 done / error / 启动失败 任一终态只收尾一次。
 	// Provider 可能已自行补发 error 事件、run 又补发一次，若重复收尾会导致 assistant 消息
@@ -200,21 +226,20 @@ func (s *ChatService) finishTurn(taskID int64, errMsg string) {
 
 	ctx := context.Background()
 
-	// 轮内时间线（reasoning / tool_call / tool_result）已由 AgentService 的
-	// TimelineRecorder 即时写入 agent_messages（见 timeline.go），这里只补
-	// 「轮末事实」：最终回答与错误，避免重复落库。
-	final := strings.TrimSpace(ts.messageContent)
-	if final == "" {
-		final = strings.TrimSpace(ts.text.String())
-	}
-	if final != "" {
-		_, _ = s.messages.Create(ctx, message.CreateParams{
-			SessionID: ts.sessionID,
-			Role:      message.RoleAssistant,
-			Kind:      message.KindAssistantFinal,
-			TaskID:    taskID,
-			Content:   final,
-		})
+	// 轮内时间线（reasoning / message / tool_call / tool_result）已由 AgentService
+	// 的 TimelineRecorder 即时写入 agent_messages（见 timeline.go）。
+	// assistant 文本块已落库时不再写 assistant_final（否则历史里会有两份相同文本）；
+	// 只有「只发增量、不发完整 message 块」的 Provider（如 mock）才用 ts.text 兜底。
+	if ts.messageContent == "" {
+		if final := strings.TrimSpace(ts.text.String()); final != "" {
+			_, _ = s.messages.Create(ctx, message.CreateParams{
+				SessionID: ts.sessionID,
+				Role:      message.RoleAssistant,
+				Kind:      message.KindAssistantFinal,
+				TaskID:    taskID,
+				Content:   final,
+			})
+		}
 	}
 
 	// 错误信息写入会话历史（kind=error），确保 UI 在本轮终态、刷新或切换会话后
@@ -311,22 +336,4 @@ func (s *ChatService) getOrCreate(ctx context.Context, in TurnInput) (session.Se
 		})
 	}
 	return s.sessions.Get(ctx, in.SessionID)
-}
-
-// messageBlockContent 从 StreamEventMessage 的 Data 中提取完整 assistant 文本。
-func messageBlockContent(data any) (string, bool) {
-	switch mb := data.(type) {
-	case MessageBlock:
-		return mb.Content, true
-	case *MessageBlock:
-		if mb == nil {
-			return "", false
-		}
-		return mb.Content, true
-	case map[string]any:
-		content, ok := mb["content"].(string)
-		return content, ok
-	default:
-		return "", false
-	}
 }

@@ -39,9 +39,10 @@ func newTestService(t *testing.T) *agent.AgentService {
 }
 
 // newTestServiceWithDB 与 newTestService 相同，但同时返回底层 DB，便于断言落库结果。
-func newTestServiceWithDB(t *testing.T) (*agent.AgentService, *gorm.DB) {
+// extra 用于注册测试专用 Provider。
+func newTestServiceWithDB(t *testing.T, extra ...agent.Provider) (*agent.AgentService, *gorm.DB) {
 	t.Helper()
-	registry := agent.NewRegistry(agentproviders.All()...)
+	registry := agent.NewRegistry(append(agentproviders.All(), extra...)...)
 	client := agent.NewClient(registry, agent.Options{})
 	db := newTestDB(t)
 
@@ -365,6 +366,86 @@ func TestTimelineMessagesPersistedDuringRun(t *testing.T) {
 	} else if len(evs) != 0 {
 		t.Fatalf("agent_events persisted %d rows, want 0", len(evs))
 	}
+}
+
+// TestAssistantMessageBlockPersistedInTurn 验证 assistant 文本块也在轮内即时落库
+// （KindAssistant），不再依赖轮末从事件回放——这是 Agent 循环中途退出后恢复的基础。
+func TestAssistantMessageBlockPersistedInTurn(t *testing.T) {
+	svc, db := newTestServiceWithDB(t, messageBlockProvider{})
+	ctx := context.Background()
+
+	profile := &agent.Profile{Name: "assistant-block-test", Provider: messageBlockProviderName}
+	if err := svc.SaveProfile(ctx, profile); err != nil {
+		t.Fatalf("SaveProfile: %v", err)
+	}
+
+	const sessionID int64 = 20241023
+	task, err := svc.CreateTask(ctx, agent.Request{
+		Provider:   messageBlockProviderName,
+		ProfileID:  profile.ID,
+		SessionID:  sessionID,
+		WorkingDir: "/tmp",
+		Stream:     true,
+		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.RunTaskSyncByID(ctx, task.ID); err != nil {
+		t.Fatalf("RunTaskSyncByID: %v", err)
+	}
+
+	var rows []message.Message
+	if err := db.Where("session_id = ? AND task_id = ?", sessionID, task.ID).
+		Order("seq ASC").Find(&rows).Error; err != nil {
+		t.Fatalf("query agent_messages: %v", err)
+	}
+
+	var assistant []message.Message
+	for _, row := range rows {
+		if row.Kind == message.KindAssistant {
+			assistant = append(assistant, row)
+		}
+	}
+	if len(assistant) != 1 || assistant[0].Content != "block answer" {
+		t.Fatalf("assistant messages = %+v, want exactly one with content %q", assistant, "block answer")
+	}
+}
+
+// ---- test providers ----
+
+// messageBlockProviderName 是测试专用 Provider 名称。
+const messageBlockProviderName = "test-message-block"
+
+// messageBlockProvider 构造一个只发「完整 assistant 消息块 + done」的 Agent，
+// 用于验证 assistant 文本块在轮内落库。
+type messageBlockProvider struct{}
+
+func (messageBlockProvider) Name() string { return messageBlockProviderName }
+
+func (messageBlockProvider) New(agent.Options) (agent.Agent, error) {
+	return messageBlockAgent{}, nil
+}
+
+type messageBlockAgent struct{}
+
+func (messageBlockAgent) Name() string { return messageBlockProviderName }
+
+func (messageBlockAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+	return messageBlockAgent{}.Stream(ctx, req, rt)
+}
+
+func (messageBlockAgent) Stream(ctx context.Context, _ agent.Request, rt agent.Runtime) (*agent.Result, error) {
+	if err := rt.Emit(ctx, agent.StreamEvent{
+		Type: agent.StreamEventMessage,
+		Data: agent.MessageBlock{ID: "m1", Content: "block answer"},
+	}); err != nil {
+		return nil, err
+	}
+	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
+		return nil, err
+	}
+	return &agent.Result{Content: "block answer"}, nil
 }
 
 // ---- helpers ----

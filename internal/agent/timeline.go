@@ -14,8 +14,8 @@ import (
 // 本文件是「流式事件 → 会话消息」的唯一投影规则。
 //
 // TimelineRecorder 在轮内即时写入父会话时间线，子 Agent 会话（执行期实时记录）共用同一规则，
-// 避免两套规则漂移：reasoning / tool_call / tool_result 产生消息，其余事件（增量、turn_*、
-// done/error 等）不产生消息——user 消息与轮末的 assistant_final / error 由 ChatService 写入。
+// 避免两套规则漂移：reasoning / message / tool_call / tool_result 产生消息，其余事件
+// （增量、turn_*、done/error 等）不产生消息——user 消息与轮末的 error 由 ChatService 写入。
 
 // ProjectTimelineEvent 把一条流式完整块事件投影为可持久化的会话消息。
 //
@@ -45,6 +45,20 @@ func ProjectTimelineEvent(sessionID, taskID int64, event StreamEvent) (message.C
 			Content:   TimelineEventSummary("tool", event.Data),
 			Data:      event.Data,
 		}, true
+	case StreamEventMessage:
+		// assistant 文本块：内容为空（只发起工具调用的消息）时不产生时间线消息。
+		content, ok := MessageBlockContent(event.Data)
+		if !ok || strings.TrimSpace(content) == "" {
+			return message.CreateParams{}, false
+		}
+		return message.CreateParams{
+			SessionID: sessionID,
+			Role:      message.RoleAssistant,
+			Kind:      message.KindAssistant,
+			TaskID:    taskID,
+			Content:   content,
+			Data:      event.Data,
+		}, true
 	case StreamEventToolResult:
 		return message.CreateParams{
 			SessionID: sessionID,
@@ -71,6 +85,26 @@ func ReasoningBlockContent(data any) (string, bool) {
 		return v.Content, true
 	case map[string]any:
 		content, ok := v["content"].(string)
+		return content, ok
+	default:
+		return "", false
+	}
+}
+
+// MessageBlockContent 从 StreamEventMessage 的 Data 中提取完整 assistant 文本。
+//
+// 投影与轮末兜底共用它，保证「什么算一条 assistant 文本」只有一个口径。
+func MessageBlockContent(data any) (string, bool) {
+	switch mb := data.(type) {
+	case MessageBlock:
+		return mb.Content, true
+	case *MessageBlock:
+		if mb == nil {
+			return "", false
+		}
+		return mb.Content, true
+	case map[string]any:
+		content, ok := mb["content"].(string)
 		return content, ok
 	default:
 		return "", false
