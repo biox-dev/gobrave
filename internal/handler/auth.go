@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent"
@@ -313,7 +314,23 @@ func (h *AuthHandler) fillAgentProfile(ctx context.Context, userInfo *types.User
 	if err != nil || profile == nil {
 		return
 	}
-	userInfo.AgentProfile = types.NewAgentProfileInfo(profile)
+	userInfo.AgentProfile = newAgentProfileInfo(profile)
+}
+
+// newAgentProfileInfo 由 agent.Profile 构造展示用 DTO；p 为空时返回 nil。
+func newAgentProfileInfo(p *agent.Profile) *types.AgentProfileInfo {
+	if p == nil {
+		return nil
+	}
+	return &types.AgentProfileInfo{
+		ID:          strconv.FormatInt(p.ID, 10),
+		Name:        p.Name,
+		Description: p.Description,
+		Model:       p.Model,
+		Provider:    p.Provider,
+		IsDefault:   p.IsDefault,
+		IsBuiltin:   p.IsBuiltin,
+	}
 }
 
 // UpdateProfile godoc
@@ -388,7 +405,7 @@ func (h *AuthHandler) UpdateAgentConfig(c *gin.Context) {
 
 	var req struct {
 		ProfileID   int64                                            `json:"profile_id,string"`
-		Permissions map[agent.OperationType]agent.PermissionDecision `json:"permissions"`
+		Permissions map[types.OperationType]types.PermissionDecision `json:"permissions"`
 		// EnvID / EnvType 为当前业务上下文（llmEnv）。EnvType 为空表示清空上下文。
 		EnvID   string `json:"env_id"`
 		EnvType string `json:"env_type"`

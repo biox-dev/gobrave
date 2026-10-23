@@ -2,12 +2,15 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 
 	"github.com/biox-dev/gobrave/internal/agent/message"
 	"github.com/biox-dev/gobrave/internal/agent/session"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"gorm.io/gorm"
 )
 
 // 本文件定义「多轮对话」编排层：把一次会话(Session)与一轮执行(Task)拆成两层。
@@ -22,7 +25,9 @@ import (
 // TurnInput 是一次「轮次」的输入，由 HTTP 层构造。
 type TurnInput struct {
 	UserID    int64
-	SessionID int64  // 为 0 则创建新会话
+	SessionID int64 // 为 0 则创建新会话
+	// ProjectID 是新建会话所属项目（通常取当前用户激活项目），0 时由 ChatService 解析。
+	ProjectID int64
 	Message   string // 本轮用户输入
 	Provider  string
 	Model     string
@@ -46,6 +51,8 @@ type ChatService struct {
 	agent    *AgentService
 	sessions session.Service
 	messages message.Service
+	// projects 用于解析当前用户激活项目，使会话按项目隔离。
+	projects interfaces.ProjectService
 
 	mu    sync.Mutex
 	locks map[int64]*sync.Mutex // sessionID → 会话级轮次锁
@@ -56,11 +63,12 @@ type ChatService struct {
 //
 // 构造时把自己的轮次收尾挂到 AgentService 的任务终态回调上：即使 Provider 没有
 // 补发 done / error 事件，任务进入终态也会释放会话锁、写入兜底消息。
-func NewChatService(agent *AgentService, sessions session.Service, messages message.Service) *ChatService {
+func NewChatService(agent *AgentService, sessions session.Service, messages message.Service, projects interfaces.ProjectService) *ChatService {
 	s := &ChatService{
 		agent:    agent,
 		sessions: sessions,
 		messages: messages,
+		projects: projects,
 		locks:    make(map[int64]*sync.Mutex),
 		turns:    make(map[int64]*turnState),
 	}
@@ -284,9 +292,40 @@ func shouldIncludeInPrompt(m message.Message) bool {
 	}
 }
 
-// ListSessions 分页查询会话；userID 为 0 表示全部用户。
+// ListSessions 分页查询会话。
+//
+// 会话按用户当前激活项目隔离：先用 GetActiveProjectByUserID 取出活动项目，
+// 再按 ProjectID 过滤；userID 为 0 表示全部用户（不做项目过滤）。
 func (s *ChatService) ListSessions(ctx context.Context, userID int64, offset, limit int) ([]session.Session, int64, error) {
-	return s.sessions.List(ctx, session.ListParams{UserID: userID, Offset: offset, Limit: limit})
+	projectID, err := s.activeProjectID(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.sessions.List(ctx, session.ListParams{
+		UserID:    userID,
+		ProjectID: projectID,
+		Offset:    offset,
+		Limit:     limit,
+	})
+}
+
+// activeProjectID 返回用户当前激活项目 ID；未注入项目服务、没有活动项目或 userID 为 0 时返回 0（不按项目过滤）。
+func (s *ChatService) activeProjectID(ctx context.Context, userID int64) (int64, error) {
+	if s.projects == nil || userID == 0 {
+		return 0, nil
+	}
+	project, err := s.projects.GetActiveProjectByUserID(ctx, userID)
+	if err != nil {
+		// 用户没有激活项目时仓储返回 ErrRecordNotFound，视为 0，保持不按项目过滤的旧行为。
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if project == nil {
+		return 0, nil
+	}
+	return project.ID, nil
 }
 
 // ListMessages 查询某个会话的全部历史消息（按 Seq 升序）。
@@ -310,10 +349,19 @@ func (s *ChatService) GetSession(ctx context.Context, id int64) (session.Session
 // getOrCreate 加载已有会话；SessionID 为 0 时创建新会话。
 func (s *ChatService) getOrCreate(ctx context.Context, in TurnInput) (session.Session, error) {
 	if in.SessionID == 0 {
+		projectID := in.ProjectID
+		if projectID == 0 {
+			resolved, err := s.activeProjectID(ctx, in.UserID)
+			if err != nil {
+				return session.Session{}, err
+			}
+			projectID = resolved
+		}
 		return s.sessions.Create(ctx, session.CreateParams{
-			UserID:   in.UserID,
-			Provider: in.Provider,
-			Model:    in.Model,
+			UserID:    in.UserID,
+			ProjectID: projectID,
+			Provider:  in.Provider,
+			Model:     in.Model,
 		})
 	}
 	return s.sessions.Get(ctx, in.SessionID)

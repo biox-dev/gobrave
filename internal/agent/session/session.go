@@ -30,6 +30,8 @@ var ErrInvalidParentSession = errors.New("session: parent session id is required
 // 按 SessionID 查询，因此这里不再内嵌 Messages。
 type Session struct {
 	ID int64 `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
+	// ProjectID 是会话所属项目（创建时取用户当前激活项目），会话列表按项目隔离。
+	ProjectID int64 `json:"project_id,string" gorm:"column:project_id;type:bigint;index"`
 	// ParentSessionID 指向父会话（如子任务会话 / 标题生成会话），0 表示顶层会话。
 	ParentSessionID int64  `json:"parent_session_id,string" gorm:"column:parent_session_id;type:bigint;index"`
 	Title           string `json:"title" gorm:"column:title;type:varchar(255)"`
@@ -62,7 +64,9 @@ const TitleSessionTitle = "Generate a title"
 type CreateParams struct {
 	// ID 可选：指定会话主键（如 CreateTaskSession 以 toolCallID 作为会话 ID）；
 	// 为 0 时由 BeforeCreate 分配雪花 ID。
-	ID              int64
+	ID int64
+	// ProjectID 是会话所属项目；0 表示未归属项目。
+	ProjectID       int64
 	ParentSessionID int64
 	Title           string
 	UserID          int64
@@ -72,6 +76,8 @@ type CreateParams struct {
 
 // ChildSessionParams 是创建子会话的入参（父会话必填，主键由雪花 ID 生成）。
 type ChildSessionParams struct {
+	// ProjectID 是会话所属项目；通常与父会话保持一致。
+	ProjectID int64
 	// ParentSessionID 是父会话 ID，必须 > 0。
 	ParentSessionID int64
 	Title           string
@@ -83,8 +89,10 @@ type ChildSessionParams struct {
 // ListParams 是会话分页查询的入参。
 type ListParams struct {
 	UserID int64 // 0 表示全部用户
-	Offset int
-	Limit  int
+	// ProjectID 限定只返回该项目的会话；0 表示不按项目过滤。
+	ProjectID int64
+	Offset    int
+	Limit     int
 }
 
 // Store 是 Session 的持久化端口，由 repository 层实现。
@@ -126,6 +134,7 @@ func (s *service) Create(ctx context.Context, params CreateParams) (Session, err
 	now := time.Now()
 	session := &Session{
 		ID:              params.ID,
+		ProjectID:       params.ProjectID,
 		ParentSessionID: params.ParentSessionID,
 		Title:           params.Title,
 		UserID:          params.UserID,
@@ -154,6 +163,7 @@ func (s *service) CreateChildSession(ctx context.Context, params ChildSessionPar
 		return Session{}, fmt.Errorf("%w: %d", ErrInvalidParentSession, params.ParentSessionID)
 	}
 	return s.Create(ctx, CreateParams{
+		ProjectID:       params.ProjectID,
 		ParentSessionID: params.ParentSessionID,
 		Title:           params.Title,
 		UserID:          params.UserID,

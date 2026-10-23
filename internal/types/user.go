@@ -1,10 +1,8 @@
 package types
 
 import (
-	"strconv"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
@@ -22,7 +20,7 @@ type User struct {
 	// Avatar URL of the user
 	Avatar string `json:"avatar"     gorm:"type:varchar(500)"`
 	// AgentConfig 用户的 Agent 配置（Profile + 权限策略），以 JSON 形式落库。
-	AgentConfig agent.UserAgentConfig `json:"agent_config" gorm:"serializer:json"`
+	AgentConfig UserAgentConfig `json:"agent_config" gorm:"serializer:json"`
 	// Tenant ID that the user belongs to
 	// TenantID uint64 `json:"tenant_id"  gorm:"index"`
 	// Whether the user is active
@@ -136,11 +134,11 @@ type RegisterResponse struct {
 
 // UserInfo represents user information for API responses
 type UserInfo struct {
-	ID          int64                 `json:"id,string"`
-	Username    string                `json:"username"`
-	Email       string                `json:"email"`
-	Avatar      string                `json:"avatar"`
-	AgentConfig agent.UserAgentConfig `json:"agent_config"`
+	ID          int64           `json:"id,string"`
+	Username    string          `json:"username"`
+	Email       string          `json:"email"`
+	Avatar      string          `json:"avatar"`
+	AgentConfig UserAgentConfig `json:"agent_config"`
 	// AgentProfile 是 agent_config.ProfileID 对应的 Profile 摘要（DTO，按需填充，可能为空）。
 	AgentProfile        *AgentProfileInfo `json:"agent_profile,omitempty"`
 	TenantID            uint64            `json:"tenant_id"`
@@ -162,22 +160,6 @@ type AgentProfileInfo struct {
 	Provider    string `json:"provider,omitempty"`
 	IsDefault   bool   `json:"is_default"`
 	IsBuiltin   bool   `json:"is_builtin"`
-}
-
-// NewAgentProfileInfo 由 agent.Profile 构造展示用 DTO；p 为空时返回 nil。
-func NewAgentProfileInfo(p *agent.Profile) *AgentProfileInfo {
-	if p == nil {
-		return nil
-	}
-	return &AgentProfileInfo{
-		ID:          strconv.FormatInt(p.ID, 10),
-		Name:        p.Name,
-		Description: p.Description,
-		Model:       p.Model,
-		Provider:    p.Provider,
-		IsDefault:   p.IsDefault,
-		IsBuiltin:   p.IsBuiltin,
-	}
 }
 
 // ToUserInfo converts User to UserInfo (without sensitive data)

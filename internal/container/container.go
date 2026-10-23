@@ -281,13 +281,13 @@ type userAgentConfigProvider struct {
 	repo interfaces.UserRepository
 }
 
-func (p userAgentConfigProvider) GetAgentConfig(ctx context.Context, userID int64) (agent.UserAgentConfig, error) {
+func (p userAgentConfigProvider) GetAgentConfig(ctx context.Context, userID int64) (types.UserAgentConfig, error) {
 	if userID == 0 {
-		return agent.UserAgentConfig{}, nil
+		return types.UserAgentConfig{}, nil
 	}
 	user, err := p.repo.GetUserByID(ctx, userID)
 	if err != nil {
-		return agent.UserAgentConfig{}, err
+		return types.UserAgentConfig{}, err
 	}
 	return user.AgentConfig, nil
 }
@@ -507,8 +507,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		return lspmanager.NewManager()
 	}))
 	// Provide ChatService：多轮对话编排层（复用 AgentService 的任务状态机）。
-	must(container.Provide(func(svc *agent.AgentService, sessions session.Service, messages message.Service) *agent.ChatService {
-		return agent.NewChatService(svc, sessions, messages)
+	// 会话按用户当前激活项目隔离（ChatService 内部通过 ProjectService 解析活动项目）。
+	must(container.Provide(func(svc *agent.AgentService, sessions session.Service, messages message.Service, projects interfaces.ProjectService) *agent.ChatService {
+		return agent.NewChatService(svc, sessions, messages, projects)
 	}))
 	must(container.Provide(manager.NewAISummaryContentProvider))
 	must(container.Provide(manager.NewAISummaryWorker))

@@ -287,6 +287,7 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	task, sess, err := h.chat.CreateTurn(c.Request.Context(), agent.TurnInput{
 		UserID:         userID,
 		SessionID:      sessionID,
+		ProjectID:      rc.ProjectID,
 		Message:        req.Message,
 		Provider:       req.Provider,
 		Model:          req.Model,

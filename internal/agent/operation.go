@@ -1,21 +1,39 @@
 package agent
 
-import "context"
+import (
+	"context"
 
-// OperationType 描述 Agent 想要执行的操作类别。
-//
-// 未来可继续扩展（install_package / git_push / docker / kubernetes ...），
-// 权限策略按类型决定 allow / deny / ask。
-type OperationType string
+	"github.com/biox-dev/gobrave/internal/types"
+)
 
+// 权限与用户 Agent 配置的基础类型定义在 internal/types（避免 types → agent 的循环依赖：
+// internal/types.User 需要直接持有 AgentConfig，而 agent 又需要读取这些类型）。
+// 这里用别名保持 agent 包内的既有引用与对外 API 不变。
+type (
+	// OperationType 描述 Agent 想要执行的操作类别。
+	OperationType = types.OperationType
+	// PermissionDecision 是权限策略 / 决策结果。
+	PermissionDecision = types.PermissionDecision
+	// UserAgentConfig 是存储在用户记录中的 Agent 配置快照。
+	UserAgentConfig = types.UserAgentConfig
+)
+
+// OperationType 取值（别名指向 types 中的定义）。
 const (
-	OperationRead         OperationType = "read"          // 读取文件
-	OperationWrite        OperationType = "write"         // 写入 / 修改文件
-	OperationDelete       OperationType = "delete"        // 删除文件
-	OperationMove         OperationType = "move"          // 移动 / 重命名文件
-	OperationExecute      OperationType = "execute"       // 执行命令 / 脚本
-	OperationNetwork      OperationType = "network"       // 网络访问
-	OperationAnalysisNode OperationType = "analysis_node" // 运行分析节点（区别于直接执行 shell / 脚本）
+	OperationRead         = types.OperationRead         // 读取文件
+	OperationWrite        = types.OperationWrite        // 写入 / 修改文件
+	OperationDelete       = types.OperationDelete       // 删除文件
+	OperationMove         = types.OperationMove         // 移动 / 重命名文件
+	OperationExecute      = types.OperationExecute      // 执行命令 / 脚本
+	OperationNetwork      = types.OperationNetwork      // 网络访问
+	OperationAnalysisNode = types.OperationAnalysisNode // 运行分析节点（区别于直接执行 shell / 脚本）
+)
+
+// PermissionDecision 取值（别名指向 types 中的定义）。
+const (
+	DecisionAllow = types.DecisionAllow // 允许执行
+	DecisionDeny  = types.DecisionDeny  // 拒绝执行
+	DecisionAsk   = types.DecisionAsk   // 需要人工确认
 )
 
 // Operation 描述 Agent 想要执行的一个原子操作。
@@ -42,50 +60,9 @@ type Operation struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-// PermissionDecision 是权限策略 / 决策结果。
-type PermissionDecision string
-
-const (
-	DecisionAllow PermissionDecision = "allow" // 允许执行
-	DecisionDeny  PermissionDecision = "deny"  // 拒绝执行
-	DecisionAsk   PermissionDecision = "ask"   // 需要人工确认
-)
-
-// UserAgentConfig 是存储在用户记录中的 Agent 配置快照（以 JSON 形式落库）。
-//
-// 它把「用户选择的 Profile」「用户自定义的权限策略」以及「当前业务上下文」合并为一处：
-//   - ProfileID：该用户选中的 AgentProfile ID（0 表示未选择，解析时走默认）；
-//   - Permissions：按 OperationType 配置的决策。空 / 未命中某项时，该项回退到
-//     defaultPermissionPolicy 的默认决策；
-//   - EnvID / EnvType：当前业务上下文（llmEnv）。由前端在进入某个业务页面时通过
-//     /auth/agent-config 更新到用户记录上，后端解析系统提示词模板变量与工作目录时
-//     直接读取该用户配置，不再由请求体传入，保证上下文与登录用户一一对应。
-type UserAgentConfig struct {
-	ProfileID   int64                                `json:"profile_id,omitempty,string"`
-	Permissions map[OperationType]PermissionDecision `json:"permissions,omitempty"`
-	// EnvID 是业务上下文对象 ID（如 project report id / analysis node id / analysis id）。
-	EnvID string `json:"env_id,omitempty"`
-	// EnvType 是业务上下文类型（见 handler 的 EnvType* 枚举，如 "projectReport" / "analysisNode"）。
-	EnvType string `json:"env_type,omitempty"`
-}
-
 // DefaultUserAgentConfig 返回默认用户配置（选中内置默认 Profile、权限全部走默认策略）。
 func DefaultUserAgentConfig() UserAgentConfig {
 	return UserAgentConfig{ProfileID: BuiltinDefaultProfileID}
-}
-
-// Env 把用户当前的业务上下文还原为 {id,type} 形式，供 RuntimeContextResolver 解析。
-// EnvType 为空时返回 nil，表示当前无业务上下文（回退到默认工作目录）。
-func (c UserAgentConfig) Env() map[string]any {
-	if c.EnvType == "" {
-		return nil
-	}
-	return map[string]any{"id": c.EnvID, "type": c.EnvType}
-}
-
-// HasEnv 报告用户当前是否绑定了业务上下文。
-func (c UserAgentConfig) HasEnv() bool {
-	return c.EnvType != ""
 }
 
 // UserAgentConfigProvider 按 userID 读取用户的 Agent 配置（用于权限决策）。

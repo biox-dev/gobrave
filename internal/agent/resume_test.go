@@ -292,7 +292,7 @@ func TestRecoverInvokesTaskFinishedHandler(t *testing.T) {
 
 	svc := newServiceOnDB(t, db)
 	// 关键：ChatService 在 Recover 之前构造，注册任务终态回调。
-	agent.NewChatService(svc, sessions, messages)
+	agent.NewChatService(svc, sessions, messages, nil)
 
 	task := agent.NewTask(agent.Request{Provider: agent.ProviderMock, SessionID: sess.ID})
 	task.SessionID = sess.ID

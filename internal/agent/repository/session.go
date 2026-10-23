@@ -58,6 +58,10 @@ func (r *gormSessionStore) List(ctx context.Context, params session.ListParams) 
 	if params.UserID != 0 {
 		q = q.Where("user_id = ?", params.UserID)
 	}
+	// ProjectID 用于会话按项目隔离：0 表示不按项目过滤。
+	if params.ProjectID != 0 {
+		q = q.Where("project_id = ?", params.ProjectID)
+	}
 
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
