@@ -837,6 +837,45 @@ func (h *AgentHandler) GetTaskRequest(c *gin.Context) {
 	c.JSON(http.StatusOK, req)
 }
 
+// GetTaskTimeline godoc
+// @Summary      获取任务的执行时间线
+// @Description  返回该任务已落库的时间线消息（reasoning / assistant / tool_call / tool_result / error），
+// @Description  用于前端刷新 / 切换会话后回填「事实流」：增量事件（text / reasoning_delta）只广播
+// @Description  不落库，完整块事件由 TimelineRecorder 即时写入 agent_messages。
+// @Tags         Agent
+// @Produce      json
+// @Param        task_id  query     string  true  "任务 ID"
+// @Success      200      {array}   agenttypes.Message
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/task/timeline [get]
+func (h *AgentHandler) GetTaskTimeline(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var q taskIDQueryParams
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	taskID, err := parseAgentID(q.TaskID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid task_id").WithDetails(err.Error()))
+		return
+	}
+	msgs, err := h.chat.GetTaskTimeline(c.Request.Context(), taskID, userID)
+	if err != nil {
+		handleAgentError(c, err, "failed to get agent task timeline")
+		return
+	}
+	c.JSON(http.StatusOK, msgs)
+}
+
 // GetPendingPermissions godoc
 // @Summary      获取任务待确认权限
 // @Tags         Agent

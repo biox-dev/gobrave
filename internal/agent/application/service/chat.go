@@ -336,6 +336,50 @@ func (s *ChatService) ListMessages(ctx context.Context, sessionID int64) ([]Mess
 	return s.messages.List(ctx, sessionID)
 }
 
+// ListTaskMessages 查询某个会话中属于指定任务的消息（按 Seq 升序）。
+//
+// 用于「一轮执行的事实流回填」：刷新 / 切换会话后，前端用该任务的已落库时间线
+// （reasoning / assistant / tool_call / tool_result / error）还原执行过程，
+// 弥补增量事件（text / reasoning_delta）只广播不落库导致的空白。
+//
+// 状态源是 agent_messages；同一会话里其它轮次的消息不会返回。
+func (s *ChatService) ListTaskMessages(ctx context.Context, sessionID, taskID int64) ([]Message, error) {
+	msgs, err := s.messages.List(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		// user 消息由 CreateTurn 写入时不带 TaskID，按任务回填只取 assistant 侧时间线。
+		if m.TaskID != taskID || m.Role != RoleAssistant {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// GetTaskTimeline 按任务 ID 返回该任务的执行时间线（已落库的事实流）。
+//
+// 校验任务归属：只有任务所属用户才能读取自己的时间线，避免越权。
+func (s *ChatService) GetTaskTimeline(ctx context.Context, taskID, userID int64) ([]Message, error) {
+	task, err := s.agent.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if task == nil {
+		return nil, ErrTaskNotFound
+	}
+	// 后台任务（UserID == 0）不对外暴露；其它任务必须归属请求者。
+	if task.Facts().UserID == 0 || task.Facts().UserID != userID {
+		return nil, ErrTaskNotFound
+	}
+	if task.SessionID <= 0 {
+		return []Message{}, nil
+	}
+	return s.ListTaskMessages(ctx, task.SessionID, task.ID)
+}
+
 // GetSession 查询会话及其完整历史消息。
 func (s *ChatService) GetSession(ctx context.Context, id int64) (Session, []Message, error) {
 	sess, err := s.sessions.Get(ctx, id)
