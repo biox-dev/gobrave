@@ -36,25 +36,19 @@ type Request struct {
 	Provider string `json:"provider"`
 	// ModelID 可选：模型标识（对应 config.agent.providers 的 key），为空时由 Provider 自行决定。
 	ModelID string `json:"model_id"`
-	// SessionID 可选：会话主键（雪花 ID），用于把多次调用关联到同一会话（与权限 / 任务联动）。
-	SessionID int64 `json:"session_id,string,omitempty"`
 	// ProfileID 可选：AgentProfile ID，AgentService 据此解析系统提示词、技能与上下文注入开关。
 	ProfileID int64 `json:"profile_id,omitempty,string"`
 	// Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。
 	Skills []string `json:"skills,omitempty"`
-	// RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录 / 归属用户）。
+	// RuntimeContext 是本轮调用的业务上下文（业务类型 / 模板变量 / 工作目录）。
 	//
 	// 由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到
 	// 配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供
 	// builtin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。
 	//
-	// 它同时是「请求级用户事实」的唯一来源：UserID / SessionID 都在这里，
-	// 权限策略、ask_user 归属、记忆检索与提取统一从它读取（见 RequestUserID）。
-	//
-	// 它只承载可序列化的业务事实，并随 Request 一起被 JSON 序列化进 agent_tasks.request
-	// （Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用
-	// （见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如
-	// AnalysisNodeRunner）不在此处，而由 agent.Options 承载。
+	// 它只承载业务事实；「谁在执行」（任务 / 会话 / 用户 / 项目）由 Task 与 TaskFacts
+	// 承载，经 Runtime 注入工具 ctx（见 tool.WithTaskFacts）。它随 Request 一起被 JSON
+	// 序列化进 agent_tasks.request（gorm serializer:json），因此任务从 DB 恢复后依然可用。
 	RuntimeContext *runtimecontext.RuntimeContext `json:"runtime_context,omitempty"`
 	// SystemPrompt 是最终发送给 Provider 的系统提示词。
 	//
@@ -79,24 +73,6 @@ type Request struct {
 type Usage struct {
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
-}
-
-// RequestUserID 返回请求归属用户 ID（来自 RuntimeContext）；无上下文时返回 0。
-//
-// 用户 ID 不再是 Request 的独立字段：RuntimeContext 是请求级事实的唯一载体（随请求
-// 序列化进 agent_tasks.request，任务恢复后仍可用），权限策略、ask_user 归属、记忆
-// 检索与提取统一通过本函数读取，避免两处来源不一致。
-func (r Request) RequestUserID() int64 {
-	return r.RuntimeContext.UserIDValue()
-}
-
-// RequestSessionID 返回请求所属会话 ID（会话主键）：优先取 RuntimeContext.SessionID，
-// 回退到 Request.SessionID；都没有时返回 0。
-func (r Request) RequestSessionID() int64 {
-	if r.RuntimeContext != nil && r.RuntimeContext.SessionID > 0 {
-		return r.RuntimeContext.SessionID
-	}
-	return r.SessionID
 }
 
 // Result 是一次 Invoke / Stream 调用的最终聚合结果。

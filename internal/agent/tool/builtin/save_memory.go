@@ -49,7 +49,7 @@ type SaveMemoryOutput struct {
 //     出现同一类可复现错误时，把「错误现象 + 根因 + 下次如何规避」写成一条 note 记忆；
 //   - 后续轮次开始时，相关记忆会随系统提示词的「相关记忆」块注入，从而避免重复踩坑。
 //
-// 归属用户由 RuntimeContext.UserID 提供（见 tool.UserIDFrom），不由模型填写，避免把记忆
+// 归属用户由执行事实（见 tool.UserIDFrom）提供，不由模型填写，避免把记忆
 // 写到别的用户名下。
 //
 // 该工具会写入用户级持久化数据，因此声明 write 授权：上层在执行前会先走权限门禁。
@@ -87,14 +87,10 @@ func SaveMemory() tool.Tool {
 			kind := normalizeMemoryKind(in.Kind)
 			importance := normalizeMemoryImportance(in.Importance)
 
-			// 记忆归属与上下文都取自运行时上下文：项目 / 会话写进结构化字段（Memory.ProjectID /
+			// 记忆归属与上下文取自执行事实：项目 / 会话写进结构化字段（Memory.ProjectID /
 			// Memory.SessionID），供上下文优先检索与会话回溯。
-			var projectID int64
-			var sessionID int64
-			if rc := tool.RuntimeContextFrom(ctx); rc != nil {
-				projectID = rc.ProjectID
-				sessionID = rc.SessionID
-			}
+			projectID := tool.ProjectIDFrom(ctx)
+			sessionID := tool.SessionIDFrom(ctx)
 			metadata := in.Metadata
 
 			res, err := saver.SaveMemory(ctx, tool.MemorySaveInput{
@@ -130,7 +126,7 @@ func SaveMemory() tool.Tool {
 	).WithPermission("write", "", "保存一条长期记忆")
 }
 
-// resolveMemoryUserID 取记忆归属用户：来自 RuntimeContext.UserID（请求级用户事实的唯一来源）。
+// resolveMemoryUserID 取记忆归属用户：来自执行事实（Tool ctx 注入的 TaskFacts）。
 func resolveMemoryUserID(ctx context.Context) int64 {
 	return tool.UserIDFrom(ctx)
 }

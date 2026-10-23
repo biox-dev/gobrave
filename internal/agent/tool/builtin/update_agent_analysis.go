@@ -55,7 +55,7 @@ type UpdateAgentAnalysisOutput struct {
 //
 // 行为：
 //   - analysis_node_id 必填；node_name / command / container_template_id 至少给出一个；
-//   - 项目归属取自 RuntimeContext.ProjectID，节点必须属于当前激活项目；
+//   - 项目归属取自执行事实（tool.ProjectIDFrom），节点必须属于当前激活项目；
 //   - 只更新给出的字段，未给出的保持原值；
 //   - command 会直接写入节点 run.sh（命令不落库），并重建 env.sh / params.json、
 //     清空节点输出目录（output）；

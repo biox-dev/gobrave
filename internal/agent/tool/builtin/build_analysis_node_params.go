@@ -61,9 +61,9 @@ func BuildAnalysisNodeParams() tool.Tool {
 			},
 		}, "analysis_node_id", "request_param"),
 		func(ctx context.Context, in BuildAnalysisNodeParamsInput) (BuildAnalysisNodeParamsOutput, error) {
-			rc := tool.RuntimeContextFrom(ctx)
-			if rc == nil {
-				return BuildAnalysisNodeParamsOutput{}, fmt.Errorf("build_analysis_node_params: runtime context is not available in this tool execution")
+			projectID := tool.ProjectIDFrom(ctx)
+			if projectID <= 0 {
+				return BuildAnalysisNodeParamsOutput{}, fmt.Errorf("build_analysis_node_params: project_id is required (no active project in this conversation)")
 			}
 
 			nodeID, err := parseAnalysisNodeID(in.AnalysisNodeID)
@@ -81,7 +81,7 @@ func BuildAnalysisNodeParams() tool.Tool {
 
 			result, buildErr := builder.BuildAnalysisNodeParams(ctx, tool.AnalysisNodeParamsInput{
 				AnalysisNodeID: nodeID,
-				ProjectID:      rc.ProjectID,
+				ProjectID:      projectID,
 				RequestParam:   in.RequestParam,
 			})
 

@@ -44,7 +44,7 @@ type UpdateScriptOutput struct {
 // 行为：
 //   - script_id 为必填，缺省直接报错；
 //   - 只覆盖本次给出的字段，未给出的字段保持数据库原值；
-//   - 项目归属取自 RuntimeContext.ProjectID，脚本必须属于当前激活项目，否则报错；
+//   - 项目归属取自执行事实（tool.ProjectIDFrom），脚本必须属于当前激活项目，否则报错；
 //   - 回传更新后的名称 / 描述与脚本主文件、io_schema.json 路径。
 //
 // 该工具会修改业务数据（写库），因此声明 write 授权：上层在执行前会先走权限门禁。
@@ -58,9 +58,9 @@ func UpdateScript() tool.Tool {
 			"description": tool.StringProperty("新的脚本描述。留空表示不修改描述（如需清空描述请明确说明，本工具不会把空串当作清空）。"),
 		}, "script_id"),
 		func(ctx context.Context, in UpdateScriptInput) (UpdateScriptOutput, error) {
-			rc := tool.RuntimeContextFrom(ctx)
-			if rc == nil || rc.ProjectID <= 0 {
-				return UpdateScriptOutput{}, fmt.Errorf("update_script: runtime context with project_id is required (no active project in this conversation)")
+			projectID := tool.ProjectIDFrom(ctx)
+			if projectID <= 0 {
+				return UpdateScriptOutput{}, fmt.Errorf("update_script: project_id is required (no active project in this conversation)")
 			}
 
 			name := strings.TrimSpace(in.Name)
@@ -80,7 +80,7 @@ func UpdateScript() tool.Tool {
 			}
 
 			updateInput := tool.ScriptUpdateInput{
-				ProjectID: rc.ProjectID,
+				ProjectID: projectID,
 				ScriptID:  scriptID,
 			}
 			if name != "" {

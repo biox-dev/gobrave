@@ -811,7 +811,7 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 		resolvedModel = "auto"
 	}
 
-	runtimeCtx, err := h.runtimeCtx.Resolve(ctx, session.userID, env)
+	runtimeCtx, facts, err := h.runtimeCtx.ResolveWithFacts(ctx, session.userID, env)
 	if err != nil {
 		h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "failed to resolve working directory", "detail": err.Error()})
 		return
@@ -823,9 +823,9 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 	})
 
 	// Build a provider-agnostic request and stream through the unified Agent client.
-	// 注意：本桥接直接调用 Client，不经过 AgentService.applyProfile，因此这里只携带运行时
-	// 上下文（含 SystemPromptVars）；渲染后的系统提示词由 AgentService 路径负责。
-	// 归属用户写入 RuntimeContext：权限策略与 ask_user 都从这里读取（见 RequestUserID）。
+	// 注意：本桥接直接调用 Client，不经过 AgentService.applyProfile，因此这里只携带业务
+	// 上下文（SystemPromptVars）；渲染后的系统提示词由 AgentService 路径负责。
+	// 执行事实（用户 / 项目）通过 facts 传给 standalone Runtime，供工具读取。
 	req := agenttypes.Request{
 		ModelID:        resolvedModel,
 		RuntimeContext: runtimeCtx,
@@ -836,7 +836,7 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 	}
 
 	var finalContent strings.Builder
-	_, err = h.agentClient.Stream(ctx, req, func(_ context.Context, event agenttypes.StreamEvent) error {
+	_, err = h.agentClient.Stream(ctx, req, facts, func(_ context.Context, event agenttypes.StreamEvent) error {
 		switch event.Type {
 		case agenttypes.StreamEventText:
 			finalContent.WriteString(event.Content)

@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
 	. "github.com/biox-dev/gobrave/internal/agent/types"
 )
 
@@ -11,8 +10,8 @@ import (
 // 未导出内部方法。它不参与生产构建（仅在 go test 编译包 service 时生效）。
 
 // InjectMemoryForTest 暴露 AgentService.injectMemoryWithContext 供外部测试调用。
-func (s *AgentService) InjectMemoryForTest(ctx context.Context, prompt string, rc *tool.RuntimeContext) string {
-	return s.injectMemoryWithContext(ctx, prompt, rc)
+func (s *AgentService) InjectMemoryForTest(ctx context.Context, prompt string, facts TaskFacts) string {
+	return s.injectMemoryWithContext(ctx, prompt, facts)
 }
 
 // ExtractMemoryForTest 暴露 AgentService.extractMemory 供外部测试调用。

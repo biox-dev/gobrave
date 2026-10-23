@@ -12,7 +12,7 @@ const CreateScriptAnalysisToolName = "create_script_analysis"
 
 // CreateScriptAnalysisInput 是 create_script_analysis 工具的入参。
 //
-// ProjectID 不由模型提供：它取自 RuntimeContext.ProjectID（当前用户激活项目）。
+// ProjectID 不由模型提供：它取自执行事实（tool.ProjectIDFrom，当前用户激活项目）。
 type CreateScriptAnalysisInput struct {
 	ScriptID     string         `json:"script_id"`     // 脚本主键 ID（必填，字符串以保精度）
 	NodeName     string         `json:"node_name"`     // 节点名称，留空时用脚本名称
@@ -75,9 +75,9 @@ func CreateScriptAnalysis() tool.Tool {
 			"timeout_seconds": tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600；run=false 时忽略。"),
 		}, "script_id"),
 		func(ctx context.Context, in CreateScriptAnalysisInput) (CreateScriptAnalysisOutput, error) {
-			rc := tool.RuntimeContextFrom(ctx)
-			if rc == nil || rc.ProjectID <= 0 {
-				return CreateScriptAnalysisOutput{}, fmt.Errorf("create_script_analysis: runtime context with project_id is required (no active project in this conversation)")
+			projectID := tool.ProjectIDFrom(ctx)
+			if projectID <= 0 {
+				return CreateScriptAnalysisOutput{}, fmt.Errorf("create_script_analysis: project_id is required (no active project in this conversation)")
 			}
 
 			scriptID, err := parseScriptID(in.ScriptID)
@@ -91,7 +91,7 @@ func CreateScriptAnalysis() tool.Tool {
 			}
 
 			result, err := creator.CreateAnalysisNode(ctx, tool.AnalysisNodeCreateInput{
-				ProjectID:    rc.ProjectID,
+				ProjectID:    projectID,
 				ScriptID:     scriptID,
 				NodeName:     in.NodeName,
 				RequestParam: in.RequestParam,

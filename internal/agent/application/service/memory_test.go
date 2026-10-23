@@ -8,7 +8,7 @@ import (
 	// 使用点导入以复用 agent 包中大量领域标识符（与合并前的包内测试保持一致）。
 	agentrepository "github.com/biox-dev/gobrave/internal/agent/application/repository"
 	. "github.com/biox-dev/gobrave/internal/agent/application/service"
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+
 	. "github.com/biox-dev/gobrave/internal/agent/types"
 )
 
@@ -66,17 +66,13 @@ func TestInjectMemory(t *testing.T) {
 
 	svc := NewService(ServiceConfig{Memory: mgr})
 
-	out := svc.InjectMemoryForTest(ctx, "你是助手", &tool.RuntimeContext{UserID: 1})
+	out := svc.InjectMemoryForTest(ctx, "你是助手", TaskFacts{UserID: 1})
 	if !strings.Contains(out, "相关记忆") || !strings.Contains(out, "偏爱简洁") {
 		t.Fatalf("memory not injected into SystemPrompt:\n%s", out)
 	}
 
-	// 无 RuntimeContext（无 UserID）时不应注入。
-	if got := svc.InjectMemoryForTest(ctx, "你是助手", nil); got != "你是助手" {
-		t.Fatalf("expected no injection without RuntimeContext, got %q", got)
-	}
-	// RuntimeContext 存在但 UserID 为 0 时同样不注入。
-	if got := svc.InjectMemoryForTest(ctx, "你是助手", &tool.RuntimeContext{}); got != "你是助手" {
+	// 无 UserID 时不应注入。
+	if got := svc.InjectMemoryForTest(ctx, "你是助手", TaskFacts{}); got != "你是助手" {
 		t.Fatalf("expected no injection without userID, got %q", got)
 	}
 }
@@ -94,10 +90,7 @@ func TestExtractMemory(t *testing.T) {
 	mgr := newTestMemoryManager(t, MemoryConfig{Extractor: extractor})
 	svc := NewService(ServiceConfig{Memory: mgr})
 
-	task := NewTask(Request{
-		SessionID:      1001,
-		RuntimeContext: &tool.RuntimeContext{UserID: 1, SessionID: 1001},
-	})
+	task := NewTask(Request{}, TaskFacts{UserID: 1, SessionID: 1001})
 	req := task.Request
 	svc.ExtractMemoryForTest(ctx, task, req, &Result{Content: "done"})
 

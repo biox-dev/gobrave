@@ -12,7 +12,7 @@ const ListProjectScriptsToolName = "list_project_scripts"
 
 // ListProjectScriptsInput 是 list_project_scripts 工具的入参。
 //
-// ProjectID 不由模型提供：它取自 RuntimeContext.ProjectID（当前用户激活项目），
+// ProjectID 不由模型提供：它取自执行事实（tool.ProjectIDFrom，当前用户激活项目），
 // 避免模型去查别的项目的脚本。
 type ListProjectScriptsInput struct{}
 
@@ -94,11 +94,11 @@ func ListProjectScripts() tool.Tool {
 	).WithPermission("read", "", "列出当前项目下的全部脚本")
 }
 
-// requireProjectID 从运行时上下文取当前激活项目 ID；缺失时返回带工具名的错误。
+// requireProjectID 从执行事实取当前激活项目 ID；缺失时返回带工具名的错误。
 func requireProjectID(ctx context.Context, toolName string) (int64, error) {
-	rc := tool.RuntimeContextFrom(ctx)
-	if rc == nil || rc.ProjectID <= 0 {
-		return 0, fmt.Errorf("%s: runtime context with project_id is required (no active project in this conversation)", toolName)
+	projectID := tool.ProjectIDFrom(ctx)
+	if projectID <= 0 {
+		return 0, fmt.Errorf("%s: project_id is required (no active project in this conversation)", toolName)
 	}
-	return rc.ProjectID, nil
+	return projectID, nil
 }

@@ -13,7 +13,7 @@ const GetScriptToolName = "get_script"
 // GetScriptInput 是 get_script 工具的入参。
 //
 // ScriptID 为必填：模型必须显式给出要查看的脚本 ID，不再从运行时上下文回退。
-// 项目归属取自 RuntimeContext.ProjectID，脚本必须属于当前激活项目。
+// 项目归属取自执行事实（tool.ProjectIDFrom），脚本必须属于当前激活项目。
 type GetScriptInput struct {
 	ScriptID string `json:"script_id"` // 脚本主键 ID（必填，字符串以保精度）
 }
@@ -39,7 +39,7 @@ type GetScriptOutput struct {
 //
 // 行为：
 //   - 解析必填入参 script_id；
-//   - 项目归属取自 RuntimeContext.ProjectID，脚本必须属于当前激活项目，否则报错；
+//   - 项目归属取自执行事实（tool.ProjectIDFrom），脚本必须属于当前激活项目，否则报错。
 //   - 回传脚本名称、描述、绑定的容器模板 ID、主文件路径与 io_schema.json 路径。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。

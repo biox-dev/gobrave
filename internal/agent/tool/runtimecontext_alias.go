@@ -62,13 +62,9 @@ type (
 )
 
 var (
-	WithUserIDForContext = runtimecontext.WithUserIDForContext
-
 	WithRuntimeContext = runtimecontext.WithRuntimeContext
 	RuntimeContextFrom = runtimecontext.RuntimeContextFrom
 	SystemPromptVar    = runtimecontext.SystemPromptVar
-	UserIDFrom         = runtimecontext.UserIDFrom
-	SessionIDFrom      = runtimecontext.SessionIDFrom
 
 	WithAnalysisNodeRunner = runtimecontext.WithAnalysisNodeRunner
 	AnalysisNodeRunnerFrom = runtimecontext.AnalysisNodeRunnerFrom

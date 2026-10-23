@@ -22,12 +22,12 @@ func ToolRuntimeContextFromRequest(req Request) *tool.RuntimeContext {
 	return req.RuntimeContext
 }
 
-// WithRequestFacts 在请求级上下文上补齐「用户 + 会话」事实，返回新的 RuntimeContext。
+// WithToolFacts 把 Runtime 绑定的执行事实注入工具 ctx。
 //
-// 用户 ID 与 SessionID 不属于某个业务 env，而是「一次调用」的属性，因此在组装 Request
-// 时统一写入 RuntimeContext（它是请求级事实的唯一载体，见 Request.RequestUserID）。
-func WithRequestFacts(rc *tool.RuntimeContext, userID int64, sessionID int64) *tool.RuntimeContext {
-	return tool.WithUserIDForContext(rc, userID, sessionID)
+// 工具通过 tool.UserIDFrom / SessionIDFrom / ProjectIDFrom 读取，因此这些事实
+// 只需要在 Provider 组装工具 ctx 时注入一次，不必逐层传参。
+func WithToolFacts(ctx context.Context, rt Runtime) context.Context {
+	return tool.WithTaskFacts(ctx, FactsOf(rt))
 }
 
 // WithToolPermission 把工具执行期的授权请求桥接到 Agent Runtime：
@@ -151,14 +151,14 @@ func WithToolRuntimeContext(ctx context.Context, rc *tool.RuntimeContext) contex
 	return tool.WithRuntimeContext(ctx, rc)
 }
 
-// WithToolRuntime 把「运行时上下文（业务事实）+ 进程级服务能力」一次性注入工具执行 ctx。
+// WithToolRuntime 把「业务上下文（RuntimeContext）+ 进程级服务能力」一次性注入工具执行 ctx。
 //
 // 二者来源与生命周期不同：RuntimeContext 来自请求（可序列化），服务能力（AnalysisNodeRunner /
 // FileReader / ScriptCreator / AnalysisNodeCreator / AnalysisNodeParamsBuilder / AgentEnvUpdater / MemorySaver / FileHistory / Skills）来自 Options
 // （不可序列化、进程级复用），因此分开注入、互不影响。任一为 nil 时跳过对应注入。
 //
-// 归属用户不再作为参数单独注入：RuntimeContext.UserID 就是请求级用户事实的唯一来源，
-// 工具通过 tool.RuntimeContextFrom(ctx).UserID 读取（见 save_memory）。
+// 执行事实（用户 / 会话 / 项目）不在 RuntimeContext 里：它们由 TaskFacts 承载，
+// 经 WithToolFacts 注入，工具通过 tool.UserIDFrom / SessionIDFrom / ProjectIDFrom 读取。
 func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, nodeCreator tool.AnalysisNodeCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, files HistoryService) context.Context {
 	ctx = WithToolRuntimeContext(ctx, rc)
 	ctx = tool.WithAnalysisNodeRunner(ctx, runner)

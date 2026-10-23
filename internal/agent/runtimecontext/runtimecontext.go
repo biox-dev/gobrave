@@ -37,19 +37,6 @@ type RuntimeContext struct {
 	// Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，
 	// 为空表示默认工作区）。
 	Type string `json:"type,omitempty"`
-	// ProjectID 是本次调用所属项目的 ID（当前用户激活项目），供工具在执行期做项目级
-	// 数据定位。0 表示未知（未解析到激活项目）。
-	ProjectID int64 `json:"project_id,omitempty,string"`
-	// UserID 是本次调用发起用户的 ID（请求级事实，由上层按 Request.UserID 注入）。
-	//
-	// 供需要「按用户隔离数据」的工具（如 save_memory 写长期记忆）在
-	// RuntimeContext 内直接取到归属用户；0 表示未知（未注入）。
-	UserID int64 `json:"user_id,omitempty,string"`
-	// SessionID 是本次调用所属的会话 ID（请求级事实，由上层按 Request.SessionID 注入）。
-	//
-	// 它是会话主键（雪花 ID），0 表示未知（未注入）。供记忆检索 / 写入把记忆与
-	// 会话关联（例如把某轮踩坑经验记在当次会话下）。
-	SessionID int64 `json:"session_id,omitempty,string"`
 	// Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。
 	Label string `json:"label,omitempty"`
 	// SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量
@@ -140,49 +127,6 @@ func (rc *RuntimeContext) Vars() map[string]any {
 	return rc.SystemPromptVars
 }
 
-// UserID 返回本次调用的用户 ID；上下文为 nil 时返回 0。
-func (rc *RuntimeContext) UserIDValue() int64 {
-	if rc == nil {
-		return 0
-	}
-	return rc.UserID
-}
-
-// SessionID 返回本次调用所属的会话 ID；上下文为 nil 时返回 0。
-func (rc *RuntimeContext) SessionIDValue() int64 {
-	if rc == nil {
-		return 0
-	}
-	return rc.SessionID
-}
-
-// WithUserIDForContext 返回一个补齐了用户 / 会话事实的 RuntimeContext 副本。
-//
-// RuntimeContext 由 Handler 的 RuntimeContextResolver 产出，是请求级业务事实的载体；
-// 用户与会话 ID 都是「一次调用」的属性（不属于某个业务 env），因此允许调用方在产出后
-// 追加：rc 为 nil 且 userID / sessionID 都为空时返回 nil（表示本轮确实没有上下文）。
-//
-// 参数均为 0 时不覆盖已有值（增量补齐语义）。
-func WithUserIDForContext(rc *RuntimeContext, userID int64, sessionID int64) *RuntimeContext {
-	if rc == nil && userID <= 0 && sessionID <= 0 {
-		return nil
-	}
-	if rc != nil && (userID <= 0 || rc.UserID == userID) && (sessionID <= 0 || rc.SessionID == sessionID) {
-		return rc
-	}
-	var cp RuntimeContext
-	if rc != nil {
-		cp = *rc
-	}
-	if userID > 0 {
-		cp.UserID = userID
-	}
-	if sessionID > 0 {
-		cp.SessionID = sessionID
-	}
-	return &cp
-}
-
 // runtimeContextKey 是 RuntimeContext 在 context 中的私有键类型。
 type runtimeContextKey struct{}
 
@@ -210,21 +154,6 @@ func RuntimeContextFrom(ctx context.Context) *RuntimeContext {
 // 返回值会做 TrimSpace；上下文未注入 / 键不存在 / 值为空时返回空字符串。
 func SystemPromptVar(ctx context.Context, key string) string {
 	return RuntimeContextFrom(ctx).SystemPromptVar(key)
-}
-
-// UserIDFrom 取出注入的运行时上下文中的用户 ID；未注入时返回 0。
-//
-// 用户 ID 不再单独存一个 context 键：RuntimeContext.UserID 就是请求级用户事实的唯一来源，
-// 工具统一通过本函数读取（如 create_script 写回用户业务上下文、save_memory 归属记忆）。
-func UserIDFrom(ctx context.Context) int64 {
-	return RuntimeContextFrom(ctx).UserIDValue()
-}
-
-// SessionIDFrom 取出注入的运行时上下文中的会话 ID（0 表示未注入）。
-//
-// 文件历史（history.Service）按会话维度记录版本，工具统一通过本函数取当前会话。
-func SessionIDFrom(ctx context.Context) int64 {
-	return RuntimeContextFrom(ctx).SessionIDValue()
 }
 
 // analysisNodeRunnerKey 是 AnalysisNodeRunner 在 context 中的私有键类型。

@@ -102,8 +102,8 @@ func NewService(cfg ServiceConfig) *AgentService {
 //
 // 事件消费只有两条通路：实时推送走 EventBus（Subscribe），历史落库走
 // TimelineRecorder（agent_messages）；不再接受同步 handler。
-func (s *AgentService) RunTask(ctx context.Context, req Request) (*Task, error) {
-	task, err := s.CreateTask(ctx, req)
+func (s *AgentService) RunTask(ctx context.Context, req Request, facts TaskFacts) (*Task, error) {
+	task, err := s.CreateTask(ctx, req, facts)
 	if err != nil {
 		return nil, err
 	}
@@ -115,10 +115,13 @@ func (s *AgentService) RunTask(ctx context.Context, req Request) (*Task, error) 
 
 // CreateTask 创建任务（不启动执行）。
 //
+// facts 是任务的生命周期属性（用户 / 会话 / 项目），由调用方显式提供，
+// 不再从 Request 或 RuntimeContext 推导。
+//
 // 供 HTTP 层使用：先拿到 taskID 订阅事件，再调用 StartTask 启动，避免错过
 // task.created 等早期事件。
-func (s *AgentService) CreateTask(ctx context.Context, req Request) (*Task, error) {
-	task := NewTask(req)
+func (s *AgentService) CreateTask(ctx context.Context, req Request, facts TaskFacts) (*Task, error) {
+	task := NewTask(req, facts)
 	if err := s.tasks.Create(ctx, task); err != nil {
 		return nil, err
 	}
@@ -180,8 +183,8 @@ func (s *AgentService) releaseActive(taskID int64, cancel context.CancelFunc) {
 //
 // 若调用方需要在任务创建后、执行前拿到 taskID（例如把摘要记录立即关联到任务），
 // 请改用 CreateTask + RunTaskSyncByID 的两步形式。
-func (s *AgentService) RunTaskSync(ctx context.Context, req Request, opts ...RuntimeOption) (*Result, error) {
-	task, err := s.CreateTask(ctx, req)
+func (s *AgentService) RunTaskSync(ctx context.Context, req Request, facts TaskFacts, opts ...RuntimeOption) (*Result, error) {
+	task, err := s.CreateTask(ctx, req, facts)
 	if err != nil {
 		return nil, err
 	}
@@ -250,8 +253,9 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 
 	// 有效请求在内存中构造；task.Request 保持创建时的原样（审计与恢复重建都依赖它），
 	// 只把派生出的模型 / Provider 回写到任务列。
+	facts := task.Facts()
 	req := applyProfileOverrides(task.Request, profile)
-	req.SystemPrompt = s.GetSystemPromptByProfileWithContext(ctx, profile, req.RuntimeContext, req.Skills)
+	req.SystemPrompt = s.GetSystemPromptByProfileWithContext(ctx, profile, req.RuntimeContext, facts, req.Skills)
 	task.Model = req.ModelID
 	if provider := strings.TrimSpace(req.Provider); provider != "" {
 		task.Provider = provider
@@ -645,13 +649,8 @@ func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID int64, pro
 	if err != nil || profile == nil {
 		return nil, "", nil
 	}
-	// 只提供用户 ID（无业务上下文）：补一个仅含用户事实的 RuntimeContext，
-	// 使记忆注入能按用户维度检索。
-	var rc *tool.RuntimeContext
-	if userID > 0 {
-		rc = &tool.RuntimeContext{UserID: userID}
-	}
-	systemPrompt := s.GetSystemPromptByProfileWithContext(ctx, profile, rc, profile.Skills)
+	// 只提供用户 ID（无业务上下文）：让记忆注入能按用户维度检索。
+	systemPrompt := s.GetSystemPromptByProfileWithContext(ctx, profile, nil, TaskFacts{UserID: userID}, profile.Skills)
 
 	// return RenderSystemPromptTemplate(profile.SystemPrompt, vars)
 	return profile, systemPrompt, nil
@@ -712,26 +711,25 @@ func applyProfileOverrides(req Request, profile *Profile) Request {
 // GetSystemSpromptByProfile 按 Profile 渲染系统提示词，并按需注入技能说明与记忆背景。
 //
 // vars 是模板变量（来自 RuntimeContext.SystemPromptVars）；记忆注入的用户 / 上下文维度
-// 需要 RuntimeContext，因此没有业务场景的调用请使用
+// 需要 TaskFacts，因此没有业务场景的调用请使用
 // GetSystemPromptByProfileWithContext（或 RenderSystemPrompt）。
 func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *Profile, vars map[string]any, selectedSkills []string) string {
-	return s.buildSystemPrompt(ctx, profile, vars, nil, selectedSkills)
+	return s.buildSystemPrompt(ctx, profile, vars, TaskFacts{}, selectedSkills)
 }
 
 // GetSystemPromptByProfileWithContext 按 Profile 渲染系统提示词，并带上本次调用的
-// 运行时上下文（模板变量 / 项目 / 会话 / 归属用户），使记忆注入优先命中所属上下文。
-//
-// rc 可为 nil（此时不做记忆注入，也不渲染模板变量之外的内容）。
-func (s *AgentService) GetSystemPromptByProfileWithContext(ctx context.Context, profile *Profile, rc *tool.RuntimeContext, selectedSkills []string) string {
+// 运行时上下文（模板变量）与执行事实（用户 / 项目 / 会话），使记忆注入优先命中
+// 所属上下文。rc / facts 均可为零值。
+func (s *AgentService) GetSystemPromptByProfileWithContext(ctx context.Context, profile *Profile, rc *tool.RuntimeContext, facts TaskFacts, selectedSkills []string) string {
 	var vars map[string]any
 	if rc != nil {
 		vars = rc.Vars()
 	}
-	return s.buildSystemPrompt(ctx, profile, vars, rc, selectedSkills)
+	return s.buildSystemPrompt(ctx, profile, vars, facts, selectedSkills)
 }
 
 // buildSystemPrompt 是系统提示词渲染的单一实现：模板渲染 → 技能说明 → 记忆背景。
-func (s *AgentService) buildSystemPrompt(ctx context.Context, profile *Profile, vars map[string]any, rc *tool.RuntimeContext, selectedSkills []string) string {
+func (s *AgentService) buildSystemPrompt(ctx context.Context, profile *Profile, vars map[string]any, facts TaskFacts, selectedSkills []string) string {
 	if profile == nil {
 		return ""
 	}
@@ -758,30 +756,29 @@ func (s *AgentService) buildSystemPrompt(ctx context.Context, profile *Profile, 
 	}
 
 	// 3) 背景注入：按 Profile 声明的开关执行。
-	// 用户 / 项目 / 会话维度全部取自 RuntimeContext，rc 为 nil 时跳过注入。
+	// 用户 / 项目 / 会话维度全部取自执行事实（TaskFacts），零值时跳过注入。
 	if profile.Context.InjectMemory {
-		prompt = s.injectMemoryWithContext(ctx, prompt, rc)
+		prompt = s.injectMemoryWithContext(ctx, prompt, facts)
 	}
 
 	return prompt
 }
 
-// injectMemoryWithContext 按「用户 + 业务上下文」检索记忆并注入系统提示词。
+// injectMemoryWithContext 按「用户 + 执行上下文」检索记忆并注入系统提示词。
 //
-// 归属用户、项目、会话全部取自 RuntimeContext（它是请求级事实的唯一来源，见
-// Request.RequestUserID）：当前项目 / 当前会话下写入的注意事项（如 save_memory 记录的
-// 工具使用避坑点）优先被注入，其余记忆作为补充；仓库不支持上下文优先时自动退化为
-// 普通检索。
+// 归属用户、项目、会话全部取自 TaskFacts：当前项目 / 当前会话下写入的注意事项
+// （如 save_memory 记录的工具使用避坑点）优先被注入，其余记忆作为补充；仓库不支持
+// 上下文优先时自动退化为普通检索。
 //
-// rc 为 nil 或 UserID 为空（后台任务等无用户场景）时不做注入，原样返回 prompt。
-func (s *AgentService) injectMemoryWithContext(ctx context.Context, prompt string, rc *tool.RuntimeContext) string {
-	if s.memory == nil || rc == nil || rc.UserID == 0 {
+// UserID 为 0（后台任务等无用户场景）时不做注入，原样返回 prompt。
+func (s *AgentService) injectMemoryWithContext(ctx context.Context, prompt string, facts TaskFacts) string {
+	if s.memory == nil || facts.UserID == 0 {
 		return prompt
 	}
 	mems, err := s.memory.Retrieve(ctx, MemoryQuery{
-		UserID:    rc.UserID,
-		ProjectID: rc.ProjectID,
-		SessionID: rc.SessionID,
+		UserID:    facts.UserID,
+		ProjectID: facts.ProjectID,
+		SessionID: facts.SessionID,
 		Limit:     DefaultMemoryRetrieveLimit,
 	})
 	if err != nil || len(mems) == 0 {
@@ -805,14 +802,14 @@ func appendPromptBlock(prompt, block string) string {
 //
 // 提取器未配置或提取失败时静默跳过（记忆提取是尽力而为的旁路，不应影响任务结果）。
 func (s *AgentService) extractMemory(ctx context.Context, task *Task, req Request, result *Result) {
-	userID := req.RequestUserID()
-	if s.memory == nil || userID == 0 {
+	facts := task.Facts()
+	if s.memory == nil || facts.UserID == 0 {
 		return
 	}
 	mems, err := s.memory.Extract(ctx, MemoryTurn{
-		UserID:    userID,
-		ProjectID: req.RuntimeContext.ProjectID,
-		SessionID: req.RequestSessionID(),
+		UserID:    facts.UserID,
+		ProjectID: facts.ProjectID,
+		SessionID: facts.SessionID,
 		Request:   req,
 		Result:    result,
 	})

@@ -34,11 +34,10 @@ func TestGormTaskRepositoryRoundTrip(t *testing.T) {
 
 	task := agenttypes.NewTask(agenttypes.Request{
 		Provider:   agenttypes.ProviderMock,
-		SessionID:  1001,
 		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hi"}},
 		Env:        map[string]string{"K": "V"},
 		WorkingDir: "/tmp",
-	})
+	}, agenttypes.TaskFacts{SessionID: 1001})
 	if err := repo.Create(ctx, task); err != nil {
 		t.Fatalf("Create: %v", err)
 	}

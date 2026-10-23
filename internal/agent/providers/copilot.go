@@ -325,6 +325,7 @@ func (a *copilotAgent) buildTools(rt agentinterfaces.Runtime, req agenttypes.Req
 				Parameters:  def.InputSchema,
 				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
 					ctx := agentruntime.WithToolPermission(inv.TraceContext, rt)
+					ctx = agentruntime.WithToolFacts(ctx, rt)
 					ctx = agentruntime.WithProjectResourceBrowser(ctx, browser)
 					ctx = agentruntime.WithSkills(ctx, skills)
 					ctx = agentruntime.WithAgentAnalysisRunner(ctx, agentAnalysisRunner)

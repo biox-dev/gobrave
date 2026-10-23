@@ -36,9 +36,10 @@ func NewClient(registry *Registry, opts Options) *Client {
 // }
 
 // Stream 执行流式请求：解析 Provider → Agent.Stream。
-// 内部使用 standalone Runtime，其 Emit 直接把事件交给 handler。
-func (c *Client) Stream(ctx context.Context, req Request, handler StreamHandler) (*Result, error) {
-	return c.StreamRuntime(ctx, req, agentruntime.NewStandaloneRuntime(handler))
+// 内部使用带执行事实的 standalone Runtime（facts 让工具拿到用户 / 项目），
+// 其 Emit 直接把事件交给 handler。
+func (c *Client) Stream(ctx context.Context, req Request, facts TaskFacts, handler StreamHandler) (*Result, error) {
+	return c.StreamRuntime(ctx, req, agentruntime.NewStandaloneRuntimeWithFacts(handler, facts))
 }
 
 // InvokeRuntime 使用调用方提供的 Runtime 执行一次性任务（供 AgentService 任务模式使用）。

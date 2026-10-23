@@ -14,7 +14,7 @@ const GetAnalysisNodeToolName = "get_analysis_node"
 // GetAnalysisNodeInput 是 get_analysis_node 工具的入参。
 //
 // AnalysisNodeID 为必填：模型必须显式给出要查看的分析节点 ID，不再从运行时上下文回退。
-// 项目归属取自 RuntimeContext.ProjectID，节点必须属于当前激活项目。
+// 项目归属取自执行事实（tool.ProjectIDFrom），节点必须属于当前激活项目。
 type GetAnalysisNodeInput struct {
 	AnalysisNodeID string `json:"analysis_node_id"` // 分析节点主键 ID（必填，字符串以保精度）
 }
@@ -61,7 +61,7 @@ const analysisNodeTypeAgent = "agent"
 //
 // 行为：
 //   - 解析必填入参 analysis_node_id；
-//   - 项目归属取自 RuntimeContext.ProjectID，节点必须属于当前激活项目，否则报错；
+//   - 项目归属取自执行事实（tool.ProjectIDFrom），节点必须属于当前激活项目，否则报错。
 //   - 回传节点名称、节点类型（creation_source / node_type：agent / script / scheduler）、
 //     工作目录（绝对路径）与 params.json 路径；
 //   - 按类型区分回传字段：agent 节点回传 command_path（run.sh 绝对路径），

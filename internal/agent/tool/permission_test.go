@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 )
 
 type permissionRequesterFunc func(context.Context, PermissionRequest) bool
@@ -19,7 +21,7 @@ type permissionDemoInput struct {
 
 func TestFuncSelfRequestsPermission(t *testing.T) {
 	var captured PermissionRequest
-	ctx := WithRuntimeContext(context.Background(), &RuntimeContext{SessionID: 42})
+	ctx := WithTaskFacts(context.Background(), agenttypes.TaskFacts{SessionID: 42})
 	ctx = WithPermissionRequester(ctx, permissionRequesterFunc(func(_ context.Context, req PermissionRequest) bool {
 		captured = req
 		return true

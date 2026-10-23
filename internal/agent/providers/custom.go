@@ -58,10 +58,11 @@ func (a *customAgent) run(ctx context.Context, req agenttypes.Request, rt agenti
 		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
 		defer cancel()
 	}
+	facts := agentruntime.FactsOf(rt)
 
-	llmOpts, err := a.llmOptions(ctx, req)
+	llmOpts, err := a.llmOptions(ctx, req, facts)
 	if err != nil {
-		logger.Errorf(ctx, "custom provider: resolve llm options failed (model=%s session=%d): %v", req.ModelID, req.RequestSessionID(), err)
+		logger.Errorf(ctx, "custom provider: resolve llm options failed (model=%s session=%d): %v", req.ModelID, facts.SessionID, err)
 		return nil, err
 	}
 	client, err := provider.New(llmOpts)
@@ -78,25 +79,25 @@ func (a *customAgent) run(ctx context.Context, req agenttypes.Request, rt agenti
 	}
 	result, err := nativeAgent.Run(ctx, req, rt)
 	if err != nil {
-		logger.Errorf(ctx, "custom provider: agent run failed (model=%s session=%d): %v", req.ModelID, req.RequestSessionID(), err)
+		logger.Errorf(ctx, "custom provider: agent run failed (model=%s session=%d): %v", req.ModelID, facts.SessionID, err)
 		return nil, err
 	}
 	return result, nil
 }
 
 // llmOptions 把 gobrave 请求 + 配置表解析为一次 LLM 调用参数。
-func (a *customAgent) llmOptions(ctx context.Context, req agenttypes.Request) (provider.Options, error) {
+func (a *customAgent) llmOptions(ctx context.Context, req agenttypes.Request, facts agenttypes.TaskFacts) (provider.Options, error) {
 	workingDir := firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
 	if workingDir == "" {
 		err := fmt.Errorf("custom provider: working dir is required")
-		logger.Errorf(ctx, "%v (session=%d)", err, req.RequestSessionID())
+		logger.Errorf(ctx, "%v (session=%d)", err, facts.SessionID)
 		return provider.Options{}, err
 	}
 
 	modelKey := strings.TrimSpace(req.ModelID)
 	if modelKey == "" {
 		err := fmt.Errorf("custom provider: model is required")
-		logger.Errorf(ctx, "%v (session=%d)", err, req.RequestSessionID())
+		logger.Errorf(ctx, "%v (session=%d)", err, facts.SessionID)
 		return provider.Options{}, err
 	}
 
@@ -113,7 +114,7 @@ func (a *customAgent) llmOptions(ctx context.Context, req agenttypes.Request) (p
 	if providerName == "" {
 		err := fmt.Errorf(
 			"custom provider: provider (vendor) is required for model %q; configure it in agent.providers", modelKey)
-		logger.Errorf(ctx, "%v (session=%d)", err, req.RequestSessionID())
+		logger.Errorf(ctx, "%v (session=%d)", err, facts.SessionID)
 		return provider.Options{}, err
 	}
 
@@ -174,6 +175,7 @@ func (a *customAgent) toolRegistry(req agenttypes.Request, rt agentinterfaces.Ru
 // 会话，而是同步运行原生 Agent 循环并直接返回最终回答（见 native.NewAgentTool）。
 func (a *customAgent) newAgentTool(req agenttypes.Request, rt agentinterfaces.Runtime) tool.Tool {
 	prepare := a.toolContext(req, rt)
+	facts := agentruntime.FactsOf(rt)
 	workingDir := firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
 	return native.NewAgentTool(native.AgentToolConfig{
 		// 子 Agent 沿用父请求的模型 / 厂商配置，只替换系统提示词；配置错误在执行期
@@ -181,14 +183,14 @@ func (a *customAgent) newAgentTool(req agenttypes.Request, rt agentinterfaces.Ru
 		NewClient: func(ctx context.Context) (provider.Client, error) {
 			subReq := req
 			subReq.SystemPrompt = native.TaskAgentSystemPrompt
-			llmOpts, err := a.llmOptions(ctx, subReq)
+			llmOpts, err := a.llmOptions(ctx, subReq, facts)
 			if err != nil {
-				logger.Errorf(ctx, "custom provider: sub-agent llm options failed (model=%s session=%d): %v", subReq.ModelID, subReq.RequestSessionID(), err)
+				logger.Errorf(ctx, "custom provider: sub-agent llm options failed (model=%s session=%d): %v", subReq.ModelID, facts.SessionID, err)
 				return nil, err
 			}
 			client, err := provider.New(llmOpts)
 			if err != nil {
-				logger.Errorf(ctx, "custom provider: sub-agent client creation failed (model=%s session=%d): %v", subReq.ModelID, subReq.RequestSessionID(), err)
+				logger.Errorf(ctx, "custom provider: sub-agent client creation failed (model=%s session=%d): %v", subReq.ModelID, facts.SessionID, err)
 				return nil, err
 			}
 			return client, nil
@@ -202,8 +204,8 @@ func (a *customAgent) newAgentTool(req agenttypes.Request, rt agentinterfaces.Ru
 		Provider:     strings.TrimSpace(req.Provider),
 		Model:        strings.TrimSpace(req.ModelID),
 		// 回退值：工具执行 ctx 缺少 RuntimeContext 时也能拿到父会话 / 用户。
-		ParentSessionID: req.RequestSessionID(),
-		UserID:          req.RequestUserID(),
+		ParentSessionID: facts.SessionID,
+		UserID:          facts.UserID,
 	})
 }
 
@@ -213,6 +215,7 @@ func (a *customAgent) toolContext(req agenttypes.Request, rt agentinterfaces.Run
 	services := a.opts
 	return func(ctx context.Context) context.Context {
 		ctx = agentruntime.WithToolPermission(ctx, rt)
+		ctx = agentruntime.WithToolFacts(ctx, rt)
 		ctx = agentruntime.WithToolRuntime(ctx, rc,
 			services.AnalysisNodeRunner,
 			services.FileReader,

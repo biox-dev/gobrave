@@ -171,7 +171,7 @@ func TestApprovePermissionResumesAfterRestart(t *testing.T) {
 		ProfileID: profile.ID,
 		Messages:  []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	}
-	task := agenttypes.NewTask(req)
+	task := agenttypes.NewTask(req, agenttypes.TaskFacts{})
 	task.Status = agenttypes.TaskWaitingPermission
 	task.ResumeState = &agenttypes.TaskResumeState{
 		Version: agenttypes.ResumeStateVersion,
@@ -241,7 +241,7 @@ func TestManualResumeInterruptedTask(t *testing.T) {
 		Provider:  resumeTestProviderName,
 		ProfileID: profile.ID,
 		Messages:  []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
-	})
+	}, agenttypes.TaskFacts{})
 	task.Status = agenttypes.TaskRunning
 	task.ResumeState = &agenttypes.TaskResumeState{
 		Version: agenttypes.ResumeStateVersion,
@@ -295,7 +295,7 @@ func TestRecoverInvokesTaskFinishedHandler(t *testing.T) {
 	// 关键：ChatService 在 Recover 之前构造，注册任务终态回调。
 	agentservice.NewChatService(svc, sessions, messages, nil)
 
-	task := agenttypes.NewTask(agenttypes.Request{Provider: agenttypes.ProviderMock, SessionID: sess.ID})
+	task := agenttypes.NewTask(agenttypes.Request{Provider: agenttypes.ProviderMock}, agenttypes.TaskFacts{SessionID: sess.ID})
 	task.SessionID = sess.ID
 	task.Status = agenttypes.TaskRunning
 	task.ResumeState = &agenttypes.TaskResumeState{Version: agenttypes.ResumeStateVersion}

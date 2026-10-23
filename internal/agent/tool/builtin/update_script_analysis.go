@@ -57,7 +57,7 @@ type UpdateScriptAnalysisOutput struct {
 //
 // 行为：
 //   - analysis_node_id 必填；node_name / request_param 至少给出一个；
-//   - 项目归属取自 RuntimeContext.ProjectID，节点必须属于当前激活项目；
+//   - 项目归属取自执行事实（tool.ProjectIDFrom），节点必须属于当前激活项目；
 //   - 只更新给出的字段，未给出的保持原值；
 //   - request_param 非 nil 时按脚本最新 io_schema.json 重新解析并刷新节点参数，
 //     重新生成 params.json 并清空节点输出目录（output）；空对象表示清空参数；

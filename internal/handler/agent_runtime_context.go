@@ -10,6 +10,7 @@ import (
 
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -204,13 +205,6 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 		}
 	}
 
-	// 当前用户激活项目：既作为 RuntimeContext.ProjectID（供工具定位项目级数据），
-	// 也是默认工作目录的兜底来源。
-	var projectID int64
-	if project, pErr := r.projectSvc.GetActiveProjectByUserID(ctx, userID); pErr == nil && project != nil {
-		projectID = project.ID
-	}
-
 	if strings.TrimSpace(workingDir) == "" {
 		dir, lbl, err := r.resolveDefaultWorkingDirectory(ctx, userID)
 		if err != nil {
@@ -230,15 +224,29 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 	vars["workspace_label"] = label
 
 	return &RuntimeContext{
-		Type:      rtcType,
-		ProjectID: projectID,
-		// 归属用户是请求级事实：用户 ID 与业务 env 无关，但必须随上下文一路传播，
-		// 权限策略、ask_user 归属、记忆检索与提取都从这里读取（见 agent.RequestUserID）。
-		UserID:           userID,
+		Type:             rtcType,
 		Label:            label,
 		SystemPromptVars: vars,
 		WorkingDir:       workingDir,
 	}, nil
+}
+
+// ResolveWithFacts 解析业务上下文，并返回本次调用的执行事实（用户 / 激活项目）。
+//
+// 会话 ID 由上层按具体会话补齐；工具通过 Runtime 注入的 TaskFacts 读取这些事实，
+// 不再从 RuntimeContext 里取。
+func (r *RuntimeContextResolver) ResolveWithFacts(ctx context.Context, userID int64, env map[string]any) (*RuntimeContext, agenttypes.TaskFacts, error) {
+	rc, err := r.Resolve(ctx, userID, env)
+	if err != nil {
+		return nil, agenttypes.TaskFacts{}, err
+	}
+	var projectID int64
+	if r.projectSvc != nil {
+		if project, pErr := r.projectSvc.GetActiveProjectByUserID(ctx, userID); pErr == nil && project != nil {
+			projectID = project.ID
+		}
+	}
+	return rc, agenttypes.TaskFacts{UserID: userID, ProjectID: projectID}, nil
 }
 
 // ProjectReportItemVar 是暴露给 pongo2 模板遍历的项目报告条目变量。

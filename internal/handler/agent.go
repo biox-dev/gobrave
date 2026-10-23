@@ -202,19 +202,27 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 		return
 	}
 
-	var req agenttypes.Request
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var body struct {
+		agenttypes.Request
+		SessionID int64 `json:"session_id,string"`
+		ProjectID int64 `json:"project_id,string"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
 		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
 		return
 	}
 
-	// 用户 ID 以当前登录用户为准，供权限策略按用户读取许可配置。
-	// 用户 / 会话事实统一由 RuntimeContext 承载（见 agent.RequestUserID），
-	// 因此这里把它写进上下文（保留调用方已有的业务上下文）。
-	req.RuntimeContext = tool.WithUserIDForContext(req.RuntimeContext, userID, req.SessionID)
+	// 执行事实（用户 / 会话 / 项目）由 Task 承载：用户取当前登录用户，
+	// 会话 / 项目可由调用方指定，缺省时回退到当前激活项目。
+	facts := agenttypes.TaskFacts{UserID: userID, SessionID: body.SessionID, ProjectID: body.ProjectID}
+	if facts.ProjectID == 0 && h.runtimeCtx != nil {
+		if _, rf, err := h.runtimeCtx.ResolveWithFacts(c.Request.Context(), userID, nil); err == nil {
+			facts.ProjectID = rf.ProjectID
+		}
+	}
 
 	// 1) 先创建任务拿到 taskID（此时仅发布 task.created）。
-	task, err := h.svc.CreateTask(c.Request.Context(), req)
+	task, err := h.svc.CreateTask(c.Request.Context(), body.Request, facts)
 	if err != nil {
 		handleAgentError(c, err, "failed to create agent task")
 		return
@@ -265,7 +273,7 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	// 写入 user.AgentConfig.EnvID / EnvType，这里读取用户配置解析（不再接收请求体 env）。
 	// 解析结果 → 系统提示词模板变量 + 工作目录。
 	// 系统提示词本身不在这里拼装：它由 AgentService 依据 Profile 模板 + 这些变量渲染。
-	rc, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), userID, user.AgentConfig.Env())
+	rc, facts, rcErr := h.runtimeCtx.ResolveWithFacts(c.Request.Context(), userID, user.AgentConfig.Env())
 	if rcErr != nil {
 		handleAgentError(c, rcErr, "failed to resolve runtime context")
 		return
@@ -286,7 +294,7 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	task, sess, err := h.chat.CreateTurn(c.Request.Context(), agentservice.TurnInput{
 		UserID:         userID,
 		SessionID:      sessionID,
-		ProjectID:      rc.ProjectID,
+		ProjectID:      facts.ProjectID,
 		Message:        req.Message,
 		Provider:       req.Provider,
 		Model:          req.Model,

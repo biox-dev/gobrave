@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 
-	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	. "github.com/biox-dev/gobrave/internal/agent/types"
 	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
@@ -141,21 +140,20 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Sess
 		return nil, Session{}, err
 	}
 
-	// 用户 / 会话事实统一由 RuntimeContext 承载：这里把会话 ID 与该轮用户写入上下文，
-	// 使权限策略、ask_user 归属与记忆检索都能从同一处读取。
-	rc := agentruntime.WithRequestFacts(in.RuntimeContext, in.UserID, sess.ID)
+	// 执行事实（用户 / 会话 / 项目）是任务的属性：随 CreateTask 显式传入，
+	// 不再写进 RuntimeContext。
 	req := Request{
 		Provider:       in.Provider,
 		ModelID:        in.Model,
-		SessionID:      sess.ID,
-		RuntimeContext: rc,
+		RuntimeContext: in.RuntimeContext,
 		ProfileID:      in.ProfileID,
 		Messages:       promptMessagesForRequest(history),
 		WorkingDir:     in.WorkingDir,
 		Stream:         true, // 会话轮次统一走流式，便于捕获 assistant 文本
 	}
+	facts := TaskFacts{UserID: in.UserID, SessionID: sess.ID, ProjectID: sess.ProjectID}
 
-	task, err := s.agent.CreateTask(ctx, req)
+	task, err := s.agent.CreateTask(ctx, req, facts)
 	if err != nil {
 		l.Unlock()
 		return nil, Session{}, err

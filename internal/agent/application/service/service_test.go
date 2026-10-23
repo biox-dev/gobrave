@@ -100,7 +100,7 @@ func TestServiceFullPermissionFlow(t *testing.T) {
 		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	}
 
-	task, err := svc.RunTask(ctx, req)
+	task, err := svc.RunTask(ctx, req, agenttypes.TaskFacts{})
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	}
 
-	task, err := svc.RunTask(ctx, req)
+	task, err := svc.RunTask(ctx, req, agenttypes.TaskFacts{})
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestRecoverInterruptedTask(t *testing.T) {
 	ctx := context.Background()
 
 	tasks := agentrepository.NewGormTaskRepository(newTestDB(t))
-	task := agenttypes.NewTask(agenttypes.Request{Provider: agenttypes.ProviderMock})
+	task := agenttypes.NewTask(agenttypes.Request{Provider: agenttypes.ProviderMock}, agenttypes.TaskFacts{})
 	task.Status = agenttypes.TaskRunning
 	if err := tasks.Update(ctx, task); err != nil {
 		t.Fatalf("seed task: %v", err)
@@ -286,7 +286,7 @@ func TestServiceSyncRunAutoApprovesPermission(t *testing.T) {
 		WorkingDir: "/tmp",
 		Env:        map[string]string{"MOCK_PERMISSION_DEMO": "true"},
 		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
-	})
+	}, agenttypes.TaskFacts{})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -343,11 +343,10 @@ func TestTimelineMessagesPersistedDuringRun(t *testing.T) {
 	task, err := svc.CreateTask(ctx, agenttypes.Request{
 		Provider:   agenttypes.ProviderMock,
 		ProfileID:  profile.ID,
-		SessionID:  sessionID,
 		WorkingDir: "/tmp",
 		Env:        map[string]string{"MOCK_TOOL_DEMO": "true"},
 		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
-	})
+	}, agenttypes.TaskFacts{SessionID: sessionID})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -393,11 +392,10 @@ func TestAssistantMessageBlockPersistedInTurn(t *testing.T) {
 	task, err := svc.CreateTask(ctx, agenttypes.Request{
 		Provider:   messageBlockProviderName,
 		ProfileID:  profile.ID,
-		SessionID:  sessionID,
 		WorkingDir: "/tmp",
 		Stream:     true,
 		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
-	})
+	}, agenttypes.TaskFacts{SessionID: sessionID})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -438,11 +436,10 @@ func TestAssistantFinalFallbackWhenNoMessageBlock(t *testing.T) {
 	task, err := svc.CreateTask(ctx, agenttypes.Request{
 		Provider:   deltaOnlyProviderName,
 		ProfileID:  profile.ID,
-		SessionID:  sessionID,
 		WorkingDir: "/tmp",
 		Stream:     true,
 		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
-	})
+	}, agenttypes.TaskFacts{SessionID: sessionID})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

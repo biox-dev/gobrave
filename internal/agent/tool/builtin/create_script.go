@@ -17,7 +17,7 @@ const DefaultScriptType = "qmd"
 
 // CreateScriptInput 是 create_script 工具的入参（只创建脚本，不创建分析节点）。
 //
-// ProjectID 不由模型提供：它取自 RuntimeContext.ProjectID（当前用户激活项目），
+// ProjectID 不由模型提供：它取自执行事实（tool.ProjectIDFrom，当前用户激活项目），
 // 避免模型把脚本写到别的项目里。
 type CreateScriptInput struct {
 	Name                string `json:"name"`                  // 脚本名称（Script.Name）
@@ -81,9 +81,9 @@ func CreateScript() tool.Tool {
 			"outputs":               ioItemsSchema("脚本输出契约列表（io_schema.json 的 outputs）。name 为输出名，type 通常为 file。"),
 		}, "name"),
 		func(ctx context.Context, in CreateScriptInput) (CreateScriptOutput, error) {
-			rc := tool.RuntimeContextFrom(ctx)
-			if rc == nil || rc.ProjectID <= 0 {
-				return CreateScriptOutput{}, fmt.Errorf("create_script: runtime context with project_id is required (no active project in this conversation)")
+			projectID := tool.ProjectIDFrom(ctx)
+			if projectID <= 0 {
+				return CreateScriptOutput{}, fmt.Errorf("create_script: project_id is required (no active project in this conversation)")
 			}
 
 			name := strings.TrimSpace(in.Name)
@@ -106,7 +106,7 @@ func CreateScript() tool.Tool {
 			}
 
 			result, err := creator.CreateScript(ctx, tool.ScriptCreateInput{
-				ProjectID:           rc.ProjectID,
+				ProjectID:           projectID,
 				Name:                name,
 				Description:         strings.TrimSpace(in.Description),
 				ContainerTemplateID: containerTemplateID,

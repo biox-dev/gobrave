@@ -352,7 +352,7 @@ func TestAgentToolPersistsChildSessionAndMessages(t *testing.T) {
 		Model:        "test-model",
 	})
 
-	ctx := tool.WithRuntimeContext(context.Background(), &tool.RuntimeContext{SessionID: 42, UserID: 7})
+	ctx := tool.WithTaskFacts(context.Background(), agenttypes.TaskFacts{SessionID: 42, UserID: 7})
 	out, err := agentTool.Execute(ctx, json.RawMessage(`{"prompt":"查工具注册位置"}`))
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)

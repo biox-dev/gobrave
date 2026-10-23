@@ -23,11 +23,23 @@ func NewStandaloneRuntime(handler StreamHandler) Runtime {
 	return &standaloneRuntime{handler: handler, policy: agentpolicy.DefaultPermissionPolicy()}
 }
 
+// NewStandaloneRuntimeWithFacts 创建带执行事实的独立 Runtime。
+//
+// 无任务的直接调用（如 LLM 桥接）也要让工具拿到归属用户 / 项目，因此事实由调用方
+// 显式传入，与任务模式下的 Task.Facts() 语义一致。
+func NewStandaloneRuntimeWithFacts(handler StreamHandler, facts TaskFacts) Runtime {
+	return &standaloneRuntime{handler: handler, policy: agentpolicy.DefaultPermissionPolicy(), facts: facts}
+}
+
 // standaloneRuntime 是 Runtime 的独立实现。
 type standaloneRuntime struct {
 	handler StreamHandler
 	policy  PermissionPolicy
+	facts   TaskFacts
 }
+
+// Facts 实现 TaskAware：返回调用方传入的执行事实（可能为零值）。
+func (r *standaloneRuntime) Facts() TaskFacts { return r.facts }
 
 func (r *standaloneRuntime) Emit(ctx context.Context, event StreamEvent) error {
 	if r.handler != nil {

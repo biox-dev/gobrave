@@ -15,7 +15,7 @@ const GetDatasetToolName = "get_dataset"
 // GetDatasetInput 是 get_dataset 工具的入参。
 //
 // DatasetID 对应用户消息里的 @dataset:<id> 引用（如 "@dataset:2109711590457610240"），
-// 它是 go_dataset 主键；所属项目取自 RuntimeContext.ProjectID。
+// 它是 go_dataset 主键；所属项目取自执行事实（tool.ProjectIDFrom）。
 type GetDatasetInput struct {
 	DatasetID string `json:"dataset_id"` // 数据集 ID（支持 "@dataset:<id>" 形式）
 }
@@ -36,7 +36,7 @@ type GetDatasetOutput struct {
 //
 // 行为：
 //   - 解析入参 dataset_id（容错剥离 @dataset: 前缀）；
-//   - 项目归属取自 RuntimeContext.ProjectID，数据集必须绑定到当前激活项目；
+//   - 项目归属取自执行事实（tool.ProjectIDFrom），数据集必须绑定到当前激活项目；
 //   - 回传数据集名称、描述与工作目录绝对路径。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。

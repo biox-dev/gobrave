@@ -13,7 +13,7 @@ const CreateAgentAnalysisToolName = "create_agent_analysis"
 
 // CreateAgentAnalysisInput 是 create_agent_analysis 工具的入参。
 //
-// ProjectID 不由模型提供：它取自 RuntimeContext.ProjectID（当前用户激活项目），
+// ProjectID 不由模型提供：它取自执行事实（tool.ProjectIDFrom，当前用户激活项目），
 // 避免把任务写到别的项目下。
 type CreateAgentAnalysisInput struct {
 	Name string `json:"name"` // 节点名称（也用作容器资源名）
@@ -132,9 +132,9 @@ func CreateAgentAnalysis() tool.Tool {
 			"timeout_seconds":       tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 1800；run=false 时忽略。"),
 		}, "name", "command"),
 		func(ctx context.Context, in CreateAgentAnalysisInput) (CreateAgentAnalysisOutput, error) {
-			rc := tool.RuntimeContextFrom(ctx)
-			if rc == nil || rc.ProjectID <= 0 {
-				return CreateAgentAnalysisOutput{}, fmt.Errorf("create_agent_analysis: runtime context with project_id is required (no active project in this conversation)")
+			projectID := tool.ProjectIDFrom(ctx)
+			if projectID <= 0 {
+				return CreateAgentAnalysisOutput{}, fmt.Errorf("create_agent_analysis: project_id is required (no active project in this conversation)")
 			}
 
 			name := strings.TrimSpace(in.Name)
@@ -163,7 +163,7 @@ func CreateAgentAnalysis() tool.Tool {
 			}
 
 			result, runErr := runner.CreateAgentAnalysis(ctx, tool.AgentAnalysisInput{
-				ProjectID:           rc.ProjectID,
+				ProjectID:           projectID,
 				Name:                name,
 				ContainerTemplateID: containerTemplateID,
 				Command:             command,

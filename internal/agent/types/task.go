@@ -56,8 +56,10 @@ type TaskFinishedHandler func(ctx context.Context, task *Task)
 type Task struct {
 	ID        int64 `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
 	SessionID int64 `json:"session_id,string,omitempty" gorm:"column:session_id;type:bigint;index"`
-	// ProjectID 是任务所属项目（创建时取 Request.RuntimeContext.ProjectID），0 表示未知。
-	ProjectID  int64      `json:"project_id,string,omitempty" gorm:"column:project_id;type:bigint;index"`
+	// ProjectID 是任务所属项目（创建时由调用方提供），0 表示未知。
+	ProjectID int64 `json:"project_id,string,omitempty" gorm:"column:project_id;type:bigint;index"`
+	// UserID 是任务归属用户（0 表示后台任务 / 无登录用户）。
+	UserID     int64      `json:"user_id,string,omitempty" gorm:"column:user_id;type:bigint;index"`
 	Provider   string     `json:"provider" gorm:"column:provider;type:varchar(64)"`
 	Model      string     `json:"model,omitempty" gorm:"column:model;type:varchar(128)"`
 	Status     TaskStatus `json:"status" gorm:"column:status;type:varchar(32);index"`
@@ -102,13 +104,12 @@ func (t *Task) AfterFind(*gorm.DB) error {
 //
 // 与 *Task 不同，它不含 Status / ResumeState / 时间戳等可变状态：
 // 因此可以安全地被 Runtime 持有并跨 goroutine 读取，也不会让 Agent 层依赖持久化实体。
-// 「谁在执行」这类事实（用户 / 会话 / 项目）统一从这里读取，而不是逐层传递参数。
+// 「谁在执行」这类事实（任务 / 会话 / 项目 / 用户）统一从这里读取，而不是逐层传递参数。
 type TaskFacts struct {
-	TaskID     int64
-	SessionID  int64
-	ProjectID  int64
-	UserID     int64
-	WorkingDir string
+	TaskID    int64
+	SessionID int64
+	ProjectID int64
+	UserID    int64
 }
 
 // Facts 返回任务的只读事实快照；nil 任务返回零值。
@@ -117,25 +118,23 @@ func (t *Task) Facts() TaskFacts {
 		return TaskFacts{}
 	}
 	return TaskFacts{
-		TaskID:     t.ID,
-		SessionID:  t.SessionID,
-		ProjectID:  t.ProjectID,
-		UserID:     t.Request.RequestUserID(),
-		WorkingDir: t.WorkingDir,
+		TaskID:    t.ID,
+		SessionID: t.SessionID,
+		ProjectID: t.ProjectID,
+		UserID:    t.UserID,
 	}
 }
 
-// NewTask 基于请求构建一个 created 状态的任务。
-func NewTask(req Request) *Task {
+// NewTask 基于请求与执行事实构建一个 created 状态的任务。
+//
+// 执行事实（用户 / 会话 / 项目）由调用方显式提供：它们是任务的生命周期属性，
+// 不再散落在 Request / RuntimeContext 里。
+func NewTask(req Request, facts TaskFacts) *Task {
 	now := time.Now()
-	// 任务归属项目来自运行时上下文（用户当前激活项目），随请求一起解析。
-	var projectID int64
-	if req.RuntimeContext != nil {
-		projectID = req.RuntimeContext.ProjectID
-	}
 	return &Task{
-		SessionID:   req.SessionID,
-		ProjectID:   projectID,
+		SessionID:   facts.SessionID,
+		ProjectID:   facts.ProjectID,
+		UserID:      facts.UserID,
 		Provider:    req.Provider,
 		Model:       req.ModelID,
 		Status:      TaskCreated,
