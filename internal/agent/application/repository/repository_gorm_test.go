@@ -33,11 +33,10 @@ func TestGormTaskRepositoryRoundTrip(t *testing.T) {
 	repo := NewGormTaskRepository(newGormTestDB(t))
 
 	task := agenttypes.NewTask(agenttypes.Request{
-		Provider:   agenttypes.ProviderMock,
-		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hi"}},
-		Env:        map[string]string{"K": "V"},
-		WorkingDir: "/tmp",
-	}, agenttypes.TaskFacts{SessionID: 1001})
+		Provider: agenttypes.ProviderMock,
+		Messages: []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hi"}},
+		Env:      map[string]string{"K": "V"},
+	}, agenttypes.TaskFacts{SessionID: 1001, WorkingDir: "/tmp"})
 	if err := repo.Create(ctx, task); err != nil {
 		t.Fatalf("Create: %v", err)
 	}

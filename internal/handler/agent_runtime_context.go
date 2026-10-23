@@ -22,7 +22,7 @@ import (
 //
 // 前端通过 setLLMEnv(id, type) 设置全局上下文，后端据此解析出：
 //   - SystemPromptVars：渲染 Profile 系统提示词模板所需的变量（如工作目录、脚本路径）；
-//   - WorkingDir：Agent 执行时的工作目录。
+//   - WorkingDir：Agent 执行时的工作目录（作为执行事实写入 Task.WorkingDir）。
 //
 // 这些枚举是前端与后端之间的契约，新增业务上下文时在此登记并同步前端 llm-env.ts。
 const (
@@ -54,8 +54,9 @@ func normalizeEnvType(typ string) string {
 // RuntimeContext 是解析后的运行时上下文。
 //
 // 直接复用 tool.RuntimeContext：它只承载可序列化的业务事实（渲染 Profile 系统提示词模板
-// 所需的 SystemPromptVars 与工作目录），随 TurnInput → agenttypes.Request.RuntimeContext 一路
+// 所需的 SystemPromptVars），随 TurnInput → agenttypes.Request.RuntimeContext 一路
 // 传递到工具执行期，并随 Request 一起序列化进 agent_tasks.request 持久化（重启后可恢复）。
+// 工作目录属于执行事实，由 ResolveWithFacts 返回并落到 Task.WorkingDir。
 //
 // 工具执行期所需的服务能力（如 AnalysisNodeRunner）不在此结构内：它是进程级静态依赖，
 // 改由 agentclient.Options 注入（见 buildAgentClient），避免服务对象被序列化进 agent_tasks。
@@ -94,13 +95,22 @@ func NewRuntimeContextResolver(
 	}
 }
 
+// Resolved 是一次业务 env 的解析结果。
+//
+// RuntimeContext 只承载业务变量；工作目录属于执行事实，由调用方写入 TaskFacts
+// （最终落到 Task.WorkingDir），不再重复存放在 RuntimeContext 里。
+type Resolved struct {
+	Context    *RuntimeContext
+	WorkingDir string
+}
+
 // Resolve 根据 env 解析出系统提示词模板变量与工作目录。
 //
 // 它不再返回拼装好的系统提示词，而是返回 SystemPromptVars；真正的系统提示词由
 // AgentService 依据 Profile 模板渲染（见 applyProfile / RenderSystemPrompt）。
 //
 // env 为 nil 或 type 为空时，回退到当前用户激活项目的默认工作目录。
-func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env map[string]any) (*RuntimeContext, error) {
+func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env map[string]any) (*Resolved, error) {
 	if r.projectSvc == nil {
 		return nil, fmt.Errorf("project service is not initialized")
 	}
@@ -223,20 +233,22 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 	vars["workspace_directory"] = strings.TrimSpace(workingDir)
 	vars["workspace_label"] = label
 
-	return &RuntimeContext{
-		Type:             rtcType,
-		Label:            label,
-		SystemPromptVars: vars,
-		WorkingDir:       workingDir,
+	return &Resolved{
+		Context: &RuntimeContext{
+			Type:             rtcType,
+			Label:            label,
+			SystemPromptVars: vars,
+		},
+		WorkingDir: workingDir,
 	}, nil
 }
 
-// ResolveWithFacts 解析业务上下文，并返回本次调用的执行事实（用户 / 激活项目）。
+// ResolveWithFacts 解析业务上下文，并返回本次调用的执行事实（用户 / 项目 / 工作目录）。
 //
 // 会话 ID 由上层按具体会话补齐；工具通过 Runtime 注入的 TaskFacts 读取这些事实，
 // 不再从 RuntimeContext 里取。
 func (r *RuntimeContextResolver) ResolveWithFacts(ctx context.Context, userID int64, env map[string]any) (*RuntimeContext, agenttypes.TaskFacts, error) {
-	rc, err := r.Resolve(ctx, userID, env)
+	resolved, err := r.Resolve(ctx, userID, env)
 	if err != nil {
 		return nil, agenttypes.TaskFacts{}, err
 	}
@@ -246,7 +258,11 @@ func (r *RuntimeContextResolver) ResolveWithFacts(ctx context.Context, userID in
 			projectID = project.ID
 		}
 	}
-	return rc, agenttypes.TaskFacts{UserID: userID, ProjectID: projectID}, nil
+	return resolved.Context, agenttypes.TaskFacts{
+		UserID:     userID,
+		ProjectID:  projectID,
+		WorkingDir: resolved.WorkingDir,
+	}, nil
 }
 
 // ProjectReportItemVar 是暴露给 pongo2 模板遍历的项目报告条目变量。
@@ -379,10 +395,11 @@ type RuntimeContextInfo struct {
 // 与 Resolve 共享同一套解析逻辑：先用 env 解析出 SystemPromptVars，再按当前用户选中的
 // Profile（profileID）解析其系统提示词模板，用变量渲染出真正的系统提示词。
 func (r *RuntimeContextResolver) Describe(ctx context.Context, userID int64, profileID int64, env map[string]any) (*RuntimeContextInfo, error) {
-	rc, err := r.Resolve(ctx, userID, env)
+	resolved, err := r.Resolve(ctx, userID, env)
 	if err != nil {
 		return nil, err
 	}
+	rc := resolved.Context
 
 	profile, systemPrompt, err := r.agentSvc.RenderSystemPrompt(ctx, userID, profileID, rc.SystemPromptVars)
 	if err != nil {
@@ -392,7 +409,7 @@ func (r *RuntimeContextResolver) Describe(ctx context.Context, userID int64, pro
 	info := &RuntimeContextInfo{
 		Type:         rc.Type,
 		Label:        rc.Label,
-		WorkingDir:   rc.WorkingDir,
+		WorkingDir:   resolved.WorkingDir,
 		SystemPrompt: systemPrompt,
 		Vars:         rc.SystemPromptVars,
 	}

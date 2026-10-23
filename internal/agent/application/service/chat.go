@@ -148,10 +148,14 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Sess
 		RuntimeContext: in.RuntimeContext,
 		ProfileID:      in.ProfileID,
 		Messages:       promptMessagesForRequest(history),
-		WorkingDir:     in.WorkingDir,
 		Stream:         true, // 会话轮次统一走流式，便于捕获 assistant 文本
 	}
-	facts := TaskFacts{UserID: in.UserID, SessionID: sess.ID, ProjectID: sess.ProjectID}
+	facts := TaskFacts{
+		UserID:     in.UserID,
+		SessionID:  sess.ID,
+		ProjectID:  sess.ProjectID,
+		WorkingDir: in.WorkingDir,
+	}
 
 	task, err := s.agent.CreateTask(ctx, req, facts)
 	if err != nil {

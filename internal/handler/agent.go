@@ -204,20 +204,31 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 
 	var body struct {
 		agenttypes.Request
-		SessionID int64 `json:"session_id,string"`
-		ProjectID int64 `json:"project_id,string"`
+		SessionID  int64  `json:"session_id,string"`
+		ProjectID  int64  `json:"project_id,string"`
+		WorkingDir string `json:"working_dir"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
 		return
 	}
 
-	// 执行事实（用户 / 会话 / 项目）由 Task 承载：用户取当前登录用户，
-	// 会话 / 项目可由调用方指定，缺省时回退到当前激活项目。
-	facts := agenttypes.TaskFacts{UserID: userID, SessionID: body.SessionID, ProjectID: body.ProjectID}
-	if facts.ProjectID == 0 && h.runtimeCtx != nil {
+	// 执行事实（用户 / 会话 / 项目 / 工作目录）由 Task 承载：用户取当前登录用户，
+	// 其余可由调用方指定，缺省时回退到当前激活项目。
+	facts := agenttypes.TaskFacts{
+		UserID:     userID,
+		SessionID:  body.SessionID,
+		ProjectID:  body.ProjectID,
+		WorkingDir: body.WorkingDir,
+	}
+	if (facts.ProjectID == 0 || facts.WorkingDir == "") && h.runtimeCtx != nil {
 		if _, rf, err := h.runtimeCtx.ResolveWithFacts(c.Request.Context(), userID, nil); err == nil {
-			facts.ProjectID = rf.ProjectID
+			if facts.ProjectID == 0 {
+				facts.ProjectID = rf.ProjectID
+			}
+			if facts.WorkingDir == "" {
+				facts.WorkingDir = rf.WorkingDir
+			}
 		}
 	}
 
@@ -278,7 +289,7 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		handleAgentError(c, rcErr, "failed to resolve runtime context")
 		return
 	}
-	workingDir := rc.WorkingDir
+	workingDir := facts.WorkingDir
 
 	// 1) 准备一轮：追加 user 消息、组装历史、创建任务（复用 AgentService 状态机）。
 	// 新的对话 conversation_id 可能为空字符串，表示新建会话（TurnInput.SessionID == 0）。
@@ -462,12 +473,12 @@ func (h *AgentHandler) ResolveSkill(c *gin.Context) {
 	// 按当前场景渲染（与 get_skill 工具执行期使用同一套变量与渲染实现）。
 	ctx := c.Request.Context()
 	if h.runtimeCtx != nil {
-		rc, err := h.runtimeCtx.Resolve(ctx, user.ID, user.AgentConfig.Env())
+		resolved, err := h.runtimeCtx.Resolve(ctx, user.ID, user.AgentConfig.Env())
 		if err != nil {
 			handleAgentError(c, err, "failed to resolve runtime context")
 			return
 		}
-		ctx = tool.WithRuntimeContext(ctx, rc)
+		ctx = tool.WithRuntimeContext(ctx, resolved.Context)
 	}
 
 	// version 留空：HTTP 接口使用当前已安装版本（与 get_skill 不传 version 时一致）。

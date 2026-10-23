@@ -124,20 +124,18 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	}
 
 	task, err := w.agentService.CreateTask(ctx, agenttypes.Request{
-		WorkingDir: content.WorkingDir,
-		// 系统提示词模板变量与工作目录由 RuntimeContext 承载（可持久化到 agent_tasks）。
+		// 系统提示词模板变量由 RuntimeContext 承载（可持久化到 agent_tasks）。
 		// 摘要任务由后台 worker 触发，没有登录用户，因此 Task.UserID 为 0：
 		// 权限策略走默认策略、不写入用户记忆。
 		RuntimeContext: &tool.RuntimeContext{
 			SystemPromptVars: content.SystemPromptVars,
-			WorkingDir:       content.WorkingDir,
 		},
 		Messages: []agenttypes.Message{
 			{Role: agenttypes.RoleUser, Content: "请根据系统提示词完成对应的任务"},
 		},
 		Provider:  agenttypes.ProviderCustom,
 		ProfileID: profileID,
-	}, agenttypes.TaskFacts{ProjectID: summary.ProjectID})
+	}, agenttypes.TaskFacts{ProjectID: summary.ProjectID, WorkingDir: content.WorkingDir})
 	if err != nil {
 		return fmt.Errorf("create agent task: %w", err)
 	}

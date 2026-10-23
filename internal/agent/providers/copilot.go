@@ -256,7 +256,7 @@ func (a *copilotAgent) clientOptions() *copilot.ClientOptions {
 func (a *copilotAgent) sessionConfig(ctx context.Context, req agenttypes.Request, model string, rt agentinterfaces.Runtime) *copilot.SessionConfig {
 	cfg := &copilot.SessionConfig{
 		Model:               model,
-		WorkingDirectory:    firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
+		WorkingDirectory:    firstNonEmpty(strings.TrimSpace(agentruntime.FactsOf(rt).WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
 		Streaming:           copilot.Bool(true),
 		OnPermissionRequest: a.permissionHandler(ctx, rt),
 		Tools:               a.buildTools(rt, req),

@@ -44,7 +44,7 @@ func (a *mockAgent) Invoke(ctx context.Context, req agenttypes.Request, rt agent
 	content := fmt.Sprintf("[mock:%s] %s", req.ModelID, lastUserPrompt(req))
 
 	if demoPermission(req) {
-		decision, err := requestDemoPermission(ctx, rt, req)
+		decision, err := requestDemoPermission(ctx, rt)
 		if err != nil {
 			return nil, err
 		}
@@ -89,7 +89,7 @@ func (a *mockAgent) Stream(ctx context.Context, req agenttypes.Request, rt agent
 
 	// 演示权限链路：请求一次“写文件”权限并等待 UI 决策。
 	if demoPermission(req) {
-		decision, err := requestDemoPermission(ctx, rt, req)
+		decision, err := requestDemoPermission(ctx, rt)
 		if err != nil {
 			return nil, err
 		}
@@ -176,10 +176,10 @@ func requestDemoQuestion(ctx context.Context, rt agentinterfaces.Runtime) (agent
 }
 
 // requestDemoPermission 构造一个 write 操作并通过 Runtime 请求权限。
-func requestDemoPermission(ctx context.Context, rt agentinterfaces.Runtime, req agenttypes.Request) (agenttypes.PermissionDecision, error) {
+func requestDemoPermission(ctx context.Context, rt agentinterfaces.Runtime) (agenttypes.PermissionDecision, error) {
 	op := agenttypes.Operation{
 		Type:    agenttypes.OperationWrite,
-		Path:    filepath.Join(req.WorkingDir, "demo.txt"),
+		Path:    filepath.Join(agentruntime.FactsOf(rt).WorkingDir, "demo.txt"),
 		Content: "[mock] demo write content",
 	}
 

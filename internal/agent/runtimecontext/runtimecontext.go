@@ -25,9 +25,10 @@ import (
 
 // RuntimeContext 是一次 Agent 调用的运行时上下文（业务变量）。
 //
-// 它是「业务 env(type,id) → 系统提示词变量 / 工作目录」的载体：由 handler 的
+// 它是「业务 env(type,id) → 系统提示词模板变量」的载体：由 handler 的
 // RuntimeContextResolver 解析产出，随 agent.Request 传递到工具执行期，并随 Request
 // 一起被 JSON 序列化进 agent_tasks.request 持久化（gorm serializer:json）。
+// 工作目录属于执行事实，不在这里：由 Resolver 单独返回并落到 Task.WorkingDir。
 //
 // 注意：本结构是纯可序列化的业务事实，会随 Request 一起被 JSON 序列化进 agent_tasks
 // 落库（Task.Request，gorm serializer:json），因此这里绝不能放服务对象
@@ -42,8 +43,6 @@ type RuntimeContext struct {
 	// SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量
 	// （如 analysis_node_id / workspace_directory / script_file_path 等）。
 	SystemPromptVars map[string]any `json:"system_prompt_vars,omitempty"`
-	// WorkingDir 是 Agent 执行工作目录。
-	WorkingDir string `json:"working_dir,omitempty"`
 }
 
 // AnalysisNodeRunner 抽象「运行分析节点并等待完成」的业务能力。

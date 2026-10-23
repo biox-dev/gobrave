@@ -304,7 +304,6 @@ func (t *agentTool) runTask(ctx context.Context, task AgentTaskParams) agentRunR
 	answer, err := sub.Run(ctx, agenttypes.Request{
 		Messages:     []agenttypes.Message{{Role: agenttypes.RoleUser, Content: task.Prompt}},
 		SystemPrompt: systemPrompt,
-		WorkingDir:   t.cfg.WorkingDir,
 	}, rt)
 	if err != nil {
 		result.err = fmt.Errorf("error generating agent: %s", err)
@@ -329,7 +328,18 @@ func (t *agentTool) runTask(ctx context.Context, task AgentTaskParams) agentRunR
 //
 // 会话创建失败属于旁路故障：只记日志并退回 standalone，不影响子 Agent 执行。
 func (t *agentTool) sessionRuntime(ctx context.Context, task AgentTaskParams) (int64, agentinterfaces.Runtime) {
-	standalone := agentruntime.NewStandaloneRuntime(nil)
+	// 子 Agent 沿用父执行的执行事实（用户 / 项目 / 工作目录），并补上父会话回退值。
+	facts := tool.TaskFactsFrom(ctx)
+	if facts.WorkingDir == "" {
+		facts.WorkingDir = t.cfg.WorkingDir
+	}
+	if facts.SessionID <= 0 {
+		facts.SessionID = t.cfg.ParentSessionID
+	}
+	if facts.UserID <= 0 {
+		facts.UserID = t.cfg.UserID
+	}
+	standalone := agentruntime.NewStandaloneRuntimeWithFacts(nil, facts)
 	if t.cfg.SessionStore == nil {
 		return 0, standalone
 	}
@@ -390,6 +400,11 @@ func (r *recordingRuntime) Emit(ctx context.Context, event agenttypes.StreamEven
 		logging.Warn("sub-agent: persist message failed", "sessionID", r.sessionID, "event", event.Type, "err", err)
 	}
 	return err
+}
+
+// Facts 实现 TaskAware：子 Agent 沿用父执行的执行事实（用户 / 项目 / 工作目录）。
+func (r *recordingRuntime) Facts() agenttypes.TaskFacts {
+	return agentruntime.FactsOf(r.fallback)
 }
 
 func (r *recordingRuntime) RequestPermission(ctx context.Context, op agenttypes.Operation) (agenttypes.PermissionDecision, error) {

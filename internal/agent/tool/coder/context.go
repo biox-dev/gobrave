@@ -17,10 +17,10 @@ import (
 // gobrave 统一改为从工具执行 ctx 读取（见 tool.WithFileHistory / WithLSPClients），
 // 使工具本身无状态、可在 builtin 注册表里单例复用。
 
-// workingDir 返回本次调用的工作目录：优先 RuntimeContext.WorkingDir，其次进程 cwd。
+// workingDir 返回本次调用的工作目录：优先执行事实（TaskFacts.WorkingDir），其次进程 cwd。
 func workingDir(ctx context.Context) string {
-	if rc := tool.RuntimeContextFrom(ctx); rc != nil && rc.WorkingDir != "" {
-		return rc.WorkingDir
+	if wd := tool.TaskFactsFrom(ctx).WorkingDir; wd != "" {
+		return wd
 	}
 	if wd, err := os.Getwd(); err == nil {
 		return wd

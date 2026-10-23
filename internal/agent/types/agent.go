@@ -40,7 +40,7 @@ type Request struct {
 	ProfileID int64 `json:"profile_id,omitempty,string"`
 	// Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。
 	Skills []string `json:"skills,omitempty"`
-	// RuntimeContext 是本轮调用的业务上下文（业务类型 / 模板变量 / 工作目录）。
+	// RuntimeContext 是本轮调用的业务上下文（业务类型 / 模板变量）。
 	//
 	// 由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到
 	// 配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供
@@ -57,8 +57,6 @@ type Request struct {
 	SystemPrompt string `json:"system_prompt,omitempty"`
 	// Messages 对话上下文（不含 SystemPrompt）。
 	Messages []Message `json:"messages"`
-	// WorkingDir 可选：Agent 执行的工作目录。
-	WorkingDir string `json:"working_dir"`
 	// Env 可选：额外环境变量（也可携带 Provider 特有开关）。
 	Env map[string]string `json:"env"`
 	// MaxTokens 可选：最大输出 token 数，0 表示不限制。

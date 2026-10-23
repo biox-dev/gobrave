@@ -92,15 +92,14 @@ func TestServiceFullPermissionFlow(t *testing.T) {
 	}
 
 	req := agenttypes.Request{
-		Provider:   agenttypes.ProviderMock,
-		ProfileID:  profile.ID,
-		Stream:     true,
-		WorkingDir: "/tmp",
-		Env:        map[string]string{"MOCK_PERMISSION_DEMO": "true"},
-		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
+		Provider:  agenttypes.ProviderMock,
+		ProfileID: profile.ID,
+		Stream:    true,
+		Env:       map[string]string{"MOCK_PERMISSION_DEMO": "true"},
+		Messages:  []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	}
 
-	task, err := svc.RunTask(ctx, req, agenttypes.TaskFacts{})
+	task, err := svc.RunTask(ctx, req, agenttypes.TaskFacts{WorkingDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)
 	}
@@ -178,15 +177,14 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 	}
 
 	req := agenttypes.Request{
-		Provider:   agenttypes.ProviderMock,
-		ProfileID:  profile.ID,
-		Stream:     true,
-		WorkingDir: "/tmp",
-		Env:        map[string]string{"MOCK_PERMISSION_DEMO": "true"},
-		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
+		Provider:  agenttypes.ProviderMock,
+		ProfileID: profile.ID,
+		Stream:    true,
+		Env:       map[string]string{"MOCK_PERMISSION_DEMO": "true"},
+		Messages:  []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	}
 
-	task, err := svc.RunTask(ctx, req, agenttypes.TaskFacts{})
+	task, err := svc.RunTask(ctx, req, agenttypes.TaskFacts{WorkingDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)
 	}
@@ -281,12 +279,11 @@ func TestServiceSyncRunAutoApprovesPermission(t *testing.T) {
 	}
 
 	task, err := svc.CreateTask(ctx, agenttypes.Request{
-		Provider:   agenttypes.ProviderMock,
-		ProfileID:  profile.ID,
-		WorkingDir: "/tmp",
-		Env:        map[string]string{"MOCK_PERMISSION_DEMO": "true"},
-		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
-	}, agenttypes.TaskFacts{})
+		Provider:  agenttypes.ProviderMock,
+		ProfileID: profile.ID,
+		Env:       map[string]string{"MOCK_PERMISSION_DEMO": "true"},
+		Messages:  []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
+	}, agenttypes.TaskFacts{WorkingDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -341,12 +338,11 @@ func TestTimelineMessagesPersistedDuringRun(t *testing.T) {
 
 	const sessionID int64 = 20241022
 	task, err := svc.CreateTask(ctx, agenttypes.Request{
-		Provider:   agenttypes.ProviderMock,
-		ProfileID:  profile.ID,
-		WorkingDir: "/tmp",
-		Env:        map[string]string{"MOCK_TOOL_DEMO": "true"},
-		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
-	}, agenttypes.TaskFacts{SessionID: sessionID})
+		Provider:  agenttypes.ProviderMock,
+		ProfileID: profile.ID,
+		Env:       map[string]string{"MOCK_TOOL_DEMO": "true"},
+		Messages:  []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
+	}, agenttypes.TaskFacts{SessionID: sessionID, WorkingDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -390,12 +386,11 @@ func TestAssistantMessageBlockPersistedInTurn(t *testing.T) {
 
 	const sessionID int64 = 20241023
 	task, err := svc.CreateTask(ctx, agenttypes.Request{
-		Provider:   messageBlockProviderName,
-		ProfileID:  profile.ID,
-		WorkingDir: "/tmp",
-		Stream:     true,
-		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
-	}, agenttypes.TaskFacts{SessionID: sessionID})
+		Provider:  messageBlockProviderName,
+		ProfileID: profile.ID,
+		Stream:    true,
+		Messages:  []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
+	}, agenttypes.TaskFacts{SessionID: sessionID, WorkingDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -434,12 +429,11 @@ func TestAssistantFinalFallbackWhenNoMessageBlock(t *testing.T) {
 
 	const sessionID int64 = 20241024
 	task, err := svc.CreateTask(ctx, agenttypes.Request{
-		Provider:   deltaOnlyProviderName,
-		ProfileID:  profile.ID,
-		WorkingDir: "/tmp",
-		Stream:     true,
-		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
-	}, agenttypes.TaskFacts{SessionID: sessionID})
+		Provider:  deltaOnlyProviderName,
+		ProfileID: profile.ID,
+		Stream:    true,
+		Messages:  []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
+	}, agenttypes.TaskFacts{SessionID: sessionID, WorkingDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

@@ -819,7 +819,7 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 
 	h.pushBridgeEvent(session.userID, session.sessionID, "start", gin.H{
 		"model":       resolvedModel,
-		"working_dir": runtimeCtx.WorkingDir,
+		"working_dir": facts.WorkingDir,
 	})
 
 	// Build a provider-agnostic request and stream through the unified Agent client.
@@ -829,7 +829,6 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 	req := agenttypes.Request{
 		ModelID:        resolvedModel,
 		RuntimeContext: runtimeCtx,
-		WorkingDir:     runtimeCtx.WorkingDir,
 		Messages: []agenttypes.Message{
 			{Role: agenttypes.RoleUser, Content: prompt},
 		},

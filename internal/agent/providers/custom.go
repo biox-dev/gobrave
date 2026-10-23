@@ -87,7 +87,7 @@ func (a *customAgent) run(ctx context.Context, req agenttypes.Request, rt agenti
 
 // llmOptions 把 gobrave 请求 + 配置表解析为一次 LLM 调用参数。
 func (a *customAgent) llmOptions(ctx context.Context, req agenttypes.Request, facts agenttypes.TaskFacts) (provider.Options, error) {
-	workingDir := firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
+	workingDir := firstNonEmpty(strings.TrimSpace(facts.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
 	if workingDir == "" {
 		err := fmt.Errorf("custom provider: working dir is required")
 		logger.Errorf(ctx, "%v (session=%d)", err, facts.SessionID)
@@ -176,7 +176,7 @@ func (a *customAgent) toolRegistry(req agenttypes.Request, rt agentinterfaces.Ru
 func (a *customAgent) newAgentTool(req agenttypes.Request, rt agentinterfaces.Runtime) tool.Tool {
 	prepare := a.toolContext(req, rt)
 	facts := agentruntime.FactsOf(rt)
-	workingDir := firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
+	workingDir := firstNonEmpty(strings.TrimSpace(facts.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
 	return native.NewAgentTool(native.AgentToolConfig{
 		// 子 Agent 沿用父请求的模型 / 厂商配置，只替换系统提示词；配置错误在执行期
 		// 转为工具失败结果，由父 Agent 决定是否重试。
