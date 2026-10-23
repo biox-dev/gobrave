@@ -33,8 +33,15 @@ const (
 // TimelineRecorder 投影到 agent_messages（见 timeline.go）。
 // 前端刷新 / 恢复历史请读会话消息，而不是事件流。
 type AgentEvent struct {
-	ID        int64          `json:"id,string"`
-	TaskID    int64          `json:"task_id,string"`
+	ID     int64 `json:"id,string"`
+	TaskID int64 `json:"task_id,string"`
+	// UserID / SessionID 是事件的推送路由与归属信息：由服务层从 TaskFacts 填充，
+	// 传输层（WS / SSE）据此决定推给谁，不需要再维护 taskID → userID 的映射表，
+	// 也不需要按任务逐个订阅。
+	//
+	// UserID 为 0 表示无登录用户（后台任务 / 系统摘要），不应推送给任何客户端。
+	UserID    int64          `json:"user_id,string,omitempty"`
+	SessionID int64          `json:"session_id,string,omitempty"`
 	Type      AgentEventType `json:"type"`
 	Payload   any            `json:"payload,omitempty"`
 	CreatedAt time.Time      `json:"created_at"`

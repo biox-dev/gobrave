@@ -59,8 +59,8 @@ func (r *taskRuntime) Facts() TaskFacts { return r.facts }
 
 func (r *taskRuntime) Emit(ctx context.Context, event StreamEvent) error {
 	// 事件只有一个出口（publish）：实时推送走 EventBus，完整块事件持久化走 TimelineRecorder。
-	// 任务 / 会话归属直接取自事实快照，不需要再查任务或维护缓存。
-	r.svc.publish(ctx, r.facts.TaskID, r.facts.SessionID, EventStream, event, IsBlockEvent(event.Type))
+	// 任务 / 会话 / 用户归属直接取自事实快照，订阅方据此按 UserID 路由，无需再查任务。
+	r.svc.publish(ctx, r.facts, EventStream, event, IsBlockEvent(event.Type))
 	return nil
 }
 
@@ -108,7 +108,7 @@ func (r *taskRuntime) RequestPermission(ctx context.Context, operation Operation
 	if err := r.svc.transitionTask(ctx, task, TaskWaitingPermission, ""); err != nil {
 		return "", err
 	}
-	r.svc.emitEvent(ctx, r.facts.TaskID, EventPermissionCreated, perm)
+	r.svc.emitEvent(ctx, r.facts, EventPermissionCreated, perm)
 
 	// 5) 阻塞等待 UI 决策。
 	decision, err := r.svc.perms.Wait(ctx, perm.ID)
@@ -245,7 +245,7 @@ func (r *taskRuntime) AskUser(ctx context.Context, input AskUserInput) (AskUserA
 	if err := r.svc.transitionTask(ctx, task, TaskWaitingPermission, ""); err != nil {
 		return AskUserAnswer{}, err
 	}
-	r.svc.emitEvent(ctx, r.facts.TaskID, EventQuestionCreated, question)
+	r.svc.emitEvent(ctx, r.facts, EventQuestionCreated, question)
 
 	// 阻塞等待用户作答。
 	answer, err := r.svc.questions.Wait(ctx, question.ID)

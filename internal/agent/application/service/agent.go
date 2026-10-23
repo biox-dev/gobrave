@@ -125,7 +125,7 @@ func (s *AgentService) CreateTask(ctx context.Context, req Request, facts TaskFa
 	if err := s.tasks.Create(ctx, task); err != nil {
 		return nil, err
 	}
-	s.emitEvent(ctx, task.ID, EventTaskCreated, task)
+	s.emitEvent(ctx, task.Facts(), EventTaskCreated, task)
 	return task, nil
 }
 
@@ -395,7 +395,7 @@ func (s *AgentService) transitionTask(ctx context.Context, task *Task, next Task
 		}
 	}
 
-	s.emitEvent(ctx, task.ID, taskEventType(next), task)
+	s.emitEvent(ctx, task.Facts(), taskEventType(next), task)
 	return nil
 }
 
@@ -409,7 +409,7 @@ func (s *AgentService) ApprovePermission(ctx context.Context, id int64, by int64
 	if err != nil {
 		return err
 	}
-	s.emitEvent(ctx, p.TaskID, EventPermissionResolved, p)
+	s.emitEvent(ctx, s.factsForTask(ctx, p.TaskID), EventPermissionResolved, p)
 
 	if !s.isActive(p.TaskID) {
 		s.resumeAfterUserAction(ctx, p.TaskID, "permission approved")
@@ -426,7 +426,7 @@ func (s *AgentService) DenyPermission(ctx context.Context, id int64, by int64) e
 	if err != nil {
 		return err
 	}
-	s.emitEvent(ctx, p.TaskID, EventPermissionResolved, p)
+	s.emitEvent(ctx, s.factsForTask(ctx, p.TaskID), EventPermissionResolved, p)
 
 	if !s.isActive(p.TaskID) {
 		s.failWaitingTask(context.WithoutCancel(ctx), p.TaskID, "permission denied by user")
@@ -463,7 +463,7 @@ func (s *AgentService) AnswerQuestion(ctx context.Context, id int64, answer AskU
 	if err != nil {
 		return err
 	}
-	s.emitEvent(ctx, q.TaskID, EventQuestionResolved, q)
+	s.emitEvent(ctx, s.factsForTask(ctx, q.TaskID), EventQuestionResolved, q)
 
 	// 与权限同构：只有“本次作答已完成、且没有活跃 goroutine”时才需要真正续跑。
 	if q.Status == QuestionAnswered && !s.isActive(q.TaskID) {
@@ -502,25 +502,44 @@ func (s *AgentService) Subscribe(taskID int64, handler EventHandler) func() {
 	return s.bus.Subscribe(taskID, handler)
 }
 
+// factsForTask 按任务 ID 加载只读事实（用户 / 会话 / 项目），供没有 *Task 在手的事件
+// 路径（如权限 / 提问的决策事件）填充推送路由信息。
+//
+// 查不到任务时返回仅含 TaskID 的空事实：事件仍会广播，但不会推送给任何用户，
+// 属于“实时性缺失”而不是状态错误（状态源是数据库）。
+func (s *AgentService) factsForTask(ctx context.Context, taskID int64) TaskFacts {
+	if s.tasks != nil {
+		if task, err := s.tasks.Get(ctx, taskID); err == nil && task != nil {
+			return task.Facts()
+		}
+	}
+	return TaskFacts{TaskID: taskID}
+}
+
 // emitEvent 广播一个事件（不落库）。时间线由 TimelineRecorder 在 EventStream 分支
-// 即时投影为 agent_messages；sessionID 仅流式事件需要，其余事件传 0。
-func (s *AgentService) emitEvent(ctx context.Context, taskID int64, typ AgentEventType, payload any) {
-	s.publish(ctx, taskID, 0, typ, payload, true)
+// 即时投影为 agent_messages；facts 同时提供任务时间线归属与推送路由（UserID）。
+func (s *AgentService) emitEvent(ctx context.Context, facts TaskFacts, typ AgentEventType, payload any) {
+	s.publish(ctx, facts, typ, payload, true)
 }
 
 // broadcastEvent 仅广播一个事件，不持久化（用于 delta 等临时事件）。
-func (s *AgentService) broadcastEvent(ctx context.Context, taskID int64, typ AgentEventType, payload any) {
-	s.publish(ctx, taskID, 0, typ, payload, false)
+func (s *AgentService) broadcastEvent(ctx context.Context, facts TaskFacts, typ AgentEventType, payload any) {
+	s.publish(ctx, facts, typ, payload, false)
 }
 
 // publish 是事件的单一出口：构造 AgentEvent，按需投影为时间线消息，再广播给订阅者。
-func (s *AgentService) publish(ctx context.Context, taskID, sessionID int64, typ AgentEventType, payload any, persist bool) {
+//
+// facts 中的 UserID / SessionID 会写进事件本身：传输层（WS / SSE）据此按用户路由，
+// 因此订阅方只需全局订阅一次，不需要按任务维护订阅表。
+func (s *AgentService) publish(ctx context.Context, facts TaskFacts, typ AgentEventType, payload any, persist bool) {
 	// 每个事件都分配唯一 ID：持久化事件由 BeforeCreate 兜底，但广播（不落库）的
 	// 流式增量事件不走 Append，若不在此分配，ID 恒为 0，前端按 id:sequence 去重
 	// 会把同一任务的所有 stream 增量判为重复而丢弃，导致实时流只显示首个增量。
 	e := &AgentEvent{
 		ID:        utils.GenerateID(),
-		TaskID:    taskID,
+		TaskID:    facts.TaskID,
+		SessionID: facts.SessionID,
+		UserID:    facts.UserID,
 		Type:      typ,
 		Payload:   payload,
 		CreatedAt: time.Now(),
@@ -532,7 +551,7 @@ func (s *AgentService) publish(ctx context.Context, taskID, sessionID int64, typ
 	// 	_ = s.events.Append(ctx, e)
 	// }
 	if persist && typ == EventStream {
-		s.timeline.Record(ctx, sessionID, taskID, payload)
+		s.timeline.Record(ctx, facts.SessionID, facts.TaskID, payload)
 	}
 	if s.bus != nil {
 		s.bus.Publish(ctx, *e)
@@ -550,7 +569,7 @@ func (s *AgentService) SaveMemory(ctx context.Context, memory *Memory) error {
 		return err
 	}
 	// 记忆是用户级（跨任务）对象，不归属某个任务的时间线，因此仅实时广播、不落事件流。
-	s.broadcastEvent(ctx, 0, EventMemorySaved, memory)
+	s.broadcastEvent(ctx, TaskFacts{UserID: memory.UserID, ProjectID: memory.ProjectID, SessionID: memory.SessionID}, EventMemorySaved, memory)
 	return nil
 }
 
@@ -574,7 +593,7 @@ func (s *AgentService) DeleteMemory(ctx context.Context, id int64) error {
 	if err := s.memory.Delete(ctx, id); err != nil {
 		return err
 	}
-	s.broadcastEvent(ctx, 0, EventMemoryDeleted, mem)
+	s.broadcastEvent(ctx, TaskFacts{UserID: mem.UserID, ProjectID: mem.ProjectID, SessionID: mem.SessionID}, EventMemoryDeleted, mem)
 	return nil
 }
 
@@ -820,7 +839,7 @@ func (s *AgentService) extractMemory(ctx context.Context, task *Task, req Reques
 		if err := s.memory.Save(ctx, mem); err != nil {
 			continue
 		}
-		s.broadcastEvent(ctx, task.ID, EventMemorySaved, mem)
+		s.broadcastEvent(ctx, facts, EventMemorySaved, mem)
 	}
 }
 
@@ -879,7 +898,7 @@ func (s *AgentService) ResumeTask(ctx context.Context, taskID int64) error {
 		return err
 	}
 
-	s.emitEvent(ctx, task.ID, EventTaskStarted, task)
+	s.emitEvent(ctx, task.Facts(), EventTaskStarted, task)
 
 	go s.execute(execCtx, task, NewTaskRuntime(s, task))
 	launched = true

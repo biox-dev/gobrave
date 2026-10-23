@@ -23,8 +23,11 @@ import (
 //
 // 职责边界（对应 design.md）：
 //   - HTTP 是 command（创建任务 / 批准 / 拒绝）；
-//   - WS 是 notification（通过 AgentService.Subscribe 把事件推送给创建任务的用户）；
+//   - WS 是 notification（StartEventBridge 全局订阅事件，按 AgentEvent.UserID 推送）；
 //   - AgentService / Repository 是真正的 state。
+//
+// 事件订阅不按任务维护：AgentEvent 自带 UserID，因此所有任务启动路径（含
+// ResumeTask / Recover 自动续跑）都无需再显式挂订阅。
 type AgentHandler struct {
 	svc  *agentservice.AgentService
 	chat *agentservice.ChatService
@@ -35,8 +38,9 @@ type AgentHandler struct {
 
 	runtimeCtx *RuntimeContextResolver
 
-	mu   sync.Mutex
-	subs map[int64]func() // taskID → 取消订阅函数
+	mu sync.Mutex
+	// unsub 是全局事件订阅的取消函数（由 StartEventBridge 注册）。
+	unsub func()
 }
 
 // NewAgentHandler 创建 AgentHandler。
@@ -48,7 +52,6 @@ func NewAgentHandler(svc *agentservice.AgentService, chat *agentservice.ChatServ
 		skills:     skills,
 		skillStore: skillStore,
 		runtimeCtx: runtimeCtx,
-		subs:       make(map[int64]func()),
 	}
 }
 
@@ -185,7 +188,7 @@ func parseOptionalAgentID(s string) (int64, error) {
 
 // CreateTask godoc
 // @Summary      创建 Agent 任务
-// @Description  创建任务、订阅事件流到 WS，并异步启动执行
+// @Description  创建任务并异步启动执行；实时事件由全局事件桥按任务归属用户推送到 WS
 // @Tags         Agent
 // @Accept       json
 // @Produce      json
@@ -239,10 +242,7 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 		return
 	}
 
-	// 2) 在启动执行前订阅该任务事件，避免错过早期事件。
-	h.attachTaskStream(userID, task.ID)
-
-	// 3) 启动异步执行。
+	// 2) 启动异步执行（实时事件由全局事件桥按 UserID 推送，无需逐任务订阅）。
 	if err := h.svc.StartTask(c.Request.Context(), task.ID); err != nil {
 		handleAgentError(c, err, "failed to start agent task")
 		return
@@ -318,10 +318,8 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		return
 	}
 
-	// 2) 在启动执行前订阅该任务事件到 WS，避免错过早期事件。
-	h.attachTaskStream(userID, task.ID)
-
-	// 3) 启动执行（异步，assistant 回复在轮次结束时自动写回会话历史）。
+	// 2) 启动执行（异步，assistant 回复在轮次结束时自动写回会话历史）。
+	// 实时事件由全局事件桥按 UserID 推送，无需逐任务订阅。
 	if err := h.chat.StartTurn(c.Request.Context(), task.ID); err != nil {
 		handleAgentError(c, err, "failed to start conversation turn")
 		return
@@ -1504,55 +1502,48 @@ func (h *AgentHandler) ResumeTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
 }
 
-// attachTaskStream 订阅任务事件并推送到指定用户的 WS。
+// StartEventBridge 注册全局 Agent 事件订阅，把事件按 AgentEvent.UserID 推送到对应的 WS 连接。
 //
-// 事件通过 AgentService.Subscribe（EventBus）分发，WS 只是通知层；
-// 历史时间线请从会话消息（agent_messages）读取。任务到达终态时自动取消订阅，避免泄漏。
-func (h *AgentHandler) attachTaskStream(userID int64, taskID int64) {
+// 为什么是全局订阅而不是逐任务订阅：
+//   - 事件已经自带归属用户（服务层从 TaskFacts 填充），路由不需要任务表；
+//   - 任务可能在 HTTP 请求之外的路径启动（ResumeTask / Recover 自动续跑 /
+//     权限决策后续跑），逐任务订阅必须覆盖每个启动点，容易遗漏；
+//   - 订阅没有 per-task 状态，不存在“终态未到导致订阅泄漏”的问题。
+//
+// 后台任务（无登录用户，UserID == 0）不推送。历史时间线仍以 agent_messages 为准。
+func (h *AgentHandler) StartEventBridge() {
 	if h.svc == nil || h.hub == nil {
 		return
 	}
 
 	h.mu.Lock()
-	if _, exists := h.subs[taskID]; exists {
-		h.mu.Unlock()
+	defer h.mu.Unlock()
+	if h.unsub != nil {
 		return
 	}
-	h.mu.Unlock()
 
-	var once sync.Once
-	var unsub func()
-
-	unsub = h.svc.Subscribe(taskID, func(_ context.Context, ev agenttypes.AgentEvent) error {
-		switch ev.Type {
-		case agenttypes.EventTaskCompleted, agenttypes.EventTaskFailed, agenttypes.EventTaskCanceled:
-			once.Do(func() {
-				h.mu.Lock()
-				delete(h.subs, taskID)
-				h.mu.Unlock()
-				if unsub != nil {
-					unsub()
-				}
-			})
+	h.unsub = h.svc.Subscribe(0, func(_ context.Context, ev agenttypes.AgentEvent) error {
+		if ev.UserID == 0 {
+			return nil
 		}
-
-		_ = h.hub.PushMessage(userID, agentWSEvent{
+		_ = h.hub.PushMessage(ev.UserID, agentWSEvent{
 			Type:   "agent.event",
-			TaskID: taskID,
+			TaskID: ev.TaskID,
 			Event:  ev,
 		})
 		return nil
 	})
+}
 
+// StopEventBridge 取消全局事件订阅（供容器关闭 / 测试清理使用）。
+func (h *AgentHandler) StopEventBridge() {
 	h.mu.Lock()
-	if _, exists := h.subs[taskID]; exists {
-		// 并发创建时出现重复订阅，取消后保留第一个。
-		h.mu.Unlock()
-		unsub()
-		return
-	}
-	h.subs[taskID] = unsub
+	unsub := h.unsub
+	h.unsub = nil
 	h.mu.Unlock()
+	if unsub != nil {
+		unsub()
+	}
 }
 
 // getCurrentUser 从 gin 上下文读取当前登录用户（由认证中间件注入）。

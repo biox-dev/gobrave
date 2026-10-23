@@ -748,6 +748,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// dig 是懒加载的，若不显式 Invoke，Recover 先把 running 任务置为 failed 时
 	// onTaskFinished 尚未注册，会话 CurrentTaskID / 错误消息就不会被清理。
 	must(container.Invoke(func(_ *agentservice.ChatService) {}))
+	// Agent 实时事件桥：全局订阅一次（taskID == 0），按事件上的 UserID 路由到 WS。
+	// 必须在 Recover 之前注册：Recover 可能立即自动续跑任务并产生事件。
+	must(container.Invoke(func(h *handler.AgentHandler) { h.StartEventBridge() }))
 	must(container.Invoke(func(svc *agentservice.AgentService) {
 		if err := svc.Recover(context.Background()); err != nil {
 			logger.Warnf(context.Background(), "[Container] agent task recovery failed: %v", err)
