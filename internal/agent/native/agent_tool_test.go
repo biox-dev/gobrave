@@ -62,6 +62,7 @@ func TestNewAgentToolRunsNestedAgent(t *testing.T) {
 		},
 		Tools:        tool.NewRegistryWith(stubTool{name: "probe"}),
 		SystemPrompt: "test task prompt",
+		SessionStore: &fakeSubAgentStore{},
 	})
 
 	out, err := agentTool.Execute(context.Background(), json.RawMessage(`{"prompt":"where is config?"}`))
@@ -109,6 +110,7 @@ func TestAgentToolRejectsEmptyResponse(t *testing.T) {
 		NewClient: func(context.Context) (provider.Client, error) {
 			return &fakeClient{responses: []*provider.Response{{Content: "   "}}}, nil
 		},
+		SessionStore: &fakeSubAgentStore{},
 	})
 	if _, err := agentTool.Execute(context.Background(), json.RawMessage(`{"prompt":"hi"}`)); err == nil {
 		t.Fatal("expected error for empty nested response")
@@ -208,6 +210,7 @@ func TestAgentToolRunsBatchConcurrently(t *testing.T) {
 		NewClient: func(context.Context) (provider.Client, error) {
 			return &barrierClient{probe: probe, started: &started, release: release}, nil
 		},
+		SessionStore: &fakeSubAgentStore{},
 	})
 
 	out, err := agentTool.Execute(context.Background(), json.RawMessage(
@@ -255,6 +258,7 @@ func TestAgentToolBatchKeepsGoingAfterFailure(t *testing.T) {
 		NewClient: func(context.Context) (provider.Client, error) {
 			return &promptErrorClient{failOn: "b"}, nil
 		},
+		SessionStore: &fakeSubAgentStore{},
 	})
 
 	out, err := agentTool.Execute(context.Background(), json.RawMessage(
@@ -316,6 +320,14 @@ func (s *fakeSubAgentStore) CreateChildSession(_ context.Context, info SubAgentS
 	defer s.mu.Unlock()
 	s.created = append(s.created, info)
 	return 999, nil
+}
+
+// CreateSession 记录独立会话（无父会话时调用）。
+func (s *fakeSubAgentStore) CreateSession(_ context.Context, info SubAgentSessionInfo) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.created = append(s.created, info)
+	return 777, nil
 }
 
 func (s *fakeSubAgentStore) AppendUserMessage(_ context.Context, sessionID int64, content string) error {
@@ -386,7 +398,7 @@ func TestAgentToolPersistsChildSessionAndMessages(t *testing.T) {
 	}
 }
 
-func TestAgentToolSkipsPersistenceWithoutParentSession(t *testing.T) {
+func TestAgentToolCreatesStandaloneSessionWithoutParentSession(t *testing.T) {
 	store := &fakeSubAgentStore{}
 	agentTool := NewAgentTool(AgentToolConfig{
 		NewClient: func(context.Context) (provider.Client, error) {
@@ -398,7 +410,32 @@ func TestAgentToolSkipsPersistenceWithoutParentSession(t *testing.T) {
 	if _, err := agentTool.Execute(context.Background(), json.RawMessage(`{"prompt":"hi"}`)); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if len(store.created) != 0 || len(store.messages) != 0 {
-		t.Fatalf("expected no persistence without parent session: created=%d messages=%d", len(store.created), len(store.messages))
+
+	// 无父会话时创建独立会话（不再降级为无会话执行）。
+	if len(store.created) != 1 {
+		t.Fatalf("sessions created = %d, want 1", len(store.created))
+	}
+	if info := store.created[0]; info.ParentSessionID != 0 {
+		t.Fatalf("standalone session parent = %d, want 0", info.ParentSessionID)
+	}
+	if len(store.messages) == 0 {
+		t.Fatalf("expected messages persisted to standalone session")
+	}
+	for _, m := range store.messages {
+		if m.sessionID != 777 {
+			t.Fatalf("message written to session %d, want 777", m.sessionID)
+		}
+	}
+}
+
+func TestAgentToolRequiresSessionStore(t *testing.T) {
+	agentTool := NewAgentTool(AgentToolConfig{
+		NewClient: func(context.Context) (provider.Client, error) {
+			return &fakeClient{responses: []*provider.Response{{Content: "ok"}}}, nil
+		},
+	})
+
+	if _, err := agentTool.Execute(context.Background(), json.RawMessage(`{"prompt":"hi"}`)); err == nil {
+		t.Fatalf("Execute() error = nil, want session store error")
 	}
 }

@@ -171,8 +171,9 @@ func (a *customAgent) toolRegistry(req agenttypes.Request, rt agentinterfaces.Ru
 
 // newAgentTool 构建 agent 工具：复用父请求的模型 / 厂商配置启动一个只读子 Agent。
 //
-// 与 opencode NewAgentTool 的差异：gobrave 没有会话服务，子 Agent 不再创建 task
-// 会话，而是同步运行原生 Agent 循环并直接返回最终回答（见 native.NewAgentTool）。
+// 与 opencode NewAgentTool 的差异：子 Agent 同步运行原生 Agent 循环并直接返回最终回答
+// （见 native.NewAgentTool）；会话由 native 通过 SessionStore 创建（父请求有会话时为
+// 子会话，否则为独立会话）。
 func (a *customAgent) newAgentTool(req agenttypes.Request, rt agentinterfaces.Runtime) tool.Tool {
 	prepare := a.toolContext(req, rt)
 	facts := agentruntime.FactsOf(rt)
@@ -201,8 +202,10 @@ func (a *customAgent) newAgentTool(req agenttypes.Request, rt agentinterfaces.Ru
 		// 子会话落库：有父会话时创建 ParentSessionID = 父会话的子会话，并把子 Agent 的
 		// reasoning / tool_call / tool_result / 最终回答写入 agent_messages。
 		SessionStore: newSubAgentSessionStore(a.opts.Sessions, a.opts.Messages),
-		Provider:     strings.TrimSpace(req.Provider),
-		Model:        strings.TrimSpace(req.ModelID),
+		// 子 Agent 的权限 / 提问委托给父 Runtime（事件仍只写子会话）。
+		ParentRuntime: rt,
+		Provider:      strings.TrimSpace(req.Provider),
+		Model:         strings.TrimSpace(req.ModelID),
 		// 回退值：工具执行 ctx 缺少 RuntimeContext 时也能拿到父会话 / 用户。
 		ParentSessionID: facts.SessionID,
 		UserID:          facts.UserID,

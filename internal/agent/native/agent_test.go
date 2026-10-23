@@ -8,9 +8,29 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 )
+
+// testRuntime 是 executeTools 测试用的最小 Runtime：丢弃事件，权限一律拒绝。
+type testRuntime struct{}
+
+func (testRuntime) Facts() agenttypes.TaskFacts { return agenttypes.TaskFacts{} }
+
+func (testRuntime) Emit(context.Context, agenttypes.StreamEvent) error { return nil }
+
+func (testRuntime) RequestPermission(context.Context, agenttypes.Operation) (agenttypes.PermissionDecision, error) {
+	return agenttypes.DecisionDeny, agentruntime.ErrNoPermissionResolver
+}
+
+func (testRuntime) WaitPermission(context.Context, int64) (agenttypes.PermissionDecision, error) {
+	return agenttypes.DecisionDeny, agentruntime.ErrNoPermissionResolver
+}
+
+func (testRuntime) AskUser(context.Context, agenttypes.AskUserInput) (agenttypes.AskUserAnswer, error) {
+	return agenttypes.AskUserAnswer{}, agenttypes.ErrNoUserInputResolver
+}
 
 // blockingAgentTool 是名为 agent 的测试工具：进入即登记并发，阻塞到 release 后返回。
 type blockingAgentTool struct {
@@ -63,7 +83,7 @@ func TestExecuteToolsRunsAgentCallsConcurrently(t *testing.T) {
 	}
 
 	cfg := &Config{}
-	results := cfg.executeTools(context.Background(), tool.NewExecutor(registry), calls, newMemoryRuntime(agenttypes.TaskFacts{}), nil)
+	results := cfg.executeTools(context.Background(), tool.NewExecutor(registry), calls, testRuntime{}, nil)
 
 	if len(results) != 2 {
 		t.Fatalf("len(results) = %d, want 2", len(results))

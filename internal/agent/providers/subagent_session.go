@@ -21,7 +21,10 @@ type subAgentSessionStore struct {
 	messages agentinterfaces.MessageService
 }
 
-// newSubAgentSessionStore 构建子 Agent 持久化适配器；任一服务缺失时返回 nil（不落库）。
+// newSubAgentSessionStore 构建子 Agent 持久化适配器；任一服务缺失时返回 nil。
+//
+// SessionStore 现在是子 Agent 的必需依赖（子 Agent 始终要落一个完整会话），
+// 因此返回 nil 会让子 Agent 执行失败，而不是静默降级为无会话运行。
 func newSubAgentSessionStore(sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) native.SubAgentSessionStore {
 	if sessions == nil || messages == nil {
 		return nil
@@ -32,11 +35,27 @@ func newSubAgentSessionStore(sessions agentinterfaces.SessionService, messages a
 // CreateChildSession 实现 native.SubAgentSessionStore。
 func (s subAgentSessionStore) CreateChildSession(ctx context.Context, info native.SubAgentSessionInfo) (int64, error) {
 	sess, err := s.sessions.CreateChildSession(ctx, agenttypes.SessionChildParams{
+		ProjectID:       info.ProjectID,
 		ParentSessionID: info.ParentSessionID,
 		Title:           info.Title,
 		UserID:          info.UserID,
 		Provider:        info.Provider,
 		Model:           info.Model,
+	})
+	if err != nil {
+		return 0, err
+	}
+	return sess.ID, nil
+}
+
+// CreateSession 实现 native.SubAgentSessionStore：无父会话时创建独立会话。
+func (s subAgentSessionStore) CreateSession(ctx context.Context, info native.SubAgentSessionInfo) (int64, error) {
+	sess, err := s.sessions.Create(ctx, agenttypes.SessionCreateParams{
+		ProjectID: info.ProjectID,
+		Title:     info.Title,
+		UserID:    info.UserID,
+		Provider:  info.Provider,
+		Model:     info.Model,
 	})
 	if err != nil {
 		return 0, err
