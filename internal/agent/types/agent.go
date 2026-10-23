@@ -50,11 +50,13 @@ type Request struct {
 	// 承载，经 Runtime 注入工具 ctx（见 tool.WithTaskFacts）。它随 Request 一起被 JSON
 	// 序列化进 agent_tasks.request（gorm serializer:json），因此任务从 DB 恢复后依然可用。
 	RuntimeContext *runtimecontext.RuntimeContext `json:"runtime_context,omitempty"`
-	// SystemPrompt 是最终发送给 Provider 的系统提示词。
+	// SystemPrompt 是最终发送给 Provider 的系统提示词（仅运行时使用）。
 	//
-	// 注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +
-	// RuntimeContext.SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。
-	SystemPrompt string `json:"system_prompt,omitempty"`
+	// 它是派生值：AgentService 依据 Profile.SystemPrompt 模板 +
+	// RuntimeContext.SystemPromptVars 在 run 时渲染后写入（见 applyProfile），
+	// Provider 只读该字段。因此不随 Request 持久化（json:"-"）：
+	// 任务恢复时会按 Profile 重新渲染，避免把过期快照写进 agent_tasks.request。
+	SystemPrompt string `json:"-"`
 	// Messages 对话上下文（不含 SystemPrompt）。
 	Messages []Message `json:"messages"`
 	// Env 可选：额外环境变量（也可携带 Provider 特有开关）。
