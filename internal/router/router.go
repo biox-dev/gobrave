@@ -45,7 +45,6 @@ type RouterParams struct {
 	FileHandler      *handler.FileHandler
 	ProxyHandler     *handler.ProxyHandler
 	RealtimeHandler  *handler.RealtimeHandler
-	LLMHandler       *handler.LLMHandler
 	AISummaryHandler *handler.AISummaryHandler
 	AgentHandler     *handler.AgentHandler
 }
@@ -107,7 +106,6 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterSheetRoutes(v1, params.SheetHandler)
 		RegisterFileRoutes(v1, params.FileHandler)
 		RegisterRealtimeRoutes(v1, params.RealtimeHandler)
-		RegisterLLMRoutes(v1, params.LLMHandler)
 		RegisterAISummaryRoutes(v1, params.AISummaryHandler)
 		RegisterAgentRoutes(v1, params.AgentHandler)
 	}
@@ -442,22 +440,6 @@ func RegisterAISummaryRoutes(r *gin.RouterGroup, handler *handler.AISummaryHandl
 	r.GET("/ai-summary/input", handler.GetAISummaryInput)
 	r.POST("/ai-summary/update", handler.UpdateAISummary)
 	r.POST("/ai-summary/delete", handler.DeleteAISummary)
-}
-
-func RegisterLLMRoutes(r *gin.RouterGroup, handler *handler.LLMHandler) {
-	r.POST("/llm/session/create", handler.CreateLLMSession)
-	r.GET("/llm/session/get", handler.GetLLMSession)
-	r.POST("/llm/session/update", handler.UpdateLLMSession)
-	r.POST("/llm/session/delete", handler.DeleteLLMSession)
-	r.GET("/llm/session/list", handler.ListLLMSession)
-
-	r.POST("/llm/conversation/create", handler.CreateLLMConversation)
-	r.GET("/llm/conversation/get", handler.GetLLMConversation)
-	r.POST("/llm/conversation/update", handler.UpdateLLMConversation)
-	r.POST("/llm/conversation/delete", handler.DeleteLLMConversation)
-	r.GET("/llm/conversation/list", handler.ListLLMConversation)
-
-	// r.POST("/llm/copilot-cli/chat", handler.CopilotChat)
 }
 
 func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {

@@ -53,7 +53,7 @@ type copilotStreamResult struct {
 // 时优先使用 req.Timeout），避免推理类模型或耗时较长的 Copilot 调用被误判为超时。
 func (a *copilotAgent) Invoke(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	if rt == nil {
-		rt = agentruntime.NewStandaloneRuntime(nil)
+		return nil, fmt.Errorf("copilot: runtime is required")
 	}
 
 	ctx, cancel := a.withTimeout(ctx, req.Timeout)
@@ -117,7 +117,7 @@ func (a *copilotAgent) Invoke(ctx context.Context, req agenttypes.Request, rt ag
 // Stream 执行流式请求：把 Copilot 的增量事件转换为 agenttypes.StreamEvent，通过 Runtime.Emit 输出。
 func (a *copilotAgent) Stream(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	if rt == nil {
-		rt = agentruntime.NewStandaloneRuntime(nil)
+		return nil, fmt.Errorf("copilot: runtime is required")
 	}
 
 	ctx, cancel := a.withTimeout(ctx, req.Timeout)

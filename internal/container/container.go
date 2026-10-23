@@ -695,9 +695,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(realtime.NewHub))
 	must(container.Provide(handler.NewRealtimeHandler))
 	// RuntimeContextResolver：把业务 env(type,id) 解析为系统提示词 + 工作目录，
-	// 供 LLM 桥接（LLMHandler）与 Agent 会话（AgentHandler）共用。
+	// 供 Agent 会话（AgentHandler）使用。
 	must(container.Provide(handler.NewRuntimeContextResolver))
-	must(container.Provide(handler.NewLLMHandler))
 	must(container.Provide(handler.NewAISummaryHandler))
 	must(container.Provide(handler.NewAgentHandler))
 	// must(container.Provide(handler.NewTraceHandler))

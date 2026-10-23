@@ -51,7 +51,7 @@ func (a *customAgent) Stream(ctx context.Context, req agenttypes.Request, rt age
 // run 组装 LLM 客户端与工具上下文，交给原生 Agent 循环执行。
 func (a *customAgent) run(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	if rt == nil {
-		rt = agentruntime.NewStandaloneRuntime(nil)
+		return nil, agentclient.ErrRuntimeRequired
 	}
 	if req.Timeout > 0 {
 		var cancel context.CancelFunc

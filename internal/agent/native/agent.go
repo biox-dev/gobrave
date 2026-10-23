@@ -15,7 +15,6 @@ import (
 	"sync"
 
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
-	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
@@ -42,7 +41,11 @@ func (c *Config) Run(ctx context.Context, req agenttypes.Request, rt agentinterf
 		return nil, err
 	}
 	if rt == nil {
-		rt = agentruntime.NewStandaloneRuntime(nil)
+		// Runtime 由调用方（AgentService 的 taskRuntime）保证非 nil：事件、权限、
+		// 提问都必须有明确的任务归属，这里不做“无任务”兜底。
+		err := fmt.Errorf("native agent: runtime is required")
+		logger.Errorf(ctx, "native agent: %v", err)
+		return nil, err
 	}
 
 	executor := tool.NewExecutor(c.Tools)

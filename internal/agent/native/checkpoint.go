@@ -15,7 +15,7 @@ import (
 //	native 循环（内存历史 / 工具往返） ↔ agenttypes.TaskResumeState（可 JSON 落库）
 //
 // 只有 Runtime 实现了 agentinterfaces.CheckpointRuntime（任务模式）时才启用检查点；
-// 独立调用（NewStandaloneRuntime）下 writer 为空，行为与之前完全一致。
+// 独立调用（Runtime 未实现 CheckpointRuntime）下 writer 为空，行为与之前完全一致。
 
 // checkpointWriter 把检查点写入 Runtime 背后的任务行。
 type checkpointWriter struct {

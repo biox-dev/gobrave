@@ -322,11 +322,11 @@ func (t *agentTool) runTask(ctx context.Context, task AgentTaskParams) agentRunR
 
 // sessionRuntime 为一次子 Agent 执行准备 Runtime：
 //
-//   - 未注入 SessionStore / 父请求没有会话 ID：返回 (0, standalone)，不落库；
+//   - 未注入 SessionStore / 父请求没有会话 ID：返回 (0, memoryRuntime)，不落库；
 //   - 否则创建 ParentSessionID = 父会话的子会话，写入 user 消息，并返回把
 //     reasoning / tool_call / tool_result 写入该子会话的 recordingRuntime。
 //
-// 会话创建失败属于旁路故障：只记日志并退回 standalone，不影响子 Agent 执行。
+// 会话创建失败属于旁路故障：只记日志并退回 memoryRuntime，不影响子 Agent 执行。
 func (t *agentTool) sessionRuntime(ctx context.Context, task AgentTaskParams) (int64, agentinterfaces.Runtime) {
 	// 子 Agent 沿用父执行的执行事实（用户 / 项目 / 工作目录），并补上父会话回退值。
 	facts := tool.TaskFactsFrom(ctx)
@@ -339,16 +339,16 @@ func (t *agentTool) sessionRuntime(ctx context.Context, task AgentTaskParams) (i
 	if facts.UserID <= 0 {
 		facts.UserID = t.cfg.UserID
 	}
-	standalone := agentruntime.NewStandaloneRuntimeWithFacts(nil, facts)
+	fallback := newMemoryRuntime(facts)
 	if t.cfg.SessionStore == nil {
-		return 0, standalone
+		return 0, fallback
 	}
 	parentSessionID := tool.SessionIDFrom(ctx)
 	if parentSessionID <= 0 {
 		parentSessionID = t.cfg.ParentSessionID
 	}
 	if parentSessionID <= 0 {
-		return 0, standalone
+		return 0, fallback
 	}
 
 	userID := tool.UserIDFrom(ctx)
@@ -365,12 +365,12 @@ func (t *agentTool) sessionRuntime(ctx context.Context, task AgentTaskParams) (i
 	})
 	if err != nil || sessionID <= 0 {
 		logging.Warn("sub-agent: create child session failed", "parentSessionID", parentSessionID, "err", err)
-		return 0, standalone
+		return 0, fallback
 	}
 	if err := t.cfg.SessionStore.AppendUserMessage(ctx, sessionID, task.Prompt); err != nil {
 		logging.Warn("sub-agent: append user message failed", "sessionID", sessionID, "err", err)
 	}
-	return sessionID, &recordingRuntime{store: t.cfg.SessionStore, sessionID: sessionID, fallback: standalone}
+	return sessionID, &recordingRuntime{store: t.cfg.SessionStore, sessionID: sessionID, fallback: fallback}
 }
 
 // appendFinal 把子 Agent 的最终回答（或错误）写入子会话；未落库时直接跳过。
@@ -387,7 +387,7 @@ func (t *agentTool) appendFinal(ctx context.Context, sessionID int64, content st
 //
 // 投影规则由实现方复用 agentservice.ProjectTimelineEvent（reasoning / tool_call / tool_result
 // 产生消息，增量与生命周期事件忽略）；最终回答由 appendFinal 统一写入。
-// 权限与提问委托给无 UI 的 standalone Runtime（子 Agent 只读，正常不会触发）。
+// 权限与提问委托给无 UI 的 memoryRuntime（子 Agent 只读，正常不会触发）。
 type recordingRuntime struct {
 	store     SubAgentSessionStore
 	sessionID int64

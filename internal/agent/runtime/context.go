@@ -54,7 +54,7 @@ func (r toolPermissionRequester) RequestPermission(ctx context.Context, req tool
 	return err == nil && decision == DecisionAllow
 }
 
-// FactsOf 返回 Runtime 绑定的任务事实快照；未实现 TaskAware 的 Runtime（如 standalone）返回零值。
+// FactsOf 返回 Runtime 绑定的任务事实快照；Runtime 未实现 TaskAware 时返回零值。
 func FactsOf(rt Runtime) TaskFacts {
 	if aware, ok := rt.(TaskAware); ok {
 		return aware.Facts()

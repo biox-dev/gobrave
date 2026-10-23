@@ -7,11 +7,34 @@ import (
 
 	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
-	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
+
+// recordingRuntime 是测试用的最小 Runtime：事件追加到 events，权限一律放行。
+type recordingRuntime struct {
+	events *[]agenttypes.StreamEvent
+}
+
+func (r recordingRuntime) Facts() agenttypes.TaskFacts { return agenttypes.TaskFacts{} }
+
+func (r recordingRuntime) Emit(_ context.Context, ev agenttypes.StreamEvent) error {
+	*r.events = append(*r.events, ev)
+	return nil
+}
+
+func (r recordingRuntime) RequestPermission(context.Context, agenttypes.Operation) (agenttypes.PermissionDecision, error) {
+	return agenttypes.DecisionAllow, nil
+}
+
+func (r recordingRuntime) WaitPermission(context.Context, int64) (agenttypes.PermissionDecision, error) {
+	return agenttypes.DecisionAllow, nil
+}
+
+func (r recordingRuntime) AskUser(context.Context, agenttypes.AskUserInput) (agenttypes.AskUserAnswer, error) {
+	return agenttypes.AskUserAnswer{}, agenttypes.ErrNoUserInputResolver
+}
 
 func resolveMock(t *testing.T, opts agentclient.Options) agentinterfaces.Agent {
 	t.Helper()
@@ -27,10 +50,7 @@ func TestMockToolCallDefault(t *testing.T) {
 	a := resolveMock(t, agentclient.Options{})
 
 	var events []agenttypes.StreamEvent
-	rt := agentruntime.NewStandaloneRuntime(func(_ context.Context, ev agenttypes.StreamEvent) error {
-		events = append(events, ev)
-		return nil
-	})
+	rt := recordingRuntime{events: &events}
 
 	req := agenttypes.Request{
 		Env:      map[string]string{"MOCK_TOOL_DEMO": "true"},
@@ -76,10 +96,7 @@ func TestMockToolCallCustomTool(t *testing.T) {
 	a := resolveMock(t, agentclient.Options{Tools: reg})
 
 	var events []agenttypes.StreamEvent
-	rt := agentruntime.NewStandaloneRuntime(func(_ context.Context, ev agenttypes.StreamEvent) error {
-		events = append(events, ev)
-		return nil
-	})
+	rt := recordingRuntime{events: &events}
 
 	req := agenttypes.Request{
 		Env: map[string]string{

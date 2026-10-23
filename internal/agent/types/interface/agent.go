@@ -30,8 +30,8 @@ type Runtime interface {
 
 // TaskAware 是 Runtime 的可选扩展：暴露本次执行绑定的任务事实快照（只读）。
 //
-// standalone Runtime 不实现该接口；需要用户 / 会话 / 项目事实的 Provider 可通过
-// agentruntime.FactsOf 读取，未实现时得到零值。
+// 需要用户 / 会话 / 项目事实的 Provider 可通过 agentruntime.FactsOf 读取，
+// Runtime 未实现该接口时得到零值。
 type TaskAware interface {
 	Facts() types.TaskFacts
 }
@@ -49,9 +49,8 @@ type Agent interface {
 
 // CheckpointRuntime 是 Runtime 的可选扩展：Agent 循环通过它读写任务的持久化检查点。
 //
-// 独立 Runtime（NewStandaloneRuntime）不实现该接口，此时 Agent 循环退化为纯内存执行。
 // taskRuntime 实现了该接口；native 包通过类型断言使用它，避免把持久化细节耦合进
-// Agent 循环本身。
+// Agent 循环本身。Runtime 未实现该接口时，Agent 循环退化为纯内存执行。
 type CheckpointRuntime interface {
 	Runtime
 	// LoadCheckpoint 读取当前任务的检查点；不存在时返回 nil。

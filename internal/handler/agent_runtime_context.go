@@ -63,8 +63,7 @@ func normalizeEnvType(typ string) string {
 type RuntimeContext = tool.RuntimeContext
 
 // RuntimeContextResolver 把「业务 env(type,id) → 系统提示词 + 工作目录」的解析逻辑
-// 从具体 Handler 中抽离出来，供 LLM 桥接（LLMHandler）与 Agent 会话（AgentHandler）
-// 两套调用链路复用，避免重复实现导致的行为漂移。
+// 从具体 Handler 中抽离出来，供 Agent 会话（AgentHandler）使用，避免重复实现导致的行为漂移。
 type RuntimeContextResolver struct {
 	cfg         *config.Config
 	projectSvc  interfaces.ProjectService

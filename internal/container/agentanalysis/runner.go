@@ -21,7 +21,7 @@ import (
 // analysisNodeRunner 实现 tool.AnalysisNodeRunner：把「运行分析节点并等待完成、读取日志」
 // 的业务能力暴露给内置工具 run_analysis_node。
 //
-// 与 AnalysisHandler.RunAnalysisNodeWithID / LLMHandler.runAnalysisNodeByID 语义一致：
+// 与 AnalysisHandler.RunAnalysisNodeWithID 语义一致：
 // 按最新 io_schema 刷新 patterns → 重置节点状态 → 提交异步执行 → **订阅节点完成事件**
 // 等待终态 → 读取 command.log 内容。
 //

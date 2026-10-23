@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
-	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 )
 
 // blockingAgentTool 是名为 agent 的测试工具：进入即登记并发，阻塞到 release 后返回。
@@ -63,7 +63,7 @@ func TestExecuteToolsRunsAgentCallsConcurrently(t *testing.T) {
 	}
 
 	cfg := &Config{}
-	results := cfg.executeTools(context.Background(), tool.NewExecutor(registry), calls, agentruntime.NewStandaloneRuntime(nil), nil)
+	results := cfg.executeTools(context.Background(), tool.NewExecutor(registry), calls, newMemoryRuntime(agenttypes.TaskFacts{}), nil)
 
 	if len(results) != 2 {
 		t.Fatalf("len(results) = %d, want 2", len(results))

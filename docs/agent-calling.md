@@ -8,7 +8,7 @@
 | 语义 | 接口 | 适用场景 |
 | --- | --- | --- |
 | 一次性任务 | `Agent.Invoke` | AI 摘要生成、后台异步任务（如 `AISummaryWorker`） |
-| 流式请求 | `Agent.Stream` | 前端聊天、边生成边推送（如 `LLMHandler` bridge） |
+| 流式请求 | `Agent.Stream` | 前端聊天、边生成边推送（`AgentService` 任务流） |
 
 ## 2. 目录结构
 
