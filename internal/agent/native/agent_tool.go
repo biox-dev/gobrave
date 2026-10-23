@@ -392,16 +392,16 @@ func (r *recordingRuntime) Emit(ctx context.Context, event agenttypes.StreamEven
 	return err
 }
 
-func (r *recordingRuntime) RequestPermission(ctx context.Context, userID int64, op agenttypes.Operation) (agenttypes.PermissionDecision, error) {
-	return r.fallback.RequestPermission(ctx, userID, op)
+func (r *recordingRuntime) RequestPermission(ctx context.Context, op agenttypes.Operation) (agenttypes.PermissionDecision, error) {
+	return r.fallback.RequestPermission(ctx, op)
 }
 
 func (r *recordingRuntime) WaitPermission(ctx context.Context, permissionID int64) (agenttypes.PermissionDecision, error) {
 	return r.fallback.WaitPermission(ctx, permissionID)
 }
 
-func (r *recordingRuntime) AskUser(ctx context.Context, userID int64, input agenttypes.AskUserInput) (agenttypes.AskUserAnswer, error) {
-	return r.fallback.AskUser(ctx, userID, input)
+func (r *recordingRuntime) AskUser(ctx context.Context, input agenttypes.AskUserInput) (agenttypes.AskUserAnswer, error) {
+	return r.fallback.AskUser(ctx, input)
 }
 
 // subAgentSessionTitle 生成子会话标题：优先子任务名，否则取 prompt 首行前 60 个字符。

@@ -36,23 +36,30 @@ func WithRequestFacts(rc *tool.RuntimeContext, userID int64, sessionID int64) *t
 //
 // 工具在真正操作文件 / 执行命令前自行调用 tool.RequirePermission，Provider 只需
 // 在每次执行工具前注入本函数。rt 为 nil 时原样返回 ctx（工具侧视为免授权）。
-func WithToolPermission(ctx context.Context, rt Runtime, userID int64) context.Context {
+func WithToolPermission(ctx context.Context, rt Runtime) context.Context {
 	if rt == nil {
 		return ctx
 	}
-	return tool.WithPermissionRequester(ctx, toolPermissionRequester{rt: rt, userID: userID})
+	return tool.WithPermissionRequester(ctx, toolPermissionRequester{rt: rt})
 }
 
 type toolPermissionRequester struct {
-	rt     Runtime
-	userID int64
+	rt Runtime
 }
 
 // RequestPermission 实现 tool.PermissionRequester：把工具授权请求映射为 Operation
 // 并交由 Runtime 决策；出错一律按拒绝处理（安全默认）。
 func (r toolPermissionRequester) RequestPermission(ctx context.Context, req tool.PermissionRequest) bool {
-	decision, err := r.rt.RequestPermission(ctx, r.userID, operationFromToolPermission(ctx, req))
+	decision, err := r.rt.RequestPermission(ctx, operationFromToolPermission(ctx, req))
 	return err == nil && decision == DecisionAllow
+}
+
+// FactsOf 返回 Runtime 绑定的任务事实快照；未实现 TaskAware 的 Runtime（如 standalone）返回零值。
+func FactsOf(rt Runtime) TaskFacts {
+	if aware, ok := rt.(TaskAware); ok {
+		return aware.Facts()
+	}
+	return TaskFacts{}
 }
 
 // operationFromToolPermission 把工具授权请求映射为框架内的 Operation 描述。

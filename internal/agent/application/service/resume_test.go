@@ -90,7 +90,7 @@ func (a *resumeTestAgent) run(ctx context.Context, req agenttypes.Request, rt ag
 
 	if a.provider.requestPermission {
 		ctx = agenttypes.WithToolCallID(ctx, "call-1")
-		decision, err := rt.RequestPermission(ctx, req.RequestUserID(), agenttypes.Operation{
+		decision, err := rt.RequestPermission(ctx, agenttypes.Operation{
 			Type: agenttypes.OperationWrite,
 			Path: "/tmp/x",
 		})

@@ -139,49 +139,31 @@ func TimelineEventSummary(prefix string, data any) string {
 //
 // nil receiver 安全：未注入 MessageService 时所有方法都是空操作。
 type TimelineRecorder struct {
-	tasks    TaskRepository
 	messages MessageService
 
-	mu       sync.RWMutex
-	sessions map[int64]int64 // taskID → sessionID（避免每个事件都查一次任务）
+	mu sync.RWMutex
 	// sawAssistant 记录该任务是否已落过 assistant 文本块（KindAssistant），
 	// 供 RecordResult 判断是否还需要用最终结果补一条 assistant_final。
 	sawAssistant map[int64]bool
 }
 
 // NewTimelineRecorder 创建时间线记录器；messages 为 nil 时返回 nil（等价于关闭落库）。
-func NewTimelineRecorder(tasks TaskRepository, messages MessageService) *TimelineRecorder {
+func NewTimelineRecorder(messages MessageService) *TimelineRecorder {
 	if messages == nil {
 		return nil
 	}
 	return &TimelineRecorder{
-		tasks:        tasks,
 		messages:     messages,
-		sessions:     make(map[int64]int64),
 		sawAssistant: make(map[int64]bool),
 	}
 }
 
-// Remember 记录任务归属的会话，供后续事件投影时直接取用。
-//
-// 在 CreateTask / StartTask / RunTaskSyncByID 拿到 Task 时调用，热点路径（Emit）
-// 因此不需要再查一次任务。
-func (r *TimelineRecorder) Remember(taskID, sessionID int64) {
-	if r == nil || taskID == 0 {
-		return
-	}
-	r.mu.Lock()
-	r.sessions[taskID] = sessionID
-	r.mu.Unlock()
-}
-
-// Forget 在任务进入终态后清理会话缓存，避免长期运行下无限增长。
+// Forget 在任务进入终态后清理 assistant 记录，避免长期运行下无限增长。
 func (r *TimelineRecorder) Forget(taskID int64) {
 	if r == nil || taskID == 0 {
 		return
 	}
 	r.mu.Lock()
-	delete(r.sessions, taskID)
 	delete(r.sawAssistant, taskID)
 	r.mu.Unlock()
 }
@@ -190,8 +172,8 @@ func (r *TimelineRecorder) Forget(taskID int64) {
 //
 // 这是 Emit 的热点路径：只处理完整块事件，增量事件在 publish 侧就不会进来；
 // 落库失败只记 Warn，绝不影响 Agent 主流程。
-func (r *TimelineRecorder) Record(ctx context.Context, taskID int64, payload any) {
-	if r == nil || r.messages == nil || taskID == 0 {
+func (r *TimelineRecorder) Record(ctx context.Context, sessionID, taskID int64, payload any) {
+	if r == nil || r.messages == nil || taskID == 0 || sessionID <= 0 {
 		return
 	}
 	event, ok := streamEventFromPayload(payload)
@@ -203,11 +185,6 @@ func (r *TimelineRecorder) Record(ctx context.Context, taskID int64, payload any
 	// 落库是「事后必须完成」的动作，这里解绑取消信号，避免消息静默丢失。
 	persistCtx := context.WithoutCancel(ctx)
 
-	sessionID, err := r.sessionID(persistCtx, taskID)
-	if err != nil || sessionID <= 0 {
-		// 无会话归属的任务（如 AI 摘要等后台任务）没有 agent_messages 载体。
-		return
-	}
 	params, ok := ProjectTimelineEvent(sessionID, taskID, event)
 	if !ok {
 		return
@@ -229,8 +206,8 @@ func (r *TimelineRecorder) Record(ctx context.Context, taskID int64, payload any
 //
 // 已经有 KindAssistant 块（Record 落过）时直接跳过，避免历史里出现两份相同文本。
 // 必须在任务进入终态（Forget 清理缓存）之前调用。
-func (r *TimelineRecorder) RecordResult(ctx context.Context, taskID int64, content string) {
-	if r == nil || r.messages == nil || taskID == 0 {
+func (r *TimelineRecorder) RecordResult(ctx context.Context, sessionID, taskID int64, content string) {
+	if r == nil || r.messages == nil || taskID == 0 || sessionID <= 0 {
 		return
 	}
 	content = strings.TrimSpace(content)
@@ -246,10 +223,6 @@ func (r *TimelineRecorder) RecordResult(ctx context.Context, taskID int64, conte
 	}
 
 	persistCtx := context.WithoutCancel(ctx)
-	sessionID, err := r.sessionID(persistCtx, taskID)
-	if err != nil || sessionID <= 0 {
-		return
-	}
 	if _, err := r.messages.Create(persistCtx, MessageCreateParams{
 		SessionID: sessionID,
 		Role:      RoleAssistant,
@@ -259,27 +232,6 @@ func (r *TimelineRecorder) RecordResult(ctx context.Context, taskID int64, conte
 	}); err != nil {
 		logger.Warnf(persistCtx, "[agent] persist assistant_final failed: task=%d err=%v", taskID, err)
 	}
-}
-
-// sessionID 返回任务所属会话（先查缓存，缺失时回查任务并缓存）。
-func (r *TimelineRecorder) sessionID(ctx context.Context, taskID int64) (int64, error) {
-	r.mu.RLock()
-	sessionID, ok := r.sessions[taskID]
-	r.mu.RUnlock()
-	if ok {
-		return sessionID, nil
-	}
-	if r.tasks == nil {
-		return 0, nil
-	}
-	task, err := r.tasks.Get(ctx, taskID)
-	if err != nil {
-		return 0, err
-	}
-	r.mu.Lock()
-	r.sessions[taskID] = task.SessionID
-	r.mu.Unlock()
-	return task.SessionID, nil
 }
 
 // streamEventFromPayload 把 publish 的 payload 还原为 StreamEvent。

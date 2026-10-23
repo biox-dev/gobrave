@@ -160,7 +160,7 @@ func (a *customAgent) toolRegistry(req agenttypes.Request, rt agentinterfaces.Ru
 		items = append(items, a.opts.Tools.Tools()...)
 	}
 	if rt != nil {
-		items = append(items, askUserTool(rt, req.RequestUserID()))
+		items = append(items, askUserTool(rt))
 	}
 	// 子 Agent 工具（迁移自 opencode NewAgentTool）：模型可把「多轮检索」委派给
 	// 只读子 Agent，避免父 Agent 上下文被大量中间结果占满。
@@ -212,7 +212,7 @@ func (a *customAgent) toolContext(req agenttypes.Request, rt agentinterfaces.Run
 	rc := agentruntime.ToolRuntimeContextFromRequest(req)
 	services := a.opts
 	return func(ctx context.Context) context.Context {
-		ctx = agentruntime.WithToolPermission(ctx, rt, req.RequestUserID())
+		ctx = agentruntime.WithToolPermission(ctx, rt)
 		ctx = agentruntime.WithToolRuntime(ctx, rc,
 			services.AnalysisNodeRunner,
 			services.FileReader,
@@ -236,11 +236,11 @@ func (a *customAgent) toolContext(req agenttypes.Request, rt agentinterfaces.Run
 
 // askUserTool 构建 ask_user 工具：解析模型入参 → Runtime.AskUser 阻塞等待作答 →
 // 把答案格式化为可读文本回填给模型。无 UI 时 Runtime 返回错误，执行器转为失败结果。
-func askUserTool(rt agentinterfaces.Runtime, userID int64) tool.Tool {
+func askUserTool(rt agentinterfaces.Runtime) tool.Tool {
 	def := agentruntime.AskUserToolDefinition()
 	return tool.NewFunc(def.Name, def.Description, def.InputSchema,
 		func(ctx context.Context, in agenttypes.AskUserInput) (string, error) {
-			answer, err := rt.AskUser(ctx, userID, in)
+			answer, err := rt.AskUser(ctx, in)
 			if err != nil {
 				return "", err
 			}

@@ -98,6 +98,33 @@ func (t *Task) AfterFind(*gorm.DB) error {
 	return nil
 }
 
+// TaskFacts 是一次 Agent 执行所需的只读任务事实快照。
+//
+// 与 *Task 不同，它不含 Status / ResumeState / 时间戳等可变状态：
+// 因此可以安全地被 Runtime 持有并跨 goroutine 读取，也不会让 Agent 层依赖持久化实体。
+// 「谁在执行」这类事实（用户 / 会话 / 项目）统一从这里读取，而不是逐层传递参数。
+type TaskFacts struct {
+	TaskID     int64
+	SessionID  int64
+	ProjectID  int64
+	UserID     int64
+	WorkingDir string
+}
+
+// Facts 返回任务的只读事实快照；nil 任务返回零值。
+func (t *Task) Facts() TaskFacts {
+	if t == nil {
+		return TaskFacts{}
+	}
+	return TaskFacts{
+		TaskID:     t.ID,
+		SessionID:  t.SessionID,
+		ProjectID:  t.ProjectID,
+		UserID:     t.Request.RequestUserID(),
+		WorkingDir: t.WorkingDir,
+	}
+}
+
 // NewTask 基于请求构建一个 created 状态的任务。
 func NewTask(req Request) *Task {
 	now := time.Now()

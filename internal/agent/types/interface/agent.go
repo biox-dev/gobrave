@@ -19,13 +19,21 @@ type Runtime interface {
 	// Emit 输出一个流式事件。
 	Emit(ctx context.Context, event types.StreamEvent) error
 	// RequestPermission 创建权限请求并阻塞等待决策（allow / deny）。
-	// userID 用于按用户读取其自定义的许可策略（空表示无用户，走默认策略）。
-	RequestPermission(ctx context.Context, userID int64, operation types.Operation) (types.PermissionDecision, error)
+	// 归属用户是执行环境属性，由 Runtime 自己持有（见 TaskAware），不再逐层传参。
+	RequestPermission(ctx context.Context, operation types.Operation) (types.PermissionDecision, error)
 	// WaitPermission 等待一个已存在权限请求（permissionID）的决策。
 	WaitPermission(ctx context.Context, permissionID int64) (types.PermissionDecision, error)
 	// AskUser 向用户提问并阻塞等待作答（提问卡片由 UI 渲染）。
-	// userID 用于提问归属；无 UI 的独立调用返回 ErrNoUserInputResolver。
-	AskUser(ctx context.Context, userID int64, input types.AskUserInput) (types.AskUserAnswer, error)
+	// 无 UI 的独立调用返回 ErrNoUserInputResolver。
+	AskUser(ctx context.Context, input types.AskUserInput) (types.AskUserAnswer, error)
+}
+
+// TaskAware 是 Runtime 的可选扩展：暴露本次执行绑定的任务事实快照（只读）。
+//
+// standalone Runtime 不实现该接口；需要用户 / 会话 / 项目事实的 Provider 可通过
+// agentruntime.FactsOf 读取，未实现时得到零值。
+type TaskAware interface {
+	Facts() types.TaskFacts
 }
 
 // Agent 是统一 Agent 调用接口。

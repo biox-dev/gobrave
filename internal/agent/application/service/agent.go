@@ -85,7 +85,7 @@ func NewService(cfg ServiceConfig) *AgentService {
 		tasks:     cfg.Tasks,
 		perms:     cfg.Perms,
 		questions: cfg.Questions,
-		timeline:  NewTimelineRecorder(cfg.Tasks, cfg.Messages),
+		timeline:  NewTimelineRecorder(cfg.Messages),
 		bus:       cfg.Bus,
 		policy:    cfg.Policy,
 		memory:    cfg.Memory,
@@ -122,8 +122,6 @@ func (s *AgentService) CreateTask(ctx context.Context, req Request) (*Task, erro
 	if err := s.tasks.Create(ctx, task); err != nil {
 		return nil, err
 	}
-	// 预先记住会话归属，使 Emit 热点路径不需要回查任务。
-	s.timeline.Remember(task.ID, task.SessionID)
 	s.emitEvent(ctx, task.ID, EventTaskCreated, task)
 	return task, nil
 }
@@ -134,10 +132,7 @@ func (s *AgentService) StartTask(ctx context.Context, taskID int64) error {
 	if err != nil {
 		return err
 	}
-	s.timeline.Remember(task.ID, task.SessionID)
-
-	rt := NewTaskRuntime(s, task.ID)
-	return s.launch(task, rt)
+	return s.launch(task, NewTaskRuntime(s, task))
 }
 
 // launch 注册活跃执行上下文并在独立 goroutine 中执行任务。
@@ -206,9 +201,8 @@ func (s *AgentService) RunTaskSyncByID(ctx context.Context, taskID int64, opts .
 	if err != nil {
 		return nil, err
 	}
-	s.timeline.Remember(task.ID, task.SessionID)
 	// 默认开启自动放行；显式传入的 opts 顺序在后，可覆盖该默认值。
-	rt := NewTaskRuntime(s, taskID, append([]RuntimeOption{WithAutoApprove(true)}, opts...)...)
+	rt := NewTaskRuntime(s, task, append([]RuntimeOption{WithAutoApprove(true)}, opts...)...)
 	result, err := s.run(ctx, task, rt)
 	if result != nil {
 		result.TaskID = taskID
@@ -254,13 +248,15 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 		return s.failTask(ctx, task, rt, fmt.Errorf("resolve profile %d: %w", task.Request.ProfileID, err))
 	}
 
-	task.Request = applyProfileOverrides(task.Request, profile)
-	// 系统提示词模板变量取自 Request.RuntimeContext（随 Request 一起持久化进
-	// agent_tasks.request，任务从 DB 恢复后依然可用）；同时把运行时上下文传给记忆注入，
-	// 使当前项目 / 会话下的记忆优先出现。
-	task.Request.SystemPrompt = s.GetSystemPromptByProfileWithContext(ctx, profile, task.Request.RuntimeContext, task.Request.Skills)
-	// Profile 可能依据 Profile.Model 覆盖请求级模型，同步回任务持久化字段。
-	task.Model = task.Request.ModelID
+	// 有效请求在内存中构造；task.Request 保持创建时的原样（审计与恢复重建都依赖它），
+	// 只把派生出的模型 / Provider 回写到任务列。
+	req := applyProfileOverrides(task.Request, profile)
+	req.SystemPrompt = s.GetSystemPromptByProfileWithContext(ctx, profile, req.RuntimeContext, req.Skills)
+	task.Model = req.ModelID
+	if provider := strings.TrimSpace(req.Provider); provider != "" {
+		task.Provider = provider
+	}
+
 	if task.Status != TaskRunning {
 		if err := s.transitionTask(ctx, task, TaskRunning, ""); err != nil {
 			return s.failTask(ctx, task, rt, fmt.Errorf("start task %d: %w", task.ID, err))
@@ -272,11 +268,10 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	}
 
 	var result *Result
-	// var err error
-	if task.Request.Stream {
-		result, err = s.client.StreamRuntime(ctx, task.Request, rt)
+	if req.Stream {
+		result, err = s.client.StreamRuntime(ctx, req, rt)
 	} else {
-		result, err = s.client.InvokeRuntime(ctx, task.Request, rt)
+		result, err = s.client.InvokeRuntime(ctx, req, rt)
 	}
 
 	switch {
@@ -286,11 +281,11 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 		return s.failTask(ctx, task, rt, fmt.Errorf("agent: empty result"))
 	default:
 		// Provider 只发增量（没有完整 message 块）时，用最终结果补一条 assistant_final。
-		// 必须在 transitionTask 之前：终态会 Forget 时间线缓存。
-		s.timeline.RecordResult(ctx, task.ID, result.Content)
+		// 必须在 transitionTask 之前：终态会清理时间线缓存。
+		s.timeline.RecordResult(ctx, task.SessionID, task.ID, result.Content)
 		_ = s.transitionTask(ctx, task, TaskCompleted, "")
 		// 任务成功完成后，从本轮执行中提取值得长期记住的记忆。
-		s.extractMemory(ctx, task, task.Request, result)
+		s.extractMemory(ctx, task, req, result)
 		return result, nil
 	}
 }
@@ -306,7 +301,7 @@ func (s *AgentService) failTask(ctx context.Context, task *Task, rt Runtime, err
 		err = fmt.Errorf("agent: unknown error")
 	}
 	logger.Errorf(ctx, "agent: task %d failed (provider=%s model=%s session=%d): %v",
-		task.ID, task.Request.Provider, task.Request.ModelID, task.Request.RequestSessionID(), err)
+		task.ID, task.Provider, task.Model, task.SessionID, err)
 	if rt != nil {
 		_ = rt.Emit(ctx, StreamEvent{Type: StreamEventError, Content: err.Error(), Err: err})
 	}
@@ -504,18 +499,18 @@ func (s *AgentService) Subscribe(taskID int64, handler EventHandler) func() {
 }
 
 // emitEvent 广播一个事件（不落库）。时间线由 TimelineRecorder 在 EventStream 分支
-// 即时投影为 agent_messages。
+// 即时投影为 agent_messages；sessionID 仅流式事件需要，其余事件传 0。
 func (s *AgentService) emitEvent(ctx context.Context, taskID int64, typ AgentEventType, payload any) {
-	s.publish(ctx, taskID, typ, payload, true)
+	s.publish(ctx, taskID, 0, typ, payload, true)
 }
 
 // broadcastEvent 仅广播一个事件，不持久化（用于 delta 等临时事件）。
 func (s *AgentService) broadcastEvent(ctx context.Context, taskID int64, typ AgentEventType, payload any) {
-	s.publish(ctx, taskID, typ, payload, false)
+	s.publish(ctx, taskID, 0, typ, payload, false)
 }
 
 // publish 是事件的单一出口：构造 AgentEvent，按需投影为时间线消息，再广播给订阅者。
-func (s *AgentService) publish(ctx context.Context, taskID int64, typ AgentEventType, payload any, persist bool) {
+func (s *AgentService) publish(ctx context.Context, taskID, sessionID int64, typ AgentEventType, payload any, persist bool) {
 	// 每个事件都分配唯一 ID：持久化事件由 BeforeCreate 兜底，但广播（不落库）的
 	// 流式增量事件不走 Append，若不在此分配，ID 恒为 0，前端按 id:sequence 去重
 	// 会把同一任务的所有 stream 增量判为重复而丢弃，导致实时流只显示首个增量。
@@ -533,7 +528,7 @@ func (s *AgentService) publish(ctx context.Context, taskID int64, typ AgentEvent
 	// 	_ = s.events.Append(ctx, e)
 	// }
 	if persist && typ == EventStream {
-		s.timeline.Record(ctx, taskID, payload)
+		s.timeline.Record(ctx, sessionID, taskID, payload)
 	}
 	if s.bus != nil {
 		s.bus.Publish(ctx, *e)
@@ -887,11 +882,9 @@ func (s *AgentService) ResumeTask(ctx context.Context, taskID int64) error {
 		return err
 	}
 
-	s.timeline.Remember(task.ID, task.SessionID)
 	s.emitEvent(ctx, task.ID, EventTaskStarted, task)
 
-	rt := NewTaskRuntime(s, task.ID)
-	go s.execute(execCtx, task, rt)
+	go s.execute(execCtx, task, NewTaskRuntime(s, task))
 	launched = true
 	return nil
 }

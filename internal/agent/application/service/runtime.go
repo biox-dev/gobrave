@@ -19,9 +19,12 @@ func sessionRef(sessionID int64) string {
 }
 
 // taskRuntime 是绑定到具体任务的 Runtime：事件持久化 + 广播，权限持久化 + 阻塞等待。
+//
+// 它只持有任务事实的只读快照（TaskFacts），而不是 *Task：状态迁移仍然每次从仓库
+// 读取最新任务，避免用陈旧的 Status 做非法迁移。
 type taskRuntime struct {
-	svc    *AgentService
-	taskID int64
+	svc   *AgentService
+	facts TaskFacts
 	// autoApprove 为真表示“无人值守”执行：权限 ask 降级为 allow，不落 pending、
 	// 不进入 waiting_permission、不阻塞等待人工决策（见 WithAutoApprove）。
 	autoApprove bool
@@ -41,8 +44,8 @@ func WithAutoApprove(auto bool) RuntimeOption {
 	return func(r *taskRuntime) { r.autoApprove = auto }
 }
 
-func NewTaskRuntime(svc *AgentService, taskID int64, opts ...RuntimeOption) Runtime {
-	r := &taskRuntime{svc: svc, taskID: taskID}
+func NewTaskRuntime(svc *AgentService, task *Task, opts ...RuntimeOption) Runtime {
+	r := &taskRuntime{svc: svc, facts: task.Facts()}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(r)
@@ -51,26 +54,21 @@ func NewTaskRuntime(svc *AgentService, taskID int64, opts ...RuntimeOption) Runt
 	return r
 }
 
+// Facts 实现 agentinterfaces.TaskAware：返回本次执行绑定的只读任务事实快照。
+func (r *taskRuntime) Facts() TaskFacts { return r.facts }
+
 func (r *taskRuntime) Emit(ctx context.Context, event StreamEvent) error {
-	// delta / block 分流：
-	//   - 完整块与生命周期事件：投影为时间线消息 + 广播；
-	//   - 纯增量（text / reasoning_delta）：仅广播，用于前端实时渲染，不落库。
-	//
-	// 事件只有一个出口（publish）：实时推送走 EventBus，持久化走 TimelineRecorder。
-	// 上层不再注册同步 handler，避免同一事件出现两条消费路径。
-	if IsBlockEvent(event.Type) {
-		r.svc.emitEvent(ctx, r.taskID, EventStream, event)
-	} else {
-		r.svc.broadcastEvent(ctx, r.taskID, EventStream, event)
-	}
+	// 事件只有一个出口（publish）：实时推送走 EventBus，完整块事件持久化走 TimelineRecorder。
+	// 任务 / 会话归属直接取自事实快照，不需要再查任务或维护缓存。
+	r.svc.publish(ctx, r.facts.TaskID, r.facts.SessionID, EventStream, event, IsBlockEvent(event.Type))
 	return nil
 }
 
-func (r *taskRuntime) RequestPermission(ctx context.Context, userID int64, operation Operation) (PermissionDecision, error) {
+func (r *taskRuntime) RequestPermission(ctx context.Context, operation Operation) (PermissionDecision, error) {
 	// 0) 恢复重放：同一个 tool call 已经在本任务下创建过权限请求（后端重启后重试未完成的工具）。
 	//    复用持久化决策，既不重复弹确认，也不会把已批准的操作再次置为 pending。
 	if callID := ToolCallIDFromContext(ctx); callID != "" {
-		existing, err := r.svc.perms.FindByToolCall(ctx, r.taskID, callID)
+		existing, err := r.svc.perms.FindByToolCall(ctx, r.facts.TaskID, callID)
 		if err != nil {
 			return "", err
 		}
@@ -82,50 +80,45 @@ func (r *taskRuntime) RequestPermission(ctx context.Context, userID int64, opera
 	// 把工具调用 ID 写入 Operation 元数据，供后续恢复路径精确匹配。
 	operation = withToolCallMetadata(ctx, operation)
 
-	// 1) 通知 UI：Agent 请求了对某个操作的权限确认。
-	// _ = r.Emit(ctx, StreamEvent{Type: StreamEventPermission, Content: marshalOperation(operation)})
-
-	// 2) 策略先行：直接放行 / 直接拒绝。
-	if decision := r.svc.policy.Check(ctx, userID, operation); decision != DecisionAsk {
-		// r.emitPermissionResult(ctx, string(decision))
+	// 1) 策略先行：直接放行 / 直接拒绝。归属用户来自任务事实，无需调用方传入。
+	if decision := r.svc.policy.Check(ctx, r.facts.UserID, operation); decision != DecisionAsk {
 		if decision == DecisionDeny {
 			return DecisionDeny, ErrPermissionDenied
 		}
 		return DecisionAllow, nil
 	}
 
-	// 3) 无人值守执行（同步调用 / 无 UI）：ask 降级为 allow，直接放行——
+	// 2) 无人值守执行（同步调用 / 无 UI）：ask 降级为 allow，直接放行——
 	// 不产生 pending 权限请求，也不阻塞等待人工决策。策略 deny 已在上面拒绝。
 	if r.autoApprove {
 		return DecisionAllow, nil
 	}
 
-	// 4) 持久化 pending 权限请求。
-	task, err := r.svc.tasks.Get(ctx, r.taskID)
+	// 3) 持久化 pending 权限请求。
+	task, err := r.svc.tasks.Get(ctx, r.facts.TaskID)
 	if err != nil {
 		return "", err
 	}
-	perm, err := r.svc.perms.Create(ctx, r.taskID, sessionRef(task.SessionID), operation)
+	perm, err := r.svc.perms.Create(ctx, r.facts.TaskID, sessionRef(r.facts.SessionID), operation)
 	if err != nil {
 		return "", err
 	}
 
-	// 5) 任务进入等待权限状态，并广播事件。
+	// 4) 任务进入等待权限状态，并广播事件。
 	if err := r.svc.transitionTask(ctx, task, TaskWaitingPermission, ""); err != nil {
 		return "", err
 	}
-	r.svc.emitEvent(ctx, r.taskID, EventPermissionCreated, perm)
+	r.svc.emitEvent(ctx, r.facts.TaskID, EventPermissionCreated, perm)
 
-	// 6) 阻塞等待 UI 决策。
+	// 5) 阻塞等待 UI 决策。
 	decision, err := r.svc.perms.Wait(ctx, perm.ID)
 	if err != nil {
 		r.emitPermissionResult(ctx, fmt.Sprintf("error: %v", err))
 		return "", err
 	}
 
-	// 7) 恢复任务为 running（deny 时 Agent 会返回错误，由 execute 置为 failed）。
+	// 6) 恢复任务为 running（deny 时 Agent 会返回错误，由 execute 置为 failed）。
 	_ = r.svc.transitionTask(ctx, task, TaskRunning, "")
-	// r.emitPermissionResult(ctx, string(decision))
 	return decision, nil
 }
 
@@ -136,7 +129,7 @@ func (r *taskRuntime) RequestPermission(ctx context.Context, userID int64, opera
 //   - pending → 直接等待原请求（不新建），用户点击允许后即可继续；
 //   - denied / expired / canceled → 返回拒绝或错误。
 func (r *taskRuntime) resolveExistingPermission(ctx context.Context, p *PermissionRequest) (PermissionDecision, error) {
-	task, err := r.svc.tasks.Get(ctx, r.taskID)
+	task, err := r.svc.tasks.Get(ctx, r.facts.TaskID)
 	if err != nil {
 		return "", err
 	}
@@ -220,7 +213,7 @@ func (r *taskRuntime) WaitPermission(ctx context.Context, permissionID int64) (P
 //
 // 与 RequestPermission 同构：持久化 pending 提问后，Agent 阻塞在 QuestionManager.Wait，
 // 用户在 UI 作答 → AnswerQuestion 更新 DB 并唤醒 Agent → 这里返回答案继续执行。
-func (r *taskRuntime) AskUser(ctx context.Context, _ int64, input AskUserInput) (AskUserAnswer, error) {
+func (r *taskRuntime) AskUser(ctx context.Context, input AskUserInput) (AskUserAnswer, error) {
 	// 无人值守执行（同步调用 / 无 UI）：没人会作答，快速失败而不是永久阻塞在 Wait 上。
 	if r.autoApprove {
 		return AskUserAnswer{}, ErrNoUserInputResolver
@@ -230,7 +223,7 @@ func (r *taskRuntime) AskUser(ctx context.Context, _ int64, input AskUserInput) 
 
 	// 恢复重放：该 tool call 已经创建过提问（重启后重新执行 ask_user）。
 	if callID != "" {
-		existing, err := r.svc.questions.FindByToolCall(ctx, r.taskID, callID)
+		existing, err := r.svc.questions.FindByToolCall(ctx, r.facts.TaskID, callID)
 		if err != nil {
 			return AskUserAnswer{}, err
 		}
@@ -239,11 +232,11 @@ func (r *taskRuntime) AskUser(ctx context.Context, _ int64, input AskUserInput) 
 		}
 	}
 
-	task, err := r.svc.tasks.Get(ctx, r.taskID)
+	task, err := r.svc.tasks.Get(ctx, r.facts.TaskID)
 	if err != nil {
 		return AskUserAnswer{}, err
 	}
-	question, err := r.svc.questions.CreateForToolCall(ctx, r.taskID, sessionRef(task.SessionID), input, callID)
+	question, err := r.svc.questions.CreateForToolCall(ctx, r.facts.TaskID, sessionRef(r.facts.SessionID), input, callID)
 	if err != nil {
 		return AskUserAnswer{}, err
 	}
@@ -252,7 +245,7 @@ func (r *taskRuntime) AskUser(ctx context.Context, _ int64, input AskUserInput) 
 	if err := r.svc.transitionTask(ctx, task, TaskWaitingPermission, ""); err != nil {
 		return AskUserAnswer{}, err
 	}
-	r.svc.emitEvent(ctx, r.taskID, EventQuestionCreated, question)
+	r.svc.emitEvent(ctx, r.facts.TaskID, EventQuestionCreated, question)
 
 	// 阻塞等待用户作答。
 	answer, err := r.svc.questions.Wait(ctx, question.ID)
@@ -267,7 +260,7 @@ func (r *taskRuntime) AskUser(ctx context.Context, _ int64, input AskUserInput) 
 
 // resolveExistingQuestion 复用一份已持久化的提问（恢复执行专用）。
 func (r *taskRuntime) resolveExistingQuestion(ctx context.Context, q *QuestionRequest) (AskUserAnswer, error) {
-	task, err := r.svc.tasks.Get(ctx, r.taskID)
+	task, err := r.svc.tasks.Get(ctx, r.facts.TaskID)
 	if err != nil {
 		return AskUserAnswer{}, err
 	}
@@ -307,7 +300,7 @@ func (r *taskRuntime) LoadCheckpoint(ctx context.Context) *TaskResumeState {
 	if r.svc == nil || r.svc.tasks == nil {
 		return nil
 	}
-	task, err := r.svc.tasks.Get(ctx, r.taskID)
+	task, err := r.svc.tasks.Get(ctx, r.facts.TaskID)
 	if err != nil {
 		return nil
 	}
@@ -322,7 +315,7 @@ func (r *taskRuntime) SaveCheckpoint(ctx context.Context, state *TaskResumeState
 	if r.svc == nil || r.svc.tasks == nil {
 		return nil
 	}
-	return r.svc.tasks.UpdateResumeState(context.WithoutCancel(ctx), r.taskID, state)
+	return r.svc.tasks.UpdateResumeState(context.WithoutCancel(ctx), r.facts.TaskID, state)
 }
 
 // ClearCheckpoint 清理检查点（任务正常结束 / 取消时）。
@@ -330,5 +323,5 @@ func (r *taskRuntime) ClearCheckpoint(ctx context.Context) error {
 	if r.svc == nil || r.svc.tasks == nil {
 		return nil
 	}
-	return r.svc.tasks.UpdateResumeState(context.WithoutCancel(ctx), r.taskID, nil)
+	return r.svc.tasks.UpdateResumeState(context.WithoutCancel(ctx), r.facts.TaskID, nil)
 }

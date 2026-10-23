@@ -258,7 +258,7 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agenttypes.Request
 		Model:               model,
 		WorkingDirectory:    firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
 		Streaming:           copilot.Bool(true),
-		OnPermissionRequest: a.permissionHandler(ctx, rt, req.RequestUserID()),
+		OnPermissionRequest: a.permissionHandler(ctx, rt),
 		Tools:               a.buildTools(rt, req),
 	}
 
@@ -315,8 +315,7 @@ func (a *copilotAgent) buildTools(rt agentinterfaces.Runtime, req agenttypes.Req
 	skills := a.opts.Skills
 
 	if a.opts.Tools != nil {
-		userID := req.RequestUserID()
-		runnerExec := agentruntime.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt).SetUserID(userID)
+		runnerExec := agentruntime.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt)
 		defs := a.opts.Tools.List()
 		for _, def := range defs {
 			name := def.Name
@@ -325,7 +324,7 @@ func (a *copilotAgent) buildTools(rt agentinterfaces.Runtime, req agenttypes.Req
 				Description: def.Description,
 				Parameters:  def.InputSchema,
 				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
-					ctx := agentruntime.WithToolPermission(inv.TraceContext, rt, userID)
+					ctx := agentruntime.WithToolPermission(inv.TraceContext, rt)
 					ctx = agentruntime.WithProjectResourceBrowser(ctx, browser)
 					ctx = agentruntime.WithSkills(ctx, skills)
 					ctx = agentruntime.WithAgentAnalysisRunner(ctx, agentAnalysisRunner)
@@ -344,13 +343,13 @@ func (a *copilotAgent) buildTools(rt agentinterfaces.Runtime, req agenttypes.Req
 	}
 
 	// ask_user：内置提问工具，阻塞等待用户在 UI 作答后把答案回填给模型。
-	out = append(out, a.askUserTool(rt, req.RequestUserID()))
+	out = append(out, a.askUserTool(rt))
 	return out
 }
 
 // askUserTool 构建 ask_user 工具：解析模型入参 → Runtime.AskUser 阻塞等待作答 →
 // 把答案（JSON）作为工具结果回填给模型。无 UI 时 Runtime 返回错误，转为失败结果。
-func (a *copilotAgent) askUserTool(rt agentinterfaces.Runtime, userID int64) copilot.Tool {
+func (a *copilotAgent) askUserTool(rt agentinterfaces.Runtime) copilot.Tool {
 	def := agentruntime.AskUserToolDefinition()
 	return copilot.Tool{
 		Name:        def.Name,
@@ -362,7 +361,7 @@ func (a *copilotAgent) askUserTool(rt agentinterfaces.Runtime, userID int64) cop
 			if err := json.Unmarshal(raw, &in); err != nil {
 				return copilot.ToolResult{TextResultForLLM: err.Error(), ResultType: "failure", Error: err.Error()}, nil
 			}
-			answer, err := rt.AskUser(inv.TraceContext, userID, in)
+			answer, err := rt.AskUser(inv.TraceContext, in)
 			if err != nil {
 				return copilot.ToolResult{TextResultForLLM: err.Error(), ResultType: "failure", Error: err.Error()}, nil
 			}
@@ -392,11 +391,11 @@ func toCopilotToolResult(res tool.Result) copilot.ToolResult {
 
 // permissionHandler 将 Copilot 的权限请求映射为 agenttypes.Operation，并通过 Runtime 请求权限，
 // 阻塞等待策略 / UI 决策后再把结果翻译回 Copilot 的 PermissionDecision。
-func (a *copilotAgent) permissionHandler(ctx context.Context, rt agentinterfaces.Runtime, userID int64) copilot.PermissionHandlerFunc {
+func (a *copilotAgent) permissionHandler(ctx context.Context, rt agentinterfaces.Runtime) copilot.PermissionHandlerFunc {
 	return func(request copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilotrpc.PermissionDecision, error) {
 		op := toOperation(request)
 
-		decision, err := rt.RequestPermission(ctx, userID, op)
+		decision, err := rt.RequestPermission(ctx, op)
 		if err != nil {
 			// 权限等待失败（例如无解析器 / 被取消），交给 SDK 决定如何降级。
 			return nil, err

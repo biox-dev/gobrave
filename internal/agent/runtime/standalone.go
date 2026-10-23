@@ -36,8 +36,9 @@ func (r *standaloneRuntime) Emit(ctx context.Context, event StreamEvent) error {
 	return nil
 }
 
-func (r *standaloneRuntime) RequestPermission(ctx context.Context, userID int64, operation Operation) (PermissionDecision, error) {
-	decision := r.policy.Check(ctx, userID, operation)
+func (r *standaloneRuntime) RequestPermission(ctx context.Context, operation Operation) (PermissionDecision, error) {
+	// 独立调用没有归属用户，按 0（默认策略）判定。
+	decision := r.policy.Check(ctx, 0, operation)
 	if decision == DecisionAsk {
 		// 无 UI 可确认：宽松放行，避免阻塞无任务语义的调用。
 		return DecisionAllow, nil
@@ -50,6 +51,6 @@ func (r *standaloneRuntime) WaitPermission(context.Context, int64) (PermissionDe
 }
 
 // AskUser 在无 UI 的独立调用中无法向用户提问，直接返回错误，由工具层转为失败结果。
-func (r *standaloneRuntime) AskUser(context.Context, int64, AskUserInput) (AskUserAnswer, error) {
+func (r *standaloneRuntime) AskUser(context.Context, AskUserInput) (AskUserAnswer, error) {
 	return AskUserAnswer{}, ErrNoUserInputResolver
 }

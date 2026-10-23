@@ -58,7 +58,7 @@ func (a *mockAgent) Invoke(ctx context.Context, req agenttypes.Request, rt agent
 
 	// 演示提问链路：模拟模型通过 ask_user 向用户提问并等待作答。
 	if demoAskUser(req) {
-		answer, err := requestDemoQuestion(ctx, rt, req)
+		answer, err := requestDemoQuestion(ctx, rt)
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +112,7 @@ func (a *mockAgent) Stream(ctx context.Context, req agenttypes.Request, rt agent
 
 	// 演示提问链路：模拟模型通过 ask_user 向用户提问并阻塞等待作答。
 	if demoAskUser(req) {
-		answer, err := requestDemoQuestion(ctx, rt, req)
+		answer, err := requestDemoQuestion(ctx, rt)
 		if err != nil {
 			return nil, err
 		}
@@ -152,7 +152,7 @@ func demoAskUser(req agenttypes.Request) bool {
 // requestDemoQuestion 构造一个示例问题，并通过 Runtime.AskUser 阻塞等待用户作答。
 //
 // 覆盖单选 + 自定义输入两种交互，供 mock 链路联调 / 演示使用。
-func requestDemoQuestion(ctx context.Context, rt agentinterfaces.Runtime, req agenttypes.Request) (agenttypes.AskUserAnswer, error) {
+func requestDemoQuestion(ctx context.Context, rt agentinterfaces.Runtime) (agenttypes.AskUserAnswer, error) {
 	input := agenttypes.AskUserInput{
 		RequestID:   "ask_001",
 		Title:       "选择分析类型",
@@ -172,7 +172,7 @@ func requestDemoQuestion(ctx context.Context, rt agentinterfaces.Runtime, req ag
 			},
 		},
 	}
-	return rt.AskUser(ctx, req.RequestUserID(), input)
+	return rt.AskUser(ctx, input)
 }
 
 // requestDemoPermission 构造一个 write 操作并通过 Runtime 请求权限。
@@ -183,7 +183,7 @@ func requestDemoPermission(ctx context.Context, rt agentinterfaces.Runtime, req 
 		Content: "[mock] demo write content",
 	}
 
-	decision, err := rt.RequestPermission(ctx, req.RequestUserID(), op)
+	decision, err := rt.RequestPermission(ctx, op)
 	if err != nil {
 		return "", err
 	}
