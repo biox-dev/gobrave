@@ -1,4 +1,4 @@
-package agent
+package service
 
 import (
 	"context"
@@ -6,10 +6,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/biox-dev/gobrave/internal/agent/message"
-	"github.com/biox-dev/gobrave/internal/agent/session"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
-	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	. "github.com/biox-dev/gobrave/internal/agent/types"
+	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
+	coreinterfaces "github.com/biox-dev/gobrave/internal/types/interfaces"
 	"gorm.io/gorm"
 )
 
@@ -49,10 +50,10 @@ type turnState struct {
 // ChatService 编排多轮对话：负责历史拼接 + 复用 AgentService 执行每一轮。
 type ChatService struct {
 	agent    *AgentService
-	sessions session.Service
-	messages message.Service
+	sessions SessionService
+	messages MessageService
 	// projects 用于解析当前用户激活项目，使会话按项目隔离。
-	projects interfaces.ProjectService
+	projects coreinterfaces.ProjectService
 
 	mu    sync.Mutex
 	locks map[int64]*sync.Mutex // sessionID → 会话级轮次锁
@@ -63,7 +64,7 @@ type ChatService struct {
 //
 // 构造时把自己的轮次收尾挂到 AgentService 的任务终态回调上：即使 Provider 没有
 // 补发 done / error 事件，任务进入终态也会释放会话锁、写入兜底消息。
-func NewChatService(agent *AgentService, sessions session.Service, messages message.Service, projects interfaces.ProjectService) *ChatService {
+func NewChatService(agent *AgentService, sessions SessionService, messages MessageService, projects coreinterfaces.ProjectService) *ChatService {
 	s := &ChatService{
 		agent:    agent,
 		sessions: sessions,
@@ -113,36 +114,36 @@ func (s *ChatService) lockFor(sessionID int64) *sync.Mutex {
 //  4. 登记本轮中间态，返回 task 供上层（handler）在启动前订阅 WS。
 //
 // 锁在本轮结束时由 finishTurn 释放。
-func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, session.Session, error) {
+func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Session, error) {
 	sess, err := s.getOrCreate(ctx, in)
 	if err != nil {
-		return nil, session.Session{}, err
+		return nil, Session{}, err
 	}
 
 	l := s.lockFor(sess.ID)
 	l.Lock()
 
 	// 追加 user 消息。
-	if _, err := s.messages.Create(ctx, message.CreateParams{
+	if _, err := s.messages.Create(ctx, MessageCreateParams{
 		SessionID: sess.ID,
-		Role:      message.RoleUser,
-		Kind:      message.KindUser,
+		Role:      RoleUser,
+		Kind:      KindUser,
 		Content:   in.Message,
 	}); err != nil {
 		l.Unlock()
-		return nil, session.Session{}, err
+		return nil, Session{}, err
 	}
 
 	// 读取完整历史组装请求（快照，避免后续 assistant 回复混入本轮 prompt）。
 	history, err := s.messages.List(ctx, sess.ID)
 	if err != nil {
 		l.Unlock()
-		return nil, session.Session{}, err
+		return nil, Session{}, err
 	}
 
 	// 用户 / 会话事实统一由 RuntimeContext 承载：这里把会话 ID 与该轮用户写入上下文，
 	// 使权限策略、ask_user 归属与记忆检索都能从同一处读取。
-	rc := withRequestFacts(in.RuntimeContext, in.UserID, sess.ID)
+	rc := agentruntime.WithRequestFacts(in.RuntimeContext, in.UserID, sess.ID)
 	req := Request{
 		Provider:       in.Provider,
 		ModelID:        in.Model,
@@ -157,7 +158,7 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, sess
 	task, err := s.agent.CreateTask(ctx, req)
 	if err != nil {
 		l.Unlock()
-		return nil, session.Session{}, err
+		return nil, Session{}, err
 	}
 
 	// 记录当前活跃轮次，供前端刷新 / 切换会话时恢复实时流。
@@ -165,7 +166,7 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, sess
 	sess, err = s.sessions.Save(ctx, sess)
 	if err != nil {
 		l.Unlock()
-		return nil, session.Session{}, err
+		return nil, Session{}, err
 	}
 
 	s.mu.Lock()
@@ -184,7 +185,7 @@ func (s *ChatService) StartTurn(ctx context.Context, taskID int64) error {
 	_, ok := s.turns[taskID]
 	s.mu.Unlock()
 	if !ok {
-		return session.ErrNotFound
+		return ErrSessionNotFound
 	}
 
 	if err := s.agent.StartTask(ctx, taskID); err != nil {
@@ -227,10 +228,10 @@ func (s *ChatService) finishTurn(taskID, sessionID int64, errMsg string, keepCur
 	// 时间线（reasoning / message / tool_call / tool_result）与兜底 assistant_final
 	// 已由 AgentService/TimelineRecorder 在轮内写入 agent_messages；这里只补「轮末错误」。
 	if strings.TrimSpace(errMsg) != "" && !s.hasTaskErrorMessage(ctx, sessionID, taskID) {
-		_, _ = s.messages.Create(ctx, message.CreateParams{
+		_, _ = s.messages.Create(ctx, MessageCreateParams{
 			SessionID: sessionID,
-			Role:      message.RoleAssistant,
-			Kind:      message.KindError,
+			Role:      RoleAssistant,
+			Kind:      KindError,
 			TaskID:    taskID,
 			Content:   errMsg,
 		})
@@ -257,7 +258,7 @@ func (s *ChatService) hasTaskErrorMessage(ctx context.Context, sessionID, taskID
 		return false
 	}
 	for _, m := range msgs {
-		if m.TaskID == taskID && m.Kind == message.KindError {
+		if m.TaskID == taskID && m.Kind == KindError {
 			return true
 		}
 	}
@@ -265,24 +266,24 @@ func (s *ChatService) hasTaskErrorMessage(ctx context.Context, sessionID, taskID
 }
 
 // promptMessagesForRequest 仅挑选可用于下一轮 prompt 的语义消息。
-func promptMessagesForRequest(history []message.Message) []message.Message {
-	out := make([]message.Message, 0, len(history))
+func promptMessagesForRequest(history []Message) []Message {
+	out := make([]Message, 0, len(history))
 	for _, m := range history {
 		if !shouldIncludeInPrompt(m) {
 			continue
 		}
-		out = append(out, message.Message{Role: m.Role, Content: m.Content})
+		out = append(out, Message{Role: m.Role, Content: m.Content})
 	}
 	return out
 }
 
-func shouldIncludeInPrompt(m message.Message) bool {
+func shouldIncludeInPrompt(m Message) bool {
 	switch m.Role {
-	case message.RoleUser:
+	case RoleUser:
 		return true
-	case message.RoleAssistant:
+	case RoleAssistant:
 		switch m.Kind {
-		case "", message.KindAssistant, message.KindAssistantFinal, message.KindToolCall, message.KindToolResult:
+		case "", KindAssistant, KindAssistantFinal, KindToolCall, KindToolResult:
 			return true
 		default:
 			return false
@@ -296,12 +297,12 @@ func shouldIncludeInPrompt(m message.Message) bool {
 //
 // 会话按用户当前激活项目隔离：先用 GetActiveProjectByUserID 取出活动项目，
 // 再按 ProjectID 过滤；userID 为 0 表示全部用户（不做项目过滤）。
-func (s *ChatService) ListSessions(ctx context.Context, userID int64, offset, limit int) ([]session.Session, int64, error) {
+func (s *ChatService) ListSessions(ctx context.Context, userID int64, offset, limit int) ([]Session, int64, error) {
 	projectID, err := s.activeProjectID(ctx, userID)
 	if err != nil {
 		return nil, 0, err
 	}
-	return s.sessions.List(ctx, session.ListParams{
+	return s.sessions.List(ctx, SessionListParams{
 		UserID:    userID,
 		ProjectID: projectID,
 		Offset:    offset,
@@ -329,35 +330,35 @@ func (s *ChatService) activeProjectID(ctx context.Context, userID int64) (int64,
 }
 
 // ListMessages 查询某个会话的全部历史消息（按 Seq 升序）。
-func (s *ChatService) ListMessages(ctx context.Context, sessionID int64) ([]message.Message, error) {
+func (s *ChatService) ListMessages(ctx context.Context, sessionID int64) ([]Message, error) {
 	return s.messages.List(ctx, sessionID)
 }
 
 // GetSession 查询会话及其完整历史消息。
-func (s *ChatService) GetSession(ctx context.Context, id int64) (session.Session, []message.Message, error) {
+func (s *ChatService) GetSession(ctx context.Context, id int64) (Session, []Message, error) {
 	sess, err := s.sessions.Get(ctx, id)
 	if err != nil {
-		return session.Session{}, nil, err
+		return Session{}, nil, err
 	}
 	msgs, err := s.messages.List(ctx, id)
 	if err != nil {
-		return session.Session{}, nil, err
+		return Session{}, nil, err
 	}
 	return sess, msgs, nil
 }
 
 // getOrCreate 加载已有会话；SessionID 为 0 时创建新会话。
-func (s *ChatService) getOrCreate(ctx context.Context, in TurnInput) (session.Session, error) {
+func (s *ChatService) getOrCreate(ctx context.Context, in TurnInput) (Session, error) {
 	if in.SessionID == 0 {
 		projectID := in.ProjectID
 		if projectID == 0 {
 			resolved, err := s.activeProjectID(ctx, in.UserID)
 			if err != nil {
-				return session.Session{}, err
+				return Session{}, err
 			}
 			projectID = resolved
 		}
-		return s.sessions.Create(ctx, session.CreateParams{
+		return s.sessions.Create(ctx, SessionCreateParams{
 			UserID:    in.UserID,
 			ProjectID: projectID,
 			Provider:  in.Provider,

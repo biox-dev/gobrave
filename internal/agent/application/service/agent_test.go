@@ -1,9 +1,10 @@
-package agent
+package service
 
 import (
 	"context"
 	"testing"
 
+	. "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
 

@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agent "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"gorm.io/gorm"
 )
 
 // NewGormPermissionRepository 创建基于数据库的权限请求 Repository。
-func NewGormPermissionRepository(db *gorm.DB) agent.PermissionRepository {
+func NewGormPermissionRepository(db *gorm.DB) agentinterfaces.PermissionRepository {
 	return &gormPermissionRepository{db: db}
 }
 

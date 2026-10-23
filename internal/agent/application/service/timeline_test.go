@@ -1,9 +1,9 @@
-package agent
+package service
 
 import (
 	"testing"
 
-	"github.com/biox-dev/gobrave/internal/agent/message"
+	. "github.com/biox-dev/gobrave/internal/agent/types"
 )
 
 // TestProjectTimelineEventMessageBlock 验证 assistant 文本块也会在轮内被投影为消息，
@@ -25,9 +25,9 @@ func TestProjectTimelineEventMessageBlock(t *testing.T) {
 	if params.SessionID != 11 || params.TaskID != 22 {
 		t.Fatalf("owner = (%d,%d), want (11,22)", params.SessionID, params.TaskID)
 	}
-	if params.Role != message.RoleAssistant || params.Kind != message.KindAssistant {
+	if params.Role != RoleAssistant || params.Kind != KindAssistant {
 		t.Fatalf("role/kind = %s/%s, want %s/%s",
-			params.Role, params.Kind, message.RoleAssistant, message.KindAssistant)
+			params.Role, params.Kind, RoleAssistant, KindAssistant)
 	}
 	if params.Content != "done" {
 		t.Fatalf("content = %q, want done", params.Content)

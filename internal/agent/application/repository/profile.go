@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agent "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"gorm.io/gorm"
 )
 
 // NewGormProfileRepository 创建基于数据库的 Profile Repository。
-func NewGormProfileRepository(db *gorm.DB) agent.ProfileRepository {
+func NewGormProfileRepository(db *gorm.DB) agentinterfaces.ProfileRepository {
 	return &gormProfileRepository{db: db}
 }
 

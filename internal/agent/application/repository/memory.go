@@ -5,12 +5,13 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agent "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"gorm.io/gorm"
 )
 
 // NewGormMemoryRepository 创建基于数据库的记忆 Repository。
-func NewGormMemoryRepository(db *gorm.DB) agent.MemoryRepository {
+func NewGormMemoryRepository(db *gorm.DB) agentinterfaces.MemoryRepository {
 	return &gormMemoryRepository{db: db}
 }
 

@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/history"
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 // 本文件集中了 coder 工具在 gobrave 运行时下取「工作目录 / 会话 / 服务能力」的方式。
@@ -34,7 +34,7 @@ func sessionID(ctx context.Context) int64 {
 }
 
 // fileHistory 返回注入的文件历史服务；未注入时返回 nil。
-func fileHistory(ctx context.Context) history.Service {
+func fileHistory(ctx context.Context) agentinterfaces.HistoryService {
 	return tool.FileHistoryFrom(ctx)
 }
 

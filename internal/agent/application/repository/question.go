@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agent "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"gorm.io/gorm"
 )
 
 // NewGormQuestionRepository 创建基于数据库的提问请求 Repository。
-func NewGormQuestionRepository(db *gorm.DB) agent.QuestionRepository {
+func NewGormQuestionRepository(db *gorm.DB) agentinterfaces.QuestionRepository {
 	return &gormQuestionRepository{db: db}
 }
 

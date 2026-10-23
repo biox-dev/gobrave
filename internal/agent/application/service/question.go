@@ -1,10 +1,13 @@
-package agent
+package service
 
 import (
 	"context"
 	"fmt"
 	"sync"
 	"time"
+
+	. "github.com/biox-dev/gobrave/internal/agent/types"
+	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 // QuestionManager 负责用户提问（AskUser）的创建、持久化与作答流转。

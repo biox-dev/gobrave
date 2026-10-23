@@ -5,12 +5,13 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/history"
+	agent "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"gorm.io/gorm"
 )
 
 // NewGormHistoryStore 创建基于数据库的文件历史 Store。
-func NewGormHistoryStore(db *gorm.DB) history.Store {
+func NewGormHistoryStore(db *gorm.DB) agentinterfaces.HistoryStore {
 	return &gormHistoryStore{db: db}
 }
 
@@ -18,15 +19,15 @@ type gormHistoryStore struct {
 	db *gorm.DB
 }
 
-func (r *gormHistoryStore) Create(ctx context.Context, file *history.File) error {
+func (r *gormHistoryStore) Create(ctx context.Context, file *agent.File) error {
 	err := r.db.WithContext(ctx).Create(file).Error
 	if err != nil && isUniqueViolation(err) {
-		return history.ErrDuplicateVersion
+		return agent.ErrDuplicateVersion
 	}
 	return err
 }
 
-func (r *gormHistoryStore) Update(ctx context.Context, file *history.File) error {
+func (r *gormHistoryStore) Update(ctx context.Context, file *agent.File) error {
 	return r.db.WithContext(ctx).Model(file).
 		Updates(map[string]any{
 			"content":    file.Content,
@@ -35,16 +36,16 @@ func (r *gormHistoryStore) Update(ctx context.Context, file *history.File) error
 		}).Error
 }
 
-func (r *gormHistoryStore) Get(ctx context.Context, id int64) (*history.File, error) {
-	var file history.File
+func (r *gormHistoryStore) Get(ctx context.Context, id int64) (*agent.File, error) {
+	var file agent.File
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&file).Error; err != nil {
 		return nil, wrapHistoryNotFound(err)
 	}
 	return &file, nil
 }
 
-func (r *gormHistoryStore) GetByPathAndSession(ctx context.Context, path string, sessionID int64) (*history.File, error) {
-	var file history.File
+func (r *gormHistoryStore) GetByPathAndSession(ctx context.Context, path string, sessionID int64) (*agent.File, error) {
+	var file agent.File
 	err := r.db.WithContext(ctx).
 		Where("path = ? AND session_id = ?", path, sessionID).
 		Order("created_at DESC").
@@ -55,8 +56,8 @@ func (r *gormHistoryStore) GetByPathAndSession(ctx context.Context, path string,
 	return &file, nil
 }
 
-func (r *gormHistoryStore) ListBySession(ctx context.Context, sessionID int64) ([]*history.File, error) {
-	var files []*history.File
+func (r *gormHistoryStore) ListBySession(ctx context.Context, sessionID int64) ([]*agent.File, error) {
+	var files []*agent.File
 	if err := r.db.WithContext(ctx).
 		Where("session_id = ?", sessionID).
 		Order("created_at ASC").
@@ -66,8 +67,8 @@ func (r *gormHistoryStore) ListBySession(ctx context.Context, sessionID int64) (
 	return files, nil
 }
 
-func (r *gormHistoryStore) ListByPathAndSession(ctx context.Context, path string, sessionID int64) ([]*history.File, error) {
-	var files []*history.File
+func (r *gormHistoryStore) ListByPathAndSession(ctx context.Context, path string, sessionID int64) ([]*agent.File, error) {
+	var files []*agent.File
 	if err := r.db.WithContext(ctx).
 		Where("path = ? AND session_id = ?", path, sessionID).
 		Order("created_at DESC").
@@ -77,14 +78,14 @@ func (r *gormHistoryStore) ListByPathAndSession(ctx context.Context, path string
 	return files, nil
 }
 
-func (r *gormHistoryStore) ListLatestBySession(ctx context.Context, sessionID int64) ([]*history.File, error) {
+func (r *gormHistoryStore) ListLatestBySession(ctx context.Context, sessionID int64) ([]*agent.File, error) {
 	latest := r.db.WithContext(ctx).
-		Model(&history.File{}).
+		Model(&agent.File{}).
 		Select("path, MAX(created_at) AS max_created_at").
 		Where("session_id = ?", sessionID).
 		Group("path")
 
-	var files []*history.File
+	var files []*agent.File
 	err := r.db.WithContext(ctx).
 		Table("agent_history_files AS f").
 		Joins("INNER JOIN (?) AS latest ON f.path = latest.path AND f.created_at = latest.max_created_at", latest).
@@ -98,17 +99,17 @@ func (r *gormHistoryStore) ListLatestBySession(ctx context.Context, sessionID in
 }
 
 func (r *gormHistoryStore) Delete(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&history.File{}).Error
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&agent.File{}).Error
 }
 
 func (r *gormHistoryStore) DeleteBySession(ctx context.Context, sessionID int64) error {
-	return r.db.WithContext(ctx).Where("session_id = ?", sessionID).Delete(&history.File{}).Error
+	return r.db.WithContext(ctx).Where("session_id = ?", sessionID).Delete(&agent.File{}).Error
 }
 
-// wrapHistoryNotFound 把 GORM 的未找到错误转换为 history.ErrNotFound。
+// wrapHistoryNotFound 把 GORM 的未找到错误转换为 agent.ErrHistoryNotFound。
 func wrapHistoryNotFound(err error) error {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return history.ErrNotFound
+		return agent.ErrHistoryNotFound
 	}
 	return err
 }

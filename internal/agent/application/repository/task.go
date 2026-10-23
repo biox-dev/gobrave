@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agent "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"gorm.io/gorm"
 )
 
 // NewGormTaskRepository 创建基于数据库的任务 Repository。
-func NewGormTaskRepository(db *gorm.DB) agent.TaskRepository {
+func NewGormTaskRepository(db *gorm.DB) agentinterfaces.TaskRepository {
 	return &gormTaskRepository{db: db}
 }
 

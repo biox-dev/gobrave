@@ -1,24 +1,10 @@
-// Package agent 定义 AI Agent 调用的统一抽象层。
+// Package types 定义 Agent 领域的数据库实体与值对象。
 //
-// 它屏蔽了具体第三方 Agent（Claude Code / Codex / Copilot）与后续自研 Agent 的差异，
-// 向上层业务（AISummaryWorker、LLMHandler 等）统一暴露两种调用语义：
-//
-//   - Invoke：一次性任务调用，同步等待最终结果。适合 AI 摘要、后台任务等场景。
-//   - Stream：流式调用，通过 Runtime.Emit 逐块输出事件。适合前端聊天等场景。
-//
-// 除“调用”本身外，本包还实现了 design.md 中描述的“执行架构”：
-//
-//   - Agent：执行层，负责产生文本 / 推理 / 工具调用等事件，并在需要时请求权限。
-//   - Runtime：Agent 执行期的运行时环境（Emit / RequestPermission / WaitPermission）。
-//   - Operation / PermissionPolicy：描述“要做什么”以及“能不能做”。
-//   - PermissionManager / PermissionRequest：持久化的权限请求与批准 / 拒绝。
-//   - Task / TaskManager（AgentService）：任务状态机与编排。
-//   - EventBus / AgentEvent：实时通知层（不落库；历史时间线见 agent_messages）。
-//   - Repository：持久化抽象（默认提供内存实现，后续可替换为 DB）。
-//
-// 各 Provider 通过 Registry 注册，运行时按名称解析；Client 是统一门面，负责
-// 解析请求应使用的 Provider 并转发 Invoke / Stream。
-package agent
+// 本包只包含可序列化的领域数据（Task / Session / Message / PermissionRequest /
+// QuestionRequest / Profile / Memory 等）以及请求 / 结果 / 事件等值对象，不包含
+// 任何持久化或编排实现。Repository 与 Service 接口见 types/interface，
+// 实现在 application/repository 与 application/service。
+package types
 
 import (
 	"context"
@@ -26,8 +12,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent/message"
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 )
 
 // Provider 名称常量。新增第三方 Agent 或自研 Agent 时在此登记一个唯一名称。
@@ -41,27 +26,6 @@ const (
 
 // DefaultProvider 是未配置时的兜底 Provider。
 const DefaultProvider = ProviderMock
-
-// Message 是对话消息的类型别名：持久化模型与 Agent 请求消息统一到 message 包。
-type Message = message.Message
-
-// MessageRole 常量（别名到 message 包）。
-const (
-	RoleSystem    = message.RoleSystem
-	RoleUser      = message.RoleUser
-	RoleAssistant = message.RoleAssistant
-	RoleTool      = message.RoleTool
-)
-
-// MessageKind 定义会话层可回放的消息类型（别名到 message 包）。
-const (
-	MessageKindUser           = message.KindUser
-	MessageKindAssistant      = message.KindAssistant
-	MessageKindAssistantFinal = message.KindAssistantFinal
-	MessageKindReasoning      = message.KindReasoning
-	MessageKindToolCall       = message.KindToolCall
-	MessageKindToolResult     = message.KindToolResult
-)
 
 // ErrNotImplemented 表示某个 Provider 尚未实现真实调用。
 var ErrNotImplemented = errors.New("agent: provider not implemented yet")
@@ -91,7 +55,7 @@ type Request struct {
 	// （Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用
 	// （见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如
 	// AnalysisNodeRunner）不在此处，而由 agent.Options 承载。
-	RuntimeContext *tool.RuntimeContext `json:"runtime_context,omitempty"`
+	RuntimeContext *runtimecontext.RuntimeContext `json:"runtime_context,omitempty"`
 	// SystemPrompt 是最终发送给 Provider 的系统提示词。
 	//
 	// 注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +
@@ -179,11 +143,11 @@ type StreamEvent struct {
 	Err     error           `json:"-"`                 // 仅当 Type == StreamEventError 时有效
 }
 
-// isBlockEvent 判断事件类型是否应被持久化（作为时间线数据源）。
+// IsBlockEvent 判断事件类型是否应被持久化（作为时间线数据源）。
 //
 // 只有纯增量事件（text / reasoning_delta）是“临时”的：它们用于前端实时渲染，
 // 默认只广播不落库；其余事件（完整块 + done/error/permission 等生命周期信号）都会落库。
-func isBlockEvent(t StreamEventType) bool {
+func IsBlockEvent(t StreamEventType) bool {
 	switch t {
 	case StreamEventText, StreamEventReasoningDelta:
 		return false
@@ -222,36 +186,3 @@ type TurnBlock struct {
 
 // StreamHandler 消费流式事件；返回非 nil 错误时中断流式调用。
 type StreamHandler func(ctx context.Context, event StreamEvent) error
-
-// Runtime 是 Agent 执行期间的运行时环境，由上层（Client 或 AgentService）注入。
-//
-// Agent 通过它完成三件事：
-//   - Emit：向外输出流式事件（文本 / 推理 / 工具调用 / 权限通知等）；
-//   - RequestPermission：创建一个权限请求并阻塞等待用户 / 策略决策；
-//   - WaitPermission：等待一个已存在的权限请求的决策（用于恢复场景）。
-//
-// 该接口把 Agent 与“持久化、通知、权限决策”等业务关注点解耦：
-// Agent 只描述“要做什么”，具体“能不能做”由 Runtime 背后的 PermissionManager / Policy 决定。
-type Runtime interface {
-	// Emit 输出一个流式事件。
-	Emit(ctx context.Context, event StreamEvent) error
-	// RequestPermission 创建权限请求并阻塞等待决策（allow / deny）。
-	// userID 用于按用户读取其自定义的许可策略（空表示无用户，走默认策略）。
-	RequestPermission(ctx context.Context, userID int64, operation Operation) (PermissionDecision, error)
-	// WaitPermission 等待一个已存在权限请求（permissionID）的决策。
-	WaitPermission(ctx context.Context, permissionID int64) (PermissionDecision, error)
-	// AskUser 向用户提问并阻塞等待作答（提问卡片由 UI 渲染）。
-	// userID 用于提问归属；无 UI 的独立调用返回 ErrNoUserInputResolver。
-	AskUser(ctx context.Context, userID int64, input AskUserInput) (AskUserAnswer, error)
-}
-
-// Agent 是统一 Agent 调用接口。
-// 每个 Provider（claude_code / codex / copilot / custom ...）都需要实现该接口。
-type Agent interface {
-	// Name 返回 Provider 唯一标识。
-	Name() string
-	// Invoke 执行一次性任务并同步返回最终结果。
-	Invoke(ctx context.Context, req Request, rt Runtime) (*Result, error)
-	// Stream 执行流式请求，通过 rt.Emit 逐块输出事件，返回最终聚合结果。
-	Stream(ctx context.Context, req Request, rt Runtime) (*Result, error)
-}

@@ -1,10 +1,12 @@
-package agent
+package agentruntime
 
 import (
 	"context"
 	"encoding/json"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	. "github.com/biox-dev/gobrave/internal/agent/types"
+	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 // 本文件把 tool 包（工具定义 / 注册 / 执行）桥接到 Agent 的运行时：

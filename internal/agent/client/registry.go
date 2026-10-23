@@ -1,4 +1,4 @@
-package agent
+package client
 
 import (
 	"fmt"
@@ -6,11 +6,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/biox-dev/gobrave/internal/agent/history"
 	lspmanager "github.com/biox-dev/gobrave/internal/agent/lsp/manager"
-	"github.com/biox-dev/gobrave/internal/agent/message"
-	"github.com/biox-dev/gobrave/internal/agent/session"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 // Provider 是 Agent 的工厂接口：根据 Options 构建一个 Agent 实例。
@@ -166,7 +164,7 @@ type Options struct {
 	// 从 opencode internal/history 迁移而来，供 edit / write / patch 工具记录文件版本。
 	// 与其它服务能力一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前
 	// 注入工具执行 ctx（见 agent.WithToolRuntime → tool.WithFileHistory）。
-	FileHistory history.Service `json:"-"`
+	FileHistory HistoryService `json:"-"`
 
 	// LSP 是 LSP 客户端管理器（可为 nil）。
 	//
@@ -179,8 +177,8 @@ type Options struct {
 	// custom Provider 用它们为子 Agent 创建子会话（ParentSessionID = 父会话）并写入
 	// 子 Agent 的 reasoning / tool_call / tool_result / 最终回答；任一为 nil 时子 Agent
 	// 不落库，只把最终结果回填给父 Agent（旧行为）。
-	Sessions session.Service `json:"-"`
-	Messages message.Service `json:"-"`
+	Sessions SessionService `json:"-"`
+	Messages MessageService `json:"-"`
 }
 
 // ResolveProvider 按模型名从 ProviderSource 解析本次调用的模型提供商配置。

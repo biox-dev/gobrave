@@ -1,4 +1,4 @@
-package agent
+package service
 
 import (
 	"context"
@@ -7,7 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/biox-dev/gobrave/internal/agent/message"
+	. "github.com/biox-dev/gobrave/internal/agent/types"
+	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/logger"
 )
 
@@ -21,26 +22,26 @@ import (
 //
 // sessionID / taskID 写入消息归属；taskID 为 0 表示不属于 agent_tasks（如子 Agent 会话）。
 // 返回 ok=false 表示该事件不应落库。
-func ProjectTimelineEvent(sessionID, taskID int64, event StreamEvent) (message.CreateParams, bool) {
+func ProjectTimelineEvent(sessionID, taskID int64, event StreamEvent) (MessageCreateParams, bool) {
 	switch event.Type {
 	case StreamEventReasoning:
 		content, ok := ReasoningBlockContent(event.Data)
 		if !ok || strings.TrimSpace(content) == "" {
-			return message.CreateParams{}, false
+			return MessageCreateParams{}, false
 		}
-		return message.CreateParams{
+		return MessageCreateParams{
 			SessionID: sessionID,
-			Role:      message.RoleAssistant,
-			Kind:      message.KindReasoning,
+			Role:      RoleAssistant,
+			Kind:      KindReasoning,
 			TaskID:    taskID,
 			Content:   content,
 			Data:      event.Data,
 		}, true
 	case StreamEventToolCall:
-		return message.CreateParams{
+		return MessageCreateParams{
 			SessionID: sessionID,
-			Role:      message.RoleAssistant,
-			Kind:      message.KindToolCall,
+			Role:      RoleAssistant,
+			Kind:      KindToolCall,
 			TaskID:    taskID,
 			Content:   TimelineEventSummary("tool", event.Data),
 			Data:      event.Data,
@@ -49,27 +50,27 @@ func ProjectTimelineEvent(sessionID, taskID int64, event StreamEvent) (message.C
 		// assistant 文本块：内容为空（只发起工具调用的消息）时不产生时间线消息。
 		content, ok := MessageBlockContent(event.Data)
 		if !ok || strings.TrimSpace(content) == "" {
-			return message.CreateParams{}, false
+			return MessageCreateParams{}, false
 		}
-		return message.CreateParams{
+		return MessageCreateParams{
 			SessionID: sessionID,
-			Role:      message.RoleAssistant,
-			Kind:      message.KindAssistant,
+			Role:      RoleAssistant,
+			Kind:      KindAssistant,
 			TaskID:    taskID,
 			Content:   content,
 			Data:      event.Data,
 		}, true
 	case StreamEventToolResult:
-		return message.CreateParams{
+		return MessageCreateParams{
 			SessionID: sessionID,
-			Role:      message.RoleAssistant,
-			Kind:      message.KindToolResult,
+			Role:      RoleAssistant,
+			Kind:      KindToolResult,
 			TaskID:    taskID,
 			Content:   TimelineEventSummary("tool_result", event.Data),
 			Data:      event.Data,
 		}, true
 	default:
-		return message.CreateParams{}, false
+		return MessageCreateParams{}, false
 	}
 }
 
@@ -136,10 +137,10 @@ func TimelineEventSummary(prefix string, data any) string {
 //   - user 消息：CreateTurn 在启动任务前写入；
 //   - assistant 最终回答 / error：finishTurn 在轮末写入。
 //
-// nil receiver 安全：未注入 message.Service 时所有方法都是空操作。
+// nil receiver 安全：未注入 MessageService 时所有方法都是空操作。
 type TimelineRecorder struct {
 	tasks    TaskRepository
-	messages message.Service
+	messages MessageService
 
 	mu       sync.RWMutex
 	sessions map[int64]int64 // taskID → sessionID（避免每个事件都查一次任务）
@@ -149,7 +150,7 @@ type TimelineRecorder struct {
 }
 
 // NewTimelineRecorder 创建时间线记录器；messages 为 nil 时返回 nil（等价于关闭落库）。
-func NewTimelineRecorder(tasks TaskRepository, messages message.Service) *TimelineRecorder {
+func NewTimelineRecorder(tasks TaskRepository, messages MessageService) *TimelineRecorder {
 	if messages == nil {
 		return nil
 	}
@@ -216,7 +217,7 @@ func (r *TimelineRecorder) Record(ctx context.Context, taskID int64, payload any
 			taskID, params.Kind, err)
 		return
 	}
-	if params.Kind == message.KindAssistant {
+	if params.Kind == KindAssistant {
 		r.mu.Lock()
 		r.sawAssistant[taskID] = true
 		r.mu.Unlock()
@@ -249,10 +250,10 @@ func (r *TimelineRecorder) RecordResult(ctx context.Context, taskID int64, conte
 	if err != nil || sessionID <= 0 {
 		return
 	}
-	if _, err := r.messages.Create(persistCtx, message.CreateParams{
+	if _, err := r.messages.Create(persistCtx, MessageCreateParams{
 		SessionID: sessionID,
-		Role:      message.RoleAssistant,
-		Kind:      message.KindAssistantFinal,
+		Role:      RoleAssistant,
+		Kind:      KindAssistantFinal,
 		TaskID:    taskID,
 		Content:   content,
 	}); err != nil {

@@ -1,4 +1,4 @@
-package agent
+package service
 
 import (
 	"context"
@@ -8,10 +8,14 @@ import (
 	"sync"
 	"time"
 
+	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
 	"github.com/biox-dev/gobrave/internal/agent/logging"
-	"github.com/biox-dev/gobrave/internal/agent/message"
+	agentpolicy "github.com/biox-dev/gobrave/internal/agent/policy"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	. "github.com/biox-dev/gobrave/internal/agent/types"
+	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
@@ -29,7 +33,7 @@ import (
 //
 // Recover 用于后端重启后重建运行态。
 type AgentService struct {
-	client    *Client
+	client    *agentclient.Client
 	tasks     TaskRepository
 	perms     *PermissionManager
 	questions *QuestionManager
@@ -51,12 +55,12 @@ type AgentService struct {
 
 // ServiceConfig 是 AgentService 的依赖配置。
 type ServiceConfig struct {
-	Client    *Client
+	Client    *agentclient.Client
 	Tasks     TaskRepository
 	Perms     *PermissionManager
 	Questions *QuestionManager
 	// Messages 是时间线消息（agent_messages）的持久化服务。
-	Messages message.Service
+	Messages MessageService
 	Bus      EventBus
 	Policy   PermissionPolicy
 	Memory   *MemoryManager
@@ -74,7 +78,7 @@ func NewService(cfg ServiceConfig) *AgentService {
 		cfg.Bus = NewEventBus()
 	}
 	if cfg.Policy == nil {
-		cfg.Policy = DefaultPermissionPolicy()
+		cfg.Policy = agentpolicy.DefaultPermissionPolicy()
 	}
 	return &AgentService{
 		client:    cfg.Client,
@@ -744,7 +748,7 @@ func (s *AgentService) buildSystemPrompt(ctx context.Context, profile *Profile, 
 	// 1) 系统提示词：来源于 Profile —— 用调用方传入的变量渲染 Profile 的模板，
 	// 拼接在基础编码提示词之后。
 	if tpl := strings.TrimSpace(profile.SystemPrompt); tpl != "" {
-		rendered, err := RenderSystemPromptTemplate(profile.SystemPrompt, vars)
+		rendered, err := agentruntime.RenderSystemPromptTemplate(profile.SystemPrompt, vars)
 		if err != nil {
 			prompt = appendPromptBlock(prompt, tpl)
 		} else {
@@ -783,7 +787,7 @@ func (s *AgentService) injectMemoryWithContext(ctx context.Context, prompt strin
 		UserID:    rc.UserID,
 		ProjectID: rc.ProjectID,
 		SessionID: rc.SessionID,
-		Limit:     defaultMemoryRetrieveLimit,
+		Limit:     DefaultMemoryRetrieveLimit,
 	})
 	if err != nil || len(mems) == 0 {
 		return prompt

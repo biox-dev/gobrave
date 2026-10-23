@@ -1,12 +1,6 @@
-// Package message 定义会话消息（Message）模型与增删改查服务。
-//
-// 参考 opencode 的分层方式：消息按 session_id 归属会话，独立持久化；Session 不内嵌
-// 消息列表。Message 同时作为 Agent 请求中的对话消息（agent.Message 是其类型别名），
-// 使「持久化历史」与「拼装 prompt」共用同一套字段。
-package message
+package types
 
 import (
-	"context"
 	"errors"
 	"time"
 
@@ -14,8 +8,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// ErrNotFound 表示消息不存在。
-var ErrNotFound = errors.New("message: not found")
+// ErrMessageNotFound 表示消息不存在。
+var ErrMessageNotFound = errors.New("message: not found")
 
 // 消息角色。
 const (
@@ -36,6 +30,16 @@ const (
 	// KindError 是一条可回放的错误消息（任务执行失败时由 ChatService 写入），
 	// 前端据此用错误样式稳定展示，而不是只依赖临时流式事件。
 	KindError = "error"
+)
+
+// MessageKind 常量是 Kind* 的兼容别名（旧 agent 包对外的命名）。
+const (
+	MessageKindUser           = KindUser
+	MessageKindAssistant      = KindAssistant
+	MessageKindAssistantFinal = KindAssistantFinal
+	MessageKindReasoning      = KindReasoning
+	MessageKindToolCall       = KindToolCall
+	MessageKindToolResult     = KindToolResult
 )
 
 // Message 是一条会话消息，以独立表持久化。
@@ -66,92 +70,12 @@ func (m *Message) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
-// CreateParams 是写入一条消息的入参。
-type CreateParams struct {
+// MessageCreateParams 是写入一条消息的入参。
+type MessageCreateParams struct {
 	SessionID int64
 	Role      string
 	Kind      string
 	TaskID    int64
 	Content   string
 	Data      any
-}
-
-// Store 是 Message 的持久化端口，由 repository 层实现。
-type Store interface {
-	Create(ctx context.Context, m *Message) error
-	Update(ctx context.Context, m *Message) error
-	Get(ctx context.Context, id int64) (*Message, error)
-	List(ctx context.Context, sessionID int64) ([]*Message, error)
-	Delete(ctx context.Context, id int64) error
-	DeleteBySession(ctx context.Context, sessionID int64) error
-}
-
-// Service 提供消息的增删改查（与 opencode message.Service 形式一致）。
-type Service interface {
-	Create(ctx context.Context, params CreateParams) (Message, error)
-	Update(ctx context.Context, message Message) (Message, error)
-	Get(ctx context.Context, id int64) (Message, error)
-	List(ctx context.Context, sessionID int64) ([]Message, error)
-	Delete(ctx context.Context, id int64) error
-	DeleteSessionMessages(ctx context.Context, sessionID int64) error
-}
-
-type service struct {
-	store Store
-}
-
-// NewService 创建消息服务。
-func NewService(store Store) Service {
-	return &service{store: store}
-}
-
-func (s *service) Create(ctx context.Context, params CreateParams) (Message, error) {
-	message := &Message{
-		SessionID: params.SessionID,
-		Role:      params.Role,
-		Kind:      params.Kind,
-		TaskID:    params.TaskID,
-		Content:   params.Content,
-		Data:      params.Data,
-		CreatedAt: time.Now(),
-	}
-	if err := s.store.Create(ctx, message); err != nil {
-		return Message{}, err
-	}
-	return *message, nil
-}
-
-func (s *service) Update(ctx context.Context, message Message) (Message, error) {
-	if err := s.store.Update(ctx, &message); err != nil {
-		return Message{}, err
-	}
-	return message, nil
-}
-
-func (s *service) Get(ctx context.Context, id int64) (Message, error) {
-	message, err := s.store.Get(ctx, id)
-	if err != nil {
-		return Message{}, err
-	}
-	return *message, nil
-}
-
-func (s *service) List(ctx context.Context, sessionID int64) ([]Message, error) {
-	rows, err := s.store.List(ctx, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Message, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, *row)
-	}
-	return out, nil
-}
-
-func (s *service) Delete(ctx context.Context, id int64) error {
-	return s.store.Delete(ctx, id)
-}
-
-func (s *service) DeleteSessionMessages(ctx context.Context, sessionID int64) error {
-	return s.store.DeleteBySession(ctx, sessionID)
 }

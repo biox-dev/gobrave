@@ -1,9 +1,12 @@
-package agent
+package service
 
 import (
 	"context"
 	"sync"
 	"time"
+
+	. "github.com/biox-dev/gobrave/internal/agent/types"
+	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 // PermissionManager 负责权限请求的创建、持久化与决策流转。

@@ -1,9 +1,4 @@
-// Package agent 中的 memory 层：Agent 的「长期记忆」子系统。
-//
-// 与 chat.go 中的「短期上下文」（单次会话的多轮历史）不同，memory 负责跨轮次、
-// 跨会话、跨任务的持久化记忆，例如用户偏好、已确认的事实、任务摘要等。它遵循与权限
-// 子系统一致的架构原则：Repository 是状态源，Manager 负责编排，检索 / 提取可插拔。
-package agent
+package types
 
 import (
 	"context"
@@ -81,24 +76,6 @@ func NewMemory(userID int64, projectID int64, sessionID int64, kind MemoryKind, 
 	}
 }
 
-// MemoryRepository 持久化记忆。
-//
-// 实现见 internal/agent/repository 子包（基于 GORM 的数据库实现）。
-type MemoryRepository interface {
-	Create(ctx context.Context, memory *Memory) error
-	Get(ctx context.Context, id int64) (*Memory, error)
-	Update(ctx context.Context, memory *Memory) error
-	Delete(ctx context.Context, id int64) error
-	// ListByUser 分页查询某用户的记忆（按 UpdatedAt 降序）；kinds 为空表示全部类别。
-	ListByUser(ctx context.Context, userID int64, offset, limit int, kinds ...MemoryKind) ([]*Memory, int64, error)
-	// ListByUserContext 分页查询某用户的记忆，并优先返回 projectID / sessionID 匹配的记录。
-	// projectID <= 0 / sessionID <= 0 时退化为普通的分页查询。
-	ListByUserContext(ctx context.Context, userID int64, projectID int64, sessionID int64, offset, limit int, kinds ...MemoryKind) ([]*Memory, int64, error)
-	// Search 按关键词检索某用户的记忆（返回按相关度 + 重要度排序）。
-	// 基础实现为子串 / LIKE 匹配，可被更高级的检索器（向量 / 语义）替换。
-	Search(ctx context.Context, userID int64, query string, limit int) ([]*Memory, error)
-}
-
 // MemoryTurn 描述一轮已完成执行的上下文，供 MemoryExtractor 提取记忆。
 type MemoryTurn struct {
 	UserID    int64
@@ -153,12 +130,6 @@ func truncateRunes(s string, max int) string {
 	return string(r[:max]) + "…"
 }
 
-// MemoryConfig 是 MemoryManager 的依赖配置。
-type MemoryConfig struct {
-	Repo      MemoryRepository
-	Extractor MemoryExtractor
-}
-
 // MemoryQuery 描述一次记忆检索的上下文。
 //
 // UserID 是归属用户（必填）；ProjectID / SessionID 是可选的业务上下文，用于优先
@@ -170,94 +141,6 @@ type MemoryQuery struct {
 	// Text 是检索关键词；为空时退化为「按上下文 + 更新时间」的分页读取。
 	Text  string
 	Limit int
-}
-
-// MemoryManager 负责记忆的创建、查询、检索与提取编排。
-//
-// 它是 memory 域的「门面」：上层（AgentService / HTTP 层）只依赖 MemoryManager，
-// 不直接感知 Repository / Retriever / Extractor 的具体实现。
-type MemoryManager struct {
-	repo      MemoryRepository
-	extractor MemoryExtractor
-}
-
-// NewMemoryManager 创建记忆管理器。
-func NewMemoryManager(cfg MemoryConfig) *MemoryManager {
-	return &MemoryManager{
-		repo:      cfg.Repo,
-		extractor: cfg.Extractor,
-	}
-}
-
-// Save 创建或更新一条记忆：ID 为 0（新建）时交给 Repository 创建，主键在写入前由
-// BeforeCreate 分配；否则更新。
-func (m *MemoryManager) Save(ctx context.Context, memory *Memory) error {
-	if memory == nil {
-		return nil
-	}
-	now := time.Now()
-	if memory.ID == 0 {
-		memory.CreatedAt = now
-		memory.UpdatedAt = now
-		return m.repo.Create(ctx, memory)
-	}
-	memory.UpdatedAt = now
-	return m.repo.Update(ctx, memory)
-}
-
-// Get 按 ID 查询记忆。
-func (m *MemoryManager) Get(ctx context.Context, id int64) (*Memory, error) {
-	return m.repo.Get(ctx, id)
-}
-
-// List 分页查询某用户的记忆；kinds 为空表示全部类别。
-func (m *MemoryManager) List(ctx context.Context, userID int64, offset, limit int, kinds ...MemoryKind) ([]*Memory, int64, error) {
-	return m.repo.ListByUser(ctx, userID, offset, limit, kinds...)
-}
-
-// Retrieve 按「业务上下文 + 关键词」检索记忆，并刷新这些记忆的访问时间（Touch）。
-//
-// ProjectID / SessionID 用于优先返回当前项目 / 会话下的记忆；Text 为关键词，
-// 为空时退化为按上下文 + 更新时间读取。
-func (m *MemoryManager) Retrieve(ctx context.Context, q MemoryQuery) ([]*Memory, error) {
-	limit := q.Limit
-	if limit <= 0 {
-		limit = defaultMemoryRetrieveLimit
-	}
-
-	mems, _, err := m.repo.ListByUserContext(ctx, q.UserID, q.ProjectID, q.SessionID, 0, limit)
-	if err != nil {
-		return nil, err
-	}
-	for _, mem := range mems {
-		_ = m.Touch(ctx, mem.ID)
-	}
-	return mems, nil
-}
-
-// Delete 删除记忆。
-func (m *MemoryManager) Delete(ctx context.Context, id int64) error {
-	return m.repo.Delete(ctx, id)
-}
-
-// Touch 更新记忆的最近访问时间（用于淘汰 / 排序策略）。
-func (m *MemoryManager) Touch(ctx context.Context, id int64) error {
-	mem, err := m.repo.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	mem.LastAccessedAt = &now
-	return m.repo.Update(ctx, mem)
-}
-
-// Extract 调用已配置的提取器，从一轮执行中提取待写入的记忆。
-// 未配置提取器时返回空（不提取）。
-func (m *MemoryManager) Extract(ctx context.Context, turn MemoryTurn) ([]*Memory, error) {
-	if m.extractor == nil {
-		return nil, nil
-	}
-	return m.extractor.Extract(ctx, turn)
 }
 
 // BuildMemoryContext 把检索到的记忆格式化为注入上下文的文本块。
@@ -294,5 +177,5 @@ func lastUserMessage(messages []Message) string {
 	return ""
 }
 
-// defaultMemoryRetrieveLimit 是单次注入检索记忆的默认条数上限。
-const defaultMemoryRetrieveLimit = 5
+// DefaultMemoryRetrieveLimit 是单次注入检索记忆的默认条数上限。
+const DefaultMemoryRetrieveLimit = 5

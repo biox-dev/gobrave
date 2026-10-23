@@ -1,13 +1,14 @@
-package agent
+package service
 
 import (
 	"context"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	. "github.com/biox-dev/gobrave/internal/agent/types"
 )
 
-// 本文件仅为测试提供导出包装，使外部测试包（agent_test）能够访问 AgentService 的
-// 未导出内部方法。它不参与生产构建（仅在 go test 编译包 agent 时生效）。
+// 本文件仅为测试提供导出包装，使外部测试包（service_test）能够访问 AgentService 的
+// 未导出内部方法。它不参与生产构建（仅在 go test 编译包 service 时生效）。
 
 // InjectMemoryForTest 暴露 AgentService.injectMemoryWithContext 供外部测试调用。
 func (s *AgentService) InjectMemoryForTest(ctx context.Context, prompt string, rc *tool.RuntimeContext) string {

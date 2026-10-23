@@ -1,4 +1,4 @@
-package agent_test
+package service_test
 
 import (
 	"context"
@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent"
+	agentrepository "github.com/biox-dev/gobrave/internal/agent/application/repository"
 	"github.com/biox-dev/gobrave/internal/agent/message"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
-	agentrepository "github.com/biox-dev/gobrave/internal/agent/repository"
 	"github.com/biox-dev/gobrave/internal/agent/session"
 	"gorm.io/gorm"
 )

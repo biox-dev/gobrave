@@ -1,14 +1,13 @@
-package agent
+package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
-)
 
-// ErrNoPermissionResolver 表示当前 Runtime 没有绑定权限解析器（无法等待人工决策）。
-var ErrNoPermissionResolver = errors.New("agent: no permission resolver in runtime")
+	. "github.com/biox-dev/gobrave/internal/agent/types"
+	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
+)
 
 // sessionRef 把 Task 上的 int64 会话主键转为权限 / 提问子系统使用的字符串会话标识；
 // 0 表示不关联会话。
@@ -17,48 +16,6 @@ func sessionRef(sessionID int64) string {
 		return ""
 	}
 	return strconv.FormatInt(sessionID, 10)
-}
-
-// NewStandaloneRuntime 返回一个独立于任务上下文的 Runtime，用于 Client.Invoke / Client.Stream
-// 这类“无任务、无 UI”的一次性调用。
-//
-// 行为约定：
-//   - Emit：直接把事件交给 handler（handler 为 nil 时丢弃）；
-//   - RequestPermission：应用默认策略，ask 降级为 allow（宽松放行），保证链路可跑通；
-//   - WaitPermission：无解析器，直接返回 ErrNoPermissionResolver。
-func NewStandaloneRuntime(handler StreamHandler) Runtime {
-	return &standaloneRuntime{handler: handler, policy: DefaultPermissionPolicy()}
-}
-
-// standaloneRuntime 是 Runtime 的独立实现。
-type standaloneRuntime struct {
-	handler StreamHandler
-	policy  PermissionPolicy
-}
-
-func (r *standaloneRuntime) Emit(ctx context.Context, event StreamEvent) error {
-	if r.handler != nil {
-		return r.handler(ctx, event)
-	}
-	return nil
-}
-
-func (r *standaloneRuntime) RequestPermission(ctx context.Context, userID int64, operation Operation) (PermissionDecision, error) {
-	decision := r.policy.Check(ctx, userID, operation)
-	if decision == DecisionAsk {
-		// 无 UI 可确认：宽松放行，避免阻塞无任务语义的调用。
-		return DecisionAllow, nil
-	}
-	return decision, nil
-}
-
-func (r *standaloneRuntime) WaitPermission(context.Context, int64) (PermissionDecision, error) {
-	return "", ErrNoPermissionResolver
-}
-
-// AskUser 在无 UI 的独立调用中无法向用户提问，直接返回错误，由工具层转为失败结果。
-func (r *standaloneRuntime) AskUser(context.Context, int64, AskUserInput) (AskUserAnswer, error) {
-	return AskUserAnswer{}, ErrNoUserInputResolver
 }
 
 // taskRuntime 是绑定到具体任务的 Runtime：事件持久化 + 广播，权限持久化 + 阻塞等待。
@@ -101,7 +58,7 @@ func (r *taskRuntime) Emit(ctx context.Context, event StreamEvent) error {
 	//
 	// 事件只有一个出口（publish）：实时推送走 EventBus，持久化走 TimelineRecorder。
 	// 上层不再注册同步 handler，避免同一事件出现两条消费路径。
-	if isBlockEvent(event.Type) {
+	if IsBlockEvent(event.Type) {
 		r.svc.emitEvent(ctx, r.taskID, EventStream, event)
 	} else {
 		r.svc.broadcastEvent(ctx, r.taskID, EventStream, event)

@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent/history"
 	"github.com/biox-dev/gobrave/internal/agent/logging"
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/coder/diff"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 type EditParams struct {
@@ -35,7 +35,7 @@ type EditResponseMetadata struct {
 
 type editTool struct {
 	lspClients map[string]*lsp.Client
-	files      history.Service
+	files      agentinterfaces.HistoryService
 }
 
 const (

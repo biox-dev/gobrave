@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent/history"
 	"github.com/biox-dev/gobrave/internal/agent/logging"
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/coder/diff"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 type PatchParams struct {
@@ -27,7 +27,7 @@ type PatchResponseMetadata struct {
 
 type patchTool struct {
 	lspClients map[string]*lsp.Client
-	files      history.Service
+	files      agentinterfaces.HistoryService
 }
 
 const (

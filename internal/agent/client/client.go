@@ -1,9 +1,13 @@
-package agent
+package client
 
 import (
 	"context"
 	"strings"
 	"sync"
+
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
+	. "github.com/biox-dev/gobrave/internal/agent/types"
+	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 // Client 是 Agent 调用的统一门面（Facade）。
@@ -34,7 +38,7 @@ func NewClient(registry *Registry, opts Options) *Client {
 // Stream 执行流式请求：解析 Provider → Agent.Stream。
 // 内部使用 standalone Runtime，其 Emit 直接把事件交给 handler。
 func (c *Client) Stream(ctx context.Context, req Request, handler StreamHandler) (*Result, error) {
-	return c.StreamRuntime(ctx, req, NewStandaloneRuntime(handler))
+	return c.StreamRuntime(ctx, req, agentruntime.NewStandaloneRuntime(handler))
 }
 
 // InvokeRuntime 使用调用方提供的 Runtime 执行一次性任务（供 AgentService 任务模式使用）。
@@ -44,7 +48,7 @@ func (c *Client) InvokeRuntime(ctx context.Context, req Request, rt Runtime) (*R
 		return nil, err
 	}
 	if rt == nil {
-		rt = NewStandaloneRuntime(nil)
+		rt = agentruntime.NewStandaloneRuntime(nil)
 	}
 	return a.Invoke(ctx, req, rt)
 }
@@ -56,7 +60,7 @@ func (c *Client) StreamRuntime(ctx context.Context, req Request, rt Runtime) (*R
 		return nil, err
 	}
 	if rt == nil {
-		rt = NewStandaloneRuntime(nil)
+		rt = agentruntime.NewStandaloneRuntime(nil)
 	}
 	return a.Stream(ctx, req, rt)
 }

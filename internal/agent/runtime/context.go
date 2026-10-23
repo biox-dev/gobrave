@@ -1,13 +1,14 @@
-package agent
+package agentruntime
 
 import (
 	"context"
 	"encoding/json"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/history"
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	. "github.com/biox-dev/gobrave/internal/agent/types"
+	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 // ToolRuntimeContextFromRequest 取出一次调用的运行时上下文，用于注入工具执行上下文。
@@ -21,11 +22,11 @@ func ToolRuntimeContextFromRequest(req Request) *tool.RuntimeContext {
 	return req.RuntimeContext
 }
 
-// withRequestFacts 在请求级上下文上补齐「用户 + 会话」事实，返回新的 RuntimeContext。
+// WithRequestFacts 在请求级上下文上补齐「用户 + 会话」事实，返回新的 RuntimeContext。
 //
 // 用户 ID 与 SessionID 不属于某个业务 env，而是「一次调用」的属性，因此在组装 Request
 // 时统一写入 RuntimeContext（它是请求级事实的唯一载体，见 Request.RequestUserID）。
-func withRequestFacts(rc *tool.RuntimeContext, userID int64, sessionID int64) *tool.RuntimeContext {
+func WithRequestFacts(rc *tool.RuntimeContext, userID int64, sessionID int64) *tool.RuntimeContext {
 	return tool.WithUserIDForContext(rc, userID, sessionID)
 }
 
@@ -151,7 +152,7 @@ func WithToolRuntimeContext(ctx context.Context, rc *tool.RuntimeContext) contex
 //
 // 归属用户不再作为参数单独注入：RuntimeContext.UserID 就是请求级用户事实的唯一来源，
 // 工具通过 tool.RuntimeContextFrom(ctx).UserID 读取（见 save_memory）。
-func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, nodeCreator tool.AnalysisNodeCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, files history.Service) context.Context {
+func WithToolRuntime(ctx context.Context, rc *tool.RuntimeContext, runner tool.AnalysisNodeRunner, reader tool.FileReader, creator tool.ScriptCreator, nodeCreator tool.AnalysisNodeCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, files HistoryService) context.Context {
 	ctx = WithToolRuntimeContext(ctx, rc)
 	ctx = tool.WithAnalysisNodeRunner(ctx, runner)
 	ctx = tool.WithFileReader(ctx, reader)
