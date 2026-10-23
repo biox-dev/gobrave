@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -28,7 +29,7 @@ type AISummaryWorker struct {
 	containerRepo interfaces.ContainerRepository
 	projectRepo   interfaces.ProjectRepository
 	bus           event.Bus
-	agentService  *agent.AgentService
+	agentService  *agentservice.AgentService
 	content       AISummaryContentProvider
 	cfg           *config.Config
 }
@@ -39,7 +40,7 @@ func NewAISummaryWorker(
 	containerRepo interfaces.ContainerRepository,
 	projectRepo interfaces.ProjectRepository,
 	bus event.Bus,
-	agentService *agent.AgentService,
+	agentService *agentservice.AgentService,
 	content AISummaryContentProvider,
 	cfg *config.Config,
 ) *AISummaryWorker {
@@ -94,7 +95,7 @@ func (w *AISummaryWorker) handleGenerateRequest(ctx context.Context, req AISumma
 // 若后续摘要需要边生成边推送给前端，可切换为任务流式模式并在 StreamHandler 中逐块发布状态事件。
 //
 // 生成使用的 Agent Profile 取自摘要记录（用户创建/更新时选定），为 0 时回退到内置
-// agent.BuiltinSummaryProfileID，保证旧数据仍按原有行为生成。
+// agenttypes.BuiltinSummaryProfileID，保证旧数据仍按原有行为生成。
 func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 	summary, err := w.summaryRepo.GetAISummaryByID(ctx, summaryID)
 	if err != nil {
@@ -119,10 +120,10 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 
 	profileID := summary.ProfileID
 	if profileID == 0 {
-		profileID = agent.BuiltinSummaryProfileID
+		profileID = agenttypes.BuiltinSummaryProfileID
 	}
 
-	task, err := w.agentService.CreateTask(ctx, agent.Request{
+	task, err := w.agentService.CreateTask(ctx, agenttypes.Request{
 		WorkingDir: content.WorkingDir,
 		// 系统提示词模板变量与工作目录统一由运行时上下文承载（可持久化到 agent_tasks）。
 		// 摘要任务由后台 worker 触发，没有登录用户：RuntimeContext.UserID 留空，
@@ -131,10 +132,10 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 			SystemPromptVars: content.SystemPromptVars,
 			WorkingDir:       content.WorkingDir,
 		},
-		Messages: []agent.Message{
-			{Role: agent.RoleUser, Content: "请根据系统提示词完成对应的任务"},
+		Messages: []agenttypes.Message{
+			{Role: agenttypes.RoleUser, Content: "请根据系统提示词完成对应的任务"},
 		},
-		Provider:  agent.ProviderCustom,
+		Provider:  agenttypes.ProviderCustom,
 		ProfileID: profileID,
 	})
 	if err != nil {

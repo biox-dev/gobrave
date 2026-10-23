@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
 	"github.com/biox-dev/gobrave/internal/agent/llm/models"
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
 	"github.com/biox-dev/gobrave/internal/agent/native"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/logger"
 )
 
@@ -18,37 +21,37 @@ import (
 //
 // 它直接使用 gobrave 自己的 LLM 协议客户端与工具注册表驱动 Agent 循环，
 // 不再依赖 opencode SDK。Provider 名称仍保留为 "custom"（与内置 Profile 一致）。
-func NewCustom() agent.Provider {
+func NewCustom() agentclient.Provider {
 	return customProvider{}
 }
 
 type customProvider struct{}
 
-func (customProvider) Name() string { return agent.ProviderCustom }
+func (customProvider) Name() string { return agenttypes.ProviderCustom }
 
-func (customProvider) New(opts agent.Options) (agent.Agent, error) {
+func (customProvider) New(opts agentclient.Options) (agentinterfaces.Agent, error) {
 	return &customAgent{opts: opts}, nil
 }
 
 // customAgent 是 ProviderCustom 的 Agent 实现。
 type customAgent struct {
-	opts agent.Options
+	opts agentclient.Options
 }
 
-func (a *customAgent) Name() string { return agent.ProviderCustom }
+func (a *customAgent) Name() string { return agenttypes.ProviderCustom }
 
-func (a *customAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+func (a *customAgent) Invoke(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	return a.run(ctx, req, rt)
 }
 
-func (a *customAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+func (a *customAgent) Stream(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	return a.run(ctx, req, rt)
 }
 
 // run 组装 LLM 客户端与工具上下文，交给原生 Agent 循环执行。
-func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+func (a *customAgent) run(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	if rt == nil {
-		rt = agent.NewStandaloneRuntime(nil)
+		rt = agentruntime.NewStandaloneRuntime(nil)
 	}
 	if req.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -82,7 +85,7 @@ func (a *customAgent) run(ctx context.Context, req agent.Request, rt agent.Runti
 }
 
 // llmOptions 把 gobrave 请求 + 配置表解析为一次 LLM 调用参数。
-func (a *customAgent) llmOptions(ctx context.Context, req agent.Request) (provider.Options, error) {
+func (a *customAgent) llmOptions(ctx context.Context, req agenttypes.Request) (provider.Options, error) {
 	workingDir := firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
 	if workingDir == "" {
 		err := fmt.Errorf("custom provider: working dir is required")
@@ -98,7 +101,7 @@ func (a *customAgent) llmOptions(ctx context.Context, req agent.Request) (provid
 	}
 
 	// 模型配置按模型名解析；未命中时凭模型名前缀推断厂商，其余字段走默认值。
-	var pc agent.ModelProviderConfig
+	var pc agentclient.ModelProviderConfig
 	if resolved := a.opts.ResolveProvider(modelKey); resolved != nil {
 		pc = *resolved
 	}
@@ -151,7 +154,7 @@ func (a *customAgent) llmOptions(ctx context.Context, req agent.Request) (provid
 // toolRegistry 组合本次调用可用的工具：注册表工具 + 内置 ask_user + 子 Agent 工具。
 //
 // ask_user 依赖 Runtime 阻塞等待用户作答，因此只在有 Runtime 时注册。
-func (a *customAgent) toolRegistry(req agent.Request, rt agent.Runtime) *tool.Registry {
+func (a *customAgent) toolRegistry(req agenttypes.Request, rt agentinterfaces.Runtime) *tool.Registry {
 	items := make([]tool.Tool, 0)
 	if a.opts.Tools != nil {
 		items = append(items, a.opts.Tools.Tools()...)
@@ -169,7 +172,7 @@ func (a *customAgent) toolRegistry(req agent.Request, rt agent.Runtime) *tool.Re
 //
 // 与 opencode NewAgentTool 的差异：gobrave 没有会话服务，子 Agent 不再创建 task
 // 会话，而是同步运行原生 Agent 循环并直接返回最终回答（见 native.NewAgentTool）。
-func (a *customAgent) newAgentTool(req agent.Request, rt agent.Runtime) tool.Tool {
+func (a *customAgent) newAgentTool(req agenttypes.Request, rt agentinterfaces.Runtime) tool.Tool {
 	prepare := a.toolContext(req, rt)
 	workingDir := firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
 	return native.NewAgentTool(native.AgentToolConfig{
@@ -205,12 +208,12 @@ func (a *customAgent) newAgentTool(req agent.Request, rt agent.Runtime) tool.Too
 }
 
 // toolContext 返回工具执行前的 ctx 装饰函数：注入权限、请求事实与进程级服务能力。
-func (a *customAgent) toolContext(req agent.Request, rt agent.Runtime) func(context.Context) context.Context {
-	rc := agent.ToolRuntimeContextFromRequest(req)
+func (a *customAgent) toolContext(req agenttypes.Request, rt agentinterfaces.Runtime) func(context.Context) context.Context {
+	rc := agentruntime.ToolRuntimeContextFromRequest(req)
 	services := a.opts
 	return func(ctx context.Context) context.Context {
-		ctx = agent.WithToolPermission(ctx, rt, req.RequestUserID())
-		ctx = agent.WithToolRuntime(ctx, rc,
+		ctx = agentruntime.WithToolPermission(ctx, rt, req.RequestUserID())
+		ctx = agentruntime.WithToolRuntime(ctx, rc,
 			services.AnalysisNodeRunner,
 			services.FileReader,
 			services.ScriptCreator,
@@ -221,11 +224,11 @@ func (a *customAgent) toolContext(req agent.Request, rt agent.Runtime) func(cont
 			services.MemorySaver,
 			services.FileHistory,
 		)
-		ctx = agent.WithAgentAnalysisRunner(ctx, services.AgentAnalysisRunner)
-		ctx = agent.WithProjectResourceBrowser(ctx, services.ProjectResourceBrowser)
-		ctx = agent.WithSkills(ctx, services.Skills)
+		ctx = agentruntime.WithAgentAnalysisRunner(ctx, services.AgentAnalysisRunner)
+		ctx = agentruntime.WithProjectResourceBrowser(ctx, services.ProjectResourceBrowser)
+		ctx = agentruntime.WithSkills(ctx, services.Skills)
 		if services.LSP != nil {
-			ctx = agent.WithLSPClients(ctx, services.LSP.Clients())
+			ctx = agentruntime.WithLSPClients(ctx, services.LSP.Clients())
 		}
 		return ctx
 	}
@@ -233,10 +236,10 @@ func (a *customAgent) toolContext(req agent.Request, rt agent.Runtime) func(cont
 
 // askUserTool 构建 ask_user 工具：解析模型入参 → Runtime.AskUser 阻塞等待作答 →
 // 把答案格式化为可读文本回填给模型。无 UI 时 Runtime 返回错误，执行器转为失败结果。
-func askUserTool(rt agent.Runtime, userID int64) tool.Tool {
-	def := agent.AskUserToolDefinition()
+func askUserTool(rt agentinterfaces.Runtime, userID int64) tool.Tool {
+	def := agentruntime.AskUserToolDefinition()
 	return tool.NewFunc(def.Name, def.Description, def.InputSchema,
-		func(ctx context.Context, in agent.AskUserInput) (string, error) {
+		func(ctx context.Context, in agenttypes.AskUserInput) (string, error) {
 			answer, err := rt.AskUser(ctx, userID, in)
 			if err != nil {
 				return "", err
@@ -269,7 +272,7 @@ func inferProviderFromModel(modelID string) string {
 // providerType 返回模型配置中的厂商类型（openai / anthropic / deepseek …）。
 //
 // 依次回退：Provider 字段 → Extra["provider"] → Extra["type"]。
-func providerType(pc agent.ModelProviderConfig) string {
+func providerType(pc agentclient.ModelProviderConfig) string {
 	if name := strings.TrimSpace(pc.Provider); name != "" {
 		return strings.ToLower(name)
 	}
@@ -280,8 +283,8 @@ func providerType(pc agent.ModelProviderConfig) string {
 }
 
 // formatAskUserAnswer 把用户作答格式化为人类可读摘要（作为 ask_user 工具结果文本）。
-func formatAskUserAnswer(in agent.AskUserInput, answer agent.AskUserAnswer) string {
-	byID := make(map[string]agent.QuestionAnswer, len(answer.Answers))
+func formatAskUserAnswer(in agenttypes.AskUserInput, answer agenttypes.AskUserAnswer) string {
+	byID := make(map[string]agenttypes.QuestionAnswer, len(answer.Answers))
 	for _, ans := range answer.Answers {
 		if ans.ID != "" {
 			byID[ans.ID] = ans
@@ -344,7 +347,7 @@ func formatAskUserAnswer(in agent.AskUserInput, answer agent.AskUserAnswer) stri
 }
 
 // formatQuestionAnswer 把单个答案拼接为文本（多选用逗号分隔，自定义输入用括号标注）。
-func formatQuestionAnswer(ans agent.QuestionAnswer) string {
+func formatQuestionAnswer(ans agenttypes.QuestionAnswer) string {
 	parts := make([]string, 0, len(ans.Values)+1)
 	parts = append(parts, ans.Values...)
 	if value := strings.TrimSpace(ans.Value); value != "" {

@@ -7,11 +7,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
 	"github.com/biox-dev/gobrave/internal/agent/logging"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/coder"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 // 本文件迁移自 opencode internal/llm/agent/agent-tool.go。
@@ -134,7 +136,7 @@ type SubAgentSessionInfo struct {
 
 // SubAgentSessionStore 是子 Agent 的会话 / 消息持久化端口。
 //
-// 由 Provider 用 session.Service + message.Service 实现（见 providers.subAgentSessionStore），
+// 由 Provider 用 agentinterfaces.SessionService + agentinterfaces.MessageService 实现（见 providers.subAgentSessionStore），
 // native 包只按语义调用，不直接依赖 session / message 的具体类型。
 type SubAgentSessionStore interface {
 	// CreateChildSession 创建 ParentSessionID = info.ParentSessionID 的子会话并返回会话 ID。
@@ -142,8 +144,8 @@ type SubAgentSessionStore interface {
 	// AppendUserMessage 追加子任务的 user 消息。
 	AppendUserMessage(ctx context.Context, sessionID int64, content string) error
 	// AppendEvent 把一条流式事件投影为子会话消息（投影规则由实现方决定，通常复用
-	// agent.ProjectTimelineEvent；不产生消息的事件直接忽略）。
-	AppendEvent(ctx context.Context, sessionID int64, event agent.StreamEvent) error
+	// agentservice.ProjectTimelineEvent；不产生消息的事件直接忽略）。
+	AppendEvent(ctx context.Context, sessionID int64, event agenttypes.StreamEvent) error
 	// AppendFinalMessage 追加子 Agent 的最终回答（或错误信息）。
 	AppendFinalMessage(ctx context.Context, sessionID int64, content string) error
 }
@@ -299,8 +301,8 @@ func (t *agentTool) runTask(ctx context.Context, task AgentTaskParams) agentRunR
 	// 子会话（有父会话且注入了 SessionStore 时才创建）+ 记录型 Runtime。
 	sessionID, rt := t.sessionRuntime(ctx, task)
 
-	answer, err := sub.Run(ctx, agent.Request{
-		Messages:     []agent.Message{{Role: agent.RoleUser, Content: task.Prompt}},
+	answer, err := sub.Run(ctx, agenttypes.Request{
+		Messages:     []agenttypes.Message{{Role: agenttypes.RoleUser, Content: task.Prompt}},
 		SystemPrompt: systemPrompt,
 		WorkingDir:   t.cfg.WorkingDir,
 	}, rt)
@@ -326,8 +328,8 @@ func (t *agentTool) runTask(ctx context.Context, task AgentTaskParams) agentRunR
 //     reasoning / tool_call / tool_result 写入该子会话的 recordingRuntime。
 //
 // 会话创建失败属于旁路故障：只记日志并退回 standalone，不影响子 Agent 执行。
-func (t *agentTool) sessionRuntime(ctx context.Context, task AgentTaskParams) (int64, agent.Runtime) {
-	standalone := agent.NewStandaloneRuntime(nil)
+func (t *agentTool) sessionRuntime(ctx context.Context, task AgentTaskParams) (int64, agentinterfaces.Runtime) {
+	standalone := agentruntime.NewStandaloneRuntime(nil)
 	if t.cfg.SessionStore == nil {
 		return 0, standalone
 	}
@@ -373,16 +375,16 @@ func (t *agentTool) appendFinal(ctx context.Context, sessionID int64, content st
 
 // recordingRuntime 把子 Agent 的流式事件交给 SubAgentSessionStore 投影落库。
 //
-// 投影规则由实现方复用 agent.ProjectTimelineEvent（reasoning / tool_call / tool_result
+// 投影规则由实现方复用 agentservice.ProjectTimelineEvent（reasoning / tool_call / tool_result
 // 产生消息，增量与生命周期事件忽略）；最终回答由 appendFinal 统一写入。
 // 权限与提问委托给无 UI 的 standalone Runtime（子 Agent 只读，正常不会触发）。
 type recordingRuntime struct {
 	store     SubAgentSessionStore
 	sessionID int64
-	fallback  agent.Runtime
+	fallback  agentinterfaces.Runtime
 }
 
-func (r *recordingRuntime) Emit(ctx context.Context, event agent.StreamEvent) error {
+func (r *recordingRuntime) Emit(ctx context.Context, event agenttypes.StreamEvent) error {
 	err := r.store.AppendEvent(ctx, r.sessionID, event)
 	if err != nil {
 		logging.Warn("sub-agent: persist message failed", "sessionID", r.sessionID, "event", event.Type, "err", err)
@@ -390,15 +392,15 @@ func (r *recordingRuntime) Emit(ctx context.Context, event agent.StreamEvent) er
 	return err
 }
 
-func (r *recordingRuntime) RequestPermission(ctx context.Context, userID int64, op agent.Operation) (agent.PermissionDecision, error) {
+func (r *recordingRuntime) RequestPermission(ctx context.Context, userID int64, op agenttypes.Operation) (agenttypes.PermissionDecision, error) {
 	return r.fallback.RequestPermission(ctx, userID, op)
 }
 
-func (r *recordingRuntime) WaitPermission(ctx context.Context, permissionID int64) (agent.PermissionDecision, error) {
+func (r *recordingRuntime) WaitPermission(ctx context.Context, permissionID int64) (agenttypes.PermissionDecision, error) {
 	return r.fallback.WaitPermission(ctx, permissionID)
 }
 
-func (r *recordingRuntime) AskUser(ctx context.Context, userID int64, input agent.AskUserInput) (agent.AskUserAnswer, error) {
+func (r *recordingRuntime) AskUser(ctx context.Context, userID int64, input agenttypes.AskUserInput) (agenttypes.AskUserAnswer, error) {
 	return r.fallback.AskUser(ctx, userID, input)
 }
 

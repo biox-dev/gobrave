@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/manager"
@@ -24,7 +25,7 @@ type aiSummaryService struct {
 	analysisRepo interfaces.AnalysisRepository
 	cfg          *config.Config
 	// agentSvc 用于按摘要使用的 Profile 渲染真实的系统提示词（可为空）。
-	agentSvc *agent.AgentService
+	agentSvc *agentservice.AgentService
 }
 
 func NewAISummaryService(
@@ -34,7 +35,7 @@ func NewAISummaryService(
 	content manager.AISummaryContentProvider,
 	analysisRepo interfaces.AnalysisRepository,
 	cfg *config.Config,
-	agentSvc *agent.AgentService,
+	agentSvc *agentservice.AgentService,
 ) interfaces.AISummaryService {
 	return &aiSummaryService{
 		summaryRepo:   summaryRepo,
@@ -304,7 +305,7 @@ func (s *aiSummaryService) DeleteAISummary(ctx context.Context, id int64) error 
 //
 // 与 DescribeEnv 类似：先取摘要记录，按所属对象（Analysis / AnalysisNode）解析出
 // 系统提示词模板变量，再按该摘要使用的 Agent Profile（取自摘要记录 ProfileID，为 0 回退
-// 内置 agent.BuiltinSummaryProfileID）渲染出真正的系统提示词。
+// 内置 agenttypes.BuiltinSummaryProfileID）渲染出真正的系统提示词。
 func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, id int64) (*types.AISummaryInput, error) {
 	summary, err := s.summaryRepo.GetAISummaryByID(ctx, id)
 	if err != nil {
@@ -318,7 +319,7 @@ func (s *aiSummaryService) GetAISummaryInput(ctx context.Context, id int64) (*ty
 
 	profileID := summary.ProfileID
 	if profileID == 0 {
-		profileID = agent.BuiltinSummaryProfileID
+		profileID = agenttypes.BuiltinSummaryProfileID
 	}
 
 	profile, systemPrompt, err := s.agentSvc.RenderSystemPrompt(ctx, 0, profileID, content.SystemPromptVars)

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/types"
 )
 
@@ -31,7 +31,7 @@ func TestProjectReportItemVarOwnerTypeRenderable(t *testing.T) {
 		{Name: "摘要一", Content: "/data/36/summary.md", OwnerType: string(types.ProjectReportItemOwnerAISummary)},
 	}
 
-	out, err := agent.RenderSystemPromptTemplate(tpl, map[string]any{"project_report_items": items})
+	out, err := agentruntime.RenderSystemPromptTemplate(tpl, map[string]any{"project_report_items": items})
 	if err != nil {
 		t.Fatalf("render project report template: %v", err)
 	}

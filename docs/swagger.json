@@ -198,7 +198,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/agent.Memory"
+                            "$ref": "#/definitions/types.Memory"
                         }
                     },
                     "400": {
@@ -307,7 +307,7 @@
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/agent.Memory"
+                                "$ref": "#/definitions/types.Memory"
                             }
                         }
                     },
@@ -359,7 +359,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/agent.Memory"
+                            "$ref": "#/definitions/types.Memory"
                         }
                     },
                     "400": {
@@ -631,7 +631,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/agent.Profile"
+                            "$ref": "#/definitions/types.Profile"
                         }
                     },
                     "400": {
@@ -676,7 +676,7 @@
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/agent.Profile"
+                                "$ref": "#/definitions/types.Profile"
                             }
                         }
                     },
@@ -722,7 +722,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/agent.Profile"
+                            "$ref": "#/definitions/types.Profile"
                         }
                     },
                     "400": {
@@ -1276,7 +1276,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/agent.Request"
+                            "$ref": "#/definitions/types.Request"
                         }
                     }
                 ],
@@ -1284,7 +1284,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/agent.Task"
+                            "$ref": "#/definitions/types.Task"
                         }
                     },
                     "400": {
@@ -1335,7 +1335,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/agent.Task"
+                            "$ref": "#/definitions/types.Task"
                         }
                     },
                     "400": {
@@ -1439,7 +1439,7 @@
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/agent.PermissionRequest"
+                                "$ref": "#/definitions/types.PermissionRequest"
                             }
                         }
                     },
@@ -1487,7 +1487,7 @@
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/agent.QuestionRequest"
+                                "$ref": "#/definitions/types.QuestionRequest"
                             }
                         }
                     },
@@ -1534,7 +1534,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/agent.Request"
+                            "$ref": "#/definitions/types.Request"
                         }
                     },
                     "400": {
@@ -1551,6 +1551,63 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/task/resume": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "用于后端重启 / 进程崩溃导致执行循环退出、但任务仍有可恢复检查点的场景。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "从持久化检查点继续执行 Agent 任务",
+                "parameters": [
+                    {
+                        "description": "任务 ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.taskIDBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -6956,7 +7013,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.File"
+                            "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
                         }
                     }
                 ],
@@ -6964,7 +7021,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/types.File"
+                            "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
                         }
                     },
                     "400": {
@@ -7088,7 +7145,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/types.File"
+                            "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
                         }
                     },
                     "400": {
@@ -7139,7 +7196,7 @@
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/types.File"
+                                "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
                             }
                         }
                     },
@@ -7188,7 +7245,7 @@
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/types.File"
+                                "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
                             }
                         }
                     },
@@ -7243,7 +7300,7 @@
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/types.File"
+                                "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
                             }
                         }
                     },
@@ -7532,7 +7589,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.File"
+                            "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
                         }
                     }
                 ],
@@ -12522,683 +12579,6 @@
         }
     },
     "definitions": {
-        "agent.AskUserAnswer": {
-            "type": "object",
-            "properties": {
-                "answered_ids": {
-                    "description": "本次已作答的问题 ID（用于逐题提交合并）",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "answers": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/agent.QuestionAnswer"
-                    }
-                },
-                "request_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "agent.ContextConfig": {
-            "type": "object",
-            "properties": {
-                "inject_memory": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "agent.Memory": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "description": "Content 可能是整段会话 / 任务摘要或长事实，64KB 的 text 会触发 1406，这里用 longtext。",
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "importance": {
-                    "description": "Importance 表示记忆重要度（0-10），检索排序时权重更高。",
-                    "type": "integer"
-                },
-                "kind": {
-                    "$ref": "#/definitions/agent.MemoryKind"
-                },
-                "last_accessed_at": {
-                    "type": "string"
-                },
-                "metadata": {
-                    "description": "Metadata 承载扩展信息（来源、标签等），由序列化为 JSON 持久化。",
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "project_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "session_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "user_id": {
-                    "type": "string",
-                    "example": "0"
-                }
-            }
-        },
-        "agent.MemoryKind": {
-            "type": "string",
-            "enum": [
-                "fact",
-                "summary",
-                "note",
-                "event"
-            ],
-            "x-enum-comments": {
-                "MemoryKindEvent": "事件记录（带时间语义）",
-                "MemoryKindFact": "用户偏好 / 事实（长期有效）",
-                "MemoryKindNote": "通用备注",
-                "MemoryKindSummary": "会话 / 任务摘要"
-            },
-            "x-enum-descriptions": [
-                "用户偏好 / 事实（长期有效）",
-                "会话 / 任务摘要",
-                "通用备注",
-                "事件记录（带时间语义）"
-            ],
-            "x-enum-varnames": [
-                "MemoryKindFact",
-                "MemoryKindSummary",
-                "MemoryKindNote",
-                "MemoryKindEvent"
-            ]
-        },
-        "agent.Message": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "description": "Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。",
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "data": {},
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "kind": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "seq": {
-                    "type": "integer"
-                },
-                "session_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "task_id": {
-                    "type": "string",
-                    "example": "0"
-                }
-            }
-        },
-        "agent.Operation": {
-            "type": "object",
-            "properties": {
-                "command": {
-                    "description": "execute",
-                    "type": "string"
-                },
-                "content": {
-                    "description": "write",
-                    "type": "string"
-                },
-                "description": {
-                    "description": "Description 是人类可读的操作摘要（如 \"Execute command: ls -la\" /\n\"Replace content in file /a/b.go\"）。Provider 有更精确的描述时填入，\n供 UI 在批准前展示；为空时前端回退到 Path / Command / Content。",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "metadata": {
-                    "description": "Metadata 承载操作相关的扩展信息（如命令参数、网络地址等）。",
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "path": {
-                    "description": "read / write / delete / move",
-                    "type": "string"
-                },
-                "type": {
-                    "$ref": "#/definitions/agent.OperationType"
-                }
-            }
-        },
-        "agent.OperationType": {
-            "type": "string",
-            "enum": [
-                "read",
-                "write",
-                "delete",
-                "move",
-                "execute",
-                "network",
-                "analysis_node"
-            ],
-            "x-enum-comments": {
-                "OperationAnalysisNode": "运行分析节点（区别于直接执行 shell / 脚本）",
-                "OperationDelete": "删除文件",
-                "OperationExecute": "执行命令 / 脚本",
-                "OperationMove": "移动 / 重命名文件",
-                "OperationNetwork": "网络访问",
-                "OperationRead": "读取文件",
-                "OperationWrite": "写入 / 修改文件"
-            },
-            "x-enum-descriptions": [
-                "读取文件",
-                "写入 / 修改文件",
-                "删除文件",
-                "移动 / 重命名文件",
-                "执行命令 / 脚本",
-                "网络访问",
-                "运行分析节点（区别于直接执行 shell / 脚本）"
-            ],
-            "x-enum-varnames": [
-                "OperationRead",
-                "OperationWrite",
-                "OperationDelete",
-                "OperationMove",
-                "OperationExecute",
-                "OperationNetwork",
-                "OperationAnalysisNode"
-            ]
-        },
-        "agent.PermissionDecision": {
-            "type": "string",
-            "enum": [
-                "allow",
-                "deny",
-                "ask"
-            ],
-            "x-enum-comments": {
-                "DecisionAllow": "允许执行",
-                "DecisionAsk": "需要人工确认",
-                "DecisionDeny": "拒绝执行"
-            },
-            "x-enum-descriptions": [
-                "允许执行",
-                "拒绝执行",
-                "需要人工确认"
-            ],
-            "x-enum-varnames": [
-                "DecisionAllow",
-                "DecisionDeny",
-                "DecisionAsk"
-            ]
-        },
-        "agent.PermissionRequest": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "operation": {
-                    "$ref": "#/definitions/agent.Operation"
-                },
-                "resolved_at": {
-                    "type": "string"
-                },
-                "resolved_by": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "session_id": {
-                    "type": "string"
-                },
-                "status": {
-                    "$ref": "#/definitions/agent.PermissionStatus"
-                },
-                "task_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "agent.PermissionStatus": {
-            "type": "string",
-            "enum": [
-                "pending",
-                "approved",
-                "denied",
-                "expired",
-                "canceled",
-                "consumed"
-            ],
-            "x-enum-comments": {
-                "PermissionApproved": "已批准",
-                "PermissionCanceled": "已取消（任务被取消等）",
-                "PermissionConsumed": "已消费：Agent 已恢复并继续执行",
-                "PermissionDenied": "已拒绝",
-                "PermissionExpired": "已过期",
-                "PermissionPending": "等待人工确认"
-            },
-            "x-enum-descriptions": [
-                "等待人工确认",
-                "已批准",
-                "已拒绝",
-                "已过期",
-                "已取消（任务被取消等）",
-                "已消费：Agent 已恢复并继续执行"
-            ],
-            "x-enum-varnames": [
-                "PermissionPending",
-                "PermissionApproved",
-                "PermissionDenied",
-                "PermissionExpired",
-                "PermissionCanceled",
-                "PermissionConsumed"
-            ]
-        },
-        "agent.Profile": {
-            "type": "object",
-            "properties": {
-                "context": {
-                    "$ref": "#/definitions/agent.ContextConfig"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "is_builtin": {
-                    "type": "boolean"
-                },
-                "is_default": {
-                    "type": "boolean"
-                },
-                "model": {
-                    "description": "Model 指定本 Profile 使用的模型名（对应 config.agent.providers 的 key）。\n为空时回退到请求级 req.Model（若仍未指定则由 Provider 兜底）。",
-                    "type": "string"
-                },
-                "name": {
-                    "description": "Name 仅作为展示名使用，不参与任何查询。",
-                    "type": "string"
-                },
-                "provider": {
-                    "description": "Provider 指定本 Profile 使用的 Agent（Provider）名称（mock | claude_code | codex | copilot | custom）。\n为空时回退到请求级 req.Provider（若仍未指定则由 Client 的默认 Provider 兜底）。",
-                    "type": "string"
-                },
-                "skills": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "system_prompt": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "agent.Question": {
-            "type": "object",
-            "properties": {
-                "allow_custom": {
-                    "description": "是否允许自定义输入",
-                    "type": "boolean"
-                },
-                "description": {
-                    "description": "问题补充说明",
-                    "type": "string"
-                },
-                "id": {
-                    "description": "问题标识（答案按此 ID 回填）",
-                    "type": "string"
-                },
-                "options": {
-                    "description": "选项（choice 类型）",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/agent.QuestionOption"
-                    }
-                },
-                "placeholder": {
-                    "description": "自定义 / 文本输入的占位提示",
-                    "type": "string"
-                },
-                "required": {
-                    "description": "是否必答",
-                    "type": "boolean"
-                },
-                "title": {
-                    "description": "问题文本",
-                    "type": "string"
-                },
-                "type": {
-                    "description": "single_choice / multiple_choice / text",
-                    "type": "string"
-                }
-            }
-        },
-        "agent.QuestionAnswer": {
-            "type": "object",
-            "properties": {
-                "custom": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "value": {
-                    "type": "string"
-                },
-                "values": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "agent.QuestionOption": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "description": "选项说明",
-                    "type": "string"
-                },
-                "label": {
-                    "description": "展示文案",
-                    "type": "string"
-                },
-                "value": {
-                    "description": "提交值",
-                    "type": "string"
-                }
-            }
-        },
-        "agent.QuestionRequest": {
-            "type": "object",
-            "properties": {
-                "answer": {
-                    "$ref": "#/definitions/agent.AskUserAnswer"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "questions": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/agent.Question"
-                    }
-                },
-                "request_id": {
-                    "type": "string"
-                },
-                "resolved_at": {
-                    "type": "string"
-                },
-                "resolved_by": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "session_id": {
-                    "type": "string"
-                },
-                "status": {
-                    "$ref": "#/definitions/agent.QuestionStatus"
-                },
-                "task_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "title": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "agent.QuestionStatus": {
-            "type": "string",
-            "enum": [
-                "pending",
-                "answered",
-                "canceled",
-                "expired"
-            ],
-            "x-enum-comments": {
-                "QuestionAnswered": "用户已作答",
-                "QuestionCanceled": "已取消（任务被取消等）",
-                "QuestionExpired": "已过期",
-                "QuestionPending": "等待用户作答"
-            },
-            "x-enum-descriptions": [
-                "等待用户作答",
-                "用户已作答",
-                "已取消（任务被取消等）",
-                "已过期"
-            ],
-            "x-enum-varnames": [
-                "QuestionPending",
-                "QuestionAnswered",
-                "QuestionCanceled",
-                "QuestionExpired"
-            ]
-        },
-        "agent.Request": {
-            "type": "object",
-            "properties": {
-                "env": {
-                    "description": "Env 可选：额外环境变量（也可携带 Provider 特有开关）。",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "max_tokens": {
-                    "description": "MaxTokens 可选：最大输出 token 数，0 表示不限制。",
-                    "type": "integer"
-                },
-                "messages": {
-                    "description": "Messages 对话上下文（不含 SystemPrompt）。",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/agent.Message"
-                    }
-                },
-                "model_id": {
-                    "description": "ModelID 可选：模型标识（对应 config.agent.providers 的 key），为空时由 Provider 自行决定。",
-                    "type": "string"
-                },
-                "profile_id": {
-                    "description": "ProfileID 可选：AgentProfile ID，AgentService 据此解析系统提示词、技能与上下文注入开关。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "provider": {
-                    "description": "Provider 可选：强制指定 Provider 名称；为空则使用 Client 的默认 Provider。",
-                    "type": "string"
-                },
-                "runtime_context": {
-                    "description": "RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录 / 归属用户）。\n\n由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到\n配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供\nbuiltin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。\n\n它同时是「请求级用户事实」的唯一来源：UserID / SessionID 都在这里，\n权限策略、ask_user 归属、记忆检索与提取统一从它读取（见 RequestUserID）。\n\n它只承载可序列化的业务事实，并随 Request 一起被 JSON 序列化进 agent_tasks.request\n（Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用\n（见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如\nAnalysisNodeRunner）不在此处，而由 agent.Options 承载。",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/tool.RuntimeContext"
-                        }
-                    ]
-                },
-                "session_id": {
-                    "description": "SessionID 可选：会话主键（雪花 ID），用于把多次调用关联到同一会话（与权限 / 任务联动）。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "skills": {
-                    "description": "Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "stream": {
-                    "description": "Stream 可选：任务模式下是否使用流式调用；默认 false 使用 Invoke。",
-                    "type": "boolean"
-                },
-                "system_prompt": {
-                    "description": "SystemPrompt 是最终发送给 Provider 的系统提示词。\n\n注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +\nRuntimeContext.SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。",
-                    "type": "string"
-                },
-                "working_dir": {
-                    "description": "WorkingDir 可选：Agent 执行的工作目录。",
-                    "type": "string"
-                }
-            }
-        },
-        "agent.Task": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "error": {
-                    "description": "Error 保存最近一次错误信息（Status == failed 时有效）。",
-                    "type": "string"
-                },
-                "finished_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "model": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "request": {
-                    "description": "Request 保存原始请求，用于恢复时重建上下文。",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/agent.Request"
-                        }
-                    ]
-                },
-                "session_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "started_at": {
-                    "type": "string"
-                },
-                "status": {
-                    "$ref": "#/definitions/agent.TaskStatus"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "working_dir": {
-                    "type": "string"
-                }
-            }
-        },
-        "agent.TaskStatus": {
-            "type": "string",
-            "enum": [
-                "created",
-                "running",
-                "waiting_permission",
-                "completed",
-                "failed",
-                "canceled"
-            ],
-            "x-enum-comments": {
-                "TaskCanceled": "已取消",
-                "TaskCompleted": "已完成",
-                "TaskCreated": "已创建，尚未开始",
-                "TaskFailed": "失败",
-                "TaskRunning": "正在执行",
-                "TaskWaitingPermission": "等待权限确认"
-            },
-            "x-enum-descriptions": [
-                "已创建，尚未开始",
-                "正在执行",
-                "等待权限确认",
-                "已完成",
-                "失败",
-                "已取消"
-            ],
-            "x-enum-varnames": [
-                "TaskCreated",
-                "TaskRunning",
-                "TaskWaitingPermission",
-                "TaskCompleted",
-                "TaskFailed",
-                "TaskCanceled"
-            ]
-        },
-        "agent.UserAgentConfig": {
-            "type": "object",
-            "properties": {
-                "env_id": {
-                    "description": "EnvID 是业务上下文对象 ID（如 project report id / analysis node id / analysis id）。",
-                    "type": "string"
-                },
-                "env_type": {
-                    "description": "EnvType 是业务上下文类型（见 handler 的 EnvType* 枚举，如 \"projectReport\" / \"analysisNode\"）。",
-                    "type": "string"
-                },
-                "permissions": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "$ref": "#/definitions/agent.PermissionDecision"
-                    }
-                },
-                "profile_id": {
-                    "type": "string",
-                    "example": "0"
-                }
-            }
-        },
         "config.ModelProviderConfig": {
             "type": "object",
             "properties": {
@@ -13377,6 +12757,150 @@
         "gin.H": {
             "type": "object",
             "additionalProperties": {}
+        },
+        "github_com_biox-dev_gobrave_internal_agent_types.OperationType": {
+            "type": "string",
+            "enum": [
+                "read",
+                "write",
+                "delete",
+                "move",
+                "execute",
+                "network",
+                "analysis_node",
+                "read",
+                "write",
+                "delete",
+                "move",
+                "execute",
+                "network",
+                "analysis_node"
+            ],
+            "x-enum-comments": {
+                "OperationAnalysisNode": "运行分析节点（区别于直接执行 shell / 脚本）",
+                "OperationDelete": "删除文件",
+                "OperationExecute": "执行命令 / 脚本",
+                "OperationMove": "移动 / 重命名文件",
+                "OperationNetwork": "网络访问",
+                "OperationRead": "读取文件",
+                "OperationWrite": "写入 / 修改文件"
+            },
+            "x-enum-descriptions": [
+                "读取文件",
+                "写入 / 修改文件",
+                "删除文件",
+                "移动 / 重命名文件",
+                "执行命令 / 脚本",
+                "网络访问",
+                "运行分析节点（区别于直接执行 shell / 脚本）"
+            ],
+            "x-enum-varnames": [
+                "OperationRead",
+                "OperationWrite",
+                "OperationDelete",
+                "OperationMove",
+                "OperationExecute",
+                "OperationNetwork",
+                "OperationAnalysisNode"
+            ]
+        },
+        "github_com_biox-dev_gobrave_internal_types.File": {
+            "type": "object",
+            "properties": {
+                "analysis_node_id": {
+                    "type": "integer"
+                },
+                "assay_id": {
+                    "description": "AssayID owns the file (int64 PK of go_assay). 0 means the file is not\nowned by any assay.",
+                    "type": "string",
+                    "example": "0"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "file_key": {
+                    "description": "FileKey is the file's key inside its owning assay, e.g. FASTQ_R1 or BAM.\nAnalysis form inputs use it to map the file onto the matching key of\ntheir resolver.accept_formats (see buildParseAnalysisResult).",
+                    "type": "string"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "format": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "md5": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "role": {
+                    "description": "Role is the role the file is published under in the workflow form's\nanalysis_result map, e.g. BAM / VCF / DEFAULT. A node output file takes it\nfrom its output_patterns entry (see NodeCompletionCoordinator.recordNodeOutputFiles),\ndefaulting to dag.DefaultNodeOutputRole (\"DEFAULT\") when the pattern declares\nnone; resolveFormAnalysisResult groups the node output files by it so the\nfrontend reads them as dataMap[role] just like dataset files.",
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "storage": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_biox-dev_gobrave_internal_types.PermissionDecision": {
+            "type": "string",
+            "enum": [
+                "allow",
+                "deny",
+                "ask"
+            ],
+            "x-enum-comments": {
+                "DecisionAllow": "允许执行",
+                "DecisionAsk": "需要人工确认",
+                "DecisionDeny": "拒绝执行"
+            },
+            "x-enum-descriptions": [
+                "允许执行",
+                "拒绝执行",
+                "需要人工确认"
+            ],
+            "x-enum-varnames": [
+                "DecisionAllow",
+                "DecisionDeny",
+                "DecisionAsk"
+            ]
+        },
+        "github_com_biox-dev_gobrave_internal_types.UserAgentConfig": {
+            "type": "object",
+            "properties": {
+                "env_id": {
+                    "description": "EnvID 是业务上下文对象 ID（如 project report id / analysis node id / analysis id）。",
+                    "type": "string"
+                },
+                "env_type": {
+                    "description": "EnvType 是业务上下文类型（见 handler 的 EnvType* 枚举，如 \"projectReport\" / \"analysisNode\"）。",
+                    "type": "string"
+                },
+                "permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.PermissionDecision"
+                    }
+                },
+                "profile_id": {
+                    "type": "string",
+                    "example": "0"
+                }
+            }
         },
         "gorm.DeletedAt": {
             "type": "object",
@@ -13795,7 +13319,7 @@
                 "kinds": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/agent.MemoryKind"
+                        "$ref": "#/definitions/types.MemoryKind"
                     }
                 },
                 "page": {
@@ -13828,7 +13352,7 @@
                 "statuses": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/agent.PermissionStatus"
+                        "$ref": "#/definitions/types.PermissionStatus"
                     }
                 },
                 "task_id": {
@@ -13853,7 +13377,7 @@
                 "statuses": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/agent.QuestionStatus"
+                        "$ref": "#/definitions/types.QuestionStatus"
                     }
                 },
                 "task_id": {
@@ -13878,7 +13402,7 @@
                 "statuses": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/agent.TaskStatus"
+                        "$ref": "#/definitions/types.TaskStatus"
                     }
                 }
             }
@@ -14693,7 +14217,7 @@
                     "type": "integer"
                 },
                 "kind": {
-                    "$ref": "#/definitions/agent.MemoryKind"
+                    "$ref": "#/definitions/types.MemoryKind"
                 },
                 "metadata": {
                     "type": "object",
@@ -14809,7 +14333,7 @@
             ],
             "properties": {
                 "context": {
-                    "$ref": "#/definitions/agent.ContextConfig"
+                    "$ref": "#/definitions/types.ContextConfig"
                 },
                 "description": {
                     "type": "string"
@@ -15064,7 +14588,7 @@
             ],
             "properties": {
                 "answer": {
-                    "$ref": "#/definitions/agent.AskUserAnswer"
+                    "$ref": "#/definitions/types.AskUserAnswer"
                 },
                 "id": {
                     "type": "string"
@@ -15240,7 +14764,7 @@
                     "type": "string"
                 },
                 "current_task_id": {
-                    "description": "CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；\n轮次结束时置空。供前端刷新 / 切换会话时恢复实时流。",
+                    "description": "CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；\n轮次正常结束时置空。failed 但仍有检查点（可续跑）的任务会保留该指针，\n供前端刷新 / 切换会话时展示「Continue」并从 /agent/task/resume 恢复执行。",
                     "type": "string",
                     "example": "0"
                 },
@@ -15251,7 +14775,7 @@
                 "messages": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/message.Message"
+                        "$ref": "#/definitions/types.Message"
                     }
                 },
                 "model": {
@@ -15259,6 +14783,11 @@
                 },
                 "parent_session_id": {
                     "description": "ParentSessionID 指向父会话（如子任务会话 / 标题生成会话），0 表示顶层会话。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "project_id": {
+                    "description": "ProjectID 是会话所属项目（创建时取用户当前激活项目），会话列表按项目隔离。",
                     "type": "string",
                     "example": "0"
                 },
@@ -15593,7 +15122,7 @@
                     "description": "File is the go_file row the workbook was read from. It is only populated\nby ReadWorkbookByFileID so the frontend can render the file metadata\nwithout an extra request.",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/types.File"
+                            "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
                         }
                     ]
                 },
@@ -15620,37 +15149,40 @@
                 }
             }
         },
-        "message.Message": {
+        "runtimecontext.RuntimeContext": {
             "type": "object",
             "properties": {
-                "content": {
-                    "description": "Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。",
+                "label": {
+                    "description": "Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。",
                     "type": "string"
                 },
-                "created_at": {
-                    "type": "string"
-                },
-                "data": {},
-                "id": {
+                "project_id": {
+                    "description": "ProjectID 是本次调用所属项目的 ID（当前用户激活项目），供工具在执行期做项目级\n数据定位。0 表示未知（未解析到激活项目）。",
                     "type": "string",
                     "example": "0"
-                },
-                "kind": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "seq": {
-                    "type": "integer"
                 },
                 "session_id": {
+                    "description": "SessionID 是本次调用所属的会话 ID（请求级事实，由上层按 Request.SessionID 注入）。\n\n它是会话主键（雪花 ID），0 表示未知（未注入）。供记忆检索 / 写入把记忆与\n会话关联（例如把某轮踩坑经验记在当次会话下）。",
                     "type": "string",
                     "example": "0"
                 },
-                "task_id": {
+                "system_prompt_vars": {
+                    "description": "SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量\n（如 analysis_node_id / workspace_directory / script_file_path 等）。",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "type": {
+                    "description": "Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，\n为空表示默认工作区）。",
+                    "type": "string"
+                },
+                "user_id": {
+                    "description": "UserID 是本次调用发起用户的 ID（请求级事实，由上层按 Request.UserID 注入）。\n\n供需要「按用户隔离数据」的工具（如 save_memory 写长期记忆）在\nRuntimeContext 内直接取到归属用户；0 表示未知（未注入）。",
                     "type": "string",
                     "example": "0"
+                },
+                "working_dir": {
+                    "description": "WorkingDir 是 Agent 执行工作目录。",
+                    "type": "string"
                 }
             }
         },
@@ -15715,43 +15247,6 @@
                     "type": "boolean"
                 },
                 "version": {
-                    "type": "string"
-                }
-            }
-        },
-        "tool.RuntimeContext": {
-            "type": "object",
-            "properties": {
-                "label": {
-                    "description": "Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。",
-                    "type": "string"
-                },
-                "project_id": {
-                    "description": "ProjectID 是本次调用所属项目的 ID（当前用户激活项目），供工具在执行期做项目级\n数据定位。0 表示未知（未解析到激活项目）。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "session_id": {
-                    "description": "SessionID 是本次调用所属的会话 ID（请求级事实，由上层按 Request.SessionID 注入）。\n\n它是会话主键（雪花 ID），0 表示未知（未注入）。供记忆检索 / 写入把记忆与\n会话关联（例如把某轮踩坑经验记在当次会话下）。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "system_prompt_vars": {
-                    "description": "SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量\n（如 analysis_node_id / workspace_directory / script_file_path 等）。",
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "type": {
-                    "description": "Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，\n为空表示默认工作区）。",
-                    "type": "string"
-                },
-                "user_id": {
-                    "description": "UserID 是本次调用发起用户的 ID（请求级事实，由上层按 Request.UserID 注入）。\n\n供需要「按用户隔离数据」的工具（如 save_memory 写长期记忆）在\nRuntimeContext 内直接取到归属用户；0 表示未知（未注入）。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "working_dir": {
-                    "description": "WorkingDir 是 Agent 执行工作目录。",
                     "type": "string"
                 }
             }
@@ -15898,7 +15393,7 @@
                     "$ref": "#/definitions/types.DatasetFile"
                 },
                 "file": {
-                    "$ref": "#/definitions/types.File"
+                    "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
                 }
             }
         },
@@ -16169,6 +15664,27 @@
                     "example": "0"
                 },
                 "workspace_path": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.AskUserAnswer": {
+            "type": "object",
+            "properties": {
+                "answered_ids": {
+                    "description": "本次已作答的问题 ID（用于逐题提交合并）",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "answers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.QuestionAnswer"
+                    }
+                },
+                "request_id": {
                     "type": "string"
                 }
             }
@@ -16467,6 +15983,14 @@
                 }
             }
         },
+        "types.ContextConfig": {
+            "type": "object",
+            "properties": {
+                "inject_memory": {
+                    "type": "boolean"
+                }
+            }
+        },
         "types.CreateDatasetRequest": {
             "type": "object",
             "required": [
@@ -16591,58 +16115,6 @@
                 "id": {
                     "type": "string",
                     "example": "0"
-                }
-            }
-        },
-        "types.File": {
-            "type": "object",
-            "properties": {
-                "analysis_node_id": {
-                    "type": "integer"
-                },
-                "assay_id": {
-                    "description": "AssayID owns the file (int64 PK of go_assay). 0 means the file is not\nowned by any assay.",
-                    "type": "string",
-                    "example": "0"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "file_key": {
-                    "description": "FileKey is the file's key inside its owning assay, e.g. FASTQ_R1 or BAM.\nAnalysis form inputs use it to map the file onto the matching key of\ntheir resolver.accept_formats (see buildParseAnalysisResult).",
-                    "type": "string"
-                },
-                "file_name": {
-                    "type": "string"
-                },
-                "format": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "md5": {
-                    "type": "string"
-                },
-                "path": {
-                    "type": "string"
-                },
-                "role": {
-                    "description": "Role is the role the file is published under in the workflow form's\nanalysis_result map, e.g. BAM / VCF / DEFAULT. A node output file takes it\nfrom its output_patterns entry (see NodeCompletionCoordinator.recordNodeOutputFiles),\ndefaulting to dag.DefaultNodeOutputRole (\"DEFAULT\") when the pattern declares\nnone; resolveFormAnalysisResult groups the node output files by it so the\nfrontend reads them as dataMap[role] just like dataset files.",
-                    "type": "string"
-                },
-                "size": {
-                    "type": "integer"
-                },
-                "storage": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
                 }
             }
         },
@@ -16799,6 +16271,145 @@
                 }
             }
         },
+        "types.Memory": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "description": "Content 可能是整段会话 / 任务摘要或长事实，64KB 的 text 会触发 1406，这里用 longtext。",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "importance": {
+                    "description": "Importance 表示记忆重要度（0-10），检索排序时权重更高。",
+                    "type": "integer"
+                },
+                "kind": {
+                    "$ref": "#/definitions/types.MemoryKind"
+                },
+                "last_accessed_at": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "description": "Metadata 承载扩展信息（来源、标签等），由序列化为 JSON 持久化。",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "project_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "session_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "0"
+                }
+            }
+        },
+        "types.MemoryKind": {
+            "type": "string",
+            "enum": [
+                "fact",
+                "summary",
+                "note",
+                "event"
+            ],
+            "x-enum-comments": {
+                "MemoryKindEvent": "事件记录（带时间语义）",
+                "MemoryKindFact": "用户偏好 / 事实（长期有效）",
+                "MemoryKindNote": "通用备注",
+                "MemoryKindSummary": "会话 / 任务摘要"
+            },
+            "x-enum-descriptions": [
+                "用户偏好 / 事实（长期有效）",
+                "会话 / 任务摘要",
+                "通用备注",
+                "事件记录（带时间语义）"
+            ],
+            "x-enum-varnames": [
+                "MemoryKindFact",
+                "MemoryKindSummary",
+                "MemoryKindNote",
+                "MemoryKindEvent"
+            ]
+        },
+        "types.Message": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "description": "Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "data": {},
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "session_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "task_id": {
+                    "type": "string",
+                    "example": "0"
+                }
+            }
+        },
+        "types.Operation": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "description": "execute",
+                    "type": "string"
+                },
+                "content": {
+                    "description": "write",
+                    "type": "string"
+                },
+                "description": {
+                    "description": "Description 是人类可读的操作摘要（如 \"Execute command: ls -la\" /\n\"Replace content in file /a/b.go\"）。Provider 有更精确的描述时填入，\n供 UI 在批准前展示；为空时前端回退到 Path / Command / Content。",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "description": "Metadata 承载操作相关的扩展信息（如命令参数、网络地址等）。",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "path": {
+                    "description": "read / write / delete / move",
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_agent_types.OperationType"
+                }
+            }
+        },
         "types.Pagination": {
             "type": "object",
             "properties": {
@@ -16812,6 +16423,124 @@
                     "type": "integer",
                     "maximum": 1000,
                     "minimum": 1
+                }
+            }
+        },
+        "types.PermissionRequest": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "operation": {
+                    "$ref": "#/definitions/types.Operation"
+                },
+                "resolved_at": {
+                    "type": "string"
+                },
+                "resolved_by": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/types.PermissionStatus"
+                },
+                "task_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.PermissionStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "approved",
+                "denied",
+                "expired",
+                "canceled",
+                "consumed"
+            ],
+            "x-enum-comments": {
+                "PermissionApproved": "已批准",
+                "PermissionCanceled": "已取消（任务被取消等）",
+                "PermissionConsumed": "已消费：Agent 已恢复并继续执行",
+                "PermissionDenied": "已拒绝",
+                "PermissionExpired": "已过期",
+                "PermissionPending": "等待人工确认"
+            },
+            "x-enum-descriptions": [
+                "等待人工确认",
+                "已批准",
+                "已拒绝",
+                "已过期",
+                "已取消（任务被取消等）",
+                "已消费：Agent 已恢复并继续执行"
+            ],
+            "x-enum-varnames": [
+                "PermissionPending",
+                "PermissionApproved",
+                "PermissionDenied",
+                "PermissionExpired",
+                "PermissionCanceled",
+                "PermissionConsumed"
+            ]
+        },
+        "types.Profile": {
+            "type": "object",
+            "properties": {
+                "context": {
+                    "$ref": "#/definitions/types.ContextConfig"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "is_builtin": {
+                    "type": "boolean"
+                },
+                "is_default": {
+                    "type": "boolean"
+                },
+                "model": {
+                    "description": "Model 指定本 Profile 使用的模型名（对应 config.agent.providers 的 key）。\n为空时回退到请求级 req.Model（若仍未指定则由 Provider 兜底）。",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name 仅作为展示名使用，不参与任何查询。",
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "Provider 指定本 Profile 使用的 Agent（Provider）名称（mock | claude_code | codex | copilot | custom）。\n为空时回退到请求级 req.Provider（若仍未指定则由 Client 的默认 Provider 兜底）。",
+                    "type": "string"
+                },
+                "skills": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "system_prompt": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -16924,6 +16653,164 @@
                 }
             }
         },
+        "types.Question": {
+            "type": "object",
+            "properties": {
+                "allow_custom": {
+                    "description": "是否允许自定义输入",
+                    "type": "boolean"
+                },
+                "description": {
+                    "description": "问题补充说明",
+                    "type": "string"
+                },
+                "id": {
+                    "description": "问题标识（答案按此 ID 回填）",
+                    "type": "string"
+                },
+                "options": {
+                    "description": "选项（choice 类型）",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.QuestionOption"
+                    }
+                },
+                "placeholder": {
+                    "description": "自定义 / 文本输入的占位提示",
+                    "type": "string"
+                },
+                "required": {
+                    "description": "是否必答",
+                    "type": "boolean"
+                },
+                "title": {
+                    "description": "问题文本",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "single_choice / multiple_choice / text",
+                    "type": "string"
+                }
+            }
+        },
+        "types.QuestionAnswer": {
+            "type": "object",
+            "properties": {
+                "custom": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "types.QuestionOption": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "description": "选项说明",
+                    "type": "string"
+                },
+                "label": {
+                    "description": "展示文案",
+                    "type": "string"
+                },
+                "value": {
+                    "description": "提交值",
+                    "type": "string"
+                }
+            }
+        },
+        "types.QuestionRequest": {
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "$ref": "#/definitions/types.AskUserAnswer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "questions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Question"
+                    }
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "resolved_at": {
+                    "type": "string"
+                },
+                "resolved_by": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/types.QuestionStatus"
+                },
+                "task_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "tool_call_id": {
+                    "description": "ToolCallID 是发起本次提问的工具调用 ID（ask_user）。\n重启后据此把“已作答的提问”与待重放的 ask_user 调用精确配对，避免重复创建提问。",
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.QuestionStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "answered",
+                "canceled",
+                "expired"
+            ],
+            "x-enum-comments": {
+                "QuestionAnswered": "用户已作答",
+                "QuestionCanceled": "已取消（任务被取消等）",
+                "QuestionExpired": "已过期",
+                "QuestionPending": "等待用户作答"
+            },
+            "x-enum-descriptions": [
+                "等待用户作答",
+                "用户已作答",
+                "已取消（任务被取消等）",
+                "已过期"
+            ],
+            "x-enum-varnames": [
+                "QuestionPending",
+                "QuestionAnswered",
+                "QuestionCanceled",
+                "QuestionExpired"
+            ]
+        },
         "types.RegisterRequest": {
             "type": "object",
             "required": [
@@ -16957,6 +16844,74 @@
                 },
                 "user": {
                     "$ref": "#/definitions/types.User"
+                }
+            }
+        },
+        "types.Request": {
+            "type": "object",
+            "properties": {
+                "env": {
+                    "description": "Env 可选：额外环境变量（也可携带 Provider 特有开关）。",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "max_tokens": {
+                    "description": "MaxTokens 可选：最大输出 token 数，0 表示不限制。",
+                    "type": "integer"
+                },
+                "messages": {
+                    "description": "Messages 对话上下文（不含 SystemPrompt）。",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Message"
+                    }
+                },
+                "model_id": {
+                    "description": "ModelID 可选：模型标识（对应 config.agent.providers 的 key），为空时由 Provider 自行决定。",
+                    "type": "string"
+                },
+                "profile_id": {
+                    "description": "ProfileID 可选：AgentProfile ID，AgentService 据此解析系统提示词、技能与上下文注入开关。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "provider": {
+                    "description": "Provider 可选：强制指定 Provider 名称；为空则使用 Client 的默认 Provider。",
+                    "type": "string"
+                },
+                "runtime_context": {
+                    "description": "RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录 / 归属用户）。\n\n由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到\n配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供\nbuiltin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。\n\n它同时是「请求级用户事实」的唯一来源：UserID / SessionID 都在这里，\n权限策略、ask_user 归属、记忆检索与提取统一从它读取（见 RequestUserID）。\n\n它只承载可序列化的业务事实，并随 Request 一起被 JSON 序列化进 agent_tasks.request\n（Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用\n（见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如\nAnalysisNodeRunner）不在此处，而由 agent.Options 承载。",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/runtimecontext.RuntimeContext"
+                        }
+                    ]
+                },
+                "session_id": {
+                    "description": "SessionID 可选：会话主键（雪花 ID），用于把多次调用关联到同一会话（与权限 / 任务联动）。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "skills": {
+                    "description": "Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "stream": {
+                    "description": "Stream 可选：任务模式下是否使用流式调用；默认 false 使用 Invoke。",
+                    "type": "boolean"
+                },
+                "system_prompt": {
+                    "description": "SystemPrompt 是最终发送给 Provider 的系统提示词。\n\n注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +\nRuntimeContext.SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。",
+                    "type": "string"
+                },
+                "working_dir": {
+                    "description": "WorkingDir 可选：Agent 执行的工作目录。",
+                    "type": "string"
                 }
             }
         },
@@ -17191,6 +17146,99 @@
                 "SummaryStatusFailed"
             ]
         },
+        "types.Task": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "error": {
+                    "description": "Error 保存最近一次错误信息（Status == failed 时有效）。",
+                    "type": "string"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "description": "ProjectID 是任务所属项目（创建时取 Request.RuntimeContext.ProjectID），0 表示未知。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "request": {
+                    "description": "Request 保存原始请求，用于恢复时重建上下文。",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.Request"
+                        }
+                    ]
+                },
+                "resumable": {
+                    "description": "Resumable 是非持久化派生字段：只要存在检查点就可以被手动 / 自动恢复。",
+                    "type": "boolean"
+                },
+                "session_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/types.TaskStatus"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "working_dir": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.TaskStatus": {
+            "type": "string",
+            "enum": [
+                "created",
+                "running",
+                "waiting_permission",
+                "completed",
+                "failed",
+                "canceled"
+            ],
+            "x-enum-comments": {
+                "TaskCanceled": "已取消",
+                "TaskCompleted": "已完成",
+                "TaskCreated": "已创建，尚未开始",
+                "TaskFailed": "失败",
+                "TaskRunning": "正在执行",
+                "TaskWaitingPermission": "等待权限确认"
+            },
+            "x-enum-descriptions": [
+                "已创建，尚未开始",
+                "正在执行",
+                "等待权限确认",
+                "已完成",
+                "失败",
+                "已取消"
+            ],
+            "x-enum-varnames": [
+                "TaskCreated",
+                "TaskRunning",
+                "TaskWaitingPermission",
+                "TaskCompleted",
+                "TaskFailed",
+                "TaskCanceled"
+            ]
+        },
         "types.UpdateDatasetRequest": {
             "type": "object",
             "required": [
@@ -17220,7 +17268,7 @@
                     "description": "AgentConfig 用户的 Agent 配置（Profile + 权限策略），以 JSON 形式落库。",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/agent.UserAgentConfig"
+                            "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.UserAgentConfig"
                         }
                     ]
                 },

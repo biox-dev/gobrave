@@ -4,10 +4,10 @@ import (
 	"context"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent"
-	"github.com/biox-dev/gobrave/internal/agent/message"
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	"github.com/biox-dev/gobrave/internal/agent/native"
-	"github.com/biox-dev/gobrave/internal/agent/session"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 // subAgentSessionStore 把子 Agent 的会话与消息写入 agent_sessions / agent_messages。
@@ -17,12 +17,12 @@ import (
 //   - 消息 kind 与 ChatService 对父会话的投影规则保持一致
 //     （reasoning / tool_call / tool_result / assistant_final）。
 type subAgentSessionStore struct {
-	sessions session.Service
-	messages message.Service
+	sessions agentinterfaces.SessionService
+	messages agentinterfaces.MessageService
 }
 
 // newSubAgentSessionStore 构建子 Agent 持久化适配器；任一服务缺失时返回 nil（不落库）。
-func newSubAgentSessionStore(sessions session.Service, messages message.Service) native.SubAgentSessionStore {
+func newSubAgentSessionStore(sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) native.SubAgentSessionStore {
 	if sessions == nil || messages == nil {
 		return nil
 	}
@@ -31,7 +31,7 @@ func newSubAgentSessionStore(sessions session.Service, messages message.Service)
 
 // CreateChildSession 实现 native.SubAgentSessionStore。
 func (s subAgentSessionStore) CreateChildSession(ctx context.Context, info native.SubAgentSessionInfo) (int64, error) {
-	sess, err := s.sessions.CreateChildSession(ctx, session.ChildSessionParams{
+	sess, err := s.sessions.CreateChildSession(ctx, agenttypes.SessionChildParams{
 		ParentSessionID: info.ParentSessionID,
 		Title:           info.Title,
 		UserID:          info.UserID,
@@ -46,12 +46,12 @@ func (s subAgentSessionStore) CreateChildSession(ctx context.Context, info nativ
 
 // AppendUserMessage 实现 native.SubAgentSessionStore。
 func (s subAgentSessionStore) AppendUserMessage(ctx context.Context, sessionID int64, content string) error {
-	return s.append(ctx, sessionID, message.RoleUser, message.KindUser, content, nil)
+	return s.append(ctx, sessionID, agenttypes.RoleUser, agenttypes.KindUser, content, nil)
 }
 
 // AppendEvent 实现 native.SubAgentSessionStore：复用父会话同一条投影规则。
-func (s subAgentSessionStore) AppendEvent(ctx context.Context, sessionID int64, event agent.StreamEvent) error {
-	params, ok := agent.ProjectTimelineEvent(sessionID, 0, event)
+func (s subAgentSessionStore) AppendEvent(ctx context.Context, sessionID int64, event agenttypes.StreamEvent) error {
+	params, ok := agentservice.ProjectTimelineEvent(sessionID, 0, event)
 	if !ok {
 		return nil
 	}
@@ -64,11 +64,11 @@ func (s subAgentSessionStore) AppendFinalMessage(ctx context.Context, sessionID 
 	if content = strings.TrimSpace(content); content == "" {
 		return nil
 	}
-	return s.append(ctx, sessionID, message.RoleAssistant, message.KindAssistantFinal, content, nil)
+	return s.append(ctx, sessionID, agenttypes.RoleAssistant, agenttypes.KindAssistantFinal, content, nil)
 }
 
 func (s subAgentSessionStore) append(ctx context.Context, sessionID int64, role, kind, content string, data any) error {
-	_, err := s.messages.Create(ctx, message.CreateParams{
+	_, err := s.messages.Create(ctx, agenttypes.MessageCreateParams{
 		SessionID: sessionID,
 		Role:      role,
 		Kind:      kind,

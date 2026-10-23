@@ -5,8 +5,9 @@ import (
 	"testing"
 
 	// 使用点导入以复用 agent 包中大量领域标识符（与合并前的包内测试保持一致）。
-	. "github.com/biox-dev/gobrave/internal/agent"
 	agentrepository "github.com/biox-dev/gobrave/internal/agent/application/repository"
+	. "github.com/biox-dev/gobrave/internal/agent/application/service"
+	. "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
 

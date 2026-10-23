@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent"
 	agentrepository "github.com/biox-dev/gobrave/internal/agent/application/repository"
-	"github.com/biox-dev/gobrave/internal/agent/message"
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
+	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
-	"github.com/biox-dev/gobrave/internal/agent/session"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"gorm.io/gorm"
 )
 
@@ -27,12 +28,12 @@ type resumeTestProvider struct {
 	mu       sync.Mutex
 	runs     int
 	resumed  int
-	lastSeen *agent.TaskResumeState
+	lastSeen *agenttypes.TaskResumeState
 }
 
 func (p *resumeTestProvider) Name() string { return resumeTestProviderName }
 
-func (p *resumeTestProvider) New(agent.Options) (agent.Agent, error) {
+func (p *resumeTestProvider) New(agentclient.Options) (agentinterfaces.Agent, error) {
 	return &resumeTestAgent{provider: p}, nil
 }
 
@@ -48,16 +49,16 @@ type resumeTestAgent struct {
 
 func (a *resumeTestAgent) Name() string { return resumeTestProviderName }
 
-func (a *resumeTestAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+func (a *resumeTestAgent) Invoke(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	return a.run(ctx, req, rt)
 }
 
-func (a *resumeTestAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+func (a *resumeTestAgent) Stream(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	return a.run(ctx, req, rt)
 }
 
-func (a *resumeTestAgent) run(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
-	cr, ok := rt.(agent.CheckpointRuntime)
+func (a *resumeTestAgent) run(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
+	cr, ok := rt.(agentinterfaces.CheckpointRuntime)
 	if !ok {
 		return nil, errors.New("runtime does not support checkpoints")
 	}
@@ -73,12 +74,12 @@ func (a *resumeTestAgent) run(ctx context.Context, req agent.Request, rt agent.R
 
 	if state == nil {
 		// 模拟原生循环：在“模型已响应、工具待执行”安全点落检查点。
-		if err := cr.SaveCheckpoint(ctx, &agent.TaskResumeState{
-			Version: agent.ResumeStateVersion,
-			History: []agent.ResumeMessage{{Role: "user", Content: "hello"}},
-			Pending: &agent.ResumeTurn{Assistant: agent.ResumeMessage{
-				Role: string(agent.RoleAssistant),
-				ToolCalls: []agent.ResumeToolCall{{
+		if err := cr.SaveCheckpoint(ctx, &agenttypes.TaskResumeState{
+			Version: agenttypes.ResumeStateVersion,
+			History: []agenttypes.ResumeMessage{{Role: "user", Content: "hello"}},
+			Pending: &agenttypes.ResumeTurn{Assistant: agenttypes.ResumeMessage{
+				Role: string(agenttypes.RoleAssistant),
+				ToolCalls: []agenttypes.ResumeToolCall{{
 					ID: "call-1", Name: "write", Input: `{"path":"/tmp/x"}`,
 				}},
 			}},
@@ -88,45 +89,45 @@ func (a *resumeTestAgent) run(ctx context.Context, req agent.Request, rt agent.R
 	}
 
 	if a.provider.requestPermission {
-		ctx = agent.WithToolCallID(ctx, "call-1")
-		decision, err := rt.RequestPermission(ctx, req.RequestUserID(), agent.Operation{
-			Type: agent.OperationWrite,
+		ctx = agenttypes.WithToolCallID(ctx, "call-1")
+		decision, err := rt.RequestPermission(ctx, req.RequestUserID(), agenttypes.Operation{
+			Type: agenttypes.OperationWrite,
 			Path: "/tmp/x",
 		})
 		if err != nil {
 			return nil, err
 		}
-		if decision == agent.DecisionDeny {
-			return nil, agent.ErrPermissionDenied
+		if decision == agenttypes.DecisionDeny {
+			return nil, agenttypes.ErrPermissionDenied
 		}
 	}
 
 	// 正常结束语义：清理检查点（与 native 循环一致）。
 	_ = cr.ClearCheckpoint(ctx)
-	return &agent.Result{Content: "resumed-ok"}, nil
+	return &agenttypes.Result{Content: "resumed-ok"}, nil
 }
 
 // ---- 测试辅助 ----
 
 // newServiceOnDB 复用同一个数据库构造 AgentService（模拟后端重启）。
-func newServiceOnDB(t *testing.T, db *gorm.DB, extra ...agent.Provider) *agent.AgentService {
+func newServiceOnDB(t *testing.T, db *gorm.DB, extra ...agentclient.Provider) *agentservice.AgentService {
 	t.Helper()
-	registry := agent.NewRegistry(append(agentproviders.All(), extra...)...)
-	client := agent.NewClient(registry, agent.Options{})
-	return agent.NewService(agent.ServiceConfig{
+	registry := agentclient.NewRegistry(append(agentproviders.All(), extra...)...)
+	client := agentclient.NewClient(registry, agentclient.Options{})
+	return agentservice.NewService(agentservice.ServiceConfig{
 		Client:    client,
 		Tasks:     agentrepository.NewGormTaskRepository(db),
-		Messages:  message.NewService(agentrepository.NewGormMessageStore(db)),
-		Perms:     agent.NewPermissionManager(agentrepository.NewGormPermissionRepository(db)),
-		Questions: agent.NewQuestionManager(agentrepository.NewGormQuestionRepository(db)),
-		Profiles:  agent.NewProfileManager(agentrepository.NewGormProfileRepository(db)),
+		Messages:  agentservice.NewMessageService(agentrepository.NewGormMessageStore(db)),
+		Perms:     agentservice.NewPermissionManager(agentrepository.NewGormPermissionRepository(db)),
+		Questions: agentservice.NewQuestionManager(agentrepository.NewGormQuestionRepository(db)),
+		Profiles:  agentservice.NewProfileManager(agentrepository.NewGormProfileRepository(db)),
 	})
 }
 
 // seedResumeProfile 创建一个指向测试 Provider 的 Profile（测试库不预置内置 Profile）。
-func seedResumeProfile(t *testing.T, svc *agent.AgentService) *agent.Profile {
+func seedResumeProfile(t *testing.T, svc *agentservice.AgentService) *agenttypes.Profile {
 	t.Helper()
-	p := &agent.Profile{Name: "resume-test", Provider: resumeTestProviderName}
+	p := &agenttypes.Profile{Name: "resume-test", Provider: resumeTestProviderName}
 	if err := svc.SaveProfile(context.Background(), p); err != nil {
 		t.Fatalf("SaveProfile: %v", err)
 	}
@@ -134,7 +135,7 @@ func seedResumeProfile(t *testing.T, svc *agent.AgentService) *agent.Profile {
 }
 
 // waitTaskStatus 轮询任务状态直到命中期望值或超时。
-func waitTaskStatus(t *testing.T, svc *agent.AgentService, taskID int64, want agent.TaskStatus) *agent.Task {
+func waitTaskStatus(t *testing.T, svc *agentservice.AgentService, taskID int64, want agenttypes.TaskStatus) *agenttypes.Task {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -165,28 +166,28 @@ func TestApprovePermissionResumesAfterRestart(t *testing.T) {
 	profileSvc := newServiceOnDB(t, db, provider)
 	profile := seedResumeProfile(t, profileSvc)
 
-	req := agent.Request{
+	req := agenttypes.Request{
 		Provider:  resumeTestProviderName,
 		ProfileID: profile.ID,
-		Messages:  []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+		Messages:  []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	}
-	task := agent.NewTask(req)
-	task.Status = agent.TaskWaitingPermission
-	task.ResumeState = &agent.TaskResumeState{
-		Version: agent.ResumeStateVersion,
-		History: []agent.ResumeMessage{{Role: "user", Content: "hello"}},
-		Pending: &agent.ResumeTurn{Assistant: agent.ResumeMessage{
-			Role:      string(agent.RoleAssistant),
-			ToolCalls: []agent.ResumeToolCall{{ID: "call-1", Name: "write", Input: `{}`}},
+	task := agenttypes.NewTask(req)
+	task.Status = agenttypes.TaskWaitingPermission
+	task.ResumeState = &agenttypes.TaskResumeState{
+		Version: agenttypes.ResumeStateVersion,
+		History: []agenttypes.ResumeMessage{{Role: "user", Content: "hello"}},
+		Pending: &agenttypes.ResumeTurn{Assistant: agenttypes.ResumeMessage{
+			Role:      string(agenttypes.RoleAssistant),
+			ToolCalls: []agenttypes.ResumeToolCall{{ID: "call-1", Name: "write", Input: `{}`}},
 		}},
 	}
 	if err := agentrepository.NewGormTaskRepository(db).Create(ctx, task); err != nil {
 		t.Fatalf("seed task: %v", err)
 	}
-	perm := agent.NewPermissionRequest(task.ID, "", agent.Operation{
-		Type:     agent.OperationWrite,
+	perm := agenttypes.NewPermissionRequest(task.ID, "", agenttypes.Operation{
+		Type:     agenttypes.OperationWrite,
 		Path:     "/tmp/x",
-		Metadata: map[string]any{agent.OperationMetadataToolCallID: "call-1"},
+		Metadata: map[string]any{agenttypes.OperationMetadataToolCallID: "call-1"},
 	})
 	if err := agentrepository.NewGormPermissionRepository(db).Create(ctx, perm); err != nil {
 		t.Fatalf("seed permission: %v", err)
@@ -197,14 +198,14 @@ func TestApprovePermissionResumesAfterRestart(t *testing.T) {
 	if err := svc.Recover(ctx); err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
-	if got := waitTaskStatus(t, svc, task.ID, agent.TaskWaitingPermission); got.Status != agent.TaskWaitingPermission {
+	if got := waitTaskStatus(t, svc, task.ID, agenttypes.TaskWaitingPermission); got.Status != agenttypes.TaskWaitingPermission {
 		t.Fatalf("status after recover = %v", got.Status)
 	}
 
 	if err := svc.ApprovePermission(ctx, perm.ID, 1); err != nil {
 		t.Fatalf("ApprovePermission: %v", err)
 	}
-	waitTaskStatus(t, svc, task.ID, agent.TaskCompleted)
+	waitTaskStatus(t, svc, task.ID, agenttypes.TaskCompleted)
 
 	runs, resumed := provider.stats()
 	if runs != 1 || resumed != 1 {
@@ -222,7 +223,7 @@ func TestApprovePermissionResumesAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get permission: %v", err)
 	}
-	if approved.Status != agent.PermissionConsumed {
+	if approved.Status != agenttypes.PermissionConsumed {
 		t.Fatalf("permission status = %s, want consumed", approved.Status)
 	}
 }
@@ -236,15 +237,15 @@ func TestManualResumeInterruptedTask(t *testing.T) {
 	profileSvc := newServiceOnDB(t, db, provider)
 	profile := seedResumeProfile(t, profileSvc)
 
-	task := agent.NewTask(agent.Request{
+	task := agenttypes.NewTask(agenttypes.Request{
 		Provider:  resumeTestProviderName,
 		ProfileID: profile.ID,
-		Messages:  []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+		Messages:  []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	})
-	task.Status = agent.TaskRunning
-	task.ResumeState = &agent.TaskResumeState{
-		Version: agent.ResumeStateVersion,
-		History: []agent.ResumeMessage{{Role: "user", Content: "hello"}},
+	task.Status = agenttypes.TaskRunning
+	task.ResumeState = &agenttypes.TaskResumeState{
+		Version: agenttypes.ResumeStateVersion,
+		History: []agenttypes.ResumeMessage{{Role: "user", Content: "hello"}},
 	}
 	if err := agentrepository.NewGormTaskRepository(db).Create(ctx, task); err != nil {
 		t.Fatalf("seed task: %v", err)
@@ -255,7 +256,7 @@ func TestManualResumeInterruptedTask(t *testing.T) {
 	if err := svc.Recover(ctx); err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
-	failed := waitTaskStatus(t, svc, task.ID, agent.TaskFailed)
+	failed := waitTaskStatus(t, svc, task.ID, agenttypes.TaskFailed)
 	if !failed.Resumable || !strings.Contains(failed.Error, "resumable") {
 		t.Fatalf("task should be resumable: resumable=%v error=%q", failed.Resumable, failed.Error)
 	}
@@ -264,14 +265,14 @@ func TestManualResumeInterruptedTask(t *testing.T) {
 	if err := svc.ResumeTask(ctx, task.ID); err != nil {
 		t.Fatalf("ResumeTask: %v", err)
 	}
-	waitTaskStatus(t, svc, task.ID, agent.TaskCompleted)
+	waitTaskStatus(t, svc, task.ID, agenttypes.TaskCompleted)
 
 	if _, resumed := provider.stats(); resumed != 1 {
 		t.Fatalf("provider resumed=%d, want 1", resumed)
 	}
 
 	// 已完成任务不可再次续跑。
-	if err := svc.ResumeTask(ctx, task.ID); !errors.Is(err, agent.ErrTaskNotResumable) {
+	if err := svc.ResumeTask(ctx, task.ID); !errors.Is(err, agenttypes.ErrTaskNotResumable) {
 		t.Fatalf("ResumeTask on completed = %v, want ErrTaskNotResumable", err)
 	}
 }
@@ -282,22 +283,22 @@ func TestRecoverInvokesTaskFinishedHandler(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 
-	sessions := session.NewService(agentrepository.NewGormSessionStore(db))
-	messages := message.NewService(agentrepository.NewGormMessageStore(db))
+	sessions := agentservice.NewSessionService(agentrepository.NewGormSessionStore(db))
+	messages := agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))
 
-	sess, err := sessions.Create(ctx, session.CreateParams{UserID: 1, Title: "t"})
+	sess, err := sessions.Create(ctx, agenttypes.SessionCreateParams{UserID: 1, Title: "t"})
 	if err != nil {
 		t.Fatalf("Create session: %v", err)
 	}
 
 	svc := newServiceOnDB(t, db)
 	// 关键：ChatService 在 Recover 之前构造，注册任务终态回调。
-	agent.NewChatService(svc, sessions, messages, nil)
+	agentservice.NewChatService(svc, sessions, messages, nil)
 
-	task := agent.NewTask(agent.Request{Provider: agent.ProviderMock, SessionID: sess.ID})
+	task := agenttypes.NewTask(agenttypes.Request{Provider: agenttypes.ProviderMock, SessionID: sess.ID})
 	task.SessionID = sess.ID
-	task.Status = agent.TaskRunning
-	task.ResumeState = &agent.TaskResumeState{Version: agent.ResumeStateVersion}
+	task.Status = agenttypes.TaskRunning
+	task.ResumeState = &agenttypes.TaskResumeState{Version: agenttypes.ResumeStateVersion}
 	if err := agentrepository.NewGormTaskRepository(db).Create(ctx, task); err != nil {
 		t.Fatalf("seed task: %v", err)
 	}
@@ -325,7 +326,7 @@ func TestRecoverInvokesTaskFinishedHandler(t *testing.T) {
 	}
 	var foundError bool
 	for _, m := range msgs {
-		if m.TaskID == task.ID && m.Kind == message.KindError {
+		if m.TaskID == task.ID && m.Kind == agenttypes.KindError {
 			foundError = true
 			break
 		}

@@ -6,11 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent"
 	agentrepository "github.com/biox-dev/gobrave/internal/agent/application/repository"
-	"github.com/biox-dev/gobrave/internal/agent/message"
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
+	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
-	"github.com/biox-dev/gobrave/internal/agent/session"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/ncruces/go-sqlite3/gormlite"
 	"gorm.io/gorm"
@@ -32,14 +33,14 @@ func newTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("get sql db: %v", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&agent.Task{}, &agent.PermissionRequest{}, &agent.QuestionRequest{}, &session.Session{}, &message.Message{}, &agent.Memory{}, &agent.Profile{}); err != nil {
+	if err := db.AutoMigrate(&agenttypes.Task{}, &agenttypes.PermissionRequest{}, &agenttypes.QuestionRequest{}, &agenttypes.Session{}, &agenttypes.Message{}, &agenttypes.Memory{}, &agenttypes.Profile{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return db
 }
 
 // newTestService 构建一个使用 mock Provider 与数据库仓库（内存 sqlite）的 AgentService。
-func newTestService(t *testing.T) *agent.AgentService {
+func newTestService(t *testing.T) *agentservice.AgentService {
 	t.Helper()
 	svc, _ := newTestServiceWithDB(t)
 	return svc
@@ -47,25 +48,25 @@ func newTestService(t *testing.T) *agent.AgentService {
 
 // newTestServiceWithDB 与 newTestService 相同，但同时返回底层 DB，便于断言落库结果。
 // extra 用于注册测试专用 Provider。
-func newTestServiceWithDB(t *testing.T, extra ...agent.Provider) (*agent.AgentService, *gorm.DB) {
+func newTestServiceWithDB(t *testing.T, extra ...agentclient.Provider) (*agentservice.AgentService, *gorm.DB) {
 	t.Helper()
-	registry := agent.NewRegistry(append(agentproviders.All(), extra...)...)
-	client := agent.NewClient(registry, agent.Options{})
+	registry := agentclient.NewRegistry(append(agentproviders.All(), extra...)...)
+	client := agentclient.NewClient(registry, agentclient.Options{})
 	db := newTestDB(t)
 	// 生产环境由容器启动时调用 EnsureBuiltinProfiles；测试库同样需要内置默认 Profile，
 	// 否则 run 解析 ProfileID=0 会失败。
-	if err := agent.EnsureBuiltinProfiles(context.Background(), agentrepository.NewGormProfileRepository(db)); err != nil {
+	if err := agentservice.EnsureBuiltinProfiles(context.Background(), agentrepository.NewGormProfileRepository(db)); err != nil {
 		t.Fatalf("seed builtin profiles: %v", err)
 	}
 
-	svc := agent.NewService(agent.ServiceConfig{
+	svc := agentservice.NewService(agentservice.ServiceConfig{
 		Client:    client,
 		Tasks:     agentrepository.NewGormTaskRepository(db),
-		Messages:  message.NewService(agentrepository.NewGormMessageStore(db)),
-		Perms:     agent.NewPermissionManager(agentrepository.NewGormPermissionRepository(db)),
-		Questions: agent.NewQuestionManager(agentrepository.NewGormQuestionRepository(db)),
-		Memory:    agent.NewMemoryManager(agent.MemoryConfig{Repo: agentrepository.NewGormMemoryRepository(db)}),
-		Profiles:  agent.NewProfileManager(agentrepository.NewGormProfileRepository(db)),
+		Messages:  agentservice.NewMessageService(agentrepository.NewGormMessageStore(db)),
+		Perms:     agentservice.NewPermissionManager(agentrepository.NewGormPermissionRepository(db)),
+		Questions: agentservice.NewQuestionManager(agentrepository.NewGormQuestionRepository(db)),
+		Memory:    agentservice.NewMemoryManager(agentservice.MemoryConfig{Repo: agentrepository.NewGormMemoryRepository(db)}),
+		Profiles:  agentservice.NewProfileManager(agentrepository.NewGormProfileRepository(db)),
 	})
 	return svc, db
 }
@@ -77,26 +78,26 @@ func TestServiceFullPermissionFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	events := make(chan agent.AgentEvent, 128)
-	unsub := svc.Subscribe(0, func(_ context.Context, ev agent.AgentEvent) error {
+	events := make(chan agenttypes.AgentEvent, 128)
+	unsub := svc.Subscribe(0, func(_ context.Context, ev agenttypes.AgentEvent) error {
 		events <- ev
 		return nil
 	})
 	defer unsub()
 
 	// 测试库的内置默认 Profile 指向 custom；这里固定使用 mock，避免真实 LLM 调用。
-	profile := &agent.Profile{Name: "full-permission-flow", Provider: agent.ProviderMock}
+	profile := &agenttypes.Profile{Name: "full-permission-flow", Provider: agenttypes.ProviderMock}
 	if err := svc.SaveProfile(ctx, profile); err != nil {
 		t.Fatalf("SaveProfile: %v", err)
 	}
 
-	req := agent.Request{
-		Provider:   agent.ProviderMock,
+	req := agenttypes.Request{
+		Provider:   agenttypes.ProviderMock,
 		ProfileID:  profile.ID,
 		Stream:     true,
 		WorkingDir: "/tmp",
 		Env:        map[string]string{"MOCK_PERMISSION_DEMO": "true"},
-		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	}
 
 	task, err := svc.RunTask(ctx, req)
@@ -108,21 +109,21 @@ func TestServiceFullPermissionFlow(t *testing.T) {
 	var permID int64
 	for {
 		ev := readEvent(t, ctx, events)
-		if ev.Type == agent.EventPermissionCreated {
-			perm, ok := ev.Payload.(*agent.PermissionRequest)
+		if ev.Type == agenttypes.EventPermissionCreated {
+			perm, ok := ev.Payload.(*agenttypes.PermissionRequest)
 			if !ok {
 				t.Fatalf("unexpected payload type %T", ev.Payload)
 			}
 			permID = perm.ID
 			break
 		}
-		if ev.Type == agent.EventTaskFailed || ev.Type == agent.EventTaskCompleted {
+		if ev.Type == agenttypes.EventTaskFailed || ev.Type == agenttypes.EventTaskCompleted {
 			t.Fatalf("task finished before permission: %s", ev.Type)
 		}
 	}
 
 	// 校验任务进入 waiting_permission，且权限可被查询。
-	if got, _ := svc.GetTask(ctx, task.ID); got.Status != agent.TaskWaitingPermission {
+	if got, _ := svc.GetTask(ctx, task.ID); got.Status != agenttypes.TaskWaitingPermission {
 		t.Fatalf("task status = %s, want waiting_permission", got.Status)
 	}
 	pending, err := svc.GetPendingPermissions(ctx, task.ID)
@@ -139,9 +140,9 @@ func TestServiceFullPermissionFlow(t *testing.T) {
 	for {
 		ev := readEvent(t, ctx, events)
 		switch ev.Type {
-		case agent.EventTaskCompleted:
+		case agenttypes.EventTaskCompleted:
 			goto done
-		case agent.EventTaskFailed:
+		case agenttypes.EventTaskFailed:
 			t.Fatalf("task failed: %v", ev.Payload)
 		}
 	}
@@ -152,7 +153,7 @@ done:
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if got.Status != agent.TaskCompleted {
+	if got.Status != agenttypes.TaskCompleted {
 		t.Fatalf("task status = %s, want completed", got.Status)
 	}
 }
@@ -163,26 +164,26 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	events := make(chan agent.AgentEvent, 128)
-	unsub := svc.Subscribe(0, func(_ context.Context, ev agent.AgentEvent) error {
+	events := make(chan agenttypes.AgentEvent, 128)
+	unsub := svc.Subscribe(0, func(_ context.Context, ev agenttypes.AgentEvent) error {
 		events <- ev
 		return nil
 	})
 	defer unsub()
 
 	// 固定使用 mock Profile，避免内置默认 Profile（custom）发起真实 LLM 调用。
-	profile := &agent.Profile{Name: "deny-permission-flow", Provider: agent.ProviderMock}
+	profile := &agenttypes.Profile{Name: "deny-permission-flow", Provider: agenttypes.ProviderMock}
 	if err := svc.SaveProfile(ctx, profile); err != nil {
 		t.Fatalf("SaveProfile: %v", err)
 	}
 
-	req := agent.Request{
-		Provider:   agent.ProviderMock,
+	req := agenttypes.Request{
+		Provider:   agenttypes.ProviderMock,
 		ProfileID:  profile.ID,
 		Stream:     true,
 		WorkingDir: "/tmp",
 		Env:        map[string]string{"MOCK_PERMISSION_DEMO": "true"},
-		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	}
 
 	task, err := svc.RunTask(ctx, req)
@@ -193,8 +194,8 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 	var permID int64
 	for {
 		ev := readEvent(t, ctx, events)
-		if ev.Type == agent.EventPermissionCreated {
-			permID = ev.Payload.(*agent.PermissionRequest).ID
+		if ev.Type == agenttypes.EventPermissionCreated {
+			permID = ev.Payload.(*agenttypes.PermissionRequest).ID
 			break
 		}
 	}
@@ -205,13 +206,13 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 
 	for {
 		ev := readEvent(t, ctx, events)
-		if ev.Type == agent.EventTaskFailed {
+		if ev.Type == agenttypes.EventTaskFailed {
 			break
 		}
 	}
 
 	got, _ := svc.GetTask(ctx, task.ID)
-	if got.Status != agent.TaskFailed {
+	if got.Status != agenttypes.TaskFailed {
 		t.Fatalf("task status = %s, want failed", got.Status)
 	}
 	if got.Error == "" {
@@ -221,11 +222,11 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 
 // TestStandaloneInvoke 验证 Client.Invoke 的一次性调用语义（AI 摘要等场景）不受影响。
 // func TestStandaloneInvoke(t *testing.T) {
-// 	registry := agent.NewRegistry(agentproviders.All()...)
-// 	client := agent.NewClient(registry, agent.ProviderMock, agent.Options{})
+// 	registry := agentclient.NewRegistry(agentproviders.All()...)
+// 	client := agentclient.NewClient(registry, agenttypes.ProviderMock, agentclient.Options{})
 
-// 	result, err := client.Invoke(context.Background(), agent.Request{
-// 		Messages: []agent.Message{{Role: agent.RoleUser, Content: "hi"}},
+// 	result, err := client.Invoke(context.Background(), agenttypes.Request{
+// 		Messages: []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hi"}},
 // 	})
 // 	if err != nil {
 // 		t.Fatalf("Invoke: %v", err)
@@ -240,13 +241,13 @@ func TestRecoverInterruptedTask(t *testing.T) {
 	ctx := context.Background()
 
 	tasks := agentrepository.NewGormTaskRepository(newTestDB(t))
-	task := agent.NewTask(agent.Request{Provider: agent.ProviderMock})
-	task.Status = agent.TaskRunning
+	task := agenttypes.NewTask(agenttypes.Request{Provider: agenttypes.ProviderMock})
+	task.Status = agenttypes.TaskRunning
 	if err := tasks.Update(ctx, task); err != nil {
 		t.Fatalf("seed task: %v", err)
 	}
 
-	svc := agent.NewService(agent.ServiceConfig{Tasks: tasks})
+	svc := agentservice.NewService(agentservice.ServiceConfig{Tasks: tasks})
 
 	if err := svc.Recover(ctx); err != nil {
 		t.Fatalf("Recover: %v", err)
@@ -256,7 +257,7 @@ func TestRecoverInterruptedTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if got.Status != agent.TaskFailed {
+	if got.Status != agenttypes.TaskFailed {
 		t.Fatalf("task status = %s, want failed after recover", got.Status)
 	}
 	if got.Error == "" {
@@ -274,17 +275,17 @@ func TestServiceSyncRunAutoApprovesPermission(t *testing.T) {
 
 	// 测试库未播种内置 Profile，这里建一个自定义 Profile 固定 Provider=mock
 	// （内置默认 Profile 的 Provider 是 copilot）。
-	profile := &agent.Profile{Name: "sync-auto-approve-test", Provider: agent.ProviderMock}
+	profile := &agenttypes.Profile{Name: "sync-auto-approve-test", Provider: agenttypes.ProviderMock}
 	if err := svc.SaveProfile(ctx, profile); err != nil {
 		t.Fatalf("SaveProfile: %v", err)
 	}
 
-	task, err := svc.CreateTask(ctx, agent.Request{
-		Provider:   agent.ProviderMock,
+	task, err := svc.CreateTask(ctx, agenttypes.Request{
+		Provider:   agenttypes.ProviderMock,
 		ProfileID:  profile.ID,
 		WorkingDir: "/tmp",
 		Env:        map[string]string{"MOCK_PERMISSION_DEMO": "true"},
-		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -305,7 +306,7 @@ func TestServiceSyncRunAutoApprovesPermission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if got.Status != agent.TaskCompleted {
+	if got.Status != agenttypes.TaskCompleted {
 		t.Fatalf("task status = %s, want completed", got.Status)
 	}
 
@@ -333,19 +334,19 @@ func TestTimelineMessagesPersistedDuringRun(t *testing.T) {
 	svc, db := newTestServiceWithDB(t)
 	ctx := context.Background()
 
-	profile := &agent.Profile{Name: "timeline-persist-test", Provider: agent.ProviderMock}
+	profile := &agenttypes.Profile{Name: "timeline-persist-test", Provider: agenttypes.ProviderMock}
 	if err := svc.SaveProfile(ctx, profile); err != nil {
 		t.Fatalf("SaveProfile: %v", err)
 	}
 
 	const sessionID int64 = 20241022
-	task, err := svc.CreateTask(ctx, agent.Request{
-		Provider:   agent.ProviderMock,
+	task, err := svc.CreateTask(ctx, agenttypes.Request{
+		Provider:   agenttypes.ProviderMock,
 		ProfileID:  profile.ID,
 		SessionID:  sessionID,
 		WorkingDir: "/tmp",
 		Env:        map[string]string{"MOCK_TOOL_DEMO": "true"},
-		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -354,7 +355,7 @@ func TestTimelineMessagesPersistedDuringRun(t *testing.T) {
 		t.Fatalf("RunTaskSyncByID: %v", err)
 	}
 
-	var rows []message.Message
+	var rows []agenttypes.Message
 	if err := db.Where("session_id = ? AND task_id = ?", sessionID, task.ID).
 		Order("seq ASC").Find(&rows).Error; err != nil {
 		t.Fatalf("query agent_messages: %v", err)
@@ -370,7 +371,7 @@ func TestTimelineMessagesPersistedDuringRun(t *testing.T) {
 			t.Fatalf("message %d has invalid seq %d", row.ID, row.Seq)
 		}
 	}
-	for _, want := range []string{message.KindToolCall, message.KindToolResult} {
+	for _, want := range []string{agenttypes.KindToolCall, agenttypes.KindToolResult} {
 		if !seen[want] {
 			t.Fatalf("missing timeline message kind %q (got %v)", want, seen)
 		}
@@ -383,19 +384,19 @@ func TestAssistantMessageBlockPersistedInTurn(t *testing.T) {
 	svc, db := newTestServiceWithDB(t, messageBlockProvider{})
 	ctx := context.Background()
 
-	profile := &agent.Profile{Name: "assistant-block-test", Provider: messageBlockProviderName}
+	profile := &agenttypes.Profile{Name: "assistant-block-test", Provider: messageBlockProviderName}
 	if err := svc.SaveProfile(ctx, profile); err != nil {
 		t.Fatalf("SaveProfile: %v", err)
 	}
 
 	const sessionID int64 = 20241023
-	task, err := svc.CreateTask(ctx, agent.Request{
+	task, err := svc.CreateTask(ctx, agenttypes.Request{
 		Provider:   messageBlockProviderName,
 		ProfileID:  profile.ID,
 		SessionID:  sessionID,
 		WorkingDir: "/tmp",
 		Stream:     true,
-		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -404,15 +405,15 @@ func TestAssistantMessageBlockPersistedInTurn(t *testing.T) {
 		t.Fatalf("RunTaskSyncByID: %v", err)
 	}
 
-	var rows []message.Message
+	var rows []agenttypes.Message
 	if err := db.Where("session_id = ? AND task_id = ?", sessionID, task.ID).
 		Order("seq ASC").Find(&rows).Error; err != nil {
 		t.Fatalf("query agent_messages: %v", err)
 	}
 
-	var assistant []message.Message
+	var assistant []agenttypes.Message
 	for _, row := range rows {
-		if row.Kind == message.KindAssistant {
+		if row.Kind == agenttypes.KindAssistant {
 			assistant = append(assistant, row)
 		}
 	}
@@ -428,19 +429,19 @@ func TestAssistantFinalFallbackWhenNoMessageBlock(t *testing.T) {
 	svc, db := newTestServiceWithDB(t, deltaOnlyProvider{})
 	ctx := context.Background()
 
-	profile := &agent.Profile{Name: "delta-only-test", Provider: deltaOnlyProviderName}
+	profile := &agenttypes.Profile{Name: "delta-only-test", Provider: deltaOnlyProviderName}
 	if err := svc.SaveProfile(ctx, profile); err != nil {
 		t.Fatalf("SaveProfile: %v", err)
 	}
 
 	const sessionID int64 = 20241024
-	task, err := svc.CreateTask(ctx, agent.Request{
+	task, err := svc.CreateTask(ctx, agenttypes.Request{
 		Provider:   deltaOnlyProviderName,
 		ProfileID:  profile.ID,
 		SessionID:  sessionID,
 		WorkingDir: "/tmp",
 		Stream:     true,
-		Messages:   []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+		Messages:   []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -449,18 +450,18 @@ func TestAssistantFinalFallbackWhenNoMessageBlock(t *testing.T) {
 		t.Fatalf("RunTaskSyncByID: %v", err)
 	}
 
-	var rows []message.Message
+	var rows []agenttypes.Message
 	if err := db.Where("session_id = ? AND task_id = ?", sessionID, task.ID).
 		Order("seq ASC").Find(&rows).Error; err != nil {
 		t.Fatalf("query agent_messages: %v", err)
 	}
 
-	var assistant, final []message.Message
+	var assistant, final []agenttypes.Message
 	for _, row := range rows {
 		switch row.Kind {
-		case message.KindAssistant:
+		case agenttypes.KindAssistant:
 			assistant = append(assistant, row)
-		case message.KindAssistantFinal:
+		case agenttypes.KindAssistantFinal:
 			final = append(final, row)
 		}
 	}
@@ -483,7 +484,7 @@ type messageBlockProvider struct{}
 
 func (messageBlockProvider) Name() string { return messageBlockProviderName }
 
-func (messageBlockProvider) New(agent.Options) (agent.Agent, error) {
+func (messageBlockProvider) New(agentclient.Options) (agentinterfaces.Agent, error) {
 	return messageBlockAgent{}, nil
 }
 
@@ -491,21 +492,21 @@ type messageBlockAgent struct{}
 
 func (messageBlockAgent) Name() string { return messageBlockProviderName }
 
-func (messageBlockAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+func (messageBlockAgent) Invoke(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	return messageBlockAgent{}.Stream(ctx, req, rt)
 }
 
-func (messageBlockAgent) Stream(ctx context.Context, _ agent.Request, rt agent.Runtime) (*agent.Result, error) {
-	if err := rt.Emit(ctx, agent.StreamEvent{
-		Type: agent.StreamEventMessage,
-		Data: agent.MessageBlock{ID: "m1", Content: "block answer"},
+func (messageBlockAgent) Stream(ctx context.Context, _ agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
+	if err := rt.Emit(ctx, agenttypes.StreamEvent{
+		Type: agenttypes.StreamEventMessage,
+		Data: agenttypes.MessageBlock{ID: "m1", Content: "block answer"},
 	}); err != nil {
 		return nil, err
 	}
-	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
+	if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventDone}); err != nil {
 		return nil, err
 	}
-	return &agent.Result{Content: "block answer"}, nil
+	return &agenttypes.Result{Content: "block answer"}, nil
 }
 
 // deltaOnlyProviderName 是「只发增量」测试 Provider 名称。
@@ -517,7 +518,7 @@ type deltaOnlyProvider struct{}
 
 func (deltaOnlyProvider) Name() string { return deltaOnlyProviderName }
 
-func (deltaOnlyProvider) New(agent.Options) (agent.Agent, error) {
+func (deltaOnlyProvider) New(agentclient.Options) (agentinterfaces.Agent, error) {
 	return deltaOnlyAgent{}, nil
 }
 
@@ -525,29 +526,29 @@ type deltaOnlyAgent struct{}
 
 func (deltaOnlyAgent) Name() string { return deltaOnlyProviderName }
 
-func (deltaOnlyAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+func (deltaOnlyAgent) Invoke(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	return deltaOnlyAgent{}.Stream(ctx, req, rt)
 }
 
-func (deltaOnlyAgent) Stream(ctx context.Context, _ agent.Request, rt agent.Runtime) (*agent.Result, error) {
-	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: "delta answer"}); err != nil {
+func (deltaOnlyAgent) Stream(ctx context.Context, _ agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
+	if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventText, Content: "delta answer"}); err != nil {
 		return nil, err
 	}
-	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
+	if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventDone}); err != nil {
 		return nil, err
 	}
-	return &agent.Result{Content: "delta answer"}, nil
+	return &agenttypes.Result{Content: "delta answer"}, nil
 }
 
 // ---- helpers ----
 
-func readEvent(t *testing.T, ctx context.Context, ch <-chan agent.AgentEvent) agent.AgentEvent {
+func readEvent(t *testing.T, ctx context.Context, ch <-chan agenttypes.AgentEvent) agenttypes.AgentEvent {
 	t.Helper()
 	select {
 	case ev := <-ch:
 		return ev
 	case <-ctx.Done():
 		t.Fatalf("timed out waiting for event")
-		return agent.AgentEvent{}
+		return agenttypes.AgentEvent{}
 	}
 }

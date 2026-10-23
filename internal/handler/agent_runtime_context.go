@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -53,11 +53,11 @@ func normalizeEnvType(typ string) string {
 // RuntimeContext 是解析后的运行时上下文。
 //
 // 直接复用 tool.RuntimeContext：它只承载可序列化的业务事实（渲染 Profile 系统提示词模板
-// 所需的 SystemPromptVars 与工作目录），随 TurnInput → agent.Request.RuntimeContext 一路
+// 所需的 SystemPromptVars 与工作目录），随 TurnInput → agenttypes.Request.RuntimeContext 一路
 // 传递到工具执行期，并随 Request 一起序列化进 agent_tasks.request 持久化（重启后可恢复）。
 //
 // 工具执行期所需的服务能力（如 AnalysisNodeRunner）不在此结构内：它是进程级静态依赖，
-// 改由 agent.Options 注入（见 buildAgentClient），避免服务对象被序列化进 agent_tasks。
+// 改由 agentclient.Options 注入（见 buildAgentClient），避免服务对象被序列化进 agent_tasks。
 type RuntimeContext = tool.RuntimeContext
 
 // RuntimeContextResolver 把「业务 env(type,id) → 系统提示词 + 工作目录」的解析逻辑
@@ -71,7 +71,7 @@ type RuntimeContextResolver struct {
 	// summarySvc 用于解析项目报告中的 AI 摘要条目（标题 + 摘要文件路径）。
 	summarySvc interfaces.AISummaryService
 	// agentSvc 用于在 Describe 中按用户 Profile 渲染真正的系统提示词（可为空）。
-	agentSvc *agent.AgentService
+	agentSvc *agentservice.AgentService
 }
 
 // NewRuntimeContextResolver 创建运行时上下文解析器。
@@ -81,7 +81,7 @@ func NewRuntimeContextResolver(
 	workflowSvc interfaces.WorkflowService,
 	analysisSvc interfaces.AnalysisService,
 	summarySvc interfaces.AISummaryService,
-	agentSvc *agent.AgentService,
+	agentSvc *agentservice.AgentService,
 ) *RuntimeContextResolver {
 	return &RuntimeContextResolver{
 		cfg:         cfg,

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -63,7 +63,7 @@ func TestExecuteToolsRunsAgentCallsConcurrently(t *testing.T) {
 	}
 
 	cfg := &Config{}
-	results := cfg.executeTools(context.Background(), tool.NewExecutor(registry), calls, agent.NewStandaloneRuntime(nil), nil)
+	results := cfg.executeTools(context.Background(), tool.NewExecutor(registry), calls, agentruntime.NewStandaloneRuntime(nil), nil)
 
 	if len(results) != 2 {
 		t.Fatalf("len(results) = %d, want 2", len(results))

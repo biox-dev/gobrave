@@ -15,9 +15,7 @@ internal/agent/
 ├── native/                    # 原生 Agent 循环
 ├── tool/                      # 工具注册表、执行器、builtin / coder
 ├── skill/                     # Agent Skills
-├── llm/ lsp/ mcp/ logging/    # 基础设施
-├── compat.go                  # 旧根包 agent 的兼容导入面（类型别名/构造器转发）
-└── session/ message/ history/ # 旧导入路径兼容层（类型/接口别名）
+└── llm/ lsp/ mcp/ logging/    # 基础设施
 ```
 
 ## 分层约定
@@ -33,13 +31,18 @@ internal/agent/
 > 目录名 `types/interface` 是对外约定的路径；由于 `interface` 是 Go 关键字，
 > 包声明使用 `package interfaces`。
 
-## 兼容层
+## 导入路径
 
-根包 `agent` 以及 `session` / `message` / `history` 保留了旧导入路径的类型别名与构造
-函数转发，便于上层（`handler` / `container` / `manager` / `providers` / `native`）平滑迁移。
-新代码应直接依赖：
+旧的根包 `agent` 以及 `session` / `message` / `history` 路径兼容层已删除，所有调用方
+直接依赖以下路径：
 
-- `github.com/biox-dev/gobrave/internal/agent/types`
-- `github.com/biox-dev/gobrave/internal/agent/types/interface`
-- `github.com/biox-dev/gobrave/internal/agent/application/service`
-- `github.com/biox-dev/gobrave/internal/agent/application/repository`
+- 实体 / 值对象：`github.com/biox-dev/gobrave/internal/agent/types`
+- Repository / Service 接口：`github.com/biox-dev/gobrave/internal/agent/types/interface`
+- Repository 实现：`github.com/biox-dev/gobrave/internal/agent/application/repository`
+- Service 实现：`github.com/biox-dev/gobrave/internal/agent/application/service`
+- Client / Registry / Options：`github.com/biox-dev/gobrave/internal/agent/client`
+- Runtime / ToolRunner / 工具上下文：`github.com/biox-dev/gobrave/internal/agent/runtime`
+- PermissionPolicy：`github.com/biox-dev/gobrave/internal/agent/policy`
+
+> `tool/runtimecontext_alias.go` 仅为保留 `tool.RuntimeContext` 等既有符号名而存在，
+> 属于符号转发而非路径兼容层；如需彻底移除可改为直接使用 `runtimecontext` 包。

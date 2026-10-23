@@ -9,20 +9,22 @@ import (
 	"strings"
 	"time"
 
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
+	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
+	agentpolicy "github.com/biox-dev/gobrave/internal/agent/policy"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
+
 	// sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 	// "github.com/minebiome/ai-agent-go/internal/application/repository"
 	// "github.com/minebiome/ai-agent-go/internal/application/service"
 	// "github.com/minebiome/ai-agent-go/internal/config"
 	// "github.com/minebiome/ai-agent-go/internal/grpcserver"
 	// "github.com/minebiome/ai-agent-go/internal/handler"
-	"github.com/biox-dev/gobrave/internal/agent"
 	agentrepository "github.com/biox-dev/gobrave/internal/agent/application/repository"
-	"github.com/biox-dev/gobrave/internal/agent/history"
 	lspmanager "github.com/biox-dev/gobrave/internal/agent/lsp/manager"
 	"github.com/biox-dev/gobrave/internal/agent/mcp"
-	"github.com/biox-dev/gobrave/internal/agent/message"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
-	"github.com/biox-dev/gobrave/internal/agent/session"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
@@ -148,13 +150,13 @@ func ensureBuiltinSkills(cfg *config.Config) error {
 // 每次调用都基于当前生效的 config.Config 重新生成，因此可视化配置页保存 agent 段后，
 // 下一次 Agent 请求即可使用新的 base_url / api_key，无需重启进程。
 // key 统一小写（与 Provider 内部按模型名查找的方式一致）。
-func agentProviders(cfg *config.Config) map[string]agent.ModelProviderConfig {
+func agentProviders(cfg *config.Config) map[string]agentclient.ModelProviderConfig {
 	if cfg == nil || cfg.Agent == nil || len(cfg.Agent.Providers) == 0 {
 		return nil
 	}
-	providers := make(map[string]agent.ModelProviderConfig, len(cfg.Agent.Providers))
+	providers := make(map[string]agentclient.ModelProviderConfig, len(cfg.Agent.Providers))
 	for name, pc := range cfg.Agent.Providers {
-		providers[strings.ToLower(strings.TrimSpace(name))] = agent.ModelProviderConfig{
+		providers[strings.ToLower(strings.TrimSpace(name))] = agentclient.ModelProviderConfig{
 			ModelID:             pc.ModelID,
 			BaseURL:             pc.BaseURL,
 			APIKey:              pc.APIKey,
@@ -213,13 +215,13 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 // skills 是技能注册表：既提供系统提示词的技能元信息，也供 get_skill /
 // load_skill_resource 工具在执行期读取技能指令与附属资源。
 // sessions / messages 是会话与消息服务：供 custom Provider 为子 Agent 创建子会话并落库。
-func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, agentAnalysisRunner tool.AgentAnalysisRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, nodeCreator tool.AnalysisNodeCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager, sessions session.Service, messages message.Service) *agent.Client {
-	opts := agent.Options{}
+func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner tool.AnalysisNodeRunner, agentAnalysisRunner tool.AgentAnalysisRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, nodeCreator tool.AnalysisNodeCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
+	opts := agentclient.Options{}
 
 	// 模型提供商配置表按需实时生成：可视化配置页保存 agent 段后，内存中的 cfg 会被立即更新，
 	// 下一次请求即可读到新的 providers，无需重启进程。
 	if cfg != nil {
-		opts.ProviderSource = func() map[string]agent.ModelProviderConfig {
+		opts.ProviderSource = func() map[string]agentclient.ModelProviderConfig {
 			return agentProviders(cfg)
 		}
 	}
@@ -267,7 +269,7 @@ func buildAgentClient(cfg *config.Config, registry *agent.Registry, runner tool.
 	opts.Sessions = sessions
 	opts.Messages = messages
 
-	return agent.NewClient(registry, opts)
+	return agentclient.NewClient(registry, opts)
 }
 
 type eventHandlerGroupIn struct {
@@ -275,7 +277,7 @@ type eventHandlerGroupIn struct {
 	Handlers []event.Handler `group:"event_handlers"`
 }
 
-// userAgentConfigProvider 把用户的 Agent 配置读取适配为 agent.UserAgentConfigProvider，
+// userAgentConfigProvider 把用户的 Agent 配置读取适配为 agentinterfaces.UserAgentConfigProvider，
 // 使权限策略能按 userID 读取存储在 User.AgentConfig 中的许可配置。
 type userAgentConfigProvider struct {
 	repo interfaces.UserRepository
@@ -389,8 +391,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		return w
 	}, dig.Group("event_handlers")))
 	// Provide AISummaryWorker as its concrete type and register it as an event handler.
-	must(container.Provide(func() *agent.Registry {
-		return agent.NewRegistry(agentproviders.All()...)
+	must(container.Provide(func() *agentclient.Registry {
+		return agentclient.NewRegistry(agentproviders.All()...)
 	}))
 	must(container.Provide(buildSkillRegistry))
 	must(container.Provide(buildSkillStore))
@@ -430,76 +432,76 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(newAgentEnvUpdater))
 	// 记忆管理器以具体类型提供一次：既供 AgentService 使用，也供 memorySaver（save_memory 工具）
 	// 复用同一个实例，避免记忆域出现两份独立的状态入口。
-	must(container.Provide(func(mems agent.MemoryRepository) *agent.MemoryManager {
-		return agent.NewMemoryManager(agent.MemoryConfig{Repo: mems}) // Extractor: agent.MockMemoryExtractor(),
+	must(container.Provide(func(mems agentinterfaces.MemoryRepository) *agentservice.MemoryManager {
+		return agentservice.NewMemoryManager(agentservice.MemoryConfig{Repo: mems}) // Extractor: agenttypes.MockMemoryExtractor(),
 	}))
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agent.Registry, runner tool.AnalysisNodeRunner, agentAnalysisRunner tool.AgentAnalysisRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, nodeCreator tool.AnalysisNodeCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files history.Service, lspMgr *lspmanager.Manager, sessions session.Service, messages message.Service) *agent.Client {
+	must(container.Provide(func(cfg *config.Config, registry *agentclient.Registry, runner tool.AnalysisNodeRunner, agentAnalysisRunner tool.AgentAnalysisRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, nodeCreator tool.AnalysisNodeCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
 		return buildAgentClient(cfg, registry, runner, agentAnalysisRunner, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。
-	must(container.Provide(func(db *gorm.DB) agent.TaskRepository {
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.TaskRepository {
 		return agentrepository.NewGormTaskRepository(db)
 	}))
-	must(container.Provide(func(db *gorm.DB) agent.PermissionRepository {
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.PermissionRepository {
 		return agentrepository.NewGormPermissionRepository(db)
 	}))
-	must(container.Provide(func(db *gorm.DB) agent.QuestionRepository {
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.QuestionRepository {
 		return agentrepository.NewGormQuestionRepository(db)
 	}))
-	must(container.Provide(func(db *gorm.DB) agent.MemoryRepository {
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.MemoryRepository {
 		return agentrepository.NewGormMemoryRepository(db)
 	}))
-	must(container.Provide(func(db *gorm.DB) agent.ProfileRepository {
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.ProfileRepository {
 		return agentrepository.NewGormProfileRepository(db)
 	}))
 	// 系统启动时同步内置 Profile 到数据库（按 ID 判断：不存在则新增、已存在则更新）。
-	must(container.Invoke(func(repo agent.ProfileRepository) error {
-		return agent.EnsureBuiltinProfiles(ctx, repo)
+	must(container.Invoke(func(repo agentinterfaces.ProfileRepository) error {
+		return agentservice.EnsureBuiltinProfiles(ctx, repo)
 	}))
 	// 说明：默认容器模板的兜底（EnsureDefaultContainerTemplate）只在下面的
 	// InstallBuiltinContainerTemplates 之后执行一次，避免在内置模板导入前
 	// 抢先选中一条旧的绑定行作为默认。
 
 	must(container.Provide(func(
-		client *agent.Client,
-		tasks agent.TaskRepository,
-		perms agent.PermissionRepository,
-		questions agent.QuestionRepository,
-		messages message.Service,
-		mems *agent.MemoryManager,
-		profiles agent.ProfileRepository,
+		client *agentclient.Client,
+		tasks agentinterfaces.TaskRepository,
+		perms agentinterfaces.PermissionRepository,
+		questions agentinterfaces.QuestionRepository,
+		messages agentinterfaces.MessageService,
+		mems *agentservice.MemoryManager,
+		profiles agentinterfaces.ProfileRepository,
 		skills *skill.Registry,
 		userRepo interfaces.UserRepository,
-	) *agent.AgentService {
+	) *agentservice.AgentService {
 
-		return agent.NewService(agent.ServiceConfig{
+		return agentservice.NewService(agentservice.ServiceConfig{
 			Client:    client,
 			Tasks:     tasks,
-			Perms:     agent.NewPermissionManager(perms),
-			Questions: agent.NewQuestionManager(questions),
+			Perms:     agentservice.NewPermissionManager(perms),
+			Questions: agentservice.NewQuestionManager(questions),
 			// 时间线消息（agent_messages）由 AgentService 在轮内即时持久化。
 			Messages: messages,
 			Memory:   mems,
-			Profiles: agent.NewProfileManager(profiles),
+			Profiles: agentservice.NewProfileManager(profiles),
 			Skills:   skills,
-			Policy:   agent.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
+			Policy:   agentpolicy.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
 		})
 	}))
-	// Provide session.Service / message.Service：会话与消息的增删改查（参考 opencode 分层）。
+	// Provide agentinterfaces.SessionService / agentinterfaces.MessageService：会话与消息的增删改查（参考 opencode 分层）。
 	// 使用数据库 Store，使会话历史跨进程重启持久化。
-	must(container.Provide(func(db *gorm.DB) session.Service {
-		return session.NewService(agentrepository.NewGormSessionStore(db))
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.SessionService {
+		return agentservice.NewSessionService(agentrepository.NewGormSessionStore(db))
 	}))
-	must(container.Provide(func(db *gorm.DB) message.Service {
-		return message.NewService(agentrepository.NewGormMessageStore(db))
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.MessageService {
+		return agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))
 	}))
-	// Provide history.Service：会话内文件版本历史（Write / Edit / Patch 落版本）。
-	must(container.Provide(func(db *gorm.DB) history.Service {
-		return history.NewService(agentrepository.NewGormHistoryStore(db))
+	// Provide agentinterfaces.HistoryService：会话内文件版本历史（Write / Edit / Patch 落版本）。
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.HistoryService {
+		return agentservice.NewHistoryService(agentrepository.NewGormHistoryStore(db))
 	}))
 	// Provide LSP 客户端管理器：diagnostics / view / edit / write / patch 通过它取 LSP 客户端。
 	// 具体语言服务由上层按需调用 Manager.Start(ctx, servers) 启动（gobrave 暂无全局 LSP 配置）。
@@ -508,8 +510,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	}))
 	// Provide ChatService：多轮对话编排层（复用 AgentService 的任务状态机）。
 	// 会话按用户当前激活项目隔离（ChatService 内部通过 ProjectService 解析活动项目）。
-	must(container.Provide(func(svc *agent.AgentService, sessions session.Service, messages message.Service, projects interfaces.ProjectService) *agent.ChatService {
-		return agent.NewChatService(svc, sessions, messages, projects)
+	must(container.Provide(func(svc *agentservice.AgentService, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService, projects interfaces.ProjectService) *agentservice.ChatService {
+		return agentservice.NewChatService(svc, sessions, messages, projects)
 	}))
 	must(container.Provide(manager.NewAISummaryContentProvider))
 	must(container.Provide(manager.NewAISummaryWorker))
@@ -746,8 +748,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 先确保 ChatService 已构造：它在构造函数里注册任务终态回调（会话轮次收尾）。
 	// dig 是懒加载的，若不显式 Invoke，Recover 先把 running 任务置为 failed 时
 	// onTaskFinished 尚未注册，会话 CurrentTaskID / 错误消息就不会被清理。
-	must(container.Invoke(func(_ *agent.ChatService) {}))
-	must(container.Invoke(func(svc *agent.AgentService) {
+	must(container.Invoke(func(_ *agentservice.ChatService) {}))
+	must(container.Invoke(func(svc *agentservice.AgentService) {
 		if err := svc.Recover(context.Background()); err != nil {
 			logger.Warnf(context.Background(), "[Container] agent task recovery failed: %v", err)
 		}
@@ -1002,14 +1004,14 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.GatewayRoute{},
 		&types.OutboxEvent{},
 		&types.AISummary{},
-		&agent.Task{},
-		&agent.PermissionRequest{},
-		&agent.QuestionRequest{},
-		&session.Session{},
-		&message.Message{},
-		&history.File{},
-		&agent.Memory{},
-		&agent.Profile{},
+		&agenttypes.Task{},
+		&agenttypes.PermissionRequest{},
+		&agenttypes.QuestionRequest{},
+		&agenttypes.Session{},
+		&agenttypes.Message{},
+		&agenttypes.File{},
+		&agenttypes.Memory{},
+		&agenttypes.Profile{},
 	// &types.Trace{},
 	// &types.RSSSource{},
 	); err != nil {

@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 )
 
 // fakeClient 是 provider.Client 的测试实现：按预置响应逐轮返回 complete 事件。
@@ -321,8 +322,8 @@ func (s *fakeSubAgentStore) AppendUserMessage(_ context.Context, sessionID int64
 	return s.add(sessionID, "user", "user", content)
 }
 
-func (s *fakeSubAgentStore) AppendEvent(_ context.Context, sessionID int64, event agent.StreamEvent) error {
-	params, ok := agent.ProjectTimelineEvent(sessionID, 0, event)
+func (s *fakeSubAgentStore) AppendEvent(_ context.Context, sessionID int64, event agenttypes.StreamEvent) error {
+	params, ok := agentservice.ProjectTimelineEvent(sessionID, 0, event)
 	if !ok {
 		return nil
 	}

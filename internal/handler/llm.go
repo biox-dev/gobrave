@@ -14,7 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/config"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/errors"
@@ -51,7 +52,7 @@ type LLMHandler struct {
 	workflowSvc      interfaces.WorkflowService
 	analsyisSvc      interfaces.AnalysisService
 	nodeOrchestrator interfaces.NodeOrchestrator
-	agentClient      *agent.Client
+	agentClient      *agentclient.Client
 	runtimeCtx       *RuntimeContextResolver
 
 	completionBroker *nodeCompletionBroker
@@ -120,7 +121,7 @@ func NewLLMHandler(hub *realtime.Hub, cfg *config.Config, projectSvc interfaces.
 	workflowSvc interfaces.WorkflowService,
 	analsyisSvc interfaces.AnalysisService,
 	nodeOrchestrator interfaces.NodeOrchestrator,
-	agentClient *agent.Client,
+	agentClient *agentclient.Client,
 	runtimeCtx *RuntimeContextResolver,
 ) *LLMHandler {
 	cliURL := ""
@@ -825,26 +826,26 @@ func (h *LLMHandler) runBridgeSession(ctx context.Context, session *llmBridgeSes
 	// 注意：本桥接直接调用 Client，不经过 AgentService.applyProfile，因此这里只携带运行时
 	// 上下文（含 SystemPromptVars）；渲染后的系统提示词由 AgentService 路径负责。
 	// 归属用户写入 RuntimeContext：权限策略与 ask_user 都从这里读取（见 RequestUserID）。
-	req := agent.Request{
+	req := agenttypes.Request{
 		ModelID:        resolvedModel,
 		RuntimeContext: runtimeCtx,
 		WorkingDir:     runtimeCtx.WorkingDir,
-		Messages: []agent.Message{
-			{Role: agent.RoleUser, Content: prompt},
+		Messages: []agenttypes.Message{
+			{Role: agenttypes.RoleUser, Content: prompt},
 		},
 	}
 
 	var finalContent strings.Builder
-	_, err = h.agentClient.Stream(ctx, req, func(_ context.Context, event agent.StreamEvent) error {
+	_, err = h.agentClient.Stream(ctx, req, func(_ context.Context, event agenttypes.StreamEvent) error {
 		switch event.Type {
-		case agent.StreamEventText:
+		case agenttypes.StreamEventText:
 			finalContent.WriteString(event.Content)
 			h.pushBridgeEvent(session.userID, session.sessionID, "assistant.message_delta", gin.H{"deltaContent": event.Content})
-		case agent.StreamEventToolCall:
+		case agenttypes.StreamEventToolCall:
 			h.pushBridgeEvent(session.userID, session.sessionID, "tool_call", gin.H{"content": event.Content})
-		case agent.StreamEventToolResult:
+		case agenttypes.StreamEventToolResult:
 			h.pushBridgeEvent(session.userID, session.sessionID, "tool_result", gin.H{"content": event.Content})
-		case agent.StreamEventError:
+		case agenttypes.StreamEventError:
 			h.pushBridgeEvent(session.userID, session.sessionID, "error", gin.H{"error": "agent stream failed", "detail": event.Err.Error()})
 			return event.Err
 		}

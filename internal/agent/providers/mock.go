@@ -8,8 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 // mockProvider 是自研的 mock Provider，用于在没有真实 Agent 的情况下
@@ -23,21 +26,21 @@ import (
 type mockProvider struct{}
 
 // NewMock 创建 mock Provider。
-func NewMock() agent.Provider { return mockProvider{} }
+func NewMock() agentclient.Provider { return mockProvider{} }
 
-func (mockProvider) Name() string { return agent.ProviderMock }
+func (mockProvider) Name() string { return agenttypes.ProviderMock }
 
-func (mockProvider) New(opts agent.Options) (agent.Agent, error) {
+func (mockProvider) New(opts agentclient.Options) (agentinterfaces.Agent, error) {
 	return &mockAgent{opts: opts}, nil
 }
 
 type mockAgent struct {
-	opts agent.Options
+	opts agentclient.Options
 }
 
-func (a *mockAgent) Name() string { return agent.ProviderMock }
+func (a *mockAgent) Name() string { return agenttypes.ProviderMock }
 
-func (a *mockAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+func (a *mockAgent) Invoke(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	content := fmt.Sprintf("[mock:%s] %s", req.ModelID, lastUserPrompt(req))
 
 	if demoPermission(req) {
@@ -62,10 +65,10 @@ func (a *mockAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runt
 		body, _ := json.Marshal(answer)
 		content = fmt.Sprintf("%s\n[ask_user=%s]", content, body)
 	}
-	return &agent.Result{Content: content}, nil
+	return &agenttypes.Result{Content: content}, nil
 }
 
-func (a *mockAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+func (a *mockAgent) Stream(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	full := fmt.Sprintf("[mock:%s] %s", req.ModelID, lastUserPrompt(req))
 
 	// 按固定块切分模拟流式输出，通过 Runtime.Emit 对外输出事件。
@@ -79,7 +82,7 @@ func (a *mockAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runt
 		}
 		chunk := string(runes[i:end])
 		sb.WriteString(chunk)
-		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: chunk}); err != nil {
+		if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventText, Content: chunk}); err != nil {
 			return nil, err
 		}
 	}
@@ -92,7 +95,7 @@ func (a *mockAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runt
 		}
 		note := fmt.Sprintf("\n[permission=%s]", decision)
 		sb.WriteString(note)
-		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: note}); err != nil {
+		if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventText, Content: note}); err != nil {
 			return nil, err
 		}
 	}
@@ -102,7 +105,7 @@ func (a *mockAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runt
 	if demoToolCall(req) {
 		note := "\n" + a.runMockToolCall(ctx, req, rt)
 		sb.WriteString(note)
-		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: note}); err != nil {
+		if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventText, Content: note}); err != nil {
 			return nil, err
 		}
 	}
@@ -116,51 +119,51 @@ func (a *mockAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runt
 		body, _ := json.Marshal(answer)
 		note := fmt.Sprintf("\n[ask_user=%s]", body)
 		sb.WriteString(note)
-		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: note}); err != nil {
+		if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventText, Content: note}); err != nil {
 			return nil, err
 		}
 	}
 
 	// 完整 assistant 消息块：与真实 Provider 对齐（时间线以完整块为准），
 	// 由 TimelineRecorder 在轮内落库为 KindAssistant。
-	if err := rt.Emit(ctx, agent.StreamEvent{
-		Type: agent.StreamEventMessage,
-		Data: agent.MessageBlock{ID: fmt.Sprintf("mock-%d", time.Now().UnixNano()), Content: sb.String()},
+	if err := rt.Emit(ctx, agenttypes.StreamEvent{
+		Type: agenttypes.StreamEventMessage,
+		Data: agenttypes.MessageBlock{ID: fmt.Sprintf("mock-%d", time.Now().UnixNano()), Content: sb.String()},
 	}); err != nil {
 		return nil, err
 	}
 
-	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
+	if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventDone}); err != nil {
 		return nil, err
 	}
-	return &agent.Result{Content: sb.String()}, nil
+	return &agenttypes.Result{Content: sb.String()}, nil
 }
 
 // demoPermission 判断本次请求是否触发权限演示。
-func demoPermission(req agent.Request) bool {
+func demoPermission(req agenttypes.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(req.Env["MOCK_PERMISSION_DEMO"]), "true")
 }
 
 // demoAskUser 判断本次请求是否触发提问（ask_user）演示。
-func demoAskUser(req agent.Request) bool {
+func demoAskUser(req agenttypes.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(req.Env["MOCK_ASK_USER_DEMO"]), "true")
 }
 
 // requestDemoQuestion 构造一个示例问题，并通过 Runtime.AskUser 阻塞等待用户作答。
 //
 // 覆盖单选 + 自定义输入两种交互，供 mock 链路联调 / 演示使用。
-func requestDemoQuestion(ctx context.Context, rt agent.Runtime, req agent.Request) (agent.AskUserAnswer, error) {
-	input := agent.AskUserInput{
+func requestDemoQuestion(ctx context.Context, rt agentinterfaces.Runtime, req agenttypes.Request) (agenttypes.AskUserAnswer, error) {
+	input := agenttypes.AskUserInput{
 		RequestID:   "ask_001",
 		Title:       "选择分析类型",
 		Description: "请确认你希望进行哪种差异分析。",
-		Questions: []agent.Question{
+		Questions: []agenttypes.Question{
 			{
 				ID:       "analysis_type",
-				Type:     agent.QuestionTypeSingleChoice,
+				Type:     agenttypes.QuestionTypeSingleChoice,
 				Title:    "你要分析什么？",
 				Required: true,
-				Options: []agent.QuestionOption{
+				Options: []agenttypes.QuestionOption{
 					{Label: "差异表达分析", Value: "differential_expression", Description: "适用于 RNA-seq 基因表达数据"},
 					{Label: "差异丰度分析", Value: "differential_abundance", Description: "适用于微生物或其他特征丰度数据"},
 					{Label: "差异代谢物分析", Value: "differential_metabolites", Description: "适用于代谢组数据"},
@@ -173,9 +176,9 @@ func requestDemoQuestion(ctx context.Context, rt agent.Runtime, req agent.Reques
 }
 
 // requestDemoPermission 构造一个 write 操作并通过 Runtime 请求权限。
-func requestDemoPermission(ctx context.Context, rt agent.Runtime, req agent.Request) (agent.PermissionDecision, error) {
-	op := agent.Operation{
-		Type:    agent.OperationWrite,
+func requestDemoPermission(ctx context.Context, rt agentinterfaces.Runtime, req agenttypes.Request) (agenttypes.PermissionDecision, error) {
+	op := agenttypes.Operation{
+		Type:    agenttypes.OperationWrite,
 		Path:    filepath.Join(req.WorkingDir, "demo.txt"),
 		Content: "[mock] demo write content",
 	}
@@ -184,16 +187,16 @@ func requestDemoPermission(ctx context.Context, rt agent.Runtime, req agent.Requ
 	if err != nil {
 		return "", err
 	}
-	if decision == agent.DecisionDeny {
-		return decision, fmt.Errorf("%w: write %s", agent.ErrPermissionDenied, op.Path)
+	if decision == agenttypes.DecisionDeny {
+		return decision, fmt.Errorf("%w: write %s", agenttypes.ErrPermissionDenied, op.Path)
 	}
 	return decision, nil
 }
 
 // lastUserPrompt 提取最后一条 user 消息作为提示词；无 user 消息时回退到系统提示。
-func lastUserPrompt(req agent.Request) string {
+func lastUserPrompt(req agenttypes.Request) string {
 	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role == agent.RoleUser {
+		if req.Messages[i].Role == agenttypes.RoleUser {
 			return req.Messages[i].Content
 		}
 	}
@@ -201,7 +204,7 @@ func lastUserPrompt(req agent.Request) string {
 }
 
 // demoToolCall 判断本次请求是否触发 tool-call 演示。
-func demoToolCall(req agent.Request) bool {
+func demoToolCall(req agenttypes.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(req.Env["MOCK_TOOL_DEMO"]), "true")
 }
 
@@ -240,7 +243,7 @@ func defaultMockTools() *tool.Registry {
 //  2. 工具注册表优先取 Options.Tools，为空时回退到内置演示工具集；
 //  3. 通过 ToolRunner 执行（Stream 场景会输出 tool_call / tool_result 事件）；
 //  4. 返回形如 "[tool=echo] {...}" 的文本，拼进最终结果。
-func (a *mockAgent) runMockToolCall(ctx context.Context, req agent.Request, rt agent.Runtime) string {
+func (a *mockAgent) runMockToolCall(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) string {
 	name := strings.TrimSpace(req.Env["MOCK_TOOL_NAME"])
 	if name == "" {
 		name = "echo"
@@ -251,8 +254,8 @@ func (a *mockAgent) runMockToolCall(ctx context.Context, req agent.Request, rt a
 		reg = defaultMockTools()
 	}
 
-	runner := agent.NewToolRunner(tool.NewExecutor(reg), rt)
-	res := runner.Run(ctx, agent.ToolCall{
+	runner := agentruntime.NewToolRunner(tool.NewExecutor(reg), rt)
+	res := runner.Run(ctx, agenttypes.ToolCall{
 		ID:        "mock_call_1",
 		Name:      name,
 		Arguments: map[string]any{"text": lastUserPrompt(req)},

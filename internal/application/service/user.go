@@ -14,16 +14,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 
-	"github.com/biox-dev/gobrave/internal/agent"
 	apprepo "github.com/biox-dev/gobrave/internal/application/repository"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type oidcAuthorizationState struct {
@@ -130,7 +130,7 @@ func (s *userService) Register(ctx context.Context, req *types.RegisterRequest) 
 		Username:     req.Username,
 		Email:        req.Email,
 		PasswordHash: string(hashedPassword),
-		AgentConfig:  agent.DefaultUserAgentConfig(),
+		AgentConfig:  agenttypes.DefaultUserAgentConfig(),
 		// TenantID:     createdTenant.ID,
 		IsActive:  true,
 		CreatedAt: time.Now(),

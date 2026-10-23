@@ -5,8 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 )
 
 func newEchoTool() tool.Tool {
@@ -22,47 +23,47 @@ func newEchoTool() tool.Tool {
 
 // collectRuntime 捕获 Emit 的事件，其余方法按默认行为。
 type collectRuntime struct {
-	events []agent.StreamEvent
+	events []agenttypes.StreamEvent
 }
 
-func (r *collectRuntime) Emit(_ context.Context, ev agent.StreamEvent) error {
+func (r *collectRuntime) Emit(_ context.Context, ev agenttypes.StreamEvent) error {
 	r.events = append(r.events, ev)
 	return nil
 }
 
-func (r *collectRuntime) RequestPermission(_ context.Context, _ int64, _ agent.Operation) (agent.PermissionDecision, error) {
-	return agent.DecisionAllow, nil
+func (r *collectRuntime) RequestPermission(_ context.Context, _ int64, _ agenttypes.Operation) (agenttypes.PermissionDecision, error) {
+	return agenttypes.DecisionAllow, nil
 }
 
-func (r *collectRuntime) WaitPermission(context.Context, int64) (agent.PermissionDecision, error) {
-	return agent.DecisionAllow, nil
+func (r *collectRuntime) WaitPermission(context.Context, int64) (agenttypes.PermissionDecision, error) {
+	return agenttypes.DecisionAllow, nil
 }
 
-func (r *collectRuntime) AskUser(context.Context, int64, agent.AskUserInput) (agent.AskUserAnswer, error) {
-	return agent.AskUserAnswer{}, nil
+func (r *collectRuntime) AskUser(context.Context, int64, agenttypes.AskUserInput) (agenttypes.AskUserAnswer, error) {
+	return agenttypes.AskUserAnswer{}, nil
 }
 
 // denyRuntime 始终拒绝权限。
 type denyRuntime struct{}
 
-func (denyRuntime) Emit(context.Context, agent.StreamEvent) error { return nil }
-func (denyRuntime) RequestPermission(context.Context, int64, agent.Operation) (agent.PermissionDecision, error) {
-	return agent.DecisionDeny, nil
+func (denyRuntime) Emit(context.Context, agenttypes.StreamEvent) error { return nil }
+func (denyRuntime) RequestPermission(context.Context, int64, agenttypes.Operation) (agenttypes.PermissionDecision, error) {
+	return agenttypes.DecisionDeny, nil
 }
-func (denyRuntime) WaitPermission(context.Context, int64) (agent.PermissionDecision, error) {
-	return agent.DecisionDeny, nil
+func (denyRuntime) WaitPermission(context.Context, int64) (agenttypes.PermissionDecision, error) {
+	return agenttypes.DecisionDeny, nil
 }
 
-func (denyRuntime) AskUser(context.Context, int64, agent.AskUserInput) (agent.AskUserAnswer, error) {
-	return agent.AskUserAnswer{}, nil
+func (denyRuntime) AskUser(context.Context, int64, agenttypes.AskUserInput) (agenttypes.AskUserAnswer, error) {
+	return agenttypes.AskUserAnswer{}, nil
 }
 
 func TestToolRunnerEmitsEvents(t *testing.T) {
 	exec := tool.NewExecutor(tool.NewRegistryWith(newEchoTool()))
 	rt := &collectRuntime{}
-	runner := agent.NewToolRunner(exec, rt)
+	runner := agentruntime.NewToolRunner(exec, rt)
 
-	res := runner.Run(context.Background(), agent.ToolCall{
+	res := runner.Run(context.Background(), agenttypes.ToolCall{
 		ID:        "c1",
 		Name:      "echo",
 		Arguments: map[string]any{"text": "hi"},
@@ -74,13 +75,13 @@ func TestToolRunnerEmitsEvents(t *testing.T) {
 	if len(rt.events) != 2 {
 		t.Fatalf("events = %d, want 2", len(rt.events))
 	}
-	if rt.events[0].Type != agent.StreamEventToolCall {
+	if rt.events[0].Type != agenttypes.StreamEventToolCall {
 		t.Fatalf("first event = %s, want tool_call", rt.events[0].Type)
 	}
-	if rt.events[1].Type != agent.StreamEventToolResult {
+	if rt.events[1].Type != agenttypes.StreamEventToolResult {
 		t.Fatalf("second event = %s, want tool_result", rt.events[1].Type)
 	}
-	tr, ok := rt.events[1].Data.(agent.ToolResultEvent)
+	tr, ok := rt.events[1].Data.(agentruntime.ToolResultEvent)
 	if !ok {
 		t.Fatalf("tool_result data type = %T", rt.events[1].Data)
 	}
@@ -92,31 +93,31 @@ func TestToolRunnerEmitsEvents(t *testing.T) {
 func TestToolRunnerPermissionDeny(t *testing.T) {
 	exec := tool.NewExecutor(tool.NewRegistryWith(newEchoTool()))
 	rt := denyRuntime{}
-	runner := agent.NewToolRunner(exec, rt).SetPermissionResolver(func(_ context.Context, _ agent.ToolCall) (agent.Operation, bool) {
-		return agent.Operation{Type: agent.OperationWrite}, true
+	runner := agentruntime.NewToolRunner(exec, rt).SetPermissionResolver(func(_ context.Context, _ agenttypes.ToolCall) (agenttypes.Operation, bool) {
+		return agenttypes.Operation{Type: agenttypes.OperationWrite}, true
 	})
 
-	res := runner.Run(context.Background(), agent.ToolCall{ID: "c1", Name: "echo"})
+	res := runner.Run(context.Background(), agenttypes.ToolCall{ID: "c1", Name: "echo"})
 	if !res.IsError {
 		t.Fatalf("expected denied result")
 	}
-	if !errors.Is(res.Err, agent.ErrPermissionDenied) {
+	if !errors.Is(res.Err, agenttypes.ErrPermissionDenied) {
 		t.Fatalf("err = %v, want ErrPermissionDenied", res.Err)
 	}
 }
 
 func TestToolLoop(t *testing.T) {
 	exec := tool.NewExecutor(tool.NewRegistryWith(newEchoTool()))
-	runner := agent.NewToolRunner(exec, &collectRuntime{})
-	loop := agent.NewToolLoop(runner)
+	runner := agentruntime.NewToolRunner(exec, &collectRuntime{})
+	loop := agentruntime.NewToolLoop(runner)
 
 	// Provider 提供两批工具调用，第二批结束后返回空（结束循环）。
-	batches := [][]agent.ToolCall{
+	batches := [][]agenttypes.ToolCall{
 		{{ID: "c1", Name: "echo", Arguments: map[string]any{"text": "a"}}},
 		{{ID: "c2", Name: "echo", Arguments: map[string]any{"text": "b"}}},
 	}
 	i := 0
-	results, err := loop.Run(context.Background(), func(_ context.Context, _ []tool.Result) ([]agent.ToolCall, error) {
+	results, err := loop.Run(context.Background(), func(_ context.Context, _ []tool.Result) ([]agenttypes.ToolCall, error) {
 		if i >= len(batches) {
 			return nil, nil
 		}

@@ -5,15 +5,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
 	agentproviders "github.com/biox-dev/gobrave/internal/agent/providers"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
-func resolveMock(t *testing.T, opts agent.Options) agent.Agent {
+func resolveMock(t *testing.T, opts agentclient.Options) agentinterfaces.Agent {
 	t.Helper()
-	reg := agent.NewRegistry(agentproviders.NewMock())
-	a, err := reg.Resolve(agent.ProviderMock, opts)
+	reg := agentclient.NewRegistry(agentproviders.NewMock())
+	a, err := reg.Resolve(agenttypes.ProviderMock, opts)
 	if err != nil {
 		t.Fatalf("resolve mock: %v", err)
 	}
@@ -21,17 +24,17 @@ func resolveMock(t *testing.T, opts agent.Options) agent.Agent {
 }
 
 func TestMockToolCallDefault(t *testing.T) {
-	a := resolveMock(t, agent.Options{})
+	a := resolveMock(t, agentclient.Options{})
 
-	var events []agent.StreamEvent
-	rt := agent.NewStandaloneRuntime(func(_ context.Context, ev agent.StreamEvent) error {
+	var events []agenttypes.StreamEvent
+	rt := agentruntime.NewStandaloneRuntime(func(_ context.Context, ev agenttypes.StreamEvent) error {
 		events = append(events, ev)
 		return nil
 	})
 
-	req := agent.Request{
+	req := agenttypes.Request{
 		Env:      map[string]string{"MOCK_TOOL_DEMO": "true"},
-		Messages: []agent.Message{{Role: agent.RoleUser, Content: "hello"}},
+		Messages: []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
 	}
 
 	res, err := a.Stream(context.Background(), req, rt)
@@ -43,9 +46,9 @@ func TestMockToolCallDefault(t *testing.T) {
 	var sawCall, sawResult bool
 	for _, ev := range events {
 		switch ev.Type {
-		case agent.StreamEventToolCall:
+		case agenttypes.StreamEventToolCall:
 			sawCall = true
-		case agent.StreamEventToolResult:
+		case agenttypes.StreamEventToolResult:
 			sawResult = true
 		}
 	}
@@ -70,20 +73,20 @@ func TestMockToolCallCustomTool(t *testing.T) {
 			return "hi " + in.Text, nil
 		}),
 	)
-	a := resolveMock(t, agent.Options{Tools: reg})
+	a := resolveMock(t, agentclient.Options{Tools: reg})
 
-	var events []agent.StreamEvent
-	rt := agent.NewStandaloneRuntime(func(_ context.Context, ev agent.StreamEvent) error {
+	var events []agenttypes.StreamEvent
+	rt := agentruntime.NewStandaloneRuntime(func(_ context.Context, ev agenttypes.StreamEvent) error {
 		events = append(events, ev)
 		return nil
 	})
 
-	req := agent.Request{
+	req := agenttypes.Request{
 		Env: map[string]string{
 			"MOCK_TOOL_DEMO": "true",
 			"MOCK_TOOL_NAME": "greet",
 		},
-		Messages: []agent.Message{{Role: agent.RoleUser, Content: "bob"}},
+		Messages: []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "bob"}},
 	}
 
 	res, err := a.Stream(context.Background(), req, rt)

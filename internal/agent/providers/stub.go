@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
 // notImplementedProvider 是尚未实现真实调用的 Provider 占位实现。
@@ -15,21 +17,21 @@ type notImplementedProvider struct {
 
 func (p notImplementedProvider) Name() string { return p.name }
 
-func (p notImplementedProvider) New(opts agent.Options) (agent.Agent, error) {
+func (p notImplementedProvider) New(opts agentclient.Options) (agentinterfaces.Agent, error) {
 	return &notImplementedAgent{name: p.name, opts: opts}, nil
 }
 
 type notImplementedAgent struct {
 	name string
-	opts agent.Options
+	opts agentclient.Options
 }
 
 func (a *notImplementedAgent) Name() string { return a.name }
 
-func (a *notImplementedAgent) Invoke(_ context.Context, _ agent.Request, _ agent.Runtime) (*agent.Result, error) {
-	return nil, fmt.Errorf("%w: provider=%s", agent.ErrNotImplemented, a.name)
+func (a *notImplementedAgent) Invoke(_ context.Context, _ agenttypes.Request, _ agentinterfaces.Runtime) (*agenttypes.Result, error) {
+	return nil, fmt.Errorf("%w: provider=%s", agenttypes.ErrNotImplemented, a.name)
 }
 
-func (a *notImplementedAgent) Stream(_ context.Context, _ agent.Request, _ agent.Runtime) (*agent.Result, error) {
-	return nil, fmt.Errorf("%w: provider=%s", agent.ErrNotImplemented, a.name)
+func (a *notImplementedAgent) Stream(_ context.Context, _ agenttypes.Request, _ agentinterfaces.Runtime) (*agenttypes.Result, error) {
+	return nil, fmt.Errorf("%w: provider=%s", agenttypes.ErrNotImplemented, a.name)
 }

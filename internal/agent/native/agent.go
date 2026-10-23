@@ -14,9 +14,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/biox-dev/gobrave/internal/agent"
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/google/uuid"
 )
@@ -33,14 +35,14 @@ type Config struct {
 }
 
 // Run 执行一次完整请求：模型流式输出 → 执行工具 → 回填结果 → 继续，直至模型不再调用工具。
-func (c *Config) Run(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+func (c *Config) Run(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	if c.Client == nil {
 		err := fmt.Errorf("native agent: provider client is required")
 		logger.Errorf(ctx, "native agent: %v", err)
 		return nil, err
 	}
 	if rt == nil {
-		rt = agent.NewStandaloneRuntime(nil)
+		rt = agentruntime.NewStandaloneRuntime(nil)
 	}
 
 	executor := tool.NewExecutor(c.Tools)
@@ -63,15 +65,15 @@ func (c *Config) Run(ctx context.Context, req agent.Request, rt agent.Runtime) (
 
 		// 完整思考块 / 消息块：作为时间线锚点持久化（增量已实时下发）。
 		if strings.TrimSpace(thinking) != "" {
-			_ = rt.Emit(ctx, agent.StreamEvent{
-				Type: agent.StreamEventReasoning,
-				Data: agent.ReasoningBlock{ID: uuid.NewString(), Content: thinking},
+			_ = rt.Emit(ctx, agenttypes.StreamEvent{
+				Type: agenttypes.StreamEventReasoning,
+				Data: agenttypes.ReasoningBlock{ID: uuid.NewString(), Content: thinking},
 			})
 		}
 		if strings.TrimSpace(response.Content) != "" {
-			_ = rt.Emit(ctx, agent.StreamEvent{
-				Type: agent.StreamEventMessage,
-				Data: agent.MessageBlock{ID: uuid.NewString(), Content: response.Content},
+			_ = rt.Emit(ctx, agenttypes.StreamEvent{
+				Type: agenttypes.StreamEventMessage,
+				Data: agenttypes.MessageBlock{ID: uuid.NewString(), Content: response.Content},
 			})
 		}
 		final = response.Content
@@ -84,10 +86,10 @@ func (c *Config) Run(ctx context.Context, req agent.Request, rt agent.Runtime) (
 				ToolCalls: nil,
 			})
 			cw.clear(ctx)
-			_ = rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone})
-			return &agent.Result{
+			_ = rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventDone})
+			return &agenttypes.Result{
 				Content: final,
-				Usage:   agent.Usage{InputTokens: response.Usage.InputTokens, OutputTokens: response.Usage.OutputTokens},
+				Usage:   agenttypes.Usage{InputTokens: response.Usage.InputTokens, OutputTokens: response.Usage.OutputTokens},
 			}, nil
 		}
 
@@ -124,12 +126,12 @@ func (c *Config) Run(ctx context.Context, req agent.Request, rt agent.Runtime) (
 //   - History 还原为已完成的多轮对话；
 //   - Pending 中的 assistant 响应重新入栈；
 //   - 已完成结果的工具直接复用，未完成的工具重新执行（权限 / 提问会按 tool_call_id 复用决策）。
-func (c *Config) restoreCheckpoint(ctx context.Context, executor *tool.Executor, rt agent.Runtime, cw *checkpointWriter) ([]provider.Message, bool) {
+func (c *Config) restoreCheckpoint(ctx context.Context, executor *tool.Executor, rt agentinterfaces.Runtime, cw *checkpointWriter) ([]provider.Message, bool) {
 	if !cw.enabled() {
 		return nil, false
 	}
 	state := cw.load(ctx)
-	if state == nil || state.Version != agent.ResumeStateVersion {
+	if state == nil || state.Version != agenttypes.ResumeStateVersion {
 		return nil, false
 	}
 	// 空检查点没有恢复价值：回退到请求自带历史，避免让模型收到空对话。
@@ -167,7 +169,7 @@ func (c *Config) restoreCheckpoint(ctx context.Context, executor *tool.Executor,
 }
 
 // streamOnce 执行一轮模型调用，转发增量事件并返回聚合结果。
-func (c *Config) streamOnce(ctx context.Context, history []provider.Message, tools []provider.Tool, rt agent.Runtime) (*provider.Response, string, error) {
+func (c *Config) streamOnce(ctx context.Context, history []provider.Message, tools []provider.Tool, rt agentinterfaces.Runtime) (*provider.Response, string, error) {
 	stream := c.Client.Stream(ctx, history, tools)
 	var thinking strings.Builder
 
@@ -175,12 +177,12 @@ func (c *Config) streamOnce(ctx context.Context, history []provider.Message, too
 		switch event.Type {
 		case provider.EventContentDelta:
 			if event.Content != "" {
-				_ = rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: event.Content})
+				_ = rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventText, Content: event.Content})
 			}
 		case provider.EventThinkingDelta:
 			if event.Thinking != "" {
 				thinking.WriteString(event.Thinking)
-				_ = rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventReasoningDelta, Content: event.Thinking})
+				_ = rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventReasoningDelta, Content: event.Thinking})
 			}
 		case provider.EventError:
 			if event.Error == nil {
@@ -216,14 +218,14 @@ const maxConcurrentAgentCalls = 4
 //   - 其它工具保持顺序执行，避免 bash / edit / write 等写操作互相干扰；
 //   - 结果按模型给出的调用顺序回填（与 tool_call_id 一一对应），并发完成顺序不影响语义。
 //   - onResult 在每个工具完成时回调，用于把结果增量写入持久化检查点（可为 nil）。
-func (c *Config) executeTools(ctx context.Context, executor *tool.Executor, calls []provider.ToolCall, rt agent.Runtime, onResult func(provider.ToolCall, provider.ToolResult)) []provider.ToolResult {
+func (c *Config) executeTools(ctx context.Context, executor *tool.Executor, calls []provider.ToolCall, rt agentinterfaces.Runtime, onResult func(provider.ToolCall, provider.ToolResult)) []provider.ToolResult {
 	results := make([]provider.ToolResult, len(calls))
 
 	// 先按顺序下发全部 tool_call 事件，保证时间线里调用顺序与模型输出一致。
 	for _, call := range calls {
-		_ = rt.Emit(ctx, agent.StreamEvent{
-			Type: agent.StreamEventToolCall,
-			Data: agent.ToolCall{ID: call.ID, Name: call.Name, Arguments: call.Input},
+		_ = rt.Emit(ctx, agenttypes.StreamEvent{
+			Type: agenttypes.StreamEventToolCall,
+			Data: agenttypes.ToolCall{ID: call.ID, Name: call.Name, Arguments: call.Input},
 		})
 	}
 
@@ -290,7 +292,7 @@ func (c *Config) executeTools(ctx context.Context, executor *tool.Executor, call
 // executeTool 执行单个工具调用（注入工具执行上下文）。
 func (c *Config) executeTool(ctx context.Context, executor *tool.Executor, call provider.ToolCall) provider.ToolResult {
 	// 工具调用 ID 贯穿权限 / 提问 / 工具执行全链路：重启恢复时据此复用已落库的决策。
-	ctx = agent.WithToolCallID(ctx, call.ID)
+	ctx = agenttypes.WithToolCallID(ctx, call.ID)
 
 	toolCtx := ctx
 	if c.PrepareToolContext != nil {
@@ -321,9 +323,9 @@ func truncateLog(s string, max int) string {
 }
 
 // emitToolResult 下发一次完整的工具结果事件。
-func (c *Config) emitToolResult(ctx context.Context, rt agent.Runtime, call provider.ToolCall, res provider.ToolResult) {
-	_ = rt.Emit(ctx, agent.StreamEvent{
-		Type: agent.StreamEventToolResult,
+func (c *Config) emitToolResult(ctx context.Context, rt agentinterfaces.Runtime, call provider.ToolCall, res provider.ToolResult) {
+	_ = rt.Emit(ctx, agenttypes.StreamEvent{
+		Type: agenttypes.StreamEventToolResult,
 		Data: map[string]any{
 			"tool_call_id": call.ID,
 			"name":         call.Name,
@@ -334,7 +336,7 @@ func (c *Config) emitToolResult(ctx context.Context, rt agent.Runtime, call prov
 }
 
 // requestMessages 把请求历史转换为模型消息：只保留 user / assistant 文本。
-func requestMessages(req agent.Request) []provider.Message {
+func requestMessages(req agenttypes.Request) []provider.Message {
 	out := make([]provider.Message, 0, len(req.Messages))
 	for _, msg := range req.Messages {
 		content := strings.TrimSpace(msg.Content)
@@ -342,9 +344,9 @@ func requestMessages(req agent.Request) []provider.Message {
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(msg.Role)) {
-		case agent.RoleUser:
+		case agenttypes.RoleUser:
 			out = append(out, provider.Message{Role: provider.RoleUser, Content: msg.Content})
-		case agent.RoleAssistant:
+		case agenttypes.RoleAssistant:
 			out = append(out, provider.Message{Role: provider.RoleAssistant, Content: msg.Content})
 		}
 	}

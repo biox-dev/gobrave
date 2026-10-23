@@ -4,8 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	copilot "github.com/github/copilot-sdk/go"
 )
 
@@ -22,9 +23,9 @@ func newEchoTool() tool.Tool {
 
 func TestBuildTools(t *testing.T) {
 	reg := tool.NewRegistryWith(newEchoTool())
-	a := &copilotAgent{opts: agent.Options{Tools: reg}}
+	a := &copilotAgent{opts: agentclient.Options{Tools: reg}}
 
-	tools := a.buildTools(nil, agent.Request{})
+	tools := a.buildTools(nil, agenttypes.Request{})
 	// echo（注册表工具）+ ask_user（内置提问工具）。
 	if len(tools) != 2 {
 		t.Fatalf("tools = %d, want 2", len(tools))
@@ -58,12 +59,12 @@ func TestBuildTools(t *testing.T) {
 }
 
 func TestBuildToolsNilRegistry(t *testing.T) {
-	a := &copilotAgent{opts: agent.Options{}}
+	a := &copilotAgent{opts: agentclient.Options{}}
 
 	// 无注册表工具时仍应暴露内置 ask_user 工具。
-	tools := a.buildTools(nil, agent.Request{})
-	if len(tools) != 1 || tools[0].Name != agent.AskUserToolName {
-		t.Fatalf("tools = %v, want single %q", tools, agent.AskUserToolName)
+	tools := a.buildTools(nil, agenttypes.Request{})
+	if len(tools) != 1 || tools[0].Name != agenttypes.AskUserToolName {
+		t.Fatalf("tools = %v, want single %q", tools, agenttypes.AskUserToolName)
 	}
 }
 
@@ -73,8 +74,8 @@ func TestToCopilotToolResult(t *testing.T) {
 		t.Fatalf("success result = %+v", ok)
 	}
 
-	fail := toCopilotToolResult(tool.Failure(agent.ErrPermissionDenied))
-	if fail.ResultType != "failure" || fail.TextResultForLLM != agent.ErrPermissionDenied.Error() {
+	fail := toCopilotToolResult(tool.Failure(agenttypes.ErrPermissionDenied))
+	if fail.ResultType != "failure" || fail.TextResultForLLM != agenttypes.ErrPermissionDenied.Error() {
 		t.Fatalf("failure result = %+v", fail)
 	}
 }

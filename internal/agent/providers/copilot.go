@@ -7,8 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
+	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	copilot "github.com/github/copilot-sdk/go"
 	copilotrpc "github.com/github/copilot-sdk/go/rpc"
 )
@@ -22,20 +25,20 @@ import (
 type copilotProvider struct{}
 
 // NewCopilot 创建 Copilot Provider。
-func NewCopilot() agent.Provider { return copilotProvider{} }
+func NewCopilot() agentclient.Provider { return copilotProvider{} }
 
-func (copilotProvider) Name() string { return agent.ProviderCopilot }
+func (copilotProvider) Name() string { return agenttypes.ProviderCopilot }
 
-func (copilotProvider) New(opts agent.Options) (agent.Agent, error) {
+func (copilotProvider) New(opts agentclient.Options) (agentinterfaces.Agent, error) {
 	return &copilotAgent{opts: opts}, nil
 }
 
 // copilotAgent 是 Copilot Provider 的 Agent 实现。
 type copilotAgent struct {
-	opts agent.Options
+	opts agentclient.Options
 }
 
-func (a *copilotAgent) Name() string { return agent.ProviderCopilot }
+func (a *copilotAgent) Name() string { return agenttypes.ProviderCopilot }
 
 // copilotStreamResult 是流式调用内部使用的终态结果。
 type copilotStreamResult struct {
@@ -48,9 +51,9 @@ type copilotStreamResult struct {
 // 通过 SDK 的 SendAndWait 等待 session.idle。由于 SendAndWait 在 ctx 无 deadline 时
 // 会强加 60s 硬超时，这里通过 withTimeout 为 ctx 附加默认 10 分钟超时（req.Timeout > 0
 // 时优先使用 req.Timeout），避免推理类模型或耗时较长的 Copilot 调用被误判为超时。
-func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+func (a *copilotAgent) Invoke(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	if rt == nil {
-		rt = agent.NewStandaloneRuntime(nil)
+		rt = agentruntime.NewStandaloneRuntime(nil)
 	}
 
 	ctx, cancel := a.withTimeout(ctx, req.Timeout)
@@ -91,7 +94,7 @@ func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request, rt agent.R
 	// 这里输出“完整消息块”（而非 text 增量），使其可作为时间线数据源落库。
 	if messageData != nil {
 		for _, tr := range messageData.ToolRequests {
-			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventToolCall, Data: agent.ToolCall{
+			if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventToolCall, Data: agenttypes.ToolCall{
 				ID:        tr.ToolCallID,
 				Name:      tr.Name,
 				Arguments: tr.Arguments,
@@ -100,21 +103,21 @@ func (a *copilotAgent) Invoke(ctx context.Context, req agent.Request, rt agent.R
 			}
 		}
 		if len(messageData.ToolRequests) == 0 {
-			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventMessage, Data: toMessageBlock(messageData)}); err != nil {
+			if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventMessage, Data: toMessageBlock(messageData)}); err != nil {
 				return nil, err
 			}
 		}
 	}
-	if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
+	if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventDone}); err != nil {
 		return nil, err
 	}
-	return &agent.Result{Content: content}, nil
+	return &agenttypes.Result{Content: content}, nil
 }
 
-// Stream 执行流式请求：把 Copilot 的增量事件转换为 agent.StreamEvent，通过 Runtime.Emit 输出。
-func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.Runtime) (*agent.Result, error) {
+// Stream 执行流式请求：把 Copilot 的增量事件转换为 agenttypes.StreamEvent，通过 Runtime.Emit 输出。
+func (a *copilotAgent) Stream(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) (*agenttypes.Result, error) {
 	if rt == nil {
-		rt = agent.NewStandaloneRuntime(nil)
+		rt = agentruntime.NewStandaloneRuntime(nil)
 	}
 
 	ctx, cancel := a.withTimeout(ctx, req.Timeout)
@@ -144,12 +147,12 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.R
 		switch data := event.Data.(type) {
 		// —— 完整块：时间线数据源，落库 ——
 		case *copilot.AssistantTurnStartData:
-			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventTurnStart, Data: turnBlock(data.TurnID, data.Model)}); err != nil {
+			if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventTurnStart, Data: turnBlock(data.TurnID, data.Model)}); err != nil {
 				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 			}
 
 		case *copilot.AssistantTurnEndData:
-			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventTurnEnd, Data: turnBlock(data.TurnID, data.Model)}); err != nil {
+			if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventTurnEnd, Data: turnBlock(data.TurnID, data.Model)}); err != nil {
 				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 			}
 
@@ -157,13 +160,13 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.R
 		case *copilot.AssistantMessageDeltaData:
 			if data.DeltaContent != "" {
 				final.WriteString(data.DeltaContent)
-				if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventText, Content: data.DeltaContent}); err != nil {
+				if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventText, Content: data.DeltaContent}); err != nil {
 					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 				}
 			}
 		case *copilot.AssistantMessageData:
 			for _, tr := range data.ToolRequests {
-				if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventToolCall, Data: agent.ToolCall{
+				if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventToolCall, Data: agenttypes.ToolCall{
 					ID:        tr.ToolCallID,
 					Name:      tr.Name,
 					Arguments: tr.Arguments,
@@ -176,18 +179,18 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.R
 			// 	final.WriteString(data.Content)
 			// }
 			if len(data.ToolRequests) == 0 {
-				if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventMessage, Data: toMessageBlock(data)}); err != nil {
+				if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventMessage, Data: toMessageBlock(data)}); err != nil {
 					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 				}
 			}
 		case *copilot.AssistantReasoningDeltaData:
 			if data.DeltaContent != "" {
-				if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventReasoningDelta, Content: data.DeltaContent}); err != nil {
+				if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventReasoningDelta, Content: data.DeltaContent}); err != nil {
 					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 				}
 			}
 		case *copilot.AssistantReasoningData:
-			if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventReasoning, Data: agent.ReasoningBlock{ID: data.ReasoningID, Content: data.Content}}); err != nil {
+			if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventReasoning, Data: agenttypes.ReasoningBlock{ID: data.ReasoningID, Content: data.Content}}); err != nil {
 				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 			}
 
@@ -209,13 +212,13 @@ func (a *copilotAgent) Stream(ctx context.Context, req agent.Request, rt agent.R
 		if res.err != nil {
 			_ = session.Abort(context.Background())
 			// Err 不参与 JSON 序列化；同时写入 Content，保证错误文本能下发到 UI。
-			_ = rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventError, Content: res.err.Error(), Err: res.err})
+			_ = rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventError, Content: res.err.Error(), Err: res.err})
 			return nil, res.err
 		}
-		if err := rt.Emit(ctx, agent.StreamEvent{Type: agent.StreamEventDone}); err != nil {
+		if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventDone}); err != nil {
 			return nil, err
 		}
-		return &agent.Result{Content: res.content}, nil
+		return &agenttypes.Result{Content: res.content}, nil
 	case <-ctx.Done():
 		_ = session.Abort(context.Background())
 		return nil, ctx.Err()
@@ -250,7 +253,7 @@ func (a *copilotAgent) clientOptions() *copilot.ClientOptions {
 }
 
 // sessionConfig 根据 Options 与单次请求构建 Copilot Session 配置。
-func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, model string, rt agent.Runtime) *copilot.SessionConfig {
+func (a *copilotAgent) sessionConfig(ctx context.Context, req agenttypes.Request, model string, rt agentinterfaces.Runtime) *copilot.SessionConfig {
 	cfg := &copilot.SessionConfig{
 		Model:               model,
 		WorkingDirectory:    firstNonEmpty(strings.TrimSpace(req.WorkingDir), strings.TrimSpace(a.opts.WorkingDir)),
@@ -286,18 +289,18 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agent.Request, mod
 // ExternalToolRequested 事件并在独立 goroutine 中调用对应 Handler，再把返回的 ToolResult
 // 通过 RPC 回填给模型，多轮 tool-call 循环由 SDK 内部完成，Provider 无需自己驱动循环。
 //
-// 桥接过程（见 agent.ToolRunner.Run）：
+// 桥接过程（见 agentruntime.ToolRunner.Run）：
 //
-//	ToolInvocation → agent.ToolCall → 输出 tool_call 事件 → 执行 → tool.Result
+//	ToolInvocation → agenttypes.ToolCall → 输出 tool_call 事件 → 执行 → tool.Result
 //	  → 输出 tool_result 事件 → copilot.ToolResult → 回传给模型
-func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot.Tool {
+func (a *copilotAgent) buildTools(rt agentinterfaces.Runtime, req agenttypes.Request) []copilot.Tool {
 	out := make([]copilot.Tool, 0)
 
 	// 工具执行上下文 = 本轮业务事实（SystemPromptVars 等，来自请求）+ 进程级服务能力
 	// （AnalysisNodeRunner，来自 Options）。二者分开注入：前者可序列化、随请求来，后者不可
 	// 序列化、进程内复用。
 	// 注意：copilot provider 计划废弃，此处仅保持与新 API 兼容。
-	rc := agent.ToolRuntimeContextFromRequest(req)
+	rc := agentruntime.ToolRuntimeContextFromRequest(req)
 	runner := a.opts.AnalysisNodeRunner
 	agentAnalysisRunner := a.opts.AgentAnalysisRunner
 	fileReader := a.opts.FileReader
@@ -313,7 +316,7 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 
 	if a.opts.Tools != nil {
 		userID := req.RequestUserID()
-		runnerExec := agent.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt).SetUserID(userID)
+		runnerExec := agentruntime.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt).SetUserID(userID)
 		defs := a.opts.Tools.List()
 		for _, def := range defs {
 			name := def.Name
@@ -322,14 +325,14 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 				Description: def.Description,
 				Parameters:  def.InputSchema,
 				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
-					ctx := agent.WithToolPermission(inv.TraceContext, rt, userID)
-					ctx = agent.WithProjectResourceBrowser(ctx, browser)
-					ctx = agent.WithSkills(ctx, skills)
-					ctx = agent.WithAgentAnalysisRunner(ctx, agentAnalysisRunner)
+					ctx := agentruntime.WithToolPermission(inv.TraceContext, rt, userID)
+					ctx = agentruntime.WithProjectResourceBrowser(ctx, browser)
+					ctx = agentruntime.WithSkills(ctx, skills)
+					ctx = agentruntime.WithAgentAnalysisRunner(ctx, agentAnalysisRunner)
 					if a.opts.LSP != nil {
-						ctx = agent.WithLSPClients(ctx, a.opts.LSP.Clients())
+						ctx = agentruntime.WithLSPClients(ctx, a.opts.LSP.Clients())
 					}
-					res := runnerExec.Run(agent.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, files), agent.ToolCall{
+					res := runnerExec.Run(agentruntime.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, files), agenttypes.ToolCall{
 						ID:        inv.ToolCallID,
 						Name:      name,
 						Arguments: inv.Arguments,
@@ -347,14 +350,14 @@ func (a *copilotAgent) buildTools(rt agent.Runtime, req agent.Request) []copilot
 
 // askUserTool 构建 ask_user 工具：解析模型入参 → Runtime.AskUser 阻塞等待作答 →
 // 把答案（JSON）作为工具结果回填给模型。无 UI 时 Runtime 返回错误，转为失败结果。
-func (a *copilotAgent) askUserTool(rt agent.Runtime, userID int64) copilot.Tool {
-	def := agent.AskUserToolDefinition()
+func (a *copilotAgent) askUserTool(rt agentinterfaces.Runtime, userID int64) copilot.Tool {
+	def := agentruntime.AskUserToolDefinition()
 	return copilot.Tool{
 		Name:        def.Name,
 		Description: def.Description,
 		Parameters:  def.InputSchema,
 		Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
-			var in agent.AskUserInput
+			var in agenttypes.AskUserInput
 			raw, _ := json.Marshal(inv.Arguments)
 			if err := json.Unmarshal(raw, &in); err != nil {
 				return copilot.ToolResult{TextResultForLLM: err.Error(), ResultType: "failure", Error: err.Error()}, nil
@@ -387,9 +390,9 @@ func toCopilotToolResult(res tool.Result) copilot.ToolResult {
 	}
 }
 
-// permissionHandler 将 Copilot 的权限请求映射为 agent.Operation，并通过 Runtime 请求权限，
+// permissionHandler 将 Copilot 的权限请求映射为 agenttypes.Operation，并通过 Runtime 请求权限，
 // 阻塞等待策略 / UI 决策后再把结果翻译回 Copilot 的 PermissionDecision。
-func (a *copilotAgent) permissionHandler(ctx context.Context, rt agent.Runtime, userID int64) copilot.PermissionHandlerFunc {
+func (a *copilotAgent) permissionHandler(ctx context.Context, rt agentinterfaces.Runtime, userID int64) copilot.PermissionHandlerFunc {
 	return func(request copilot.PermissionRequest, _ copilot.PermissionInvocation) (copilotrpc.PermissionDecision, error) {
 		op := toOperation(request)
 
@@ -400,9 +403,9 @@ func (a *copilotAgent) permissionHandler(ctx context.Context, rt agent.Runtime, 
 		}
 
 		switch decision {
-		case agent.DecisionAllow:
+		case agenttypes.DecisionAllow:
 			return &copilotrpc.PermissionDecisionApproveOnce{}, nil
-		case agent.DecisionDeny:
+		case agenttypes.DecisionDeny:
 			feedback := fmt.Sprintf("permission denied: %s", op.Type)
 			return &copilotrpc.PermissionDecisionReject{Feedback: &feedback}, nil
 		default:
@@ -417,33 +420,33 @@ func (a *copilotAgent) permissionHandler(ctx context.Context, rt agent.Runtime, 
 //
 // Description 填人类可读摘要（Intent），便于 UI 在批准前展示操作意图；
 // Path / Command / Content 仍按类型填充，前端为空时回退到这些字段。
-func toOperation(request copilot.PermissionRequest) agent.Operation {
+func toOperation(request copilot.PermissionRequest) agenttypes.Operation {
 	switch request.Kind() {
 	case copilot.PermissionRequestKindRead:
 		if r, ok := request.(*copilot.PermissionRequestRead); ok {
-			return agent.Operation{Type: agent.OperationRead, Path: r.Path,
+			return agenttypes.Operation{Type: agenttypes.OperationRead, Path: r.Path,
 				Description: r.Intention,
 				Metadata:    map[string]any{"intention": r.Intention},
 			}
 		}
 	case copilot.PermissionRequestKindWrite:
 		if w, ok := request.(*copilot.PermissionRequestWrite); ok {
-			return agent.Operation{Type: agent.OperationWrite, Path: w.FileName,
+			return agenttypes.Operation{Type: agenttypes.OperationWrite, Path: w.FileName,
 				Content:     w.Diff,
 				Description: fmt.Sprintf("Write file %s", w.FileName),
 			}
 		}
 	case copilot.PermissionRequestKindShell:
 		if s, ok := request.(*copilot.PermissionRequestShell); ok {
-			typ := agent.OperationExecute
+			typ := agenttypes.OperationExecute
 			if s.HasWriteFileRedirection {
-				typ = agent.OperationWrite
+				typ = agenttypes.OperationWrite
 			}
 			desc := s.Intention
 			if strings.TrimSpace(desc) == "" {
 				desc = s.FullCommandText
 			}
-			return agent.Operation{
+			return agenttypes.Operation{
 				Type:        typ,
 				Command:     s.FullCommandText,
 				Description: desc,
@@ -460,15 +463,15 @@ func toOperation(request copilot.PermissionRequest) agent.Operation {
 			if strings.TrimSpace(desc) == "" {
 				desc = fmt.Sprintf("Fetch URL %s", u.URL)
 			}
-			return agent.Operation{
-				Type:        agent.OperationNetwork,
+			return agenttypes.Operation{
+				Type:        agenttypes.OperationNetwork,
 				Description: desc,
 				Metadata:    map[string]any{"url": u.URL, "intention": u.Intention},
 			}
 		}
 	}
-	return agent.Operation{
-		Type:        agent.OperationExecute,
+	return agenttypes.Operation{
+		Type:        agenttypes.OperationExecute,
 		Description: string(request.Kind()),
 		Metadata:    map[string]any{"kind": string(request.Kind())},
 	}
@@ -511,7 +514,7 @@ func (a *copilotAgent) providerConfig(modelKey string) *copilot.ProviderConfig {
 }
 
 // resolveModel 解析本次调用使用的模型名（Profile 指定的模型 key）。
-func (a *copilotAgent) resolveModel(req agent.Request) (string, error) {
+func (a *copilotAgent) resolveModel(req agenttypes.Request) (string, error) {
 	model := strings.TrimSpace(req.ModelID)
 	if model == "" {
 		return "", fmt.Errorf("copilot: model is required (set it via Profile.Model)")
@@ -534,7 +537,7 @@ func (a *copilotAgent) withTimeout(ctx context.Context, timeout time.Duration) (
 }
 
 // buildPrompt 将 Request 中的对话上下文转换为 Copilot 单次 Send 所需的 prompt。
-func buildPrompt(req agent.Request) string {
+func buildPrompt(req agenttypes.Request) string {
 	// 常见场景：单条 user 消息直接透传。
 	if len(req.Messages) == 1 {
 		return strings.TrimSpace(req.Messages[0].Content)
@@ -550,9 +553,9 @@ func buildPrompt(req agent.Request) string {
 			b.WriteString("\n\n")
 		}
 		switch m.Role {
-		case agent.RoleUser:
+		case agenttypes.RoleUser:
 			b.WriteString(content)
-		case agent.RoleAssistant:
+		case agenttypes.RoleAssistant:
 			b.WriteString("assistant: ")
 			b.WriteString(content)
 		default:
@@ -577,8 +580,8 @@ func firstNonEmpty(values ...string) string {
 }
 
 // toMessageBlock 将 Copilot 的完整 assistant 消息转换为框架内的完整消息块。
-func toMessageBlock(data *copilot.AssistantMessageData) agent.MessageBlock {
-	mb := agent.MessageBlock{
+func toMessageBlock(data *copilot.AssistantMessageData) agenttypes.MessageBlock {
+	mb := agenttypes.MessageBlock{
 		ID:      data.MessageID,
 		Content: data.Content,
 	}
@@ -586,7 +589,7 @@ func toMessageBlock(data *copilot.AssistantMessageData) agent.MessageBlock {
 		mb.TurnID = *data.TurnID
 	}
 	for _, tr := range data.ToolRequests {
-		mb.ToolCalls = append(mb.ToolCalls, agent.ToolCall{
+		mb.ToolCalls = append(mb.ToolCalls, agenttypes.ToolCall{
 			ID:        tr.ToolCallID,
 			Name:      tr.Name,
 			Arguments: tr.Arguments,
@@ -596,8 +599,8 @@ func toMessageBlock(data *copilot.AssistantMessageData) agent.MessageBlock {
 }
 
 // turnBlock 构造一轮边界块；model 可能为 nil。
-func turnBlock(turnID string, model *string) agent.TurnBlock {
-	tb := agent.TurnBlock{TurnID: turnID}
+func turnBlock(turnID string, model *string) agenttypes.TurnBlock {
+	tb := agenttypes.TurnBlock{TurnID: turnID}
 	if model != nil {
 		tb.Model = *model
 	}

@@ -7,7 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -23,7 +24,7 @@ import (
 type AuthHandler struct {
 	userService    interfaces.UserService
 	projectService interfaces.ProjectService
-	agentService   *agent.AgentService
+	agentService   *agentservice.AgentService
 	configInfo     *config.Config
 }
 
@@ -35,7 +36,7 @@ const (
 func NewAuthHandler(configInfo *config.Config,
 	userService interfaces.UserService,
 	projectService interfaces.ProjectService,
-	agentService *agent.AgentService) *AuthHandler {
+	agentService *agentservice.AgentService) *AuthHandler {
 	return &AuthHandler{
 		configInfo:     configInfo,
 		userService:    userService,
@@ -317,8 +318,8 @@ func (h *AuthHandler) fillAgentProfile(ctx context.Context, userInfo *types.User
 	userInfo.AgentProfile = newAgentProfileInfo(profile)
 }
 
-// newAgentProfileInfo 由 agent.Profile 构造展示用 DTO；p 为空时返回 nil。
-func newAgentProfileInfo(p *agent.Profile) *types.AgentProfileInfo {
+// newAgentProfileInfo 由 agenttypes.Profile 构造展示用 DTO；p 为空时返回 nil。
+func newAgentProfileInfo(p *agenttypes.Profile) *types.AgentProfileInfo {
 	if p == nil {
 		return nil
 	}

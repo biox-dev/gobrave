@@ -9,11 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/biox-dev/gobrave/internal/agent"
-	"github.com/biox-dev/gobrave/internal/agent/message"
-	"github.com/biox-dev/gobrave/internal/agent/session"
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/realtime"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -27,8 +26,8 @@ import (
 //   - WS 是 notification（通过 AgentService.Subscribe 把事件推送给创建任务的用户）；
 //   - AgentService / Repository 是真正的 state。
 type AgentHandler struct {
-	svc  *agent.AgentService
-	chat *agent.ChatService
+	svc  *agentservice.AgentService
+	chat *agentservice.ChatService
 	hub  *realtime.Hub
 
 	skills     *skill.Registry
@@ -41,7 +40,7 @@ type AgentHandler struct {
 }
 
 // NewAgentHandler 创建 AgentHandler。
-func NewAgentHandler(svc *agent.AgentService, chat *agent.ChatService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry, skillStore *skill.Store) *AgentHandler {
+func NewAgentHandler(svc *agentservice.AgentService, chat *agentservice.ChatService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry, skillStore *skill.Store) *AgentHandler {
 	return &AgentHandler{
 		svc:        svc,
 		chat:       chat,
@@ -55,9 +54,9 @@ func NewAgentHandler(svc *agent.AgentService, chat *agent.ChatService, hub *real
 
 // agentWSEvent 是推送到前端 WS 的事件信封。
 type agentWSEvent struct {
-	Type   string           `json:"type"` // 固定 "agent.event"
-	TaskID int64            `json:"task_id,string"`
-	Event  agent.AgentEvent `json:"event"`
+	Type   string                `json:"type"` // 固定 "agent.event"
+	TaskID int64                 `json:"task_id,string"`
+	Event  agenttypes.AgentEvent `json:"event"`
 }
 
 // ---- 请求 / 响应结构 ----
@@ -99,13 +98,13 @@ type describeEnvRequest struct{}
 
 type agentTaskPageRequest struct {
 	types.Pagination
-	Statuses []agent.TaskStatus `json:"statuses"`
+	Statuses []agenttypes.TaskStatus `json:"statuses"`
 }
 
 type agentPermissionPageRequest struct {
 	types.Pagination
-	TaskID   string                   `json:"task_id"`
-	Statuses []agent.PermissionStatus `json:"statuses"`
+	TaskID   string                        `json:"task_id"`
+	Statuses []agenttypes.PermissionStatus `json:"statuses"`
 }
 
 // agentQuestionsQuery 是查询任务待作答提问的查询参数。
@@ -115,21 +114,21 @@ type agentQuestionsQuery struct {
 
 // questionAnswerBody 是用户作答请求体。
 type questionAnswerBody struct {
-	ID     string              `json:"id" binding:"required"`
-	Answer agent.AskUserAnswer `json:"answer"`
+	ID     string                   `json:"id" binding:"required"`
+	Answer agenttypes.AskUserAnswer `json:"answer"`
 }
 
 // agentQuestionPageRequest 是提问分页查询请求；task_id 为空表示全部任务。
 type agentQuestionPageRequest struct {
 	types.Pagination
-	TaskID   string                 `json:"task_id"`
-	Statuses []agent.QuestionStatus `json:"statuses"`
+	TaskID   string                      `json:"task_id"`
+	Statuses []agenttypes.QuestionStatus `json:"statuses"`
 }
 
 // agentMemoryPageRequest 是记忆分页查询请求；kinds 为空表示全部类别。
 type agentMemoryPageRequest struct {
 	types.Pagination
-	Kinds []agent.MemoryKind `json:"kinds"`
+	Kinds []agenttypes.MemoryKind `json:"kinds"`
 }
 
 // memoryIDQuery 是单条记忆的查询参数；记忆 ID 是雪花 ID（int64）。
@@ -144,13 +143,13 @@ type memoryIDBody struct {
 
 // memorySaveRequest 是创建 / 更新记忆的请求体；UserID 由当前登录用户注入。
 type memorySaveRequest struct {
-	ID         int64            `json:"id,string"`         // 为 0 则新建，否则更新
-	ProjectID  int64            `json:"project_id,string"` // 可选：关联项目
-	SessionID  int64            `json:"session_id,string"` // 可选：关联会话
-	Kind       agent.MemoryKind `json:"kind" binding:"required"`
-	Content    string           `json:"content" binding:"required"`
-	Importance int              `json:"importance"`
-	Metadata   map[string]any   `json:"metadata"`
+	ID         int64                 `json:"id,string"`         // 为 0 则新建，否则更新
+	ProjectID  int64                 `json:"project_id,string"` // 可选：关联项目
+	SessionID  int64                 `json:"session_id,string"` // 可选：关联会话
+	Kind       agenttypes.MemoryKind `json:"kind" binding:"required"`
+	Content    string                `json:"content" binding:"required"`
+	Importance int                   `json:"importance"`
+	Metadata   map[string]any        `json:"metadata"`
 }
 
 // memoryRetrieveRequest 是记忆检索请求体。
@@ -161,14 +160,14 @@ type memoryRetrieveRequest struct {
 
 // profileSaveRequest 是创建 / 更新 AgentProfile 的请求体；UserID 由当前登录用户注入。
 type profileSaveRequest struct {
-	ID           string              `json:"id"` // 为空则新建，否则更新
-	Name         string              `json:"name" binding:"required"`
-	Description  string              `json:"description"`
-	SystemPrompt string              `json:"system_prompt"`
-	Model        string              `json:"model"`
-	Skills       []string            `json:"skills"`
-	Context      agent.ContextConfig `json:"context"`
-	IsDefault    bool                `json:"is_default"`
+	ID           string                   `json:"id"` // 为空则新建，否则更新
+	Name         string                   `json:"name" binding:"required"`
+	Description  string                   `json:"description"`
+	SystemPrompt string                   `json:"system_prompt"`
+	Model        string                   `json:"model"`
+	Skills       []string                 `json:"skills"`
+	Context      agenttypes.ContextConfig `json:"context"`
+	IsDefault    bool                     `json:"is_default"`
 }
 
 // parseAgentID 把字符串 ID 解析为 int64（任务 / 会话 / 权限 ID 统一为雪花 ID）。
@@ -190,8 +189,8 @@ func parseOptionalAgentID(s string) (int64, error) {
 // @Tags         Agent
 // @Accept       json
 // @Produce      json
-// @Param        request  body      agent.Request  true  "请求参数"
-// @Success      200      {object}  agent.Task
+// @Param        request  body      agenttypes.Request  true  "请求参数"
+// @Success      200      {object}  agenttypes.Task
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
@@ -203,7 +202,7 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 		return
 	}
 
-	var req agent.Request
+	var req agenttypes.Request
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
 		return
@@ -284,7 +283,7 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 			return
 		}
 	}
-	task, sess, err := h.chat.CreateTurn(c.Request.Context(), agent.TurnInput{
+	task, sess, err := h.chat.CreateTurn(c.Request.Context(), agentservice.TurnInput{
 		UserID:         userID,
 		SessionID:      sessionID,
 		ProjectID:      rc.ProjectID,
@@ -341,7 +340,7 @@ func (h *AgentHandler) DescribeEnv(c *gin.Context) {
 	// 用当前用户选中的 Profile 解析系统提示词模板，返回渲染后的真实提示词。
 	profileID := user.AgentConfig.ProfileID
 	if profileID == 0 {
-		profileID = agent.BuiltinDefaultProfileID
+		profileID = agenttypes.BuiltinDefaultProfileID
 	}
 	// 业务上下文（llmEnv）从当前用户配置读取，不再接收前端传入的 env。
 	info, err := h.runtimeCtx.Describe(c.Request.Context(), user.ID, profileID, user.AgentConfig.Env())
@@ -596,7 +595,7 @@ func (h *AgentHandler) DeleteSkill(c *gin.Context) {
 // @Description  返回全部 Profile（全局可见），包含系统提示词、技能与上下文注入开关
 // @Tags         Agent
 // @Produce      json
-// @Success      200  {array}   agent.Profile
+// @Success      200  {array}   agenttypes.Profile
 // @Failure      401  {object}  errors.AppError
 // @Security     Bearer
 // @Router       /agent/profile/list [get]
@@ -620,7 +619,7 @@ func (h *AgentHandler) ListProfiles(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        request  body      handler.profileSaveRequest  true  "Profile 内容"
-// @Success      200      {object}  agent.Profile
+// @Success      200      {object}  agenttypes.Profile
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
@@ -637,7 +636,7 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 		return
 	}
 
-	var profile *agent.Profile
+	var profile *agenttypes.Profile
 	if req.ID != "" {
 		id, err := parseAgentID(req.ID)
 		if err != nil {
@@ -659,7 +658,7 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 		existing.IsDefault = req.IsDefault
 		profile = existing
 	} else {
-		profile = &agent.Profile{
+		profile = &agenttypes.Profile{
 			Name:         req.Name,
 			Description:  req.Description,
 			SystemPrompt: req.SystemPrompt,
@@ -683,7 +682,7 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 // @Tags         Agent
 // @Produce      json
 // @Param        id  query     string  true  "Profile ID"
-// @Success      200  {object}  agent.Profile
+// @Success      200  {object}  agenttypes.Profile
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
@@ -755,7 +754,7 @@ func (h *AgentHandler) DeleteProfile(c *gin.Context) {
 // @Tags         Agent
 // @Produce      json
 // @Param        id   query     string  true  "任务 ID"
-// @Success      200  {object}  agent.Task
+// @Success      200  {object}  agenttypes.Task
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
@@ -791,7 +790,7 @@ func (h *AgentHandler) GetTask(c *gin.Context) {
 // @Tags         Agent
 // @Produce      json
 // @Param        id   query     string  true  "任务 ID"
-// @Success      200  {object}  agent.Request
+// @Success      200  {object}  agenttypes.Request
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
@@ -826,7 +825,7 @@ func (h *AgentHandler) GetTaskRequest(c *gin.Context) {
 // @Tags         Agent
 // @Produce      json
 // @Param        task_id  query     string  true  "任务 ID"
-// @Success      200      {array}   agent.PermissionRequest
+// @Success      200      {array}   agenttypes.PermissionRequest
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Security     Bearer
@@ -897,8 +896,8 @@ type sessionPageRequest struct {
 
 // sessionDetail 是会话详情响应：会话字段平铺 + 消息列表（保持原 conversation 响应结构）。
 type sessionDetail struct {
-	session.Session
-	Messages []message.Message `json:"messages"`
+	agenttypes.Session
+	Messages []agenttypes.Message `json:"messages"`
 }
 
 // PageSessions godoc
@@ -1039,7 +1038,7 @@ func (h *AgentHandler) PagePermissions(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        request  body      handler.memorySaveRequest  true  "记忆内容"
-// @Success      200      {object}  agent.Memory
+// @Success      200      {object}  agenttypes.Memory
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
@@ -1057,7 +1056,7 @@ func (h *AgentHandler) SaveMemory(c *gin.Context) {
 		return
 	}
 
-	var memory *agent.Memory
+	var memory *agenttypes.Memory
 	if req.ID != 0 {
 		// 更新：先加载既有记录，保留 CreatedAt / LastAccessedAt 等只读字段。
 		existing, err := h.svc.GetMemory(c.Request.Context(), req.ID)
@@ -1077,7 +1076,7 @@ func (h *AgentHandler) SaveMemory(c *gin.Context) {
 		existing.Metadata = req.Metadata
 		memory = existing
 	} else {
-		memory = &agent.Memory{
+		memory = &agenttypes.Memory{
 			UserID:     userID,
 			ProjectID:  req.ProjectID,
 			SessionID:  req.SessionID,
@@ -1099,7 +1098,7 @@ func (h *AgentHandler) SaveMemory(c *gin.Context) {
 // @Tags         Agent
 // @Produce      json
 // @Param        id   query     string  true  "记忆 ID"
-// @Success      200  {object}  agent.Memory
+// @Success      200  {object}  agenttypes.Memory
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
@@ -1215,7 +1214,7 @@ func (h *AgentHandler) PageMemory(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        request  body      handler.memoryRetrieveRequest  true  "检索参数"
-// @Success      200      {array}   agent.Memory
+// @Success      200      {array}   agenttypes.Memory
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Security     Bearer
@@ -1309,7 +1308,7 @@ func (h *AgentHandler) resolvePermission(c *gin.Context, approve bool) {
 // @Tags         Agent
 // @Produce      json
 // @Param        task_id  query     string  true  "任务 ID"
-// @Success      200      {array}   agent.QuestionRequest
+// @Success      200      {array}   agenttypes.QuestionRequest
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Security     Bearer
@@ -1505,9 +1504,9 @@ func (h *AgentHandler) attachTaskStream(userID int64, taskID int64) {
 	var once sync.Once
 	var unsub func()
 
-	unsub = h.svc.Subscribe(taskID, func(_ context.Context, ev agent.AgentEvent) error {
+	unsub = h.svc.Subscribe(taskID, func(_ context.Context, ev agenttypes.AgentEvent) error {
 		switch ev.Type {
-		case agent.EventTaskCompleted, agent.EventTaskFailed, agent.EventTaskCanceled:
+		case agenttypes.EventTaskCompleted, agenttypes.EventTaskFailed, agenttypes.EventTaskCanceled:
 			once.Do(func() {
 				h.mu.Lock()
 				delete(h.subs, taskID)
@@ -1555,17 +1554,17 @@ func getCurrentUser(c *gin.Context) (*types.User, bool) {
 // handleAgentError 把 Agent 域错误映射为对应的 HTTP 状态码。
 func handleAgentError(c *gin.Context, err error, internalMsg string) {
 	switch {
-	case stderrs.Is(err, agent.ErrTaskNotFound), stderrs.Is(err, agent.ErrPermissionNotFound),
-		stderrs.Is(err, agent.ErrQuestionNotFound),
-		stderrs.Is(err, session.ErrNotFound), stderrs.Is(err, agent.ErrMemoryNotFound):
+	case stderrs.Is(err, agenttypes.ErrTaskNotFound), stderrs.Is(err, agenttypes.ErrPermissionNotFound),
+		stderrs.Is(err, agenttypes.ErrQuestionNotFound),
+		stderrs.Is(err, agenttypes.ErrSessionNotFound), stderrs.Is(err, agenttypes.ErrMemoryNotFound):
 		c.Error(errors.NewNotFoundError("record not found"))
-	case stderrs.Is(err, agent.ErrPermissionNotPending),
-		stderrs.Is(err, agent.ErrQuestionNotPending),
-		stderrs.Is(err, agent.ErrInvalidPermissionTransition),
-		stderrs.Is(err, agent.ErrInvalidQuestionTransition),
-		stderrs.Is(err, agent.ErrUnknownQuestionID),
-		stderrs.Is(err, agent.ErrTaskAlreadyRunning),
-		stderrs.Is(err, agent.ErrTaskNotResumable):
+	case stderrs.Is(err, agenttypes.ErrPermissionNotPending),
+		stderrs.Is(err, agenttypes.ErrQuestionNotPending),
+		stderrs.Is(err, agenttypes.ErrInvalidPermissionTransition),
+		stderrs.Is(err, agenttypes.ErrInvalidQuestionTransition),
+		stderrs.Is(err, agenttypes.ErrUnknownQuestionID),
+		stderrs.Is(err, agenttypes.ErrTaskAlreadyRunning),
+		stderrs.Is(err, agenttypes.ErrTaskNotResumable):
 		c.Error(errors.NewConflictError(err.Error()))
 	default:
 		c.Error(errors.NewInternalServerError(internalMsg).WithDetails(err.Error()))

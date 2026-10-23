@@ -5,25 +5,26 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent"
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 )
 
 // memorySaver 实现 tool.MemorySaver：把工具（save_memory）写记忆的请求落到记忆域的
 // MemoryManager 上。
 //
 // 之所以放在 container 而不是 tool 包：Memory / MemoryManager 属于 agent 包，而 tool 包
-// 刻意不依赖 agent（避免循环引用）。这里只做「入参归一化 → 构造 agent.Memory → 持久化」，
+// 刻意不依赖 agent（避免循环引用）。这里只做「入参归一化 → 构造 agenttypes.Memory → 持久化」，
 // 真正的存储细节仍由 MemoryRepository 负责。
 //
 // 直接使用 MemoryManager.Save（而不是 AgentService.SaveMemory）是为了避免 container →
 // AgentService → Client → Options 的构造环。
 type memorySaver struct {
-	mgr *agent.MemoryManager
+	mgr *agentservice.MemoryManager
 }
 
 // newMemorySaver 构建「保存长期记忆」执行器并注入内置工具体系。
-func newMemorySaver(mgr *agent.MemoryManager) tool.MemorySaver {
+func newMemorySaver(mgr *agentservice.MemoryManager) tool.MemorySaver {
 	return &memorySaver{mgr: mgr}
 }
 
@@ -39,19 +40,19 @@ func (s *memorySaver) SaveMemory(ctx context.Context, input tool.MemorySaveInput
 		return tool.MemorySaveResult{}, fmt.Errorf("save_memory: content is required")
 	}
 
-	kind := agent.MemoryKind(strings.ToLower(strings.TrimSpace(input.Kind)))
+	kind := agenttypes.MemoryKind(strings.ToLower(strings.TrimSpace(input.Kind)))
 	switch kind {
-	case agent.MemoryKindFact, agent.MemoryKindSummary, agent.MemoryKindNote, agent.MemoryKindEvent:
+	case agenttypes.MemoryKindFact, agenttypes.MemoryKindSummary, agenttypes.MemoryKindNote, agenttypes.MemoryKindEvent:
 		// 合法类别，原样使用。
 	default:
-		kind = agent.MemoryKindNote
+		kind = agenttypes.MemoryKindNote
 	}
 
 	memID := input.ID
-	var mem *agent.Memory
+	var mem *agenttypes.Memory
 	created := memID == 0
 	if created {
-		mem = agent.NewMemory(input.UserID, input.ProjectID, input.SessionID, kind, content)
+		mem = agenttypes.NewMemory(input.UserID, input.ProjectID, input.SessionID, kind, content)
 	} else {
 		existing, err := s.mgr.Get(ctx, memID)
 		if err != nil {
