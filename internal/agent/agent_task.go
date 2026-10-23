@@ -54,8 +54,10 @@ type TaskFinishedHandler func(ctx context.Context, task *Task)
 // PermissionRequest 记录“某个具体操作是否被允许”。后端重启后，可根据 Task.Status
 // 与 pending 的 PermissionRequest 重建运行态（见 Recovery）。
 type Task struct {
-	ID         int64      `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	SessionID  int64      `json:"session_id,string,omitempty" gorm:"column:session_id;type:bigint;index"`
+	ID        int64 `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
+	SessionID int64 `json:"session_id,string,omitempty" gorm:"column:session_id;type:bigint;index"`
+	// ProjectID 是任务所属项目（创建时取 Request.RuntimeContext.ProjectID），0 表示未知。
+	ProjectID  int64      `json:"project_id,string,omitempty" gorm:"column:project_id;type:bigint;index"`
 	Provider   string     `json:"provider" gorm:"column:provider;type:varchar(64)"`
 	Model      string     `json:"model,omitempty" gorm:"column:model;type:varchar(128)"`
 	Status     TaskStatus `json:"status" gorm:"column:status;type:varchar(32);index"`
@@ -99,8 +101,14 @@ func (t *Task) AfterFind(*gorm.DB) error {
 // NewTask 基于请求构建一个 created 状态的任务。
 func NewTask(req Request) *Task {
 	now := time.Now()
+	// 任务归属项目来自运行时上下文（用户当前激活项目），随请求一起解析。
+	var projectID int64
+	if req.RuntimeContext != nil {
+		projectID = req.RuntimeContext.ProjectID
+	}
 	return &Task{
 		SessionID:   req.SessionID,
+		ProjectID:   projectID,
 		Provider:    req.Provider,
 		Model:       req.ModelID,
 		Status:      TaskCreated,
