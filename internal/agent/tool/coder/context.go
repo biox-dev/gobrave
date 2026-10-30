@@ -45,9 +45,13 @@ func lspClients(ctx context.Context) map[string]*lsp.Client {
 
 // permissionPath 返回文件操作的授权范围（对齐 opencode）：
 // 文件位于工作目录内时收敛到工作目录，否则取文件所在目录。
+//
+// 注意：不能用 strings.HasPrefix 判断包含关系，因为 "/data/36" 也是
+// "/data/360/x" 的前缀，会把工作目录外的文件误判为工作目录内，
+// 从而把授权范围放大到整个工作目录。这里统一用 filepath.Rel 判断。
 func permissionPath(ctx context.Context, filePath string) string {
 	root := workingDir(ctx)
-	if strings.HasPrefix(filePath, root) {
+	if rel, err := filepath.Rel(root, filePath); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return root
 	}
 	return filepath.Dir(filePath)

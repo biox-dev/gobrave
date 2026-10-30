@@ -114,7 +114,7 @@ func (e *editTool) Definition() tool.Definition {
 func (e *editTool) Execute(ctx context.Context, args json.RawMessage) (any, error) {
 	var params EditParams
 	if err := json.Unmarshal(args, &params); err != nil {
-		return nil, toolError("invalid parameters")
+		return nil, toolError(fmt.Sprintf("invalid parameters: %v", err))
 	}
 	if params.FilePath == "" {
 		return nil, toolError("file_path is required")
@@ -123,7 +123,9 @@ func (e *editTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 		params.FilePath = filepath.Join(workingDir(ctx), params.FilePath)
 	}
 
-	e = newEditTool(ctx)
+	// 依赖按 ctx 组装到局部变量，不要覆盖接收者：NewEdit 返回的是无状态单例，
+	// 但覆写 e 容易让人误以为工具实例上保存了状态，且无法暴露并发问题。
+	t := newEditTool(ctx)
 
 	var (
 		response ToolResponse
@@ -131,11 +133,11 @@ func (e *editTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 	)
 	switch {
 	case params.OldString == "":
-		response, err = e.createNewFile(ctx, params.FilePath, params.NewString)
+		response, err = t.createNewFile(ctx, params.FilePath, params.NewString)
 	case params.NewString == "":
-		response, err = e.deleteContent(ctx, params.FilePath, params.OldString)
+		response, err = t.deleteContent(ctx, params.FilePath, params.OldString)
 	default:
-		response, err = e.replaceContent(ctx, params.FilePath, params.OldString, params.NewString)
+		response, err = t.replaceContent(ctx, params.FilePath, params.OldString, params.NewString)
 	}
 	if err != nil {
 		return nil, err
@@ -144,9 +146,9 @@ func (e *editTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 		return response.result()
 	}
 
-	waitForLspDiagnostics(ctx, params.FilePath, e.lspClients)
+	waitForLspDiagnostics(ctx, params.FilePath, t.lspClients)
 	text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
-	text += getDiagnostics(params.FilePath, e.lspClients)
+	text += getDiagnostics(params.FilePath, t.lspClients)
 	return text, nil
 }
 
