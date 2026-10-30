@@ -170,6 +170,7 @@ func RegisterProjectRoutes(r *gin.RouterGroup, handler *handler.ProjectHandler, 
 	r.GET("/project/project-report-file", handler.GetProjectReportFile)
 	r.POST("/project/update-project-report-file", handler.UpdateProjectReportFile)
 	r.GET("/project/project-report-html", handler.GetProjectReportHTML)
+	r.GET("/project/project-report-file-html", handler.GetProjectReportFileHTML)
 	// 报告工作目录（data/<projectId>/report/<reportId>）的 git 能力：
 	// 查看本地变化 / 提交改动 / 撤回单个文件（见 handler/project_report_git.go）。
 	r.GET("/project/project-report-git-diff", handler.GetProjectReportGitDiff)

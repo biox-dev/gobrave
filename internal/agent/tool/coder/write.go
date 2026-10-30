@@ -107,11 +107,13 @@ func (w *writeTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 			return nil, toolError(fmt.Sprintf("Path is a directory, not a file: %s", filePath))
 		}
 
-		modTime := fileInfo.ModTime()
-		lastRead := getLastReadTime(filePath)
-		if modTime.After(lastRead) {
+		status := CheckFileRead(filePath, fileInfo)
+		switch {
+		case !status.Read:
+			return nil, toolError(fmt.Sprintf("File %s has not been read yet.\n\nPlease read the file with the View tool before writing it, so the existing content is not overwritten blindly.", filePath))
+		case status.Modified:
 			return nil, toolError(fmt.Sprintf("File %s has been modified since it was last read.\nLast modification: %s\nLast read: %s\n\nPlease read the file again before modifying it.",
-				filePath, modTime.Format(time.RFC3339), lastRead.Format(time.RFC3339)))
+				filePath, status.ModTime.Format(time.RFC3339), status.LastRead.Format(time.RFC3339)))
 		}
 
 		oldContent, readErr := os.ReadFile(filePath)

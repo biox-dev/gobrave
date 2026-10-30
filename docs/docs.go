@@ -1265,7 +1265,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "创建任务、订阅事件流到 WS，并异步启动执行",
+                "description": "创建任务并异步启动执行；实时事件由全局事件桥按任务归属用户推送到 WS",
                 "consumes": [
                     "application/json"
                 ],
@@ -1615,6 +1615,61 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/task/timeline": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回该任务已落库的时间线消息（reasoning / assistant / tool_call / tool_result / error），\n用于前端刷新 / 切换会话后回填「事实流」：增量事件（text / reasoning_delta）只广播\n不落库，完整块事件由 TimelineRecorder 即时写入 agent_messages。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "获取任务的执行时间线",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "任务 ID",
+                        "name": "task_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/types.Message"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -9610,6 +9665,71 @@ const docTemplate = `{
                 }
             }
         },
+        "/project/project-report-file-html": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "将报告工作目录下的 output.md 渲染为独立 HTML 文档；inline_images=true 时图片以 base64 内嵌（自包含），false 时保留原始 URL",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "导出报告自身文件为 HTML",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "报告ID",
+                        "name": "report_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "是否内嵌图片（默认 true）",
+                        "name": "inline_images",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML 文档",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "未认证",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "报告不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/project/project-report-git-diff": {
             "get": {
                 "security": [
@@ -15163,16 +15283,6 @@ const docTemplate = `{
                     "description": "Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。",
                     "type": "string"
                 },
-                "project_id": {
-                    "description": "ProjectID 是本次调用所属项目的 ID（当前用户激活项目），供工具在执行期做项目级\n数据定位。0 表示未知（未解析到激活项目）。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "session_id": {
-                    "description": "SessionID 是本次调用所属的会话 ID（请求级事实，由上层按 Request.SessionID 注入）。\n\n它是会话主键（雪花 ID），0 表示未知（未注入）。供记忆检索 / 写入把记忆与\n会话关联（例如把某轮踩坑经验记在当次会话下）。",
-                    "type": "string",
-                    "example": "0"
-                },
                 "system_prompt_vars": {
                     "description": "SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量\n（如 analysis_node_id / workspace_directory / script_file_path 等）。",
                     "type": "object",
@@ -15180,15 +15290,6 @@ const docTemplate = `{
                 },
                 "type": {
                     "description": "Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，\n为空表示默认工作区）。",
-                    "type": "string"
-                },
-                "user_id": {
-                    "description": "UserID 是本次调用发起用户的 ID（请求级事实，由上层按 Request.UserID 注入）。\n\n供需要「按用户隔离数据」的工具（如 save_memory 写长期记忆）在\nRuntimeContext 内直接取到归属用户；0 表示未知（未注入）。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "working_dir": {
-                    "description": "WorkingDir 是 Agent 执行工作目录。",
                     "type": "string"
                 }
             }
@@ -16889,17 +16990,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "runtime_context": {
-                    "description": "RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录 / 归属用户）。\n\n由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到\n配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供\nbuiltin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。\n\n它同时是「请求级用户事实」的唯一来源：UserID / SessionID 都在这里，\n权限策略、ask_user 归属、记忆检索与提取统一从它读取（见 RequestUserID）。\n\n它只承载可序列化的业务事实，并随 Request 一起被 JSON 序列化进 agent_tasks.request\n（Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用\n（见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如\nAnalysisNodeRunner）不在此处，而由 agent.Options 承载。",
+                    "description": "RuntimeContext 是本轮调用的业务上下文（业务类型 / 模板变量）。\n\n由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到\n配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供\nbuiltin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。\n\n它只承载业务事实；「谁在执行」（任务 / 会话 / 用户 / 项目）由 Task 与 TaskFacts\n承载，经 Runtime 注入工具 ctx（见 tool.WithTaskFacts）。它随 Request 一起被 JSON\n序列化进 agent_tasks.request（gorm serializer:json），因此任务从 DB 恢复后依然可用。",
                     "allOf": [
                         {
                             "$ref": "#/definitions/runtimecontext.RuntimeContext"
                         }
                     ]
-                },
-                "session_id": {
-                    "description": "SessionID 可选：会话主键（雪花 ID），用于把多次调用关联到同一会话（与权限 / 任务联动）。",
-                    "type": "string",
-                    "example": "0"
                 },
                 "skills": {
                     "description": "Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。",
@@ -16911,14 +17007,6 @@ const docTemplate = `{
                 "stream": {
                     "description": "Stream 可选：任务模式下是否使用流式调用；默认 false 使用 Invoke。",
                     "type": "boolean"
-                },
-                "system_prompt": {
-                    "description": "SystemPrompt 是最终发送给 Provider 的系统提示词。\n\n注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +\nRuntimeContext.SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。",
-                    "type": "string"
-                },
-                "working_dir": {
-                    "description": "WorkingDir 可选：Agent 执行的工作目录。",
-                    "type": "string"
                 }
             }
         },
@@ -17174,7 +17262,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "project_id": {
-                    "description": "ProjectID 是任务所属项目（创建时取 Request.RuntimeContext.ProjectID），0 表示未知。",
+                    "description": "ProjectID 是任务所属项目（创建时由调用方提供），0 表示未知。",
                     "type": "string",
                     "example": "0"
                 },
@@ -17205,6 +17293,11 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "user_id": {
+                    "description": "UserID 是任务归属用户（0 表示后台任务 / 无登录用户）。",
+                    "type": "string",
+                    "example": "0"
                 },
                 "working_dir": {
                     "type": "string"

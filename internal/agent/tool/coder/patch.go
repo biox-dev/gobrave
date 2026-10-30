@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/logging"
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
@@ -100,9 +99,6 @@ func (p *patchTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 	filesToRead := diff.IdentifyFilesNeeded(params.PatchText)
 	for _, filePath := range filesToRead {
 		path := absPath(filePath)
-		if getLastReadTime(path).IsZero() {
-			return nil, toolError(fmt.Sprintf("you must read the file %s before patching it. Use the View tool first", filePath))
-		}
 		fileInfo, err := os.Stat(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -113,11 +109,8 @@ func (p *patchTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 		if fileInfo.IsDir() {
 			return nil, toolError(fmt.Sprintf("path is a directory, not a file: %s", path))
 		}
-		modTime := fileInfo.ModTime()
-		lastRead := getLastReadTime(path)
-		if modTime.After(lastRead) {
-			return nil, toolError(fmt.Sprintf("file %s has been modified since it was last read (mod time: %s, last read: %s)",
-				path, modTime.Format(time.RFC3339), lastRead.Format(time.RFC3339)))
+		if msg, ok := guardFileModify(path, fileInfo); !ok {
+			return nil, toolError(msg)
 		}
 	}
 

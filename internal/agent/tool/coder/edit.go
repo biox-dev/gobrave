@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/logging"
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
@@ -229,17 +228,8 @@ func (e *editTool) deleteContent(ctx context.Context, filePath, oldString string
 		return NewTextErrorResponse(fmt.Sprintf("path is a directory, not a file: %s", filePath)), nil
 	}
 
-	if getLastReadTime(filePath).IsZero() {
-		return NewTextErrorResponse("you must read the file before editing it. Use the View tool first"), nil
-	}
-
-	modTime := fileInfo.ModTime()
-	lastRead := getLastReadTime(filePath)
-	if modTime.After(lastRead) {
-		return NewTextErrorResponse(
-			fmt.Sprintf("file %s has been modified since it was last read (mod time: %s, last read: %s)",
-				filePath, modTime.Format(time.RFC3339), lastRead.Format(time.RFC3339),
-			)), nil
+	if msg, ok := guardFileModify(filePath, fileInfo); !ok {
+		return NewTextErrorResponse(msg), nil
 	}
 
 	content, err := os.ReadFile(filePath)
@@ -330,17 +320,8 @@ func (e *editTool) replaceContent(ctx context.Context, filePath, oldString, newS
 		return NewTextErrorResponse(fmt.Sprintf("path is a directory, not a file: %s", filePath)), nil
 	}
 
-	if getLastReadTime(filePath).IsZero() {
-		return NewTextErrorResponse("you must read the file before editing it. Use the View tool first"), nil
-	}
-
-	modTime := fileInfo.ModTime()
-	lastRead := getLastReadTime(filePath)
-	if modTime.After(lastRead) {
-		return NewTextErrorResponse(
-			fmt.Sprintf("file %s has been modified since it was last read (mod time: %s, last read: %s)",
-				filePath, modTime.Format(time.RFC3339), lastRead.Format(time.RFC3339),
-			)), nil
+	if msg, ok := guardFileModify(filePath, fileInfo); !ok {
+		return NewTextErrorResponse(msg), nil
 	}
 
 	content, err := os.ReadFile(filePath)

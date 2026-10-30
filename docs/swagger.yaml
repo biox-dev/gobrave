@@ -1827,20 +1827,6 @@ definitions:
       label:
         description: Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。
         type: string
-      project_id:
-        description: |-
-          ProjectID 是本次调用所属项目的 ID（当前用户激活项目），供工具在执行期做项目级
-          数据定位。0 表示未知（未解析到激活项目）。
-        example: "0"
-        type: string
-      session_id:
-        description: |-
-          SessionID 是本次调用所属的会话 ID（请求级事实，由上层按 Request.SessionID 注入）。
-
-          它是会话主键（雪花 ID），0 表示未知（未注入）。供记忆检索 / 写入把记忆与
-          会话关联（例如把某轮踩坑经验记在当次会话下）。
-        example: "0"
-        type: string
       system_prompt_vars:
         additionalProperties: {}
         description: |-
@@ -1851,17 +1837,6 @@ definitions:
         description: |-
           Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，
           为空表示默认工作区）。
-        type: string
-      user_id:
-        description: |-
-          UserID 是本次调用发起用户的 ID（请求级事实，由上层按 Request.UserID 注入）。
-
-          供需要「按用户隔离数据」的工具（如 save_memory 写长期记忆）在
-          RuntimeContext 内直接取到归属用户；0 表示未知（未注入）。
-        example: "0"
-        type: string
-      working_dir:
-        description: WorkingDir 是 Agent 执行工作目录。
         type: string
     type: object
   skill.GetSkillOutput:
@@ -3123,23 +3098,15 @@ definitions:
         allOf:
         - $ref: '#/definitions/runtimecontext.RuntimeContext'
         description: |-
-          RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录 / 归属用户）。
+          RuntimeContext 是本轮调用的业务上下文（业务类型 / 模板变量）。
 
           由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到
           配置了工具的 Provider；Provider 在每次调用时把它注入工具执行上下文，供
           builtin 工具（如 run_analysis_node）在执行期读取 SystemPromptVars。
 
-          它同时是「请求级用户事实」的唯一来源：UserID / SessionID 都在这里，
-          权限策略、ask_user 归属、记忆检索与提取统一从它读取（见 RequestUserID）。
-
-          它只承载可序列化的业务事实，并随 Request 一起被 JSON 序列化进 agent_tasks.request
-          （Task.Request 为 gorm serializer:json），因此在任务从 DB 恢复后依然可用
-          （见 ToolRuntimeContextFromRequest）。工具执行期所需的服务能力（如
-          AnalysisNodeRunner）不在此处，而由 agent.Options 承载。
-      session_id:
-        description: SessionID 可选：会话主键（雪花 ID），用于把多次调用关联到同一会话（与权限 / 任务联动）。
-        example: "0"
-        type: string
+          它只承载业务事实；「谁在执行」（任务 / 会话 / 用户 / 项目）由 Task 与 TaskFacts
+          承载，经 Runtime 注入工具 ctx（见 tool.WithTaskFacts）。它随 Request 一起被 JSON
+          序列化进 agent_tasks.request（gorm serializer:json），因此任务从 DB 恢复后依然可用。
       skills:
         description: Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。
         items:
@@ -3148,16 +3115,6 @@ definitions:
       stream:
         description: Stream 可选：任务模式下是否使用流式调用；默认 false 使用 Invoke。
         type: boolean
-      system_prompt:
-        description: |-
-          SystemPrompt 是最终发送给 Provider 的系统提示词。
-
-          注意：它不再由调用方直接设置，而是 AgentService 依据 Profile.SystemPrompt 模板 +
-          RuntimeContext.SystemPromptVars 渲染后写入（见 applyProfile）；Provider 只读该字段。
-        type: string
-      working_dir:
-        description: WorkingDir 可选：Agent 执行的工作目录。
-        type: string
     type: object
   types.Script:
     properties:
@@ -3349,7 +3306,7 @@ definitions:
       model:
         type: string
       project_id:
-        description: ProjectID 是任务所属项目（创建时取 Request.RuntimeContext.ProjectID），0 表示未知。
+        description: ProjectID 是任务所属项目（创建时由调用方提供），0 表示未知。
         example: "0"
         type: string
       provider:
@@ -3369,6 +3326,10 @@ definitions:
       status:
         $ref: '#/definitions/types.TaskStatus'
       updated_at:
+        type: string
+      user_id:
+        description: UserID 是任务归属用户（0 表示后台任务 / 无登录用户）。
+        example: "0"
         type: string
       working_dir:
         type: string
@@ -4444,7 +4405,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 创建任务、订阅事件流到 WS，并异步启动执行
+      description: 创建任务并异步启动执行；实时事件由全局事件桥按任务归属用户推送到 WS
       parameters:
       - description: 请求参数
         in: body
@@ -4667,6 +4628,44 @@ paths:
       security:
       - Bearer: []
       summary: 从持久化检查点继续执行 Agent 任务
+      tags:
+      - Agent
+  /agent/task/timeline:
+    get:
+      description: |-
+        返回该任务已落库的时间线消息（reasoning / assistant / tool_call / tool_result / error），
+        用于前端刷新 / 切换会话后回填「事实流」：增量事件（text / reasoning_delta）只广播
+        不落库，完整块事件由 TimelineRecorder 即时写入 agent_messages。
+      parameters:
+      - description: 任务 ID
+        in: query
+        name: task_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/types.Message'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 获取任务的执行时间线
       tags:
       - Agent
   /ai-summary/create:
@@ -9781,6 +9780,49 @@ paths:
       security:
       - Bearer: []
       summary: 查询报告自身文件
+      tags:
+      - 项目
+  /project/project-report-file-html:
+    get:
+      description: 将报告工作目录下的 output.md 渲染为独立 HTML 文档；inline_images=true 时图片以 base64
+        内嵌（自包含），false 时保留原始 URL
+      parameters:
+      - description: 报告ID
+        format: int64
+        in: query
+        name: report_id
+        required: true
+        type: integer
+      - description: 是否内嵌图片（默认 true）
+        in: query
+        name: inline_images
+        type: boolean
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML 文档
+          schema:
+            type: string
+        "400":
+          description: 参数错误
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: 未认证
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: 报告不存在
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: 服务器错误
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 导出报告自身文件为 HTML
       tags:
       - 项目
   /project/project-report-git-diff:
