@@ -313,7 +313,7 @@ func (b *projectResourceBrowser) toScriptBrief(baseDir string, script *types.Scr
 	scriptDir, scriptFile, _ := utils.GetScriptFile(baseDir, script.ProjectID, script.ScriptType, script.ScriptID)
 	brief.ScriptFilePath = filepath.Join(scriptDir, scriptFile)
 	// 脚本与工作流共用同一份 io_schema.json 布局（<dir>/io_schema.json），故复用工作流侧的路径解析。
-	brief.IOSchemaPath = utils.WorkflowIOSchemaPath(baseDir, script.ProjectID, script.ScriptID)
+	brief.IOSchemaPath = utils.ScriptIOSchemaPath(baseDir, script.ProjectID, script.ScriptID)
 	return brief
 }
 

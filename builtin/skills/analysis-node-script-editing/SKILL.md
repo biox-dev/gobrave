@@ -23,7 +23,7 @@ user-invocable: true
 
 如果 io_schema.json 中 `outputs` 有值，qmd 中需要添加输出，例如 io_schema.json 里：
 
-~~~json
+```json
 "outputs": [
   {
     "name": "tsv",
@@ -31,13 +31,13 @@ user-invocable: true
     "role": "TABLE"
   }
 ]
-~~~
+```
 
 对应 qmd 中需要写出 outputs.json（键名与 io_schema.outputs 的 name 一致，值指向实际产物路径）：
 
-~~~r
+```r
 outputs <- list(
   tsv = mutate_genes_path
 )
 jsonlite::write_json(outputs, file.path(params$output_dir, "outputs.json"), auto_unbox = TRUE, pretty = TRUE)
-~~~
+```

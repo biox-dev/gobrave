@@ -63,6 +63,7 @@ func BuiltinProfiles() []*Profile {
 			Skills: []string{
 				skill.BuiltinAnalysisScriptSkillName,
 				skill.BuiltinAnalysisNodeScriptSkillName,
+				skill.BuiltinAnalysisScriptSpecSkillName,
 			},
 			Context:   ContextConfig{InjectMemory: true},
 			CreatedAt: now,

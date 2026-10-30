@@ -30,6 +30,7 @@ func TestBuiltinSkillsParse(t *testing.T) {
 	markers := map[string]string{
 		BuiltinAnalysisScriptSkillName:     "create_script",
 		BuiltinAnalysisNodeScriptSkillName: "run_analysis_node",
+		BuiltinAnalysisScriptSpecSkillName: "io_schema_path",
 	}
 	for _, sk := range skills {
 		marker, ok := markers[sk.Name]

@@ -27,6 +27,8 @@ const (
 	BuiltinAnalysisScriptSkillName = "analysis-script-workflow"
 	// BuiltinAnalysisNodeScriptSkillName 是「分析节点脚本修改」内置技能名。
 	BuiltinAnalysisNodeScriptSkillName = "analysis-node-script-editing"
+	// BuiltinAnalysisScriptSpecSkillName 是「分析脚本修改规范」内置技能名。
+	BuiltinAnalysisScriptSpecSkillName = "analysis-script-spec"
 )
 
 // builtinSkillBaseDirs 是运行期查找内置技能源码的目录列表（按顺序，先磁盘后内嵌）。
@@ -47,6 +49,7 @@ func SetBuiltinSkillDir(dir string) {
 var builtinSkillNames = []string{
 	BuiltinAnalysisScriptSkillName,
 	BuiltinAnalysisNodeScriptSkillName,
+	BuiltinAnalysisScriptSpecSkillName,
 }
 
 // Builtin 读取全部内置技能（磁盘优先，缺失时回退到 go:embed 副本）。
