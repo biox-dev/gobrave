@@ -490,6 +490,57 @@ func (h *AuthHandler) UpdateAgentEnv(c *gin.Context) {
 	})
 }
 
+// UpdateMenuConfig godoc
+// @Summary      更新当前用户的主标签页配置
+// @Description  保存主区域标签页（URL + 显示名），前端刷新时从 /auth/me 的 user.menu_config 回填
+// @Tags         认证
+// @Accept       json
+// @Produce      json
+// @Param        request  body      object{tabs=[]types.UserMenuTab}  true  "标签页列表（数组顺序即标签栏顺序）"
+// @Success      200      {object}  map[string]interface{}            "更新成功"
+// @Failure      400      {object}  errors.AppError                   "请求参数错误"
+// @Security     Bearer
+// @Router       /auth/menu-config [post]
+func (h *AuthHandler) UpdateMenuConfig(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	user, err := h.userService.GetCurrentUser(ctx)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to get current user: %v", err)
+		appErr := errors.NewUnauthorizedError("Failed to get user information").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	var req struct {
+		Tabs []types.UserMenuTab `json:"tabs"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Error(ctx, "Failed to parse menu config update request", err)
+		appErr := errors.NewValidationError("Invalid menu config update request").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	// 整体替换语义：前端每次都提交完整的有序列表，服务端只做清洗与限流。
+	menuConfig := types.UserMenuConfig{Tabs: req.Tabs}
+	menuConfig.Normalize()
+	user.MenuConfig = menuConfig
+	if err := h.userService.UpdateUser(ctx, user); err != nil {
+		logger.Errorf(ctx, "Failed to update user menu config: %v", err)
+		appErr := errors.NewInternalServerError("Failed to update menu config").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	logger.Infof(ctx, "User menu config updated: %d tabs=%d", user.ID, len(menuConfig.Tabs))
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Menu config updated",
+		"tabs":    menuConfig.Tabs,
+	})
+}
+
 // ChangePassword godoc
 // @Summary      修改密码
 // @Description  修改当前用户的登录密码

@@ -148,6 +148,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, handler *handler.AuthHandler) {
 	r.POST("/auth/profile", handler.UpdateProfile)
 	r.POST("/auth/agent-config", handler.UpdateAgentConfig)
 	r.POST("/auth/agent-env", handler.UpdateAgentEnv)
+	r.POST("/auth/menu-config", handler.UpdateMenuConfig)
 	// r.POST("/auth/change-password", handler.ChangePassword)
 }
 

@@ -3411,11 +3411,29 @@ definitions:
           TenantID uint64 `json:"tenant_id"  gorm:"index"`
           Whether the user is active
         type: boolean
+      menu_config:
+        allOf:
+        - $ref: '#/definitions/types.UserMenuConfig'
+        description: MenuConfig 用户的主区域标签页配置（有序的 URL + 显示名），以 JSON 形式落库。
       updated_at:
         description: Last updated time of the user
         type: string
       username:
         description: Username of the user
+        type: string
+    type: object
+  types.UserMenuConfig:
+    properties:
+      tabs:
+        items:
+          $ref: '#/definitions/types.UserMenuTab'
+        type: array
+    type: object
+  types.UserMenuTab:
+    properties:
+      title:
+        type: string
+      url:
         type: string
     type: object
   types.Workflow:
@@ -5621,6 +5639,40 @@ paths:
       security:
       - Bearer: []
       summary: 获取当前用户信息
+      tags:
+      - 认证
+  /auth/menu-config:
+    post:
+      consumes:
+      - application/json
+      description: 保存主区域标签页（URL + 显示名），前端刷新时从 /auth/me 的 user.menu_config 回填
+      parameters:
+      - description: 标签页列表（数组顺序即标签栏顺序）
+        in: body
+        name: request
+        required: true
+        schema:
+          properties:
+            tabs:
+              items:
+                $ref: '#/definitions/types.UserMenuTab'
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 更新当前用户的主标签页配置
       tags:
       - 认证
   /auth/profile:

@@ -1,11 +1,69 @@
 package types
 
 import (
+	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
+
+// MaxUserMenuTabs 是主区域标签页配置允许保存的最大数量，超出的按「最近使用」截断。
+const MaxUserMenuTabs = 16
+
+// UserMenuTab 是主区域一个标签页的状态。
+//
+// URL 是标签页对应的路由地址（pathname + search），前端直接 navigate(URL) 即可切换；
+// Title 是该标签页最近一次登记的显示名（如分析节点名），可为空 —— 为空时前端回退到静态标题规则。
+type UserMenuTab struct {
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
+}
+
+// UserMenuConfig 是用户的菜单配置（主区域标签页），以 JSON 形式落库。
+//
+// 用「有序数组」而不是 `urls + titles 两张表」：顺序即标签栏顺序，标题跟着自己的 URL 走，
+// 序列化 / 回填都是一次读写。
+type UserMenuConfig struct {
+	Tabs []UserMenuTab `json:"tabs,omitempty"`
+}
+
+// Normalize 清洗标签页列表：去空白、去重（保留首次出现）、丢弃根路由，并按上限截断尾部。
+// 调用方（handler）在写库前调用，避免把脏数据或超长字符串落库。
+func (c *UserMenuConfig) Normalize() {
+	if c == nil {
+		return
+	}
+	seen := make(map[string]struct{}, len(c.Tabs))
+	tabs := make([]UserMenuTab, 0, len(c.Tabs))
+	for _, tab := range c.Tabs {
+		url := strings.TrimSpace(tab.URL)
+		if url == "" || url == "/" {
+			continue
+		}
+		if _, exists := seen[url]; exists {
+			continue
+		}
+		seen[url] = struct{}{}
+		tabs = append(tabs, UserMenuTab{
+			URL:   truncateRunes(url, 512),
+			Title: truncateRunes(strings.TrimSpace(tab.Title), 200),
+		})
+	}
+	if len(tabs) > MaxUserMenuTabs {
+		tabs = tabs[len(tabs)-MaxUserMenuTabs:]
+	}
+	c.Tabs = tabs
+}
+
+// truncateRunes 按字符（不是字节）截断，避免切坏 UTF-8。
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
 
 // User represents a user in the system
 type User struct {
@@ -21,6 +79,8 @@ type User struct {
 	Avatar string `json:"avatar"     gorm:"type:varchar(500)"`
 	// AgentConfig 用户的 Agent 配置（Profile + 权限策略），以 JSON 形式落库。
 	AgentConfig UserAgentConfig `json:"agent_config" gorm:"serializer:json"`
+	// MenuConfig 用户的主区域标签页配置（有序的 URL + 显示名），以 JSON 形式落库。
+	MenuConfig UserMenuConfig `json:"menu_config" gorm:"serializer:json"`
 	// Tenant ID that the user belongs to
 	// TenantID uint64 `json:"tenant_id"  gorm:"index"`
 	// Whether the user is active
@@ -139,6 +199,8 @@ type UserInfo struct {
 	Email       string          `json:"email"`
 	Avatar      string          `json:"avatar"`
 	AgentConfig UserAgentConfig `json:"agent_config"`
+	// MenuConfig 是主区域标签页配置（刷新后前端据此回填标签栏与名称）。
+	MenuConfig UserMenuConfig `json:"menu_config"`
 	// AgentProfile 是 agent_config.ProfileID 对应的 Profile 摘要（DTO，按需填充，可能为空）。
 	AgentProfile        *AgentProfileInfo `json:"agent_profile,omitempty"`
 	TenantID            uint64            `json:"tenant_id"`
@@ -170,6 +232,7 @@ func (u *User) ToUserInfo() *UserInfo {
 		Email:       u.Email,
 		Avatar:      u.Avatar,
 		AgentConfig: u.AgentConfig,
+		MenuConfig:  u.MenuConfig,
 		// TenantID:            u.TenantID,
 		IsActive:            u.IsActive,
 		CanAccessAllTenants: u.CanAccessAllTenants,
