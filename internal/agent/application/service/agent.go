@@ -659,7 +659,10 @@ func (s *AgentService) DeleteProfile(ctx context.Context, id int64) error {
 // RenderSystemPrompt 按 Profile ID 解析 Profile，并用 vars 渲染其系统提示词模板，
 // 返回真正的系统提示词（供 DescribeEnv 等前端展示 / 调试场景使用）。
 //
-// Profile 不存在或未配置系统提示词时返回空串、nil 错误。
+// vars 是模板变量（通常为 RuntimeContext.SystemPromptVars），必须透传给
+// buildSystemPrompt，否则模板里的 {{...}} 变量会渲染成空值。
+//
+// Profile 不存在时返回 nil Profile、空串与 nil 错误。
 func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID int64, profileID int64, vars map[string]any) (*Profile, string, error) {
 	if s.profiles == nil {
 		return nil, "", nil
@@ -669,9 +672,7 @@ func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID int64, pro
 		return nil, "", nil
 	}
 	// 只提供用户 ID（无业务上下文）：让记忆注入能按用户维度检索。
-	systemPrompt := s.GetSystemPromptByProfileWithContext(ctx, profile, nil, TaskFacts{UserID: userID}, profile.Skills)
-
-	// return RenderSystemPromptTemplate(profile.SystemPrompt, vars)
+	systemPrompt := s.buildSystemPrompt(ctx, profile, vars, TaskFacts{UserID: userID}, profile.Skills)
 	return profile, systemPrompt, nil
 }
 
