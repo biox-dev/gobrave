@@ -233,6 +233,15 @@ type ContainerConfig struct {
 	// TerminalUnattachedGraceSeconds 是终端会话创建后一直没有订阅者时的保留秒数。
 	// <=0 使用默认 120 秒；与上面的 IdleGrace 分开，避免刚建好就被删。
 	TerminalUnattachedGraceSeconds int `yaml:"terminal_unattached_grace_seconds" json:"terminal_unattached_grace_seconds"`
+	// TerminalSessionTTLMinutes 是终端会话的空闲上限：空闲超过该时长即回收容器并删除记录。
+	// <=0 使用默认 120 分钟。设置为很大的值时，只有显式删除 / 容器消失才会回收。
+	TerminalSessionTTLMinutes int `yaml:"terminal_session_ttl_minutes" json:"terminal_session_ttl_minutes"`
+	// TerminalMaxSessionsPerUser 是单用户同时存在的终端会话上限；<=0 使用默认 4。
+	TerminalMaxSessionsPerUser int `yaml:"terminal_max_sessions_per_user" json:"terminal_max_sessions_per_user"`
+	// TerminalBufferDir 是滚动缓冲落盘目录；留空使用 <storage.base_dir>/terminal_sessions。
+	TerminalBufferDir string `yaml:"terminal_buffer_dir" json:"terminal_buffer_dir"`
+	// TerminalBufferKB 是单个会话滚动缓冲的上限（KB）；<=0 使用默认 1024。
+	TerminalBufferKB int `yaml:"terminal_buffer_kb" json:"terminal_buffer_kb"`
 }
 
 type KubernetesRuntimeConfig struct {
@@ -259,6 +268,10 @@ func DefaultContainerConfig() *ContainerConfig {
 		TerminalIdleGraceSeconds: 0,
 		// 创建后无人订阅时的保护窗口。
 		TerminalUnattachedGraceSeconds: 120,
+		// 持久会话空闲上限 / 单用户配额 / 滚动缓冲。
+		TerminalSessionTTLMinutes:  120,
+		TerminalMaxSessionsPerUser: 4,
+		TerminalBufferKB:           1024,
 	}
 }
 

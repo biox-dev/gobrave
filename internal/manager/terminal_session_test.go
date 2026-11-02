@@ -3,6 +3,7 @@ package manager
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 // fakeShell 模拟一个 bash + PROMPT_COMMAND 的 PTY：
@@ -68,20 +70,40 @@ func (s *fakeShell) Close() error {
 }
 
 type fakeOpener struct {
-	shell *fakeShell
-	calls int
-	mu    sync.Mutex
+	shell    *fakeShell
+	calls    int
+	attaches int
+	mu       sync.Mutex
 }
 
-func (o *fakeOpener) OpenProbeTerminal(_ context.Context, _, _ int64, _ containerruntime.TerminalOptions) (containerruntime.TerminalSession, func(), error) {
+func (o *fakeOpener) StartTerminalRuntime(_ context.Context, _, _, _ int64, _ containerruntime.TerminalOptions) (*ProbeTerminalHandle, error) {
 	o.mu.Lock()
 	o.calls++
 	o.mu.Unlock()
-	return o.shell, func() {}, nil
+	return &ProbeTerminalHandle{
+		RuntimeName: "fake",
+		RuntimeID:   "fake-runtime-1",
+		Session:     o.shell,
+		Cleanup:     func() {},
+	}, nil
 }
 
+func (o *fakeOpener) AttachTerminalRuntime(_ context.Context, _, runtimeID string, _ containerruntime.TerminalOptions) (*ProbeTerminalHandle, error) {
+	o.mu.Lock()
+	o.attaches++
+	o.mu.Unlock()
+	return &ProbeTerminalHandle{
+		RuntimeName: "fake",
+		RuntimeID:   runtimeID,
+		Session:     o.shell,
+		Cleanup:     func() {},
+	}, nil
+}
+
+func (o *fakeOpener) DropTerminalRuntime(context.Context, string, string) {}
+
 func newTestRegistry(opener *fakeOpener) *TerminalSessionRegistry {
-	return newTerminalSessionRegistry(opener, nil, TerminalRegistryOptions{
+	return newTerminalSessionRegistry(opener, nil, nil, TerminalRegistryOptions{
 		ReadyWait:   2 * time.Second,
 		IdleGrace:   time.Minute,
 		BufferBytes: 64 * 1024,
@@ -190,7 +212,7 @@ func TestTerminalSessionRegistryExecTimeoutAndReplay(t *testing.T) {
 // 默认策略：最后一个订阅者离开后立即删除容器；创建后无人订阅时使用 unattached grace。
 func TestTerminalSessionRegistryImmediateReapOnLastDetach(t *testing.T) {
 	opener := &fakeOpener{shell: newFakeShell()}
-	registry := newTerminalSessionRegistry(opener, nil, TerminalRegistryOptions{
+	registry := newTerminalSessionRegistry(opener, nil, nil, TerminalRegistryOptions{
 		ReadyWait:   2 * time.Second,
 		IdleGrace:   0,
 		BufferBytes: 64 * 1024,
@@ -276,5 +298,161 @@ func TestTerminalSessionRegistryCreateOnlyOnceUnderConcurrency(t *testing.T) {
 	opener.mu.Unlock()
 	if calls != 1 {
 		t.Fatalf("expected one container creation, got %d", calls)
+	}
+}
+
+// fakeTerminalStore 是 TerminalSessionStore 的内存实现。
+type fakeTerminalStore struct {
+	mu   sync.Mutex
+	rows map[string]*types.TerminalSession
+}
+
+func newFakeTerminalStore() *fakeTerminalStore {
+	return &fakeTerminalStore{rows: make(map[string]*types.TerminalSession)}
+}
+
+func (s *fakeTerminalStore) Get(_ context.Context, key TerminalSessionKey) (*types.TerminalSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.rows[key.SessionID()]
+	if !ok {
+		return nil, nil
+	}
+	cp := *rec
+	return &cp, nil
+}
+
+func (s *fakeTerminalStore) Upsert(_ context.Context, rec *types.TerminalSession) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := *rec
+	s.rows[rec.SessionKey] = &cp
+	return nil
+}
+
+func (s *fakeTerminalStore) Touch(_ context.Context, key TerminalSessionKey, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rec, ok := s.rows[key.SessionID()]; ok {
+		rec.LastActiveAt = at
+	}
+	return nil
+}
+
+func (s *fakeTerminalStore) Delete(_ context.Context, key TerminalSessionKey) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.rows, key.SessionID())
+	return nil
+}
+
+func (s *fakeTerminalStore) List(context.Context) ([]*types.TerminalSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*types.TerminalSession, 0, len(s.rows))
+	for _, rec := range s.rows {
+		cp := *rec
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+// 进程重启后：按 DB 记录认领原容器（不再新建），并从落盘的滚动缓冲回放历史输出。
+func TestTerminalSessionRegistryAdoptsPersistedSession(t *testing.T) {
+	dir := t.TempDir()
+	key := TerminalSessionKey{UserID: 31, ProjectID: 32, TemplateID: 33}
+
+	opener := &fakeOpener{shell: newFakeShell()}
+	store := newFakeTerminalStore()
+	store.rows[key.SessionID()] = &types.TerminalSession{
+		SessionKey:   key.SessionID(),
+		UserID:       key.UserID,
+		ProjectID:    key.ProjectID,
+		TemplateID:   key.TemplateID,
+		RuntimeName:  "fake",
+		RuntimeID:    "runtime-before-restart",
+		Status:       types.TerminalSessionStatusRunning,
+		LastActiveAt: time.Now(),
+	}
+
+	scrollback, err := newTerminalScrollback(dir, key.SessionID(), 1<<20)
+	if err != nil {
+		t.Fatalf("new scrollback: %v", err)
+	}
+	if err := scrollback.Save([]byte("before-restart-output\r\n")); err != nil {
+		t.Fatalf("save scrollback: %v", err)
+	}
+
+	registry := newTerminalSessionRegistry(opener, nil, store, TerminalRegistryOptions{
+		ReadyWait:     2 * time.Second,
+		IdleGrace:     time.Minute,
+		BufferBytes:   64 * 1024,
+		SessionTTL:    time.Hour,
+		ScrollbackDir: dir,
+	})
+
+	session, created, err := registry.Ensure(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if created {
+		t.Fatalf("expected adopted session, got newly created")
+	}
+	opener.mu.Lock()
+	attaches, starts := opener.attaches, opener.calls
+	opener.mu.Unlock()
+	if attaches != 1 || starts != 0 {
+		t.Fatalf("expected attach(1) and no new container, got attaches=%d starts=%d", attaches, starts)
+	}
+
+	sub, replay := session.Attach(0)
+	defer session.Detach(sub)
+	if !strings.Contains(string(replay), "before-restart-output") {
+		t.Fatalf("expected replayed scrollback, got %q", string(replay))
+	}
+
+	registry.CloseSession(key)
+	if _, err := store.Get(context.Background(), key); err != nil {
+		t.Fatalf("get after close: %v", err)
+	}
+	store.mu.Lock()
+	_, stillThere := store.rows[key.SessionID()]
+	store.mu.Unlock()
+	if stillThere {
+		t.Fatalf("expected session record removed on close")
+	}
+}
+
+// 单用户会话配额：达到上限后新建会话被拒绝。
+func TestTerminalSessionRegistryQuota(t *testing.T) {
+	key := TerminalSessionKey{UserID: 41, ProjectID: 42, TemplateID: 43}
+	opener := &fakeOpener{shell: newFakeShell()}
+	store := newFakeTerminalStore()
+	start := terminalSessionRecord(key, "runtime-1")
+	store.rows[key.SessionID()] = start
+
+	registry := newTerminalSessionRegistry(opener, nil, store, TerminalRegistryOptions{
+		ReadyWait:          2 * time.Second,
+		MaxSessionsPerUser: 1,
+		SessionTTL:         time.Hour,
+	})
+	// 不同模板 → 不同 key，但同一用户已有一个会话。
+	other := TerminalSessionKey{UserID: key.UserID, ProjectID: key.ProjectID, TemplateID: 99}
+	_, _, err := registry.Ensure(context.Background(), other)
+	if err == nil || !errors.Is(err, ErrTerminalSessionQuotaExceeded) {
+		t.Fatalf("expected quota error, got %v", err)
+	}
+}
+
+func terminalSessionRecord(key TerminalSessionKey, runtimeID string) *types.TerminalSession {
+	return &types.TerminalSession{
+		SessionKey:   key.SessionID(),
+		UserID:       key.UserID,
+		ProjectID:    key.ProjectID,
+		TemplateID:   key.TemplateID,
+		RuntimeName:  "fake",
+		RuntimeID:    runtimeID,
+		Status:       types.TerminalSessionStatusRunning,
+		LastActiveAt: time.Now(),
 	}
 }

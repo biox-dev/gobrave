@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/config"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 // 本文件实现「容器模板临时终端」的会话层。
@@ -32,7 +34,10 @@ import (
 //     也不会在终端里留下难看的哨兵命令回显；
 //   - 最后一个订阅者离开后的回收策略可配置（container.terminal_idle_grace_seconds）：
 //     0 = 立即删除容器（默认），>0 = 保留 grace period，方便重连 / Agent 继续执行；
-//   - 会话创建后一直没有订阅者时使用独立的 unattached grace，避免「刚建好就被删」。
+//   - 会话创建后一直没有订阅者时使用独立的 unattached grace，避免「刚建好就被删」；
+//   - 会话 → 容器的映射落在 go_terminal_session（container.terminal_session_ttl_minutes
+//     控制空闲 TTL，terminal_max_sessions_per_user 控制配额），进程重启后可认领原容器；
+//   - 历史输出以滚动快照落盘（container.terminal_buffer_dir），认领后回放。
 
 // TerminalSessionKey 是会话的唯一标识。
 type TerminalSessionKey struct {
@@ -59,11 +64,17 @@ const (
 	defaultTerminalBufferBytes     = 256 * 1024
 	defaultTerminalCreateWait      = 10 * time.Minute
 	defaultTerminalExecTimeout     = 5 * time.Minute
-	terminalIdleThreshold          = 300 * time.Millisecond
-	terminalIdleWait               = 3 * time.Second
-	terminalExecQueueSize          = 16
-	terminalSubscriberBufSize      = 2048
-	terminalEventBufSize           = 64
+	// defaultTerminalSessionTTL 是「持久会话」的空闲上限：超过即回收容器并删记录。
+	defaultTerminalSessionTTL         = 2 * time.Hour
+	defaultTerminalMaxSessionsPerUser = 4
+	defaultTerminalScrollbackBytes    = 1024 * 1024
+	terminalIdleThreshold             = 300 * time.Millisecond
+	terminalIdleWait                  = 3 * time.Second
+	terminalExecQueueSize             = 16
+	terminalSubscriberBufSize         = 2048
+	terminalEventBufSize              = 64
+	terminalScrollbackFlushInterval   = 2 * time.Second
+	terminalMaintenanceInterval       = time.Minute
 )
 
 var (
@@ -73,6 +84,8 @@ var (
 	ErrTerminalSessionClosed = errors.New("terminal session is closed")
 	// ErrTerminalBusy 表示命令队列已满。
 	ErrTerminalBusy = errors.New("terminal session is busy")
+	// ErrTerminalSessionQuotaExceeded 表示当前用户的终端会话数已达上限。
+	ErrTerminalSessionQuotaExceeded = errors.New("terminal session quota exceeded")
 )
 
 // TerminalEventPublisher 把「Agent 在终端里执行了命令」这类事件推给前端，
@@ -89,6 +102,13 @@ type TerminalRegistryOptions struct {
 	// UnattachedGrace 是会话创建后一直没有订阅者时的保留时长；<=0 使用默认 2 分钟。
 	// 与 IdleGrace 分开是为了避免「Agent 刚建好会话、前端还没连上就被删」。
 	UnattachedGrace time.Duration
+	// SessionTTL 是持久会话的空闲上限：超过即回收容器并删除记录。<=0 使用默认 2 小时。
+	SessionTTL time.Duration
+	// MaxSessionsPerUser 限制单个用户同时存在的终端会话数；<=0 使用默认 4。
+	MaxSessionsPerUser int
+	// ScrollbackDir / ScrollbackBytes 控制滚动缓冲落盘目录与单会话上限。
+	ScrollbackDir   string
+	ScrollbackBytes int
 	ReadyWait       time.Duration
 	CreateWait      time.Duration
 	BufferBytes     int
@@ -162,11 +182,15 @@ func (s *TerminalSubscriber) close() {
 
 // ManagedTerminalSession 是注册表持有一个 PTY（容器 + bash -l）。
 type ManagedTerminalSession struct {
-	id       string
-	key      TerminalSessionKey
-	sess     containerruntime.TerminalSession
-	cleanup  func()
-	registry *TerminalSessionRegistry
+	id          string
+	key         TerminalSessionKey
+	sess        containerruntime.TerminalSession
+	cleanup     func()
+	registry    *TerminalSessionRegistry
+	store       TerminalSessionStore
+	scrollback  *terminalScrollback
+	runtimeID   string
+	runtimeName string
 
 	// writeMu 串行化「整段命令 / 按键」的写入，避免两次写入交错。
 	writeMu sync.Mutex
@@ -182,7 +206,12 @@ type ManagedTerminalSession struct {
 	bufStart   int64 // buf[0] 对应的全局序号
 	bufLimit   int
 	lastOutput time.Time
-	reapTimer  *time.Timer
+	// lastActive 记录「用户/Agent 最近一次操作」时间，用于空闲 TTL 回收。
+	lastActive time.Time
+	// busy 表示有命令正在执行：空闲 TTL 回收必须跳过，避免杀掉长任务。
+	busy            bool
+	scrollbackDirty bool
+	reapTimer       *time.Timer
 	// attachedOnce 标记会话是否曾经被订阅过：从未订阅时使用 UnattachedGrace，
 	// 订阅过之后（最后一个订阅者离开）才使用 IdleGrace（默认为 0 = 立即删除）。
 	attachedOnce bool
@@ -211,16 +240,19 @@ type terminalExecOutcome struct {
 	err             error
 }
 
-// TerminalRuntimeOpener 抽象「创建探针容器 + 打开交互式 shell」的能力。
+// TerminalRuntimeOpener 抽象「创建探针容器 / 认领已有容器 + 打开交互式 shell」的能力。
 // *ContainerProbeRunner 实现它；单测可注入 fake PTY。
 type TerminalRuntimeOpener interface {
-	OpenProbeTerminal(ctx context.Context, projectID, templateID int64, opts containerruntime.TerminalOptions) (containerruntime.TerminalSession, func(), error)
+	StartTerminalRuntime(ctx context.Context, userID, projectID, templateID int64, opts containerruntime.TerminalOptions) (*ProbeTerminalHandle, error)
+	AttachTerminalRuntime(ctx context.Context, runtimeName, runtimeID string, opts containerruntime.TerminalOptions) (*ProbeTerminalHandle, error)
+	DropTerminalRuntime(ctx context.Context, runtimeName, runtimeID string)
 }
 
 // TerminalSessionRegistry 维护 (userID, projectID, templateID) → PTY 的映射。
 type TerminalSessionRegistry struct {
 	probe     TerminalRuntimeOpener
 	publisher TerminalEventPublisher
+	store     TerminalSessionStore
 	opts      TerminalRegistryOptions
 
 	mu       sync.Mutex
@@ -229,18 +261,24 @@ type TerminalSessionRegistry struct {
 }
 
 type pendingTerminalSession struct {
-	done chan struct{}
-	sess *ManagedTerminalSession
-	err  error
+	done    chan struct{}
+	sess    *ManagedTerminalSession
+	created bool
+	err     error
 }
 
 // NewTerminalSessionRegistry 构造会话注册表。
 //
 // probe 复用 ContainerProbeRunner 的容器组装链路（与 probe_container_env 口径一致）；
-// publisher 可为 nil（例如单测），此时不推送前端事件；cfg 决定终端容器的回收策略
-// （container.terminal_idle_grace_seconds / terminal_unattached_grace_seconds）。
-func NewTerminalSessionRegistry(probe *ContainerProbeRunner, publisher TerminalEventPublisher, cfg *config.Config) *TerminalSessionRegistry {
-	return newTerminalSessionRegistry(probe, publisher, terminalRegistryOptions(cfg))
+// publisher 可为 nil（例如单测），此时不推送前端事件；store 记录会话→容器的映射，
+// 供进程重启后认领；cfg 决定回收策略 / 配额 / 滚动缓冲目录。
+func NewTerminalSessionRegistry(probe *ContainerProbeRunner, publisher TerminalEventPublisher, store TerminalSessionStore, cfg *config.Config) *TerminalSessionRegistry {
+	registry := newTerminalSessionRegistry(probe, publisher, store, terminalRegistryOptions(cfg))
+	// 注册表在进程启动时构造一次（Router → ContainerHandler），在这里拉起后台维护：
+	// 空闲 TTL 回收 + 跨进程残留对账。放在构造函数里而不是 dig Invoke，
+	// 避免最小依赖图的单元测试强制解析 ContainerCreateWorker 的全部依赖。
+	registry.StartMaintenance(context.Background())
+	return registry
 }
 
 // terminalRegistryOptions 把配置转换成注册表选项。
@@ -252,13 +290,21 @@ func terminalRegistryOptions(cfg *config.Config) TerminalRegistryOptions {
 	}
 	opts.IdleGrace = time.Duration(cfg.Container.TerminalIdleGraceSeconds) * time.Second
 	opts.UnattachedGrace = time.Duration(cfg.Container.TerminalUnattachedGraceSeconds) * time.Second
+	opts.SessionTTL = time.Duration(cfg.Container.TerminalSessionTTLMinutes) * time.Minute
+	opts.MaxSessionsPerUser = cfg.Container.TerminalMaxSessionsPerUser
+	opts.ScrollbackDir = cfg.Container.TerminalBufferDir
+	opts.ScrollbackBytes = cfg.Container.TerminalBufferKB * 1024
+	if opts.ScrollbackDir == "" && cfg.Storage != nil && strings.TrimSpace(cfg.Storage.BaseDir) != "" {
+		opts.ScrollbackDir = filepath.Join(cfg.Storage.BaseDir, "terminal_sessions")
+	}
 	return opts
 }
 
-func newTerminalSessionRegistry(probe TerminalRuntimeOpener, publisher TerminalEventPublisher, opts TerminalRegistryOptions) *TerminalSessionRegistry {
+func newTerminalSessionRegistry(probe TerminalRuntimeOpener, publisher TerminalEventPublisher, store TerminalSessionStore, opts TerminalRegistryOptions) *TerminalSessionRegistry {
 	return &TerminalSessionRegistry{
 		probe:     probe,
 		publisher: publisher,
+		store:     store,
 		opts:      opts,
 		sessions:  make(map[string]*ManagedTerminalSession),
 		pending:   make(map[string]*pendingTerminalSession),
@@ -311,6 +357,27 @@ func (r *TerminalSessionRegistry) execTimeout() time.Duration {
 	return defaultTerminalExecTimeout
 }
 
+func (r *TerminalSessionRegistry) sessionTTL() time.Duration {
+	if r.opts.SessionTTL > 0 {
+		return r.opts.SessionTTL
+	}
+	return defaultTerminalSessionTTL
+}
+
+func (r *TerminalSessionRegistry) maxSessionsPerUser() int {
+	if r.opts.MaxSessionsPerUser > 0 {
+		return r.opts.MaxSessionsPerUser
+	}
+	return defaultTerminalMaxSessionsPerUser
+}
+
+func (r *TerminalSessionRegistry) scrollbackBytes() int {
+	if r.opts.ScrollbackBytes > 0 {
+		return r.opts.ScrollbackBytes
+	}
+	return defaultTerminalScrollbackBytes
+}
+
 // Ensure 返回（必要时创建）会话，并等待 shell 进入可执行状态。
 //
 // created 表示本次调用是否新建了容器。创建使用独立的后台 context，不跟随 HTTP /
@@ -327,7 +394,7 @@ func (r *TerminalSessionRegistry) Ensure(ctx context.Context, key TerminalSessio
 		r.mu.Unlock()
 		select {
 		case <-wait.done:
-			return wait.sess, true, wait.err
+			return wait.sess, wait.created, wait.err
 		case <-ctx.Done():
 			return nil, false, ctx.Err()
 		}
@@ -336,7 +403,7 @@ func (r *TerminalSessionRegistry) Ensure(ctx context.Context, key TerminalSessio
 	r.pending[id] = pending
 	r.mu.Unlock()
 
-	sess, err := r.createSession(key)
+	sess, created, err := r.createOrAdopt(key)
 
 	r.mu.Lock()
 	delete(r.pending, id)
@@ -344,6 +411,7 @@ func (r *TerminalSessionRegistry) Ensure(ctx context.Context, key TerminalSessio
 		r.sessions[id] = sess
 	}
 	pending.sess = sess
+	pending.created = created
 	pending.err = err
 	close(pending.done)
 	r.mu.Unlock()
@@ -354,40 +422,126 @@ func (r *TerminalSessionRegistry) Ensure(ctx context.Context, key TerminalSessio
 		r.scheduleReap(sess)
 	}
 
-	return sess, true, err
+	return sess, created, err
 }
 
-func (r *TerminalSessionRegistry) createSession(key TerminalSessionKey) (*ManagedTerminalSession, error) {
+// defaultTerminalOptions 返回交互式终端的默认参数（宽高只是初始值，前端会 resize）。
+func defaultTerminalOptions() containerruntime.TerminalOptions {
+	return containerruntime.TerminalOptions{
+		Command: []string{"/bin/bash", "-l"},
+		TTY:     true,
+		Rows:    24,
+		Cols:    80,
+	}
+}
+
+// createOrAdopt 先尝试认领数据库里记录的旧容器，失败再新建。
+//
+// “认领”的含义：进程重启后容器还在，但原来的 shell 已随连接结束；这里在同一个
+// 容器上重新 exec 一个 bash，并把落盘的滚动缓冲回放进内存缓冲。
+func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey) (*ManagedTerminalSession, bool, error) {
 	if r.probe == nil {
-		return nil, fmt.Errorf("container probe is not configured")
+		return nil, false, fmt.Errorf("container probe is not configured")
 	}
 
 	createCtx, cancel := context.WithTimeout(context.Background(), r.createWait())
 	defer cancel()
 
-	// 用较宽的初始终端尺寸，前端连接后会用 resize 控制帧覆盖。
-	session, cleanup, err := r.probe.OpenProbeTerminal(createCtx, key.ProjectID, key.TemplateID, containerruntime.TerminalOptions{
+	adopted, err := r.adoptSession(createCtx, key)
+	if err == nil && adopted != nil {
+		return adopted, false, nil
+	}
+	if err != nil {
+		logger.Warnf(createCtx, "[TerminalSession] adopt session %s failed, will recreate: %v", key.SessionID(), err)
+	}
+
+	if err := r.checkQuota(createCtx, key.UserID); err != nil {
+		return nil, false, err
+	}
+
+	handle, err := r.probe.StartTerminalRuntime(createCtx, key.UserID, key.ProjectID, key.TemplateID, defaultTerminalOptions())
+	if err != nil {
+		return nil, false, err
+	}
+	managed, err := r.initSession(createCtx, key, handle, nil)
+	if err != nil {
+		handle.Cleanup()
+		return nil, false, err
+	}
+	r.persistRecord(createCtx, key, handle)
+	return managed, true, nil
+}
+
+// adoptSession 按数据库记录重新 attach 到原容器；没有记录 / 容器已不可用时返回 (nil, nil)。
+func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key TerminalSessionKey) (*ManagedTerminalSession, error) {
+	if r.store == nil {
+		return nil, nil
+	}
+	rec, err := r.store.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if rec == nil || rec.Status != types.TerminalSessionStatusRunning || strings.TrimSpace(rec.RuntimeID) == "" {
+		return nil, nil
+	}
+	// 超出空闲 TTL 的残留记录：直接清掉，交给新建路径。
+	if ttl := r.sessionTTL(); ttl > 0 && time.Since(rec.LastActiveAt) > ttl {
+		r.dropRecord(ctx, rec)
+		return nil, nil
+	}
+
+	handle, err := r.probe.AttachTerminalRuntime(ctx, rec.RuntimeName, rec.RuntimeID, containerruntime.TerminalOptions{
 		Command: []string{"/bin/bash", "-l"},
 		TTY:     true,
 		Rows:    24,
 		Cols:    80,
 	})
 	if err != nil {
+		// 容器已被删除 / 节点重建：记录作废，走新建。
+		r.dropRecord(ctx, rec)
 		return nil, err
 	}
 
+	managed, err := r.initSession(ctx, key, handle, r.loadScrollback(key))
+	if err != nil {
+		handle.Cleanup()
+		return nil, err
+	}
+	logger.Infof(ctx, "[TerminalSession] adopted session %s runtime=%s", key.SessionID(), rec.RuntimeID)
+	r.touchRecord(ctx, key)
+	return managed, nil
+}
+
+// initSession 把「新容器 / 认领容器」统一初始化为托管会话。
+func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalSessionKey, handle *ProbeTerminalHandle, replay []byte) (*ManagedTerminalSession, error) {
+	if handle == nil || handle.Session == nil {
+		return nil, fmt.Errorf("terminal runtime handle is empty")
+	}
 	managed := &ManagedTerminalSession{
-		id:         key.SessionID(),
-		key:        key,
-		sess:       session,
-		cleanup:    cleanup,
-		registry:   r,
-		subs:       make(map[int64]*TerminalSubscriber),
-		bufLimit:   r.bufferBytes(),
-		readyCh:    make(chan struct{}),
-		done:       make(chan struct{}),
-		markerCh:   make(chan int, 8),
-		lastOutput: time.Now(),
+		id:          key.SessionID(),
+		key:         key,
+		sess:        handle.Session,
+		cleanup:     handle.Cleanup,
+		registry:    r,
+		store:       r.store,
+		scrollback:  r.openScrollback(key),
+		runtimeID:   handle.RuntimeID,
+		runtimeName: handle.RuntimeName,
+		subs:        make(map[int64]*TerminalSubscriber),
+		bufLimit:    r.bufferBytes(),
+		readyCh:     make(chan struct{}),
+		done:        make(chan struct{}),
+		markerCh:    make(chan int, 8),
+		lastOutput:  time.Now(),
+		lastActive:  time.Now(),
+	}
+	if len(replay) > 0 {
+		// 重启前缓存的历史输出：作为初始缓冲，前端 attach 时直接回放。
+		if managed.bufLimit > 0 && len(replay) > managed.bufLimit {
+			replay = replay[len(replay)-managed.bufLimit:]
+		}
+		managed.buf = replay
+		managed.bufStart = 0
 	}
 	managed.start()
 
@@ -405,6 +559,175 @@ func (r *TerminalSessionRegistry) createSession(key TerminalSessionKey) (*Manage
 		return nil, err
 	}
 	return managed, nil
+}
+
+// persistRecord 把 会话 key → runtimeID 的映射落库，供进程重启后认领。
+func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, key TerminalSessionKey, handle *ProbeTerminalHandle) {
+	if r.store == nil {
+		return
+	}
+	rec := &types.TerminalSession{
+		SessionKey:    key.SessionID(),
+		UserID:        key.UserID,
+		ProjectID:     key.ProjectID,
+		TemplateID:    key.TemplateID,
+		RuntimeName:   handle.RuntimeName,
+		RuntimeID:     handle.RuntimeID,
+		ContainerName: handle.ContainerName,
+		Status:        types.TerminalSessionStatusRunning,
+		LastActiveAt:  time.Now(),
+	}
+	if err := r.store.Upsert(ctx, rec); err != nil {
+		logger.Warnf(ctx, "[TerminalSession] persist session %s failed: %v", key.SessionID(), err)
+	}
+}
+
+func (r *TerminalSessionRegistry) touchRecord(ctx context.Context, key TerminalSessionKey) {
+	if r.store == nil {
+		return
+	}
+	if err := r.store.Touch(ctx, key, time.Now()); err != nil {
+		logger.Warnf(ctx, "[TerminalSession] touch session %s failed: %v", key.SessionID(), err)
+	}
+}
+
+// dropRecord 删除数据库记录并尽力删除其容器（处理跨进程残留）。
+func (r *TerminalSessionRegistry) dropRecord(ctx context.Context, rec *types.TerminalSession) {
+	if rec == nil {
+		return
+	}
+	if r.probe != nil {
+		r.probe.DropTerminalRuntime(ctx, rec.RuntimeName, rec.RuntimeID)
+	}
+	// 会话已不存在，滚动缓冲文件也一并清理，避免目录无限增长。
+	if scrollback, err := newTerminalScrollback(r.opts.ScrollbackDir, rec.SessionKey, r.scrollbackBytes()); err == nil {
+		scrollback.Remove()
+	}
+	if r.store != nil {
+		key := TerminalSessionKey{UserID: rec.UserID, ProjectID: rec.ProjectID, TemplateID: rec.TemplateID}
+		if err := r.store.Delete(ctx, key); err != nil {
+			logger.Warnf(ctx, "[TerminalSession] delete session record %s failed: %v", rec.SessionKey, err)
+		}
+	}
+}
+
+// checkQuota 限制单个用户同时存在的终端会话数。
+func (r *TerminalSessionRegistry) checkQuota(ctx context.Context, userID int64) error {
+	limit := r.maxSessionsPerUser()
+	if r.store == nil || limit <= 0 || userID <= 0 {
+		return nil
+	}
+	rows, err := r.store.List(ctx)
+	if err != nil {
+		// 查询失败不阻塞使用，只记录。
+		logger.Warnf(ctx, "[TerminalSession] list sessions for quota failed: %v", err)
+		return nil
+	}
+	now := time.Now()
+	active := 0
+	for _, rec := range rows {
+		if rec.UserID != userID || rec.Status != types.TerminalSessionStatusRunning {
+			continue
+		}
+		if r.sessionTTL() > 0 && now.Sub(rec.LastActiveAt) > r.sessionTTL() {
+			continue
+		}
+		active++
+	}
+	if active >= limit {
+		return fmt.Errorf("%w (user %d already has %d terminal sessions, limit %d)", ErrTerminalSessionQuotaExceeded, userID, active, limit)
+	}
+	return nil
+}
+
+func (r *TerminalSessionRegistry) openScrollback(key TerminalSessionKey) *terminalScrollback {
+	if strings.TrimSpace(r.opts.ScrollbackDir) == "" {
+		return nil
+	}
+	scrollback, err := newTerminalScrollback(r.opts.ScrollbackDir, key.SessionID(), r.scrollbackBytes())
+	if err != nil {
+		logger.Warnf(context.Background(), "[TerminalSession] open scrollback for %s failed: %v", key.SessionID(), err)
+		return nil
+	}
+	return scrollback
+}
+
+func (r *TerminalSessionRegistry) loadScrollback(key TerminalSessionKey) []byte {
+	scrollback, err := newTerminalScrollback(r.opts.ScrollbackDir, key.SessionID(), r.scrollbackBytes())
+	if err != nil {
+		return nil
+	}
+	data := scrollback.Load()
+	if len(data) == 0 {
+		return nil
+	}
+	// 去掉旧的 OSC 标记，避免回放里混入控制字符。
+	return stripTerminalMarkers(data)
+}
+
+// StartMaintenance 启动后台维护：空闲会话回收 + 跨进程残留对账。
+// 传入的 ctx 取消时退出。
+func (r *TerminalSessionRegistry) StartMaintenance(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(terminalMaintenanceInterval)
+		defer ticker.Stop()
+		r.maintain(ctx)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				r.maintain(ctx)
+			}
+		}
+	}()
+}
+
+func (r *TerminalSessionRegistry) maintain(ctx context.Context) {
+	now := time.Now()
+	ttl := r.sessionTTL()
+
+	r.mu.Lock()
+	live := make([]*ManagedTerminalSession, 0, len(r.sessions))
+	for _, sess := range r.sessions {
+		live = append(live, sess)
+	}
+	r.mu.Unlock()
+
+	for _, sess := range live {
+		if sess.isBusy() {
+			// 长任务执行中：只刷新活跃时间，不做 TTL 回收。
+			r.touchRecord(ctx, sess.key)
+			continue
+		}
+		if ttl > 0 && sess.idleFor(now) > ttl {
+			logger.Infof(ctx, "[TerminalSession] session %s idle for %s, releasing", sess.id, sess.idleFor(now).Truncate(time.Second))
+			r.forget(sess)
+			sess.Close()
+			continue
+		}
+		r.touchRecord(ctx, sess.key)
+	}
+
+	if r.store == nil || ttl <= 0 {
+		return
+	}
+	rows, err := r.store.List(ctx)
+	if err != nil {
+		logger.Warnf(ctx, "[TerminalSession] maintenance list failed: %v", err)
+		return
+	}
+	for _, rec := range rows {
+		if now.Sub(rec.LastActiveAt) <= ttl {
+			continue
+		}
+		key := TerminalSessionKey{UserID: rec.UserID, ProjectID: rec.ProjectID, TemplateID: rec.TemplateID}
+		if r.Lookup(key) != nil {
+			continue
+		}
+		logger.Infof(ctx, "[TerminalSession] dropping stale session %s (idle %s)", rec.SessionKey, now.Sub(rec.LastActiveAt).Truncate(time.Second))
+		r.dropRecord(ctx, rec)
+	}
 }
 
 // Lookup 返回存活会话（不创建）。
@@ -471,6 +794,7 @@ func (r *TerminalSessionRegistry) Execute(ctx context.Context, key TerminalSessi
 		}
 		sess = created
 	}
+	sess.touch()
 
 	if cmd.NotifyUI {
 		r.notifyExec(sess, cmd, "start", nil)
@@ -654,6 +978,9 @@ func (s *ManagedTerminalSession) start() {
 	s.requests = make(chan terminalExecRequest, s.registry.execQueueSize())
 	go s.readLoop()
 	go s.execLoop()
+	if s.scrollback != nil {
+		go s.flushLoop()
+	}
 }
 
 // ID 返回会话 ID。
@@ -667,6 +994,7 @@ func (s *ManagedTerminalSession) WriteInput(data []byte) (int, error) {
 	if s.isDead() {
 		return 0, ErrTerminalSessionClosed
 	}
+	s.touch()
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.sess.Write(data)
@@ -697,6 +1025,7 @@ func (s *ManagedTerminalSession) Attach(sinceSeq int64) (*TerminalSubscriber, []
 	sub := newTerminalSubscriber(s.nextSubID)
 	s.subs[sub.ID] = sub
 	s.attachedOnce = true
+	s.lastActive = time.Now()
 
 	var replay []byte
 	if sinceSeq >= 0 {
@@ -773,7 +1102,78 @@ func (s *ManagedTerminalSession) Close() {
 		if s.cleanup != nil {
 			s.cleanup()
 		}
+		// 会话结束：删除持久记录与滚动缓冲文件，避免重启后被认领。
+		if s.store != nil {
+			_ = s.store.Delete(context.Background(), s.key)
+		}
+		if s.scrollback != nil {
+			s.scrollback.Remove()
+		}
 	})
+}
+
+// touch 记录一次「用户 / Agent 操作」，用于空闲 TTL 回收。
+func (s *ManagedTerminalSession) touch() {
+	s.mu.Lock()
+	s.lastActive = time.Now()
+	s.mu.Unlock()
+}
+
+// idleFor 返回距离最近一次操作（含输出）的时长。
+func (s *ManagedTerminalSession) idleFor(now time.Time) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	last := s.lastActive
+	if s.lastOutput.After(last) {
+		last = s.lastOutput
+	}
+	return now.Sub(last)
+}
+
+func (s *ManagedTerminalSession) setBusy(busy bool) {
+	s.mu.Lock()
+	s.busy = busy
+	if busy {
+		s.lastActive = time.Now()
+	}
+	s.mu.Unlock()
+}
+
+func (s *ManagedTerminalSession) isBusy() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.busy
+}
+
+// flushLoop 定期把环形缓冲快照落盘（仅脏写）。
+func (s *ManagedTerminalSession) flushLoop() {
+	ticker := time.NewTicker(terminalScrollbackFlushInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			s.flushScrollback()
+		}
+	}
+}
+
+func (s *ManagedTerminalSession) flushScrollback() {
+	if s.scrollback == nil {
+		return
+	}
+	s.mu.Lock()
+	if !s.scrollbackDirty {
+		s.mu.Unlock()
+		return
+	}
+	data := append([]byte(nil), s.buf...)
+	s.scrollbackDirty = false
+	s.mu.Unlock()
+	if err := s.scrollback.Save(data); err != nil {
+		logger.Warnf(context.Background(), "[TerminalSession] flush scrollback %s failed: %v", s.id, err)
+	}
 }
 
 func (s *ManagedTerminalSession) isDead() bool {
@@ -880,6 +1280,9 @@ func (s *ManagedTerminalSession) publish(chunk []byte) {
 		s.buf = append([]byte(nil), s.buf[drop:]...)
 		s.bufStart += int64(drop)
 	}
+	if s.scrollback != nil {
+		s.scrollbackDirty = true
+	}
 	for _, sub := range s.subs {
 		select {
 		case sub.Data <- chunk:
@@ -985,6 +1388,8 @@ func (s *ManagedTerminalSession) runCommand(req terminalExecRequest) terminalExe
 
 	// 命令执行期间不允许被「无人订阅」回收（agent 可能在没有前端连接时跑长任务）。
 	s.suspendReap()
+	s.setBusy(true)
+	defer s.setBusy(false)
 	// 先等输出静止，再清掉上一条命令残留的标记：
 	// 顺序反过来会把「等待期间产生的旧标记」误当成本次命令的退出码。
 	waitCtx, cancel := context.WithTimeout(context.Background(), terminalIdleWait+time.Second)

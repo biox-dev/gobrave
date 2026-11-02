@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -182,6 +183,8 @@ func (h *ContainerHandler) ContainerTemplateTerminalExec(c *gin.Context) {
 			c.Error(apperrors.NewConflictError("terminal session is busy").WithDetails(err.Error()))
 		case err == manager.ErrTerminalSessionClosed:
 			c.Error(apperrors.NewConflictError("terminal session is closed").WithDetails(err.Error()))
+		case errors.Is(err, manager.ErrTerminalSessionQuotaExceeded):
+			c.Error(apperrors.NewConflictError("terminal session quota exceeded").WithDetails(err.Error()))
 		default:
 			c.Error(apperrors.NewInternalServerError("failed to execute terminal command").WithDetails(err.Error()))
 		}

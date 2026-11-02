@@ -409,6 +409,11 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(hub *realtime.Hub) manager.TerminalEventPublisher {
 		return hub
 	}))
+	// 会话记录持久化：进程重启后可按 runtimeID 认领原容器（容器与挂载卷仍在，shell 重新 exec）。
+	must(container.Provide(manager.NewGormTerminalSessionStore))
+	must(container.Provide(func(store *manager.GormTerminalSessionStore) manager.TerminalSessionStore {
+		return store
+	}))
 	must(container.Provide(manager.NewTerminalSessionRegistry))
 	// 同一注册表同时暴露为 Agent 工具端口，供 terminal_exec 注入。
 	must(container.Provide(func(registry *manager.TerminalSessionRegistry) runtimecontext.ContainerTerminalRunner {
@@ -1003,6 +1008,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.AppSession{},
 		&types.ContainerInstance{},
 		&types.ContainerEvent{},
+		&types.TerminalSession{},
 		&types.LLMSession{},
 		&types.LLMConversation{},
 		&types.GatewayRoute{},

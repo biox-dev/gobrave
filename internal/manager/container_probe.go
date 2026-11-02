@@ -65,7 +65,7 @@ type probePlan struct {
 // template image / resources / mounts / env, project env / mounts, package
 // variables, storage mounts, variable resolution, volume source preparation.
 // The command itself is left empty for the caller to set after resolution.
-func (r *ContainerProbeRunner) buildProbePlan(ctx context.Context, projectID, templateID int64) (*probePlan, error) {
+func (r *ContainerProbeRunner) buildProbePlan(ctx context.Context, userID, projectID, templateID int64) (*probePlan, error) {
 	w := r.worker
 	if w == nil || w.repo == nil || w.projectRepo == nil {
 		return nil, fmt.Errorf("container probe is not configured")
@@ -142,12 +142,18 @@ func (r *ContainerProbeRunner) buildProbePlan(ctx context.Context, projectID, te
 			ownerType, 0, fmt.Sprintf("agent-probe-%d-%d", projectID, time.Now().UnixNano()),
 		),
 		Labels: map[string]string{
-			"gobrave-probe":      "true",
-			"gobrave-project-id": strconv.FormatInt(projectID, 10),
+			"gobrave-probe":       "true",
+			"gobrave-project-id":  strconv.FormatInt(projectID, 10),
+			"gobrave-template-id": strconv.FormatInt(templateID, 10),
 		},
 		// 探针是一次性命令：k8s 一律用 job，避免 deployment 退出后被重启。
 		WorkloadKind:  probeContainerWorkload,
 		ExposeService: false,
+	}
+	// 终端会话容器额外打上 user / session label，进程重启后可按 label 对账认领。
+	if userID > 0 {
+		spec.Labels["gobrave-user-id"] = strconv.FormatInt(userID, 10)
+		spec.Labels["gobrave-terminal-session"] = fmt.Sprintf("term-%d-%d-%d", userID, projectID, templateID)
 	}
 	w.containerManager.applyRuntimeUser(spec, resolveVars)
 
@@ -184,49 +190,141 @@ func deleteProbeRuntime(ctx context.Context, rt containerruntime.Runtime, runtim
 	}
 }
 
-// OpenProbeTerminal starts a long-lived probe container and opens an interactive
-// shell inside it. The returned cleanup function deletes the container and must
-// be called when the terminal disconnects.
-func (r *ContainerProbeRunner) OpenProbeTerminal(ctx context.Context, projectID, templateID int64, opts containerruntime.TerminalOptions) (containerruntime.TerminalSession, func(), error) {
-	plan, err := r.buildProbePlan(ctx, projectID, templateID)
+// ProbeTerminalHandle 是一次「探针容器 + 交互式 shell」的句柄。
+//
+// 它把创建/认领两条路径统一起来：
+//   - StartTerminalRuntime 新建容器后返回 runtimeID；
+//   - AttachTerminalRuntime 在已有容器上重新 exec 一个 shell（进程重启后的认领）。
+//
+// Cleanup 负责删除容器（关闭 shell 之后调用）；调用方必须在会话 Close 时执行它。
+type ProbeTerminalHandle struct {
+	Runtime       containerruntime.Runtime
+	RuntimeName   string
+	RuntimeID     string
+	ContainerName string
+	Session       containerruntime.TerminalSession
+	Cleanup       func()
+}
+
+// StartTerminalRuntime 创建长期存活的探针容器、等待其可被 exec，并打开交互式 shell。
+func (r *ContainerProbeRunner) StartTerminalRuntime(ctx context.Context, userID, projectID, templateID int64, opts containerruntime.TerminalOptions) (*ProbeTerminalHandle, error) {
+	plan, err := r.buildProbePlan(ctx, userID, projectID, templateID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	plan.spec.Command = []string{probeKeepAliveCommand}
 
 	runtimeID, err := plan.rt.Create(ctx, plan.spec)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create probe container: %w", err)
+		return nil, fmt.Errorf("create probe container: %w", err)
 	}
 	cleanup := func() { deleteProbeRuntime(ctx, plan.rt, runtimeID) }
 
 	starter, ok := plan.rt.(containerruntime.RuntimeTerminalStarter)
 	if !ok {
 		cleanup()
-		return nil, nil, fmt.Errorf("runtime %s does not support interactive terminals", plan.rt.Name())
+		return nil, fmt.Errorf("runtime %s does not support interactive terminals", plan.rt.Name())
 	}
 	startCtx, cancel := context.WithTimeout(ctx, probeTerminalStartWait)
 	defer cancel()
 	if err := starter.StartForTerminal(startCtx, runtimeID); err != nil {
 		cleanup()
-		return nil, nil, fmt.Errorf("start probe container: %w", err)
+		return nil, fmt.Errorf("start probe container: %w", err)
 	}
 
-	terminal, ok := plan.rt.(containerruntime.RuntimeTerminal)
-	if !ok {
-		cleanup()
-		return nil, nil, fmt.Errorf("runtime %s does not support interactive terminals", plan.rt.Name())
+	handle := &ProbeTerminalHandle{
+		Runtime:       plan.rt,
+		RuntimeName:   plan.rt.Name(),
+		RuntimeID:     runtimeID,
+		ContainerName: plan.spec.RuntimeName,
+		Cleanup:       cleanup,
 	}
+	session, err := plan.rt.(containerruntime.RuntimeTerminal).OpenTerminal(ctx, runtimeID, normalizeTerminalOptions(opts))
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("open probe terminal: %w", err)
+	}
+	handle.Session = session
+	return handle, nil
+}
+
+// AttachTerminalRuntime 在已有容器上执行交互式 shell（等价于 kubectl/docker exec -it）。
+//
+// 这是进程重启后「认领」原容器的唯一方式：容器还在，但原来的 shell 已经随连接
+// 结束，所以这里得到的是一个新的 bash（cwd / 环境变量不会保留，历史输出由滚动缓冲回放）。
+func (r *ContainerProbeRunner) AttachTerminalRuntime(ctx context.Context, runtimeName, runtimeID string, opts containerruntime.TerminalOptions) (*ProbeTerminalHandle, error) {
+	rt := r.resolveRuntime(runtimeName)
+	if rt == nil {
+		return nil, fmt.Errorf("runtime %q is not registered", runtimeName)
+	}
+	terminal, ok := rt.(containerruntime.RuntimeTerminal)
+	if !ok {
+		return nil, fmt.Errorf("runtime %s does not support interactive terminals", rt.Name())
+	}
+	session, err := terminal.OpenTerminal(ctx, runtimeID, normalizeTerminalOptions(opts))
+	if err != nil {
+		return nil, fmt.Errorf("attach probe terminal: %w", err)
+	}
+	return &ProbeTerminalHandle{
+		Runtime:     rt,
+		RuntimeName: rt.Name(),
+		RuntimeID:   runtimeID,
+		Session:     session,
+		Cleanup:     func() { deleteProbeRuntime(ctx, rt, runtimeID) },
+	}, nil
+}
+
+// DropTerminalRuntime 删除一个（可能来自旧进程的）终端容器，失败只记日志。
+func (r *ContainerProbeRunner) DropTerminalRuntime(ctx context.Context, runtimeName, runtimeID string) {
+	if strings.TrimSpace(runtimeID) == "" {
+		return
+	}
+	rt := r.resolveRuntime(runtimeName)
+	if rt == nil {
+		return
+	}
+	deleteProbeRuntime(ctx, rt, runtimeID)
+}
+
+// resolveRuntime 优先按名字解析，其次回退到当前默认运行时。
+func (r *ContainerProbeRunner) resolveRuntime(name string) containerruntime.Runtime {
+	if r.worker == nil {
+		return nil
+	}
+	if r.worker.reg != nil {
+		if n := strings.TrimSpace(name); n != "" {
+			if rt := r.worker.reg.Get(n); rt != nil {
+				return rt
+			}
+		}
+	}
+	if r.worker.containerManager == nil {
+		return nil
+	}
+	rt, err := r.worker.containerManager.getRuntime()
+	if err != nil {
+		return nil
+	}
+	return rt
+}
+
+// OpenProbeTerminal 保留旧接口：创建容器并打开 shell，cleanup 删除容器。
+func (r *ContainerProbeRunner) OpenProbeTerminal(ctx context.Context, projectID, templateID int64, opts containerruntime.TerminalOptions) (containerruntime.TerminalSession, func(), error) {
+	handle, err := r.StartTerminalRuntime(ctx, 0, projectID, templateID, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { handle.Cleanup() }
+	return handle.Session, cleanup, nil
+}
+
+// normalizeTerminalOptions 统一交互式终端的默认值。
+func normalizeTerminalOptions(opts containerruntime.TerminalOptions) containerruntime.TerminalOptions {
 	if len(opts.Command) == 0 {
 		opts.Command = []string{"/bin/bash", "-l"}
 	}
 	opts.TTY = true
-	session, err := terminal.OpenTerminal(ctx, runtimeID, opts)
-	if err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("open probe terminal: %w", err)
-	}
-	return session, cleanup, nil
+	return opts
 }
 
 // ProbeContainerEnv creates a throwaway container from a template, runs the
@@ -246,7 +344,7 @@ func (r *ContainerProbeRunner) ProbeContainerEnv(ctx context.Context, in runtime
 	}
 	result.ContainerTemplateID = in.ContainerTemplateID
 
-	plan, err := r.buildProbePlan(ctx, in.ProjectID, in.ContainerTemplateID)
+	plan, err := r.buildProbePlan(ctx, 0, in.ProjectID, in.ContainerTemplateID)
 	if err != nil {
 		return result, err
 	}

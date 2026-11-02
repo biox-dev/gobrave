@@ -200,3 +200,13 @@ container:
   # 容器模板终端：会话创建后一直没有任何订阅者时的保留秒数（避免刚建好就被回收）。
   # <=0 使用默认 120 秒。
   terminal_unattached_grace_seconds: 120
+  # 持久会话空闲上限（分钟）：超过该时长没有操作/输出，自动回收容器并删除会话记录。
+  # <=0 使用默认 120。设为很大的值即"只随显式删除回收"（注意资源占用）。
+  terminal_session_ttl_minutes: 120
+  # 单用户同时存在的终端会话上限（<=0 默认 4），超出时新建会话会被拒绝。
+  terminal_max_sessions_per_user: 4
+  # 滚动缓冲落盘目录；留空使用 <storage.base_dir>/terminal_sessions。
+  # 进程重启后从该目录回放历史输出（每会话一个文件，滚动覆盖）。
+  terminal_buffer_dir: ""
+  # 单个会话滚动缓冲上限（KB），<=0 默认 1024。
+  terminal_buffer_kb: 1024
