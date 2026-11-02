@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -215,5 +216,110 @@ func TestLoadConfigDatabaseLogLevel(t *testing.T) {
 	}
 	if got := ResolveDatabaseLogLevel(cfg); got != DatabaseLogLevelInfo {
 		t.Errorf("log_level = %q, want %q", got, DatabaseLogLevelInfo)
+	}
+}
+
+// clearProxyEnv 清空代理相关的环境变量（含大写形式），避免宿主机环境影响测试。
+func clearProxyEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"HTTP_PROXY", "http_proxy",
+		"HTTPS_PROXY", "https_proxy",
+		"NO_PROXY", "no_proxy",
+		"ALL_PROXY", "all_proxy",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
+// TestProxyConfigProxyFunc 校验代理段解析：http/https 各自取对应代理，
+// no_proxy 命中的主机直连。
+func TestProxyConfigProxyFunc(t *testing.T) {
+	// 隔离宿主机环境变量，避免影响未配置代理的分支。
+	clearProxyEnv(t)
+
+	writeConfig(t, `proxy:
+  http_proxy: http://10.110.1.11:7890
+  https_proxy: http://10.110.1.11:7890
+  no_proxy: internal.example.com
+`)
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	proxyFunc := cfg.ProxyFunc()
+	cases := []struct {
+		target string
+		want   string
+	}{
+		{"http://example.com/a", "http://10.110.1.11:7890"},
+		{"https://example.com/a", "http://10.110.1.11:7890"},
+		{"http://internal.example.com/a", ""},
+	}
+	for _, c := range cases {
+		u, err := url.Parse(c.target)
+		if err != nil {
+			t.Fatalf("parse %s: %v", c.target, err)
+		}
+		got, err := proxyFunc(u)
+		if err != nil {
+			t.Fatalf("proxyFunc(%s): %v", c.target, err)
+		}
+		if c.want == "" {
+			if got != nil {
+				t.Errorf("proxyFunc(%s) = %v, want direct", c.target, got)
+			}
+			continue
+		}
+		if got == nil || got.String() != c.want {
+			t.Errorf("proxyFunc(%s) = %v, want %s", c.target, got, c.want)
+		}
+	}
+
+	// Transport 必须复用同一套代理选择逻辑。
+	transport := cfg.NewHTTPTransport()
+	if transport.Proxy == nil {
+		t.Fatal("transport proxy func should not be nil")
+	}
+}
+
+// TestProxyConfigIgnoresEnvironment 校验未配置代理时一律直连，
+// 即使宿主机设置了 http_proxy / https_proxy 等环境变量也不生效。
+func TestProxyConfigIgnoresEnvironment(t *testing.T) {
+	clearProxyEnv(t)
+	t.Setenv("http_proxy", "http://env-proxy:8080")
+	t.Setenv("https_proxy", "http://env-proxy:8080")
+	t.Setenv("HTTP_PROXY", "http://env-proxy:8080")
+	t.Setenv("HTTPS_PROXY", "http://env-proxy:8080")
+
+	writeConfig(t, "server:\n  port: 8083\n")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	for _, target := range []string{"http://example.com", "https://example.com"} {
+		u, err := url.Parse(target)
+		if err != nil {
+			t.Fatalf("parse %s: %v", target, err)
+		}
+		got, err := cfg.ProxyFunc()(u)
+		if err != nil {
+			t.Fatalf("proxy func: %v", err)
+		}
+		if got != nil {
+			t.Errorf("proxyFunc(%s) = %v, want direct (env must be ignored)", target, got)
+		}
+	}
+
+	// cfg / proxy 段为 nil 同样直连。
+	nilURL, err := url.Parse("https://example.com")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var nilCfg *Config
+	if got, _ := nilCfg.ProxyFunc()(nilURL); got != nil {
+		t.Errorf("nil config proxy = %v, want direct", got)
 	}
 }

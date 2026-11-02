@@ -58,8 +58,11 @@ TIPS:
 )
 
 // NewFetch 返回 fetch 工具。
-func NewFetch() tool.Tool {
-	return &fetchTool{client: &http.Client{Timeout: 30 * time.Second}}
+//
+// 出站请求复用 config 中的代理配置（proxy.http_proxy / proxy.https_proxy /
+// proxy.no_proxy）；未配置时直连，不读取环境变量。
+func NewFetch(deps Deps) tool.Tool {
+	return &fetchTool{client: deps.Config.NewHTTPClient(30 * time.Second)}
 }
 
 // Definition 实现 tool.Tool。
@@ -112,7 +115,11 @@ func (t *fetchTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 		if params.Timeout > 120 {
 			params.Timeout = 120
 		}
-		client = &http.Client{Timeout: time.Duration(params.Timeout) * time.Second}
+		// 保留构造期的 Transport，使代理配置在自定义超时时仍然生效。
+		client = &http.Client{
+			Timeout:   time.Duration(params.Timeout) * time.Second,
+			Transport: t.client.Transport,
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", params.URL, nil)

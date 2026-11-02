@@ -3,6 +3,7 @@ package coder
 import (
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
+	"github.com/biox-dev/gobrave/internal/config"
 )
 
 // Deps 是 coder 工具集的进程级静态依赖，由 container 在构建工具注册表时一次性装配。
@@ -17,6 +18,9 @@ type Deps struct {
 	// 以「提供者」而不是客户端 map 注入：Clients() 在每次执行时取当前快照，
 	// 避免工具在构造期就把客户端集合固化下来。
 	LSP LSPClientProvider
+	// Config 是进程配置快照，供需要出站网络的工具（如 fetch）读取代理设置。
+	// 为 nil 或未配置代理时直连（不读取环境变量）。
+	Config *config.Config
 }
 
 // LSPClientProvider 抽象「提供当前 LSP 客户端集合」的能力。

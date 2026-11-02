@@ -31,6 +31,12 @@ proxy:
   brave_api: http://localhost:5000
   container: http://localhost:8089
   onlyoffice: http://localhost:8080
+  # outbound proxy for external HTTP(S) requests (e.g. agent fetch tool).
+  # leave empty to connect directly; env http_proxy / https_proxy are ignored.
+  http_proxy: ""
+  https_proxy: ""
+  # hosts that bypass the proxy, comma separated (domain / IP / CIDR)
+  no_proxy: localhost,127.0.0.1
 
 route:
   # gateway | traefik | k8s-ingress

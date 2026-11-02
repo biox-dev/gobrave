@@ -23,7 +23,7 @@ func All(deps Deps) []tool.Tool {
 		NewGlob(),
 		NewGrep(),
 		NewLs(),
-		NewFetch(),
+		NewFetch(deps),
 		NewSourcegraph(),
 		NewDiagnostics(deps),
 	}

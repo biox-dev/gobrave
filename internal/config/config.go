@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/goccy/go-yaml"
+	"golang.org/x/net/http/httpproxy"
 )
 
 // CLIFlags holds command-line arguments that can override config.yml values.
@@ -295,10 +298,89 @@ func ResolveGitIdentity(cfg *Config) (string, string) {
 	return name, email
 }
 
+// ProxyConfig 保存内部服务地址与出站网络代理配置。
+//
+// 出站代理（http_proxy / https_proxy / no_proxy）是完全由配置驱动的通用能力：
+// 任何需要访问外部网络的组件都可以通过 (*Config).NewHTTPClient /
+// NewHTTPTransport 复用，而不只是 fetch 工具。未配置时一律直连，不读取环境变量。
 type ProxyConfig struct {
 	BraveAPI   string `yaml:"brave_api" json:"brave_api"`
 	Container  string `yaml:"container" json:"container"`
 	OnlyOffice string `yaml:"onlyoffice" json:"onlyoffice"`
+
+	// HTTPProxy 是出站 http:// 请求使用的代理地址，例如 http://10.110.1.11:7890。
+	// 为空表示不使用该协议的代理（不会回退到环境变量）。
+	HTTPProxy string `yaml:"http_proxy" json:"http_proxy"`
+	// HTTPSProxy 是出站 https:// 请求使用的代理地址，例如 http://10.110.1.11:7890。
+	// 为空表示不使用该协议的代理（不会回退到环境变量）。
+	HTTPSProxy string `yaml:"https_proxy" json:"https_proxy"`
+	// NoProxy 是不走代理的主机列表（逗号分隔，支持域名 / IP / CIDR）。
+	NoProxy string `yaml:"no_proxy" json:"no_proxy"`
+}
+
+// directProxy 表示直连：不经过任何代理。
+func directProxy(*url.URL) (*url.URL, error) { return nil, nil }
+
+// ProxyFunc 返回按目标 URL 选择代理的函数。
+//
+// 行为完全由配置决定：http_proxy / https_proxy / no_proxy。
+// 未配置（或 p 为 nil）时一律直连，不读取 http_proxy / https_proxy 等环境变量。
+func (p *ProxyConfig) ProxyFunc() func(*url.URL) (*url.URL, error) {
+	if p == nil {
+		return directProxy
+	}
+	httpProxy := strings.TrimSpace(p.HTTPProxy)
+	httpsProxy := strings.TrimSpace(p.HTTPSProxy)
+	if httpProxy == "" && httpsProxy == "" {
+		return directProxy
+	}
+	proxyCfg := httpproxy.Config{
+		HTTPProxy:  httpProxy,
+		HTTPSProxy: httpsProxy,
+		NoProxy:    strings.TrimSpace(p.NoProxy),
+	}
+	return proxyCfg.ProxyFunc()
+}
+
+// NewHTTPTransport 返回套用了代理配置的 Transport。
+// 可在需要自定义超时 / 连接池时作为任意出站 http.Client 的基础。
+func (p *ProxyConfig) NewHTTPTransport() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	proxyFunc := p.ProxyFunc()
+	transport.Proxy = func(req *http.Request) (*url.URL, error) {
+		return proxyFunc(req.URL)
+	}
+	return transport
+}
+
+// NewHTTPClient 返回套用了代理配置的 http.Client。
+func (p *ProxyConfig) NewHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: p.NewHTTPTransport()}
+}
+
+// ProxyFunc 返回当前配置下的出站代理选择函数；cfg 或其 proxy 段为 nil、
+// 或未配置 http_proxy / https_proxy 时一律直连（忽略环境变量）。
+func (c *Config) ProxyFunc() func(*url.URL) (*url.URL, error) {
+	if c == nil {
+		return (*ProxyConfig)(nil).ProxyFunc()
+	}
+	return c.Proxy.ProxyFunc()
+}
+
+// NewHTTPTransport 返回当前配置下套用了代理的 Transport。
+func (c *Config) NewHTTPTransport() *http.Transport {
+	if c == nil {
+		return (*ProxyConfig)(nil).NewHTTPTransport()
+	}
+	return c.Proxy.NewHTTPTransport()
+}
+
+// NewHTTPClient 返回当前配置下套用了代理的 http.Client。
+func (c *Config) NewHTTPClient(timeout time.Duration) *http.Client {
+	if c == nil {
+		return (*ProxyConfig)(nil).NewHTTPClient(timeout)
+	}
+	return c.Proxy.NewHTTPClient(timeout)
 }
 
 type RouteConfig struct {
