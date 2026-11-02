@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -148,6 +149,21 @@ type TerminalSessionStatus struct {
 	Alive       bool   `json:"alive"`
 	Subscribers int    `json:"subscribers"`
 	Seq         int64  `json:"seq"`
+
+	// 以下字段只在「按用户列出会话」时填充，供左侧栏列表 join 容器模板展示。
+	UserID     int64 `json:"user_id,omitempty,string"`
+	ProjectID  int64 `json:"project_id,omitempty,string"`
+	TemplateID int64 `json:"template_id,omitempty,string"`
+	// Persistent 为 true 表示会话只能由空闲 TTL 或显式关闭回收。
+	Persistent bool `json:"persistent"`
+	// Busy 表示当前有命令在执行（此时空闲 TTL 不会回收容器）。
+	Busy bool `json:"busy"`
+	// RuntimeID / RuntimeName 是底层容器标识（docker id / k8s workload），便于排查。
+	RuntimeID   string `json:"runtime_id,omitempty"`
+	RuntimeName string `json:"runtime_name,omitempty"`
+	// CreatedAt 是会话在内存注册表里的创建时间；LastActive 是最近一次操作时间。
+	CreatedAt  time.Time `json:"created_at,omitempty"`
+	LastActive time.Time `json:"last_active,omitempty"`
 }
 
 // TerminalSubscriber 是一个终端输出订阅者（浏览器 WebSocket）。
@@ -205,6 +221,8 @@ type ManagedTerminalSession struct {
 	lastOutput time.Time
 	// lastActive 记录「用户/Agent 最近一次操作」时间，用于空闲 TTL 回收。
 	lastActive time.Time
+	// createdAt 是会话在注册表内的创建时间，仅用于列表展示。
+	createdAt time.Time
 	// busy 表示有命令正在执行：空闲 TTL 回收必须跳过，避免杀掉长任务。
 	busy            bool
 	scrollbackDirty bool
@@ -553,6 +571,7 @@ func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalS
 		markerCh:    make(chan int, 8),
 		lastOutput:  time.Now(),
 		lastActive:  time.Now(),
+		createdAt:   time.Now(),
 	}
 	if len(replay) > 0 {
 		// 重启前缓存的历史输出：作为初始缓冲，前端 attach 时直接回放。
@@ -781,7 +800,51 @@ func (r *TerminalSessionRegistry) Status(key TerminalSessionKey) TerminalSession
 	}
 }
 
-// CloseSession 主动结束会话（删除容器）。
+// ListSessions 返回当前用户的全部终端会话状态（按 key 排序，保证顺序稳定）。
+//
+// 只返回内存注册表里存活的会话：进程重启后持久层还留着记录，但 shell 已经结束，
+// 这种「记录存在、会话不存在」的残留由启动/定期对账清理，不在这里暴露。
+func (r *TerminalSessionRegistry) ListSessions(userID int64) []TerminalSessionStatus {
+	r.mu.Lock()
+	sessions := make([]*ManagedTerminalSession, 0, len(r.sessions))
+	for _, sess := range r.sessions {
+		if sess == nil || sess.key.UserID != userID {
+			continue
+		}
+		sessions = append(sessions, sess)
+	}
+	r.mu.Unlock()
+
+	out := make([]TerminalSessionStatus, 0, len(sessions))
+	for _, sess := range sessions {
+		subs, seq, alive := sess.snapshotStatus()
+		out = append(out, TerminalSessionStatus{
+			SessionID:   sess.id,
+			Exists:      true,
+			Alive:       alive,
+			Subscribers: subs,
+			Seq:         seq,
+			UserID:      sess.key.UserID,
+			ProjectID:   sess.key.ProjectID,
+			TemplateID:  sess.key.TemplateID,
+			Persistent:  sess.isPersistent(),
+			Busy:        sess.isBusy(),
+			RuntimeID:   sess.runtimeID,
+			RuntimeName: sess.runtimeName,
+			CreatedAt:   sess.createdAt,
+			LastActive:  sess.lastActiveTime(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TemplateID != out[j].TemplateID {
+			return out[i].TemplateID < out[j].TemplateID
+		}
+		return out[i].SessionID < out[j].SessionID
+	})
+	return out
+}
+
+// CloseSession 主动结束会话（删除容器），并删除持久层记录。
 func (r *TerminalSessionRegistry) CloseSession(key TerminalSessionKey) bool {
 	r.mu.Lock()
 	sess, ok := r.sessions[key.SessionID()]
@@ -789,6 +852,15 @@ func (r *TerminalSessionRegistry) CloseSession(key TerminalSessionKey) bool {
 		delete(r.sessions, key.SessionID())
 	}
 	r.mu.Unlock()
+
+	// 记录里的 runtime 信息用于兜底删除容器：即便内存里没有会话（例如进程重启后
+	// 还残留记录），也应当把容器删掉，避免「列表点了删除但容器还在」。
+	if r.store != nil {
+		if rec, err := r.store.Get(context.Background(), key); err == nil && rec != nil {
+			r.dropRecord(context.Background(), rec)
+		}
+	}
+
 	if !ok || sess == nil {
 		return false
 	}
@@ -1030,6 +1102,13 @@ func (s *ManagedTerminalSession) ID() string { return s.id }
 
 // Key 返回会话 key。
 func (s *ManagedTerminalSession) Key() TerminalSessionKey { return s.key }
+
+// lastActiveTime 返回最近一次操作时间（用于列表展示）。
+func (s *ManagedTerminalSession) lastActiveTime() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastActive
+}
 
 // WriteInput 写入用户按键（终端原始输入）。
 func (s *ManagedTerminalSession) WriteInput(data []byte) (int, error) {

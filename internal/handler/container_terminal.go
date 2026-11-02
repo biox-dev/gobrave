@@ -227,6 +227,96 @@ func (h *ContainerHandler) ContainerTemplateTerminalStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, h.terminalRegistry.Status(key))
 }
 
+// containerTerminalSessionPageItem 是「终端会话」列表项。
+//
+// 会话本身只存在于进程内注册表，容器模板信息在库里：这里把两者 join 起来，
+// 一次请求就够左侧栏列表渲染（名称 / 镜像 / 状态 / 删除）。
+type containerTerminalSessionPageItem struct {
+	manager.TerminalSessionStatus
+	// DisplayName 取自绑定行（ContainerTemplateDefinition.DisplayName），为空时回退模板名。
+	DisplayName string `json:"display_name"`
+	// TemplateName / ImageName / AppType 是模板的只读快照，便于列表直接展示。
+	TemplateName string `json:"template_name"`
+	ImageName    string `json:"image_name"`
+	AppType      string `json:"app_type"`
+}
+
+// ContainerTerminalSessionList 列出当前用户的终端会话。
+//
+// 每项 = 内存注册表中的会话状态 + 容器模板绑定行（DisplayName / ImageName）。
+// 只返回存活会话：进程重启后数据库里的残留记录由后台对账清理，不出现在列表里。
+// 模板已被删除的会话仍会返回（DisplayName 回退为 session key），方便用户清理容器。
+//
+// 默认只返回「当前激活项目」下的会话（与左侧栏其它面板口径一致）；
+// ?all_projects=true 时返回该用户全部项目的会话（UI 上的「仅当前项目」开关）。
+//
+// @Summary      终端会话列表
+// @Description  当前用户的容器模板终端会话，含模板展示名与镜像名；默认按激活项目过滤。
+// @Tags         容器管理
+// @Param        all_projects  query  bool  false  "为 true 时返回该用户全部项目的会话"
+// @Success      200  {array}  handler.containerTerminalSessionPageItem
+// @Failure      401  {object}  errors.AppError
+// @Failure      404  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/terminal/session/list [get]
+func (h *ContainerHandler) ContainerTerminalSessionList(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+	if h.terminalRegistry == nil {
+		c.Error(apperrors.NewInternalServerError("container terminal registry is not configured"))
+		return
+	}
+
+	allProjects := strings.EqualFold(strings.TrimSpace(c.Query("all_projects")), "true") ||
+		strings.TrimSpace(c.Query("all_projects")) == "1"
+
+	// 默认只展示当前激活项目：与左侧栏其它面板口径一致。
+	// 仅当显式要求「全部项目」时才允许没有激活项目。
+	projectID := int64(0)
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil || project == nil {
+		if !allProjects {
+			c.Error(apperrors.NewNotFoundError("no active project for container terminal").WithDetails(errStringOrEmpty(err)))
+			return
+		}
+	} else {
+		projectID = project.ID
+	}
+
+	sessions := h.terminalRegistry.ListSessions(userID)
+	items := make([]containerTerminalSessionPageItem, 0, len(sessions))
+	for _, status := range sessions {
+		if !allProjects && status.ProjectID != projectID {
+			continue
+		}
+
+		item := containerTerminalSessionPageItem{TerminalSessionStatus: status}
+
+		tpl, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), status.TemplateID)
+		if err != nil || tpl == nil {
+			item.DisplayName = status.SessionID
+			items = append(items, item)
+			continue
+		}
+		displayName := strings.TrimSpace(tpl.DisplayName)
+		if displayName == "" {
+			displayName = tpl.Name
+		}
+		if displayName == "" {
+			displayName = status.SessionID
+		}
+		item.DisplayName = displayName
+		item.TemplateName = tpl.Name
+		item.ImageName = tpl.ImageName
+		item.AppType = tpl.AppType
+		items = append(items, item)
+	}
+
+	c.JSON(http.StatusOK, items)
+}
+
 // ContainerTemplateTerminalClose 主动结束会话并删除容器。
 //
 // @Summary      关闭容器模板终端

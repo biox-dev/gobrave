@@ -290,6 +290,9 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	r.POST("/container/template/:templateId/terminal/exec", handler.ContainerTemplateTerminalExec)
 	r.GET("/container/template/:templateId/terminal/status", handler.ContainerTemplateTerminalStatus)
 	r.DELETE("/container/template/:templateId/terminal", handler.ContainerTemplateTerminalClose)
+	// 当前用户（当前激活项目）的全部终端会话：join 容器模板绑定行返回展示名 / 镜像名，
+	// 供左侧栏「终端会话」面板列出并逐个关闭。
+	r.GET("/container/terminal/session/list", handler.ContainerTerminalSessionList)
 
 	r.POST("/container/template-spec/create", handler.CreateContainerTemplateSpec)
 	r.GET("/container/template-spec/get", handler.GetContainerTemplateSpec)
