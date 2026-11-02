@@ -18,6 +18,8 @@ type Deps struct {
 	Runner runtimecontext.AnalysisNodeRunner
 	// AgentRunner 创建并（可选）运行命令型分析节点（create_agent_analysis）。
 	AgentRunner runtimecontext.AgentAnalysisRunner
+	// Probe 在临时容器中同步执行命令（probe_container_env）。
+	Probe runtimecontext.ContainerEnvProbe
 	// FileReader 按 go_file 主键读取文件（read_file_by_id）。
 	FileReader runtimecontext.FileReader
 	// ScriptCreator 创建脚本（create_script）；同时实现 ScriptUpdater 时也用于 update_script。

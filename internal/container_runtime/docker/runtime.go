@@ -141,6 +141,56 @@ func (d *DockerRuntime) Start(ctx context.Context, id string) error {
 	return d.Monitor(ctx, id)
 }
 
+// StartAndWait starts the container and blocks until it exits, returning its exit
+// code. Unlike Start it does not register an asynchronous monitor: one-shot probe
+// containers only need the final result and are deleted by their caller.
+func (d *DockerRuntime) StartAndWait(ctx context.Context, id string) (int, error) {
+	containerID, err := d.toContainerID(id)
+	if err != nil {
+		return -1, err
+	}
+
+	cli, err := d.getClient()
+	if err != nil {
+		return -1, err
+	}
+
+	if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		return -1, fmt.Errorf("start container %s: %w", containerID, err)
+	}
+
+	statusCh, errCh := cli.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	for statusCh != nil || errCh != nil {
+		select {
+		case <-ctx.Done():
+			return -1, ctx.Err()
+		case waitErr, ok := <-errCh:
+			if !ok {
+				errCh = nil
+				continue
+			}
+			if waitErr == nil {
+				continue
+			}
+			if errdefs.IsNotFound(waitErr) {
+				return -1, fmt.Errorf("container %s not found: %w", containerID, waitErr)
+			}
+			return -1, fmt.Errorf("wait container %s: %w", containerID, waitErr)
+		case result, ok := <-statusCh:
+			if !ok {
+				statusCh = nil
+				continue
+			}
+			if result.Error != nil {
+				return int(result.StatusCode), errors.New(result.Error.Message)
+			}
+			return int(result.StatusCode), nil
+		}
+	}
+
+	return -1, errors.New("wait container: no result")
+}
+
 func (d *DockerRuntime) Monitor(ctx context.Context, runtimeID string) error {
 	if _, err := d.toContainerID(runtimeID); err != nil {
 		return err

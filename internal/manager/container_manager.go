@@ -1021,13 +1021,21 @@ func (m *ContainerManager) applyTaskRuntimeSpec(spec *types.ContainerSpec, resol
 		}
 	}
 
+	m.applyRuntimeUser(spec, resolveVars)
+}
+
+// applyRuntimeUser maps USERID/GROUPID to the runtime's user field. Docker uses
+// uid:gid, while Kubernetes currently maps ContainerSpec.User to runAsUser.
+func (m *ContainerManager) applyRuntimeUser(spec *types.ContainerSpec, resolveVars map[string]string) {
+	if spec == nil {
+		return
+	}
 	uid := strings.TrimSpace(resolveVars["USERID"])
 	if uid == "" {
 		return
 	}
 	gid := strings.TrimSpace(resolveVars["GROUPID"])
-	runtimeName := m.resolveRuntimeName()
-	switch strings.ToLower(strings.TrimSpace(runtimeName)) {
+	switch strings.ToLower(strings.TrimSpace(m.resolveRuntimeName())) {
 	case "docker":
 		if gid != "" {
 			spec.User = uid + ":" + gid
@@ -1035,8 +1043,6 @@ func (m *ContainerManager) applyTaskRuntimeSpec(spec *types.ContainerSpec, resol
 		}
 		spec.User = uid
 	case "k8s", "k3s", "kubernetes":
-		// Kubernetes runtime currently maps ContainerSpec.User to runAsUser,
-		// so set a plain uid value here.
 		spec.User = uid
 	}
 }

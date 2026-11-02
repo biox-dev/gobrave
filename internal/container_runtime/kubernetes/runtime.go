@@ -197,6 +197,117 @@ func (k *KubernetesRuntime) Start(ctx context.Context, runtimeID string) error {
 	}
 }
 
+// StartAndWait starts a workload and blocks until it reaches a terminal state,
+// returning the process exit code. Jobs are the one-shot probe path: suspend is
+// cleared and the call waits for completion. Deployments only wait until they
+// become available because a deployment process is not expected to exit.
+func (k *KubernetesRuntime) StartAndWait(ctx context.Context, runtimeID string) (int, error) {
+	meta, err := k.parseRuntimeID(runtimeID)
+	if err != nil {
+		return -1, err
+	}
+
+	switch meta.Kind {
+	case workloadKindDeployment:
+		if err := k.scaleDeployment(ctx, meta.Namespace, meta.Name, 1); err != nil {
+			return -1, err
+		}
+		return 0, k.waitDeploymentAvailable(ctx, meta.Namespace, meta.Name)
+	case workloadKindJob:
+		if err := k.setJobSuspended(ctx, meta.Namespace, meta.Name, false); err != nil {
+			if apierrors.IsNotFound(err) {
+				return -1, fmt.Errorf("job workload is not restartable after delete: %s", runtimeID)
+			}
+			return -1, fmt.Errorf("resume job %s: %w", meta.Name, err)
+		}
+		return k.waitJobExit(ctx, meta.Namespace, meta.Name)
+	default:
+		return -1, fmt.Errorf("unsupported workload kind: %s", meta.Kind)
+	}
+}
+
+func (k *KubernetesRuntime) waitJobExit(ctx context.Context, namespace, name string) (int, error) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		job, err := k.clientset.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return -1, fmt.Errorf("job %s not found", name)
+			}
+			return -1, fmt.Errorf("get job %s: %w", name, err)
+		}
+
+		if job.Status.Succeeded > 0 {
+			if code, ok := k.latestPodExitCode(ctx, namespace, name); ok {
+				return code, nil
+			}
+			return 0, nil
+		}
+		if job.Status.Failed > 0 {
+			code, ok := k.latestPodExitCode(ctx, namespace, name)
+			if !ok || code == 0 {
+				code = 1
+			}
+			return code, fmt.Errorf("job %s failed: %s", name, jobFailureMessage(job))
+		}
+
+		select {
+		case <-ctx.Done():
+			return -1, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (k *KubernetesRuntime) waitDeploymentAvailable(ctx context.Context, namespace, name string) error {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		dep, err := k.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get deployment %s: %w", name, err)
+		}
+		if dep.Status.AvailableReplicas > 0 {
+			return nil
+		}
+		if msg, failed := deploymentFailureMessage(dep); failed {
+			return fmt.Errorf("deployment %s failed: %s", name, msg)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// latestPodExitCode reads the terminated exit code from the newest pod of a job.
+// The job status only reports success/failure counts, so the exit code has to
+// come from the pod status. It is best-effort: unavailable pods return ok=false.
+func (k *KubernetesRuntime) latestPodExitCode(ctx context.Context, namespace, name string) (int, bool) {
+	podName, err := k.resolveLatestPodName(ctx, namespace, map[string]string{"gobrave-workload": name})
+	if err != nil {
+		return 0, false
+	}
+	pod, err := k.clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return 0, false
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.State.Terminated != nil {
+			return int(status.State.Terminated.ExitCode), true
+		}
+		if status.LastTerminationState.Terminated != nil {
+			return int(status.LastTerminationState.Terminated.ExitCode), true
+		}
+	}
+	return 0, false
+}
+
 func (k *KubernetesRuntime) Stop(ctx context.Context, runtimeID string) error {
 	meta, err := k.parseRuntimeID(runtimeID)
 	if err != nil {

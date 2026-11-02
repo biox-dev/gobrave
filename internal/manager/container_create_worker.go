@@ -20,6 +20,9 @@ import (
 
 var (
 	errWorkerInvalidState = errors.New("worker event invalid for current state")
+	// errBraveEnvFileCreate marks the brave-env.sh preparation step so callers can
+	// report the historical ContainerCreateBraveEnvFailed event.
+	errBraveEnvFileCreate = errors.New("create brave-env.sh")
 )
 
 const (
@@ -377,30 +380,14 @@ func (w *ContainerCreateWorker) executeCreate(
 	}
 
 	// volumes默认添加 cfg.Storage.BaseDir 目录的绑定，确保容器可以访问到这个目录下的文件（如Rprofile等）
-	if w.cfg != nil && w.cfg.Storage != nil && w.cfg.Storage.BaseDir != "" {
-		volumes = append(volumes, types.ContainerVolume{
-			Source: w.cfg.Storage.BaseDir,
-			Target: w.cfg.Storage.BaseDir,
-			Mode:   "rw",
-		})
-		// 添加 挂载点 $PACKAGE_DIR/brave-env.sh ，如果文件不存在则先创建
-		packageDir := filepath.Join(w.cfg.Storage.BaseDir, "package")
-		if err := os.MkdirAll(packageDir, 0755); err != nil {
-			_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerCreatePackageDirFailed")
-			return err
+	volumes, err = w.appendStorageVolumes(ctx, volumes)
+	if err != nil {
+		eventType := "ContainerCreatePackageDirFailed"
+		if errors.Is(err, errBraveEnvFileCreate) {
+			eventType = "ContainerCreateBraveEnvFailed"
 		}
-		braveEnvFile := filepath.Join(packageDir, "brave-env.sh")
-		if _, err := os.Stat(braveEnvFile); os.IsNotExist(err) {
-			if _, err := os.Create(braveEnvFile); err != nil {
-				_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerCreateBraveEnvFailed")
-				return err
-			}
-		}
-		volumes = append(volumes, types.ContainerVolume{
-			Source: braveEnvFile,
-			Target: "/etc/profile.d/brave-env.sh",
-			Mode:   "rw",
-		})
+		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, eventType)
+		return err
 	}
 
 	spec := &types.ContainerSpec{
@@ -871,6 +858,42 @@ func (w *ContainerCreateWorker) buildRuntimeResourceName(ownerType types.Contain
 		return fmt.Sprintf("%s-%d", name, instanceID)
 	}
 	return name
+}
+
+// appendStorageVolumes adds the storage base dir bind and the shared
+// brave-env.sh profile mount. Host paths are created when missing so runtime
+// create does not fail. Shared by normal container creation and agent probes.
+func (w *ContainerCreateWorker) appendStorageVolumes(ctx context.Context, volumes []types.ContainerVolume) ([]types.ContainerVolume, error) {
+	if w.cfg == nil || w.cfg.Storage == nil {
+		return volumes, nil
+	}
+	baseDir := strings.TrimSpace(w.cfg.Storage.BaseDir)
+	if baseDir == "" {
+		return volumes, nil
+	}
+
+	volumes = append(volumes, types.ContainerVolume{
+		Source: baseDir,
+		Target: baseDir,
+		Mode:   "rw",
+	})
+
+	packageDir := filepath.Join(baseDir, "package")
+	if err := os.MkdirAll(packageDir, 0755); err != nil {
+		return volumes, err
+	}
+	braveEnvFile := filepath.Join(packageDir, "brave-env.sh")
+	if _, err := os.Stat(braveEnvFile); os.IsNotExist(err) {
+		if _, err := os.Create(braveEnvFile); err != nil {
+			return volumes, fmt.Errorf("%w: %v", errBraveEnvFileCreate, err)
+		}
+	}
+	volumes = append(volumes, types.ContainerVolume{
+		Source: braveEnvFile,
+		Target: "/etc/profile.d/brave-env.sh",
+		Mode:   "rw",
+	})
+	return volumes, nil
 }
 
 func hasDockerSocketVolume(volumes []types.ContainerVolume) bool {

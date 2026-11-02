@@ -34,6 +34,14 @@ type RuntimeMonitor interface {
 	Monitor(ctx context.Context, runtimeID string) error
 }
 
+// RuntimeSyncStarter is an optional extension interface for one-shot execution:
+// start the runtime resource and block until its process exits (or ctx is done),
+// returning the process exit code. It is used by agent probe containers, which
+// need the command result instead of an asynchronous lifecycle event.
+type RuntimeSyncStarter interface {
+	StartAndWait(ctx context.Context, runtimeID string) (exitCode int, err error)
+}
+
 // RuntimeImageManager is an optional extension interface for runtime-side
 // image lifecycle operations used by ImageManager.
 type RuntimeImageManager interface {

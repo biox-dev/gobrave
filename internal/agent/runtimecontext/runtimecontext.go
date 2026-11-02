@@ -204,6 +204,46 @@ type AgentAnalysisResult struct {
 	CommandPath  string `json:"command_path,omitempty"`
 }
 
+// ContainerEnvProbe 抽象「用容器模板创建临时容器 → 同步执行命令 → 读取日志 →
+// 自动删除容器」的业务能力（probe_container_env）。
+//
+// 它是进程级静态依赖，由 builtin.Deps 在构造工具时注入；projectID 取自
+// 执行事实（tool.ProjectIDFrom），工具层只负责把请求转换为入参。
+type ContainerEnvProbe interface {
+	// ProbeContainerEnv 在临时容器中执行 command 并等待结束。
+	//
+	// 容器按 executeCreate 的口径组装：模板镜像 / 资源 / 挂载 / 环境变量，并补齐
+	// buildPackageVariables 产生的包目录变量；执行结束后无论成败都会删除容器。
+	// 命令失败 / 超时属于正常结果（Success=false、Error 非空），只有模板 / 运行时 /
+	// 资源准备等前置错误才返回 error。
+	ProbeContainerEnv(ctx context.Context, in ContainerEnvProbeInput) (ContainerEnvProbeResult, error)
+}
+
+// ContainerEnvProbeInput 是一次 probe_container_env 调用的入参。
+type ContainerEnvProbeInput struct {
+	// ProjectID 取自 RuntimeContext.ProjectID（当前用户激活项目）。
+	ProjectID int64
+	// ContainerTemplateID 是必填的容器模板 ID。
+	ContainerTemplateID int64
+	// Command 是要在容器内执行的 shell 命令。
+	Command string
+	// TimeoutSeconds <= 0 时使用实现默认超时。
+	TimeoutSeconds int
+}
+
+// ContainerEnvProbeResult 是一次临时容器探测的执行结果。
+type ContainerEnvProbeResult struct {
+	ContainerTemplateID int64   `json:"container_template_id"`
+	RuntimeName         string  `json:"runtime_name,omitempty"`
+	ExitCode            int     `json:"exit_code"`
+	Success             bool    `json:"success"`
+	TimedOut            bool    `json:"timed_out,omitempty"`
+	Log                 string  `json:"log,omitempty"`
+	LogTruncated        bool    `json:"log_truncated,omitempty"`
+	DurationSeconds     float64 `json:"duration_seconds,omitempty"`
+	Error               string  `json:"error,omitempty"`
+}
+
 // FileReader 抽象「按 go_file 主键 ID 读取文件」的业务能力。
 //
 // 它把「file_id → 文件元信息（含 path）+ 内容预览」的业务细节收敛在上层实现
