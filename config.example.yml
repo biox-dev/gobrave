@@ -194,11 +194,18 @@ container:
   create_queue_max_concurrency: 3
   # 容器创建队列的最大排队数（超出后新请求直接返回错误）。
   create_queue_max_pending: 50
-  # 容器模板终端：最后一个 WebSocket 订阅者离开后，保留会话（容器）的秒数。
-  # 0 = 立即删除容器（默认）；>0 = 保留该时长，方便页面刷新/重连或 Agent 继续执行。
+  # 容器模板终端：容器删除策略。
+  #   explicit     ：WebSocket 断开（含刷新/短暂断网）不删容器，只有前端关闭标签调用
+  #                  DELETE /container/template/{id}/terminal 或空闲 TTL 到期才删除。
+  #                  刷新后会重连到同一个 PTY（cwd / 环境变量 / 运行中任务都保留）。
+  #   ws_disconnect：WebSocket 断开即按下面的 terminal_idle_grace_seconds 回收，
+  #                  刷新/关标签都会（延时）删除容器。
+  terminal_close_policy: explicit
+  # ws_disconnect 策略下：最后一个 WebSocket 订阅者离开后保留会话（容器）的秒数。
+  # 0 = 立即删除；>0 = 保留该时长。explicit 策略下本项不生效。
   terminal_idle_grace_seconds: 0
   # 容器模板终端：会话创建后一直没有任何订阅者时的保留秒数（避免刚建好就被回收）。
-  # <=0 使用默认 120 秒。
+  # 仅在 ws_disconnect 策略下生效；explicit 策略由空闲 TTL 兜底。<=0 使用默认 120 秒。
   terminal_unattached_grace_seconds: 120
   # 持久会话空闲上限（分钟）：超过该时长没有操作/输出，自动回收容器并删除会话记录。
   # <=0 使用默认 120。设为很大的值即"只随显式删除回收"（注意资源占用）。

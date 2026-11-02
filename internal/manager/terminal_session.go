@@ -32,8 +32,9 @@ import (
 //   - 命令写入通过串行队列执行，靠 shell 的 PROMPT_COMMAND 打出不可见的 OSC 标记
 //     （ESC ] 633 ; GD ; <exit code> BEL）来判定「命令结束 + 退出码」，不解析提示符，
 //     也不会在终端里留下难看的哨兵命令回显；
-//   - 最后一个订阅者离开后的回收策略可配置（container.terminal_idle_grace_seconds）：
-//     0 = 立即删除容器（默认），>0 = 保留 grace period，方便重连 / Agent 继续执行；
+//   - 删除时机由 container.terminal_close_policy 控制：
+//     explicit（默认）= WS 断开不删，仅前端关标签调 DELETE 或空闲 TTL 到期才删；
+//     ws_disconnect = WS 断开即按 terminal_idle_grace_seconds 回收；
 //   - 会话创建后一直没有订阅者时使用独立的 unattached grace，避免「刚建好就被删」；
 //   - 会话 → 容器的映射落在 go_terminal_session（container.terminal_session_ttl_minutes
 //     控制空闲 TTL，terminal_max_sessions_per_user 控制配额），进程重启后可认领原容器；
@@ -94,10 +95,36 @@ type TerminalEventPublisher interface {
 	PushMessage(userID int64, data any) error
 }
 
+// TerminalClosePolicy 决定「终端容器什么时候删除」。
+type TerminalClosePolicy string
+
+const (
+	// TerminalClosePolicyWSDisconnect：WebSocket 断开（含刷新、关标签）就按 IdleGrace 回收。
+	// IdleGrace=0 时等效于「一断开就删容器」。
+	TerminalClosePolicyWSDisconnect TerminalClosePolicy = "ws_disconnect"
+	// TerminalClosePolicyExplicit：WebSocket 断开不删容器，只有前端关闭标签调 DELETE
+	// （或空闲 TTL 到期）才删除。刷新/瞬断会复用同一个 PTY。
+	TerminalClosePolicyExplicit TerminalClosePolicy = "explicit"
+)
+
+// normalizeTerminalClosePolicy 把配置值规整为枚举，未知值回退到 ws_disconnect。
+func normalizeTerminalClosePolicy(raw string) TerminalClosePolicy {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(TerminalClosePolicyExplicit), "manual", "frontend", "close_button":
+		return TerminalClosePolicyExplicit
+	case string(TerminalClosePolicyWSDisconnect), "disconnect", "":
+		return TerminalClosePolicyWSDisconnect
+	default:
+		return TerminalClosePolicyWSDisconnect
+	}
+}
+
 // TerminalRegistryOptions 控制会话生命周期，零值使用默认值。
 type TerminalRegistryOptions struct {
-	// IdleGrace 是最后一个订阅者离开后保留会话（容器）的时长。
-	// 0 = 立即删除（默认）；>0 = 保留该时长，期间可重连 / Agent 继续执行。
+	// ClosePolicy 决定断开 WebSocket 是否删除容器；默认 ws_disconnect。
+	ClosePolicy TerminalClosePolicy
+	// IdleGrace 是 ws_disconnect 策略下，最后一个订阅者离开后保留会话（容器）的时长。
+	// 0 = 立即删除；>0 = 保留该时长，期间可重连 / Agent 继续执行。
 	IdleGrace time.Duration
 	// UnattachedGrace 是会话创建后一直没有订阅者时的保留时长；<=0 使用默认 2 分钟。
 	// 与 IdleGrace 分开是为了避免「Agent 刚建好会话、前端还没连上就被删」。
@@ -290,6 +317,7 @@ func terminalRegistryOptions(cfg *config.Config) TerminalRegistryOptions {
 	}
 	opts.IdleGrace = time.Duration(cfg.Container.TerminalIdleGraceSeconds) * time.Second
 	opts.UnattachedGrace = time.Duration(cfg.Container.TerminalUnattachedGraceSeconds) * time.Second
+	opts.ClosePolicy = normalizeTerminalClosePolicy(cfg.Container.TerminalClosePolicy)
 	opts.SessionTTL = time.Duration(cfg.Container.TerminalSessionTTLMinutes) * time.Minute
 	opts.MaxSessionsPerUser = cfg.Container.TerminalMaxSessionsPerUser
 	opts.ScrollbackDir = cfg.Container.TerminalBufferDir
@@ -313,6 +341,14 @@ func newTerminalSessionRegistry(probe TerminalRuntimeOpener, publisher TerminalE
 
 func (r *TerminalSessionRegistry) idleGrace() time.Duration {
 	return r.opts.IdleGrace
+}
+
+// closePolicy 返回当前删除策略；未配置时按 ws_disconnect 处理。
+func (r *TerminalSessionRegistry) closePolicy() TerminalClosePolicy {
+	if r.opts.ClosePolicy == "" {
+		return TerminalClosePolicyWSDisconnect
+	}
+	return r.opts.ClosePolicy
 }
 
 func (r *TerminalSessionRegistry) unattachedGrace() time.Duration {
@@ -695,8 +731,8 @@ func (r *TerminalSessionRegistry) maintain(ctx context.Context) {
 	r.mu.Unlock()
 
 	for _, sess := range live {
-		if sess.isBusy() {
-			// 长任务执行中：只刷新活跃时间，不做 TTL 回收。
+		if sess.isBusy() || sess.hasSubscribers() {
+			// 长任务执行中 / 仍有人连接：只刷新活跃时间，不做 TTL 回收。
 			r.touchRecord(ctx, sess.key)
 			continue
 		}
@@ -933,6 +969,14 @@ func (r *TerminalSessionRegistry) scheduleReap(sess *ManagedTerminalSession) {
 		sess.reapTimer = nil
 	}
 
+	// explicit 策略：断开 WebSocket 不回收，容器只在 DELETE 接口或空闲 TTL 到期时删除。
+	// 这样刷新页面会重连到同一个 PTY（cwd / 环境变量 / 正在跑的任务都保留）。
+	// 注：explicit 下 unattached grace 也不参与，统一由 SessionTTL 兜底。
+	if r.closePolicy() == TerminalClosePolicyExplicit {
+		sess.mu.Unlock()
+		return
+	}
+
 	// 从未被订阅过（Agent 先建会话、前端还没连上）用 unattached grace；
 	// 订阅过之后才用 IdleGrace，0 表示立即删除。
 	grace := r.idleGrace()
@@ -1143,6 +1187,12 @@ func (s *ManagedTerminalSession) isBusy() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.busy
+}
+
+func (s *ManagedTerminalSession) hasSubscribers() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.subs) > 0
 }
 
 // flushLoop 定期把环形缓冲快照落盘（仅脏写）。

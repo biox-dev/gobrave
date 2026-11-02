@@ -275,6 +275,78 @@ func TestTerminalSessionRegistryGraceKeepsSession(t *testing.T) {
 	}
 }
 
+// explicit 策略：WS 断开（刷新/断网）只移除订阅者，会话与 PTY 保留；
+// 只有 DELETE（CloseSession）或空闲 TTL 才真正删除容器与记录。
+func TestTerminalSessionRegistryExplicitPolicyKeepsSessionOnDetach(t *testing.T) {
+	opener := &fakeOpener{shell: newFakeShell()}
+	store := newFakeTerminalStore()
+	key := TerminalSessionKey{UserID: 51, ProjectID: 52, TemplateID: 53}
+
+	registry := newTerminalSessionRegistry(opener, nil, store, TerminalRegistryOptions{
+		ReadyWait:   2 * time.Second,
+		ClosePolicy: TerminalClosePolicyExplicit,
+		SessionTTL:  time.Hour,
+	})
+
+	session, _, err := registry.Ensure(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	sub, _ := session.Attach(0)
+	session.Detach(sub)
+
+	if registry.Lookup(key) == nil {
+		t.Fatalf("explicit policy must keep the session after last detach")
+	}
+	select {
+	case <-opener.shell.closed:
+		t.Fatalf("terminal must stay open after detach in explicit policy")
+	default:
+	}
+
+	// 显式关闭（前端关标签 → DELETE）才删除。
+	registry.CloseSession(key)
+	if registry.Lookup(key) != nil {
+		t.Fatalf("expected session removed after explicit close")
+	}
+	select {
+	case <-opener.shell.closed:
+	default:
+		t.Fatalf("expected terminal closed after explicit close")
+	}
+	store.mu.Lock()
+	_, stillThere := store.rows[key.SessionID()]
+	store.mu.Unlock()
+	if stillThere {
+		t.Fatalf("expected session record removed after explicit close")
+	}
+}
+
+// 仍有订阅者的会话不能被 TTL 维护误回收。
+func TestTerminalSessionRegistryMaintainSkipsSubscribedSession(t *testing.T) {
+	opener := &fakeOpener{shell: newFakeShell()}
+	registry := newTerminalSessionRegistry(opener, nil, nil, TerminalRegistryOptions{
+		ReadyWait:   2 * time.Second,
+		ClosePolicy: TerminalClosePolicyExplicit,
+		SessionTTL:  10 * time.Millisecond,
+	})
+	key := TerminalSessionKey{UserID: 61, ProjectID: 62, TemplateID: 63}
+
+	session, _, err := registry.Ensure(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	sub, _ := session.Attach(0)
+	defer session.Detach(sub)
+
+	time.Sleep(30 * time.Millisecond)
+	registry.maintain(context.Background())
+
+	if registry.Lookup(key) == nil {
+		t.Fatalf("session with active subscriber must not be reaped by TTL")
+	}
+}
+
 func TestTerminalSessionRegistryCreateOnlyOnceUnderConcurrency(t *testing.T) {
 	opener := &fakeOpener{shell: newFakeShell()}
 	registry := newTestRegistry(opener)
