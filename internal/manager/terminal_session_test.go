@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	"github.com/biox-dev/gobrave/internal/types"
 )
@@ -105,7 +106,7 @@ func (o *fakeOpener) DropTerminalRuntime(context.Context, string, string) {}
 func newTestRegistry(opener *fakeOpener) *TerminalSessionRegistry {
 	return newTerminalSessionRegistry(opener, nil, nil, TerminalRegistryOptions{
 		ReadyWait:   2 * time.Second,
-		IdleGrace:   time.Minute,
+		SessionTTL:  time.Hour,
 		BufferBytes: 64 * 1024,
 		ExecTimeout: 2 * time.Second,
 	})
@@ -173,7 +174,8 @@ func TestTerminalSessionRegistryExecTimeoutAndReplay(t *testing.T) {
 	key := TerminalSessionKey{UserID: 7, ProjectID: 8, TemplateID: 9}
 	defer registry.CloseSession(key)
 
-	if _, _, err := registry.Ensure(context.Background(), key); err != nil {
+	// 用持久会话验证「超时后仍可回放」：一次性会话在命令结束且无订阅者时会被回收。
+	if _, _, err := registry.EnsurePersistent(context.Background(), key); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 
@@ -209,12 +211,12 @@ func TestTerminalSessionRegistryExecTimeoutAndReplay(t *testing.T) {
 	}
 }
 
-// 默认策略：最后一个订阅者离开后立即删除容器；创建后无人订阅时使用 unattached grace。
-func TestTerminalSessionRegistryImmediateReapOnLastDetach(t *testing.T) {
+// 一次性会话（Agent 创建、从未被前端接入）：最后一个订阅者离开后立即删除容器与记录。
+func TestTerminalSessionRegistryReapsOneShotSessionOnLastDetach(t *testing.T) {
 	opener := &fakeOpener{shell: newFakeShell()}
-	registry := newTerminalSessionRegistry(opener, nil, nil, TerminalRegistryOptions{
+	store := newFakeTerminalStore()
+	registry := newTerminalSessionRegistry(opener, nil, store, TerminalRegistryOptions{
 		ReadyWait:   2 * time.Second,
-		IdleGrace:   0,
 		BufferBytes: 64 * 1024,
 	})
 	key := TerminalSessionKey{UserID: 11, ProjectID: 12, TemplateID: 13}
@@ -223,10 +225,8 @@ func TestTerminalSessionRegistryImmediateReapOnLastDetach(t *testing.T) {
 	if err != nil || !created {
 		t.Fatalf("Ensure: created=%v err=%v", created, err)
 	}
-
-	// 创建后还没人订阅：不应被立即回收（unattached grace 保护）。
-	if registry.Lookup(key) == nil {
-		t.Fatalf("session should survive before the first attach")
+	if session.isPersistent() {
+		t.Fatalf("agent-created session must not be persistent by default")
 	}
 
 	sub, _ := session.Attach(0)
@@ -239,7 +239,7 @@ func TestTerminalSessionRegistryImmediateReapOnLastDetach(t *testing.T) {
 	session.Detach(sub)
 
 	if registry.Lookup(key) != nil {
-		t.Fatalf("expected session removed immediately after last detach")
+		t.Fatalf("expected one-shot session removed immediately after last detach")
 	}
 	select {
 	case <-opener.shell.closed:
@@ -249,76 +249,96 @@ func TestTerminalSessionRegistryImmediateReapOnLastDetach(t *testing.T) {
 	if status := registry.Status(key); status.Exists {
 		t.Fatalf("expected status not exists, got %+v", status)
 	}
-}
-
-// 配了 grace 时，最后一个订阅者离开后会话要保留（可重连）。
-func TestTerminalSessionRegistryGraceKeepsSession(t *testing.T) {
-	opener := &fakeOpener{shell: newFakeShell()}
-	registry := newTestRegistry(opener) // IdleGrace = 1min
-	key := TerminalSessionKey{UserID: 21, ProjectID: 22, TemplateID: 23}
-	defer registry.CloseSession(key)
-
-	session, _, err := registry.Ensure(context.Background(), key)
-	if err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	sub, _ := session.Attach(0)
-	session.Detach(sub)
-
-	if registry.Lookup(key) == nil {
-		t.Fatalf("expected session kept during grace period")
-	}
-	select {
-	case <-opener.shell.closed:
-		t.Fatalf("terminal must stay open during grace period")
-	default:
-	}
-}
-
-// explicit 策略：WS 断开（刷新/断网）只移除订阅者，会话与 PTY 保留；
-// 只有 DELETE（CloseSession）或空闲 TTL 才真正删除容器与记录。
-func TestTerminalSessionRegistryExplicitPolicyKeepsSessionOnDetach(t *testing.T) {
-	opener := &fakeOpener{shell: newFakeShell()}
-	store := newFakeTerminalStore()
-	key := TerminalSessionKey{UserID: 51, ProjectID: 52, TemplateID: 53}
-
-	registry := newTerminalSessionRegistry(opener, nil, store, TerminalRegistryOptions{
-		ReadyWait:   2 * time.Second,
-		ClosePolicy: TerminalClosePolicyExplicit,
-		SessionTTL:  time.Hour,
-	})
-
-	session, _, err := registry.Ensure(context.Background(), key)
-	if err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	sub, _ := session.Attach(0)
-	session.Detach(sub)
-
-	if registry.Lookup(key) == nil {
-		t.Fatalf("explicit policy must keep the session after last detach")
-	}
-	select {
-	case <-opener.shell.closed:
-		t.Fatalf("terminal must stay open after detach in explicit policy")
-	default:
-	}
-
-	// 显式关闭（前端关标签 → DELETE）才删除。
-	registry.CloseSession(key)
-	if registry.Lookup(key) != nil {
-		t.Fatalf("expected session removed after explicit close")
-	}
-	select {
-	case <-opener.shell.closed:
-	default:
-		t.Fatalf("expected terminal closed after explicit close")
-	}
 	store.mu.Lock()
 	_, stillThere := store.rows[key.SessionID()]
 	store.mu.Unlock()
 	if stillThere {
-		t.Fatalf("expected session record removed after explicit close")
+		t.Fatalf("expected session record removed for one-shot session")
+	}
+}
+
+// 一旦被标记为持久（前端接入 / Agent 显式要求），Detach 不再回收会话。
+func TestTerminalSessionRegistryPersistentSurvivesDetach(t *testing.T) {
+	opener := &fakeOpener{shell: newFakeShell()}
+	store := newFakeTerminalStore()
+	registry := newTerminalSessionRegistry(opener, nil, store, TerminalRegistryOptions{
+		ReadyWait:   2 * time.Second,
+		BufferBytes: 64 * 1024,
+		SessionTTL:  time.Hour,
+	})
+	key := TerminalSessionKey{UserID: 21, ProjectID: 22, TemplateID: 23}
+
+	session, _, err := registry.EnsurePersistent(context.Background(), key)
+	if err != nil {
+		t.Fatalf("EnsurePersistent: %v", err)
+	}
+	if !session.isPersistent() {
+		t.Fatalf("expected persistent session")
+	}
+
+	sub, _ := session.Attach(0)
+	session.Detach(sub)
+
+	if registry.Lookup(key) == nil {
+		t.Fatalf("persistent session must survive last detach")
+	}
+	select {
+	case <-opener.shell.closed:
+		t.Fatalf("terminal must stay open for persistent session")
+	default:
+	}
+	store.mu.Lock()
+	rec, ok := store.rows[key.SessionID()]
+	persisted := ok && rec.Persistent
+	store.mu.Unlock()
+	if !persisted {
+		t.Fatalf("expected persistent flag stored in record")
+	}
+}
+
+// 一次性会话经前端接入（EnsurePersistent）后升级为持久，且不会退回一次性。
+func TestTerminalSessionRegistryOneShotUpgradesToPersistent(t *testing.T) {
+	opener := &fakeOpener{shell: newFakeShell()}
+	store := newFakeTerminalStore()
+	registry := newTerminalSessionRegistry(opener, nil, store, TerminalRegistryOptions{
+		ReadyWait:   2 * time.Second,
+		BufferBytes: 64 * 1024,
+		SessionTTL:  time.Hour,
+	})
+	key := TerminalSessionKey{UserID: 71, ProjectID: 72, TemplateID: 73}
+
+	session, created, err := registry.Ensure(context.Background(), key) // Agent 创建：一次性
+	if err != nil || !created {
+		t.Fatalf("Ensure: created=%v err=%v", created, err)
+	}
+	if session.isPersistent() {
+		t.Fatalf("expected non-persistent session after agent create")
+	}
+
+	// 前端打开同一个模板的终端：复用同一会话并升级为持久。
+	again, createdAgain, err := registry.EnsurePersistent(context.Background(), key)
+	if err != nil {
+		t.Fatalf("EnsurePersistent: %v", err)
+	}
+	if createdAgain || again != session {
+		t.Fatalf("expected the same session to be reused")
+	}
+	if !session.isPersistent() {
+		t.Fatalf("expected session upgraded to persistent")
+	}
+
+	// 再走一次普通 Ensure 不能把它改回一次性。
+	if _, _, err := registry.Ensure(context.Background(), key); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if !session.isPersistent() {
+		t.Fatalf("persistent flag must not be downgraded")
+	}
+
+	sub, _ := session.Attach(0)
+	session.Detach(sub)
+	if registry.Lookup(key) == nil {
+		t.Fatalf("upgraded session must survive detach")
 	}
 }
 
@@ -326,13 +346,12 @@ func TestTerminalSessionRegistryExplicitPolicyKeepsSessionOnDetach(t *testing.T)
 func TestTerminalSessionRegistryMaintainSkipsSubscribedSession(t *testing.T) {
 	opener := &fakeOpener{shell: newFakeShell()}
 	registry := newTerminalSessionRegistry(opener, nil, nil, TerminalRegistryOptions{
-		ReadyWait:   2 * time.Second,
-		ClosePolicy: TerminalClosePolicyExplicit,
-		SessionTTL:  10 * time.Millisecond,
+		ReadyWait:  2 * time.Second,
+		SessionTTL: 10 * time.Millisecond,
 	})
 	key := TerminalSessionKey{UserID: 61, ProjectID: 62, TemplateID: 63}
 
-	session, _, err := registry.Ensure(context.Background(), key)
+	session, _, err := registry.EnsurePersistent(context.Background(), key)
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -344,6 +363,83 @@ func TestTerminalSessionRegistryMaintainSkipsSubscribedSession(t *testing.T) {
 
 	if registry.Lookup(key) == nil {
 		t.Fatalf("session with active subscriber must not be reaped by TTL")
+	}
+}
+
+// terminal_exec 的两种语义：
+//   - 默认（persistent=false）：一次性会话，命令结束即删除会话与容器；
+//   - persistent=true：会话保留，后续调用复用同一容器。
+func TestTerminalSessionRunInTerminalOneShotVsPersistent(t *testing.T) {
+	store := newFakeTerminalStore()
+
+	// 一次性会话：执行完立即回收。用独立的 opener，避免回收时关闭的 shell 影响后续用例。
+	oneShotOpener := &fakeOpener{shell: newFakeShell()}
+	oneShotRegistry := newTerminalSessionRegistry(oneShotOpener, nil, store, TerminalRegistryOptions{
+		ReadyWait:   2 * time.Second,
+		BufferBytes: 64 * 1024,
+		ExecTimeout: 2 * time.Second,
+	})
+	oneShot := TerminalSessionKey{UserID: 81, ProjectID: 82, TemplateID: 83}
+	result, err := oneShotRegistry.RunInTerminal(context.Background(), runtimecontext.ContainerTerminalExecInput{
+		UserID:              oneShot.UserID,
+		ProjectID:           oneShot.ProjectID,
+		ContainerTemplateID: oneShot.TemplateID,
+		Command:             "echo hi",
+		Wait:                true,
+		TimeoutSeconds:      2,
+		CreateIfMissing:     true,
+	})
+	if err != nil {
+		t.Fatalf("RunInTerminal: %v", err)
+	}
+	if result.ExitCode != 0 || !strings.Contains(result.Output, "echo:echo hi") {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if oneShotRegistry.Lookup(oneShot) != nil {
+		t.Fatalf("one-shot session must be reaped after the command finishes")
+	}
+	store.mu.Lock()
+	_, stillThere := store.rows[oneShot.SessionID()]
+	store.mu.Unlock()
+	if stillThere {
+		t.Fatalf("one-shot session record must be removed")
+	}
+
+	// 持久会话：执行完保留，第二次调用复用同一个 shell。
+	// 用新的 opener（新的 fakeShell），因为一次性会话回收时已关闭上一个 shell。
+	persistOpener := &fakeOpener{shell: newFakeShell()}
+	persistRegistry := newTerminalSessionRegistry(persistOpener, nil, store, TerminalRegistryOptions{
+		ReadyWait:   2 * time.Second,
+		BufferBytes: 64 * 1024,
+		ExecTimeout: 2 * time.Second,
+	})
+	persistent := TerminalSessionKey{UserID: 84, ProjectID: 85, TemplateID: 86}
+	defer persistRegistry.CloseSession(persistent)
+	for i := 0; i < 2; i++ {
+		if _, err := persistRegistry.RunInTerminal(context.Background(), runtimecontext.ContainerTerminalExecInput{
+			UserID:              persistent.UserID,
+			ProjectID:           persistent.ProjectID,
+			ContainerTemplateID: persistent.TemplateID,
+			Command:             "echo keep",
+			Wait:                true,
+			TimeoutSeconds:      2,
+			CreateIfMissing:     true,
+			Persistent:          true,
+		}); err != nil {
+			t.Fatalf("RunInTerminal persistent #%d: %v", i, err)
+		}
+		if persistRegistry.Lookup(persistent) == nil {
+			t.Fatalf("persistent session must survive after the command finishes")
+		}
+	}
+	oneShotOpener.mu.Lock()
+	oneShotCalls := oneShotOpener.calls
+	oneShotOpener.mu.Unlock()
+	persistOpener.mu.Lock()
+	persistCalls := persistOpener.calls
+	persistOpener.mu.Unlock()
+	if oneShotCalls != 1 || persistCalls != 1 {
+		t.Fatalf("expected 1 creation per registry, got one-shot=%d persistent=%d", oneShotCalls, persistCalls)
 	}
 }
 
@@ -411,6 +507,15 @@ func (s *fakeTerminalStore) Touch(_ context.Context, key TerminalSessionKey, at 
 	return nil
 }
 
+func (s *fakeTerminalStore) MarkPersistent(_ context.Context, key TerminalSessionKey) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rec, ok := s.rows[key.SessionID()]; ok {
+		rec.Persistent = true
+	}
+	return nil
+}
+
 func (s *fakeTerminalStore) Delete(_ context.Context, key TerminalSessionKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -457,7 +562,6 @@ func TestTerminalSessionRegistryAdoptsPersistedSession(t *testing.T) {
 
 	registry := newTerminalSessionRegistry(opener, nil, store, TerminalRegistryOptions{
 		ReadyWait:     2 * time.Second,
-		IdleGrace:     time.Minute,
 		BufferBytes:   64 * 1024,
 		SessionTTL:    time.Hour,
 		ScrollbackDir: dir,

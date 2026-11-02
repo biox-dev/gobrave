@@ -194,19 +194,18 @@ container:
   create_queue_max_concurrency: 3
   # 容器创建队列的最大排队数（超出后新请求直接返回错误）。
   create_queue_max_pending: 50
-  # 容器模板终端：容器删除策略。
-  #   explicit     ：WebSocket 断开（含刷新/短暂断网）不删容器，只有前端关闭标签调用
-  #                  DELETE /container/template/{id}/terminal 或空闲 TTL 到期才删除。
-  #                  刷新后会重连到同一个 PTY（cwd / 环境变量 / 运行中任务都保留）。
-  #   ws_disconnect：WebSocket 断开即按下面的 terminal_idle_grace_seconds 回收，
-  #                  刷新/关标签都会（延时）删除容器。
-  terminal_close_policy: explicit
-  # ws_disconnect 策略下：最后一个 WebSocket 订阅者离开后保留会话（容器）的秒数。
-  # 0 = 立即删除；>0 = 保留该时长。explicit 策略下本项不生效。
-  terminal_idle_grace_seconds: 0
-  # 容器模板终端：会话创建后一直没有任何订阅者时的保留秒数（避免刚建好就被回收）。
-  # 仅在 ws_disconnect 策略下生效；explicit 策略由空闲 TTL 兜底。<=0 使用默认 120 秒。
-  terminal_unattached_grace_seconds: 120
+  # 容器模板终端：一个模板对应一个持久会话（同一个容器 + shell），不会随连接创建/销毁。
+  #
+  # 回收规则按「会话是否持久」决定（go_terminal_session.persistent）：
+  #   - 持久会话：前端只要通过 WS（GET /container/template/{id}/terminal）接入过，
+  #     该会话即被标记为持久；Agent 的 terminal_exec 也可用 persistent=true 直接要求。
+  #     断开 WebSocket（刷新 / 关标签 / 断网）都不会删除容器，只能由下面的
+  #     空闲 TTL 到期，或用户显式调用 DELETE /container/template/{id}/terminal 回收。
+  #   - 一次性会话：Agent 用 terminal_exec（persistent 默认 false）创建且从未被前端接入；
+  #     命令结束、最后一个订阅者离开后立即删除会话与容器。
+  #     因此 Agent 每次 terminal_exec 都会新建容器，除非它显式请求持久会话。
+  # 持久标记只增不减：一次性会话经前端打开一次后即变为持久。
+  #
   # 持久会话空闲上限（分钟）：超过该时长没有操作/输出，自动回收容器并删除会话记录。
   # <=0 使用默认 120。设为很大的值即"只随显式删除回收"（注意资源占用）。
   terminal_session_ttl_minutes: 120

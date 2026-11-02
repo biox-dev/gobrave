@@ -44,6 +44,16 @@ type TerminalSession struct {
 
 	Status TerminalSessionStatus `json:"status" gorm:"type:varchar(32);index;not null;default:running"`
 
+	// Persistent 标记会话是否为「持久会话」。
+	//
+	// true  = 只能由空闲 TTL 到期（terminal_session_ttl_minutes）或用户显式关闭
+	//         （DELETE /container/template/{id}/terminal）回收；
+	// false = 由 Agent 创建的一次性会话：最后一个订阅者（terminal_exec）离开后立即回收。
+	//
+	// 只要经过 ContainerTemplateTerminal（前端打开终端）就会被置为 true，
+	// 并且此后不会再退回 false。
+	Persistent bool `json:"persistent" gorm:"not null;default:false"`
+
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	LastActiveAt time.Time `json:"last_active_at" gorm:"index"`

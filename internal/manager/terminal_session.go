@@ -32,10 +32,13 @@ import (
 //   - 命令写入通过串行队列执行，靠 shell 的 PROMPT_COMMAND 打出不可见的 OSC 标记
 //     （ESC ] 633 ; GD ; <exit code> BEL）来判定「命令结束 + 退出码」，不解析提示符，
 //     也不会在终端里留下难看的哨兵命令回显；
-//   - 删除时机由 container.terminal_close_policy 控制：
-//     explicit（默认）= WS 断开不删，仅前端关标签调 DELETE 或空闲 TTL 到期才删；
-//     ws_disconnect = WS 断开即按 terminal_idle_grace_seconds 回收；
-//   - 会话创建后一直没有订阅者时使用独立的 unattached grace，避免「刚建好就被删」；
+//   - 删除时机由「会话是否持久」决定（types.TerminalSession.Persistent）：
+//     * 持久会话：前端通过 ContainerTemplateTerminal 接入即置为持久（Agent 也可在建会话时
+//       直接要求持久）；只能由空闲 TTL（container.terminal_session_ttl_minutes）或
+//       用户显式 DELETE /container/template/{id}/terminal 回收；
+//     * 一次性会话：Agent 创建且从未被前端接入；命令结束、最后一个订阅者离开时立即回收
+//       容器与记录（因此每次 terminal_exec 都会新建容器，除非请求持久会话）；
+//   - 持久标记只增不减：一次性会话经前端打开后即变为持久；
 //   - 会话 → 容器的映射落在 go_terminal_session（container.terminal_session_ttl_minutes
 //     控制空闲 TTL，terminal_max_sessions_per_user 控制配额），进程重启后可认领原容器；
 //   - 历史输出以滚动快照落盘（container.terminal_buffer_dir），认领后回放。
@@ -60,11 +63,10 @@ const (
 	// 输出上一条命令的退出码。
 	terminalInitCommand = `PROMPT_COMMAND='__gobrave_rc=$?; printf "\033]633;GD;%s\007" "$__gobrave_rc"'`
 
-	defaultTerminalUnattachedGrace = 2 * time.Minute
-	defaultTerminalReadyWait       = 60 * time.Second
-	defaultTerminalBufferBytes     = 256 * 1024
-	defaultTerminalCreateWait      = 10 * time.Minute
-	defaultTerminalExecTimeout     = 5 * time.Minute
+	defaultTerminalReadyWait   = 60 * time.Second
+	defaultTerminalBufferBytes = 256 * 1024
+	defaultTerminalCreateWait  = 10 * time.Minute
+	defaultTerminalExecTimeout = 5 * time.Minute
 	// defaultTerminalSessionTTL 是「持久会话」的空闲上限：超过即回收容器并删记录。
 	defaultTerminalSessionTTL         = 2 * time.Hour
 	defaultTerminalMaxSessionsPerUser = 4
@@ -95,40 +97,8 @@ type TerminalEventPublisher interface {
 	PushMessage(userID int64, data any) error
 }
 
-// TerminalClosePolicy 决定「终端容器什么时候删除」。
-type TerminalClosePolicy string
-
-const (
-	// TerminalClosePolicyWSDisconnect：WebSocket 断开（含刷新、关标签）就按 IdleGrace 回收。
-	// IdleGrace=0 时等效于「一断开就删容器」。
-	TerminalClosePolicyWSDisconnect TerminalClosePolicy = "ws_disconnect"
-	// TerminalClosePolicyExplicit：WebSocket 断开不删容器，只有前端关闭标签调 DELETE
-	// （或空闲 TTL 到期）才删除。刷新/瞬断会复用同一个 PTY。
-	TerminalClosePolicyExplicit TerminalClosePolicy = "explicit"
-)
-
-// normalizeTerminalClosePolicy 把配置值规整为枚举，未知值回退到 ws_disconnect。
-func normalizeTerminalClosePolicy(raw string) TerminalClosePolicy {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case string(TerminalClosePolicyExplicit), "manual", "frontend", "close_button":
-		return TerminalClosePolicyExplicit
-	case string(TerminalClosePolicyWSDisconnect), "disconnect", "":
-		return TerminalClosePolicyWSDisconnect
-	default:
-		return TerminalClosePolicyWSDisconnect
-	}
-}
-
 // TerminalRegistryOptions 控制会话生命周期，零值使用默认值。
 type TerminalRegistryOptions struct {
-	// ClosePolicy 决定断开 WebSocket 是否删除容器；默认 ws_disconnect。
-	ClosePolicy TerminalClosePolicy
-	// IdleGrace 是 ws_disconnect 策略下，最后一个订阅者离开后保留会话（容器）的时长。
-	// 0 = 立即删除；>0 = 保留该时长，期间可重连 / Agent 继续执行。
-	IdleGrace time.Duration
-	// UnattachedGrace 是会话创建后一直没有订阅者时的保留时长；<=0 使用默认 2 分钟。
-	// 与 IdleGrace 分开是为了避免「Agent 刚建好会话、前端还没连上就被删」。
-	UnattachedGrace time.Duration
 	// SessionTTL 是持久会话的空闲上限：超过即回收容器并删除记录。<=0 使用默认 2 小时。
 	SessionTTL time.Duration
 	// MaxSessionsPerUser 限制单个用户同时存在的终端会话数；<=0 使用默认 4。
@@ -238,17 +208,16 @@ type ManagedTerminalSession struct {
 	// busy 表示有命令正在执行：空闲 TTL 回收必须跳过，避免杀掉长任务。
 	busy            bool
 	scrollbackDirty bool
-	reapTimer       *time.Timer
-	// attachedOnce 标记会话是否曾经被订阅过：从未订阅时使用 UnattachedGrace，
-	// 订阅过之后（最后一个订阅者离开）才使用 IdleGrace（默认为 0 = 立即删除）。
-	attachedOnce bool
-	markerCarry  []byte
-	readyOnce    sync.Once
-	readyCh      chan struct{}
-	done         chan struct{}
-	closeOnce    sync.Once
-	markerCh     chan int
-	requests     chan terminalExecRequest
+	// persistent 标记会话是否为持久会话（见 types.TerminalSession.Persistent）。
+	// 只会在 WS（ContainerTemplateTerminal）接入或 Agent 显式要求时从 false 变 true。
+	persistent  bool
+	markerCarry []byte
+	readyOnce   sync.Once
+	readyCh     chan struct{}
+	done        chan struct{}
+	closeOnce   sync.Once
+	markerCh    chan int
+	requests    chan terminalExecRequest
 }
 
 type terminalExecRequest struct {
@@ -315,9 +284,6 @@ func terminalRegistryOptions(cfg *config.Config) TerminalRegistryOptions {
 	if cfg == nil || cfg.Container == nil {
 		return opts
 	}
-	opts.IdleGrace = time.Duration(cfg.Container.TerminalIdleGraceSeconds) * time.Second
-	opts.UnattachedGrace = time.Duration(cfg.Container.TerminalUnattachedGraceSeconds) * time.Second
-	opts.ClosePolicy = normalizeTerminalClosePolicy(cfg.Container.TerminalClosePolicy)
 	opts.SessionTTL = time.Duration(cfg.Container.TerminalSessionTTLMinutes) * time.Minute
 	opts.MaxSessionsPerUser = cfg.Container.TerminalMaxSessionsPerUser
 	opts.ScrollbackDir = cfg.Container.TerminalBufferDir
@@ -337,25 +303,6 @@ func newTerminalSessionRegistry(probe TerminalRuntimeOpener, publisher TerminalE
 		sessions:  make(map[string]*ManagedTerminalSession),
 		pending:   make(map[string]*pendingTerminalSession),
 	}
-}
-
-func (r *TerminalSessionRegistry) idleGrace() time.Duration {
-	return r.opts.IdleGrace
-}
-
-// closePolicy 返回当前删除策略；未配置时按 ws_disconnect 处理。
-func (r *TerminalSessionRegistry) closePolicy() TerminalClosePolicy {
-	if r.opts.ClosePolicy == "" {
-		return TerminalClosePolicyWSDisconnect
-	}
-	return r.opts.ClosePolicy
-}
-
-func (r *TerminalSessionRegistry) unattachedGrace() time.Duration {
-	if r.opts.UnattachedGrace > 0 {
-		return r.opts.UnattachedGrace
-	}
-	return defaultTerminalUnattachedGrace
 }
 
 func (r *TerminalSessionRegistry) readyWait() time.Duration {
@@ -419,17 +366,34 @@ func (r *TerminalSessionRegistry) scrollbackBytes() int {
 // created 表示本次调用是否新建了容器。创建使用独立的后台 context，不跟随 HTTP /
 // WebSocket 请求的生命周期：调用方响应结束后会话必须继续存活。
 func (r *TerminalSessionRegistry) Ensure(ctx context.Context, key TerminalSessionKey) (*ManagedTerminalSession, bool, error) {
+	return r.ensure(ctx, key, false)
+}
+
+// EnsurePersistent 与 Ensure 相同，但会把会话标记为持久会话（见 types.TerminalSession.Persistent）。
+//
+// ContainerTemplateTerminal（前端打开终端）走这个入口：无论会话是新建的还是复用的，
+// 只要前端接入了，此后就只能由空闲 TTL 或显式 DELETE 回收。
+func (r *TerminalSessionRegistry) EnsurePersistent(ctx context.Context, key TerminalSessionKey) (*ManagedTerminalSession, bool, error) {
+	return r.ensure(ctx, key, true)
+}
+
+func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessionKey, persistent bool) (*ManagedTerminalSession, bool, error) {
 	id := key.SessionID()
 
 	r.mu.Lock()
 	if sess, ok := r.sessions[id]; ok && !sess.isDead() {
 		r.mu.Unlock()
+		// 复用已有会话时同样要把持久标记升级上去（幂等）。
+		r.MarkPersistent(ctx, key)
 		return sess, false, nil
 	}
 	if wait, ok := r.pending[id]; ok {
 		r.mu.Unlock()
 		select {
 		case <-wait.done:
+			if wait.err == nil {
+				r.MarkPersistent(ctx, key)
+			}
 			return wait.sess, wait.created, wait.err
 		case <-ctx.Done():
 			return nil, false, ctx.Err()
@@ -452,13 +416,30 @@ func (r *TerminalSessionRegistry) Ensure(ctx context.Context, key TerminalSessio
 	close(pending.done)
 	r.mu.Unlock()
 
-	if err == nil {
-		// 无人订阅时也要回收：Agent 可能先创建会话（HTTP exec）却始终没人打开终端面板。
-		// 订阅者接入后 Attach 会停掉这个计时器。
-		r.scheduleReap(sess)
+	if err == nil && persistent {
+		r.MarkPersistent(ctx, key)
 	}
 
 	return sess, created, err
+}
+
+// MarkPersistent 把会话标记为持久，并同步到持久层。
+//
+// 只会 false → true：已经持久的会话不会被改回一次性。
+func (r *TerminalSessionRegistry) MarkPersistent(ctx context.Context, key TerminalSessionKey) {
+	sess := r.Lookup(key)
+	if sess == nil {
+		return
+	}
+	if !sess.markPersistent() {
+		return
+	}
+	if r.store == nil {
+		return
+	}
+	if err := r.store.MarkPersistent(ctx, key); err != nil {
+		logger.Warnf(ctx, "[TerminalSession] mark session %s persistent failed: %v", key.SessionID(), err)
+	}
 }
 
 // defaultTerminalOptions 返回交互式终端的默认参数（宽高只是初始值，前端会 resize）。
@@ -504,7 +485,8 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey) (*Manage
 		handle.Cleanup()
 		return nil, false, err
 	}
-	r.persistRecord(createCtx, key, handle)
+	// 新会话默认是一次性（Agent 创建的）；调用方随后可用 MarkPersistent 升级。
+	r.persistRecord(createCtx, key, handle, false)
 	return managed, true, nil
 }
 
@@ -543,8 +525,9 @@ func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key Terminal
 		handle.Cleanup()
 		return nil, err
 	}
-	logger.Infof(ctx, "[TerminalSession] adopted session %s runtime=%s", key.SessionID(), rec.RuntimeID)
+	logger.Infof(ctx, "[TerminalSession] adopted session %s runtime=%s persistent=%v", key.SessionID(), rec.RuntimeID, rec.Persistent)
 	r.touchRecord(ctx, key)
+	managed.setPersistent(rec.Persistent)
 	return managed, nil
 }
 
@@ -598,7 +581,7 @@ func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalS
 }
 
 // persistRecord 把 会话 key → runtimeID 的映射落库，供进程重启后认领。
-func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, key TerminalSessionKey, handle *ProbeTerminalHandle) {
+func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, key TerminalSessionKey, handle *ProbeTerminalHandle, persistent bool) {
 	if r.store == nil {
 		return
 	}
@@ -611,6 +594,7 @@ func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, key Termina
 		RuntimeID:     handle.RuntimeID,
 		ContainerName: handle.ContainerName,
 		Status:        types.TerminalSessionStatusRunning,
+		Persistent:    persistent,
 		LastActiveAt:  time.Now(),
 	}
 	if err := r.store.Upsert(ctx, rec); err != nil {
@@ -736,6 +720,8 @@ func (r *TerminalSessionRegistry) maintain(ctx context.Context) {
 			r.touchRecord(ctx, sess.key)
 			continue
 		}
+		// 一次性会话在最后一个订阅者离开时已被 scheduleReap 回收；
+		// 这里主要兜底持久会话（以及极端情况下漏掉的一次性会话）。
 		if ttl > 0 && sess.idleFor(now) > ttl {
 			logger.Infof(ctx, "[TerminalSession] session %s idle for %s, releasing", sess.id, sess.idleFor(now).Truncate(time.Second))
 			r.forget(sess)
@@ -895,12 +881,43 @@ func (r *TerminalSessionRegistry) Execute(ctx context.Context, key TerminalSessi
 }
 
 // RunInTerminal 实现 runtimecontext.ContainerTerminalRunner，供 Agent 工具注入。
+//
+// 语义：
+//   - 创建新会话时，按 in.Persistent 决定它是一次性还是持久会话；
+//   - 命令结束（含超时 / 失败）后总是 Detach：一次性会话因此立即回收容器，
+//     持久会话则保留，等待空闲 TTL 或用户显式关闭。
 func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimecontext.ContainerTerminalExecInput) (runtimecontext.ContainerTerminalExecResult, error) {
-	result, err := r.Execute(ctx, TerminalSessionKey{
+	key := TerminalSessionKey{
 		UserID:     in.UserID,
 		ProjectID:  in.ProjectID,
 		TemplateID: in.ContainerTemplateID,
-	}, TerminalCommand{
+	}
+
+	// 先占位：保证「一次性会话 + 无 WS」时命令执行期间不会被回收。
+	sess := r.Lookup(key)
+	if sess == nil && in.CreateIfMissing {
+		created, _, err := r.Ensure(ctx, key)
+		if err != nil {
+			return runtimecontext.ContainerTerminalExecResult{}, err
+		}
+		sess = created
+	}
+	if sess == nil {
+		return runtimecontext.ContainerTerminalExecResult{}, ErrTerminalSessionNotFound
+	}
+
+	if in.Persistent {
+		if sess.markPersistent() && r.store != nil {
+			if err := r.store.MarkPersistent(ctx, key); err != nil {
+				logger.Warnf(ctx, "[TerminalSession] mark session %s persistent failed: %v", key.SessionID(), err)
+			}
+		}
+	}
+
+	detach := sess.AttachObserver()
+	defer detach()
+
+	result, err := r.Execute(ctx, key, TerminalCommand{
 		Command:         in.Command,
 		Wait:            in.Wait,
 		Timeout:         time.Duration(in.TimeoutSeconds) * time.Second,
@@ -958,62 +975,43 @@ func (r *TerminalSessionRegistry) forget(sess *ManagedTerminalSession) {
 	}
 }
 
+// scheduleReap 在「最后一个订阅者离开」后决定是否立即回收会话。
+//
+// 规则：
+//   - 仍有订阅者 / 已关闭 / 有命令在执行 → 不回收；
+//   - 持久会话（前端接入过，或 Agent 显式要求持久）→ 不回收，
+//     只能等空闲 TTL 到期（maintain）或显式 CloseSession；
+//   - 一次性会话（Agent 创建且从未被前端接入）→ 立即回收容器与记录。
 func (r *TerminalSessionRegistry) scheduleReap(sess *ManagedTerminalSession) {
+	if sess == nil {
+		return
+	}
 	sess.mu.Lock()
-	if sess.closed || len(sess.subs) > 0 {
-		sess.mu.Unlock()
-		return
-	}
-	if sess.reapTimer != nil {
-		sess.reapTimer.Stop()
-		sess.reapTimer = nil
-	}
-
-	// explicit 策略：断开 WebSocket 不回收，容器只在 DELETE 接口或空闲 TTL 到期时删除。
-	// 这样刷新页面会重连到同一个 PTY（cwd / 环境变量 / 正在跑的任务都保留）。
-	// 注：explicit 下 unattached grace 也不参与，统一由 SessionTTL 兜底。
-	if r.closePolicy() == TerminalClosePolicyExplicit {
-		sess.mu.Unlock()
-		return
-	}
-
-	// 从未被订阅过（Agent 先建会话、前端还没连上）用 unattached grace；
-	// 订阅过之后才用 IdleGrace，0 表示立即删除。
-	grace := r.idleGrace()
-	if !sess.attachedOnce {
-		grace = r.unattachedGrace()
-	}
-
-	if grace <= 0 {
-		sess.mu.Unlock()
-		logger.Infof(context.Background(), "[TerminalSession] releasing idle session %s immediately", sess.id)
-		r.forget(sess)
-		sess.Close()
-		return
-	}
-
-	sess.reapTimer = time.AfterFunc(grace, func() {
-		sess.mu.Lock()
-		empty := !sess.closed && len(sess.subs) == 0
-		sess.mu.Unlock()
-		if !empty {
-			return
-		}
-		logger.Infof(context.Background(), "[TerminalSession] releasing idle session %s after %s", sess.id, grace)
-		r.forget(sess)
-		sess.Close()
-	})
+	closed := sess.closed
+	dead := sess.dead
+	subs := len(sess.subs)
+	busy := sess.busy
+	persistent := sess.persistent
 	sess.mu.Unlock()
+
+	if closed || dead || subs > 0 || busy {
+		return
+	}
+	if persistent {
+		// 持久会话保持存活，交给空闲 TTL / 显式关闭处理。
+		return
+	}
+
+	logger.Infof(context.Background(), "[TerminalSession] releasing one-shot session %s", sess.id)
+	r.forget(sess)
+	sess.Close()
 }
 
-// suspendReap 暂停回收计时（命令执行期间不能因为“无人订阅”把容器删掉）。
+// suspendReap 已不再需要（回收改为同步判定），保留空实现以免破坏调用点。
+//
+// 命令执行期间的防回收由 scheduleReap 里的 busy 判断负责。
 func (s *ManagedTerminalSession) suspendReap() {
-	s.mu.Lock()
-	if s.reapTimer != nil {
-		s.reapTimer.Stop()
-		s.reapTimer = nil
-	}
-	s.mu.Unlock()
+	s.setBusy(true)
 }
 
 // ===== ManagedTerminalSession =====
@@ -1054,21 +1052,18 @@ func (s *ManagedTerminalSession) Resize(rows, cols uint16) error {
 
 // Attach 注册一个订阅者并返回重放数据。
 //
+// 前端（ContainerTemplateTerminal）接入时调用者还应调用 MarkPersistent，
+// 把会话升级为持久会话。
+//
 // sinceSeq <= 0 表示「尽可能早」；sinceSeq 大于当前序号表示只要新输出。
 // 重放与订阅在同一临界区内完成，不会丢帧。
 func (s *ManagedTerminalSession) Attach(sinceSeq int64) (*TerminalSubscriber, []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.reapTimer != nil {
-		s.reapTimer.Stop()
-		s.reapTimer = nil
-	}
-
 	s.nextSubID++
 	sub := newTerminalSubscriber(s.nextSubID)
 	s.subs[sub.ID] = sub
-	s.attachedOnce = true
 	s.lastActive = time.Now()
 
 	var replay []byte
@@ -1088,7 +1083,23 @@ func (s *ManagedTerminalSession) Attach(sinceSeq int64) (*TerminalSubscriber, []
 	return sub, replay
 }
 
-// Detach 注销订阅者；最后一个订阅者离开后进入 grace 计时。
+// AttachObserver 登记一个「只占位、不接收输出」的订阅者，返回幂等的 Detach 函数。
+//
+// 供 terminal_exec 这类「我只需要保证执行期间不被回收」的调用使用：
+//   - 它与 WS 订阅者共用 subs 计数，因此有前端终端在线时 Detach 不会触发回收；
+//   - 它的 Data 是无缓冲 channel 且无人读取，publish 会走 default 分支丢弃，
+//     不会像普通订阅者那样占用 2048 块的缓冲内存。
+func (s *ManagedTerminalSession) AttachObserver() func() {
+	sub, _ := s.Attach(0)
+	s.mu.Lock()
+	sub.Data = make(chan []byte) // 无缓冲 + 无人读：publish 必定走 default
+	s.mu.Unlock()
+
+	var once sync.Once
+	return func() { once.Do(func() { s.Detach(sub) }) }
+}
+
+// Detach 注销订阅者；最后一个订阅者离开后按会话类型决定是否立即回收。
 func (s *ManagedTerminalSession) Detach(sub *TerminalSubscriber) {
 	if sub == nil {
 		return
@@ -1121,6 +1132,31 @@ func (s *ManagedTerminalSession) SendEvent(payload map[string]any) {
 		default:
 		}
 	}
+}
+
+// isPersistent 返回会话是否为持久会话。
+func (s *ManagedTerminalSession) isPersistent() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistent
+}
+
+// markPersistent 把会话升级为持久会话；返回是否发生了状态变化（false → true）。
+func (s *ManagedTerminalSession) markPersistent() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.persistent {
+		return false
+	}
+	s.persistent = true
+	return true
+}
+
+// setPersistent 直接设置持久标记（用于认领进程重启前的记录）。
+func (s *ManagedTerminalSession) setPersistent(persistent bool) {
+	s.mu.Lock()
+	s.persistent = persistent
+	s.mu.Unlock()
 }
 
 // Close 关闭 shell 并删除容器；可重复调用。
@@ -1425,7 +1461,7 @@ func (s *ManagedTerminalSession) execLoop() {
 			if req.result != nil {
 				req.result <- outcome
 			}
-			// 命令结束后重新评估回收：执行期间计时器被 suspendReap 停掉了。
+			// 命令结束后重新评估回收：一次性会话若已无订阅者则在此回收。
 			s.registry.scheduleReap(s)
 		}
 	}
@@ -1438,7 +1474,6 @@ func (s *ManagedTerminalSession) runCommand(req terminalExecRequest) terminalExe
 
 	// 命令执行期间不允许被「无人订阅」回收（agent 可能在没有前端连接时跑长任务）。
 	s.suspendReap()
-	s.setBusy(true)
 	defer s.setBusy(false)
 	// 先等输出静止，再清掉上一条命令残留的标记：
 	// 顺序反过来会把「等待期间产生的旧标记」误当成本次命令的退出码。

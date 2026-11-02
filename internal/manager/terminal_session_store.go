@@ -21,6 +21,8 @@ type TerminalSessionStore interface {
 	Upsert(ctx context.Context, rec *types.TerminalSession) error
 	// Touch 刷新 last_active_at。
 	Touch(ctx context.Context, key TerminalSessionKey, at time.Time) error
+	// MarkPersistent 把会话标记为持久（幂等，只会 false → true）。
+	MarkPersistent(ctx context.Context, key TerminalSessionKey) error
 	// Delete 按会话 key 删除记录。
 	Delete(ctx context.Context, key TerminalSessionKey) error
 	// List 返回全部记录（用于启动/定期对账）。
@@ -74,6 +76,8 @@ func (s *GormTerminalSessionStore) Upsert(ctx context.Context, rec *types.Termin
 			"runtime_id":     rec.RuntimeID,
 			"container_name": rec.ContainerName,
 			"status":         rec.Status,
+			// 持久标记只增不减：已持久化的会话不能被后续 Upsert 改回一次性。
+			"persistent":     existing.Persistent || rec.Persistent,
 			"last_active_at": rec.LastActiveAt,
 			"updated_at":     time.Now(),
 		}
@@ -89,6 +93,19 @@ func (s *GormTerminalSessionStore) Touch(ctx context.Context, key TerminalSessio
 		Model(&types.TerminalSession{}).
 		Where("session_key = ?", key.SessionID()).
 		Updates(map[string]any{"last_active_at": at, "updated_at": at}).Error
+}
+
+// MarkPersistent 把会话标记为持久（只会 false → true）。
+//
+// 记录不存在时是空操作：真正的持久化由随后的 Upsert 写回。
+func (s *GormTerminalSessionStore) MarkPersistent(ctx context.Context, key TerminalSessionKey) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.WithContext(ctx).
+		Model(&types.TerminalSession{}).
+		Where("session_key = ? AND persistent = ?", key.SessionID(), false).
+		Updates(map[string]any{"persistent": true, "updated_at": time.Now()}).Error
 }
 
 func (s *GormTerminalSessionStore) Delete(ctx context.Context, key TerminalSessionKey) error {

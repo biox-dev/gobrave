@@ -227,16 +227,6 @@ type ContainerConfig struct {
 	CreateQueueMaxConcurrency int `yaml:"create_queue_max_concurrency" json:"create_queue_max_concurrency"`
 	// CreateQueueMaxPending limits how many creation requests can wait in the queue.
 	CreateQueueMaxPending int `yaml:"create_queue_max_pending" json:"create_queue_max_pending"`
-	// TerminalClosePolicy 决定终端容器的删除时机：
-	//   ws_disconnect：WebSocket 断开（含刷新 / 关标签）即按 terminal_idle_grace_seconds 回收；
-	//   explicit：WebSocket 断开不删容器，仅前端关闭标签调 DELETE 或空闲 TTL 到期时删除。
-	TerminalClosePolicy string `yaml:"terminal_close_policy" json:"terminal_close_policy"`
-	// TerminalIdleGraceSeconds 是容器模板终端「最后一个订阅者离开」后保留会话（容器）的秒数。
-	// 仅在 ws_disconnect 策略下生效：0 = 立即删除（默认）；>0 = 保留该时长。
-	TerminalIdleGraceSeconds int `yaml:"terminal_idle_grace_seconds" json:"terminal_idle_grace_seconds"`
-	// TerminalUnattachedGraceSeconds 是终端会话创建后一直没有订阅者时的保留秒数。
-	// 仅在 ws_disconnect 策略下生效；explicit 策略由 terminal_session_ttl_minutes 兜底。
-	TerminalUnattachedGraceSeconds int `yaml:"terminal_unattached_grace_seconds" json:"terminal_unattached_grace_seconds"`
 	// TerminalSessionTTLMinutes 是终端会话的空闲上限：空闲超过该时长即回收容器并删除记录。
 	// <=0 使用默认 120 分钟。设置为很大的值时，只有显式删除 / 容器消失才会回收。
 	TerminalSessionTTLMinutes int `yaml:"terminal_session_ttl_minutes" json:"terminal_session_ttl_minutes"`
@@ -268,13 +258,6 @@ func DefaultContainerConfig() *ContainerConfig {
 		DagNodeCleanupOnDagFinished:         "delete",
 		CreateQueueMaxConcurrency:           3,
 		CreateQueueMaxPending:               50,
-		// 默认 explicit：刷新页面/短暂断网不会丢现场，关标签由前端调 DELETE 回收；
-		// 若希望「WS 一断开就删容器」，改成 ws_disconnect。
-		TerminalClosePolicy: "explicit",
-		// ws_disconnect 策略下的断线保留窗口（0 = 立即删除；对 explicit 不生效）。
-		TerminalIdleGraceSeconds: 0,
-		// 创建后无人订阅时的保护窗口。
-		TerminalUnattachedGraceSeconds: 120,
 		// 持久会话空闲上限 / 单用户配额 / 滚动缓冲。
 		TerminalSessionTTLMinutes:  120,
 		TerminalMaxSessionsPerUser: 4,

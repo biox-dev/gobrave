@@ -256,6 +256,10 @@ type ContainerTerminalRunner interface {
 	//
 	// Wait=true 时等待命令结束并返回退出码与输出尾部；Wait=false 时只投递并立即返回
 	// （Accepted=true，Running=true）。
+	//
+	// 命令结束（含超时 / 失败）后实现方必须「解绑」本次调用：
+	// 一次性会话（Persistent=false）若已无前端终端连接会被立即回收，
+	// 持久会话（Persistent=true）则保留，直到空闲 TTL 或显式关闭。
 	RunInTerminal(ctx context.Context, in ContainerTerminalExecInput) (ContainerTerminalExecResult, error)
 }
 
@@ -277,6 +281,10 @@ type ContainerTerminalExecInput struct {
 	NotifyUI bool
 	// CreateIfMissing 为 true 时允许自动创建终端会话（容器）。
 	CreateIfMissing bool
+	// Persistent 为 true 时把会话标记为持久：命令结束后不回收容器，
+	// 直到空闲 TTL 到期或用户显式关闭。false（默认）= 一次性会话，
+	// 命令结束后若没有前端终端连接则立即删除会话与容器。
+	Persistent bool
 }
 
 // ContainerTerminalExecResult 是一次 terminal_exec 调用的执行结果。

@@ -19,8 +19,9 @@ import (
 // （manager.TerminalSessionRegistry），key = (userID, projectID, templateID)。
 //
 //   - 同一个模板重复打开只会 attach 到同一个 PTY，不会重复创建容器；
-//   - 断开连接后的回收策略由 config.container.terminal_idle_grace_seconds 控制：
-//     0（默认）= 最后一个订阅者离开立即删除容器，>0 = 保留该时长以便重连 / Agent 继续执行；
+//   - 一旦前端接入，会话即被标记为「持久」：断开连接（刷新 / 关标签 / 断网）都不会删除容器，
+//     只有空闲 TTL（container.terminal_session_ttl_minutes）到期或前端关闭标签调用
+//     DELETE /container/template/{id}/terminal 时才删除；
 //   - 输出环形缓冲带序号，连接时可用 ?since=<seq> 重放（缺省回放全部缓存）。
 //
 // 协议：
@@ -70,7 +71,7 @@ func (h *ContainerHandler) ContainerTemplateTerminal(c *gin.Context) {
 
 	_ = conn.WriteMessage(websocket.TextMessage, []byte("\x1b[90mpreparing container terminal...\x1b[0m\r\n"))
 
-	session, _, err := h.terminalRegistry.Ensure(c.Request.Context(), key)
+	session, _, err := h.terminalRegistry.EnsurePersistent(c.Request.Context(), key)
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("\x1b[31mfailed to open terminal: "+err.Error()+"\x1b[0m\r\n"))
 		return
