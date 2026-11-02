@@ -64,7 +64,7 @@ type UpdateAgentAnalysisOutput struct {
 //     run=false 时只更新节点，不提交运行。
 //
 // 该工具会修改业务数据并重写运行期文件，并在默认情况下触发一次节点运行，因此声明 write 授权。
-func UpdateAgentAnalysis() tool.Tool {
+func UpdateAgentAnalysis(updater runtimecontext.AnalysisNodeUpdater, runner runtimecontext.AnalysisNodeRunner, browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
 	return tool.NewFunc(
 		UpdateAgentAnalysisToolName,
 		"更新 Agent 命令节点（creation_source=agent，无绑定脚本，run.sh 由 Agent 生成），默认更新后运行。仅适用于 get_analysis_node 返回 node_type=agent 的节点；script / scheduler 类型（绑定脚本）请改用 update_script_analysis。analysis_node_id 必填；可选给出 node_name / command / container_template_id，至少给出一个；未给出的字段保持原值。command 会直接写入节点 run.sh（命令不落库），并清空节点输出目录（output）。run 可选，默认 true：为 true 时更新成功后立即运行该节点并等待结束，返回状态、执行日志与日志路径；为 false 时只更新节点不运行（之后可用 run_analysis_node 运行）。timeout_seconds 可选，默认 600，run=false 时忽略。",
@@ -107,7 +107,6 @@ func UpdateAgentAnalysis() tool.Tool {
 				return UpdateAgentAnalysisOutput{}, fmt.Errorf("%s: at least one of node_name / command / container_template_id must be provided", UpdateAgentAnalysisToolName)
 			}
 
-			updater := runtimecontext.AnalysisNodeUpdaterFrom(ctx)
 			if updater == nil {
 				return UpdateAgentAnalysisOutput{}, fmt.Errorf("%s: analysis node updater is not available in this runtime", UpdateAgentAnalysisToolName)
 			}
@@ -153,7 +152,6 @@ func UpdateAgentAnalysis() tool.Tool {
 				return out, nil
 			}
 
-			runner := runtimecontext.AnalysisNodeRunnerFrom(ctx)
 			if runner == nil {
 				out.Ran = false
 				out.Error = "update_agent_analysis: analysis node runner is not available in this runtime; the node was updated but not run"
@@ -177,14 +175,16 @@ func UpdateAgentAnalysis() tool.Tool {
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "更新 Agent 命令节点（写库并重建 run.sh，默认更新后运行）", previewUpdateAgentAnalysis)
+	).WithPermissionPreview("write", "", "更新 Agent 命令节点（写库并重建 run.sh，默认更新后运行）", func(ctx context.Context, in UpdateAgentAnalysisInput) tool.PermissionPreview {
+		return previewUpdateAgentAnalysis(ctx, browser, in)
+	})
 }
 
 // previewUpdateAgentAnalysis 生成批准前预览：run.sh 旧内容 → 新内容的 diff。
 //
 // 旧内容直接从磁盘上的 run.sh 读取（命令不再落库）；读取失败时退化为「新增 / 覆盖
 // run.sh」的预览，不影响授权流程本身。
-func previewUpdateAgentAnalysis(ctx context.Context, in UpdateAgentAnalysisInput) tool.PermissionPreview {
+func previewUpdateAgentAnalysis(ctx context.Context, browser runtimecontext.AnalysisNodeBrowser, in UpdateAgentAnalysisInput) tool.PermissionPreview {
 	command := strings.TrimSpace(in.Command)
 	if command == "" {
 		return tool.PermissionPreview{}
@@ -192,7 +192,7 @@ func previewUpdateAgentAnalysis(ctx context.Context, in UpdateAgentAnalysisInput
 
 	path := runScriptPath("", "")
 	before := ""
-	if current, ok := analysisNodeForPreview(ctx, UpdateAgentAnalysisToolName, in.AnalysisNodeID); ok {
+	if current, ok := analysisNodeForPreview(ctx, browser, UpdateAgentAnalysisToolName, in.AnalysisNodeID); ok {
 		path = runScriptPath(current.CommandPath, current.WorkspaceDir)
 		if content, err := prepare.ReadCommandRunScript(current.CommandPath); err == nil {
 			before = runScriptContent(content)

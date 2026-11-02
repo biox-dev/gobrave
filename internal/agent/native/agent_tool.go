@@ -161,12 +161,15 @@ type SubAgentSessionStore interface {
 }
 
 // TaskAgentTools 返回子 Agent 的只读工具集合（对齐 opencode TaskAgentTools）。
+//
+// 子 Agent 不注入文件历史 / LSP 客户端（这些依赖只服务于父 Agent 的写入与诊断链路），
+// 因此 coder 工具以空依赖构造：view 仍可正常读文件，只是不附带 LSP 诊断。
 func TaskAgentTools() []tool.Tool {
 	return []tool.Tool{
 		coder.NewGlob(),
 		coder.NewGrep(),
 		coder.NewLs(),
-		coder.NewView(),
+		coder.NewView(coder.Deps{}),
 		coder.NewSourcegraph(),
 	}
 }

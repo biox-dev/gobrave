@@ -66,7 +66,7 @@ type UpdateScriptAnalysisOutput struct {
 //     run=false 时只更新节点，不提交运行。
 //
 // 该工具会写库并重写 params.json，并在默认情况下触发一次节点运行，因此声明 write 授权。
-func UpdateScriptAnalysis() tool.Tool {
+func UpdateScriptAnalysis(updater runtimecontext.AnalysisNodeUpdater, runner runtimecontext.AnalysisNodeRunner, browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
 	return tool.NewFunc(
 		UpdateScriptAnalysisToolName,
 		"更新脚本节点（creation_source=script 或 scheduler，绑定脚本，参数按脚本 io_schema 解析），默认更新后运行。仅适用于 get_analysis_node 返回 node_type=script / scheduler 的节点；agent 类型（无脚本的命令节点）请改用 update_agent_analysis。analysis_node_id 必填；可选给出 node_name / request_param，至少给出一个；未给出的字段保持原值。request_param 的键为脚本 io_schema.json inputs 中各条目的 name，给出时会按 io_schema 重新解析并生成 params.json 并清空节点输出目录（output）（显式传空对象表示清空参数）。run 可选，默认 true：为 true 时更新成功后立即运行该节点并等待结束，返回状态、执行日志与日志路径；为 false 时只更新节点不运行（之后可用 run_analysis_node 运行）。timeout_seconds 可选，默认 600，run=false 时忽略。",
@@ -96,7 +96,6 @@ func UpdateScriptAnalysis() tool.Tool {
 				return UpdateScriptAnalysisOutput{}, fmt.Errorf("%s: at least one of node_name / request_param must be provided", UpdateScriptAnalysisToolName)
 			}
 
-			updater := runtimecontext.AnalysisNodeUpdaterFrom(ctx)
 			if updater == nil {
 				return UpdateScriptAnalysisOutput{}, fmt.Errorf("%s: analysis node updater is not available in this runtime", UpdateScriptAnalysisToolName)
 			}
@@ -140,7 +139,6 @@ func UpdateScriptAnalysis() tool.Tool {
 				return out, nil
 			}
 
-			runner := runtimecontext.AnalysisNodeRunnerFrom(ctx)
 			if runner == nil {
 				out.Ran = false
 				out.Error = "update_script_analysis: analysis node runner is not available in this runtime; the node was updated but not run"
@@ -167,14 +165,16 @@ func UpdateScriptAnalysis() tool.Tool {
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "更新脚本节点（script / scheduler；写库并重建 params.json，默认更新后运行）", previewUpdateScriptAnalysis)
+	).WithPermissionPreview("write", "", "更新脚本节点（script / scheduler；写库并重建 params.json，默认更新后运行）", func(ctx context.Context, in UpdateScriptAnalysisInput) tool.PermissionPreview {
+		return previewUpdateScriptAnalysis(ctx, browser, in)
+	})
 }
 
 // previewUpdateScriptAnalysis 生成批准前预览：params.json 中请求参数的旧值 → 新值 diff。
 //
 // 未给出 request_param 时没有参数改动可预览（仅改名不会展示 diff）；读取不到节点
 // 当前参数时退化为「覆盖 params.json」的预览，不影响授权流程本身。
-func previewUpdateScriptAnalysis(ctx context.Context, in UpdateScriptAnalysisInput) tool.PermissionPreview {
+func previewUpdateScriptAnalysis(ctx context.Context, browser runtimecontext.AnalysisNodeBrowser, in UpdateScriptAnalysisInput) tool.PermissionPreview {
 	if in.RequestParam == nil {
 		return tool.PermissionPreview{}
 	}
@@ -185,7 +185,7 @@ func previewUpdateScriptAnalysis(ctx context.Context, in UpdateScriptAnalysisInp
 
 	path := "params.json"
 	before := ""
-	if current, ok := analysisNodeForPreview(ctx, UpdateScriptAnalysisToolName, in.AnalysisNodeID); ok {
+	if current, ok := analysisNodeForPreview(ctx, browser, UpdateScriptAnalysisToolName, in.AnalysisNodeID); ok {
 		if current.ParamsPath != "" {
 			path = current.ParamsPath
 		}

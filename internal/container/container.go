@@ -204,19 +204,12 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 // 供 Provider 在每次调用时按 Profile.Model 解析出 base_url / api_key 等 LLM 配置。
 // 使用哪个 Agent（Provider）由 Profile.Provider 决定。
 //
-// runner 是「运行分析节点」的进程级静态服务能力，注入 Options 后由 Provider 在执行工具时
-// 注入工具 ctx（与可序列化的 RuntimeContext 分开，避免服务对象被序列化进 DB）。
-// agentAnalysisRunner 是「创建并（可选）运行命令型分析节点」的同类能力，
-// 供 create_agent_analysis 工具使用。
-// fileReader 同理，承载「按文件 ID 读取内容预览」的能力，供 read_file_by_id 工具使用。
-// paramsBuilder 承载「按 io_schema 生成节点参数」的能力，供 build_analysis_node_params 工具使用。
-// nodeUpdater 承载「更新分析节点」的能力，供 update_agent_analysis / update_script_analysis 工具使用。
-// envUpdater 承载「写回用户业务上下文（EnvID / EnvType）」的能力，供 create_script 工具使用。
-// memorySaver 承载「保存一条用户长期记忆」的能力，供 save_memory 工具使用。
-// skills 是技能注册表：既提供系统提示词的技能元信息，也供 get_skill /
-// load_skill_resource 工具在执行期读取技能指令与附属资源。
+// 本函数是内置 / coder 工具静态依赖的单点装配处：runner / agentAnalysisRunner /
+// fileReader / scriptCreator / nodeCreator / paramsBuilder / nodeUpdater / memorySaver /
+// browser / skills / files / lspMgr 全部在这里装入 builtin.Deps 与 coder.Deps，
+// 通过工具构造函数注入；Options 不再承载服务对象，Provider 只注入请求级上下文。
 // sessions / messages 是会话与消息服务：供 custom Provider 为子 Agent 创建子会话并落库。
-func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, envUpdater runtimecontext.AgentEnvUpdater, memorySaver runtimecontext.MemorySaver, browser runtimecontext.ProjectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
+func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
 	opts := agentclient.Options{}
 
 	// 模型提供商配置表按需实时生成：可视化配置页保存 agent 段后，内存中的 cfg 会被立即更新，
@@ -227,44 +220,36 @@ func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner
 		}
 	}
 
-	// 注册框架内置工具（get_weather / run_analysis_node 等）+ 从 opencode 迁移的 coder 工具
-	// （bash / edit / view / write / patch / glob / grep / ls / fetch / sourcegraph / diagnostics）。
-	// 后续新增内置工具时在 builtin.All() / coder.All() 中追加即可，无需改动此处。
-	opts.Tools = tool.NewRegistryWith(append(builtin.All(), coder.All()...)...)
+	// 单点装配：内置 / coder 工具的进程级静态依赖在这里一次性构造注入。
+	// Provider 只负责注入随请求变化的 RuntimeContext / TaskFacts / 权限。
+	var skillResolver runtimecontext.SkillResolver
+	if skills != nil {
+		skillResolver = skills.Resolver()
+	}
+	builtinDeps := builtin.Deps{
+		Runner:          runner,
+		AgentRunner:     agentAnalysisRunner,
+		FileReader:      fileReader,
+		ScriptCreator:   scriptCreator,
+		NodeCreator:     nodeCreator,
+		ParamsBuilder:   paramsBuilder,
+		NodeUpdater:     nodeUpdater,
+		MemorySaver:     memorySaver,
+		ScriptBrowser:   browser,
+		NodeBrowser:     browser,
+		TemplateBrowser: browser,
+		DatasetBrowser:  browser,
+		ReportContext:   browser,
+		Skills:          skillResolver,
+	}
+	opts.Tools = tool.NewRegistryWith(append(
+		builtin.All(builtinDeps),
+		coder.All(coder.Deps{History: files, LSP: lspMgr})...,
+	)...)
 	// 外部 MCP 服务提供的工具：工具名为 <服务名>_<工具名>，与内置工具同池调度（权限门禁复用）。
 	for _, t := range buildMCPTools(cfg) {
 		opts.Tools.Register(t)
 	}
-	// 进程级服务能力：run_analysis_node 等 builtin 工具在执行期通过它触发节点运行。
-	opts.AnalysisNodeRunner = runner
-	// 进程级服务能力：create_agent_analysis 工具在执行期通过它创建（并按需运行）AgentAnalysis 容器任务。
-	opts.AgentAnalysisRunner = agentAnalysisRunner
-	// 进程级服务能力：read_file_by_id 等 builtin 工具在执行期通过它按文件 ID 读取内容预览。
-	opts.FileReader = fileReader
-	// 进程级服务能力：create_script 工具在执行期通过它创建脚本。
-	opts.ScriptCreator = scriptCreator
-	// 进程级服务能力：create_script_analysis 工具在执行期通过它为脚本创建分析节点。
-	opts.AnalysisNodeCreator = nodeCreator
-	// 进程级服务能力：build_analysis_node_params 工具在执行期通过它按 io_schema 生成 params.json。
-	opts.AnalysisNodeParamsBuilder = paramsBuilder
-	// 进程级服务能力：update_agent_analysis / update_script_analysis 工具在执行期通过它更新分析节点。
-	opts.AnalysisNodeUpdater = nodeUpdater
-	// 进程级服务能力：create_script 工具在执行期通过它把当前用户业务上下文切到新分析节点。
-	opts.AgentEnvUpdater = envUpdater
-	// 进程级服务能力：save_memory 工具在执行期通过它把注意事项写入用户长期记忆。
-	opts.MemorySaver = memorySaver
-	// 进程级服务能力：list_project_scripts / get_script / get_analysis_node 等只读浏览工具
-	// 在执行期通过它按当前项目读取脚本与分析节点。
-	opts.ProjectResourceBrowser = browser
-	// 进程级服务能力：get_skill / load_skill_resource 工具在执行期通过它按名称解析技能，
-	// 读取 SKILL.md 指令正文与技能目录内的附属资源。
-	if skills != nil {
-		opts.Skills = skills.Resolver()
-	}
-	// 会话内文件版本历史：edit / write / patch 工具在每次写入时记录一个版本。
-	opts.FileHistory = files
-	// LSP 客户端管理器：diagnostics / view / edit / write / patch 在执行期通过 Clients() 取客户端。
-	opts.LSP = lspMgr
 	// 会话 / 消息服务：custom Provider 通过它们为子 Agent 创建子会话（ParentSessionID = 父会话）
 	// 并写入子 Agent 的 reasoning / tool_call / tool_result / 最终回答。
 	opts.Sessions = sessions
@@ -425,12 +410,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 分析节点更新器：把「更新分析节点名称 / 命令型节点 / 脚本型节点」能力暴露给内置工具
 	// update_agent_analysis / update_script_analysis。
 	must(container.Provide(agentanalysis.NewNodeUpdater))
-	// 项目资源浏览器：把「列出项目脚本 / 按 ID 查看脚本 / 按 ID 查看分析节点」能力暴露给
-	// 内置只读工具 list_project_scripts / get_script / get_analysis_node。
+	// 项目资源浏览器：把「脚本 / 分析节点 / 容器模板 / 数据集 / 报告上下文」只读能力
+	// 统一提供给内置只读工具。
 	must(container.Provide(newProjectResourceBrowser))
-	// 用户业务上下文写回器：把「更新 user.AgentConfig.EnvID / EnvType」能力暴露给内置工具
-	// create_script_analysis，使其创建分析节点后把当前上下文切到新节点。
-	must(container.Provide(newAgentEnvUpdater))
 	// 记忆管理器以具体类型提供一次：既供 AgentService 使用，也供 memorySaver（save_memory 工具）
 	// 复用同一个实例，避免记忆域出现两份独立的状态入口。
 	must(container.Provide(func(mems agentinterfaces.MemoryRepository) *agentservice.MemoryManager {
@@ -439,8 +421,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, envUpdater runtimecontext.AgentEnvUpdater, memorySaver runtimecontext.MemorySaver, browser runtimecontext.ProjectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
-		return buildAgentClient(cfg, registry, runner, agentAnalysisRunner, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
+	must(container.Provide(func(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
+		return buildAgentClient(cfg, registry, runner, agentAnalysisRunner, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。

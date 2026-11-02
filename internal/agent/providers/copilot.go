@@ -296,23 +296,10 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agenttypes.Request
 func (a *copilotAgent) buildTools(rt agentinterfaces.Runtime, req agenttypes.Request) []copilot.Tool {
 	out := make([]copilot.Tool, 0)
 
-	// 工具执行上下文 = 本轮业务事实（SystemPromptVars 等，来自请求）+ 进程级服务能力
-	// （AnalysisNodeRunner，来自 Options）。二者分开注入：前者可序列化、随请求来，后者不可
-	// 序列化、进程内复用。
+	// 工具执行上下文 = 本轮业务事实（RuntimeContext / TaskFacts）+ 权限。
+	// 进程级静态服务已在构建工具注册表时构造注入，Provider 不再逐项注入。
 	// 注意：copilot provider 计划废弃，此处仅保持与新 API 兼容。
 	rc := agentruntime.ToolRuntimeContextFromRequest(req)
-	runner := a.opts.AnalysisNodeRunner
-	agentAnalysisRunner := a.opts.AgentAnalysisRunner
-	fileReader := a.opts.FileReader
-	scriptCreator := a.opts.ScriptCreator
-	nodeCreator := a.opts.AnalysisNodeCreator
-	paramsBuilder := a.opts.AnalysisNodeParamsBuilder
-	nodeUpdater := a.opts.AnalysisNodeUpdater
-	envUpdater := a.opts.AgentEnvUpdater
-	memorySaver := a.opts.MemorySaver
-	files := a.opts.FileHistory
-	browser := a.opts.ProjectResourceBrowser
-	skills := a.opts.Skills
 
 	if a.opts.Tools != nil {
 		runnerExec := agentruntime.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt)
@@ -326,13 +313,7 @@ func (a *copilotAgent) buildTools(rt agentinterfaces.Runtime, req agenttypes.Req
 				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
 					ctx := agentruntime.WithToolPermission(inv.TraceContext, rt)
 					ctx = agentruntime.WithToolFacts(ctx, rt)
-					ctx = agentruntime.WithProjectResourceBrowser(ctx, browser)
-					ctx = agentruntime.WithSkills(ctx, skills)
-					ctx = agentruntime.WithAgentAnalysisRunner(ctx, agentAnalysisRunner)
-					if a.opts.LSP != nil {
-						ctx = agentruntime.WithLSPClients(ctx, a.opts.LSP.Clients())
-					}
-					res := runnerExec.Run(agentruntime.WithToolRuntime(ctx, rc, runner, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, files), agenttypes.ToolCall{
+					res := runnerExec.Run(agentruntime.WithToolRuntimeContext(ctx, rc), agenttypes.ToolCall{
 						ID:        inv.ToolCallID,
 						Name:      name,
 						Arguments: inv.Arguments,

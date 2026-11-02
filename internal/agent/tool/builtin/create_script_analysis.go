@@ -61,7 +61,7 @@ type CreateScriptAnalysisOutput struct {
 //
 // 该工具会创建业务数据（写库 + 写盘），并在默认情况下触发一次节点运行，因此声明
 // write 授权。
-func CreateScriptAnalysis() tool.Tool {
+func CreateScriptAnalysis(creator runtimecontext.AnalysisNodeCreator, runner runtimecontext.AnalysisNodeRunner) tool.Tool {
 	return tool.NewFunc(
 		CreateScriptAnalysisToolName,
 		"为已有脚本创建一个新的独立分析节点（可反复创建，用于同一脚本的多次独立分析）。script_id 必填；node_name 留空时使用脚本名称；可选传入 request_param（键为脚本 io_schema 的 name）作为节点的初始参数，传入时会按 io_schema 解析并生成 params.json。run 可选，默认 true：为 true 时创建后立即运行该节点并等待结束，返回状态、执行日志与日志路径；为 false 时只创建节点不运行（之后可用 run_analysis_node 运行）。返回节点 ID、工作目录、params.json 路径，以及脚本主文件路径（script_file_path）与 io_schema.json 路径（io_schema_path）。所属项目取自当前会话上下文，无需传入。",
@@ -86,7 +86,6 @@ func CreateScriptAnalysis() tool.Tool {
 				return CreateScriptAnalysisOutput{}, fmt.Errorf("create_script_analysis: %w", err)
 			}
 
-			creator := runtimecontext.AnalysisNodeCreatorFrom(ctx)
 			if creator == nil {
 				return CreateScriptAnalysisOutput{}, fmt.Errorf("create_script_analysis: analysis node creator is not available in this runtime")
 			}
@@ -124,7 +123,6 @@ func CreateScriptAnalysis() tool.Tool {
 				return out, nil
 			}
 
-			runner := runtimecontext.AnalysisNodeRunnerFrom(ctx)
 			if runner == nil {
 				out.Ran = false
 				out.Error = "create_script_analysis: analysis node runner is not available in this runtime; the node was created but not run"

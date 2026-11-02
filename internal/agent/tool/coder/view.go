@@ -58,9 +58,9 @@ TIPS:
 )
 
 // NewView 返回 view 工具（带行号读取文件并附带 LSP 诊断）。
-func NewView() tool.Tool { return &viewTool{} }
+func NewView(deps Deps) tool.Tool { return &viewTool{deps: deps} }
 
-type viewTool struct{}
+type viewTool struct{ deps Deps }
 
 // Definition 实现 tool.Tool。
 func (v *viewTool) Definition() tool.Definition {
@@ -135,7 +135,7 @@ func (v *viewTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 		return nil, fmt.Errorf("error reading file: %w", err)
 	}
 
-	clients := lspClients(ctx)
+	clients := v.deps.lspClients()
 	notifyLspOpenFile(ctx, filePath, clients)
 	output := "<file>\n"
 	output += addLineNumbers(content, params.Offset+1)

@@ -33,6 +33,7 @@ type EditResponseMetadata struct {
 }
 
 type editTool struct {
+	deps       Deps
 	lspClients map[string]*lsp.Client
 	files      agentinterfaces.HistoryService
 }
@@ -89,11 +90,11 @@ Remember: when making multiple file edits in a row to the same file, you should 
 )
 
 // NewEdit 返回 edit 工具。
-func NewEdit() tool.Tool { return &editTool{} }
+func NewEdit(deps Deps) tool.Tool { return &editTool{deps: deps} }
 
-// newEditTool 按本次调用 ctx 组装依赖（历史服务 / LSP 客户端来自执行上下文）。
-func newEditTool(ctx context.Context) *editTool {
-	return &editTool{lspClients: lspClients(ctx), files: fileHistory(ctx)}
+// newTool 按构造期注入的依赖组装本次调用的工具实例（LSP 客户端取当前快照）。
+func (e *editTool) newTool() *editTool {
+	return &editTool{deps: e.deps, lspClients: e.deps.lspClients(), files: e.deps.History}
 }
 
 // Definition 实现 tool.Tool。
@@ -124,7 +125,7 @@ func (e *editTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 
 	// 依赖按 ctx 组装到局部变量，不要覆盖接收者：NewEdit 返回的是无状态单例，
 	// 但覆写 e 容易让人误以为工具实例上保存了状态，且无法暴露并发问题。
-	t := newEditTool(ctx)
+	t := e.newTool()
 
 	var (
 		response ToolResponse

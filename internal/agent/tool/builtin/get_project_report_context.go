@@ -60,13 +60,13 @@ const projectReportContextTemplate = `- 报告标题：{{ report_title }}
 //
 // 行为：
 //   - 解析必填入参 report_id；
-//   - 通过注入的 ProjectResourceBrowser 按报告 ID 解析报告标题、工作目录、输出文件与
+//   - 通过构造注入的 ProjectReportContextResolver 按报告 ID 解析报告标题、工作目录、输出文件与
 //     条目列表（名称 / 内容 / 来源类型），条目解析口径与原 RuntimeContextResolver 的
 //     projectReport 分支一致；
 //   - 用内置 pongo2 模板把上述事实渲染成一段 Markdown 文本，作为工具结果返回给模型。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。
-func GetProjectReportContext() tool.Tool {
+func GetProjectReportContext(browser runtimecontext.ProjectReportContextResolver) tool.Tool {
 	return tool.NewFunc(
 		GetProjectReportContextToolName,
 		"按 report_id 获取项目报告的撰写上下文。返回报告标题、工作目录、输出文件，以及报告条目清单：custom 条目直接给出章节名称，analysis_node 条目给出对应分析的结果文件（output.md）绝对路径。撰写 / 总结报告前必须调用本工具，并对每个结果文件读取实际内容后再总结，禁止臆造结果。",
@@ -89,14 +89,13 @@ func GetProjectReportContext() tool.Tool {
 				return "", fmt.Errorf("%s: user_id is required in this runtime", GetProjectReportContextToolName)
 			}
 
-			browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 			if browser == nil {
 				return "", fmt.Errorf("%s: project resource browser is not available in this runtime", GetProjectReportContextToolName)
 			}
 
 			reportCtx, err := browser.GetProjectReportContext(ctx, userID, projectID, reportID)
 			if err != nil {
-				return "", fmt.Errorf("%s: %w", GetProjectReportContextToolName, err)
+				return "", err
 			}
 
 			rendered, err := tool.RenderTemplate(projectReportContextTemplate, map[string]any{

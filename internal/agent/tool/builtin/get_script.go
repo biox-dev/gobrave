@@ -44,7 +44,7 @@ type GetScriptOutput struct {
 //   - 回传脚本名称、描述、绑定的容器模板 ID、主文件路径与 io_schema.json 路径。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。
-func GetScript() tool.Tool {
+func GetScript(browser runtimecontext.ScriptBrowser) tool.Tool {
 	return tool.NewFunc(
 		GetScriptToolName,
 		"按 script_id 查看单个分析脚本的基本信息。返回 name（脚本名称）、description（描述）、container_template_id（脚本绑定的容器模板 ID）、script_file_path（脚本主文件路径，可直接读写以修改脚本内容）与 io_schema_path（脚本输入输出契约 io_schema.json 的路径）。不确定 script_id 时先用 list_project_scripts 列出当前项目脚本。",
@@ -62,7 +62,6 @@ func GetScript() tool.Tool {
 				return GetScriptOutput{}, fmt.Errorf("%s: %w", GetScriptToolName, err)
 			}
 
-			browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 			if browser == nil {
 				return GetScriptOutput{}, fmt.Errorf("%s: project resource browser is not available in this runtime", GetScriptToolName)
 			}

@@ -66,7 +66,7 @@ type LoadSkillResourceOutput struct {
 }
 
 // GetSkill 返回「按名称加载技能指令」工具。
-func GetSkill() tool.Tool {
+func GetSkill(resolver runtimecontext.SkillResolver) tool.Tool {
 	return tool.NewFunc(
 		GetSkillToolName,
 		"Load a skill's full instructions (the body of its SKILL.md) by name. When the user's request matches an available skill's description, call this first and follow the returned instructions. Returns instructions plus the skill description, version and the list of bundled resources (read them with load_skill_resource).",
@@ -75,7 +75,7 @@ func GetSkill() tool.Tool {
 			"version": tool.StringProperty("可选：技能版本（精确匹配）。留空表示使用当前已安装版本。"),
 		}, "name"),
 		func(ctx context.Context, in GetSkillInput) (GetSkillOutput, error) {
-			return ResolveSkillOutput(ctx, runtimecontext.SkillResolverFrom(ctx), in.Name, in.Version)
+			return ResolveSkillOutput(ctx, resolver, in.Name, in.Version)
 		},
 	)
 }
@@ -121,7 +121,7 @@ func ResolveSkillOutput(ctx context.Context, resolver runtimecontext.SkillResolv
 //
 // 用于读取参考文档、脚本源码、模板、Schema 等附属文件，而不是再次读取完整的技能
 // 指令（那应该用 get_skill）。只允许访问技能目录内部的文件。
-func LoadSkillResource() tool.Tool {
+func LoadSkillResource(resolver runtimecontext.SkillResolver) tool.Tool {
 	return tool.NewFunc(
 		LoadSkillResourceToolName,
 		"Load a bundled resource of a skill: reference documents, script sources, templates, JSON schemas, etc. Use it instead of re-reading the full skill instructions. `path` must be relative to the skill directory (e.g. references/design.md, scripts/run_analysis.R, templates/params.schema.json).",
@@ -131,7 +131,6 @@ func LoadSkillResource() tool.Tool {
 			"version": tool.StringProperty("可选：技能版本（精确匹配）。留空表示使用当前已安装版本。"),
 		}, "name", "path"),
 		func(ctx context.Context, in LoadSkillResourceInput) (LoadSkillResourceOutput, error) {
-			resolver := runtimecontext.SkillResolverFrom(ctx)
 			if resolver == nil {
 				return LoadSkillResourceOutput{}, fmt.Errorf("%s: skill registry is not available in this runtime", LoadSkillResourceToolName)
 			}

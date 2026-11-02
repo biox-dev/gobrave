@@ -54,7 +54,7 @@ type SaveMemoryOutput struct {
 // 写到别的用户名下。
 //
 // 该工具会写入用户级持久化数据，因此声明 write 授权：上层在执行前会先走权限门禁。
-func SaveMemory() tool.Tool {
+func SaveMemory(saver runtimecontext.MemorySaver) tool.Tool {
 	return tool.NewFunc(
 		SaveMemoryToolName,
 		"保存一条长期记忆（跨会话保留）。当调用其他工具遇到可复现的错误（参数格式不对、上下文缺失、环境未配置等）时，用它把「错误现象 + 原因 + 下次正确的做法」写成一条注意事项，避免后续重复犯同样的错；也可用于记录用户偏好与已确认的事实。",
@@ -80,7 +80,6 @@ func SaveMemory() tool.Tool {
 				return SaveMemoryOutput{}, fmt.Errorf("save_memory: user id is not available in this runtime")
 			}
 
-			saver := runtimecontext.MemorySaverFrom(ctx)
 			if saver == nil {
 				return SaveMemoryOutput{}, fmt.Errorf("save_memory: memory saver is not available in this runtime")
 			}

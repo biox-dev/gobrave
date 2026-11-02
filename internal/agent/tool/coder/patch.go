@@ -25,6 +25,7 @@ type PatchResponseMetadata struct {
 }
 
 type patchTool struct {
+	deps       Deps
 	lspClients map[string]*lsp.Client
 	files      agentinterfaces.HistoryService
 }
@@ -62,7 +63,7 @@ The tool will apply all changes in a single atomic operation.`
 )
 
 // NewPatch 返回 patch 工具。
-func NewPatch() tool.Tool { return &patchTool{} }
+func NewPatch(deps Deps) tool.Tool { return &patchTool{deps: deps} }
 
 // Definition 实现 tool.Tool。
 func (p *patchTool) Definition() tool.Definition {
@@ -85,8 +86,8 @@ func (p *patchTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 		return nil, toolError("patch_text is required")
 	}
 
-	p.lspClients = lspClients(ctx)
-	p.files = fileHistory(ctx)
+	p.lspClients = p.deps.lspClients()
+	p.files = p.deps.History
 	wd := workingDir(ctx)
 	absPath := func(path string) string {
 		if filepath.IsAbs(path) {

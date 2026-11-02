@@ -49,7 +49,7 @@ type UpdateScriptOutput struct {
 //   - 回传更新后的名称 / 描述与脚本主文件、io_schema.json 路径。
 //
 // 该工具会修改业务数据（写库），因此声明 write 授权：上层在执行前会先走权限门禁。
-func UpdateScript() tool.Tool {
+func UpdateScript(updater runtimecontext.ScriptUpdater) tool.Tool {
 	return tool.NewFunc(
 		UpdateScriptToolName,
 		"更新已有分析脚本的基本信息（name / description）。script_id 必填。只改元数据，不修改脚本内容（脚本内容请直接写脚本主文件）、io_schema 与容器模板；未给出的字段保持原值。返回更新后的名称、描述与脚本主文件路径。",
@@ -70,7 +70,6 @@ func UpdateScript() tool.Tool {
 				return UpdateScriptOutput{}, fmt.Errorf("update_script: at least one of name / description must be provided")
 			}
 
-			updater := runtimecontext.ScriptUpdaterFrom(ctx)
 			if updater == nil {
 				return UpdateScriptOutput{}, fmt.Errorf("update_script: script updater is not available in this runtime")
 			}

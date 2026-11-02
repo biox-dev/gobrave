@@ -39,17 +39,16 @@ type ListContainerTemplatesOutput struct {
 // ListContainerTemplates 返回一个「列出全部容器模板」工具。
 //
 // 行为：
-//   - 通过注入的 ProjectResourceBrowser 列出全部 go_container_template_definition；
+//   - 通过构造注入的 ContainerTemplateBrowser 列出全部 go_container_template_definition；
 //   - 每行回传 definition 的 ID 及关联 ContainerTemplateSpec 的 Name / Description。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。
-func ListContainerTemplates() tool.Tool {
+func ListContainerTemplates(browser runtimecontext.ContainerTemplateBrowser) tool.Tool {
 	return tool.NewFunc(
 		ListContainerTemplatesToolName,
 		"列出系统中全部可运行的容器模板（ContainerTemplateDefinition）。返回每个模板的 id（字符串形式，避免大整数精度丢失，即绑定行主键，可直接用于 container_template_id 引用）、spec_id（关联的共享运行配置 ID）、name（ContainerTemplateSpec 的名称）与 description（ContainerTemplateSpec 的描述）。容器模板是全局资产，不需要传入项目或分页参数。已知具体模板 ID（如用户消息里的 @container:<id>）时，改用 get_container_template 查看该模板自身的 display_name 与 description。",
 		tool.Schema("列出全部容器模板的入参（无需参数）", map[string]any{}),
 		func(ctx context.Context, _ ListContainerTemplatesInput) (ListContainerTemplatesOutput, error) {
-			browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 			if browser == nil {
 				return ListContainerTemplatesOutput{}, fmt.Errorf("%s: project resource browser is not available in this runtime", ListContainerTemplatesToolName)
 			}

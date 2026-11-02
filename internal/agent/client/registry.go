@@ -6,8 +6,6 @@ import (
 	"strings"
 	"sync"
 
-	lspmanager "github.com/biox-dev/gobrave/internal/agent/lsp/manager"
-	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
@@ -83,95 +81,11 @@ type Options struct {
 	//
 	// Provider 据此向模型暴露工具定义（tool.List()），并通过 ToolRunner /
 	// tool.Executor 执行模型发起的工具调用。为 nil 表示本次调用不启用工具。
+	//
+	// 内置 / coder 工具的进程级静态依赖（分析节点执行器、脚本与报告浏览器、技能解析等）
+	// 在 container 构建注册表时通过构造注入完成（见 builtin.Deps / coder.Deps），
+	// Options 不再承载这些服务对象，Provider 也无需逐项注入工具 ctx。
 	Tools *tool.Registry `json:"-"`
-
-	// AnalysisNodeRunner 是「运行分析节点」的进程级静态服务能力（可为 nil）。
-	//
-	// 它不是进程/请求状态，只在构建 Client 时注入一次，由 Provider 在执行工具前
-	// 注入工具执行 ctx（见 agent.WithToolRuntimeContext / WithAnalysisNodeRunner），
-	// 供 builtin 的 run_analysis_node 工具使用。
-	//
-	// 注意：该能力不放 RuntimeContext —— RuntimeContext 会随 agent.Request 序列化
-	// 入库，而服务对象不可序列化。
-	AnalysisNodeRunner runtimecontext.AnalysisNodeRunner `json:"-"`
-
-	// AgentAnalysisRunner 是「创建（并按需运行）AgentAnalysis 容器任务」的进程级静态服务能力（可为 nil）。
-	//
-	// 与 AnalysisNodeRunner 一样，只在构建 Client 时注入一次，由 Provider 在执行工具前
-	// 注入工具执行 ctx，供 builtin 的 create_agent_analysis 工具使用。
-	AgentAnalysisRunner runtimecontext.AgentAnalysisRunner `json:"-"`
-
-	// FileReader 是「按 go_file 主键 ID 读取文件（含表格预览）」的进程级静态服务能力（可为 nil）。
-	//
-	// 与 AnalysisNodeRunner 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前
-	// 注入工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 read_file_by_id 工具使用。
-	FileReader runtimecontext.FileReader `json:"-"`
-
-	// ScriptCreator 是「创建脚本」的进程级静态服务能力（可为 nil）。
-	//
-	// 与 FileReader 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
-	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script 工具使用。
-	ScriptCreator runtimecontext.ScriptCreator `json:"-"`
-
-	// AnalysisNodeCreator 是「为已有脚本创建分析节点」的进程级静态服务能力（可为 nil）。
-	//
-	// 与 ScriptCreator 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
-	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script_analysis 工具使用。
-	AnalysisNodeCreator runtimecontext.AnalysisNodeCreator `json:"-"`
-
-	// AnalysisNodeParamsBuilder 是「按 io_schema 生成分析节点参数」的进程级静态服务能力（可为 nil）。
-	//
-	// 与 ScriptCreator 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
-	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 build_analysis_node_params 工具使用。
-	AnalysisNodeParamsBuilder runtimecontext.AnalysisNodeParamsBuilder `json:"-"`
-
-	// AnalysisNodeUpdater 是「更新分析节点」的进程级静态服务能力（可为 nil）。
-	//
-	// 与 AnalysisNodeParamsBuilder 一样，它只在构建 Client 时注入一次，由 Provider 在执行
-	// 工具前注入工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的
-	// update_agent_analysis / update_script_analysis 工具使用。
-	AnalysisNodeUpdater runtimecontext.AnalysisNodeUpdater `json:"-"`
-
-	// AgentEnvUpdater 是「把用户当前业务上下文（llmEnv）写回用户记录」的进程级静态服务能力（可为 nil）。
-	//
-	// 与 ScriptCreator 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
-	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 create_script_analysis 工具在
-	// 创建新分析节点后把当前上下文切换过去（EnvID = 新节点 ID，EnvType = analysisNode）。
-	AgentEnvUpdater runtimecontext.AgentEnvUpdater `json:"-"`
-
-	// MemorySaver 是「保存用户长期记忆」的进程级静态服务能力（可为 nil）。
-	//
-	// 与 ScriptCreator 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
-	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 save_memory 工具把「遇到的
-	// 可复现错误 / 注意事项」写入用户长期记忆，后续轮次随背景注入回到系统提示词。
-	MemorySaver runtimecontext.MemorySaver `json:"-"`
-
-	// ProjectResourceBrowser 是「浏览项目内脚本 / 分析节点」的进程级静态服务能力（可为 nil）。
-	//
-	// 与 FileReader 一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前注入
-	// 工具执行 ctx（见 agent.WithToolRuntime），供 builtin 的 list_project_scripts /
-	// get_script / get_analysis_node 三个只读工具使用。
-	ProjectResourceBrowser runtimecontext.ProjectResourceBrowser `json:"-"`
-
-	// Skills 是技能注册表（可为 nil）。
-	//
-	// 它既用于把技能元信息（name / description）注入系统提示词，也由 Provider 注入
-	// 工具执行 ctx（见 agent.WithToolRuntime），供 get_skill / load_skill_resource 工具
-	// 在执行期按名称解析技能并读取指令与附属资源。
-	Skills runtimecontext.SkillResolver `json:"-"`
-
-	// FileHistory 是会话内文件版本历史服务（可为 nil）。
-	//
-	// 从 opencode internal/history 迁移而来，供 edit / write / patch 工具记录文件版本。
-	// 与其它服务能力一样，它只在构建 Client 时注入一次，由 Provider 在执行工具前
-	// 注入工具执行 ctx（见 agent.WithToolRuntime → tool.WithFileHistory）。
-	FileHistory HistoryService `json:"-"`
-
-	// LSP 是 LSP 客户端管理器（可为 nil）。
-	//
-	// 由上层启动并持有各语言的 LSP 客户端；Provider 在每次调用前通过 `LSP.Clients()`
-	// 取当前客户端快照注入工具执行 ctx，供 diagnostics / view / edit / write / patch 使用。
-	LSP *lspmanager.Manager `json:"-"`
 
 	// Sessions / Messages 是会话与消息的持久化服务（可为 nil）。
 	//

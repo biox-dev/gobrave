@@ -43,11 +43,11 @@ type ListProjectScriptsOutput struct {
 //
 // 行为：
 //   - 从 RuntimeContext 取当前项目 ID（缺失时直接报错）；
-//   - 通过注入的 ProjectResourceBrowser 列出该项目下的全部脚本；
+//   - 通过构造注入的 ScriptBrowser 列出该项目下的全部脚本；
 //   - 每个脚本回传名称、描述、主文件路径与 io_schema.json 路径。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。
-func ListProjectScripts() tool.Tool {
+func ListProjectScripts(browser runtimecontext.ScriptBrowser) tool.Tool {
 	return tool.NewFunc(
 		ListProjectScriptsToolName,
 		"列出当前激活项目下的全部分析脚本。返回每个脚本的 script_id（字符串形式，避免大整数精度丢失，可直接传给 get_script）、name（脚本名称）、description（描述）、script_file_path（脚本主文件路径，可直接读写）与 io_schema_path（脚本输入输出契约 io_schema.json 的路径）。需要查看某个脚本的细节时，再用 get_script 按 script_id 查询。所属项目取自当前会话上下文，无需传入。",
@@ -58,7 +58,6 @@ func ListProjectScripts() tool.Tool {
 				return ListProjectScriptsOutput{}, err
 			}
 
-			browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 			if browser == nil {
 				return ListProjectScriptsOutput{}, fmt.Errorf("%s: project resource browser is not available in this runtime", ListProjectScriptsToolName)
 			}

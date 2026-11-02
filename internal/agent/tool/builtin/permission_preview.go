@@ -62,7 +62,7 @@ func textDiffPreview(path, before, after string) tool.PermissionPreview {
 //
 // 任何失败（上下文缺项目 / ID 非法 / 未注入浏览器 / 节点不存在）都返回 ok=false，
 // 由调用方退化为「无旧值」的预览；真正的错误仍由工具主体返回给模型。
-func analysisNodeForPreview(ctx context.Context, toolName, rawNodeID string) (runtimecontext.AnalysisNodeBrief, bool) {
+func analysisNodeForPreview(ctx context.Context, browser runtimecontext.AnalysisNodeBrowser, toolName, rawNodeID string) (runtimecontext.AnalysisNodeBrief, bool) {
 	projectID, err := requireProjectID(ctx, toolName)
 	if err != nil {
 		return runtimecontext.AnalysisNodeBrief{}, false
@@ -71,7 +71,6 @@ func analysisNodeForPreview(ctx context.Context, toolName, rawNodeID string) (ru
 	if err != nil {
 		return runtimecontext.AnalysisNodeBrief{}, false
 	}
-	browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 	if browser == nil {
 		return runtimecontext.AnalysisNodeBrief{}, false
 	}

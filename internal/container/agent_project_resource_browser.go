@@ -18,7 +18,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// 本文件实现 runtimecontext.ProjectResourceBrowser：「浏览项目内的脚本 / 分析节点」与「浏览全局容器模板」。
+// 本文件实现项目资源只读能力（按窄接口拆分：ScriptBrowser / AnalysisNodeBrowser /
+// ContainerTemplateBrowser / DatasetBrowser / ProjectReportContextResolver）：
+// 「浏览项目内的脚本 / 分析节点」与「浏览全局容器模板 / 数据集 / 报告上下文」。
 //
 // 只读内置工具共用同一份实现：
 //   - list_project_scripts：按 RuntimeContext.ProjectID 列出全部脚本；
@@ -34,7 +36,7 @@ import (
 // io_schema.json 布局），节点工作目录与 params.json 取自 analysisRepository 在读取时
 // 还原的绝对路径（WorkspaceDir 落库为相对 storage.base_dir 的路径）。
 
-// projectResourceBrowser 实现 runtimecontext.ProjectResourceBrowser。
+// projectResourceBrowser 同时实现 runtimecontext 的多个只读窄接口，由 container 单点装配。
 type projectResourceBrowser struct {
 	workflowSvc  interfaces.WorkflowService
 	analysisRepo interfaces.AnalysisRepository
@@ -53,8 +55,11 @@ type projectResourceBrowser struct {
 	cfg         *config.Config
 }
 
-// newProjectResourceBrowser 构建「浏览项目内脚本 / 分析节点 / 容器模板 / 数据集 / 报告」执行器并注入内置工具体系。
-func newProjectResourceBrowser(workflowSvc interfaces.WorkflowService, analysisRepo interfaces.AnalysisRepository, containerSvc interfaces.ContainerService, dataSvc interfaces.DataService, projectSvc interfaces.ProjectService, analysisSvc interfaces.AnalysisService, summaryRepo interfaces.AISummaryRepository, cfg *config.Config) runtimecontext.ProjectResourceBrowser {
+// newProjectResourceBrowser 构建「脚本 / 分析节点 / 容器模板 / 数据集 / 报告上下文」只读执行器。
+//
+// 返回具体类型：工具侧按消费者拆成窄接口（runtimecontext.ScriptBrowser 等），
+// 由 buildAgentClient 单点装配到 builtin.Deps；容器内无需再维护组合接口。
+func newProjectResourceBrowser(workflowSvc interfaces.WorkflowService, analysisRepo interfaces.AnalysisRepository, containerSvc interfaces.ContainerService, dataSvc interfaces.DataService, projectSvc interfaces.ProjectService, analysisSvc interfaces.AnalysisService, summaryRepo interfaces.AISummaryRepository, cfg *config.Config) *projectResourceBrowser {
 	return &projectResourceBrowser{
 		workflowSvc:  workflowSvc,
 		analysisRepo: analysisRepo,

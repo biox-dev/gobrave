@@ -8,20 +8,16 @@ import (
 
 // 本文件提供「工具执行期运行时上下文」的载体。
 //
-// builtin 工具是进程内单例（见 builtin.All），在构建期拿不到任何业务上下文；而部分工具
-// （如 run_analysis_node）在执行时既需要业务变量（analysis_node_id 等，来自 RuntimeContext
-// 的 SystemPromptVars），又需要业务服务（AnalysisNodeRunner）。为此约定：
+// 分两类职责：
 //
-//   - RuntimeContextResolver 解析业务 env(type,id) 后产出 RuntimeContext（纯可序列化的
-//     业务事实），随请求（agent.Request.RuntimeContext）传到配置了工具的 Provider，并随
-//     Request 一起被 JSON 序列化进 agent_tasks.request 以便重启后恢复；
-//   - 服务能力（AnalysisNodeRunner）不放 RuntimeContext，而是作为进程级静态依赖放在
-//     agent.Options 上，由 Provider 在执行工具前合并进 ToolRuntime；
-//   - builtin 工具在 Execute(ctx, ...) 中用 RuntimeContextFrom / AnalysisNodeRunnerFrom
-//     分别取出业务变量与服务能力。
+//   - RuntimeContext（本文件的 context 载体）承载可序列化的业务变量（SystemPromptVars），
+//     随请求（agent.Request.RuntimeContext）传到配置了工具的 Provider，并随 Request
+//     一起被 JSON 序列化进 agent_tasks.request 以便重启后恢复；
+//   - 服务能力接口（AnalysisNodeRunner / ScriptBrowser / SkillResolver 等）只是端口类型，
+//     供 builtin.Deps / coder.Deps 在构造工具时注入具体实现；它们不再进 context。
 //
-// 该载体刻意不依赖 agent 包（避免 tool ← agent 的循环引用）：服务能力以最小接口形式
-// 在 tool 包声明，由上层在注入时提供实现。
+// 该包刻意不依赖 agent 包（避免 tool ← agent 的循环引用），因此端口与上下文载体
+// 都放在这里，由上层（container / providers）实现与装配。
 
 // RuntimeContext 是一次 Agent 调用的运行时上下文（业务变量）。
 //
@@ -31,9 +27,8 @@ import (
 // 工作目录属于执行事实，不在这里：由 Resolver 单独返回并落到 Task.WorkingDir。
 //
 // 注意：本结构是纯可序列化的业务事实，会随 Request 一起被 JSON 序列化进 agent_tasks
-// 落库（Task.Request，gorm serializer:json），因此这里绝不能放服务对象
-// （如 AnalysisNodeRunner）——服务能力是进程级静态依赖，改由 agent.Options 注入并在
-// 执行期与业务变量合并。
+// 落库（Task.Request，gorm serializer:json），因此这里绝不能放服务对象——服务能力
+// 是进程级静态依赖，改由 builtin.Deps / coder.Deps 在构造工具时注入。
 type RuntimeContext struct {
 	// Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，
 	// 为空表示默认工作区）。
@@ -47,11 +42,8 @@ type RuntimeContext struct {
 
 // AnalysisNodeRunner 抽象「运行分析节点并等待完成」的业务能力。
 //
-// 由上层（container / handler）注入具体实现，把异步提交、状态轮询、日志读取等业务细节
-// 收敛在一处；tool 包只负责把它暴露给模型。
-//
-// 它是进程级静态依赖（一次注入、所有请求共用），因此不放入 RuntimeContext，而由
-// agent.Options.AnalysisNodeRunner 承载，经 WithAnalysisNodeRunner 注入工具执行 ctx。
+// 由上层（container / handler）实现，经 builtin.Deps 在构造工具时注入；tool 包只负责
+// 把它暴露给模型。
 type AnalysisNodeRunner interface {
 	// RunAnalysisNode 触发分析节点执行并阻塞等待其进入终态，返回执行日志内容。
 	//
@@ -155,36 +147,23 @@ func SystemPromptVar(ctx context.Context, key string) string {
 	return RuntimeContextFrom(ctx).SystemPromptVar(key)
 }
 
-// analysisNodeRunnerKey 是 AnalysisNodeRunner 在 context 中的私有键类型。
-//
-// 与 runtimeContextKey 分开承载：RuntimeContext 是可序列化的业务事实，而
-// AnalysisNodeRunner 是不可序列化的进程级服务——两者来源不同（前者来自业务
-// env 解析，后者来自 agent.Options），生命周期也不同，故不混入同一结构。
-type analysisNodeRunnerKey struct{}
-
-// WithAnalysisNodeRunner 把「运行分析节点」的服务能力注入 context，供 builtin 工具执行期读取。
-//
-// 传入 nil 时返回原 context（不注入）。
-func WithAnalysisNodeRunner(ctx context.Context, runner AnalysisNodeRunner) context.Context {
-	if ctx == nil || runner == nil {
-		return ctx
+// toString 把任意值尽力转为去空白的字符串。
+func toString(v any) string {
+	switch s := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(s)
+	case []byte:
+		return strings.TrimSpace(string(s))
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", v))
 	}
-	return context.WithValue(ctx, analysisNodeRunnerKey{}, runner)
-}
-
-// AnalysisNodeRunnerFrom 取出注入的「运行分析节点」服务能力；未注入时返回 nil。
-func AnalysisNodeRunnerFrom(ctx context.Context) AnalysisNodeRunner {
-	if ctx == nil {
-		return nil
-	}
-	runner, _ := ctx.Value(analysisNodeRunnerKey{}).(AnalysisNodeRunner)
-	return runner
 }
 
 // AgentAnalysisRunner 抽象「创建命令型分析节点（可选运行）并等待其结束」的业务能力。
 //
-// 与 AnalysisNodeRunner 一样，它是进程级静态依赖（一次注入、所有请求共用），
-// 由 agent.Options 承载并在执行工具前注入 ctx。
+// 与 AnalysisNodeRunner 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入。
 type AgentAnalysisRunner interface {
 	// CreateAgentAnalysis 创建一条命令型 AnalysisNode（工作目录、run.sh、容器模板）；
 	// Run 为 nil / true 时复用通用节点链路运行到终态并返回状态、退出码与命令日志，
@@ -225,34 +204,13 @@ type AgentAnalysisResult struct {
 	CommandPath  string `json:"command_path,omitempty"`
 }
 
-// agentAnalysisRunnerKey 是 AgentAnalysisRunner 在 context 中的私有键类型。
-type agentAnalysisRunnerKey struct{}
-
-// WithAgentAnalysisRunner 把「创建并等待 AgentAnalysis 容器任务」的能力注入 ctx。
-func WithAgentAnalysisRunner(ctx context.Context, runner AgentAnalysisRunner) context.Context {
-	if ctx == nil || runner == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, agentAnalysisRunnerKey{}, runner)
-}
-
-// AgentAnalysisRunnerFrom 取出注入的 AgentAnalysis 执行能力；未注入时返回 nil。
-func AgentAnalysisRunnerFrom(ctx context.Context) AgentAnalysisRunner {
-	if ctx == nil {
-		return nil
-	}
-	runner, _ := ctx.Value(agentAnalysisRunnerKey{}).(AgentAnalysisRunner)
-	return runner
-}
-
 // FileReader 抽象「按 go_file 主键 ID 读取文件」的业务能力。
 //
 // 它把「file_id → 文件元信息（含 path）+ 内容预览」的业务细节收敛在上层实现
 // （见 container），tool 包只负责把它暴露给模型。对 tsv / csv / xlsx（全部 sheet）
 // 会解析出列信息与前若干行数据；其它格式只返回文件路径。
 //
-// 与 AnalysisNodeRunner 一样，它是进程级静态依赖（一次注入、所有请求共用），
-// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithFileReader 注入工具执行 ctx。
+// 与 AnalysisNodeRunner 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入。
 type FileReader interface {
 	// ReadFileByID 按 go_file 主键 ID 读取文件，返回文件元信息与内容预览。
 	//
@@ -280,31 +238,6 @@ type FileSheetTab struct {
 	Rows    []map[string]any `json:"rows,omitempty"`
 }
 
-// fileReaderKey 是 FileReader 在 context 中的私有键类型。
-//
-// 与 analysisNodeRunnerKey 分开承载：均为不可序列化的进程级服务，来源与生命周期一致
-// （均来自 agent.Options），但职责不同，故各自独立存放。
-type fileReaderKey struct{}
-
-// WithFileReader 把「按 ID 读取文件」的服务能力注入 context，供 builtin 工具执行期读取。
-//
-// 传入 nil 时返回原 context（不注入）。
-func WithFileReader(ctx context.Context, reader FileReader) context.Context {
-	if ctx == nil || reader == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, fileReaderKey{}, reader)
-}
-
-// FileReaderFrom 取出注入的「按 ID 读取文件」服务能力；未注入时返回 nil。
-func FileReaderFrom(ctx context.Context) FileReader {
-	if ctx == nil {
-		return nil
-	}
-	reader, _ := ctx.Value(fileReaderKey{}).(FileReader)
-	return reader
-}
-
 // ScriptCreator 抽象「创建脚本」的业务能力（create_script）。
 //
 // 职责刻意与节点创建拆开（脚本与节点是两个独立资源）：
@@ -316,8 +249,7 @@ func FileReaderFrom(ctx context.Context) FileReader {
 // 场景（只写脚本）也不必凭空造一个节点。这些细节收敛在上层实现（见 container），
 // tool 包只负责把能力暴露给模型。
 //
-// 与 AnalysisNodeRunner / FileReader 一样，它是进程级静态依赖（一次注入、所有请求共用），
-// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithScriptCreator 注入工具执行 ctx。
+// 与 AnalysisNodeRunner / FileReader 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入。
 type ScriptCreator interface {
 	// CreateScript 创建脚本并初始化脚本目录，返回脚本 ID 与主文件 / io_schema.json 路径。
 	//
@@ -366,8 +298,7 @@ type AnalysisNodeCreateResult struct {
 // 它属于分析节点域（而非脚本域）：脚本必须已存在且 io_schema.json 已写好，
 // 创建时落地节点的 inputs_patterns / output_patterns 并准备好工作目录。
 //
-// 与 ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），
-// 由 agent.Options 承载，经 WithAnalysisNodeCreator 注入工具执行 ctx。
+// 与 ScriptCreator 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入。
 type AnalysisNodeCreator interface {
 	// CreateAnalysisNode 为已有脚本创建一个独立分析节点。
 	//
@@ -386,8 +317,7 @@ type AnalysisNodeCreator interface {
 // 只覆盖请求中给出的字段，再整体回写，避免把未提交的字段写成零值
 // （workflowRepository.UpdateScript 是整体替换语义）。
 //
-// 与 ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），
-// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithScriptUpdater 注入工具执行 ctx。
+// 与 ScriptCreator 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入。
 type ScriptUpdater interface {
 	// UpdateScriptInfo 更新脚本的 name / description，返回更新后的关键信息。
 	//
@@ -422,28 +352,6 @@ type ScriptUpdateResult struct {
 	Changed []string `json:"changed,omitempty"`
 }
 
-// scriptUpdaterKey 是 ScriptUpdater 在 context 中的私有键类型。
-type scriptUpdaterKey struct{}
-
-// WithScriptUpdater 把「更新脚本基本信息」的服务能力注入 context，供 builtin 工具执行期读取。
-//
-// 传入 nil 时返回原 context（不注入）。
-func WithScriptUpdater(ctx context.Context, updater ScriptUpdater) context.Context {
-	if ctx == nil || updater == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, scriptUpdaterKey{}, updater)
-}
-
-// ScriptUpdaterFrom 取出注入的「更新脚本基本信息」服务能力；未注入时返回 nil。
-func ScriptUpdaterFrom(ctx context.Context) ScriptUpdater {
-	if ctx == nil {
-		return nil
-	}
-	updater, _ := ctx.Value(scriptUpdaterKey{}).(ScriptUpdater)
-	return updater
-}
-
 // AnalysisNodeUpdater 抽象「更新已有分析节点」的业务能力。
 //
 // 按节点类型拆成两个入口（节点类型取自 analysis_nodes.creation_source，只有三种）：
@@ -453,8 +361,7 @@ func ScriptUpdaterFrom(ctx context.Context) ScriptUpdater {
 // 实现是「读改写」：先按 analysis_node_id 读出节点，只覆盖请求中给出的字段再回写；
 // 命令 / 参数的变更还会重新生成 run.sh / params.json 等运行期文件。
 //
-// 与 ScriptUpdater 一样，它是进程级静态依赖（一次注入、所有请求共用），
-// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithAnalysisNodeUpdater 注入工具执行 ctx。
+// 与 ScriptUpdater 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入。
 type AnalysisNodeUpdater interface {
 	// UpdateAgentAnalysis 更新 agent 节点（命令节点，无脚本）。
 	//
@@ -529,41 +436,10 @@ type ScriptAnalysisUpdateResult struct {
 	Changed []string `json:"changed,omitempty"`
 }
 
-// analysisNodeUpdaterKey 是 AnalysisNodeUpdater 在 context 中的私有键类型。
-type analysisNodeUpdaterKey struct{}
-
-// WithAnalysisNodeUpdater 把「更新分析节点基本信息」的服务能力注入 context，供 builtin 工具执行期读取。
+// ScriptBrowser 抽象「浏览项目脚本」的只读能力（list_project_scripts / get_script）。
 //
-// 传入 nil 时返回原 context（不注入）。
-func WithAnalysisNodeUpdater(ctx context.Context, updater AnalysisNodeUpdater) context.Context {
-	if ctx == nil || updater == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, analysisNodeUpdaterKey{}, updater)
-}
-
-// AnalysisNodeUpdaterFrom 取出注入的「更新分析节点基本信息」服务能力；未注入时返回 nil。
-func AnalysisNodeUpdaterFrom(ctx context.Context) AnalysisNodeUpdater {
-	if ctx == nil {
-		return nil
-	}
-	updater, _ := ctx.Value(analysisNodeUpdaterKey{}).(AnalysisNodeUpdater)
-	return updater
-}
-
-// ProjectResourceBrowser 抽象「浏览项目脚本 / 分析节点 / 容器模板 / 报告」的业务能力。
-//
-// 供内置工具 list_project_scripts / get_script / get_analysis_node /
-// list_container_templates / get_project_report_context 使用：它们都是纯只读查询，
-// 统一由同一份业务实现承载（见 container.projectResourceBrowser），避免为每个工具
-// 各建一个注入点。
-//
-// 注意：脚本 / 分析节点按当前激活项目隔离，而容器模板是全局资产（不属于某个项目），
-// 因此 ListContainerTemplates 不需要 projectID 参数。
-//
-// 与 ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），因此不放入
-// RuntimeContext，而由 agent.Options 承载，经 WithProjectResourceBrowser 注入工具执行 ctx。
-type ProjectResourceBrowser interface {
+// 脚本按当前激活项目隔离，projectID 由调用方从执行事实（TaskFacts）取得。
+type ScriptBrowser interface {
 	// ListScriptsByProject 返回指定项目下的全部脚本（item_type/pipeline 中 component_type=script）。
 	//
 	// 结果按 id 倒序，不分页（项目内脚本数量有限）；projectID 必须为正数。
@@ -571,42 +447,48 @@ type ProjectResourceBrowser interface {
 
 	// GetScriptByID 按主键读取脚本（必须属于当前激活项目，否则返回错误）。
 	//
-	// projectID 取自 RuntimeContext.ProjectID，scriptID 是 pipeline_components 主键。
+	// projectID 取自执行事实，scriptID 是 pipeline_components 主键。
 	GetScriptByID(ctx context.Context, projectID int64, scriptID int64) (ScriptBrief, error)
+}
 
+// AnalysisNodeBrowser 抽象「按 ID 查看分析节点」的只读能力（get_analysis_node 与更新类工具的预览）。
+type AnalysisNodeBrowser interface {
 	// GetAnalysisNodeByID 按主键读取分析节点（必须属于当前激活项目，否则返回错误）。
 	//
 	// 返回的 WorkspaceDir 是绝对路径，ParamsPath 由 WorkspaceDir 派生。
 	GetAnalysisNodeByID(ctx context.Context, projectID int64, nodeID int64) (AnalysisNodeBrief, error)
+}
 
-	// ListContainerTemplates 返回全部可运行容器模板（容器模板是全局资产，不按项目隔离）。
+// ContainerTemplateBrowser 抽象「浏览容器模板」的只读能力（list_container_templates / get_container_template）。
+//
+// 容器模板是全局资产（不属于某个项目），因此 ListContainerTemplates 不需要 projectID。
+type ContainerTemplateBrowser interface {
+	// ListContainerTemplates 返回全部可运行容器模板。
 	//
 	// 每一项对应一行 go_container_template_definition（ID 即对外的容器模板 ID），
 	// Name / Description 取自该绑定行关联的 go_container_template_spec。
 	ListContainerTemplates(ctx context.Context) ([]ContainerTemplateBrief, error)
 
 	// GetContainerTemplateByID 按主键读取一个可运行容器模板（绑定行 + 绑定的共享运行配置）。
-	//
-	// 用于解析用户输入里的 @container:<id> 引用：返回绑定行自己的 DisplayName 与
-	// Description（longtext），以及 spec / image 等运行信息。容器模板是全局资产，
-	// 不按项目隔离。
 	GetContainerTemplateByID(ctx context.Context, containerTemplateID int64) (ContainerTemplateDetail, error)
+}
 
+// DatasetBrowser 抽象「按 ID 查看数据集」的只读能力（get_dataset）。
+type DatasetBrowser interface {
 	// GetDatasetByID 按主键读取数据集（必须属于当前激活项目，否则返回错误）。
 	//
 	// 用于解析用户输入里的 @dataset:<id> 引用：返回数据集名称 / 描述与其工作目录的
 	// 绝对路径（utils.GetDatasetDir），模型可直接按该路径读取 / 写入数据集文件。
 	GetDatasetByID(ctx context.Context, projectID int64, datasetID int64) (DatasetBrief, error)
+}
 
-	// GetProjectReportContext 按报告 ID 解析「报告撰写」所需的上下文。
+// ProjectReportContextResolver 抽象「按报告 ID 解析报告撰写上下文」的能力
+// （get_project_report_context）。
+type ProjectReportContextResolver interface {
+	// GetProjectReportContext 返回报告标题、工作目录、输出文件与已解析的条目列表。
 	//
-	// 返回报告标题、报告工作目录、输出文件路径与已解析的条目列表（名称 / 内容 / 来源类型）。
-	// 这段解析原先写在 handler.RuntimeContextResolver.Resolve 的 projectReport 分支，把结果
-	// 注入系统提示词变量 project_report_items；改为由 get_project_report_context 工具在
-	// 执行期按 reportID 拉取后，报告工作区不再依赖系统提示词里的条目快照。
-	//
-	// reportID 必须属于当前激活项目（projectID），否则返回错误；userID 用于校验报告条目
-	// 列表的访问权限。
+	// reportID 必须属于当前激活项目（projectID），否则返回错误；userID 用于校验报告
+	// 条目列表的访问权限。
 	GetProjectReportContext(ctx context.Context, userID int64, projectID int64, reportID int64) (ProjectReportContext, error)
 }
 
@@ -708,34 +590,11 @@ type ProjectReportItemBrief struct {
 	OwnerType string `json:"owner_type"`
 }
 
-// projectResourceBrowserKey 是 ProjectResourceBrowser 在 context 中的私有键类型。
-type projectResourceBrowserKey struct{}
-
-// WithProjectResourceBrowser 把「浏览项目内脚本 / 分析节点」的服务能力注入 context。
-//
-// 传入 nil 时返回原 context（不注入）。
-func WithProjectResourceBrowser(ctx context.Context, browser ProjectResourceBrowser) context.Context {
-	if ctx == nil || browser == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, projectResourceBrowserKey{}, browser)
-}
-
-// ProjectResourceBrowserFrom 取出注入的「浏览项目内脚本 / 分析节点」服务能力；未注入时返回 nil。
-func ProjectResourceBrowserFrom(ctx context.Context) ProjectResourceBrowser {
-	if ctx == nil {
-		return nil
-	}
-	browser, _ := ctx.Value(projectResourceBrowserKey{}).(ProjectResourceBrowser)
-	return browser
-}
-
 // SkillResolver 抽象「按名称解析技能」的能力，供技能工具（get_skill /
 // load_skill_resource）在执行期读取技能指令与附属资源。
 //
 // 声明为接口而不是直接依赖 skill 包，是为了避免 tool ← skill 的循环引用：
-// skill 包用它自己的 *Registry 实现本接口，并由 Provider 在构建工具执行 ctx 时注入
-// （见 agent.WithToolRuntime / skill.RegistryFrom）。
+// skill 包用它自己的 *Registry 实现本接口，并由 container 在构造 builtin.Deps 时注入。
 type SkillResolver interface {
 	// Get 按名称解析技能；不存在时 ok 为 false。
 	Get(name string) (SkillResource, bool)
@@ -765,27 +624,6 @@ type SkillInfo struct {
 	// DisableRender 为 true 时，技能文本（指令正文 / 附属资源）按原文返回，
 	// 不做 pongo2 模板渲染（见 skill.Skill.DisableRender）。
 	DisableRender bool
-}
-
-// skillResolverKey 是 SkillResolver 在 context 中的私有键类型。
-type skillResolverKey struct{}
-
-// WithSkillResolver 把「按名称解析技能」的能力注入 context，供 get_skill /
-// load_skill_resource 工具执行期读取。传入 nil 时返回原 context（不注入）。
-func WithSkillResolver(ctx context.Context, resolver SkillResolver) context.Context {
-	if ctx == nil || resolver == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, skillResolverKey{}, resolver)
-}
-
-// SkillResolverFrom 取出注入的技能解析能力；未注入时返回 nil。
-func SkillResolverFrom(ctx context.Context) SkillResolver {
-	if ctx == nil {
-		return nil
-	}
-	resolver, _ := ctx.Value(skillResolverKey{}).(SkillResolver)
-	return resolver
 }
 
 // ScriptCreateInput 是「创建脚本」的入参（不创建分析节点）。
@@ -824,102 +662,6 @@ type ScriptCreateResult struct {
 	ContainerTemplateName string `json:"container_template_name,omitempty"`
 }
 
-// scriptCreatorKey 是 ScriptCreator 在 context 中的私有键类型。
-type scriptCreatorKey struct{}
-
-// WithScriptCreator 把「创建脚本 + 分析节点」的服务能力注入 context，供 builtin 工具执行期读取。
-//
-// 传入 nil 时返回原 context（不注入）。
-func WithScriptCreator(ctx context.Context, creator ScriptCreator) context.Context {
-	if ctx == nil || creator == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, scriptCreatorKey{}, creator)
-}
-
-// ScriptCreatorFrom 取出注入的「创建脚本」服务能力；未注入时返回 nil。
-func ScriptCreatorFrom(ctx context.Context) ScriptCreator {
-	if ctx == nil {
-		return nil
-	}
-	creator, _ := ctx.Value(scriptCreatorKey{}).(ScriptCreator)
-	return creator
-}
-
-// analysisNodeCreatorKey 是 AnalysisNodeCreator 在 context 中的私有键类型。
-type analysisNodeCreatorKey struct{}
-
-// WithAnalysisNodeCreator 把「为已有脚本创建分析节点」的服务能力注入 context，
-// 供 builtin 的 create_script_analysis 工具执行期读取。传入 nil 时返回原 context。
-func WithAnalysisNodeCreator(ctx context.Context, creator AnalysisNodeCreator) context.Context {
-	if ctx == nil || creator == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, analysisNodeCreatorKey{}, creator)
-}
-
-// AnalysisNodeCreatorFrom 取出注入的「为已有脚本创建分析节点」服务能力；未注入时返回 nil。
-func AnalysisNodeCreatorFrom(ctx context.Context) AnalysisNodeCreator {
-	if ctx == nil {
-		return nil
-	}
-	creator, _ := ctx.Value(analysisNodeCreatorKey{}).(AnalysisNodeCreator)
-	return creator
-}
-
-// AgentEnvUpdater 抽象「把用户当前业务上下文（llmEnv）写回用户记录」的业务能力。
-//
-// 业务页面进入时由前端调用 /auth/agent-env 写入 user.AgentConfig.EnvID / EnvType；
-// 而 create_script 这类「在 Agent 会话内新建了业务对象」的工具，需要把上下文就地切到
-// 新对象上（新分析节点），否则后续对话仍停留在旧上下文 / 默认工作目录。该能力让工具
-// 无需依赖具体的 user service / repository。
-//
-// 与 ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），
-// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithAgentEnvUpdater 注入工具执行 ctx。
-type AgentEnvUpdater interface {
-	// UpdateAgentEnv 把指定用户的 AgentConfig.EnvID / EnvType 覆盖为给定值。
-	//
-	// 只改业务上下文，不触碰 Profile 与权限策略。envType 为空表示清空上下文；
-	// 非法 envType（不属于 handler 约定的枚举）由实现决定是否报错。
-	UpdateAgentEnv(ctx context.Context, userID int64, envID string, envType string) error
-}
-
-// agentEnvUpdaterKey 是 AgentEnvUpdater 在 context 中的私有键类型。
-type agentEnvUpdaterKey struct{}
-
-// WithAgentEnvUpdater 把「更新用户业务上下文」的服务能力注入 context，供 builtin 工具执行期读取。
-//
-// 传入 nil 时返回原 context（不注入）。
-func WithAgentEnvUpdater(ctx context.Context, updater AgentEnvUpdater) context.Context {
-	if ctx == nil || updater == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, agentEnvUpdaterKey{}, updater)
-}
-
-// AgentEnvUpdaterFrom 取出注入的「更新用户业务上下文」服务能力；未注入时返回 nil。
-func AgentEnvUpdaterFrom(ctx context.Context) AgentEnvUpdater {
-	if ctx == nil {
-		return nil
-	}
-	updater, _ := ctx.Value(agentEnvUpdaterKey{}).(AgentEnvUpdater)
-	return updater
-}
-
-// toString 把任意值尽力转为去空白的字符串。
-func toString(v any) string {
-	switch s := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return strings.TrimSpace(s)
-	case []byte:
-		return strings.TrimSpace(string(s))
-	default:
-		return strings.TrimSpace(fmt.Sprintf("%v", v))
-	}
-}
-
 // AnalysisNodeParamsBuilder 抽象「按脚本 io_schema 解析请求参数 → 落库并生成 params.json」
 // 的业务能力。
 //
@@ -929,9 +671,7 @@ func toString(v any) string {
 // request_param，再通过 NodeRuntimePreparer.Prepare 把配方写成节点 params.json /
 // run.sh / env.sh，使 run_analysis_node 能直接以这份参数运行脚本。
 //
-// 与 AnalysisNodeRunner / ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），
-// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithAnalysisNodeParamsBuilder
-// 注入工具执行 ctx。
+// 与 AnalysisNodeRunner / ScriptCreator 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入。
 type AnalysisNodeParamsBuilder interface {
 	// BuildAnalysisNodeParams 为指定分析节点生成运行期参数文件并落库。
 	//
@@ -969,36 +709,13 @@ type AnalysisNodeParamsResult struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-// analysisNodeParamsBuilderKey 是 AnalysisNodeParamsBuilder 在 context 中的私有键类型。
-type analysisNodeParamsBuilderKey struct{}
-
-// WithAnalysisNodeParamsBuilder 把「生成分析节点参数」的服务能力注入 context，供 builtin 工具执行期读取。
-//
-// 传入 nil 时返回原 context（不注入）。
-func WithAnalysisNodeParamsBuilder(ctx context.Context, builder AnalysisNodeParamsBuilder) context.Context {
-	if ctx == nil || builder == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, analysisNodeParamsBuilderKey{}, builder)
-}
-
-// AnalysisNodeParamsBuilderFrom 取出注入的「生成分析节点参数」服务能力；未注入时返回 nil。
-func AnalysisNodeParamsBuilderFrom(ctx context.Context) AnalysisNodeParamsBuilder {
-	if ctx == nil {
-		return nil
-	}
-	builder, _ := ctx.Value(analysisNodeParamsBuilderKey{}).(AnalysisNodeParamsBuilder)
-	return builder
-}
-
 // MemorySaver 抽象「创建 / 更新一条用户长期记忆」的业务能力。
 //
 // 它把记忆域（agent.Memory / MemoryManager）的持久化细节收敛在上层实现（见 container），
 // tool 包只负责把能力暴露给模型：模型在遭遇可复现的错误后，把「下次如何绕开」的注意事项
 // 写入记忆，后续调用会随背景注入出现在系统提示词里。
 //
-// 与 AnalysisNodeRunner / ScriptCreator 一样，它是进程级静态依赖（一次注入、所有请求共用），
-// 因此不放入 RuntimeContext，而由 agent.Options 承载，经 WithMemorySaver 注入工具执行 ctx。
+// 与 AnalysisNodeRunner / ScriptCreator 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入。
 type MemorySaver interface {
 	// SaveMemory 创建或更新一条记忆。
 	//
@@ -1036,26 +753,4 @@ type MemorySaveResult struct {
 	Importance int    `json:"importance"`
 	// Created 标识本次是新建（true）还是更新既有记忆（false）。
 	Created bool `json:"created"`
-}
-
-// memorySaverKey 是 MemorySaver 在 context 中的私有键类型。
-type memorySaverKey struct{}
-
-// WithMemorySaver 把「保存长期记忆」的服务能力注入 context，供 builtin 工具执行期读取。
-//
-// 传入 nil 时返回原 context（不注入）。
-func WithMemorySaver(ctx context.Context, saver MemorySaver) context.Context {
-	if ctx == nil || saver == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, memorySaverKey{}, saver)
-}
-
-// MemorySaverFrom 取出注入的「保存长期记忆」服务能力；未注入时返回 nil。
-func MemorySaverFrom(ctx context.Context) MemorySaver {
-	if ctx == nil {
-		return nil
-	}
-	saver, _ := ctx.Value(memorySaverKey{}).(MemorySaver)
-	return saver
 }

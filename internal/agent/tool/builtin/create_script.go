@@ -69,7 +69,7 @@ type CreateScriptOutput struct {
 //   - 把新脚本主文件路径与 io_schema.json 路径回传给模型。
 //
 // 该工具会创建业务数据（写库 + 写盘），因此声明 write 授权：上层在执行前会先走权限门禁。
-func CreateScript() tool.Tool {
+func CreateScript(creator runtimecontext.ScriptCreator) tool.Tool {
 	return tool.NewFunc(
 		CreateScriptToolName,
 		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径，可据此编写脚本内容、补充参数契约。所属项目取自当前会话上下文，无需传入。请在调用时一次性给出 inputs / outputs（脚本输入输出契约，参数名将与 params.json 的键、脚本内读取的参数名一一对应；不传则使用默认 input1/output）。需要运行脚本时，再调用 create_script_analysis（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。\n\n用户消息里可能出现界面插入的引用 chip：@container:<id> 表示用户选中的容器模板（对应 container_template_id），@dataset:<id> 表示用户选中的数据集，@file:<id> 表示文件。遇到 @container:<id> 时，直接把冒号后的 ID 作为 container_template_id 传入，不要丢弃或改写；需要确认该模板的展示名 / 描述时先调用 get_container_template；遇到 @dataset:<id> 时可用 get_dataset 获取其工作目录路径。",
@@ -101,7 +101,6 @@ func CreateScript() tool.Tool {
 				return CreateScriptOutput{}, err
 			}
 
-			creator := runtimecontext.ScriptCreatorFrom(ctx)
 			if creator == nil {
 				return CreateScriptOutput{}, fmt.Errorf("create_script: script creator is not available in this runtime")
 			}

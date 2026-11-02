@@ -121,7 +121,7 @@ Before executing the command, please follow these steps:
 //
 // 该工具会创建分析节点（写库并写出 run.sh），默认还会触发一次运行，因此声明 write 授权，
 // 与其它业务写入类工具共用许可策略。
-func CreateAgentAnalysis() tool.Tool {
+func CreateAgentAnalysis(runner runtimecontext.AgentAnalysisRunner) tool.Tool {
 	return tool.NewFunc(
 		CreateAgentAnalysisToolName,
 		createAgentAnalysisDescription(),
@@ -152,7 +152,6 @@ func CreateAgentAnalysis() tool.Tool {
 				return CreateAgentAnalysisOutput{}, fmt.Errorf("create_agent_analysis: command is required")
 			}
 
-			runner := runtimecontext.AgentAnalysisRunnerFrom(ctx)
 			if runner == nil {
 				return CreateAgentAnalysisOutput{}, fmt.Errorf("create_agent_analysis: agent analysis runner is not available in this runtime")
 			}

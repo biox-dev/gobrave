@@ -6,16 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/lsp"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
-	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 )
 
-// 本文件集中了 coder 工具在 gobrave 运行时下取「工作目录 / 会话 / 服务能力」的方式。
+// 本文件集中了 coder 工具在 gobrave 运行时下取「工作目录 / 会话」的方式。
 //
-// opencode 的工具体直接持有 history.Service / lspClients / permission.Service；
-// gobrave 统一改为从工具执行 ctx 读取（见 tool.WithFileHistory / WithLSPClients），
-// 使工具本身无状态、可在 builtin 注册表里单例复用。
+// 进程级静态依赖（文件历史 / LSP）已改为构造期注入（见 coder.Deps），
+// 这里只保留随请求变化的执行事实。
 
 // workingDir 返回本次调用的工作目录：优先执行事实（TaskFacts.WorkingDir），其次进程 cwd。
 func workingDir(ctx context.Context) string {
@@ -31,16 +28,6 @@ func workingDir(ctx context.Context) string {
 // sessionID 返回本次调用所属会话 ID（0 表示未知）。
 func sessionID(ctx context.Context) int64 {
 	return tool.SessionIDFrom(ctx)
-}
-
-// fileHistory 返回注入的文件历史服务；未注入时返回 nil。
-func fileHistory(ctx context.Context) agentinterfaces.HistoryService {
-	return tool.FileHistoryFrom(ctx)
-}
-
-// lspClients 返回注入的 LSP 客户端集合。
-func lspClients(ctx context.Context) map[string]*lsp.Client {
-	return tool.LSPClientsFrom(ctx)
 }
 
 // permissionPath 返回文件操作的授权范围（对齐 opencode）：

@@ -46,7 +46,7 @@ type GetContainerTemplateOutput struct {
 //     is_default / spec_name 等运行信息。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。
-func GetContainerTemplate() tool.Tool {
+func GetContainerTemplate(browser runtimecontext.ContainerTemplateBrowser) tool.Tool {
 	return tool.NewFunc(
 		GetContainerTemplateToolName,
 		"按 container_template_id 查看单个可运行容器模板（ContainerTemplateDefinition）。用于回答用户对 @container:<id> 引用的提问，也用于在创建脚本 / 分析节点前确认模板用途。返回 display_name（模板展示名）、description（模板自身的长描述）、image_name、pull_policy、is_default（是否系统默认模板）与 spec_name（关联的共享运行配置名）。该 ID 可原样作为 create_script / create_agent_analysis 的 container_template_id。不确定有哪些模板时先用 list_container_templates 列出全部模板。",
@@ -62,7 +62,6 @@ func GetContainerTemplate() tool.Tool {
 				return GetContainerTemplateOutput{}, fmt.Errorf("%s: container_template_id is required", GetContainerTemplateToolName)
 			}
 
-			browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 			if browser == nil {
 				return GetContainerTemplateOutput{}, fmt.Errorf("%s: project resource browser is not available in this runtime", GetContainerTemplateToolName)
 			}

@@ -50,7 +50,7 @@ type BuildAnalysisNodeParamsOutput struct {
 //
 // 该工具会写库并写盘（params.json / run.sh 等运行期文件），因此声明 write 授权：上层在
 // 执行前会先走权限门禁。返回的 Error 为空即表示 params.json 已就绪。
-func BuildAnalysisNodeParams() tool.Tool {
+func BuildAnalysisNodeParams(builder runtimecontext.AnalysisNodeParamsBuilder) tool.Tool {
 	return tool.NewFunc(
 		BuildAnalysisNodeParamsToolName,
 		"根据脚本的 io_schema.json 生成分析节点的运行参数：把 request_param（键为 io_schema 中的 name）解析成节点结构化的输入/输出和解析后输入，刷新节点记录并写出 params.json。返回 params_path 与 params.json 的实际内容。生成后可直接调用 run_analysis_node 以这份参数运行脚本。",
@@ -75,7 +75,6 @@ func BuildAnalysisNodeParams() tool.Tool {
 				return BuildAnalysisNodeParamsOutput{}, fmt.Errorf("build_analysis_node_params: request_param is required and must be a non-empty object")
 			}
 
-			builder := runtimecontext.AnalysisNodeParamsBuilderFrom(ctx)
 			if builder == nil {
 				return BuildAnalysisNodeParamsOutput{}, fmt.Errorf("build_analysis_node_params: analysis node params builder is not available in this runtime")
 			}

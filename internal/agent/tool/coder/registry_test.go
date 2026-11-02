@@ -5,7 +5,7 @@ import "testing"
 // TestAllToolsWellFormed 校验每个 coder 工具都有唯一名称、非空描述与 object schema。
 func TestAllToolsWellFormed(t *testing.T) {
 	seen := make(map[string]bool)
-	for _, tl := range All() {
+	for _, tl := range All(Deps{}) {
 		def := tl.Definition()
 		if def.Name == "" {
 			t.Fatalf("tool with empty name: %#v", def)

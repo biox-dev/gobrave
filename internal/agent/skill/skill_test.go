@@ -163,9 +163,10 @@ func TestGetSkillTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	ctx := runtimecontext.WithSkillResolver(context.Background(), NewRegistryWith(s).Resolver())
+	resolver := NewRegistryWith(s).Resolver()
+	ctx := context.Background()
 
-	out := runTool(t, ctx, GetSkill(), `{"name":"demo-skill"}`)
+	out := runTool(t, ctx, GetSkill(resolver), `{"name":"demo-skill"}`)
 	var got GetSkillOutput
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unmarshal: %v (%s)", err, out)
@@ -184,14 +185,14 @@ func TestGetSkillTool(t *testing.T) {
 	}
 
 	// 版本精确匹配。
-	if out := runTool(t, ctx, GetSkill(), `{"name":"demo-skill","version":"1.2.0"}`); strings.Contains(string(out), `"error"`) {
+	if out := runTool(t, ctx, GetSkill(resolver), `{"name":"demo-skill","version":"1.2.0"}`); strings.Contains(string(out), `"error"`) {
 		t.Fatalf("exact version should succeed: %s", out)
 	}
-	if out := runTool(t, ctx, GetSkill(), `{"name":"demo-skill","version":"9.9.9"}`); !strings.Contains(string(out), "is not available") {
+	if out := runTool(t, ctx, GetSkill(resolver), `{"name":"demo-skill","version":"9.9.9"}`); !strings.Contains(string(out), "is not available") {
 		t.Fatalf("mismatched version should fail: %s", out)
 	}
 	// 未知技能。
-	if out := runTool(t, ctx, GetSkill(), `{"name":"nope"}`); !strings.Contains(string(out), "not found") {
+	if out := runTool(t, ctx, GetSkill(resolver), `{"name":"nope"}`); !strings.Contains(string(out), "not found") {
 		t.Fatalf("unknown skill should fail: %s", out)
 	}
 }
@@ -211,9 +212,10 @@ func TestLoadSkillResourceTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	ctx := runtimecontext.WithSkillResolver(context.Background(), NewRegistryWith(s).Resolver())
+	resolver := NewRegistryWith(s).Resolver()
+	ctx := context.Background()
 
-	out := runTool(t, ctx, LoadSkillResource(), `{"name":"demo-skill","path":"references/design.md"}`)
+	out := runTool(t, ctx, LoadSkillResource(resolver), `{"name":"demo-skill","path":"references/design.md"}`)
 	var got LoadSkillResourceOutput
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unmarshal: %v (%s)", err, out)
@@ -226,15 +228,15 @@ func TestLoadSkillResourceTool(t *testing.T) {
 	}
 
 	// 目录穿越被拒绝。
-	if out := runTool(t, ctx, LoadSkillResource(), `{"name":"demo-skill","path":"../../etc/passwd"}`); !strings.Contains(string(out), "escapes the skill directory") {
+	if out := runTool(t, ctx, LoadSkillResource(resolver), `{"name":"demo-skill","path":"../../etc/passwd"}`); !strings.Contains(string(out), "escapes the skill directory") {
 		t.Fatalf("traversal should be rejected: %s", out)
 	}
 	// 绝对路径被规范化到技能目录内（不会读到技能目录外的文件）。
-	if out := runTool(t, ctx, LoadSkillResource(), `{"name":"demo-skill","path":"/etc/passwd"}`); !strings.Contains(string(out), "no such file or directory") {
+	if out := runTool(t, ctx, LoadSkillResource(resolver), `{"name":"demo-skill","path":"/etc/passwd"}`); !strings.Contains(string(out), "no such file or directory") {
 		t.Fatalf("absolute path must stay inside the skill dir: %s", out)
 	}
 	// 不允许用本工具重复读取 SKILL.md。
-	if out := runTool(t, ctx, LoadSkillResource(), `{"name":"demo-skill","path":"SKILL.md"}`); !strings.Contains(string(out), "get_skill") {
+	if out := runTool(t, ctx, LoadSkillResource(resolver), `{"name":"demo-skill","path":"SKILL.md"}`); !strings.Contains(string(out), "get_skill") {
 		t.Fatalf("SKILL.md should point at get_skill: %s", out)
 	}
 }
@@ -271,10 +273,10 @@ func TestSkillTemplateRenderSwitch(t *testing.T) {
 	ctx := runtimecontext.WithRuntimeContext(context.Background(), &runtimecontext.RuntimeContext{
 		SystemPromptVars: map[string]any{"workspace_directory": "/w/demo"},
 	})
-	ctx = runtimecontext.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
+	resolver := NewRegistryWith(s).Resolver()
 
 	var got GetSkillOutput
-	if err := json.Unmarshal(runTool(t, ctx, GetSkill(), `{"name":"tpl-skill"}`), &got); err != nil {
+	if err := json.Unmarshal(runTool(t, ctx, GetSkill(resolver), `{"name":"tpl-skill"}`), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if !strings.Contains(got.Instructions, "workspace: /w/demo") {
@@ -283,8 +285,8 @@ func TestSkillTemplateRenderSwitch(t *testing.T) {
 
 	// 打开开关后不再渲染。
 	s.DisableRender = true
-	ctx = runtimecontext.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
-	if err := json.Unmarshal(runTool(t, ctx, GetSkill(), `{"name":"tpl-skill"}`), &got); err != nil {
+	resolver = NewRegistryWith(s).Resolver()
+	if err := json.Unmarshal(runTool(t, ctx, GetSkill(resolver), `{"name":"tpl-skill"}`), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if !strings.Contains(got.Instructions, "{{ workspace_directory }}") {
@@ -300,7 +302,7 @@ func TestSkillTemplateRenderSwitch(t *testing.T) {
 		t.Fatalf("write resource: %v", err)
 	}
 	var res LoadSkillResourceOutput
-	if err := json.Unmarshal(runTool(t, ctx, LoadSkillResource(), `{"name":"tpl-skill","path":"references/vars.md"}`), &res); err != nil {
+	if err := json.Unmarshal(runTool(t, ctx, LoadSkillResource(resolver), `{"name":"tpl-skill","path":"references/vars.md"}`), &res); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if res.Content != "dir={{ workspace_directory }}" {
@@ -308,8 +310,8 @@ func TestSkillTemplateRenderSwitch(t *testing.T) {
 	}
 
 	s.DisableRender = false
-	ctx = runtimecontext.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
-	if err := json.Unmarshal(runTool(t, ctx, LoadSkillResource(), `{"name":"tpl-skill","path":"references/vars.md"}`), &res); err != nil {
+	resolver = NewRegistryWith(s).Resolver()
+	if err := json.Unmarshal(runTool(t, ctx, LoadSkillResource(resolver), `{"name":"tpl-skill","path":"references/vars.md"}`), &res); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if res.Content != "dir=/w/demo" {

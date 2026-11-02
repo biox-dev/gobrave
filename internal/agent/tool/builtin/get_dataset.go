@@ -41,7 +41,7 @@ type GetDatasetOutput struct {
 //   - 回传数据集名称、描述与工作目录绝对路径。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。
-func GetDataset() tool.Tool {
+func GetDataset(browser runtimecontext.DatasetBrowser) tool.Tool {
 	return tool.NewFunc(
 		GetDatasetToolName,
 		"按 dataset_id 查看单个数据集。用于回答用户对 @dataset:<id> 引用的提问，或在分析前确认数据集位置。返回 dataset_name（数据集名称）、description（描述）与 path（数据集工作目录的绝对路径，可直接在该目录下读写文件）。数据集按当前激活项目隔离，不属于当前项目时会报错。",
@@ -59,7 +59,6 @@ func GetDataset() tool.Tool {
 				return GetDatasetOutput{}, fmt.Errorf("%s: %w", GetDatasetToolName, err)
 			}
 
-			browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 			if browser == nil {
 				return GetDatasetOutput{}, fmt.Errorf("%s: project resource browser is not available in this runtime", GetDatasetToolName)
 			}

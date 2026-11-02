@@ -212,30 +212,16 @@ func (a *customAgent) newAgentTool(req agenttypes.Request, rt agentinterfaces.Ru
 	})
 }
 
-// toolContext 返回工具执行前的 ctx 装饰函数：注入权限、请求事实与进程级服务能力。
+// toolContext 返回工具执行前的 ctx 装饰函数：注入权限、请求事实与运行时业务变量。
+//
+// 进程级静态服务（分析节点执行器、脚本 / 报告浏览器、技能解析等）已在构建工具注册表时
+// 通过构造注入（builtin.Deps / coder.Deps），这里不再逐项注入 ctx。
 func (a *customAgent) toolContext(req agenttypes.Request, rt agentinterfaces.Runtime) func(context.Context) context.Context {
 	rc := agentruntime.ToolRuntimeContextFromRequest(req)
-	services := a.opts
 	return func(ctx context.Context) context.Context {
 		ctx = agentruntime.WithToolPermission(ctx, rt)
 		ctx = agentruntime.WithToolFacts(ctx, rt)
-		ctx = agentruntime.WithToolRuntime(ctx, rc,
-			services.AnalysisNodeRunner,
-			services.FileReader,
-			services.ScriptCreator,
-			services.AnalysisNodeCreator,
-			services.AnalysisNodeParamsBuilder,
-			services.AnalysisNodeUpdater,
-			services.AgentEnvUpdater,
-			services.MemorySaver,
-			services.FileHistory,
-		)
-		ctx = agentruntime.WithAgentAnalysisRunner(ctx, services.AgentAnalysisRunner)
-		ctx = agentruntime.WithProjectResourceBrowser(ctx, services.ProjectResourceBrowser)
-		ctx = agentruntime.WithSkills(ctx, services.Skills)
-		if services.LSP != nil {
-			ctx = agentruntime.WithLSPClients(ctx, services.LSP.Clients())
-		}
+		ctx = agentruntime.WithToolRuntimeContext(ctx, rc)
 		return ctx
 	}
 }

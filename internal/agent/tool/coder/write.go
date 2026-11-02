@@ -26,6 +26,7 @@ type WritePermissionsParams struct {
 }
 
 type writeTool struct {
+	deps       Deps
 	lspClients map[string]*lsp.Client
 	files      agentinterfaces.HistoryService
 }
@@ -69,7 +70,7 @@ TIPS:
 )
 
 // NewWrite 返回 write 工具。
-func NewWrite() tool.Tool { return &writeTool{} }
+func NewWrite(deps Deps) tool.Tool { return &writeTool{deps: deps} }
 
 // Definition 实现 tool.Tool。
 func (w *writeTool) Definition() tool.Definition {
@@ -153,8 +154,8 @@ func (w *writeTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 		return nil, fmt.Errorf("error writing file: %w", err)
 	}
 
-	w.files = fileHistory(ctx)
-	w.lspClients = lspClients(ctx)
+	w.files = w.deps.History
+	w.lspClients = w.deps.lspClients()
 	if w.files != nil {
 		file, histErr := w.files.GetByPathAndSession(ctx, filePath, sid)
 		if histErr != nil {

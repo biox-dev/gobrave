@@ -51,7 +51,7 @@ type ReadFileSheetTab struct {
 //
 // 该工具是只读的，因此声明 read 授权：路径取自入参 file_id 解析后的文件，上层在执行前
 // 会先走权限门禁。
-func ReadFileByID() tool.Tool {
+func ReadFileByID(reader runtimecontext.FileReader) tool.Tool {
 	return tool.NewFunc(
 		ReadFileByIDToolName,
 		"根据文件 ID 读取文件内容。用于回答用户对 @file:<id> 引用文件的提问（如“这个文件有什么列/内容是什么”）。对 tsv/csv/xlsx 返回所有列名与最多前 5 行数据，其它格式只返回文件路径。",
@@ -64,7 +64,6 @@ func ReadFileByID() tool.Tool {
 				return ReadFileByIDOutput{}, err
 			}
 
-			reader := runtimecontext.FileReaderFrom(ctx)
 			if reader == nil {
 				return ReadFileByIDOutput{}, fmt.Errorf("read_file_by_id: file reader is not available in this runtime")
 			}

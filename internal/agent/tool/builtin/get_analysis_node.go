@@ -70,7 +70,7 @@ const analysisNodeTypeAgent = "agent"
 //     已保存的 request_param，不回传 command_path。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。
-func GetAnalysisNode() tool.Tool {
+func GetAnalysisNode(browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
 	return tool.NewFunc(
 		GetAnalysisNodeToolName,
 		"按 analysis_node_id 查看分析节点。返回 node_name（节点名称）、node_type / creation_source（节点类型：agent 为 Agent 命令节点、script 为脚本节点、scheduler 为 DAG 调度器节点）与 node_type_description（类型说明及可用工具）、workspace_dir（节点工作目录绝对路径，output / params.json / run.sh / command.log 均在其下）与 params_path（节点 params.json 路径）。返回字段按节点类型区分：node_type=agent 时返回 command_path（节点 run.sh 绝对路径，可直接读取以复核命令），不返回 script_id / request_param；node_type=script / scheduler 时返回 script_id 与 request_param（节点上已保存的请求参数，键为脚本 io_schema 中的 name），不返回 command_path。修改节点前先看 node_type：agent 类型用 update_agent_analysis，script / scheduler 类型用 update_script_analysis；三种类型都可以用 run_analysis_node 运行，脚本型节点重算参数用 build_analysis_node_params。",
@@ -88,7 +88,6 @@ func GetAnalysisNode() tool.Tool {
 				return GetAnalysisNodeOutput{}, fmt.Errorf("%s: %w", GetAnalysisNodeToolName, err)
 			}
 
-			browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 			if browser == nil {
 				return GetAnalysisNodeOutput{}, fmt.Errorf("%s: project resource browser is not available in this runtime", GetAnalysisNodeToolName)
 			}

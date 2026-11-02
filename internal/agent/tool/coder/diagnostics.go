@@ -45,9 +45,9 @@ TIPS:
 )
 
 // NewDiagnostics 返回 diagnostics 工具（读取 LSP 诊断结果）。
-func NewDiagnostics() tool.Tool { return &diagnosticsTool{} }
+func NewDiagnostics(deps Deps) tool.Tool { return &diagnosticsTool{deps: deps} }
 
-type diagnosticsTool struct{}
+type diagnosticsTool struct{ deps Deps }
 
 // Definition 实现 tool.Tool。
 func (d *diagnosticsTool) Definition() tool.Definition {
@@ -67,7 +67,7 @@ func (d *diagnosticsTool) Execute(ctx context.Context, args json.RawMessage) (an
 		return nil, toolError(fmt.Sprintf("error parsing parameters: %s", err))
 	}
 
-	clients := lspClients(ctx)
+	clients := d.deps.lspClients()
 	if len(clients) == 0 {
 		return nil, toolError("no LSP clients available")
 	}

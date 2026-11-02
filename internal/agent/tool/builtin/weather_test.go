@@ -9,7 +9,7 @@ import (
 )
 
 func TestGetWeather(t *testing.T) {
-	exec := tool.NewExecutor(tool.NewRegistryWith(All()...))
+	exec := tool.NewExecutor(tool.NewRegistryWith(All(Deps{})...))
 
 	res := exec.Execute(context.Background(), tool.Call{
 		ID:        "c1",

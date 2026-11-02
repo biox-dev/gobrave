@@ -84,7 +84,7 @@ type RunAnalysisNodeOutput struct {
 // 该工具会改变计算状态（触发一次节点运行），因此声明 analysis_node 授权：与直接执行
 // shell / 脚本（execute）区分开，便于按动作粒度配置许可策略（如允许 execute 但限制
 // analysis_node，或反之）。上层在执行前会先走权限门禁。
-func RunAnalysisNode() tool.Tool {
+func RunAnalysisNode(runner runtimecontext.AnalysisNodeRunner) tool.Tool {
 	return tool.NewFunc(
 		RunAnalysisNodeToolName,
 		"运行指定分析节点（analysis_node_id 必填），可运行所有节点类型（creation_source = agent / script / scheduler，即 get_analysis_node 返回的 node_type 均可）。等待其完成后返回节点状态、绑定的 script_id、执行日志（log；截断时用 log_path 读取完整日志）、params_path、params.json 正文与本次生效的 request_param。agent 命令节点（无脚本）直接运行节点自身的 run.sh；script / scheduler 脚本节点使用节点上已保存的 request_param（修改参数请用 build_analysis_node_params；update_script_analysis 默认更新后运行，适合「改参数并立即运行」），运行前会按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param 并清空上一轮 input_validation_errors / output_validation_errors；运行前还会清空节点输出目录（output），因此输出只包含本次运行的产物。",
@@ -93,17 +93,11 @@ func RunAnalysisNode() tool.Tool {
 			"timeout_seconds":  tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600。"),
 		}, "analysis_node_id"),
 		func(ctx context.Context, in RunAnalysisNodeInput) (RunAnalysisNodeOutput, error) {
-			rc := runtimecontext.RuntimeContextFrom(ctx)
-			if rc == nil {
-				return RunAnalysisNodeOutput{}, fmt.Errorf("run_analysis_node: runtime context is not available in this tool execution")
-			}
-
 			nodeID, err := parseAnalysisNodeID(in.AnalysisNodeID)
 			if err != nil {
 				return RunAnalysisNodeOutput{}, err
 			}
 
-			runner := runtimecontext.AnalysisNodeRunnerFrom(ctx)
 			if runner == nil {
 				return RunAnalysisNodeOutput{}, fmt.Errorf("run_analysis_node: analysis node runner is not available in this runtime")
 			}

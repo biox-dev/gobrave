@@ -12,18 +12,19 @@ package coder
 import "github.com/biox-dev/gobrave/internal/agent/tool"
 
 // All 返回全部 coder 工具。新增工具时在此追加即可自动接入各 Provider。
-func All() []tool.Tool {
+// All 返回全部 coder 工具。静态依赖（文件历史 / LSP）由 container 在构建期注入。
+func All(deps Deps) []tool.Tool {
 	return []tool.Tool{
 		NewBash(),
-		NewEdit(),
-		NewView(),
-		NewWrite(),
-		NewPatch(),
+		NewEdit(deps),
+		NewView(deps),
+		NewWrite(deps),
+		NewPatch(deps),
 		NewGlob(),
 		NewGrep(),
 		NewLs(),
 		NewFetch(),
 		NewSourcegraph(),
-		NewDiagnostics(),
+		NewDiagnostics(deps),
 	}
 }
