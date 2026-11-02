@@ -399,6 +399,10 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 临时容器探测器：把「模板 → 临时容器 → 同步执行命令 → 自动清理」能力暴露给
 	// 内置工具 probe_container_env，复用 executeCreate 的变量 / 挂载 / env 组装链路。
 	must(container.Provide(manager.NewContainerProbeRunner))
+	// 同一实例同时暴露为 Agent 工具端口，供 probe_container_env 注入。
+	must(container.Provide(func(probe *manager.ContainerProbeRunner) runtimecontext.ContainerEnvProbe {
+		return probe
+	}))
 	// 文件读取器：把「按 go_file 主键 ID 读取文件（含表格预览）」能力暴露给内置工具
 	// read_file_by_id，由 Provider 在执行工具前注入工具 ctx。
 	must(container.Provide(newFileReader))

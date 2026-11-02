@@ -226,6 +226,73 @@ func (k *KubernetesRuntime) StartAndWait(ctx context.Context, runtimeID string) 
 	}
 }
 
+// StartForTerminal starts a long-lived workload and waits until a pod is running
+// so an interactive exec can attach. It does not register asynchronous monitoring;
+// the caller deletes the workload when the terminal closes.
+func (k *KubernetesRuntime) StartForTerminal(ctx context.Context, runtimeID string) error {
+	meta, err := k.parseRuntimeID(runtimeID)
+	if err != nil {
+		return err
+	}
+
+	switch meta.Kind {
+	case workloadKindDeployment:
+		if err := k.scaleDeployment(ctx, meta.Namespace, meta.Name, 1); err != nil {
+			return err
+		}
+		return k.waitDeploymentAvailable(ctx, meta.Namespace, meta.Name)
+	case workloadKindJob:
+		if err := k.setJobSuspended(ctx, meta.Namespace, meta.Name, false); err != nil {
+			if apierrors.IsNotFound(err) {
+				return fmt.Errorf("job workload is not restartable after delete: %s", runtimeID)
+			}
+			return fmt.Errorf("resume job %s: %w", meta.Name, err)
+		}
+		return k.waitJobPodRunning(ctx, meta.Namespace, meta.Name)
+	default:
+		return fmt.Errorf("unsupported workload kind: %s", meta.Kind)
+	}
+}
+
+func (k *KubernetesRuntime) waitJobPodRunning(ctx context.Context, namespace, name string) error {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		job, err := k.clientset.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get job %s: %w", name, err)
+		}
+		if job.Status.Failed > 0 {
+			return fmt.Errorf("job %s failed: %s", name, jobFailureMessage(job))
+		}
+		if job.Status.Succeeded > 0 {
+			return fmt.Errorf("job %s exited before terminal opened", name)
+		}
+
+		podName, err := k.resolveLatestPodName(ctx, namespace, map[string]string{"gobrave-workload": name})
+		if err == nil {
+			pod, getErr := k.clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+			if getErr == nil {
+				switch pod.Status.Phase {
+				case corev1.PodRunning:
+					return nil
+				case corev1.PodFailed, corev1.PodSucceeded:
+					return fmt.Errorf("pod %s exited before terminal opened (phase=%s)", podName, pod.Status.Phase)
+				}
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("find job pod %s: %w", name, err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (k *KubernetesRuntime) waitJobExit(ctx context.Context, namespace, name string) (int, error) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()

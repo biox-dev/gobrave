@@ -283,6 +283,8 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	r.POST("/container/template/set-default", handler.SetDefaultContainerTemplate)
 	r.POST("/container/template/export", handler.ExportContainerTemplate)
 	r.POST("/container/template/import", handler.ImportContainerTemplate)
+	// 临时容器终端：用模板创建一次性容器并 exec bash，WebSocket 关闭时删除容器。
+	r.GET("/container/template/:templateId/terminal", handler.ContainerTemplateTerminal)
 
 	r.POST("/container/template-spec/create", handler.CreateContainerTemplateSpec)
 	r.GET("/container/template-spec/get", handler.GetContainerTemplateSpec)

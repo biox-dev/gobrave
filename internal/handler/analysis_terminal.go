@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -77,43 +76,7 @@ func (h *AnalysisHandler) AnalysisNodeTerminal(c *gin.Context) {
 	}
 	defer session.Close()
 
-	// 容器输出 -> 浏览器（唯一的 WebSocket 写协程）。
-	go func() {
-		buf := make([]byte, 32*1024)
-		for {
-			n, readErr := session.Read(buf)
-			if n > 0 {
-				if writeErr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); writeErr != nil {
-					return
-				}
-			}
-			if readErr != nil {
-				return
-			}
-		}
-	}()
-
-	// 浏览器输入 -> 容器；文本消息支持 resize 控制帧。
-	for {
-		messageType, data, readErr := conn.ReadMessage()
-		if readErr != nil {
-			return
-		}
-		if messageType == websocket.TextMessage {
-			var control struct {
-				Type string `json:"type"`
-				Rows uint16 `json:"rows"`
-				Cols uint16 `json:"cols"`
-			}
-			if json.Unmarshal(data, &control) == nil && control.Type == "resize" {
-				_ = session.Resize(control.Rows, control.Cols)
-				continue
-			}
-		}
-		if _, writeErr := session.Write(data); writeErr != nil {
-			return
-		}
-	}
+	bridgeTerminalWebSocket(conn, session)
 }
 
 func errStringOrEmpty(err error) string {

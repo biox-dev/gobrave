@@ -20,7 +20,11 @@ const (
 	maxProbeLogBytes       = 12000
 	probeCleanupTimeout    = 60 * time.Second
 	probeLogReadTimeout    = 10 * time.Second
+	probeTerminalStartWait = 2 * time.Minute
 	probeContainerWorkload = "job"
+	// probeKeepAliveCommand keeps the probe container alive until the interactive
+	// terminal disconnects; the real shell is opened with docker exec / kubectl exec.
+	probeKeepAliveCommand = "while true; do sleep 3600; done"
 )
 
 // probeEnvKeys are the runtime variables that are materialized into the probe
@@ -41,77 +45,76 @@ var probeEnvKeys = []string{
 	"PROJECT_CONFIG_DIR",
 }
 
-// containerProbeRunner implements runtimecontext.ContainerEnvProbe by reusing the
+// ContainerProbeRunner implements runtimecontext.ContainerEnvProbe by reusing the
 // same container assembly path as ContainerCreateWorker.executeCreate.
-type containerProbeRunner struct {
+type ContainerProbeRunner struct {
 	worker *ContainerCreateWorker
 }
 
 // NewContainerProbeRunner builds the probe_container_env executor.
-func NewContainerProbeRunner(worker *ContainerCreateWorker) runtimecontext.ContainerEnvProbe {
-	return &containerProbeRunner{worker: worker}
+func NewContainerProbeRunner(worker *ContainerCreateWorker) *ContainerProbeRunner {
+	return &ContainerProbeRunner{worker: worker}
 }
 
-// ProbeContainerEnv creates a throwaway container from a template, runs the
-// command synchronously, reads its log, and always deletes the runtime resource.
-func (r *containerProbeRunner) ProbeContainerEnv(ctx context.Context, in runtimecontext.ContainerEnvProbeInput) (runtimecontext.ContainerEnvProbeResult, error) {
-	var result runtimecontext.ContainerEnvProbeResult
+type probePlan struct {
+	spec *types.ContainerSpec
+	rt   containerruntime.Runtime
+}
 
+// buildProbePlan assembles the runtime spec exactly like executeCreate:
+// template image / resources / mounts / env, project env / mounts, package
+// variables, storage mounts, variable resolution, volume source preparation.
+// The command itself is left empty for the caller to set after resolution.
+func (r *ContainerProbeRunner) buildProbePlan(ctx context.Context, projectID, templateID int64) (*probePlan, error) {
 	w := r.worker
 	if w == nil || w.repo == nil || w.projectRepo == nil {
-		return result, fmt.Errorf("container probe is not configured")
+		return nil, fmt.Errorf("container probe is not configured")
 	}
-	if in.ProjectID <= 0 {
-		return result, fmt.Errorf("project id is required")
+	if projectID <= 0 {
+		return nil, fmt.Errorf("project id is required")
 	}
-	if in.ContainerTemplateID <= 0 {
-		return result, fmt.Errorf("container_template_id is required")
+	if templateID <= 0 {
+		return nil, fmt.Errorf("container_template_id is required")
 	}
-	command := strings.TrimSpace(in.Command)
-	if command == "" {
-		return result, fmt.Errorf("command is required")
-	}
-	result.ContainerTemplateID = in.ContainerTemplateID
 
-	tpl, err := w.repo.GetContainerTemplateByID(ctx, in.ContainerTemplateID)
+	tpl, err := w.repo.GetContainerTemplateByID(ctx, templateID)
 	if err != nil {
-		return result, fmt.Errorf("load container template %d: %w", in.ContainerTemplateID, err)
+		return nil, fmt.Errorf("load container template %d: %w", templateID, err)
 	}
 	if tpl == nil {
-		return result, fmt.Errorf("container template %d not found", in.ContainerTemplateID)
+		return nil, fmt.Errorf("container template %d not found", templateID)
 	}
 	if strings.TrimSpace(tpl.ImageName) == "" {
-		return result, fmt.Errorf("container template %d does not bind any image", in.ContainerTemplateID)
+		return nil, fmt.Errorf("container template %d does not bind any image", templateID)
 	}
 
-	project, err := w.projectRepo.GetProjectByID(ctx, in.ProjectID)
+	project, err := w.projectRepo.GetProjectByID(ctx, projectID)
 	if err != nil {
-		return result, fmt.Errorf("load project %d: %w", in.ProjectID, err)
+		return nil, fmt.Errorf("load project %d: %w", projectID, err)
 	}
 	if project == nil {
-		return result, fmt.Errorf("project %d not found", in.ProjectID)
+		return nil, fmt.Errorf("project %d not found", projectID)
 	}
 
 	if w.containerManager == nil {
-		return result, fmt.Errorf("container manager is not configured")
+		return nil, fmt.Errorf("container manager is not configured")
 	}
 	rt, err := w.containerManager.getRuntime()
 	if err != nil {
-		return result, err
+		return nil, err
 	}
-	result.RuntimeName = rt.Name()
 
 	// 与 executeCreate 一致：先基于模板 / 项目构建运行时变量（含 buildPackageVariables），
 	// 再用它解析 env / mounts / workdir 中的占位符。
 	ownerType := types.ContainerOwnerDagNode
-	ownerCtx := &ownerRuntimeContext{project: project, projectID: in.ProjectID}
+	ownerCtx := &ownerRuntimeContext{project: project, projectID: projectID}
 	resolveVars := w.buildRuntimeVariables(ctx, tpl, ownerType, ownerCtx).ToMap()
 
 	volumes := parseVolumes(tpl.Mounts, ownerType)
 	volumes = append(volumes, parseVolumes(project.Mounts, ownerType)...)
 	volumes, err = w.appendStorageVolumes(ctx, volumes)
 	if err != nil {
-		return result, fmt.Errorf("prepare probe volumes: %w", err)
+		return nil, fmt.Errorf("prepare probe volumes: %w", err)
 	}
 
 	envs := parseEnv(tpl.Env)
@@ -136,11 +139,11 @@ func (r *containerProbeRunner) ProbeContainerEnv(ctx context.Context, in runtime
 		Memory:               tpl.Memory,
 		WorkDir:              workDir,
 		RuntimeName: w.buildRuntimeResourceName(
-			ownerType, 0, fmt.Sprintf("agent-probe-%d-%d", in.ProjectID, time.Now().UnixNano()),
+			ownerType, 0, fmt.Sprintf("agent-probe-%d-%d", projectID, time.Now().UnixNano()),
 		),
 		Labels: map[string]string{
 			"gobrave-probe":      "true",
-			"gobrave-project-id": strconv.FormatInt(in.ProjectID, 10),
+			"gobrave-project-id": strconv.FormatInt(projectID, 10),
 		},
 		// 探针是一次性命令：k8s 一律用 job，避免 deployment 退出后被重启。
 		WorkloadKind:  probeContainerWorkload,
@@ -151,15 +154,12 @@ func (r *containerProbeRunner) ProbeContainerEnv(ctx context.Context, in runtime
 	if w.res != nil {
 		spec, err = w.res.Resolve(ctx, &ContainerRuntimeResolveInput{Spec: spec, Variables: resolveVars})
 		if err != nil {
-			return result, fmt.Errorf("resolve probe spec: %w", err)
+			return nil, fmt.Errorf("resolve probe spec: %w", err)
 		}
 	}
-	// 命令是 agent 传入的原始 shell 文本，必须在变量解析之后再挂上，避免把
-	// $HOME / $PATH / $R_PACKAGE_DIR 等 shell 变量提前替换成宿主机值。
-	spec.Command = []string{command}
 
 	if err := w.ensureVolumeSources(ctx, spec.Volumes); err != nil {
-		return result, fmt.Errorf("prepare probe volume sources: %w", err)
+		return nil, fmt.Errorf("prepare probe volume sources: %w", err)
 	}
 	if hasDockerSocketVolume(spec.Volumes) {
 		if gid, ok := resolvePathGID(dockerSocketPath); ok {
@@ -167,26 +167,103 @@ func (r *containerProbeRunner) ProbeContainerEnv(ctx context.Context, in runtime
 		}
 	}
 
-	runtimeID, err := rt.Create(ctx, spec)
+	return &probePlan{spec: spec, rt: rt}, nil
+}
+
+// deleteProbeRuntime removes a probe container and suppresses lifecycle events:
+// probe containers have no DB instance, so ContainerManager must not try to
+// apply ContainerDeleted to an instance that does not exist.
+func deleteProbeRuntime(ctx context.Context, rt containerruntime.Runtime, runtimeID string) {
+	if containerruntime.MarkIfNotMonitoring(runtimeID) {
+		defer containerruntime.UnmarkRuntimeMonitoring(runtimeID)
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), probeCleanupTimeout)
+	defer cancel()
+	if err := rt.Delete(cleanupCtx, runtimeID); err != nil {
+		logger.Warnf(ctx, "[ContainerProbe] delete runtime failed, runtime_id=%s err=%v", runtimeID, err)
+	}
+}
+
+// OpenProbeTerminal starts a long-lived probe container and opens an interactive
+// shell inside it. The returned cleanup function deletes the container and must
+// be called when the terminal disconnects.
+func (r *ContainerProbeRunner) OpenProbeTerminal(ctx context.Context, projectID, templateID int64, opts containerruntime.TerminalOptions) (containerruntime.TerminalSession, func(), error) {
+	plan, err := r.buildProbePlan(ctx, projectID, templateID)
+	if err != nil {
+		return nil, nil, err
+	}
+	plan.spec.Command = []string{probeKeepAliveCommand}
+
+	runtimeID, err := plan.rt.Create(ctx, plan.spec)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create probe container: %w", err)
+	}
+	cleanup := func() { deleteProbeRuntime(ctx, plan.rt, runtimeID) }
+
+	starter, ok := plan.rt.(containerruntime.RuntimeTerminalStarter)
+	if !ok {
+		cleanup()
+		return nil, nil, fmt.Errorf("runtime %s does not support interactive terminals", plan.rt.Name())
+	}
+	startCtx, cancel := context.WithTimeout(ctx, probeTerminalStartWait)
+	defer cancel()
+	if err := starter.StartForTerminal(startCtx, runtimeID); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("start probe container: %w", err)
+	}
+
+	terminal, ok := plan.rt.(containerruntime.RuntimeTerminal)
+	if !ok {
+		cleanup()
+		return nil, nil, fmt.Errorf("runtime %s does not support interactive terminals", plan.rt.Name())
+	}
+	if len(opts.Command) == 0 {
+		opts.Command = []string{"/bin/bash", "-l"}
+	}
+	opts.TTY = true
+	session, err := terminal.OpenTerminal(ctx, runtimeID, opts)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("open probe terminal: %w", err)
+	}
+	return session, cleanup, nil
+}
+
+// ProbeContainerEnv creates a throwaway container from a template, runs the
+// command synchronously, reads its log, and always deletes the runtime resource.
+func (r *ContainerProbeRunner) ProbeContainerEnv(ctx context.Context, in runtimecontext.ContainerEnvProbeInput) (runtimecontext.ContainerEnvProbeResult, error) {
+	var result runtimecontext.ContainerEnvProbeResult
+
+	if in.ProjectID <= 0 {
+		return result, fmt.Errorf("project id is required")
+	}
+	if in.ContainerTemplateID <= 0 {
+		return result, fmt.Errorf("container_template_id is required")
+	}
+	command := strings.TrimSpace(in.Command)
+	if command == "" {
+		return result, fmt.Errorf("command is required")
+	}
+	result.ContainerTemplateID = in.ContainerTemplateID
+
+	plan, err := r.buildProbePlan(ctx, in.ProjectID, in.ContainerTemplateID)
+	if err != nil {
+		return result, err
+	}
+	result.RuntimeName = plan.rt.Name()
+	// 命令是 agent 传入的原始 shell 文本，必须在变量解析之后再挂上，避免把
+	// $HOME / $PATH / $R_PACKAGE_DIR 等 shell 变量提前替换成宿主机值。
+	plan.spec.Command = []string{command}
+
+	runtimeID, err := plan.rt.Create(ctx, plan.spec)
 	if err != nil {
 		return result, fmt.Errorf("create probe container: %w", err)
 	}
-	defer func() {
-		// Probe containers have no DB instance; mark them as monitored so Delete
-		// does not emit lifecycle events that ContainerManager would try to apply.
-		if containerruntime.MarkIfNotMonitoring(runtimeID) {
-			defer containerruntime.UnmarkRuntimeMonitoring(runtimeID)
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), probeCleanupTimeout)
-		defer cancel()
-		if deleteErr := rt.Delete(cleanupCtx, runtimeID); deleteErr != nil {
-			logger.Warnf(ctx, "[ContainerProbe] delete runtime failed, runtime_id=%s err=%v", runtimeID, deleteErr)
-		}
-	}()
+	defer deleteProbeRuntime(ctx, plan.rt, runtimeID)
 
-	starter, ok := rt.(containerruntime.RuntimeSyncStarter)
+	starter, ok := plan.rt.(containerruntime.RuntimeSyncStarter)
 	if !ok {
-		return result, fmt.Errorf("runtime %s does not support synchronous start", rt.Name())
+		return result, fmt.Errorf("runtime %s does not support synchronous start", plan.rt.Name())
 	}
 
 	timeout := defaultProbeTimeout
@@ -210,7 +287,7 @@ func (r *containerProbeRunner) ProbeContainerEnv(ctx context.Context, in runtime
 
 	logCtx, logCancel := context.WithTimeout(context.Background(), probeLogReadTimeout)
 	defer logCancel()
-	logText, logErr := rt.Logs(logCtx, runtimeID, probeLogTailLines)
+	logText, logErr := plan.rt.Logs(logCtx, runtimeID, probeLogTailLines)
 	if logErr != nil {
 		if result.Error == "" {
 			result.Error = logErr.Error()
