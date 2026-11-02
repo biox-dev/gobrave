@@ -46,6 +46,9 @@ type (
 	ContainerTemplateDetail = runtimecontext.ContainerTemplateDetail
 	DatasetBrief            = runtimecontext.DatasetBrief
 
+	ProjectReportContext   = runtimecontext.ProjectReportContext
+	ProjectReportItemBrief = runtimecontext.ProjectReportItemBrief
+
 	SkillResolver = runtimecontext.SkillResolver
 	SkillResource = runtimecontext.SkillResource
 	SkillInfo     = runtimecontext.SkillInfo

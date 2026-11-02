@@ -551,11 +551,12 @@ func AnalysisNodeUpdaterFrom(ctx context.Context) AnalysisNodeUpdater {
 	return updater
 }
 
-// ProjectResourceBrowser 抽象「浏览项目脚本 / 分析节点 / 容器模板」的业务能力。
+// ProjectResourceBrowser 抽象「浏览项目脚本 / 分析节点 / 容器模板 / 报告」的业务能力。
 //
 // 供内置工具 list_project_scripts / get_script / get_analysis_node /
-// list_container_templates 使用：它们都是纯只读查询，统一由同一份业务实现承载
-// （见 container.projectResourceBrowser），避免为每个工具各建一个注入点。
+// list_container_templates / get_project_report_context 使用：它们都是纯只读查询，
+// 统一由同一份业务实现承载（见 container.projectResourceBrowser），避免为每个工具
+// 各建一个注入点。
 //
 // 注意：脚本 / 分析节点按当前激活项目隔离，而容器模板是全局资产（不属于某个项目），
 // 因此 ListContainerTemplates 不需要 projectID 参数。
@@ -596,6 +597,17 @@ type ProjectResourceBrowser interface {
 	// 用于解析用户输入里的 @dataset:<id> 引用：返回数据集名称 / 描述与其工作目录的
 	// 绝对路径（utils.GetDatasetDir），模型可直接按该路径读取 / 写入数据集文件。
 	GetDatasetByID(ctx context.Context, projectID int64, datasetID int64) (DatasetBrief, error)
+
+	// GetProjectReportContext 按报告 ID 解析「报告撰写」所需的上下文。
+	//
+	// 返回报告标题、报告工作目录、输出文件路径与已解析的条目列表（名称 / 内容 / 来源类型）。
+	// 这段解析原先写在 handler.RuntimeContextResolver.Resolve 的 projectReport 分支，把结果
+	// 注入系统提示词变量 project_report_items；改为由 get_project_report_context 工具在
+	// 执行期按 reportID 拉取后，报告工作区不再依赖系统提示词里的条目快照。
+	//
+	// reportID 必须属于当前激活项目（projectID），否则返回错误；userID 用于校验报告条目
+	// 列表的访问权限。
+	GetProjectReportContext(ctx context.Context, userID int64, projectID int64, reportID int64) (ProjectReportContext, error)
 }
 
 // ScriptBrief 是脚本的只读摘要（工具回传给模型的最小字段集）。
@@ -669,6 +681,31 @@ type DatasetBrief struct {
 	DatasetName string `json:"dataset_name"`
 	Description string `json:"description,omitempty"`
 	Path        string `json:"path"`
+}
+
+// ProjectReportContext 是项目报告的只读上下文（供 get_project_report_context 渲染模板）。
+type ProjectReportContext struct {
+	ReportID  int64 `json:"report_id"`
+	ProjectID int64 `json:"project_id"`
+	// ReportTitle 是报告标题。
+	ReportTitle string `json:"report_title"`
+	// WorkingDir 是报告工作目录（<baseDir>/data/<projectId>/report/<reportId>）。
+	WorkingDir string `json:"workspace_directory"`
+	// OutputFile 是报告输出文件（工作目录下的 output.md，见 types.DefaultProjectReportFilename）。
+	OutputFile string `json:"output_file"`
+	// Items 是报告条目（按树的前序遍历，与前端 tree 顺序一致）。
+	Items []ProjectReportItemBrief `json:"project_report_items"`
+}
+
+// ProjectReportItemBrief 是报告条目的只读摘要（供报告撰写模板遍历）。
+//
+// OwnerType 刻意声明为 string，而不是 types.ProjectReportItemOwnerType：pongo2 的 `==`
+// 最终走 Go 的接口相等比较，具名字符串类型永远不等于字符串字面量，会让
+// {% if item.OwnerType == "custom" %} 恒为假、循环体整段不输出。
+type ProjectReportItemBrief struct {
+	Name      string `json:"name"`
+	Content   string `json:"content"`
+	OwnerType string `json:"owner_type"`
 }
 
 // projectResourceBrowserKey 是 ProjectResourceBrowser 在 context 中的私有键类型。

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/container/agentanalysis"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -24,7 +26,8 @@ import (
 //   - get_analysis_node：按 analysis_node_id 查看节点名称 / 工作目录 / params.json / 参数；
 //   - list_container_templates：列出全部容器模板（definition ID + spec 的 name / description）；
 //   - get_container_template：按 @container:<id> 引用查看绑定行的 display_name / description；
-//   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径。
+//   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径；
+//   - get_project_report_context：按 report_id 解析报告标题 / 工作目录 / 条目清单。
 //
 // 路径口径与 create_script / update_script 完全一致：脚本主文件走
 // utils.GetScriptFile，io_schema 走 utils.WorkflowIOSchemaPath（工作流与脚本共用同一份
@@ -37,16 +40,29 @@ type projectResourceBrowser struct {
 	analysisRepo interfaces.AnalysisRepository
 	containerSvc interfaces.ContainerService
 	dataSvc      interfaces.DataService
-	cfg          *config.Config
+	// projectSvc / analysisSvc 供 get_project_report_context 解析报告条目
+	// （标题 / 工作目录 / 各来源的结果文件路径），口径与 handler.RuntimeContextResolver
+	// 的 projectReport 分支保持一致。
+	//
+	// 摘要条目只用到摘要的 ID / 标题 / 项目 ID，因此直接依赖 AISummaryRepository，
+	// 而不是 interfaces.AISummaryService：后者依赖 *agentservice.AgentService，而
+	// AgentService 又依赖由本对象构建的 agent client，注入 Service 会形成 DI 环。
+	projectSvc  interfaces.ProjectService
+	analysisSvc interfaces.AnalysisService
+	summaryRepo interfaces.AISummaryRepository
+	cfg         *config.Config
 }
 
-// newProjectResourceBrowser 构建「浏览项目内脚本 / 分析节点 / 容器模板 / 数据集」执行器并注入内置工具体系。
-func newProjectResourceBrowser(workflowSvc interfaces.WorkflowService, analysisRepo interfaces.AnalysisRepository, containerSvc interfaces.ContainerService, dataSvc interfaces.DataService, cfg *config.Config) tool.ProjectResourceBrowser {
+// newProjectResourceBrowser 构建「浏览项目内脚本 / 分析节点 / 容器模板 / 数据集 / 报告」执行器并注入内置工具体系。
+func newProjectResourceBrowser(workflowSvc interfaces.WorkflowService, analysisRepo interfaces.AnalysisRepository, containerSvc interfaces.ContainerService, dataSvc interfaces.DataService, projectSvc interfaces.ProjectService, analysisSvc interfaces.AnalysisService, summaryRepo interfaces.AISummaryRepository, cfg *config.Config) tool.ProjectResourceBrowser {
 	return &projectResourceBrowser{
 		workflowSvc:  workflowSvc,
 		analysisRepo: analysisRepo,
 		containerSvc: containerSvc,
 		dataSvc:      dataSvc,
+		projectSvc:   projectSvc,
+		analysisSvc:  analysisSvc,
+		summaryRepo:  summaryRepo,
 		cfg:          cfg,
 	}
 }
@@ -296,6 +312,153 @@ func (b *projectResourceBrowser) GetDatasetByID(ctx context.Context, projectID i
 		Description: dataset.Description,
 		Path:        utils.GetDatasetDir(absBaseDir, projectID, datasetID),
 	}, nil
+}
+
+// GetProjectReportContext 按报告 ID 解析报告标题 / 工作目录 / 输出文件与条目列表。
+//
+// 这段逻辑原先位于 handler.RuntimeContextResolver.Resolve 的 projectReport 分支，把解析
+// 结果写进系统提示词变量 project_report_items；报告撰写改为由 get_project_report_context
+// 工具在执行期按 reportID 拉取，故整体前移到这里（Resolve 中的对应代码后续废弃）。
+func (b *projectResourceBrowser) GetProjectReportContext(ctx context.Context, userID int64, projectID int64, reportID int64) (tool.ProjectReportContext, error) {
+	const toolName = "get_project_report_context"
+	if reportID <= 0 {
+		return tool.ProjectReportContext{}, fmt.Errorf("%s: report_id is required", toolName)
+	}
+	if b.projectSvc == nil {
+		return tool.ProjectReportContext{}, fmt.Errorf("%s: required services are not configured", toolName)
+	}
+
+	report, err := b.projectSvc.GetProjectReportByID(ctx, reportID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return tool.ProjectReportContext{}, fmt.Errorf("%s: project report %d not found", toolName, reportID)
+		}
+		return tool.ProjectReportContext{}, fmt.Errorf("%s: failed to load project report: %w", toolName, err)
+	}
+	if report == nil || report.ID == 0 {
+		return tool.ProjectReportContext{}, fmt.Errorf("%s: project report %d not found", toolName, reportID)
+	}
+	// 报告按当前激活项目隔离，避免跨项目读到别的报告目录。
+	if projectID > 0 && report.ProjectID != projectID {
+		return tool.ProjectReportContext{}, fmt.Errorf("%s: project report %d does not belong to the active project %d", toolName, reportID, projectID)
+	}
+
+	// 报告工作目录是报告撰写的事实工作区（git 仓库），使用前确保存在。
+	baseDir := b.storageBaseDir()
+	dir := utils.GetProjectReportDir(baseDir, report.ProjectID, fmt.Sprintf("%d", report.ID))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return tool.ProjectReportContext{}, fmt.Errorf("%s: failed to create report working directory: %w", toolName, err)
+	}
+
+	items, err := b.resolveProjectReportItems(ctx, userID, baseDir, report)
+	if err != nil {
+		return tool.ProjectReportContext{}, err
+	}
+
+	return tool.ProjectReportContext{
+		ReportID:    report.ID,
+		ProjectID:   report.ProjectID,
+		ReportTitle: report.Title,
+		WorkingDir:  dir,
+		OutputFile:  filepath.Join(dir, types.DefaultProjectReportFilename),
+		Items:       items,
+	}, nil
+}
+
+// resolveProjectReportItems 读取报告下的全部条目并解析为模板可用的名称 / 内容。
+// 单个条目解析失败（owner 记录缺失等）时跳过该条目并记录告警，
+// 避免一个失效引用导致整份报告上下文不可用。
+func (b *projectResourceBrowser) resolveProjectReportItems(ctx context.Context, userID int64, baseDir string, report *types.ProjectReport) ([]tool.ProjectReportItemBrief, error) {
+	if report == nil {
+		return nil, nil
+	}
+	if b.projectSvc == nil {
+		return nil, fmt.Errorf("get_project_report_context: required services are not configured")
+	}
+
+	items, err := b.projectSvc.ListProjectReportItemsByReportID(ctx, userID, report.ID)
+	if err != nil {
+		return nil, fmt.Errorf("get_project_report_context: failed to list project report items: %w", err)
+	}
+
+	result := make([]tool.ProjectReportItemBrief, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		name, content, ok := b.resolveProjectReportItemVar(ctx, baseDir, report, item)
+		if !ok {
+			logger.Warnf(ctx, "[ProjectResourceBrowser] skip project report item, item_id=%d owner_type=%s owner_id=%d", item.ID, item.OwnerType, item.OwnerID)
+			continue
+		}
+		result = append(result, tool.ProjectReportItemBrief{Name: name, Content: content, OwnerType: string(item.OwnerType)})
+	}
+	return result, nil
+}
+
+// projectReportOutputMarkdownPath 拼接 owner（Analysis / AnalysisNode）输出目录下的 output.md 路径。
+// 目录为空时返回空串，避免模板拿到悬空的 "output.md"（与 utils 派生路径的空值口径一致）。
+func projectReportOutputMarkdownPath(dir string) string {
+	if strings.TrimSpace(dir) == "" {
+		return ""
+	}
+	return filepath.Join(dir, types.DefaultProjectReportFilename)
+}
+
+// resolveProjectReportItemVar 按 owner 类型解析单个报告条目的名称与内容。
+// 名称与内容的口径与 handler.RuntimeContextResolver.resolveProjectReportItemVar 一致：
+//   - analysis / analysis_node：名称取 AnalysisName / NodeName，内容为工作目录 / 输出目录下的 output.md；
+//   - ai_summary：名称取摘要标题，内容为摘要文件路径（utils.GetAISummaryFile）；
+//   - custom：名称取用户编辑的标题，内容为用户编辑的正文。
+//
+// 返回 ok=false 表示无法解析（owner 缺失、服务不可用或 owner 类型不支持）。
+func (b *projectResourceBrowser) resolveProjectReportItemVar(ctx context.Context, baseDir string, report *types.ProjectReport, item *types.ProjectReportItem) (string, string, bool) {
+	switch item.OwnerType {
+	case types.ProjectReportItemOwnerAnalysis:
+		if b.analysisSvc == nil {
+			return "", "", false
+		}
+		analysis, err := b.analysisSvc.GetAnalysisByID(ctx, item.OwnerID)
+		if err != nil {
+			return "", "", false
+		}
+		// 内容给到 Analysis 工作目录下的 output.md，而不是目录本身：报告撰写
+		// 模板需要的是可直接读取的结果文件路径（与 ai_summary 条目的口径一致）。
+		return analysis.AnalysisName, projectReportOutputMarkdownPath(analysis.WorkspaceDir), true
+
+	case types.ProjectReportItemOwnerAnalysisNode:
+		if b.analysisSvc == nil {
+			return "", "", false
+		}
+		node, err := b.analysisSvc.GetAnalysisNodeByID(ctx, item.OwnerID)
+		if err != nil {
+			return "", "", false
+		}
+		// 同上：节点输出目录下的 output.md。
+		return node.NodeName, projectReportOutputMarkdownPath(node.OutputDir), true
+
+	case types.ProjectReportItemOwnerAISummary:
+		if b.summaryRepo == nil {
+			return "", "", false
+		}
+		summary, err := b.summaryRepo.GetAISummaryByID(ctx, item.OwnerID)
+		if err != nil {
+			return "", "", false
+		}
+		// 摘要文件路径需要项目 ID：优先用摘要记录上的 ProjectID，
+		// 尚未回填时回退到报告所属项目，保证路径仍可定位。
+		projectID := summary.ProjectID
+		if projectID == 0 && report != nil {
+			projectID = report.ProjectID
+		}
+		return summary.Title, utils.GetAISummaryFile(baseDir, projectID, summary.ID), true
+
+	case types.ProjectReportItemOwnerCustom:
+		return item.Title, item.Content, true
+
+	default:
+		return "", "", false
+	}
 }
 
 // toScriptBrief 把 Script 记录转换成工具回传的摘要（补齐磁盘路径）。
