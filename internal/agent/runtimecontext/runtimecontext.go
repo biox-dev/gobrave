@@ -244,6 +244,53 @@ type ContainerEnvProbeResult struct {
 	Error               string  `json:"error,omitempty"`
 }
 
+// ContainerTerminalRunner 抽象「向当前用户激活项目下的容器模板临时终端写入命令」
+// 的业务能力（terminal_exec）。
+//
+// 与 ContainerEnvProbe 的区别：
+//   - ContainerEnvProbe 每次新建一次性容器、同步执行、执行完删除，互不可见；
+//   - ContainerTerminalRunner 复用用户已经打开的持久终端（同一个 PTY），命令输出
+//     会实时出现在前端 xterm 中，用户也能看到 Agent 执行了什么。
+type ContainerTerminalRunner interface {
+	// RunInTerminal 把 command 写入会话的串行队列。
+	//
+	// Wait=true 时等待命令结束并返回退出码与输出尾部；Wait=false 时只投递并立即返回
+	// （Accepted=true，Running=true）。
+	RunInTerminal(ctx context.Context, in ContainerTerminalExecInput) (ContainerTerminalExecResult, error)
+}
+
+// ContainerTerminalExecInput 是一次 terminal_exec 调用的入参。
+type ContainerTerminalExecInput struct {
+	// UserID 取自执行事实（tool.UserIDFrom）。
+	UserID int64
+	// ProjectID 取自执行事实（tool.ProjectIDFrom，当前用户激活项目）。
+	ProjectID int64
+	// ContainerTemplateID 是必填的容器模板 ID。
+	ContainerTemplateID int64
+	// Command 是要在终端里执行的 shell 命令。
+	Command string
+	// TimeoutSeconds <= 0 时使用实现默认超时。
+	TimeoutSeconds int
+	// Wait 为 true 时等待命令结束。
+	Wait bool
+	// NotifyUI 为 true 时通过 realtime 通知前端打开终端标签。
+	NotifyUI bool
+	// CreateIfMissing 为 true 时允许自动创建终端会话（容器）。
+	CreateIfMissing bool
+}
+
+// ContainerTerminalExecResult 是一次 terminal_exec 调用的执行结果。
+type ContainerTerminalExecResult struct {
+	SessionID       string  `json:"session_id,omitempty"`
+	Accepted        bool    `json:"accepted"`
+	Running         bool    `json:"running,omitempty"`
+	ExitCode        int     `json:"exit_code"`
+	TimedOut        bool    `json:"timed_out,omitempty"`
+	DurationSeconds float64 `json:"duration_seconds,omitempty"`
+	Output          string  `json:"output,omitempty"`
+	OutputTruncated bool    `json:"output_truncated,omitempty"`
+}
+
 // FileReader 抽象「按 go_file 主键 ID 读取文件」的业务能力。
 //
 // 它把「file_id → 文件元信息（含 path）+ 内容预览」的业务细节收敛在上层实现

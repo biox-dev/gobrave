@@ -64,7 +64,10 @@ func (k *KubernetesRuntime) OpenTerminal(ctx context.Context, runtimeID string, 
 		return nil, fmt.Errorf("create exec executor for pod %s: %w", podName, err)
 	}
 
-	sessionCtx, cancel := context.WithCancel(ctx)
+	// 会话生命周期必须独立于本次请求：容器模板终端的 PTY 会长期存活（跨 WebSocket
+	// 断线、跨 HTTP 请求），若沿用调用方 ctx 的 deadline / cancel，请求结束或超时会把
+	// exec 流一起掐断。关闭会话由 session.Close() 里的 cancel 负责。
+	sessionCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	session := &kubernetesTerminalSession{
 		stdinReader:  nil,
 		stdinWriter:  nil,
