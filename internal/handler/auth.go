@@ -522,9 +522,10 @@ func (h *AuthHandler) UpdateMenuConfig(c *gin.Context) {
 		return
 	}
 
-	// 整体替换语义：前端每次都提交完整的有序列表，服务端只做清洗与限流。
-	menuConfig := types.UserMenuConfig{Tabs: req.Tabs}
-	menuConfig.Normalize()
+	// 只整体替换主区域标签页：底部面板（终端 / 日志）配置保持不变。
+	menuConfig := user.MenuConfig
+	menuConfig.Tabs = req.Tabs
+	menuConfig.NormalizeTabs()
 	user.MenuConfig = menuConfig
 	if err := h.userService.UpdateUser(ctx, user); err != nil {
 		logger.Errorf(ctx, "Failed to update user menu config: %v", err)
@@ -538,6 +539,70 @@ func (h *AuthHandler) UpdateMenuConfig(c *gin.Context) {
 		"success": true,
 		"message": "Menu config updated",
 		"tabs":    menuConfig.Tabs,
+	})
+}
+
+// UpdateBottomPanel godoc
+// @Summary      更新当前用户的底部面板配置
+// @Description  保存底部面板的标签列表 / 激活标签 / 展开态 / 高度，与主区域标签页一起落在 users.menu_config
+// @Tags         认证
+// @Accept       json
+// @Produce      json
+// @Param        request  body      object{open=bool,active=string,height=int,tabs=[]types.UserBottomTab}  true  "底部面板状态"
+// @Success      200      {object}  map[string]interface{}                                             "更新成功"
+// @Failure      400      {object}  errors.AppError                                                    "请求参数错误"
+// @Security     Bearer
+// @Router       /auth/bottom-panel [post]
+func (h *AuthHandler) UpdateBottomPanel(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	user, err := h.userService.GetCurrentUser(ctx)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to get current user: %v", err)
+		appErr := errors.NewUnauthorizedError("Failed to get user information").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	var req struct {
+		Open   bool                  `json:"open"`
+		Active string                `json:"active"`
+		Height int                   `json:"height"`
+		Tabs   []types.UserBottomTab `json:"tabs"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Error(ctx, "Failed to parse bottom panel update request", err)
+		appErr := errors.NewValidationError("Invalid bottom panel update request").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	// 整体替换底部面板；主区域标签页（Tabs）保持不变。
+	menuConfig := user.MenuConfig
+	menuConfig.Bottom = &types.UserBottomPanel{
+		Open:   req.Open,
+		Active: req.Active,
+		Height: req.Height,
+		Tabs:   req.Tabs,
+	}
+	menuConfig.NormalizeBottom()
+	user.MenuConfig = menuConfig
+	if err := h.userService.UpdateUser(ctx, user); err != nil {
+		logger.Errorf(ctx, "Failed to update user bottom panel: %v", err)
+		appErr := errors.NewInternalServerError("Failed to update bottom panel").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
+
+	tabCount := 0
+	if menuConfig.Bottom != nil {
+		tabCount = len(menuConfig.Bottom.Tabs)
+	}
+	logger.Infof(ctx, "User bottom panel updated: %d tabs=%d", user.ID, tabCount)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Bottom panel updated",
+		"bottom":  menuConfig.Bottom,
 	})
 }
 

@@ -11,6 +11,15 @@ import (
 // MaxUserMenuTabs 是主区域标签页配置允许保存的最大数量，超出的按「最近使用」截断。
 const MaxUserMenuTabs = 16
 
+// MaxUserBottomTabs 是主区域底部面板（终端 / 日志等）允许保存的最大标签数。
+const MaxUserBottomTabs = 8
+
+// 底部面板高度的允许区间（px）。前端拖拽分隔条时会实时更新。
+const (
+	MinUserBottomPanelHeight = 120
+	MaxUserBottomPanelHeight = 800
+)
+
 // UserMenuTab 是主区域一个标签页的状态。
 //
 // URL 是标签页对应的路由地址（pathname + search），前端直接 navigate(URL) 即可切换；
@@ -20,17 +29,50 @@ type UserMenuTab struct {
 	Title string `json:"title,omitempty"`
 }
 
-// UserMenuConfig 是用户的菜单配置（主区域标签页），以 JSON 形式落库。
+// UserBottomTab 是底部面板的一个标签页。
+//
+// Kind 决定前端用哪个渲染器（terminal / log / …），Params 是该渲染器自己的参数
+// （终端为 {template_id}），因此新增底部面板类型不需要改后端表结构。
+type UserBottomTab struct {
+	Key    string         `json:"key"`
+	Kind   string         `json:"kind"`
+	Title  string         `json:"title,omitempty"`
+	Params map[string]any `json:"params,omitempty"`
+}
+
+// UserBottomPanel 是主区域底部面板的完整状态。
+//
+// Open = 面板是否展开（收起时只保留标签栏）；Active = 当前激活标签的 Key；
+// Height = 展开时的高度（px）。三个状态与标签列表一起落库，刷新后可原样恢复。
+type UserBottomPanel struct {
+	Open   bool            `json:"open"`
+	Active string          `json:"active,omitempty"`
+	Height int             `json:"height,omitempty"`
+	Tabs   []UserBottomTab `json:"tabs,omitempty"`
+}
+
+// UserMenuConfig 是用户的菜单配置（主区域标签页 + 底部面板），以 JSON 形式落库。
 //
 // 用「有序数组」而不是 `urls + titles 两张表」：顺序即标签栏顺序，标题跟着自己的 URL 走，
 // 序列化 / 回填都是一次读写。
 type UserMenuConfig struct {
 	Tabs []UserMenuTab `json:"tabs,omitempty"`
+	// Bottom 为空表示底部面板没有打开的标签（前端据此不渲染面板）。
+	Bottom *UserBottomPanel `json:"bottom,omitempty"`
 }
 
-// Normalize 清洗标签页列表：去空白、去重（保留首次出现）、丢弃根路由，并按上限截断尾部。
+// Normalize 清洗整份菜单配置（标签页 + 底部面板）。
 // 调用方（handler）在写库前调用，避免把脏数据或超长字符串落库。
 func (c *UserMenuConfig) Normalize() {
+	if c == nil {
+		return
+	}
+	c.NormalizeTabs()
+	c.NormalizeBottom()
+}
+
+// NormalizeTabs 清洗主区域标签页列表：去空白、去重（保留首次出现）、丢弃根路由，并按上限截断尾部。
+func (c *UserMenuConfig) NormalizeTabs() {
 	if c == nil {
 		return
 	}
@@ -56,6 +98,72 @@ func (c *UserMenuConfig) Normalize() {
 	c.Tabs = tabs
 }
 
+// NormalizeBottom 清洗底部面板：去空白、去重（按 Key）、丢弃缺少 Kind 的项、按上限截断尾部，
+// 并保证 Active 指向一个真实存在的标签；没有标签时把 Bottom 置空，避免前端渲染空面板。
+func (c *UserMenuConfig) NormalizeBottom() {
+	if c == nil || c.Bottom == nil {
+		return
+	}
+	bottom := c.Bottom
+	seen := make(map[string]struct{}, len(bottom.Tabs))
+	tabs := make([]UserBottomTab, 0, len(bottom.Tabs))
+	for _, tab := range bottom.Tabs {
+		key := strings.TrimSpace(tab.Key)
+		kind := strings.TrimSpace(tab.Kind)
+		if key == "" || kind == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		params := tab.Params
+		if len(params) == 0 {
+			params = nil
+		}
+		tabs = append(tabs, UserBottomTab{
+			Key:    truncateRunes(key, 200),
+			Kind:   truncateRunes(kind, 64),
+			Title:  truncateRunes(strings.TrimSpace(tab.Title), 200),
+			Params: params,
+		})
+	}
+	if len(tabs) > MaxUserBottomTabs {
+		tabs = tabs[len(tabs)-MaxUserBottomTabs:]
+	}
+	if len(tabs) == 0 {
+		c.Bottom = nil
+		return
+	}
+
+	height := bottom.Height
+	if height < MinUserBottomPanelHeight {
+		height = MinUserBottomPanelHeight
+	}
+	if height > MaxUserBottomPanelHeight {
+		height = MaxUserBottomPanelHeight
+	}
+	bottom.Height = height
+
+	active := strings.TrimSpace(bottom.Active)
+	if active == "" {
+		active = tabs[0].Key
+	} else {
+		found := false
+		for _, tab := range tabs {
+			if tab.Key == active {
+				found = true
+				break
+			}
+		}
+		if !found {
+			active = tabs[0].Key
+		}
+	}
+	bottom.Active = active
+	bottom.Tabs = tabs
+}
+
 // truncateRunes 按字符（不是字节）截断，避免切坏 UTF-8。
 func truncateRunes(value string, limit int) string {
 	runes := []rune(value)
@@ -79,7 +187,7 @@ type User struct {
 	Avatar string `json:"avatar"     gorm:"type:varchar(500)"`
 	// AgentConfig 用户的 Agent 配置（Profile + 权限策略），以 JSON 形式落库。
 	AgentConfig UserAgentConfig `json:"agent_config" gorm:"serializer:json"`
-	// MenuConfig 用户的主区域标签页配置（有序的 URL + 显示名），以 JSON 形式落库。
+	// MenuConfig 用户的菜单配置：主区域标签页 + 底部面板（终端 / 日志），以 JSON 形式落库。
 	MenuConfig UserMenuConfig `json:"menu_config" gorm:"serializer:json"`
 	// Tenant ID that the user belongs to
 	// TenantID uint64 `json:"tenant_id"  gorm:"index"`
@@ -199,7 +307,7 @@ type UserInfo struct {
 	Email       string          `json:"email"`
 	Avatar      string          `json:"avatar"`
 	AgentConfig UserAgentConfig `json:"agent_config"`
-	// MenuConfig 是主区域标签页配置（刷新后前端据此回填标签栏与名称）。
+	// MenuConfig 是主区域标签页 + 底部面板配置（刷新后前端据此回填）。
 	MenuConfig UserMenuConfig `json:"menu_config"`
 	// AgentProfile 是 agent_config.ProfileID 对应的 Profile 摘要（DTO，按需填充，可能为空）。
 	AgentProfile        *AgentProfileInfo `json:"agent_profile,omitempty"`
