@@ -194,3 +194,9 @@ container:
   create_queue_max_concurrency: 3
   # 容器创建队列的最大排队数（超出后新请求直接返回错误）。
   create_queue_max_pending: 50
+  # 容器模板终端：最后一个 WebSocket 订阅者离开后，保留会话（容器）的秒数。
+  # 0 = 立即删除容器（默认）；>0 = 保留该时长，方便页面刷新/重连或 Agent 继续执行。
+  terminal_idle_grace_seconds: 0
+  # 容器模板终端：会话创建后一直没有任何订阅者时的保留秒数（避免刚建好就被回收）。
+  # <=0 使用默认 120 秒。
+  terminal_unattached_grace_seconds: 120

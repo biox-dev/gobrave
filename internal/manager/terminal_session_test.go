@@ -187,6 +187,72 @@ func TestTerminalSessionRegistryExecTimeoutAndReplay(t *testing.T) {
 	}
 }
 
+// 默认策略：最后一个订阅者离开后立即删除容器；创建后无人订阅时使用 unattached grace。
+func TestTerminalSessionRegistryImmediateReapOnLastDetach(t *testing.T) {
+	opener := &fakeOpener{shell: newFakeShell()}
+	registry := newTerminalSessionRegistry(opener, nil, TerminalRegistryOptions{
+		ReadyWait:   2 * time.Second,
+		IdleGrace:   0,
+		BufferBytes: 64 * 1024,
+	})
+	key := TerminalSessionKey{UserID: 11, ProjectID: 12, TemplateID: 13}
+
+	session, created, err := registry.Ensure(context.Background(), key)
+	if err != nil || !created {
+		t.Fatalf("Ensure: created=%v err=%v", created, err)
+	}
+
+	// 创建后还没人订阅：不应被立即回收（unattached grace 保护）。
+	if registry.Lookup(key) == nil {
+		t.Fatalf("session should survive before the first attach")
+	}
+
+	sub, _ := session.Attach(0)
+	select {
+	case <-opener.shell.closed:
+		t.Fatalf("terminal must not be closed while subscribed")
+	default:
+	}
+
+	session.Detach(sub)
+
+	if registry.Lookup(key) != nil {
+		t.Fatalf("expected session removed immediately after last detach")
+	}
+	select {
+	case <-opener.shell.closed:
+	default:
+		t.Fatalf("expected underlying terminal closed immediately")
+	}
+	if status := registry.Status(key); status.Exists {
+		t.Fatalf("expected status not exists, got %+v", status)
+	}
+}
+
+// 配了 grace 时，最后一个订阅者离开后会话要保留（可重连）。
+func TestTerminalSessionRegistryGraceKeepsSession(t *testing.T) {
+	opener := &fakeOpener{shell: newFakeShell()}
+	registry := newTestRegistry(opener) // IdleGrace = 1min
+	key := TerminalSessionKey{UserID: 21, ProjectID: 22, TemplateID: 23}
+	defer registry.CloseSession(key)
+
+	session, _, err := registry.Ensure(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	sub, _ := session.Attach(0)
+	session.Detach(sub)
+
+	if registry.Lookup(key) == nil {
+		t.Fatalf("expected session kept during grace period")
+	}
+	select {
+	case <-opener.shell.closed:
+		t.Fatalf("terminal must stay open during grace period")
+	default:
+	}
+}
+
 func TestTerminalSessionRegistryCreateOnlyOnceUnderConcurrency(t *testing.T) {
 	opener := &fakeOpener{shell: newFakeShell()}
 	registry := newTestRegistry(opener)

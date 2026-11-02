@@ -227,6 +227,12 @@ type ContainerConfig struct {
 	CreateQueueMaxConcurrency int `yaml:"create_queue_max_concurrency" json:"create_queue_max_concurrency"`
 	// CreateQueueMaxPending limits how many creation requests can wait in the queue.
 	CreateQueueMaxPending int `yaml:"create_queue_max_pending" json:"create_queue_max_pending"`
+	// TerminalIdleGraceSeconds 是容器模板终端「最后一个订阅者离开」后保留会话（容器）的秒数。
+	// 0 = 立即删除（默认）；>0 = 保留该时长，期间可重连 / Agent 继续执行。
+	TerminalIdleGraceSeconds int `yaml:"terminal_idle_grace_seconds" json:"terminal_idle_grace_seconds"`
+	// TerminalUnattachedGraceSeconds 是终端会话创建后一直没有订阅者时的保留秒数。
+	// <=0 使用默认 120 秒；与上面的 IdleGrace 分开，避免刚建好就被删。
+	TerminalUnattachedGraceSeconds int `yaml:"terminal_unattached_grace_seconds" json:"terminal_unattached_grace_seconds"`
 }
 
 type KubernetesRuntimeConfig struct {
@@ -249,6 +255,10 @@ func DefaultContainerConfig() *ContainerConfig {
 		DagNodeCleanupOnDagFinished:         "delete",
 		CreateQueueMaxConcurrency:           3,
 		CreateQueueMaxPending:               50,
+		// 0 = 最后一个订阅者离开后立即删除终端容器（默认）；需要保留重连窗口时调大。
+		TerminalIdleGraceSeconds: 0,
+		// 创建后无人订阅时的保护窗口。
+		TerminalUnattachedGraceSeconds: 120,
 	}
 }
 

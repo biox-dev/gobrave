@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	"github.com/biox-dev/gobrave/internal/config"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	"github.com/biox-dev/gobrave/internal/logger"
 )
@@ -29,8 +30,9 @@ import (
 //   - 命令写入通过串行队列执行，靠 shell 的 PROMPT_COMMAND 打出不可见的 OSC 标记
 //     （ESC ] 633 ; GD ; <exit code> BEL）来判定「命令结束 + 退出码」，不解析提示符，
 //     也不会在终端里留下难看的哨兵命令回显；
-//   - 最后一个订阅者离开后不立刻删容器，保留 grace period，方便 Agent 继续执行、
-//     也方便用户关掉面板后再打开看到上下文。
+//   - 最后一个订阅者离开后的回收策略可配置（container.terminal_idle_grace_seconds）：
+//     0 = 立即删除容器（默认），>0 = 保留 grace period，方便重连 / Agent 继续执行；
+//   - 会话创建后一直没有订阅者时使用独立的 unattached grace，避免「刚建好就被删」。
 
 // TerminalSessionKey 是会话的唯一标识。
 type TerminalSessionKey struct {
@@ -52,16 +54,16 @@ const (
 	// 输出上一条命令的退出码。
 	terminalInitCommand = `PROMPT_COMMAND='__gobrave_rc=$?; printf "\033]633;GD;%s\007" "$__gobrave_rc"'`
 
-	defaultTerminalIdleGrace   = 10 * time.Minute
-	defaultTerminalReadyWait   = 60 * time.Second
-	defaultTerminalBufferBytes = 256 * 1024
-	defaultTerminalCreateWait  = 10 * time.Minute
-	defaultTerminalExecTimeout = 5 * time.Minute
-	terminalIdleThreshold      = 300 * time.Millisecond
-	terminalIdleWait           = 3 * time.Second
-	terminalExecQueueSize      = 16
-	terminalSubscriberBufSize  = 2048
-	terminalEventBufSize       = 64
+	defaultTerminalUnattachedGrace = 2 * time.Minute
+	defaultTerminalReadyWait       = 60 * time.Second
+	defaultTerminalBufferBytes     = 256 * 1024
+	defaultTerminalCreateWait      = 10 * time.Minute
+	defaultTerminalExecTimeout     = 5 * time.Minute
+	terminalIdleThreshold          = 300 * time.Millisecond
+	terminalIdleWait               = 3 * time.Second
+	terminalExecQueueSize          = 16
+	terminalSubscriberBufSize      = 2048
+	terminalEventBufSize           = 64
 )
 
 var (
@@ -81,12 +83,17 @@ type TerminalEventPublisher interface {
 
 // TerminalRegistryOptions 控制会话生命周期，零值使用默认值。
 type TerminalRegistryOptions struct {
-	IdleGrace     time.Duration
-	ReadyWait     time.Duration
-	CreateWait    time.Duration
-	BufferBytes   int
-	ExecTimeout   time.Duration
-	ExecQueueSize int
+	// IdleGrace 是最后一个订阅者离开后保留会话（容器）的时长。
+	// 0 = 立即删除（默认）；>0 = 保留该时长，期间可重连 / Agent 继续执行。
+	IdleGrace time.Duration
+	// UnattachedGrace 是会话创建后一直没有订阅者时的保留时长；<=0 使用默认 2 分钟。
+	// 与 IdleGrace 分开是为了避免「Agent 刚建好会话、前端还没连上就被删」。
+	UnattachedGrace time.Duration
+	ReadyWait       time.Duration
+	CreateWait      time.Duration
+	BufferBytes     int
+	ExecTimeout     time.Duration
+	ExecQueueSize   int
 }
 
 // TerminalCommand 是一次写入终端的命令。
@@ -164,25 +171,28 @@ type ManagedTerminalSession struct {
 	// writeMu 串行化「整段命令 / 按键」的写入，避免两次写入交错。
 	writeMu sync.Mutex
 
-	mu          sync.Mutex
-	closed      bool
-	dead        bool
-	deadErr     error
-	ready       bool
-	subs        map[int64]*TerminalSubscriber
-	nextSubID   int64
-	buf         []byte
-	bufStart    int64 // buf[0] 对应的全局序号
-	bufLimit    int
-	lastOutput  time.Time
-	reapTimer   *time.Timer
-	markerCarry []byte
-	readyOnce   sync.Once
-	readyCh     chan struct{}
-	done        chan struct{}
-	closeOnce   sync.Once
-	markerCh    chan int
-	requests    chan terminalExecRequest
+	mu         sync.Mutex
+	closed     bool
+	dead       bool
+	deadErr    error
+	ready      bool
+	subs       map[int64]*TerminalSubscriber
+	nextSubID  int64
+	buf        []byte
+	bufStart   int64 // buf[0] 对应的全局序号
+	bufLimit   int
+	lastOutput time.Time
+	reapTimer  *time.Timer
+	// attachedOnce 标记会话是否曾经被订阅过：从未订阅时使用 UnattachedGrace，
+	// 订阅过之后（最后一个订阅者离开）才使用 IdleGrace（默认为 0 = 立即删除）。
+	attachedOnce bool
+	markerCarry  []byte
+	readyOnce    sync.Once
+	readyCh      chan struct{}
+	done         chan struct{}
+	closeOnce    sync.Once
+	markerCh     chan int
+	requests     chan terminalExecRequest
 }
 
 type terminalExecRequest struct {
@@ -227,9 +237,22 @@ type pendingTerminalSession struct {
 // NewTerminalSessionRegistry 构造会话注册表。
 //
 // probe 复用 ContainerProbeRunner 的容器组装链路（与 probe_container_env 口径一致）；
-// publisher 可为 nil（例如单测），此时不推送前端事件。
-func NewTerminalSessionRegistry(probe *ContainerProbeRunner, publisher TerminalEventPublisher) *TerminalSessionRegistry {
-	return newTerminalSessionRegistry(probe, publisher, TerminalRegistryOptions{})
+// publisher 可为 nil（例如单测），此时不推送前端事件；cfg 决定终端容器的回收策略
+// （container.terminal_idle_grace_seconds / terminal_unattached_grace_seconds）。
+func NewTerminalSessionRegistry(probe *ContainerProbeRunner, publisher TerminalEventPublisher, cfg *config.Config) *TerminalSessionRegistry {
+	return newTerminalSessionRegistry(probe, publisher, terminalRegistryOptions(cfg))
+}
+
+// terminalRegistryOptions 把配置转换成注册表选项。
+// 未配置（或 cfg 为 nil）时 IdleGrace = 0，即「最后一个订阅者离开立即删除容器」。
+func terminalRegistryOptions(cfg *config.Config) TerminalRegistryOptions {
+	opts := TerminalRegistryOptions{}
+	if cfg == nil || cfg.Container == nil {
+		return opts
+	}
+	opts.IdleGrace = time.Duration(cfg.Container.TerminalIdleGraceSeconds) * time.Second
+	opts.UnattachedGrace = time.Duration(cfg.Container.TerminalUnattachedGraceSeconds) * time.Second
+	return opts
 }
 
 func newTerminalSessionRegistry(probe TerminalRuntimeOpener, publisher TerminalEventPublisher, opts TerminalRegistryOptions) *TerminalSessionRegistry {
@@ -243,10 +266,14 @@ func newTerminalSessionRegistry(probe TerminalRuntimeOpener, publisher TerminalE
 }
 
 func (r *TerminalSessionRegistry) idleGrace() time.Duration {
-	if r.opts.IdleGrace > 0 {
-		return r.opts.IdleGrace
+	return r.opts.IdleGrace
+}
+
+func (r *TerminalSessionRegistry) unattachedGrace() time.Duration {
+	if r.opts.UnattachedGrace > 0 {
+		return r.opts.UnattachedGrace
 	}
-	return defaultTerminalIdleGrace
+	return defaultTerminalUnattachedGrace
 }
 
 func (r *TerminalSessionRegistry) readyWait() time.Duration {
@@ -579,8 +606,24 @@ func (r *TerminalSessionRegistry) scheduleReap(sess *ManagedTerminalSession) {
 	}
 	if sess.reapTimer != nil {
 		sess.reapTimer.Stop()
+		sess.reapTimer = nil
 	}
+
+	// 从未被订阅过（Agent 先建会话、前端还没连上）用 unattached grace；
+	// 订阅过之后才用 IdleGrace，0 表示立即删除。
 	grace := r.idleGrace()
+	if !sess.attachedOnce {
+		grace = r.unattachedGrace()
+	}
+
+	if grace <= 0 {
+		sess.mu.Unlock()
+		logger.Infof(context.Background(), "[TerminalSession] releasing idle session %s immediately", sess.id)
+		r.forget(sess)
+		sess.Close()
+		return
+	}
+
 	sess.reapTimer = time.AfterFunc(grace, func() {
 		sess.mu.Lock()
 		empty := !sess.closed && len(sess.subs) == 0
@@ -593,6 +636,16 @@ func (r *TerminalSessionRegistry) scheduleReap(sess *ManagedTerminalSession) {
 		sess.Close()
 	})
 	sess.mu.Unlock()
+}
+
+// suspendReap 暂停回收计时（命令执行期间不能因为“无人订阅”把容器删掉）。
+func (s *ManagedTerminalSession) suspendReap() {
+	s.mu.Lock()
+	if s.reapTimer != nil {
+		s.reapTimer.Stop()
+		s.reapTimer = nil
+	}
+	s.mu.Unlock()
 }
 
 // ===== ManagedTerminalSession =====
@@ -643,6 +696,7 @@ func (s *ManagedTerminalSession) Attach(sinceSeq int64) (*TerminalSubscriber, []
 	s.nextSubID++
 	sub := newTerminalSubscriber(s.nextSubID)
 	s.subs[sub.ID] = sub
+	s.attachedOnce = true
 
 	var replay []byte
 	if sinceSeq >= 0 {
@@ -918,6 +972,8 @@ func (s *ManagedTerminalSession) execLoop() {
 			if req.result != nil {
 				req.result <- outcome
 			}
+			// 命令结束后重新评估回收：执行期间计时器被 suspendReap 停掉了。
+			s.registry.scheduleReap(s)
 		}
 	}
 }
@@ -927,6 +983,8 @@ func (s *ManagedTerminalSession) runCommand(req terminalExecRequest) terminalExe
 		return terminalExecOutcome{err: ErrTerminalSessionClosed}
 	}
 
+	// 命令执行期间不允许被「无人订阅」回收（agent 可能在没有前端连接时跑长任务）。
+	s.suspendReap()
 	// 先等输出静止，再清掉上一条命令残留的标记：
 	// 顺序反过来会把「等待期间产生的旧标记」误当成本次命令的退出码。
 	waitCtx, cancel := context.WithTimeout(context.Background(), terminalIdleWait+time.Second)

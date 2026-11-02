@@ -18,8 +18,8 @@ import (
 // （manager.TerminalSessionRegistry），key = (userID, projectID, templateID)。
 //
 //   - 同一个模板重复打开只会 attach 到同一个 PTY，不会重复创建容器；
-//   - 断开连接后会话保留 grace period，期间 Agent 的 terminal_exec 仍可复用，
-//     重新打开面板可回放历史输出；
+//   - 断开连接后的回收策略由 config.container.terminal_idle_grace_seconds 控制：
+//     0（默认）= 最后一个订阅者离开立即删除容器，>0 = 保留该时长以便重连 / Agent 继续执行；
 //   - 输出环形缓冲带序号，连接时可用 ?since=<seq> 重放（缺省回放全部缓存）。
 //
 // 协议：
@@ -28,7 +28,7 @@ import (
 //     或纯文本提示。
 //
 // @Summary      容器模板终端
-// @Description  用容器模板创建（或复用）会话并打开交互式终端；WebSocket 断开后会话保留一段时间。
+// @Description  用容器模板创建（或复用）会话并打开交互式终端；断开后按配置立即删除或保留一段时间。
 // @Tags         容器管理
 // @Param        templateId  path   int  true   "容器模板 ID"
 // @Param        since       query  int  false  "从指定输出序号重放（缺省回放全部缓存）"
