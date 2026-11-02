@@ -12,6 +12,7 @@ import (
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
 	agentpolicy "github.com/biox-dev/gobrave/internal/agent/policy"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 
@@ -215,7 +216,7 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 // skills 是技能注册表：既提供系统提示词的技能元信息，也供 get_skill /
 // load_skill_resource 工具在执行期读取技能指令与附属资源。
 // sessions / messages 是会话与消息服务：供 custom Provider 为子 Agent 创建子会话并落库。
-func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner tool.AnalysisNodeRunner, agentAnalysisRunner tool.AgentAnalysisRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, nodeCreator tool.AnalysisNodeCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
+func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, envUpdater runtimecontext.AgentEnvUpdater, memorySaver runtimecontext.MemorySaver, browser runtimecontext.ProjectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
 	opts := agentclient.Options{}
 
 	// 模型提供商配置表按需实时生成：可视化配置页保存 agent 段后，内存中的 cfg 会被立即更新，
@@ -412,8 +413,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 文件读取器：把「按 go_file 主键 ID 读取文件（含表格预览）」能力暴露给内置工具
 	// read_file_by_id，由 Provider 在执行工具前注入工具 ctx。
 	must(container.Provide(newFileReader))
-	// 脚本业务能力：agentscript.Creator 同时实现 tool.ScriptCreator（create_script）与
-	// tool.ScriptUpdater（update_script），故只需注入一次。
+	// 脚本业务能力：agentscript.Creator 同时实现 runtimecontext.ScriptCreator（create_script）与
+	// runtimecontext.ScriptUpdater（update_script），故只需注入一次。
 	must(container.Provide(agentscript.NewCreator))
 	// 脚本分析节点创建器：把「读取脚本契约 → 创建独立分析节点 → 准备工作目录」能力
 	// 暴露给内置工具 create_script_analysis。
@@ -438,7 +439,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agentclient.Registry, runner tool.AnalysisNodeRunner, agentAnalysisRunner tool.AgentAnalysisRunner, fileReader tool.FileReader, scriptCreator tool.ScriptCreator, nodeCreator tool.AnalysisNodeCreator, paramsBuilder tool.AnalysisNodeParamsBuilder, nodeUpdater tool.AnalysisNodeUpdater, envUpdater tool.AgentEnvUpdater, memorySaver tool.MemorySaver, browser tool.ProjectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
+	must(container.Provide(func(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, envUpdater runtimecontext.AgentEnvUpdater, memorySaver runtimecontext.MemorySaver, browser runtimecontext.ProjectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
 		return buildAgentClient(cfg, registry, runner, agentAnalysisRunner, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, envUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。

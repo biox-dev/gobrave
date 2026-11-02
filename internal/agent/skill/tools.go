@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -74,7 +75,7 @@ func GetSkill() tool.Tool {
 			"version": tool.StringProperty("可选：技能版本（精确匹配）。留空表示使用当前已安装版本。"),
 		}, "name"),
 		func(ctx context.Context, in GetSkillInput) (GetSkillOutput, error) {
-			return ResolveSkillOutput(ctx, tool.SkillResolverFrom(ctx), in.Name, in.Version)
+			return ResolveSkillOutput(ctx, runtimecontext.SkillResolverFrom(ctx), in.Name, in.Version)
 		},
 	)
 }
@@ -86,7 +87,7 @@ func GetSkill() tool.Tool {
 //
 // 返回 error 仅表示调用方环境缺失（如未注入 SkillResolver）；技能不存在、版本不匹配、
 // 渲染失败等业务错误通过 GetSkillOutput.Error 返回（与工具反馈给模型的口径一致）。
-func ResolveSkillOutput(ctx context.Context, resolver tool.SkillResolver, name, version string) (GetSkillOutput, error) {
+func ResolveSkillOutput(ctx context.Context, resolver runtimecontext.SkillResolver, name, version string) (GetSkillOutput, error) {
 	if resolver == nil {
 		return GetSkillOutput{}, fmt.Errorf("%s: skill registry is not available in this runtime", GetSkillToolName)
 	}
@@ -130,7 +131,7 @@ func LoadSkillResource() tool.Tool {
 			"version": tool.StringProperty("可选：技能版本（精确匹配）。留空表示使用当前已安装版本。"),
 		}, "name", "path"),
 		func(ctx context.Context, in LoadSkillResourceInput) (LoadSkillResourceOutput, error) {
-			resolver := tool.SkillResolverFrom(ctx)
+			resolver := runtimecontext.SkillResolverFrom(ctx)
 			if resolver == nil {
 				return LoadSkillResourceOutput{}, fmt.Errorf("%s: skill registry is not available in this runtime", LoadSkillResourceToolName)
 			}
@@ -174,7 +175,7 @@ func LoadSkillResource() tool.Tool {
 }
 
 // resolveSkill 按名称（与可选版本）解析技能。
-func resolveSkill(resolver tool.SkillResolver, name, version string) (tool.SkillResource, error) {
+func resolveSkill(resolver runtimecontext.SkillResolver, name, version string) (runtimecontext.SkillResource, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("name is required")
@@ -202,7 +203,7 @@ func resolveSkill(resolver tool.SkillResolver, name, version string) (tool.Skill
 
 // renderSkillTemplate 用本轮业务变量渲染技能文本（SKILL.md 正文 / 附属资源）中的 pongo2 模板。
 //
-// 变量取自 tool.RuntimeContextFrom(ctx).SystemPromptVars —— 与 Agent Profile 系统提示词
+// 变量取自 runtimecontext.RuntimeContextFrom(ctx).SystemPromptVars —— 与 Agent Profile 系统提示词
 // 使用同一套变量与同一份渲染实现（tool.RenderTemplate / agent.RenderSystemPromptTemplate）。
 // 未注入 RuntimeContext 时沿用空变量，未定义的占位符按 pongo2 默认行为渲染为空串，
 // 因此无业务上下文的场景不受影响。

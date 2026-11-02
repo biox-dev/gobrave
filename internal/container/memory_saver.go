@@ -6,11 +6,11 @@ import (
 	"strings"
 
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 )
 
-// memorySaver 实现 tool.MemorySaver：把工具（save_memory）写记忆的请求落到记忆域的
+// memorySaver 实现 runtimecontext.MemorySaver：把工具（save_memory）写记忆的请求落到记忆域的
 // MemoryManager 上。
 //
 // 之所以放在 container 而不是 tool 包：Memory / MemoryManager 属于 agent 包，而 tool 包
@@ -24,20 +24,20 @@ type memorySaver struct {
 }
 
 // newMemorySaver 构建「保存长期记忆」执行器并注入内置工具体系。
-func newMemorySaver(mgr *agentservice.MemoryManager) tool.MemorySaver {
+func newMemorySaver(mgr *agentservice.MemoryManager) runtimecontext.MemorySaver {
 	return &memorySaver{mgr: mgr}
 }
 
-func (s *memorySaver) SaveMemory(ctx context.Context, input tool.MemorySaveInput) (tool.MemorySaveResult, error) {
+func (s *memorySaver) SaveMemory(ctx context.Context, input runtimecontext.MemorySaveInput) (runtimecontext.MemorySaveResult, error) {
 	if s.mgr == nil {
-		return tool.MemorySaveResult{}, fmt.Errorf("save_memory: memory manager is not configured")
+		return runtimecontext.MemorySaveResult{}, fmt.Errorf("save_memory: memory manager is not configured")
 	}
 	if input.UserID <= 0 {
-		return tool.MemorySaveResult{}, fmt.Errorf("save_memory: user_id is required")
+		return runtimecontext.MemorySaveResult{}, fmt.Errorf("save_memory: user_id is required")
 	}
 	content := strings.TrimSpace(input.Content)
 	if content == "" {
-		return tool.MemorySaveResult{}, fmt.Errorf("save_memory: content is required")
+		return runtimecontext.MemorySaveResult{}, fmt.Errorf("save_memory: content is required")
 	}
 
 	kind := agenttypes.MemoryKind(strings.ToLower(strings.TrimSpace(input.Kind)))
@@ -56,11 +56,11 @@ func (s *memorySaver) SaveMemory(ctx context.Context, input tool.MemorySaveInput
 	} else {
 		existing, err := s.mgr.Get(ctx, memID)
 		if err != nil {
-			return tool.MemorySaveResult{}, fmt.Errorf("save_memory: failed to load memory %d: %w", memID, err)
+			return runtimecontext.MemorySaveResult{}, fmt.Errorf("save_memory: failed to load memory %d: %w", memID, err)
 		}
 		// 只允许更新本人记忆，避免模型把注意事项写进其他用户的数据。
 		if existing.UserID != input.UserID {
-			return tool.MemorySaveResult{}, fmt.Errorf("save_memory: memory %d does not belong to user %d", memID, input.UserID)
+			return runtimecontext.MemorySaveResult{}, fmt.Errorf("save_memory: memory %d does not belong to user %d", memID, input.UserID)
 		}
 		mem = existing
 		mem.Kind = kind
@@ -96,10 +96,10 @@ func (s *memorySaver) SaveMemory(ctx context.Context, input tool.MemorySaveInput
 	}
 
 	if err := s.mgr.Save(ctx, mem); err != nil {
-		return tool.MemorySaveResult{}, fmt.Errorf("save_memory: %w", err)
+		return runtimecontext.MemorySaveResult{}, fmt.Errorf("save_memory: %w", err)
 	}
 
-	return tool.MemorySaveResult{
+	return runtimecontext.MemorySaveResult{
 		ID:         mem.ID,
 		Kind:       string(mem.Kind),
 		Importance: mem.Importance,

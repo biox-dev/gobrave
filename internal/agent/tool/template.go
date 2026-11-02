@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/flosch/pongo2/v6"
 )
 
@@ -49,7 +50,7 @@ func RenderTemplate(text string, vars map[string]any) (string, error) {
 // 不受影响；text 为空时直接返回空串。
 func RenderRuntimeTemplate(ctx context.Context, text string) (string, error) {
 	var vars map[string]any
-	if rc := RuntimeContextFrom(ctx); rc != nil {
+	if rc := runtimecontext.RuntimeContextFrom(ctx); rc != nil {
 		vars = rc.Vars()
 	}
 	return RenderTemplate(text, vars)

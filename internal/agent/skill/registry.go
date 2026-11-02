@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 )
 
 // promptHeader 是注入系统提示词的技能说明前言。
@@ -82,15 +82,15 @@ func (r *Registry) Get(name string) (*Skill, bool) {
 	return s, ok
 }
 
-// Resolver 返回实现 tool.SkillResolver 的视图，供技能工具（get_skill /
+// Resolver 返回实现 runtimecontext.SkillResolver 的视图，供技能工具（get_skill /
 // load_skill_resource）在执行期按名称解析技能。
-func (r *Registry) Resolver() tool.SkillResolver { return registryResolver{r: r} }
+func (r *Registry) Resolver() runtimecontext.SkillResolver { return registryResolver{r: r} }
 
-// registryResolver 把 *Registry 适配为 tool.SkillResolver（返回 tool.SkillResource 接口）。
+// registryResolver 把 *Registry 适配为 runtimecontext.SkillResolver（返回 runtimecontext.SkillResource 接口）。
 type registryResolver struct{ r *Registry }
 
-// Get 实现 tool.SkillResolver。
-func (rr registryResolver) Get(name string) (tool.SkillResource, bool) {
+// Get 实现 runtimecontext.SkillResolver。
+func (rr registryResolver) Get(name string) (runtimecontext.SkillResource, bool) {
 	s, ok := rr.r.Get(name)
 	if !ok || s == nil {
 		return nil, false
@@ -98,7 +98,7 @@ func (rr registryResolver) Get(name string) (tool.SkillResource, bool) {
 	return s, true
 }
 
-// Names 实现 tool.SkillResolver。
+// Names 实现 runtimecontext.SkillResolver。
 func (rr registryResolver) Names() []string { return rr.r.Names() }
 
 // Has 报告指定技能是否已注册。

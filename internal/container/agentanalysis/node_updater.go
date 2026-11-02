@@ -1,12 +1,12 @@
 package agentanalysis
 
 import (
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
-// analysisNodeUpdater 实现 tool.AnalysisNodeUpdater：把「更新分析节点」的业务能力
+// analysisNodeUpdater 实现 runtimecontext.AnalysisNodeUpdater：把「更新分析节点」的业务能力
 // 暴露给内置工具 update_agent_analysis / update_script_analysis。
 //
 // 按节点类型细分的更新（命令型 / 脚本型）见 agent_node_updater.go / script_node_updater.go。
@@ -31,7 +31,7 @@ func NewNodeUpdater(
 	dataSvc interfaces.DataService,
 	containerRepo interfaces.ContainerRepository,
 	preparer prepare.NodeRuntimePreparer,
-) tool.AnalysisNodeUpdater {
+) runtimecontext.AnalysisNodeUpdater {
 	return &analysisNodeUpdater{
 		analysisSvc:   analysisSvc,
 		workflowSvc:   workflowSvc,

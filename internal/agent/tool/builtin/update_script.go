@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -69,7 +70,7 @@ func UpdateScript() tool.Tool {
 				return UpdateScriptOutput{}, fmt.Errorf("update_script: at least one of name / description must be provided")
 			}
 
-			updater := tool.ScriptUpdaterFrom(ctx)
+			updater := runtimecontext.ScriptUpdaterFrom(ctx)
 			if updater == nil {
 				return UpdateScriptOutput{}, fmt.Errorf("update_script: script updater is not available in this runtime")
 			}
@@ -79,7 +80,7 @@ func UpdateScript() tool.Tool {
 				return UpdateScriptOutput{}, fmt.Errorf("update_script: %w", err)
 			}
 
-			updateInput := tool.ScriptUpdateInput{
+			updateInput := runtimecontext.ScriptUpdateInput{
 				ProjectID: projectID,
 				ScriptID:  scriptID,
 			}

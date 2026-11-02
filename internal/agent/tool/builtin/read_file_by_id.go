@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -63,7 +64,7 @@ func ReadFileByID() tool.Tool {
 				return ReadFileByIDOutput{}, err
 			}
 
-			reader := tool.FileReaderFrom(ctx)
+			reader := runtimecontext.FileReaderFrom(ctx)
 			if reader == nil {
 				return ReadFileByIDOutput{}, fmt.Errorf("read_file_by_id: file reader is not available in this runtime")
 			}

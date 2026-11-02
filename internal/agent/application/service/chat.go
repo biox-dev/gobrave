@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	. "github.com/biox-dev/gobrave/internal/agent/types"
 	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	coreinterfaces "github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -32,7 +32,7 @@ type TurnInput struct {
 	Provider  string
 	Model     string
 	// RuntimeContext 是本轮调用的运行时上下文（业务类型 / 变量 / 工作目录）。
-	RuntimeContext *tool.RuntimeContext
+	RuntimeContext *runtimecontext.RuntimeContext
 	ProfileID      int64 // AgentProfile ID（为 0 取默认）
 	WorkingDir     string
 }

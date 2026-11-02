@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -61,7 +62,7 @@ func GetScript() tool.Tool {
 				return GetScriptOutput{}, fmt.Errorf("%s: %w", GetScriptToolName, err)
 			}
 
-			browser := tool.ProjectResourceBrowserFrom(ctx)
+			browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 			if browser == nil {
 				return GetScriptOutput{}, fmt.Errorf("%s: project resource browser is not available in this runtime", GetScriptToolName)
 			}

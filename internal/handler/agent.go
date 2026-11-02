@@ -10,8 +10,8 @@ import (
 	"sync"
 
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
-	"github.com/biox-dev/gobrave/internal/agent/tool"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/realtime"
@@ -476,7 +476,7 @@ func (h *AgentHandler) ResolveSkill(c *gin.Context) {
 			handleAgentError(c, err, "failed to resolve runtime context")
 			return
 		}
-		ctx = tool.WithRuntimeContext(ctx, resolved.Context)
+		ctx = runtimecontext.WithRuntimeContext(ctx, resolved.Context)
 	}
 
 	// version 留空：HTTP 接口使用当前已安装版本（与 get_skill 不传 version 时一致）。

@@ -8,14 +8,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
 // previewRowLimit 是文件内容预览的最大行数（列名之外）。
 const previewRowLimit = 5
 
-// fileReader 实现 tool.FileReader：把「按 go_file 主键 ID 读取文件内容预览」的业务能力
+// fileReader 实现 runtimecontext.FileReader：把「按 go_file 主键 ID 读取文件内容预览」的业务能力
 // 暴露给内置工具 read_file_by_id。
 //
 // 它复用 DataService（ID → 文件元信息 / path）与 SheetFileService（表格解析）：对
@@ -27,7 +27,7 @@ type fileReader struct {
 }
 
 // newFileReader 构建文件读取器并注入内置工具体系。
-func newFileReader(dataService interfaces.DataService, sheetService interfaces.SheetFileService) tool.FileReader {
+func newFileReader(dataService interfaces.DataService, sheetService interfaces.SheetFileService) runtimecontext.FileReader {
 	return &fileReader{
 		dataService:  dataService,
 		sheetService: sheetService,
@@ -35,23 +35,23 @@ func newFileReader(dataService interfaces.DataService, sheetService interfaces.S
 }
 
 // ReadFileByID 按 go_file 主键 ID 读取文件，返回文件元信息与内容预览。
-func (r *fileReader) ReadFileByID(ctx context.Context, fileID int64) (tool.FileReadResult, error) {
+func (r *fileReader) ReadFileByID(ctx context.Context, fileID int64) (runtimecontext.FileReadResult, error) {
 	if fileID <= 0 {
-		return tool.FileReadResult{FileID: fileID}, fmt.Errorf("invalid file id")
+		return runtimecontext.FileReadResult{FileID: fileID}, fmt.Errorf("invalid file id")
 	}
 	if r.dataService == nil {
-		return tool.FileReadResult{FileID: fileID}, fmt.Errorf("data service is not configured")
+		return runtimecontext.FileReadResult{FileID: fileID}, fmt.Errorf("data service is not configured")
 	}
 
 	file, err := r.dataService.GetFileByID(ctx, fileID)
 	if err != nil {
-		return tool.FileReadResult{FileID: fileID}, fmt.Errorf("failed to get file by id: %w", err)
+		return runtimecontext.FileReadResult{FileID: fileID}, fmt.Errorf("failed to get file by id: %w", err)
 	}
 	if file == nil {
-		return tool.FileReadResult{FileID: fileID}, fmt.Errorf("file %d not found", fileID)
+		return runtimecontext.FileReadResult{FileID: fileID}, fmt.Errorf("file %d not found", fileID)
 	}
 
-	result := tool.FileReadResult{
+	result := runtimecontext.FileReadResult{
 		FileID:   file.ID,
 		FileName: file.FileName,
 		FilePath: file.Path,
@@ -102,7 +102,7 @@ func normalizePreviewFormat(format, path string) string {
 //
 // 其中 cellData 的键是「行下标字符串」，值是「列下标字符串 → {v: 值}」。因此第一行
 // （下标 "0"）被视为表头，其余前 previewRowLimit 行作为数据行。
-func buildSheetPreviews(workbookData map[string]any) []tool.FileSheetTab {
+func buildSheetPreviews(workbookData map[string]any) []runtimecontext.FileSheetTab {
 	if workbookData == nil {
 		return nil
 	}
@@ -115,14 +115,14 @@ func buildSheetPreviews(workbookData map[string]any) []tool.FileSheetTab {
 	// 按 sheetOrder 排序，缺省时按 sheetID 升序，保证输出稳定。
 	order := sheetOrderOf(workbookData, rawSheets)
 
-	out := make([]tool.FileSheetTab, 0, len(order))
+	out := make([]runtimecontext.FileSheetTab, 0, len(order))
 	for _, sheetID := range order {
 		rawSheet, ok := rawSheets[sheetID].(map[string]any)
 		if !ok {
 			continue
 		}
 
-		tab := tool.FileSheetTab{Name: sheetNameOf(rawSheet, sheetID)}
+		tab := runtimecontext.FileSheetTab{Name: sheetNameOf(rawSheet, sheetID)}
 		tab.Columns, tab.Rows = previewFromCellData(cellDataOf(rawSheet))
 		out = append(out, tab)
 	}

@@ -42,7 +42,8 @@ internal/agent/
 - Service 实现：`github.com/biox-dev/gobrave/internal/agent/application/service`
 - Client / Registry / Options：`github.com/biox-dev/gobrave/internal/agent/client`
 - Runtime / ToolRunner / 工具上下文：`github.com/biox-dev/gobrave/internal/agent/runtime`
+- 工具执行期上下文与服务能力接口：`github.com/biox-dev/gobrave/internal/agent/runtimecontext`
 - PermissionPolicy：`github.com/biox-dev/gobrave/internal/agent/policy`
 
-> `tool/runtimecontext_alias.go` 仅为保留 `tool.RuntimeContext` 等既有符号名而存在，
-> 属于符号转发而非路径兼容层；如需彻底移除可改为直接使用 `runtimecontext` 包。
+> `tool/runtimecontext_alias.go` 已删除，`RuntimeContext` 与服务能力接口统一直接使用
+> `runtimecontext` 包。

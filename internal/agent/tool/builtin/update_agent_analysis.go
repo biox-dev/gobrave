@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 )
@@ -106,12 +107,12 @@ func UpdateAgentAnalysis() tool.Tool {
 				return UpdateAgentAnalysisOutput{}, fmt.Errorf("%s: at least one of node_name / command / container_template_id must be provided", UpdateAgentAnalysisToolName)
 			}
 
-			updater := tool.AnalysisNodeUpdaterFrom(ctx)
+			updater := runtimecontext.AnalysisNodeUpdaterFrom(ctx)
 			if updater == nil {
 				return UpdateAgentAnalysisOutput{}, fmt.Errorf("%s: analysis node updater is not available in this runtime", UpdateAgentAnalysisToolName)
 			}
 
-			input := tool.AgentAnalysisUpdateInput{
+			input := runtimecontext.AgentAnalysisUpdateInput{
 				ProjectID:           projectID,
 				AnalysisNodeID:      nodeID,
 				ContainerTemplateID: templateID,
@@ -152,7 +153,7 @@ func UpdateAgentAnalysis() tool.Tool {
 				return out, nil
 			}
 
-			runner := tool.AnalysisNodeRunnerFrom(ctx)
+			runner := runtimecontext.AnalysisNodeRunnerFrom(ctx)
 			if runner == nil {
 				out.Ran = false
 				out.Error = "update_agent_analysis: analysis node runner is not available in this runtime; the node was updated but not run"

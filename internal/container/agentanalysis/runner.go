@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/dag"
@@ -18,7 +18,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
-// analysisNodeRunner 实现 tool.AnalysisNodeRunner：把「运行分析节点并等待完成、读取日志」
+// analysisNodeRunner 实现 runtimecontext.AnalysisNodeRunner：把「运行分析节点并等待完成、读取日志」
 // 的业务能力暴露给内置工具 run_analysis_node。
 //
 // 与 AnalysisHandler.RunAnalysisNodeWithID 语义一致：
@@ -67,7 +67,7 @@ func NewNodeRunner(
 	preparer prepare.NodeRuntimePreparer,
 	router *dagruntime.EventRouter,
 	cfg *config.Config,
-) tool.AnalysisNodeRunner {
+) runtimecontext.AnalysisNodeRunner {
 	return &analysisNodeRunner{
 		analysisSvc:      analysisSvc,
 		nodeOrchestrator: nodeOrchestrator,
@@ -90,12 +90,12 @@ func NewNodeRunner(
 // request_param / resolved_inputs / inputs_patterns / output_patterns 一次性回写节点、
 // 清空上一轮的 input_validation_errors / output_validation_errors，再重新生成
 // params.json 并清空节点输出目录。解析失败则不提交运行（避免用过期 / 空参数跑出误导性结果）。
-func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, requestParam map[string]any, timeoutSeconds int) (result tool.AnalysisNodeRunResult, runErr error) {
+func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, requestParam map[string]any, timeoutSeconds int) (result runtimecontext.AnalysisNodeRunResult, runErr error) {
 	if nodeID <= 0 {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("invalid analysis node id")
+		return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("invalid analysis node id")
 	}
 	if r.nodeOrchestrator == nil {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("node orchestrator is not configured")
+		return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("node orchestrator is not configured")
 	}
 
 	timeout := r.defaultTimeout
@@ -105,7 +105,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 
 	node, err := r.analysisSvc.GetAnalysisNodeByID(ctx, nodeID)
 	if err != nil {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to get analysis node: %w", err)
+		return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to get analysis node: %w", err)
 	}
 
 	// 节点已取到：把绑定的 script_id 统一回填到所有返回分支（含错误 / 超时分支），
@@ -119,7 +119,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 
 	// 防重复提交：节点已在运行中时直接拒绝，避免并发触发。
 	if node.Status == dag.StatusRunning || node.Status == dag.StatusSubmitted || node.Status == dag.StatusStopping {
-		return tool.AnalysisNodeRunResult{
+		return runtimecontext.AnalysisNodeRunResult{
 			NodeID:       nodeID,
 			Status:       node.Status,
 			Log:          readAnalysisNodeLog(node.LogPath, r.maxLogBytes),
@@ -136,16 +136,16 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	// 更新入口写入节点目录，这里只重建目录 / params.json / env.sh，然后走通用节点链路运行。
 	if node.IsCommandNode() {
 		if len(requestParam) > 0 {
-			return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("analysis node %d is a command node and does not accept request_param", nodeID)
+			return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("analysis node %d is a command node and does not accept request_param", nodeID)
 		}
 		if r.preparer == nil {
-			return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("node runtime preparer is not configured")
+			return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("node runtime preparer is not configured")
 		}
 		node.HydrateDerivedPaths()
 		// 不携带 prepare.WithSkipCleanOutput：运行前清空 output，避免上一轮残留文件
 		// 被当作本轮结果（尤其是命令节点输出校验 / 后续节点读取）。
 		if err := r.preparer.Prepare(ctx, node); err != nil {
-			return tool.AnalysisNodeRunResult{
+			return runtimecontext.AnalysisNodeRunResult{
 				NodeID:       nodeID,
 				Status:       "params_failed",
 				WorkspaceDir: node.WorkspaceDir,
@@ -163,7 +163,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		effectiveRequestParam = DecodeRequestParam(node.RequestParam)
 	}
 	if len(effectiveRequestParam) == 0 {
-		return tool.AnalysisNodeRunResult{
+		return runtimecontext.AnalysisNodeRunResult{
 			NodeID:       nodeID,
 			Status:       "params_failed",
 			WorkspaceDir: node.WorkspaceDir,
@@ -175,12 +175,12 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 
 	// 2) 读取脚本，按表单把 request_param 解析成节点记录（patterns / resolved_inputs / request_param）。
 	if r.analysisRepo == nil || r.workflowSvc == nil {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("required services are not configured")
+		return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("required services are not configured")
 	}
 
 	script, err := r.workflowSvc.GetScriptByID(ctx, node.ScriptID)
 	if err != nil {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to load script %d: %w", node.ScriptID, err)
+		return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to load script %d: %w", node.ScriptID, err)
 	}
 
 	// 与 create_script_analysis / 保存独立节点同一构建口径（含读取脚本表单）：只取其中的 patterns /
@@ -193,7 +193,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		BaseDir:      r.storageBaseDir(),
 	})
 	if err != nil {
-		return tool.AnalysisNodeRunResult{
+		return runtimecontext.AnalysisNodeRunResult{
 			NodeID:       nodeID,
 			Status:       "params_failed",
 			RequestParam: effectiveRequestParam,
@@ -201,7 +201,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	}
 	formJSONWrap := built.ScriptFormJSON
 	if len(formJSONWrap) == 0 {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("script %d has no io_schema inputs, nothing to build", node.ScriptID)
+		return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("script %d has no io_schema inputs, nothing to build", node.ScriptID)
 	}
 	requestParamBytes := built.Node.RequestParam
 	resolvedInputs := built.Node.ResolvedInputs
@@ -217,12 +217,12 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		"input_validation_errors":  types.JSONSlice{},
 		"output_validation_errors": types.JSONSlice{},
 	}); err != nil {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to update analysis node %d: %w", node.ID, err)
+		return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to update analysis node %d: %w", node.ID, err)
 	}
 
 	// 4) 用刚写入的字段重新生成 params.json / run.sh / env.sh。
 	if r.preparer == nil {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("node runtime preparer is not configured")
+		return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("node runtime preparer is not configured")
 	}
 	node.InputsPatterns = inputsPatterns
 	node.OutputPatterns = outputPatterns
@@ -231,7 +231,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	node.HydrateDerivedPaths()
 	// 不携带 prepare.WithSkipCleanOutput：运行前清空 output，保证本次结果不复用上一轮残留文件。
 	if err := r.preparer.Prepare(ctx, node); err != nil {
-		return tool.AnalysisNodeRunResult{
+		return runtimecontext.AnalysisNodeRunResult{
 			NodeID:         nodeID,
 			Status:         "params_failed",
 			WorkspaceDir:   node.WorkspaceDir,
@@ -271,7 +271,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 // resetAndRun 把节点重置为 ready 并提交异步执行，然后等待终态。
 //
 // 校验错误由调用方在参数解析阶段清空，这里只负责运行态字段与状态。
-func (r *analysisNodeRunner) resetAndRun(ctx context.Context, node *types.AnalysisNode, timeout time.Duration) (tool.AnalysisNodeRunResult, error) {
+func (r *analysisNodeRunner) resetAndRun(ctx context.Context, node *types.AnalysisNode, timeout time.Duration) (runtimecontext.AnalysisNodeRunResult, error) {
 	if err := r.analysisSvc.UpdateAnalysisNodeByID(ctx, node.ID, map[string]any{
 		"status":        dag.StatusReady,
 		"server_status": "",
@@ -285,11 +285,11 @@ func (r *analysisNodeRunner) resetAndRun(ctx context.Context, node *types.Analys
 		"finished_at":   nil,
 		"updated_at":    time.Now().UTC(),
 	}); err != nil {
-		return tool.AnalysisNodeRunResult{NodeID: node.ID}, fmt.Errorf("failed to reset analysis node status: %w", err)
+		return runtimecontext.AnalysisNodeRunResult{NodeID: node.ID}, fmt.Errorf("failed to reset analysis node status: %w", err)
 	}
 
 	if err := r.nodeOrchestrator.StartAsync(ctx, node.ID); err != nil {
-		return tool.AnalysisNodeRunResult{NodeID: node.ID}, fmt.Errorf("failed to submit analysis node: %w", err)
+		return runtimecontext.AnalysisNodeRunResult{NodeID: node.ID}, fmt.Errorf("failed to submit analysis node: %w", err)
 	}
 
 	return r.waitForCompletion(ctx, node.ID, strings.TrimSpace(node.LogPath), timeout)
@@ -319,12 +319,12 @@ func readParamsJSON(paramsPath string) string {
 //
 // 每次被唤醒都会重新读取节点并检查终态，因此事件只是「提前唤醒信号」，最终是否结束
 // 仍以节点持久化状态为准，避免把事件与状态不一致的情形误判为已完成。
-func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64, logPath string, timeout time.Duration) (tool.AnalysisNodeRunResult, error) {
+func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64, logPath string, timeout time.Duration) (runtimecontext.AnalysisNodeRunResult, error) {
 	deadline := time.Now().Add(timeout)
 
 	node, err := r.analysisSvc.GetAnalysisNodeByID(ctx, nodeID)
 	if err != nil {
-		return tool.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to get analysis node: %w", err)
+		return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to get analysis node: %w", err)
 	}
 	analysisID := node.AnalysisID
 	scriptID := node.ScriptID
@@ -367,7 +367,7 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 	for {
 		select {
 		case <-ctx.Done():
-			return tool.AnalysisNodeRunResult{
+			return runtimecontext.AnalysisNodeRunResult{
 				NodeID:       nodeID,
 				ScriptID:     scriptID,
 				Status:       "canceled",
@@ -407,7 +407,7 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 			if isAnalysisNodeTerminal(status) {
 				log := readAnalysisNodeLog(logPath, r.maxLogBytes)
 				success := isAnalysisNodeSuccess(status)
-				result := tool.AnalysisNodeRunResult{
+				result := runtimecontext.AnalysisNodeRunResult{
 					NodeID:       nodeID,
 					ScriptID:     node.ScriptID,
 					Status:       node.Status,
@@ -431,7 +431,7 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 		}
 
 		if time.Now().After(deadline) {
-			return tool.AnalysisNodeRunResult{
+			return runtimecontext.AnalysisNodeRunResult{
 				NodeID:       nodeID,
 				ScriptID:     scriptID,
 				Status:       "timeout",

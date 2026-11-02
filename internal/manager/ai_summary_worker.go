@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/event"
@@ -127,7 +127,7 @@ func (w *AISummaryWorker) process(ctx context.Context, summaryID int64) error {
 		// 系统提示词模板变量由 RuntimeContext 承载（可持久化到 agent_tasks）。
 		// 摘要任务由后台 worker 触发，没有登录用户，因此 Task.UserID 为 0：
 		// 权限策略走默认策略、不写入用户记忆。
-		RuntimeContext: &tool.RuntimeContext{
+		RuntimeContext: &runtimecontext.RuntimeContext{
 			SystemPromptVars: content.SystemPromptVars,
 		},
 		Messages: []agenttypes.Message{

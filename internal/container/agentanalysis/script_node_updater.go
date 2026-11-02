@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -19,8 +19,8 @@ import (
 // inputs_patterns / output_patterns 并清空上一轮校验错误，最后重新生成 params.json，
 // 同时清空节点输出目录（旧参数的结果已失效）。
 // 传入空对象（{}）表示清空节点参数。
-func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in tool.ScriptAnalysisUpdateInput) (tool.ScriptAnalysisUpdateResult, error) {
-	result := tool.ScriptAnalysisUpdateResult{AnalysisNodeID: in.AnalysisNodeID}
+func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runtimecontext.ScriptAnalysisUpdateInput) (runtimecontext.ScriptAnalysisUpdateResult, error) {
+	result := runtimecontext.ScriptAnalysisUpdateResult{AnalysisNodeID: in.AnalysisNodeID}
 
 	if in.ProjectID <= 0 {
 		return result, fmt.Errorf("update_script_analysis: project_id is required")
@@ -127,7 +127,7 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in tool.
 		requestParam = in.RequestParam
 	}
 
-	return tool.ScriptAnalysisUpdateResult{
+	return runtimecontext.ScriptAnalysisUpdateResult{
 		AnalysisNodeID: node.ID,
 		NodeName:       node.NodeName,
 		ScriptID:       node.ScriptID,

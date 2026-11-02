@@ -21,9 +21,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	yaml "github.com/goccy/go-yaml"
-
-	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
 const (
@@ -485,15 +484,15 @@ func isWithin(root, path string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// 以下方法实现 tool.SkillResource，供 get_skill / load_skill_resource 工具在
+// 以下方法实现 runtimecontext.SkillResource，供 get_skill / load_skill_resource 工具在
 // 执行期读取技能指令与附属资源（skill 包依赖 tool 包，反向通过接口解耦）。
 
 // SkillInfo 返回技能的最小元信息与指令正文。
-func (s *Skill) SkillInfo() tool.SkillInfo {
+func (s *Skill) SkillInfo() runtimecontext.SkillInfo {
 	if s == nil {
-		return tool.SkillInfo{}
+		return runtimecontext.SkillInfo{}
 	}
-	return tool.SkillInfo{
+	return runtimecontext.SkillInfo{
 		Name:          s.Name,
 		Description:   s.Description,
 		SkillPath:     s.Path,

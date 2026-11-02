@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
@@ -19,7 +19,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// analysisNodeParamsBuilder 实现 tool.AnalysisNodeParamsBuilder：把「按脚本 io_schema
+// analysisNodeParamsBuilder 实现 runtimecontext.AnalysisNodeParamsBuilder：把「按脚本 io_schema
 // 解析请求参数 → 刷新节点记录 → 生成 params.json」的业务能力暴露给内置工具
 // build_analysis_node_params。
 //
@@ -47,7 +47,7 @@ func NewParamsBuilder(
 	dataSvc interfaces.DataService,
 	preparer prepare.NodeRuntimePreparer,
 	cfg *config.Config,
-) tool.AnalysisNodeParamsBuilder {
+) runtimecontext.AnalysisNodeParamsBuilder {
 	return &analysisNodeParamsBuilder{
 		analysisSvc:  analysisSvc,
 		analysisRepo: analysisRepo,
@@ -69,8 +69,8 @@ func NewParamsBuilder(
 //  5. 回读 params.json，把路径与实际内容一起回传给模型。
 //
 // request_param 必须非空。
-func (b *analysisNodeParamsBuilder) BuildAnalysisNodeParams(ctx context.Context, in tool.AnalysisNodeParamsInput) (tool.AnalysisNodeParamsResult, error) {
-	result := tool.AnalysisNodeParamsResult{AnalysisNodeID: in.AnalysisNodeID}
+func (b *analysisNodeParamsBuilder) BuildAnalysisNodeParams(ctx context.Context, in runtimecontext.AnalysisNodeParamsInput) (runtimecontext.AnalysisNodeParamsResult, error) {
+	result := runtimecontext.AnalysisNodeParamsResult{AnalysisNodeID: in.AnalysisNodeID}
 
 	if in.AnalysisNodeID <= 0 {
 		return result, fmt.Errorf("analysis node id is required")

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -53,14 +53,14 @@ func normalizeEnvType(typ string) string {
 
 // RuntimeContext 是解析后的运行时上下文。
 //
-// 直接复用 tool.RuntimeContext：它只承载可序列化的业务事实（渲染 Profile 系统提示词模板
+// 直接复用 runtimecontext.RuntimeContext：它只承载可序列化的业务事实（渲染 Profile 系统提示词模板
 // 所需的 SystemPromptVars），随 TurnInput → agenttypes.Request.RuntimeContext 一路
 // 传递到工具执行期，并随 Request 一起序列化进 agent_tasks.request 持久化（重启后可恢复）。
 // 工作目录属于执行事实，由 ResolveWithFacts 返回并落到 Task.WorkingDir。
 //
 // 工具执行期所需的服务能力（如 AnalysisNodeRunner）不在此结构内：它是进程级静态依赖，
 // 改由 agentclient.Options 注入（见 buildAgentClient），避免服务对象被序列化进 agent_tasks。
-type RuntimeContext = tool.RuntimeContext
+type RuntimeContext = runtimecontext.RuntimeContext
 
 // RuntimeContextResolver 把「业务 env(type,id) → 系统提示词 + 工作目录」的解析逻辑
 // 从具体 Handler 中抽离出来，供 Agent 会话（AgentHandler）使用，避免重复实现导致的行为漂移。

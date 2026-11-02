@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/coder/diff"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
@@ -61,22 +62,22 @@ func textDiffPreview(path, before, after string) tool.PermissionPreview {
 //
 // 任何失败（上下文缺项目 / ID 非法 / 未注入浏览器 / 节点不存在）都返回 ok=false，
 // 由调用方退化为「无旧值」的预览；真正的错误仍由工具主体返回给模型。
-func analysisNodeForPreview(ctx context.Context, toolName, rawNodeID string) (tool.AnalysisNodeBrief, bool) {
+func analysisNodeForPreview(ctx context.Context, toolName, rawNodeID string) (runtimecontext.AnalysisNodeBrief, bool) {
 	projectID, err := requireProjectID(ctx, toolName)
 	if err != nil {
-		return tool.AnalysisNodeBrief{}, false
+		return runtimecontext.AnalysisNodeBrief{}, false
 	}
 	nodeID, err := parseAnalysisNodeID(rawNodeID)
 	if err != nil {
-		return tool.AnalysisNodeBrief{}, false
+		return runtimecontext.AnalysisNodeBrief{}, false
 	}
-	browser := tool.ProjectResourceBrowserFrom(ctx)
+	browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 	if browser == nil {
-		return tool.AnalysisNodeBrief{}, false
+		return runtimecontext.AnalysisNodeBrief{}, false
 	}
 	brief, err := browser.GetAnalysisNodeByID(ctx, projectID, nodeID)
 	if err != nil {
-		return tool.AnalysisNodeBrief{}, false
+		return runtimecontext.AnalysisNodeBrief{}, false
 	}
 	return brief, true
 }

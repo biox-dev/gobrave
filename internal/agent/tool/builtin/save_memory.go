@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -79,7 +80,7 @@ func SaveMemory() tool.Tool {
 				return SaveMemoryOutput{}, fmt.Errorf("save_memory: user id is not available in this runtime")
 			}
 
-			saver := tool.MemorySaverFrom(ctx)
+			saver := runtimecontext.MemorySaverFrom(ctx)
 			if saver == nil {
 				return SaveMemoryOutput{}, fmt.Errorf("save_memory: memory saver is not available in this runtime")
 			}
@@ -93,7 +94,7 @@ func SaveMemory() tool.Tool {
 			sessionID := tool.SessionIDFrom(ctx)
 			metadata := in.Metadata
 
-			res, err := saver.SaveMemory(ctx, tool.MemorySaveInput{
+			res, err := saver.SaveMemory(ctx, runtimecontext.MemorySaveInput{
 				UserID:     userID,
 				ID:         in.MemoryID,
 				SessionID:  sessionID,

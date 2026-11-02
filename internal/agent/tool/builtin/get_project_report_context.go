@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -88,7 +89,7 @@ func GetProjectReportContext() tool.Tool {
 				return "", fmt.Errorf("%s: user_id is required in this runtime", GetProjectReportContextToolName)
 			}
 
-			browser := tool.ProjectResourceBrowserFrom(ctx)
+			browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 			if browser == nil {
 				return "", fmt.Errorf("%s: project resource browser is not available in this runtime", GetProjectReportContextToolName)
 			}

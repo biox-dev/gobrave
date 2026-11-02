@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -100,12 +101,12 @@ func CreateScript() tool.Tool {
 				return CreateScriptOutput{}, err
 			}
 
-			creator := tool.ScriptCreatorFrom(ctx)
+			creator := runtimecontext.ScriptCreatorFrom(ctx)
 			if creator == nil {
 				return CreateScriptOutput{}, fmt.Errorf("create_script: script creator is not available in this runtime")
 			}
 
-			result, err := creator.CreateScript(ctx, tool.ScriptCreateInput{
+			result, err := creator.CreateScript(ctx, runtimecontext.ScriptCreateInput{
 				ProjectID:           projectID,
 				Name:                name,
 				Description:         strings.TrimSpace(in.Description),

@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
 
-// agentEnvUpdater 实现 tool.AgentEnvUpdater：把用户当前业务上下文（llmEnv）写回
+// agentEnvUpdater 实现 runtimecontext.AgentEnvUpdater：把用户当前业务上下文（llmEnv）写回
 // user.AgentConfig.EnvID / EnvType。
 //
 // 与前端调用 /auth/agent-env 的效果一致；区别只是触发方是 Agent 工具（create_script 在
@@ -22,7 +22,7 @@ type agentEnvUpdater struct {
 }
 
 // newAgentEnvUpdater 构建「更新用户业务上下文」执行器并注入内置工具体系。
-func newAgentEnvUpdater(userRepo interfaces.UserRepository) tool.AgentEnvUpdater {
+func newAgentEnvUpdater(userRepo interfaces.UserRepository) runtimecontext.AgentEnvUpdater {
 	return &agentEnvUpdater{userRepo: userRepo}
 }
 

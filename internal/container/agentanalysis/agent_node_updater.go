@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/types"
 	"gorm.io/gorm"
@@ -18,8 +18,8 @@ import (
 // command 不再落库（AnalysisNode 没有 Command 字段），而是直接写入节点 run.sh；
 // 命令变更后重新生成 env.sh / params.json，并清空节点输出目录（旧命令的结果已失效），
 // 保证下一次运行使用新命令且不复用上一轮残留产物。
-func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in tool.AgentAnalysisUpdateInput) (tool.AgentAnalysisUpdateResult, error) {
-	result := tool.AgentAnalysisUpdateResult{AnalysisNodeID: in.AnalysisNodeID}
+func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtimecontext.AgentAnalysisUpdateInput) (runtimecontext.AgentAnalysisUpdateResult, error) {
+	result := runtimecontext.AgentAnalysisUpdateResult{AnalysisNodeID: in.AnalysisNodeID}
 
 	if in.ProjectID <= 0 {
 		return result, fmt.Errorf("update_agent_analysis: project_id is required")
@@ -125,7 +125,7 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in tool.A
 	if content, readErr := prepare.ReadCommandRunScript(node.CommandPath); readErr == nil {
 		currentCommand = strings.TrimSpace(content)
 	}
-	return tool.AgentAnalysisUpdateResult{
+	return runtimecontext.AgentAnalysisUpdateResult{
 		AnalysisNodeID:      node.ID,
 		NodeName:            node.NodeName,
 		Command:             currentCommand,

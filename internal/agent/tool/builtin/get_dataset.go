@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -58,7 +59,7 @@ func GetDataset() tool.Tool {
 				return GetDatasetOutput{}, fmt.Errorf("%s: %w", GetDatasetToolName, err)
 			}
 
-			browser := tool.ProjectResourceBrowserFrom(ctx)
+			browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 			if browser == nil {
 				return GetDatasetOutput{}, fmt.Errorf("%s: project resource browser is not available in this runtime", GetDatasetToolName)
 			}

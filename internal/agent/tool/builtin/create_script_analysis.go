@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -85,12 +86,12 @@ func CreateScriptAnalysis() tool.Tool {
 				return CreateScriptAnalysisOutput{}, fmt.Errorf("create_script_analysis: %w", err)
 			}
 
-			creator := tool.AnalysisNodeCreatorFrom(ctx)
+			creator := runtimecontext.AnalysisNodeCreatorFrom(ctx)
 			if creator == nil {
 				return CreateScriptAnalysisOutput{}, fmt.Errorf("create_script_analysis: analysis node creator is not available in this runtime")
 			}
 
-			result, err := creator.CreateAnalysisNode(ctx, tool.AnalysisNodeCreateInput{
+			result, err := creator.CreateAnalysisNode(ctx, runtimecontext.AnalysisNodeCreateInput{
 				ProjectID:    projectID,
 				ScriptID:     scriptID,
 				NodeName:     in.NodeName,
@@ -123,7 +124,7 @@ func CreateScriptAnalysis() tool.Tool {
 				return out, nil
 			}
 
-			runner := tool.AnalysisNodeRunnerFrom(ctx)
+			runner := runtimecontext.AnalysisNodeRunnerFrom(ctx)
 			if runner == nil {
 				out.Ran = false
 				out.Error = "create_script_analysis: analysis node runner is not available in this runtime; the node was created but not run"

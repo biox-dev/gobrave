@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
@@ -15,7 +15,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/utils"
 )
 
-// scriptNodeCreator 实现 tool.AnalysisNodeCreator：为已有脚本创建一个独立分析节点
+// scriptNodeCreator 实现 runtimecontext.AnalysisNodeCreator：为已有脚本创建一个独立分析节点
 // （create_script_analysis）。
 //
 // 与 handler 保存独立节点保持同一口径：脚本必须属于 project_id，request_param 非空时
@@ -44,7 +44,7 @@ func NewScriptNodeCreator(
 	dataSvc interfaces.DataService,
 	preparer prepare.NodeRuntimePreparer,
 	cfg *config.Config,
-) tool.AnalysisNodeCreator {
+) runtimecontext.AnalysisNodeCreator {
 	return &scriptNodeCreator{
 		workflowSvc:  workflowSvc,
 		analysisRepo: analysisRepo,
@@ -58,36 +58,36 @@ func NewScriptNodeCreator(
 //
 // 步骤：校验脚本归属 → 按脚本 io_schema 构建节点并落库 → 生成运行期文件 →
 // 回传节点 ID 与脚本 / 节点两侧的关键路径。
-func (c *scriptNodeCreator) CreateAnalysisNode(ctx context.Context, in tool.AnalysisNodeCreateInput) (tool.AnalysisNodeCreateResult, error) {
+func (c *scriptNodeCreator) CreateAnalysisNode(ctx context.Context, in runtimecontext.AnalysisNodeCreateInput) (runtimecontext.AnalysisNodeCreateResult, error) {
 	if in.ProjectID <= 0 {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: project_id is required")
+		return runtimecontext.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: project_id is required")
 	}
 	if in.ScriptID <= 0 {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: script_id is required")
+		return runtimecontext.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: script_id is required")
 	}
 	if c.workflowSvc == nil || c.analysisRepo == nil {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: required services are not configured")
+		return runtimecontext.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: required services are not configured")
 	}
 
 	script, err := c.workflowSvc.GetScriptByID(ctx, in.ScriptID)
 	if err != nil {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: failed to get script %d: %w", in.ScriptID, err)
+		return runtimecontext.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: failed to get script %d: %w", in.ScriptID, err)
 	}
 	if script == nil || script.ID == 0 {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: script %d not found", in.ScriptID)
+		return runtimecontext.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: script %d not found", in.ScriptID)
 	}
 	if script.ProjectID != in.ProjectID {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: script %d belongs to project %d, not the active project %d", script.ID, script.ProjectID, in.ProjectID)
+		return runtimecontext.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: script %d belongs to project %d, not the active project %d", script.ID, script.ProjectID, in.ProjectID)
 	}
 
 	node, err := c.createNode(ctx, script, in.RequestParam, in.NodeName)
 	if err != nil {
-		return tool.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: %w", err)
+		return runtimecontext.AnalysisNodeCreateResult{}, fmt.Errorf("create_script_analysis: %w", err)
 	}
 
 	// 脚本侧路径由脚本目录派生（与 create_script / update_script 同口径）：
 	// 建好节点后模型经常要紧接着改脚本或 io_schema，这里一并回传免得多查一次。
-	result := tool.AnalysisNodeCreateResult{
+	result := runtimecontext.AnalysisNodeCreateResult{
 		AnalysisNodeID: node.ID,
 		NodeName:       node.NodeName,
 		ScriptID:       script.ID,

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/container/agentanalysis"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -18,7 +18,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// 本文件实现 tool.ProjectResourceBrowser：「浏览项目内的脚本 / 分析节点」与「浏览全局容器模板」。
+// 本文件实现 runtimecontext.ProjectResourceBrowser：「浏览项目内的脚本 / 分析节点」与「浏览全局容器模板」。
 //
 // 只读内置工具共用同一份实现：
 //   - list_project_scripts：按 RuntimeContext.ProjectID 列出全部脚本；
@@ -34,7 +34,7 @@ import (
 // io_schema.json 布局），节点工作目录与 params.json 取自 analysisRepository 在读取时
 // 还原的绝对路径（WorkspaceDir 落库为相对 storage.base_dir 的路径）。
 
-// projectResourceBrowser 实现 tool.ProjectResourceBrowser。
+// projectResourceBrowser 实现 runtimecontext.ProjectResourceBrowser。
 type projectResourceBrowser struct {
 	workflowSvc  interfaces.WorkflowService
 	analysisRepo interfaces.AnalysisRepository
@@ -54,7 +54,7 @@ type projectResourceBrowser struct {
 }
 
 // newProjectResourceBrowser 构建「浏览项目内脚本 / 分析节点 / 容器模板 / 数据集 / 报告」执行器并注入内置工具体系。
-func newProjectResourceBrowser(workflowSvc interfaces.WorkflowService, analysisRepo interfaces.AnalysisRepository, containerSvc interfaces.ContainerService, dataSvc interfaces.DataService, projectSvc interfaces.ProjectService, analysisSvc interfaces.AnalysisService, summaryRepo interfaces.AISummaryRepository, cfg *config.Config) tool.ProjectResourceBrowser {
+func newProjectResourceBrowser(workflowSvc interfaces.WorkflowService, analysisRepo interfaces.AnalysisRepository, containerSvc interfaces.ContainerService, dataSvc interfaces.DataService, projectSvc interfaces.ProjectService, analysisSvc interfaces.AnalysisService, summaryRepo interfaces.AISummaryRepository, cfg *config.Config) runtimecontext.ProjectResourceBrowser {
 	return &projectResourceBrowser{
 		workflowSvc:  workflowSvc,
 		analysisRepo: analysisRepo,
@@ -68,7 +68,7 @@ func newProjectResourceBrowser(workflowSvc interfaces.WorkflowService, analysisR
 }
 
 // ListScriptsByProject 返回指定项目下的全部脚本（按 id 倒序）。
-func (b *projectResourceBrowser) ListScriptsByProject(ctx context.Context, projectID int64) ([]tool.ScriptBrief, error) {
+func (b *projectResourceBrowser) ListScriptsByProject(ctx context.Context, projectID int64) ([]runtimecontext.ScriptBrief, error) {
 	if projectID <= 0 {
 		return nil, fmt.Errorf("list_project_scripts: project_id is required")
 	}
@@ -85,7 +85,7 @@ func (b *projectResourceBrowser) ListScriptsByProject(ctx context.Context, proje
 	}
 
 	baseDir := b.storageBaseDir()
-	out := make([]tool.ScriptBrief, 0, len(scripts))
+	out := make([]runtimecontext.ScriptBrief, 0, len(scripts))
 	for _, script := range scripts {
 		if script == nil {
 			continue
@@ -96,58 +96,58 @@ func (b *projectResourceBrowser) ListScriptsByProject(ctx context.Context, proje
 }
 
 // GetScriptByID 按主键读取脚本，并校验其属于当前激活项目。
-func (b *projectResourceBrowser) GetScriptByID(ctx context.Context, projectID int64, scriptID int64) (tool.ScriptBrief, error) {
+func (b *projectResourceBrowser) GetScriptByID(ctx context.Context, projectID int64, scriptID int64) (runtimecontext.ScriptBrief, error) {
 	if projectID <= 0 {
-		return tool.ScriptBrief{}, fmt.Errorf("get_script: project_id is required")
+		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: project_id is required")
 	}
 	if scriptID <= 0 {
-		return tool.ScriptBrief{}, fmt.Errorf("get_script: script_id is required")
+		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: script_id is required")
 	}
 	if b.workflowSvc == nil {
-		return tool.ScriptBrief{}, fmt.Errorf("get_script: required services are not configured")
+		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: required services are not configured")
 	}
 
 	script, err := b.workflowSvc.GetScriptByID(ctx, scriptID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return tool.ScriptBrief{}, fmt.Errorf("get_script: script %d not found", scriptID)
+			return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: script %d not found", scriptID)
 		}
-		return tool.ScriptBrief{}, fmt.Errorf("get_script: failed to load script: %w", err)
+		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: failed to load script: %w", err)
 	}
 	if script == nil || script.ID == 0 {
-		return tool.ScriptBrief{}, fmt.Errorf("get_script: script %d not found", scriptID)
+		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: script %d not found", scriptID)
 	}
 	if script.ProjectID != projectID {
-		return tool.ScriptBrief{}, fmt.Errorf("get_script: script %d does not belong to the active project %d", script.ID, projectID)
+		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: script %d does not belong to the active project %d", script.ID, projectID)
 	}
 	return b.toScriptBrief(b.storageBaseDir(), script), nil
 }
 
 // GetAnalysisNodeByID 按主键读取分析节点，并校验其属于当前激活项目。
-func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projectID int64, nodeID int64) (tool.AnalysisNodeBrief, error) {
+func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projectID int64, nodeID int64) (runtimecontext.AnalysisNodeBrief, error) {
 	if projectID <= 0 {
-		return tool.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: project_id is required")
+		return runtimecontext.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: project_id is required")
 	}
 	if nodeID <= 0 {
-		return tool.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: analysis_node_id is required")
+		return runtimecontext.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: analysis_node_id is required")
 	}
 	if b.analysisRepo == nil {
-		return tool.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: required services are not configured")
+		return runtimecontext.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: required services are not configured")
 	}
 
 	// repository 读取时已把 WorkspaceDir 还原成绝对路径，并填充 ParamsPath 等派生路径。
 	node, err := b.analysisRepo.GetAnalysisNodeByID(ctx, nodeID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return tool.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: analysis node %d not found", nodeID)
+			return runtimecontext.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: analysis node %d not found", nodeID)
 		}
-		return tool.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: failed to load node: %w", err)
+		return runtimecontext.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: failed to load node: %w", err)
 	}
 	if node == nil || node.ID == 0 {
-		return tool.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: analysis node %d not found", nodeID)
+		return runtimecontext.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: analysis node %d not found", nodeID)
 	}
 	if node.ProjectID != projectID {
-		return tool.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: analysis node %d does not belong to the active project %d", node.ID, projectID)
+		return runtimecontext.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: analysis node %d does not belong to the active project %d", node.ID, projectID)
 	}
 
 	// 兜底：个别读取路径可能没有填充派生路径，这里按 WorkspaceDir 再推导一次（幂等）。
@@ -155,7 +155,7 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 		node.HydrateDerivedPaths()
 	}
 
-	return tool.AnalysisNodeBrief{
+	return runtimecontext.AnalysisNodeBrief{
 		AnalysisNodeID:      node.ID,
 		NodeName:            node.NodeName,
 		CreationSource:      node.CreationSource,
@@ -174,7 +174,7 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 //
 // ListContainerTemplate 的读模型会把 DisplayName 优先填进 Name，而本工具要求返回
 // spec 自身的 Name，因此这里按 SpecID 回查 spec（同一分组的多个镜像只查一次）。
-func (b *projectResourceBrowser) ListContainerTemplates(ctx context.Context) ([]tool.ContainerTemplateBrief, error) {
+func (b *projectResourceBrowser) ListContainerTemplates(ctx context.Context) ([]runtimecontext.ContainerTemplateBrief, error) {
 	if b.containerSvc == nil {
 		return nil, fmt.Errorf("list_container_templates: required services are not configured")
 	}
@@ -186,13 +186,13 @@ func (b *projectResourceBrowser) ListContainerTemplates(ctx context.Context) ([]
 
 	specs := make(map[int64]*types.ContainerTemplateSpec)
 	resolved := make(map[int64]bool)
-	out := make([]tool.ContainerTemplateBrief, 0, len(templates))
+	out := make([]runtimecontext.ContainerTemplateBrief, 0, len(templates))
 	for _, tpl := range templates {
 		if tpl == nil {
 			continue
 		}
 
-		brief := tool.ContainerTemplateBrief{
+		brief := runtimecontext.ContainerTemplateBrief{
 			DefinitionID: tpl.ID,
 			SpecID:       tpl.SpecID,
 		}
@@ -217,26 +217,26 @@ func (b *projectResourceBrowser) ListContainerTemplates(ctx context.Context) ([]
 //
 // 返回绑定行自身的 DisplayName / Description（longtext），并额外带上 spec 名称与镜像信息，
 // 便于模型确认“这个模板到底是什么、能不能跑当前任务”。
-func (b *projectResourceBrowser) GetContainerTemplateByID(ctx context.Context, containerTemplateID int64) (tool.ContainerTemplateDetail, error) {
+func (b *projectResourceBrowser) GetContainerTemplateByID(ctx context.Context, containerTemplateID int64) (runtimecontext.ContainerTemplateDetail, error) {
 	if containerTemplateID <= 0 {
-		return tool.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: container_template_id is required")
+		return runtimecontext.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: container_template_id is required")
 	}
 	if b.containerSvc == nil {
-		return tool.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: required services are not configured")
+		return runtimecontext.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: required services are not configured")
 	}
 
 	tpl, err := b.containerSvc.GetContainerTemplateByID(ctx, containerTemplateID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return tool.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: container template %d not found", containerTemplateID)
+			return runtimecontext.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: container template %d not found", containerTemplateID)
 		}
-		return tool.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: failed to load container template: %w", err)
+		return runtimecontext.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: failed to load container template: %w", err)
 	}
 	if tpl == nil || tpl.ID == 0 {
-		return tool.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: container template %d not found", containerTemplateID)
+		return runtimecontext.ContainerTemplateDetail{}, fmt.Errorf("get_container_template: container template %d not found", containerTemplateID)
 	}
 
-	detail := tool.ContainerTemplateDetail{
+	detail := runtimecontext.ContainerTemplateDetail{
 		DefinitionID: tpl.ID,
 		SpecID:       tpl.SpecID,
 		DisplayName:  tpl.DisplayName,
@@ -256,32 +256,32 @@ func (b *projectResourceBrowser) GetContainerTemplateByID(ctx context.Context, c
 //
 // 数据集按当前激活项目隔离：先校验 go_project_dataset 绑定，再返回 utils.GetDatasetDir
 // 推导出的工作目录绝对路径，模型可直接在该目录下读写文件。
-func (b *projectResourceBrowser) GetDatasetByID(ctx context.Context, projectID int64, datasetID int64) (tool.DatasetBrief, error) {
+func (b *projectResourceBrowser) GetDatasetByID(ctx context.Context, projectID int64, datasetID int64) (runtimecontext.DatasetBrief, error) {
 	if projectID <= 0 {
-		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: project_id is required")
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("get_dataset: project_id is required")
 	}
 	if datasetID <= 0 {
-		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: dataset_id is required")
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("get_dataset: dataset_id is required")
 	}
 	if b.dataSvc == nil {
-		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: required services are not configured")
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("get_dataset: required services are not configured")
 	}
 
 	dataset, err := b.dataSvc.GetDatasetByID(ctx, datasetID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return tool.DatasetBrief{}, fmt.Errorf("get_dataset: dataset %d not found", datasetID)
+			return runtimecontext.DatasetBrief{}, fmt.Errorf("get_dataset: dataset %d not found", datasetID)
 		}
-		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: failed to load dataset: %w", err)
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("get_dataset: failed to load dataset: %w", err)
 	}
 	if dataset == nil || dataset.ID == 0 {
-		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: dataset %d not found", datasetID)
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("get_dataset: dataset %d not found", datasetID)
 	}
 
 	// 校验数据集属于当前激活项目（go_project_dataset 绑定）。
 	bound, err := b.dataSvc.ListDatasetByProjectID(ctx, projectID)
 	if err != nil {
-		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: failed to verify project binding: %w", err)
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("get_dataset: failed to verify project binding: %w", err)
 	}
 	belongs := false
 	for _, item := range bound {
@@ -291,7 +291,7 @@ func (b *projectResourceBrowser) GetDatasetByID(ctx context.Context, projectID i
 		}
 	}
 	if !belongs {
-		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: dataset %d does not belong to the active project %d", datasetID, projectID)
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("get_dataset: dataset %d does not belong to the active project %d", datasetID, projectID)
 	}
 
 	baseDir := ""
@@ -299,14 +299,14 @@ func (b *projectResourceBrowser) GetDatasetByID(ctx context.Context, projectID i
 		baseDir = strings.TrimSpace(b.cfg.Storage.BaseDir)
 	}
 	if baseDir == "" {
-		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: storage base dir is not configured")
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("get_dataset: storage base dir is not configured")
 	}
 	absBaseDir, err := utils.ResolveExternalPath(baseDir)
 	if err != nil {
-		return tool.DatasetBrief{}, fmt.Errorf("get_dataset: failed to resolve storage base dir: %w", err)
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("get_dataset: failed to resolve storage base dir: %w", err)
 	}
 
-	return tool.DatasetBrief{
+	return runtimecontext.DatasetBrief{
 		DatasetID:   dataset.ID,
 		DatasetName: dataset.DatasetName,
 		Description: dataset.Description,
@@ -319,43 +319,43 @@ func (b *projectResourceBrowser) GetDatasetByID(ctx context.Context, projectID i
 // 这段逻辑原先位于 handler.RuntimeContextResolver.Resolve 的 projectReport 分支，把解析
 // 结果写进系统提示词变量 project_report_items；报告撰写改为由 get_project_report_context
 // 工具在执行期按 reportID 拉取，故整体前移到这里（Resolve 中的对应代码后续废弃）。
-func (b *projectResourceBrowser) GetProjectReportContext(ctx context.Context, userID int64, projectID int64, reportID int64) (tool.ProjectReportContext, error) {
+func (b *projectResourceBrowser) GetProjectReportContext(ctx context.Context, userID int64, projectID int64, reportID int64) (runtimecontext.ProjectReportContext, error) {
 	const toolName = "get_project_report_context"
 	if reportID <= 0 {
-		return tool.ProjectReportContext{}, fmt.Errorf("%s: report_id is required", toolName)
+		return runtimecontext.ProjectReportContext{}, fmt.Errorf("%s: report_id is required", toolName)
 	}
 	if b.projectSvc == nil {
-		return tool.ProjectReportContext{}, fmt.Errorf("%s: required services are not configured", toolName)
+		return runtimecontext.ProjectReportContext{}, fmt.Errorf("%s: required services are not configured", toolName)
 	}
 
 	report, err := b.projectSvc.GetProjectReportByID(ctx, reportID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return tool.ProjectReportContext{}, fmt.Errorf("%s: project report %d not found", toolName, reportID)
+			return runtimecontext.ProjectReportContext{}, fmt.Errorf("%s: project report %d not found", toolName, reportID)
 		}
-		return tool.ProjectReportContext{}, fmt.Errorf("%s: failed to load project report: %w", toolName, err)
+		return runtimecontext.ProjectReportContext{}, fmt.Errorf("%s: failed to load project report: %w", toolName, err)
 	}
 	if report == nil || report.ID == 0 {
-		return tool.ProjectReportContext{}, fmt.Errorf("%s: project report %d not found", toolName, reportID)
+		return runtimecontext.ProjectReportContext{}, fmt.Errorf("%s: project report %d not found", toolName, reportID)
 	}
 	// 报告按当前激活项目隔离，避免跨项目读到别的报告目录。
 	if projectID > 0 && report.ProjectID != projectID {
-		return tool.ProjectReportContext{}, fmt.Errorf("%s: project report %d does not belong to the active project %d", toolName, reportID, projectID)
+		return runtimecontext.ProjectReportContext{}, fmt.Errorf("%s: project report %d does not belong to the active project %d", toolName, reportID, projectID)
 	}
 
 	// 报告工作目录是报告撰写的事实工作区（git 仓库），使用前确保存在。
 	baseDir := b.storageBaseDir()
 	dir := utils.GetProjectReportDir(baseDir, report.ProjectID, fmt.Sprintf("%d", report.ID))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return tool.ProjectReportContext{}, fmt.Errorf("%s: failed to create report working directory: %w", toolName, err)
+		return runtimecontext.ProjectReportContext{}, fmt.Errorf("%s: failed to create report working directory: %w", toolName, err)
 	}
 
 	items, err := b.resolveProjectReportItems(ctx, userID, baseDir, report)
 	if err != nil {
-		return tool.ProjectReportContext{}, err
+		return runtimecontext.ProjectReportContext{}, err
 	}
 
-	return tool.ProjectReportContext{
+	return runtimecontext.ProjectReportContext{
 		ReportID:    report.ID,
 		ProjectID:   report.ProjectID,
 		ReportTitle: report.Title,
@@ -368,7 +368,7 @@ func (b *projectResourceBrowser) GetProjectReportContext(ctx context.Context, us
 // resolveProjectReportItems 读取报告下的全部条目并解析为模板可用的名称 / 内容。
 // 单个条目解析失败（owner 记录缺失等）时跳过该条目并记录告警，
 // 避免一个失效引用导致整份报告上下文不可用。
-func (b *projectResourceBrowser) resolveProjectReportItems(ctx context.Context, userID int64, baseDir string, report *types.ProjectReport) ([]tool.ProjectReportItemBrief, error) {
+func (b *projectResourceBrowser) resolveProjectReportItems(ctx context.Context, userID int64, baseDir string, report *types.ProjectReport) ([]runtimecontext.ProjectReportItemBrief, error) {
 	if report == nil {
 		return nil, nil
 	}
@@ -381,7 +381,7 @@ func (b *projectResourceBrowser) resolveProjectReportItems(ctx context.Context, 
 		return nil, fmt.Errorf("get_project_report_context: failed to list project report items: %w", err)
 	}
 
-	result := make([]tool.ProjectReportItemBrief, 0, len(items))
+	result := make([]runtimecontext.ProjectReportItemBrief, 0, len(items))
 	for _, item := range items {
 		if item == nil {
 			continue
@@ -391,7 +391,7 @@ func (b *projectResourceBrowser) resolveProjectReportItems(ctx context.Context, 
 			logger.Warnf(ctx, "[ProjectResourceBrowser] skip project report item, item_id=%d owner_type=%s owner_id=%d", item.ID, item.OwnerType, item.OwnerID)
 			continue
 		}
-		result = append(result, tool.ProjectReportItemBrief{Name: name, Content: content, OwnerType: string(item.OwnerType)})
+		result = append(result, runtimecontext.ProjectReportItemBrief{Name: name, Content: content, OwnerType: string(item.OwnerType)})
 	}
 	return result, nil
 }
@@ -462,8 +462,8 @@ func (b *projectResourceBrowser) resolveProjectReportItemVar(ctx context.Context
 }
 
 // toScriptBrief 把 Script 记录转换成工具回传的摘要（补齐磁盘路径）。
-func (b *projectResourceBrowser) toScriptBrief(baseDir string, script *types.Script) tool.ScriptBrief {
-	brief := tool.ScriptBrief{
+func (b *projectResourceBrowser) toScriptBrief(baseDir string, script *types.Script) runtimecontext.ScriptBrief {
+	brief := runtimecontext.ScriptBrief{
 		ScriptID:            script.ID,
 		ContainerTemplateID: script.ContainerTemplateID,
 		ScriptName:          script.Name,

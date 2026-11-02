@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -92,7 +93,7 @@ func RunAnalysisNode() tool.Tool {
 			"timeout_seconds":  tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600。"),
 		}, "analysis_node_id"),
 		func(ctx context.Context, in RunAnalysisNodeInput) (RunAnalysisNodeOutput, error) {
-			rc := tool.RuntimeContextFrom(ctx)
+			rc := runtimecontext.RuntimeContextFrom(ctx)
 			if rc == nil {
 				return RunAnalysisNodeOutput{}, fmt.Errorf("run_analysis_node: runtime context is not available in this tool execution")
 			}
@@ -102,7 +103,7 @@ func RunAnalysisNode() tool.Tool {
 				return RunAnalysisNodeOutput{}, err
 			}
 
-			runner := tool.AnalysisNodeRunnerFrom(ctx)
+			runner := runtimecontext.AnalysisNodeRunnerFrom(ctx)
 			if runner == nil {
 				return RunAnalysisNodeOutput{}, fmt.Errorf("run_analysis_node: analysis node runner is not available in this runtime")
 			}

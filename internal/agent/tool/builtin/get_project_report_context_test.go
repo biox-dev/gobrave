@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -15,7 +16,7 @@ import (
 //   - analysis_node 条目输出结果文件路径，并带上「必须读取实际内容」的约束；
 //   - OwnerType 是 string 时 pongo2 的 == 分支能命中（一旦改回具名字符串类型即失败）。
 func TestProjectReportContextTemplate(t *testing.T) {
-	items := []tool.ProjectReportItemBrief{
+	items := []runtimecontext.ProjectReportItemBrief{
 		{Name: "引言", Content: "用户编辑的正文", OwnerType: "custom"},
 		{Name: "差异基因分析", Content: "/data/36/analysis_node/1/output/output.md", OwnerType: "analysis_node"},
 	}

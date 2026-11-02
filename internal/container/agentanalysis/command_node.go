@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// agentRunAnalysis 实现 tool.AgentAnalysisRunner：把「名称 + 容器模板 + 命令」的模型请求
+// agentRunAnalysis 实现 runtimecontext.AgentAnalysisRunner：把「名称 + 容器模板 + 命令」的模型请求
 // 转换成一条命令型 AnalysisNode，并复用通用节点链路运行、等待与读取日志。
 //
 // 与脚本节点唯一的区别是：命令节点没有脚本，容器模板取节点上的 ContainerTemplateID，
@@ -25,7 +25,7 @@ type agentRunAnalysis struct {
 	analysisRepo  interfaces.AnalysisRepository
 	containerRepo interfaces.ContainerRepository
 	preparer      prepare.NodeRuntimePreparer
-	nodeRunner    tool.AnalysisNodeRunner
+	nodeRunner    runtimecontext.AnalysisNodeRunner
 	cfg           *config.Config
 }
 
@@ -34,9 +34,9 @@ func NewAgentAnalysisRunner(
 	analysisRepo interfaces.AnalysisRepository,
 	containerRepo interfaces.ContainerRepository,
 	preparer prepare.NodeRuntimePreparer,
-	nodeRunner tool.AnalysisNodeRunner,
+	nodeRunner runtimecontext.AnalysisNodeRunner,
 	cfg *config.Config,
-) tool.AgentAnalysisRunner {
+) runtimecontext.AgentAnalysisRunner {
 	return &agentRunAnalysis{
 		analysisRepo:  analysisRepo,
 		containerRepo: containerRepo,
@@ -50,8 +50,8 @@ func NewAgentAnalysisRunner(
 //
 // Prepare 未携带 prepare.WithSkipCleanOutput，因此每次创建都会清理节点输出目录，
 // 避免上一轮运行的残留文件干扰本次执行结果。
-func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in tool.AgentAnalysisInput) (tool.AgentAnalysisResult, error) {
-	var result tool.AgentAnalysisResult
+func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in runtimecontext.AgentAnalysisInput) (runtimecontext.AgentAnalysisResult, error) {
+	var result runtimecontext.AgentAnalysisResult
 
 	if in.ProjectID <= 0 {
 		return result, fmt.Errorf("project id is required")
@@ -100,7 +100,7 @@ func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in tool.Agen
 
 	// Run 可选且默认为运行：nil / true 表示创建后立即运行，false 表示只创建节点。
 	if in.Run != nil && !*in.Run {
-		result = tool.AgentAnalysisResult{
+		result = runtimecontext.AgentAnalysisResult{
 			AgentAnalysisID: node.ID,
 			Status:          node.Status,
 			Ran:             false,
@@ -112,7 +112,7 @@ func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in tool.Agen
 	}
 
 	runResult, runErr := r.nodeRunner.RunAnalysisNode(ctx, node.ID, nil, in.TimeoutSeconds)
-	result = tool.AgentAnalysisResult{
+	result = runtimecontext.AgentAnalysisResult{
 		AgentAnalysisID: node.ID,
 		Status:          runResult.Status,
 		Ran:             true,
@@ -127,7 +127,7 @@ func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in tool.Agen
 }
 
 // fillRuntimeFacts 回填容器实例 / 退出码等运行期事实（尽力而为，不影响运行结果）。
-func (r *agentRunAnalysis) fillRuntimeFacts(ctx context.Context, nodeID int64, result *tool.AgentAnalysisResult) {
+func (r *agentRunAnalysis) fillRuntimeFacts(ctx context.Context, nodeID int64, result *runtimecontext.AgentAnalysisResult) {
 	if node, err := r.analysisRepo.GetAnalysisNodeByID(ctx, nodeID); err == nil && node != nil {
 		result.ExitCode = node.ExitCode
 	}

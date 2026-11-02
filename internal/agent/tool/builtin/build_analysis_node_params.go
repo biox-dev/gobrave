@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -74,12 +75,12 @@ func BuildAnalysisNodeParams() tool.Tool {
 				return BuildAnalysisNodeParamsOutput{}, fmt.Errorf("build_analysis_node_params: request_param is required and must be a non-empty object")
 			}
 
-			builder := tool.AnalysisNodeParamsBuilderFrom(ctx)
+			builder := runtimecontext.AnalysisNodeParamsBuilderFrom(ctx)
 			if builder == nil {
 				return BuildAnalysisNodeParamsOutput{}, fmt.Errorf("build_analysis_node_params: analysis node params builder is not available in this runtime")
 			}
 
-			result, buildErr := builder.BuildAnalysisNodeParams(ctx, tool.AnalysisNodeParamsInput{
+			result, buildErr := builder.BuildAnalysisNodeParams(ctx, runtimecontext.AnalysisNodeParamsInput{
 				AnalysisNodeID: nodeID,
 				ProjectID:      projectID,
 				RequestParam:   in.RequestParam,

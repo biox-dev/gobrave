@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -151,7 +152,7 @@ func CreateAgentAnalysis() tool.Tool {
 				return CreateAgentAnalysisOutput{}, fmt.Errorf("create_agent_analysis: command is required")
 			}
 
-			runner := tool.AgentAnalysisRunnerFrom(ctx)
+			runner := runtimecontext.AgentAnalysisRunnerFrom(ctx)
 			if runner == nil {
 				return CreateAgentAnalysisOutput{}, fmt.Errorf("create_agent_analysis: agent analysis runner is not available in this runtime")
 			}
@@ -162,7 +163,7 @@ func CreateAgentAnalysis() tool.Tool {
 				run = *in.Run
 			}
 
-			result, runErr := runner.CreateAgentAnalysis(ctx, tool.AgentAnalysisInput{
+			result, runErr := runner.CreateAgentAnalysis(ctx, runtimecontext.AgentAnalysisInput{
 				ProjectID:           projectID,
 				Name:                name,
 				ContainerTemplateID: containerTemplateID,

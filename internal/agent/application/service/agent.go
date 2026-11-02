@@ -12,8 +12,8 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/logging"
 	agentpolicy "github.com/biox-dev/gobrave/internal/agent/policy"
 	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
-	"github.com/biox-dev/gobrave/internal/agent/tool"
 	. "github.com/biox-dev/gobrave/internal/agent/types"
 	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -740,7 +740,7 @@ func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *P
 // GetSystemPromptByProfileWithContext 按 Profile 渲染系统提示词，并带上本次调用的
 // 运行时上下文（模板变量）与执行事实（用户 / 项目 / 会话），使记忆注入优先命中
 // 所属上下文。rc / facts 均可为零值。
-func (s *AgentService) GetSystemPromptByProfileWithContext(ctx context.Context, profile *Profile, rc *tool.RuntimeContext, facts TaskFacts, selectedSkills []string) string {
+func (s *AgentService) GetSystemPromptByProfileWithContext(ctx context.Context, profile *Profile, rc *runtimecontext.RuntimeContext, facts TaskFacts, selectedSkills []string) string {
 	var vars map[string]any
 	if rc != nil {
 		vars = rc.Vars()

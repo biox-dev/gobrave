@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -61,7 +62,7 @@ func GetContainerTemplate() tool.Tool {
 				return GetContainerTemplateOutput{}, fmt.Errorf("%s: container_template_id is required", GetContainerTemplateToolName)
 			}
 
-			browser := tool.ProjectResourceBrowserFrom(ctx)
+			browser := runtimecontext.ProjectResourceBrowserFrom(ctx)
 			if browser == nil {
 				return GetContainerTemplateOutput{}, fmt.Errorf("%s: project resource browser is not available in this runtime", GetContainerTemplateToolName)
 			}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -95,12 +96,12 @@ func UpdateScriptAnalysis() tool.Tool {
 				return UpdateScriptAnalysisOutput{}, fmt.Errorf("%s: at least one of node_name / request_param must be provided", UpdateScriptAnalysisToolName)
 			}
 
-			updater := tool.AnalysisNodeUpdaterFrom(ctx)
+			updater := runtimecontext.AnalysisNodeUpdaterFrom(ctx)
 			if updater == nil {
 				return UpdateScriptAnalysisOutput{}, fmt.Errorf("%s: analysis node updater is not available in this runtime", UpdateScriptAnalysisToolName)
 			}
 
-			input := tool.ScriptAnalysisUpdateInput{
+			input := runtimecontext.ScriptAnalysisUpdateInput{
 				ProjectID:      projectID,
 				AnalysisNodeID: nodeID,
 				RequestParam:   in.RequestParam,
@@ -139,7 +140,7 @@ func UpdateScriptAnalysis() tool.Tool {
 				return out, nil
 			}
 
-			runner := tool.AnalysisNodeRunnerFrom(ctx)
+			runner := runtimecontext.AnalysisNodeRunnerFrom(ctx)
 			if runner == nil {
 				out.Ran = false
 				out.Error = "update_script_analysis: analysis node runner is not available in this runtime; the node was updated but not run"

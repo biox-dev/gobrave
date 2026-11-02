@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
@@ -162,7 +163,7 @@ func TestGetSkillTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	ctx := tool.WithSkillResolver(context.Background(), NewRegistryWith(s).Resolver())
+	ctx := runtimecontext.WithSkillResolver(context.Background(), NewRegistryWith(s).Resolver())
 
 	out := runTool(t, ctx, GetSkill(), `{"name":"demo-skill"}`)
 	var got GetSkillOutput
@@ -210,7 +211,7 @@ func TestLoadSkillResourceTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	ctx := tool.WithSkillResolver(context.Background(), NewRegistryWith(s).Resolver())
+	ctx := runtimecontext.WithSkillResolver(context.Background(), NewRegistryWith(s).Resolver())
 
 	out := runTool(t, ctx, LoadSkillResource(), `{"name":"demo-skill","path":"references/design.md"}`)
 	var got LoadSkillResourceOutput
@@ -267,10 +268,10 @@ func TestSkillTemplateRenderSwitch(t *testing.T) {
 		t.Fatalf("disable-render should default to false")
 	}
 
-	ctx := tool.WithRuntimeContext(context.Background(), &tool.RuntimeContext{
+	ctx := runtimecontext.WithRuntimeContext(context.Background(), &runtimecontext.RuntimeContext{
 		SystemPromptVars: map[string]any{"workspace_directory": "/w/demo"},
 	})
-	ctx = tool.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
+	ctx = runtimecontext.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
 
 	var got GetSkillOutput
 	if err := json.Unmarshal(runTool(t, ctx, GetSkill(), `{"name":"tpl-skill"}`), &got); err != nil {
@@ -282,7 +283,7 @@ func TestSkillTemplateRenderSwitch(t *testing.T) {
 
 	// 打开开关后不再渲染。
 	s.DisableRender = true
-	ctx = tool.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
+	ctx = runtimecontext.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
 	if err := json.Unmarshal(runTool(t, ctx, GetSkill(), `{"name":"tpl-skill"}`), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -307,7 +308,7 @@ func TestSkillTemplateRenderSwitch(t *testing.T) {
 	}
 
 	s.DisableRender = false
-	ctx = tool.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
+	ctx = runtimecontext.WithSkillResolver(ctx, NewRegistryWith(s).Resolver())
 	if err := json.Unmarshal(runTool(t, ctx, LoadSkillResource(), `{"name":"tpl-skill","path":"references/vars.md"}`), &res); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}

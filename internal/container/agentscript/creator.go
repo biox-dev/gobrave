@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -18,7 +18,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// scriptCreator 实现 tool.ScriptCreator：把「创建脚本」能力暴露给内置工具 create_script。
+// scriptCreator 实现 runtimecontext.ScriptCreator：把「创建脚本」能力暴露给内置工具 create_script。
 //
 // 脚本与节点是两个独立资源：为脚本创建分析节点由 agentanalysis.ScriptNodeCreator
 // （create_script_analysis）负责，本类型不触碰 AnalysisNode。
@@ -39,7 +39,7 @@ type scriptCreator struct {
 
 // NewCreator 构建「创建脚本」执行器并注入内置工具体系。
 //
-// 返回值同时实现 tool.ScriptCreator（create_script）与 tool.ScriptUpdater
+// 返回值同时实现 runtimecontext.ScriptCreator（create_script）与 runtimecontext.ScriptUpdater
 // （update_script）：创建与更新共享同一份脚本业务服务依赖，故由同一个对象承载
 // （Options.ScriptCreator 一处注入即可）。
 func NewCreator(
@@ -47,7 +47,7 @@ func NewCreator(
 	projectRepo interfaces.ProjectRepository,
 	containerRepo interfaces.ContainerRepository,
 	cfg *config.Config,
-) tool.ScriptCreator {
+) runtimecontext.ScriptCreator {
 	return &scriptCreator{
 		workflowSvc:   workflowSvc,
 		projectRepo:   projectRepo,
@@ -60,16 +60,16 @@ func NewCreator(
 //
 // 步骤：解析默认容器模板 → 落库 Script → 初始化脚本目录（主文件 + io_schema.json）。
 // 分析节点由 create_script_analysis（agentanalysis）单独创建，因此这里不需要任何节点名称 / 节点目录。
-func (c *scriptCreator) CreateScript(ctx context.Context, in tool.ScriptCreateInput) (tool.ScriptCreateResult, error) {
+func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.ScriptCreateInput) (runtimecontext.ScriptCreateResult, error) {
 	if in.ProjectID <= 0 {
-		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: project_id is required")
+		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: project_id is required")
 	}
 	if c.workflowSvc == nil || c.projectRepo == nil {
-		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: required services are not configured")
+		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: required services are not configured")
 	}
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
-		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: name is required")
+		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: name is required")
 	}
 	scriptType := strings.ToLower(strings.TrimSpace(in.ScriptType))
 	if scriptType == "" {
@@ -83,7 +83,7 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in tool.ScriptCreateIn
 	if containerTemplateID <= 0 {
 		resolved, err := c.resolveDefaultContainerTemplate(ctx)
 		if err != nil {
-			return tool.ScriptCreateResult{}, err
+			return runtimecontext.ScriptCreateResult{}, err
 		}
 		containerTemplateID = resolved.ID
 		containerTemplateName = resolved.Name
@@ -93,15 +93,15 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in tool.ScriptCreateIn
 
 	baseDir := c.storageBaseDir()
 	if baseDir == "" {
-		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: storage.base_dir is empty")
+		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: storage.base_dir is empty")
 	}
 
 	project, err := c.projectRepo.GetProjectByID(ctx, in.ProjectID)
 	if err != nil {
-		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: failed to get project %d: %w", in.ProjectID, err)
+		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to get project %d: %w", in.ProjectID, err)
 	}
 	if project == nil || project.ID == 0 {
-		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: project %d not found", in.ProjectID)
+		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: project %d not found", in.ProjectID)
 	}
 
 	// 1) 落库 Script：ScriptID 是脚本目录名，必须唯一，因此这里生成 UUID。
@@ -116,29 +116,29 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in tool.ScriptCreateIn
 		Category:            "default",
 	}
 	if err := c.workflowSvc.CreateScript(ctx, script); err != nil {
-		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: failed to create script: %w", err)
+		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to create script: %w", err)
 	}
 
 	// 2) 初始化脚本目录：主文件 + io_schema.json。
 	ioSchemaJSON, err := buildIOSchemaJSON(in.Inputs, in.Outputs)
 	if err != nil {
-		return tool.ScriptCreateResult{}, err
+		return runtimecontext.ScriptCreateResult{}, err
 	}
 	scriptDir, scriptFile, _ := utils.GetScriptFile(baseDir, project.ID, script.ScriptType, script.ScriptID)
 	scriptFilePath := filepath.Join(scriptDir, scriptFile)
 	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
-		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: failed to prepare script dir: %w", err)
+		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to prepare script dir: %w", err)
 	}
 	if _, statErr := os.Stat(scriptFilePath); os.IsNotExist(statErr) {
 		if err := os.WriteFile(scriptFilePath, []byte(defaultScriptInitContent(script.ScriptType)), 0o644); err != nil {
-			return tool.ScriptCreateResult{}, fmt.Errorf("create_script: failed to create script file: %w", err)
+			return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to create script file: %w", err)
 		}
 	}
 	if err := utils.WriteScriptIOSchema(baseDir, project.ID, script.ScriptID, ioSchemaJSON); err != nil {
-		return tool.ScriptCreateResult{}, fmt.Errorf("create_script: failed to write io_schema.json: %w", err)
+		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to write io_schema.json: %w", err)
 	}
 
-	return tool.ScriptCreateResult{
+	return runtimecontext.ScriptCreateResult{
 		ScriptID:              script.ID,
 		ScriptKey:             script.ScriptID,
 		ScriptName:            script.Name,
