@@ -34,7 +34,7 @@ func All(d Deps) []tool.Tool {
 		CreateAgentAnalysis(d.AgentRunner),
 		ReadFileByID(d.FileReader),
 		SaveMemory(d.MemorySaver),
-		GetProjectReportContext(d.ReportContext),
+		GetReportContext(d.ReportContext),
 		// 技能：指令正文与附属资源都按需通过工具加载（渐进式披露）。
 		skill.GetSkill(d.Skills),
 		skill.LoadSkillResource(d.Skills),

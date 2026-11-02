@@ -483,13 +483,13 @@ type DatasetBrowser interface {
 }
 
 // ProjectReportContextResolver 抽象「按报告 ID 解析报告撰写上下文」的能力
-// （get_project_report_context）。
+// （get_report_context）。
 type ProjectReportContextResolver interface {
-	// GetProjectReportContext 返回报告标题、工作目录、输出文件与已解析的条目列表。
+	// GetReportContext 返回报告标题、工作目录、输出文件与已解析的条目列表。
 	//
 	// reportID 必须属于当前激活项目（projectID），否则返回错误；userID 用于校验报告
 	// 条目列表的访问权限。
-	GetProjectReportContext(ctx context.Context, userID int64, projectID int64, reportID int64) (ProjectReportContext, error)
+	GetReportContext(ctx context.Context, userID int64, projectID int64, reportID int64) (ProjectReportContext, error)
 }
 
 // ScriptBrief 是脚本的只读摘要（工具回传给模型的最小字段集）。
@@ -565,7 +565,7 @@ type DatasetBrief struct {
 	Path        string `json:"path"`
 }
 
-// ProjectReportContext 是项目报告的只读上下文（供 get_project_report_context 渲染模板）。
+// ProjectReportContext 是项目报告的只读上下文（供 get_report_context 渲染模板）。
 type ProjectReportContext struct {
 	ReportID  int64 `json:"report_id"`
 	ProjectID int64 `json:"project_id"`

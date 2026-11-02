@@ -8,20 +8,20 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
-// TestProjectReportContextTemplate 覆盖 get_project_report_context 的内置模板渲染。
+// TestReportContextTemplate 覆盖 get_report_context 的内置模板渲染。
 //
 // 重点验证：
 //   - 报告事实（标题 / 工作目录 / 输出文件）被正确填充；
 //   - custom 条目直接输出章节名称；
 //   - analysis_node 条目输出结果文件路径，并带上「必须读取实际内容」的约束；
 //   - OwnerType 是 string 时 pongo2 的 == 分支能命中（一旦改回具名字符串类型即失败）。
-func TestProjectReportContextTemplate(t *testing.T) {
+func TestReportContextTemplate(t *testing.T) {
 	items := []runtimecontext.ProjectReportItemBrief{
 		{Name: "引言", Content: "用户编辑的正文", OwnerType: "custom"},
 		{Name: "差异基因分析", Content: "/data/36/analysis_node/1/output/output.md", OwnerType: "analysis_node"},
 	}
 
-	rendered, err := tool.RenderTemplate(projectReportContextTemplate, map[string]any{
+	rendered, err := tool.RenderTemplate(reportContextTemplate, map[string]any{
 		"report_title":         "肠道菌群研究报告",
 		"workspace_directory":  "/data/36/report/1",
 		"output_file":          "/data/36/report/1/output.md",
@@ -48,13 +48,17 @@ func TestProjectReportContextTemplate(t *testing.T) {
 	}
 }
 
-func TestParseProjectReportID(t *testing.T) {
-	if id, err := parseProjectReportID(" 123 "); err != nil || id != 123 {
-		t.Fatalf("parseProjectReportID(123) = (%d, %v), want (123, nil)", id, err)
+func TestParseReportID(t *testing.T) {
+	if id, err := parseReportID(" 123 "); err != nil || id != 123 {
+		t.Fatalf("parseReportID(123) = (%d, %v), want (123, nil)", id, err)
 	}
-	for _, raw := range []string{"", "abc", "0", "-1"} {
-		if _, err := parseProjectReportID(raw); err == nil {
-			t.Fatalf("parseProjectReportID(%q) expected error", raw)
+	// 用户消息里的 @report:<id> 引用需要容错剥离前缀。
+	if id, err := parseReportID("@report:2109711590457610240"); err != nil || id != 2109711590457610240 {
+		t.Fatalf("parseReportID(@report:...) = (%d, %v), want (2109711590457610240, nil)", id, err)
+	}
+	for _, raw := range []string{"", "abc", "0", "-1", "@report:"} {
+		if _, err := parseReportID(raw); err == nil {
+			t.Fatalf("parseReportID(%q) expected error", raw)
 		}
 	}
 }

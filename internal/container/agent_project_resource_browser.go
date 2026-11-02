@@ -29,7 +29,7 @@ import (
 //   - list_container_templates：列出全部容器模板（definition ID + spec 的 name / description）；
 //   - get_container_template：按 @container:<id> 引用查看绑定行的 display_name / description；
 //   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径；
-//   - get_project_report_context：按 report_id 解析报告标题 / 工作目录 / 条目清单。
+//   - get_report_context：按 @report:<id> 引用解析报告标题 / 工作目录 / 条目清单。
 //
 // 路径口径与 create_script / update_script 完全一致：脚本主文件走
 // utils.GetScriptFile，io_schema 走 utils.WorkflowIOSchemaPath（工作流与脚本共用同一份
@@ -42,7 +42,7 @@ type projectResourceBrowser struct {
 	analysisRepo interfaces.AnalysisRepository
 	containerSvc interfaces.ContainerService
 	dataSvc      interfaces.DataService
-	// projectSvc / analysisSvc 供 get_project_report_context 解析报告条目
+	// projectSvc / analysisSvc 供 get_report_context 解析报告条目
 	// （标题 / 工作目录 / 各来源的结果文件路径），口径与 handler.RuntimeContextResolver
 	// 的 projectReport 分支保持一致。
 	//
@@ -319,13 +319,13 @@ func (b *projectResourceBrowser) GetDatasetByID(ctx context.Context, projectID i
 	}, nil
 }
 
-// GetProjectReportContext 按报告 ID 解析报告标题 / 工作目录 / 输出文件与条目列表。
+// GetReportContext 按报告 ID 解析报告标题 / 工作目录 / 输出文件与条目列表。
 //
 // 这段逻辑原先位于 handler.RuntimeContextResolver.Resolve 的 projectReport 分支，把解析
-// 结果写进系统提示词变量 project_report_items；报告撰写改为由 get_project_report_context
+// 结果写进系统提示词变量 project_report_items；报告撰写改为由 get_report_context
 // 工具在执行期按 reportID 拉取，故整体前移到这里（Resolve 中的对应代码后续废弃）。
-func (b *projectResourceBrowser) GetProjectReportContext(ctx context.Context, userID int64, projectID int64, reportID int64) (runtimecontext.ProjectReportContext, error) {
-	const toolName = "get_project_report_context"
+func (b *projectResourceBrowser) GetReportContext(ctx context.Context, userID int64, projectID int64, reportID int64) (runtimecontext.ProjectReportContext, error) {
+	const toolName = "get_report_context"
 	if reportID <= 0 {
 		return runtimecontext.ProjectReportContext{}, fmt.Errorf("%s: report_id is required", toolName)
 	}
@@ -378,12 +378,12 @@ func (b *projectResourceBrowser) resolveProjectReportItems(ctx context.Context, 
 		return nil, nil
 	}
 	if b.projectSvc == nil {
-		return nil, fmt.Errorf("get_project_report_context: required services are not configured")
+		return nil, fmt.Errorf("get_report_context: required services are not configured")
 	}
 
 	items, err := b.projectSvc.ListProjectReportItemsByReportID(ctx, userID, report.ID)
 	if err != nil {
-		return nil, fmt.Errorf("get_project_report_context: failed to list project report items: %w", err)
+		return nil, fmt.Errorf("get_report_context: failed to list project report items: %w", err)
 	}
 
 	result := make([]runtimecontext.ProjectReportItemBrief, 0, len(items))
