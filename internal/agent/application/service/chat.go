@@ -380,17 +380,66 @@ func (s *ChatService) GetTaskTimeline(ctx context.Context, taskID, userID int64)
 	return s.ListTaskMessages(ctx, task.SessionID, task.ID)
 }
 
-// GetSession 查询会话及其完整历史消息。
-func (s *ChatService) GetSession(ctx context.Context, id int64) (Session, []Message, error) {
+// 会话详情分页参数默认值与上限。
+const (
+	// DefaultSessionMessageLimit 是会话详情默认返回的消息条数。
+	DefaultSessionMessageLimit = 20
+	// MaxSessionMessageLimit 是单次可请求的最大消息条数（防止前端一次拉全量）。
+	MaxSessionMessageLimit = 200
+)
+
+// SessionMessageQuery 是会话消息的分页参数。
+type SessionMessageQuery struct {
+	// BeforeSeq 是向上翻页游标：只返回 Seq 小于该值的消息；0 表示取最新一页。
+	BeforeSeq int
+	// Limit 是本页最大条数；<=0 使用 DefaultSessionMessageLimit。
+	Limit int
+}
+
+// SessionDetail 是会话详情：会话本体 + 一页历史消息 + 向上翻页游标。
+type SessionDetail struct {
+	Session
+	Messages []Message `json:"messages"`
+	// HasMore 表示是否还有更早的消息（前端向上滚动时继续加载）。
+	HasMore bool `json:"has_more"`
+	// NextCursor 是继续向上翻页的游标（本页最小 Seq）；HasMore 为 false 时无意义。
+	NextCursor int `json:"next_cursor"`
+}
+
+// GetSession 查询会话及一页历史消息（默认最新一页，按 Seq 升序）。
+//
+// 历史消息可能非常大（长回复 / 工具输出），因此不再一次返回全部：
+// 首次只取最新一页，用户向上滚动时把上一页返回的 NextCursor 作为 BeforeSeq 继续加载。
+func (s *ChatService) GetSession(ctx context.Context, id int64, q SessionMessageQuery) (SessionDetail, error) {
 	sess, err := s.sessions.Get(ctx, id)
 	if err != nil {
-		return Session{}, nil, err
+		return SessionDetail{}, err
 	}
-	msgs, err := s.messages.List(ctx, id)
+
+	limit := q.Limit
+	if limit <= 0 {
+		limit = DefaultSessionMessageLimit
+	}
+	if limit > MaxSessionMessageLimit {
+		limit = MaxSessionMessageLimit
+	}
+
+	msgs, hasMore, err := s.messages.ListPage(ctx, id, q.BeforeSeq, limit)
 	if err != nil {
-		return Session{}, nil, err
+		return SessionDetail{}, err
 	}
-	return sess, msgs, nil
+
+	// 本页最小 Seq 即下一页的游标（Seq 升序，第一页为最早一条）。
+	nextCursor := 0
+	if len(msgs) > 0 {
+		nextCursor = msgs[0].Seq
+	}
+	return SessionDetail{
+		Session:    sess,
+		Messages:   msgs,
+		HasMore:    hasMore,
+		NextCursor: nextCursor,
+	}, nil
 }
 
 // getOrCreate 加载已有会话；SessionID 为 0 时创建新会话。

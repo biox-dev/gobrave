@@ -90,6 +90,11 @@ type MessageStore interface {
 	Update(ctx context.Context, m *types.Message) error
 	Get(ctx context.Context, id int64) (*types.Message, error)
 	List(ctx context.Context, sessionID int64) ([]*types.Message, error)
+	// ListPage 分页查询某会话的消息（按 Seq 升序返回）。
+	//
+	// beforeSeq > 0 时只返回 Seq 更小的消息（向上翻页），0 表示从最新消息开始。
+	// hasMore 表示在本次返回的最早一条消息之前仍有消息。
+	ListPage(ctx context.Context, sessionID int64, beforeSeq, limit int) ([]*types.Message, bool, error)
 	Delete(ctx context.Context, id int64) error
 	DeleteBySession(ctx context.Context, sessionID int64) error
 }

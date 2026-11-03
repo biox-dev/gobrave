@@ -61,6 +61,19 @@ func (s *messageService) List(ctx context.Context, sessionID int64) ([]Message, 
 	return out, nil
 }
 
+// ListPage 分页查询会话消息（按 Seq 升序）；beforeSeq 为向上翻页游标。
+func (s *messageService) ListPage(ctx context.Context, sessionID int64, beforeSeq, limit int) ([]Message, bool, error) {
+	rows, hasMore, err := s.store.ListPage(ctx, sessionID, beforeSeq, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	out := make([]Message, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, *row)
+	}
+	return out, hasMore, nil
+}
+
 func (s *messageService) Delete(ctx context.Context, id int64) error {
 	return s.store.Delete(ctx, id)
 }

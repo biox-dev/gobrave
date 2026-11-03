@@ -946,14 +946,19 @@ func (h *AgentHandler) PageTasks(c *gin.Context) {
 	})
 }
 
+// sessionPageRequest 是会话列表分页请求。
 type sessionPageRequest struct {
 	types.Pagination
 }
 
-// sessionDetail 是会话详情响应：会话字段平铺 + 消息列表（保持原 conversation 响应结构）。
-type sessionDetail struct {
-	agenttypes.Session
-	Messages []agenttypes.Message `json:"messages"`
+// sessionGetQuery 是获取会话详情的查询参数。
+//
+// before_seq 是向上翻页游标：只返回 seq 更小的消息；0 表示取最新一页。
+// limit 是本页最大条数（后端有默认值和上限），首页不传即可。
+type sessionGetQuery struct {
+	ID        string `form:"id" binding:"required"`
+	BeforeSeq int    `form:"before_seq"`
+	Limit     int    `form:"limit"`
 }
 
 // PageSessions godoc
@@ -986,14 +991,14 @@ func (h *AgentHandler) PageSessions(c *gin.Context) {
 	}
 
 	// 会话列表按原 API 结构附带消息（Session 本身不内嵌 Messages）。
-	items := make([]sessionDetail, 0, len(sessions))
+	items := make([]agentservice.SessionDetail, 0, len(sessions))
 	for _, sess := range sessions {
 		msgs, err := h.chat.ListMessages(c.Request.Context(), sess.ID)
 		if err != nil {
 			handleAgentError(c, err, "failed to load session messages")
 			return
 		}
-		items = append(items, sessionDetail{Session: sess, Messages: msgs})
+		items = append(items, agentservice.SessionDetail{Session: sess, Messages: msgs})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1005,11 +1010,14 @@ func (h *AgentHandler) PageSessions(c *gin.Context) {
 }
 
 // GetSession godoc
-// @Summary      获取会话（含完整历史消息）
+// @Summary      获取会话（含一页历史消息）
+// @Description  默认只返回最新一页消息；向上滚动时把响应的 next_cursor 作为 before_seq 继续加载更早的消息
 // @Tags         Agent
 // @Produce      json
-// @Param        id   query     string  true  "会话 ID"
-// @Success      200  {object}  handler.sessionDetail
+// @Param        id          query     string  true   "会话 ID"
+// @Param        before_seq  query     int     false  "向上翻页游标（上一页的 next_cursor），0 表示最新一页"
+// @Param        limit       query     int     false  "本页最大条数（默认 30，最大 200）"
+// @Success      200  {object}  agentservice.SessionDetail
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
@@ -1021,7 +1029,7 @@ func (h *AgentHandler) GetSession(c *gin.Context) {
 		return
 	}
 
-	var q taskIDQuery
+	var q sessionGetQuery
 	if err := c.ShouldBindQuery(&q); err != nil {
 		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
 		return
@@ -1032,17 +1040,20 @@ func (h *AgentHandler) GetSession(c *gin.Context) {
 		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
 		return
 	}
-	sess, msgs, err := h.chat.GetSession(c.Request.Context(), id)
+	detail, err := h.chat.GetSession(c.Request.Context(), id, agentservice.SessionMessageQuery{
+		BeforeSeq: q.BeforeSeq,
+		Limit:     q.Limit,
+	})
 	if err != nil {
 		handleAgentError(c, err, "failed to get session")
 		return
 	}
 	// 校验归属，防止越权访问他人会话。
-	if sess.UserID != userID {
+	if detail.UserID != userID {
 		c.Error(errors.NewNotFoundError("record not found"))
 		return
 	}
-	c.JSON(http.StatusOK, sessionDetail{Session: sess, Messages: msgs})
+	c.JSON(http.StatusOK, detail)
 }
 
 // PagePermissions godoc

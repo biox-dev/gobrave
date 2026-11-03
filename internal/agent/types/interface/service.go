@@ -27,6 +27,9 @@ type MessageService interface {
 	Update(ctx context.Context, message types.Message) (types.Message, error)
 	Get(ctx context.Context, id int64) (types.Message, error)
 	List(ctx context.Context, sessionID int64) ([]types.Message, error)
+	// ListPage 分页查询某会话的消息（按 Seq 升序）；beforeSeq 为向上翻页游标，
+	// 0 表示取最新一页；hasMore 表示还有更早的消息。
+	ListPage(ctx context.Context, sessionID int64, beforeSeq, limit int) ([]types.Message, bool, error)
 	Delete(ctx context.Context, id int64) error
 	DeleteSessionMessages(ctx context.Context, sessionID int64) error
 }

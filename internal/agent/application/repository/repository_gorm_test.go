@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -117,6 +118,55 @@ func TestGormPermissionRepositoryRoundTrip(t *testing.T) {
 	pending, _ = repo.ListPendingByTask(ctx, 1)
 	if len(pending) != 0 {
 		t.Fatalf("expected no pending after approve, got %d", len(pending))
+	}
+}
+
+func TestGormMessageStoreListPage(t *testing.T) {
+	ctx := context.Background()
+	db := newGormTestDB(t)
+	sessions := agentservice.NewSessionService(NewGormSessionStore(db))
+	messages := agentservice.NewMessageService(NewGormMessageStore(db))
+
+	sess, err := sessions.Create(ctx, agenttypes.SessionCreateParams{UserID: 1, Provider: agenttypes.ProviderMock})
+	if err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := messages.Create(ctx, agenttypes.MessageCreateParams{
+			SessionID: sess.ID,
+			Role:      agenttypes.RoleUser,
+			Kind:      agenttypes.KindUser,
+			Content:   fmt.Sprintf("m%d", i),
+		}); err != nil {
+			t.Fatalf("Create message %d: %v", i, err)
+		}
+	}
+
+	// 最新一页：按 Seq 升序返回，hasMore 表示其之前仍有消息。
+	page, hasMore, err := messages.ListPage(ctx, sess.ID, 0, 2)
+	if err != nil {
+		t.Fatalf("ListPage: %v", err)
+	}
+	if !hasMore || len(page) != 2 || page[0].Seq != 3 || page[1].Seq != 4 {
+		t.Fatalf("first page = %+v hasMore=%v, want seq [3 4] and hasMore", page, hasMore)
+	}
+
+	// 向上翻页：以本页最小 Seq 为游标继续取更早的消息。
+	older, hasMore, err := messages.ListPage(ctx, sess.ID, page[0].Seq, 2)
+	if err != nil {
+		t.Fatalf("ListPage older: %v", err)
+	}
+	if !hasMore || len(older) != 2 || older[0].Seq != 1 || older[1].Seq != 2 {
+		t.Fatalf("older page = %+v hasMore=%v, want seq [1 2] and hasMore", older, hasMore)
+	}
+
+	// 最后一页：hasMore 为 false。
+	last, hasMore, err := messages.ListPage(ctx, sess.ID, older[0].Seq, 2)
+	if err != nil {
+		t.Fatalf("ListPage last: %v", err)
+	}
+	if hasMore || len(last) != 1 || last[0].Seq != 0 {
+		t.Fatalf("last page = %+v hasMore=%v, want seq [0] and no more", last, hasMore)
 	}
 }
 
