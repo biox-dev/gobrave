@@ -403,6 +403,10 @@ func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessio
 		r.mu.Unlock()
 		// 复用已有会话时同样要把持久标记升级上去（幂等）。
 		r.MarkPersistent(ctx, key)
+		// 复用分支也要通知：Agent 的 terminal_exec 大多复用已存活会话（例如前端打开过终端、
+		// 或上一次调用创建的会话尚未回收），若不推前端列表就不会刷新。
+		// 仅新建时推送会导致「terminal_exec 执行了但终端会话列表没有新条目」。
+		r.notifySessionChanged(sess, "sessionCreated")
 		return sess, false, nil
 	}
 	if wait, ok := r.pending[id]; ok {
@@ -411,6 +415,7 @@ func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessio
 		case <-wait.done:
 			if wait.err == nil {
 				r.MarkPersistent(ctx, key)
+				r.notifySessionChanged(wait.sess, "sessionCreated")
 			}
 			return wait.sess, wait.created, wait.err
 		case <-ctx.Done():
@@ -433,6 +438,11 @@ func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessio
 	pending.err = err
 	close(pending.done)
 	r.mu.Unlock()
+
+	if err == nil {
+		// 通知前端「终端会话列表」刷新（新建 / 复用都推，列表侧重拉是幂等的）。
+		r.notifySessionChanged(sess, "sessionCreated")
+	}
 
 	if err == nil && persistent {
 		r.MarkPersistent(ctx, key)
@@ -745,6 +755,7 @@ func (r *TerminalSessionRegistry) maintain(ctx context.Context) {
 			logger.Infof(ctx, "[TerminalSession] session %s idle for %s, releasing", sess.id, sess.idleFor(now).Truncate(time.Second))
 			r.forget(sess)
 			sess.Close()
+			r.notifySessionChanged(sess, "sessionDeleted")
 			continue
 		}
 		r.touchRecord(ctx, sess.key)
@@ -768,6 +779,7 @@ func (r *TerminalSessionRegistry) maintain(ctx context.Context) {
 		}
 		logger.Infof(ctx, "[TerminalSession] dropping stale session %s (idle %s)", rec.SessionKey, now.Sub(rec.LastActiveAt).Truncate(time.Second))
 		r.dropRecord(ctx, rec)
+		r.notifySessionEvent(rec.UserID, rec.TemplateID, rec.SessionKey, "sessionDeleted")
 	}
 }
 
@@ -852,6 +864,8 @@ func (r *TerminalSessionRegistry) CloseSession(key TerminalSessionKey) bool {
 		delete(r.sessions, key.SessionID())
 	}
 	r.mu.Unlock()
+	// 广播删除事件（即使内存里没有会话，也要让前端列表刷新：记录/容器可能残留）。
+	r.notifySessionEvent(key.UserID, key.TemplateID, key.SessionID(), "sessionDeleted")
 
 	// 记录里的 runtime 信息用于兜底删除容器：即便内存里没有会话（例如进程重启后
 	// 还残留记录），也应当把容器删掉，避免「列表点了删除但容器还在」。
@@ -1038,6 +1052,48 @@ func (r *TerminalSessionRegistry) notifyExec(sess *ManagedTerminalSession, cmd T
 	}
 }
 
+// notifySessionChanged 推送「终端会话列表」需要刷新的实时事件。
+//
+// 与 AppSessionEventHandler 的推送方式一致：action=component.invoke，前端
+// ActionDispatcher 收到后调用 useComponentStore().invoke(category, "*", method)，
+// 左侧栏「终端会话」面板注册的 sessionCreated / sessionDeleted 会触发 refetch。
+func (r *TerminalSessionRegistry) notifySessionChanged(sess *ManagedTerminalSession, method string) {
+	if sess == nil {
+		return
+	}
+	r.notifySessionEvent(sess.key.UserID, sess.key.TemplateID, sess.ID(), method)
+}
+
+// notifySessionEvent 推送会话变更事件（method 为 sessionCreated / sessionDeleted）。
+func (r *TerminalSessionRegistry) notifySessionEvent(userID, templateID int64, sessionID, method string) {
+	if r.publisher == nil || userID == 0 {
+		return
+	}
+	eventMethod := strings.TrimSpace(method)
+	if eventMethod == "" {
+		eventMethod = "sessionDeleted"
+	}
+	payload := map[string]any{
+		"session_id":  sessionID,
+		"template_id": strconv.FormatInt(templateID, 10),
+		"event":       eventMethod,
+	}
+	msg := map[string]any{
+		"action": "component.invoke",
+		"payload": map[string]any{
+			"category": "container-terminal-session",
+			"id":       "*",
+			"method":   eventMethod,
+			"args":     payload,
+		},
+	}
+	if err := r.publisher.PushMessage(userID, msg); err != nil {
+		if !strings.Contains(err.Error(), "no_client_for_user:") {
+			logger.Warnf(context.Background(), "[TerminalSession] push session event failed user=%d session=%s method=%s err=%v", userID, sessionID, eventMethod, err)
+		}
+	}
+}
+
 // forget 从注册表中移除会话（仅当指针一致）。
 func (r *TerminalSessionRegistry) forget(sess *ManagedTerminalSession) {
 	r.mu.Lock()
@@ -1077,6 +1133,7 @@ func (r *TerminalSessionRegistry) scheduleReap(sess *ManagedTerminalSession) {
 	logger.Infof(context.Background(), "[TerminalSession] releasing one-shot session %s", sess.id)
 	r.forget(sess)
 	sess.Close()
+	r.notifySessionChanged(sess, "sessionDeleted")
 }
 
 // suspendReap 已不再需要（回收改为同步判定），保留空实现以免破坏调用点。
