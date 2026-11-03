@@ -864,8 +864,6 @@ func (r *TerminalSessionRegistry) CloseSession(key TerminalSessionKey) bool {
 		delete(r.sessions, key.SessionID())
 	}
 	r.mu.Unlock()
-	// 广播删除事件（即使内存里没有会话，也要让前端列表刷新：记录/容器可能残留）。
-	r.notifySessionEvent(key.UserID, key.TemplateID, key.SessionID(), "sessionDeleted")
 
 	// 记录里的 runtime 信息用于兜底删除容器：即便内存里没有会话（例如进程重启后
 	// 还残留记录），也应当把容器删掉，避免「列表点了删除但容器还在」。
@@ -875,11 +873,14 @@ func (r *TerminalSessionRegistry) CloseSession(key TerminalSessionKey) bool {
 		}
 	}
 
-	if !ok || sess == nil {
-		return false
+	if ok && sess != nil {
+		sess.Close()
 	}
-	sess.Close()
-	return true
+	// 广播删除事件：前端「终端会话列表」不再轮询，完全依赖该事件刷新，
+	// 因此即使内存里没有会话（记录 / 容器残留）也必须推一次。
+	r.notifySessionEvent(key.UserID, key.TemplateID, key.SessionID(), "sessionDeleted")
+
+	return ok && sess != nil
 }
 
 // Execute 把命令写入会话的串行队列。
@@ -1533,6 +1534,9 @@ func (s *ManagedTerminalSession) handleReadError(err error) {
 	s.SendEvent(map[string]any{"type": "exit", "session_id": s.id})
 	s.registry.forget(s)
 	s.Close()
+	// shell 自然退出 / 容器消失：内存会话已移除，推一次删除事件让前端列表刷新
+	// （前端不再轮询，只能靠这条事件感知会话已消失）。
+	s.registry.notifySessionEvent(s.key.UserID, s.key.TemplateID, s.id, "sessionDeleted")
 }
 
 func (s *ManagedTerminalSession) currentSeq() int64 {
