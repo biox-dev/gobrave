@@ -128,6 +128,12 @@ type TerminalCommand struct {
 	NotifyUI bool
 	// CreateIfMissing 为 true 时允许自动创建会话。
 	CreateIfMissing bool
+	// Persistent 为 true 时，本命令「新建」的会话直接按持久会话创建。
+	//
+	// 原因：一次性会话在命令结束且没有订阅者时会被立即回收（容器也会删除），
+	// 因此「先投递命令、再由前端打开终端看输出」的场景必须建持久会话，
+	// 否则命令执行完容器就没了，前端随后接入拿到的是另一台新容器（看不到输出）。
+	Persistent bool
 }
 
 // TerminalCommandResult 是一次命令投递 / 执行的结果。
@@ -594,6 +600,7 @@ func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalS
 	managed.start()
 
 	// 注入提示符标记；命令本身会被 shell 回显一次，因此只写一行。
+	// 用 LF 提交（canonical TTY 下 LF 恒为行分隔符，readline 下 C-j 为 accept-line）。
 	managed.writeMu.Lock()
 	_, writeErr := managed.sess.Write([]byte(terminalInitCommand + "\n"))
 	managed.writeMu.Unlock()
@@ -897,11 +904,16 @@ func (r *TerminalSessionRegistry) Execute(ctx context.Context, key TerminalSessi
 		if !cmd.CreateIfMissing {
 			return TerminalCommandResult{}, ErrTerminalSessionNotFound
 		}
-		created, _, err := r.Ensure(ctx, key)
+		// 新建会话时按 cmd.Persistent 决定生命周期：一次性会话在本命令结束
+		// 且没有订阅者时会被回收，命令输出随之丢失。
+		created, _, err := r.ensure(ctx, key, cmd.Persistent)
 		if err != nil {
 			return TerminalCommandResult{}, err
 		}
 		sess = created
+	} else if cmd.Persistent {
+		// 复用已有会话：持久标记只增不减，这里显式升级以免命令结束就被回收。
+		r.MarkPersistent(ctx, key)
 	}
 	sess.touch()
 
@@ -1012,6 +1024,8 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 		Source:          "agent",
 		NotifyUI:        in.Persistent,
 		CreateIfMissing: in.CreateIfMissing,
+		// 会话可能在本函数 Ensure 之后被回收，交给 Execute 兜底按同一规则创建。
+		Persistent: in.Persistent,
 	})
 	if err != nil {
 		return runtimecontext.ContainerTerminalExecResult{SessionID: result.SessionID}, err
@@ -1695,9 +1709,21 @@ func (s *ManagedTerminalSession) runCommand(req terminalExecRequest) terminalExe
 		"source":     req.source,
 	})
 
+	// 写入前先发 Ctrl-U（kill line）清掉当前行残留的输入，再用 LF 提交：
+	//   - 交互式 shell 里随时可能有一行「用户敲了一半、还没回车」的内容。
+	//     直接接上命令会拼成一整行（例如 `a="x"` + `pwd` → 只是个赋值，什么都不执行），
+	//     现象就是「命令回显了但没执行，按回车才动 / 干脆没有输出」；
+	//   - 提交用 LF(0x0a) 而不是 CR：canonical TTY 下 LF 永远是行分隔符
+	//     （CR 只有在 ICRNL 打开时才会被当成换行），readline 下 C-j 同样是 accept-line。
+	//     实测某些镜像的 PTY 上只发 CR 会导致命令只回显、永不执行。
+	// 整段要放在同一次 Write 里，避免与浏览器按键输入交错。
+	payload := []byte("\x15" + strings.TrimRight(req.command, "\r\n") + "\n")
 	s.writeMu.Lock()
-	_, writeErr := s.sess.Write([]byte(strings.TrimRight(req.command, "\n") + "\n"))
+	n, writeErr := s.sess.Write(payload)
 	s.writeMu.Unlock()
+	// 排查用：确认命令真的写进了 PTY（\x15/CR 用转义表示，避免日志里出现控制字符）。
+	logger.Debugf(context.Background(), "[TerminalSession] exec session=%s source=%s bytes=%d/%d payload=%q",
+		s.id, req.source, n, len(payload), string(payload))
 	if writeErr != nil {
 		outcome := terminalExecOutcome{err: writeErr, duration: time.Since(startedAt)}
 		s.SendEvent(map[string]any{"type": "exec", "phase": "end", "session_id": s.id, "error": writeErr.Error()})

@@ -121,6 +121,10 @@ type containerTerminalExecResponse struct {
 //     命令输出通过该终端的 WebSocket 实时回传；
 //   - wait_seconds>0：等待命令结束（或超时），返回退出码与输出尾部。
 //
+// 会话生命周期：本接口代表「用户终端」，因此新建的会话一律建为持久会话。
+// 一次性会话在命令结束且没有订阅者时会被立即回收（容器一起删除），
+// 那样 UI「提交命令 → 再打开终端看输出」看到的会是一台全新的容器，命令输出全部丢失。
+//
 // 同一会话的命令串行执行；Agent 的 terminal_exec 工具复用同一实现。
 //
 // @Summary      容器模板终端执行命令
@@ -175,6 +179,10 @@ func (h *ContainerHandler) ContainerTemplateTerminalExec(c *gin.Context) {
 		Source:          "ui",
 		NotifyUI:        false,
 		CreateIfMissing: createIfMissing,
+		// UI 发起的命令：会话不存在时直接建持久会话。
+		// 否则一次性会话会在命令结束后连同容器一起被回收，
+		// 前端随后打开终端拿到的是新容器（看不到刚才那条命令的任何输出）。
+		Persistent: true,
 	})
 	if err != nil {
 		switch {

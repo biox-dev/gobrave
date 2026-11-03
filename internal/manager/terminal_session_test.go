@@ -37,20 +37,36 @@ func newFakeShell() *fakeShell {
 }
 
 func (s *fakeShell) loop() {
-	scanner := bufio.NewScanner(s.inR)
-	for scanner.Scan() {
-		line := scanner.Text()
-		// 真实 PTY 会回显输入，这里同样回显，便于验证「重放包含命令」。
-		_, _ = io.WriteString(s.outW, line+"\r\n")
-		switch {
-		case strings.Contains(line, "PROMPT_COMMAND"):
-			_, _ = io.WriteString(s.outW, "\x1b]633;GD;0\x07")
-		case strings.HasPrefix(line, "hang"):
-			// 模拟一直运行、不回到提示符的命令。
-		case strings.HasPrefix(line, "fail"):
-			_, _ = io.WriteString(s.outW, "boom\n\x1b]633;GD;1\x07")
+	reader := bufio.NewReader(s.inR)
+	var line []byte
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			break
+		}
+		switch b {
+		case 0x15: // Ctrl-U：清掉当前行（与 readline 的 kill-line 一致）
+			line = line[:0]
+		case '\r', '\n':
+			text := string(line)
+			line = line[:0]
+			if text == "" {
+				continue
+			}
+			// 真实 PTY 会回显输入，这里同样回显，便于验证「重放包含命令」。
+			_, _ = io.WriteString(s.outW, text+"\r\n")
+			switch {
+			case strings.Contains(text, "PROMPT_COMMAND"):
+				_, _ = io.WriteString(s.outW, "\x1b]633;GD;0\x07")
+			case strings.HasPrefix(text, "hang"):
+				// 模拟一直运行、不回到提示符的命令。
+			case strings.HasPrefix(text, "fail"):
+				_, _ = io.WriteString(s.outW, "boom\n\x1b]633;GD;1\x07")
+			default:
+				_, _ = io.WriteString(s.outW, "echo:"+text+"\n\x1b]633;GD;0\x07")
+			}
 		default:
-			_, _ = io.WriteString(s.outW, "echo:"+line+"\n\x1b]633;GD;0\x07")
+			line = append(line, b)
 		}
 	}
 	_ = s.outW.Close()
@@ -208,6 +224,131 @@ func TestTerminalSessionRegistryExecTimeoutAndReplay(t *testing.T) {
 	status := registry.Status(key)
 	if !status.Exists || !status.Alive || status.Subscribers != 1 || status.Seq <= 0 {
 		t.Fatalf("unexpected status: %+v", status)
+	}
+}
+
+// 会话不存在时，Execute 必须「先建会话再执行命令」，且 Persistent 请求要生效。
+//
+// 回归场景：UI「运行命令」= wait_seconds:0 + create_if_missing:true。
+// 如果新建的是一次性会话，命令跑完容器就被回收，前端随后打开终端看到的是新容器，
+// 表现为「命令没执行，只是起了 session 和容器」。
+func TestTerminalSessionRegistryExecCreatesPersistentSessionOnDemand(t *testing.T) {
+	opener := &fakeOpener{shell: newFakeShell()}
+	registry := newTestRegistry(opener)
+	key := TerminalSessionKey{UserID: 21, ProjectID: 22, TemplateID: 23}
+	defer registry.CloseSession(key)
+
+	result, err := registry.Execute(context.Background(), key, TerminalCommand{
+		Command:         "pwd",
+		Wait:            false,
+		Source:          "ui",
+		CreateIfMissing: true,
+		Persistent:      true,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !result.Accepted || !result.Running {
+		t.Fatalf("unexpected async result: %+v", result)
+	}
+
+	session := registry.Lookup(key)
+	if session == nil {
+		t.Fatalf("expected session created on demand")
+	}
+	if !session.isPersistent() {
+		t.Fatalf("ui exec must create a persistent session")
+	}
+
+	// 命令真的被写进了 PTY，并且输出可在后续 attach 时重放。
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(string(session.readSince(0)), "echo:pwd") {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	sub, replay := session.Attach(0)
+	defer session.Detach(sub)
+	if !strings.Contains(string(replay), "echo:pwd") {
+		t.Fatalf("expected command output in replay, got %q", string(replay))
+	}
+
+	// 命令结束后持久会话仍然存活（不会被立即回收）。
+	time.Sleep(200 * time.Millisecond)
+	if registry.Lookup(key) == nil {
+		t.Fatalf("persistent session must survive after the command finished")
+	}
+	select {
+	case <-opener.shell.closed:
+		t.Fatalf("persistent session terminal must not be closed")
+	default:
+	}
+}
+
+// 未显式要求持久时，Execute 新建的仍是一次性会话（命令结束即回收）。
+func TestTerminalSessionRegistryExecOneShotStillReaps(t *testing.T) {
+	opener := &fakeOpener{shell: newFakeShell()}
+	registry := newTestRegistry(opener)
+	key := TerminalSessionKey{UserID: 31, ProjectID: 32, TemplateID: 33}
+	defer registry.CloseSession(key)
+
+	result, err := registry.Execute(context.Background(), key, TerminalCommand{
+		Command:         "ls",
+		Wait:            true,
+		Timeout:         2 * time.Second,
+		Source:          "agent",
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Output, "echo:ls") {
+		t.Fatalf("expected command output, got %q", result.Output)
+	}
+	// 回收发生在 result 返回之后（execLoop 里的 scheduleReap），这里等一小会儿。
+	deadline := time.Now().Add(2 * time.Second)
+	for registry.Lookup(key) != nil && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if registry.Lookup(key) != nil {
+		t.Fatalf("expected one-shot session reaped after the command finished")
+	}
+}
+
+// 终端里有一行「用户敲了一半、还没回车」的输入时执行命令：
+// 必须先清行再写，否则命令会被拼成 `a="pending"pwd` 这种「合法但什么都不做」的行，
+// 表现为「命令回显了却没执行，按回车才动」。
+func TestTerminalSessionRegistryExecClearsPendingInputLine(t *testing.T) {
+	opener := &fakeOpener{shell: newFakeShell()}
+	registry := newTestRegistry(opener)
+	key := TerminalSessionKey{UserID: 41, ProjectID: 42, TemplateID: 43}
+	defer registry.CloseSession(key)
+
+	session, _, err := registry.EnsurePersistent(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	// 模拟用户敲了一半、没有回车提交。
+	if _, err := session.WriteInput([]byte(`a="pending"`)); err != nil {
+		t.Fatalf("WriteInput: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	result, err := registry.Execute(context.Background(), key, TerminalCommand{
+		Command:         "pwd",
+		Wait:            true,
+		Timeout:         2 * time.Second,
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if strings.Contains(result.Output, "pending") {
+		t.Fatalf("exec command was appended to the pending input line: %q", result.Output)
+	}
+	if !strings.Contains(result.Output, "echo:pwd") {
+		t.Fatalf("expected the command to run on a clean line, got %q", result.Output)
 	}
 }
 
