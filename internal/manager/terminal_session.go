@@ -1066,8 +1066,40 @@ func (r *TerminalSessionRegistry) notifySessionChanged(sess *ManagedTerminalSess
 	r.notifySessionEvent(sess.key.UserID, sess.key.TemplateID, sess.ID(), method)
 }
 
+// notifySessionState 推送「会话运行 / 订阅」状态变化，让列表里的
+// Running（busy）/ Attached（subscribers）标签即时刷新。
+//
+// method 取值：sessionRunning（命令开始）、sessionIdle（命令结束）、
+// sessionAttached（WS 首次接入）、sessionDetached（最后一个 WS 断开）。
+// 只应在状态真正发生跳变时调用，否则每个 terminal_exec 都会刷一次列表。
+func (r *TerminalSessionRegistry) notifySessionState(sess *ManagedTerminalSession, method string) {
+	if r.publisher == nil || sess == nil {
+		return
+	}
+	sess.mu.Lock()
+	busy := sess.busy
+	subs := len(sess.subs)
+	persistent := sess.persistent
+	closed := sess.closed || sess.dead
+	sess.mu.Unlock()
+	if closed {
+		// 会话正在关闭：sessionDeleted 紧随其后，没必要再推一条状态事件。
+		return
+	}
+	r.pushSessionEvent(sess.key.UserID, sess.key.TemplateID, sess.ID(), method, map[string]any{
+		"busy":        busy,
+		"subscribers": subs,
+		"persistent":  persistent,
+	})
+}
+
 // notifySessionEvent 推送会话变更事件（method 为 sessionCreated / sessionDeleted）。
 func (r *TerminalSessionRegistry) notifySessionEvent(userID, templateID int64, sessionID, method string) {
+	r.pushSessionEvent(userID, templateID, sessionID, method, nil)
+}
+
+// pushSessionEvent 把会话事件封装成 component.invoke 推给前端；extra 会并入 args。
+func (r *TerminalSessionRegistry) pushSessionEvent(userID, templateID int64, sessionID, method string, extra map[string]any) {
 	if r.publisher == nil || userID == 0 {
 		return
 	}
@@ -1079,6 +1111,9 @@ func (r *TerminalSessionRegistry) notifySessionEvent(userID, templateID int64, s
 		"session_id":  sessionID,
 		"template_id": strconv.FormatInt(templateID, 10),
 		"event":       eventMethod,
+	}
+	for key, value := range extra {
+		payload[key] = value
 	}
 	msg := map[string]any{
 		"action": "component.invoke",
@@ -1113,22 +1148,7 @@ func (r *TerminalSessionRegistry) forget(sess *ManagedTerminalSession) {
 //     只能等空闲 TTL 到期（maintain）或显式 CloseSession；
 //   - 一次性会话（Agent 创建且从未被前端接入）→ 立即回收容器与记录。
 func (r *TerminalSessionRegistry) scheduleReap(sess *ManagedTerminalSession) {
-	if sess == nil {
-		return
-	}
-	sess.mu.Lock()
-	closed := sess.closed
-	dead := sess.dead
-	subs := len(sess.subs)
-	busy := sess.busy
-	persistent := sess.persistent
-	sess.mu.Unlock()
-
-	if closed || dead || subs > 0 || busy {
-		return
-	}
-	if persistent {
-		// 持久会话保持存活，交给空闲 TTL / 显式关闭处理。
+	if sess == nil || !r.shouldReap(sess) {
 		return
 	}
 
@@ -1136,6 +1156,24 @@ func (r *TerminalSessionRegistry) scheduleReap(sess *ManagedTerminalSession) {
 	r.forget(sess)
 	sess.Close()
 	r.notifySessionChanged(sess, "sessionDeleted")
+}
+
+// shouldReap 判断会话此刻是否应该被立即回收（scheduleReap 的唯一判据）。
+//
+// 规则：
+//   - 已关闭 / 已断开 / 仍有订阅者 / 有命令在执行 → 不回收；
+//   - 持久会话 → 不回收，交给空闲 TTL 或显式 CloseSession；
+//   - 一次性会话 → 回收。
+func (r *TerminalSessionRegistry) shouldReap(sess *ManagedTerminalSession) bool {
+	if sess == nil {
+		return false
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.closed || sess.dead || len(sess.subs) > 0 || sess.busy {
+		return false
+	}
+	return !sess.persistent
 }
 
 // suspendReap 已不再需要（回收改为同步判定），保留空实现以免破坏调用点。
@@ -1197,7 +1235,7 @@ func (s *ManagedTerminalSession) Resize(rows, cols uint16) error {
 // 重放与订阅在同一临界区内完成，不会丢帧。
 func (s *ManagedTerminalSession) Attach(sinceSeq int64) (*TerminalSubscriber, []byte) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	first := len(s.subs) == 0
 
 	s.nextSubID++
 	sub := newTerminalSubscriber(s.nextSubID)
@@ -1217,6 +1255,12 @@ func (s *ManagedTerminalSession) Attach(sinceSeq int64) (*TerminalSubscriber, []
 		if offset < int64(len(s.buf)) {
 			replay = append([]byte(nil), s.buf[offset:]...)
 		}
+	}
+	s.mu.Unlock()
+
+	// 订阅者 0 → n：列表里的 Attached 标签需要立刻反映出来。
+	if first {
+		s.registry.notifySessionState(s, "sessionAttached")
 	}
 	return sub, replay
 }
@@ -1243,15 +1287,18 @@ func (s *ManagedTerminalSession) Detach(sub *TerminalSubscriber) {
 		return
 	}
 	s.mu.Lock()
-	if _, ok := s.subs[sub.ID]; ok {
-		delete(s.subs, sub.ID)
-	}
+	delete(s.subs, sub.ID)
 	empty := len(s.subs) == 0
 	s.mu.Unlock()
 
 	sub.close()
 
 	if empty {
+		// 一次性会话会被 scheduleReap 立即回收并推 sessionDeleted，
+		// 此时再补一条 detached 只会多一次无效刷新。
+		if !s.registry.shouldReap(s) {
+			s.registry.notifySessionState(s, "sessionDetached")
+		}
 		s.registry.scheduleReap(s)
 	}
 }
@@ -1350,11 +1397,25 @@ func (s *ManagedTerminalSession) idleFor(now time.Time) time.Duration {
 
 func (s *ManagedTerminalSession) setBusy(busy bool) {
 	s.mu.Lock()
+	changed := s.busy != busy
 	s.busy = busy
 	if busy {
 		s.lastActive = time.Now()
 	}
 	s.mu.Unlock()
+
+	if !changed {
+		return
+	}
+	if busy {
+		s.registry.notifySessionState(s, "sessionRunning")
+		return
+	}
+	// 一次性会话执行完就会被回收（推 sessionDeleted），不必再推 idle。
+	if s.registry.shouldReap(s) {
+		return
+	}
+	s.registry.notifySessionState(s, "sessionIdle")
 }
 
 func (s *ManagedTerminalSession) isBusy() bool {

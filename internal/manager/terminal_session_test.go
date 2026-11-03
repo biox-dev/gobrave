@@ -632,3 +632,88 @@ func terminalSessionRecord(key TerminalSessionKey, runtimeID string) *types.Term
 		LastActiveAt: time.Now(),
 	}
 }
+
+// recordPublisher 记录推送给前端的实时消息，用于断言会话事件。
+type recordPublisher struct {
+	mu   sync.Mutex
+	msgs []map[string]any
+}
+
+func (p *recordPublisher) PushMessage(_ int64, data any) error {
+	msg, _ := data.(map[string]any)
+	p.mu.Lock()
+	p.msgs = append(p.msgs, msg)
+	p.mu.Unlock()
+	return nil
+}
+
+// sessionEventMethods 返回推送过的会话事件 method（category=container-terminal-session）。
+func (p *recordPublisher) sessionEventMethods() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]string, 0, len(p.msgs))
+	for _, msg := range p.msgs {
+		if msg["action"] != "component.invoke" {
+			continue
+		}
+		payload, ok := msg["payload"].(map[string]any)
+		if !ok || payload["category"] != "container-terminal-session" {
+			continue
+		}
+		if method, ok := payload["method"].(string); ok {
+			out = append(out, method)
+		}
+	}
+	return out
+}
+
+func hasSessionEvent(methods []string, want string) bool {
+	for _, method := range methods {
+		if method == want {
+			return true
+		}
+	}
+	return false
+}
+
+// 列表的 Running / Attached 标签依赖这些状态事件：订阅者与 busy 跳变时必须推送。
+func TestTerminalSessionRegistryPushesStateEvents(t *testing.T) {
+	publisher := &recordPublisher{}
+	opener := &fakeOpener{shell: newFakeShell()}
+	registry := newTerminalSessionRegistry(opener, publisher, nil, TerminalRegistryOptions{
+		ReadyWait:   2 * time.Second,
+		BufferBytes: 64 * 1024,
+		ExecTimeout: 2 * time.Second,
+	})
+	ctx := context.Background()
+	key := TerminalSessionKey{UserID: 11, ProjectID: 12, TemplateID: 13}
+	defer registry.CloseSession(key)
+
+	session, _, err := registry.EnsurePersistent(ctx, key)
+	if err != nil {
+		t.Fatalf("EnsurePersistent: %v", err)
+	}
+
+	sub, _ := session.Attach(0)
+	if methods := publisher.sessionEventMethods(); !hasSessionEvent(methods, "sessionAttached") {
+		t.Fatalf("expected sessionAttached event, got %v", methods)
+	}
+
+	session.Detach(sub)
+	if methods := publisher.sessionEventMethods(); !hasSessionEvent(methods, "sessionDetached") {
+		t.Fatalf("expected sessionDetached event, got %v", methods)
+	}
+
+	if _, err := registry.Execute(ctx, key, TerminalCommand{
+		Command:         "ls",
+		Wait:            true,
+		Timeout:         2 * time.Second,
+		CreateIfMissing: true,
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	methods := publisher.sessionEventMethods()
+	if !hasSessionEvent(methods, "sessionRunning") || !hasSessionEvent(methods, "sessionIdle") {
+		t.Fatalf("expected sessionRunning/sessionIdle events, got %v", methods)
+	}
+}
