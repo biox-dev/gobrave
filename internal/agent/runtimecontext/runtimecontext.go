@@ -277,8 +277,6 @@ type ContainerTerminalExecInput struct {
 	TimeoutSeconds int
 	// Wait 为 true 时等待命令结束。
 	Wait bool
-	// NotifyUI 为 true 时通过 realtime 通知前端打开终端标签。
-	NotifyUI bool
 	// CreateIfMissing 为 true 时允许自动创建终端会话（容器）。
 	CreateIfMissing bool
 	// Persistent 为 true 时把会话标记为持久：命令结束后不回收容器，

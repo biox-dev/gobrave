@@ -1003,12 +1003,13 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 	detach := sess.AttachObserver()
 	defer detach()
 
+	// 持久会话会通过 realtime 推送 terminal.exec 事件，让前端自动打开终端标签。
 	result, err := r.Execute(ctx, key, TerminalCommand{
 		Command:         in.Command,
 		Wait:            in.Wait,
 		Timeout:         time.Duration(in.TimeoutSeconds) * time.Second,
 		Source:          "agent",
-		NotifyUI:        in.NotifyUI,
+		NotifyUI:        in.Persistent,
 		CreateIfMissing: in.CreateIfMissing,
 	})
 	if err != nil {
