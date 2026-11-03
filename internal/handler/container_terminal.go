@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -22,7 +23,9 @@ import (
 //   - 一旦前端接入，会话即被标记为「持久」：断开连接（刷新 / 关标签 / 断网）都不会删除容器，
 //     只有空闲 TTL（container.terminal_session_ttl_minutes）到期或前端关闭标签调用
 //     DELETE /container/template/{id}/terminal 时才删除；
-//   - 输出环形缓冲带序号，连接时可用 ?since=<seq> 重放（缺省回放全部缓存）。
+//   - 输出环形缓冲带序号，连接时可用 ?since=<seq> 重放（缺省回放全部缓存）；
+//     rows/cols 是前端 xterm 的尺寸：新建会话直接用它建 PTY，保证历史输出的换行与
+//     前端渲染一致（PTY 宽度变了 bash 会按旧宽度重绘，覆盖已经输出的行）。
 //
 // 协议：
 //   - 浏览器 → 后端：二进制/文本都是按键输入；文本 {"type":"resize",...} 是尺寸控制帧；
@@ -34,6 +37,8 @@ import (
 // @Tags         容器管理
 // @Param        templateId  path   int  true   "容器模板 ID"
 // @Param        since       query  int  false  "从指定输出序号重放（缺省回放全部缓存）"
+// @Param        rows        query  int  false  "PTY 行数（仅新建会话时使用）"
+// @Param        cols        query  int  false  "PTY 列数（仅新建会话时使用）"
 // @Success      101
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
@@ -57,6 +62,8 @@ func (h *ContainerHandler) ContainerTemplateTerminal(c *gin.Context) {
 			sinceSeq = parsed
 		}
 	}
+	rows, _ := strconv.ParseUint(strings.TrimSpace(c.Query("rows")), 10, 16)
+	cols, _ := strconv.ParseUint(strings.TrimSpace(c.Query("cols")), 10, 16)
 
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  4096,
@@ -71,27 +78,42 @@ func (h *ContainerHandler) ContainerTemplateTerminal(c *gin.Context) {
 
 	_ = conn.WriteMessage(websocket.TextMessage, []byte("\x1b[90mpreparing container terminal...\x1b[0m\r\n"))
 
-	session, _, err := h.terminalRegistry.EnsurePersistent(c.Request.Context(), key)
+	session, _, err := h.terminalRegistry.EnsurePersistentSized(c.Request.Context(), key, uint16(rows), uint16(cols))
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("\x1b[31mfailed to open terminal: "+err.Error()+"\x1b[0m\r\n"))
 		return
 	}
 
-	sub, replay := session.Attach(sinceSeq)
+	sub, replay := session.AttachWithInfo(sinceSeq)
 	defer session.Detach(sub)
 
-	if len(replay) > 0 {
-		if err := conn.WriteMessage(websocket.BinaryMessage, replay); err != nil {
+	// 先下发回放元信息，再下发回放字节：前端据此决定是否清屏（reset）、
+	// 下次重连从哪个序号续传（seq），以及用哪个宽度渲染回放（rows/cols）。
+	ptyRows, ptyCols := session.Size()
+	if meta, err := json.Marshal(map[string]any{
+		"type":         "session",
+		"session_id":   session.ID(),
+		"status":       "ready",
+		"seq":          replay.To,
+		"replay_from":  replay.From,
+		"replay_bytes": len(replay.Data),
+		"reset":        replay.Reset,
+		"truncated":    replay.Truncated,
+		"rows":         ptyRows,
+		"cols":         ptyCols,
+	}); err == nil {
+		if err := conn.WriteMessage(websocket.TextMessage, meta); err != nil {
+			return
+		}
+	}
+
+	if len(replay.Data) > 0 {
+		if err := conn.WriteMessage(websocket.BinaryMessage, replay.Data); err != nil {
 			return
 		}
 	} else {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("\x1b[90mcontainer ready.\x1b[0m\r\n"))
 	}
-	session.SendEvent(map[string]any{
-		"type":       "session",
-		"session_id": session.ID(),
-		"status":     "ready",
-	})
 
 	bridgeManagedTerminalWebSocket(conn, session, sub)
 }

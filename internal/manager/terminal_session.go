@@ -114,6 +114,45 @@ type TerminalRegistryOptions struct {
 	ExecQueueSize   int
 }
 
+// TerminalReplayInfo 描述一次回放覆盖的序号区间。
+type TerminalReplayInfo struct {
+	// Data 是从 From 到 To 的输出字节。客户端下次重连应把 To + 本连接新收到的字节数
+	// 作为新的 since 传回来（不要自己从 0 开始数字节，否则缓冲滚动后会错位）。
+	Data []byte
+	// From / To 是本次回放在会话输出流里的序号区间（[From, To)）。
+	From int64
+	To   int64
+	// Truncated 表示客户端请求的位置早于环形缓冲起点：中间有一段输出已被滚动覆盖。
+	Truncated bool
+	// Reset 表示客户端持有的序号超出了本会话（会话被重建 / 认领后序号基准改变），
+	// 已回退为「整段重放」，客户端应先清屏再写入 Data，否则会出现重复内容。
+	Reset bool
+}
+
+// terminalSize 是 PTY 的字符尺寸。
+//
+// 它必须和浏览器 xterm 的尺寸一致：PTY 宽度决定了历史输出的换行位置，也决定了
+// bash/readline 对「提示符占几行」的判断。宽度变了以后 bash 会按旧宽度重绘提示符
+// （\r ESC[K ESC[A ...），在更宽的 xterm 里那个 ESC[A 会落到上一行，把已经输出的
+// 历史行覆盖掉。所以新会话直接用前端上报的尺寸，并记住该模板上次用过的尺寸。
+type terminalSize struct {
+	rows uint16
+	cols uint16
+}
+
+func (s terminalSize) valid() bool { return s.rows > 0 && s.cols > 0 }
+
+// normalize 补齐缺失维度（默认 24x80）。
+func (s terminalSize) normalize() terminalSize {
+	if s.rows == 0 {
+		s.rows = 24
+	}
+	if s.cols == 0 {
+		s.cols = 80
+	}
+	return s
+}
+
 // TerminalCommand 是一次写入终端的命令。
 type TerminalCommand struct {
 	// Command 是要执行的 shell 命令，可多行。
@@ -234,7 +273,10 @@ type ManagedTerminalSession struct {
 	scrollbackDirty bool
 	// persistent 标记会话是否为持久会话（见 types.TerminalSession.Persistent）。
 	// 只会在 WS（ContainerTemplateTerminal）接入或 Agent 显式要求时从 false 变 true。
-	persistent  bool
+	persistent bool
+	// rows / cols 是 PTY 当前尺寸；前端据此渲染回放，保证与历史输出的宽度一致。
+	rows        uint16
+	cols        uint16
 	markerCarry []byte
 	readyOnce   sync.Once
 	readyCh     chan struct{}
@@ -278,6 +320,9 @@ type TerminalSessionRegistry struct {
 	mu       sync.Mutex
 	sessions map[string]*ManagedTerminalSession
 	pending  map[string]*pendingTerminalSession
+	// lastSizes 记住「该用户在这个模板终端上最近一次使用的 PTY 尺寸」（userID:templateID）。
+	// Agent 先建会话时没有前端在线，沿用它就能避免前端接入后再改宽度触发 bash 重绘。
+	lastSizes map[string]terminalSize
 }
 
 type pendingTerminalSession struct {
@@ -326,7 +371,39 @@ func newTerminalSessionRegistry(probe TerminalRuntimeOpener, publisher TerminalE
 		opts:      opts,
 		sessions:  make(map[string]*ManagedTerminalSession),
 		pending:   make(map[string]*pendingTerminalSession),
+		lastSizes: make(map[string]terminalSize),
 	}
+}
+
+// rememberSize 记住该用户在该模板上最近使用的 PTY 尺寸。
+func (r *TerminalSessionRegistry) rememberSize(key TerminalSessionKey, size terminalSize) {
+	if key.UserID == 0 || key.TemplateID == 0 || !size.valid() {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.lastSizes) > 1024 {
+		r.lastSizes = make(map[string]terminalSize)
+	}
+	r.lastSizes[strconv.FormatInt(key.UserID, 10)+":"+strconv.FormatInt(key.TemplateID, 10)] = size.normalize()
+}
+
+// rememberedSize 返回该模板上次使用的尺寸；没有记录时返回零值。
+func (r *TerminalSessionRegistry) rememberedSize(key TerminalSessionKey) terminalSize {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastSizes[strconv.FormatInt(key.UserID, 10)+":"+strconv.FormatInt(key.TemplateID, 10)]
+}
+
+// resolveSize 决定新会话的 PTY 尺寸：显式传入 > 该模板上次用过的 > 24x80。
+func (r *TerminalSessionRegistry) resolveSize(key TerminalSessionKey, size terminalSize) terminalSize {
+	if size.valid() {
+		return size.normalize()
+	}
+	if remembered := r.rememberedSize(key); remembered.valid() {
+		return remembered
+	}
+	return terminalSize{}.normalize()
 }
 
 func (r *TerminalSessionRegistry) readyWait() time.Duration {
@@ -390,7 +467,7 @@ func (r *TerminalSessionRegistry) scrollbackBytes() int {
 // created 表示本次调用是否新建了容器。创建使用独立的后台 context，不跟随 HTTP /
 // WebSocket 请求的生命周期：调用方响应结束后会话必须继续存活。
 func (r *TerminalSessionRegistry) Ensure(ctx context.Context, key TerminalSessionKey) (*ManagedTerminalSession, bool, error) {
-	return r.ensure(ctx, key, false)
+	return r.ensure(ctx, key, false, terminalSize{})
 }
 
 // EnsurePersistent 与 Ensure 相同，但会把会话标记为持久会话（见 types.TerminalSession.Persistent）。
@@ -398,10 +475,20 @@ func (r *TerminalSessionRegistry) Ensure(ctx context.Context, key TerminalSessio
 // ContainerTemplateTerminal（前端打开终端）走这个入口：无论会话是新建的还是复用的，
 // 只要前端接入了，此后就只能由空闲 TTL 或显式 DELETE 回收。
 func (r *TerminalSessionRegistry) EnsurePersistent(ctx context.Context, key TerminalSessionKey) (*ManagedTerminalSession, bool, error) {
-	return r.ensure(ctx, key, true)
+	return r.ensure(ctx, key, true, terminalSize{})
 }
 
-func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessionKey, persistent bool) (*ManagedTerminalSession, bool, error) {
+// EnsurePersistentSized 与 EnsurePersistent 相同，但会带上前端 xterm 的行列：
+// 新建的会话直接以这个尺寸创建 PTY，并记住它供 Agent 之后创建的会话复用。
+func (r *TerminalSessionRegistry) EnsurePersistentSized(ctx context.Context, key TerminalSessionKey, rows, cols uint16) (*ManagedTerminalSession, bool, error) {
+	size := terminalSize{rows: rows, cols: cols}
+	if size.valid() {
+		r.rememberSize(key, size)
+	}
+	return r.ensure(ctx, key, true, size)
+}
+
+func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessionKey, persistent bool, size terminalSize) (*ManagedTerminalSession, bool, error) {
 	id := key.SessionID()
 
 	r.mu.Lock()
@@ -432,7 +519,7 @@ func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessio
 	r.pending[id] = pending
 	r.mu.Unlock()
 
-	sess, created, err := r.createOrAdopt(key)
+	sess, created, err := r.createOrAdopt(key, size)
 
 	r.mu.Lock()
 	delete(r.pending, id)
@@ -476,13 +563,14 @@ func (r *TerminalSessionRegistry) MarkPersistent(ctx context.Context, key Termin
 	}
 }
 
-// defaultTerminalOptions 返回交互式终端的默认参数（宽高只是初始值，前端会 resize）。
-func defaultTerminalOptions() containerruntime.TerminalOptions {
+// terminalOptions 按指定尺寸组装交互式终端参数。
+func terminalOptions(size terminalSize) containerruntime.TerminalOptions {
+	size = size.normalize()
 	return containerruntime.TerminalOptions{
 		Command: []string{"/bin/bash", "-l"},
 		TTY:     true,
-		Rows:    24,
-		Cols:    80,
+		Rows:    size.rows,
+		Cols:    size.cols,
 	}
 }
 
@@ -490,15 +578,17 @@ func defaultTerminalOptions() containerruntime.TerminalOptions {
 //
 // “认领”的含义：进程重启后容器还在，但原来的 shell 已随连接结束；这里在同一个
 // 容器上重新 exec 一个 bash，并把落盘的滚动缓冲回放进内存缓冲。
-func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey) (*ManagedTerminalSession, bool, error) {
+func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, size terminalSize) (*ManagedTerminalSession, bool, error) {
 	if r.probe == nil {
 		return nil, false, fmt.Errorf("container probe is not configured")
 	}
 
+	resolved := r.resolveSize(key, size)
+
 	createCtx, cancel := context.WithTimeout(context.Background(), r.createWait())
 	defer cancel()
 
-	adopted, err := r.adoptSession(createCtx, key)
+	adopted, err := r.adoptSession(createCtx, key, resolved)
 	if err == nil && adopted != nil {
 		return adopted, false, nil
 	}
@@ -510,11 +600,11 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey) (*Manage
 		return nil, false, err
 	}
 
-	handle, err := r.probe.StartTerminalRuntime(createCtx, key.UserID, key.ProjectID, key.TemplateID, defaultTerminalOptions())
+	handle, err := r.probe.StartTerminalRuntime(createCtx, key.UserID, key.ProjectID, key.TemplateID, terminalOptions(resolved))
 	if err != nil {
 		return nil, false, err
 	}
-	managed, err := r.initSession(createCtx, key, handle, nil)
+	managed, err := r.initSession(createCtx, key, handle, nil, resolved)
 	if err != nil {
 		handle.Cleanup()
 		return nil, false, err
@@ -525,7 +615,7 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey) (*Manage
 }
 
 // adoptSession 按数据库记录重新 attach 到原容器；没有记录 / 容器已不可用时返回 (nil, nil)。
-func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key TerminalSessionKey) (*ManagedTerminalSession, error) {
+func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key TerminalSessionKey, size terminalSize) (*ManagedTerminalSession, error) {
 	if r.store == nil {
 		return nil, nil
 	}
@@ -542,19 +632,14 @@ func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key Terminal
 		return nil, nil
 	}
 
-	handle, err := r.probe.AttachTerminalRuntime(ctx, rec.RuntimeName, rec.RuntimeID, containerruntime.TerminalOptions{
-		Command: []string{"/bin/bash", "-l"},
-		TTY:     true,
-		Rows:    24,
-		Cols:    80,
-	})
+	handle, err := r.probe.AttachTerminalRuntime(ctx, rec.RuntimeName, rec.RuntimeID, terminalOptions(size))
 	if err != nil {
 		// 容器已被删除 / 节点重建：记录作废，走新建。
 		r.dropRecord(ctx, rec)
 		return nil, err
 	}
 
-	managed, err := r.initSession(ctx, key, handle, r.loadScrollback(key))
+	managed, err := r.initSession(ctx, key, handle, r.loadScrollback(key), size)
 	if err != nil {
 		handle.Cleanup()
 		return nil, err
@@ -566,7 +651,7 @@ func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key Terminal
 }
 
 // initSession 把「新容器 / 认领容器」统一初始化为托管会话。
-func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalSessionKey, handle *ProbeTerminalHandle, replay []byte) (*ManagedTerminalSession, error) {
+func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalSessionKey, handle *ProbeTerminalHandle, replay []byte, size terminalSize) (*ManagedTerminalSession, error) {
 	if handle == nil || handle.Session == nil {
 		return nil, fmt.Errorf("terminal runtime handle is empty")
 	}
@@ -588,6 +673,8 @@ func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalS
 		lastOutput:  time.Now(),
 		lastActive:  time.Now(),
 		createdAt:   time.Now(),
+		rows:        size.rows,
+		cols:        size.cols,
 	}
 	if len(replay) > 0 {
 		// 重启前缓存的历史输出：作为初始缓冲，前端 attach 时直接回放。
@@ -906,7 +993,7 @@ func (r *TerminalSessionRegistry) Execute(ctx context.Context, key TerminalSessi
 		}
 		// 新建会话时按 cmd.Persistent 决定生命周期：一次性会话在本命令结束
 		// 且没有订阅者时会被回收，命令输出随之丢失。
-		created, _, err := r.ensure(ctx, key, cmd.Persistent)
+		created, _, err := r.ensure(ctx, key, cmd.Persistent, terminalSize{})
 		if err != nil {
 			return TerminalCommandResult{}, err
 		}
@@ -1233,21 +1320,67 @@ func (s *ManagedTerminalSession) WriteInput(data []byte) (int, error) {
 }
 
 // Resize 调整 PTY 尺寸。
+//
+// 尺寸必须由前端 xterm 驱动：PTY 宽度变了以后 bash 会按旧宽度重绘提示符，
+// 所以这里记住尺寸，下一次该模板的新会话直接用这个宽度，避免再触发重绘。
 func (s *ManagedTerminalSession) Resize(rows, cols uint16) error {
 	if s.isDead() {
 		return ErrTerminalSessionClosed
 	}
+	if rows == 0 || cols == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	changed := s.rows != rows || s.cols != cols
+	s.rows = rows
+	s.cols = cols
+	s.mu.Unlock()
+	if changed {
+		s.registry.rememberSize(s.key, terminalSize{rows: rows, cols: cols})
+	}
 	return s.sess.Resize(rows, cols)
+}
+
+// Size 返回 PTY 当前尺寸（前端据此渲染回放，保证宽度一致）。
+func (s *ManagedTerminalSession) Size() (rows, cols uint16) {
+	s.mu.Lock()
+	size := terminalSize{rows: s.rows, cols: s.cols}.normalize()
+	s.mu.Unlock()
+	return size.rows, size.cols
 }
 
 // Attach 注册一个订阅者并返回重放数据。
 //
 // 前端（ContainerTemplateTerminal）接入时调用者还应调用 MarkPersistent，
-// 把会话升级为持久会话。
+// 把会话升级为持久会话。需要知道回放序号区间 / 是否需要清屏时用 AttachWithInfo。
 //
-// sinceSeq <= 0 表示「尽可能早」；sinceSeq 大于当前序号表示只要新输出。
+// sinceSeq <= 0 表示「尽可能早」（整段缓冲）；否则从该序号开始回放。
+// 注意 sinceSeq 是会话输出流的全局序号（见 TerminalReplayInfo），不是「本地收到的
+// 字节数」；超过当前序号时会被当作失效序号整段重放（Reset）。
 // 重放与订阅在同一临界区内完成，不会丢帧。
 func (s *ManagedTerminalSession) Attach(sinceSeq int64) (*TerminalSubscriber, []byte) {
+	sub, replay := s.AttachWithInfo(sinceSeq)
+	return sub, replay.Data
+}
+
+// AttachWithInfo 与 Attach 相同，但额外返回本次回放的序号区间与续传状态。
+//
+// 为什么需要：调用方（前端）把「已消费到哪个序号」传回来才能增量回放，而序号是
+// 环形缓冲里的全局偏移（bufStart 可能在缓冲滚动后不为 0）。如果客户端自己按
+// 「收到多少字节」计数，一旦缓冲滚动、或会话被重建 / 认领（序号基准归零），
+// 续传位置就会错位：轻则重复/跳过一段，重则 since 超出当前序号 → 空回放、历史全丢。
+//
+// 因此这里把边界情况显式告知调用方：
+//   - sinceSeq > To：客户端位置超出本会话（会话重建 / 认领后序号基准改变），
+//     回退为整段重放并置 Reset=true，客户端应先清屏；
+//   - sinceSeq < bufStart：中间那段已被缓冲覆盖，置 Truncated=true；
+//   - From/To 是本次回放覆盖的序号区间，客户端下次应从这里继续。
+func (s *ManagedTerminalSession) AttachWithInfo(sinceSeq int64) (*TerminalSubscriber, TerminalReplayInfo) {
+	return s.attach(sinceSeq, true)
+}
+
+// attach 是 Attach / AttachObserver 的共同实现；withReplay=false 时不复制缓冲。
+func (s *ManagedTerminalSession) attach(sinceSeq int64, withReplay bool) (*TerminalSubscriber, TerminalReplayInfo) {
 	s.mu.Lock()
 	first := len(s.subs) == 0
 
@@ -1256,18 +1389,29 @@ func (s *ManagedTerminalSession) Attach(sinceSeq int64) (*TerminalSubscriber, []
 	s.subs[sub.ID] = sub
 	s.lastActive = time.Now()
 
-	var replay []byte
-	if sinceSeq >= 0 {
-		start := s.bufStart
-		if sinceSeq > start {
-			start = sinceSeq
+	end := s.bufStart + int64(len(s.buf))
+	info := TerminalReplayInfo{From: end, To: end}
+	if withReplay {
+		start := sinceSeq
+		switch {
+		case sinceSeq <= 0:
+			// 首次连接：尽可能早。
+			start = s.bufStart
+		case sinceSeq > end:
+			// 客户端的位置比本会话还大：旧序号已失效，整段重放并让客户端清屏。
+			start = s.bufStart
+			info.Reset = true
+		case sinceSeq < s.bufStart:
+			// 缓冲已滚动：请求的位置之前那段没了。
+			start = s.bufStart
+			info.Truncated = true
 		}
 		if start < s.bufStart {
 			start = s.bufStart
 		}
-		offset := start - s.bufStart
-		if offset < int64(len(s.buf)) {
-			replay = append([]byte(nil), s.buf[offset:]...)
+		info.From = start
+		if offset := start - s.bufStart; offset < int64(len(s.buf)) {
+			info.Data = append([]byte(nil), s.buf[offset:]...)
 		}
 	}
 	s.mu.Unlock()
@@ -1276,7 +1420,7 @@ func (s *ManagedTerminalSession) Attach(sinceSeq int64) (*TerminalSubscriber, []
 	if first {
 		s.registry.notifySessionState(s, "sessionAttached")
 	}
-	return sub, replay
+	return sub, info
 }
 
 // AttachObserver 登记一个「只占位、不接收输出」的订阅者，返回幂等的 Detach 函数。
@@ -1286,7 +1430,7 @@ func (s *ManagedTerminalSession) Attach(sinceSeq int64) (*TerminalSubscriber, []
 //   - 它的 Data 是无缓冲 channel 且无人读取，publish 会走 default 分支丢弃，
 //     不会像普通订阅者那样占用 2048 块的缓冲内存。
 func (s *ManagedTerminalSession) AttachObserver() func() {
-	sub, _ := s.Attach(0)
+	sub, _ := s.attach(0, false)
 	s.mu.Lock()
 	sub.Data = make(chan []byte) // 无缓冲 + 无人读：publish 必定走 default
 	s.mu.Unlock()

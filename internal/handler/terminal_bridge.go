@@ -64,6 +64,8 @@ func bridgeManagedTerminalWebSocket(conn *websocket.Conn, session *manager.Manag
 		for {
 			select {
 			case chunk := <-sub.Data:
+				// 打印chunk的内容
+				// fmt.Printf("Sending chunk to websocket: %s\n", string(chunk))
 				if err := conn.WriteMessage(websocket.BinaryMessage, chunk); err != nil {
 					return
 				}
