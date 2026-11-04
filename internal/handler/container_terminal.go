@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -176,6 +177,11 @@ func (h *ContainerHandler) ContainerTemplateTerminal(c *gin.Context) {
 	_ = conn.WriteMessage(websocket.TextMessage, []byte("\x1b[90mpreparing container terminal...\x1b[0m\r\n"))
 
 	sub, replay := session.AttachWithInfo(sinceSeq)
+	// 前端接入即把会话升级为持久会话（标记只增不减）：这样 Agent 用一次性会话
+	// 跑的长命令，用户点开终端后即使命令结束 / 刷新页面也不会被回收，可以继续查看输出。
+	// 必须在 Detach 之前完成（一次性会话在最后一个订阅者离开时会被立即回收）；
+	// 不跟随请求 context：WS 升级后它可能已被取消，而这里是一次 DB 写。
+	h.terminalRegistry.MarkPersistent(context.Background(), session.Key())
 	defer session.Detach(sub)
 
 	// 先下发回放元信息，再下发回放字节：前端据此决定是否清屏（reset）、
