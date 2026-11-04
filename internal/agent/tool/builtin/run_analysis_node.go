@@ -133,8 +133,15 @@ func RunAnalysisNode(runner runtimecontext.AnalysisNodeRunner) tool.Tool {
 }
 
 // parseAnalysisNodeID 解析必填的分析节点 ID：为空或非法时返回错误。
+//
+// 容错处理用户 / 模型可能带上的 "@analysis_node:" 引用前缀（如
+// "@analysis_node:2109711590457610240"）：该前缀来自界面「Ask Agent」插入的引用 chip，
+// 模型在服务端可原样把 chip 文本传进来，这里统一剥离后再解析。
 func parseAnalysisNodeID(raw string) (int64, error) {
 	idStr := strings.TrimSpace(raw)
+	if idx := strings.Index(idStr, "@analysis_node:"); idx >= 0 {
+		idStr = strings.TrimSpace(idStr[idx+len("@analysis_node:"):])
+	}
 	if idStr == "" {
 		return 0, fmt.Errorf("analysis_node_id is required")
 	}

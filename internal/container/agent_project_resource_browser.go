@@ -25,7 +25,7 @@ import (
 // 只读内置工具共用同一份实现：
 //   - list_project_scripts：按 RuntimeContext.ProjectID 列出全部脚本；
 //   - get_script：按 script_id 查看脚本名称 / 描述 / 主文件路径 / io_schema.json 路径；
-//   - get_analysis_node：按 analysis_node_id 查看节点名称 / 工作目录 / params.json / 参数；
+//   - get_analysis_node：按 analysis_node_id（兼容 @analysis_node:<id> 引用）查看节点名称 / 工作目录 / params.json / 参数；
 //   - list_container_templates：列出全部容器模板（definition ID + spec 的 name / description）；
 //   - get_container_template：按 @container:<id> 引用查看绑定行的 display_name / description；
 //   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径；
