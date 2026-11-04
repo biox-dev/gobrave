@@ -247,7 +247,7 @@ func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner
 	}
 	opts.Tools = tool.NewRegistryWith(append(
 		builtin.All(builtinDeps),
-		coder.All(coder.Deps{History: files, LSP: lspMgr, Config: cfg})...,
+		coder.All(coder.Deps{History: files, LSP: lspMgr, Config: cfg, Terminal: terminalRunner})...,
 	)...)
 	// 外部 MCP 服务提供的工具：工具名为 <服务名>_<工具名>，与内置工具同池调度（权限门禁复用）。
 	for _, t := range buildMCPTools(cfg) {

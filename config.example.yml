@@ -216,3 +216,11 @@ container:
   terminal_buffer_dir: ""
   # 单个会话滚动缓冲上限（KB），<=0 默认 1024。
   terminal_buffer_kb: 1024
+  # bash 工具（Agent 的命令执行工具）的实际执行位置：
+  #   host      - 在 gobrave 宿主机上的持久 shell 里执行（默认）；
+  #   container - 在用户的容器模板终端里执行，命令输出会显示在前端 xterm 中。
+  # 该开关对 Agent 完全透明：bash 的入参 / 返回结构不变，Agent 不需要传容器信息。
+  # 注意：container 模式要求会话有激活项目与 Agent 会话 ID，否则调用会返回错误。
+  bash_execution_mode: host
+  # bash_execution_mode=container 时使用的容器模板 ID（十进制）；<=0 使用默认 202606160002。
+  bash_container_template_id: 202606160002

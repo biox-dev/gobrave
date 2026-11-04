@@ -15,7 +15,7 @@ import "github.com/biox-dev/gobrave/internal/agent/tool"
 // All 返回全部 coder 工具。静态依赖（文件历史 / LSP）由 container 在构建期注入。
 func All(deps Deps) []tool.Tool {
 	return []tool.Tool{
-		NewBash(),
+		NewBash(deps),
 		NewEdit(deps),
 		NewView(deps),
 		NewWrite(deps),

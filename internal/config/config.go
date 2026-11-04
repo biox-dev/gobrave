@@ -236,6 +236,36 @@ type ContainerConfig struct {
 	TerminalBufferDir string `yaml:"terminal_buffer_dir" json:"terminal_buffer_dir"`
 	// TerminalBufferKB 是单个会话滚动缓冲的上限（KB）；<=0 使用默认 1024。
 	TerminalBufferKB int `yaml:"terminal_buffer_kb" json:"terminal_buffer_kb"`
+
+	// BashExecutionMode 决定 bash 工具的实际执行位置：host（宿主机，默认）或 container（容器）。
+	// 该开关只影响执行位置，Agent 对此无感知（工具参数不变）。
+	BashExecutionMode string `yaml:"bash_execution_mode" json:"bash_execution_mode"`
+	// BashContainerTemplateID 是 container 模式下 bash 工具使用的容器模板 ID。
+	// <=0 时使用 DefaultBashContainerTemplateID（202606160002）。
+	BashContainerTemplateID int64 `yaml:"bash_container_template_id" json:"bash_container_template_id"`
+}
+
+// bash 工具的执行模式。
+const (
+	// BashExecutionModeHost 表示 bash 工具在宿主机上执行命令。
+	BashExecutionModeHost = "host"
+	// BashExecutionModeContainer 表示 bash 工具在容器模板终端中执行命令。
+	BashExecutionModeContainer = "container"
+)
+
+// DefaultBashContainerTemplateID 是 container 模式下 bash 工具默认使用的容器模板 ID。
+const DefaultBashContainerTemplateID int64 = 202606160002
+
+// NormalizeBashExecutionMode 归一化 bash 执行模式：空值回退 host，非法值报错。
+func NormalizeBashExecutionMode(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", BashExecutionModeHost:
+		return BashExecutionModeHost, nil
+	case BashExecutionModeContainer:
+		return BashExecutionModeContainer, nil
+	default:
+		return "", fmt.Errorf("unsupported bash_execution_mode %q, expected one of %s, %s", mode, BashExecutionModeHost, BashExecutionModeContainer)
+	}
 }
 
 type KubernetesRuntimeConfig struct {
@@ -262,6 +292,9 @@ func DefaultContainerConfig() *ContainerConfig {
 		TerminalSessionTTLMinutes:  120,
 		TerminalMaxSessionsPerUser: 4,
 		TerminalBufferKB:           1024,
+		// bash 工具默认在宿主机执行；切换为 container 时使用内置模板 ID。
+		BashExecutionMode:       BashExecutionModeHost,
+		BashContainerTemplateID: DefaultBashContainerTemplateID,
 	}
 }
 
@@ -667,6 +700,16 @@ func LoadConfig() (*Config, error) {
 		cfg.Container.Kubernetes.Namespace = "default"
 	}
 	cfg.Container.Kubernetes.Kubeconfig = strings.TrimSpace(cfg.Container.Kubernetes.Kubeconfig)
+	// bash 工具执行位置：空值回退宿主机，非法值回退宿主机（避免因配置笔误导致启动失败）。
+	if mode, err := NormalizeBashExecutionMode(cfg.Container.BashExecutionMode); err != nil {
+		logger.Warnf(context.Background(), "[Config] %v; falling back to %s", err, BashExecutionModeHost)
+		cfg.Container.BashExecutionMode = BashExecutionModeHost
+	} else {
+		cfg.Container.BashExecutionMode = mode
+	}
+	if cfg.Container.BashContainerTemplateID <= 0 {
+		cfg.Container.BashContainerTemplateID = DefaultBashContainerTemplateID
+	}
 	if cfg.Realtime == nil {
 		cfg.Realtime = &RealtimeConfig{
 			Transport:             "ws",

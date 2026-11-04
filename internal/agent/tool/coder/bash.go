@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/coder/shell"
+	"github.com/biox-dev/gobrave/internal/config"
 )
 
 // BashParams 是 bash 工具的入参。
@@ -221,9 +223,13 @@ Important:
 }
 
 // NewBash 返回 bash 工具（持久 shell 会话中执行命令）。
-func NewBash() tool.Tool { return &bashTool{} }
+//
+// 实际执行位置由 container.bash_execution_mode 决定：host（默认）走宿主机持久 shell，
+// container 走用户的容器模板终端（container.bash_container_template_id）。Agent 对此
+// 无感知：工具入参与返回结构完全一致，不需要传入任何容器相关信息。
+func NewBash(deps Deps) tool.Tool { return &bashTool{deps: deps} }
 
-type bashTool struct{}
+type bashTool struct{ deps Deps }
 
 // Definition 实现 tool.Tool。
 func (b *bashTool) Definition() tool.Definition {
@@ -274,6 +280,11 @@ func (b *bashTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 	}
 
 	startTime := time.Now()
+	mode, templateID := b.deps.bashExecution()
+	if mode == config.BashExecutionModeContainer {
+		return b.executeInContainer(ctx, params, templateID, startTime)
+	}
+
 	sh := shell.GetPersistentShell(workingDir(ctx))
 	stdout, stderr, exitCode, interrupted, err := sh.Exec(ctx, params.Command, params.Timeout)
 	if err != nil {
@@ -310,6 +321,64 @@ func (b *bashTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 		out.Output = "no output"
 	}
 	return out, nil
+}
+
+// executeInContainer 是 bash 工具在 container 模式下的执行分支。
+//
+// 它把命令写入用户在该容器模板上的终端会话（复用 TerminalRunInTerminal 的语义：
+// 同一 Agent 会话在同一模板上复用一个终端会话），因此 cd / export / 已安装的包
+// 在多次调用之间保留。返回结构仍然兼容 BashOutput：命令输出（含退出码说明）放在
+// output 字段，调用方无需区分宿主机还是容器。
+func (b *bashTool) executeInContainer(ctx context.Context, params BashParams, templateID int64, startTime time.Time) (any, error) {
+	if b.deps.Terminal == nil {
+		return nil, toolError("container execution mode is enabled but the container terminal is not available in this runtime")
+	}
+	projectID := tool.ProjectIDFrom(ctx)
+	agentSessionID := tool.SessionIDFrom(ctx)
+	if projectID <= 0 {
+		return nil, toolError("container execution mode requires an active project in this conversation")
+	}
+	if agentSessionID <= 0 {
+		return nil, toolError("container execution mode requires an agent session id")
+	}
+
+	result, err := b.deps.Terminal.RunInTerminal(ctx, runtimecontext.ContainerTerminalExecInput{
+		UserID:              tool.UserIDFrom(ctx),
+		ProjectID:           projectID,
+		AgentSessionID:      agentSessionID,
+		ContainerTemplateID: templateID,
+		Command:             params.Command,
+		TimeoutSeconds:      params.Timeout / 1000,
+		Wait:                true,
+		CreateIfMissing:     true,
+		Persistent:          false,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error executing command: %w", err)
+	}
+
+	output := truncateOutput(result.Output)
+	if result.TimedOut {
+		output = appendLine(output, "Command was aborted before completion")
+	} else if result.ExitCode != 0 {
+		output = appendLine(output, fmt.Sprintf("Exit code %d", result.ExitCode))
+	}
+
+	out := BashOutput{Output: output}
+	out.Metadata.StartTime = startTime.UnixMilli()
+	out.Metadata.EndTime = time.Now().UnixMilli()
+	if out.Output == "" {
+		out.Output = "no output"
+	}
+	return out, nil
+}
+
+// appendLine 把 msg 追加为 output 的下一行（output 为空时直接返回 msg）。
+func appendLine(output, msg string) string {
+	if output != "" && !strings.HasSuffix(output, "\n") {
+		output += "\n"
+	}
+	return output + msg
 }
 
 func truncateOutput(content string) string {

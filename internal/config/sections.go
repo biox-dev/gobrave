@@ -176,6 +176,19 @@ func normalizeContainerConfig(c *ContainerConfig) error {
 	}
 	c.Kubernetes.Kubeconfig = strings.TrimSpace(c.Kubernetes.Kubeconfig)
 
+	// bash 工具的执行位置：空值回退宿主机；非法值直接拒绝保存，避免写入无法生效的配置。
+	mode, err := NormalizeBashExecutionMode(c.BashExecutionMode)
+	if err != nil {
+		return err
+	}
+	c.BashExecutionMode = mode
+	if c.BashContainerTemplateID < 0 {
+		c.BashContainerTemplateID = 0
+	}
+	if c.BashContainerTemplateID == 0 {
+		c.BashContainerTemplateID = DefaultBashContainerTemplateID
+	}
+
 	// 队列为空表示沿用管理器内置的默认值，负数没有意义。
 	if c.CreateQueueMaxConcurrency < 0 {
 		return fmt.Errorf("create_queue_max_concurrency must be >= 0")
