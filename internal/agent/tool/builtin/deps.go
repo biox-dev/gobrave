@@ -41,6 +41,9 @@ type Deps struct {
 	TemplateBrowser runtimecontext.ContainerTemplateBrowser
 	DatasetBrowser  runtimecontext.DatasetBrowser
 	ReportContext   runtimecontext.ProjectReportContextResolver
+	// DatasetWriter 准备已知 key 的数据集 / 向数据集登记文件
+	// （get_project_database_path / add_file_to_dataset）。
+	DatasetWriter runtimecontext.DatasetWriter
 
 	// Skills 技能解析能力（get_skill / load_skill_resource）。
 	Skills runtimecontext.SkillResolver

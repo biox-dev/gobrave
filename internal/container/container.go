@@ -241,6 +241,7 @@ func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner
 		NodeBrowser:     browser,
 		TemplateBrowser: browser,
 		DatasetBrowser:  browser,
+		DatasetWriter:   browser,
 		ReportContext:   browser,
 		Skills:          skillResolver,
 	}

@@ -116,6 +116,10 @@ type DataRepository interface {
 
 	CreateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error
 	GetProjectDatasetByID(ctx context.Context, id int64) (*types.ProjectDataset, error)
+	// GetProjectDatasetByDatasetID returns one project binding of the dataset
+	// (newest first), used to derive the dataset workspace path when only the
+	// dataset id is known.
+	GetProjectDatasetByDatasetID(ctx context.Context, datasetID int64) (*types.ProjectDataset, error)
 	UpdateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error
 	DeleteProjectDataset(ctx context.Context, id int64) error
 	ListProjectDataset(ctx context.Context) ([]*types.ProjectDataset, error)

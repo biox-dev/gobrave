@@ -34,6 +34,7 @@ func (r *dataRepository) UpdateDataset(ctx context.Context, dataset *types.Datas
 		Where("id = ?", dataset.ID).
 		Updates(map[string]interface{}{
 			"dataset_name": dataset.DatasetName,
+			"dataset_key":  dataset.DatasetKey,
 			"description":  dataset.Description,
 			"metadata":     dataset.Metadata,
 		}).Error
@@ -59,7 +60,7 @@ func (r *dataRepository) ListDatasetByProjectID(ctx context.Context, projectID i
 	items := make([]*types.Dataset, 0)
 	err := r.db.WithContext(ctx).
 		Table("go_dataset AS dataset").
-		Select("dataset.id, dataset.dataset_name, dataset.description, dataset.metadata, dataset.created_at, dataset.updated_at").
+		Select("dataset.id, dataset.dataset_name, dataset.dataset_key, dataset.description, dataset.metadata, dataset.created_at, dataset.updated_at").
 		Joins("JOIN go_project_dataset AS pd ON pd.dataset_id = dataset.id").
 		Where("pd.project_id = ?", projectID).
 		Distinct().
@@ -99,6 +100,10 @@ func (r *dataRepository) PageDatasetByProjectID(ctx context.Context, pagination 
 			db = db.Where("dataset.dataset_name LIKE ?", "%"+datasetName+"%")
 		}
 
+		if datasetKey := query.GetDatasetKey(); datasetKey != "" {
+			db = db.Where("dataset.dataset_key = ?", datasetKey)
+		}
+
 		if description := query.GetDescription(); description != "" {
 			db = db.Where("dataset.description LIKE ?", "%"+description+"%")
 		}
@@ -119,7 +124,7 @@ func (r *dataRepository) PageDatasetByProjectID(ctx context.Context, pagination 
 	}
 
 	err := baseQuery.
-		Select("dataset.id, dataset.dataset_name, dataset.description, dataset.metadata, dataset.created_at, dataset.updated_at").
+		Select("dataset.id, dataset.dataset_name, dataset.dataset_key, dataset.description, dataset.metadata, dataset.created_at, dataset.updated_at").
 		Distinct().
 		Order("dataset.id DESC").
 		Offset(pagination.Offset()).
@@ -143,6 +148,20 @@ func (r *dataRepository) CreateProjectDataset(ctx context.Context, projectDatase
 func (r *dataRepository) GetProjectDatasetByID(ctx context.Context, id int64) (*types.ProjectDataset, error) {
 	item := &types.ProjectDataset{}
 	if err := r.db.WithContext(ctx).Where("id = ?", id).Take(item).Error; err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// GetProjectDatasetByDatasetID returns one project binding of the dataset
+// (newest first), used to derive the dataset workspace path when only the
+// dataset id is known.
+func (r *dataRepository) GetProjectDatasetByDatasetID(ctx context.Context, datasetID int64) (*types.ProjectDataset, error) {
+	item := &types.ProjectDataset{}
+	if err := r.db.WithContext(ctx).
+		Where("dataset_id = ?", datasetID).
+		Order("id DESC").
+		Take(item).Error; err != nil {
 		return nil, err
 	}
 	return item, nil

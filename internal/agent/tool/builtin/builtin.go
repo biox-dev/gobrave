@@ -29,6 +29,8 @@ func All(d Deps) []tool.Tool {
 		// ProbeContainerEnv(d.Probe),
 		TerminalExec(d.Terminal),
 		GetDataset(d.DatasetBrowser),
+		GetProjectDatabasePath(d.DatasetWriter),
+		AddFileToDataset(d.DatasetWriter),
 		BuildAnalysisNodeParams(d.ParamsBuilder),
 		RunAnalysisNode(d.Runner),
 		UpdateAgentAnalysis(d.NodeUpdater, d.Runner, d.NodeBrowser),

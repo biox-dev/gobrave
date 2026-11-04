@@ -575,6 +575,52 @@ type DatasetBrowser interface {
 	GetDatasetByID(ctx context.Context, projectID int64, datasetID int64) (DatasetBrief, error)
 }
 
+// DatasetWriter 抽象「按 key 准备数据集 / 向数据集添加文件」的写能力
+// （get_project_database_path / add_file_to_dataset）。
+//
+// 与 DatasetBrowser 分开：写操作需要创建数据集、登记文件，属于会改库 / 改盘的能力。
+type DatasetWriter interface {
+	// EnsureDatasetByKey 返回当前激活项目下 dataset_key 匹配的数据集；不存在时按
+	// key 作为名称创建并绑定到项目。第二个返回值表示本次是否新建。
+	EnsureDatasetByKey(ctx context.Context, projectID int64, datasetKey string) (DatasetBrief, bool, error)
+
+	// AddFileToDataset 把 Path 指向的文件登记为 DatasetID 的数据集文件。
+	//
+	// 绝对路径必须在存储根目录（storage.base_dir）内；相对路径相对数据集工作目录
+	// （utils.GetDatasetDir）解析。IsPrefix / IsCopy 语义与
+	// types.AddFileToDatasetRequest 一致。
+	AddFileToDataset(ctx context.Context, in DatasetFileAddInput) (DatasetFileAddResult, error)
+}
+
+// DatasetFileAddInput 是一次 add_file_to_dataset 调用的入参。
+type DatasetFileAddInput struct {
+	// ProjectID 取自执行事实（tool.ProjectIDFrom，当前用户激活项目）。
+	ProjectID int64
+	// DatasetID 是目标数据集主键（go_dataset）。
+	DatasetID int64
+	// Path 是要登记的文件路径：绝对路径或相对数据集工作目录的路径。
+	Path string
+	// Role 是文件角色（go_file.role），空时由实现回退到 DEFAULT。
+	Role string
+	// FileName 是展示文件名，空时由实现取 Path 的 basename。
+	FileName string
+	// IsPrefix 为 true 时把 Path 当作前缀（不校验文件是否存在）。
+	IsPrefix bool
+	// IsCopy 为 true 时把文件复制到数据集目录后再登记。
+	IsCopy bool
+}
+
+// DatasetFileAddResult 是一次 add_file_to_dataset 调用的结果。
+type DatasetFileAddResult struct {
+	DatasetID int64  `json:"dataset_id"`
+	FileID    int64  `json:"file_id"`
+	FilePath  string `json:"file_path"`
+	FileName  string `json:"file_name"`
+	Role      string `json:"role,omitempty"`
+	Format    string `json:"format,omitempty"`
+	Size      int64  `json:"size,omitempty"`
+}
+
 // ProjectReportContextResolver 抽象「按报告 ID 解析报告撰写上下文」的能力
 // （get_report_context）。
 type ProjectReportContextResolver interface {

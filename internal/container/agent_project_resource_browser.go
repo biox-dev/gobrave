@@ -29,6 +29,8 @@ import (
 //   - list_container_templates：列出全部容器模板（definition ID + spec 的 name / description）；
 //   - get_container_template：按 @container:<id> 引用查看绑定行的 display_name / description；
 //   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径；
+//   - get_project_database_path：按固定 dataset_key=DATABASES 准备并返回项目数据库目录；
+//   - add_file_to_dataset：把文件登记到当前项目的数据集；
 //   - get_report_context：按 @report:<id> 引用解析报告标题 / 工作目录 / 条目清单。
 //
 // 路径口径与 create_script / update_script 完全一致：脚本主文件走
@@ -36,7 +38,7 @@ import (
 // io_schema.json 布局），节点工作目录与 params.json 取自 analysisRepository 在读取时
 // 还原的绝对路径（WorkspaceDir 落库为相对 storage.base_dir 的路径）。
 
-// projectResourceBrowser 同时实现 runtimecontext 的多个只读窄接口，由 container 单点装配。
+// projectResourceBrowser 同时实现 runtimecontext 的多个窄接口，由 container 单点装配。
 type projectResourceBrowser struct {
 	workflowSvc  interfaces.WorkflowService
 	analysisRepo interfaces.AnalysisRepository
@@ -317,6 +319,155 @@ func (b *projectResourceBrowser) GetDatasetByID(ctx context.Context, projectID i
 		Description: dataset.Description,
 		Path:        utils.GetDatasetDir(absBaseDir, projectID, datasetID),
 	}, nil
+}
+
+// EnsureDatasetByKey 返回当前激活项目下 dataset_key 匹配的数据集，不存在时创建
+// （get_project_database_path）。
+//
+// 固定 key 的数据集（如 types.DatasetKeyDatabases）由 Agent 按需准备：先按
+// go_project_dataset 绑定列出项目数据集并匹配 dataset_key，未命中时以 key 为名称
+// 创建数据集并绑定到项目（CreateDataset 同时会确保工作目录存在）。第二个返回值
+// 表示本次是否新建。
+func (b *projectResourceBrowser) EnsureDatasetByKey(ctx context.Context, projectID int64, datasetKey string) (runtimecontext.DatasetBrief, bool, error) {
+	const toolName = "get_project_database_path"
+	key := strings.TrimSpace(datasetKey)
+	if projectID <= 0 {
+		return runtimecontext.DatasetBrief{}, false, fmt.Errorf("%s: project_id is required", toolName)
+	}
+	if key == "" {
+		return runtimecontext.DatasetBrief{}, false, fmt.Errorf("%s: dataset_key is required", toolName)
+	}
+	if b.dataSvc == nil {
+		return runtimecontext.DatasetBrief{}, false, fmt.Errorf("%s: required services are not configured", toolName)
+	}
+
+	datasets, err := b.dataSvc.ListDatasetByProjectID(ctx, projectID)
+	if err != nil {
+		return runtimecontext.DatasetBrief{}, false, fmt.Errorf("%s: failed to list project datasets: %w", toolName, err)
+	}
+	for _, dataset := range datasets {
+		if dataset == nil || !strings.EqualFold(strings.TrimSpace(dataset.DatasetKey), key) {
+			continue
+		}
+		brief, err := b.toDatasetBrief(toolName, projectID, dataset)
+		return brief, false, err
+	}
+
+	dataset := &types.Dataset{
+		DatasetKey:  key,
+		DatasetName: key,
+		Description: "由 Agent 自动创建的数据集（dataset_key=" + key + "）",
+	}
+	if err := b.dataSvc.CreateDataset(ctx, dataset, projectID); err != nil {
+		return runtimecontext.DatasetBrief{}, false, fmt.Errorf("%s: failed to create dataset %q: %w", toolName, key, err)
+	}
+
+	brief, err := b.toDatasetBrief(toolName, projectID, dataset)
+	return brief, true, err
+}
+
+// toDatasetBrief 把数据集映射为工具回传的摘要，Path 由 utils.GetDatasetDir 推导。
+func (b *projectResourceBrowser) toDatasetBrief(toolName string, projectID int64, dataset *types.Dataset) (runtimecontext.DatasetBrief, error) {
+	if dataset == nil || dataset.ID == 0 {
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: dataset is invalid", toolName)
+	}
+	absBaseDir, err := utils.ResolveExternalPath(b.storageBaseDir())
+	if err != nil {
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: failed to resolve storage base dir: %w", toolName, err)
+	}
+	return runtimecontext.DatasetBrief{
+		DatasetID:   dataset.ID,
+		DatasetName: dataset.DatasetName,
+		Description: dataset.Description,
+		Path:        utils.GetDatasetDir(absBaseDir, projectID, dataset.ID),
+	}, nil
+}
+
+// AddFileToDataset 把文件登记到数据集（add_file_to_dataset）。
+//
+// 先校验数据集属于当前激活项目，再把相对路径解析到数据集工作目录，最后复用
+// dataService.AddFileToDataset（source=analysis 表示 path 已是绝对路径）。
+func (b *projectResourceBrowser) AddFileToDataset(ctx context.Context, in runtimecontext.DatasetFileAddInput) (runtimecontext.DatasetFileAddResult, error) {
+	const toolName = "add_file_to_dataset"
+	if in.ProjectID <= 0 {
+		return runtimecontext.DatasetFileAddResult{}, fmt.Errorf("%s: project_id is required", toolName)
+	}
+	if in.DatasetID <= 0 {
+		return runtimecontext.DatasetFileAddResult{}, fmt.Errorf("%s: dataset_id is required", toolName)
+	}
+	if b.dataSvc == nil {
+		return runtimecontext.DatasetFileAddResult{}, fmt.Errorf("%s: required services are not configured", toolName)
+	}
+
+	path, err := b.resolveDatasetFilePath(toolName, in.ProjectID, in.DatasetID, in.Path)
+	if err != nil {
+		return runtimecontext.DatasetFileAddResult{}, err
+	}
+
+	// 数据集按当前激活项目隔离，先校验 go_project_dataset 绑定。
+	datasets, err := b.dataSvc.ListDatasetByProjectID(ctx, in.ProjectID)
+	if err != nil {
+		return runtimecontext.DatasetFileAddResult{}, fmt.Errorf("%s: failed to verify project binding: %w", toolName, err)
+	}
+	belongs := false
+	for _, dataset := range datasets {
+		if dataset != nil && dataset.ID == in.DatasetID {
+			belongs = true
+			break
+		}
+	}
+	if !belongs {
+		return runtimecontext.DatasetFileAddResult{}, fmt.Errorf("%s: dataset %d does not belong to the active project %d", toolName, in.DatasetID, in.ProjectID)
+	}
+
+	result, err := b.dataSvc.AddFileToDataset(ctx, &types.AddFileToDatasetRequest{
+		DatasetID: in.DatasetID,
+		ProjectID: in.ProjectID,
+		Path:      path,
+		Role:      strings.TrimSpace(in.Role),
+		FileName:  strings.TrimSpace(in.FileName),
+		IsPrefix:  in.IsPrefix,
+		IsCopy:    in.IsCopy,
+		// analysis 表示 Path 已是待校验的绝对路径（相对路径已在上方按数据集目录解析）。
+		Source: "analysis",
+	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return runtimecontext.DatasetFileAddResult{}, fmt.Errorf("%s: file %q not found under the project storage directory", toolName, path)
+		}
+		return runtimecontext.DatasetFileAddResult{}, fmt.Errorf("%s: failed to add file to dataset: %w", toolName, err)
+	}
+
+	out := runtimecontext.DatasetFileAddResult{
+		DatasetID: in.DatasetID,
+		FilePath:  path,
+	}
+	if result != nil && result.File != nil {
+		out.FileID = result.File.ID
+		out.FilePath = result.File.Path
+		out.FileName = result.File.FileName
+		out.Role = result.File.Role
+		out.Format = result.File.Format
+		out.Size = result.File.Size
+	}
+	return out, nil
+}
+
+// resolveDatasetFilePath 把工具入参的 path 解析为绝对路径：绝对路径原样返回，
+// 相对路径相对数据集工作目录（utils.GetDatasetDir）解析。
+func (b *projectResourceBrowser) resolveDatasetFilePath(toolName string, projectID int64, datasetID int64, rawPath string) (string, error) {
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return "", fmt.Errorf("%s: path is required", toolName)
+	}
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path), nil
+	}
+	absBaseDir, err := utils.ResolveExternalPath(b.storageBaseDir())
+	if err != nil {
+		return "", fmt.Errorf("%s: failed to resolve storage base dir: %w", toolName, err)
+	}
+	return filepath.Join(utils.GetDatasetDir(absBaseDir, projectID, datasetID), path), nil
 }
 
 // GetReportContext 按报告 ID 解析报告标题 / 工作目录 / 输出文件与条目列表。

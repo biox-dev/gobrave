@@ -68,7 +68,12 @@ func (s *dataService) CreateDataset(ctx context.Context, dataset *types.Dataset,
 
 	// Ensure the dataset workspace directory exists (created lazily on first
 	// use by downstream steps otherwise).
-	return s.ensureDatasetDir(projectID, dataset.ID)
+	if err := s.ensureDatasetDir(projectID, dataset.ID); err != nil {
+		return err
+	}
+
+	dataset.Path = s.datasetPath(projectID, dataset.ID)
+	return nil
 }
 
 // EnsureDatasetDir validates that the dataset exists and creates the dataset
@@ -95,6 +100,57 @@ func (s *dataService) EnsureDatasetDir(ctx context.Context, datasetID int64, pro
 	}
 
 	return utils.GetDatasetDir(s.baseDir, projectID, datasetID), nil
+}
+
+// datasetPath resolves the absolute dataset workspace directory
+// (utils.GetDatasetDir) used to annotate API responses. It returns an empty
+// string when the storage base dir or the ids are missing.
+func (s *dataService) datasetPath(projectID int64, datasetID int64) string {
+	if projectID == 0 || datasetID == 0 {
+		return ""
+	}
+	baseDir := strings.TrimSpace(s.baseDir)
+	if baseDir == "" {
+		return ""
+	}
+	absBaseDir, err := utils.ResolveExternalPath(baseDir)
+	if err != nil {
+		return ""
+	}
+	return utils.GetDatasetDir(absBaseDir, projectID, datasetID)
+}
+
+// fillDatasetPaths sets Path on every dataset bound to the project.
+func (s *dataService) fillDatasetPaths(items []*types.Dataset, projectID int64) {
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		item.Path = s.datasetPath(projectID, item.ID)
+	}
+}
+
+// fillDatasetPath resolves the project binding of the dataset and sets its Path.
+// It is best-effort: an unbound dataset simply keeps an empty Path.
+func (s *dataService) fillDatasetPath(ctx context.Context, dataset *types.Dataset) {
+	if dataset == nil || dataset.ID == 0 {
+		return
+	}
+	binding, err := s.dataRepo.GetProjectDatasetByDatasetID(ctx, dataset.ID)
+	if err != nil || binding == nil {
+		return
+	}
+	dataset.Path = s.datasetPath(binding.ProjectID, dataset.ID)
+}
+
+// fillProjectDatasetPaths sets Path on project-dataset bindings.
+func (s *dataService) fillProjectDatasetPaths(items []*types.ProjectDataset) {
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		item.Path = s.datasetPath(item.ProjectID, item.DatasetID)
+	}
 }
 
 // ensureDatasetDir creates utils.GetDatasetDir(baseDir, projectID, datasetID)
@@ -278,7 +334,12 @@ func (s *dataService) ListDatasetFiles(ctx context.Context, datasetID int64) ([]
 }
 
 func (s *dataService) GetDatasetByID(ctx context.Context, id int64) (*types.Dataset, error) {
-	return s.dataRepo.GetDatasetByID(ctx, id)
+	dataset, err := s.dataRepo.GetDatasetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.fillDatasetPath(ctx, dataset)
+	return dataset, nil
 }
 
 func (s *dataService) UpdateDataset(ctx context.Context, dataset *types.Dataset) error {
@@ -302,7 +363,12 @@ func (s *dataService) ListDataset(ctx context.Context) ([]*types.Dataset, error)
 }
 
 func (s *dataService) ListDatasetByProjectID(ctx context.Context, projectID int64) ([]*types.Dataset, error) {
-	return s.dataRepo.ListDatasetByProjectID(ctx, projectID)
+	items, err := s.dataRepo.ListDatasetByProjectID(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	s.fillDatasetPaths(items, projectID)
+	return items, nil
 }
 
 func (s *dataService) PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID int64) (*types.PageResult, error) {
@@ -314,6 +380,8 @@ func (s *dataService) PageDatasetByProjectID(ctx context.Context, pagination *ty
 	if err != nil {
 		return nil, err
 	}
+
+	s.fillDatasetPaths(items, projectID)
 
 	return types.NewPageResult(total, pagination, items), nil
 }
@@ -348,11 +416,23 @@ func (s *dataService) CreateProjectDataset(ctx context.Context, projectDataset *
 		return gorm.ErrRecordNotFound
 	}
 
-	return s.dataRepo.CreateProjectDataset(ctx, projectDataset)
+	if err := s.dataRepo.CreateProjectDataset(ctx, projectDataset); err != nil {
+		return err
+	}
+
+	projectDataset.Path = s.datasetPath(projectDataset.ProjectID, projectDataset.DatasetID)
+	return nil
 }
 
 func (s *dataService) GetProjectDatasetByID(ctx context.Context, id int64) (*types.ProjectDataset, error) {
-	return s.dataRepo.GetProjectDatasetByID(ctx, id)
+	item, err := s.dataRepo.GetProjectDatasetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if item != nil {
+		item.Path = s.datasetPath(item.ProjectID, item.DatasetID)
+	}
+	return item, nil
 }
 
 func (s *dataService) UpdateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error {
@@ -377,7 +457,12 @@ func (s *dataService) UpdateProjectDataset(ctx context.Context, projectDataset *
 		return gorm.ErrRecordNotFound
 	}
 
-	return s.dataRepo.UpdateProjectDataset(ctx, projectDataset)
+	if err := s.dataRepo.UpdateProjectDataset(ctx, projectDataset); err != nil {
+		return err
+	}
+
+	projectDataset.Path = s.datasetPath(projectDataset.ProjectID, projectDataset.DatasetID)
+	return nil
 }
 
 func (s *dataService) DeleteProjectDataset(ctx context.Context, id int64) error {
@@ -389,7 +474,12 @@ func (s *dataService) DeleteProjectDataset(ctx context.Context, id int64) error 
 }
 
 func (s *dataService) ListProjectDataset(ctx context.Context) ([]*types.ProjectDataset, error) {
-	return s.dataRepo.ListProjectDataset(ctx)
+	items, err := s.dataRepo.ListProjectDataset(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.fillProjectDatasetPaths(items)
+	return items, nil
 }
 
 // ensureFileAssayExists verifies the owning assay of a file. assayID 0 means the
