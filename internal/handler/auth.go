@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	stderrs "errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	secutils "github.com/biox-dev/gobrave/internal/utils"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // AuthHandler implements HTTP request handlers for user authentication
@@ -290,8 +292,7 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	// 		// Don't fail the request if tenant info is not available
 	// 	}
 	// }
-	userInfo := user.ToUserInfo()
-	h.fillAgentProfile(ctx, userInfo, user)
+	userInfo := h.buildUserInfo(ctx, user)
 	// userInfo.CanAccessAllTenants = user.CanAccessAllTenants && h.configInfo.Tenant.EnableCrossTenantAccess
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -300,6 +301,36 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 			// "tenant": tenant,
 		},
 	})
+}
+
+// buildUserInfo 构造对外返回的用户信息 DTO。
+//
+// 菜单配置（主区域标签页 + 底部面板）是项目维度的，存在 user_project.menu_config，
+// 需要按「当前激活项目」单独填充；Agent Profile 摘要按 agent_config.profile_id 解析。
+// 其他返回用户信息的接口（改 Profile / Agent 配置 / 校验令牌）也走这里，
+// 保证任意入口返回的 user 字段结构一致。
+func (h *AuthHandler) buildUserInfo(ctx context.Context, user *types.User) *types.UserInfo {
+	if user == nil {
+		return nil
+	}
+	userInfo := user.ToUserInfo()
+	h.fillMenuConfig(ctx, userInfo, user.ID)
+	h.fillAgentProfile(ctx, userInfo, user)
+	return userInfo
+}
+
+// fillMenuConfig 把用户「当前激活项目」下的菜单配置填入 userInfo。
+// 没有激活项目或查询失败时保持空配置，不影响用户信息本身的返回。
+func (h *AuthHandler) fillMenuConfig(ctx context.Context, userInfo *types.UserInfo, userID int64) {
+	if h.projectService == nil || userInfo == nil {
+		return
+	}
+	config, err := h.projectService.GetActiveUserMenuConfig(ctx, userID)
+	if err != nil {
+		logger.Warnf(ctx, "Failed to get menu config of active project for user %d: %v", userID, err)
+		return
+	}
+	userInfo.MenuConfig = config
 }
 
 // fillAgentProfile 按用户选中的 Profile ID 解析 Profile，并以 DTO 形式填入 userInfo。
@@ -378,7 +409,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Profile updated",
-		"user":    user.ToUserInfo(),
+		"user":    h.buildUserInfo(ctx, user),
 	})
 }
 
@@ -435,7 +466,7 @@ func (h *AuthHandler) UpdateAgentConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Agent config updated",
-		"user":    user.ToUserInfo(),
+		"user":    h.buildUserInfo(ctx, user),
 	})
 }
 
@@ -486,19 +517,20 @@ func (h *AuthHandler) UpdateAgentEnv(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Agent env updated",
-		"user":    user.ToUserInfo(),
+		"user":    h.buildUserInfo(ctx, user),
 	})
 }
 
 // UpdateMenuConfig godoc
-// @Summary      更新当前用户的主标签页配置
-// @Description  保存主区域标签页（URL + 显示名），前端刷新时从 /auth/me 的 user.menu_config 回填
+// @Summary      更新当前用户在当前项目下的主标签页配置
+// @Description  保存主区域标签页（URL + 显示名）到当前激活项目的 user_project.menu_config，前端刷新时从 /auth/me 的 user.menu_config 回填
 // @Tags         认证
 // @Accept       json
 // @Produce      json
 // @Param        request  body      object{tabs=[]types.UserMenuTab}  true  "标签页列表（数组顺序即标签栏顺序）"
 // @Success      200      {object}  map[string]interface{}            "更新成功"
 // @Failure      400      {object}  errors.AppError                   "请求参数错误"
+// @Failure      404      {object}  errors.AppError                   "没有激活项目"
 // @Security     Bearer
 // @Router       /auth/menu-config [post]
 func (h *AuthHandler) UpdateMenuConfig(c *gin.Context) {
@@ -522,19 +554,29 @@ func (h *AuthHandler) UpdateMenuConfig(c *gin.Context) {
 		return
 	}
 
-	// 只整体替换主区域标签页：底部面板（终端 / 日志）配置保持不变。
-	menuConfig := user.MenuConfig
+	// 菜单配置按项目落库（user_project.menu_config）：先取当前激活项目的配置，
+	// 再只整体替换主区域标签页，底部面板（终端 / 日志）配置保持不变。
+	menuConfig, err := h.projectService.GetActiveUserMenuConfig(ctx, user.ID)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to get menu config of active project: %v", err)
+		appErr := errors.NewInternalServerError("Failed to get menu config").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
 	menuConfig.Tabs = req.Tabs
 	menuConfig.NormalizeTabs()
-	user.MenuConfig = menuConfig
-	if err := h.userService.UpdateUser(ctx, user); err != nil {
-		logger.Errorf(ctx, "Failed to update user menu config: %v", err)
+	if err := h.projectService.UpdateActiveUserMenuConfig(ctx, user.ID, menuConfig); err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("no active project"))
+			return
+		}
+		logger.Errorf(ctx, "Failed to update project menu config: %v", err)
 		appErr := errors.NewInternalServerError("Failed to update menu config").WithDetails(err.Error())
 		c.Error(appErr)
 		return
 	}
 
-	logger.Infof(ctx, "User menu config updated: %d tabs=%d", user.ID, len(menuConfig.Tabs))
+	logger.Infof(ctx, "User %d menu config updated: tabs=%d", user.ID, len(menuConfig.Tabs))
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Menu config updated",
@@ -543,14 +585,15 @@ func (h *AuthHandler) UpdateMenuConfig(c *gin.Context) {
 }
 
 // UpdateBottomPanel godoc
-// @Summary      更新当前用户的底部面板配置
-// @Description  保存底部面板的标签列表 / 激活标签 / 展开态 / 高度，与主区域标签页一起落在 users.menu_config
+// @Summary      更新当前用户在当前项目下的底部面板配置
+// @Description  保存底部面板的标签列表 / 激活标签 / 展开态 / 高度，与主区域标签页一起落在当前激活项目的 user_project.menu_config
 // @Tags         认证
 // @Accept       json
 // @Produce      json
 // @Param        request  body      object{open=bool,active=string,height=int,tabs=[]types.UserBottomTab}  true  "底部面板状态"
 // @Success      200      {object}  map[string]interface{}                                             "更新成功"
 // @Failure      400      {object}  errors.AppError                                                    "请求参数错误"
+// @Failure      404      {object}  errors.AppError                                                    "没有激活项目"
 // @Security     Bearer
 // @Router       /auth/bottom-panel [post]
 func (h *AuthHandler) UpdateBottomPanel(c *gin.Context) {
@@ -578,7 +621,13 @@ func (h *AuthHandler) UpdateBottomPanel(c *gin.Context) {
 	}
 
 	// 整体替换底部面板；主区域标签页（Tabs）保持不变。
-	menuConfig := user.MenuConfig
+	menuConfig, err := h.projectService.GetActiveUserMenuConfig(ctx, user.ID)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to get menu config of active project: %v", err)
+		appErr := errors.NewInternalServerError("Failed to get menu config").WithDetails(err.Error())
+		c.Error(appErr)
+		return
+	}
 	menuConfig.Bottom = &types.UserBottomPanel{
 		Open:   req.Open,
 		Active: req.Active,
@@ -586,9 +635,12 @@ func (h *AuthHandler) UpdateBottomPanel(c *gin.Context) {
 		Tabs:   req.Tabs,
 	}
 	menuConfig.NormalizeBottom()
-	user.MenuConfig = menuConfig
-	if err := h.userService.UpdateUser(ctx, user); err != nil {
-		logger.Errorf(ctx, "Failed to update user bottom panel: %v", err)
+	if err := h.projectService.UpdateActiveUserMenuConfig(ctx, user.ID, menuConfig); err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("no active project"))
+			return
+		}
+		logger.Errorf(ctx, "Failed to update project bottom panel: %v", err)
 		appErr := errors.NewInternalServerError("Failed to update bottom panel").WithDetails(err.Error())
 		c.Error(appErr)
 		return
@@ -598,7 +650,7 @@ func (h *AuthHandler) UpdateBottomPanel(c *gin.Context) {
 	if menuConfig.Bottom != nil {
 		tabCount = len(menuConfig.Bottom.Tabs)
 	}
-	logger.Infof(ctx, "User bottom panel updated: %d tabs=%d", user.ID, tabCount)
+	logger.Infof(ctx, "User %d bottom panel updated: tabs=%d", user.ID, tabCount)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Bottom panel updated",
@@ -695,7 +747,7 @@ func (h *AuthHandler) ValidateToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Token is valid",
-		"user":    user.ToUserInfo(),
+		"user":    h.buildUserInfo(ctx, user),
 	})
 }
 

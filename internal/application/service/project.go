@@ -151,6 +151,28 @@ func (s *projectService) DeleteUserProject(ctx context.Context, userID int64, pr
 	return s.projectRepo.DeleteUserProject(ctx, userID, projectID)
 }
 
+// GetActiveUserMenuConfig 返回用户在当前激活项目下的菜单配置。
+// 菜单配置是项目维度的：没有激活项目时返回空配置，前端按默认行为渲染。
+func (s *projectService) GetActiveUserMenuConfig(ctx context.Context, userID int64) (types.UserMenuConfig, error) {
+	up, err := s.projectRepo.GetActiveUserProjectByUserID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return types.UserMenuConfig{}, nil
+		}
+		return types.UserMenuConfig{}, err
+	}
+	return up.MenuConfig, nil
+}
+
+// UpdateActiveUserMenuConfig 整体覆盖用户在当前激活项目下的菜单配置。
+func (s *projectService) UpdateActiveUserMenuConfig(ctx context.Context, userID int64, config types.UserMenuConfig) error {
+	up, err := s.projectRepo.GetActiveUserProjectByUserID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	return s.projectRepo.UpdateUserProjectMenuConfig(ctx, userID, up.ProjectID, config)
+}
+
 func (s *projectService) CreateDefaultProjectForUser(ctx context.Context, userID int64, username string) error {
 	projectName := fmt.Sprintf("%s's Project", username)
 

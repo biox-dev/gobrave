@@ -815,6 +815,85 @@ definitions:
         minimum: 1
         type: integer
     type: object
+  handler.containerTerminalExecRequest:
+    properties:
+      command:
+        type: string
+      create_if_missing:
+        type: boolean
+      wait_seconds:
+        type: integer
+    required:
+    - command
+    type: object
+  handler.containerTerminalExecResponse:
+    properties:
+      accepted:
+        type: boolean
+      duration_seconds:
+        type: number
+      exit_code:
+        type: integer
+      output:
+        type: string
+      output_truncated:
+        type: boolean
+      running:
+        type: boolean
+      session_id:
+        type: string
+      timed_out:
+        type: boolean
+    type: object
+  handler.containerTerminalSessionPageItem:
+    properties:
+      alive:
+        type: boolean
+      app_type:
+        type: string
+      busy:
+        description: Busy 表示当前有命令在执行（此时空闲 TTL 不会回收容器）。
+        type: boolean
+      created_at:
+        description: CreatedAt 是会话在内存注册表里的创建时间；LastActive 是最近一次操作时间。
+        type: string
+      display_name:
+        description: DisplayName 取自绑定行（ContainerTemplateDefinition.DisplayName），为空时回退模板名。
+        type: string
+      exists:
+        type: boolean
+      image_name:
+        type: string
+      last_active:
+        type: string
+      persistent:
+        description: Persistent 为 true 表示会话只能由空闲 TTL 或显式关闭回收。
+        type: boolean
+      project_id:
+        example: "0"
+        type: string
+      runtime_id:
+        description: RuntimeID / RuntimeName 是底层容器标识（docker id / k8s workload），便于排查。
+        type: string
+      runtime_name:
+        type: string
+      seq:
+        type: integer
+      session_id:
+        type: string
+      subscribers:
+        type: integer
+      template_id:
+        example: "0"
+        type: string
+      template_name:
+        description: TemplateName / ImageName / AppType 是模板的只读快照，便于列表直接展示。
+        type: string
+      user_id:
+        description: 以下字段只在「按用户列出会话」时填充，供左侧栏列表 join 容器模板展示。
+        example: "0"
+        type: string
+    type: object
   handler.createAISummaryRequest:
     properties:
       owner_id:
@@ -1549,44 +1628,6 @@ definitions:
         description: WorkflowID 是 workflow 表主键（int64），兼容 JSON 字符串（"123"）与数字（123）两种写法。
         type: integer
     type: object
-  handler.sessionDetail:
-    properties:
-      created_at:
-        type: string
-      current_task_id:
-        description: |-
-          CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；
-          轮次正常结束时置空。failed 但仍有检查点（可续跑）的任务会保留该指针，
-          供前端刷新 / 切换会话时展示「Continue」并从 /agent/task/resume 恢复执行。
-        example: "0"
-        type: string
-      id:
-        example: "0"
-        type: string
-      messages:
-        items:
-          $ref: '#/definitions/types.Message'
-        type: array
-      model:
-        type: string
-      parent_session_id:
-        description: ParentSessionID 指向父会话（如子任务会话 / 标题生成会话），0 表示顶层会话。
-        example: "0"
-        type: string
-      project_id:
-        description: ProjectID 是会话所属项目（创建时取用户当前激活项目），会话列表按项目隔离。
-        example: "0"
-        type: string
-      provider:
-        type: string
-      title:
-        type: string
-      updated_at:
-        type: string
-      user_id:
-        example: "0"
-        type: string
-    type: object
   handler.sessionPageRequest:
     properties:
       page:
@@ -1822,6 +1863,45 @@ definitions:
       format:
         type: string
     type: object
+  manager.TerminalSessionStatus:
+    properties:
+      alive:
+        type: boolean
+      busy:
+        description: Busy 表示当前有命令在执行（此时空闲 TTL 不会回收容器）。
+        type: boolean
+      created_at:
+        description: CreatedAt 是会话在内存注册表里的创建时间；LastActive 是最近一次操作时间。
+        type: string
+      exists:
+        type: boolean
+      last_active:
+        type: string
+      persistent:
+        description: Persistent 为 true 表示会话只能由空闲 TTL 或显式关闭回收。
+        type: boolean
+      project_id:
+        example: "0"
+        type: string
+      runtime_id:
+        description: RuntimeID / RuntimeName 是底层容器标识（docker id / k8s workload），便于排查。
+        type: string
+      runtime_name:
+        type: string
+      seq:
+        type: integer
+      session_id:
+        type: string
+      subscribers:
+        type: integer
+      template_id:
+        example: "0"
+        type: string
+      user_id:
+        description: 以下字段只在「按用户列出会话」时填充，供左侧栏列表 join 容器模板展示。
+        example: "0"
+        type: string
+    type: object
   runtimecontext.RuntimeContext:
     properties:
       label:
@@ -1837,6 +1917,50 @@ definitions:
         description: |-
           Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，
           为空表示默认工作区）。
+        type: string
+    type: object
+  service.SessionDetail:
+    properties:
+      created_at:
+        type: string
+      current_task_id:
+        description: |-
+          CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；
+          轮次正常结束时置空。failed 但仍有检查点（可续跑）的任务会保留该指针，
+          供前端刷新 / 切换会话时展示「Continue」并从 /agent/task/resume 恢复执行。
+        example: "0"
+        type: string
+      has_more:
+        description: HasMore 表示是否还有更早的消息（前端向上滚动时继续加载）。
+        type: boolean
+      id:
+        example: "0"
+        type: string
+      messages:
+        items:
+          $ref: '#/definitions/types.Message'
+        type: array
+      model:
+        type: string
+      next_cursor:
+        description: NextCursor 是继续向上翻页的游标（本页最小 Seq）；HasMore 为 false 时无意义。
+        type: integer
+      parent_session_id:
+        description: ParentSessionID 指向父会话（如子任务会话 / 标题生成会话），0 表示顶层会话。
+        example: "0"
+        type: string
+      project_id:
+        description: ProjectID 是会话所属项目（创建时取用户当前激活项目），会话列表按项目隔离。
+        example: "0"
+        type: string
+      provider:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        example: "0"
         type: string
     type: object
   skill.GetSkillOutput:
@@ -3411,10 +3535,6 @@ definitions:
           TenantID uint64 `json:"tenant_id"  gorm:"index"`
           Whether the user is active
         type: boolean
-      menu_config:
-        allOf:
-        - $ref: '#/definitions/types.UserMenuConfig'
-        description: MenuConfig 用户的主区域标签页配置（有序的 URL + 显示名），以 JSON 形式落库。
       updated_at:
         description: Last updated time of the user
         type: string
@@ -3422,12 +3542,17 @@ definitions:
         description: Username of the user
         type: string
     type: object
-  types.UserMenuConfig:
+  types.UserBottomTab:
     properties:
-      tabs:
-        items:
-          $ref: '#/definitions/types.UserMenuTab'
-        type: array
+      key:
+        type: string
+      kind:
+        type: string
+      params:
+        additionalProperties: {}
+        type: object
+      title:
+        type: string
     type: object
   types.UserMenuTab:
     properties:
@@ -4171,19 +4296,28 @@ paths:
       - Agent
   /agent/session/get:
     get:
+      description: 默认只返回最新一页消息；向上滚动时把响应的 next_cursor 作为 before_seq 继续加载更早的消息
       parameters:
       - description: 会话 ID
         in: query
         name: id
         required: true
         type: string
+      - description: 向上翻页游标（上一页的 next_cursor），0 表示最新一页
+        in: query
+        name: before_seq
+        type: integer
+      - description: 本页最大条数（默认 30，最大 200）
+        in: query
+        name: limit
+        type: integer
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/handler.sessionDetail'
+            $ref: '#/definitions/service.SessionDetail'
         "400":
           description: Bad Request
           schema:
@@ -4198,7 +4332,7 @@ paths:
             $ref: '#/definitions/errors.AppError'
       security:
       - Bearer: []
-      summary: 获取会话（含完整历史消息）
+      summary: 获取会话（含一页历史消息）
       tags:
       - Agent
   /agent/session/page:
@@ -5537,6 +5671,50 @@ paths:
       summary: 更新当前用户的业务上下文（llmEnv）
       tags:
       - 认证
+  /auth/bottom-panel:
+    post:
+      consumes:
+      - application/json
+      description: 保存底部面板的标签列表 / 激活标签 / 展开态 / 高度，与主区域标签页一起落在当前激活项目的 user_project.menu_config
+      parameters:
+      - description: 底部面板状态
+        in: body
+        name: request
+        required: true
+        schema:
+          properties:
+            active:
+              type: string
+            height:
+              type: integer
+            open:
+              type: boolean
+            tabs:
+              items:
+                $ref: '#/definitions/types.UserBottomTab'
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: 没有激活项目
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 更新当前用户在当前项目下的底部面板配置
+      tags:
+      - 认证
   /auth/change-password:
     post:
       consumes:
@@ -5645,7 +5823,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: 保存主区域标签页（URL + 显示名），前端刷新时从 /auth/me 的 user.menu_config 回填
+      description: 保存主区域标签页（URL + 显示名）到当前激活项目的 user_project.menu_config，前端刷新时从 /auth/me
+        的 user.menu_config 回填
       parameters:
       - description: 标签页列表（数组顺序即标签栏顺序）
         in: body
@@ -5670,9 +5849,13 @@ paths:
           description: 请求参数错误
           schema:
             $ref: '#/definitions/errors.AppError'
+        "404":
+          description: 没有激活项目
+          schema:
+            $ref: '#/definitions/errors.AppError'
       security:
       - Bearer: []
-      summary: 更新当前用户的主标签页配置
+      summary: 更新当前用户在当前项目下的主标签页配置
       tags:
       - 认证
   /auth/profile:
@@ -6581,6 +6764,155 @@ paths:
       summary: 更新容器运行配置
       tags:
       - 容器管理
+  /container/template/{templateId}/terminal:
+    delete:
+      description: 结束会话（关闭 shell 并删除临时容器）。
+      parameters:
+      - description: 容器模板 ID
+        in: path
+        name: templateId
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 关闭容器模板终端
+      tags:
+      - 容器管理
+    get:
+      description: 用容器模板创建（或复用）会话并打开交互式终端；断开后按配置立即删除或保留一段时间。
+      parameters:
+      - description: 容器模板 ID
+        in: path
+        name: templateId
+        required: true
+        type: integer
+      - description: 从指定输出序号重放（缺省回放全部缓存）
+        in: query
+        name: since
+        type: integer
+      - description: PTY 行数（仅新建会话时使用）
+        in: query
+        name: rows
+        type: integer
+      - description: PTY 列数（仅新建会话时使用）
+        in: query
+        name: cols
+        type: integer
+      responses:
+        "101":
+          description: Switching Protocols
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 容器模板终端
+      tags:
+      - 容器管理
+  /container/template/{templateId}/terminal/exec:
+    post:
+      consumes:
+      - application/json
+      description: 向当前用户该模板的终端会话写入命令；wait_seconds=0 时为异步投递。
+      parameters:
+      - description: 容器模板 ID
+        in: path
+        name: templateId
+        required: true
+        type: integer
+      - description: 命令
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.containerTerminalExecRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.containerTerminalExecResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 容器模板终端执行命令
+      tags:
+      - 容器管理
+  /container/template/{templateId}/terminal/status:
+    get:
+      description: 返回会话是否存在、存活、订阅者数量与当前输出序号。
+      parameters:
+      - description: 容器模板 ID
+        in: path
+        name: templateId
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/manager.TerminalSessionStatus'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 容器模板终端状态
+      tags:
+      - 容器管理
   /container/template/create:
     post:
       consumes:
@@ -7003,6 +7335,34 @@ paths:
       security:
       - Bearer: []
       summary: 更新容器模板
+      tags:
+      - 容器管理
+  /container/terminal/session/list:
+    get:
+      description: 当前用户的容器模板终端会话，含模板展示名与镜像名；默认按激活项目过滤。
+      parameters:
+      - description: 为 true 时返回该用户全部项目的会话
+        in: query
+        name: all_projects
+        type: boolean
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/handler.containerTerminalSessionPageItem'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 终端会话列表
       tags:
       - 容器管理
   /data/assay/create:

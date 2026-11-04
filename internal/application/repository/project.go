@@ -65,6 +65,32 @@ func (r *projectRepository) UpdateProjectSharing(ctx context.Context, userID int
 		}).Error
 }
 
+// GetActiveUserProjectByUserID 返回用户唯一激活的项目绑定（含该项目下的菜单配置）。
+func (r *projectRepository) GetActiveUserProjectByUserID(ctx context.Context, userID int64) (*types.UserProject, error) {
+	up := &types.UserProject{}
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND is_active = ?", userID, true).
+		Order("id DESC").
+		Take(up).Error
+	if err != nil {
+		return nil, err
+	}
+	return up, nil
+}
+
+// UpdateUserProjectMenuConfig 覆盖某个用户在某个项目下的菜单配置。
+//
+// 必须走「结构体 + Select」的更新方式：GORM 的 serializer:json 只在按字段取值时生效，
+// 用 Update/Updates(map) 会把结构体原样交给驱动（写成 fmt 文本），不会序列化成 JSON。
+// Select 同时保证清空配置（零值）时也会真正写入。
+func (r *projectRepository) UpdateUserProjectMenuConfig(ctx context.Context, userID int64, projectID int64, config types.UserMenuConfig) error {
+	return r.db.WithContext(ctx).
+		Model(&types.UserProject{}).
+		Where("user_id = ? AND project_id = ?", userID, projectID).
+		Select("menu_config").
+		Updates(&types.UserProject{MenuConfig: config}).Error
+}
+
 func (r *projectRepository) DeleteUserProject(ctx context.Context, userID int64, projectID int64) error {
 	return r.db.WithContext(ctx).
 		Where("user_id = ? AND project_id = ?", userID, projectID).

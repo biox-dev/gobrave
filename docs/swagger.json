@@ -860,13 +860,14 @@
                         "Bearer": []
                     }
                 ],
+                "description": "默认只返回最新一页消息；向上滚动时把响应的 next_cursor 作为 before_seq 继续加载更早的消息",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Agent"
                 ],
-                "summary": "获取会话（含完整历史消息）",
+                "summary": "获取会话（含一页历史消息）",
                 "parameters": [
                     {
                         "type": "string",
@@ -874,13 +875,25 @@
                         "name": "id",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "向上翻页游标（上一页的 next_cursor），0 表示最新一页",
+                        "name": "before_seq",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "本页最大条数（默认 30，最大 200）",
+                        "name": "limit",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handler.sessionDetail"
+                            "$ref": "#/definitions/service.SessionDetail"
                         }
                     },
                     "400": {
@@ -2999,6 +3012,75 @@
                 }
             }
         },
+        "/auth/bottom-panel": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "保存底部面板的标签列表 / 激活标签 / 展开态 / 高度，与主区域标签页一起落在当前激活项目的 user_project.menu_config",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "认证"
+                ],
+                "summary": "更新当前用户在当前项目下的底部面板配置",
+                "parameters": [
+                    {
+                        "description": "底部面板状态",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "active": {
+                                    "type": "string"
+                                },
+                                "height": {
+                                    "type": "integer"
+                                },
+                                "open": {
+                                    "type": "boolean"
+                                },
+                                "tabs": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/types.UserBottomTab"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "更新成功",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "没有激活项目",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/change-password": {
             "post": {
                 "security": [
@@ -3170,7 +3252,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "保存主区域标签页（URL + 显示名），前端刷新时从 /auth/me 的 user.menu_config 回填",
+                "description": "保存主区域标签页（URL + 显示名）到当前激活项目的 user_project.menu_config，前端刷新时从 /auth/me 的 user.menu_config 回填",
                 "consumes": [
                     "application/json"
                 ],
@@ -3180,7 +3262,7 @@
                 "tags": [
                     "认证"
                 ],
-                "summary": "更新当前用户的主标签页配置",
+                "summary": "更新当前用户在当前项目下的主标签页配置",
                 "parameters": [
                     {
                         "description": "标签页列表（数组顺序即标签栏顺序）",
@@ -3210,6 +3292,12 @@
                     },
                     "400": {
                         "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "没有激活项目",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -5274,6 +5362,284 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/template/{templateId}/terminal": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "用容器模板创建（或复用）会话并打开交互式终端；断开后按配置立即删除或保留一段时间。",
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "容器模板终端",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "容器模板 ID",
+                        "name": "templateId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "从指定输出序号重放（缺省回放全部缓存）",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "PTY 行数（仅新建会话时使用）",
+                        "name": "rows",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "PTY 列数（仅新建会话时使用）",
+                        "name": "cols",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "101": {
+                        "description": "Switching Protocols"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "结束会话（关闭 shell 并删除临时容器）。",
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "关闭容器模板终端",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "容器模板 ID",
+                        "name": "templateId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/template/{templateId}/terminal/exec": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "向当前用户该模板的终端会话写入命令；wait_seconds=0 时为异步投递。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "容器模板终端执行命令",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "容器模板 ID",
+                        "name": "templateId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "命令",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.containerTerminalExecRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.containerTerminalExecResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/template/{templateId}/terminal/status": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回会话是否存在、存活、订阅者数量与当前输出序号。",
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "容器模板终端状态",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "容器模板 ID",
+                        "name": "templateId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/manager.TerminalSessionStatus"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/terminal/session/list": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "当前用户的容器模板终端会话，含模板展示名与镜像名；默认按激活项目过滤。",
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "终端会话列表",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "为 true 时返回该用户全部项目的会话",
+                        "name": "all_projects",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/handler.containerTerminalSessionPageItem"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -13852,6 +14218,121 @@
                 }
             }
         },
+        "handler.containerTerminalExecRequest": {
+            "type": "object",
+            "required": [
+                "command"
+            ],
+            "properties": {
+                "command": {
+                    "type": "string"
+                },
+                "create_if_missing": {
+                    "type": "boolean"
+                },
+                "wait_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handler.containerTerminalExecResponse": {
+            "type": "object",
+            "properties": {
+                "accepted": {
+                    "type": "boolean"
+                },
+                "duration_seconds": {
+                    "type": "number"
+                },
+                "exit_code": {
+                    "type": "integer"
+                },
+                "output": {
+                    "type": "string"
+                },
+                "output_truncated": {
+                    "type": "boolean"
+                },
+                "running": {
+                    "type": "boolean"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "timed_out": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "handler.containerTerminalSessionPageItem": {
+            "type": "object",
+            "properties": {
+                "alive": {
+                    "type": "boolean"
+                },
+                "app_type": {
+                    "type": "string"
+                },
+                "busy": {
+                    "description": "Busy 表示当前有命令在执行（此时空闲 TTL 不会回收容器）。",
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "description": "CreatedAt 是会话在内存注册表里的创建时间；LastActive 是最近一次操作时间。",
+                    "type": "string"
+                },
+                "display_name": {
+                    "description": "DisplayName 取自绑定行（ContainerTemplateDefinition.DisplayName），为空时回退模板名。",
+                    "type": "string"
+                },
+                "exists": {
+                    "type": "boolean"
+                },
+                "image_name": {
+                    "type": "string"
+                },
+                "last_active": {
+                    "type": "string"
+                },
+                "persistent": {
+                    "description": "Persistent 为 true 表示会话只能由空闲 TTL 或显式关闭回收。",
+                    "type": "boolean"
+                },
+                "project_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "runtime_id": {
+                    "description": "RuntimeID / RuntimeName 是底层容器标识（docker id / k8s workload），便于排查。",
+                    "type": "string"
+                },
+                "runtime_name": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "subscribers": {
+                    "type": "integer"
+                },
+                "template_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "template_name": {
+                    "description": "TemplateName / ImageName / AppType 是模板的只读快照，便于列表直接展示。",
+                    "type": "string"
+                },
+                "user_id": {
+                    "description": "以下字段只在「按用户列出会话」时填充，供左侧栏列表 join 容器模板展示。",
+                    "type": "string",
+                    "example": "0"
+                }
+            }
+        },
         "handler.createAISummaryRequest": {
             "type": "object",
             "required": [
@@ -14931,55 +15412,6 @@
                 }
             }
         },
-        "handler.sessionDetail": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "current_task_id": {
-                    "description": "CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；\n轮次正常结束时置空。failed 但仍有检查点（可续跑）的任务会保留该指针，\n供前端刷新 / 切换会话时展示「Continue」并从 /agent/task/resume 恢复执行。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "messages": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.Message"
-                    }
-                },
-                "model": {
-                    "type": "string"
-                },
-                "parent_session_id": {
-                    "description": "ParentSessionID 指向父会话（如子任务会话 / 标题生成会话），0 表示顶层会话。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "project_id": {
-                    "description": "ProjectID 是会话所属项目（创建时取用户当前激活项目），会话列表按项目隔离。",
-                    "type": "string",
-                    "example": "0"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "title": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "user_id": {
-                    "type": "string",
-                    "example": "0"
-                }
-            }
-        },
         "handler.sessionPageRequest": {
             "type": "object",
             "properties": {
@@ -15323,6 +15755,61 @@
                 }
             }
         },
+        "manager.TerminalSessionStatus": {
+            "type": "object",
+            "properties": {
+                "alive": {
+                    "type": "boolean"
+                },
+                "busy": {
+                    "description": "Busy 表示当前有命令在执行（此时空闲 TTL 不会回收容器）。",
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "description": "CreatedAt 是会话在内存注册表里的创建时间；LastActive 是最近一次操作时间。",
+                    "type": "string"
+                },
+                "exists": {
+                    "type": "boolean"
+                },
+                "last_active": {
+                    "type": "string"
+                },
+                "persistent": {
+                    "description": "Persistent 为 true 表示会话只能由空闲 TTL 或显式关闭回收。",
+                    "type": "boolean"
+                },
+                "project_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "runtime_id": {
+                    "description": "RuntimeID / RuntimeName 是底层容器标识（docker id / k8s workload），便于排查。",
+                    "type": "string"
+                },
+                "runtime_name": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "subscribers": {
+                    "type": "integer"
+                },
+                "template_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "user_id": {
+                    "description": "以下字段只在「按用户列出会话」时填充，供左侧栏列表 join 容器模板展示。",
+                    "type": "string",
+                    "example": "0"
+                }
+            }
+        },
         "runtimecontext.RuntimeContext": {
             "type": "object",
             "properties": {
@@ -15338,6 +15825,63 @@
                 "type": {
                     "description": "Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，\n为空表示默认工作区）。",
                     "type": "string"
+                }
+            }
+        },
+        "service.SessionDetail": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "current_task_id": {
+                    "description": "CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；\n轮次正常结束时置空。failed 但仍有检查点（可续跑）的任务会保留该指针，\n供前端刷新 / 切换会话时展示「Continue」并从 /agent/task/resume 恢复执行。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "has_more": {
+                    "description": "HasMore 表示是否还有更早的消息（前端向上滚动时继续加载）。",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Message"
+                    }
+                },
+                "model": {
+                    "type": "string"
+                },
+                "next_cursor": {
+                    "description": "NextCursor 是继续向上翻页的游标（本页最小 Seq）；HasMore 为 false 时无意义。",
+                    "type": "integer"
+                },
+                "parent_session_id": {
+                    "description": "ParentSessionID 指向父会话（如子任务会话 / 标题生成会话），0 表示顶层会话。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "project_id": {
+                    "description": "ProjectID 是会话所属项目（创建时取用户当前激活项目），会话列表按项目隔离。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -17452,14 +17996,6 @@
                     "description": "Tenant ID that the user belongs to\nTenantID uint64 `json:\"tenant_id\"  gorm:\"index\"`\nWhether the user is active",
                     "type": "boolean"
                 },
-                "menu_config": {
-                    "description": "MenuConfig 用户的主区域标签页配置（有序的 URL + 显示名），以 JSON 形式落库。",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/types.UserMenuConfig"
-                        }
-                    ]
-                },
                 "updated_at": {
                     "description": "Last updated time of the user",
                     "type": "string"
@@ -17470,14 +18006,21 @@
                 }
             }
         },
-        "types.UserMenuConfig": {
+        "types.UserBottomTab": {
             "type": "object",
             "properties": {
-                "tabs": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.UserMenuTab"
-                    }
+                "key": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "params": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },
