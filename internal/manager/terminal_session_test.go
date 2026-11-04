@@ -749,6 +749,20 @@ func (s *fakeTerminalStore) List(context.Context) ([]*types.TerminalSession, err
 	return out, nil
 }
 
+func (s *fakeTerminalStore) ListByUser(_ context.Context, userID int64) ([]*types.TerminalSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*types.TerminalSession, 0, len(s.rows))
+	for _, rec := range s.rows {
+		if rec.UserID != userID || rec.Status != types.TerminalSessionStatusRunning {
+			continue
+		}
+		cp := *rec
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
 // 进程重启后：按 DB 记录认领原容器（不再新建），并从落盘的滚动缓冲回放历史输出。
 func TestTerminalSessionRegistryAdoptsPersistedSession(t *testing.T) {
 	dir := t.TempDir()
@@ -815,6 +829,64 @@ func TestTerminalSessionRegistryAdoptsPersistedSession(t *testing.T) {
 	if stillThere {
 		t.Fatalf("expected session record removed on close")
 	}
+}
+
+// 进程重启后：列表必须来自数据库（内存为空也要有记录），且可以用同一 ID 重建会话。
+func TestTerminalSessionRegistryListAndReviveAfterRestart(t *testing.T) {
+	key := NewUIKey(51, 52, 53).ReplaceID(777)
+
+	opener := &fakeOpener{shell: newFakeShell()}
+	store := newFakeTerminalStore()
+	rec := terminalSessionRecord(key, "runtime-before-restart")
+	rec.Name = "my-terminal"
+	rec.Persistent = true
+	store.rows[key.SessionKey()] = rec
+
+	registry := newTerminalSessionRegistry(opener, nil, store, TerminalRegistryOptions{
+		ReadyWait:   2 * time.Second,
+		BufferBytes: 64 * 1024,
+		SessionTTL:  time.Hour,
+	})
+
+	// 内存注册表为空，但列表仍应返回数据库里的会话（未连接状态）。
+	sessions := registry.ListSessions(key.UserID)
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 persisted session in list, got %d", len(sessions))
+	}
+	if sessions[0].SessionID != "777" || sessions[0].Exists != true || sessions[0].Alive {
+		t.Fatalf("unexpected list item: %+v", sessions[0])
+	}
+	if sessions[0].Name != "my-terminal" || !sessions[0].Persistent {
+		t.Fatalf("expected record fields backfilled, got %+v", sessions[0])
+	}
+
+	// 用同一 ID 重连：自动认领原容器并重建 shell。
+	sess, err := registry.ReviveByID(context.Background(), key.ID)
+	if err != nil {
+		t.Fatalf("ReviveByID: %v", err)
+	}
+	if sess.ID() != "777" {
+		t.Fatalf("revived session must keep id, got %q", sess.ID())
+	}
+	opener.mu.Lock()
+	attaches, starts := opener.attaches, opener.calls
+	opener.mu.Unlock()
+	if attaches != 1 || starts != 0 {
+		t.Fatalf("expected adopt rather than new container, attaches=%d starts=%d", attaches, starts)
+	}
+
+	// 重建后列表用内存状态回填 Alive。
+	sessions = registry.ListSessions(key.UserID)
+	if len(sessions) != 1 || !sessions[0].Alive {
+		t.Fatalf("expected alive session after revive, got %+v", sessions)
+	}
+
+	// 记录不存在时返回 NotFound，交调用方报 404。
+	if _, err := registry.ReviveByID(context.Background(), 424242); !errors.Is(err, ErrTerminalSessionNotFound) {
+		t.Fatalf("expected ErrTerminalSessionNotFound, got %v", err)
+	}
+
+	registry.CloseSession(sess.Key())
 }
 
 // 单用户会话配额：达到上限后新建会话被拒绝。

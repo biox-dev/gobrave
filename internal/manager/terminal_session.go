@@ -947,6 +947,9 @@ func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *Manag
 	}
 	key := sess.Key()
 	rec := &types.TerminalSession{
+		// 已认领的会话（进程重启后按 ID 重建）必须保留原主键：
+		// 否则 Upsert 会当成新记录插入并回填一个新 ID，把对外的 session_id 换掉。
+		ID:             sess.recordID(),
 		SessionKey:     key.SessionKey(),
 		Name:           sess.displayName(),
 		AgentSessionID: key.AgentSessionID,
@@ -1222,43 +1225,55 @@ func (r *TerminalSessionRegistry) Status(key TerminalSessionKey) TerminalSession
 	}
 }
 
-// ListSessions 返回当前用户的全部终端会话状态（按 key 排序，保证顺序稳定）。
+// ListSessions 返回当前用户的全部终端会话状态（按模板 / 会话 ID 排序，保证顺序稳定）。
 //
-// 只返回内存注册表里存活的会话：进程重启后持久层还留着记录，但 shell 已经结束，
-// 这种「记录存在、会话不存在」的残留由启动/定期对账清理，不在这里暴露。
+// 数据源是数据库（go_terminal_session）：会话是持久化实体，进程重启后列表仍应完整。
+// 数据库里有的记录，如果内存注册表里已有对应会话（Alive=true），用内存状态回填
+// 订阅者数 / 序号 / busy 等实时字段；没有则在原记录上补充 Exists/Alive=false，
+// 前端打开它会触发 ContainerTemplateTerminal 自动认领原容器并重建 shell。
 func (r *TerminalSessionRegistry) ListSessions(userID int64) []TerminalSessionStatus {
-	r.mu.Lock()
-	sessions := make([]*ManagedTerminalSession, 0, len(r.sessions))
-	for _, sess := range r.sessions {
-		if sess == nil || sess.key.UserID != userID {
+	if r.store == nil || userID <= 0 {
+		return nil
+	}
+	records, err := r.store.ListByUser(context.Background(), userID)
+	if err != nil {
+		logger.Warnf(context.Background(), "[TerminalSession] list sessions for user %d failed: %v", userID, err)
+		return nil
+	}
+
+	out := make([]TerminalSessionStatus, 0, len(records))
+	for _, rec := range records {
+		if rec == nil {
 			continue
 		}
-		sessions = append(sessions, sess)
-	}
-	r.mu.Unlock()
-
-	out := make([]TerminalSessionStatus, 0, len(sessions))
-	for _, sess := range sessions {
-		subs, seq, alive := sess.snapshotStatus()
-		out = append(out, TerminalSessionStatus{
-			SessionID:      sess.ID(),
+		status := TerminalSessionStatus{
+			SessionID:      sessionIDString(rec.ID),
 			Exists:         true,
-			Alive:          alive,
-			Subscribers:    subs,
-			Seq:            seq,
-			UserID:         sess.key.UserID,
-			ProjectID:      sess.key.ProjectID,
-			TemplateID:     sess.key.TemplateID,
-			AgentSessionID: sess.key.AgentSessionID,
-			Name:           sess.displayName(),
-			Persistent:     sess.isPersistent(),
-			Busy:           sess.isBusy(),
-			RuntimeID:      sess.runtimeID,
-			RuntimeName:    sess.runtimeName,
-			CreatedAt:      sess.createdAt,
-			LastActive:     sess.lastActiveTime(),
-		})
+			UserID:         rec.UserID,
+			ProjectID:      rec.ProjectID,
+			TemplateID:     rec.TemplateID,
+			AgentSessionID: rec.AgentSessionID,
+			Name:           strings.TrimSpace(rec.Name),
+			Persistent:     rec.Persistent,
+			RuntimeID:      rec.RuntimeID,
+			RuntimeName:    rec.RuntimeName,
+			CreatedAt:      rec.CreatedAt,
+			LastActive:     rec.LastActiveAt,
+		}
+		// 内存里有会话（本进程已 attach）：用实时状态覆盖。
+		if sess := r.LookupByID(rec.ID); sess != nil {
+			subs, seq, alive := sess.snapshotStatus()
+			status.Alive = alive
+			status.Subscribers = subs
+			status.Seq = seq
+			status.Busy = sess.isBusy()
+			status.Persistent = sess.isPersistent()
+			status.Name = sess.displayName()
+			status.LastActive = sess.lastActiveTime()
+		}
+		out = append(out, status)
 	}
+
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].TemplateID != out[j].TemplateID {
 			return out[i].TemplateID < out[j].TemplateID
@@ -1266,6 +1281,67 @@ func (r *TerminalSessionRegistry) ListSessions(userID int64) []TerminalSessionSt
 		return out[i].SessionID < out[j].SessionID
 	})
 	return out
+}
+
+// SessionRecord 按终端会话主键返回持久层记录（不存在时返回 nil）。
+//
+// 供 handler 在内存注册表里找不到会话时做归属校验 / 判断会话是否仍然存在。
+func (r *TerminalSessionRegistry) SessionRecord(ctx context.Context, id int64) (*types.TerminalSession, error) {
+	if r.store == nil || id <= 0 {
+		return nil, nil
+	}
+	rec, err := r.store.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if rec == nil || rec.Status != types.TerminalSessionStatusRunning {
+		return nil, nil
+	}
+	return rec, nil
+}
+
+// ReviveByID 按终端会话主键「重建」一个本进程里还不存在的会话。
+// 典型场景：进程重启后数据库里仍有记录、容器也可能还在，但 shell 随进程结束。
+// 这里走与创建相同的 ensure 路径：能认领原容器就重新 exec 一个 shell（adoptSession），
+// 容器已不存在则新建；历史输出由落盘的滚动缓冲回放。
+//
+// 返回 ErrTerminalSessionNotFound 表示记录不存在（或已关闭），由调用方报 404。
+func (r *TerminalSessionRegistry) ReviveByID(ctx context.Context, id int64) (*ManagedTerminalSession, error) {
+	if id <= 0 {
+		return nil, ErrTerminalSessionNotFound
+	}
+	if sess := r.LookupByID(id); sess != nil {
+		return sess, nil
+	}
+	if r.store == nil {
+		return nil, ErrTerminalSessionNotFound
+	}
+	rec, err := r.store.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if rec == nil || rec.Status != types.TerminalSessionStatusRunning {
+		return nil, ErrTerminalSessionNotFound
+	}
+
+	key := TerminalSessionKey{
+		UserID:         rec.UserID,
+		ProjectID:      rec.ProjectID,
+		TemplateID:     rec.TemplateID,
+		AgentSessionID: rec.AgentSessionID,
+		ID:             rec.ID,
+		Name:           rec.Name,
+	}
+	// 用户正在主动打开它：一律按持久会话重建，避免一次性规则把容器回收掉。
+	sess, created, err := r.ensure(ctx, key, true, terminalSize{})
+	if err != nil {
+		return nil, err
+	}
+	if sess == nil || sess.isDead() {
+		return nil, ErrTerminalSessionNotFound
+	}
+	logger.Infof(ctx, "[TerminalSession] revived session %d created=%v runtime=%s", rec.ID, created, rec.RuntimeID)
+	return sess, nil
 }
 
 // CloseSession 主动结束会话（删除容器），并删除持久层记录。

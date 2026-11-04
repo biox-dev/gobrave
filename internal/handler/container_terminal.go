@@ -137,7 +137,7 @@ func (h *ContainerHandler) ContainerTerminalSessionCreate(c *gin.Context) {
 //     或纯文本提示。
 //
 // @Summary      容器终端会话 WebSocket
-// @Description  用终端会话 ID 接入交互式终端；会话不存在时返回错误（需先调用 create）。
+// @Description  用终端会话 ID 接入交互式终端；会话不在内存时会按数据库记录自动认领原容器并重建 shell。
 // @Tags         容器管理
 // @Param        id     path   int  true   "终端会话 ID"
 // @Param        since  query  int  false  "从指定输出序号重放（缺省回放全部缓存）"
@@ -347,8 +347,9 @@ type containerTerminalSessionPageItem struct {
 
 // ContainerTerminalSessionList 列出当前用户的终端会话。
 //
-// 每项 = 内存注册表中的会话状态 + 容器模板绑定行（DisplayName / ImageName）。
-// 只返回存活会话：进程重启后数据库里的残留记录由后台对账清理，不出现在列表里。
+// 数据源是数据库（go_terminal_session），内存注册表只用于回填实时字段：
+// 进程重启后记录仍在，因此列表不会变空；这类会话 Exists=true / Alive=false，
+// 前端打开时由 ContainerTemplateTerminal 自动认领原容器并重建 shell。
 // 模板已被删除的会话仍会返回（DisplayName 回退为会话 ID），方便用户清理容器。
 //
 // 默认只返回「当前激活项目」下的会话（与左侧栏其它面板口径一致）；
@@ -454,8 +455,15 @@ func (h *ContainerHandler) resolveTerminalSessionID(c *gin.Context) (int64, bool
 		c.Error(apperrors.NewValidationError("invalid terminal session id"))
 		return 0, false
 	}
-	sess := h.terminalRegistry.LookupByID(id)
-	if sess == nil || sess.Key().UserID != userID {
+	// 内存里有会话时直接校验归属；没有时先看数据库（进程重启后记录仍在）。
+	if sess := h.terminalRegistry.LookupByID(id); sess != nil {
+		if sess.Key().UserID != userID {
+			c.Error(apperrors.NewNotFoundError("terminal session does not exist"))
+			return 0, false
+		}
+		return id, true
+	}
+	if rec, err := h.terminalRegistry.SessionRecord(c.Request.Context(), id); err != nil || rec == nil || rec.UserID != userID {
 		c.Error(apperrors.NewNotFoundError("terminal session does not exist"))
 		return 0, false
 	}
@@ -463,14 +471,18 @@ func (h *ContainerHandler) resolveTerminalSessionID(c *gin.Context) (int64, bool
 }
 
 // resolveTerminalSession 解析并校验路径里的终端会话 ID，返回托管会话。
+//
+// 内存里没有时会自动「重建」：按数据库记录认领原容器并重新 exec 一个 shell
+// （见 manager.TerminalSessionRegistry.ReviveByID）。这样进程重启后前端用同一个
+// 会话 ID 重连即可继续使用，而不会因会话不在内存里报 404。
 func (h *ContainerHandler) resolveTerminalSession(c *gin.Context) (*manager.ManagedTerminalSession, bool) {
 	id, ok := h.resolveTerminalSessionID(c)
 	if !ok {
 		return nil, false
 	}
-	sess := h.terminalRegistry.LookupByID(id)
-	if sess == nil {
-		c.Error(apperrors.NewNotFoundError("terminal session does not exist"))
+	sess, err := h.terminalRegistry.ReviveByID(c.Request.Context(), id)
+	if err != nil || sess == nil {
+		c.Error(apperrors.NewNotFoundError("terminal session does not exist").WithDetails(errStringOrEmpty(err)))
 		return nil, false
 	}
 	return sess, true

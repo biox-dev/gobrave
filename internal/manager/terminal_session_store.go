@@ -37,6 +37,8 @@ type TerminalSessionStore interface {
 	DeleteByID(ctx context.Context, id int64) error
 	// List 返回全部记录（用于启动/定期对账）。
 	List(ctx context.Context) ([]*types.TerminalSession, error)
+	// ListByUser 返回某用户的全部存活记录（status=running），供「终端会话列表」使用。
+	ListByUser(ctx context.Context, userID int64) ([]*types.TerminalSession, error)
 }
 
 // NewGormTerminalSessionStore 构造基于 GORM 的会话记录存储。
@@ -177,6 +179,21 @@ func (s *GormTerminalSessionStore) List(ctx context.Context) ([]*types.TerminalS
 	var rows []*types.TerminalSession
 	if err := s.db.WithContext(ctx).Order("last_active_at ASC").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list terminal sessions: %w", err)
+	}
+	return rows, nil
+}
+
+func (s *GormTerminalSessionStore) ListByUser(ctx context.Context, userID int64) ([]*types.TerminalSession, error) {
+	if s == nil || s.db == nil || userID <= 0 {
+		return nil, nil
+	}
+	var rows []*types.TerminalSession
+	err := s.db.WithContext(ctx).
+		Where("user_id = ? AND status = ?", userID, types.TerminalSessionStatusRunning).
+		Order("template_id ASC, created_at ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("list terminal sessions for user %d: %w", userID, err)
 	}
 	return rows, nil
 }
