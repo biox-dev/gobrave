@@ -947,9 +947,8 @@ func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *Manag
 	}
 	key := sess.Key()
 	rec := &types.TerminalSession{
-		// 已认领的会话（进程重启后按 ID 重建）必须保留原主键：
-		// 否则 Upsert 会当成新记录插入并回填一个新 ID，把对外的 session_id 换掉。
-		ID:             sess.recordID(),
+		// 注意只认「真实主键」：新会话在落库前用的是负数占位 ID（见
+		// newTerminalSessionPlaceholderID），绝不能写进记录，否则主键会变成 -1。
 		SessionKey:     key.SessionKey(),
 		Name:           sess.displayName(),
 		AgentSessionID: key.AgentSessionID,
@@ -962,6 +961,11 @@ func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *Manag
 		Status:         types.TerminalSessionStatusRunning,
 		Persistent:     persistent,
 		LastActiveAt:   time.Now(),
+	}
+	// 已认领的会话必须保留原主键，否则 Upsert 会当成新记录插入并把 session_id 换掉。
+	// 只有真实主键（> 0）才写入；新会话此时还是负数占位 ID，交给数据库分配。
+	if id := sess.recordID(); id > 0 {
+		rec.ID = id
 	}
 	if err := r.store.Upsert(ctx, rec); err != nil {
 		logger.Warnf(ctx, "[TerminalSession] persist session %s failed: %v", key.SessionKey(), err)

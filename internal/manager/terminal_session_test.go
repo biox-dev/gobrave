@@ -831,6 +831,49 @@ func TestTerminalSessionRegistryAdoptsPersistedSession(t *testing.T) {
 	}
 }
 
+// 新建会话必须拿到数据库分配的正数主键（对外 session_id）。
+//
+// 回归场景：新会话在落库前用的是负数占位 ID（newTerminalSessionPlaceholderID）。
+// 如果把占位 ID 写进记录，Upsert 会以 -1 为主键插入，assignRecordID 又因 <=0 被忽略，
+// 前端拿到的 session_id 就是 "-1"，随后 WS 按该 ID 找不到会话。
+func TestTerminalSessionRegistryCreateAssignsPositiveID(t *testing.T) {
+	opener := &fakeOpener{shell: newFakeShell()}
+	store := newFakeTerminalStore()
+	registry := newTerminalSessionRegistry(opener, nil, store, TerminalRegistryOptions{
+		ReadyWait:   2 * time.Second,
+		BufferBytes: 64 * 1024,
+		SessionTTL:  time.Hour,
+	})
+
+	session, err := registry.CreateForTemplate(context.Background(), 91, 92, 93, "fresh", 24, 80)
+	if err != nil {
+		t.Fatalf("CreateForTemplate: %v", err)
+	}
+	defer registry.CloseSession(session.Key())
+
+	id := session.recordID()
+	if id <= 0 {
+		t.Fatalf("new session must have a positive record id, got %d (session id %q)", id, session.ID())
+	}
+	if session.ID() != strconv.FormatInt(id, 10) {
+		t.Fatalf("session id must be the string form of the record id, got %q want %d", session.ID(), id)
+	}
+	// 落库记录的主键必须与内存一致，且能被 ID 索引定位（WS / exec 都按它寻址）。
+	store.mu.Lock()
+	stored, ok := store.rows[session.Key().SessionKey()]
+	var storedID int64
+	if ok {
+		storedID = stored.ID
+	}
+	store.mu.Unlock()
+	if !ok || storedID != id {
+		t.Fatalf("persisted row must carry the same id, got %d (found=%v)", storedID, ok)
+	}
+	if registry.LookupByID(id) != session {
+		t.Fatalf("session must be addressable by its record id")
+	}
+}
+
 // 进程重启后：列表必须来自数据库（内存为空也要有记录），且可以用同一 ID 重建会话。
 func TestTerminalSessionRegistryListAndReviveAfterRestart(t *testing.T) {
 	key := NewUIKey(51, 52, 53).ReplaceID(777)
