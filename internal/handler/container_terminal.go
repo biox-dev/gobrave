@@ -14,45 +14,144 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// ContainerTemplateTerminal 通过 WebSocket 连接「容器模板临时终端」。
+// 本文件实现「容器模板终端会话」的 HTTP / WebSocket 接口。
 //
-// 与历史实现的区别：容器不再随连接创建 / 销毁，而是收敛到进程内的会话注册表
-// （manager.TerminalSessionRegistry），key = (userID, projectID, templateID)。
+// 核心约定：会话的创建与 WebSocket 连接是**分开**的。
 //
-//   - 同一个模板重复打开只会 attach 到同一个 PTY，不会重复创建容器；
-//   - 一旦前端接入，会话即被标记为「持久」：断开连接（刷新 / 关标签 / 断网）都不会删除容器，
-//     只有空闲 TTL（container.terminal_session_ttl_minutes）到期或前端关闭标签调用
-//     DELETE /container/template/{id}/terminal 时才删除；
-//   - 输出环形缓冲带序号，连接时可用 ?since=<seq> 重放（缺省回放全部缓存）；
-//     rows/cols 是前端 xterm 的尺寸：新建会话直接用它建 PTY，保证历史输出的换行与
-//     前端渲染一致（PTY 宽度变了 bash 会按旧宽度重绘，覆盖已经输出的行）。
+//   - POST /container/terminal/session/create：按容器模板新建一条终端会话，
+//     创建时即拉起容器与 shell，返回会话 ID（= go_terminal_session.id）；
+//   - GET  /container/terminal/session/{id}/terminal：用会话 ID attach 到该 PTY
+//     （只建立 WebSocket，不再按模板创建容器）；
+//   - POST /container/terminal/session/{id}/terminal/exec：向该会话写命令；
+//   - GET  /container/terminal/session/{id}/status：查询会话状态；
+//   - DEL  /container/terminal/session/{id}：关闭会话（关 shell + 删容器）；
+//   - GET  /container/terminal/session/list：列出当前用户的终端会话。
+//
+// 一个容器模板可以有多条会话：UI 每点一次「新建」都新建一条独立会话；
+// Agent 通过 terminal_exec 创建的会话按 (templateID, agentSessionID) 唯一。
+//
+// 会话一旦建立即为「持久」：断开 WebSocket（刷新 / 关标签 / 断网）不会删除容器，
+// 只有空闲 TTL（container.terminal_session_ttl_minutes）到期或显式 DELETE 才回收。
+
+// ContainerTerminalSessionCreateRequest 是「新建终端会话」的入参。
+type ContainerTerminalSessionCreateRequest struct {
+	// ContainerTemplateID 是必填的容器模板 ID（go_container_template_definition 主键）。
+	ContainerTemplateID int64 `json:"container_template_id,string" binding:"required"`
+	// Name 是会话展示名；为空时由服务端回退到模板展示名 / 模板名 / ID。
+	Name string `json:"name"`
+	// Rows / Cols 是前端 xterm 的尺寸：新建会话直接用它建 PTY，
+	// 保证历史输出的换行与前端渲染一致。为 0 时沿用该模板上次用过的尺寸。
+	Rows uint16 `json:"rows"`
+	Cols uint16 `json:"cols"`
+}
+
+// containerTerminalSessionCreateResponse 是新建终端会话的结果。
+type containerTerminalSessionCreateResponse struct {
+	manager.TerminalSessionStatus
+	// DisplayName / TemplateName / ImageName / AppType 是容器模板的只读快照。
+	DisplayName  string `json:"display_name"`
+	TemplateName string `json:"template_name"`
+	ImageName    string `json:"image_name"`
+	AppType      string `json:"app_type"`
+}
+
+// ContainerTerminalSessionCreate 按容器模板新建一条终端会话并立即启动容器。
+//
+// @Summary      新建容器终端会话
+// @Description  按容器模板创建终端会话（创建时即启动容器与 shell），返回会话 ID。
+// @Tags         容器管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body  handler.ContainerTerminalSessionCreateRequest  true  "创建参数"
+// @Success      200  {object}  handler.containerTerminalSessionCreateResponse
+// @Failure      400  {object}  errors.AppError
+// @Failure      401  {object}  errors.AppError
+// @Failure      404  {object}  errors.AppError
+// @Failure      409  {object}  errors.AppError
+// @Failure      500  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/terminal/session/create [post]
+func (h *ContainerHandler) ContainerTerminalSessionCreate(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+	if h.terminalRegistry == nil {
+		c.Error(apperrors.NewInternalServerError("container terminal registry is not configured"))
+		return
+	}
+
+	var req ContainerTerminalSessionCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(apperrors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+	if req.ContainerTemplateID <= 0 {
+		c.Error(apperrors.NewValidationError("container_template_id is required"))
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil || project == nil {
+		c.Error(apperrors.NewNotFoundError("no active project for container terminal").WithDetails(errStringOrEmpty(err)))
+		return
+	}
+
+	tpl, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ContainerTemplateID)
+	if err != nil || tpl == nil {
+		c.Error(apperrors.NewNotFoundError("container template not found").WithDetails(errStringOrEmpty(err)))
+		return
+	}
+	displayName := firstNonEmptyStrings(req.Name, tpl.DisplayName, tpl.Name, strconv.FormatInt(req.ContainerTemplateID, 10))
+
+	session, err := h.terminalRegistry.CreateForTemplate(
+		c.Request.Context(), userID, project.ID, req.ContainerTemplateID, displayName, req.Rows, req.Cols,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, manager.ErrTerminalSessionQuotaExceeded):
+			c.Error(apperrors.NewConflictError("terminal session quota exceeded").WithDetails(err.Error()))
+		default:
+			c.Error(apperrors.NewInternalServerError("failed to create terminal session").WithDetails(err.Error()))
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, containerTerminalSessionCreateResponse{
+		TerminalSessionStatus: h.terminalRegistry.Status(session.Key()),
+		DisplayName:           displayName,
+		TemplateName:          tpl.Name,
+		ImageName:             tpl.ImageName,
+		AppType:               tpl.AppType,
+	})
+}
+
+// ContainerTemplateTerminal 通过 WebSocket 连接「已有的终端会话」。
+//
+// 只按会话 ID attach，不再支持按 templateId 建立连接（容器由 create 接口创建）。
 //
 // 协议：
 //   - 浏览器 → 后端：二进制/文本都是按键输入；文本 {"type":"resize",...} 是尺寸控制帧；
 //   - 后端 → 浏览器：二进制为 PTY 输出；文本为 JSON 控制事件（session / exec / exit）
 //     或纯文本提示。
 //
-// @Summary      容器模板终端
-// @Description  用容器模板创建（或复用）会话并打开交互式终端；断开后按配置立即删除或保留一段时间。
+// @Summary      容器终端会话 WebSocket
+// @Description  用终端会话 ID 接入交互式终端；会话不存在时返回错误（需先调用 create）。
 // @Tags         容器管理
-// @Param        templateId  path   int  true   "容器模板 ID"
-// @Param        since       query  int  false  "从指定输出序号重放（缺省回放全部缓存）"
-// @Param        rows        query  int  false  "PTY 行数（仅新建会话时使用）"
-// @Param        cols        query  int  false  "PTY 列数（仅新建会话时使用）"
+// @Param        id     path   int  true   "终端会话 ID"
+// @Param        since  query  int  false  "从指定输出序号重放（缺省回放全部缓存）"
+// @Param        rows   query  int  false  "PTY 行数（浏览器 xterm 尺寸，可选）"
+// @Param        cols   query  int  false  "PTY 列数（浏览器 xterm 尺寸，可选）"
 // @Success      101
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
 // @Failure      500  {object}  errors.AppError
 // @Security     Bearer
-// @Router       /container/template/{templateId}/terminal [get]
+// @Router       /container/terminal/session/{id}/terminal [get]
 func (h *ContainerHandler) ContainerTemplateTerminal(c *gin.Context) {
-	key, ok := h.resolveTerminalSessionKey(c)
+	session, ok := h.resolveTerminalSession(c)
 	if !ok {
-		return
-	}
-	if h.terminalRegistry == nil {
-		c.Error(apperrors.NewInternalServerError("container terminal registry is not configured"))
 		return
 	}
 
@@ -62,8 +161,6 @@ func (h *ContainerHandler) ContainerTemplateTerminal(c *gin.Context) {
 			sinceSeq = parsed
 		}
 	}
-	rows, _ := strconv.ParseUint(strings.TrimSpace(c.Query("rows")), 10, 16)
-	cols, _ := strconv.ParseUint(strings.TrimSpace(c.Query("cols")), 10, 16)
 
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  4096,
@@ -77,12 +174,6 @@ func (h *ContainerHandler) ContainerTemplateTerminal(c *gin.Context) {
 	defer conn.Close()
 
 	_ = conn.WriteMessage(websocket.TextMessage, []byte("\x1b[90mpreparing container terminal...\x1b[0m\r\n"))
-
-	session, _, err := h.terminalRegistry.EnsurePersistentSized(c.Request.Context(), key, uint16(rows), uint16(cols))
-	if err != nil {
-		_ = conn.WriteMessage(websocket.TextMessage, []byte("\x1b[31mfailed to open terminal: "+err.Error()+"\x1b[0m\r\n"))
-		return
-	}
 
 	sub, replay := session.AttachWithInfo(sinceSeq)
 	defer session.Detach(sub)
@@ -119,9 +210,8 @@ func (h *ContainerHandler) ContainerTemplateTerminal(c *gin.Context) {
 }
 
 type containerTerminalExecRequest struct {
-	Command         string `json:"command" binding:"required"`
-	WaitSeconds     int    `json:"wait_seconds"`
-	CreateIfMissing *bool  `json:"create_if_missing"`
+	Command     string `json:"command" binding:"required"`
+	WaitSeconds int    `json:"wait_seconds"`
 }
 
 type containerTerminalExecResponse struct {
@@ -135,27 +225,23 @@ type containerTerminalExecResponse struct {
 	OutputTruncated bool    `json:"output_truncated,omitempty"`
 }
 
-// ContainerTemplateTerminalExec 向「当前用户的容器模板终端」写入一条命令。
+// ContainerTemplateTerminalExec 向「指定的终端会话」写入一条命令。
 //
 // 语义：
-//   - 会话不存在时默认自动创建（create_if_missing=false 可关闭）；
+//   - 只能写入已存在的会话（容器由 create 接口创建，这里不再自动创建）；
 //   - wait_seconds=0：只投递命令，立即返回 accepted=true / running=true，
-//     命令输出通过该终端的 WebSocket 实时回传；
+//     命令输出通过该会话的 WebSocket 实时回传；
 //   - wait_seconds>0：等待命令结束（或超时），返回退出码与输出尾部。
 //
-// 会话生命周期：本接口代表「用户终端」，因此新建的会话一律建为持久会话。
-// 一次性会话在命令结束且没有订阅者时会被立即回收（容器一起删除），
-// 那样 UI「提交命令 → 再打开终端看输出」看到的会是一台全新的容器，命令输出全部丢失。
+// 同一会话的命令串行执行；Agent 的 terminal_exec 工具复用同一底层实现。
 //
-// 同一会话的命令串行执行；Agent 的 terminal_exec 工具复用同一实现。
-//
-// @Summary      容器模板终端执行命令
-// @Description  向当前用户该模板的终端会话写入命令；wait_seconds=0 时为异步投递。
+// @Summary      容器终端会话执行命令
+// @Description  向指定终端会话写入命令；wait_seconds=0 时为异步投递。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
-// @Param        templateId  path  int  true  "容器模板 ID"
-// @Param        request     body  handler.containerTerminalExecRequest  true  "命令"
+// @Param        id       path  int  true  "终端会话 ID"
+// @Param        request  body  handler.containerTerminalExecRequest  true  "命令"
 // @Success      200  {object}  handler.containerTerminalExecResponse
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
@@ -163,14 +249,10 @@ type containerTerminalExecResponse struct {
 // @Failure      409  {object}  errors.AppError
 // @Failure      500  {object}  errors.AppError
 // @Security     Bearer
-// @Router       /container/template/{templateId}/terminal/exec [post]
+// @Router       /container/terminal/session/{id}/terminal/exec [post]
 func (h *ContainerHandler) ContainerTemplateTerminalExec(c *gin.Context) {
-	key, ok := h.resolveTerminalSessionKey(c)
+	session, ok := h.resolveTerminalSession(c)
 	if !ok {
-		return
-	}
-	if h.terminalRegistry == nil {
-		c.Error(apperrors.NewInternalServerError("container terminal registry is not configured"))
 		return
 	}
 
@@ -188,23 +270,13 @@ func (h *ContainerHandler) ContainerTemplateTerminalExec(c *gin.Context) {
 		req.WaitSeconds = 0
 	}
 
-	createIfMissing := true
-	if req.CreateIfMissing != nil {
-		createIfMissing = *req.CreateIfMissing
-	}
-
-	timeout := time.Duration(req.WaitSeconds) * time.Second
-	result, err := h.terminalRegistry.Execute(c.Request.Context(), key, manager.TerminalCommand{
-		Command:         command,
-		Wait:            req.WaitSeconds > 0,
-		Timeout:         timeout,
-		Source:          "ui",
-		NotifyUI:        false,
-		CreateIfMissing: createIfMissing,
-		// UI 发起的命令：会话不存在时直接建持久会话。
-		// 否则一次性会话会在命令结束后连同容器一起被回收，
-		// 前端随后打开终端拿到的是新容器（看不到刚才那条命令的任何输出）。
-		Persistent: true,
+	result, err := h.terminalRegistry.Execute(c.Request.Context(), session.Key(), manager.TerminalCommand{
+		Command: command,
+		Wait:    req.WaitSeconds > 0,
+		Timeout: time.Duration(req.WaitSeconds) * time.Second,
+		Source:  "ui",
+		// 会话由 create 接口建立且已持久；这里只投递，不自动创建。
+		CreateIfMissing: false,
 	})
 	if err != nil {
 		switch {
@@ -236,25 +308,21 @@ func (h *ContainerHandler) ContainerTemplateTerminalExec(c *gin.Context) {
 
 // ContainerTemplateTerminalStatus 返回会话状态（用于前端判断是否需要重放 / 重连）。
 //
-// @Summary      容器模板终端状态
+// @Summary      容器终端会话状态
 // @Description  返回会话是否存在、存活、订阅者数量与当前输出序号。
 // @Tags         容器管理
-// @Param        templateId  path  int  true  "容器模板 ID"
+// @Param        id  path  int  true  "终端会话 ID"
 // @Success      200  {object}  manager.TerminalSessionStatus
 // @Failure      401  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
 // @Security     Bearer
-// @Router       /container/template/{templateId}/terminal/status [get]
+// @Router       /container/terminal/session/{id}/status [get]
 func (h *ContainerHandler) ContainerTemplateTerminalStatus(c *gin.Context) {
-	key, ok := h.resolveTerminalSessionKey(c)
+	id, ok := h.resolveTerminalSessionID(c)
 	if !ok {
 		return
 	}
-	if h.terminalRegistry == nil {
-		c.Error(apperrors.NewInternalServerError("container terminal registry is not configured"))
-		return
-	}
-	c.JSON(http.StatusOK, h.terminalRegistry.Status(key))
+	c.JSON(http.StatusOK, h.terminalRegistry.Status(manager.TerminalSessionKey{ID: id}))
 }
 
 // containerTerminalSessionPageItem 是「终端会话」列表项。
@@ -263,7 +331,7 @@ func (h *ContainerHandler) ContainerTemplateTerminalStatus(c *gin.Context) {
 // 一次请求就够左侧栏列表渲染（名称 / 镜像 / 状态 / 删除）。
 type containerTerminalSessionPageItem struct {
 	manager.TerminalSessionStatus
-	// DisplayName 取自绑定行（ContainerTemplateDefinition.DisplayName），为空时回退模板名。
+	// DisplayName 取自会话名（创建时写入），为空时回退模板展示名 / 模板名 / 会话 ID。
 	DisplayName string `json:"display_name"`
 	// TemplateName / ImageName / AppType 是模板的只读快照，便于列表直接展示。
 	TemplateName string `json:"template_name"`
@@ -275,13 +343,13 @@ type containerTerminalSessionPageItem struct {
 //
 // 每项 = 内存注册表中的会话状态 + 容器模板绑定行（DisplayName / ImageName）。
 // 只返回存活会话：进程重启后数据库里的残留记录由后台对账清理，不出现在列表里。
-// 模板已被删除的会话仍会返回（DisplayName 回退为 session key），方便用户清理容器。
+// 模板已被删除的会话仍会返回（DisplayName 回退为会话 ID），方便用户清理容器。
 //
 // 默认只返回「当前激活项目」下的会话（与左侧栏其它面板口径一致）；
 // ?all_projects=true 时返回该用户全部项目的会话（UI 上的「仅当前项目」开关）。
 //
 // @Summary      终端会话列表
-// @Description  当前用户的容器模板终端会话，含模板展示名与镜像名；默认按激活项目过滤。
+// @Description  当前用户的容器终端会话，含模板展示名与镜像名；默认按激活项目过滤。
 // @Tags         容器管理
 // @Param        all_projects  query  bool  false  "为 true 时返回该用户全部项目的会话"
 // @Success      200  {array}  handler.containerTerminalSessionPageItem
@@ -323,21 +391,14 @@ func (h *ContainerHandler) ContainerTerminalSessionList(c *gin.Context) {
 		}
 
 		item := containerTerminalSessionPageItem{TerminalSessionStatus: status}
+		item.DisplayName = firstNonEmptyStrings(status.Name, status.SessionID)
 
 		tpl, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), status.TemplateID)
 		if err != nil || tpl == nil {
-			item.DisplayName = status.SessionID
 			items = append(items, item)
 			continue
 		}
-		displayName := strings.TrimSpace(tpl.DisplayName)
-		if displayName == "" {
-			displayName = tpl.Name
-		}
-		if displayName == "" {
-			displayName = status.SessionID
-		}
-		item.DisplayName = displayName
+		item.DisplayName = firstNonEmptyStrings(status.Name, tpl.DisplayName, tpl.Name, status.SessionID)
 		item.TemplateName = tpl.Name
 		item.ImageName = tpl.ImageName
 		item.AppType = tpl.AppType
@@ -349,55 +410,72 @@ func (h *ContainerHandler) ContainerTerminalSessionList(c *gin.Context) {
 
 // ContainerTemplateTerminalClose 主动结束会话并删除容器。
 //
-// @Summary      关闭容器模板终端
-// @Description  结束会话（关闭 shell 并删除临时容器）。
+// @Summary      关闭容器终端会话
+// @Description  结束会话（关闭 shell 并删除容器）。
 // @Tags         容器管理
-// @Param        templateId  path  int  true  "容器模板 ID"
+// @Param        id  path  int  true  "终端会话 ID"
 // @Success      200  {object}  map[string]bool
 // @Failure      401  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
 // @Security     Bearer
-// @Router       /container/template/{templateId}/terminal [delete]
+// @Router       /container/terminal/session/{id} [delete]
 func (h *ContainerHandler) ContainerTemplateTerminalClose(c *gin.Context) {
-	key, ok := h.resolveTerminalSessionKey(c)
-	if !ok {
-		return
-	}
 	if h.terminalRegistry == nil {
 		c.Error(apperrors.NewInternalServerError("container terminal registry is not configured"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"closed": h.terminalRegistry.CloseSession(key)})
+	id, ok := h.resolveTerminalSessionID(c)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"closed": h.terminalRegistry.CloseSession(manager.TerminalSessionKey{ID: id})})
 }
 
-// resolveTerminalSessionKey 校验用户 / 激活项目 / 模板并返回会话 key。
-func (h *ContainerHandler) resolveTerminalSessionKey(c *gin.Context) (manager.TerminalSessionKey, bool) {
-	var key manager.TerminalSessionKey
-
+// resolveTerminalSessionID 校验并解析路径里的终端会话 ID。
+//
+// 同时校验会话归属：只能操作当前用户自己创建的会话（防止越权操作他人容器）。
+func (h *ContainerHandler) resolveTerminalSessionID(c *gin.Context) (int64, bool) {
 	userID, ok := getCurrentUserID(c)
 	if !ok {
-		return key, false
+		return 0, false
 	}
+	if h.terminalRegistry == nil {
+		c.Error(apperrors.NewInternalServerError("container terminal registry is not configured"))
+		return 0, false
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		c.Error(apperrors.NewValidationError("invalid terminal session id"))
+		return 0, false
+	}
+	sess := h.terminalRegistry.LookupByID(id)
+	if sess == nil || sess.Key().UserID != userID {
+		c.Error(apperrors.NewNotFoundError("terminal session does not exist"))
+		return 0, false
+	}
+	return id, true
+}
 
-	templateID, err := strconv.ParseInt(strings.TrimSpace(c.Param("templateId")), 10, 64)
-	if err != nil || templateID <= 0 {
-		c.Error(apperrors.NewValidationError("invalid container template id"))
-		return key, false
+// resolveTerminalSession 解析并校验路径里的终端会话 ID，返回托管会话。
+func (h *ContainerHandler) resolveTerminalSession(c *gin.Context) (*manager.ManagedTerminalSession, bool) {
+	id, ok := h.resolveTerminalSessionID(c)
+	if !ok {
+		return nil, false
 	}
+	sess := h.terminalRegistry.LookupByID(id)
+	if sess == nil {
+		c.Error(apperrors.NewNotFoundError("terminal session does not exist"))
+		return nil, false
+	}
+	return sess, true
+}
 
-	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
-	if err != nil || project == nil {
-		c.Error(apperrors.NewNotFoundError("no active project for container terminal").WithDetails(errStringOrEmpty(err)))
-		return key, false
+// firstNonEmptyStrings 返回第一个去空白后非空的字符串。
+func firstNonEmptyStrings(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
 	}
-	if _, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), templateID); err != nil {
-		c.Error(apperrors.NewNotFoundError("container template not found").WithDetails(err.Error()))
-		return key, false
-	}
-
-	return manager.TerminalSessionKey{
-		UserID:     userID,
-		ProjectID:  project.ID,
-		TemplateID: templateID,
-	}, true
+	return ""
 }

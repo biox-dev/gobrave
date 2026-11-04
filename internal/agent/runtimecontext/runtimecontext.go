@@ -269,6 +269,11 @@ type ContainerTerminalExecInput struct {
 	UserID int64
 	// ProjectID 取自执行事实（tool.ProjectIDFrom，当前用户激活项目）。
 	ProjectID int64
+	// AgentSessionID 是发起本次调用的 Agent 会话 ID（tool.SessionIDFrom）。
+	//
+	// 终端会话按 (ContainerTemplateID, AgentSessionID) 唯一：同一 Agent 会话在同一个模板上
+	// 多次执行命令会复用同一个终端会话（同一容器与 PTY）。必须 > 0。
+	AgentSessionID int64
 	// ContainerTemplateID 是必填的容器模板 ID。
 	ContainerTemplateID int64
 	// Command 是要在终端里执行的 shell 命令。

@@ -14,10 +14,11 @@ func newReplayTestSession(t *testing.T, key TerminalSessionKey) (*TerminalSessio
 	registry := newTestRegistry(opener)
 	t.Cleanup(func() { registry.CloseSession(key) })
 
-	if _, _, err := registry.EnsurePersistent(context.Background(), key); err != nil {
+	created, _, err := registry.EnsurePersistent(context.Background(), key)
+	if err != nil {
 		t.Fatalf("EnsurePersistent: %v", err)
 	}
-	if _, err := registry.Execute(context.Background(), key, TerminalCommand{
+	if _, err := registry.Execute(context.Background(), created.Key(), TerminalCommand{
 		Command:         "pwd",
 		Wait:            true,
 		Timeout:         2 * time.Second,
@@ -26,7 +27,7 @@ func newReplayTestSession(t *testing.T, key TerminalSessionKey) (*TerminalSessio
 		t.Fatalf("Execute: %v", err)
 	}
 
-	session := registry.Lookup(key)
+	session := registry.Lookup(created.Key())
 	if session == nil {
 		t.Fatalf("expected live session")
 	}
@@ -107,10 +108,11 @@ func TestTerminalAttachWithInfoTruncatedAfterRollover(t *testing.T) {
 	})
 	defer registry.CloseSession(key)
 
-	if _, _, err := registry.EnsurePersistent(context.Background(), key); err != nil {
+	created, _, err := registry.EnsurePersistent(context.Background(), key)
+	if err != nil {
 		t.Fatalf("EnsurePersistent: %v", err)
 	}
-	if _, err := registry.Execute(context.Background(), key, TerminalCommand{
+	if _, err := registry.Execute(context.Background(), created.Key(), TerminalCommand{
 		Command:         strings.Repeat("x", 512),
 		Wait:            true,
 		Timeout:         2 * time.Second,
@@ -119,7 +121,7 @@ func TestTerminalAttachWithInfoTruncatedAfterRollover(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	session := registry.Lookup(key)
+	session := registry.Lookup(created.Key())
 	if session == nil {
 		t.Fatalf("expected live session")
 	}
@@ -172,10 +174,7 @@ func TestTerminalSessionRegistryUsesBrowserPTYSize(t *testing.T) {
 	}
 
 	// Agent 侧（不带尺寸）关闭并重建同一会话。
-	registry.CloseSession(key)
-	opener.mu.Lock()
-	opener.shell = newFakeShell() // 上一个 shell 已随会话关闭
-	opener.mu.Unlock()
+	registry.CloseSession(session.Key())
 
 	recreated, _, err := registry.Ensure(context.Background(), key)
 	if err != nil {

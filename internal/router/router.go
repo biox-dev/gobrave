@@ -284,15 +284,17 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	r.POST("/container/template/set-default", handler.SetDefaultContainerTemplate)
 	r.POST("/container/template/export", handler.ExportContainerTemplate)
 	r.POST("/container/template/import", handler.ImportContainerTemplate)
-	// 容器模板终端：会话由进程内注册表持有（同一用户 + 项目 + 模板复用一个 PTY），
-	// WebSocket 断开后保留 grace period；exec 接口用于 UI 按钮 / Agent 向该终端写命令。
-	r.GET("/container/template/:templateId/terminal", handler.ContainerTemplateTerminal)
-	r.POST("/container/template/:templateId/terminal/exec", handler.ContainerTemplateTerminalExec)
-	r.GET("/container/template/:templateId/terminal/status", handler.ContainerTemplateTerminalStatus)
-	r.DELETE("/container/template/:templateId/terminal", handler.ContainerTemplateTerminalClose)
-	// 当前用户（当前激活项目）的全部终端会话：join 容器模板绑定行返回展示名 / 镜像名，
-	// 供左侧栏「终端会话」面板列出并逐个关闭。
+	// 容器模板终端会话：会话由进程内注册表持有，创建与 WebSocket 连接分开。
+	//   - create：按容器模板新建一条会话并立即启动容器，返回会话 ID；
+	//   - {id}/terminal：用会话 ID 建立 WebSocket（不再支持按 templateId 连接）；
+	//   - {id}/terminal/exec / {id}/status / {id}：命令投递 / 状态 / 关闭；
+	//   - list：当前用户（当前激活项目）的会话列表。
+	r.POST("/container/terminal/session/create", handler.ContainerTerminalSessionCreate)
 	r.GET("/container/terminal/session/list", handler.ContainerTerminalSessionList)
+	r.GET("/container/terminal/session/:id/terminal", handler.ContainerTemplateTerminal)
+	r.POST("/container/terminal/session/:id/terminal/exec", handler.ContainerTemplateTerminalExec)
+	r.GET("/container/terminal/session/:id/status", handler.ContainerTemplateTerminalStatus)
+	r.DELETE("/container/terminal/session/:id", handler.ContainerTemplateTerminalClose)
 
 	r.POST("/container/template-spec/create", handler.CreateContainerTemplateSpec)
 	r.GET("/container/template-spec/get", handler.GetContainerTemplateSpec)

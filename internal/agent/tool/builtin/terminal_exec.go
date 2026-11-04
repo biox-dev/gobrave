@@ -65,8 +65,12 @@ func TerminalExec(runner runtimecontext.ContainerTerminalRunner) tool.Tool {
 		func(ctx context.Context, in TerminalExecInput) (TerminalExecOutput, error) {
 			userID := tool.UserIDFrom(ctx)
 			projectID := tool.ProjectIDFrom(ctx)
+			agentSessionID := tool.SessionIDFrom(ctx)
 			if projectID <= 0 {
 				return TerminalExecOutput{}, fmt.Errorf("terminal_exec: project_id is required (no active project in this conversation)")
+			}
+			if agentSessionID <= 0 {
+				return TerminalExecOutput{}, fmt.Errorf("terminal_exec: agent session id is required (terminal session is scoped by agent session)")
 			}
 
 			containerTemplateID, err := parseContainerTemplateID(in.ContainerTemplateID)
@@ -91,6 +95,7 @@ func TerminalExec(runner runtimecontext.ContainerTerminalRunner) tool.Tool {
 			result, execErr := runner.RunInTerminal(ctx, runtimecontext.ContainerTerminalExecInput{
 				UserID:              userID,
 				ProjectID:           projectID,
+				AgentSessionID:      agentSessionID,
 				ContainerTemplateID: containerTemplateID,
 				Command:             command,
 				TimeoutSeconds:      in.TimeoutSeconds,
