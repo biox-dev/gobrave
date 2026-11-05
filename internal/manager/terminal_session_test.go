@@ -157,7 +157,8 @@ func newTestRegistry(opener *fakeOpener) *TerminalSessionRegistry {
 // 生产代码只保留具名入口（CreateForTemplate / EnsurePersistent* / Execute），
 // 通用的一次性入口不再对外暴露。
 func ensureOneShot(registry *TerminalSessionRegistry, key TerminalSessionKey) (*ManagedTerminalSession, bool, error) {
-	return registry.ensure(context.Background(), key, terminalCreateOptions{})
+	sess, _, created, err := registry.ensure(context.Background(), key, terminalCreateOptions{})
+	return sess, created, err
 }
 
 func TestTerminalSessionRegistryExec(t *testing.T) {
@@ -882,7 +883,7 @@ func TestTerminalSessionRegistryCreateAssignsPositiveID(t *testing.T) {
 		SessionTTL:  time.Hour,
 	})
 
-	session, err := registry.CreateForTemplate(context.Background(), 91, 92, 93, 24, 80)
+	session, _, err := registry.CreateForTemplate(context.Background(), 91, 92, 93, 24, 80)
 	if err != nil {
 		t.Fatalf("CreateForTemplate: %v", err)
 	}
@@ -1099,11 +1100,11 @@ func TestTerminalSessionRegistryCreateMultipleUISessionsPerTemplate(t *testing.T
 		SessionTTL:  time.Hour,
 	})
 
-	a, err := registry.CreateForTemplate(context.Background(), 1, 2, 3, 24, 80)
+	a, _, err := registry.CreateForTemplate(context.Background(), 1, 2, 3, 24, 80)
 	if err != nil {
 		t.Fatalf("CreateForTemplate #1: %v", err)
 	}
-	b, err := registry.CreateForTemplate(context.Background(), 1, 2, 3, 24, 80)
+	b, _, err := registry.CreateForTemplate(context.Background(), 1, 2, 3, 24, 80)
 	if err != nil {
 		t.Fatalf("CreateForTemplate #2: %v", err)
 	}

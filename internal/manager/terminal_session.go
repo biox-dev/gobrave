@@ -411,6 +411,7 @@ type TerminalSessionRegistry struct {
 type pendingTerminalSession struct {
 	done    chan struct{}
 	sess    *ManagedTerminalSession
+	rec     *types.TerminalSession
 	created bool
 	err     error
 }
@@ -538,16 +539,16 @@ func firstNonEmptyString(values ...string) string {
 //
 // 一个模板可以有多条这样的会话（每次点「新建」都新建一条），彼此独立。
 // 持久会话（只能由空闲 TTL 或显式关闭回收）；展示名由 persistRecord 按模板生成。
-func (r *TerminalSessionRegistry) CreateForTemplate(ctx context.Context, userID, projectID, templateID int64, rows, cols uint16) (*ManagedTerminalSession, error) {
+func (r *TerminalSessionRegistry) CreateForTemplate(ctx context.Context, userID, projectID, templateID int64, rows, cols uint16) (*ManagedTerminalSession, *types.TerminalSession, error) {
 	key := NewUIKey(userID, projectID, templateID)
-	sess, _, err := r.ensure(ctx, key, terminalCreateOptions{
+	sess, rec, _, err := r.ensure(ctx, key, terminalCreateOptions{
 		persistent: true,
 		size:       terminalSize{rows: rows, cols: cols},
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return sess, nil
+	return sess, rec, nil
 }
 
 // EnsurePersistent 创建（或复用）会话，并把会话标记为持久会话（见 types.TerminalSession.Persistent）。
@@ -555,23 +556,25 @@ func (r *TerminalSessionRegistry) CreateForTemplate(ctx context.Context, userID,
 // WebSocket 接入（ContainerTemplateTerminal）走这个入口：无论会话是否新建、是否复用，
 // 只要前端接入了，此后就只能由空闲 TTL 或显式 DELETE 回收。
 func (r *TerminalSessionRegistry) EnsurePersistent(ctx context.Context, key TerminalSessionKey) (*ManagedTerminalSession, bool, error) {
-	return r.ensure(ctx, key, terminalCreateOptions{persistent: true})
+	sess, _, created, err := r.ensure(ctx, key, terminalCreateOptions{persistent: true})
+	return sess, created, err
 }
 
 // EnsurePersistentSized 与 EnsurePersistent 相同，但会带上前端 xterm 的行列：
 // 新建的会话直接以这个尺寸创建 PTY；已存活的会话保持原 PTY，接入方再调用 Resize 同步。
 func (r *TerminalSessionRegistry) EnsurePersistentSized(ctx context.Context, key TerminalSessionKey, rows, cols uint16) (*ManagedTerminalSession, bool, error) {
-	return r.ensure(ctx, key, terminalCreateOptions{
+	sess, _, created, err := r.ensure(ctx, key, terminalCreateOptions{
 		persistent: true,
 		size:       terminalSize{rows: rows, cols: cols},
 	})
+	return sess, created, err
 }
 
-func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessionKey, opts terminalCreateOptions) (*ManagedTerminalSession, bool, error) {
+func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessionKey, opts terminalCreateOptions) (*ManagedTerminalSession, *types.TerminalSession, bool, error) {
 	// 先把「Agent 会话身份」解析成终端会话主键：之后 UI / Agent 走同一条路。
 	resolved, err := r.resolveRecordKey(ctx, key)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	key = resolved
 
@@ -592,7 +595,7 @@ func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessio
 	r.mu.Lock()
 	if sess := r.lookupLocked(key); sess != nil {
 		r.mu.Unlock()
-		return r.reuseExisting(ctx, sess, opts.persistent), false, nil
+		return r.reuseExisting(ctx, sess, opts.persistent)
 	}
 	if pendingID != "" {
 		if wait, ok := r.pending[pendingID]; ok {
@@ -603,7 +606,7 @@ func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessio
 	}
 	r.mu.Unlock()
 
-	sess, created, err := r.createOrAdopt(key, opts)
+	sess, rec, created, err := r.createOrAdopt(key, opts)
 
 	r.mu.Lock()
 	var pending *pendingTerminalSession
@@ -616,6 +619,7 @@ func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessio
 	}
 	if pending != nil {
 		pending.sess = sess
+		pending.rec = rec
 		pending.created = created
 		pending.err = err
 		close(pending.done)
@@ -627,7 +631,7 @@ func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessio
 		r.notifySessionChanged(sess, "sessionCreated")
 	}
 
-	return sess, created, err
+	return sess, rec, created, err
 }
 
 // resolveRecordKey 把「Agent 会话身份」解析成终端会话主键；其它形态原样返回。
@@ -659,29 +663,34 @@ func (r *TerminalSessionRegistry) resolveRecordKey(ctx context.Context, key Term
 // reuseExisting 是 ensure 的「命中已存活会话」分支：按需升级持久标记并推一次列表刷新。
 //
 // 调用方不得持有 r.mu（MarkPersistent / notifySessionChanged 会重新加锁）。
-func (r *TerminalSessionRegistry) reuseExisting(ctx context.Context, sess *ManagedTerminalSession, persistent bool) *ManagedTerminalSession {
+// 复用路径不读数据库，因此返回的持久化记录为 nil。
+func (r *TerminalSessionRegistry) reuseExisting(ctx context.Context, sess *ManagedTerminalSession, persistent bool) (*ManagedTerminalSession, *types.TerminalSession, bool, error) {
 	if persistent {
 		r.MarkPersistent(ctx, sess.Key())
 	}
 	// 复用也要通知：Agent 的 terminal_exec 大多复用已存活会话，
 	// 不推前端列表就会表现为「执行了但列表没刷新」。
 	r.notifySessionChanged(sess, "sessionCreated")
-	return sess
+	return sess, nil, false, nil
 }
 
 // waitForPending 等待同一个 pending 创建完成，并复用它建好的会话。
 //
 // 调用方已释放 r.mu；pending 的 sess / created / err 都在 close(done) 之前写入，
 // 因此这里的读取与创建方之间由 channel close 建立了 happens-before 关系。
-func (r *TerminalSessionRegistry) waitForPending(ctx context.Context, wait *pendingTerminalSession, persistent bool) (*ManagedTerminalSession, bool, error) {
+func (r *TerminalSessionRegistry) waitForPending(ctx context.Context, wait *pendingTerminalSession, persistent bool) (*ManagedTerminalSession, *types.TerminalSession, bool, error) {
 	select {
 	case <-wait.done:
 		if wait.err != nil {
-			return wait.sess, wait.created, wait.err
+			return wait.sess, wait.rec, wait.created, wait.err
 		}
-		return r.reuseExisting(ctx, wait.sess, persistent), wait.created, nil
+		sess, rec, _, err := r.reuseExisting(ctx, wait.sess, persistent)
+		if rec == nil {
+			rec = wait.rec
+		}
+		return sess, rec, wait.created, err
 	case <-ctx.Done():
-		return nil, false, ctx.Err()
+		return nil, nil, false, ctx.Err()
 	}
 }
 
@@ -768,9 +777,9 @@ func terminalOptions(size terminalSize) containerruntime.TerminalOptions {
 //
 // “认领”的含义：进程重启后容器还在，但原来的 shell 已随连接结束；这里在同一个
 // 容器上重新 exec 一个 bash，并把落盘的滚动缓冲回放进内存缓冲。
-func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, opts terminalCreateOptions) (*ManagedTerminalSession, bool, error) {
+func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, opts terminalCreateOptions) (*ManagedTerminalSession, *types.TerminalSession, bool, error) {
 	if r.probe == nil {
-		return nil, false, fmt.Errorf("container probe is not configured")
+		return nil, nil, false, fmt.Errorf("container probe is not configured")
 	}
 
 	// 调用方没给尺寸（例如 Agent 的 terminal_exec）时用默认 24x80；
@@ -782,35 +791,36 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, opts ter
 
 	adopted, err := r.adoptSession(createCtx, key, resolved)
 	if err == nil && adopted != nil {
+		var rec *types.TerminalSession
 		if opts.persistent {
 			adopted.setPersistent(true)
 			// 认领的是已有记录：Update 不写 name。
-			r.persistRecord(createCtx, adopted, true)
+			rec = r.persistRecord(createCtx, adopted, true)
 		}
-		return adopted, false, nil
+		return adopted, rec, false, nil
 	}
 	if err != nil {
 		logger.Warnf(createCtx, "[TerminalSession] adopt session %s failed, will recreate: %v", key.SessionKey(), err)
 	}
 
 	if err := r.checkQuota(createCtx, key.UserID); err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
 	handle, err := r.probe.StartTerminalRuntime(createCtx, key.UserID, key.ProjectID, key.TemplateID, terminalOptions(resolved))
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	managed, err := r.initSession(createCtx, key, handle, nil, resolved)
 	if err != nil {
 		handle.Cleanup()
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	// 新会话默认是一次性（Agent 创建的）；UI / Agent 显式要求持久时在这里直接落库为持久。
 	// 先落库拿到主键，再让注册表把会话挂进索引（保证 createOrAdopt 返回时 ID 已就绪）。
 	managed.setPersistent(opts.persistent)
-	r.persistRecord(createCtx, managed, opts.persistent)
-	return managed, true, nil
+	rec := r.persistRecord(createCtx, managed, opts.persistent)
+	return managed, rec, true, nil
 }
 
 // adoptSession 按终端会话主键认领数据库记录指向的原容器；没有记录 / 容器已不可用时返回 (nil, nil)。
@@ -918,9 +928,12 @@ func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalS
 // 已存在的记录只走 Update，绝不回写 name —— DB 是 name 的唯一真相。
 // 新建时 key.ID 还是进程内负数占位 ID，Create 后回填主键，再把会话 key
 // 换成真实 ID 形态（滚动缓冲文件名随之迁移）。
-func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *ManagedTerminalSession, persistent bool) {
+//
+// 返回本次写入的持久层记录（含自动生成的 name）：调用方（如创建接口）可直接用它
+// 把展示名返回给前端；store 未配置或写入失败时返回 nil。
+func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *ManagedTerminalSession, persistent bool) *types.TerminalSession {
 	if r.store == nil || sess == nil {
-		return
+		return nil
 	}
 	key := sess.Key()
 	rec := &types.TerminalSession{
@@ -941,28 +954,30 @@ func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *Manag
 		rec.ID = id
 		if err := r.store.Update(ctx, rec); err != nil {
 			logger.Warnf(ctx, "[TerminalSession] update session %s failed: %v", key.SessionKey(), err)
+			return nil
 		}
-		return
+		return rec
 	}
 	// 新会话：展示名只在 Create 分支生成并落库。
 	rec.Name = r.defaultSessionName(ctx, key.TemplateID)
 	if err := r.store.Create(ctx, rec); err != nil {
 		logger.Warnf(ctx, "[TerminalSession] persist session %s failed: %v", key.SessionKey(), err)
-		return
+		return nil
 	}
 	if rec.ID <= 0 {
-		return
+		return rec
 	}
 	// 把（占位）ID 换成数据库主键。
 	sess.assignRecordID(rec.ID)
 	if rec.SessionKey == sess.Key().SessionKey() {
-		return
+		return rec
 	}
 	// 唯一键从「占位形态」变成 ID 形态：只改 key，不碰 name。
 	rec.SessionKey = sess.Key().SessionKey()
 	if err := r.store.Update(ctx, rec); err != nil {
 		logger.Warnf(ctx, "[TerminalSession] rename session %s failed: %v", rec.SessionKey, err)
 	}
+	return rec
 }
 
 func (r *TerminalSessionRegistry) touchRecord(ctx context.Context, key TerminalSessionKey) {
@@ -1280,7 +1295,7 @@ func (r *TerminalSessionRegistry) ReviveByID(ctx context.Context, id int64, rows
 	}
 	// 用户正在主动打开它：一律按持久会话重建，避免一次性规则把容器回收掉。
 	size := terminalSize{rows: rows, cols: cols}
-	sess, created, err := r.ensure(ctx, key, terminalCreateOptions{
+	sess, _, created, err := r.ensure(ctx, key, terminalCreateOptions{
 		persistent: true,
 		size:       size,
 	})
@@ -1365,7 +1380,7 @@ func (r *TerminalSessionRegistry) Execute(ctx context.Context, key TerminalSessi
 		}
 		// 新建会话时按 cmd.Persistent 决定生命周期：一次性会话在本命令结束
 		// 且没有订阅者时会被回收，命令输出随之丢失。
-		created, _, err := r.ensure(ctx, key, terminalCreateOptions{persistent: cmd.Persistent})
+		created, _, _, err := r.ensure(ctx, key, terminalCreateOptions{persistent: cmd.Persistent})
 		if err != nil {
 			return TerminalCommandResult{}, err
 		}
@@ -1457,7 +1472,7 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 	// 先占位：保证「一次性会话 + 无 WS」时命令执行期间不会被回收。
 	sess := r.Lookup(key)
 	if sess == nil && in.CreateIfMissing {
-		created, _, err := r.ensure(ctx, key, terminalCreateOptions{})
+		created, _, _, err := r.ensure(ctx, key, terminalCreateOptions{})
 		if err != nil {
 			return runtimecontext.ContainerTerminalExecResult{}, err
 		}

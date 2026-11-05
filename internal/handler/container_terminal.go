@@ -38,22 +38,10 @@ import (
 type ContainerTerminalSessionCreateRequest struct {
 	// ContainerTemplateID 是必填的容器模板 ID（go_container_template_definition 主键）。
 	ContainerTemplateID int64 `json:"container_template_id,string" binding:"required"`
-	// Name 是会话展示名；为空时由服务端回退到模板展示名 / 模板名 / ID。
-	Name string `json:"name"`
 	// Rows / Cols 是前端 xterm 的尺寸：新建会话直接用它建 PTY，
 	// 保证历史输出的换行与前端渲染一致。为 0 时使用默认 24x80。
 	Rows uint16 `json:"rows"`
 	Cols uint16 `json:"cols"`
-}
-
-// containerTerminalSessionCreateResponse 是新建终端会话的结果。
-type containerTerminalSessionCreateResponse struct {
-	manager.TerminalSessionStatus
-	// DisplayName / TemplateName / ImageName / AppType 是容器模板的只读快照。
-	DisplayName  string `json:"display_name"`
-	TemplateName string `json:"template_name"`
-	ImageName    string `json:"image_name"`
-	AppType      string `json:"app_type"`
 }
 
 // ContainerTerminalSessionCreate 按容器模板新建一条终端会话并立即启动容器。
@@ -64,7 +52,7 @@ type containerTerminalSessionCreateResponse struct {
 // @Accept       json
 // @Produce      json
 // @Param        request  body  handler.ContainerTerminalSessionCreateRequest  true  "创建参数"
-// @Success      200  {object}  handler.containerTerminalSessionCreateResponse
+// @Success      200  {object}  manager.TerminalSessionStatus
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
@@ -98,14 +86,7 @@ func (h *ContainerHandler) ContainerTerminalSessionCreate(c *gin.Context) {
 		return
 	}
 
-	// tpl, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ContainerTemplateID)
-	// if err != nil || tpl == nil {
-	// 	c.Error(apperrors.NewNotFoundError("container template not found").WithDetails(errStringOrEmpty(err)))
-	// 	return
-	// }
-	// displayName := firstNonEmptyStrings(req.Name, tpl.DisplayName, tpl.Name, strconv.FormatInt(req.ContainerTemplateID, 10))
-
-	session, err := h.terminalRegistry.CreateForTemplate(
+	session, rec, err := h.terminalRegistry.CreateForTemplate(
 		c.Request.Context(), userID, project.ID, req.ContainerTemplateID, req.Rows, req.Cols,
 	)
 	if err != nil {
@@ -118,13 +99,13 @@ func (h *ContainerHandler) ContainerTerminalSessionCreate(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, containerTerminalSessionCreateResponse{
-		TerminalSessionStatus: h.terminalRegistry.Status(session.Key()),
-		// DisplayName:           displayName,
-		// TemplateName:          tpl.Name,
-		// ImageName:             tpl.ImageName,
-		// AppType:               tpl.AppType,
-	})
+	status := h.terminalRegistry.Status(session.Key())
+	// 展示名由服务端在落库时自动生成（模板展示名 → 模板名 → 模板 ID），
+	// 这里直接从持久化记录里带回去，前端不用再取一次列表 / 自己拼。
+	if rec != nil {
+		status.Name = strings.TrimSpace(rec.Name)
+	}
+	c.JSON(http.StatusOK, status)
 }
 
 // ContainerTemplateTerminal 通过 WebSocket 连接「已有的终端会话」。
