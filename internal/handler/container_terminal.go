@@ -98,15 +98,15 @@ func (h *ContainerHandler) ContainerTerminalSessionCreate(c *gin.Context) {
 		return
 	}
 
-	tpl, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ContainerTemplateID)
-	if err != nil || tpl == nil {
-		c.Error(apperrors.NewNotFoundError("container template not found").WithDetails(errStringOrEmpty(err)))
-		return
-	}
-	displayName := firstNonEmptyStrings(req.Name, tpl.DisplayName, tpl.Name, strconv.FormatInt(req.ContainerTemplateID, 10))
+	// tpl, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ContainerTemplateID)
+	// if err != nil || tpl == nil {
+	// 	c.Error(apperrors.NewNotFoundError("container template not found").WithDetails(errStringOrEmpty(err)))
+	// 	return
+	// }
+	// displayName := firstNonEmptyStrings(req.Name, tpl.DisplayName, tpl.Name, strconv.FormatInt(req.ContainerTemplateID, 10))
 
 	session, err := h.terminalRegistry.CreateForTemplate(
-		c.Request.Context(), userID, project.ID, req.ContainerTemplateID, displayName, req.Rows, req.Cols,
+		c.Request.Context(), userID, project.ID, req.ContainerTemplateID, req.Rows, req.Cols,
 	)
 	if err != nil {
 		switch {
@@ -120,10 +120,10 @@ func (h *ContainerHandler) ContainerTerminalSessionCreate(c *gin.Context) {
 
 	c.JSON(http.StatusOK, containerTerminalSessionCreateResponse{
 		TerminalSessionStatus: h.terminalRegistry.Status(session.Key()),
-		DisplayName:           displayName,
-		TemplateName:          tpl.Name,
-		ImageName:             tpl.ImageName,
-		AppType:               tpl.AppType,
+		// DisplayName:           displayName,
+		// TemplateName:          tpl.Name,
+		// ImageName:             tpl.ImageName,
+		// AppType:               tpl.AppType,
 	})
 }
 

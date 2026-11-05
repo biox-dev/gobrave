@@ -56,6 +56,20 @@ func NewContainerProbeRunner(worker *ContainerCreateWorker) *ContainerProbeRunne
 	return &ContainerProbeRunner{worker: worker}
 }
 
+// ContainerTemplateName 返回模板的展示名与名称，供终端会话生成默认展示名。
+//
+// 模板不可读 / 未配置时返回空串，调用方会回退到模板 ID。
+func (r *ContainerProbeRunner) ContainerTemplateName(ctx context.Context, templateID int64) (string, string) {
+	if r == nil || r.worker == nil || r.worker.repo == nil || templateID <= 0 {
+		return "", ""
+	}
+	tpl, err := r.worker.repo.GetContainerTemplateByID(ctx, templateID)
+	if err != nil || tpl == nil {
+		return "", ""
+	}
+	return tpl.DisplayName, tpl.Name
+}
+
 type probePlan struct {
 	spec *types.ContainerSpec
 	rt   containerruntime.Runtime

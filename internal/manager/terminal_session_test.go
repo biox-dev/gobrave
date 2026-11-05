@@ -92,6 +92,10 @@ type fakeOpener struct {
 	calls    int
 	attaches int
 	mu       sync.Mutex
+
+	// templateDisplayName / templateName 供新建会话生成展示名时使用。
+	templateDisplayName string
+	templateName        string
 }
 
 // currentShell 返回当前 shell；每次 Start 都换一个新的（真实容器每会话一个 shell）。
@@ -133,6 +137,12 @@ func (o *fakeOpener) AttachTerminalRuntime(_ context.Context, _, runtimeID strin
 }
 
 func (o *fakeOpener) DropTerminalRuntime(context.Context, string, string) {}
+
+func (o *fakeOpener) ContainerTemplateName(context.Context, int64) (string, string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.templateDisplayName, o.templateName
+}
 
 func newTestRegistry(opener *fakeOpener) *TerminalSessionRegistry {
 	return newTerminalSessionRegistry(opener, nil, nil, TerminalRegistryOptions{
@@ -872,7 +882,7 @@ func TestTerminalSessionRegistryCreateAssignsPositiveID(t *testing.T) {
 		SessionTTL:  time.Hour,
 	})
 
-	session, err := registry.CreateForTemplate(context.Background(), 91, 92, 93, "fresh", 24, 80)
+	session, err := registry.CreateForTemplate(context.Background(), 91, 92, 93, 24, 80)
 	if err != nil {
 		t.Fatalf("CreateForTemplate: %v", err)
 	}
@@ -1081,7 +1091,7 @@ func TestTerminalSessionRegistryPushesStateEvents(t *testing.T) {
 
 // 一个容器模板可以创建多条「UI 手动创建」的会话：每次新建都是独立会话 / 容器。
 func TestTerminalSessionRegistryCreateMultipleUISessionsPerTemplate(t *testing.T) {
-	opener := &fakeOpener{shell: newFakeShell()}
+	opener := &fakeOpener{shell: newFakeShell(), templateDisplayName: "template-display"}
 	store := newFakeTerminalStore()
 	registry := newTerminalSessionRegistry(opener, nil, store, TerminalRegistryOptions{
 		ReadyWait:   2 * time.Second,
@@ -1089,11 +1099,11 @@ func TestTerminalSessionRegistryCreateMultipleUISessionsPerTemplate(t *testing.T
 		SessionTTL:  time.Hour,
 	})
 
-	a, err := registry.CreateForTemplate(context.Background(), 1, 2, 3, "first", 24, 80)
+	a, err := registry.CreateForTemplate(context.Background(), 1, 2, 3, 24, 80)
 	if err != nil {
 		t.Fatalf("CreateForTemplate #1: %v", err)
 	}
-	b, err := registry.CreateForTemplate(context.Background(), 1, 2, 3, "second", 24, 80)
+	b, err := registry.CreateForTemplate(context.Background(), 1, 2, 3, 24, 80)
 	if err != nil {
 		t.Fatalf("CreateForTemplate #2: %v", err)
 	}
@@ -1108,7 +1118,7 @@ func TestTerminalSessionRegistryCreateMultipleUISessionsPerTemplate(t *testing.T
 	for _, item := range sessions {
 		names[item.SessionID] = item.Name
 	}
-	if names[a.ID()] != "first" || names[b.ID()] != "second" {
+	if names[a.ID()] != "template-display" || names[b.ID()] != "template-display" {
 		t.Fatalf("unexpected names: %q / %q", names[a.ID()], names[b.ID()])
 	}
 	if registry.LookupByID(a.recordID()) != a || registry.LookupByID(b.recordID()) != b {

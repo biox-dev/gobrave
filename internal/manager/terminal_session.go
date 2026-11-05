@@ -117,13 +117,11 @@ func (k TerminalSessionKey) ReplaceID(id int64) TerminalSessionKey {
 
 // terminalCreateOptions 是「创建（或认领）会话」的参数。
 //
-// 这些参数只在新建时生效：已存在的会话 / 认领的旧容器保持原有的名字与持久标记。
-// 会话名刻意不放进 TerminalSessionKey：key 只回答「是哪个会话」，不承载创建参数。
+// 这些参数只在新建时生效：已存在的会话 / 认领的旧容器保持原有的持久标记。
+// 展示名不在这里：它只由 persistRecord 的 Create 分支按模板元数据生成并落库。
 type terminalCreateOptions struct {
 	// persistent 为 true 时新建的会话是持久会话（只能被空闲 TTL 或显式关闭回收）。
 	persistent bool
-	// name 是新建会话的展示名，只在 Create 时写入 DB；为空时列表接口回退到模板展示名 / 会话 ID。
-	name string
 	// size 是新建 PTY 的尺寸；0 值表示使用默认 24x80。
 	size terminalSize
 }
@@ -144,16 +142,13 @@ const (
 	defaultTerminalSessionTTL         = 2 * time.Hour
 	defaultTerminalMaxSessionsPerUser = 4
 	defaultTerminalScrollbackBytes    = 1024 * 1024
-	// defaultAgentTerminalSessionName 是 Agent 通过 terminal_exec 新建会话时写死的展示名。
-	// 会话名只在创建时确定，之后只能通过改名接口修改（尚未实现）。
-	defaultAgentTerminalSessionName = "Agent 终端"
-	terminalIdleThreshold           = 300 * time.Millisecond
-	terminalIdleWait                = 3 * time.Second
-	terminalExecQueueSize           = 16
-	terminalSubscriberBufSize       = 2048
-	terminalEventBufSize            = 64
-	terminalScrollbackFlushInterval = 2 * time.Second
-	terminalMaintenanceInterval     = time.Minute
+	terminalIdleThreshold             = 300 * time.Millisecond
+	terminalIdleWait                  = 3 * time.Second
+	terminalExecQueueSize             = 16
+	terminalSubscriberBufSize         = 2048
+	terminalEventBufSize              = 64
+	terminalScrollbackFlushInterval   = 2 * time.Second
+	terminalMaintenanceInterval       = time.Minute
 )
 
 var (
@@ -389,6 +384,9 @@ type TerminalRuntimeOpener interface {
 	StartTerminalRuntime(ctx context.Context, userID, projectID, templateID int64, opts containerruntime.TerminalOptions) (*ProbeTerminalHandle, error)
 	AttachTerminalRuntime(ctx context.Context, runtimeName, runtimeID string, opts containerruntime.TerminalOptions) (*ProbeTerminalHandle, error)
 	DropTerminalRuntime(ctx context.Context, runtimeName, runtimeID string)
+	// ContainerTemplateName 返回模板的展示名与名称，供新建会话生成默认展示名。
+	// 模板不可读时返回空串，调用方回退到模板 ID。
+	ContainerTemplateName(ctx context.Context, templateID int64) (displayName, name string)
 }
 
 // TerminalSessionRegistry 维护终端会话 ID → PTY 的映射。
@@ -515,17 +513,36 @@ func (r *TerminalSessionRegistry) scrollbackBytes() int {
 	return defaultTerminalScrollbackBytes
 }
 
+// defaultSessionName 生成新会话的默认展示名：模板展示名 → 模板名 → 模板 ID。
+//
+// 只在 persistRecord 的 Create 分支调用：DB 是 name 的唯一真相，之后任何更新都不改写它。
+func (r *TerminalSessionRegistry) defaultSessionName(ctx context.Context, templateID int64) string {
+	displayName, name := "", ""
+	if r.probe != nil {
+		displayName, name = r.probe.ContainerTemplateName(ctx, templateID)
+	}
+	return firstNonEmptyString(displayName, name, strconv.FormatInt(templateID, 10))
+}
+
+// firstNonEmptyString 返回第一个去空白后非空的字符串。
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 // CreateForTemplate 按容器模板新建一条「UI 手动创建」的终端会话并立即启动。
 //
 // 一个模板可以有多条这样的会话（每次点「新建」都新建一条），彼此独立。
-// name 是会话展示名（前端 / 模板名），持久会话（只能由空闲 TTL 或显式关闭回收）。
-func (r *TerminalSessionRegistry) CreateForTemplate(ctx context.Context, userID, projectID, templateID int64, name string, rows, cols uint16) (*ManagedTerminalSession, error) {
+// 持久会话（只能由空闲 TTL 或显式关闭回收）；展示名由 persistRecord 按模板生成。
+func (r *TerminalSessionRegistry) CreateForTemplate(ctx context.Context, userID, projectID, templateID int64, rows, cols uint16) (*ManagedTerminalSession, error) {
 	key := NewUIKey(userID, projectID, templateID)
 	sess, _, err := r.ensure(ctx, key, terminalCreateOptions{
 		persistent: true,
-		// 会话名只在创建时写入（由调用方传入），创建后不再自动改写。
-		name: strings.TrimSpace(name),
-		size: terminalSize{rows: rows, cols: cols},
+		size:       terminalSize{rows: rows, cols: cols},
 	})
 	if err != nil {
 		return nil, err
@@ -767,8 +784,8 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, opts ter
 	if err == nil && adopted != nil {
 		if opts.persistent {
 			adopted.setPersistent(true)
-			// 认领的是已有记录：Update 不写 name（opts.name 在这里无意义）。
-			r.persistRecord(createCtx, adopted, "", true)
+			// 认领的是已有记录：Update 不写 name。
+			r.persistRecord(createCtx, adopted, true)
 		}
 		return adopted, false, nil
 	}
@@ -792,7 +809,7 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, opts ter
 	// 新会话默认是一次性（Agent 创建的）；UI / Agent 显式要求持久时在这里直接落库为持久。
 	// 先落库拿到主键，再让注册表把会话挂进索引（保证 createOrAdopt 返回时 ID 已就绪）。
 	managed.setPersistent(opts.persistent)
-	r.persistRecord(createCtx, managed, opts.name, opts.persistent)
+	r.persistRecord(createCtx, managed, opts.persistent)
 	return managed, true, nil
 }
 
@@ -897,18 +914,17 @@ func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalS
 
 // persistRecord 把 会话 → runtimeID 的映射落库，供进程重启后认领。
 //
-// 只有「新建容器」会写 name（由调用方传入 terminalCreateOptions.name）；
+// name 只在 Create 分支生成：模板展示名 → 模板名 → 模板 ID；
 // 已存在的记录只走 Update，绝不回写 name —— DB 是 name 的唯一真相。
 // 新建时 key.ID 还是进程内负数占位 ID，Create 后回填主键，再把会话 key
 // 换成真实 ID 形态（滚动缓冲文件名随之迁移）。
-func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *ManagedTerminalSession, name string, persistent bool) {
+func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *ManagedTerminalSession, persistent bool) {
 	if r.store == nil || sess == nil {
 		return
 	}
 	key := sess.Key()
 	rec := &types.TerminalSession{
 		SessionKey:     key.SessionKey(),
-		Name:           strings.TrimSpace(name),
 		AgentSessionID: key.AgentSessionID,
 		UserID:         key.UserID,
 		ProjectID:      key.ProjectID,
@@ -928,7 +944,8 @@ func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *Manag
 		}
 		return
 	}
-	// 新会话：这里才写 name。
+	// 新会话：展示名只在 Create 分支生成并落库。
+	rec.Name = r.defaultSessionName(ctx, key.TemplateID)
 	if err := r.store.Create(ctx, rec); err != nil {
 		logger.Warnf(ctx, "[TerminalSession] persist session %s failed: %v", key.SessionKey(), err)
 		return
@@ -1265,7 +1282,6 @@ func (r *TerminalSessionRegistry) ReviveByID(ctx context.Context, id int64, rows
 	size := terminalSize{rows: rows, cols: cols}
 	sess, created, err := r.ensure(ctx, key, terminalCreateOptions{
 		persistent: true,
-		name:       rec.Name,
 		size:       size,
 	})
 	if err != nil {
@@ -1349,12 +1365,7 @@ func (r *TerminalSessionRegistry) Execute(ctx context.Context, key TerminalSessi
 		}
 		// 新建会话时按 cmd.Persistent 决定生命周期：一次性会话在本命令结束
 		// 且没有订阅者时会被回收，命令输出随之丢失。
-		opts := terminalCreateOptions{persistent: cmd.Persistent}
-		if key.AgentSessionID > 0 {
-			// Agent 会话被回收后重建：补回展示名，避免 DB 里的 name 为空。
-			opts.name = defaultAgentTerminalSessionName
-		}
-		created, _, err := r.ensure(ctx, key, opts)
+		created, _, err := r.ensure(ctx, key, terminalCreateOptions{persistent: cmd.Persistent})
 		if err != nil {
 			return TerminalCommandResult{}, err
 		}
@@ -1446,8 +1457,7 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 	// 先占位：保证「一次性会话 + 无 WS」时命令执行期间不会被回收。
 	sess := r.Lookup(key)
 	if sess == nil && in.CreateIfMissing {
-		// 新建会话时写死展示名：会话名不在创建后自动推导 / 改写（改名只走后续接口）。
-		created, _, err := r.ensure(ctx, key, terminalCreateOptions{name: defaultAgentTerminalSessionName})
+		created, _, err := r.ensure(ctx, key, terminalCreateOptions{})
 		if err != nil {
 			return runtimecontext.ContainerTerminalExecResult{}, err
 		}
