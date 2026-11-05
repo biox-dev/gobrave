@@ -148,9 +148,9 @@ func TestTerminalAttachWithInfoTruncatedAfterRollover(t *testing.T) {
 	}
 }
 
-// PTY 尺寸必须用前端 xterm 的尺寸：新会话直接用上报值，之后（Agent 先建会话）沿用
-// 上次 UI 用过的尺寸。否则前端接入时改变 PTY 宽度会让 bash 按旧宽度重绘提示符，
-// 把已经输出的历史行覆盖掉。
+// PTY 尺寸以调用方 / 前端 xterm 为准：
+//   - 新建会话直接使用上报尺寸；没上报则回落到默认 24x80；
+//   - 已存活会话在 attach（ReviveByID）时用上报尺寸 Resize，不跨会话记忆尺寸。
 func TestTerminalSessionRegistryUsesBrowserPTYSize(t *testing.T) {
 	opener := &fakeOpener{shell: newFakeShell()}
 	registry := newTestRegistry(opener)
@@ -168,19 +168,22 @@ func TestTerminalSessionRegistryUsesBrowserPTYSize(t *testing.T) {
 		t.Fatalf("unexpected PTY size %dx%d, want 40x132", rows, cols)
 	}
 
-	// 前端 resize：记住新尺寸，供之后的会话复用。
-	if err := session.Resize(50, 160); err != nil {
-		t.Fatalf("Resize: %v", err)
+	// attach 时上报的尺寸直接作用于存活会话。
+	if _, err := registry.ReviveByID(context.Background(), session.recordID(), 50, 160); err != nil {
+		t.Fatalf("ReviveByID: %v", err)
+	}
+	if rows, cols := session.Size(); rows != 50 || cols != 160 {
+		t.Fatalf("expected PTY resized to 50x160, got %dx%d", rows, cols)
 	}
 
-	// Agent 侧（不带尺寸）关闭并重建同一会话。
+	// 不带尺寸的调用（Agent 的 terminal_exec）回落到默认尺寸，不再继承上次尺寸。
 	registry.CloseSession(session.Key())
 
 	recreated, _, err := registry.Ensure(context.Background(), key)
 	if err != nil {
 		t.Fatalf("Ensure after close: %v", err)
 	}
-	if rows, cols := recreated.Size(); rows != 50 || cols != 160 {
-		t.Fatalf("expected remembered PTY size 50x160, got %dx%d", rows, cols)
+	if rows, cols := recreated.Size(); rows != 24 || cols != 80 {
+		t.Fatalf("expected default PTY size 24x80, got %dx%d", rows, cols)
 	}
 }

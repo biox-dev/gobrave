@@ -194,7 +194,7 @@ type TerminalReplayInfo struct {
 // 它必须和浏览器 xterm 的尺寸一致：PTY 宽度决定了历史输出的换行位置，也决定了
 // bash/readline 对「提示符占几行」的判断。宽度变了以后 bash 会按旧宽度重绘提示符
 // （\r ESC[K ESC[A ...），在更宽的 xterm 里那个 ESC[A 会落到上一行，把已经输出的
-// 历史行覆盖掉。所以新会话直接用前端上报的尺寸，并记住该模板上次用过的尺寸。
+// 历史行覆盖掉。所以新建会话直接用前端上报的尺寸，前端接入时再用 Resize 对齐。
 type terminalSize struct {
 	rows uint16
 	cols uint16
@@ -395,9 +395,6 @@ type TerminalSessionRegistry struct {
 	//   - 按会话主键重建：id:<会话主键>
 	//   - 按 Agent 会话新建：(userID, projectID, templateID, agentSessionID)
 	pending map[string]*pendingTerminalSession
-	// lastSizes 记住「该用户在这个模板终端上最近一次使用的 PTY 尺寸」（userID:templateID）。
-	// Agent 先建会话时没有前端在线，沿用它就能避免前端接入后再改宽度触发 bash 重绘。
-	lastSizes map[string]terminalSize
 }
 
 type pendingTerminalSession struct {
@@ -446,39 +443,7 @@ func newTerminalSessionRegistry(probe TerminalRuntimeOpener, publisher TerminalE
 		opts:      opts,
 		sessions:  make(map[int64]*ManagedTerminalSession),
 		pending:   make(map[string]*pendingTerminalSession),
-		lastSizes: make(map[string]terminalSize),
 	}
-}
-
-// rememberSize 记住该用户在该模板上最近使用的 PTY 尺寸。
-func (r *TerminalSessionRegistry) rememberSize(key TerminalSessionKey, size terminalSize) {
-	if key.UserID == 0 || key.TemplateID == 0 || !size.valid() {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.lastSizes) > 1024 {
-		r.lastSizes = make(map[string]terminalSize)
-	}
-	r.lastSizes[strconv.FormatInt(key.UserID, 10)+":"+strconv.FormatInt(key.TemplateID, 10)] = size.normalize()
-}
-
-// rememberedSize 返回该模板上次使用的尺寸；没有记录时返回零值。
-func (r *TerminalSessionRegistry) rememberedSize(key TerminalSessionKey) terminalSize {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.lastSizes[strconv.FormatInt(key.UserID, 10)+":"+strconv.FormatInt(key.TemplateID, 10)]
-}
-
-// resolveSize 决定新会话的 PTY 尺寸：显式传入 > 该模板上次用过的 > 24x80。
-func (r *TerminalSessionRegistry) resolveSize(key TerminalSessionKey, size terminalSize) terminalSize {
-	if size.valid() {
-		return size.normalize()
-	}
-	if remembered := r.rememberedSize(key); remembered.valid() {
-		return remembered
-	}
-	return terminalSize{}.normalize()
 }
 
 func (r *TerminalSessionRegistry) readyWait() time.Duration {
@@ -560,9 +525,6 @@ func (r *TerminalSessionRegistry) Create(ctx context.Context, key TerminalSessio
 // name 是会话展示名（前端 / 模板名），持久会话（只能由空闲 TTL 或显式关闭回收）。
 func (r *TerminalSessionRegistry) CreateForTemplate(ctx context.Context, userID, projectID, templateID int64, name string, rows, cols uint16) (*ManagedTerminalSession, error) {
 	size := terminalSize{rows: rows, cols: cols}
-	if size.valid() {
-		r.rememberSize(NewUIKey(userID, projectID, templateID), size)
-	}
 	key := NewUIKey(userID, projectID, templateID)
 	key.Name = strings.TrimSpace(name)
 	sess, _, err := r.ensure(ctx, key, true, size)
@@ -591,13 +553,9 @@ func (r *TerminalSessionRegistry) EnsurePersistent(ctx context.Context, key Term
 }
 
 // EnsurePersistentSized 与 EnsurePersistent 相同，但会带上前端 xterm 的行列：
-// 新建的会话直接以这个尺寸创建 PTY，并记住它供 Agent 之后创建的会话复用。
+// 新建的会话直接以这个尺寸创建 PTY；已存活的会话保持原 PTY，接入方再调用 Resize 同步。
 func (r *TerminalSessionRegistry) EnsurePersistentSized(ctx context.Context, key TerminalSessionKey, rows, cols uint16) (*ManagedTerminalSession, bool, error) {
-	size := terminalSize{rows: rows, cols: cols}
-	if size.valid() {
-		r.rememberSize(key, size)
-	}
-	return r.ensure(ctx, key, true, size)
+	return r.ensure(ctx, key, true, terminalSize{rows: rows, cols: cols})
 }
 
 func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessionKey, persistent bool, size terminalSize) (*ManagedTerminalSession, bool, error) {
@@ -761,11 +719,9 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, persiste
 		return nil, false, fmt.Errorf("container probe is not configured")
 	}
 
-	resolved := r.resolveSize(key, size)
-	if size.valid() {
-		// 显式上报的尺寸同时记为该模板的「上次尺寸」。
-		r.rememberSize(key, resolved)
-	}
+	// 调用方没给尺寸（例如 Agent 的 terminal_exec）时用默认 24x80；
+	// 前端接入后由 Resize 把 PTY 调整成 xterm 的尺寸。
+	resolved := size.normalize()
 
 	createCtx, cancel := context.WithTimeout(context.Background(), r.createWait())
 	defer cancel()
@@ -1261,16 +1217,18 @@ func (r *TerminalSessionRegistry) SessionRecord(ctx context.Context, id int64) (
 // 这里走与创建相同的 ensure 路径：能认领原容器就重新 exec 一个 shell（adoptSession），
 // 容器已不存在则新建；历史输出由落盘的滚动缓冲回放。
 //
-// rows/cols 是前端 xterm 当前尺寸：重新 exec 的 shell 直接用这个尺寸建 PTY，
-// 否则进程重启后会回落到默认 24x80（前端把 PTY 宽度当权威尺寸，就再也 fit 不回来了）。
-// 传 0 时沿用该模板上次用过的尺寸 / 默认值。
+// rows/cols 是前端 xterm 当前尺寸：会话已存活时直接 Resize 到该尺寸；
+// 需要重新 exec shell 时用它建 PTY。传 0 时保持原尺寸 / 使用默认 24x80。
 //
 // 返回 ErrTerminalSessionNotFound 表示记录不存在（或已关闭），由调用方报 404。
+// id 只拒绝 0（未分配）：落库前的新会话使用负数占位 ID，它们同样可以被定位。
 func (r *TerminalSessionRegistry) ReviveByID(ctx context.Context, id int64, rows, cols uint16) (*ManagedTerminalSession, error) {
-	if id <= 0 {
+	if id == 0 {
 		return nil, ErrTerminalSessionNotFound
 	}
 	if sess := r.LookupByID(id); sess != nil {
+		// 已存活的会话：接入时按前端上报的尺寸调整 PTY。
+		resizeTerminalSession(sess, terminalSize{rows: rows, cols: cols})
 		return sess, nil
 	}
 	if r.store == nil {
@@ -1293,10 +1251,6 @@ func (r *TerminalSessionRegistry) ReviveByID(ctx context.Context, id int64, rows
 		Name:           rec.Name,
 	}
 	size := terminalSize{rows: rows, cols: cols}
-	if size.valid() {
-		// 记住前端尺寸，供之后没有前端在线的会话（Agent）复用。
-		r.rememberSize(key, size)
-	}
 	// 用户正在主动打开它：一律按持久会话重建，避免一次性规则把容器回收掉。
 	sess, created, err := r.ensure(ctx, key, true, size)
 	if err != nil {
@@ -1305,8 +1259,23 @@ func (r *TerminalSessionRegistry) ReviveByID(ctx context.Context, id int64, rows
 	if sess == nil || sess.isDead() {
 		return nil, ErrTerminalSessionNotFound
 	}
+	// ensure 复用了本进程里的存活会话时，用它把 PTY 调整到前端尺寸。
+	resizeTerminalSession(sess, size)
 	logger.Infof(ctx, "[TerminalSession] revived session %d created=%v runtime=%s", rec.ID, created, rec.RuntimeID)
 	return sess, nil
+}
+
+// resizeTerminalSession 按前端 xterm 尺寸调整会话 PTY；rows/cols 为 0 时不做任何事。
+//
+// 前端把 PTY 宽度当权威尺寸：接入时先按上报尺寸对齐 PTY，再回放历史输出，
+// 否则 bash 会在回放期间按旧宽度重绘提示符，覆盖已经输出的行。
+func resizeTerminalSession(sess *ManagedTerminalSession, size terminalSize) {
+	if sess == nil || !size.valid() {
+		return
+	}
+	if err := sess.Resize(size.rows, size.cols); err != nil {
+		logger.Warnf(context.Background(), "[TerminalSession] resize session %s to %dx%d failed: %v", sess.ID(), size.rows, size.cols, err)
+	}
 }
 
 // CloseSession 主动结束会话（删除容器），并删除持久层记录。
@@ -1768,10 +1737,7 @@ func (s *ManagedTerminalSession) WriteInput(data []byte) (int, error) {
 	return s.sess.Write(data)
 }
 
-// Resize 调整 PTY 尺寸。
-//
-// 尺寸必须由前端 xterm 驱动：PTY 宽度变了以后 bash 会按旧宽度重绘提示符，
-// 所以这里记住尺寸，下一次该模板的新会话直接用这个宽度，避免再触发重绘。
+// Resize 调整 PTY 尺寸（前端 xterm 是尺寸的唯一来源）。
 func (s *ManagedTerminalSession) Resize(rows, cols uint16) error {
 	if s.isDead() {
 		return ErrTerminalSessionClosed
@@ -1780,13 +1746,9 @@ func (s *ManagedTerminalSession) Resize(rows, cols uint16) error {
 		return nil
 	}
 	s.mu.Lock()
-	changed := s.rows != rows || s.cols != cols
 	s.rows = rows
 	s.cols = cols
 	s.mu.Unlock()
-	if changed {
-		s.registry.rememberSize(s.key, terminalSize{rows: rows, cols: cols})
-	}
 	return s.sess.Resize(rows, cols)
 }
 

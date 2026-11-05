@@ -41,7 +41,7 @@ type ContainerTerminalSessionCreateRequest struct {
 	// Name 是会话展示名；为空时由服务端回退到模板展示名 / 模板名 / ID。
 	Name string `json:"name"`
 	// Rows / Cols 是前端 xterm 的尺寸：新建会话直接用它建 PTY，
-	// 保证历史输出的换行与前端渲染一致。为 0 时沿用该模板上次用过的尺寸。
+	// 保证历史输出的换行与前端渲染一致。为 0 时使用默认 24x80。
 	Rows uint16 `json:"rows"`
 	Cols uint16 `json:"cols"`
 }
@@ -493,7 +493,7 @@ func (h *ContainerHandler) resolveTerminalSession(c *gin.Context, rows, cols uin
 
 // terminalSizeFromQuery 读取前端上报的 xterm 行列（?rows=&cols=）。
 //
-// 缺省 / 非法 / 只给了其中一项时返回 0：交给会话层按「该模板上次用过的尺寸」或默认值处理。
+// 缺省 / 非法 / 只给了其中一项时返回 0：交给会话层保持原尺寸 / 使用默认值处理。
 func terminalSizeFromQuery(c *gin.Context) (uint16, uint16) {
 	parse := func(name string) uint16 {
 		raw := strings.TrimSpace(c.Query(name))
