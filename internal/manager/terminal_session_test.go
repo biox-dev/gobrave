@@ -696,7 +696,7 @@ func (s *fakeTerminalStore) FindAgentSession(_ context.Context, userID, projectI
 	return nil, nil
 }
 
-func (s *fakeTerminalStore) Upsert(_ context.Context, rec *types.TerminalSession) error {
+func (s *fakeTerminalStore) Create(_ context.Context, rec *types.TerminalSession) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := *rec
@@ -705,7 +705,27 @@ func (s *fakeTerminalStore) Upsert(_ context.Context, rec *types.TerminalSession
 		cp.ID = s.nextID
 		rec.ID = cp.ID
 	}
-	s.rows[rec.SessionKey] = &cp
+	s.rows[cp.SessionKey] = &cp
+	return nil
+}
+
+func (s *fakeTerminalStore) Update(_ context.Context, rec *types.TerminalSession) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, existing := range s.rows {
+		if existing.ID != rec.ID {
+			continue
+		}
+		updated := *rec
+		// name 只由 Create 写入：更新时保留原值。
+		updated.Name = existing.Name
+		updated.Persistent = existing.Persistent || rec.Persistent
+		if key != updated.SessionKey {
+			delete(s.rows, key)
+		}
+		s.rows[updated.SessionKey] = &updated
+		return nil
+	}
 	return nil
 }
 
@@ -1083,8 +1103,13 @@ func TestTerminalSessionRegistryCreateMultipleUISessionsPerTemplate(t *testing.T
 	if a.ID() == b.ID() {
 		t.Fatalf("each UI create must produce a distinct terminal session, both got %s", a.ID())
 	}
-	if a.displayName() != "first" || b.displayName() != "second" {
-		t.Fatalf("unexpected names: %q / %q", a.displayName(), b.displayName())
+	sessions := registry.ListSessions(1)
+	names := make(map[string]string, len(sessions))
+	for _, item := range sessions {
+		names[item.SessionID] = item.Name
+	}
+	if names[a.ID()] != "first" || names[b.ID()] != "second" {
+		t.Fatalf("unexpected names: %q / %q", names[a.ID()], names[b.ID()])
 	}
 	if registry.LookupByID(a.recordID()) != a || registry.LookupByID(b.recordID()) != b {
 		t.Fatalf("both sessions must be addressable by their id")

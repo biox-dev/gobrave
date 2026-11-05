@@ -122,7 +122,7 @@ func (k TerminalSessionKey) ReplaceID(id int64) TerminalSessionKey {
 type terminalCreateOptions struct {
 	// persistent 为 true 时新建的会话是持久会话（只能被空闲 TTL 或显式关闭回收）。
 	persistent bool
-	// name 是新建会话的展示名；为空时 displayName 回退为会话主键。
+	// name 是新建会话的展示名，只在 Create 时写入 DB；为空时列表接口回退到模板展示名 / 会话 ID。
 	name string
 	// size 是新建 PTY 的尺寸；0 值表示使用默认 24x80。
 	size terminalSize
@@ -355,9 +355,6 @@ type ManagedTerminalSession struct {
 	// persistent 标记会话是否为持久会话（见 types.TerminalSession.Persistent）。
 	// 只会在 WS（ContainerTemplateTerminal）接入、UI 手动创建或 Agent 显式要求时从 false 变 true。
 	persistent bool
-	// name 是会话展示名（UI 创建时由用户 / 模板提供，Agent 创建时取模板展示名）。
-	// 构造后不再修改：只在 initSession 里赋值一次。
-	name string
 	// rows / cols 是 PTY 当前尺寸；前端据此渲染回放，保证与历史输出的宽度一致。
 	rows        uint16
 	cols        uint16
@@ -770,7 +767,8 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, opts ter
 	if err == nil && adopted != nil {
 		if opts.persistent {
 			adopted.setPersistent(true)
-			r.persistRecord(createCtx, adopted, true)
+			// 认领的是已有记录：Update 不写 name（opts.name 在这里无意义）。
+			r.persistRecord(createCtx, adopted, "", true)
 		}
 		return adopted, false, nil
 	}
@@ -786,7 +784,7 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, opts ter
 	if err != nil {
 		return nil, false, err
 	}
-	managed, err := r.initSession(createCtx, key, handle, nil, resolved, opts.name)
+	managed, err := r.initSession(createCtx, key, handle, nil, resolved)
 	if err != nil {
 		handle.Cleanup()
 		return nil, false, err
@@ -794,7 +792,7 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, opts ter
 	// 新会话默认是一次性（Agent 创建的）；UI / Agent 显式要求持久时在这里直接落库为持久。
 	// 先落库拿到主键，再让注册表把会话挂进索引（保证 createOrAdopt 返回时 ID 已就绪）。
 	managed.setPersistent(opts.persistent)
-	r.persistRecord(createCtx, managed, opts.persistent)
+	r.persistRecord(createCtx, managed, opts.name, opts.persistent)
 	return managed, true, nil
 }
 
@@ -826,7 +824,7 @@ func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key Terminal
 		return nil, err
 	}
 
-	managed, err := r.initSession(ctx, recKey, handle, r.loadScrollback(recKey), size, rec.Name)
+	managed, err := r.initSession(ctx, recKey, handle, r.loadScrollback(recKey), size)
 	if err != nil {
 		handle.Cleanup()
 		return nil, err
@@ -842,7 +840,7 @@ func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key Terminal
 // 新建容器时 key.ID 为 0：先用进程内生成的占位 ID 建立会话（保证有稳定的
 // sessions 索引与滚动缓冲文件名），等落库（persistRecord）拿到主键后
 // 再 ReplaceID 换成真实 ID。
-func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalSessionKey, handle *ProbeTerminalHandle, replay []byte, size terminalSize, name string) (*ManagedTerminalSession, error) {
+func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalSessionKey, handle *ProbeTerminalHandle, replay []byte, size terminalSize) (*ManagedTerminalSession, error) {
 	if handle == nil || handle.Session == nil {
 		return nil, fmt.Errorf("terminal runtime handle is empty")
 	}
@@ -869,8 +867,6 @@ func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalS
 		createdAt:   time.Now(),
 		rows:        size.rows,
 		cols:        size.cols,
-		// 会话名只在创建 / 认领时写入一次；空名字保持为空（displayName 回退为主键）。
-		name: strings.TrimSpace(name),
 	}
 	if len(replay) > 0 {
 		// 重启前缓存的历史输出：作为初始缓冲，前端 attach 时直接回放。
@@ -901,18 +897,18 @@ func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalS
 
 // persistRecord 把 会话 → runtimeID 的映射落库，供进程重启后认领。
 //
-// 新建会话时 key.ID 为 0，Upsert 后回填主键：随后把内存会话的 key 换成真实 ID，
-// 并把滚动缓冲文件从 "new" 占位名迁移到 ID 名（超时 / 重启后仍能回放）。
-func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *ManagedTerminalSession, persistent bool) {
+// 只有「新建容器」会写 name（由调用方传入 terminalCreateOptions.name）；
+// 已存在的记录只走 Update，绝不回写 name —— DB 是 name 的唯一真相。
+// 新建时 key.ID 还是进程内负数占位 ID，Create 后回填主键，再把会话 key
+// 换成真实 ID 形态（滚动缓冲文件名随之迁移）。
+func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *ManagedTerminalSession, name string, persistent bool) {
 	if r.store == nil || sess == nil {
 		return
 	}
 	key := sess.Key()
 	rec := &types.TerminalSession{
-		// 注意只认「真实主键」：新会话在落库前用的是负数占位 ID（见
-		// newTerminalSessionPlaceholderID），绝不能写进记录，否则主键会变成 -1。
 		SessionKey:     key.SessionKey(),
-		Name:           sess.displayName(),
+		Name:           strings.TrimSpace(name),
 		AgentSessionID: key.AgentSessionID,
 		UserID:         key.UserID,
 		ProjectID:      key.ProjectID,
@@ -924,29 +920,31 @@ func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *Manag
 		Persistent:     persistent,
 		LastActiveAt:   time.Now(),
 	}
-	// 已认领的会话必须保留原主键，否则 Upsert 会当成新记录插入并把 session_id 换掉。
-	// 只有真实主键（> 0）才写入；新会话此时还是负数占位 ID，交给数据库分配。
+	// 已落库（真实主键）：只更新运行时字段，name 保持数据库里的值。
 	if id := sess.recordID(); id > 0 {
 		rec.ID = id
+		if err := r.store.Update(ctx, rec); err != nil {
+			logger.Warnf(ctx, "[TerminalSession] update session %s failed: %v", key.SessionKey(), err)
+		}
+		return
 	}
-	if err := r.store.Upsert(ctx, rec); err != nil {
+	// 新会话：这里才写 name。
+	if err := r.store.Create(ctx, rec); err != nil {
 		logger.Warnf(ctx, "[TerminalSession] persist session %s failed: %v", key.SessionKey(), err)
 		return
 	}
 	if rec.ID <= 0 {
 		return
 	}
-	// 把（可能还是占位 / 未分配）的 ID 换成数据库主键。
+	// 把（占位）ID 换成数据库主键。
 	sess.assignRecordID(rec.ID)
 	if rec.SessionKey == sess.Key().SessionKey() {
 		return
 	}
-	// 唯一键从「占位形态」变成了 ID 形态：把旧记录删掉，再写一条 ID 形态的记录。
-	_ = r.store.DeleteByID(ctx, rec.ID)
-	renamed := *rec
-	renamed.SessionKey = sess.Key().SessionKey()
-	if err := r.store.Upsert(ctx, &renamed); err != nil {
-		logger.Warnf(ctx, "[TerminalSession] persist renamed session %s failed: %v", renamed.SessionKey, err)
+	// 唯一键从「占位形态」变成 ID 形态：只改 key，不碰 name。
+	rec.SessionKey = sess.Key().SessionKey()
+	if err := r.store.Update(ctx, rec); err != nil {
+		logger.Warnf(ctx, "[TerminalSession] rename session %s failed: %v", rec.SessionKey, err)
 	}
 }
 
@@ -1143,7 +1141,6 @@ func (r *TerminalSessionRegistry) Status(key TerminalSessionKey) TerminalSession
 		ProjectID:      sess.key.ProjectID,
 		TemplateID:     sess.key.TemplateID,
 		AgentSessionID: sess.key.AgentSessionID,
-		Name:           sess.displayName(),
 		Persistent:     sess.isPersistent(),
 		Busy:           sess.isBusy(),
 		RuntimeID:      sess.runtimeID,
@@ -1196,7 +1193,6 @@ func (r *TerminalSessionRegistry) ListSessions(userID int64) []TerminalSessionSt
 			status.Seq = seq
 			status.Busy = sess.isBusy()
 			status.Persistent = sess.isPersistent()
-			status.Name = sess.displayName()
 			status.LastActive = sess.lastActiveTime()
 		}
 		out = append(out, status)
@@ -1353,7 +1349,12 @@ func (r *TerminalSessionRegistry) Execute(ctx context.Context, key TerminalSessi
 		}
 		// 新建会话时按 cmd.Persistent 决定生命周期：一次性会话在本命令结束
 		// 且没有订阅者时会被回收，命令输出随之丢失。
-		created, _, err := r.ensure(ctx, key, terminalCreateOptions{persistent: cmd.Persistent})
+		opts := terminalCreateOptions{persistent: cmd.Persistent}
+		if key.AgentSessionID > 0 {
+			// Agent 会话被回收后重建：补回展示名，避免 DB 里的 name 为空。
+			opts.name = defaultAgentTerminalSessionName
+		}
+		created, _, err := r.ensure(ctx, key, opts)
 		if err != nil {
 			return TerminalCommandResult{}, err
 		}
@@ -1675,18 +1676,6 @@ func (s *ManagedTerminalSession) recordID() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.key.ID
-}
-
-// displayName 返回会话展示名；未设置时回退为 ID。
-func (s *ManagedTerminalSession) displayName() string {
-	s.mu.Lock()
-	name := strings.TrimSpace(s.name)
-	id := s.key.ID
-	s.mu.Unlock()
-	if name != "" {
-		return name
-	}
-	return sessionIDString(id)
 }
 
 // assignRecordID 在会话落库后把（占位）ID 换成真实主键。
