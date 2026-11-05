@@ -904,7 +904,7 @@ func TestTerminalSessionRegistryListAndReviveAfterRestart(t *testing.T) {
 	}
 
 	// 用同一 ID 重连：自动认领原容器并重建 shell。
-	sess, err := registry.ReviveByID(context.Background(), key.ID)
+	sess, err := registry.ReviveByID(context.Background(), key.ID, 0, 0)
 	if err != nil {
 		t.Fatalf("ReviveByID: %v", err)
 	}
@@ -925,7 +925,7 @@ func TestTerminalSessionRegistryListAndReviveAfterRestart(t *testing.T) {
 	}
 
 	// 记录不存在时返回 NotFound，交调用方报 404。
-	if _, err := registry.ReviveByID(context.Background(), 424242); !errors.Is(err, ErrTerminalSessionNotFound) {
+	if _, err := registry.ReviveByID(context.Background(), 424242, 0, 0); !errors.Is(err, ErrTerminalSessionNotFound) {
 		t.Fatalf("expected ErrTerminalSessionNotFound, got %v", err)
 	}
 

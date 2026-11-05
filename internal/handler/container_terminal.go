@@ -151,7 +151,8 @@ func (h *ContainerHandler) ContainerTerminalSessionCreate(c *gin.Context) {
 // @Security     Bearer
 // @Router       /container/terminal/session/{id}/terminal [get]
 func (h *ContainerHandler) ContainerTemplateTerminal(c *gin.Context) {
-	session, ok := h.resolveTerminalSession(c)
+	rows, cols := terminalSizeFromQuery(c)
+	session, ok := h.resolveTerminalSession(c, rows, cols)
 	if !ok {
 		return
 	}
@@ -257,7 +258,7 @@ type containerTerminalExecResponse struct {
 // @Security     Bearer
 // @Router       /container/terminal/session/{id}/terminal/exec [post]
 func (h *ContainerHandler) ContainerTemplateTerminalExec(c *gin.Context) {
-	session, ok := h.resolveTerminalSession(c)
+	session, ok := h.resolveTerminalSession(c, 0, 0)
 	if !ok {
 		return
 	}
@@ -475,17 +476,41 @@ func (h *ContainerHandler) resolveTerminalSessionID(c *gin.Context) (int64, bool
 // 内存里没有时会自动「重建」：按数据库记录认领原容器并重新 exec 一个 shell
 // （见 manager.TerminalSessionRegistry.ReviveByID）。这样进程重启后前端用同一个
 // 会话 ID 重连即可继续使用，而不会因会话不在内存里报 404。
-func (h *ContainerHandler) resolveTerminalSession(c *gin.Context) (*manager.ManagedTerminalSession, bool) {
+//
+// rows/cols 是前端 xterm 的尺寸（可为 0）：重建的 PTY 直接用它，保证宽度与前端一致。
+func (h *ContainerHandler) resolveTerminalSession(c *gin.Context, rows, cols uint16) (*manager.ManagedTerminalSession, bool) {
 	id, ok := h.resolveTerminalSessionID(c)
 	if !ok {
 		return nil, false
 	}
-	sess, err := h.terminalRegistry.ReviveByID(c.Request.Context(), id)
+	sess, err := h.terminalRegistry.ReviveByID(c.Request.Context(), id, rows, cols)
 	if err != nil || sess == nil {
 		c.Error(apperrors.NewNotFoundError("terminal session does not exist").WithDetails(errStringOrEmpty(err)))
 		return nil, false
 	}
 	return sess, true
+}
+
+// terminalSizeFromQuery 读取前端上报的 xterm 行列（?rows=&cols=）。
+//
+// 缺省 / 非法 / 只给了其中一项时返回 0：交给会话层按「该模板上次用过的尺寸」或默认值处理。
+func terminalSizeFromQuery(c *gin.Context) (uint16, uint16) {
+	parse := func(name string) uint16 {
+		raw := strings.TrimSpace(c.Query(name))
+		if raw == "" {
+			return 0
+		}
+		parsed, err := strconv.ParseUint(raw, 10, 16)
+		if err != nil {
+			return 0
+		}
+		return uint16(parsed)
+	}
+	rows, cols := parse("rows"), parse("cols")
+	if rows == 0 || cols == 0 {
+		return 0, 0
+	}
+	return rows, cols
 }
 
 // firstNonEmptyStrings 返回第一个去空白后非空的字符串。
