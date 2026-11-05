@@ -4,7 +4,9 @@ import (
 	"context"
 	stderrs "errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/biox-dev/gobrave/internal/config"
 	apperrors "github.com/biox-dev/gobrave/internal/errors"
@@ -521,6 +523,62 @@ func (s *containerService) CreateAppSessionByTemplate(ctx context.Context, userI
 
 func (s *containerService) CreateAppSessionByTemplateForAnalysisNode(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error) {
 	return s.createAppSessionByTemplate(ctx, userID, projectID, containerTemplateID, name, analysisNodeID, workspacePath)
+}
+
+// CreateTerminalAppSession 按容器模板创建「终端会话」（AppSession + 常驻容器）。
+//
+// 与 CreateAppSessionByTemplate 的区别：
+//   - AgentSessionID 记录发起方（0 = UI 手动创建；>0 = Agent 会话）：
+//     同一 (templateID, agentSessionID) 只会有一条会话；
+//   - Persistent 标记会话是否持久（UI / WS 接入后不会再退回一次性）；
+//   - 容器以 terminalKeepAliveCommand 常驻，真正的交互式 shell 由运行时 exec 打开。
+//
+// 容器创建由终端会话注册表在拿到会话主键后同步执行（CreateByTemplateWithOptions），
+// 因此这里只负责落库会话记录。
+func (s *containerService) CreateTerminalAppSession(ctx context.Context, in types.TerminalAppSessionInput) (*types.AppSession, error) {
+	if in.UserID == 0 {
+		return nil, fmt.Errorf("user id is required")
+	}
+	if in.ProjectID == 0 {
+		return nil, fmt.Errorf("project id is required")
+	}
+	if in.ContainerTemplateID == 0 {
+		return nil, fmt.Errorf("container template id is required")
+	}
+
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		tpl, err := s.containerRepo.GetContainerTemplateByID(ctx, in.ContainerTemplateID)
+		if err == nil && tpl != nil {
+			name = strings.TrimSpace(tpl.DisplayName)
+			if name == "" {
+				name = strings.TrimSpace(tpl.Name)
+			}
+		}
+		if name == "" {
+			name = strconv.FormatInt(in.ContainerTemplateID, 10)
+		}
+		if in.AgentSessionID > 0 {
+			name = fmt.Sprintf("%s (Agent %d)", name, in.AgentSessionID)
+		}
+	}
+
+	now := time.Now()
+	session := &types.AppSession{
+		UserID:              in.UserID,
+		ProjectID:           in.ProjectID,
+		ContainerTemplateID: in.ContainerTemplateID,
+		AgentSessionID:      in.AgentSessionID,
+		Name:                name,
+		Status:              "CREATING",
+		WorkspacePath:       strings.TrimSpace(in.WorkspacePath),
+		Persistent:          in.Persistent,
+		LastAccessAt:        &now,
+	}
+	if err := s.containerRepo.CreateAppSession(ctx, session); err != nil {
+		return nil, err
+	}
+	return session, nil
 }
 
 func (s *containerService) createAppSessionByTemplate(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error) {

@@ -5376,23 +5376,181 @@ const docTemplate = `{
                 }
             }
         },
-        "/container/template/{templateId}/terminal": {
+        "/container/terminal/session/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按容器模板创建终端会话（创建时即启动容器与 shell），返回会话 ID。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "新建容器终端会话",
+                "parameters": [
+                    {
+                        "description": "创建参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.ContainerTerminalSessionCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/manager.TerminalSessionStatus"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/terminal/session/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "结束会话（关闭 shell 并删除容器）。",
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "关闭容器终端会话",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "终端会话 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/terminal/session/{id}/status": {
             "get": {
                 "security": [
                     {
                         "Bearer": []
                     }
                 ],
-                "description": "用容器模板创建（或复用）会话并打开交互式终端；断开后按配置立即删除或保留一段时间。",
+                "description": "返回会话是否存在、存活、订阅者数量与当前输出序号。",
                 "tags": [
                     "容器管理"
                 ],
-                "summary": "容器模板终端",
+                "summary": "容器终端会话状态",
                 "parameters": [
                     {
                         "type": "integer",
-                        "description": "容器模板 ID",
-                        "name": "templateId",
+                        "description": "终端会话 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/manager.TerminalSessionStatus"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/terminal/session/{id}/terminal": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "用终端会话 ID 接入交互式终端；会话不在内存时会按数据库记录自动认领原容器并重建 shell。",
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "容器终端会话 WebSocket",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "终端会话 ID",
+                        "name": "id",
                         "in": "path",
                         "required": true
                     },
@@ -5404,13 +5562,13 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "PTY 行数（仅新建会话时使用）",
+                        "description": "PTY 行数（浏览器 xterm 尺寸，可选）",
                         "name": "rows",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "PTY 列数（仅新建会话时使用）",
+                        "description": "PTY 列数（浏览器 xterm 尺寸，可选）",
                         "name": "cols",
                         "in": "query"
                     }
@@ -5444,60 +5602,16 @@ const docTemplate = `{
                         }
                     }
                 }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "结束会话（关闭 shell 并删除临时容器）。",
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "关闭容器模板终端",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "容器模板 ID",
-                        "name": "templateId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "boolean"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
             }
         },
-        "/container/template/{templateId}/terminal/exec": {
+        "/container/terminal/session/{id}/terminal/exec": {
             "post": {
                 "security": [
                     {
                         "Bearer": []
                     }
                 ],
-                "description": "向当前用户该模板的终端会话写入命令；wait_seconds=0 时为异步投递。",
+                "description": "向指定终端会话写入命令；wait_seconds=0 时为异步投递。",
                 "consumes": [
                     "application/json"
                 ],
@@ -5507,12 +5621,12 @@ const docTemplate = `{
                 "tags": [
                     "容器管理"
                 ],
-                "summary": "容器模板终端执行命令",
+                "summary": "容器终端会话执行命令",
                 "parameters": [
                     {
                         "type": "integer",
-                        "description": "容器模板 ID",
-                        "name": "templateId",
+                        "description": "终端会话 ID",
+                        "name": "id",
                         "in": "path",
                         "required": true
                     },
@@ -5559,94 +5673,6 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/container/template/{templateId}/terminal/status": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "返回会话是否存在、存活、订阅者数量与当前输出序号。",
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "容器模板终端状态",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "容器模板 ID",
-                        "name": "templateId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/manager.TerminalSessionStatus"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/container/terminal/session/list": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "当前用户的容器模板终端会话，含模板展示名与镜像名；默认按激活项目过滤。",
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "终端会话列表",
-                "parameters": [
-                    {
-                        "type": "boolean",
-                        "description": "为 true 时返回该用户全部项目的会话",
-                        "name": "all_projects",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/handler.containerTerminalSessionPageItem"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -13479,6 +13505,26 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.ContainerTerminalSessionCreateRequest": {
+            "type": "object",
+            "required": [
+                "container_template_id"
+            ],
+            "properties": {
+                "cols": {
+                    "type": "integer"
+                },
+                "container_template_id": {
+                    "description": "ContainerTemplateID 是必填的容器模板 ID（go_container_template_definition 主键）。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "rows": {
+                    "description": "Rows / Cols 是前端 xterm 的尺寸：新建会话直接用它建 PTY，\n保证历史输出的换行与前端渲染一致。为 0 时使用默认 24x80。",
+                    "type": "integer"
+                }
+            }
+        },
         "handler.EditNodeParamsResponse": {
             "type": "object",
             "properties": {
@@ -14234,9 +14280,6 @@ const docTemplate = `{
                 "command": {
                     "type": "string"
                 },
-                "create_if_missing": {
-                    "type": "boolean"
-                },
                 "wait_seconds": {
                     "type": "integer"
                 }
@@ -14268,75 +14311,6 @@ const docTemplate = `{
                 },
                 "timed_out": {
                     "type": "boolean"
-                }
-            }
-        },
-        "handler.containerTerminalSessionPageItem": {
-            "type": "object",
-            "properties": {
-                "alive": {
-                    "type": "boolean"
-                },
-                "app_type": {
-                    "type": "string"
-                },
-                "busy": {
-                    "description": "Busy 表示当前有命令在执行（此时空闲 TTL 不会回收容器）。",
-                    "type": "boolean"
-                },
-                "created_at": {
-                    "description": "CreatedAt 是会话在内存注册表里的创建时间；LastActive 是最近一次操作时间。",
-                    "type": "string"
-                },
-                "display_name": {
-                    "description": "DisplayName 取自绑定行（ContainerTemplateDefinition.DisplayName），为空时回退模板名。",
-                    "type": "string"
-                },
-                "exists": {
-                    "type": "boolean"
-                },
-                "image_name": {
-                    "type": "string"
-                },
-                "last_active": {
-                    "type": "string"
-                },
-                "persistent": {
-                    "description": "Persistent 为 true 表示会话只能由空闲 TTL 或显式关闭回收。",
-                    "type": "boolean"
-                },
-                "project_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "runtime_id": {
-                    "description": "RuntimeID / RuntimeName 是底层容器标识（docker id / k8s workload），便于排查。",
-                    "type": "string"
-                },
-                "runtime_name": {
-                    "type": "string"
-                },
-                "seq": {
-                    "type": "integer"
-                },
-                "session_id": {
-                    "type": "string"
-                },
-                "subscribers": {
-                    "type": "integer"
-                },
-                "template_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "template_name": {
-                    "description": "TemplateName / ImageName / AppType 是模板的只读快照，便于列表直接展示。",
-                    "type": "string"
-                },
-                "user_id": {
-                    "description": "以下字段只在「按用户列出会话」时填充，供左侧栏列表 join 容器模板展示。",
-                    "type": "string",
-                    "example": "0"
                 }
             }
         },
@@ -14512,6 +14486,9 @@ const docTemplate = `{
         "handler.datasetByProjectPageRequest": {
             "type": "object",
             "properties": {
+                "dataset_key": {
+                    "type": "string"
+                },
                 "dataset_name": {
                     "type": "string"
                 },
@@ -15765,6 +15742,11 @@ const docTemplate = `{
         "manager.TerminalSessionStatus": {
             "type": "object",
             "properties": {
+                "agent_session_id": {
+                    "description": "AgentSessionID 是创建该终端会话的 Agent 会话 ID；0 表示 UI 手动创建。",
+                    "type": "string",
+                    "example": "0"
+                },
                 "alive": {
                     "type": "boolean"
                 },
@@ -15780,6 +15762,10 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "last_active": {
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name 是会话展示名（UI 创建时写入；Agent 创建时取模板展示名）。",
                     "type": "string"
                 },
                 "persistent": {
@@ -15801,6 +15787,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "session_id": {
+                    "description": "SessionID 是终端会话主键（= types.AppSession.ID）的字符串形式，\n也是 WS / exec / status / close 接口里使用的 {id}。",
                     "type": "string"
                 },
                 "subscribers": {
@@ -16328,6 +16315,11 @@ const docTemplate = `{
         "types.AppSession": {
             "type": "object",
             "properties": {
+                "agent_session_id": {
+                    "description": "AgentSessionID 记录创建该会话的 Agent 会话 ID（agent_sessions.id）。\n\n0 表示用户从 UI 手动创建；\u003e0 表示由 Agent 的 terminal_exec / 容器 coder bash 创建，\n同一 (container_template_id, agent_session_id) 唯一，保证同一 Agent 会话在同一模板上\n只复用一个终端会话（同一个容器与 PTY）。",
+                    "type": "string",
+                    "example": "0"
+                },
                 "analysis_node_id": {
                     "type": "string",
                     "example": "0"
@@ -16348,6 +16340,10 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "persistent": {
+                    "description": "Persistent 标记会话是否为「持久会话」。\n\ntrue  = 只能由空闲 TTL 到期或用户显式关闭（DELETE /container/terminal/session/{id}）回收；\nfalse = 一次性会话：最后一个订阅者（terminal_exec / WS）离开后立即回收容器与会话。\n\n用户从 UI 创建的会话一律持久；Agent 创建的一次性会话经前端打开后也会被置为 true，\n并且此后不会再退回 false（只增不减）。",
+                    "type": "boolean"
                 },
                 "project_id": {
                     "type": "string",
@@ -16703,6 +16699,10 @@ const docTemplate = `{
                 "dataset_name"
             ],
             "properties": {
+                "dataset_key": {
+                    "description": "DatasetKey is optional; leave it empty for ordinary user datasets.",
+                    "type": "string"
+                },
                 "dataset_name": {
                     "type": "string"
                 },
@@ -16720,6 +16720,10 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "dataset_key": {
+                    "description": "DatasetKey is a stable business key used to look up well-known datasets\nthe system provisions on demand, e.g. DatasetKeyDatabases (\"DATABASES\")\nfor the project's reference database directory. User-created datasets\nleave it empty. In practice it is unique per project (go_dataset itself\nhas no project column; the binding lives in go_project_dataset).",
+                    "type": "string"
+                },
                 "dataset_name": {
                     "type": "string"
                 },
@@ -16731,6 +16735,10 @@ const docTemplate = `{
                     "example": "0"
                 },
                 "metadata": {
+                    "type": "string"
+                },
+                "path": {
+                    "description": "Path is the dataset workspace directory (utils.GetDatasetDir). It is\nderived at read time from the active project and is never persisted.",
                     "type": "string"
                 },
                 "updated_at": {
@@ -17263,6 +17271,10 @@ const docTemplate = `{
                 "id": {
                     "type": "string",
                     "example": "0"
+                },
+                "path": {
+                    "description": "Path is the bound dataset's workspace directory\n(utils.GetDatasetDir(baseDir, project_id, dataset_id)). It is derived at\nread time and is never persisted.",
+                    "type": "string"
                 },
                 "project_id": {
                     "type": "string",
@@ -17944,6 +17956,9 @@ const docTemplate = `{
                 "id"
             ],
             "properties": {
+                "dataset_key": {
+                    "type": "string"
+                },
                 "dataset_name": {
                     "type": "string"
                 },

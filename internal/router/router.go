@@ -290,7 +290,8 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	//   - {id}/terminal/exec / {id}/status / {id}：命令投递 / 状态 / 关闭；
 	//   - list：当前用户（当前激活项目）的会话列表。
 	r.POST("/container/terminal/session/create", handler.ContainerTerminalSessionCreate)
-	r.GET("/container/terminal/session/list", handler.ContainerTerminalSessionList)
+	// 终端会话列表复用「应用会话」分页接口（/container/app-session/list-by-page）：
+	// 终端会话就是 AppSession，不再单独提供列表接口。
 	r.GET("/container/terminal/session/:id/terminal", handler.ContainerTemplateTerminal)
 	r.POST("/container/terminal/session/:id/terminal/exec", handler.ContainerTemplateTerminalExec)
 	r.GET("/container/terminal/session/:id/status", handler.ContainerTemplateTerminalStatus)

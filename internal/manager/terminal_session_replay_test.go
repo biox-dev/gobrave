@@ -100,7 +100,7 @@ func TestTerminalAttachWithInfoResetsWhenSeqAhead(t *testing.T) {
 func TestTerminalAttachWithInfoTruncatedAfterRollover(t *testing.T) {
 	key := TerminalSessionKey{UserID: 221, ProjectID: 222, TemplateID: 223}
 	opener := &fakeOpener{shell: newFakeShell()}
-	registry := newTerminalSessionRegistry(opener, nil, nil, TerminalRegistryOptions{
+	registry := newTerminalSessionRegistry(opener, nil, nil, nil, TerminalRegistryOptions{
 		ReadyWait:   2 * time.Second,
 		SessionTTL:  time.Hour,
 		BufferBytes: 256,

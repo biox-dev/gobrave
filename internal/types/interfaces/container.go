@@ -48,6 +48,10 @@ type ContainerService interface {
 
 	CreateAppSessionByTemplate(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string) (*types.AppSession, error)
 	CreateAppSessionByTemplateForAnalysisNode(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error)
+	// CreateTerminalAppSession 按容器模板创建终端会话（AppSession + 常驻容器）。
+	// 终端会话与「应用会话」是同一个实体，AgentSessionID / Persistent 区分来源与生命周期；
+	// 容器由 terminalKeepAliveCommand 常驻，交互式 shell 由运行时 exec 打开。
+	CreateTerminalAppSession(ctx context.Context, in types.TerminalAppSessionInput) (*types.AppSession, error)
 	StartAppSession(ctx context.Context, userID int64, appSessionID int64) error
 	StopAppSession(ctx context.Context, userID int64, appSessionID int64) error
 	DeleteAppSession(ctx context.Context, userID int64, appSessionID int64) error

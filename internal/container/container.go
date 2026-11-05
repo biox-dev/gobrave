@@ -403,10 +403,16 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(hub *realtime.Hub) manager.TerminalEventPublisher {
 		return hub
 	}))
-	// 会话记录持久化：进程重启后可按 runtimeID 认领原容器（容器与挂载卷仍在，shell 重新 exec）。
+	// 会话记录持久化：终端会话就是 AppSession（go_container_app_session），
+	// 进程重启后按 (owner_type=app_session, owner_id=会话 ID) 认领原容器。
 	must(container.Provide(manager.NewGormTerminalSessionStore))
 	must(container.Provide(func(store *manager.GormTerminalSessionStore) manager.TerminalSessionStore {
 		return store
+	}))
+	// 容器实例定位 / 删除：认领与关闭会话时按 owner 找到对应的 ContainerInstance。
+	// interfaces.ContainerRepository 已经满足 TerminalInstanceStore 的最小契约。
+	must(container.Provide(func(repo interfaces.ContainerRepository) manager.TerminalInstanceStore {
+		return repo
 	}))
 	must(container.Provide(manager.NewTerminalSessionRegistry))
 	// 同一注册表同时暴露为 Agent 工具端口，供 terminal_exec 注入。
@@ -623,6 +629,15 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(newSchedulerRegistry))
 	must(container.Provide(service.NewWorkflowService))
 	must(container.Provide(service.NewContainerService))
+	// 回填 ContainerManager 的「同步创建执行者」：终端会话需要「返回即 running」的
+	// 创建语义（否则拿不到容器就 exec shell），由 CreateByTemplateWithOptions(Sync=true)
+	// 直接调用 ContainerCreateWorker，跳过 outbox。
+	//
+	// 不能写成 Provide 的包装构造函数：ContainerCreateWorker 依赖 ContainerManager，
+	// 直接互相构造会被 dig 判定为循环依赖；这里在两者都已注册之后用 Invoke 回填指针。
+	must(container.Invoke(func(mgr *manager.ContainerManager, worker *manager.ContainerCreateWorker) {
+		mgr.SetCreateWorker(worker)
+	}))
 	// 系统启动时导入内置容器模板（builtin/container_templates/*.json）：
 	// 复用 InstallContainerAssets 按主键 upsert（镜像 → 运行配置 → 绑定行），
 	// 因此每次启动都会把内置模板刷新成代码里的最新定义；文件里 is_default=true 的
@@ -1002,7 +1017,6 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.AppSession{},
 		&types.ContainerInstance{},
 		&types.ContainerEvent{},
-		&types.TerminalSession{},
 		&types.LLMSession{},
 		&types.LLMConversation{},
 		&types.GatewayRoute{},

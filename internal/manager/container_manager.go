@@ -27,6 +27,9 @@ var (
 	errWorkerConcurrencyLimit = errors.New("worker concurrency limit reached")
 )
 
+// defaultSyncCreateWait 是「同步创建容器」等待 running 的默认上限。
+const defaultSyncCreateWait = 2 * time.Minute
+
 type ContainerManager struct {
 	containerService interfaces.ContainerService
 	containerRepo    interfaces.ContainerRepository
@@ -38,6 +41,12 @@ type ContainerManager struct {
 	res              ContainerRuntimeResolver
 	cfg              *config.Config
 	monitorOnce      sync.Once
+
+	// createWorker 是同步创建容器的执行者：CreateByTemplateWithOptions(Sync=true) 时
+	// 直接调用它的 create/start 逻辑，跳过 outbox（终端会话必须「返回即 running」）。
+	// 由容器装配阶段回填（见 internal/container），避免 ContainerManager 与
+	// ContainerCreateWorker 构造顺序互相依赖。
+	createWorker *ContainerCreateWorker
 
 	// statusMu/statusWaiters 保存「等待某个 ContainerInstance 进入指定状态」的订阅者。
 	// OnEvent 应用完运行时事件后向订阅者广播最新状态，供创建方等待
@@ -58,6 +67,17 @@ func NewContainerManager(
 ) *ContainerManager {
 	return &ContainerManager{
 		containerRepo: containerRepo, projectRepo: projectRepo, analysisRepo: analysisRepo, workflowService: workflowService, reg: reg, bus: bus, res: res, cfg: cfg}
+}
+
+// SetCreateWorker 注入同步创建容器所需的 worker（容器装配阶段调用一次）。
+//
+// 之所以不在构造函数里注入：ContainerCreateWorker 自身依赖 ContainerManager，
+// 直接双向构造会形成循环依赖；装配阶段回填一个指针即可。
+func (s *ContainerManager) SetCreateWorker(worker *ContainerCreateWorker) {
+	if s == nil {
+		return
+	}
+	s.createWorker = worker
 }
 
 func (s *ContainerManager) TransitionContainerAndEnqueueOutbox(ctx context.Context, inst *types.ContainerInstance, to types.ContainerStatus, eventType string) error {
@@ -294,6 +314,54 @@ func (m *ContainerManager) CreateByTemplate(
 	ownerID int64,
 	name string,
 ) (*types.ContainerInstance, error) {
+	return m.CreateByTemplateWithOptions(ctx, ContainerCreateOptions{
+		TemplateID: templateID,
+		OwnerType:  ownerType,
+		OwnerID:    ownerID,
+		Name:       name,
+	})
+}
+
+// ContainerCreateOptions 是 CreateByTemplateWithOptions 的参数。
+//
+// 与 CreateByTemplate 相比，它额外支持：
+//   - 同步创建：不写 outbox、由 ContainerCreateWorker 直接调用 runtime.Create +
+//     runtime.Start，并在返回前等待容器进入 running（终端会话需要立刻 exec shell）；
+//   - 覆盖运行命令：终端会话容器用 terminalKeepAliveCommand 常驻，真正的 shell
+//     由 docker exec / kubectl exec 打开；
+//   - 透传额外标签，便于进程重启后按 label 对账认领。
+type ContainerCreateOptions struct {
+	TemplateID int64
+	OwnerType  types.ContainerOwnerType
+	OwnerID    int64
+	Name       string
+
+	// Command 非空时覆盖模板里配置的启动命令（Entrypoint/Command 仍取自模板）。
+	// 终端会话容器用它把容器变成常驻进程。
+	Command []string
+	// Labels 会与默认 owner 标签合并（同名时覆盖默认值）。
+	Labels map[string]string
+
+	// Sync 为 true 时同步创建并等待容器 running：
+	//   - 不写 outbox，直接由 worker 调用 runtime.Create + runtime.Start；
+	//   - 创建的 ContainerInstance 不占用创建并发额度（长期占用 running 的实例）；
+	//   - 返回前等待 ContainerManager.OnEvent 广播的 ContainerStarted（running）。
+	//
+	// Sync 为 false（默认）时保持旧行为：写 outbox，由 OutboxDispatcher 异步创建。
+	Sync bool
+	// WaitTimeout 是 Sync=true 时等待容器 running 的上限；<=0 使用默认 2 分钟。
+	WaitTimeout time.Duration
+}
+
+// CreateByTemplateWithOptions 按模板创建容器实例。
+//
+// 这是 CreateByTemplate 的可扩展版本：默认走 outbox 异步链路（与历史行为一致），
+// Sync=true 时改为同步创建并等待 running（见 ContainerCreateOptions）。
+func (m *ContainerManager) CreateByTemplateWithOptions(ctx context.Context, opts ContainerCreateOptions) (*types.ContainerInstance, error) {
+	templateID := opts.TemplateID
+	if templateID <= 0 {
+		return nil, fmt.Errorf("container template id is required")
+	}
 
 	tpl, err := m.containerRepo.GetContainerTemplateByID(ctx, templateID)
 	if err != nil {
@@ -313,10 +381,14 @@ func (m *ContainerManager) CreateByTemplate(
 	inst := &types.ContainerInstance{
 		RuntimeName: rt.Name(),
 		TemplateID:  templateID,
-		OwnerType:   ownerType,
-		OwnerID:     ownerID,
-		Name:        name,
+		OwnerType:   opts.OwnerType,
+		OwnerID:     opts.OwnerID,
+		Name:        opts.Name,
 		Status:      types.ContainerCreatePending,
+	}
+
+	if opts.Sync {
+		return m.createByTemplateSync(ctx, inst, opts)
 	}
 
 	// Always enqueue the create request through the worker.
@@ -383,7 +455,42 @@ func (m *ContainerManager) CreateByTemplate(
 		return nil, err
 	}
 
-	logger.Infof(ctx, "[ContainerManager] enqueued create request, instance_id=%d name=%s", inst.ID, name)
+	logger.Infof(ctx, "[ContainerManager] enqueued create request, instance_id=%d name=%s", inst.ID, opts.Name)
+	return inst, nil
+}
+
+// createByTemplateSync 同步创建容器：落实例 → worker 直接 create/start → 等待 running。
+//
+// 终端会话需要「返回时容器已经能 exec」的语义，因此不能走 outbox 异步链路。
+func (m *ContainerManager) createByTemplateSync(ctx context.Context, inst *types.ContainerInstance, opts ContainerCreateOptions) (*types.ContainerInstance, error) {
+	if m.createWorker == nil {
+		return nil, errors.New("container create worker is not configured")
+	}
+	if err := m.containerRepo.CreateContainerInstance(ctx, inst); err != nil {
+		return nil, fmt.Errorf("create container instance: %w", err)
+	}
+
+	if err := m.createWorker.executeCreateInstance(ctx, inst, opts); err != nil {
+		_ = m.containerRepo.DeleteContainerInstance(ctx, inst.ID)
+		return nil, err
+	}
+
+	waitTimeout := opts.WaitTimeout
+	if waitTimeout <= 0 {
+		waitTimeout = defaultSyncCreateWait
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
+	defer cancel()
+	if _, err := m.WaitForInstanceStatus(waitCtx, inst.ID, types.ContainerRunning); err != nil {
+		// 启动失败：尽力回收容器，避免留下僵尸实例。
+		_ = m.containerRepo.DeleteContainerInstance(context.Background(), inst.ID)
+		return nil, fmt.Errorf("wait container %d running: %w", inst.ID, err)
+	}
+
+	// 等待期间 OnEvent 可能已经更新过实例（status / runtime id / started_at）。
+	if latest, err := m.containerRepo.GetContainerInstanceByID(ctx, inst.ID); err == nil && latest != nil {
+		inst = latest
+	}
 	return inst, nil
 }
 

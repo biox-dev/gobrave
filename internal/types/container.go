@@ -324,6 +324,22 @@ type AppSession struct {
 
 	WorkspacePath string `json:"workspace_path" gorm:"type:varchar(1024)"`
 
+	// AgentSessionID 记录创建该会话的 Agent 会话 ID（agent_sessions.id）。
+	//
+	// 0 表示用户从 UI 手动创建；>0 表示由 Agent 的 terminal_exec / 容器 coder bash 创建，
+	// 同一 (container_template_id, agent_session_id) 唯一，保证同一 Agent 会话在同一模板上
+	// 只复用一个终端会话（同一个容器与 PTY）。
+	AgentSessionID int64 `json:"agent_session_id,string" gorm:"index;not null;default:0"`
+
+	// Persistent 标记会话是否为「持久会话」。
+	//
+	// true  = 只能由空闲 TTL 到期或用户显式关闭（DELETE /container/terminal/session/{id}）回收；
+	// false = 一次性会话：最后一个订阅者（terminal_exec / WS）离开后立即回收容器与会话。
+	//
+	// 用户从 UI 创建的会话一律持久；Agent 创建的一次性会话经前端打开后也会被置为 true，
+	// 并且此后不会再退回 false（只增不减）。
+	Persistent bool `json:"persistent" gorm:"not null;default:false"`
+
 	LastAccessAt *time.Time `json:"last_access_at"`
 
 	StartedAt *time.Time `json:"started_at"`

@@ -194,13 +194,15 @@ container:
   create_queue_max_concurrency: 3
   # 容器创建队列的最大排队数（超出后新请求直接返回错误）。
   create_queue_max_pending: 50
-  # 容器模板终端：一个模板对应一个持久会话（同一个容器 + shell），不会随连接创建/销毁。
+  # 容器模板终端：一个模板可以有多条终端会话，每条会话都是一个「应用会话」
+  # （go_container_app_session）+ 一台常驻容器（owner_type=app_session）。容器以
+  # terminalKeepAliveCommand 常驻，交互式 shell 由 docker exec / kubectl exec 打开。
   #
-  # 回收规则按「会话是否持久」决定（go_terminal_session.persistent）：
-  #   - 持久会话：前端只要通过 WS（GET /container/template/{id}/terminal）接入过，
+  # 回收规则按「会话是否持久」决定（go_container_app_session.persistent）：
+  #   - 持久会话：前端只要通过 WS（GET /container/terminal/session/{id}/terminal）接入过，
   #     该会话即被标记为持久；Agent 的 terminal_exec 也可用 persistent=true 直接要求。
   #     断开 WebSocket（刷新 / 关标签 / 断网）都不会删除容器，只能由下面的
-  #     空闲 TTL 到期，或用户显式调用 DELETE /container/template/{id}/terminal 回收。
+  #     空闲 TTL 到期，或用户显式调用 DELETE /container/terminal/session/{id} 回收。
   #   - 一次性会话：Agent 用 terminal_exec（persistent 默认 false）创建且从未被前端接入；
   #     命令结束、最后一个订阅者离开后立即删除会话与容器。
   #     因此 Agent 每次 terminal_exec 都会新建容器，除非它显式请求持久会话。
