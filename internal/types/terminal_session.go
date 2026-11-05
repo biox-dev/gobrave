@@ -39,7 +39,8 @@ type TerminalSession struct {
 	// 仅作为唯一键与滚动缓冲文件名的来源，对外不使用。
 	SessionKey string `json:"session_key" gorm:"type:varchar(128);uniqueIndex;not null"`
 
-	// Name 是会话展示名：优先取容器模板的 DisplayName，为空时回退模板名 / ID。
+	// Name 是会话展示名：创建时由调用方传入并固定下来（UI 传模板展示名 / 用户输入，
+	// Agent 传写死的常量），之后只能通过改名接口修改。
 	Name string `json:"name" gorm:"type:varchar(255)"`
 
 	// AgentSessionID 是创建该终端会话的 Agent 会话 ID（agent_sessions.id）。

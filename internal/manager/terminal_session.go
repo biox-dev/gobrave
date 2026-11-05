@@ -132,13 +132,16 @@ const (
 	defaultTerminalSessionTTL         = 2 * time.Hour
 	defaultTerminalMaxSessionsPerUser = 4
 	defaultTerminalScrollbackBytes    = 1024 * 1024
-	terminalIdleThreshold             = 300 * time.Millisecond
-	terminalIdleWait                  = 3 * time.Second
-	terminalExecQueueSize             = 16
-	terminalSubscriberBufSize         = 2048
-	terminalEventBufSize              = 64
-	terminalScrollbackFlushInterval   = 2 * time.Second
-	terminalMaintenanceInterval       = time.Minute
+	// defaultAgentTerminalSessionName 是 Agent 通过 terminal_exec 新建会话时写死的展示名。
+	// 会话名只在创建时确定，之后只能通过改名接口修改（尚未实现）。
+	defaultAgentTerminalSessionName = "Agent 终端"
+	terminalIdleThreshold           = 300 * time.Millisecond
+	terminalIdleWait                = 3 * time.Second
+	terminalExecQueueSize           = 16
+	terminalSubscriberBufSize       = 2048
+	terminalEventBufSize            = 64
+	terminalScrollbackFlushInterval = 2 * time.Second
+	terminalMaintenanceInterval     = time.Minute
 )
 
 var (
@@ -524,17 +527,12 @@ func (r *TerminalSessionRegistry) Create(ctx context.Context, key TerminalSessio
 // 一个模板可以有多条这样的会话（每次点「新建」都新建一条），彼此独立。
 // name 是会话展示名（前端 / 模板名），持久会话（只能由空闲 TTL 或显式关闭回收）。
 func (r *TerminalSessionRegistry) CreateForTemplate(ctx context.Context, userID, projectID, templateID int64, name string, rows, cols uint16) (*ManagedTerminalSession, error) {
-	size := terminalSize{rows: rows, cols: cols}
 	key := NewUIKey(userID, projectID, templateID)
+	// 会话名只在创建时写入（由调用方传入），创建后不再自动改写。
 	key.Name = strings.TrimSpace(name)
-	sess, _, err := r.ensure(ctx, key, true, size)
+	sess, _, err := r.ensure(ctx, key, true, terminalSize{rows: rows, cols: cols})
 	if err != nil {
 		return nil, err
-	}
-	if key.Name != "" {
-		if sess.setName(key.Name) {
-			r.persistName(ctx, sess)
-		}
 	}
 	return sess, nil
 }
@@ -954,21 +952,6 @@ func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *Manag
 	renamed.SessionKey = sess.Key().SessionKey()
 	if err := r.store.Upsert(ctx, &renamed); err != nil {
 		logger.Warnf(ctx, "[TerminalSession] persist renamed session %s failed: %v", renamed.SessionKey, err)
-	}
-}
-
-// persistName 把会话展示名写回持久层（UI 创建时由用户 / 模板提供）。
-func (r *TerminalSessionRegistry) persistName(ctx context.Context, sess *ManagedTerminalSession) {
-	if r.store == nil || sess == nil {
-		return
-	}
-	rec, err := r.store.GetByID(ctx, sess.recordID())
-	if err != nil || rec == nil {
-		return
-	}
-	rec.Name = sess.displayName()
-	if err := r.store.Upsert(ctx, rec); err != nil {
-		logger.Warnf(ctx, "[TerminalSession] persist session name %s failed: %v", sess.ID(), err)
 	}
 }
 
@@ -1460,6 +1443,8 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 		return runtimecontext.ContainerTerminalExecResult{}, fmt.Errorf("terminal_exec: agent session id is required")
 	}
 	key := NewAgentKey(in.UserID, in.ProjectID, in.ContainerTemplateID, in.AgentSessionID)
+	// 新建会话时写死展示名：会话名不在创建后自动推导 / 改写（改名只走后续接口）。
+	key.Name = defaultAgentTerminalSessionName
 
 	// 先占位：保证「一次性会话 + 无 WS」时命令执行期间不会被回收。
 	sess := r.Lookup(key)
