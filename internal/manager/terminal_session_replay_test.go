@@ -179,9 +179,9 @@ func TestTerminalSessionRegistryUsesBrowserPTYSize(t *testing.T) {
 	// 不带尺寸的调用（Agent 的 terminal_exec）回落到默认尺寸，不再继承上次尺寸。
 	registry.CloseSession(session.Key())
 
-	recreated, _, err := registry.Ensure(context.Background(), key)
+	recreated, _, err := ensureOneShot(registry, key)
 	if err != nil {
-		t.Fatalf("Ensure after close: %v", err)
+		t.Fatalf("ensureOneShot after close: %v", err)
 	}
 	if rows, cols := recreated.Size(); rows != 24 || cols != 80 {
 		t.Fatalf("expected default PTY size 24x80, got %dx%d", rows, cols)

@@ -143,6 +143,13 @@ func newTestRegistry(opener *fakeOpener) *TerminalSessionRegistry {
 	})
 }
 
+// ensureOneShot 是测试用的「Agent 语义」入口：新建的会话默认是一次性的。
+// 生产代码只保留具名入口（CreateForTemplate / EnsurePersistent* / Execute），
+// 通用的一次性入口不再对外暴露。
+func ensureOneShot(registry *TerminalSessionRegistry, key TerminalSessionKey) (*ManagedTerminalSession, bool, error) {
+	return registry.ensure(context.Background(), key, terminalCreateOptions{})
+}
+
 func TestTerminalSessionRegistryExec(t *testing.T) {
 	opener := &fakeOpener{shell: newFakeShell()}
 	registry := newTestRegistry(opener)
@@ -382,9 +389,9 @@ func TestTerminalSessionRegistryReapsOneShotSessionOnLastDetach(t *testing.T) {
 	})
 	key := NewAgentKey(11, 12, 13, 3)
 
-	session, created, err := registry.Ensure(context.Background(), key)
+	session, created, err := ensureOneShot(registry, key)
 	if err != nil || !created {
-		t.Fatalf("Ensure: created=%v err=%v", created, err)
+		t.Fatalf("ensureOneShot: created=%v err=%v", created, err)
 	}
 	if session.isPersistent() {
 		t.Fatalf("agent-created session must not be persistent by default")
@@ -469,9 +476,9 @@ func TestTerminalSessionRegistryOneShotUpgradesToPersistent(t *testing.T) {
 	})
 	key := NewAgentKey(71, 72, 73, 5)
 
-	session, created, err := registry.Ensure(context.Background(), key) // Agent 创建：一次性
+	session, created, err := ensureOneShot(registry, key) // Agent 创建：一次性
 	if err != nil || !created {
-		t.Fatalf("Ensure: created=%v err=%v", created, err)
+		t.Fatalf("ensureOneShot: created=%v err=%v", created, err)
 	}
 	defer registry.CloseSession(session.Key())
 	if session.isPersistent() {
@@ -490,9 +497,9 @@ func TestTerminalSessionRegistryOneShotUpgradesToPersistent(t *testing.T) {
 		t.Fatalf("expected session upgraded to persistent")
 	}
 
-	// 再走一次普通 Ensure 不能把它改回一次性。
-	if _, _, err := registry.Ensure(context.Background(), key); err != nil {
-		t.Fatalf("Ensure: %v", err)
+	// 再走一次一次性入口不能把它改回一次性。
+	if _, _, err := ensureOneShot(registry, key); err != nil {
+		t.Fatalf("ensureOneShot: %v", err)
 	}
 	if !session.isPersistent() {
 		t.Fatalf("persistent flag must not be downgraded")
@@ -622,8 +629,8 @@ func TestTerminalSessionRegistryCreateOnlyOnceUnderConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, _, err := registry.Ensure(context.Background(), key); err != nil {
-				t.Errorf("Ensure: %v", err)
+			if _, _, err := ensureOneShot(registry, key); err != nil {
+				t.Errorf("ensureOneShot: %v", err)
 			}
 		}()
 	}
@@ -799,9 +806,9 @@ func TestTerminalSessionRegistryAdoptsPersistedSession(t *testing.T) {
 		ScrollbackDir: dir,
 	})
 
-	session, created, err := registry.Ensure(context.Background(), key.UIKey())
+	session, created, err := ensureOneShot(registry, key.UIKey())
 	if err != nil {
-		t.Fatalf("Ensure: %v", err)
+		t.Fatalf("ensureOneShot: %v", err)
 	}
 	if created {
 		t.Fatalf("expected adopted session, got newly created")
@@ -947,7 +954,7 @@ func TestTerminalSessionRegistryQuota(t *testing.T) {
 	})
 	// 不同模板 → 不同会话，但同一用户已有一个会话。
 	other := NewUIKey(key.UserID, key.ProjectID, 99)
-	_, _, err := registry.Ensure(context.Background(), other)
+	_, _, err := ensureOneShot(registry, other)
 	if err == nil || !errors.Is(err, ErrTerminalSessionQuotaExceeded) {
 		t.Fatalf("expected quota error, got %v", err)
 	}
@@ -1090,15 +1097,15 @@ func TestTerminalSessionRegistryAgentSessionUniquePerTemplate(t *testing.T) {
 	registry := newTestRegistry(opener)
 	key := NewAgentKey(1, 2, 3, 42)
 
-	first, created, err := registry.Ensure(context.Background(), key)
+	first, created, err := ensureOneShot(registry, key)
 	if err != nil || !created {
-		t.Fatalf("Ensure: created=%v err=%v", created, err)
+		t.Fatalf("ensureOneShot: created=%v err=%v", created, err)
 	}
 	defer registry.CloseSession(first.Key())
 
-	second, createdAgain, err := registry.Ensure(context.Background(), key)
+	second, createdAgain, err := ensureOneShot(registry, key)
 	if err != nil {
-		t.Fatalf("Ensure again: %v", err)
+		t.Fatalf("ensureOneShot again: %v", err)
 	}
 	if createdAgain || second != first {
 		t.Fatalf("expected the same terminal session for the same agent session")
@@ -1108,9 +1115,9 @@ func TestTerminalSessionRegistryAgentSessionUniquePerTemplate(t *testing.T) {
 	}
 
 	// 不同 Agent 会话 / 不同模板互不影响。
-	otherAgent, createdOther, err := registry.Ensure(context.Background(), NewAgentKey(1, 2, 3, 43))
+	otherAgent, createdOther, err := ensureOneShot(registry, NewAgentKey(1, 2, 3, 43))
 	if err != nil || !createdOther {
-		t.Fatalf("Ensure other agent: created=%v err=%v", createdOther, err)
+		t.Fatalf("ensureOneShot other agent: created=%v err=%v", createdOther, err)
 	}
 	defer registry.CloseSession(otherAgent.Key())
 	if otherAgent.ID() == first.ID() {

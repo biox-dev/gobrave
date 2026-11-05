@@ -65,10 +65,9 @@ type TerminalSessionKey struct {
 	// AgentSessionID 是创建该终端会话的 Agent 会话 ID（agent_sessions.id）；
 	// 0 表示用户从 UI 手动创建。
 	AgentSessionID int64
-	// ID 是终端会话主键。>0 表示已定位到具体会话；0 表示「按模板创建新会话」。
+	// ID 是终端会话主键。0 表示尚未定位到具体会话（创建请求）；
+	// 落库前的新会话使用进程内负数占位 ID（见 newTerminalSessionPlaceholderID）。
 	ID int64
-	// Name 是会话展示名（仅创建请求用；不参与 SessionKey 计算）。
-	Name string
 }
 
 // NewUIKey 返回「用户从 UI 在某个模板上新建会话」的 key（尚未分配终端会话 ID）。
@@ -114,6 +113,19 @@ func (k TerminalSessionKey) SessionID() string { return k.SessionKey() }
 func (k TerminalSessionKey) ReplaceID(id int64) TerminalSessionKey {
 	k.ID = id
 	return k
+}
+
+// terminalCreateOptions 是「创建（或认领）会话」的参数。
+//
+// 这些参数只在新建时生效：已存在的会话 / 认领的旧容器保持原有的名字与持久标记。
+// 会话名刻意不放进 TerminalSessionKey：key 只回答「是哪个会话」，不承载创建参数。
+type terminalCreateOptions struct {
+	// persistent 为 true 时新建的会话是持久会话（只能被空闲 TTL 或显式关闭回收）。
+	persistent bool
+	// name 是新建会话的展示名；为空时 displayName 回退为会话主键。
+	name string
+	// size 是新建 PTY 的尺寸；0 值表示使用默认 24x80。
+	size terminalSize
 }
 
 const (
@@ -344,6 +356,7 @@ type ManagedTerminalSession struct {
 	// 只会在 WS（ContainerTemplateTerminal）接入、UI 手动创建或 Agent 显式要求时从 false 变 true。
 	persistent bool
 	// name 是会话展示名（UI 创建时由用户 / 模板提供，Agent 创建时取模板展示名）。
+	// 构造后不再修改：只在 initSession 里赋值一次。
 	name string
 	// rows / cols 是 PTY 当前尺寸；前端据此渲染回放，保证与历史输出的宽度一致。
 	rows        uint16
@@ -505,58 +518,42 @@ func (r *TerminalSessionRegistry) scrollbackBytes() int {
 	return defaultTerminalScrollbackBytes
 }
 
-// Ensure 返回（必要时创建）会话，并等待 shell 进入可执行状态。
-//
-// created 表示本次调用是否新建了容器。创建使用独立的后台 context，不跟随 HTTP /
-// WebSocket 请求的生命周期：调用方响应结束后会话必须继续存活。
-// Create 创建（或复用）一条终端会话并立即拉起容器与 shell。
-//
-// 与 WebSocket 连接解耦：UI 的「新建终端会话」按钮走这个入口，创建成功后再用
-// 返回的会话 ID 打开 WS。生命周期规则：
-//   - key.AgentSessionID == 0（UI 手动创建）：总是新建一条独立会话，持久会话；
-//   - key.AgentSessionID > 0（Agent 创建）：同一 (templateID, agentSessionID) 只有一条，
-//     已存在则复用，持久性由 persistent 决定。
-//
-// created 表示本次调用是否新建了容器。
-func (r *TerminalSessionRegistry) Create(ctx context.Context, key TerminalSessionKey, persistent bool, size terminalSize) (*ManagedTerminalSession, bool, error) {
-	return r.ensure(ctx, key, persistent, size)
-}
-
 // CreateForTemplate 按容器模板新建一条「UI 手动创建」的终端会话并立即启动。
 //
 // 一个模板可以有多条这样的会话（每次点「新建」都新建一条），彼此独立。
 // name 是会话展示名（前端 / 模板名），持久会话（只能由空闲 TTL 或显式关闭回收）。
 func (r *TerminalSessionRegistry) CreateForTemplate(ctx context.Context, userID, projectID, templateID int64, name string, rows, cols uint16) (*ManagedTerminalSession, error) {
 	key := NewUIKey(userID, projectID, templateID)
-	// 会话名只在创建时写入（由调用方传入），创建后不再自动改写。
-	key.Name = strings.TrimSpace(name)
-	sess, _, err := r.ensure(ctx, key, true, terminalSize{rows: rows, cols: cols})
+	sess, _, err := r.ensure(ctx, key, terminalCreateOptions{
+		persistent: true,
+		// 会话名只在创建时写入（由调用方传入），创建后不再自动改写。
+		name: strings.TrimSpace(name),
+		size: terminalSize{rows: rows, cols: cols},
+	})
 	if err != nil {
 		return nil, err
 	}
 	return sess, nil
 }
 
-// Ensure 按 key 返回（必要时创建）会话，默认一次性（Agent 语义）。
-func (r *TerminalSessionRegistry) Ensure(ctx context.Context, key TerminalSessionKey) (*ManagedTerminalSession, bool, error) {
-	return r.ensure(ctx, key, false, terminalSize{})
-}
-
-// EnsurePersistent 与 Ensure 相同，但会把会话标记为持久会话（见 types.TerminalSession.Persistent）。
+// EnsurePersistent 创建（或复用）会话，并把会话标记为持久会话（见 types.TerminalSession.Persistent）。
 //
 // WebSocket 接入（ContainerTemplateTerminal）走这个入口：无论会话是否新建、是否复用，
 // 只要前端接入了，此后就只能由空闲 TTL 或显式 DELETE 回收。
 func (r *TerminalSessionRegistry) EnsurePersistent(ctx context.Context, key TerminalSessionKey) (*ManagedTerminalSession, bool, error) {
-	return r.ensure(ctx, key, true, terminalSize{})
+	return r.ensure(ctx, key, terminalCreateOptions{persistent: true})
 }
 
 // EnsurePersistentSized 与 EnsurePersistent 相同，但会带上前端 xterm 的行列：
 // 新建的会话直接以这个尺寸创建 PTY；已存活的会话保持原 PTY，接入方再调用 Resize 同步。
 func (r *TerminalSessionRegistry) EnsurePersistentSized(ctx context.Context, key TerminalSessionKey, rows, cols uint16) (*ManagedTerminalSession, bool, error) {
-	return r.ensure(ctx, key, true, terminalSize{rows: rows, cols: cols})
+	return r.ensure(ctx, key, terminalCreateOptions{
+		persistent: true,
+		size:       terminalSize{rows: rows, cols: cols},
+	})
 }
 
-func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessionKey, persistent bool, size terminalSize) (*ManagedTerminalSession, bool, error) {
+func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessionKey, opts terminalCreateOptions) (*ManagedTerminalSession, bool, error) {
 	// 先把「Agent 会话身份」解析成终端会话主键：之后 UI / Agent 走同一条路。
 	resolved, err := r.resolveRecordKey(ctx, key)
 	if err != nil {
@@ -581,18 +578,18 @@ func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessio
 	r.mu.Lock()
 	if sess := r.lookupLocked(key); sess != nil {
 		r.mu.Unlock()
-		return r.reuseExisting(ctx, sess, persistent), false, nil
+		return r.reuseExisting(ctx, sess, opts.persistent), false, nil
 	}
 	if pendingID != "" {
 		if wait, ok := r.pending[pendingID]; ok {
 			r.mu.Unlock()
-			return r.waitForPending(ctx, wait, persistent)
+			return r.waitForPending(ctx, wait, opts.persistent)
 		}
 		r.pending[pendingID] = &pendingTerminalSession{done: make(chan struct{})}
 	}
 	r.mu.Unlock()
 
-	sess, created, err := r.createOrAdopt(key, persistent, size)
+	sess, created, err := r.createOrAdopt(key, opts)
 
 	r.mu.Lock()
 	var pending *pendingTerminalSession
@@ -757,21 +754,21 @@ func terminalOptions(size terminalSize) containerruntime.TerminalOptions {
 //
 // “认领”的含义：进程重启后容器还在，但原来的 shell 已随连接结束；这里在同一个
 // 容器上重新 exec 一个 bash，并把落盘的滚动缓冲回放进内存缓冲。
-func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, persistent bool, size terminalSize) (*ManagedTerminalSession, bool, error) {
+func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, opts terminalCreateOptions) (*ManagedTerminalSession, bool, error) {
 	if r.probe == nil {
 		return nil, false, fmt.Errorf("container probe is not configured")
 	}
 
 	// 调用方没给尺寸（例如 Agent 的 terminal_exec）时用默认 24x80；
 	// 前端接入后由 Resize 把 PTY 调整成 xterm 的尺寸。
-	resolved := size.normalize()
+	resolved := opts.size.normalize()
 
 	createCtx, cancel := context.WithTimeout(context.Background(), r.createWait())
 	defer cancel()
 
 	adopted, err := r.adoptSession(createCtx, key, resolved)
 	if err == nil && adopted != nil {
-		if persistent {
+		if opts.persistent {
 			adopted.setPersistent(true)
 			r.persistRecord(createCtx, adopted, true)
 		}
@@ -789,15 +786,15 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, persiste
 	if err != nil {
 		return nil, false, err
 	}
-	managed, err := r.initSession(createCtx, key, handle, nil, resolved)
+	managed, err := r.initSession(createCtx, key, handle, nil, resolved, opts.name)
 	if err != nil {
 		handle.Cleanup()
 		return nil, false, err
 	}
 	// 新会话默认是一次性（Agent 创建的）；UI / Agent 显式要求持久时在这里直接落库为持久。
 	// 先落库拿到主键，再让注册表把会话挂进索引（保证 createOrAdopt 返回时 ID 已就绪）。
-	managed.setPersistent(persistent)
-	r.persistRecord(createCtx, managed, persistent)
+	managed.setPersistent(opts.persistent)
+	r.persistRecord(createCtx, managed, opts.persistent)
 	return managed, true, nil
 }
 
@@ -829,12 +826,11 @@ func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key Terminal
 		return nil, err
 	}
 
-	managed, err := r.initSession(ctx, recKey, handle, r.loadScrollback(recKey), size)
+	managed, err := r.initSession(ctx, recKey, handle, r.loadScrollback(recKey), size, rec.Name)
 	if err != nil {
 		handle.Cleanup()
 		return nil, err
 	}
-	managed.setName(rec.Name)
 	logger.Infof(ctx, "[TerminalSession] adopted session %s runtime=%s persistent=%v", managed.ID(), rec.RuntimeID, rec.Persistent)
 	r.touchRecord(ctx, recKey)
 	managed.setPersistent(rec.Persistent)
@@ -846,7 +842,7 @@ func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key Terminal
 // 新建容器时 key.ID 为 0：先用进程内生成的占位 ID 建立会话（保证有稳定的
 // sessions 索引与滚动缓冲文件名），等落库（persistRecord）拿到主键后
 // 再 ReplaceID 换成真实 ID。
-func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalSessionKey, handle *ProbeTerminalHandle, replay []byte, size terminalSize) (*ManagedTerminalSession, error) {
+func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalSessionKey, handle *ProbeTerminalHandle, replay []byte, size terminalSize, name string) (*ManagedTerminalSession, error) {
 	if handle == nil || handle.Session == nil {
 		return nil, fmt.Errorf("terminal runtime handle is empty")
 	}
@@ -873,9 +869,8 @@ func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalS
 		createdAt:   time.Now(),
 		rows:        size.rows,
 		cols:        size.cols,
-	}
-	if name := strings.TrimSpace(key.Name); name != "" {
-		managed.name = name
+		// 会话名只在创建 / 认领时写入一次；空名字保持为空（displayName 回退为主键）。
+		name: strings.TrimSpace(name),
 	}
 	if len(replay) > 0 {
 		// 重启前缓存的历史输出：作为初始缓冲，前端 attach 时直接回放。
@@ -1269,11 +1264,14 @@ func (r *TerminalSessionRegistry) ReviveByID(ctx context.Context, id int64, rows
 		TemplateID:     rec.TemplateID,
 		AgentSessionID: rec.AgentSessionID,
 		ID:             rec.ID,
-		Name:           rec.Name,
 	}
-	size := terminalSize{rows: rows, cols: cols}
 	// 用户正在主动打开它：一律按持久会话重建，避免一次性规则把容器回收掉。
-	sess, created, err := r.ensure(ctx, key, true, size)
+	size := terminalSize{rows: rows, cols: cols}
+	sess, created, err := r.ensure(ctx, key, terminalCreateOptions{
+		persistent: true,
+		name:       rec.Name,
+		size:       size,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1355,7 +1353,7 @@ func (r *TerminalSessionRegistry) Execute(ctx context.Context, key TerminalSessi
 		}
 		// 新建会话时按 cmd.Persistent 决定生命周期：一次性会话在本命令结束
 		// 且没有订阅者时会被回收，命令输出随之丢失。
-		created, _, err := r.ensure(ctx, key, cmd.Persistent, terminalSize{})
+		created, _, err := r.ensure(ctx, key, terminalCreateOptions{persistent: cmd.Persistent})
 		if err != nil {
 			return TerminalCommandResult{}, err
 		}
@@ -1443,13 +1441,12 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 		return runtimecontext.ContainerTerminalExecResult{}, fmt.Errorf("terminal_exec: agent session id is required")
 	}
 	key := NewAgentKey(in.UserID, in.ProjectID, in.ContainerTemplateID, in.AgentSessionID)
-	// 新建会话时写死展示名：会话名不在创建后自动推导 / 改写（改名只走后续接口）。
-	key.Name = defaultAgentTerminalSessionName
 
 	// 先占位：保证「一次性会话 + 无 WS」时命令执行期间不会被回收。
 	sess := r.Lookup(key)
 	if sess == nil && in.CreateIfMissing {
-		created, _, err := r.Ensure(ctx, key)
+		// 新建会话时写死展示名：会话名不在创建后自动推导 / 改写（改名只走后续接口）。
+		created, _, err := r.ensure(ctx, key, terminalCreateOptions{name: defaultAgentTerminalSessionName})
 		if err != nil {
 			return runtimecontext.ContainerTerminalExecResult{}, err
 		}
@@ -1478,7 +1475,7 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 		Source:          "agent",
 		NotifyUI:        in.Persistent,
 		CreateIfMissing: in.CreateIfMissing,
-		// 会话可能在本函数 Ensure 之后被回收，交给 Execute 兜底按同一规则创建。
+		// 会话可能在本函数创建之后被回收，交给 Execute 兜底按同一规则创建。
 		Persistent: in.Persistent,
 	})
 	if err != nil {
@@ -1690,21 +1687,6 @@ func (s *ManagedTerminalSession) displayName() string {
 		return name
 	}
 	return sessionIDString(id)
-}
-
-// setName 设置会话展示名；返回是否发生变化。
-func (s *ManagedTerminalSession) setName(name string) bool {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.name == name {
-		return false
-	}
-	s.name = name
-	return true
 }
 
 // assignRecordID 在会话落库后把（占位）ID 换成真实主键。
