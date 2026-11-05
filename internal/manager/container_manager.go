@@ -38,6 +38,12 @@ type ContainerManager struct {
 	res              ContainerRuntimeResolver
 	cfg              *config.Config
 	monitorOnce      sync.Once
+
+	// statusMu/statusWaiters 保存「等待某个 ContainerInstance 进入指定状态」的订阅者。
+	// OnEvent 应用完运行时事件后向订阅者广播最新状态，供创建方等待
+	// ContainerStarted（running）而没有必要在 runtime 层阻塞等待。
+	statusMu      sync.Mutex
+	statusWaiters map[int64][]chan types.ContainerStatus
 }
 
 func NewContainerManager(
@@ -55,6 +61,16 @@ func NewContainerManager(
 }
 
 func (s *ContainerManager) TransitionContainerAndEnqueueOutbox(ctx context.Context, inst *types.ContainerInstance, to types.ContainerStatus, eventType string) error {
+	return s.transitionContainer(ctx, inst, to, eventType, true, true)
+}
+
+// transitionContainer 是容器实例状态迁移的唯一入口：读取最新状态 → FSM 校验 →
+// 落库 → （可选）写 outbox 事件。
+//
+// enforceConcurrency 控制是否把本次迁移计入创建并发额度；终端容器这类长期占用
+// running 的实例不参与该额度（false）。enqueueOutbox 控制是否写 outbox 事件；
+// 由调用方同步驱动的内部迁移不需要 outbox（false）。
+func (s *ContainerManager) transitionContainer(ctx context.Context, inst *types.ContainerInstance, to types.ContainerStatus, eventType string, enforceConcurrency bool, enqueueOutbox bool) error {
 	if inst == nil {
 		return errors.New("container instance is nil")
 	}
@@ -64,7 +80,7 @@ func (s *ContainerManager) TransitionContainerAndEnqueueOutbox(ctx context.Conte
 		if err != nil {
 			return err
 		}
-		if to == types.ContainerCreating || to == types.ContainerStarting {
+		if enforceConcurrency && (to == types.ContainerCreating || to == types.ContainerStarting) {
 			if s.GetMaxConcurrency() > 0 {
 				active, err := tx.CountContainerInstanceByStatuses(ctx, concurrencyOccupiedStatuses())
 				if err != nil {
@@ -91,6 +107,10 @@ func (s *ContainerManager) TransitionContainerAndEnqueueOutbox(ctx context.Conte
 			return err
 		}
 
+		if !enqueueOutbox {
+			return nil
+		}
+
 		domainEvent := &types.ContainerEvent{
 			ContainerInstanceID: inst.ID,
 			Event:               eventType,
@@ -111,6 +131,117 @@ func (s *ContainerManager) TransitionContainerAndEnqueueOutbox(ctx context.Conte
 			Status:  "pending",
 		})
 	})
+}
+
+// WaitForInstanceStatus 阻塞等待实例进入 wanted 中的任一状态。
+//
+// 状态推进完全由运行时事件驱动（ContainerManager.OnEvent），因此等待方只需要
+// 订阅状态广播：先注册订阅者，再读一次数据库，避免“注册前事件已到”的竞态。
+// 实例进入 failed / stopped / exited 且不在 wanted 中时返回错误。
+func (s *ContainerManager) WaitForInstanceStatus(ctx context.Context, instanceID int64, wanted ...types.ContainerStatus) (types.ContainerStatus, error) {
+	if instanceID <= 0 {
+		return "", errors.New("container instance id is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	ch := make(chan types.ContainerStatus, 8)
+	s.statusMu.Lock()
+	if s.statusWaiters == nil {
+		s.statusWaiters = make(map[int64][]chan types.ContainerStatus)
+	}
+	s.statusWaiters[instanceID] = append(s.statusWaiters[instanceID], ch)
+	s.statusMu.Unlock()
+	defer s.removeStatusWaiter(instanceID, ch)
+
+	// 先按数据库当前状态判断一次：事件可能在注册订阅者之前就已经应用。
+	// 只有命中 wanted 或已经进入终态才立即返回，其它中间状态（creating 等）继续等
+	// OnEvent 的后续广播。
+	current := s.currentInstanceStatus(ctx, instanceID)
+	if status, ok := matchInstanceStatus(current, wanted); ok {
+		return status, nil
+	}
+	if isTerminalContainerStatus(current) {
+		return current, fmt.Errorf("container instance %d reached %s before %v", instanceID, current, wanted)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case status := <-ch:
+			if matched, ok := matchInstanceStatus(status, wanted); ok {
+				return matched, nil
+			}
+			if isTerminalContainerStatus(status) {
+				return status, fmt.Errorf("container instance %d reached %s before %v", instanceID, status, wanted)
+			}
+		}
+	}
+}
+
+func (s *ContainerManager) currentInstanceStatus(ctx context.Context, instanceID int64) types.ContainerStatus {
+	inst, err := s.containerRepo.GetContainerInstanceByID(ctx, instanceID)
+	if err != nil || inst == nil {
+		return ""
+	}
+	return inst.Status
+}
+
+func matchInstanceStatus(status types.ContainerStatus, wanted []types.ContainerStatus) (types.ContainerStatus, bool) {
+	if status == "" {
+		return "", false
+	}
+	for _, item := range wanted {
+		if status == item {
+			return status, true
+		}
+	}
+	return status, false
+}
+
+func isTerminalContainerStatus(status types.ContainerStatus) bool {
+	switch status {
+	case types.ContainerFailed, types.ContainerStopped, types.ContainerExited, types.ContainerDeleted:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *ContainerManager) removeStatusWaiter(instanceID int64, ch chan types.ContainerStatus) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	waiters := s.statusWaiters[instanceID]
+	for i, item := range waiters {
+		if item == ch {
+			waiters = append(waiters[:i], waiters[i+1:]...)
+			break
+		}
+	}
+	if len(waiters) == 0 {
+		delete(s.statusWaiters, instanceID)
+		return
+	}
+	s.statusWaiters[instanceID] = waiters
+}
+
+// notifyInstanceStatus 把实例最新状态广播给等待方（非阻塞：等待方只关心最后一次命中）。
+func (s *ContainerManager) notifyInstanceStatus(instanceID int64, status types.ContainerStatus) {
+	if instanceID <= 0 || status == "" {
+		return
+	}
+	s.statusMu.Lock()
+	waiters := append([]chan types.ContainerStatus(nil), s.statusWaiters[instanceID]...)
+	s.statusMu.Unlock()
+
+	for _, ch := range waiters {
+		select {
+		case ch <- status:
+		default:
+		}
+	}
 }
 
 func concurrencyOccupiedStatuses() []types.ContainerStatus {
@@ -683,6 +814,9 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 	// the runtime event that produced it.
 	logger.Debugf(ctx, "[ContainerManager] runtime event applied, runtime_id=%s event=%s instance_id=%d status=%s exit_code=%s finished_at=%v",
 		e.RuntimeID, e.Type, inst.ID, inst.Status, formatExitCode(inst.ExitCode), inst.FinishedAt)
+
+	// 通知状态等待方（例如终端容器创建方等待 ContainerStarted）。
+	m.notifyInstanceStatus(inst.ID, inst.Status)
 }
 
 func parseRuntimeExitCode(raw string) (int, bool) {

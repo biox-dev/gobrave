@@ -204,53 +204,11 @@ type AgentAnalysisResult struct {
 	CommandPath  string `json:"command_path,omitempty"`
 }
 
-// ContainerEnvProbe 抽象「用容器模板创建临时容器 → 同步执行命令 → 读取日志 →
-// 自动删除容器」的业务能力（probe_container_env）。
-//
-// 它是进程级静态依赖，由 builtin.Deps 在构造工具时注入；projectID 取自
-// 执行事实（tool.ProjectIDFrom），工具层只负责把请求转换为入参。
-type ContainerEnvProbe interface {
-	// ProbeContainerEnv 在临时容器中执行 command 并等待结束。
-	//
-	// 容器按 executeCreate 的口径组装：模板镜像 / 资源 / 挂载 / 环境变量，并补齐
-	// buildPackageVariables 产生的包目录变量；执行结束后无论成败都会删除容器。
-	// 命令失败 / 超时属于正常结果（Success=false、Error 非空），只有模板 / 运行时 /
-	// 资源准备等前置错误才返回 error。
-	ProbeContainerEnv(ctx context.Context, in ContainerEnvProbeInput) (ContainerEnvProbeResult, error)
-}
-
-// ContainerEnvProbeInput 是一次 probe_container_env 调用的入参。
-type ContainerEnvProbeInput struct {
-	// ProjectID 取自 RuntimeContext.ProjectID（当前用户激活项目）。
-	ProjectID int64
-	// ContainerTemplateID 是必填的容器模板 ID。
-	ContainerTemplateID int64
-	// Command 是要在容器内执行的 shell 命令。
-	Command string
-	// TimeoutSeconds <= 0 时使用实现默认超时。
-	TimeoutSeconds int
-}
-
-// ContainerEnvProbeResult 是一次临时容器探测的执行结果。
-type ContainerEnvProbeResult struct {
-	ContainerTemplateID int64   `json:"container_template_id"`
-	RuntimeName         string  `json:"runtime_name,omitempty"`
-	ExitCode            int     `json:"exit_code"`
-	Success             bool    `json:"success"`
-	TimedOut            bool    `json:"timed_out,omitempty"`
-	Log                 string  `json:"log,omitempty"`
-	LogTruncated        bool    `json:"log_truncated,omitempty"`
-	DurationSeconds     float64 `json:"duration_seconds,omitempty"`
-	Error               string  `json:"error,omitempty"`
-}
-
 // ContainerTerminalRunner 抽象「向当前用户激活项目下的容器模板临时终端写入命令」
 // 的业务能力（terminal_exec）。
 //
-// 与 ContainerEnvProbe 的区别：
-//   - ContainerEnvProbe 每次新建一次性容器、同步执行、执行完删除，互不可见；
-//   - ContainerTerminalRunner 复用用户已经打开的持久终端（同一个 PTY），命令输出
-//     会实时出现在前端 xterm 中，用户也能看到 Agent 执行了什么。
+// 终端会话复用同一个持久 PTY，命令输出会实时出现在前端 xterm 中，用户也能看到
+// Agent 执行了什么。
 type ContainerTerminalRunner interface {
 	// RunInTerminal 把 command 写入会话的串行队列。
 	//

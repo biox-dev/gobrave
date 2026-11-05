@@ -5,6 +5,7 @@ import (
 
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -67,6 +68,43 @@ func startedJob(name string, suspend bool) *batchv1.Job {
 	}
 }
 
+// jobPodFor returns the pod the job controller creates for a job, carrying the
+// label the runtime uses to resolve a workload's pod.
+func jobPodFor(name string, phase corev1.PodPhase) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name + "-pod",
+			Namespace: "default",
+			Labels:    map[string]string{"gobrave-workload": name},
+		},
+		Status: corev1.PodStatus{Phase: phase},
+	}
+}
+
+// ContainerStarted for a job must wait for the pod to be actually Running: the
+// job alone reports a StartTime while the pod can still be Pending, and a terminal
+// exec against a Pending pod fails with "pod ... is not running (phase=Pending)".
+func TestOnPodAddOrUpdate_EmitsStartedOnlyWhenPodRunning(t *testing.T) {
+	job := startedJob("pod-ready-job", false)
+	m, _, handler := newJobMonitorFixture(t, job)
+
+	m.onPodAddOrUpdate(jobPodFor(job.Name, corev1.PodPending))
+	if len(handler.events) != 0 {
+		t.Fatalf("a pending pod must not be reported as started, got %+v", handler.events)
+	}
+
+	m.onPodAddOrUpdate(jobPodFor(job.Name, corev1.PodRunning))
+	if len(handler.events) != 1 || handler.events[0].Type != "ContainerStarted" {
+		t.Fatalf("expected ContainerStarted once the pod is running, got %+v", handler.events)
+	}
+
+	// Duplicate pod updates must not emit a second started event.
+	m.onPodAddOrUpdate(jobPodFor(job.Name, corev1.PodRunning))
+	if len(handler.events) != 1 {
+		t.Fatalf("expected ContainerStarted to be emitted once, got %+v", handler.events)
+	}
+}
+
 // A job that was created suspended and has not started yet must NOT be reported as
 // exited.
 //
@@ -118,6 +156,8 @@ func TestHandleJobEvent_EmitsExitedWhenStartedJobIsSuspended(t *testing.T) {
 	job := startedJob("stop-running-job", true)
 	m, sub, handler := newJobMonitorFixture(t, job)
 
+	// Started now comes from the pod informer (pod actually Running).
+	m.onPodAddOrUpdate(jobPodFor(job.Name, corev1.PodRunning))
 	m.handleJobEvent(sub, job)
 
 	if len(handler.events) != 2 {
@@ -148,6 +188,7 @@ func TestHandleJobEvent_EmitsExitedWhenJobSucceeded(t *testing.T) {
 	job.Status.Succeeded = 1
 	m, sub, handler := newJobMonitorFixture(t, job)
 
+	m.onPodAddOrUpdate(jobPodFor(job.Name, corev1.PodRunning))
 	m.handleJobEvent(sub, job)
 
 	if len(handler.events) != 2 {

@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -140,98 +139,6 @@ func (d *DockerRuntime) Start(ctx context.Context, id string) error {
 
 	d.emitEvent("ContainerStarted", id, "")
 	return d.Monitor(ctx, id)
-}
-
-// StartAndWait starts the container and blocks until it exits, returning its exit
-// code. Unlike Start it does not register an asynchronous monitor: one-shot probe
-// containers only need the final result and are deleted by their caller.
-func (d *DockerRuntime) StartAndWait(ctx context.Context, id string) (int, error) {
-	containerID, err := d.toContainerID(id)
-	if err != nil {
-		return -1, err
-	}
-
-	cli, err := d.getClient()
-	if err != nil {
-		return -1, err
-	}
-
-	if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
-		return -1, fmt.Errorf("start container %s: %w", containerID, err)
-	}
-
-	statusCh, errCh := cli.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
-	for statusCh != nil || errCh != nil {
-		select {
-		case <-ctx.Done():
-			return -1, ctx.Err()
-		case waitErr, ok := <-errCh:
-			if !ok {
-				errCh = nil
-				continue
-			}
-			if waitErr == nil {
-				continue
-			}
-			if errdefs.IsNotFound(waitErr) {
-				return -1, fmt.Errorf("container %s not found: %w", containerID, waitErr)
-			}
-			return -1, fmt.Errorf("wait container %s: %w", containerID, waitErr)
-		case result, ok := <-statusCh:
-			if !ok {
-				statusCh = nil
-				continue
-			}
-			if result.Error != nil {
-				return int(result.StatusCode), errors.New(result.Error.Message)
-			}
-			return int(result.StatusCode), nil
-		}
-	}
-
-	return -1, errors.New("wait container: no result")
-}
-
-// StartForTerminal starts a long-lived container and waits until Docker reports it
-// running, so a following docker exec succeeds without a race. It does not register
-// an asynchronous monitor; the caller deletes the container when the terminal closes.
-func (d *DockerRuntime) StartForTerminal(ctx context.Context, id string) error {
-	containerID, err := d.toContainerID(id)
-	if err != nil {
-		return err
-	}
-
-	cli, err := d.getClient()
-	if err != nil {
-		return err
-	}
-
-	if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
-		return fmt.Errorf("start container %s: %w", containerID, err)
-	}
-
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		info, err := cli.ContainerInspect(ctx, containerID)
-		if err != nil {
-			return fmt.Errorf("inspect container %s: %w", containerID, err)
-		}
-		if info.State != nil {
-			switch {
-			case info.State.Running:
-				return nil
-			case info.State.Dead, strings.EqualFold(info.State.Status, "exited"):
-				return fmt.Errorf("container %s exited before terminal opened (exit_code=%d)", containerID, info.State.ExitCode)
-			}
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
 }
 
 func (d *DockerRuntime) Monitor(ctx context.Context, runtimeID string) error {

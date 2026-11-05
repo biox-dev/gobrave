@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
@@ -32,6 +34,7 @@ type kubernetesMonitorV2 struct {
 	stopCh    chan struct{}
 	depSynced cache.InformerSynced
 	jobSynced cache.InformerSynced
+	podSynced cache.InformerSynced
 
 	mu   sync.Mutex
 	subs map[string]*monitorSubscription
@@ -153,6 +156,7 @@ func (m *kubernetesMonitorV2) ensureInformerStarted() error {
 
 		depInformer := factory.Apps().V1().Deployments().Informer()
 		jobInformer := factory.Batch().V1().Jobs().Informer()
+		podInformer := factory.Core().V1().Pods().Informer()
 
 		if _, err := depInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc:    m.onDeploymentAddOrUpdate,
@@ -174,17 +178,62 @@ func (m *kubernetesMonitorV2) ensureInformerStarted() error {
 			return
 		}
 
+		// Pod informer：job 的 ContainerStarted 必须等到 pod 真正进入 Running 才能发出。
+		// job.Status.StartTime 在 job controller 创建 pod 时就会写入，此时 pod 可能仍是
+		// Pending（拉镜像 / 调度中），照此发事件会让 docker/kubectl exec 立刻失败。
+		if _, err := podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    m.onPodAddOrUpdate,
+			UpdateFunc: func(_, newObj interface{}) { m.onPodAddOrUpdate(newObj) },
+		}); err != nil {
+			m.startErr = fmt.Errorf("register pod informer handler: %w", err)
+			close(m.stopCh)
+			return
+		}
+
 		m.depSynced = depInformer.HasSynced
 		m.jobSynced = jobInformer.HasSynced
+		m.podSynced = podInformer.HasSynced
 
 		factory.Start(m.stopCh)
-		if !cache.WaitForCacheSync(m.stopCh, m.depSynced, m.jobSynced) {
+		if !cache.WaitForCacheSync(m.stopCh, m.depSynced, m.jobSynced, m.podSynced) {
 			m.startErr = errors.New("sync informer cache failed")
 			close(m.stopCh)
 			return
 		}
 	})
 	return m.startErr
+}
+
+// onPodAddOrUpdate 在 job 的 pod 真正 Running 时补发 ContainerStarted。
+// deployment 的 started 由 ReadyReplicas 判定，不需要额外读取 pod。
+func (m *kubernetesMonitorV2) onPodAddOrUpdate(obj interface{}) {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok || pod == nil {
+		return
+	}
+	if pod.Status.Phase != corev1.PodRunning {
+		return
+	}
+	workload := strings.TrimSpace(pod.Labels["gobrave-workload"])
+	if workload == "" {
+		return
+	}
+	sub, found := m.getSubscription(workloadKindJob, pod.Namespace, workload)
+	if !found {
+		return
+	}
+	m.emitJobStarted(sub, "pod-informer")
+}
+
+// emitJobStarted 只发出一次 ContainerStarted（monitorState.emitStarted 去重）。
+func (m *kubernetesMonitorV2) emitJobStarted(sub *monitorSubscription, source string) {
+	if sub == nil || sub.state == nil {
+		return
+	}
+	sub.state.emitStarted(func() {
+		m.runtime.emitEvent("ContainerStarted", sub.runtimeID, "")
+		logger.Debugf(context.Background(), "[KubernetesMonitorV2] ContainerStarted emitted, runtime_id=%s source=%s", sub.runtimeID, source)
+	})
 }
 
 func (m *kubernetesMonitorV2) onJobAddOrUpdate(obj interface{}) {
@@ -261,12 +310,8 @@ func (m *kubernetesMonitorV2) onDeploymentDelete(obj interface{}) {
 }
 
 func (m *kubernetesMonitorV2) handleJobEvent(sub *monitorSubscription, job *batchv1.Job) {
-	if jobHasStarted(job) {
-		sub.state.emitStarted(func() {
-			m.runtime.emitEvent("ContainerStarted", sub.runtimeID, "")
-			logger.Debugf(context.Background(), "[KubernetesMonitorV2] ContainerStarted emitted, runtime_id=%s source=informer %s", sub.runtimeID, jobFacts(job))
-		})
-	}
+	// ContainerStarted 由 pod informer 在 pod 进入 Running 时发出：job 的 StartTime
+	// 早于 pod 可 exec，不能作为「容器已启动完成」的依据。
 	// Terminating 也会触发 update 事件
 	if job.Spec.Suspend != nil && *job.Spec.Suspend {
 		if !jobHasStarted(job) {
@@ -348,7 +393,7 @@ func (m *kubernetesMonitorV2) checkJobSnapshot(sub *monitorSubscription) bool {
 		})
 	}
 
-	if jobHasStarted(job) {
+	if jobHasStarted(job) && m.jobPodRunning(sub) {
 		sub.state.emitStarted(func() {
 			m.runtime.emitEvent("ContainerStarted", sub.runtimeID, "")
 			logger.Debugf(context.Background(), "[KubernetesMonitorV2] ContainerStarted emitted, runtime_id=%s source=snapshot %s", sub.runtimeID, jobFacts(job))
@@ -440,6 +485,29 @@ func (m *kubernetesMonitorV2) completeAndCleanup(sub *monitorSubscription) {
 
 func (m *kubernetesMonitorV2) subscriptionKey(kind, namespace, name string) string {
 	return kind + "|" + namespace + "|" + name
+}
+
+// jobPodRunning reports whether any pod of the job is already in Running phase.
+// Only then can a following docker/kubectl exec succeed, so it is the condition
+// behind ContainerStarted for job workloads.
+func (m *kubernetesMonitorV2) jobPodRunning(sub *monitorSubscription) bool {
+	if m == nil || m.runtime == nil || m.runtime.clientset == nil || sub == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), jobLiveReadTimeout)
+	defer cancel()
+	pods, err := m.runtime.clientset.CoreV1().Pods(sub.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "gobrave-workload=" + sub.name,
+	})
+	if err != nil {
+		return false
+	}
+	for i := range pods.Items {
+		if pods.Items[i].Status.Phase == corev1.PodRunning {
+			return true
+		}
+	}
+	return false
 }
 
 // jobFacts renders the job fields that decide whether a lifecycle event is real.

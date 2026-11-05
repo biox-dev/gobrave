@@ -22,7 +22,6 @@ type ContainerHandler struct {
 	analysisService  interfaces.AnalysisService
 	workflowService  interfaces.WorkflowService
 	containerManager *manager.ContainerManager
-	probe            *manager.ContainerProbeRunner
 	terminalRegistry *manager.TerminalSessionRegistry
 	cfg              *config.Config
 }
@@ -105,7 +104,6 @@ func NewContainerHandler(containerService interfaces.ContainerService,
 	projectService interfaces.ProjectService,
 	analysisService interfaces.AnalysisService, workflowService interfaces.WorkflowService,
 	containerManager *manager.ContainerManager,
-	probe *manager.ContainerProbeRunner,
 	terminalRegistry *manager.TerminalSessionRegistry,
 	cfg *config.Config) *ContainerHandler {
 	return &ContainerHandler{
@@ -114,7 +112,6 @@ func NewContainerHandler(containerService interfaces.ContainerService,
 		projectService:   projectService,
 		workflowService:  workflowService,
 		containerManager: containerManager,
-		probe:            probe,
 		terminalRegistry: terminalRegistry,
 		cfg:              cfg,
 	}

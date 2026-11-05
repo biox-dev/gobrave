@@ -26,7 +26,6 @@ func All(d Deps) []tool.Tool {
 		GetAnalysisNode(d.NodeBrowser),
 		ListContainerTemplates(d.TemplateBrowser),
 		GetContainerTemplate(d.TemplateBrowser),
-		// ProbeContainerEnv(d.Probe),
 		TerminalExec(d.Terminal),
 		GetDataset(d.DatasetBrowser),
 		GetProjectDatabasePath(d.DatasetWriter),

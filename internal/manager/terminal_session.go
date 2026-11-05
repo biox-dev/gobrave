@@ -138,6 +138,8 @@ const (
 	defaultTerminalBufferBytes = 256 * 1024
 	defaultTerminalCreateWait  = 10 * time.Minute
 	defaultTerminalExecTimeout = 5 * time.Minute
+	// maxTerminalOutputBytes 限制单次命令返回给 Agent 的输出字节数（只保留尾部）。
+	maxTerminalOutputBytes = 12000
 	// defaultTerminalSessionTTL 是「持久会话」的空闲上限：超过即回收容器并删记录。
 	defaultTerminalSessionTTL         = 2 * time.Hour
 	defaultTerminalMaxSessionsPerUser = 4
@@ -378,11 +380,11 @@ type terminalExecOutcome struct {
 	err             error
 }
 
-// TerminalRuntimeOpener 抽象「创建探针容器 / 认领已有容器 + 打开交互式 shell」的能力。
-// *ContainerProbeRunner 实现它；单测可注入 fake PTY。
+// TerminalRuntimeOpener 抽象「创建终端容器 / 认领已有容器 + 打开交互式 shell」的能力。
+// *ContainerCreateWorker 实现它；单测可注入 fake PTY。
 type TerminalRuntimeOpener interface {
-	StartTerminalRuntime(ctx context.Context, userID, projectID, templateID int64, opts containerruntime.TerminalOptions) (*ProbeTerminalHandle, error)
-	AttachTerminalRuntime(ctx context.Context, runtimeName, runtimeID string, opts containerruntime.TerminalOptions) (*ProbeTerminalHandle, error)
+	StartTerminalRuntime(ctx context.Context, userID, projectID, templateID int64, opts containerruntime.TerminalOptions) (*TerminalRuntimeHandle, error)
+	AttachTerminalRuntime(ctx context.Context, runtimeName, runtimeID string, opts containerruntime.TerminalOptions) (*TerminalRuntimeHandle, error)
 	DropTerminalRuntime(ctx context.Context, runtimeName, runtimeID string)
 	// ContainerTemplateName 返回模板的展示名与名称，供新建会话生成默认展示名。
 	// 模板不可读时返回空串，调用方回退到模板 ID。
@@ -391,7 +393,7 @@ type TerminalRuntimeOpener interface {
 
 // TerminalSessionRegistry 维护终端会话 ID → PTY 的映射。
 type TerminalSessionRegistry struct {
-	probe     TerminalRuntimeOpener
+	opener    TerminalRuntimeOpener
 	publisher TerminalEventPublisher
 	store     TerminalSessionStore
 	opts      TerminalRegistryOptions
@@ -418,11 +420,11 @@ type pendingTerminalSession struct {
 
 // NewTerminalSessionRegistry 构造会话注册表。
 //
-// probe 复用 ContainerProbeRunner 的容器组装链路（与 probe_container_env 口径一致）；
-// publisher 可为 nil（例如单测），此时不推送前端事件；store 记录会话→容器的映射，
-// 供进程重启后认领；cfg 决定回收策略 / 配额 / 滚动缓冲目录。
-func NewTerminalSessionRegistry(probe *ContainerProbeRunner, publisher TerminalEventPublisher, store TerminalSessionStore, cfg *config.Config) *TerminalSessionRegistry {
-	registry := newTerminalSessionRegistry(probe, publisher, store, terminalRegistryOptions(cfg))
+// worker 复用 ContainerCreateWorker 的容器组装与创建链路；publisher 可为 nil
+// （例如单测），此时不推送前端事件；store 记录会话→容器的映射，供进程重启后
+// 认领；cfg 决定回收策略 / 配额 / 滚动缓冲目录。
+func NewTerminalSessionRegistry(worker *ContainerCreateWorker, publisher TerminalEventPublisher, store TerminalSessionStore, cfg *config.Config) *TerminalSessionRegistry {
+	registry := newTerminalSessionRegistry(worker, publisher, store, terminalRegistryOptions(cfg))
 	// 注册表在进程启动时构造一次（Router → ContainerHandler），在这里拉起后台维护：
 	// 空闲 TTL 回收 + 跨进程残留对账。放在构造函数里而不是 dig Invoke，
 	// 避免最小依赖图的单元测试强制解析 ContainerCreateWorker 的全部依赖。
@@ -447,9 +449,9 @@ func terminalRegistryOptions(cfg *config.Config) TerminalRegistryOptions {
 	return opts
 }
 
-func newTerminalSessionRegistry(probe TerminalRuntimeOpener, publisher TerminalEventPublisher, store TerminalSessionStore, opts TerminalRegistryOptions) *TerminalSessionRegistry {
+func newTerminalSessionRegistry(opener TerminalRuntimeOpener, publisher TerminalEventPublisher, store TerminalSessionStore, opts TerminalRegistryOptions) *TerminalSessionRegistry {
 	return &TerminalSessionRegistry{
-		probe:     probe,
+		opener:    opener,
 		publisher: publisher,
 		store:     store,
 		opts:      opts,
@@ -519,8 +521,8 @@ func (r *TerminalSessionRegistry) scrollbackBytes() int {
 // 只在 persistRecord 的 Create 分支调用：DB 是 name 的唯一真相，之后任何更新都不改写它。
 func (r *TerminalSessionRegistry) defaultSessionName(ctx context.Context, templateID int64) string {
 	displayName, name := "", ""
-	if r.probe != nil {
-		displayName, name = r.probe.ContainerTemplateName(ctx, templateID)
+	if r.opener != nil {
+		displayName, name = r.opener.ContainerTemplateName(ctx, templateID)
 	}
 	return firstNonEmptyString(displayName, name, strconv.FormatInt(templateID, 10))
 }
@@ -778,8 +780,8 @@ func terminalOptions(size terminalSize) containerruntime.TerminalOptions {
 // “认领”的含义：进程重启后容器还在，但原来的 shell 已随连接结束；这里在同一个
 // 容器上重新 exec 一个 bash，并把落盘的滚动缓冲回放进内存缓冲。
 func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, opts terminalCreateOptions) (*ManagedTerminalSession, *types.TerminalSession, bool, error) {
-	if r.probe == nil {
-		return nil, nil, false, fmt.Errorf("container probe is not configured")
+	if r.opener == nil {
+		return nil, nil, false, fmt.Errorf("terminal runtime opener is not configured")
 	}
 
 	// 调用方没给尺寸（例如 Agent 的 terminal_exec）时用默认 24x80；
@@ -807,7 +809,7 @@ func (r *TerminalSessionRegistry) createOrAdopt(key TerminalSessionKey, opts ter
 		return nil, nil, false, err
 	}
 
-	handle, err := r.probe.StartTerminalRuntime(createCtx, key.UserID, key.ProjectID, key.TemplateID, terminalOptions(resolved))
+	handle, err := r.opener.StartTerminalRuntime(createCtx, key.UserID, key.ProjectID, key.TemplateID, terminalOptions(resolved))
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -844,7 +846,7 @@ func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key Terminal
 	}
 
 	recKey := key.ReplaceID(rec.ID)
-	handle, err := r.probe.AttachTerminalRuntime(ctx, rec.RuntimeName, rec.RuntimeID, terminalOptions(size))
+	handle, err := r.opener.AttachTerminalRuntime(ctx, rec.RuntimeName, rec.RuntimeID, terminalOptions(size))
 	if err != nil {
 		// 容器已被删除 / 节点重建：记录作废，走新建。
 		r.dropRecord(ctx, rec)
@@ -867,7 +869,7 @@ func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key Terminal
 // 新建容器时 key.ID 为 0：先用进程内生成的占位 ID 建立会话（保证有稳定的
 // sessions 索引与滚动缓冲文件名），等落库（persistRecord）拿到主键后
 // 再 ReplaceID 换成真实 ID。
-func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalSessionKey, handle *ProbeTerminalHandle, replay []byte, size terminalSize) (*ManagedTerminalSession, error) {
+func (r *TerminalSessionRegistry) initSession(ctx context.Context, key TerminalSessionKey, handle *TerminalRuntimeHandle, replay []byte, size terminalSize) (*ManagedTerminalSession, error) {
 	if handle == nil || handle.Session == nil {
 		return nil, fmt.Errorf("terminal runtime handle is empty")
 	}
@@ -999,8 +1001,8 @@ func (r *TerminalSessionRegistry) dropRecord(ctx context.Context, rec *types.Ter
 	if rec == nil {
 		return
 	}
-	if r.probe != nil {
-		r.probe.DropTerminalRuntime(ctx, rec.RuntimeName, rec.RuntimeID)
+	if r.opener != nil {
+		r.opener.DropTerminalRuntime(ctx, rec.RuntimeName, rec.RuntimeID)
 	}
 	// 会话已不存在，滚动缓冲文件也一并清理，避免目录无限增长。
 	if scrollback, err := newTerminalScrollback(r.opts.ScrollbackDir, rec.SessionKey, r.scrollbackBytes()); err == nil {
@@ -2314,7 +2316,7 @@ func (s *ManagedTerminalSession) runCommand(req terminalExecRequest) terminalExe
 
 	finish := func(exitCode int, timedOut bool) terminalExecOutcome {
 		out := s.readSince(startSeq)
-		output, truncated := truncateTerminalOutput(string(stripTerminalMarkers(out)), maxProbeLogBytes)
+		output, truncated := truncateTerminalOutput(string(stripTerminalMarkers(out)), maxTerminalOutputBytes)
 		s.SendEvent(map[string]any{
 			"type":       "exec",
 			"phase":      "end",

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/biox-dev/gobrave/internal/config"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
@@ -925,4 +926,417 @@ func parseInt64WithDefault(raw string, fallback int64) int64 {
 		return fallback
 	}
 	return parsed
+}
+
+// ===== 容器模板终端容器（由 ContainerCreateWorker 统一管理）=====
+//
+// 终端容器的组装口径与 executeCreate 一致（模板镜像 / 资源 / 挂载 / 环境变量 +
+// 项目 env + 包目录变量 + storage 挂载 + 变量解析），区别在于：
+//   - 它有真实的 ContainerInstance 记录（owner_type=terminal），因此运行时事件
+//     可以像普通容器一样经 ContainerManager.OnEvent 收敛状态；
+//   - 它不由 outbox / Handle 链路驱动，而是由本 worker 直接创建实例并调用
+//     runtime.Create + runtime.Start；
+//   - 启动完成的判定改为等待 OnEvent 广播的 ContainerStarted（running），
+//     不再需要 runtime 层的 StartForTerminal / StartAndWait。
+
+const (
+	terminalCleanupTimeout = 60 * time.Second
+	terminalStartWait      = 2 * time.Minute
+	terminalWorkloadKind   = "job"
+	// terminalKeepAliveCommand 让终端容器常驻，真正的 shell 由 docker exec /
+	// kubectl exec 打开。
+	terminalKeepAliveCommand = "while true; do sleep 3600; done"
+)
+
+// terminalEnvKeys 是需要物化到终端容器环境里的运行时变量。模板 / 项目 env 优先，
+// 这里只补齐缺失项，使命令可以直接使用 $R_PACKAGE_DIR / $PROJECT_DIR 等。
+var terminalEnvKeys = []string{
+	"USERID",
+	"GROUPID",
+	"DOCKER_GID",
+	"DOCKER_GROUPID",
+	"R_PROFILE",
+	"PACKAGE_DIR",
+	"R_PACKAGE_DIR",
+	"PYTHON_PACKAGE_DIR",
+	"CONDA_PACKAGE_DIR",
+	"PROJECT_DIR",
+	"PROJECT_CONFIG_DIR",
+}
+
+// TerminalRuntimeHandle 是一次「终端容器 + 交互式 shell」的句柄。
+//
+// 它把创建/认领两条路径统一起来：
+//   - StartTerminalRuntime 新建容器后返回 runtimeID；
+//   - AttachTerminalRuntime 在已有容器上重新 exec 一个 shell（进程重启后的认领）。
+//
+// Cleanup 负责删除容器（关闭 shell 之后调用）；调用方必须在会话 Close 时执行它。
+type TerminalRuntimeHandle struct {
+	Runtime             containerruntime.Runtime
+	RuntimeName         string
+	RuntimeID           string
+	ContainerName       string
+	ContainerInstanceID int64
+	Session             containerruntime.TerminalSession
+	Cleanup             func()
+}
+
+type terminalPlan struct {
+	spec *types.ContainerSpec
+	rt   containerruntime.Runtime
+}
+
+// ContainerTemplateName 返回模板的展示名与名称，供终端会话生成默认展示名。
+//
+// 模板不可读 / 未配置时返回空串，调用方会回退到模板 ID。
+func (w *ContainerCreateWorker) ContainerTemplateName(ctx context.Context, templateID int64) (string, string) {
+	if w == nil || w.repo == nil || templateID <= 0 {
+		return "", ""
+	}
+	tpl, err := w.repo.GetContainerTemplateByID(ctx, templateID)
+	if err != nil || tpl == nil {
+		return "", ""
+	}
+	return tpl.DisplayName, tpl.Name
+}
+
+// buildTerminalPlan 按 executeCreate 的口径组装运行时 spec：
+// 模板镜像 / 资源 / 挂载 / 环境变量，项目 env / 挂载，包目录变量，storage 挂载，
+// 变量解析与 volume source 准备。命令本身留给调用方在解析之后再设置。
+func (w *ContainerCreateWorker) buildTerminalPlan(ctx context.Context, userID, projectID, templateID int64) (*terminalPlan, error) {
+	if w == nil || w.repo == nil || w.projectRepo == nil {
+		return nil, fmt.Errorf("container worker is not configured")
+	}
+	if projectID <= 0 {
+		return nil, fmt.Errorf("project id is required")
+	}
+	if templateID <= 0 {
+		return nil, fmt.Errorf("container_template_id is required")
+	}
+
+	tpl, err := w.repo.GetContainerTemplateByID(ctx, templateID)
+	if err != nil {
+		return nil, fmt.Errorf("load container template %d: %w", templateID, err)
+	}
+	if tpl == nil {
+		return nil, fmt.Errorf("container template %d not found", templateID)
+	}
+	if strings.TrimSpace(tpl.ImageName) == "" {
+		return nil, fmt.Errorf("container template %d does not bind any image", templateID)
+	}
+
+	project, err := w.projectRepo.GetProjectByID(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("load project %d: %w", projectID, err)
+	}
+	if project == nil {
+		return nil, fmt.Errorf("project %d not found", projectID)
+	}
+
+	if w.containerManager == nil {
+		return nil, fmt.Errorf("container manager is not configured")
+	}
+	rt, err := w.containerManager.getRuntime()
+	if err != nil {
+		return nil, err
+	}
+
+	// 与 executeCreate 一致：先基于模板 / 项目构建运行时变量（含 buildPackageVariables），
+	// 再用它解析 env / mounts / workdir 中的占位符。
+	ownerType := types.ContainerOwnerDagNode
+	ownerCtx := &ownerRuntimeContext{project: project, projectID: projectID}
+	resolveVars := w.buildRuntimeVariables(ctx, tpl, ownerType, ownerCtx).ToMap()
+
+	volumes := parseVolumes(tpl.Mounts, ownerType)
+	volumes = append(volumes, parseVolumes(project.Mounts, ownerType)...)
+	volumes, err = w.appendStorageVolumes(ctx, volumes)
+	if err != nil {
+		return nil, fmt.Errorf("prepare terminal volumes: %w", err)
+	}
+
+	envs := parseEnv(tpl.Env)
+	for k, v := range parseEnv(project.Env) {
+		envs[k] = v
+	}
+	fillTerminalEnv(envs, resolveVars)
+
+	workDir := strings.TrimSpace(tpl.WorkDir)
+	if workDir == "" {
+		workDir = resolveVars["PROJECT_DIR"]
+	}
+
+	spec := &types.ContainerSpec{
+		Image:                tpl.ImageName,
+		PullPolicy:           tpl.PullPolicy,
+		Entrypoint:           []string{"bash", "-lc"},
+		Env:                  envs,
+		Volumes:              volumes,
+		SchedulingConstraint: parseSchedulingConstraint(tpl.SchedulingConstraint),
+		CPU:                  tpl.CPU,
+		Memory:               tpl.Memory,
+		WorkDir:              workDir,
+		RuntimeName: w.buildRuntimeResourceName(
+			types.ContainerOwnerTerminal, 0, fmt.Sprintf("terminal-%d-%d", projectID, time.Now().UnixNano()),
+		),
+		Labels: map[string]string{
+			"gobrave-terminal":    "true",
+			"gobrave-project-id":  strconv.FormatInt(projectID, 10),
+			"gobrave-template-id": strconv.FormatInt(templateID, 10),
+		},
+		// 终端容器是常驻进程：k8s 一律用 job，避免 deployment 副本被反复调度。
+		WorkloadKind:  terminalWorkloadKind,
+		ExposeService: false,
+	}
+	// 终端会话容器额外打上 user / session label，进程重启后可按 label 对账认领。
+	if userID > 0 {
+		spec.Labels["gobrave-user-id"] = strconv.FormatInt(userID, 10)
+		spec.Labels["gobrave-terminal-session"] = fmt.Sprintf("term-%d-%d-%d", userID, projectID, templateID)
+	}
+	w.containerManager.applyRuntimeUser(spec, resolveVars)
+
+	if w.res != nil {
+		spec, err = w.res.Resolve(ctx, &ContainerRuntimeResolveInput{Spec: spec, Variables: resolveVars})
+		if err != nil {
+			return nil, fmt.Errorf("resolve terminal spec: %w", err)
+		}
+	}
+
+	if err := w.ensureVolumeSources(ctx, spec.Volumes); err != nil {
+		return nil, fmt.Errorf("prepare terminal volume sources: %w", err)
+	}
+	if hasDockerSocketVolume(spec.Volumes) {
+		if gid, ok := resolvePathGID(dockerSocketPath); ok {
+			spec.SupplementalGroups = appendUniqueInt64(spec.SupplementalGroups, parseInt64WithDefault(gid, 0))
+		}
+	}
+
+	return &terminalPlan{spec: spec, rt: rt}, nil
+}
+
+// StartTerminalRuntime 创建终端容器、等待 ContainerStarted 事件确认启动完成，
+// 然后打开交互式 shell。
+func (w *ContainerCreateWorker) StartTerminalRuntime(ctx context.Context, userID, projectID, templateID int64, opts containerruntime.TerminalOptions) (*TerminalRuntimeHandle, error) {
+	plan, err := w.buildTerminalPlan(ctx, userID, projectID, templateID)
+	if err != nil {
+		return nil, err
+	}
+	plan.spec.Command = []string{terminalKeepAliveCommand}
+
+	inst := &types.ContainerInstance{
+		RuntimeName: plan.rt.Name(),
+		TemplateID:  templateID,
+		OwnerType:   types.ContainerOwnerTerminal,
+		OwnerID:     projectID,
+		Name:        plan.spec.RuntimeName,
+		Status:      types.ContainerCreatePending,
+	}
+	if err := w.createTerminalInstance(ctx, inst, plan.spec, plan.rt); err != nil {
+		return nil, err
+	}
+	cleanup := func() { w.deleteTerminalInstance(context.Background(), inst, plan.rt) }
+
+	waitCtx, cancel := context.WithTimeout(ctx, terminalStartWait)
+	defer cancel()
+	if _, err := w.containerManager.WaitForInstanceStatus(waitCtx, inst.ID, types.ContainerRunning); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("wait terminal container started: %w", err)
+	}
+
+	terminal, ok := plan.rt.(containerruntime.RuntimeTerminal)
+	if !ok {
+		cleanup()
+		return nil, fmt.Errorf("runtime %s does not support interactive terminals", plan.rt.Name())
+	}
+	session, err := terminal.OpenTerminal(ctx, inst.RuntimeID, normalizeTerminalOptions(opts))
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("open terminal session: %w", err)
+	}
+
+	return &TerminalRuntimeHandle{
+		Runtime:             plan.rt,
+		RuntimeName:         plan.rt.Name(),
+		RuntimeID:           inst.RuntimeID,
+		ContainerName:       plan.spec.RuntimeName,
+		ContainerInstanceID: inst.ID,
+		Session:             session,
+		Cleanup:             cleanup,
+	}, nil
+}
+
+// AttachTerminalRuntime 在已有容器上执行交互式 shell（等价于 kubectl/docker exec -it）。
+//
+// 这是进程重启后「认领」原容器的唯一方式：容器还在，但原来的 shell 已经随连接
+// 结束，所以这里得到的是一个新的 bash（cwd / 环境变量不会保留，历史输出由滚动缓冲回放）。
+func (w *ContainerCreateWorker) AttachTerminalRuntime(ctx context.Context, runtimeName, runtimeID string, opts containerruntime.TerminalOptions) (*TerminalRuntimeHandle, error) {
+	rt := w.resolveRuntime(runtimeName)
+	if rt == nil {
+		return nil, fmt.Errorf("runtime %q is not registered", runtimeName)
+	}
+	terminal, ok := rt.(containerruntime.RuntimeTerminal)
+	if !ok {
+		return nil, fmt.Errorf("runtime %s does not support interactive terminals", rt.Name())
+	}
+	session, err := terminal.OpenTerminal(ctx, runtimeID, normalizeTerminalOptions(opts))
+	if err != nil {
+		return nil, fmt.Errorf("attach terminal session: %w", err)
+	}
+	return &TerminalRuntimeHandle{
+		Runtime:     rt,
+		RuntimeName: rt.Name(),
+		RuntimeID:   runtimeID,
+		Session:     session,
+		Cleanup:     func() { w.DropTerminalRuntime(ctx, rt.Name(), runtimeID) },
+	}, nil
+}
+
+// DropTerminalRuntime 删除一个（可能来自旧进程的）终端容器，失败只记日志。
+func (w *ContainerCreateWorker) DropTerminalRuntime(ctx context.Context, runtimeName, runtimeID string) {
+	if strings.TrimSpace(runtimeID) == "" {
+		return
+	}
+	rt := w.resolveRuntime(runtimeName)
+	if rt == nil {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), terminalCleanupTimeout)
+	defer cancel()
+	if err := rt.Delete(cleanupCtx, runtimeID); err != nil {
+		logger.Warnf(ctx, "[ContainerCreateWorker] delete terminal runtime failed, runtime_id=%s err=%v", runtimeID, err)
+	}
+	// 运行时事件（ContainerDeleted）由 OnEvent 收敛；这里兜底清理可能残留的实例记录。
+	w.deleteTerminalInstanceByRuntimeID(cleanupCtx, runtimeID)
+}
+
+// createTerminalInstance 建立 ContainerInstance 记录并启动容器。
+//
+// 终端容器没有业务 owner，不经过 outbox / Handle 链路：由本 worker 直接创建实例、
+// 调用 runtime.Create + runtime.Start；启动完成后由 ContainerManager.OnEvent 广播
+// 的 ContainerStarted（running）确认。
+func (w *ContainerCreateWorker) createTerminalInstance(ctx context.Context, inst *types.ContainerInstance, spec *types.ContainerSpec, rt containerruntime.Runtime) error {
+	if inst == nil || rt == nil {
+		return errors.New("terminal container instance is empty")
+	}
+	if err := w.repo.CreateContainerInstance(ctx, inst); err != nil {
+		return fmt.Errorf("create terminal container instance: %w", err)
+	}
+	// 终端容器不占用创建并发额度，也不写 outbox（由本函数直接驱动）。
+	if err := w.containerManager.transitionContainer(ctx, inst, types.ContainerCreating, "ContainerCreating", false, false); err != nil {
+		_ = w.repo.DeleteContainerInstance(ctx, inst.ID)
+		return err
+	}
+
+	runtimeID, err := rt.Create(ctx, spec)
+	if err != nil {
+		_ = w.containerManager.transitionContainer(ctx, inst, types.ContainerFailed, "ContainerCreateFailed", false, false)
+		return fmt.Errorf("create terminal container: %w", err)
+	}
+
+	inst.RuntimeID = runtimeID
+	if err := w.repo.UpdateContainerInstance(ctx, inst); err != nil {
+		return fmt.Errorf("persist terminal runtime id: %w", err)
+	}
+
+	if err := rt.Start(ctx, runtimeID); err != nil {
+		_ = w.containerManager.transitionContainer(ctx, inst, types.ContainerFailed, "ContainerStartFailed", false, false)
+		return fmt.Errorf("start terminal container: %w", err)
+	}
+	return nil
+}
+
+// deleteTerminalInstance 删除终端容器：先按 FSM 进入删除中，再删除运行时资源与实例记录。
+func (w *ContainerCreateWorker) deleteTerminalInstance(ctx context.Context, inst *types.ContainerInstance, rt containerruntime.Runtime) {
+	if inst == nil || inst.ID == 0 {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), terminalCleanupTimeout)
+	defer cancel()
+
+	// 以数据库里的最新状态为准（OnEvent 可能已经写过 running / stopped 等状态）。
+	if latest, err := w.repo.GetContainerInstanceByID(cleanupCtx, inst.ID); err == nil && latest != nil {
+		inst = latest
+	}
+
+	// FSM 只允许 Deleting → Deleted，因此先 DeletePending 再 Deleting。
+	switch inst.Status {
+	case types.ContainerDeleting, types.ContainerDeleted:
+	case types.ContainerDeletePending:
+		if err := w.containerManager.transitionContainer(cleanupCtx, inst, types.ContainerDeleting, "ContainerDeleting", false, false); err != nil {
+			logger.Warnf(ctx, "[ContainerCreateWorker] terminal instance to deleting failed, instance_id=%d err=%v", inst.ID, err)
+		}
+	default:
+		if err := w.containerManager.transitionContainer(cleanupCtx, inst, types.ContainerDeletePending, "ContainerDeletePending", false, false); err != nil {
+			logger.Warnf(ctx, "[ContainerCreateWorker] terminal instance to delete_pending failed, instance_id=%d status=%s err=%v", inst.ID, inst.Status, err)
+		} else if err := w.containerManager.transitionContainer(cleanupCtx, inst, types.ContainerDeleting, "ContainerDeleting", false, false); err != nil {
+			logger.Warnf(ctx, "[ContainerCreateWorker] terminal instance to deleting failed, instance_id=%d err=%v", inst.ID, err)
+		}
+	}
+
+	if rt != nil && strings.TrimSpace(inst.RuntimeID) != "" {
+		if err := rt.Delete(cleanupCtx, inst.RuntimeID); err != nil {
+			logger.Warnf(ctx, "[ContainerCreateWorker] delete terminal runtime failed, runtime_id=%s err=%v", inst.RuntimeID, err)
+		}
+	}
+	if err := w.repo.DeleteContainerInstance(cleanupCtx, inst.ID); err != nil {
+		logger.Warnf(ctx, "[ContainerCreateWorker] delete terminal instance failed, instance_id=%d err=%v", inst.ID, err)
+	}
+}
+
+func (w *ContainerCreateWorker) deleteTerminalInstanceByRuntimeID(ctx context.Context, runtimeID string) {
+	if strings.TrimSpace(runtimeID) == "" {
+		return
+	}
+	inst, err := w.repo.GetContainerInstanceByRuntimeID(ctx, runtimeID)
+	if err != nil || inst == nil || inst.ID == 0 {
+		return
+	}
+	if err := w.repo.DeleteContainerInstance(ctx, inst.ID); err != nil {
+		logger.Warnf(ctx, "[ContainerCreateWorker] delete terminal instance failed, instance_id=%d err=%v", inst.ID, err)
+	}
+}
+
+// resolveRuntime 优先按名字解析，其次回退到当前默认运行时。
+func (w *ContainerCreateWorker) resolveRuntime(name string) containerruntime.Runtime {
+	if w == nil {
+		return nil
+	}
+	if w.reg != nil {
+		if n := strings.TrimSpace(name); n != "" {
+			if rt := w.reg.Get(n); rt != nil {
+				return rt
+			}
+		}
+	}
+	if w.containerManager == nil {
+		return nil
+	}
+	rt, err := w.containerManager.getRuntime()
+	if err != nil {
+		return nil
+	}
+	return rt
+}
+
+// normalizeTerminalOptions 统一交互式终端的默认值。
+func normalizeTerminalOptions(opts containerruntime.TerminalOptions) containerruntime.TerminalOptions {
+	if len(opts.Command) == 0 {
+		opts.Command = []string{"/bin/bash", "-l"}
+	}
+	opts.TTY = true
+	return opts
+}
+
+// fillTerminalEnv 补齐模板 / 项目未设置、但运行时已解析出来的变量。
+func fillTerminalEnv(envs, vars map[string]string) {
+	if envs == nil || vars == nil {
+		return
+	}
+	for _, key := range terminalEnvKeys {
+		if _, exists := envs[key]; exists {
+			continue
+		}
+		if value := strings.TrimSpace(vars[key]); value != "" {
+			envs[key] = value
+		}
+	}
 }

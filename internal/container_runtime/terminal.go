@@ -33,9 +33,3 @@ type TerminalSession interface {
 type RuntimeTerminal interface {
 	OpenTerminal(ctx context.Context, runtimeID string, opts TerminalOptions) (TerminalSession, error)
 }
-
-// RuntimeTerminalStarter 是可选扩展接口：启动一个用于交互式终端的长期运行
-// workload，并等待它可被 exec（不注册异步生命周期监控）。
-type RuntimeTerminalStarter interface {
-	StartForTerminal(ctx context.Context, runtimeID string) error
-}

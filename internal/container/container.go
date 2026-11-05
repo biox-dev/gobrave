@@ -209,7 +209,7 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 // browser / skills / files / lspMgr 全部在这里装入 builtin.Deps 与 coder.Deps，
 // 通过工具构造函数注入；Options 不再承载服务对象，Provider 只注入请求级上下文。
 // sessions / messages 是会话与消息服务：供 custom Provider 为子 Agent 创建子会话并落库。
-func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, containerProbe runtimecontext.ContainerEnvProbe, terminalRunner runtimecontext.ContainerTerminalRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
+func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, terminalRunner runtimecontext.ContainerTerminalRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
 	opts := agentclient.Options{}
 
 	// 模型提供商配置表按需实时生成：可视化配置页保存 agent 段后，内存中的 cfg 会被立即更新，
@@ -229,7 +229,6 @@ func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner
 	builtinDeps := builtin.Deps{
 		Runner:          runner,
 		AgentRunner:     agentAnalysisRunner,
-		Probe:           containerProbe,
 		Terminal:        terminalRunner,
 		FileReader:      fileReader,
 		ScriptCreator:   scriptCreator,
@@ -398,14 +397,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 命令型分析节点执行器：把「创建命令节点 + 等待结束 + 读取日志」能力暴露给
 	// 内置工具 create_agent_analysis，由 Provider 在执行工具前注入工具 ctx。
 	must(container.Provide(agentanalysis.NewAgentAnalysisRunner))
-	// 临时容器探测器：把「模板 → 临时容器 → 同步执行命令 → 自动清理」能力暴露给
-	// 内置工具 probe_container_env，复用 executeCreate 的变量 / 挂载 / env 组装链路。
-	must(container.Provide(manager.NewContainerProbeRunner))
-	// 同一实例同时暴露为 Agent 工具端口，供 probe_container_env 注入。
-	must(container.Provide(func(probe *manager.ContainerProbeRunner) runtimecontext.ContainerEnvProbe {
-		return probe
-	}))
 	// 终端会话注册表：把「模板 → 持久 PTY」的会话收敛到进程内，供 UI / Agent 共用。
+	// 容器创建统一由 ContainerCreateWorker 负责（实例 + runtime.Create + runtime.Start）。
 	// realtime.Hub 作为事件发布器，用于 Agent 执行命令时通知前端打开终端标签。
 	must(container.Provide(func(hub *realtime.Hub) manager.TerminalEventPublisher {
 		return hub
@@ -446,8 +439,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, containerProbe runtimecontext.ContainerEnvProbe, terminalRunner runtimecontext.ContainerTerminalRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
-		return buildAgentClient(cfg, registry, runner, agentAnalysisRunner, containerProbe, terminalRunner, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
+	must(container.Provide(func(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, terminalRunner runtimecontext.ContainerTerminalRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
+		return buildAgentClient(cfg, registry, runner, agentAnalysisRunner, terminalRunner, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。

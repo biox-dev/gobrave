@@ -356,6 +356,9 @@ const (
 	ContainerOwnerDagNode    ContainerOwnerType = "dag_node"
 	ContainerOwnerAppSession ContainerOwnerType = "app_session"
 	ContainerOwnerService    ContainerOwnerType = "service"
+	// ContainerOwnerTerminal 标识「容器模板终端会话」容器：只服务于交互式 PTY，
+	// 不参与 DAG / AppSession 的容器生命周期编排。
+	ContainerOwnerTerminal ContainerOwnerType = "terminal"
 )
 
 type ContainerStatus string

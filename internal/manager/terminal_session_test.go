@@ -108,14 +108,14 @@ func (o *fakeOpener) currentShell() *fakeShell {
 	return o.shell
 }
 
-func (o *fakeOpener) StartTerminalRuntime(_ context.Context, _, _, _ int64, _ containerruntime.TerminalOptions) (*ProbeTerminalHandle, error) {
+func (o *fakeOpener) StartTerminalRuntime(_ context.Context, _, _, _ int64, _ containerruntime.TerminalOptions) (*TerminalRuntimeHandle, error) {
 	o.mu.Lock()
 	o.calls++
 	// 一个容器对应一个独立 shell：上一次会话关闭后不能复用它的 shell。
 	shell := newFakeShell()
 	o.shell = shell
 	o.mu.Unlock()
-	return &ProbeTerminalHandle{
+	return &TerminalRuntimeHandle{
 		RuntimeName: "fake",
 		RuntimeID:   "fake-runtime-1",
 		Session:     shell,
@@ -123,12 +123,12 @@ func (o *fakeOpener) StartTerminalRuntime(_ context.Context, _, _, _ int64, _ co
 	}, nil
 }
 
-func (o *fakeOpener) AttachTerminalRuntime(_ context.Context, _, runtimeID string, _ containerruntime.TerminalOptions) (*ProbeTerminalHandle, error) {
+func (o *fakeOpener) AttachTerminalRuntime(_ context.Context, _, runtimeID string, _ containerruntime.TerminalOptions) (*TerminalRuntimeHandle, error) {
 	o.mu.Lock()
 	o.attaches++
 	shell := o.shell
 	o.mu.Unlock()
-	return &ProbeTerminalHandle{
+	return &TerminalRuntimeHandle{
 		RuntimeName: "fake",
 		RuntimeID:   runtimeID,
 		Session:     shell,
