@@ -566,19 +566,6 @@ func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessio
 	}
 	key = resolved
 
-	// 已定位到具体会话：内存里有就直接复用；否则交给 createOrAdopt 认领原容器 / 重建。
-	if key.ID != 0 {
-		if sess := r.LookupByID(key.ID); sess != nil {
-			if persistent {
-				r.MarkPersistent(ctx, sess.Key())
-			}
-			// 复用也要通知：Agent 的 terminal_exec 大多复用已存活会话，
-			// 不推前端列表就会表现为「执行了但列表没刷新」。
-			r.notifySessionChanged(sess, "sessionCreated")
-			return sess, false, nil
-		}
-	}
-
 	// pending 用「身份」做键（见 TerminalSessionRegistry.pending）：创建期间会话还没有主键。
 	// UI 的「新建」（key.ID == 0 且 agentSessionID == 0）永远建新会话，无需去重。
 	pendingID := ""
@@ -588,26 +575,24 @@ func (r *TerminalSessionRegistry) ensure(ctx context.Context, key TerminalSessio
 		pendingID = key.UIKey().SessionKey()
 	}
 
+	// 已定位到具体会话且内存里有：直接复用；否则认领原容器 / 重建。
+	//
+	// 「已有会话」的复查与 pending 占位必须在同一个临界区内完成，否则会漏判：
+	// A 先查到没有会话 → B 建完并删掉 pending → A 走到这里发现没有 pending，
+	// 于是又建了一个容器（同一个 Agent 会话拉起两台）。
+	r.mu.Lock()
+	if sess := r.lookupLocked(key); sess != nil {
+		r.mu.Unlock()
+		return r.reuseExisting(ctx, sess, persistent), false, nil
+	}
 	if pendingID != "" {
-		r.mu.Lock()
 		if wait, ok := r.pending[pendingID]; ok {
 			r.mu.Unlock()
-			select {
-			case <-wait.done:
-				if wait.err == nil {
-					if persistent {
-						r.MarkPersistent(ctx, wait.sess.Key())
-					}
-					r.notifySessionChanged(wait.sess, "sessionCreated")
-				}
-				return wait.sess, wait.created, wait.err
-			case <-ctx.Done():
-				return nil, false, ctx.Err()
-			}
+			return r.waitForPending(ctx, wait, persistent)
 		}
 		r.pending[pendingID] = &pendingTerminalSession{done: make(chan struct{})}
-		r.mu.Unlock()
 	}
+	r.mu.Unlock()
 
 	sess, created, err := r.createOrAdopt(key, persistent, size)
 
@@ -662,10 +647,63 @@ func (r *TerminalSessionRegistry) resolveRecordKey(ctx context.Context, key Term
 	return key.ReplaceID(rec.ID), nil
 }
 
-// lookupByAgentSession 按 (userID, projectID, templateID, agentSessionID) 在内存里找存活会话。
-func (r *TerminalSessionRegistry) lookupByAgentSession(key TerminalSessionKey) *ManagedTerminalSession {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+// reuseExisting 是 ensure 的「命中已存活会话」分支：按需升级持久标记并推一次列表刷新。
+//
+// 调用方不得持有 r.mu（MarkPersistent / notifySessionChanged 会重新加锁）。
+func (r *TerminalSessionRegistry) reuseExisting(ctx context.Context, sess *ManagedTerminalSession, persistent bool) *ManagedTerminalSession {
+	if persistent {
+		r.MarkPersistent(ctx, sess.Key())
+	}
+	// 复用也要通知：Agent 的 terminal_exec 大多复用已存活会话，
+	// 不推前端列表就会表现为「执行了但列表没刷新」。
+	r.notifySessionChanged(sess, "sessionCreated")
+	return sess
+}
+
+// waitForPending 等待同一个 pending 创建完成，并复用它建好的会话。
+//
+// 调用方已释放 r.mu；pending 的 sess / created / err 都在 close(done) 之前写入，
+// 因此这里的读取与创建方之间由 channel close 建立了 happens-before 关系。
+func (r *TerminalSessionRegistry) waitForPending(ctx context.Context, wait *pendingTerminalSession, persistent bool) (*ManagedTerminalSession, bool, error) {
+	select {
+	case <-wait.done:
+		if wait.err != nil {
+			return wait.sess, wait.created, wait.err
+		}
+		return r.reuseExisting(ctx, wait.sess, persistent), wait.created, nil
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
+}
+
+// lookupLocked 按身份在内存里找存活会话；调用方必须持有 r.mu。
+//
+// key.ID 优先，其次是 (userID, projectID, templateID, agentSessionID)。
+func (r *TerminalSessionRegistry) lookupLocked(key TerminalSessionKey) *ManagedTerminalSession {
+	if key.ID != 0 {
+		return r.lookupByIDLocked(key.ID)
+	}
+	if key.AgentSessionID <= 0 {
+		return nil
+	}
+	return r.lookupByAgentSessionLocked(key)
+}
+
+// lookupByIDLocked 按终端会话主键查找存活会话；调用方必须持有 r.mu。
+func (r *TerminalSessionRegistry) lookupByIDLocked(id int64) *ManagedTerminalSession {
+	if id == 0 {
+		return nil
+	}
+	sess, ok := r.sessions[id]
+	if !ok || sess == nil || sess.isDead() {
+		return nil
+	}
+	return sess
+}
+
+// lookupByAgentSessionLocked 按 (userID, projectID, templateID, agentSessionID)
+// 查找存活会话；调用方必须持有 r.mu。
+func (r *TerminalSessionRegistry) lookupByAgentSessionLocked(key TerminalSessionKey) *ManagedTerminalSession {
 	for _, sess := range r.sessions {
 		if sess == nil || sess.isDead() {
 			continue
@@ -678,6 +716,13 @@ func (r *TerminalSessionRegistry) lookupByAgentSession(key TerminalSessionKey) *
 		}
 	}
 	return nil
+}
+
+// lookupByAgentSession 按 (userID, projectID, templateID, agentSessionID) 在内存里找存活会话。
+func (r *TerminalSessionRegistry) lookupByAgentSession(key TerminalSessionKey) *ManagedTerminalSession {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lookupByAgentSessionLocked(key)
 }
 
 // MarkPersistent 把会话标记为持久，并同步到持久层。
@@ -1098,16 +1143,9 @@ func (r *TerminalSessionRegistry) Lookup(key TerminalSessionKey) *ManagedTermina
 //
 // 新会话在落库前使用负数占位 ID，因此这里只拒绝 0。
 func (r *TerminalSessionRegistry) LookupByID(id int64) *ManagedTerminalSession {
-	if id == 0 {
-		return nil
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	sess, ok := r.sessions[id]
-	if !ok || sess == nil || sess.isDead() {
-		return nil
-	}
-	return sess
+	return r.lookupByIDLocked(id)
 }
 
 // Status 返回会话状态；不存在时 Exists=false。
