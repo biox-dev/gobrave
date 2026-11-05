@@ -959,7 +959,12 @@ func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *Manag
 		return rec
 	}
 	// 新会话：展示名只在 Create 分支生成并落库。
-	rec.Name = r.defaultSessionName(ctx, key.TemplateID)
+	name := r.defaultSessionName(ctx, key.TemplateID)
+	if key.AgentSessionID > 0 {
+		rec.Name = fmt.Sprintf("%s (Agent %d)", name, key.AgentSessionID)
+	} else {
+		rec.Name = name
+	}
 	if err := r.store.Create(ctx, rec); err != nil {
 		logger.Warnf(ctx, "[TerminalSession] persist session %s failed: %v", key.SessionKey(), err)
 		return nil
