@@ -7,7 +7,6 @@
       "command": "",
       "cpu": 0,
       "memory": 0,
-      "work_dir": "",
       "port": 8443,
       "app_type": "code-server",
       "env": {

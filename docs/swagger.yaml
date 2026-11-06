@@ -2465,8 +2465,6 @@ definitions:
         type: string
       updated_at:
         type: string
-      work_dir:
-        type: string
     type: object
   types.ContainerTemplateBundle:
     properties:
@@ -2560,8 +2558,6 @@ definitions:
           type: integer
         type: array
       updated_at:
-        type: string
-      work_dir:
         type: string
     type: object
   types.ContextConfig:

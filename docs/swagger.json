@@ -16548,9 +16548,6 @@
                 },
                 "updated_at": {
                     "type": "string"
-                },
-                "work_dir": {
-                    "type": "string"
                 }
             }
         },
@@ -16671,9 +16668,6 @@
                     }
                 },
                 "updated_at": {
-                    "type": "string"
-                },
-                "work_dir": {
                     "type": "string"
                 }
             }

@@ -16555,9 +16555,6 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
-                },
-                "work_dir": {
-                    "type": "string"
                 }
             }
         },
@@ -16678,9 +16675,6 @@ const docTemplate = `{
                     }
                 },
                 "updated_at": {
-                    "type": "string"
-                },
-                "work_dir": {
                     "type": "string"
                 }
             }

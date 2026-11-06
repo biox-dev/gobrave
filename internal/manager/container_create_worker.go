@@ -440,7 +440,6 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 		SchedulingConstraint: parseSchedulingConstraint(tpl.SchedulingConstraint),
 		CPU:                  tpl.CPU,
 		Memory:               tpl.Memory,
-		WorkDir:              tpl.WorkDir,
 		RuntimeName:          w.buildRuntimeResourceName(inst.OwnerType, inst.ID, inst.Name),
 		ExposedPort:          tpl.Port,
 		Labels:               labels,
@@ -456,6 +455,13 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 	switch inst.OwnerType {
 	case types.ContainerOwnerDagNode:
 		w.containerManager.applyDagNodeRuntimeSpec(spec, resolveVars)
+	}
+
+	// 容器工作目录统一取项目的 PROJECT_DIR：容器模板不再提供 work_dir。
+	// 任务型容器（DAG 节点）已在 applyTaskRuntimeSpec 里按节点工作区 WORKSPACE_PATH 覆盖，
+	// 这里只补齐仍未设置的情况（应用会话 / 终端容器等），不会把 run.sh 所在的工作区替掉。
+	if strings.TrimSpace(spec.WorkDir) == "" {
+		spec.WorkDir = strings.TrimSpace(resolveVars["PROJECT_DIR"])
 	}
 
 	if w.res != nil {

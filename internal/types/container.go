@@ -18,6 +18,10 @@ const (
 
 // ContainerTemplateSpec 只描述"怎么跑"：命令、资源、端口、环境变量、挂载、标签等，
 // 不包含镜像。镜像由 ContainerTemplateDefinition 关联，因此同一套运行配置可被多个镜像复用。
+//
+// 这里刻意没有工作目录：容器的工作目录统一在创建时取运行时变量 PROJECT_DIR
+// （DAG 节点任务型容器仍由 applyTaskRuntimeSpec 覆盖为节点工作区），
+// 模板不再允许自定义 work_dir。
 type ContainerTemplateSpec struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
@@ -29,7 +33,6 @@ type ContainerTemplateSpec struct {
 	CPU    float64 `json:"cpu"`
 	Memory int64   `json:"memory"`
 
-	WorkDir string `json:"work_dir" gorm:"type:varchar(512)"`
 	Port    int    `json:"port" gorm:"not null;default:8787"`
 	AppType string `json:"app_type" gorm:"type:varchar(32);index"`
 
@@ -111,6 +114,9 @@ func (t *ContainerTemplateDefinition) BeforeCreate(_ *gorm.DB) error {
 // ID == ContainerTemplateDefinition.ID：引用方（script.container_template_id /
 // app_session.container_template_id / container_instance.template_id）语义不变，
 // 同时天然锁定了该模板要使用的镜像。
+//
+// 与 ContainerTemplateSpec 一样，这里没有 WorkDir：容器工作目录在创建时统一取
+// 运行时变量 PROJECT_DIR。
 type ContainerTemplate struct {
 	ID     int64 `json:"id,string"`
 	SpecID int64 `json:"spec_id,string"`
@@ -134,7 +140,6 @@ type ContainerTemplate struct {
 	CPU     float64 `json:"cpu"`
 	Memory  int64   `json:"memory"`
 
-	WorkDir string `json:"work_dir"`
 	Port    int    `json:"port"`
 	AppType string `json:"app_type"`
 
@@ -182,7 +187,6 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 		tpl.Command = spec.Command
 		tpl.CPU = spec.CPU
 		tpl.Memory = spec.Memory
-		tpl.WorkDir = spec.WorkDir
 		tpl.Port = spec.Port
 		tpl.AppType = spec.AppType
 		tpl.Env = spec.Env
@@ -271,7 +275,6 @@ func (t *ContainerTemplate) ToTemplateSpec() *ContainerTemplateSpec {
 		Command:              t.Command,
 		CPU:                  t.CPU,
 		Memory:               t.Memory,
-		WorkDir:              t.WorkDir,
 		Port:                 t.Port,
 		AppType:              t.AppType,
 		Env:                  t.Env,

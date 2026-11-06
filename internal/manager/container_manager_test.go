@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 
+	"github.com/biox-dev/gobrave/internal/config"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -832,6 +834,43 @@ func TestContainerManager_CreateByTemplate_UsesAppSessionContextVariables(t *tes
 	// APP_SESSION_ID 来自 owner 上下文。
 	if got := rt.lastSpec.Env["APP_SESSION_ID"]; got != "1001" {
 		t.Fatalf("expected APP_SESSION_ID from owner context, got %q", got)
+	}
+}
+
+func TestContainerCreateWorker_ExecuteCreate_DefaultsWorkDirToProjectDir(t *testing.T) {
+	ctx := context.Background()
+	baseDir := t.TempDir()
+
+	repo := newMockContainerRepo()
+	repo.templates[10] = &types.ContainerTemplate{
+		ID:        10,
+		ImageName: "docker.io/library/busybox:latest",
+		Command:   "echo ok",
+	}
+	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: 1, ProjectID: 2}
+	repo.projects[2] = &types.Project{ID: 2}
+
+	rt := &dockerMockRuntime{runtimeID: "docker-abc-workdir"}
+	reg := containerruntime.NewRegistry()
+	reg.Register("docker", rt)
+	projectRepo := &mockProjectRepo{projects: repo.projects}
+	mgr := NewContainerManager(repo, nil, projectRepo, nil, reg, nil, NewDefaultContainerRuntimeResolver(), nil)
+	worker := NewContainerCreateWorker(repo, projectRepo, nil, nil, reg, NewDefaultContainerRuntimeResolver(), mgr,
+		&config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}})
+
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
+	_ = repo.CreateContainerInstance(ctx, inst)
+	if err := worker.executeCreate(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreate failed: %v", err)
+	}
+
+	if rt.lastSpec == nil {
+		t.Fatalf("runtime create spec was not captured")
+	}
+	// 容器模板不再提供 work_dir：应用会话类容器的工作目录默认取 PROJECT_DIR。
+	want := filepath.Join(baseDir, "data", "2")
+	if got := rt.lastSpec.WorkDir; got != want {
+		t.Fatalf("expected WorkDir to default to PROJECT_DIR %q, got %q", want, got)
 	}
 }
 

@@ -30,6 +30,7 @@ func NewContainerService(containerRepo interfaces.ContainerRepository, container
 }
 
 // containerTemplateSpecFromReadModel 从对外模板抽出"怎么跑"的字段，用于写入 go_container_template_spec。
+// 工作目录不属于模板（创建容器时统一取 PROJECT_DIR），因此不再透传。
 func containerTemplateSpecFromReadModel(tpl *types.ContainerTemplate) *types.ContainerTemplateSpec {
 	return &types.ContainerTemplateSpec{
 		ID:                   tpl.SpecID,
@@ -38,7 +39,6 @@ func containerTemplateSpecFromReadModel(tpl *types.ContainerTemplate) *types.Con
 		Command:              tpl.Command,
 		CPU:                  tpl.CPU,
 		Memory:               tpl.Memory,
-		WorkDir:              tpl.WorkDir,
 		Port:                 tpl.Port,
 		AppType:              tpl.AppType,
 		Env:                  tpl.Env,
