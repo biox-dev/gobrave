@@ -103,6 +103,8 @@ type ContainerRepository interface {
 	ListAppSession(ctx context.Context) ([]*types.AppSession, error)
 	PageAppSessionByUserID(ctx context.Context, userID int64, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error)
 
+	// CreateContainerInstance 落库容器实例；(owner_type, owner_id) 已存在时原地更新
+	// （主键保持不变），否则新建，保证一个 owner 只有一条实例记录。
 	CreateContainerInstance(ctx context.Context, item *types.ContainerInstance) error
 	GetContainerInstanceByID(ctx context.Context, id int64) (*types.ContainerInstance, error)
 	GetContainerInstanceByRuntimeID(ctx context.Context, runtimeID string) (*types.ContainerInstance, error)

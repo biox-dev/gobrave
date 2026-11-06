@@ -294,8 +294,55 @@ func (r *containerRepository) PageAppSessionByUserID(ctx context.Context, userID
 	return items, total, nil
 }
 
+// CreateContainerInstance 落库容器实例。
+//
+// 同一个 (owner_type, owner_id) 只保留一条实例：已存在时原地更新（主键不变），
+// 否则新建。终端会话重建容器时 owner 不变，如果每次都 INSERT 就会不断堆积
+// 「已失败 / 已删除」的孤儿行，按 owner 查询也只能靠 id DESC 兜底。
 func (r *containerRepository) CreateContainerInstance(ctx context.Context, item *types.ContainerInstance) error {
+	if item == nil {
+		return errors.New("container instance is required")
+	}
+	if item.OwnerType != "" && item.OwnerID != 0 {
+		existing := &types.ContainerInstance{}
+		err := r.db.WithContext(ctx).
+			Where("owner_type = ? AND owner_id = ?", item.OwnerType, item.OwnerID).
+			Order("id DESC").
+			Take(existing).Error
+		switch {
+		case err == nil:
+			// 命中已有实例：主键沿用旧行，避免引用方（含运行时资源名）指向新 ID。
+			item.ID = existing.ID
+			return r.overwriteContainerInstance(ctx, item)
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return err
+		}
+	}
 	return r.db.WithContext(ctx).Create(item).Error
+}
+
+// overwriteContainerInstance 用显式列更新已存在的实例行。
+//
+// 不用 Updates(struct)：它会跳过零值字段，重建容器时空的 runtime_id / exit_code
+// 就无法被清掉，旧容器的残留信息会被当成当前容器的状态。
+func (r *containerRepository) overwriteContainerInstance(ctx context.Context, item *types.ContainerInstance) error {
+	return r.db.WithContext(ctx).
+		Model(&types.ContainerInstance{}).
+		Where("id = ?", item.ID).
+		Updates(map[string]any{
+			"template_id":       item.TemplateID,
+			"owner_type":        item.OwnerType,
+			"owner_id":          item.OwnerID,
+			"runtime_name":      item.RuntimeName,
+			"runtime_id":        item.RuntimeID,
+			"name":              item.Name,
+			"status":            item.Status,
+			"ip_address":        item.IPAddress,
+			"runtime_node_name": item.RuntimeNodeName,
+			"exit_code":         item.ExitCode,
+			"started_at":        item.StartedAt,
+			"finished_at":       item.FinishedAt,
+		}).Error
 }
 
 func (r *containerRepository) GetContainerInstanceByID(ctx context.Context, id int64) (*types.ContainerInstance, error) {

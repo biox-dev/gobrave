@@ -789,13 +789,11 @@ func terminalOptions(size terminalSize) containerruntime.TerminalOptions {
 	}
 }
 
-// createOrAdopt 先尝试认领数据库里记录的会话容器，失败再新建。
+// createOrAdopt 认领会话记录对应的容器；认领不到（容器已不在 / 空闲超时）就在
+// 同一条记录上重建容器并打开新的 shell。
 //
-// “认领”的含义：进程重启后容器还在，但原来的 shell 已随连接结束；这里在同一个
-// 容器上重新 exec 一个 bash，并把落盘的滚动缓冲回放进内存缓冲。
-//
-// 新建的含义：先持久化 AppSession（拿到会话主键，容器以 owner_id 归属它），
-// 再调用 ContainerManager.CreateByTemplateWithOptions(Sync=true) 同步创建并启动容器。
+// 会话记录（AppSession）只查一次并全程复用：查不到才新建，避免同一会话出现
+// 多条记录；超出空闲 TTL 的记录不删除，只是不再认领它的旧容器，直接重建。
 func (r *TerminalSessionRegistry) createOrAdopt(_ context.Context, key TerminalSessionKey, opts terminalCreateOptions) (*ManagedTerminalSession, *types.AppSession, bool, error) {
 	if r.opener == nil {
 		return nil, nil, false, fmt.Errorf("terminal runtime opener is not configured")
@@ -808,46 +806,49 @@ func (r *TerminalSessionRegistry) createOrAdopt(_ context.Context, key TerminalS
 	createCtx, cancel := context.WithTimeout(context.Background(), r.createWait())
 	defer cancel()
 
-	adopted, err := r.adoptSession(createCtx, key, resolved)
+	rec := r.loadRecord(createCtx, key)
+
+	// 1) 先尝试认领原容器：进程重启后容器还在，就在同一个容器上重新 exec shell。
+	adopted, err := r.adoptSession(createCtx, key, rec, resolved)
 	if err == nil && adopted != nil {
-		var rec *types.AppSession
 		if opts.persistent {
 			adopted.setPersistent(true)
 			// 认领的是已有记录：Update 不写 name。
-			rec = r.persistRecord(createCtx, adopted, true)
+			r.persistRecord(createCtx, adopted, true)
+			if rec != nil {
+				rec.Persistent = true
+			}
 		}
 		return adopted, rec, false, nil
 	}
 	if err != nil {
 		logger.Warnf(createCtx, "[TerminalSession] adopt session %s failed, will recreate: %v", key.SessionKey(), err)
 	}
-	// TODO
-	// if err := r.checkQuota(createCtx, key.UserID); err != nil {
-	// 	return nil, nil, false, err
-	// }
 
-	// 1) 先持久化会话实体（AppSession），拿到主键：容器以 owner_id 归属它。
+	// 2) 认领不到：复用原记录（没有才新建）拿到主键，容器以 owner_id 归属它。
 	//    未配置 store（单测 / 精简运行时）时退化为进程内占位 ID，会话仍然可用。
-	rec := r.createRecord(createCtx, key, opts.persistent)
 	if rec == nil {
-		if r.store != nil {
-			return nil, nil, false, fmt.Errorf("persist terminal session failed")
-		}
-		now := time.Now()
-		rec = &types.AppSession{
-			ID:                  newTerminalSessionPlaceholderID(),
-			UserID:              key.UserID,
-			ProjectID:           key.ProjectID,
-			ContainerTemplateID: key.TemplateID,
-			AgentSessionID:      key.AgentSessionID,
-			Status:              types.AppSessionStatusCreating,
-			Persistent:          opts.persistent,
-			LastAccessAt:        &now,
+		rec = r.createRecord(createCtx, key, opts.persistent)
+		if rec == nil {
+			if r.store != nil {
+				return nil, nil, false, fmt.Errorf("persist terminal session failed")
+			}
+			now := time.Now()
+			rec = &types.AppSession{
+				ID:                  newTerminalSessionPlaceholderID(),
+				UserID:              key.UserID,
+				ProjectID:           key.ProjectID,
+				ContainerTemplateID: key.TemplateID,
+				AgentSessionID:      key.AgentSessionID,
+				Status:              types.AppSessionStatusCreating,
+				Persistent:          opts.persistent,
+				LastAccessAt:        &now,
+			}
 		}
 	}
 	key = key.ReplaceID(rec.ID)
 
-	// 2) 再按统一链路同步创建并启动容器（keep-alive 常驻），然后打开 shell。
+	// 3) 同步创建（或按 owner 重建）容器并打开 shell。
 	handle, err := r.opener.StartTerminalRuntime(createCtx, key.UserID, key.ProjectID, key.TemplateID, rec.ID, terminalOptions(resolved))
 	if err != nil {
 		// 容器没起来：会话记录也一并清掉，避免留下永远打不开的会话。
@@ -862,26 +863,36 @@ func (r *TerminalSessionRegistry) createOrAdopt(_ context.Context, key TerminalS
 	}
 	// 新会话默认是一次性（Agent 创建的）；UI / Agent 显式要求持久时在这里直接落库为持久。
 	managed.setPersistent(opts.persistent)
+	// 容器已起来：把运行态写回记录（复用的记录也在这里刷新，列表不会停在旧状态）。
+	r.persistRecord(createCtx, managed, opts.persistent)
 	return managed, rec, true, nil
 }
 
-// adoptSession 按终端会话主键认领它对应的 ContainerInstance；没有容器 / 容器已不可用时返回 (nil, nil)。
-func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key TerminalSessionKey, size terminalSize) (*ManagedTerminalSession, error) {
-	// 只有已定位到主键的会话才可能被认领：UI 的「新建」永远是新会话，
-	// Agent 的身份在 ensure 里已经解析成了主键（见 resolveRecordKey）。
-	if r.store == nil || r.instances == nil || key.ID <= 0 {
-		return nil, nil
+// loadRecord 按终端会话主键读取持久层记录；未配置 store / 尚无主键 / 查询失败时返回 nil。
+func (r *TerminalSessionRegistry) loadRecord(ctx context.Context, key TerminalSessionKey) *types.AppSession {
+	if r.store == nil || key.ID <= 0 {
+		return nil
 	}
 	rec, err := r.store.GetByID(ctx, key.ID)
 	if err != nil {
-		return nil, err
+		logger.Warnf(ctx, "[TerminalSession] load session %s failed: %v", key.SessionKey(), err)
+		return nil
 	}
-	if rec == nil {
+	return rec
+}
+
+// adoptSession 按会话记录认领它对应的 ContainerInstance；没有可认领的容器时返回 (nil, nil)。
+//
+// rec 是调用方（createOrAdopt）已经查到的会话记录：记录只查一次，认领失败后的
+// 重建路径也复用它（不会重复插入 AppSession）。rec 为 nil 表示没有可认领的会话。
+func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key TerminalSessionKey, rec *types.AppSession, size terminalSize) (*ManagedTerminalSession, error) {
+	// 只有已定位到主键的会话才可能被认领：UI 的「新建」永远是新会话，
+	// Agent 的身份在 ensure 里已经解析成了主键（见 resolveRecordKey）。
+	if r.instances == nil || key.ID <= 0 || rec == nil {
 		return nil, nil
 	}
-	// 超出空闲 TTL 的残留会话：直接清掉，交给新建路径。
+	// 超出空闲 TTL 的记录不删，只是不再认领旧容器：由调用方在原记录上重建。
 	if ttl := r.sessionTTL(); ttl > 0 && rec.LastAccessAt != nil && time.Since(*rec.LastAccessAt) > ttl {
-		r.dropRecord(ctx, rec)
 		return nil, nil
 	}
 
