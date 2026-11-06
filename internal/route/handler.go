@@ -51,6 +51,14 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 			return
 		}
 
+		// 只有 Web 应用会话才暴露 HTTP 端口：终端会话（SessionKind=terminal）的容器
+		// 以 keep-alive 命令常驻，交互式 shell 由运行时 exec 打开，没有可路由的服务，
+		// 注册路由只会在前端产生一个打不开的 URL，因此这里直接跳过。
+		if kind := appSession.NormalizedSessionKind(); kind != types.AppSessionKindWeb {
+			logger.Infof(ctx, "[RouteRegistryHandler] skip register route key=%s: session kind=%s is not web", routeKey, kind)
+			return
+		}
+
 		port := tpl.Port
 		if port == 0 {
 			logger.Warnf(ctx, "[RouteRegistryHandler] skip register route key=%s: unresolved backend port", routeKey)

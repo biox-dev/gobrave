@@ -1039,10 +1039,15 @@ func (r *TerminalSessionRegistry) persistRecord(ctx context.Context, sess *Manag
 }
 
 func (r *TerminalSessionRegistry) touchRecord(ctx context.Context, key TerminalSessionKey) {
-	if r.store == nil {
+	r.touchRecordAt(ctx, key, time.Now())
+}
+
+// touchRecordAt 把会话的活跃时间写为 at：用于把内存里的真实活跃时间同步到持久层。
+func (r *TerminalSessionRegistry) touchRecordAt(ctx context.Context, key TerminalSessionKey, at time.Time) {
+	if r.store == nil || at.IsZero() {
 		return
 	}
-	if err := r.store.Touch(ctx, key, time.Now()); err != nil {
+	if err := r.store.Touch(ctx, key, at); err != nil {
 		logger.Warnf(ctx, "[TerminalSession] touch session %s failed: %v", key.SessionKey(), err)
 	}
 }
@@ -1154,38 +1159,39 @@ func (r *TerminalSessionRegistry) StartMaintenance(ctx context.Context) {
 	}()
 }
 
+// maintain 是终端会话的定期维护：同步活跃时间 + 回收空闲超时的会话。
+//
+// 是否回收只看持久层的 last_access_at（数据库是唯一真相），不再按内存里的
+// lastActive 自行算一遍 TTL：两套时钟会各判一次，导致同一会话被重复回收，
+// 或者内存里的时间被每轮刷新后永远不满足回收条件。
 func (r *TerminalSessionRegistry) maintain(ctx context.Context) {
-	now := time.Now()
+	if r.store == nil {
+		return
+	}
 	ttl := r.sessionTTL()
+	if ttl <= 0 {
+		return
+	}
+	now := time.Now()
 
+	// 1) 只做「活跃时间同步」：把内存会话真实的最近活跃时间写回持久层。
+	//    这一步不做任何回收判断，避免和下面的数据库判定重复。
 	r.mu.Lock()
 	live := make([]*ManagedTerminalSession, 0, len(r.sessions))
 	for _, sess := range r.sessions {
 		live = append(live, sess)
 	}
 	r.mu.Unlock()
-
 	for _, sess := range live {
 		if sess.isBusy() || sess.hasSubscribers() {
-			// 长任务执行中 / 仍有人连接：只刷新活跃时间，不做 TTL 回收。
+			// 长任务执行中 / 仍有人连接：活跃时间视为现在。
 			r.touchRecord(ctx, sess.key)
 			continue
 		}
-		// 一次性会话在最后一个订阅者离开时已被 scheduleReap 回收；
-		// 这里主要兜底持久会话（以及极端情况下漏掉的一次性会话）。
-		if ttl > 0 && sess.idleFor(now) > ttl {
-			logger.Infof(ctx, "[TerminalSession] session %s idle for %s, releasing", sess.id, sess.idleFor(now).Truncate(time.Second))
-			r.forget(sess)
-			sess.Close()
-			r.notifySessionChanged(sess, "sessionDeleted")
-			continue
-		}
-		r.touchRecord(ctx, sess.key)
+		r.touchRecordAt(ctx, sess.key, sess.lastActivityTime())
 	}
 
-	if r.store == nil || ttl <= 0 {
-		return
-	}
+	// 2) 回收：唯一判据是持久层的 last_access_at 超过空闲 TTL。
 	rows, err := r.store.List(ctx)
 	if err != nil {
 		logger.Warnf(ctx, "[TerminalSession] maintenance list failed: %v", err)
@@ -1195,8 +1201,15 @@ func (r *TerminalSessionRegistry) maintain(ctx context.Context) {
 		if rec.LastAccessAt == nil || now.Sub(*rec.LastAccessAt) <= ttl {
 			continue
 		}
-		if r.LookupByID(rec.ID) != nil {
-			continue
+		if sess := r.LookupByID(rec.ID); sess != nil {
+			// 数据库里是旧的空闲时间，但本地此刻仍在执行命令 / 前端还连着：
+			// 本轮只刷新活跃时间，留到下一轮再判断。
+			if sess.isBusy() || sess.hasSubscribers() {
+				r.touchRecord(ctx, sess.key)
+				continue
+			}
+			r.forget(sess)
+			sess.Close()
 		}
 		logger.Infof(ctx, "[TerminalSession] dropping stale session %d (idle %s)", rec.ID, now.Sub(*rec.LastAccessAt).Truncate(time.Second))
 		r.dropRecord(ctx, rec)
@@ -1991,15 +2004,17 @@ func (s *ManagedTerminalSession) touch() {
 	s.mu.Unlock()
 }
 
-// idleFor 返回距离最近一次操作（含输出）的时长。
-func (s *ManagedTerminalSession) idleFor(now time.Time) time.Duration {
+// lastActivityTime 返回会话最近一次真实活跃时间（含输出），用于把活跃时间同步到持久层。
+//
+// 它只负责提供时间戳：是否回收统一由 maintain 依据持久层的 last_access_at 判定。
+func (s *ManagedTerminalSession) lastActivityTime() time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	last := s.lastActive
 	if s.lastOutput.After(last) {
 		last = s.lastOutput
 	}
-	return now.Sub(last)
+	return last
 }
 
 func (s *ManagedTerminalSession) setBusy(busy bool) {
