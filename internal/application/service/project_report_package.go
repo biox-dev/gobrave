@@ -31,6 +31,9 @@ const maxProjectReportItemDirNameRunes = 120
 //   - ai_summary：拷贝摘要正文文件（utils.GetAISummaryFile）到该目录；
 //   - analysis：暂不处理，仅创建目录。
 //
+// 报告自身工作目录下的正文文件（output.md，见 utils.GetProjectReportOutputFile）会被拷贝到
+// 结果目录根部，使打包产物即为一份可直接交付的完整报告。
+//
 // 返回打包结果目录的绝对路径。重复调用会覆盖上一次的打包结果。
 func (s *projectService) PackageProjectReportItems(ctx context.Context, userID int64, reportID int64) (string, error) {
 	report, err := s.loadOwnedProjectReport(ctx, userID, reportID)
@@ -57,9 +60,20 @@ func (s *projectService) PackageProjectReportItems(ctx context.Context, userID i
 		return "", err
 	}
 
+	// 报告自身的正文（output.md）也一并拷到打包目录根部，保证打包结果是一份完整交付物。
+	// 先拷贝再遍历条目，并把文件名占位到根级 usedNames，避免条目标题恰好叫 output.md 时
+	// 生成的目录与正文文件重名。
+	copied, err := s.packageProjectReportOutputFile(reportDir, resultsDir)
+	if err != nil {
+		return "", err
+	}
+
 	children := projectReportItemChildren(items)
 	visited := make(map[int64]bool, len(items))
 	rootUsedNames := make(map[string]struct{})
+	if copied {
+		rootUsedNames[utils.DefaultProjectReportFilename] = struct{}{}
+	}
 
 	var walk func(parentID int64, parentDir string, usedNames map[string]struct{}) error
 	walk = func(parentID int64, parentDir string, usedNames map[string]struct{}) error {
@@ -177,6 +191,32 @@ func (s *projectService) copyAnalysisNodeOutput(ctx context.Context, nodeID int6
 	}
 
 	return utils.CopyDir(outputDir, dir)
+}
+
+// packageProjectReportOutputFile 把报告自身的正文文件（output.md）拷贝到打包目录根部。
+// 正文尚未生成（或不是普通文件）时视为空内容，不报错，返回 copied=false。
+func (s *projectService) packageProjectReportOutputFile(reportDir, resultsDir string) (bool, error) {
+	src := utils.GetProjectReportOutputFile(reportDir)
+	if src == "" {
+		return false, nil
+	}
+
+	info, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.IsDir() {
+		return false, nil
+	}
+
+	dst := utils.GetProjectReportOutputFile(resultsDir)
+	if err := utils.CopyFile(src, dst, info.Mode()); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // copyAISummaryFile 把摘要正文文件拷贝到目标目录，文件名保持为 summary.md。

@@ -9,6 +9,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -70,6 +71,8 @@ func TestPackageProjectReportItemsBuildsTree(t *testing.T) {
 	nodeOutput := filepath.Join(baseDir, "data", "7", "analysis_node", "100", "output")
 	writePackageTestFile(t, filepath.Join(nodeOutput, "result.txt"), "node output")
 	writePackageTestFile(t, filepath.Join(baseDir, "data", "7", "AiSummary", "200", "summary.md"), "# summary")
+	// 报告自身正文：应被拷贝到打包目录根部。
+	writePackageTestFile(t, utils.GetProjectReportOutputFile(filepath.Join(baseDir, "data", "7", "report", "42")), "# report")
 
 	repo := &stubProjectRepo{
 		report: &types.ProjectReport{ID: 42, ProjectID: 7},
@@ -101,6 +104,7 @@ func TestPackageProjectReportItemsBuildsTree(t *testing.T) {
 	assertPackageFile(t, filepath.Join(wantDir, "Intro", "README.md"), "# intro")
 	assertPackageFile(t, filepath.Join(wantDir, "Node A", "result.txt"), "node output")
 	assertPackageFile(t, filepath.Join(wantDir, "Node A", "Summary A", "summary.md"), "# summary")
+	assertPackageFile(t, utils.GetProjectReportOutputFile(wantDir), "# report")
 
 	// analysis 类型暂不处理，仅创建目录。
 	info, err := os.Stat(filepath.Join(wantDir, "Analysis A"))

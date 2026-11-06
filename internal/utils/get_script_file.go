@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+// DefaultProjectReportFilename 是项目报告工作目录下约定的输出文件名。
+// 定义在 utils 中是为了让报告路径推导（GetProjectReportOutputFile）不反向依赖 types 包
+// （types 已经 import utils，反向引用会形成循环）。
+const DefaultProjectReportFilename = "output.md"
+
 // projectDirName 将项目的数值主键格式化为存储目录名。
 func projectDirName(projectID int64) string {
 	return strconv.FormatInt(projectID, 10)
@@ -59,6 +64,16 @@ func GetProjectReportDir(baseDir string, projectID int64, reportID string) strin
 	projectDir := GetProjectDir(baseDir, projectID)
 	return filepath.Join(projectDir, "report", reportID)
 
+}
+
+// GetProjectReportOutputFile 返回某个 ProjectReport 目录下的正文文件路径
+// （<reportDir>/output.md）。目录为空时返回空串，避免调用方拿到悬空的 "output.md"。
+func GetProjectReportOutputFile(reportDir string) string {
+	reportDir = strings.TrimSpace(reportDir)
+	if reportDir == "" {
+		return ""
+	}
+	return filepath.Join(reportDir, DefaultProjectReportFilename)
 }
 
 func GetAISummaryDir(baseDir string, projectID int64, summaryID int64) string {

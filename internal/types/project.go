@@ -236,7 +236,9 @@ func (UserProject) TableName() string {
 
 // DefaultProjectReportFilename 是项目报告工作目录下约定的输出文件名。
 // 它仍然被 LLM 运行时（projectReport 环境）用来定位报告输出文件。
-const DefaultProjectReportFilename = "output.md"
+// 字面量统一定义在 utils（utils.GetProjectReportOutputFile 依赖它），这里只做别名，
+// 避免两处常量各自漂移。
+const DefaultProjectReportFilename = utils.DefaultProjectReportFilename
 
 // ProjectReport 是一个报告容器，只保存标题等元信息，不再承载文件内容。
 // 报告的内容由 ProjectReportItem 列表按顺序拼接而成。

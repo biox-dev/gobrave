@@ -195,7 +195,7 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					return nil, fmt.Errorf("failed to create project report working directory: %w", err)
 				}
-				outputFile := filepath.Join(dir, types.DefaultProjectReportFilename)
+				outputFile := utils.GetProjectReportOutputFile(dir)
 				label = report.Title
 				// 科研报告撰写提示词由 Profile 模板负责组织，这里只提供变量（输出文件路径等）。
 				vars["output_file"] = outputFile
@@ -322,10 +322,7 @@ func (r *RuntimeContextResolver) resolveProjectReportItemVars(ctx context.Contex
 // outputMarkdownPath 拼接 owner（Analysis / AnalysisNode）输出目录下的 output.md 路径。
 // 目录为空时返回空串，避免模板拿到悬空的 "output.md"（与 utils 派生路径的空值口径一致）。
 func outputMarkdownPath(dir string) string {
-	if strings.TrimSpace(dir) == "" {
-		return ""
-	}
-	return filepath.Join(dir, types.DefaultProjectReportFilename)
+	return utils.GetProjectReportOutputFile(dir)
 }
 
 // resolveProjectReportItemVar 按 owner 类型解析单个报告条目的名称与内容
