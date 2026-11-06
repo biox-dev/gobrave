@@ -842,6 +842,7 @@ func (r *TerminalSessionRegistry) createOrAdopt(_ context.Context, key TerminalS
 				AgentSessionID:      key.AgentSessionID,
 				Status:              types.AppSessionStatusCreating,
 				Persistent:          opts.persistent,
+				SessionKind:         types.AppSessionKindTerminal,
 				LastAccessAt:        &now,
 			}
 		}
@@ -997,6 +998,8 @@ func (r *TerminalSessionRegistry) createRecord(ctx context.Context, key Terminal
 		Name:                r.defaultSessionName(ctx, key.TemplateID),
 		Status:              types.AppSessionStatusCreating,
 		Persistent:          persistent,
+		// 终端会话：容器以 keep-alive 命令常驻，交互式 shell 由运行时 exec 打开。
+		SessionKind: types.AppSessionKindTerminal,
 	}
 	now := time.Now()
 	rec.LastAccessAt = &now

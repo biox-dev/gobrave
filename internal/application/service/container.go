@@ -573,7 +573,9 @@ func (s *containerService) CreateTerminalAppSession(ctx context.Context, in type
 		Status:              "CREATING",
 		WorkspacePath:       strings.TrimSpace(in.WorkspacePath),
 		Persistent:          in.Persistent,
-		LastAccessAt:        &now,
+		// 终端会话：容器常驻，交互式 shell 由运行时 exec 打开。
+		SessionKind:  types.AppSessionKindTerminal,
+		LastAccessAt: &now,
 	}
 	if err := s.containerRepo.CreateAppSession(ctx, session); err != nil {
 		return nil, err
@@ -613,6 +615,8 @@ func (s *containerService) createAppSessionByTemplate(ctx context.Context, userI
 		// AppType:             tpl.AppType,
 		Status:        "CREATE_PENDING", //create_pending PENDING_CREATION
 		WorkspacePath: strings.TrimSpace(workspacePath),
+		// Web 应用会话：容器跑模板命令，前端通过网关路由访问应用。
+		SessionKind: types.AppSessionKindWeb,
 	}
 	if err := s.containerRepo.CreateAppSession(ctx, session); err != nil {
 		return nil, err

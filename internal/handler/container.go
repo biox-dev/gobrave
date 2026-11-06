@@ -1116,6 +1116,9 @@ func (h *ContainerHandler) PageAppSession(c *gin.Context) {
 			if item == nil {
 				continue
 			}
+			// 历史行可能没有 session_kind：这里归一化成 web / terminal，
+			// 前端据此区分「Web 应用会话」与「终端会话」。
+			item.SessionKind = item.NormalizedSessionKind()
 			inst := nodeNameBySessionID[item.ID]
 			if inst != nil {
 				pageItems = append(pageItems, &appSessionPageItem{

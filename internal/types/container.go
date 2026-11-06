@@ -343,6 +343,15 @@ type AppSession struct {
 	// 并且此后不会再退回 false（只增不减）。
 	Persistent bool `json:"persistent" gorm:"not null;default:false"`
 
+	// SessionKind 标记会话的「种类」，取值见 AppSessionKind*：
+	//   - web      ：ContainerService.CreateAppSessionByTemplate（容器跑模板命令，前端经网关访问应用）；
+	//   - terminal ：终端会话注册表 createOrAdopt（容器常驻，交互式 shell 由运行时 exec 打开）。
+	//
+	// 它描述会话本身，而不是「谁创建的」：创建者见 AgentSessionID，生命周期策略见 Persistent。
+	// 历史行在加列之前就已存在，回填见 migrations/2026-11-06-app-session-kind；
+	// 仍为空时读取方用 NormalizedSessionKind 兜底。
+	SessionKind string `json:"session_kind" gorm:"column:session_kind;type:varchar(32);index;not null;default:web"`
+
 	LastAccessAt *time.Time `json:"last_access_at"`
 
 	StartedAt *time.Time `json:"started_at"`
