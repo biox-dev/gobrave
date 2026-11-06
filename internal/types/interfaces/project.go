@@ -43,6 +43,9 @@ type ProjectService interface {
 	GetProjectReportItemDetailByID(ctx context.Context, userID int64, itemID int64) (*types.ProjectReportItem, error)
 	// GetProjectReportItemContent 返回指定条目（入参为 ProjectReportItem ID）渲染后的内容片段。
 	GetProjectReportItemContent(ctx context.Context, itemID int64) (*types.ProjectReportItemContent, error)
+	// PackageProjectReportItems 按条目树把内容打包到报告工作目录的 results 子目录，返回结果目录路径。
+	// custom 写入 README.md；analysis_node 拷贝节点输出目录；ai_summary 拷贝摘要正文文件；analysis 暂不处理。
+	PackageProjectReportItems(ctx context.Context, userID int64, reportID int64) (string, error)
 	// GetProjectReportContent 汇总报告下所有条目，按顺序拼接成正文，仅返回拼接后的内容。
 	GetProjectReportContent(ctx context.Context, reportID int64) (string, error)
 	// GetProjectReportFile 读取报告工作目录下的自身 markdown 文件（output.md）内容。

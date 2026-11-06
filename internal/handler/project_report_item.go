@@ -454,3 +454,50 @@ func (h *ProjectHandler) GetProjectReportItemContent(c *gin.Context) {
 		"owner_type": ownerType,
 	})
 }
+
+type packageProjectReportItemRequest struct {
+	ReportID int64 `form:"report_id" binding:"required"`
+}
+
+// PackageProjectReportItem godoc
+// @Summary      打包报告条目树内容
+// @Description  把报告条目树按层级导出到报告工作目录的 results 子目录：目录名即条目标题；custom 写入 README.md，analysis_node 拷贝节点输出目录，ai_summary 拷贝摘要正文文件，analysis 暂不处理。重复调用会覆盖上一次的打包结果。
+// @Tags         项目
+// @Produce      json
+// @Param        report_id  query     int64  true  "报告ID"
+// @Success      200        {object}  map[string]string
+// @Failure      400        {object}  errors.AppError
+// @Failure      401        {object}  errors.AppError
+// @Failure      404        {object}  errors.AppError
+// @Failure      500        {object}  errors.AppError
+// @Security     Bearer
+// @Router       /project/package-project-report-item [get]
+func (h *ProjectHandler) PackageProjectReportItem(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req packageProjectReportItemRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	resultsDir, err := h.projectService.PackageProjectReportItems(ctx, userID, req.ReportID)
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			c.Error(errors.NewNotFoundError("project report not found"))
+			return
+		}
+		c.Error(errors.NewInternalServerError("failed to package project report items").WithDetails(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "project report items packaged successfully",
+		"results_dir": resultsDir,
+	})
+}
