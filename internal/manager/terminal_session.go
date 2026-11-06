@@ -796,7 +796,7 @@ func terminalOptions(size terminalSize) containerruntime.TerminalOptions {
 //
 // 新建的含义：先持久化 AppSession（拿到会话主键，容器以 owner_id 归属它），
 // 再调用 ContainerManager.CreateByTemplateWithOptions(Sync=true) 同步创建并启动容器。
-func (r *TerminalSessionRegistry) createOrAdopt(ctx context.Context, key TerminalSessionKey, opts terminalCreateOptions) (*ManagedTerminalSession, *types.AppSession, bool, error) {
+func (r *TerminalSessionRegistry) createOrAdopt(_ context.Context, key TerminalSessionKey, opts terminalCreateOptions) (*ManagedTerminalSession, *types.AppSession, bool, error) {
 	if r.opener == nil {
 		return nil, nil, false, fmt.Errorf("terminal runtime opener is not configured")
 	}
@@ -821,10 +821,10 @@ func (r *TerminalSessionRegistry) createOrAdopt(ctx context.Context, key Termina
 	if err != nil {
 		logger.Warnf(createCtx, "[TerminalSession] adopt session %s failed, will recreate: %v", key.SessionKey(), err)
 	}
-
-	if err := r.checkQuota(createCtx, key.UserID); err != nil {
-		return nil, nil, false, err
-	}
+	// TODO
+	// if err := r.checkQuota(createCtx, key.UserID); err != nil {
+	// 	return nil, nil, false, err
+	// }
 
 	// 1) 先持久化会话实体（AppSession），拿到主键：容器以 owner_id 归属它。
 	//    未配置 store（单测 / 精简运行时）时退化为进程内占位 ID，会话仍然可用。

@@ -425,11 +425,15 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 		// 覆盖启动命令（终端会话容器用 keep-alive 常驻，真正的 shell 由 exec 打开）。
 		command = opts.Command
 	}
+	// 覆盖 entrypoint：只有把它和 Command 一起换掉，shell 语句才会被 shell 执行，
+	// 而不是被 runtime 当成可执行文件名去 exec（见 ContainerCreateOptions.Entrypoint）。
+	entrypoint := opts.Entrypoint
 
 	spec := &types.ContainerSpec{
 		Image: tpl.ImageName,
 		// 拉取策略随容器模板绑定行一起下发给 runtime（docker 在 create 前 pull，k8s 设 imagePullPolicy）。
 		PullPolicy:           tpl.PullPolicy,
+		Entrypoint:           entrypoint,
 		Command:              command,
 		Env:                  envs,
 		Volumes:              volumes,
@@ -975,8 +979,21 @@ const (
 	terminalWorkloadKind   = "job"
 	// terminalKeepAliveCommand 让终端容器常驻，真正的 shell 由 docker exec /
 	// kubectl exec 打开。
+	//
+	// 注意：它是 shell 语句，必须交给 shell 执行（见 terminalShellEntrypoint /
+	// terminalShellArgs），不能作为单个参数直接当可执行文件 exec。
 	terminalKeepAliveCommand = "while true; do sleep 3600; done"
 )
+
+// terminalShellEntrypoint / terminalShellArgs 把 shell 语句包装成
+// 「entrypoint + args」：k8s 的 command=entrypoint、docker 的 Entrypoint。
+//
+// 否则 runtime 会把整条语句当成可执行文件名：
+// runc create failed: unable to start container process: exec:
+// "while true; do sleep 3600; done": executable file not found in $PATH
+func terminalShellEntrypoint() []string { return []string{"/bin/sh"} }
+
+func terminalShellArgs(script string) []string { return []string{"-c", script} }
 
 // terminalEnvKeys 是需要物化到终端容器环境里的运行时变量。模板 / 项目 env 优先，
 // 这里只补齐缺失项，使命令可以直接使用 $R_PACKAGE_DIR / $PROJECT_DIR 等。
@@ -1054,11 +1071,14 @@ func (w *ContainerCreateWorker) StartTerminalRuntime(ctx context.Context, userID
 	}
 
 	inst, err := w.containerManager.CreateByTemplateWithOptions(ctx, ContainerCreateOptions{
-		TemplateID:  templateID,
-		OwnerType:   types.ContainerOwnerAppSession,
-		OwnerID:     sessionID,
-		Name:        fmt.Sprintf("terminal-%d-%d", projectID, sessionID),
-		Command:     []string{terminalKeepAliveCommand},
+		TemplateID: templateID,
+		OwnerType:  types.ContainerOwnerAppSession,
+		OwnerID:    sessionID,
+		Name:       fmt.Sprintf("terminal-%d-%d", projectID, sessionID),
+		// 用 /bin/sh -c 承载 keep-alive 语句：k8s 把它下发为 command + args，
+		// docker 下发为 Entrypoint + Cmd，两者都会真正执行 shell 语句。
+		Entrypoint:  terminalShellEntrypoint(),
+		Command:     terminalShellArgs(terminalKeepAliveCommand),
 		Labels:      labels,
 		Sync:        true,
 		WaitTimeout: terminalStartWait,

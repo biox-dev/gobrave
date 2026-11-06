@@ -332,6 +332,33 @@ func TestBuildPodSpec_UsesSpecPullPolicy(t *testing.T) {
 	}
 }
 
+// TestBuildPodSpec_MapsEntrypointAndCommand 保证终端容器的 keep-alive 语句
+// 被下发为 image command(/bin/sh) + args(-c "while true; ...")，而不是把整条
+// shell 语句当作可执行文件名（否则 runc 报 executable file not found in $PATH）。
+func TestBuildPodSpec_MapsEntrypointAndCommand(t *testing.T) {
+	podSpec := buildPodSpec(&types.ContainerSpec{
+		Image:      "busybox:latest",
+		Entrypoint: []string{"/bin/sh"},
+		Command:    []string{"-c", "while true; do sleep 3600; done"},
+	})
+	if len(podSpec.Containers) != 1 {
+		t.Fatalf("expected 1 container, got %d", len(podSpec.Containers))
+	}
+	container := podSpec.Containers[0]
+	if len(container.Command) != 1 || container.Command[0] != "/bin/sh" {
+		t.Fatalf("container command = %v, want [/bin/sh]", container.Command)
+	}
+	wantArgs := []string{"-c", "while true; do sleep 3600; done"}
+	if len(container.Args) != len(wantArgs) {
+		t.Fatalf("container args = %v, want %v", container.Args, wantArgs)
+	}
+	for i := range wantArgs {
+		if container.Args[i] != wantArgs[i] {
+			t.Fatalf("container args = %v, want %v", container.Args, wantArgs)
+		}
+	}
+}
+
 func TestCreateJob_PropagatesPullPolicy(t *testing.T) {
 	k := &KubernetesRuntime{
 		name:      "k8s",

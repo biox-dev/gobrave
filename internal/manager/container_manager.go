@@ -30,6 +30,9 @@ var (
 // defaultSyncCreateWait 是「同步创建容器」等待 running 的默认上限。
 const defaultSyncCreateWait = 2 * time.Minute
 
+// defaultSyncCreateCleanupTimeout 是「同步创建失败后回收运行时资源」的超时上限。
+const defaultSyncCreateCleanupTimeout = 60 * time.Second
+
 type ContainerManager struct {
 	containerService interfaces.ContainerService
 	containerRepo    interfaces.ContainerRepository
@@ -336,9 +339,16 @@ type ContainerCreateOptions struct {
 	OwnerID    int64
 	Name       string
 
-	// Command 非空时覆盖模板里配置的启动命令（Entrypoint/Command 仍取自模板）。
+	// Command 非空时覆盖模板里配置的启动命令（Entrypoint 仍取自模板 / 镜像）。
 	// 终端会话容器用它把容器变成常驻进程。
 	Command []string
+	// Entrypoint 非空时覆盖容器的 entrypoint（镜像的 ENTRYPOINT）。
+	//
+	// 终端会话容器必须同时设置它：shell 语句（while true; do ...; done）不能被当成
+	// 可执行文件名直接 exec，否则 k8s / docker 会报
+	// `exec: "while true; do sleep 3600; done": executable file not found in $PATH`。
+	// 正确形态是 Entrypoint=["/bin/sh"]、Command=["-c", "while true; do ...; done"]。
+	Entrypoint []string
 	// Labels 会与默认 owner 标签合并（同名时覆盖默认值）。
 	Labels map[string]string
 
@@ -482,7 +492,12 @@ func (m *ContainerManager) createByTemplateSync(ctx context.Context, inst *types
 	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
 	defer cancel()
 	if _, err := m.WaitForInstanceStatus(waitCtx, inst.ID, types.ContainerRunning); err != nil {
-		// 启动失败：尽力回收容器，避免留下僵尸实例。
+		// 启动失败：先尽力删除运行时资源，再删实例记录。
+		//
+		// 只删数据库记录会留下一个不停重启的 Deployment / Job（典型场景是启动命令
+		// 拼错导致 CrashLoopBackOff）；资源名里带实例 ID，下次创建不会复用，
+		// 只会越堆越多，而且永远在耗节点资源。
+		m.deleteFailedSyncRuntime(context.Background(), inst)
 		_ = m.containerRepo.DeleteContainerInstance(context.Background(), inst.ID)
 		return nil, fmt.Errorf("wait container %d running: %w", inst.ID, err)
 	}
@@ -492,6 +507,25 @@ func (m *ContainerManager) createByTemplateSync(ctx context.Context, inst *types
 		inst = latest
 	}
 	return inst, nil
+}
+
+// deleteFailedSyncRuntime 在同步创建失败（容器始终没进入 running）时尽力删除运行时资源。
+//
+// 删除数据库记录不会影响运行时：Deployment / Job 仍然存在并持续重启（CrashLoopBackOff），
+// 资源名里带实例 ID，下次创建不会复用，失败重试只会不断堆积。
+func (m *ContainerManager) deleteFailedSyncRuntime(ctx context.Context, inst *types.ContainerInstance) {
+	if inst == nil || strings.TrimSpace(inst.RuntimeID) == "" {
+		return
+	}
+	rt, err := m.getRuntimeByInstance(inst)
+	if err != nil || rt == nil {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(ctx, defaultSyncCreateCleanupTimeout)
+	defer cancel()
+	if err := rt.Delete(cleanupCtx, inst.RuntimeID); err != nil {
+		logger.Warnf(ctx, "[ContainerManager] delete failed sync container %s failed: %v", inst.RuntimeID, err)
+	}
 }
 
 func (m *ContainerManager) getCreateQueueMaxPending() int {
