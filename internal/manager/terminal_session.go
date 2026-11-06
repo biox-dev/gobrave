@@ -16,6 +16,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/config"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
+	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 )
@@ -161,10 +162,8 @@ var (
 )
 
 // TerminalEventPublisher 把「Agent 在终端里执行了命令」这类事件推给前端，
-// 用于自动打开底部终端标签。*realtime.Hub 实现了该接口。
-type TerminalEventPublisher interface {
-	PushMessage(userID int64, data any) error
-}
+// 用于自动打开底部终端标签；已由 event.Bus + manager.AppSessionEventHandler 取代，
+// 会话层不再直接持有 realtime.Hub。
 
 // TerminalRegistryOptions 控制会话生命周期，零值使用默认值。
 type TerminalRegistryOptions struct {
@@ -402,8 +401,10 @@ type TerminalInstanceStore interface {
 
 // TerminalSessionRegistry 维护终端会话 ID → PTY 的映射。
 type TerminalSessionRegistry struct {
-	opener    TerminalRuntimeOpener
-	publisher TerminalEventPublisher
+	opener TerminalRuntimeOpener
+	// bus 是会话事件的唯一出口：注册表不直接推 WebSocket，而是发布
+	// types.AppSessionEvent，由 manager.AppSessionEventHandler 统一转成前端消息。
+	bus       event.Bus
 	store     TerminalSessionStore
 	instances TerminalInstanceStore
 	opts      TerminalRegistryOptions
@@ -430,12 +431,12 @@ type pendingTerminalSession struct {
 
 // NewTerminalSessionRegistry 构造会话注册表。
 //
-// worker 复用 ContainerCreateWorker 的容器组装与创建链路；publisher 可为 nil
-// （例如单测），此时不推送前端事件；store 记录会话（= AppSession）并供进程重启后
+// worker 复用 ContainerCreateWorker 的容器组装与创建链路；bus 可为 nil（例如单测），
+// 此时不推送前端事件；store 记录会话（= AppSession）并供进程重启后
 // 认领；instances 用于按会话定位 / 删除 ContainerInstance；cfg 决定回收策略 /
 // 配额 / 滚动缓冲目录。
-func NewTerminalSessionRegistry(worker *ContainerCreateWorker, publisher TerminalEventPublisher, store TerminalSessionStore, instances TerminalInstanceStore, cfg *config.Config) *TerminalSessionRegistry {
-	registry := newTerminalSessionRegistry(worker, publisher, store, instances, terminalRegistryOptions(cfg))
+func NewTerminalSessionRegistry(worker *ContainerCreateWorker, bus event.Bus, store TerminalSessionStore, instances TerminalInstanceStore, cfg *config.Config) *TerminalSessionRegistry {
+	registry := newTerminalSessionRegistry(worker, bus, store, instances, terminalRegistryOptions(cfg))
 	// 注册表在进程启动时构造一次（Router → ContainerHandler），在这里拉起后台维护：
 	// 空闲 TTL 回收 + 跨进程残留对账。放在构造函数里而不是 dig Invoke，
 	// 避免最小依赖图的单元测试强制解析 ContainerCreateWorker 的全部依赖。
@@ -460,10 +461,10 @@ func terminalRegistryOptions(cfg *config.Config) TerminalRegistryOptions {
 	return opts
 }
 
-func newTerminalSessionRegistry(opener TerminalRuntimeOpener, publisher TerminalEventPublisher, store TerminalSessionStore, instances TerminalInstanceStore, opts TerminalRegistryOptions) *TerminalSessionRegistry {
+func newTerminalSessionRegistry(opener TerminalRuntimeOpener, bus event.Bus, store TerminalSessionStore, instances TerminalInstanceStore, opts TerminalRegistryOptions) *TerminalSessionRegistry {
 	return &TerminalSessionRegistry{
 		opener:    opener,
-		publisher: publisher,
+		bus:       bus,
 		store:     store,
 		instances: instances,
 		opts:      opts,
@@ -1185,7 +1186,7 @@ func (r *TerminalSessionRegistry) maintain(ctx context.Context) {
 		}
 		logger.Infof(ctx, "[TerminalSession] dropping stale session %d (idle %s)", rec.ID, now.Sub(*rec.LastAccessAt).Truncate(time.Second))
 		r.dropRecord(ctx, rec)
-		r.notifySessionEvent(rec.UserID, rec.ContainerTemplateID, strconv.FormatInt(rec.ID, 10), "sessionDeleted")
+		r.notifySessionEvent(rec.UserID, rec.ProjectID, rec.ContainerTemplateID, rec.ID, "sessionDeleted")
 	}
 }
 
@@ -1349,11 +1350,11 @@ func (r *TerminalSessionRegistry) CloseSession(key TerminalSessionKey) bool {
 	}
 	// 广播删除事件：前端「终端会话列表」不再轮询，完全依赖该事件刷新，
 	// 因此即使内存里没有会话（记录 / 容器残留）也必须推一次。
-	userID, templateID := key.UserID, key.TemplateID
+	userID, projectID, templateID := key.UserID, key.ProjectID, key.TemplateID
 	if sess != nil {
-		userID, templateID = sess.key.UserID, sess.key.TemplateID
+		userID, projectID, templateID = sess.key.UserID, sess.key.ProjectID, sess.key.TemplateID
 	}
-	r.notifySessionEvent(userID, templateID, sessionIDString(key.ID), "sessionDeleted")
+	r.notifySessionEvent(userID, projectID, templateID, key.ID, "sessionDeleted")
 
 	return sess != nil
 }
@@ -1518,8 +1519,12 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 	}, nil
 }
 
+// notifyExec 发布「Agent 在终端里执行了命令」事件（action=terminal.exec）。
+//
+// 会话层不直接推 WebSocket：事件经 event.Bus 交给 AppSessionEventHandler，
+// 由它统一推给前端（前端收到后自动打开 / 聚焦底部终端标签）。
 func (r *TerminalSessionRegistry) notifyExec(sess *ManagedTerminalSession, cmd TerminalCommand, phase string, outcome *terminalExecOutcome) {
-	if r.publisher == nil || sess == nil {
+	if r.bus == nil || sess == nil {
 		return
 	}
 	payload := map[string]any{
@@ -1533,37 +1538,36 @@ func (r *TerminalSessionRegistry) notifyExec(sess *ManagedTerminalSession, cmd T
 		payload["exit_code"] = outcome.exitCode
 		payload["timed_out"] = outcome.timedOut
 	}
-	msg := map[string]any{
-		"action":  "terminal.exec",
-		"payload": payload,
-	}
-	if err := r.publisher.PushMessage(sess.key.UserID, msg); err != nil {
-		if !strings.Contains(err.Error(), "no_client_for_user:") {
-			logger.Warnf(context.Background(), "[TerminalSession] push terminal event failed user=%d session=%s err=%v", sess.key.UserID, sess.ID(), err)
-		}
-	}
+	r.bus.Publish(types.AppSessionEvent{
+		AppSessionID:        sess.recordID(),
+		UserID:              sess.key.UserID,
+		ProjectID:           sess.key.ProjectID,
+		ContainerTemplateID: sess.key.TemplateID,
+		Action:              "terminal.exec",
+		Args:                payload,
+	})
 }
 
-// notifySessionChanged 推送「终端会话列表」需要刷新的实时事件。
+// notifySessionChanged 发布「会话列表」需要刷新的实时事件。
 //
-// 与 AppSessionEventHandler 的推送方式一致：action=component.invoke，前端
-// ActionDispatcher 收到后调用 useComponentStore().invoke(category, "*", method)，
-// 左侧栏「终端会话」面板注册的 sessionCreated / sessionDeleted 会触发 refetch。
+// 事件经 event.Bus 交给 AppSessionEventHandler 统一推送：前端 ActionDispatcher 收到
+// component.invoke 后调用 useComponentStore().invoke("app-session", id, method)，
+// app-session 面板注册的 sessionCreated / sessionDeleted 会触发 refetch。
 func (r *TerminalSessionRegistry) notifySessionChanged(sess *ManagedTerminalSession, method string) {
 	if sess == nil {
 		return
 	}
-	r.notifySessionEvent(sess.key.UserID, sess.key.TemplateID, sess.ID(), method)
+	r.publishSessionEvent(sess.key.UserID, sess.key.ProjectID, sess.key.TemplateID, sess.recordID(), method, nil)
 }
 
-// notifySessionState 推送「会话运行 / 订阅」状态变化，让列表里的
+// notifySessionState 发布「会话运行 / 订阅」状态变化，让列表里的
 // Running（busy）/ Attached（subscribers）标签即时刷新。
 //
 // method 取值：sessionRunning（命令开始）、sessionIdle（命令结束）、
 // sessionAttached（WS 首次接入）、sessionDetached（最后一个 WS 断开）。
 // 只应在状态真正发生跳变时调用，否则每个 terminal_exec 都会刷一次列表。
 func (r *TerminalSessionRegistry) notifySessionState(sess *ManagedTerminalSession, method string) {
-	if r.publisher == nil || sess == nil {
+	if r.bus == nil || sess == nil {
 		return
 	}
 	sess.mu.Lock()
@@ -1576,49 +1580,45 @@ func (r *TerminalSessionRegistry) notifySessionState(sess *ManagedTerminalSessio
 		// 会话正在关闭：sessionDeleted 紧随其后，没必要再推一条状态事件。
 		return
 	}
-	r.pushSessionEvent(sess.key.UserID, sess.key.TemplateID, sess.ID(), method, map[string]any{
+	r.publishSessionEvent(sess.key.UserID, sess.key.ProjectID, sess.key.TemplateID, sess.recordID(), method, map[string]any{
 		"busy":        busy,
 		"subscribers": subs,
 		"persistent":  persistent,
 	})
 }
 
-// notifySessionEvent 推送会话变更事件（method 为 sessionCreated / sessionDeleted）。
-func (r *TerminalSessionRegistry) notifySessionEvent(userID, templateID int64, sessionID, method string) {
-	r.pushSessionEvent(userID, templateID, sessionID, method, nil)
+// notifySessionEvent 发布会话变更事件（method 为 sessionCreated / sessionDeleted）。
+func (r *TerminalSessionRegistry) notifySessionEvent(userID, projectID, templateID, sessionID int64, method string) {
+	r.publishSessionEvent(userID, projectID, templateID, sessionID, method, nil)
 }
 
-// pushSessionEvent 把会话事件封装成 component.invoke 推给前端；extra 会并入 args。
-func (r *TerminalSessionRegistry) pushSessionEvent(userID, templateID int64, sessionID, method string, extra map[string]any) {
-	if r.publisher == nil || userID == 0 {
+// publishSessionEvent 把会话事件发布到 event.Bus；extra 会并入 args。
+//
+// 会话层只负责「发生了什么」，不关心怎么推：消息格式（action / category / args）
+// 全部由 manager.AppSessionEventHandler 决定，避免同一次状态变化被推两遍。
+func (r *TerminalSessionRegistry) publishSessionEvent(userID, projectID, templateID, sessionID int64, method string, extra map[string]any) {
+	if r.bus == nil || userID == 0 {
 		return
 	}
 	eventMethod := strings.TrimSpace(method)
 	if eventMethod == "" {
 		eventMethod = "sessionDeleted"
 	}
-	payload := map[string]any{
-		"session_id":  sessionID,
-		"template_id": strconv.FormatInt(templateID, 10),
-		"event":       eventMethod,
-	}
+	args := make(map[string]any, len(extra)+3)
 	for key, value := range extra {
-		payload[key] = value
+		args[key] = value
 	}
-	msg := map[string]any{
-		"action": "component.invoke",
-		"payload": map[string]any{
-			"category": "container-terminal-session",
-			"id":       "*",
-			"method":   eventMethod,
-			"args":     payload,
-		},
-	}
-	if err := r.publisher.PushMessage(userID, msg); err != nil {
-		if !strings.Contains(err.Error(), "no_client_for_user:") {
-			logger.Warnf(context.Background(), "[TerminalSession] push session event failed user=%d session=%s method=%s err=%v", userID, sessionID, eventMethod, err)
-		}
-	}
+	args["session_id"] = sessionIDString(sessionID)
+	args["template_id"] = strconv.FormatInt(templateID, 10)
+	args["event"] = eventMethod
+	r.bus.Publish(types.AppSessionEvent{
+		AppSessionID:        sessionID,
+		UserID:              userID,
+		ProjectID:           projectID,
+		ContainerTemplateID: templateID,
+		Method:              eventMethod,
+		Args:                args,
+	})
 }
 
 // forget 从注册表中移除会话（仅当指针一致）。
@@ -2190,7 +2190,7 @@ func (s *ManagedTerminalSession) handleReadError(err error) {
 	s.Close()
 	// shell 自然退出 / 容器消失：内存会话已移除，推一次删除事件让前端列表刷新
 	// （前端不再轮询，只能靠这条事件感知会话已消失）。
-	s.registry.notifySessionEvent(s.key.UserID, s.key.TemplateID, s.id, "sessionDeleted")
+	s.registry.notifySessionEvent(s.key.UserID, s.key.ProjectID, s.key.TemplateID, s.key.ID, "sessionDeleted")
 }
 
 func (s *ManagedTerminalSession) currentSeq() int64 {

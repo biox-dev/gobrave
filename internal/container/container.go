@@ -399,10 +399,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(agentanalysis.NewAgentAnalysisRunner))
 	// 终端会话注册表：把「模板 → 持久 PTY」的会话收敛到进程内，供 UI / Agent 共用。
 	// 容器创建统一由 ContainerCreateWorker 负责（实例 + runtime.Create + runtime.Start）。
-	// realtime.Hub 作为事件发布器，用于 Agent 执行命令时通知前端打开终端标签。
-	must(container.Provide(func(hub *realtime.Hub) manager.TerminalEventPublisher {
-		return hub
-	}))
+	// 会话事件（创建 / 删除 / busy / terminal.exec）通过 event.Bus 发布，由
+	// manager.AppSessionEventHandler 统一推给前端，注册表自身不再持有 realtime.Hub。
 	// 会话记录持久化：终端会话就是 AppSession（go_container_app_session），
 	// 进程重启后按 (owner_type=app_session, owner_id=会话 ID) 认领原容器。
 	must(container.Provide(manager.NewGormTerminalSessionStore))

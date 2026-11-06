@@ -13,6 +13,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
+	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/types"
 )
 
@@ -1073,35 +1074,48 @@ func TestTerminalSessionRegistryQuota(t *testing.T) {
 
 func timePtr(t time.Time) *time.Time { return &t }
 
-// recordPublisher 记录推送给前端的实时消息，用于断言会话事件。
-type recordPublisher struct {
-	mu   sync.Mutex
-	msgs []map[string]any
+// recordBus 记录会话层发布到 event.Bus 的事件，用于断言「推送了哪些会话事件」。
+//
+// 会话层不再直接推 WebSocket 消息：它只负责把 types.AppSessionEvent 发布到总线，
+// 消息格式（component.invoke / category / args）由 AppSessionEventHandler 决定。
+type recordBus struct {
+	mu     sync.Mutex
+	events []types.AppSessionEvent
 }
 
-func (p *recordPublisher) PushMessage(_ int64, data any) error {
-	msg, _ := data.(map[string]any)
-	p.mu.Lock()
-	p.msgs = append(p.msgs, msg)
-	p.mu.Unlock()
-	return nil
+func (b *recordBus) Publish(evt event.Event) {
+	e, ok := evt.(types.AppSessionEvent)
+	if !ok {
+		return
+	}
+	b.mu.Lock()
+	b.events = append(b.events, e)
+	b.mu.Unlock()
 }
 
-// sessionEventMethods 返回推送过的会话事件 method（category=container-terminal-session）。
-func (p *recordPublisher) sessionEventMethods() []string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	out := make([]string, 0, len(p.msgs))
-	for _, msg := range p.msgs {
-		if msg["action"] != "component.invoke" {
-			continue
+func (b *recordBus) Subscribe(event.Handler) {}
+
+// sessionEventMethods 返回发布过的会话事件 method。
+func (b *recordBus) sessionEventMethods() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]string, 0, len(b.events))
+	for _, e := range b.events {
+		if e.Method != "" {
+			out = append(out, e.Method)
 		}
-		payload, ok := msg["payload"].(map[string]any)
-		if !ok || payload["category"] != "container-terminal-session" {
-			continue
-		}
-		if method, ok := payload["method"].(string); ok {
-			out = append(out, method)
+	}
+	return out
+}
+
+// execActions 返回发布过的 terminal.exec 动作事件。
+func (b *recordBus) execActions() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]string, 0, len(b.events))
+	for _, e := range b.events {
+		if e.Action != "" {
+			out = append(out, e.Action)
 		}
 	}
 	return out
@@ -1118,9 +1132,9 @@ func hasSessionEvent(methods []string, want string) bool {
 
 // 列表的 Running / Attached 标签依赖这些状态事件：订阅者与 busy 跳变时必须推送。
 func TestTerminalSessionRegistryPushesStateEvents(t *testing.T) {
-	publisher := &recordPublisher{}
+	bus := &recordBus{}
 	opener := &fakeOpener{shell: newFakeShell()}
-	registry := newTerminalSessionRegistry(opener, publisher, nil, nil, TerminalRegistryOptions{
+	registry := newTerminalSessionRegistry(opener, bus, nil, nil, TerminalRegistryOptions{
 		ReadyWait:   2 * time.Second,
 		BufferBytes: 64 * 1024,
 		ExecTimeout: 2 * time.Second,
@@ -1134,12 +1148,12 @@ func TestTerminalSessionRegistryPushesStateEvents(t *testing.T) {
 	defer registry.CloseSession(session.Key())
 
 	sub, _ := session.Attach(0)
-	if methods := publisher.sessionEventMethods(); !hasSessionEvent(methods, "sessionAttached") {
+	if methods := bus.sessionEventMethods(); !hasSessionEvent(methods, "sessionAttached") {
 		t.Fatalf("expected sessionAttached event, got %v", methods)
 	}
 
 	session.Detach(sub)
-	if methods := publisher.sessionEventMethods(); !hasSessionEvent(methods, "sessionDetached") {
+	if methods := bus.sessionEventMethods(); !hasSessionEvent(methods, "sessionDetached") {
 		t.Fatalf("expected sessionDetached event, got %v", methods)
 	}
 
@@ -1151,7 +1165,7 @@ func TestTerminalSessionRegistryPushesStateEvents(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	methods := publisher.sessionEventMethods()
+	methods := bus.sessionEventMethods()
 	if !hasSessionEvent(methods, "sessionRunning") || !hasSessionEvent(methods, "sessionIdle") {
 		t.Fatalf("expected sessionRunning/sessionIdle events, got %v", methods)
 	}
