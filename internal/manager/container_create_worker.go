@@ -165,15 +165,7 @@ func (w *ContainerCreateWorker) handleCreateRequest(ctx context.Context, req Out
 		_ = w.repo.MarkOutboxEventFailed(ctx, req.OutboxID)
 		return
 	}
-	if err := w.executeCreate(
-		execCtx,
-		// payload.RuntimeName,
-		// payload.TemplateID,
-		// ownerType,
-		// payload.OwnerID,
-		// payload.Name,
-		inst,
-	); err != nil {
+	if err := w.executeCreateInstance(execCtx, inst); err != nil {
 		if errors.Is(err, errWorkerInvalidState) {
 			logger.Warnf(ctx, "[ContainerCreateWorker] skip stale create request, outbox_id=%d instance_id=%d err=%v",
 				req.OutboxID, payload.ContainerInstanceID, err)
@@ -316,49 +308,23 @@ func (w *ContainerCreateWorker) handleStartRequest(ctx context.Context, req Outb
 	}
 }
 
-// executeCreate performs the actual container creation and start. It is called either
-// directly by ContainerManager.CreateByTemplate (sync path) or by
-// ContainerCreateWorker.handleCreateRequest (async path).
-// The ContainerInstance must already exist in DB with status=pending.
-func (w *ContainerCreateWorker) executeCreate(
-	ctx context.Context,
-	// runtimeName string,
-	// templateID int64,
-	// ownerType types.ContainerOwnerType,
-	// ownerID int64,
-	// name string,
-	inst *types.ContainerInstance,
-) error {
-	// 1. Acquire capacity and transition to creating.
-	// 2. 变更ContainerInstance状态为 creating，创建 ContainerCreating 事件
-	// 3. 调用 runtime.Create + runtime.Start
-
-	if inst.Status != types.ContainerCreatePending {
-		return fmt.Errorf("%w: expected=%s actual=%s instance_id=%d", errWorkerInvalidState, types.ContainerCreatePending, inst.Status, inst.ID)
-	}
-
-	return w.executeCreateInstance(ctx, inst, ContainerCreateOptions{
-		TemplateID: inst.TemplateID,
-		OwnerType:  inst.OwnerType,
-		OwnerID:    inst.OwnerID,
-		Name:       inst.Name,
-	})
-}
-
 // executeCreateInstance 是「按实例创建并启动容器」的统一实现。
 //
 // 调用方（outbox 异步链路 / ContainerManager 的同步创建 / 终端会话容器）都已把
 // ContainerInstance 落库为 create_pending，并把它传进来；这里只负责：
 //   - 状态迁移 create_pending → creating；
+//   - 按容器运行形态（inst.Kind）调整启动命令 / workload / 运行用户；
 //   - 组装运行时 spec（模板 / 项目 env、挂载、变量解析、storage 挂载）；
 //   - runtime.Create + runtime.Start。
 //
-// opts 用于覆盖运行命令（终端会话容器用 keep-alive 常驻）与追加标签。
-func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst *types.ContainerInstance, opts ContainerCreateOptions) error {
+// 启动命令、workload 类型、运行用户等差异全部来自 inst.Kind。
+func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst *types.ContainerInstance) error {
 	if inst == nil || inst.ID == 0 {
 		return errors.New("container instance is required")
 	}
-	if err := w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerCreating, "ContainerCreating"); err != nil {
+	// 运行形态决定后续所有差异，未显式设置时按 OwnerType 兜底并回写实例。
+	inst.Kind = inst.NormalizedKind()
+	if err := w.transitionToCreating(ctx, inst); err != nil {
 		return err
 	}
 
@@ -412,57 +378,13 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 	}
 
 	labels := map[string]string{
-		"gobrave-owner-type":  string(inst.OwnerType),
-		"gobrave-owner-id":    strconv.FormatInt(inst.OwnerID, 10),
-		"gobrave-instance-id": strconv.FormatInt(inst.ID, 10),
-	}
-	for key, value := range opts.Labels {
-		labels[key] = value
+		"gobrave-owner-type":    string(inst.OwnerType),
+		"gobrave-owner-id":      strconv.FormatInt(inst.OwnerID, 10),
+		"gobrave-instance-id":   strconv.FormatInt(inst.ID, 10),
+		"gobrave-instance-kind": string(inst.Kind),
 	}
 
-	command := parseCommand(tpl.Command)
-	if len(opts.Command) > 0 {
-		// 覆盖启动命令（终端会话容器用 keep-alive 常驻，真正的 shell 由 exec 打开）。
-		command = opts.Command
-	}
-	// 覆盖 entrypoint：只有把它和 Command 一起换掉，shell 语句才会被 shell 执行，
-	// 而不是被 runtime 当成可执行文件名去 exec（见 ContainerCreateOptions.Entrypoint）。
-	entrypoint := opts.Entrypoint
-
-	spec := &types.ContainerSpec{
-		Image: tpl.ImageName,
-		// 拉取策略随容器模板绑定行一起下发给 runtime（docker 在 create 前 pull，k8s 设 imagePullPolicy）。
-		PullPolicy:           tpl.PullPolicy,
-		Entrypoint:           entrypoint,
-		Command:              command,
-		Env:                  envs,
-		Volumes:              volumes,
-		SchedulingConstraint: parseSchedulingConstraint(tpl.SchedulingConstraint),
-		CPU:                  tpl.CPU,
-		Memory:               tpl.Memory,
-		RuntimeName:          w.buildRuntimeResourceName(inst.OwnerType, inst.ID, inst.Name),
-		ExposedPort:          tpl.Port,
-		Labels:               labels,
-	}
-	if inst.OwnerType == types.ContainerOwnerAppSession {
-		spec.WorkloadKind = "deployment"
-		spec.ExposeService = tpl.Port > 0
-	} else {
-		spec.WorkloadKind = "job"
-		spec.ExposeService = false
-	}
-
-	switch inst.OwnerType {
-	case types.ContainerOwnerDagNode:
-		w.containerManager.applyDagNodeRuntimeSpec(spec, resolveVars)
-	}
-
-	// 容器工作目录统一取项目的 PROJECT_DIR：容器模板不再提供 work_dir。
-	// 任务型容器（DAG 节点）已在 applyTaskRuntimeSpec 里按节点工作区 WORKSPACE_PATH 覆盖，
-	// 这里只补齐仍未设置的情况（应用会话 / 终端容器等），不会把 run.sh 所在的工作区替掉。
-	if strings.TrimSpace(spec.WorkDir) == "" {
-		spec.WorkDir = strings.TrimSpace(resolveVars["PROJECT_DIR"])
-	}
+	spec := w.buildInstanceSpec(inst, tpl, resolveVars, envs, volumes, labels)
 
 	if w.res != nil {
 		// w.ensureRuntimeFilesAndDirs(ctx, resolveVars)
@@ -472,6 +394,14 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 			// _ = w.createContainerEvent(ctx, inst.ID, "ContainerResolveSpecFailedDetail", err.Error())
 			return err
 		}
+	}
+
+	// 容器工作目录统一取项目的 PROJECT_DIR：容器模板不再提供 work_dir。
+	// 任务型容器（DAG 节点）已在 applyTaskRuntimeSpec 里按节点工作区 WORKSPACE_PATH 覆盖，
+	// 这里只补齐仍未设置的情况（应用会话 / 终端容器等），不会把 run.sh 所在的工作区替掉。
+	// 因此它必须在 resolver 之后执行。
+	if strings.TrimSpace(spec.WorkDir) == "" {
+		spec.WorkDir = strings.TrimSpace(resolveVars["PROJECT_DIR"])
 	}
 
 	// 创建 runtime 资源前，确保 volume source 都存在
@@ -505,6 +435,80 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 	}
 
 	return nil
+}
+
+// transitionToCreating 把实例迁移到 creating。
+//
+// 容器运行形态只在 OneShot 时计入创建并发额度：terminal / web 容器长期占用 running，
+// 若计入额度，几次终端会话就会把创建队列占满。
+func (w *ContainerCreateWorker) transitionToCreating(ctx context.Context, inst *types.ContainerInstance) error {
+	enforceConcurrency := containerKindIsOneShot(inst.Kind)
+	return w.containerManager.transitionContainer(ctx, inst, types.ContainerCreating, "ContainerCreating", enforceConcurrency, true)
+}
+
+// containerKindIsOneShot 表示该形态的容器跑完即退出（DAG 节点任务容器）。
+func containerKindIsOneShot(kind types.ContainerInstanceKind) bool {
+	return kind == types.ContainerInstanceKindDagNode
+}
+
+// buildInstanceSpec 按容器运行形态组装运行时 spec。
+//
+// 三种形态的差异全部收敛在这里，调用的 create 链路（outbox 异步 / 同步）只负责
+// 落库、状态迁移与 runtime.Create + Start：
+//   - web      ：跑模板命令，deployment + 暴露模板端口，供网关转发；
+//   - terminal ：/bin/sh -c keep-alive 常驻，job 不暴露端口，真正的 shell 由 exec 打开；
+//   - dag_node ：bash ./run.sh 并 tee 到 LOG_PATH，job 不暴露端口，以宿主用户运行。
+func (w *ContainerCreateWorker) buildInstanceSpec(
+	inst *types.ContainerInstance,
+	tpl *types.ContainerTemplate,
+	resolveVars map[string]string,
+	envs map[string]string,
+	volumes []types.ContainerVolume,
+	labels map[string]string,
+) *types.ContainerSpec {
+	spec := &types.ContainerSpec{
+		Image: tpl.ImageName,
+		// 拉取策略随容器模板绑定行一起下发给 runtime（docker 在 create 前 pull，k8s 设 imagePullPolicy）。
+		PullPolicy:           tpl.PullPolicy,
+		Entrypoint:           nil,
+		Command:              parseCommand(tpl.Command),
+		Env:                  envs,
+		Volumes:              volumes,
+		SchedulingConstraint: parseSchedulingConstraint(tpl.SchedulingConstraint),
+		CPU:                  tpl.CPU,
+		Memory:               tpl.Memory,
+		RuntimeName:          w.buildRuntimeResourceName(inst.OwnerType, inst.ID, inst.Name),
+		ExposedPort:          tpl.Port,
+		Labels:               labels,
+	}
+
+	switch inst.Kind {
+	case types.ContainerInstanceKindTerminal:
+		// shell 语句必须交给 shell 执行：k8s 把 Entrypoint 下发为 command、
+		// Command 下发为 args；docker 下发为 Entrypoint + Cmd。
+		// 直接当成可执行文件会报
+		// `exec: "while true; do sleep 3600; done": executable file not found in $PATH`。
+		spec.Entrypoint = terminalShellEntrypoint()
+		spec.Command = terminalShellArgs(terminalKeepAliveCommand)
+		spec.WorkloadKind = "job"
+		spec.ExposeService = false
+		// 终端容器以宿主用户启动：容器内写出的文件在宿主上可直接读写，
+		// 无需在 shell 里再 chown（同时挂上属主为该用户的 HOME）。
+		w.containerManager.applyRuntimeUser(spec, resolveVars)
+
+	case types.ContainerInstanceKindDagNode:
+		spec.WorkloadKind = "job"
+		spec.ExposeService = false
+		// 任务容器统一入口 bash ./run.sh，并按节点工作区 / LOG_PATH 覆盖工作目录与用户。
+		w.containerManager.applyDagNodeRuntimeSpec(spec, resolveVars)
+
+	default:
+		// web：跑模板命令并通过模板端口暴露给网关。
+		spec.WorkloadKind = "deployment"
+		spec.ExposeService = tpl.Port > 0
+	}
+
+	return spec
 }
 
 func (w *ContainerCreateWorker) executeRecreate(ctx context.Context, instanceID int64) error {
@@ -973,16 +977,16 @@ func parseInt64WithDefault(raw string, fallback int64) int64 {
 //
 // 终端会话容器不再单独维护一套 spec 组装 / 创建启动逻辑：
 //   - 会话实体就是 types.AppSession（go_container_app_session），
-//     容器是 owner_type=app_session、owner_id=AppSession.ID 的普通 ContainerInstance；
-//   - 创建走 ContainerManager.CreateByTemplateWithOptions(Sync=true) →
+//     容器是 owner_type=app_session、owner_id=AppSession.ID、kind=terminal 的普通 ContainerInstance；
+//   - 创建走 ContainerManager.CreateByTemplateWithOptions(Sync=true, Kind=terminal) →
 //     ContainerCreateWorker.executeCreateInstance，与 DAG / 应用会话完全同一条链路；
-//   - 唯一的差异是启动命令：终端容器用 terminalKeepAliveCommand 常驻，
-//     真正的交互式 shell 由 docker exec / kubectl exec 打开。
+//   - 唯一的差异是 buildInstanceSpec 里按 Kind=terminal 组装的启动命令
+//     （terminalKeepAliveCommand 常驻），真正的交互式 shell 由 docker exec /
+//     kubectl exec 打开。
 
 const (
 	terminalCleanupTimeout = 60 * time.Second
 	terminalStartWait      = 2 * time.Minute
-	terminalWorkloadKind   = "job"
 	// terminalKeepAliveCommand 让终端容器常驻，真正的 shell 由 docker exec /
 	// kubectl exec 打开。
 	//
@@ -1000,22 +1004,6 @@ const (
 func terminalShellEntrypoint() []string { return []string{"/bin/sh"} }
 
 func terminalShellArgs(script string) []string { return []string{"-c", script} }
-
-// terminalEnvKeys 是需要物化到终端容器环境里的运行时变量。模板 / 项目 env 优先，
-// 这里只补齐缺失项，使命令可以直接使用 $R_PACKAGE_DIR / $PROJECT_DIR 等。
-var terminalEnvKeys = []string{
-	"USERID",
-	"GROUPID",
-	"DOCKER_GID",
-	"DOCKER_GROUPID",
-	"R_PROFILE",
-	"PACKAGE_DIR",
-	"R_PACKAGE_DIR",
-	"PYTHON_PACKAGE_DIR",
-	"CONDA_PACKAGE_DIR",
-	"PROJECT_DIR",
-	"PROJECT_CONFIG_DIR",
-}
 
 // TerminalRuntimeHandle 是一次「终端容器 + 交互式 shell」的句柄。
 //
@@ -1050,10 +1038,10 @@ func (w *ContainerCreateWorker) ContainerTemplateName(ctx context.Context, templ
 
 // StartTerminalRuntime 创建终端容器并打开交互式 shell。
 //
-// 容器由 ContainerManager.CreateByTemplateWithOptions(Sync=true) 同步创建并启动
-// （复用 ContainerCreateWorker.executeCreateInstance，模板 / 项目 env、挂载、
-// 变量解析、storage 挂载与普通容器完全一致），启动命令覆盖为
-// terminalKeepAliveCommand 让容器常驻。
+// 容器由 ContainerManager.CreateByTemplateWithOptions(Sync=true, Kind=terminal) 同步
+// 创建并启动（复用 ContainerCreateWorker.executeCreateInstance，模板 / 项目 env、挂载、
+// 变量解析、storage 挂载与普通容器完全一致）。启动命令 / workload / 运行用户等
+// 终端容器特有的差异全部由 buildInstanceSpec 按 Kind=terminal 处理。
 //
 // sessionID 是终端会话（AppSession）主键：容器以 owner_type=app_session +
 // owner_id=sessionID 归属该会话，进程重启后可按 owner 认领原容器。
@@ -1066,26 +1054,12 @@ func (w *ContainerCreateWorker) StartTerminalRuntime(ctx context.Context, userID
 		return nil, fmt.Errorf("terminal session id is required")
 	}
 
-	var labels map[string]string
-	if userID > 0 {
-		labels = map[string]string{
-			"gobrave-terminal":    "true",
-			"gobrave-project-id":  strconv.FormatInt(projectID, 10),
-			"gobrave-template-id": strconv.FormatInt(templateID, 10),
-			"gobrave-user-id":     strconv.FormatInt(userID, 10),
-		}
-	}
-
 	inst, err := w.containerManager.CreateByTemplateWithOptions(ctx, ContainerCreateOptions{
-		TemplateID: templateID,
-		OwnerType:  types.ContainerOwnerAppSession,
-		OwnerID:    sessionID,
-		Name:       fmt.Sprintf("terminal-%d-%d", projectID, sessionID),
-		// 用 /bin/sh -c 承载 keep-alive 语句：k8s 把它下发为 command + args，
-		// docker 下发为 Entrypoint + Cmd，两者都会真正执行 shell 语句。
-		Entrypoint:  terminalShellEntrypoint(),
-		Command:     terminalShellArgs(terminalKeepAliveCommand),
-		Labels:      labels,
+		TemplateID:  templateID,
+		OwnerType:   types.ContainerOwnerAppSession,
+		OwnerID:     sessionID,
+		Name:        fmt.Sprintf("terminal-%d-%d", projectID, sessionID),
+		Kind:        types.ContainerInstanceKindTerminal,
 		Sync:        true,
 		WaitTimeout: terminalStartWait,
 	})

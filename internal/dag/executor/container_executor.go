@@ -66,14 +66,16 @@ func (e *ContainerExecutor) Execute(ctx context.Context, node *types.AnalysisNod
 	}
 
 	instanceName := fmt.Sprintf("dag-node-%d-%d", node.AnalysisID, node.ID)
-	inst, err := e.containerMgr.CreateByTemplate(
-		ctx,
-
-		containerTemplateID,
-		types.ContainerOwnerDagNode,
-		int64(node.ID),
-		instanceName,
-	)
+	inst, err := e.containerMgr.CreateByTemplateWithOptions(ctx, manager.ContainerCreateOptions{
+		TemplateID: containerTemplateID,
+		OwnerType:  types.ContainerOwnerDagNode,
+		OwnerID:    int64(node.ID),
+		Name:       instanceName,
+		// DAG 节点是任务型容器（bash ./run.sh，跑完即退出），受创建并发额度约束；
+		// 创建后立即返回，由运行时事件驱动后续状态，因此走 outbox 异步链路。
+		Kind: types.ContainerInstanceKindDagNode,
+		Sync: false,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create container instance by dag node failed: %w", err)
 	}

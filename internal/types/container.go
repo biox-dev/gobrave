@@ -1,6 +1,7 @@
 package types
 
 import (
+	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -389,6 +390,26 @@ const (
 	ContainerOwnerTerminal ContainerOwnerType = "terminal"
 )
 
+// ContainerInstanceKind 标识容器的「运行形态」：它决定 executeCreateInstance 如何组装
+// 运行时 spec（启动命令、workload 类型、是否以宿主用户运行、是否暴露服务等）。
+//
+// 它与 ContainerOwnerType 是两个维度：OwnerType 说明「容器属于谁 / 用于回收」，
+// Kind 说明「容器怎么跑」。例如终端会话容器的 owner 也是 app_session，
+// 但 Kind 必须是 ContainerInstanceKindTerminal。
+type ContainerInstanceKind string
+
+const (
+	// ContainerInstanceKindWeb 是 Web 应用容器：跑模板命令、暴露服务，
+	// 由网关按 AppSession 转发流量（OwnerType=app_session）。
+	ContainerInstanceKindWeb ContainerInstanceKind = "web"
+	// ContainerInstanceKindTerminal 是终端会话容器：常驻 keep-alive 进程，
+	// 真正的交互式 shell 由 docker exec / kubectl exec 打开（Sync=true 创建）。
+	ContainerInstanceKindTerminal ContainerInstanceKind = "terminal"
+	// ContainerInstanceKindDagNode 是 DAG 节点任务容器：统一入口 bash ./run.sh，
+	// 跑完即退出（OwnerType=dag_node）。
+	ContainerInstanceKindDagNode ContainerInstanceKind = "dag_node"
+)
+
 type ContainerStatus string
 
 const (
@@ -418,6 +439,11 @@ type ContainerInstance struct {
 	OwnerType ContainerOwnerType `json:"owner_type" gorm:"type:varchar(30);index;not null"`
 
 	OwnerID int64 `json:"owner_id,string" gorm:"index;not null"`
+
+	// Kind 是容器的运行形态（取值见 ContainerInstanceKind*），决定创建时如何组装运行时
+	// spec。它独立于 OwnerType：终端会话容器的 owner 也是 app_session。
+	// 历史数据该列为空，读取方用 NormalizedKind 兜底（按 OwnerType 推断）。
+	Kind ContainerInstanceKind `json:"kind" gorm:"column:kind;type:varchar(32);index;not null;default:web"`
 
 	RuntimeName string `json:"runtime_name" gorm:"type:varchar(255);index;not null"`
 
@@ -452,7 +478,43 @@ func (t *ContainerInstance) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()
 	}
+	if t.Kind == "" {
+		t.Kind = t.NormalizedKind()
+	}
 	return nil
+}
+
+// NormalizedKind 返回实例的运行形态：Kind 已显式设置时直接返回，否则按 OwnerType
+// 推断（历史数据的兜底），最终默认 web。
+func (t *ContainerInstance) NormalizedKind() ContainerInstanceKind {
+	if t == nil {
+		return ContainerInstanceKindWeb
+	}
+	if kind := NormalizeContainerInstanceKind(string(t.Kind)); kind != "" {
+		return kind
+	}
+	switch t.OwnerType {
+	case ContainerOwnerDagNode:
+		return ContainerInstanceKindDagNode
+	case ContainerOwnerTerminal:
+		return ContainerInstanceKindTerminal
+	default:
+		return ContainerInstanceKindWeb
+	}
+}
+
+// NormalizeContainerInstanceKind 校验并归一化容器运行形态；空值或未知取值返回 ""。
+func NormalizeContainerInstanceKind(raw string) ContainerInstanceKind {
+	switch ContainerInstanceKind(strings.ToLower(strings.TrimSpace(raw))) {
+	case ContainerInstanceKindWeb:
+		return ContainerInstanceKindWeb
+	case ContainerInstanceKindTerminal:
+		return ContainerInstanceKindTerminal
+	case ContainerInstanceKindDagNode:
+		return ContainerInstanceKindDagNode
+	default:
+		return ""
+	}
 }
 
 type ContainerEvent struct {

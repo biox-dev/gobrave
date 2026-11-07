@@ -129,7 +129,16 @@ func (s *containerService) createAppSessionByTemplate(ctx context.Context, userI
 		return nil, err
 	}
 
-	_, err = s.containerMgr.CreateByTemplate(ctx, containerTemplateID, types.ContainerOwnerAppSession, session.ID, name)
+	_, err = s.containerMgr.CreateByTemplateWithOptions(ctx, manager.ContainerCreateOptions{
+		TemplateID: containerTemplateID,
+		OwnerType:  types.ContainerOwnerAppSession,
+		OwnerID:    session.ID,
+		Name:       name,
+		// 应用会话是 Web 应用容器：跑模板命令、暴露服务，由网关转发流量。
+		// 走 outbox 异步链路创建（Sync=false），与历史上按模板创建的语义一致。
+		Kind: types.ContainerInstanceKindWeb,
+		Sync: false,
+	})
 	if err != nil {
 		session.Status = "FAILED"
 		_ = s.containerRepo.UpdateAppSession(ctx, session)

@@ -310,51 +310,31 @@ func (s *ContainerManager) GetMaxConcurrency() int {
 
 //		return nil
 //	}
-func (m *ContainerManager) CreateByTemplate(
-	ctx context.Context,
-	templateID int64,
-	ownerType types.ContainerOwnerType,
-	ownerID int64,
-	name string,
-) (*types.ContainerInstance, error) {
-	return m.CreateByTemplateWithOptions(ctx, ContainerCreateOptions{
-		TemplateID: templateID,
-		OwnerType:  ownerType,
-		OwnerID:    ownerID,
-		Name:       name,
-	})
-}
-
+//
 // ContainerCreateOptions 是 CreateByTemplateWithOptions 的参数。
 //
-// 与 CreateByTemplate 相比，它额外支持：
+// 与仅按模板 + owner 创建相比，它额外支持：
+//   - 显式指定容器运行形态（Kind）：决定 executeCreateInstance 如何组装运行时 spec；
+//     未指定时按 OwnerType 推断（见 types.ContainerInstance.NormalizedKind），
+//     并随实例一起落库；
 //   - 同步创建：不写 outbox、由 ContainerCreateWorker 直接调用 runtime.Create +
-//     runtime.Start，并在返回前等待容器进入 running（终端会话需要立刻 exec shell）；
-//   - 覆盖运行命令：终端会话容器用 terminalKeepAliveCommand 常驻，真正的 shell
-//     由 docker exec / kubectl exec 打开；
-//   - 透传额外标签，便于进程重启后按 label 对账认领。
+//     runtime.Start，并在返回前等待容器进入 running（终端会话需要立刻 exec shell）。
+//
+// 启动命令、workload 类型、运行用户等只由 Kind 决定（见 executeCreateInstance），
+// 这里不再接受 Command / Entrypoint 覆盖。
 type ContainerCreateOptions struct {
 	TemplateID int64
 	OwnerType  types.ContainerOwnerType
 	OwnerID    int64
 	Name       string
 
-	// Command 非空时覆盖模板里配置的启动命令（Entrypoint 仍取自模板 / 镜像）。
-	// 终端会话容器用它把容器变成常驻进程。
-	Command []string
-	// Entrypoint 非空时覆盖容器的 entrypoint（镜像的 ENTRYPOINT）。
-	//
-	// 终端会话容器必须同时设置它：shell 语句（while true; do ...; done）不能被当成
-	// 可执行文件名直接 exec，否则 k8s / docker 会报
-	// `exec: "while true; do sleep 3600; done": executable file not found in $PATH`。
-	// 正确形态是 Entrypoint=["/bin/sh"]、Command=["-c", "while true; do ...; done"]。
-	Entrypoint []string
-	// Labels 会与默认 owner 标签合并（同名时覆盖默认值）。
-	Labels map[string]string
+	// Kind 是容器运行形态（terminal / web / dag_node）。
+	// 为空时按 OwnerType 推断（见 types.ContainerInstance.NormalizedKind）。
+	Kind types.ContainerInstanceKind
 
 	// Sync 为 true 时同步创建并等待容器 running：
 	//   - 不写 outbox，直接由 worker 调用 runtime.Create + runtime.Start；
-	//   - 创建的 ContainerInstance 不占用创建并发额度（长期占用 running 的实例）；
+	//   - 创建过程中的状态迁移不计入创建并发额度（长期占用 running 的实例）；
 	//   - 返回前等待 ContainerManager.OnEvent 广播的 ContainerStarted（running）。
 	//
 	// Sync 为 false（默认）时保持旧行为：写 outbox，由 OutboxDispatcher 异步创建。
@@ -363,10 +343,10 @@ type ContainerCreateOptions struct {
 	WaitTimeout time.Duration
 }
 
-// CreateByTemplateWithOptions 按模板创建容器实例。
+// CreateByTemplateWithOptions 按模板创建容器实例（创建容器的唯一入口）。
 //
-// 这是 CreateByTemplate 的可扩展版本：默认走 outbox 异步链路（与历史行为一致），
-// Sync=true 时改为同步创建并等待 running（见 ContainerCreateOptions）。
+// 默认走 outbox 异步链路，Sync=true 时改为同步创建并等待 running
+// （见 ContainerCreateOptions）。
 func (m *ContainerManager) CreateByTemplateWithOptions(ctx context.Context, opts ContainerCreateOptions) (*types.ContainerInstance, error) {
 	templateID := opts.TemplateID
 	if templateID <= 0 {
@@ -395,6 +375,12 @@ func (m *ContainerManager) CreateByTemplateWithOptions(ctx context.Context, opts
 		OwnerID:     opts.OwnerID,
 		Name:        opts.Name,
 		Status:      types.ContainerCreatePending,
+	}
+	// Kind 只在实例上落一次：异步链路的 worker 从实例读它来决定怎么组装运行时 spec，
+	// 因此这里必须与 Sync 与否无关地写进数据库。
+	inst.Kind = opts.Kind
+	if inst.Kind == "" {
+		inst.Kind = inst.NormalizedKind()
 	}
 
 	if opts.Sync {
@@ -480,7 +466,7 @@ func (m *ContainerManager) createByTemplateSync(ctx context.Context, inst *types
 		return nil, fmt.Errorf("create container instance: %w", err)
 	}
 
-	if err := m.createWorker.executeCreateInstance(ctx, inst, opts); err != nil {
+	if err := m.createWorker.executeCreateInstance(ctx, inst); err != nil {
 		_ = m.containerRepo.DeleteContainerInstance(ctx, inst.ID)
 		return nil, err
 	}

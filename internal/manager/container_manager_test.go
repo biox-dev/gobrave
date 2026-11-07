@@ -649,10 +649,16 @@ func TestContainerManager_CreateByTemplate_StaysCreatingUntilStartedEvent(t *tes
 	rt := &dockerMockRuntime{runtimeID: "docker-abc-1"}
 	mgr, worker := newTestManagerWithWorker(repo, rt)
 
-	// create instance via CreateByTemplate (always enqueues)
-	inst, err := mgr.CreateByTemplate(ctx, 10, types.ContainerOwnerAppSession, 1001, "demo")
+	// create instance via CreateByTemplateWithOptions (always enqueues)
+	inst, err := mgr.CreateByTemplateWithOptions(ctx, ContainerCreateOptions{
+		TemplateID: 10,
+		OwnerType:  types.ContainerOwnerAppSession,
+		OwnerID:    1001,
+		Name:       "demo",
+		Kind:       types.ContainerInstanceKindWeb,
+	})
 	if err != nil {
-		t.Fatalf("CreateByTemplate failed: %v", err)
+		t.Fatalf("CreateByTemplateWithOptions failed: %v", err)
 	}
 
 	// After enqueue, status should still be pending (not yet processed by worker)
@@ -661,8 +667,8 @@ func TestContainerManager_CreateByTemplate_StaysCreatingUntilStartedEvent(t *tes
 	}
 
 	// Now simulate worker processing: execute create synchronously
-	if err := worker.executeCreate(ctx, inst); err != nil {
-		t.Fatalf("worker.executeCreate failed: %v", err)
+	if err := worker.executeCreateInstance(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreateInstance failed: %v", err)
 	}
 
 	// After execution, status should be creating (before started event)
@@ -764,8 +770,8 @@ func TestContainerManager_CreateByTemplate_ResolvesEnvAndVolumes(t *testing.T) {
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst); err != nil {
-		t.Fatalf("worker.executeCreate failed: %v", err)
+	if err := worker.executeCreateInstance(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreateInstance failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -816,8 +822,8 @@ func TestContainerManager_CreateByTemplate_UsesAppSessionContextVariables(t *tes
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst); err != nil {
-		t.Fatalf("worker.executeCreate failed: %v", err)
+	if err := worker.executeCreateInstance(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreateInstance failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -860,8 +866,8 @@ func TestContainerCreateWorker_ExecuteCreate_DefaultsWorkDirToProjectDir(t *test
 
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst); err != nil {
-		t.Fatalf("worker.executeCreate failed: %v", err)
+	if err := worker.executeCreateInstance(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreateInstance failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -896,8 +902,8 @@ func TestContainerManager_CreateByTemplate_AppSessionMergesProjectVolumes(t *tes
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst); err != nil {
-		t.Fatalf("worker.executeCreate failed: %v", err)
+	if err := worker.executeCreateInstance(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreateInstance failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -931,8 +937,8 @@ func TestContainerManager_CreateByTemplate_DagNodeUsesTaskCommand(t *testing.T) 
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerDagNode, OwnerID: 2001, Name: "dag-node-1", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst); err != nil {
-		t.Fatalf("worker.executeCreate failed: %v", err)
+	if err := worker.executeCreateInstance(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreateInstance failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -971,8 +977,8 @@ func TestContainerManager_CreateByTemplate_DagNodeSetsRuntimeUserHomeAndTmpfs(t 
 
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerDagNode, OwnerID: 2001, Name: "dag-node-1", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst); err != nil {
-		t.Fatalf("worker.executeCreate failed: %v", err)
+	if err := worker.executeCreateInstance(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreateInstance failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -1040,8 +1046,8 @@ func TestContainerManager_CreateByTemplate_ParsesSchedulingConstraint(t *testing
 	// Seed instance and execute create synchronously
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
-	if err := worker.executeCreate(ctx, inst); err != nil {
-		t.Fatalf("worker.executeCreate failed: %v", err)
+	if err := worker.executeCreateInstance(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreateInstance failed: %v", err)
 	}
 
 	if rt.lastSpec == nil {
@@ -1079,8 +1085,8 @@ func TestContainerManager_CreateByTemplate_ParsesSchedulingConstraint(t *testing
 // 	// Seed instance and execute create synchronously
 // 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 // 	_ = repo.CreateContainerInstance(ctx, inst)
-// 	if err := worker.executeCreate(ctx, inst); err != nil {
-// 		t.Fatalf("worker.executeCreate failed: %v", err)
+// 	if err := worker.executeCreateInstance(ctx, inst); err != nil {
+// 		t.Fatalf("worker.executeCreateInstance failed: %v", err)
 // 	}
 
 // 	img, err := repo.GetContainerImageByID(ctx, 1)
@@ -1123,3 +1129,141 @@ func TestContainerManager_CreateByTemplate_ParsesSchedulingConstraint(t *testing
 // 		t.Fatalf("expected image last error to be stored")
 // 	}
 // }
+
+// 以下用例覆盖「容器运行形态（ContainerInstance.Kind）」对运行时 spec 的影响：
+// 启动命令 / workload / 运行用户等差异都必须由 Kind 决定，而不是由 OwnerType 决定。
+
+func TestContainerCreateWorker_TerminalKindUsesKeepAliveAndHostUser(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("USERID", "1000")
+	t.Setenv("GROUPID", "1001")
+
+	repo := newMockContainerRepo()
+	// 模板命令是普通应用命令，终端容器必须把它换成 keep-alive。
+	repo.templates[10] = &types.ContainerTemplate{
+		ID:        10,
+		ImageName: "docker.io/library/busybox:latest",
+		Command:   "echo app",
+		Port:      8787,
+	}
+
+	rt := &dockerMockRuntime{runtimeID: "docker-abc-terminal"}
+	_, worker := newTestManagerWithWorker(repo, rt)
+
+	inst := &types.ContainerInstance{
+		TemplateID: 10,
+		OwnerType:  types.ContainerOwnerAppSession,
+		OwnerID:    1001,
+		Name:       "terminal-2-1001",
+		Kind:       types.ContainerInstanceKindTerminal,
+		Status:     types.ContainerCreatePending,
+	}
+	_ = repo.CreateContainerInstance(ctx, inst)
+	if err := worker.executeCreateInstance(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreateInstance failed: %v", err)
+	}
+
+	if rt.lastSpec == nil {
+		t.Fatalf("runtime create spec was not captured")
+	}
+	if len(rt.lastSpec.Entrypoint) != 1 || rt.lastSpec.Entrypoint[0] != "/bin/sh" {
+		t.Fatalf("expected terminal entrypoint [/bin/sh], got %#v", rt.lastSpec.Entrypoint)
+	}
+	wantCommand := []string{"-c", terminalKeepAliveCommand}
+	if len(rt.lastSpec.Command) != len(wantCommand) ||
+		rt.lastSpec.Command[0] != wantCommand[0] || rt.lastSpec.Command[1] != wantCommand[1] {
+		t.Fatalf("expected terminal command %#v, got %#v", wantCommand, rt.lastSpec.Command)
+	}
+	if rt.lastSpec.WorkloadKind != "job" {
+		t.Fatalf("expected workload kind job, got %q", rt.lastSpec.WorkloadKind)
+	}
+	if rt.lastSpec.ExposeService {
+		t.Fatalf("terminal container must not expose a service")
+	}
+	// 终端容器以宿主用户运行，并带可写的 HOME。
+	if got := rt.lastSpec.User; got != "1000:1001" {
+		t.Fatalf("expected terminal container to run as host user 1000:1001, got %q", got)
+	}
+	if got := rt.lastSpec.HomeDir; got != defaultRuntimeHomeDir {
+		t.Fatalf("expected terminal home dir %q, got %q", defaultRuntimeHomeDir, got)
+	}
+}
+
+func TestContainerCreateWorker_WebKindRunsTemplateCommandAndExposesPort(t *testing.T) {
+	ctx := context.Background()
+
+	repo := newMockContainerRepo()
+	repo.templates[10] = &types.ContainerTemplate{
+		ID:        10,
+		ImageName: "docker.io/library/busybox:latest",
+		Command:   "sleep infinity",
+		Port:      8787,
+	}
+	repo.sessions[1001] = &types.AppSession{ID: 1001, UserID: 1, ProjectID: 2}
+	repo.projects[2] = &types.Project{ID: 2}
+
+	rt := &dockerMockRuntime{runtimeID: "docker-abc-web"}
+	_, worker := newTestManagerWithWorker(repo, rt)
+
+	// OwnerType=app_session 但 Kind=web：走模板命令 + deployment + 暴露端口。
+	inst := &types.ContainerInstance{
+		TemplateID: 10,
+		OwnerType:  types.ContainerOwnerAppSession,
+		OwnerID:    1001,
+		Name:       "demo",
+		Kind:       types.ContainerInstanceKindWeb,
+		Status:     types.ContainerCreatePending,
+	}
+	_ = repo.CreateContainerInstance(ctx, inst)
+	if err := worker.executeCreateInstance(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreateInstance failed: %v", err)
+	}
+
+	if rt.lastSpec == nil {
+		t.Fatalf("runtime create spec was not captured")
+	}
+	if len(rt.lastSpec.Entrypoint) != 0 {
+		t.Fatalf("expected web container to keep image entrypoint, got %#v", rt.lastSpec.Entrypoint)
+	}
+	if len(rt.lastSpec.Command) != 2 || rt.lastSpec.Command[0] != "sleep" || rt.lastSpec.Command[1] != "infinity" {
+		t.Fatalf("expected template command to be used, got %#v", rt.lastSpec.Command)
+	}
+	if rt.lastSpec.WorkloadKind != "deployment" {
+		t.Fatalf("expected workload kind deployment, got %q", rt.lastSpec.WorkloadKind)
+	}
+	if !rt.lastSpec.ExposeService {
+		t.Fatalf("expected web container to expose service for template port")
+	}
+}
+
+func TestContainerInstance_NormalizedKindFallsBackToOwnerType(t *testing.T) {
+	cases := []struct {
+		name string
+		inst types.ContainerInstance
+		want types.ContainerInstanceKind
+	}{
+		{
+			name: "explicit kind wins over owner type",
+			inst: types.ContainerInstance{OwnerType: types.ContainerOwnerAppSession, Kind: types.ContainerInstanceKindTerminal},
+			want: types.ContainerInstanceKindTerminal,
+		},
+		{
+			name: "dag node owner without kind",
+			inst: types.ContainerInstance{OwnerType: types.ContainerOwnerDagNode},
+			want: types.ContainerInstanceKindDagNode,
+		},
+		{
+			name: "app session owner without kind",
+			inst: types.ContainerInstance{OwnerType: types.ContainerOwnerAppSession},
+			want: types.ContainerInstanceKindWeb,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.inst.NormalizedKind(); got != tc.want {
+				t.Fatalf("expected kind %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
