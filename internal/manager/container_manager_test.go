@@ -953,6 +953,71 @@ func TestContainerManager_CreateByTemplate_DagNodeUsesTaskCommand(t *testing.T) 
 	}
 }
 
+func TestContainerManager_CreateByTemplate_DagNodeSetsRuntimeUserHomeAndTmpfs(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("LOG_PATH", "/tmp/dag-task.log")
+	t.Setenv("USERID", "1000")
+	t.Setenv("GROUPID", "1001")
+
+	repo := newMockContainerRepo()
+	repo.templates[10] = &types.ContainerTemplate{
+		ID:        10,
+		ImageName: "docker.io/library/busybox:latest",
+		Command:   "sleep infinity",
+	}
+
+	rt := &dockerMockRuntime{runtimeID: "docker-abc-user"}
+	_, worker := newTestManagerWithWorker(repo, rt)
+
+	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerDagNode, OwnerID: 2001, Name: "dag-node-1", Status: types.ContainerCreatePending}
+	_ = repo.CreateContainerInstance(ctx, inst)
+	if err := worker.executeCreate(ctx, inst); err != nil {
+		t.Fatalf("worker.executeCreate failed: %v", err)
+	}
+
+	if rt.lastSpec == nil {
+		t.Fatalf("runtime create spec was not captured")
+	}
+	// docker run --user "$UID:$GID"
+	if got := rt.lastSpec.User; got != "1000:1001" {
+		t.Fatalf("expected user 1000:1001, got %q", got)
+	}
+	// -e HOME=/home/app
+	if got := rt.lastSpec.HomeDir; got != defaultRuntimeHomeDir {
+		t.Fatalf("expected home dir %q, got %q", defaultRuntimeHomeDir, got)
+	}
+	// --tmpfs /home/app:rw,uid=$UID,gid=$GID,mode=700
+	if len(rt.lastSpec.Tmpfs) != 1 {
+		t.Fatalf("expected one tmpfs mount, got %d", len(rt.lastSpec.Tmpfs))
+	}
+	got := rt.lastSpec.Tmpfs[0]
+	if got.Target != defaultRuntimeHomeDir || got.Mode != "700" || got.UID != "1000" || got.GID != "1001" {
+		t.Fatalf("unexpected tmpfs mount: %+v", got)
+	}
+}
+
+func TestApplyRuntimeUser_KeepsExplicitHomeAndTmpfs(t *testing.T) {
+	t.Setenv("USERID", "1000")
+	t.Setenv("GROUPID", "1001")
+
+	mgr := &ContainerManager{cfg: &config.Config{Container: &config.ContainerConfig{DefaultRuntime: "docker"}}}
+	spec := &types.ContainerSpec{
+		HomeDir: "/workspace/.home",
+		Tmpfs:   []types.ContainerTmpfs{{Target: "/workspace/.home", Mode: "770", UID: "1", GID: "2"}},
+	}
+	mgr.applyRuntimeUser(spec, map[string]string{"USERID": "1000", "GROUPID": "1001"})
+
+	if got := spec.User; got != "1000:1001" {
+		t.Fatalf("expected user 1000:1001, got %q", got)
+	}
+	if got := spec.HomeDir; got != "/workspace/.home" {
+		t.Fatalf("expected explicit home to be preserved, got %q", got)
+	}
+	if len(spec.Tmpfs) != 1 || spec.Tmpfs[0].UID != "1" {
+		t.Fatalf("expected explicit tmpfs to be preserved, got %+v", spec.Tmpfs)
+	}
+}
+
 func TestContainerManager_CreateByTemplate_ParsesSchedulingConstraint(t *testing.T) {
 	ctx := context.Background()
 

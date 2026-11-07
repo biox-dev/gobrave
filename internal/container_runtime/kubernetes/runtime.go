@@ -556,7 +556,15 @@ func buildPodSpec(spec *types.ContainerSpec) corev1.PodSpec {
 	}
 	sort.Strings(envKeys)
 	for _, key := range envKeys {
+		if strings.TrimSpace(spec.HomeDir) != "" && strings.EqualFold(key, "HOME") {
+			continue
+		}
 		env = append(env, corev1.EnvVar{Name: key, Value: spec.Env[key]})
+	}
+	// HOME 由 spec.HomeDir 决定（非 root 用户运行时的可写家目录），
+	// 显式设置后覆盖模板 env 里的同名值。
+	if homeDir := strings.TrimSpace(spec.HomeDir); homeDir != "" {
+		env = append(env, corev1.EnvVar{Name: "HOME", Value: homeDir})
 	}
 
 	resources := corev1.ResourceRequirements{}
@@ -572,6 +580,9 @@ func buildPodSpec(spec *types.ContainerSpec) corev1.PodSpec {
 	}
 
 	mounts, volumes := buildPodVolumes(spec.Volumes)
+	tmpfsMounts, tmpfsVolumes := buildPodTmpfsVolumes(spec.Tmpfs)
+	mounts = append(mounts, tmpfsMounts...)
+	volumes = append(volumes, tmpfsVolumes...)
 
 	container := corev1.Container{
 		Name:            "main",
@@ -743,6 +754,35 @@ func buildPodVolumes(bindings []types.ContainerVolume) ([]corev1.VolumeMount, []
 			Name: volumeName,
 			VolumeSource: corev1.VolumeSource{
 				HostPath: &corev1.HostPathVolumeSource{Path: source},
+			},
+		})
+	}
+	return mounts, volumes
+}
+
+// buildPodTmpfsVolumes 把 spec.Tmpfs 转成内存盘的 EmptyDir 挂载。
+//
+// kubernetes 的 EmptyDir 没有 --tmpfs 的 uid/gid/mode 选项：挂载点属主来自 kubelet
+// 的 fsGroup 语义，挂载路径权限固定为 0777（仍受 fsGroup / 镜像内属主约束）。
+// 因此非 root 用户写入 HOME 时，需要 fsGroup（SupplementalGroups 里带上 GID）
+// 或让镜像保证该目录可写；这里的 UID/GID 仅作为 runAsUser/fsGroup 的提示。
+func buildPodTmpfsVolumes(bindings []types.ContainerTmpfs) ([]corev1.VolumeMount, []corev1.Volume) {
+	if len(bindings) == 0 {
+		return nil, nil
+	}
+	mounts := make([]corev1.VolumeMount, 0, len(bindings))
+	volumes := make([]corev1.Volume, 0, len(bindings))
+	for i, bind := range bindings {
+		target := strings.TrimSpace(bind.Target)
+		if target == "" {
+			continue
+		}
+		volumeName := fmt.Sprintf("tmp-%d", i)
+		mounts = append(mounts, corev1.VolumeMount{Name: volumeName, MountPath: target})
+		volumes = append(volumes, corev1.Volume{
+			Name: volumeName,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
 			},
 		})
 	}

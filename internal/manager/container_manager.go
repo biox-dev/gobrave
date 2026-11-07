@@ -1299,8 +1299,21 @@ func (m *ContainerManager) applyTaskRuntimeSpec(spec *types.ContainerSpec, resol
 	m.applyRuntimeUser(spec, resolveVars)
 }
 
+// defaultRuntimeHomeDir 是非 root 用户运行容器时可写的家目录（内存盘挂载点）。
+const defaultRuntimeHomeDir = "/home/app"
+
 // applyRuntimeUser maps USERID/GROUPID to the runtime's user field. Docker uses
 // uid:gid, while Kubernetes currently maps ContainerSpec.User to runAsUser.
+//
+// 以非 root 用户运行时，镜像里的 HOME（常见是 /root）对该用户不可写，
+// 直接跑会失败（R / python / pip 都要写家目录）。因此这里等价于：
+//
+//	docker run --user "$UID:$GID" \
+//	  -e HOME=/home/app \
+//	  --tmpfs /home/app:rw,uid=$UID,gid=$GID,mode=700
+//
+// 即：User=uid[:gid]、HomeDir=/home/app、Tmpfs 挂一个属主为该用户的 700 内存盘。
+// 如果调用方 / 模板已经显式设置了 HomeDir 或为同一路径配置了 tmpfs，则不再覆盖。
 func (m *ContainerManager) applyRuntimeUser(spec *types.ContainerSpec, resolveVars map[string]string) {
 	if spec == nil {
 		return
@@ -1314,12 +1327,44 @@ func (m *ContainerManager) applyRuntimeUser(spec *types.ContainerSpec, resolveVa
 	case "docker":
 		if gid != "" {
 			spec.User = uid + ":" + gid
-			return
+		} else {
+			spec.User = uid
 		}
-		spec.User = uid
 	case "k8s", "k3s", "kubernetes":
 		spec.User = uid
+	default:
+		return
 	}
+
+	m.applyRuntimeHome(spec, uid, gid)
+}
+
+// applyRuntimeHome 为非 root 运行的容器准备可写的 HOME：
+// 设置 spec.HomeDir，并把该路径挂成属主为用户的内存盘。
+func (m *ContainerManager) applyRuntimeHome(spec *types.ContainerSpec, uid, gid string) {
+	if spec == nil {
+		return
+	}
+
+	home := strings.TrimSpace(spec.HomeDir)
+	if home == "" {
+		home = defaultRuntimeHomeDir
+		spec.HomeDir = home
+	}
+
+	for _, mount := range spec.Tmpfs {
+		if strings.TrimSpace(mount.Target) == home {
+			// 已显式配置同路径的内存盘，尊重调用方的 UID/GID/Mode。
+			return
+		}
+	}
+
+	spec.Tmpfs = append(spec.Tmpfs, types.ContainerTmpfs{
+		Target: home,
+		Mode:   "700",
+		UID:    uid,
+		GID:    gid,
+	})
 }
 
 func shellSingleQuote(text string) string {

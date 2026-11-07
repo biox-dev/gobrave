@@ -511,6 +511,21 @@ type ContainerSpec struct {
 	User                 string
 	Labels               map[string]string
 
+	// HomeDir 非空时作为容器的 HOME（容器内绝对路径），由 runtime 落到环境变量
+	// HOME 上（docker: -e HOME=...，k8s: env HOME=...）。
+	//
+	// 以非 root 用户运行时（User 非空）镜像里的 HOME 往往不可写（例如 /root），
+	// 需要同时配合 Tmpfs 把 HOME 挂成可写的内存盘。
+	HomeDir string
+	// Tmpfs 是以内存盘（tmpfs）挂载的容器内路径，落地方式由 runtime 决定：
+	// docker 映射 HostConfig.Tmpfs，kubernetes 映射 EmptyDir{Medium: Memory}。
+	//
+	// 典型用法是给非 root 用户挂一个可写的 HOME：
+	//
+	//	docker run --user "$UID:$GID" -e HOME=/home/app \
+	//	  --tmpfs /home/app:rw,uid=$UID,gid=$GID,mode=700
+	Tmpfs []ContainerTmpfs
+
 	// PullPolicy 来自容器模板绑定行（ContainerTemplateDefinition.PullPolicy），
 	// 取值 Always / IfNotPresent / Never，空值按 IfNotPresent 处理。落地方式由 runtime 决定：
 	// docker 没有 imagePullPolicy 概念，在 create 前按策略决定是否 pull；
@@ -546,6 +561,19 @@ type ContainerVolume struct {
 	// Type 可选：值为 "file" 时源路径按文件创建，否则按目录创建。
 	Type  string
 	Owner string
+}
+
+// ContainerTmpfs 描述一个内存盘挂载（对应 docker --tmpfs / HostConfig.Tmpfs）。
+type ContainerTmpfs struct {
+	// Target 是容器内的挂载路径（绝对路径）。
+	Target string
+	// Mode 是挂载权限，默认 1777，可写为 700 等。
+	Mode string
+	// UID/GID 是挂载点（tmpfs 根目录）的属主；为空时使用运行时默认（root）。
+	//
+	// 以非 root 用户运行并挂 HOME 时必须设置，否则容器用户无法写入 HOME。
+	UID string
+	GID string
 }
 
 type OutboxEvent struct {

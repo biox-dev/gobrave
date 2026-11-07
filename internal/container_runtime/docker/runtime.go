@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -512,9 +513,20 @@ func normalizePullPolicy(policy string) string {
 }
 
 func (d *DockerRuntime) toContainerConfig(spec *types.ContainerSpec) *container.Config {
-	env := make([]string, 0, len(spec.Env))
-	for key, value := range spec.Env {
-		env = append(env, fmt.Sprintf("%s=%s", key, value))
+	envKeys := make([]string, 0, len(spec.Env))
+	for key := range spec.Env {
+		envKeys = append(envKeys, key)
+	}
+	sort.Strings(envKeys)
+
+	env := make([]string, 0, len(spec.Env)+1)
+	for _, key := range envKeys {
+		env = append(env, fmt.Sprintf("%s=%s", key, spec.Env[key]))
+	}
+	// HOME 由 spec.HomeDir 决定（非 root 用户运行时的可写家目录），
+	// 显式设置后覆盖模板 env 里的同名值。
+	if homeDir := strings.TrimSpace(spec.HomeDir); homeDir != "" {
+		env = append(env, "HOME="+homeDir)
 	}
 
 	return &container.Config{
@@ -561,7 +573,44 @@ func (d *DockerRuntime) toHostConfig(spec *types.ContainerSpec) *container.HostC
 		groupAdd = append(groupAdd, strconv.FormatInt(gid, 10))
 	}
 
-	return &container.HostConfig{Resources: resources, Binds: binds, GroupAdd: groupAdd}
+	return &container.HostConfig{
+		Resources: resources,
+		Binds:     binds,
+		GroupAdd:  groupAdd,
+		Tmpfs:     toTmpfsOptions(spec.Tmpfs),
+	}
+}
+
+// toTmpfsOptions 把 spec.Tmpfs 转成 docker 的 --tmpfs 选项字符串，
+// 例如 "/home/app:rw,uid=1000,gid=1000,mode=700"。
+func toTmpfsOptions(mounts []types.ContainerTmpfs) map[string]string {
+	if len(mounts) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(mounts))
+	for _, mount := range mounts {
+		target := strings.TrimSpace(mount.Target)
+		if target == "" {
+			continue
+		}
+		opts := []string{"rw"}
+		if uid := strings.TrimSpace(mount.UID); uid != "" {
+			opts = append(opts, "uid="+uid)
+		}
+		if gid := strings.TrimSpace(mount.GID); gid != "" {
+			opts = append(opts, "gid="+gid)
+		}
+		mode := strings.TrimSpace(mount.Mode)
+		if mode == "" {
+			mode = "1777"
+		}
+		opts = append(opts, "mode="+mode)
+		out[target] = strings.Join(opts, ",")
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (d *DockerRuntime) toContainerID(runtimeID string) (string, error) {
