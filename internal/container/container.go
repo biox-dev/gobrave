@@ -363,6 +363,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(repository.NewLLMRepository))
 	must(container.Provide(repository.NewAISummaryRepository))
 	must(container.Provide(manager.NewDefaultContainerRuntimeResolver))
+	// ContainerLifecycle 收敛 ContainerManager 与 ContainerCreateWorker 共享的
+	// 状态迁移 / 运行时解析 / spec 组装能力，单例注入给两者，避免相互持有指针。
+	must(container.Provide(manager.NewContainerLifecycle))
 	must(container.Provide(manager.NewContainerManager))
 	must(container.Provide(func(mgr *manager.ContainerManager) dagruntime.NodeContainerOperator {
 		return mgr

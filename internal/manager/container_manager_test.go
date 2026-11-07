@@ -609,10 +609,11 @@ func newTestManagerWithWorker(repo *mockContainerRepo, rt *dockerMockRuntime) (*
 	reg := containerruntime.NewRegistry()
 	reg.Register("docker", rt)
 	projectRepo := &mockProjectRepo{projects: repo.projects}
-	mgr := NewContainerManager(repo, nil, projectRepo, nil, reg, nil, NewDefaultContainerRuntimeResolver(), nil)
-	// The worker performs the create transition through the manager, so it must be
-	// given the same one instead of a nil dependency.
-	worker := NewContainerCreateWorker(repo, projectRepo, nil, nil, reg, NewDefaultContainerRuntimeResolver(), mgr, nil)
+	lifecycle := NewContainerLifecycle(repo, reg, nil)
+	mgr := NewContainerManager(repo, nil, projectRepo, nil, reg, nil, NewDefaultContainerRuntimeResolver(), lifecycle, nil)
+	// The worker shares the manager's lifecycle; SetCreateWorker back-fills owner.
+	worker := NewContainerCreateWorker(repo, projectRepo, nil, nil, reg, NewDefaultContainerRuntimeResolver(), lifecycle, nil)
+	mgr.SetCreateWorker(worker)
 	return mgr, worker
 }
 
@@ -626,7 +627,7 @@ func TestContainerManager_QueueStatus_PendingIncludesCreateAndStart(t *testing.T
 		&types.OutboxEvent{Type: OutboxEventTypeStartRequest, Status: "sent"},
 	)
 
-	mgr := NewContainerManager(repo, nil, nil, nil, nil, nil, NewDefaultContainerRuntimeResolver(), nil)
+	mgr := NewContainerManager(repo, nil, nil, nil, nil, nil, NewDefaultContainerRuntimeResolver(), NewContainerLifecycle(repo, nil, nil), nil)
 	status, err := mgr.QueueStatus(ctx)
 	if err != nil {
 		t.Fatalf("QueueStatus failed: %v", err)
@@ -860,9 +861,11 @@ func TestContainerCreateWorker_ExecuteCreate_DefaultsWorkDirToProjectDir(t *test
 	reg := containerruntime.NewRegistry()
 	reg.Register("docker", rt)
 	projectRepo := &mockProjectRepo{projects: repo.projects}
-	mgr := NewContainerManager(repo, nil, projectRepo, nil, reg, nil, NewDefaultContainerRuntimeResolver(), nil)
-	worker := NewContainerCreateWorker(repo, projectRepo, nil, nil, reg, NewDefaultContainerRuntimeResolver(), mgr,
+	lifecycle := NewContainerLifecycle(repo, reg, nil)
+	mgr := NewContainerManager(repo, nil, projectRepo, nil, reg, nil, NewDefaultContainerRuntimeResolver(), lifecycle, nil)
+	worker := NewContainerCreateWorker(repo, projectRepo, nil, nil, reg, NewDefaultContainerRuntimeResolver(), lifecycle,
 		&config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}})
+	mgr.SetCreateWorker(worker)
 
 	inst := &types.ContainerInstance{TemplateID: 10, OwnerType: types.ContainerOwnerAppSession, OwnerID: 1001, Name: "demo", Status: types.ContainerCreatePending}
 	_ = repo.CreateContainerInstance(ctx, inst)
@@ -1006,7 +1009,10 @@ func TestApplyRuntimeUser_KeepsExplicitHomeAndTmpfs(t *testing.T) {
 	t.Setenv("USERID", "1000")
 	t.Setenv("GROUPID", "1001")
 
-	mgr := &ContainerManager{cfg: &config.Config{Container: &config.ContainerConfig{DefaultRuntime: "docker"}}}
+	mgr := &ContainerManager{
+		cfg:       &config.Config{Container: &config.ContainerConfig{DefaultRuntime: "docker"}},
+		lifecycle: NewContainerLifecycle(nil, nil, &config.Config{Container: &config.ContainerConfig{DefaultRuntime: "docker"}}),
+	}
 	spec := &types.ContainerSpec{
 		HomeDir: "/workspace/.home",
 		Tmpfs:   []types.ContainerTmpfs{{Target: "/workspace/.home", Mode: "770", UID: "1", GID: "2"}},

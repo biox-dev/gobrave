@@ -16,7 +16,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/config"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	"github.com/biox-dev/gobrave/internal/event"
-	"github.com/biox-dev/gobrave/internal/fsm"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -45,6 +44,10 @@ type ContainerManager struct {
 	cfg              *config.Config
 	monitorOnce      sync.Once
 
+	// lifecycle 收敛状态迁移 / 运行时解析 / spec 组装等与 ContainerCreateWorker
+	// 共享的地基层能力，避免 Manager 与 Worker 相互持有指针（见 container_lifecycle.go）。
+	lifecycle *ContainerLifecycle
+
 	// createWorker 是同步创建容器的执行者：CreateByTemplateWithOptions(Sync=true) 时
 	// 直接调用它的 create/start 逻辑，跳过 outbox（终端会话必须「返回即 running」）。
 	// 由容器装配阶段回填（见 internal/container），避免 ContainerManager 与
@@ -66,94 +69,53 @@ func NewContainerManager(
 	reg *containerruntime.Registry,
 	bus event.Bus,
 	res ContainerRuntimeResolver,
+	lifecycle *ContainerLifecycle,
 	cfg *config.Config,
 ) *ContainerManager {
 	return &ContainerManager{
-		containerRepo: containerRepo, projectRepo: projectRepo, analysisRepo: analysisRepo, workflowService: workflowService, reg: reg, bus: bus, res: res, cfg: cfg}
+		containerRepo: containerRepo, projectRepo: projectRepo, analysisRepo: analysisRepo, workflowService: workflowService, reg: reg, bus: bus, res: res, cfg: cfg,
+		// lifecycle 由 DI 单例注入，与 ContainerCreateWorker 共享同一实例。
+		lifecycle: lifecycle,
+	}
+}
+
+// Lifecycle 返回 Manager 持有的共享生命周期基础设施，供 ContainerCreateWorker 注入使用。
+func (s *ContainerManager) Lifecycle() *ContainerLifecycle {
+	if s == nil {
+		return nil
+	}
+	return s.lifecycle
 }
 
 // SetCreateWorker 注入同步创建容器所需的 worker（容器装配阶段调用一次）。
 //
 // 之所以不在构造函数里注入：ContainerCreateWorker 自身依赖 ContainerManager，
 // 直接双向构造会形成循环依赖；装配阶段回填一个指针即可。
+//
+// 同时把 Manager 自己的 lifecycle 共享给 worker（worker 构造期可能未拿到），
+// 并回填 worker.owner，供 StartTerminalRuntime 复用 CreateByTemplateWithOptions。
 func (s *ContainerManager) SetCreateWorker(worker *ContainerCreateWorker) {
-	if s == nil {
+	if s == nil || worker == nil {
 		return
 	}
 	s.createWorker = worker
+	if worker.lifecycle == nil {
+		worker.lifecycle = s.lifecycle
+	}
+	worker.owner = s
 }
 
 func (s *ContainerManager) TransitionContainerAndEnqueueOutbox(ctx context.Context, inst *types.ContainerInstance, to types.ContainerStatus, eventType string) error {
-	return s.transitionContainer(ctx, inst, to, eventType, true, true)
+	return s.lifecycle.TransitionAndEnqueue(ctx, inst, to, eventType)
 }
 
-// transitionContainer 是容器实例状态迁移的唯一入口：读取最新状态 → FSM 校验 →
-// 落库 → （可选）写 outbox 事件。
+// transitionContainer 是容器实例状态迁移的唯一入口（薄委托到 ContainerLifecycle）。
 //
 // enforceConcurrency 控制是否把本次迁移计入创建并发额度；终端容器这类长期占用
 // running 的实例不参与该额度（false）。enqueueOutbox 控制是否写 outbox 事件；
 // 由调用方同步驱动的内部迁移不需要 outbox（false）。
 func (s *ContainerManager) transitionContainer(ctx context.Context, inst *types.ContainerInstance, to types.ContainerStatus, eventType string, enforceConcurrency bool, enqueueOutbox bool) error {
-	if inst == nil {
-		return errors.New("container instance is nil")
-	}
-
-	return s.containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		latest, err := tx.GetContainerInstanceByID(ctx, inst.ID)
-		if err != nil {
-			return err
-		}
-		if enforceConcurrency && (to == types.ContainerCreating || to == types.ContainerStarting) {
-			if s.GetMaxConcurrency() > 0 {
-				active, err := tx.CountContainerInstanceByStatuses(ctx, concurrencyOccupiedStatuses())
-				if err != nil {
-					return err
-				}
-				if active >= int64(s.GetMaxConcurrency()) {
-					return fmt.Errorf("%w: active=%d max=%d", errWorkerConcurrencyLimit, active, s.GetMaxConcurrency())
-				}
-			}
-		}
-
-		if latest.Status == to {
-			inst.Status = latest.Status
-			return nil
-		}
-
-		f := &fsm.FSM{}
-		if err := f.Transition(latest.Status, to); err != nil {
-			return err
-		}
-
-		inst.Status = to
-		if err := tx.UpdateContainerInstance(ctx, inst); err != nil {
-			return err
-		}
-
-		if !enqueueOutbox {
-			return nil
-		}
-
-		domainEvent := &types.ContainerEvent{
-			ContainerInstanceID: inst.ID,
-			Event:               eventType,
-			Message:             string(to),
-		}
-		// if err := tx.CreateContainerEvent(ctx, domainEvent); err != nil {
-		// 	return err
-		// }
-
-		payload, err := json.Marshal(domainEvent)
-		if err != nil {
-			return err
-		}
-
-		return tx.CreateOutboxEvent(ctx, &types.OutboxEvent{
-			Type:    eventType,
-			Payload: payload,
-			Status:  "pending",
-		})
-	})
+	return s.lifecycle.Transition(ctx, inst, to, eventType, enforceConcurrency, enqueueOutbox)
 }
 
 // WaitForInstanceStatus 阻塞等待实例进入 wanted 中的任一状态。
@@ -278,15 +240,7 @@ func concurrencyOccupiedStatuses() []types.ContainerStatus {
 }
 
 func (s *ContainerManager) GetMaxConcurrency() int {
-	maxConcurrency := 3
-	if s.cfg != nil && s.cfg.Container != nil && s.cfg.Container.CreateQueueMaxConcurrency > 0 {
-		maxConcurrency = s.cfg.Container.CreateQueueMaxConcurrency
-	}
-
-	if maxConcurrency <= 0 {
-		maxConcurrency = 3
-	}
-	return maxConcurrency
+	return s.lifecycle.MaxConcurrency()
 }
 
 // func (m *ContainerManager) Create(ctx context.Context, spec Spec) error {
@@ -1022,78 +976,16 @@ func formatExitCode(code *int) string {
 // }
 
 func (m *ContainerManager) getRuntime() (containerruntime.Runtime, error) {
-	runtimeName := m.resolveRuntimeName()
-	if runtimeName == "" {
-		return nil, errors.New("runtime name is required")
-	}
-	rt := m.reg.Get(runtimeName)
-	if rt == nil {
-		return nil, fmt.Errorf("runtime not found: %s", runtimeName)
-	}
-	return rt, nil
+	return m.lifecycle.GetRuntime()
 }
 
 func (m *ContainerManager) resolveRuntimeName() string {
-	// runtimeName = strings.TrimSpace(runtimeName)
-	// if runtimeName != "" {
-	// 	normalized := strings.ToLower(runtimeName)
-	// 	switch normalized {
-	// 	case "kubernetes":
-	// 		normalized = "k8s"
-	// 	}
-
-	// 	if m.reg != nil {
-	// 		if m.reg.Get(normalized) != nil {
-	// 			return normalized
-	// 		}
-	// 		if normalized == "k8s" && m.reg.Get("k3s") != nil {
-	// 			return "k3s"
-	// 		}
-	// 		if normalized == "k3s" && m.reg.Get("k8s") != nil {
-	// 			return "k8s"
-	// 		}
-	// 	}
-
-	// 	return normalized
-	// }
-
-	if m.cfg != nil {
-		resolved := config.ResolveContainerRuntime(m.cfg)
-		if strings.TrimSpace(resolved) != "" {
-			return resolved
-		}
-	}
-
-	runtimes := m.reg.List()
-	if len(runtimes) == 1 {
-		return runtimes[0].Name()
-	}
-
-	return "docker"
+	return m.lifecycle.ResolveRuntimeName()
 }
 
-// getRuntimeByInstance resolves a runtime from a container instance's RuntimeID.
-func (w *ContainerManager) getRuntimeByInstance(inst *types.ContainerInstance) (containerruntime.Runtime, error) {
-	if inst == nil {
-		return nil, errors.New("container instance is nil")
-	}
-
-	for _, item := range w.reg.List() {
-		// 判断字符串相等
-		if inst.RuntimeName == item.Name() {
-			return item, nil
-		}
-	}
-
-	// items := w.reg.List()
-	// if len(items) == 1 {
-	// 	return items[0], nil
-	// }
-	rt, err := w.getRuntime()
-	if err != nil {
-		return nil, err
-	}
-	return rt, nil
+// getRuntimeByInstance resolves a runtime from a container instance's RuntimeName.
+func (m *ContainerManager) getRuntimeByInstance(inst *types.ContainerInstance) (containerruntime.Runtime, error) {
+	return m.lifecycle.GetRuntimeByInstance(inst)
 }
 
 // func (m *ContainerManager) getRuntimeByInstance(inst *types.ContainerInstance) (containerruntime.Runtime, error) {
@@ -1258,99 +1150,26 @@ func applyDagNodeTaskSpec(spec *types.ContainerSpec, logPath string) {
 
 // applyDagNodeRuntimeSpec 按 DAG 节点的约定覆盖容器启动命令（bash ./run.sh）与运行用户。
 func (m *ContainerManager) applyDagNodeRuntimeSpec(spec *types.ContainerSpec, resolveVars map[string]string) {
-	m.applyTaskRuntimeSpec(spec, resolveVars)
+	m.lifecycle.ApplyDagNodeRuntimeSpec(spec, resolveVars)
 }
 
 // applyTaskRuntimeSpec 是任务型容器（DAG 节点）的启动约定：
 // 统一入口为 bash ./run.sh、输出 tee 到 LOG_PATH，并按运行时映射运行用户。
 func (m *ContainerManager) applyTaskRuntimeSpec(spec *types.ContainerSpec, resolveVars map[string]string) {
-	if spec == nil {
-		return
-	}
-
-	logPath := strings.TrimSpace(resolveVars["LOG_PATH"])
-	if logPath == "" {
-		if envLogPath, ok := os.LookupEnv("LOG_PATH"); ok {
-			logPath = strings.TrimSpace(envLogPath)
-		}
-	}
-	applyDagNodeTaskSpec(spec, logPath)
-
-	if strings.TrimSpace(spec.WorkDir) == "" {
-		if workspacePath := strings.TrimSpace(resolveVars["WORKSPACE_PATH"]); workspacePath != "" {
-			spec.WorkDir = workspacePath
-		}
-	}
-
-	m.applyRuntimeUser(spec, resolveVars)
+	m.lifecycle.applyTaskRuntimeSpec(spec, resolveVars)
 }
 
 // defaultRuntimeHomeDir 是非 root 用户运行容器时可写的家目录（内存盘挂载点）。
 const defaultRuntimeHomeDir = "/home/app"
 
-// applyRuntimeUser maps USERID/GROUPID to the runtime's user field. Docker uses
-// uid:gid, while Kubernetes currently maps ContainerSpec.User to runAsUser.
-//
-// 以非 root 用户运行时，镜像里的 HOME（常见是 /root）对该用户不可写，
-// 直接跑会失败（R / python / pip 都要写家目录）。因此这里等价于：
-//
-//	docker run --user "$UID:$GID" \
-//	  -e HOME=/home/app \
-//	  --tmpfs /home/app:rw,uid=$UID,gid=$GID,mode=700
-//
-// 即：User=uid[:gid]、HomeDir=/home/app、Tmpfs 挂一个属主为该用户的 700 内存盘。
-// 如果调用方 / 模板已经显式设置了 HomeDir 或为同一路径配置了 tmpfs，则不再覆盖。
+// applyRuntimeUser maps USERID/GROUPID to the runtime's user field（薄委托到 ContainerLifecycle）。
 func (m *ContainerManager) applyRuntimeUser(spec *types.ContainerSpec, resolveVars map[string]string) {
-	if spec == nil {
-		return
-	}
-	uid := strings.TrimSpace(resolveVars["USERID"])
-	if uid == "" {
-		return
-	}
-	gid := strings.TrimSpace(resolveVars["GROUPID"])
-	switch strings.ToLower(strings.TrimSpace(m.resolveRuntimeName())) {
-	case "docker":
-		if gid != "" {
-			spec.User = uid + ":" + gid
-		} else {
-			spec.User = uid
-		}
-	case "k8s", "k3s", "kubernetes":
-		spec.User = uid
-	default:
-		return
-	}
-
-	m.applyRuntimeHome(spec, uid, gid)
+	m.lifecycle.ApplyRuntimeUser(spec, resolveVars)
 }
 
-// applyRuntimeHome 为非 root 运行的容器准备可写的 HOME：
-// 设置 spec.HomeDir，并把该路径挂成属主为用户的内存盘。
+// applyRuntimeHome 为非 root 运行的容器准备可写的 HOME（薄委托到 ContainerLifecycle）。
 func (m *ContainerManager) applyRuntimeHome(spec *types.ContainerSpec, uid, gid string) {
-	if spec == nil {
-		return
-	}
-
-	home := strings.TrimSpace(spec.HomeDir)
-	if home == "" {
-		home = defaultRuntimeHomeDir
-		spec.HomeDir = home
-	}
-
-	for _, mount := range spec.Tmpfs {
-		if strings.TrimSpace(mount.Target) == home {
-			// 已显式配置同路径的内存盘，尊重调用方的 UID/GID/Mode。
-			return
-		}
-	}
-
-	spec.Tmpfs = append(spec.Tmpfs, types.ContainerTmpfs{
-		Target: home,
-		Mode:   "700",
-		UID:    uid,
-		GID:    gid,
-	})
+	m.lifecycle.applyRuntimeHome(spec, uid, gid)
 }
 
 func shellSingleQuote(text string) string {

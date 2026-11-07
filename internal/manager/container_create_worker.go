@@ -84,8 +84,13 @@ type ContainerCreateWorker struct {
 	reg              *containerruntime.Registry
 	res              ContainerRuntimeResolver
 	// img              *ImageManager
-	containerManager *ContainerManager
-	cfg              *config.Config
+	// lifecycle 收敛状态迁移 / 运行时解析 / spec 组装等共享能力，
+	// 与 ContainerManager 共用同一实例（装配阶段由 Manager.Lifecycle() 注入）。
+	lifecycle *ContainerLifecycle
+	// owner 是 StartTerminalRuntime 需要的创建入口（CreateByTemplateWithOptions）。
+	// 构造时为空，由 ContainerManager.SetCreateWorker 回填，避免构造期循环依赖。
+	owner *ContainerManager
+	cfg   *config.Config
 	// maxConcurrency   int
 }
 
@@ -98,7 +103,7 @@ func NewContainerCreateWorker(
 	reg *containerruntime.Registry,
 	res ContainerRuntimeResolver,
 	// img *ImageManager,
-	containerManager *ContainerManager,
+	lifecycle *ContainerLifecycle,
 	cfg *config.Config,
 ) *ContainerCreateWorker {
 
@@ -110,8 +115,8 @@ func NewContainerCreateWorker(
 		reg:             reg,
 		res:             res,
 		// img:              img,
-		containerManager: containerManager,
-		cfg:              cfg,
+		lifecycle: lifecycle,
+		cfg:       cfg,
 		// maxConcurrency:  maxConcurrency,
 	}
 }
@@ -330,24 +335,24 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 
 	tpl, err := w.repo.GetContainerTemplateByID(ctx, inst.TemplateID)
 	if err != nil {
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerTemplateNotFound")
+		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerTemplateNotFound")
 		return err
 	}
 	if strings.TrimSpace(tpl.ImageName) == "" {
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerImageNotConfigured")
+		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerImageNotConfigured")
 		return fmt.Errorf("container template %d does not bind any image", inst.TemplateID)
 	}
 
 	rt, err := w.getRuntimeByInstance(inst)
-	// rt, err := w.containerManager.getRuntime()
+	// rt, err := w.lifecycle.GetRuntime()
 	if err != nil {
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerRuntimeNotFound")
+		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerRuntimeNotFound")
 		return err
 	}
 
 	// if w.img != nil {
 	// 	if err := w.img.EnsureImageReadyByEntity(ctx, runtimeName, img); err != nil {
-	// 		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerImagePrepareFailed")
+	// 		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerImagePrepareFailed")
 	// 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerImagePrepareFailedDetail", err.Error())
 	// 		return err
 	// 	}
@@ -373,7 +378,7 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 		if errors.Is(err, errBraveEnvFileCreate) {
 			eventType = "ContainerCreateBraveEnvFailed"
 		}
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, eventType)
+		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, eventType)
 		return err
 	}
 
@@ -390,7 +395,7 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 		// w.ensureRuntimeFilesAndDirs(ctx, resolveVars)
 		spec, err = w.res.Resolve(ctx, &ContainerRuntimeResolveInput{Spec: spec, Variables: resolveVars})
 		if err != nil {
-			_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerResolveSpecFailed")
+			_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerResolveSpecFailed")
 			// _ = w.createContainerEvent(ctx, inst.ID, "ContainerResolveSpecFailedDetail", err.Error())
 			return err
 		}
@@ -406,7 +411,7 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 
 	// 创建 runtime 资源前，确保 volume source 都存在
 	if err := w.ensureVolumeSources(ctx, spec.Volumes); err != nil {
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerCreateVolumeSourceFailed")
+		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerCreateVolumeSourceFailed")
 		return err
 	}
 
@@ -418,7 +423,7 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 
 	runtimeID, err := rt.Create(ctx, spec)
 	if err != nil {
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerCreateFailed")
+		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerCreateFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerCreateFailedDetail", err.Error())
 		return err
 	}
@@ -429,7 +434,7 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 	}
 
 	if err := rt.Start(ctx, runtimeID); err != nil {
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerStartFailed")
+		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerStartFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
 		return err
 	}
@@ -443,7 +448,7 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 // 若计入额度，几次终端会话就会把创建队列占满。
 func (w *ContainerCreateWorker) transitionToCreating(ctx context.Context, inst *types.ContainerInstance) error {
 	enforceConcurrency := containerKindIsOneShot(inst.Kind)
-	return w.containerManager.transitionContainer(ctx, inst, types.ContainerCreating, "ContainerCreating", enforceConcurrency, true)
+	return w.lifecycle.Transition(ctx, inst, types.ContainerCreating, "ContainerCreating", enforceConcurrency, true)
 }
 
 // containerKindIsOneShot 表示该形态的容器跑完即退出（DAG 节点任务容器）。
@@ -494,13 +499,13 @@ func (w *ContainerCreateWorker) buildInstanceSpec(
 		spec.ExposeService = false
 		// 终端容器以宿主用户启动：容器内写出的文件在宿主上可直接读写，
 		// 无需在 shell 里再 chown（同时挂上属主为该用户的 HOME）。
-		w.containerManager.applyRuntimeUser(spec, resolveVars)
+		w.lifecycle.ApplyRuntimeUser(spec, resolveVars)
 
 	case types.ContainerInstanceKindDagNode:
 		spec.WorkloadKind = "job"
 		spec.ExposeService = false
 		// 任务容器统一入口 bash ./run.sh，并按节点工作区 / LOG_PATH 覆盖工作目录与用户。
-		w.containerManager.applyDagNodeRuntimeSpec(spec, resolveVars)
+		w.lifecycle.ApplyDagNodeRuntimeSpec(spec, resolveVars)
 
 	default:
 		// web：跑模板命令并通过模板端口暴露给网关。
@@ -518,7 +523,7 @@ func (w *ContainerCreateWorker) executeRecreate(ctx context.Context, instanceID 
 	}
 
 	// Transition to recreating.
-	if err := w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerReCreating, "ContainerReCreating"); err != nil {
+	if err := w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerReCreating, "ContainerReCreating"); err != nil {
 		return err
 	}
 
@@ -562,19 +567,19 @@ func (w *ContainerCreateWorker) executeStop(ctx context.Context, instanceID int6
 
 	rt, err := w.getRuntimeByInstance(inst)
 	if err != nil {
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerStopFailed")
+		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerStopFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStopFailedDetail", err.Error())
 		return err
 	}
 
 	// Transition to stopping.
-	if err := w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerStopping, "ContainerStopping"); err != nil {
+	if err := w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerStopping, "ContainerStopping"); err != nil {
 		return err
 	}
 
 	// Execute runtime stop.
 	if err := rt.Stop(ctx, inst.RuntimeID); err != nil {
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerStopFailed")
+		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerStopFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStopFailedDetail", err.Error())
 		return err
 	}
@@ -604,7 +609,7 @@ func (w *ContainerCreateWorker) executeStart(ctx context.Context, instanceID int
 	if inst.Status != types.ContainerStartPending {
 		return fmt.Errorf("%w: expected=%s actual=%s instance_id=%d", errWorkerInvalidState, types.ContainerStartPending, inst.Status, instanceID)
 	}
-	err = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerStarting, "ContainerStarting")
+	err = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerStarting, "ContainerStarting")
 	if err != nil {
 		return err
 	}
@@ -616,13 +621,13 @@ func (w *ContainerCreateWorker) executeStart(ctx context.Context, instanceID int
 
 	rt, err := w.getRuntimeByInstance(inst)
 	if err != nil {
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerStartFailed")
+		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerStartFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
 		return err
 	}
 
 	if err := rt.Start(ctx, inst.RuntimeID); err != nil {
-		_ = w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerFailed, "ContainerStartFailed")
+		_ = w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerFailed, "ContainerStartFailed")
 		// _ = w.createContainerEvent(ctx, inst.ID, "ContainerStartFailedDetail", err.Error())
 		return err
 	}
@@ -639,7 +644,7 @@ func (w *ContainerCreateWorker) executeDelete(ctx context.Context, instanceID in
 	}
 
 	// Transition to deleting.
-	if err := w.containerManager.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerDeleting, "ContainerDeleting"); err != nil {
+	if err := w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerDeleting, "ContainerDeleting"); err != nil {
 		return err
 	}
 
@@ -666,7 +671,7 @@ func (w *ContainerCreateWorker) executeDelete(ctx context.Context, instanceID in
 	return nil
 }
 func (w *ContainerCreateWorker) getRuntimeByInstance(inst *types.ContainerInstance) (containerruntime.Runtime, error) {
-	return w.containerManager.getRuntimeByInstance(inst)
+	return w.lifecycle.GetRuntimeByInstance(inst)
 
 }
 
@@ -1046,7 +1051,7 @@ func (w *ContainerCreateWorker) ContainerTemplateName(ctx context.Context, templ
 // sessionID 是终端会话（AppSession）主键：容器以 owner_type=app_session +
 // owner_id=sessionID 归属该会话，进程重启后可按 owner 认领原容器。
 func (w *ContainerCreateWorker) StartTerminalRuntime(ctx context.Context, userID, projectID, templateID, sessionID int64, opts containerruntime.TerminalOptions) (*TerminalRuntimeHandle, error) {
-	if w == nil || w.containerManager == nil {
+	if w == nil || w.owner == nil {
 		return nil, fmt.Errorf("container worker is not configured")
 	}
 	if sessionID == 0 {
@@ -1054,7 +1059,7 @@ func (w *ContainerCreateWorker) StartTerminalRuntime(ctx context.Context, userID
 		return nil, fmt.Errorf("terminal session id is required")
 	}
 
-	inst, err := w.containerManager.CreateByTemplateWithOptions(ctx, ContainerCreateOptions{
+	inst, err := w.owner.CreateByTemplateWithOptions(ctx, ContainerCreateOptions{
 		TemplateID:  templateID,
 		OwnerType:   types.ContainerOwnerAppSession,
 		OwnerID:     sessionID,
@@ -1170,13 +1175,13 @@ func (w *ContainerCreateWorker) dropTerminalInstance(ctx context.Context, inst *
 	switch inst.Status {
 	case types.ContainerDeleting, types.ContainerDeleted:
 	case types.ContainerDeletePending:
-		if err := w.containerManager.transitionContainer(cleanupCtx, inst, types.ContainerDeleting, "ContainerDeleting", false, false); err != nil {
+		if err := w.lifecycle.Transition(cleanupCtx, inst, types.ContainerDeleting, "ContainerDeleting", false, false); err != nil {
 			logger.Warnf(ctx, "[ContainerCreateWorker] terminal instance to deleting failed, instance_id=%d err=%v", inst.ID, err)
 		}
 	default:
-		if err := w.containerManager.transitionContainer(cleanupCtx, inst, types.ContainerDeletePending, "ContainerDeletePending", false, false); err != nil {
+		if err := w.lifecycle.Transition(cleanupCtx, inst, types.ContainerDeletePending, "ContainerDeletePending", false, false); err != nil {
 			logger.Warnf(ctx, "[ContainerCreateWorker] terminal instance to delete_pending failed, instance_id=%d status=%s err=%v", inst.ID, inst.Status, err)
-		} else if err := w.containerManager.transitionContainer(cleanupCtx, inst, types.ContainerDeleting, "ContainerDeleting", false, false); err != nil {
+		} else if err := w.lifecycle.Transition(cleanupCtx, inst, types.ContainerDeleting, "ContainerDeleting", false, false); err != nil {
 			logger.Warnf(ctx, "[ContainerCreateWorker] terminal instance to deleting failed, instance_id=%d err=%v", inst.ID, err)
 		}
 	}
@@ -1216,10 +1221,10 @@ func (w *ContainerCreateWorker) resolveRuntime(name string) containerruntime.Run
 			}
 		}
 	}
-	if w.containerManager == nil {
+	if w.lifecycle == nil {
 		return nil
 	}
-	rt, err := w.containerManager.getRuntime()
+	rt, err := w.lifecycle.GetRuntime()
 	if err != nil {
 		return nil
 	}
