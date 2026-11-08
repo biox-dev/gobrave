@@ -11,6 +11,17 @@ import (
 	"gorm.io/gorm"
 )
 
+// closeTestDB closes the connection before the test temp dir is removed;
+// on Windows an open handle makes t.TempDir cleanup fail.
+func closeTestDB(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	t.Cleanup(func() {
+		if sqlDB, err := db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+}
+
 func newTestGateway(t *testing.T) *Gateway {
 	t.Helper()
 
@@ -19,6 +30,7 @@ func newTestGateway(t *testing.T) *Gateway {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	closeTestDB(t, db)
 
 	r, err := NewGateway(db)
 	if err != nil {
@@ -35,6 +47,7 @@ func newTestGatewayWithDB(t *testing.T, dsn string) *Gateway {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	closeTestDB(t, db)
 
 	r, err := NewGateway(db)
 	if err != nil {

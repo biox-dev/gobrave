@@ -35,6 +35,14 @@ func TestBuildContainerRegistersContainerService(t *testing.T) {
 
 	// 内置容器模板必须在启动时落库（内置 JSON 里 is_default=true 的 rstudio 模板）。
 	if err := container.Invoke(func(db *gorm.DB) error {
+		// Windows keeps the database file locked while the connection is open,
+		// which makes t.TempDir cleanup fail; close it before the test returns.
+		t.Cleanup(func() {
+			if sqlDB, err := db.DB(); err == nil {
+				_ = sqlDB.Close()
+			}
+		})
+
 		var definitions int64
 		if err := db.Model(&types.ContainerTemplateDefinition{}).Count(&definitions).Error; err != nil {
 			return err

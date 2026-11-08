@@ -25,14 +25,14 @@ func TestBuildSQLiteDSN(t *testing.T) {
 			dbPath:      `C:\workspace\gobrave\.gobrave\db\gobrave.db`,
 			pragmas:     []string{"journal_mode(WAL)"},
 			windowsOnly: true,
-			want:        "file:///C:/workspace/gobrave/.gobrave/db/gobrave.db?_pragma=journal_mode%28WAL%29",
+			want:        "file:C:/workspace/gobrave/.gobrave/db/gobrave.db?_pragma=journal_mode%28WAL%29",
 		},
 		{
 			name:        "windows path with spaces",
 			dbPath:      `C:\Program Files\gobrave\gobrave.db`,
 			pragmas:     []string{"busy_timeout(5000)"},
 			windowsOnly: true,
-			want:        "file:///C:/Program%20Files/gobrave/gobrave.db?_pragma=busy_timeout%285000%29",
+			want:        "file:C:/Program%20Files/gobrave/gobrave.db?_pragma=busy_timeout%285000%29",
 		},
 		{
 			name:   "no pragmas",
