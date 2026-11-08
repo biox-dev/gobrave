@@ -2,9 +2,11 @@ package route
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/ncruces/go-sqlite3/gormlite"
 	"gorm.io/gorm"
 )
@@ -45,7 +47,7 @@ func newTestGatewayWithDB(t *testing.T, dsn string) *Gateway {
 func TestGatewayPersistAndReload(t *testing.T) {
 	t.Parallel()
 
-	dsn := "file:" + t.TempDir() + "/gateway_route.db?_journal_mode=WAL"
+	dsn := utils.BuildSQLiteDSN(filepath.Join(t.TempDir(), "gateway_route.db"), "journal_mode(WAL)")
 	r := newTestGatewayWithDB(t, dsn)
 
 	err := r.UpsertRoute(context.Background(), Registration{

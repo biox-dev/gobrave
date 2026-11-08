@@ -952,7 +952,13 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 			}
 		}
 		// sqlite_vec.Auto()
-		dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on"
+		// 必须用 file: URI 组装 DSN：直接拼接 "path?option=value" 在 Windows 上
+		// 会因 '?' 不是合法文件名字符而打开失败，且驱动只识别 _pragma 形式。
+		dsn := utils.BuildSQLiteDSN(dbPath,
+			"busy_timeout(5000)",
+			"journal_mode(WAL)",
+			"foreign_keys(on)",
+		)
 		dialector = gormlite.Open(dsn)
 		logger.Infof(context.Background(), "DB Config: driver=sqlite path=%s", dbPath)
 	default:
