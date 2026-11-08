@@ -3,6 +3,7 @@ __debug*
 frontend/web/
 config.yml
 gobrave
+gobrave.exe
 gobrave.log
 images/
 run.sh
@@ -10,5 +11,5 @@ stop.sh
 cp_web.sh
 traefik/
 .vscode/
-server
+
 embed/

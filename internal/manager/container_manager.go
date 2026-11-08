@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/config"
@@ -1107,25 +1106,6 @@ func ensureEmptyFileIfNotExists(ctx context.Context, filePath string) {
 		return
 	}
 	_ = file.Close()
-}
-
-func resolvePathGID(path string) (string, bool) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", false
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", false
-	}
-
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "", false
-	}
-
-	return strconv.FormatUint(uint64(stat.Gid), 10), true
 }
 
 func parseCommand(raw string) []string {

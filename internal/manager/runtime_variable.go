@@ -135,28 +135,41 @@ func (w *ContainerCreateWorker) buildRuntimeVariables(
 
 // buildSystemVariables 负责 USERID/GROUPID/DOCKER_GID/DOCKER_GROUPID。
 func (w *ContainerCreateWorker) buildSystemVariables(set *RuntimeVariableSet, in *runtimeVariableBuildInput) {
-	userID := os.Getenv("USERID")
-	if userID == "" {
-		userID = strconv.Itoa(os.Getuid())
-	}
-	groupID := os.Getenv("GROUPID")
-	if groupID == "" {
-		groupID = strconv.Itoa(os.Getgid())
-	}
-	set.add("USERID", userID)
-	set.add("GROUPID", groupID)
-
-	dockerGID := os.Getenv("DOCKER_GID")
-	if dockerGID == "" {
-		if gid, ok := resolvePathGID("/var/run/docker.sock"); ok {
-			dockerGID = gid
+	// 宿主身份映射只在类 Unix 平台有效；Windows 上没有数值 UID/GID
+	// （os.Getuid/Getgid 返回 -1），此时不注入变量，避免 USERID=-1 传到容器。
+	if hostUID, hostGID, ok := hostUserIdentity(); ok {
+		userID := os.Getenv("USERID")
+		if userID == "" {
+			userID = hostUID
 		}
+		groupID := os.Getenv("GROUPID")
+		if groupID == "" {
+			groupID = hostGID
+		}
+		set.add("USERID", userID)
+		set.add("GROUPID", groupID)
+
+		dockerGID := os.Getenv("DOCKER_GID")
+		if dockerGID == "" {
+			if gid, ok := resolvePathGID("/var/run/docker.sock"); ok {
+				dockerGID = gid
+			}
+		}
+		if dockerGID == "" {
+			dockerGID = groupID
+		}
+		set.add("DOCKER_GID", dockerGID)
+		set.add("DOCKER_GROUPID", dockerGID)
+		return
 	}
-	if dockerGID == "" {
-		dockerGID = groupID
+
+	// 显式用环境变量指定身份时仍然尊重（例如 Windows 上手工映射 WSL 用户）。
+	if userID := os.Getenv("USERID"); userID != "" {
+		set.add("USERID", userID)
 	}
-	set.add("DOCKER_GID", dockerGID)
-	set.add("DOCKER_GROUPID", dockerGID)
+	if groupID := os.Getenv("GROUPID"); groupID != "" {
+		set.add("GROUPID", groupID)
+	}
 }
 
 // buildPackageVariables 负责 R/Python/Conda 包目录与 Rprofile 路径。
