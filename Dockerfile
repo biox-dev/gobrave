@@ -21,7 +21,7 @@ RUN yarn install --frozen-lockfile && yarn build
 # ============================
 # Stage 2: Build Go backend
 # ============================
-FROM golang:1.25-bookworm AS gobuilder
+FROM golang:1.26-bookworm AS gobuilder
 
 WORKDIR /app
 
