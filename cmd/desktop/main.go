@@ -1,36 +1,46 @@
+//go:build gtk3
+
 // Command desktop 是 brave 的 Wails v3 桌面客户端入口。
 //
-// 它复用 gobrave 的前端产物（frontend/web）：
-// 本地起一个真实的 http.Server 提供静态文件与反向代理，
+// 它复用 gobrave 的前端产物（frontend/web），并在**同一进程内**
+// 通过 golang 类库调用启动后端（internal/appsrv），无需额外进程；
+// 本地再起一个真实的 http.Server 提供静态文件与反向代理，
 // WebView 直接加载 http://127.0.0.1:<随机端口>/，
 // 因此 POST body、SSE、WebSocket 行为与浏览器一致。
 //
-// 当前阶段只负责「打开窗口并正常显示」，后端服务需另行启动（默认 :8084）；
-// 后续将改为在 golang 内以类库方式启动后端，届时替换 backend.Manager 的实现即可。
+// 构建/运行（必须带 gtk3 标签，宿主 GTK 4.6.9 低于 Wails 默认要求的 4.10）：
+//
+//	go run -tags "gtk3 embed_frontend" ./cmd/desktop
+//	./cmd/desktop/build.sh
+//
+// 不带 gtk3 时由 main_no_gtk3.go 提供占位 main，保证 `go build ./...` 可用。
 package main
 
 import (
 	"context"
 	"flag"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	desktopbackend "github.com/biox-dev/gobrave/cmd/desktop/backend"
+	"github.com/biox-dev/gobrave/internal/appsrv"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // DesktopService 暴露给前端调用的桌面能力。
-// 目前只有后端连接信息查询；后续可加入打开文件、读取本地配置等。
 type DesktopService struct {
 	manager *desktopbackend.Manager
+	backend *appsrv.Server
 }
 
 // NewDesktopService 构造服务。
-func NewDesktopService(manager *desktopbackend.Manager) *DesktopService {
-	return &DesktopService{manager: manager}
+func NewDesktopService(manager *desktopbackend.Manager, backend *appsrv.Server) *DesktopService {
+	return &DesktopService{manager: manager, backend: backend}
 }
 
 // BackendStatus 返回后端连接状态，前端可轮询用于展示「后端已连接/未连接」。
@@ -47,23 +57,45 @@ func (d *DesktopService) BackendBaseURL() string {
 
 func main() {
 	devURL := flag.String("dev-url", "", "开发模式下直接加载的前端地址（如 http://localhost:5173）")
+	port := flag.Int("port", desktopbackend.DefaultPort, "内嵌后端监听端口（0 表示随机空闲端口）")
 	flag.Parse()
 
-	cfg := desktopbackend.LoadConfig()
-	manager := desktopbackend.NewManager(cfg)
-
-	// 启动时探测一次，仅用于日志提示；连接失败不阻塞窗口打开，
-	// 前端仍可展示界面，并通过 BackendStatus 查询实际状态。
-	if st := manager.Health(context.Background()); st.Healthy {
-		log.Printf("[desktop] 后端连接正常: %s", st.BaseURL)
-	} else {
-		log.Printf("[desktop] 后端暂不可用(%s): %s", st.BaseURL, st.Message)
+	// 1) 以库函数方式启动后端：加载配置 → 构建 DI 容器 → 监听端口。
+	//    Address 用 127.0.0.1:<port>，避免把服务暴露到外网。
+	srv, err := appsrv.New(appsrv.Options{
+		Address:       net.JoinHostPort(desktopbackend.DefaultHost, strconv.Itoa(*port)),
+		InitSnowflake: true,
+		HandleSignals: false, // 生命周期由本进程控制
+	})
+	if err != nil {
+		log.Fatalf("[desktop] 后端初始化失败: %v", err)
 	}
+	if err := srv.Start(); err != nil {
+		log.Fatalf("[desktop] 后端启动失败: %v", err)
+	}
+	log.Printf("[desktop] 内嵌后端已启动: http://%s", srv.Address())
+
+	// 后端地址以实际监听地址为准（--port=0 时是随机端口）。
+	cfg := desktopbackend.Config{
+		Scheme: "http",
+		Host:   desktopbackend.DefaultHost,
+		Port:   portOf(srv.Address()),
+	}
+	manager := desktopbackend.NewManager(cfg)
+	// 让 /health 探针与反代都指向真实地址。
+	manager.SetBaseURL("http://" + srv.Address())
+
+	// 2) 停止后端：窗口关闭 / 进程退出时调用，保证端口与容器资源释放。
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if stopErr := srv.Shutdown(ctx); stopErr != nil {
+			log.Printf("[desktop] 后端关闭异常: %v", stopErr)
+		}
+	}()
 
 	pageURL := *devURL
 	if pageURL == "" {
-		// 在真实 HTTP 端口上提供页面，而不是走 Wails 的 wails:// 自定义协议。
-		// 原因：WebKitGTK 的自定义协议 handler 不传递 POST 请求体。
 		local, err := desktopbackend.StartLocalServer(desktopbackend.NewHandler(desktopbackend.HandlerOptions{
 			Assets:         resolveWebFS(),
 			BackendBaseURL: manager.BaseURL(),
@@ -74,7 +106,6 @@ func main() {
 		log.Printf("[desktop] 本地页面服务: %s", local.URL())
 		pageURL = local.URL() + "/"
 
-		// 应用退出后关闭本地 HTTP 服务。
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
@@ -86,7 +117,7 @@ func main() {
 		Name:        "Brave Desktop",
 		Description: "Brave 数据分析工作台桌面客户端",
 		Services: []application.Service{
-			application.NewService(NewDesktopService(manager)),
+			application.NewService(NewDesktopService(manager, srv)),
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
@@ -103,12 +134,9 @@ func main() {
 			TitleBar:                application.MacTitleBarHiddenInset,
 		},
 		BackgroundColour: application.NewRGB(6, 7, 15),
-		// 指向本地 HTTP 服务，前端因此处于 http:// origin，
-		// getPathname() 会得到正常地址，POST body/SSE/WS 均可用。
-		URL: pageURL,
+		URL:              pageURL,
 	})
 
-	// 强制 Ctrl+C 退出：部分平台 WebView 会抢占终端信号。
 	go handleSignals(app)
 
 	if err := app.Run(); err != nil {
@@ -116,12 +144,24 @@ func main() {
 	}
 }
 
-// handleSignals 在收到中断信号时退出应用，
-// 避免本地 HTTP 服务残留（defer 在 normal exit 时执行）。
+// handleSignals 在收到中断信号时退出应用。
 func handleSignals(app *application.App) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	<-signals
 	log.Printf("[desktop] 收到退出信号，正在关闭窗口...")
 	app.Quit()
+}
+
+// portOf 从 "host:port" 中取出端口，解析失败回退默认端口。
+func portOf(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return desktopbackend.DefaultPort
+	}
+	p, err := strconv.Atoi(portStr)
+	if err != nil || p <= 0 {
+		return desktopbackend.DefaultPort
+	}
+	return p
 }

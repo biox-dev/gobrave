@@ -3,6 +3,8 @@ package backend
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -37,6 +39,26 @@ func (m *Manager) BaseURL() string { return m.cfg.BaseURL() }
 
 // Config 返回当前配置。
 func (m *Manager) Config() Config { return m.cfg }
+
+// SetBaseURL 覆盖后端根地址。
+//
+// 桌面端以库方式启动后端时，实际监听端口可能与配置不同
+// （例如 --port=0 用随机空闲端口），启动后需要回填真实地址。
+func (m *Manager) SetBaseURL(baseURL string) {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return
+	}
+	scheme := u.Scheme
+	if scheme == "" {
+		scheme = "http"
+	}
+	cfg := Config{Scheme: scheme, Host: u.Hostname(), Port: DefaultPort}
+	if p, parseErr := strconv.Atoi(u.Port()); parseErr == nil && p > 0 {
+		cfg.Port = p
+	}
+	m.cfg = cfg
+}
 
 // Health 请求后端的 /health 探针。
 func (m *Manager) Health(ctx context.Context) Status {

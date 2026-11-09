@@ -21,135 +21,32 @@ package main
 
 import (
 	"context"
-	"flag"
-	"fmt"
-	"net/http"
-	"os"
-	"os/signal"
-	"time"
 
-	cmd "github.com/biox-dev/gobrave/cmd/server"
-	"github.com/biox-dev/gobrave/internal/config"
-	"github.com/biox-dev/gobrave/internal/container"
+	"github.com/biox-dev/gobrave/internal/appsrv"
 	"github.com/biox-dev/gobrave/internal/logger"
-	"github.com/biox-dev/gobrave/internal/runtime"
-	"github.com/biox-dev/gobrave/internal/utils"
-	"github.com/gin-gonic/gin"
 )
 
+// main 是命令行入口：以独立进程方式启动后端服务。
+// 启动逻辑与桌面端（cmd/desktop）共用 internal/appsrv，
+// 因此两边的路由、中间件、优雅退出行为完全一致。
 func main() {
-	// Parse command-line flags (overrides config.yml).
-	cliFlags := config.ParseCLIFlags()
-	flag.Parse()
-	config.SetCLIFlags(cliFlags)
+	// 解析命令行参数（覆盖 config.yml），必须在加载配置前完成。
+	appsrv.ParseCLIFlags()
 
-	utils.InitSnowflake(1)
-
-	// 只加载一次配置：Gin 模式需要在构建路由之前生效，
-	// 之后把同一个 cfg 注入 DI 容器，避免重复解析 config.yml。
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		logger.Fatalf(context.Background(), "Failed to load config: %v", err)
-	}
-
-	// Gin 运行模式（debug/release/test）直接取自 config.yml 的 server.mode
-	// （--gin-mode 已在 applyCLIOverrides 中合并进 cfg）。
-	// 留空时不设置，交给 gin 自身的 GIN_MODE 环境变量 / 默认值处理。
-	if cfg.Server != nil && cfg.Server.Mode != "" {
-		gin.SetMode(cfg.Server.Mode)
-	}
-	c := container.BuildContainer(runtime.GetContainer(), cfg)
-
-	err = c.Invoke(func(
-		router *gin.Engine,
-		// grpcServer *grpc.Server,
-
-	) error {
-
-		// mixedHandler := grpcHandlerFunc(grpcServer, router)
-		// server := &http.Server{
-		// 	Handler: h2c.NewHandler(mixedHandler, &http2.Server{}),
-		// }
-		server := &http.Server{
-			Handler: router,
-		}
-
-		addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-		listener, err := cmd.ListenWithRetry(addr, 10, 300*time.Millisecond)
-		if err != nil {
-			return fmt.Errorf("failed to start server: %v", err)
-		}
-
-		ctx, done := context.WithCancel(context.Background())
-
-		signals := make(chan os.Signal, 1)
-		signal.Notify(signals, cmd.ShutdownSignals...)
-
-		go func() {
-			sig := <-signals
-			logger.Infof(context.Background(), "Received signal: %v, starting server shutdown...", sig)
-
-			// Close listener first to release port immediately,
-			// so the next process can bind during our graceful drain.
-			listener.Close()
-
-			shutdownTimeout := cfg.Server.ShutdownTimeout
-			if shutdownTimeout == 0 {
-				shutdownTimeout = 30 * time.Second
-			}
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
-			defer shutdownCancel()
-
-			// Second signal → force close all connections immediately
-			go func() {
-				sig := <-signals
-				logger.Warnf(context.Background(), "Received second signal: %v, forcing shutdown...", sig)
-				server.Close()
-			}()
-
-			if err := server.Shutdown(shutdownCtx); err != nil {
-				logger.Errorf(context.Background(), "Server forced to shutdown: %v", err)
-				server.Close()
-			}
-
-			logger.Info(context.Background(), "Cleaning up resources...")
-			// errs := resourceCleaner.Cleanup(shutdownCtx)
-			// if len(errs) > 0 {
-			// 	logger.Errorf(context.Background(), "Errors occurred during resource cleanup: %v", errs)
-			// }
-			logger.Info(context.Background(), "Server has exited")
-			done()
-		}()
-
-		logger.Infof(context.Background(), "Server is running at %s", addr)
-		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			return fmt.Errorf("server error: %v", err)
-		}
-
-		<-ctx.Done()
-
-		return nil
-
+	srv, err := appsrv.New(appsrv.Options{
+		HandleSignals: true,
+		InitSnowflake: true,
 	})
 	if err != nil {
 		logger.Fatalf(context.Background(), "Failed to run application: %v", err)
 	}
 
-	// port := os.Getenv("PORT")
-	// if port == "" {
-	// 	port = "8082"
-	// }
+	if err := srv.Start(); err != nil {
+		logger.Fatalf(context.Background(), "Failed to run application: %v", err)
+	}
 
-	// webFS, err := fs.Sub(static.Files, "web")
-	// if err != nil {
-	// 	log.Fatalf("failed to load embedded web assets: %v", err)
-	// }
-
-	// http.Handle("/", http.FileServer(http.FS(webFS)))
-
-	// addr := ":" + port
-	// log.Printf("server listening on %s", addr)
-	// if err := http.ListenAndServe(addr, nil); err != nil {
-	// 	log.Fatalf("server stopped: %v", err)
-	// }
+	// 阻塞直到服务退出（收到信号优雅关闭，或异常退出）。
+	if err := srv.Wait(context.Background()); err != nil {
+		logger.Fatalf(context.Background(), "Failed to run application: %v", err)
+	}
 }
