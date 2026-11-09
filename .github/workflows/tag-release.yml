@@ -59,6 +59,35 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "release/gobrave-${TAG}-linux-amd64" .
 
+      - name: Build Windows binaries (server embed + desktop)
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          # Windows server binaries with embedded frontend
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags embed_frontend -o "release/gobrave-${TAG}-windows-amd64-embed.exe" .
+          GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -tags embed_frontend -o "release/gobrave-${TAG}-windows-arm64-embed.exe" .
+          # Windows desktop binaries (Wails), frontend embedded.
+          # 注意：cmd/desktop/main.go 带 `//go:build gtk3`，必须显式加 gtk3 标签；
+          # 该标签在 Wails 中只对 linux 生效，windows 下无副作用。
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags "gtk3 embed_frontend" -o "release/gobrave-${TAG}-windows-amd64-desktop.exe" ./cmd/desktop
+          GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -tags "gtk3 embed_frontend" -o "release/gobrave-${TAG}-windows-arm64-desktop.exe" ./cmd/desktop
+
+      - name: Install Linux desktop build dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            pkg-config
+
+      - name: Build Linux desktop binary (embedded UI)
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags "gtk3 embed_frontend" -o "release/gobrave-${TAG}-linux-amd64-desktop" ./cmd/desktop
+          chmod +x "release/gobrave-${TAG}-linux-amd64-desktop"
+
       - name: Package standard binary with web directory
         run: |
           set -euxo pipefail
@@ -85,3 +114,8 @@ jobs:
             release/gobrave-${{ github.ref_name }}-linux-amd64-embed
             release/gobrave-${{ github.ref_name }}-linux-amd64-with-web.zip
             release/gobrave-${{ github.ref_name }}-source.zip
+            release/gobrave-${{ github.ref_name }}-windows-amd64-embed.exe
+            release/gobrave-${{ github.ref_name }}-windows-arm64-embed.exe
+            release/gobrave-${{ github.ref_name }}-windows-amd64-desktop.exe
+            release/gobrave-${{ github.ref_name }}-windows-arm64-desktop.exe
+            release/gobrave-${{ github.ref_name }}-linux-amd64-desktop
