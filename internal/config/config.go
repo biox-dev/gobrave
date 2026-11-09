@@ -544,6 +544,24 @@ func ResolveDatabaseLogLevel(cfg *Config) string {
 	return normalizeDatabaseLogLevel(cfg.Database.LogLevel)
 }
 
+// StorageDrive 返回 storage.base_dir 所在的 Windows 盘符前缀（形如 `D:\`）。
+//
+// 容器内路径是 POSIX 的（/data/1），而 Windows 宿主上的 storage.base_dir 形如
+// D:\workspace\gobrave\.gobrave；把容器路径还原成宿主路径时，盘符是唯一丢失的信息，
+// 因此它由配置决定。Linux/macOS 上没有盘符，返回空串。
+//
+// 这是纯函数：盘符随时从 cfg 现算，调用方不需要额外缓存或初始化。
+func StorageDrive(cfg *Config) string {
+	if cfg == nil || cfg.Storage == nil {
+		return ""
+	}
+	baseDir := strings.TrimSpace(cfg.Storage.BaseDir)
+	if len(baseDir) < 2 || baseDir[1] != ':' {
+		return ""
+	}
+	return baseDir[:2] + `\`
+}
+
 // type IngestConfig struct {
 // 	Enabled                 bool   `yaml:"enabled" json:"enabled"`
 // 	FetchIntervalSec        int    `yaml:"fetch_interval_sec" json:"fetch_interval_sec"`

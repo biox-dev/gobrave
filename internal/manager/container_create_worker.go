@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -839,7 +840,7 @@ func (w *ContainerCreateWorker) loadOwnerRuntimeContext(ctx context.Context, own
 // }
 
 // ensureRuntimeFilesAndDirs creates necessary directories and files for the runtime.
-func ensureDirs(ctx context.Context, dirs []string) {
+func ensureDirs(ctx context.Context, cfg *config.Config, dirs []string) {
 	if len(dirs) == 0 {
 		return
 	}
@@ -849,7 +850,7 @@ func ensureDirs(ctx context.Context, dirs []string) {
 		if dir == "" {
 			continue
 		}
-		ensureDir(ctx, dir)
+		ensureDir(ctx, cfg, dir)
 	}
 
 	// if profilePath := strings.TrimSpace(vars["R_PROFILE"]); profilePath != "" {
@@ -857,8 +858,53 @@ func ensureDirs(ctx context.Context, dirs []string) {
 	// }
 }
 
-func ensureDir(ctx context.Context, dir string) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+// containerJoin 用 POSIX 分隔符拼接容器内路径。
+//
+// 运行时变量既作为宿主路径（用来创建目录）使用，也作为容器内路径（挂载目标 /
+// 工作目录 / env 值）下发。Windows 宿主上的 storage.base_dir 形如
+// D:\workspace\gobrave\.gobrave，直接 fmt.Sprintf("%s/data/%d") 会得到
+// 反斜杠与斜杠混杂的路径，容器内无法使用。因此统一先转成容器 POSIX 路径再拼接：
+//   - Linux/macOS：与原来的字符串拼接结果完全一致（零行为变化）；
+//   - Windows：D:\a\b → /a/b，容器内的 PROJECT_DIR 等变量都是合法路径。
+//
+// 需要宿主路径时再用 hostPath() 转回去。
+func containerJoin(base string, elems ...string) string {
+	joined := containerruntime.ToContainerPath(base)
+	for _, elem := range elems {
+		elem = strings.TrimSpace(elem)
+		if elem == "" {
+			continue
+		}
+		if joined == "" || joined == "/" {
+			joined = "/" + strings.Trim(elem, "/")
+			continue
+		}
+		joined = strings.TrimRight(joined, "/") + "/" + strings.Trim(elem, "/")
+	}
+	return joined
+}
+
+// hostPath 把容器路径还原成宿主可用的路径（Windows 上补回盘符并改用反斜杠）。
+//
+// 只有 Windows 需要转换：storage.base_dir 的首个盘符前缀就是映射依据，
+// 其余元素与容器路径一一对应（见 buildInstanceSpec / appendStorageVolumes 的挂载约定）。
+// 盘符是配置的纯函数，因此从 cfg 现取，不做包级缓存。
+func hostPath(cfg *config.Config, containerPath string) string {
+	p := strings.TrimSpace(containerPath)
+	if p == "" {
+		return ""
+	}
+	if runtime.GOOS != "windows" {
+		return p
+	}
+	if drive := config.StorageDrive(cfg); drive != "" {
+		return containerruntime.ToHostPath(p, drive)
+	}
+	return filepath.FromSlash(p)
+}
+
+func ensureDir(ctx context.Context, cfg *config.Config, dir string) {
+	if err := os.MkdirAll(hostPath(cfg, dir), 0755); err != nil {
 		logger.Warnf(ctx, "[ContainerCreateWorker] create runtime directory failed, path=%s err=%v", dir, err)
 	}
 }
@@ -872,7 +918,7 @@ func (w *ContainerCreateWorker) ensureVolumeSources(ctx context.Context, volumes
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(vol.Type), "file") {
-			ensureEmptyFileIfNotExists(ctx, source)
+			ensureEmptyFileIfNotExists(ctx, w.cfg, source)
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(vol.Type), "dir") {
@@ -925,7 +971,7 @@ func (w *ContainerCreateWorker) appendStorageVolumes(ctx context.Context, volume
 
 	volumes = append(volumes, types.ContainerVolume{
 		Source: baseDir,
-		Target: baseDir,
+		Target: containerruntime.ToContainerPath(baseDir),
 		Mode:   "rw",
 	})
 
@@ -943,6 +989,7 @@ func (w *ContainerCreateWorker) appendStorageVolumes(ctx context.Context, volume
 		Source: braveEnvFile,
 		Target: "/etc/profile.d/brave-env.sh",
 		Mode:   "rw",
+		Type:   "file",
 	})
 	return volumes, nil
 }

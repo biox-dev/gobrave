@@ -1086,8 +1086,10 @@ func setRuntimeVar(vars map[string]string, key string, value string) {
 	vars[key] = value
 }
 
-func ensureEmptyFileIfNotExists(ctx context.Context, filePath string) {
-	filePath = strings.TrimSpace(filePath)
+func ensureEmptyFileIfNotExists(ctx context.Context, cfg *config.Config, filePath string) {
+	// 调用方传入的可能是容器内的 POSIX 路径（Windows 宿主下由 containerJoin 生成），
+	// 落盘前需还原成宿主路径。
+	filePath = hostPath(cfg, filePath)
 	if filePath == "" {
 		return
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -551,19 +552,7 @@ func (d *DockerRuntime) toHostConfig(spec *types.ContainerSpec) *container.HostC
 		}
 	}
 
-	binds := make([]string, 0, len(spec.Volumes))
-	for _, volume := range spec.Volumes {
-		source := strings.TrimSpace(volume.Source)
-		target := strings.TrimSpace(volume.Target)
-		if source == "" || target == "" {
-			continue
-		}
-		bind := source + ":" + target
-		if mode := strings.TrimSpace(volume.Mode); mode != "" {
-			bind += ":" + mode
-		}
-		binds = append(binds, bind)
-	}
+	mounts := toMounts(spec.Volumes)
 
 	groupAdd := make([]string, 0, len(spec.SupplementalGroups))
 	for _, gid := range spec.SupplementalGroups {
@@ -575,10 +564,73 @@ func (d *DockerRuntime) toHostConfig(spec *types.ContainerSpec) *container.HostC
 
 	return &container.HostConfig{
 		Resources: resources,
-		Binds:     binds,
-		GroupAdd:  groupAdd,
-		Tmpfs:     toTmpfsOptions(spec.Tmpfs),
+		// 用 Mounts 而不是 Binds：Mounts 是结构化字段，Source/Target 分开传递，
+		// 不会被 docker 再按 ":" 切分，因此 Windows 宿主路径（D:\a\b）不会被误判。
+		// Binds 的 "src:dst:mode" 语法对含盘符的路径无解（too many colons）。
+		Mounts:   mounts,
+		GroupAdd: groupAdd,
+		Tmpfs:    toTmpfsOptions(spec.Tmpfs),
 	}
+}
+
+// toMounts 把 spec.Volumes 转成 docker 的结构化 mount 列表。
+//
+// 这里刻意不使用 container.HostConfig.Binds：bind 字符串是分号分隔的
+// "source:target:mode"，Windows 宿主路径自带冒号（D:\workspace\...），
+// 无论怎么拼接都会被 docker 解析成多余的分段，报
+// "mount denied: the source path ... too many colons"。
+//
+// 结构化 mount 的 Source 直接交给 daemon，daemon 侧再做路径解析，因此
+// Linux 与 Windows 宿主都能正确处理；目标路径统一转成容器内的 POSIX 路径。
+func toMounts(volumes []types.ContainerVolume) []mount.Mount {
+	if len(volumes) == 0 {
+		return nil
+	}
+	mounts := make([]mount.Mount, 0, len(volumes))
+	for _, volume := range volumes {
+		source := strings.TrimSpace(volume.Source)
+		target := strings.TrimSpace(volume.Target)
+		if source == "" || target == "" {
+			continue
+		}
+		mountItem := mount.Mount{
+			Type:   mountTypeForVolume(volume),
+			Source: source,
+			Target: containerruntime.ToContainerPath(target),
+		}
+		// ro/rw 落到 ReadOnly。moby 的 Mount.Consistency 只接受
+		// consistent/cached/delegated（macOS 专用），z/Z 等 SELinux 选项
+		// 在这里没有对应字段，只能忽略（与 Binds 时代的行为差别仅限 SELinux 标记）。
+		mountItem.ReadOnly = isReadOnlyMode(volume.Mode)
+		mounts = append(mounts, mountItem)
+	}
+	if len(mounts) == 0 {
+		return nil
+	}
+	return mounts
+}
+
+func mountTypeForVolume(volume types.ContainerVolume) mount.Type {
+	// file / dir 都是 bind 挂载；只要 source 是宿主路径就是 bind。
+	switch strings.ToLower(strings.TrimSpace(volume.Type)) {
+	case "volume", "named":
+		return mount.TypeVolume
+	case "tmpfs":
+		return mount.TypeTmpfs
+	default:
+		return mount.TypeBind
+	}
+}
+
+// isReadOnlyMode 解析 mode 里的 ro 语义（"ro"、"ro,z"、"z,ro" 都算只读）。
+func isReadOnlyMode(mode string) bool {
+	for _, part := range strings.Split(mode, ",") {
+		switch strings.ToLower(strings.TrimSpace(part)) {
+		case "ro", "readonly":
+			return true
+		}
+	}
+	return false
 }
 
 // toTmpfsOptions 把 spec.Tmpfs 转成 docker 的 --tmpfs 选项字符串，
