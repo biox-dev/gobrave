@@ -39,6 +39,37 @@ var noAuthAPI = map[string][]string{
 
 const authTokenCookieName = "Authorization"
 
+// bypassUserProvider 非空时跳过认证，其返回值会被注入所有请求的上下文。
+// 桌面端（cmd/desktop）用它提供单机版的内置 ADMIN 用户，避免需要登录。
+var bypassUserProvider func() *types.User
+
+// SetBypassUserProvider 关闭认证校验，所有请求都以 provider 返回的用户身份执行。
+// 必须在校由构建前调用（即 appsrv.New 之前）；传 nil 恢复认证。
+// provider 延迟调用，因此可在容器就绪后初始化/落库用户。
+func SetBypassUserProvider(provider func() *types.User) {
+	bypassUserProvider = provider
+}
+
+// bypassUser 返回免认证模式下的当前用户，未启用时返回 nil。
+func bypassUser() *types.User {
+	if bypassUserProvider == nil {
+		return nil
+	}
+	return bypassUserProvider()
+}
+
+// injectUser 把用户写入 gin 上下文与 request context，供下游业务逻辑读取 userID。
+func injectUser(c *gin.Context, user *types.User) {
+	c.Set(types.UserContextKey.String(), user)
+	c.Set(types.UserIDContextKey.String(), user.ID)
+	c.Request = c.Request.WithContext(
+		context.WithValue(
+			context.WithValue(c.Request.Context(), types.UserContextKey, user),
+			types.UserIDContextKey, user.ID,
+		),
+	)
+}
+
 // 检查请求是否在无需认证的API列表中
 func isNoAuthAPI(path string, method string) bool {
 	for api, methods := range noAuthAPI {
@@ -87,6 +118,13 @@ func Auth(
 
 		// 检查请求是否在无需认证的API列表中
 		if isNoAuthAPI(c.Request.URL.Path, c.Request.Method) {
+			c.Next()
+			return
+		}
+
+		// 免认证模式（桌面端）：直接注入内置用户
+		if user := bypassUser(); user != nil {
+			injectUser(c, user)
 			c.Next()
 			return
 		}
@@ -152,29 +190,8 @@ func Auth(
 				// 	return
 				// }
 
-				// 存储用户和租户信息到上下文
-				// c.Set(types.TenantIDContextKey.String(), targetTenantID)
-				// c.Set(types.TenantInfoContextKey.String(), tenant)
-				c.Set(types.UserContextKey.String(), user)
-				c.Set(types.UserIDContextKey.String(), user.ID)
-				c.Request = c.Request.WithContext(
-					context.WithValue(
-						context.WithValue(
-							// context.WithValue(
-							// 	context.WithValue(c.Request.Context(), types.TenantIDContextKey, targetTenantID),
-							// 	types.TenantInfoContextKey, tenant,
-							// ),
-							c.Request.Context(),
-							types.UserContextKey, user,
-						),
-						types.UserIDContextKey, user.ID,
-					),
-				)
-				// ctx := context.WithValue(c.Request.Context(), types.UserContextKey, &types.RequestContext{
-				// 	User: user,
-				// 	// Tenant: tenant,
-				// })
-				// c.Request = c.Request.WithContext(ctx)
+				// 存储用户信息到上下文（与免认证模式保持一致）
+				injectUser(c, user)
 				c.Next()
 				return
 			}

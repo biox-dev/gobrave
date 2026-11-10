@@ -100,11 +100,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// Create a default project for the new user and activate it
-	if err := h.projectService.CreateDefaultProjectForUser(ctx, user.ID, user.Username); err != nil {
-		logger.Errorf(ctx, "Failed to create default project for user %d: %v", user.ID, err)
-		// Don't fail registration — the user is already created
-	}
+	// 初始化该用户的默认项目（供桌面端等免注册入口复用，失败不影响注册成功）
+	h.InitUser(ctx, user)
 
 	// Return success response
 	response := &types.RegisterResponse{
@@ -115,6 +112,17 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	logger.Infof(ctx, "User registered successfully: %s", secutils.SanitizeForLog(user.Email))
 	c.JSON(http.StatusCreated, response)
+}
+
+// InitUser 初始化用户的首个可用环境：创建并激活默认项目。
+// 注册与桌面端内置用户共用该逻辑；失败仅记录日志，不回滚已创建的用户。
+func (h *AuthHandler) InitUser(ctx context.Context, user *types.User) {
+	if h.projectService == nil || user == nil {
+		return
+	}
+	if err := h.projectService.CreateDefaultProjectForUser(ctx, user.ID, user.Username); err != nil {
+		logger.Errorf(ctx, "Failed to create default project for user %d: %v", user.ID, err)
+	}
 }
 
 // Login godoc

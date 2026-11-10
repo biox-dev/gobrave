@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"net"
@@ -28,9 +29,69 @@ import (
 	"time"
 
 	desktopbackend "github.com/biox-dev/gobrave/cmd/desktop/backend"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	apprepo "github.com/biox-dev/gobrave/internal/application/repository"
 	"github.com/biox-dev/gobrave/internal/appsrv"
+	"github.com/biox-dev/gobrave/internal/handler"
+	"github.com/biox-dev/gobrave/internal/middleware"
+	"github.com/biox-dev/gobrave/internal/runtime"
+	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
+
+// 桌面版内置 ADMIN 用户。
+const (
+	adminUsername = "admin"
+	adminEmail    = "admin@desktop.local"
+)
+
+// adminUser 是注入到请求上下文的当前用户（由 ensureAdminUser 初始化）。
+var adminUser *types.User
+
+// ensureAdminUser 保证数据库中存在内置 ADMIN 用户，并为首次创建的账号执行初始化。
+// 免认证模式下每次请求都会读取该用户，因此它必须是持久化记录，
+// 否则依赖 userID 外键的业务（项目、数据集、会话）会失败。
+func ensureAdminUser() (*types.User, error) {
+	var userRepo interfaces.UserRepository
+	var authHandler *handler.AuthHandler
+	if err := runtime.GetContainer().Invoke(func(
+		r interfaces.UserRepository,
+		h *handler.AuthHandler,
+	) error {
+		userRepo = r
+		authHandler = h
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+
+	user, err := userRepo.GetUserByUsername(ctx, adminUsername)
+	if err == nil {
+		return user, nil
+	}
+	if !errors.Is(err, apprepo.ErrUserNotFound) {
+		return nil, err
+	}
+
+	// 首次启动：写入固定 BASIC 用户；密码校验在免认证模式下不生效。
+	user = &types.User{
+		ID:          utils.GenerateID(),
+		Username:    adminUsername,
+		Email:       adminEmail,
+		IsActive:    true,
+		AgentConfig: agenttypes.DefaultUserAgentConfig(),
+	}
+	if err := userRepo.CreateUser(ctx, user); err != nil {
+		return nil, err
+	}
+
+	authHandler.InitUser(ctx, user)
+	return user, nil
+}
 
 // DesktopService 暴露给前端调用的桌面能力。
 type DesktopService struct {
@@ -60,6 +121,10 @@ func main() {
 	port := flag.Int("port", desktopbackend.DefaultPort, "内嵌后端监听端口（0 表示随机空闲端口）")
 	flag.Parse()
 
+	// 0) 桌面版为单机模式：关闭 API 权限校验，所有请求以内置 ADMIN 用户身份执行。
+	//    用户延迟解析（容器在 appsrv.New 后才就绪），由 step 1 完成落库。
+	middleware.SetBypassUserProvider(func() *types.User { return adminUser })
+
 	// 1) 以库函数方式启动后端：加载配置 → 构建 DI 容器 → 监听端口。
 	//    Address 用 127.0.0.1:<port>，避免把服务暴露到外网。
 	srv, err := appsrv.New(appsrv.Options{
@@ -70,6 +135,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("[desktop] 后端初始化失败: %v", err)
 	}
+
+	// 容器就绪：确保内置 ADMIN 用户已持久化并完成初始化（默认项目）。
+	if adminUser, err = ensureAdminUser(); err != nil {
+		log.Fatalf("[desktop] 初始化内置用户失败: %v", err)
+	}
+	log.Printf("[desktop] 已关闭 API 认证，当前用户 %d (%s)", adminUser.ID, adminUser.Username)
+
 	if err := srv.Start(); err != nil {
 		log.Fatalf("[desktop] 后端启动失败: %v", err)
 	}

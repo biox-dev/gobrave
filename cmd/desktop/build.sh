@@ -24,5 +24,6 @@ fi
 echo "==> 编译桌面二进制 (tags: gtk3 embed_frontend)"
 mkdir -p bin
 go build -tags "gtk3 embed_frontend" -o bin/brave-desktop ./cmd/desktop
+go run -tags "gtk3 embed_frontend"  ./cmd/desktop
 
 echo "==> 完成: bin/brave-desktop"
