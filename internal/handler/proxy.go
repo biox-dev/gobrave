@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/route"
@@ -71,6 +73,14 @@ func buildReverseProxy(target string) (*httputil.ReverseProxy, error) {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	// FlushInterval = -1：立即 flush。应用会话（code-server / jupyter / rstudio）
+	// 与终端 WebSocket 都是流式场景，默认的缓冲会把小包攒起来，在短请求风暴
+	// （编辑器打开文件树、终端高频输出）下堆出大量 in-flight 连接，
+	// 拖垮 WebKit 的网络进程 → 报 Network process crashed 并整页重载。
+	proxy.FlushInterval = -1
+	// 复用同一条带连接池的 Transport：默认每个 ReverseProxy 都会新建
+	// 一个 Transport，空闲连接只保留极少数，反复建连会明显放大负载。
+	proxy.Transport = sharedProxyTransport()
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originHost := req.Host
@@ -107,6 +117,34 @@ func buildReverseProxy(target string) (*httputil.ReverseProxy, error) {
 
 	return proxy, nil
 }
+
+// sharedProxyTransport 返回进程内共享的、带连接池的 Transport。
+//
+// 默认情况下 httputil.ReverseProxy 会自己 new 一个 http.Transport，每个
+// 反向代理各自一套连接池（且 MaxIdleConnsPerHost 只有 2）。应用会话、终端、
+// code-server 这些流式场景会并发大量短请求，反复建连会明显放大 WebKit
+// 网络进程的负担，因此统一复用同一个 Transport。
+func sharedProxyTransport() *http.Transport {
+	sharedProxyTransportOnce.Do(func() {
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		// 一个宿主（容器 / code-server）经常需要保持几十条连接，
+		// 默认的每宿主 2 条空闲连接会导致频繁建连。
+		t.MaxIdleConns = 512
+		t.MaxIdleConnsPerHost = 64
+		t.MaxConnsPerHost = 0 // 不限制，交给对端
+		t.IdleConnTimeout = 90 * time.Second
+		// 与本地/内网容器交互，关闭对 HTTP/2 的强制升级，避免 WebSocket
+		// 升级与 SSE 在 h2 下降级路径上多绕一层。
+		t.ForceAttemptHTTP2 = false
+		sharedProxyTransportInstance = t
+	})
+	return sharedProxyTransportInstance
+}
+
+var (
+	sharedProxyTransportOnce     sync.Once
+	sharedProxyTransportInstance *http.Transport
+)
 
 func rewriteRedirectLocation(resp *http.Response) {
 	if resp == nil || resp.Request == nil {

@@ -458,6 +458,22 @@ func (d *DockerRuntime) SetEventHandler(h containerruntime.RuntimeEventHandler) 
 	d.handler = h
 }
 
+// HealthCheck satisfies containerruntime.RuntimeHealthChecker.
+// 通过 docker client 的 Ping 探测 daemon 是否可达（socket 权限 / daemon 未启动都会在这里暴露）。
+func (d *DockerRuntime) HealthCheck(ctx context.Context) error {
+	cli, err := d.getClient()
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := cli.Ping(ctx); err != nil {
+		return fmt.Errorf("ping docker daemon: %w", err)
+	}
+	return nil
+}
+
 func (d *DockerRuntime) getClient() (*client.Client, error) {
 	d.once.Do(func() {
 		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())

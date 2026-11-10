@@ -982,6 +982,19 @@ func (m *ContainerManager) resolveRuntimeName() string {
 	return m.lifecycle.ResolveRuntimeName()
 }
 
+// GetRuntime 按当前配置解析默认运行时，语义与容器实际创建时完全一致
+// （同为 ContainerLifecycle.GetRuntime，解析顺序见 ResolveContainerRuntime）。
+// 供配置检测接口复用，保证「检测结果」与「真实执行」不会出现口径差异。
+func (m *ContainerManager) GetRuntime() (containerruntime.Runtime, error) {
+	return m.lifecycle.GetRuntime()
+}
+
+// ResolveRuntimeName 解析当前生效的运行时名称，语义与容器实际执行时一致
+// （ContainerLifecycle.ResolveRuntimeName）。
+func (m *ContainerManager) ResolveRuntimeName() string {
+	return m.lifecycle.ResolveRuntimeName()
+}
+
 // getRuntimeByInstance resolves a runtime from a container instance's RuntimeName.
 func (m *ContainerManager) getRuntimeByInstance(inst *types.ContainerInstance) (containerruntime.Runtime, error) {
 	return m.lifecycle.GetRuntimeByInstance(inst)

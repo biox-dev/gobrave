@@ -112,6 +112,22 @@ func (k *KubernetesRuntime) Name() string {
 	return k.name
 }
 
+// HealthCheck satisfies containerruntime.RuntimeHealthChecker.
+// 通过 apiserver 的 ServerVersion 探测集群连通性与凭据有效性
+// （kubeconfig 不存在 / 证书过期 / apiserver 不可达都会在这里暴露）。
+func (k *KubernetesRuntime) HealthCheck(ctx context.Context) error {
+	if k == nil || k.clientset == nil {
+		return errors.New("kubernetes client is not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := k.clientset.Discovery().ServerVersion(); err != nil {
+		return fmt.Errorf("connect kubernetes apiserver: %w", err)
+	}
+	return nil
+}
+
 // EnsureImage satisfies containerruntime.RuntimeImageManager.
 // For Kubernetes runtimes, image pull is performed by kubelet during pod scheduling.
 // This method validates input and enforces pull-policy constraints that can be checked early.

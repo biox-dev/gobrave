@@ -32,9 +32,21 @@ func StartLocalServer(handler http.Handler) (*LocalServer, error) {
 		return nil, fmt.Errorf("监听本地端口失败: %w", err)
 	}
 
+	// 必须显式设置连接超时：WebKitGTK 会把空闲的 keep-alive 连接放进自己的
+	// 复用池，若服务端（Go）不做主动回收，WebKit 可能复用一个对端已经静默
+	// 关闭的连接，读到 EOF 后触发 WebLoaderStrategy::internallyFailedLoadTimerFired，
+	// 表现为「页面偶发自我刷新」。
+	//
+	// ReadTimeout / WriteTimeout 保持 0：SSE、WebSocket 是长连接，设了会被
+	// 按整条连接计时而中断。IdleTimeout 只作用于「空闲连接」，由服务端在
+	// 30s 后主动发 Connection: close 并关闭，早于 WebKit 自己的空闲回收，
+	// 从而避免复用失效连接。
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       0,
+		WriteTimeout:      0,
+		IdleTimeout:       30 * time.Second,
 	}
 
 	ls := &LocalServer{

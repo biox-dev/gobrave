@@ -9,6 +9,8 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync"
+	"time"
 )
 
 // debugProxy 为 true 时打印每个被转发的请求，便于排查前端请求是否到达外壳。
@@ -70,6 +72,13 @@ func NewHandler(opts HandlerOptions) http.Handler {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	// FlushInterval = -1：立即 flush。SSE、WebSocket 升级、code-server 的长轮询
+	// 都依赖流式响应；默认值会把小包攒起来，在高并发小请求下堆出大量
+	// in-flight 连接，拖垮 WebKit 的网络进程（表现为 Network process crashed）。
+	proxy.FlushInterval = -1
+	// 共用带连接池的 Transport：默认 Transport 每个 ReverseProxy 都会新建，
+	// 且只保留极少的空闲连接，短请求风暴时反复建连会进一步加重网络进程负载。
+	proxy.Transport = sharedProxyTransport()
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		// 记下客户端看到的地址，稍后写进 X-Forwarded-*。
@@ -96,6 +105,19 @@ func NewHandler(opts HandlerOptions) http.Handler {
 	// 所有请求的最终处理：静态资源 + 反代 + SPA 回退。
 	appHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
+
+		// `/wails/*` 由 Wails transport 中间件处理，绝不能被 SPA 回退吞掉。
+		// 一旦回落成 index.html，WebKit 会拿到「Content-Type: text/html 的
+		// .js 响应」，判定脚本加载失败并触发 internallyFailedLoadTimerFired
+		// 的整页重载，表现为页面偶发自我刷新。
+		//
+		// WailsHandler 从不调用 next 的 /wails/* 之外不会到达这里；能到达说明
+		// 该端点未被 Wails 中间件处理（未注入或路径未命中），此时明确返回 404，
+		// 让前端拿到真实错误而不是一段 HTML。
+		if p == "/wails" || strings.HasPrefix(p, "/wails/") {
+			http.NotFound(w, r)
+			return
+		}
 
 		if shouldProxy(p) {
 			if debugProxy {
@@ -157,6 +179,30 @@ func shouldProxy(p string) bool {
 	}
 	return false
 }
+
+// sharedProxyTransport 返回进程内共享的、带连接池的 Transport。
+//
+// 桌面壳会把 `/api`、`/container`、`/c/analysis/apps`（code-server 等应用会话）
+// 全部反向代理到内嵌后端。这些路径里有大量短请求与流式响应，如果每个
+// ReverseProxy 各自新建 Transport（默认每宿主仅保留 2 条空闲连接），会反复建连，
+// 放大 WebKit 网络进程的负担 → 偶发 Network process crashed 并触发整页重载。
+func sharedProxyTransport() *http.Transport {
+	sharedProxyTransportOnce.Do(func() {
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		t.MaxIdleConns = 512
+		t.MaxIdleConnsPerHost = 64
+		t.MaxConnsPerHost = 0 // 不限制，交给对端
+		t.IdleConnTimeout = 90 * time.Second
+		t.ForceAttemptHTTP2 = false
+		sharedProxyTransportInstance = t
+	})
+	return sharedProxyTransportInstance
+}
+
+var (
+	sharedProxyTransportOnce     sync.Once
+	sharedProxyTransportInstance *http.Transport
+)
 
 func serveIndex(w http.ResponseWriter, r *http.Request, assets fs.FS) {
 	data, err := fs.ReadFile(assets, "index.html")

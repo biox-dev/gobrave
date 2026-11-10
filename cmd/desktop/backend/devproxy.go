@@ -131,9 +131,15 @@ func StartDevProxy(
 		return nil, fmt.Errorf("监听开发代理端口失败: %w", err)
 	}
 
+	// 与生产模式（server.go）保持一致：显式回收空闲连接，避免 WebKit
+	// 复用一条对端已关闭的 keep-alive 连接而触发 internallyFailedLoadTimerFired
+	// 的整页重载。Read/WriteTimeout 保持 0 以兼容 SSE / HMR WebSocket。
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       0,
+		WriteTimeout:      0,
+		IdleTimeout:       30 * time.Second,
 	}
 
 	p := &DevProxy{

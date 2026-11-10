@@ -320,6 +320,9 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	// r.POST("/container/event/list-by-page", handler.PageContainerEvent)
 	r.POST("/container/outbox/list-by-page", handler.PageOutboxEvent)
 	r.GET("/container/runtime/monitoring/list", handler.ListRuntimeMonitoringSnapshot)
+	// 运行时检测：只校验默认运行时（container.default_runtime，缺省 docker）
+	// 是否已注册且依赖可用（docker daemon / apiserver）。
+	r.GET("/container/runtime/check", handler.CheckContainerRuntime)
 	r.GET("/container/queue/status", handler.GetQueueStatus)
 }
 
