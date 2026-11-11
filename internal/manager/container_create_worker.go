@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -92,6 +91,9 @@ type ContainerCreateWorker struct {
 	// 构造时为空，由 ContainerManager.SetCreateWorker 回填，避免构造期循环依赖。
 	owner *ContainerManager
 	cfg   *config.Config
+	// paths 是跨平台路径语义的唯一入口（宿主 / 容器 / daemon）。
+	// 由 storage.base_dir 构建，变量拼接、落盘、volume 归一都经它换算。
+	paths *containerruntime.PathMapper
 	// maxConcurrency   int
 }
 
@@ -118,6 +120,7 @@ func NewContainerCreateWorker(
 		// img:              img,
 		lifecycle: lifecycle,
 		cfg:       cfg,
+		paths:     newPathMapper(cfg),
 		// maxConcurrency:  maxConcurrency,
 	}
 }
@@ -409,6 +412,10 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 	if strings.TrimSpace(spec.WorkDir) == "" {
 		spec.WorkDir = strings.TrimSpace(resolveVars["PROJECT_DIR"])
 	}
+
+	// 变量展开后的 bind source 可能仍是容器 POSIX 路径（Windows 上丢了盘符），
+	// 必须还原成宿主路径，落盘与 runtime.Create 才能找到源。
+	w.paths.NormalizeVolumes(spec.Volumes)
 
 	// 创建 runtime 资源前，确保 volume source 都存在
 	if err := w.ensureVolumeSources(ctx, spec.Volumes); err != nil {
@@ -839,73 +846,22 @@ func (w *ContainerCreateWorker) loadOwnerRuntimeContext(ctx context.Context, own
 // 	return w.buildRuntimeVariables(ctx, tpl, ownerType, ownerCtx).ToMap()
 // }
 
-// ensureRuntimeFilesAndDirs creates necessary directories and files for the runtime.
-func ensureDirs(ctx context.Context, cfg *config.Config, dirs []string) {
-	if len(dirs) == 0 {
-		return
-	}
-	//  []string{"R_PACKAGE_DIR", "USER_PROJECT_DIR", "WORKSPACE_PATH", "PYTHON_PACKAGE_DIR", "USER_CONFIG_DIR", "CONDA_PACKAGE_DIR"}
+// newPathMapper 是 manager 包构建路径映射器的唯一入口。
+//
+// storage.base_dir 决定宿主的盘符锚点；manager 不涉及 daemon 路径语义，wslDaemon 恒为 false。
+func newPathMapper(cfg *config.Config) *containerruntime.PathMapper {
+	return containerruntime.NewPathMapper(config.StorageBaseDir(cfg), false)
+}
+
+// ensureDirs 把运行时变量里的目录（容器路径）落到宿主。
+func (w *ContainerCreateWorker) ensureDirs(ctx context.Context, dirs []string) {
 	for _, dir := range dirs {
-		// dir := strings.TrimSpace(vars[key])
-		if dir == "" {
+		if strings.TrimSpace(dir) == "" {
 			continue
 		}
-		ensureDir(ctx, cfg, dir)
-	}
-
-	// if profilePath := strings.TrimSpace(vars["R_PROFILE"]); profilePath != "" {
-	// 	ensureEmptyFileIfNotExists(ctx, profilePath)
-	// }
-}
-
-// containerJoin 用 POSIX 分隔符拼接容器内路径。
-//
-// 运行时变量既作为宿主路径（用来创建目录）使用，也作为容器内路径（挂载目标 /
-// 工作目录 / env 值）下发。Windows 宿主上的 storage.base_dir 形如
-// D:\workspace\gobrave\.gobrave，直接 fmt.Sprintf("%s/data/%d") 会得到
-// 反斜杠与斜杠混杂的路径，容器内无法使用。因此统一先转成容器 POSIX 路径再拼接：
-//   - Linux/macOS：与原来的字符串拼接结果完全一致（零行为变化）；
-//   - Windows：D:\a\b → /a/b，容器内的 PROJECT_DIR 等变量都是合法路径。
-//
-// 需要宿主路径时再用 hostPath() 转回去。
-func containerJoin(base string, elems ...string) string {
-	joined := containerruntime.ToContainerPath(base)
-	for _, elem := range elems {
-		elem = strings.TrimSpace(elem)
-		if elem == "" {
-			continue
+		if err := os.MkdirAll(w.paths.Host(dir), 0755); err != nil {
+			logger.Warnf(ctx, "[ContainerCreateWorker] create runtime directory failed, path=%s err=%v", dir, err)
 		}
-		if joined == "" || joined == "/" {
-			joined = "/" + strings.Trim(elem, "/")
-			continue
-		}
-		joined = strings.TrimRight(joined, "/") + "/" + strings.Trim(elem, "/")
-	}
-	return joined
-}
-
-// hostPath 把容器路径还原成宿主可用的路径（Windows 上补回盘符并改用反斜杠）。
-//
-// 只有 Windows 需要转换：storage.base_dir 的首个盘符前缀就是映射依据，
-// 其余元素与容器路径一一对应（见 buildInstanceSpec / appendStorageVolumes 的挂载约定）。
-// 盘符是配置的纯函数，因此从 cfg 现取，不做包级缓存。
-func hostPath(cfg *config.Config, containerPath string) string {
-	p := strings.TrimSpace(containerPath)
-	if p == "" {
-		return ""
-	}
-	if runtime.GOOS != "windows" {
-		return p
-	}
-	if drive := config.StorageDrive(cfg); drive != "" {
-		return containerruntime.ToHostPath(p, drive)
-	}
-	return filepath.FromSlash(p)
-}
-
-func ensureDir(ctx context.Context, cfg *config.Config, dir string) {
-	if err := os.MkdirAll(hostPath(cfg, dir), 0755); err != nil {
-		logger.Warnf(ctx, "[ContainerCreateWorker] create runtime directory failed, path=%s err=%v", dir, err)
 	}
 }
 
@@ -917,16 +873,14 @@ func (w *ContainerCreateWorker) ensureVolumeSources(ctx context.Context, volumes
 		if source == "" {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(vol.Type), "file") {
-			ensureEmptyFileIfNotExists(ctx, w.cfg, source)
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(vol.Type), "dir") {
-			if err := os.MkdirAll(source, 0755); err != nil {
+		switch {
+		case strings.EqualFold(strings.TrimSpace(vol.Type), "file"):
+			ensureEmptyFileIfNotExists(ctx, w.paths, source)
+		case strings.EqualFold(strings.TrimSpace(vol.Type), "dir"):
+			if err := os.MkdirAll(w.paths.Host(source), 0755); err != nil {
 				return err
 			}
 		}
-
 	}
 	return nil
 }
@@ -970,8 +924,8 @@ func (w *ContainerCreateWorker) appendStorageVolumes(ctx context.Context, volume
 	}
 
 	volumes = append(volumes, types.ContainerVolume{
-		Source: baseDir,
-		Target: containerruntime.ToContainerPath(baseDir),
+		Source: w.paths.Host(baseDir),
+		Target: w.paths.Container(baseDir),
 		Mode:   "rw",
 	})
 

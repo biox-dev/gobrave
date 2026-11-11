@@ -178,23 +178,23 @@ func (w *ContainerCreateWorker) buildPackageVariables(ctx context.Context, set *
 	// 包目录按容器模板 ID 隔离（镜像名不再有独立主键，模板 ID 同样一模板一个目录）。
 	templateID := in.tpl.ID
 
-	packageDir := containerJoin(baseDir, "package")
-	profilePath := containerJoin(packageDir, "Rprofile")
-	ensureEmptyFileIfNotExists(ctx, w.cfg, profilePath)
+	packageDir := w.paths.Join(baseDir, "package")
+	profilePath := w.paths.Join(packageDir, "Rprofile")
+	ensureEmptyFileIfNotExists(ctx, w.paths, profilePath)
 	set.add("R_PROFILE", profilePath)
 	set.add("PACKAGE_DIR", packageDir)
-	projectDir := containerJoin(baseDir, "data", strconv.FormatInt(in.ownerCtx.project.ID, 10))
+	projectDir := w.paths.Join(baseDir, "data", strconv.FormatInt(in.ownerCtx.project.ID, 10))
 
-	rPackageDir := containerJoin(projectDir, "package", fmt.Sprintf("R-%d", templateID))
+	rPackageDir := w.paths.Join(projectDir, "package", fmt.Sprintf("R-%d", templateID))
 	set.add("R_PACKAGE_DIR", rPackageDir)
 
-	pythonPackageDir := containerJoin(projectDir, "package", fmt.Sprintf("python-%d", templateID))
+	pythonPackageDir := w.paths.Join(projectDir, "package", fmt.Sprintf("python-%d", templateID))
 	set.add("PYTHON_PACKAGE_DIR", pythonPackageDir)
 
-	condaPackageDir := containerJoin(projectDir, "package", fmt.Sprintf("conda-%d", templateID))
+	condaPackageDir := w.paths.Join(projectDir, "package", fmt.Sprintf("conda-%d", templateID))
 	set.add("CONDA_PACKAGE_DIR", condaPackageDir)
 
-	ensureDirs(ctx, w.cfg, []string{rPackageDir, pythonPackageDir, condaPackageDir})
+	w.ensureDirs(ctx, []string{rPackageDir, pythonPackageDir, condaPackageDir})
 }
 
 // buildProjectVariables 负责 PROJECT_DIR/PROJECT_CONFIG_DIR。
@@ -202,12 +202,12 @@ func (w *ContainerCreateWorker) buildProjectVariables(ctx context.Context, set *
 	if in.ownerCtx == nil || in.ownerCtx.project == nil {
 		return
 	}
-	projectDir := containerJoin(in.baseDir, "data", strconv.FormatInt(in.ownerCtx.project.ID, 10))
+	projectDir := w.paths.Join(in.baseDir, "data", strconv.FormatInt(in.ownerCtx.project.ID, 10))
 	set.add("PROJECT_DIR", projectDir)
-	projectConfigDir := containerJoin(in.baseDir, "data", strconv.FormatInt(in.ownerCtx.project.ID, 10), ".config")
+	projectConfigDir := w.paths.Join(in.baseDir, "data", strconv.FormatInt(in.ownerCtx.project.ID, 10), ".config")
 	set.add("PROJECT_CONFIG_DIR", projectConfigDir)
 
-	ensureDirs(ctx, w.cfg, []string{projectDir, projectConfigDir})
+	w.ensureDirs(ctx, []string{projectDir, projectConfigDir})
 }
 
 // buildAppSessionVariables 负责应用会话相关变量。
@@ -223,14 +223,14 @@ func (w *ContainerCreateWorker) buildAppSessionVariables(ctx context.Context, se
 
 	workspacePath := session.WorkspacePath
 	if workspacePath == "" && in.ownerCtx.projectID != 0 && in.baseDir != "" && in.ownerCtx.project != nil {
-		workspacePath = containerJoin(in.baseDir, "data", strconv.FormatInt(in.ownerCtx.project.ID, 10))
+		workspacePath = w.paths.Join(in.baseDir, "data", strconv.FormatInt(in.ownerCtx.project.ID, 10))
 		session.WorkspacePath = workspacePath
 	}
 	set.add("WORKSPACE_PATH", workspacePath)
 
-	userDir := containerJoin(in.baseDir, "user", strconv.FormatInt(session.UserID, 10))
+	userDir := w.paths.Join(in.baseDir, "user", strconv.FormatInt(session.UserID, 10))
 	set.add("USER_DIR", userDir)
-	userConfigDir := containerJoin(in.baseDir, "user", strconv.FormatInt(session.UserID, 10), ".config")
+	userConfigDir := w.paths.Join(in.baseDir, "user", strconv.FormatInt(session.UserID, 10), ".config")
 	set.add("USER_CONFIG_DIR", userConfigDir)
 
 	if in.ownerCtx.node != nil && w.workflowService != nil {
@@ -240,7 +240,7 @@ func (w *ContainerCreateWorker) buildAppSessionVariables(ctx context.Context, se
 		}
 	}
 
-	ensureDirs(ctx, w.cfg, []string{workspacePath, userDir, userConfigDir})
+	w.ensureDirs(ctx, []string{workspacePath, userDir, userConfigDir})
 }
 
 // buildDagNodeVariables 负责 DAG 节点相关变量。
@@ -266,5 +266,5 @@ func (w *ContainerCreateWorker) buildDagNodeVariables(ctx context.Context, set *
 	}
 	set.add("LOG_PATH", logPath)
 
-	ensureDirs(ctx, w.cfg, []string{node.WorkspaceDir, node.OutputDir})
+	w.ensureDirs(ctx, []string{node.WorkspaceDir, node.OutputDir})
 }

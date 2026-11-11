@@ -122,10 +122,16 @@ func ToWSLDaemonPath(p string) string {
 }
 
 // ToHostPath 把容器路径映射回宿主路径（Windows 时需要 C:/... 形式）。
+//
+// 幂等：p 本身已是宿主路径（含盘符或 UNC）时只统一分隔符、直接返回，
+// 否则会把 "D:\a" 再拼一次盘符得到 "D:\D:\a"（用户实际遇到的 mkdir 报错）。
 func ToHostPath(containerPath, windowsDrivePrefix string) string {
 	p := strings.TrimSpace(containerPath)
 	if p == "" {
 		return ""
+	}
+	if IsWindowsHostPath(p) {
+		return strings.ReplaceAll(p, "/", `\`)
 	}
 	prefix := strings.TrimSpace(windowsDrivePrefix)
 	if prefix == "" {

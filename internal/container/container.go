@@ -321,7 +321,10 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		for _, name := range runtimes {
 			switch name {
 			case "docker":
-				rt := dockerruntime.NewDockerRuntime(dockerruntime.WithWSLDaemon(resolveDockerWSLDaemon(cfg)))
+				// 路径语义统一交给 PathMapper：storage.base_dir 决定宿主盘符，
+				// WSL 探测决定 bind Source 是否需要翻译成 daemon 视角。
+				paths := containerruntime.NewPathMapper(config.StorageBaseDir(cfg), resolveDockerWSLDaemon(cfg))
+				rt := dockerruntime.NewDockerRuntime(dockerruntime.WithPathMapper(paths))
 				reg.Register(rt.Name(), rt)
 			case "k8s", "k3s":
 				kcfg := &config.KubernetesRuntimeConfig{Namespace: "default"}

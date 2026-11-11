@@ -556,6 +556,17 @@ func ResolveDatabaseLogLevel(cfg *Config) string {
 	return normalizeDatabaseLogLevel(cfg.Database.LogLevel)
 }
 
+// StorageBaseDir 返回 storage.base_dir（已去空白），未配置时返回空串。
+//
+// 它是宿主路径与容器路径的唯一锚点：盘符由它决定，容器路径由它派生
+// （见 containerruntime.PathMapper）。
+func StorageBaseDir(cfg *Config) string {
+	if cfg == nil || cfg.Storage == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Storage.BaseDir)
+}
+
 // StorageDrive 返回 storage.base_dir 所在的 Windows 盘符前缀（形如 `D:\`）。
 //
 // 容器内路径是 POSIX 的（/data/1），而 Windows 宿主上的 storage.base_dir 形如
@@ -564,10 +575,7 @@ func ResolveDatabaseLogLevel(cfg *Config) string {
 //
 // 这是纯函数：盘符随时从 cfg 现算，调用方不需要额外缓存或初始化。
 func StorageDrive(cfg *Config) string {
-	if cfg == nil || cfg.Storage == nil {
-		return ""
-	}
-	baseDir := strings.TrimSpace(cfg.Storage.BaseDir)
+	baseDir := StorageBaseDir(cfg)
 	if len(baseDir) < 2 || baseDir[1] != ':' {
 		return ""
 	}

@@ -53,6 +53,9 @@ func TestToHostPath(t *testing.T) {
 	}{
 		{"/workspace/gobrave/data/1", `D:\`, `D:\workspace\gobrave\data\1`},
 		{"/workspace/gobrave", "", "/workspace/gobrave"},
+		// 幂等：已是宿主路径时不再重复补盘符。
+		{`D:\workspace\gobrave\data\1`, `D:\`, `D:\workspace\gobrave\data\1`},
+		{`D:/workspace/gobrave/data/1`, `D:\`, `D:\workspace\gobrave\data\1`},
 	}
 	for _, tc := range cases {
 		if got := ToHostPath(tc.container, tc.drive); got != tc.want {

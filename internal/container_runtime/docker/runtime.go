@@ -29,10 +29,11 @@ import (
 type DockerRuntime struct {
 	handler containerruntime.RuntimeEventHandler
 
-	// wslDaemon 表示当前连接的是 WSL2 里运行的 dockerd（DOCKER_HOST=tcp://...）。
-	// 此时 bind mount 的 Source 必须翻译成 daemon 视角的路径（D:\x → /mnt/d/x），
-	// 否则 daemon 侧会报 bind source path does not exist / mount path must be absolute。
-	wslDaemon bool
+	// paths 统一负责宿主 / 容器 / daemon 三种路径语义的转换。
+	// 连接 WSL2 里的 dockerd 时（DOCKER_HOST=tcp://...），bind mount 的 Source
+	// 会被映射成 daemon 视角的 /mnt/<drive>/...，否则 daemon 侧会报
+	// bind source path does not exist / mount path must be absolute。
+	paths *containerruntime.PathMapper
 
 	once    sync.Once
 	client  *client.Client
@@ -42,16 +43,17 @@ type DockerRuntime struct {
 // DockerRuntimeOption 定制 DockerRuntime 的构造。
 type DockerRuntimeOption func(*DockerRuntime)
 
-// WithWSLDaemon 显式指定 docker daemon 是否运行在 WSL2 内。
-//
-// 开启后 bind mount 的 Source 会从 Windows 盘符路径翻译成 WSL 视角的
-// /mnt/<drive>/...（见 containerruntime.ToWSLDaemonPath）；Target（容器内路径）不变。
-func WithWSLDaemon(enabled bool) DockerRuntimeOption {
-	return func(d *DockerRuntime) { d.wslDaemon = enabled }
+// WithPathMapper 注入统一路径映射器（由装配层按 storage.base_dir + WSL 探测构建）。
+func WithPathMapper(paths *containerruntime.PathMapper) DockerRuntimeOption {
+	return func(d *DockerRuntime) {
+		if paths != nil {
+			d.paths = paths
+		}
+	}
 }
 
 func NewDockerRuntime(opts ...DockerRuntimeOption) *DockerRuntime {
-	d := &DockerRuntime{}
+	d := &DockerRuntime{paths: containerruntime.NewPathMapper("", false)}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(d)
@@ -75,7 +77,7 @@ func AutoDetectWSLDaemon() bool {
 
 // WSLDaemon 报告当前是否按 WSL2 daemon 语义翻译挂载路径。
 func (d *DockerRuntime) WSLDaemon() bool {
-	return d.wslDaemon
+	return d.paths.WSLDaemon()
 }
 
 func (d *DockerRuntime) Name() string {
@@ -610,7 +612,7 @@ func (d *DockerRuntime) toHostConfig(spec *types.ContainerSpec) *container.HostC
 		}
 	}
 
-	mounts := toMounts(spec.Volumes, d.wslDaemon)
+	mounts := d.toMounts(spec.Volumes)
 
 	groupAdd := make([]string, 0, len(spec.SupplementalGroups))
 	for _, gid := range spec.SupplementalGroups {
@@ -639,11 +641,11 @@ func (d *DockerRuntime) toHostConfig(spec *types.ContainerSpec) *container.HostC
 // "mount denied: the source path ... too many colons"。
 //
 // 结构化 mount 的 Source 直接交给 daemon，daemon 侧再做路径解析，因此
-// Linux 与 Windows 宿主都能正确处理；目标路径统一转成容器内的 POSIX 路径。
+// Linux 与 Windows 宿主都能正确处理；Target 统一转成容器内的 POSIX 路径。
 //
-// wslDaemon 为 true 时（daemon 跑在 WSL2 里），Source 会额外翻译成
-// daemon 视角的路径（D:\x → /mnt/d/x），Target 仍按容器内路径处理。
-func toMounts(volumes []types.ContainerVolume, wslDaemon bool) []mount.Mount {
+// 路径语义全部交给 containerruntime.PathMapper：bind 的 Source 由它翻译成
+// daemon 视角（WSL2 下 D:\x → /mnt/d/x），Target 由它归一成容器路径。
+func (d *DockerRuntime) toMounts(volumes []types.ContainerVolume) []mount.Mount {
 	if len(volumes) == 0 {
 		return nil
 	}
@@ -655,10 +657,14 @@ func toMounts(volumes []types.ContainerVolume, wslDaemon bool) []mount.Mount {
 			continue
 		}
 		mountType := mountTypeForVolume(volume)
+		if mountType == mount.TypeBind {
+			// 只有 bind 需要翻译：named volume / tmpfs 的 Source 不是宿主路径。
+			source = d.paths.Daemon(source)
+		}
 		mountItem := mount.Mount{
 			Type:   mountType,
-			Source: toDaemonSourcePath(source, mountType, wslDaemon),
-			Target: containerruntime.ToContainerPath(target),
+			Source: source,
+			Target: d.paths.Container(target),
 		}
 		// ro/rw 落到 ReadOnly。moby 的 Mount.Consistency 只接受
 		// consistent/cached/delegated（macOS 专用），z/Z 等 SELinux 选项
@@ -672,30 +678,14 @@ func toMounts(volumes []types.ContainerVolume, wslDaemon bool) []mount.Mount {
 	return mounts
 }
 
-// toDaemonSourcePath 把 bind mount 的 Source 翻译成 daemon 所在机器的真实路径。
-//
-// Source 与 Target 的语义不同：Target 是容器内路径，交给 ToContainerPath 去掉盘符；
-// Source 必须是 daemon 宿主机上真实存在的路径。连接 WSL2 里的 dockerd 时，
-// Windows 盘符要映射到 /mnt/<drive>/（见 containerruntime.ToWSLDaemonPath）。
-//
-// 只有 bind 挂载需要翻译：named volume / tmpfs 的 Source 不是宿主文件系统路径。
-func toDaemonSourcePath(source string, mountType mount.Type, wslDaemon bool) string {
-	if !wslDaemon || mountType != mount.TypeBind {
-		return source
-	}
-	return containerruntime.ToWSLDaemonPath(source)
-}
-
 func mountTypeForVolume(volume types.ContainerVolume) mount.Type {
-	// file / dir 都是 bind 挂载；只要 source 是宿主路径就是 bind。
-	switch strings.ToLower(strings.TrimSpace(volume.Type)) {
-	case "volume", "named":
-		return mount.TypeVolume
-	case "tmpfs":
-		return mount.TypeTmpfs
-	default:
+	if containerruntime.IsBindVolumeType(volume.Type) {
 		return mount.TypeBind
 	}
+	if strings.EqualFold(strings.TrimSpace(volume.Type), "tmpfs") {
+		return mount.TypeTmpfs
+	}
+	return mount.TypeVolume
 }
 
 // isReadOnlyMode 解析 mode 里的 ro 语义（"ro"、"ro,z"、"z,ro" 都算只读）。
