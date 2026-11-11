@@ -231,5 +231,6 @@ container:
   # 该开关对 Agent 完全透明：bash 的入参 / 返回结构不变，Agent 不需要传容器信息。
   # 注意：container 模式要求会话有激活项目与 Agent 会话 ID，否则调用会返回错误。
   bash_execution_mode: host
-  # bash_execution_mode=container 时使用的容器模板 ID（十进制）；<=0 使用默认 202606160002。
-  bash_container_template_id: 202606160002
+  # bash_execution_mode=container 时使用的容器模板 ID（十进制 int64，注意超出 JS 安全整数范围时前端需用字符串）；
+  # <=0 时使用代码默认值 config.DefaultBashContainerTemplateID（内置 ubuntu 模板的 definition 主键）。
+  bash_container_template_id: 2112483278714834944

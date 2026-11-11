@@ -47,8 +47,8 @@ func TestBuildContainerRegistersContainerService(t *testing.T) {
 		if err := db.Model(&types.ContainerTemplateDefinition{}).Count(&definitions).Error; err != nil {
 			return err
 		}
-		if definitions != 2 {
-			t.Fatalf("container template definitions = %d, want 2 (builtin templates not installed)", definitions)
+		if definitions != 3 {
+			t.Fatalf("container template definitions = %d, want 3 (builtin templates not installed)", definitions)
 		}
 
 		var withImage int64
@@ -56,8 +56,8 @@ func TestBuildContainerRegistersContainerService(t *testing.T) {
 			Where("image_name <> ''").Count(&withImage).Error; err != nil {
 			return err
 		}
-		if withImage != 2 {
-			t.Fatalf("container template definitions with image_name = %d, want 2", withImage)
+		if withImage != 3 {
+			t.Fatalf("container template definitions with image_name = %d, want 3", withImage)
 		}
 
 		var defaults int64

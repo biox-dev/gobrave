@@ -1,0 +1,29 @@
+{
+  "container_template_specs": [
+    {
+      "id": "2112483153338699776",
+      "name": "bioinfo",
+      "description": "",
+      "command": "",
+      "cpu": 0,
+      "memory": 0,
+      "port": 8787,
+      "app_type": "",
+      "env": null,
+      "mounts": null,
+      "scheduling_constraint": null,
+      "labels": null,
+      "change_uid": false
+    }
+  ],
+  "container_template_definitions": [
+    {
+      "id": "2112483278714834944",
+      "spec_id": "2112483153338699776",
+      "image_name": "ubuntu",
+      "pull_policy": "IfNotPresent",
+      "display_name": "ubuntu",
+      "description": ""
+    }
+  ]
+}

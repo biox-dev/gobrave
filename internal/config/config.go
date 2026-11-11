@@ -242,8 +242,10 @@ type ContainerConfig struct {
 	// 该开关只影响执行位置，Agent 对此无感知（工具参数不变）。
 	BashExecutionMode string `yaml:"bash_execution_mode" json:"bash_execution_mode"`
 	// BashContainerTemplateID 是 container 模式下 bash 工具使用的容器模板 ID。
-	// <=0 时使用 DefaultBashContainerTemplateID（202606160002）。
-	BashContainerTemplateID int64 `yaml:"bash_container_template_id" json:"bash_container_template_id"`
+	// <=0 时使用 DefaultBashContainerTemplateID。
+	// ,string 让 JSON 同时接受字符串与数字：int64 主键超出 JS 安全整数范围，
+	// 前端以字符串传递，不加该标记会报 cannot unmarshal string into int64。
+	BashContainerTemplateID int64 `yaml:"bash_container_template_id" json:"bash_container_template_id,string"`
 }
 
 // bash 工具的执行模式。
@@ -255,7 +257,8 @@ const (
 )
 
 // DefaultBashContainerTemplateID 是 container 模式下 bash 工具默认使用的容器模板 ID。
-const DefaultBashContainerTemplateID int64 = 202606160002
+// 取值即内置 ubuntu 模板（builtin/container_templates/ubuntu.json）的 definition 主键。
+const DefaultBashContainerTemplateID int64 = 2112483278714834944
 
 // NormalizeBashExecutionMode 归一化 bash 执行模式：空值回退 host，非法值报错。
 func NormalizeBashExecutionMode(mode string) (string, error) {

@@ -75,7 +75,7 @@ func (f *fakeBuiltinContainerService) SetDefaultContainerTemplate(_ context.Cont
 }
 
 // TestInstallBuiltinContainerTemplatesImportsEmbeddedFiles 内置模板必须能被解析并导入：
-// 两个内嵌 JSON（code-server-quarto-r / rstudio-tidyverse-r）都按导出文件里的主键落库，
+// 内嵌 JSON（code-server-quarto-r / rstudio-tidyverse-r / ubuntu）都按导出文件里的主键落库，
 // 且文件里 is_default=true 的绑定行会被设为默认模板。
 func TestInstallBuiltinContainerTemplatesImportsEmbeddedFiles(t *testing.T) {
 	// 指向不存在的目录 → 回退到 go:embed 内嵌副本。
@@ -104,8 +104,13 @@ func TestInstallBuiltinContainerTemplatesImportsEmbeddedFiles(t *testing.T) {
 		t.Fatalf("rstudio definition = %#v", definition)
 	}
 
-	if len(svc.specs) != 2 || len(svc.definitions) != 2 {
-		t.Fatalf("counts = (%d,%d), want (2,2)", len(svc.specs), len(svc.definitions))
+	// ubuntu
+	if def := svc.definitions[2112483278714834944]; def == nil || def.ImageName != "ubuntu" {
+		t.Fatalf("ubuntu definition = %#v", def)
+	}
+
+	if len(svc.specs) != 3 || len(svc.definitions) != 3 {
+		t.Fatalf("counts = (%d,%d), want (3,3)", len(svc.specs), len(svc.definitions))
 	}
 
 	// 只有 rstudio 标记了默认；code-server 的 is_default=false 不应设置默认。
@@ -127,8 +132,8 @@ func TestInstallBuiltinContainerTemplatesIsIdempotent(t *testing.T) {
 		}
 	}
 
-	if len(svc.specs) != 2 || len(svc.definitions) != 2 {
-		t.Fatalf("counts after re-install = (%d,%d), want (2,2)", len(svc.specs), len(svc.definitions))
+	if len(svc.specs) != 3 || len(svc.definitions) != 3 {
+		t.Fatalf("counts after re-install = (%d,%d), want (3,3)", len(svc.specs), len(svc.definitions))
 	}
 }
 
