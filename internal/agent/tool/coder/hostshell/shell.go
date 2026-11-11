@@ -9,15 +9,14 @@ import "context"
 //   - ContainerShell（container_shell.go）：用户容器模板里的持久 PTY。
 //
 // 二者语义完全一致：同一个 Agent 会话内的多次调用复用同一个终端
-// （cwd / 环境变量 / 已安装的包在调用之间保留），会话结束时由调用方 Close。
+// （cwd / 环境变量 / 已安装的包在调用之间保留），会话结束时由调用方通过包级
+// CloseShell(sessionID) 统一回收。
 // 工具层只依赖本接口，通过 AcquireShell 按配置拿到具体实现，不必感知执行位置。
 type Shell interface {
 	// Exec 在终端里执行命令并等待结束。
 	//
 	// 返回值与 bash 工具对齐的四元组：stdout、stderr、exitCode、interrupted。
 	Exec(ctx context.Context, command string, timeoutMs int) (stdout, stderr string, exitCode int, interrupted bool, err error)
-	// Close 关闭终端并释放底层资源（进程 / 容器），可重复调用。
-	Close(ctx context.Context)
 }
 
 // ShellOptions 是 AcquireShell 的入参，描述「为哪个会话、在什么位置」取终端。
@@ -46,27 +45,23 @@ type ShellOptions struct {
 // 调用方据此给出可读的错误。
 func AcquireShell(options ShellOptions) Shell {
 	if options.Mode == ModeContainer {
-		sh := GetContainerShell(options.Container, options.SessionID, options.UserID, options.ProjectID, options.TemplateID)
-		if sh == nil {
-			return nil
-		}
-		return sh
+		return GetContainerShell(options.Container, options.SessionID, options.UserID, options.ProjectID, options.TemplateID)
 	}
-	sh := GetPersistentShell(options.SessionID, options.WorkingDir)
-	if sh == nil {
-		return nil
-	}
-	return sh
+	return GetPersistentShell(options.SessionID, options.WorkingDir)
 }
 
 // CloseShell 关闭 sessionID 对应的所有终端（宿主机 shell 与容器 shell），
 // 供 Agent 请求结束时统一回收；可重复调用。
+//
+// 这是包内唯一的终端回收入口：Shell 接口故意不暴露 Close，
+// 因为终端按会话（而非按实例）登记，回收必须同时命中两类终端。
 func CloseShell(sessionID int64) {
 	ClosePersistentShell(sessionID)
 	CloseContainerShell(sessionID)
 }
 
 // 执行位置常量：避免 hostshell 依赖 config 包，取值与 config.BashExecutionMode* 保持一致。
+// ModeHost 是默认值：Mode 为空串或 ModeHost 都走宿主机 shell。
 const (
 	ModeHost      = "host"
 	ModeContainer = "container"

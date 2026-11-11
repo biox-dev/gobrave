@@ -79,7 +79,7 @@ func CloseContainerShell(agentSessionID int64) {
 	containerShellMu.Unlock()
 
 	if sh != nil {
-		sh.Close(context.Background())
+		sh.close()
 	}
 }
 
@@ -100,8 +100,8 @@ func (s *ContainerShell) Exec(ctx context.Context, command string, timeoutMs int
 	return result.Output, "", result.ExitCode, false, nil
 }
 
-// Close 关闭容器 shell 并删除会话记录；可重复调用。
-func (s *ContainerShell) Close(ctx context.Context) {
+// close 关闭容器 shell 并释放容器；可重复调用。仅供 CloseContainerShell 调用。
+func (s *ContainerShell) close() {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -112,7 +112,7 @@ func (s *ContainerShell) Close(ctx context.Context) {
 	s.mu.Unlock()
 
 	if terminalID != 0 {
-		s.svc.Close(ctx, terminalID)
+		s.svc.Close(context.Background(), terminalID)
 	}
 }
 
