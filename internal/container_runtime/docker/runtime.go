@@ -653,7 +653,9 @@ func (d *DockerRuntime) toMounts(volumes []types.ContainerVolume) []mount.Mount 
 	for _, volume := range volumes {
 		source := strings.TrimSpace(volume.Source)
 		target := strings.TrimSpace(volume.Target)
+		logger.Debugf(context.Background(), "toMounts: raw volume type=%q source=%q target=%q mode=%q", volume.Type, source, target, volume.Mode)
 		if source == "" || target == "" {
+			logger.Debugf(context.Background(), "toMounts: skip volume with empty source=%q or target=%q", source, target)
 			continue
 		}
 		mountType := mountTypeForVolume(volume)
@@ -661,10 +663,12 @@ func (d *DockerRuntime) toMounts(volumes []types.ContainerVolume) []mount.Mount 
 			// 只有 bind 需要翻译：named volume / tmpfs 的 Source 不是宿主路径。
 			source = d.paths.Daemon(source)
 		}
+		containerTarget := d.paths.Container(target)
+		logger.Debugf(context.Background(), "toMounts: resolved mount type=%q source=%q target=%q", mountType, source, containerTarget)
 		mountItem := mount.Mount{
 			Type:   mountType,
 			Source: source,
-			Target: d.paths.Container(target),
+			Target: containerTarget,
 		}
 		// ro/rw 落到 ReadOnly。moby 的 Mount.Consistency 只接受
 		// consistent/cached/delegated（macOS 专用），z/Z 等 SELinux 选项
