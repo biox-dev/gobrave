@@ -83,6 +83,7 @@ func (a *customAgent) run(ctx context.Context, req agenttypes.Request, rt agenti
 		// 注入工具ctx），因此这里直接捕获会话 ID，不能用 tool.SessionIDFrom(ctx)。
 		OnFinish: func(context.Context) {
 			hostshell.ClosePersistentShell(facts.SessionID)
+			hostshell.CloseContainerShell(facts.SessionID)
 		},
 	}
 	result, err := nativeAgent.Run(ctx, req, rt)

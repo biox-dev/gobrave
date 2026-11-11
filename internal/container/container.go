@@ -30,6 +30,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
 	"github.com/biox-dev/gobrave/internal/agent/tool/coder"
+	"github.com/biox-dev/gobrave/internal/agent/tool/coder/hostshell"
 	"github.com/biox-dev/gobrave/internal/application/repository"
 	"github.com/biox-dev/gobrave/internal/application/service"
 	"github.com/biox-dev/gobrave/internal/config"
@@ -209,7 +210,8 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 // browser / skills / files / lspMgr 全部在这里装入 builtin.Deps 与 coder.Deps，
 // 通过工具构造函数注入；Options 不再承载服务对象，Provider 只注入请求级上下文。
 // sessions / messages 是会话与消息服务：供 custom Provider 为子 Agent 创建子会话并落库。
-func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, terminalRunner runtimecontext.ContainerTerminalRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
+// containerShell 供 bash 工具在 container 模式下执行命令（与宿主机 shell 同构）。
+func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, terminalRunner runtimecontext.ContainerTerminalRunner, containerShell hostshell.ContainerShellService, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
 	opts := agentclient.Options{}
 
 	// 模型提供商配置表按需实时生成：可视化配置页保存 agent 段后，内存中的 cfg 会被立即更新，
@@ -246,7 +248,7 @@ func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner
 	}
 	opts.Tools = tool.NewRegistryWith(append(
 		builtin.All(builtinDeps),
-		coder.All(coder.Deps{History: files, LSP: lspMgr, Config: cfg, Terminal: terminalRunner})...,
+		coder.All(coder.Deps{History: files, LSP: lspMgr, Config: cfg, ContainerShell: containerShell})...,
 	)...)
 	// 外部 MCP 服务提供的工具：工具名为 <服务名>_<工具名>，与内置工具同池调度（权限门禁复用）。
 	for _, t := range buildMCPTools(cfg) {
@@ -434,6 +436,10 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(registry *manager.TerminalSessionRegistry) runtimecontext.ContainerTerminalRunner {
 		return registry
 	}))
+	// 同一注册表再暴露为容器 shell 服务，供 bash 工具在 container 模式下注入。
+	must(container.Provide(func(registry *manager.TerminalSessionRegistry) hostshell.ContainerShellService {
+		return registry
+	}))
 	// 文件读取器：把「按 go_file 主键 ID 读取文件（含表格预览）」能力暴露给内置工具
 	// read_file_by_id，由 Provider 在执行工具前注入工具 ctx。
 	must(container.Provide(newFileReader))
@@ -460,8 +466,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, terminalRunner runtimecontext.ContainerTerminalRunner, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
-		return buildAgentClient(cfg, registry, runner, agentAnalysisRunner, terminalRunner, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
+	must(container.Provide(func(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, terminalRunner runtimecontext.ContainerTerminalRunner, containerShell hostshell.ContainerShellService, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
+		return buildAgentClient(cfg, registry, runner, agentAnalysisRunner, terminalRunner, containerShell, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
 	}))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。

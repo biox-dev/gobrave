@@ -1546,6 +1546,99 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 	}, nil
 }
 
+// EnsureAgentTerminal 按 (userID, projectID, templateID, agentSessionID) 创建或复用
+// Agent 会话的终端容器，返回终端会话主键。
+//
+// 与 GetPersistentShell 对应：供 hostshell.ContainerShell 在第一次执行命令时调用，
+// 之后同一 Agent 会话的多次调用复用同一个容器与 PTY。
+func (r *TerminalSessionRegistry) EnsureAgentTerminal(ctx context.Context, userID, projectID, templateID, agentSessionID int64) (int64, error) {
+	if agentSessionID <= 0 || templateID <= 0 {
+		return 0, fmt.Errorf("container shell: agent session id and template id are required")
+	}
+	key := NewAgentKey(userID, projectID, templateID, agentSessionID)
+	sess := r.Lookup(key)
+	if sess == nil {
+		created, _, _, err := r.ensure(ctx, key, terminalCreateOptions{})
+		if err != nil {
+			return 0, err
+		}
+		sess = created
+	}
+	if sess == nil {
+		return 0, ErrTerminalSessionNotFound
+	}
+	return sess.recordID(), nil
+}
+
+// ExecInTerminal 按终端会话主键执行命令并等待结束。
+//
+// 与 PersistentShell.Exec 对应：会话存活期间 cd / export / 已安装的包在多次调用之间保留。
+func (r *TerminalSessionRegistry) ExecInTerminal(ctx context.Context, terminalID int64, command string, timeoutSeconds int) (runtimecontext.ContainerTerminalExecResult, error) {
+	if terminalID == 0 {
+		return runtimecontext.ContainerTerminalExecResult{}, ErrTerminalSessionNotFound
+	}
+	sess := r.LookupByID(terminalID)
+	if sess == nil {
+		return runtimecontext.ContainerTerminalExecResult{}, ErrTerminalSessionNotFound
+	}
+	result, err := r.Execute(ctx, sess.Key(), TerminalCommand{
+		Command: command,
+		Wait:    true,
+		Timeout: time.Duration(timeoutSeconds) * time.Second,
+		Source:  "agent",
+	})
+	if err != nil {
+		return runtimecontext.ContainerTerminalExecResult{SessionID: result.SessionID}, err
+	}
+	return runtimecontext.ContainerTerminalExecResult{
+		SessionID:       result.SessionID,
+		Accepted:        result.Accepted,
+		Running:         result.Running,
+		ExitCode:        result.ExitCode,
+		TimedOut:        result.TimedOut,
+		DurationSeconds: result.DurationSeconds,
+		Output:          result.Output,
+		OutputTruncated: result.OutputTruncated,
+	}, nil
+}
+
+// CloseTerminal 按终端会话主键关闭会话并删除容器。
+//
+// 与 ClosePersistentShell 对应：Agent 请求结束时调用。
+func (r *TerminalSessionRegistry) CloseTerminal(ctx context.Context, terminalID int64) {
+	if terminalID == 0 {
+		return
+	}
+	sess := r.LookupByID(terminalID)
+	key := TerminalSessionKey{ID: terminalID}
+	if sess != nil {
+		key = sess.Key()
+	}
+	r.CloseSession(key)
+	_ = ctx
+}
+
+// ===== hostshell.ContainerShellService =====
+//
+// 以下三个方法只是上面 EnsureAgentTerminal / ExecInTerminal / CloseTerminal 的
+// 短名适配：hostshell.ContainerShell 用它们实现与宿主机持久 shell 完全一致的
+// Get / Exec / Close 生命周期。
+
+// Ensure 实现 hostshell.ContainerShellService。
+func (r *TerminalSessionRegistry) Ensure(ctx context.Context, userID, projectID, templateID, agentSessionID int64) (int64, error) {
+	return r.EnsureAgentTerminal(ctx, userID, projectID, templateID, agentSessionID)
+}
+
+// Exec 实现 hostshell.ContainerShellService。
+func (r *TerminalSessionRegistry) Exec(ctx context.Context, terminalID int64, command string, timeoutSeconds int) (runtimecontext.ContainerTerminalExecResult, error) {
+	return r.ExecInTerminal(ctx, terminalID, command, timeoutSeconds)
+}
+
+// Close 实现 hostshell.ContainerShellService。
+func (r *TerminalSessionRegistry) Close(ctx context.Context, terminalID int64) {
+	r.CloseTerminal(ctx, terminalID)
+}
+
 // notifyExec 发布「Agent 在终端里执行了命令」事件（action=terminal.exec）。
 //
 // 会话层不直接推 WebSocket：事件经 event.Bus 交给 AppSessionEventHandler，

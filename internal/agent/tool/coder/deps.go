@@ -2,7 +2,7 @@ package coder
 
 import (
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
-	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	"github.com/biox-dev/gobrave/internal/agent/tool/coder/hostshell"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/config"
 )
@@ -22,11 +22,11 @@ type Deps struct {
 	// Config 是进程配置快照，供需要出站网络的工具（如 fetch）读取代理设置。
 	// 为 nil 或未配置代理时直连（不读取环境变量）。
 	Config *config.Config
-	// Terminal 是容器终端执行能力（bash 在 container 模式下使用）。
+	// ContainerShell 是容器终端的最小服务（bash 在 container 模式下使用）。
 	//
 	// 为 nil 时 bash 一律在宿主机执行：仓库级单元测试等没有容器运行时的场景
 	// 不必装配它。bash 用哪种执行位置由 container.bash_execution_mode 决定。
-	Terminal runtimecontext.ContainerTerminalRunner
+	ContainerShell hostshell.ContainerShellService
 }
 
 // bashExecution 返回 bash 工具当前的执行位置配置（每次调用实时读取）。
