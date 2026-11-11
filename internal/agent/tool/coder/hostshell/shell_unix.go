@@ -76,7 +76,7 @@ func ClosePersistentShell(sessionID int64) {
 	shellMu.Unlock()
 
 	if sh != nil {
-		sh.Close()
+		sh.Close(context.Background())
 	}
 }
 
@@ -88,7 +88,7 @@ func CloseAllPersistentShells() {
 	shellMu.Unlock()
 
 	for _, sh := range all {
-		sh.Close()
+		sh.Close(context.Background())
 	}
 }
 
@@ -324,7 +324,8 @@ func (s *PersistentShell) Exec(ctx context.Context, command string, timeoutMs in
 	}
 }
 
-func (s *PersistentShell) Close() {
+// Close 实现 Shell：ctx 仅用于接口统一，宿主机进程结束不依赖它。
+func (s *PersistentShell) Close(_ context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closeLocked()

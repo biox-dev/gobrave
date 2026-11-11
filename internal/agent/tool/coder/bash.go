@@ -279,15 +279,11 @@ func (b *bashTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 	}
 
 	startTime := time.Now()
-	mode, templateID := b.deps.bashExecution()
-	if mode == config.BashExecutionModeContainer {
-		return b.executeInContainer(ctx, params, templateID, startTime)
+	sh, err := b.acquireShell(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	sh := hostshell.GetPersistentShell(tool.SessionIDFrom(ctx), workingDir(ctx))
-	if sh == nil {
-		return nil, toolError("no available command shell on this platform")
-	}
 	stdout, stderr, exitCode, interrupted, err := sh.Exec(ctx, params.Command, params.Timeout)
 	if err != nil {
 		return nil, fmt.Errorf("error executing command: %w", err)
@@ -325,63 +321,40 @@ func (b *bashTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 	return out, nil
 }
 
-// executeInContainer 是 bash 工具在 container 模式下的执行分支。
+// acquireShell 按 container.bash_execution_mode 取本次调用使用的统一终端。
 //
-// 与宿主机分支完全同构：GetContainerShell 复用一次 Agent 请求内的同一个容器 PTY
-// （cd / export / 已安装的包在多次调用之间保留），请求结束时由 provider 的 OnFinish
-// 调用 CloseContainerShell 回收容器。返回结构仍然是 BashOutput。
-func (b *bashTool) executeInContainer(ctx context.Context, params BashParams, templateID int64, startTime time.Time) (any, error) {
-	if b.deps.ContainerShell == nil {
-		return nil, toolError("container execution mode is enabled but the container shell service is not available in this runtime")
-	}
-	projectID := tool.ProjectIDFrom(ctx)
-	sessionID := tool.SessionIDFrom(ctx)
-	if projectID <= 0 {
-		return nil, toolError("container execution mode requires an active project in this conversation")
-	}
-	if sessionID <= 0 {
-		return nil, toolError("container execution mode requires an agent session id")
+// host（默认）返回宿主机持久 shell，container 返回该会话的容器终端；两种模式
+// 返回的都是 hostshell.Shell，下游执行与结果处理完全一致。
+func (b *bashTool) acquireShell(ctx context.Context) (hostshell.Shell, error) {
+	mode, templateID := b.deps.bashExecution()
+	if mode == config.BashExecutionModeContainer {
+		if b.deps.ContainerShell == nil {
+			return nil, toolError("container execution mode is enabled but the container shell service is not available in this runtime")
+		}
+		if tool.ProjectIDFrom(ctx) <= 0 {
+			return nil, toolError("container execution mode requires an active project in this conversation")
+		}
+		if tool.SessionIDFrom(ctx) <= 0 {
+			return nil, toolError("container execution mode requires an agent session id")
+		}
 	}
 
-	sh := hostshell.GetContainerShell(b.deps.ContainerShell, sessionID, tool.UserIDFrom(ctx), projectID, templateID)
+	sh := hostshell.AcquireShell(hostshell.ShellOptions{
+		Mode:       mode,
+		SessionID:  tool.SessionIDFrom(ctx),
+		WorkingDir: workingDir(ctx),
+		UserID:     tool.UserIDFrom(ctx),
+		ProjectID:  tool.ProjectIDFrom(ctx),
+		TemplateID: templateID,
+		Container:  b.deps.ContainerShell,
+	})
 	if sh == nil {
-		return nil, toolError("no available container shell")
-	}
-	stdout, stderr, exitCode, interrupted, err := sh.Exec(ctx, params.Command, params.Timeout)
-	if err != nil {
-		return nil, fmt.Errorf("error executing command: %w", err)
-	}
-
-	stdout = truncateOutput(stdout)
-	stderr = truncateOutput(stderr)
-
-	errorMessage := stderr
-	if interrupted {
-		if errorMessage != "" {
-			errorMessage += "\n"
+		if mode == config.BashExecutionModeContainer {
+			return nil, toolError("no available container shell")
 		}
-		errorMessage += "Command was aborted before completion"
-	} else if exitCode != 0 {
-		if errorMessage != "" {
-			errorMessage += "\n"
-		}
-		errorMessage += fmt.Sprintf("Exit code %d", exitCode)
+		return nil, toolError("no available command shell on this platform")
 	}
-
-	if stdout != "" && stderr != "" {
-		stdout += "\n"
-	}
-	if errorMessage != "" {
-		stdout += "\n" + errorMessage
-	}
-
-	out := BashOutput{Output: stdout}
-	out.Metadata.StartTime = startTime.UnixMilli()
-	out.Metadata.EndTime = time.Now().UnixMilli()
-	if out.Output == "" {
-		out.Output = "no output"
-	}
-	return out, nil
+	return sh, nil
 }
 
 // appendLine 把 msg 追加为 output 的下一行（output 为空时直接返回 msg）。

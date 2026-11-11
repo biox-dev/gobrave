@@ -1551,6 +1551,11 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 //
 // 与 GetPersistentShell 对应：供 hostshell.ContainerShell 在第一次执行命令时调用，
 // 之后同一 Agent 会话的多次调用复用同一个容器与 PTY。
+//
+// 会话一律标记为持久（persistent=true）：容器 shell 的生命周期等于一次 Agent 请求，
+// 由调用方在请求结束时通过 Close / CloseShell 回收（见 providers/custom.go 的 OnFinish）。
+// 若按一次性会话创建，命令一结束 execLoop 就会 scheduleReap 掉容器与会话记录，
+// 下一次 Exec 只能拿到 ErrTerminalSessionNotFound。
 func (r *TerminalSessionRegistry) EnsureAgentTerminal(ctx context.Context, userID, projectID, templateID, agentSessionID int64) (int64, error) {
 	if agentSessionID <= 0 || templateID <= 0 {
 		return 0, fmt.Errorf("container shell: agent session id and template id are required")
@@ -1558,11 +1563,16 @@ func (r *TerminalSessionRegistry) EnsureAgentTerminal(ctx context.Context, userI
 	key := NewAgentKey(userID, projectID, templateID, agentSessionID)
 	sess := r.Lookup(key)
 	if sess == nil {
-		created, _, _, err := r.ensure(ctx, key, terminalCreateOptions{})
+		created, _, _, err := r.ensure(ctx, key, terminalCreateOptions{persistent: true})
 		if err != nil {
 			return 0, err
 		}
 		sess = created
+	} else if sess.markPersistent() && r.store != nil {
+		// 复用了此前由一次性路径创建的会话：升级为持久，否则命令结束仍会被回收。
+		if err := r.store.MarkPersistent(ctx, sess.Key()); err != nil {
+			logger.Warnf(ctx, "[TerminalSession] mark session %s persistent failed: %v", sess.ID(), err)
+		}
 	}
 	if sess == nil {
 		return 0, ErrTerminalSessionNotFound
