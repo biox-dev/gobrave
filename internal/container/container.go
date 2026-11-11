@@ -282,6 +282,17 @@ func (p userAgentConfigProvider) GetAgentConfig(ctx context.Context, userID int6
 	return user.AgentConfig, nil
 }
 
+// resolveDockerWSLDaemon 决定 docker runtime 是否按 WSL2 daemon 语义翻译挂载路径。
+//
+// 显式配置 container.docker.wsl_daemon 优先；未配置时按 DOCKER_HOST 自动推断
+// （Windows + tcp://… 视为连接 WSL2 内的 dockerd）。
+func resolveDockerWSLDaemon(cfg *config.Config) bool {
+	if cfg != nil && cfg.Container != nil && cfg.Container.Docker != nil && cfg.Container.Docker.WSLDaemon != nil {
+		return *cfg.Container.Docker.WSLDaemon
+	}
+	return dockerruntime.AutoDetectWSLDaemon()
+}
+
 // BuildContainer 注册依赖并返回容器。
 // cfg 由调用方（main）提前加载，因此 Gin 模式等需要在容器构建前生效的配置
 // 可以直接从 cfg 读取，避免重复解析 config.yml。
@@ -310,7 +321,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		for _, name := range runtimes {
 			switch name {
 			case "docker":
-				rt := dockerruntime.NewDockerRuntime()
+				rt := dockerruntime.NewDockerRuntime(dockerruntime.WithWSLDaemon(resolveDockerWSLDaemon(cfg)))
 				reg.Register(rt.Name(), rt)
 			case "k8s", "k3s":
 				kcfg := &config.KubernetesRuntimeConfig{Namespace: "default"}

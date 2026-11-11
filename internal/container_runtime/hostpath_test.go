@@ -60,3 +60,28 @@ func TestToHostPath(t *testing.T) {
 		}
 	}
 }
+
+func TestToWSLDaemonPath(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		// 用户报错的真实 storage.base_dir：Windows 盘符映射到 WSL 的 /mnt/<drive>。
+		{`D:\gobrave`, "/mnt/d/gobrave"},
+		{`D:\gobrave\.gobrave`, "/mnt/d/gobrave/.gobrave"},
+		{`D:/gobrave/.gobrave`, "/mnt/d/gobrave/.gobrave"},
+		{`D:\gobrave\.gobrave\user\1\.config\code-server\settings.json`, "/mnt/d/gobrave/.gobrave/user/1/.config/code-server/settings.json"},
+		{`C:\Users\foo`, "/mnt/c/Users/foo"},
+		{`D:`, "/mnt/d"},
+		{`D:\`, "/mnt/d"},
+		// 已经是 POSIX 路径（Linux 宿主 / WSL 原生路径 / docker.sock）保持原样。
+		{`/var/run/docker.sock`, "/var/run/docker.sock"},
+		{`/home/admin/.gobrave`, "/home/admin/.gobrave"},
+		{``, ""},
+	}
+	for _, tc := range cases {
+		if got := ToWSLDaemonPath(tc.in); got != tc.want {
+			t.Errorf("ToWSLDaemonPath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

@@ -172,6 +172,13 @@ container:
     kubeconfig: ""
     # 在集群内运行时可设为 true，使用 in-cluster 配置
     in_cluster: false
+  docker:
+    # docker daemon 是否运行在 WSL2 内（Windows 上通过 DOCKER_HOST=tcp://<wsl-ip>:2375 连接）。
+    # 开启后 bind mount 的 Source 会从 Windows 盘符路径翻译成 WSL 视角：
+    #   D:\gobrave\.gobrave → /mnt/d/gobrave/.gobrave
+    # 不配置时（注释掉）Windows + DOCKER_HOST=tcp://… 自动视为 WSL daemon；其余情况为 false。
+    # npipe://（Docker Desktop Windows daemon）不要开启。
+    # wsl_daemon: true
   # 服务启动时是否自动恢复 job_status=running 的 analysis DAG。
   # true: 扫描并尝试恢复；false: 不自动恢复。
   recover_running_dag_on_start: true

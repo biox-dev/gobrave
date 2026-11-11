@@ -88,6 +88,39 @@ func normalizePosixSlashes(p string) string {
 	return slashed
 }
 
+// ToWSLDaemonPath 把 Windows 宿主路径转成 WSL 内 dockerd 视角的路径。
+//
+// Windows 上的 gobrave 连接 WSL2 里运行的 dockerd（DOCKER_HOST=tcp://...）时，
+// bind mount 的 Source 必须由 daemon 所在机器解析。WSL2 默认把 Windows 盘符挂载到
+// /mnt/<drive>/ 下，因此：
+//   - D:\gobrave\.gobrave  → /mnt/d/gobrave/.gobrave
+//   - C:/Users/foo          → /mnt/c/Users/foo
+//
+// 已经是 POSIX 路径（Linux 宿主 / WSL 原生路径）时原样返回，保证 Linux 行为零变化。
+func ToWSLDaemonPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+
+	if len(p) >= 2 && p[1] == ':' && isASCIIAlpha(p[0]) {
+		drive := strings.ToLower(string(p[0]))
+		rest := p[2:]
+		// 单独一个 "D:" / "D:\" 表示盘符根目录。
+		if strings.TrimSpace(strings.Trim(rest, `\/`)) == "" {
+			return "/mnt/" + drive
+		}
+		if rest[0] != '\\' && rest[0] != '/' {
+			// 盘符相对路径（D:foo），补上分隔符再处理。
+			rest = "/" + rest
+		}
+		return "/mnt/" + drive + normalizePosixSlashes(rest)
+	}
+
+	// POSIX 路径（Linux 宿主 / WSL 原生路径）保持原样。
+	return p
+}
+
 // ToHostPath 把容器路径映射回宿主路径（Windows 时需要 C:/... 形式）。
 func ToHostPath(containerPath, windowsDrivePrefix string) string {
 	p := strings.TrimSpace(containerPath)

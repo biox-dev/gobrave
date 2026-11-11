@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,13 +29,53 @@ import (
 type DockerRuntime struct {
 	handler containerruntime.RuntimeEventHandler
 
+	// wslDaemon 表示当前连接的是 WSL2 里运行的 dockerd（DOCKER_HOST=tcp://...）。
+	// 此时 bind mount 的 Source 必须翻译成 daemon 视角的路径（D:\x → /mnt/d/x），
+	// 否则 daemon 侧会报 bind source path does not exist / mount path must be absolute。
+	wslDaemon bool
+
 	once    sync.Once
 	client  *client.Client
 	initErr error
 }
 
-func NewDockerRuntime() *DockerRuntime {
-	return &DockerRuntime{}
+// DockerRuntimeOption 定制 DockerRuntime 的构造。
+type DockerRuntimeOption func(*DockerRuntime)
+
+// WithWSLDaemon 显式指定 docker daemon 是否运行在 WSL2 内。
+//
+// 开启后 bind mount 的 Source 会从 Windows 盘符路径翻译成 WSL 视角的
+// /mnt/<drive>/...（见 containerruntime.ToWSLDaemonPath）；Target（容器内路径）不变。
+func WithWSLDaemon(enabled bool) DockerRuntimeOption {
+	return func(d *DockerRuntime) { d.wslDaemon = enabled }
+}
+
+func NewDockerRuntime(opts ...DockerRuntimeOption) *DockerRuntime {
+	d := &DockerRuntime{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(d)
+		}
+	}
+	return d
+}
+
+// AutoDetectWSLDaemon 依据 DOCKER_HOST 推断是否连接 WSL2 内的 dockerd。
+//
+// 判据：Windows 宿主 + DOCKER_HOST 为 tcp:// 或 http://。
+// npipe://（Docker Desktop 的 Windows daemon）不参与推断：它的文件系统就是 Windows，
+// bind mount 的 Source 仍应是 Windows 盘符路径。
+func AutoDetectWSLDaemon() bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(os.Getenv("DOCKER_HOST")))
+	return strings.HasPrefix(host, "tcp://") || strings.HasPrefix(host, "http://")
+}
+
+// WSLDaemon 报告当前是否按 WSL2 daemon 语义翻译挂载路径。
+func (d *DockerRuntime) WSLDaemon() bool {
+	return d.wslDaemon
 }
 
 func (d *DockerRuntime) Name() string {
@@ -568,7 +610,7 @@ func (d *DockerRuntime) toHostConfig(spec *types.ContainerSpec) *container.HostC
 		}
 	}
 
-	mounts := toMounts(spec.Volumes)
+	mounts := toMounts(spec.Volumes, d.wslDaemon)
 
 	groupAdd := make([]string, 0, len(spec.SupplementalGroups))
 	for _, gid := range spec.SupplementalGroups {
@@ -598,7 +640,10 @@ func (d *DockerRuntime) toHostConfig(spec *types.ContainerSpec) *container.HostC
 //
 // 结构化 mount 的 Source 直接交给 daemon，daemon 侧再做路径解析，因此
 // Linux 与 Windows 宿主都能正确处理；目标路径统一转成容器内的 POSIX 路径。
-func toMounts(volumes []types.ContainerVolume) []mount.Mount {
+//
+// wslDaemon 为 true 时（daemon 跑在 WSL2 里），Source 会额外翻译成
+// daemon 视角的路径（D:\x → /mnt/d/x），Target 仍按容器内路径处理。
+func toMounts(volumes []types.ContainerVolume, wslDaemon bool) []mount.Mount {
 	if len(volumes) == 0 {
 		return nil
 	}
@@ -609,9 +654,10 @@ func toMounts(volumes []types.ContainerVolume) []mount.Mount {
 		if source == "" || target == "" {
 			continue
 		}
+		mountType := mountTypeForVolume(volume)
 		mountItem := mount.Mount{
-			Type:   mountTypeForVolume(volume),
-			Source: source,
+			Type:   mountType,
+			Source: toDaemonSourcePath(source, mountType, wslDaemon),
 			Target: containerruntime.ToContainerPath(target),
 		}
 		// ro/rw 落到 ReadOnly。moby 的 Mount.Consistency 只接受
@@ -624,6 +670,20 @@ func toMounts(volumes []types.ContainerVolume) []mount.Mount {
 		return nil
 	}
 	return mounts
+}
+
+// toDaemonSourcePath 把 bind mount 的 Source 翻译成 daemon 所在机器的真实路径。
+//
+// Source 与 Target 的语义不同：Target 是容器内路径，交给 ToContainerPath 去掉盘符；
+// Source 必须是 daemon 宿主机上真实存在的路径。连接 WSL2 里的 dockerd 时，
+// Windows 盘符要映射到 /mnt/<drive>/（见 containerruntime.ToWSLDaemonPath）。
+//
+// 只有 bind 挂载需要翻译：named volume / tmpfs 的 Source 不是宿主文件系统路径。
+func toDaemonSourcePath(source string, mountType mount.Type, wslDaemon bool) string {
+	if !wslDaemon || mountType != mount.TypeBind {
+		return source
+	}
+	return containerruntime.ToWSLDaemonPath(source)
 }
 
 func mountTypeForVolume(volume types.ContainerVolume) mount.Type {

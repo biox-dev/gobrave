@@ -211,6 +211,7 @@ type RealtimeConfig struct {
 
 type ContainerConfig struct {
 	Kubernetes *KubernetesRuntimeConfig `yaml:"kubernetes" json:"kubernetes"`
+	Docker     *DockerRuntimeConfig     `yaml:"docker" json:"docker"`
 	// Runtimes is the list of container runtimes to register at startup.
 	// e.g. [docker, k8s]. Each entry is normalized via normalizeContainerRuntime.
 	Runtimes []string `yaml:"runtimes" json:"runtimes"`
@@ -274,12 +275,23 @@ type KubernetesRuntimeConfig struct {
 	InCluster  bool   `yaml:"in_cluster" json:"in_cluster"`
 }
 
+// DockerRuntimeConfig 是 docker 运行时相关配置。
+type DockerRuntimeConfig struct {
+	// WSLDaemon 声明 docker daemon 是否运行在 WSL2 内。
+	//
+	// nil（未配置）：Windows 上按照 DOCKER_HOST（tcp://…）自动推断；
+	// true：强制开启，bind mount 的 Source 会从 D:\x 翻译成 /mnt/d/x；
+	// false：强制关闭，Source 保持 Windows 盘符路径（Docker Desktop npipe 等）。
+	WSLDaemon *bool `yaml:"wsl_daemon" json:"wsl_daemon"`
+}
+
 // DefaultContainerConfig 返回 container 段在代码中的默认配置。
 // LoadConfig 与可视化配置共用它，保证 config.yml 缺失/缺段时的默认值一致。
 func DefaultContainerConfig() *ContainerConfig {
 	return &ContainerConfig{
 		DefaultRuntime: "docker",
 		Kubernetes:     DefaultKubernetesRuntimeConfig(),
+		Docker:         &DockerRuntimeConfig{},
 		// RefreshImageStatusOnStart:           true,
 		RecoverRunningDagOnStart:            true,
 		CleanupDagNodeContainersBeforeStart: true,
