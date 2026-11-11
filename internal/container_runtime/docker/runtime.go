@@ -269,10 +269,76 @@ func (d *DockerRuntime) waitContainerExit(runtimeID string) {
 				d.emitEvent("ContainerExited", runtimeID, strconv.Itoa(exitCode))
 				return
 			}
+			// 非 0 退出时只带 "126"/"1" 这样的退出码，用户无从判断原因
+			// （典型如 arm64 主机跑 amd64 镜像时的 "exec format error"，
+			// 进程在 entrypoint 阶段就失败，日志文件一行都没有）。
+			// 这里在发出失败事件前采集一次运行时证据：容器状态 + 最近日志。
+			d.logTerminalEvidence(runtimeID, containerID, cli, exitCode)
 			d.emitEvent("ContainerFailed", runtimeID, strconv.Itoa(exitCode))
 			return
 		}
 	}
+}
+
+// terminalEvidenceTailLines 是失败时采集的日志尾部行数。
+// exec format error / 命令不存在 / 权限不足这类启动期错误都出现在最前面几行，
+// 200 行足够覆盖，也避免把大日志整体读入内存。
+const terminalEvidenceTailLines = 200
+
+// logTerminalEvidence 在容器异常退出时把「可排查的证据」写进服务端日志：
+//
+//   - 容器状态、退出码、OOMKilled、Error 字段（daemon 侧的启动失败原因）
+//   - 镜像名、镜像平台 / 宿主平台（用于识别 linux/amd64 镜像跑在 linux/arm64 主机上）
+//   - 容器最近 N 行 stdout/stderr（exec format error 等错误只会出现在这里）
+//
+// 采集本身是 best-effort：任何一步失败都只降级为更少的证据，不影响事件发送。
+// 日志级别为 Warn，保证 info 级别下也能看到（与 k8s 侧 logTerminalEvidence 对齐）。
+func (d *DockerRuntime) logTerminalEvidence(runtimeID, containerID string, cli *client.Client, exitCode int) {
+	ctx := context.Background()
+
+	// 容器退出后 inspect 仍可用，State.Error 保存了 daemon 启动失败的原因
+	// （例如 "failed to create task ... exec format error"）。
+	stateFacts := "state=unavailable"
+	imageName := ""
+	var imageID string
+	if info, err := cli.ContainerInspect(ctx, containerID); err != nil {
+		stateFacts = fmt.Sprintf("state=inspect_failed err=%v", err)
+	} else {
+		stateFacts = fmt.Sprintf("status=%s exit_code=%d oom_killed=%t", info.State.Status, info.State.ExitCode, info.State.OOMKilled)
+		if strings.TrimSpace(info.State.Error) != "" {
+			stateFacts += fmt.Sprintf(" daemon_error=%q", strings.TrimSpace(info.State.Error))
+		}
+		if info.Config != nil {
+			imageName = strings.TrimSpace(info.Config.Image)
+		}
+		imageID = strings.TrimSpace(info.Image)
+	}
+
+	// 镜像与平台信息：平台不匹配是 "exec format error" 最常见的原因，
+	// 直接把两边平台打印出来，用户不用再去 docker inspect 猜。
+	platformFacts := fmt.Sprintf("host_platform=%s/%s", runtime.GOOS, runtime.GOARCH)
+	if imageID != "" {
+		if img, err := cli.ImageInspect(ctx, imageID); err == nil {
+			imgPlatform := strings.TrimSpace(img.Os)
+			if arch := strings.TrimSpace(img.Architecture); arch != "" {
+				if variant := strings.TrimSpace(img.Variant); variant != "" {
+					arch += "/" + variant
+				}
+				imgPlatform += "/" + arch
+			}
+			platformFacts = fmt.Sprintf("image_platform=%s %s", strings.TrimRight(imgPlatform, "/"), platformFacts)
+		} else {
+			platformFacts = fmt.Sprintf("image_platform=inspect_failed(%v) %s", err, platformFacts)
+		}
+	}
+
+	logs, logErr := d.Logs(ctx, runtimeID, terminalEvidenceTailLines)
+	if logErr != nil {
+		logs = fmt.Sprintf("<failed to read container logs: %v>", logErr)
+	}
+
+	logger.Warnf(ctx, "[DockerRuntime] container exited with non-zero code (runtime evidence), runtime_id=%s container_id=%s image=%q %s %s\n--- container logs (tail %d) ---\n%s\n--- end container logs ---",
+		runtimeID, containerID, imageName, stateFacts, platformFacts, terminalEvidenceTailLines, strings.TrimRight(logs, "\n"))
 }
 
 func (d *DockerRuntime) Stop(ctx context.Context, id string) error {

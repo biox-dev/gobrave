@@ -673,6 +673,26 @@ func (m *ContainerManager) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// logFailureEvidence 在容器失败时把运行时日志一并写入服务端日志（Warn 级别）。
+//
+// 与 docker/kubernetes 运行时内部打印的证据行不同，这里以 ContainerInstance
+// 为中心，带上 analysis / node 维度，便于把日志行直接对应到某个节点的失败。
+func (m *ContainerManager) logFailureEvidence(ctx context.Context, inst *types.ContainerInstance, message string) {
+	rt, err := m.getRuntimeByInstance(inst)
+	if err != nil {
+		logger.Warnf(ctx, "[ContainerManager] container failed, runtime_id=%s instance_id=%d message=%q, resolve runtime failed: %v", inst.RuntimeID, inst.ID, message, err)
+		return
+	}
+
+	logs, logErr := rt.Logs(ctx, inst.RuntimeID, 200)
+	if logErr != nil {
+		logs = fmt.Sprintf("<failed to read runtime logs: %v>", logErr)
+	}
+
+	logger.Warnf(ctx, "[ContainerManager] container failed (runtime evidence), owner_type=%s owner_id=%d instance_id=%d runtime_id=%s runtime=%s status=%s message=%q started_at=%v finished_at=%v\n--- runtime logs (tail 200) ---\n%s\n--- end runtime logs ---",
+		inst.OwnerType, inst.OwnerID, inst.ID, inst.RuntimeID, inst.RuntimeName, inst.Status, message, inst.StartedAt, inst.FinishedAt, strings.TrimRight(logs, "\n"))
+}
+
 func (m *ContainerManager) GetLogs(ctx context.Context, id int64, tail int) (string, error) {
 	if tail <= 0 {
 		tail = 200
@@ -894,6 +914,13 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 	// the runtime event that produced it.
 	logger.Debugf(ctx, "[ContainerManager] runtime event applied, runtime_id=%s event=%s instance_id=%d status=%s exit_code=%s finished_at=%v",
 		e.RuntimeID, e.Type, inst.ID, inst.Status, formatExitCode(inst.ExitCode), inst.FinishedAt)
+
+	// 容器异常结束时再打一条带容器日志的 Warn：若失败发生在启动阶段
+	// （例如镜像平台不匹配导致 "exec format error"），LOG_PATH 里的日志文件是空的，
+	// 只有运行时日志能说明原因，这条是用户排查时唯一能看到的信息。
+	if e.Type == "ContainerFailed" {
+		m.logFailureEvidence(ctx, inst, e.Message)
+	}
 
 	// 通知状态等待方（例如终端容器创建方等待 ContainerStarted）。
 	m.notifyInstanceStatus(inst.ID, inst.Status)
