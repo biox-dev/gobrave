@@ -12,6 +12,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/native"
 	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/tool/coder/hostshell"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -76,6 +77,13 @@ func (a *customAgent) run(ctx context.Context, req agenttypes.Request, rt agenti
 		Client:             client,
 		Tools:              a.toolRegistry(req, rt),
 		PrepareToolContext: a.toolContext(req, rt),
+		// 宿主机持久 shell 的生命周期 = 一次 Agent 请求：会话内复用（cwd/env 保留），
+		// 请求结束立即退出进程。
+		// 注意：Run 传入的 ctx 未注入 tool.TaskFacts（facts 只在 PrepareToolContext 里
+		// 注入工具ctx），因此这里直接捕获会话 ID，不能用 tool.SessionIDFrom(ctx)。
+		OnFinish: func(context.Context) {
+			hostshell.ClosePersistentShell(facts.SessionID)
+		},
 	}
 	result, err := nativeAgent.Run(ctx, req, rt)
 	if err != nil {

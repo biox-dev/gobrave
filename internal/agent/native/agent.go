@@ -31,6 +31,11 @@ type Config struct {
 	Tools  *tool.Registry
 	// PrepareToolContext 在每次工具执行前装饰 ctx（注入权限、运行时上下文、技能等）。
 	PrepareToolContext func(context.Context) context.Context
+	// OnStart / OnFinish 是执行生命周期钩子（可选）：OnFinish 在本次 Run 返回前被调用，
+	// 用于释放执行期创建的资源（如宿主机持久 shell）。
+	// 循环本身不关心具体工具，因此由 Provider 注入，不形成对工具实现的依赖。
+	OnStart  func(context.Context)
+	OnFinish func(context.Context)
 }
 
 // Run 执行一次完整请求：模型流式输出 → 执行工具 → 回填结果 → 继续，直至模型不再调用工具。
@@ -50,6 +55,14 @@ func (c *Config) Run(ctx context.Context, req agenttypes.Request, rt agentinterf
 
 	executor := tool.NewExecutor(c.Tools)
 	tools := toolDefinitions(c.Tools)
+
+	// 执行期资源生命周期：与一次 Run 绑定（会话 shell 等由 Provider 在钩子里管理）。
+	if c.OnStart != nil {
+		c.OnStart(ctx)
+	}
+	if c.OnFinish != nil {
+		defer c.OnFinish(ctx)
+	}
 
 	// 检查点（任务模式下可用）：先尝试从持久化状态恢复未完成的工具往返。
 	cw := newCheckpointWriter(rt)

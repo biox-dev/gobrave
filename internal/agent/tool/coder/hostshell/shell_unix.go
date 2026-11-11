@@ -1,4 +1,6 @@
-package shell
+//go:build !windows
+
+package hostshell
 
 import (
 	"context"
@@ -14,6 +16,8 @@ import (
 )
 
 type PersistentShell struct {
+	// sessionID 是 shell 的归属会话：同一个 Agent 请求内的多次调用复用，请求结束即关闭。
+	sessionID    int64
 	cmd          *exec.Cmd
 	stdin        *os.File
 	isAlive      bool
@@ -38,25 +42,57 @@ type commandResult struct {
 }
 
 var (
-	shellInstance     *PersistentShell
-	shellInstanceOnce sync.Once
+	shellMu sync.Mutex
+	// shells 按会话维护持久 shell：不同会话（并发对话）各自独立，互不干扰。
+	shells = make(map[int64]*PersistentShell)
 )
 
-func GetPersistentShell(workingDir string) *PersistentShell {
-	shellInstanceOnce.Do(func() {
-		shellInstance = newPersistentShell(workingDir)
-	})
+// GetPersistentShell 返回 sessionID 对应的持久 shell：同一会话内复用（cwd / 环境变量保留），
+// 会话不同则各自新建，可并发执行。会话结束后调用方必须调用 ClosePersistentShell 释放进程。
+func GetPersistentShell(sessionID int64, workingDir string) *PersistentShell {
+	shellMu.Lock()
+	defer shellMu.Unlock()
 
-	if shellInstance == nil {
-		shellInstance = newPersistentShell(workingDir)
-	} else if !shellInstance.isAlive {
-		shellInstance = newPersistentShell(shellInstance.cwd)
+	if sh := shells[sessionID]; sh != nil && sh.isAlive {
+		return sh
 	}
-
-	return shellInstance
+	sh := newPersistentShell(sessionID, workingDir)
+	if sh == nil {
+		return nil
+	}
+	shells[sessionID] = sh
+	return sh
 }
 
-func newPersistentShell(cwd string) *PersistentShell {
+// ClosePersistentShell 关闭 sessionID 对应的 shell（会话结束后调用）。
+//
+// TODO: 子 Agent 复用父 Agent 的 SessionID（见 native.NewAgentTool 的 ParentSessionID），
+// 因此父请求结束时直接关闭会打断子 Agent 正在执行的命令。待实现：按会话统计活跃执行数，
+// 归零时才真正 kill（OnStart +1 / OnFinish -1），子 Agent 复用同会话时计数不会归零。
+func ClosePersistentShell(sessionID int64) {
+	shellMu.Lock()
+	sh := shells[sessionID]
+	delete(shells, sessionID)
+	shellMu.Unlock()
+
+	if sh != nil {
+		sh.Close()
+	}
+}
+
+// CloseAllPersistentShells 关闭所有会话的 shell（进程退出时兜底）。
+func CloseAllPersistentShells() {
+	shellMu.Lock()
+	all := shells
+	shells = make(map[int64]*PersistentShell)
+	shellMu.Unlock()
+
+	for _, sh := range all {
+		sh.Close()
+	}
+}
+
+func newPersistentShell(sessionID int64, cwd string) *PersistentShell {
 	// gobrave 无全局 shell 配置：优先沿用 $SHELL，缺省 bash -l。
 	shellPath := os.Getenv("SHELL")
 	if shellPath == "" {
@@ -80,6 +116,7 @@ func newPersistentShell(cwd string) *PersistentShell {
 	}
 
 	shell := &PersistentShell{
+		sessionID:    sessionID,
 		cmd:          cmd,
 		stdin:        stdinPipe.(*os.File),
 		isAlive:      true,
@@ -91,29 +128,43 @@ func newPersistentShell(cwd string) *PersistentShell {
 		defer func() {
 			if r := recover(); r != nil {
 				fmt.Fprintf(os.Stderr, "Panic in shell command processor: %v\n", r)
-				shell.isAlive = false
-				close(shell.commandQueue)
+				if shell.markDead() {
+					close(shell.commandQueue)
+				}
 			}
 		}()
 		shell.processCommands()
 	}()
 
 	go func() {
-		err := cmd.Wait()
-		if err != nil {
-			// Log the error if needed
+		cmd.Wait()
+		if shell.markDead() {
+			close(shell.commandQueue)
 		}
-		shell.isAlive = false
-		close(shell.commandQueue)
 	}()
 
 	return shell
 }
 
+// markDead 把 shell 置为不可用并返回是否是本次调用完成的状态切换（用于只关闭一次队列）。
+func (s *PersistentShell) markDead() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.isAlive {
+		return false
+	}
+	s.isAlive = false
+	return true
+}
+
 func (s *PersistentShell) processCommands() {
 	for cmd := range s.commandQueue {
 		result := s.execCommand(cmd.command, cmd.timeout, cmd.ctx)
-		cmd.resultChan <- result
+		// 调用方（Exec）可能因 ctx 取消或 shell 关闭已返回，避免永久阻塞。
+		select {
+		case cmd.resultChan <- result:
+		case <-cmd.ctx.Done():
+		}
 	}
 }
 
@@ -256,7 +307,7 @@ func (s *PersistentShell) Exec(ctx context.Context, command string, timeoutMs in
 
 	timeout := time.Duration(timeoutMs) * time.Millisecond
 
-	resultChan := make(chan commandResult)
+	resultChan := make(chan commandResult, 1)
 	s.commandQueue <- &commandExecution{
 		command:    command,
 		timeout:    timeout,
@@ -264,22 +315,33 @@ func (s *PersistentShell) Exec(ctx context.Context, command string, timeoutMs in
 		ctx:        ctx,
 	}
 
-	result := <-resultChan
-	return result.stdout, result.stderr, result.exitCode, result.interrupted, result.err
+	// shell 被关闭（会话结束）或 ctx 取消时不要永久阻塞。
+	select {
+	case result := <-resultChan:
+		return result.stdout, result.stderr, result.exitCode, result.interrupted, result.err
+	case <-ctx.Done():
+		return "", "command aborted: " + ctx.Err().Error(), 130, true, nil
+	}
 }
 
 func (s *PersistentShell) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.closeLocked()
+}
 
+// closeLocked 在持有 s.mu 时结束 shell 进程。
+func (s *PersistentShell) closeLocked() {
 	if !s.isAlive {
 		return
 	}
-
-	s.stdin.Write([]byte("exit\n"))
-
-	s.cmd.Process.Kill()
 	s.isAlive = false
+	// 直接结束进程：stdin 可能正被 execCommand 使用，不阻塞等锁。
+	// cmd.Wait 返回后由后台 goroutine 关闭 commandQueue。
+	if s.cmd != nil && s.cmd.Process != nil {
+		_ = s.cmd.Process.Kill()
+	}
+	_ = s.stdin.Close()
 }
 
 func shellQuote(s string) string {

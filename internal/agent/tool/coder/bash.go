@@ -9,7 +9,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
-	"github.com/biox-dev/gobrave/internal/agent/tool/coder/shell"
+	"github.com/biox-dev/gobrave/internal/agent/tool/coder/hostshell"
 	"github.com/biox-dev/gobrave/internal/config"
 )
 
@@ -285,7 +285,10 @@ func (b *bashTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 		return b.executeInContainer(ctx, params, templateID, startTime)
 	}
 
-	sh := shell.GetPersistentShell(workingDir(ctx))
+	sh := hostshell.GetPersistentShell(tool.SessionIDFrom(ctx), workingDir(ctx))
+	if sh == nil {
+		return nil, toolError("no available command shell on this platform")
+	}
 	stdout, stderr, exitCode, interrupted, err := sh.Exec(ctx, params.Command, params.Timeout)
 	if err != nil {
 		return nil, fmt.Errorf("error executing command: %w", err)
