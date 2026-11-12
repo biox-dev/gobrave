@@ -1,6 +1,7 @@
 package wsl
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -182,5 +183,49 @@ func TestDownloadedFalseWhenMissing(t *testing.T) {
 	}
 	if l.installed() {
 		t.Error("installed() should be false when nothing exists")
+	}
+}
+
+func TestInstalledTrueForAdoptedDistro(t *testing.T) {
+	// 接管场景：发行版 vhdx 由 WSL 自己管理，只有 distro-external 占位目录。
+	// installed() 必须认可它，否则 status 永远停在 not_installed。
+	dir := t.TempDir()
+	l := newLayout(dir)
+	if err := l.EnsureAdoptDirs(); err != nil {
+		t.Fatalf("EnsureAdoptDirs: %v", err)
+	}
+	if l.installed() {
+		t.Error("installed() should be false before state.json is written")
+	}
+
+	st := &state{Distro: "Ubuntu", Version: "Ubuntu 24.04", Port: 2375, Adopted: true}
+	if err := writeState(l.StatePath(), st); err != nil {
+		t.Fatalf("writeState: %v", err)
+	}
+	if !l.installed() {
+		t.Error("installed() should be true for adopted distro with state.json")
+	}
+	// 确认没有创建 distro 目录：接管不能污染导入目录。
+	if entries, err := filepath.Glob(filepath.Join(l.DistroDir(), "*")); err == nil && len(entries) > 0 {
+		t.Errorf("distro dir should stay empty for adopted distro, got %v", entries)
+	}
+}
+
+func TestInstalledRequiresDistroDirForImportedDistro(t *testing.T) {
+	dir := t.TempDir()
+	l := newLayout(dir)
+	if err := l.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	// 非接管：state.json 存在但 distro 目录被删，视为未安装。
+	st := &state{Distro: DefaultDistro, Port: 2375}
+	if err := writeState(l.StatePath(), st); err != nil {
+		t.Fatalf("writeState: %v", err)
+	}
+	if err := os.RemoveAll(l.DistroDir()); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+	if l.installed() {
+		t.Error("installed() should be false for imported distro once its dir is gone")
 	}
 }

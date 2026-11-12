@@ -87,13 +87,23 @@ func (l layout) EnsureDirs() error {
 	return nil
 }
 
-// installed 判断发行版是否已安装：distro 目录存在且 state.json 可读。
+// installed 判断发行版是否已安装（含「接管系统已有发行版」与「导入发行版」两种情况）。
+//
+// 导入场景：<root>/distro 目录存在且 state.json 可读；
+// 接管场景：发行版 vhdx 由 WSL 自己管理，只有 <root>/distro-external 占位目录，
+// 因此不能只看 DistroDir()，否则接管成功后 status 永远停在 not_installed。
 func (l layout) installed() bool {
-	if st, err := os.Stat(l.DistroDir()); err != nil || !st.IsDir() {
+	st, err := readState(l.StatePath())
+	if err != nil {
 		return false
 	}
-	_, err := readState(l.StatePath())
-	return err == nil
+	if st.Adopted {
+		return true
+	}
+	if dir, err := os.Stat(l.DistroDir()); err != nil || !dir.IsDir() {
+		return false
+	}
+	return true
 }
 
 // downloaded 判断 rootfs 包是否已下载完成。

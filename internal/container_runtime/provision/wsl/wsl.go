@@ -113,9 +113,28 @@ func (p *WSLProvisioner) Status(ctx context.Context) (*types.RuntimeStatus, erro
 		return status, nil
 	}
 
-	// 未安装但系统上已有该发行版（例如用户已装好的 Ubuntu）：
+	// 未安装（没有 state.json）但系统上已有该发行版（例如用户已装好的 Ubuntu）：
 	// 直接安装即可接管，无需下载 rootfs。
-	if registered, err := p.distroRegistered(ctx); err == nil && registered {
+	registered, regErr := p.distroRegistered(ctx)
+	if regErr != nil {
+		// WSL 不可用：此时无法判断，但也不能误报「可直接接管」。
+		status.State = types.StateNotInstalled
+		status.Detail = regErr.Error()
+		return status, nil
+	}
+	if registered {
+		status.Distro = p.cfg.Distro
+		if p.daemonRunning(ctx, p.cfg.Distro) && p.tcpListening(ctx, p.cfg.Distro, p.cfg.Port) {
+			status.State = types.StateRunning
+			if ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.Port); err == nil {
+				status.Endpoint = ep
+				status.Detail = "dockerd is running in existing distro (not yet adopted, click install to adopt)"
+			} else {
+				status.State = types.StateInstalled
+				status.Detail = err.Error()
+			}
+			return status, nil
+		}
 		status.State = types.StateNotInstalled
 		status.Detail = fmt.Sprintf("distro %s is already installed in WSL, install will start it directly without downloading", p.cfg.Distro)
 		return status, nil
@@ -445,9 +464,9 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 		return err
 	}
 
-	if _, err := runInDistro(ctx, p.cfg.Distro, "echo \"$(date -Is) port="+strconv.Itoa(p.cfg.Port)+"\" > "+managedMarkerPath); err != nil {
-		return fmt.Errorf("write managed marker in %s: %w", p.cfg.Distro, err)
-	}
+	// 标记文件写入失败不应中断接管：dockerd 已启动，state.json 才是判据。
+	// 标记仅用于排查归属，缺失会在下次 adopt 时补写。
+	_, _ = runInDistro(ctx, p.cfg.Distro, "echo \"$(date -Is) port="+strconv.Itoa(p.cfg.Port)+"\" > "+managedMarkerPath)
 
 	st := &state{
 		Distro:      p.cfg.Distro,
