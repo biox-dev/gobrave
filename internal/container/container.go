@@ -2,7 +2,6 @@ package container
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -297,17 +296,18 @@ func resolveDockerWSLDaemon(cfg *config.Config) bool {
 	return dockerruntime.AutoDetectWSLDaemon()
 }
 
-// runtimeProvisionManager 构造运行时预置管理器。
+// runtimeProvisionManager 构造运行时预置管理器，并在后台拉起 daemon。
 //
 // 返回 nil 表示「不启用自管预置」：此时 docker runtime 完全沿用历史行为
 // （client.FromEnv），不产生任何额外的 WSL / systemctl 调用。
 //
 // 启用条件是显式配置 container.docker.provision.enabled=true。
 // 该开关与平台无关：Windows 上预置的是自管 WSL 发行版，Linux 上预置的是本机 dockerd；
-// 参数（Distro / DownloadURL / Port）在 Linux 上被实现忽略。
+// 参数（Distro / DownloadURL / Endpoint）在 Linux 上被实现忽略。
 //
-// 默认关闭是刻意的：多数用户用 Docker Desktop 或已自行安装 dockerd，
-// 启动时静默启动 daemon 属于有副作用的操作，必须由配置授权。
+// StartAsync 由 Manager 自己放到 goroutine 中执行：dockerd 冷启动要数秒，
+// 不能阻塞进程启动 / 界面打开。Manager 同时被安装向导（status / download /
+// install / start 接口）复用，因此这里只负责构造与唤醒，不作为 endpoint 的来源。
 func runtimeProvisionManager(cfg *config.Config) *provision.Manager {
 	if !config.RuntimeProvisionEnabled(cfg) {
 		return nil
@@ -317,44 +317,12 @@ func runtimeProvisionManager(cfg *config.Config) *provision.Manager {
 		BaseDir:     config.StorageBaseDir(cfg),
 		DownloadURL: provCfg.DownloadURL,
 		Distro:      provCfg.Distro,
-		Port:        provCfg.Port,
+		Endpoint:    provCfg.Endpoint,
 	})
-	return provision.NewManager(inner)
+	mgr := provision.NewManager(inner)
+	mgr.StartAsync(context.Background())
+	return mgr
 }
-
-// startRuntimeProvision 执行一次启动自检并返回可用的 endpoint。
-//
-// 语义（与 provision.Provisioner.Start 一致）：
-//   - mgr 为 nil（未启用）→ 返回空串，调用方保持历史行为；
-//   - 未安装 → 静默返回空串，等待 UI 安装向导；
-//   - 已安装 → 确保 daemon 启动并返回 endpoint，失败仅记录日志。
-//
-// 该函数不得阻塞启动流程过久：用独立超时兜底，超时视为失败。
-func startRuntimeProvision(ctx context.Context, mgr *provision.Manager) string {
-	if mgr == nil {
-		return ""
-	}
-	runCtx, cancel := context.WithTimeout(ctx, runtimeProvisionTimeout)
-	defer cancel()
-
-	endpoint, err := mgr.Start(runCtx)
-	if err != nil {
-		if errors.Is(err, provision.ErrNotInstalled) {
-			logger.Infof(ctx, "[Container] container runtime provision: not installed, waiting for setup wizard")
-			return ""
-		}
-		logger.Warnf(ctx, "[Container] container runtime provision failed: %v", err)
-		return ""
-	}
-	logger.Infof(ctx, "[Container] container runtime provision ready: %s", endpoint)
-	return endpoint
-}
-
-// runtimeProvisionTimeout 是启动自检的超时上限。
-//
-// dockerd 冷启动（WSL 实例唤醒 + 容器运行时初始化）通常 3-15s，
-// 给 30s 上限既避免误判，也不会让启动流程无限挂起。
-const runtimeProvisionTimeout = 30 * time.Second
 
 // BuildContainer 注册依赖并返回容器。
 // cfg 由调用方（main）提前加载，因此 Gin 模式等需要在容器构建前生效的配置
@@ -389,11 +357,15 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 			case "docker":
 				var opts []dockerruntime.DockerRuntimeOption
 
-				// 启动自检：已安装则确保 dockerd 启动并拿到 endpoint；
-				// 未安装时什么都不做（等待 UI 安装向导），保持历史行为。
-				endpoint := startRuntimeProvision(ctx, provMgr)
-				if endpoint != "" {
-					opts = append(opts, dockerruntime.WithHost(endpoint))
+				// 启用自管预置时端点由 Manager 提供（底层实现按平台解析，已含默认值）；
+				// 不做启动自检、不阻塞进程启动；daemon 未就绪时由 docker client
+				// 首次调用时重试连接。
+				endpoint := ""
+				if config.RuntimeProvisionEnabled(cfg) {
+					endpoint = provMgr.Endpoint()
+					if endpoint != "" {
+						opts = append(opts, dockerruntime.WithHost(endpoint))
+					}
 				}
 
 				// 路径语义统一交给 PathMapper：storage.base_dir 决定宿主盘符，

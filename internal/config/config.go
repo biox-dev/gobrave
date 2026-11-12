@@ -338,7 +338,7 @@ type DockerRuntimeConfig struct {
 // RuntimeProvisionConfig 描述 gobrave 自管运行时预置的下载与运行参数。
 //
 // Enabled 与平台无关（Windows 上拉起自管 WSL 发行版内的 dockerd，Linux 上拉起
-// 本机 dockerd）；Distro / DownloadURL / Port 仅 Windows 实现使用，Linux 实现
+// 本机 dockerd）；Distro / DownloadURL / Endpoint 仅 Windows 实现使用，Linux 实现
 // 会忽略它们。
 type RuntimeProvisionConfig struct {
 	// Enabled 为 true 时启用运行时预置的启动自检：每次启动尝试 Start
@@ -354,23 +354,24 @@ type RuntimeProvisionConfig struct {
 	// DownloadURL rootfs 包下载地址（安装向导使用）。仅 Windows 生效；
 	// 接管已存在的同名发行版时可为空。
 	DownloadURL string `yaml:"download_url" json:"download_url"`
-	// Port dockerd 监听的 TCP 端口，默认 2375。仅 Windows 生效。
-	Port int `yaml:"port" json:"port"`
+	// Endpoint 是 daemon 地址，取值形如 tcp://localhost:2375 或
+	// unix:///var/run/docker.sock。仅 Windows 生效：Linux 实现固定用本机 socket。
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
 }
 
 // 自管运行时预置的默认值。
 const (
 	// DefaultProvisionDistro 默认发行版名（仅 Windows 使用）。
 	DefaultProvisionDistro = "gobrave-ubuntu-docker"
-	// DefaultProvisionDaemonPort 默认 dockerd TCP 端口。
-	DefaultProvisionDaemonPort = 2375
+	// DefaultProvisionEndpoint 默认 daemon 地址。
+	DefaultProvisionEndpoint = "tcp://localhost:2375"
 )
 
 // DefaultRuntimeProvisionConfig 返回预置段的默认配置。
 func DefaultRuntimeProvisionConfig() *RuntimeProvisionConfig {
 	return &RuntimeProvisionConfig{
 		Distro: DefaultProvisionDistro,
-		Port:   DefaultProvisionDaemonPort,
+		// Endpoint: DefaultProvisionEndpoint,
 	}
 }
 
@@ -1033,7 +1034,7 @@ func ResolveContainerRuntimes(cfg *Config) []string {
 // 任何一级缺失（cfg / container / docker / provision）都回退默认值。
 //
 // 该函数与平台无关：Windows 上参数用于自管 WSL 发行版，Linux 上 Distro /
-// DownloadURL / Port 被忽略，只用来构造本机 dockerd 的管理器。
+// DownloadURL / Endpoint 被忽略，只用来构造本机 dockerd 的管理器。
 func ResolveRuntimeProvisionConfig(cfg *Config) *RuntimeProvisionConfig {
 	if cfg == nil || cfg.Container == nil || cfg.Container.Docker == nil {
 		return DefaultRuntimeProvisionConfig()
@@ -1046,9 +1047,8 @@ func ResolveRuntimeProvisionConfig(cfg *Config) *RuntimeProvisionConfig {
 	if strings.TrimSpace(out.Distro) == "" {
 		out.Distro = DefaultProvisionDistro
 	}
-	if out.Port <= 0 {
-		out.Port = DefaultProvisionDaemonPort
-	}
+	// Endpoint 保持原样（可能为空）：默认值由平台实现决定。
+	out.Endpoint = strings.TrimSpace(out.Endpoint)
 	return &out
 }
 
@@ -1081,9 +1081,8 @@ func normalizeRuntimeProvisionConfig(d **DockerRuntimeConfig) {
 		provisionCfg.Distro = DefaultProvisionDistro
 	}
 	provisionCfg.DownloadURL = strings.TrimSpace(provisionCfg.DownloadURL)
-	if provisionCfg.Port <= 0 {
-		provisionCfg.Port = DefaultProvisionDaemonPort
-	}
+	// Endpoint 允许为空：默认值由平台实现（provision.New）选择。
+	provisionCfg.Endpoint = strings.TrimSpace(provisionCfg.Endpoint)
 }
 
 // normalizeContainerRuntimes 归一化运行时名称并去重，保持首次出现的顺序。

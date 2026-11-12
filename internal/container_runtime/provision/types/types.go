@@ -105,6 +105,9 @@ type Provisioner interface {
 	// 已安装但未运行时负责拉起；未安装时返回 ErrNotInstalled。
 	Start(ctx context.Context) (endpoint string, err error)
 
+	// Endpoint 返回当前 daemon 地址；未启动或未解析到时为空。
+	Endpoint() string
+
 	// Stop 停止 daemon（不改变安装状态）。
 	Stop(ctx context.Context) error
 
@@ -120,6 +123,7 @@ type Config struct {
 	DownloadURL string
 	// Distro 发行版名（仅 Windows）。
 	Distro string
-	// Port dockerd 的 TCP 端口（仅 Windows）。
-	Port int
+	// Endpoint daemon 地址；为空时由平台实现选择默认值
+	// （Windows 上是 tcp://localhost:2375，Linux / macOS 上是本机 unix socket）。
+	Endpoint string
 }

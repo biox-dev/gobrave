@@ -17,6 +17,8 @@ const (
 	DefaultRootfsName = "gobrave-ubuntu-docker-amd64.tar"
 	// DefaultDaemonPort 是 WSL 内 dockerd 监听的 TCP 端口。
 	DefaultDaemonPort = 2375
+	// DefaultEndpoint 是 Windows 平台上自管 dockerd 的默认地址。
+	DefaultEndpoint = "tcp://localhost:2375"
 	// managedMarkerPath 是 gobrave 在发行版根目录留下的归属标记。
 	//
 	// 用于区分「系统上本来就有、且由 gobrave 启动过 dockerd 的发行版」与

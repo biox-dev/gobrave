@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,8 +25,9 @@ type Config struct {
 	DownloadURL string
 	// Distro 发行版名，默认 DefaultDistro。
 	Distro string
-	// Port dockerd 的 TCP 端口，默认 DefaultDaemonPort。
-	Port int
+	// Endpoint daemon 地址，默认 DefaultEndpoint（tcp://localhost:2375）；
+	// 仅支持 tcp://，取值形如 tcp://localhost:2375。
+	Endpoint string
 	// HTTPClient 用于下载；nil 时使用内置 client（大文件不设总超时）。
 	HTTPClient *http.Client
 }
@@ -46,8 +48,8 @@ func New(cfg Config) *WSLProvisioner {
 	if strings.TrimSpace(cfg.Distro) == "" {
 		cfg.Distro = DefaultDistro
 	}
-	if cfg.Port <= 0 {
-		cfg.Port = DefaultDaemonPort
+	if strings.TrimSpace(cfg.Endpoint) == "" {
+		cfg.Endpoint = DefaultEndpoint
 	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{}
@@ -56,9 +58,25 @@ func New(cfg Config) *WSLProvisioner {
 		cfg:    cfg,
 		layout: newLayout(cfg.BaseDir),
 	}
-	logger.Infof(context.Background(), "[wsl] provisioner created: base_dir=%s data_dir=%s distro=%s port=%d download_url=%s",
-		cfg.BaseDir, p.layout.Root(), cfg.Distro, cfg.Port, cfg.DownloadURL)
+	logger.Infof(context.Background(), "[wsl] provisioner created: base_dir=%s data_dir=%s distro=%s endpoint=%s download_url=%s",
+		cfg.BaseDir, p.layout.Root(), cfg.Distro, cfg.Endpoint, cfg.DownloadURL)
 	return p
+}
+
+// port 从 Endpoint 解析出 TCP 端口；无法解析时回退默认端口。
+//
+// 端口只用于 dockerd 的 --host=tcp://0.0.0.0:<port> 与监听探测，
+// 因此 unix:// 等非 TCP 地址一律回退默认值。
+func (c Config) port() int {
+	u, err := url.Parse(string(c.Endpoint))
+	if err != nil || u.Port() == "" {
+		return DefaultDaemonPort
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port <= 0 {
+		return DefaultDaemonPort
+	}
+	return port
 }
 
 var _ types.Provisioner = (*WSLProvisioner)(nil)
@@ -130,9 +148,9 @@ func (p *WSLProvisioner) Status(ctx context.Context) (*types.RuntimeStatus, erro
 	}
 	if registered {
 		status.Distro = p.cfg.Distro
-		if p.daemonRunning(ctx, p.cfg.Distro) && p.tcpListening(ctx, p.cfg.Distro, p.cfg.Port) {
+		if p.daemonRunning(ctx, p.cfg.Distro) && p.tcpListening(ctx, p.cfg.Distro, p.cfg.port()) {
 			status.State = types.StateRunning
-			if ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.Port); err == nil {
+			if ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.port()); err == nil {
 				status.Endpoint = ep
 				status.Detail = "dockerd is running in existing distro (not yet adopted, click install to adopt)"
 			} else {
@@ -269,14 +287,14 @@ func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFun
 	}
 
 	types.Report(progress, "configure", 80, "starting dockerd")
-	if err := p.startDaemon(ctx, p.cfg.Distro, p.cfg.Port); err != nil {
+	if err := p.startDaemon(ctx, p.cfg.Distro, p.cfg.port()); err != nil {
 		return err
 	}
 
 	st := &state{
 		Distro:      p.cfg.Distro,
 		Version:     p.detectVersion(ctx, p.cfg.Distro),
-		Port:        p.cfg.Port,
+		Port:        p.cfg.port(),
 		InstalledAt: time.Now(),
 	}
 	if err := writeState(p.layout.StatePath(), st); err != nil {
@@ -287,7 +305,7 @@ func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFun
 	logger.Infof(ctx, "[wsl] Install: state written to %s (version=%q)", p.layout.StatePath(), st.Version)
 
 	types.Report(progress, "start", 95, "resolving endpoint")
-	ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.Port)
+	ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.port())
 	if err != nil {
 		return err
 	}
@@ -463,12 +481,12 @@ func (p *WSLProvisioner) setErr(err error) {
 	p.lastErr = err
 }
 
-// port 返回 state 中的端口，缺失时回退配置。
+// port 返回 state 中的端口，缺失时回退配置中的 endpoint。
 func (p *WSLProvisioner) port(st *state) int {
 	if st != nil && st.Port > 0 {
 		return st.Port
 	}
-	return p.cfg.Port
+	return p.cfg.port()
 }
 
 // distroRegistered 判断发行版是否存在于 WSL 注册表中。
@@ -527,13 +545,13 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 	}
 
 	types.Report(progress, "adopt", 75, "starting dockerd")
-	if err := p.startDaemon(ctx, p.cfg.Distro, p.cfg.Port); err != nil {
+	if err := p.startDaemon(ctx, p.cfg.Distro, p.cfg.port()); err != nil {
 		return err
 	}
 
 	// 标记文件写入失败不应中断接管：dockerd 已启动，state.json 才是判据。
 	// 标记仅用于排查归属，缺失会在下次 adopt 时补写。
-	markerCmd := "echo \"$(date -Is) port=" + strconv.Itoa(p.cfg.Port) + "\" > " + managedMarkerPath
+	markerCmd := "echo \"$(date -Is) endpoint=" + p.cfg.Endpoint + "\" > " + managedMarkerPath
 	if _, err := runInDistro(ctx, p.cfg.Distro, markerCmd); err != nil {
 		logger.Warnf(ctx, "[wsl] adopt: write managed marker failed (ignored): %v", err)
 	}
@@ -541,7 +559,7 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 	st := &state{
 		Distro:      p.cfg.Distro,
 		Version:     p.detectVersion(ctx, p.cfg.Distro),
-		Port:        p.cfg.Port,
+		Port:        p.cfg.port(),
 		InstalledAt: time.Now(),
 		Adopted:     true,
 	}
@@ -552,7 +570,7 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 	logger.Infof(ctx, "[wsl] adopt: state written to %s (version=%q)", p.layout.StatePath(), st.Version)
 
 	types.Report(progress, "adopt", 95, "resolving endpoint")
-	ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.Port)
+	ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.port())
 	if err != nil {
 		return err
 	}

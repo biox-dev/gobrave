@@ -16,7 +16,7 @@ func New(cfg Config) Provisioner {
 		BaseDir:     cfg.BaseDir,
 		DownloadURL: cfg.DownloadURL,
 		Distro:      cfg.Distro,
-		Port:        cfg.Port,
+		Endpoint:    cfg.Endpoint,
 	})
 }
 

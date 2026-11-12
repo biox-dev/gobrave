@@ -14,7 +14,9 @@ import (
 // 维护，gobrave 不应替用户装包。这样 Start 的语义与 Windows 完全一致——
 // 「已安装则确保运行，未安装则返回 ErrNotInstalled」，上层无需分支。
 type systemdProvisioner struct {
-	// socket 是本机 daemon 的 unix socket 路径。
+	// endpoint 是本机 daemon 的地址，形如 unix:///var/run/docker.sock。
+	endpoint string
+	// socket 是 unix socket 路径（用于探测 / Stop）；非 unix:// endpoint 时为空。
 	socket string
 	// serviceName systemd 单元名。
 	serviceName string
@@ -22,21 +24,45 @@ type systemdProvisioner struct {
 
 // newLocal 返回管理本机 docker daemon 的实现。
 //
+// endpoint 为配置传入的地址；为空时回退默认值：
+//   - DOCKER_HOST 为 unix:// 时使用它，否则用 unix:///var/run/docker.sock。
+//
 // 非 Windows 平台都走这里（Linux 是主要场景）。macOS 上通常由 Docker Desktop
 // 提供 socket，此时 Start 会因为找不到 socket 而返回 ErrNotInstalled，
 // 由用户通过 Desktop 启动，行为仍然一致。
-func newLocal() Provisioner {
+func newLocal(endpoint string) Provisioner {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		endpoint = envOrDefaultEndpoint()
+	}
 	return &systemdProvisioner{
-		socket:      defaultSocketPath(),
+		endpoint:    endpoint,
+		socket:      socketPathFromEndpoint(endpoint),
 		serviceName: "docker",
 	}
 }
 
-func defaultSocketPath() string {
+// envOrDefaultEndpoint 返回 DOCKER_HOST（仅 unix://）或默认 socket 地址。
+func envOrDefaultEndpoint() string {
 	if p := strings.TrimSpace(os.Getenv("DOCKER_HOST")); strings.HasPrefix(p, "unix://") {
-		return strings.TrimPrefix(p, "unix://")
+		return p
 	}
-	return "/var/run/docker.sock"
+	return "unix:///var/run/docker.sock"
+}
+
+// socketPathFromEndpoint 从 unix:// endpoint 中取出 socket 路径；
+// 非 unix:// 地址（如 tcp://）返回空串——此时只做 endpoint 透传，不做文件探测。
+//
+// 兼容 unix://var/run/docker.sock（缺一斜杠）写法。
+func socketPathFromEndpoint(endpoint string) string {
+	if !strings.HasPrefix(endpoint, "unix://") {
+		return ""
+	}
+	path := strings.TrimPrefix(endpoint, "unix://")
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return path
 }
 
 // Status 探测本机 dockerd。
@@ -49,12 +75,12 @@ func (p *systemdProvisioner) Status(ctx context.Context) (*RuntimeStatus, error)
 	}
 	if p.socketReady(ctx) {
 		status.State = StateRunning
-		status.Endpoint = "unix://" + p.socket
+		status.Endpoint = p.endpoint
 		status.Detail = "dockerd is running"
 		return status, nil
 	}
-	status.State = StateInstalled
-	status.Detail = "dockerd is installed but not running"
+	// status.State = StateInstalled
+	// status.Detail = "dockerd is installed but not running"
 	return status, nil
 }
 
@@ -79,7 +105,7 @@ func (p *systemdProvisioner) Start(ctx context.Context) (string, error) {
 		return "", ErrNotInstalled
 	}
 	if p.socketReady(ctx) {
-		return "unix://" + p.socket, nil
+		return p.endpoint, nil
 	}
 	// if err := p.systemctl(ctx, "start", p.serviceName); err != nil {
 	// 	return "", err
@@ -88,7 +114,7 @@ func (p *systemdProvisioner) Start(ctx context.Context) (string, error) {
 	// if !p.socketReady(ctx) {
 	// 	return "", errors.New("dockerd started but socket is not ready: " + p.socket)
 	// }
-	return "unix://" + p.socket, nil
+	return p.endpoint, nil
 }
 
 // Stop 停止 systemd 单元。
@@ -102,9 +128,14 @@ func (p *systemdProvisioner) Stop(ctx context.Context) error {
 // HealthCheck 探测 socket 是否存在且可连接。
 func (p *systemdProvisioner) HealthCheck(ctx context.Context) error {
 	if !p.socketReady(ctx) {
-		return errors.New("docker socket is not available: " + p.socket)
+		return errors.New("docker socket is not available: " + p.endpoint)
 	}
 	return nil
+}
+
+// Endpoint 返回本机 daemon 地址。
+func (p *systemdProvisioner) Endpoint() string {
+	return p.endpoint
 }
 
 // binaryExists 判断 dockerd 是否安装。
@@ -117,11 +148,15 @@ func (p *systemdProvisioner) binaryExists() bool {
 	return false
 }
 
-// socketReady 判断 socket 文件是否存在。
+// socketReady 判断 unix socket 是否就绪。
 //
-// 不直接 net.Dial：unix socket 需要特殊 dialer，且这里只需要「是否已就绪」的
-// 粗判定，真正的可用性由 DockerRuntime.HealthCheck（docker Ping）确认。
+// 非 unix:// endpoint（如 tcp://）不做文件探测，直接视为就绪：真正的可用性由
+// DockerRuntime.HealthCheck（docker Ping）确认。unix socket 也不直接 net.Dial：
+// 这里只需要「是否已就绪」的粗判定。
 func (p *systemdProvisioner) socketReady(context.Context) bool {
+	if p.socket == "" {
+		return false
+	}
 	st, err := os.Stat(p.socket)
 	return err == nil && !st.IsDir()
 }

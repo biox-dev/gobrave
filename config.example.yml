@@ -184,13 +184,14 @@ container:
     # 用户已经跑起来的 daemon。默认关闭；开启后每次启动做一次幂等的 Start 自检。
     #   enabled:      与平台无关。Windows 上拉起自管 WSL 发行版内的 dockerd，
     #                 Linux 上执行 systemctl start docker 管理本机 dockerd。
-    #   distro / download_url / port: 仅 Windows 生效，Linux 实现会忽略。
+    #   distro / download_url / endpoint: 仅 Windows 生效，Linux 实现会忽略。
+    #   endpoint:      daemon 地址，tcp://localhost:2375 或 unix:///var/run/docker.sock。
     # 未安装时不会自动安装，只等 UI 安装向导。
     # provision:
     #   enabled: true
     #   distro: gobrave-ubuntu-docker
     #   download_url: ""
-    #   port: 2375
+    #   endpoint: tcp://localhost:2375
   #
   # 应用容器端口的访问方式。
   #   container_ip（默认）：gobrave 直接访问容器 IP（docker0 / Pod IP），
