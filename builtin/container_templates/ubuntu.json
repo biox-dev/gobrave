@@ -20,7 +20,7 @@
     {
       "id": "2112483278714834944",
       "spec_id": "2112483153338699776",
-      "image_name": "ubuntu",
+      "image_name": "registry.cn-hangzhou.aliyuncs.com/wybioinfo/ubuntu",
       "pull_policy": "IfNotPresent",
       "display_name": "ubuntu",
       "description": ""
