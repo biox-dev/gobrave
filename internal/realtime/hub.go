@@ -306,6 +306,26 @@ func (h *Hub) PushMessage(userID int64, data any) error {
 	return nil
 }
 
+// Broadcast 把同一条消息推给所有在线连接（跨用户），用于与用户无关的全局事件
+// （例如「容器队列发生了变化」这种所有在线客户端都该刷新的通知）。
+//
+// 与 PushMessage 不同，没有在线连接不算错误：广播本身就是尽力而为。
+func (h *Hub) Broadcast(data any) {
+	h.mu.RLock()
+	clients := make([]*client, 0, len(h.clientByID))
+	for _, c := range h.clientByID {
+		clients = append(clients, c)
+	}
+	h.mu.RUnlock()
+
+	for _, c := range clients {
+		if err := h.sendWithoutAck(c, data); err != nil {
+			logger.Warnf(context.Background(), "[Realtime] broadcast failed user_id=%d client_id=%s err=%v", c.userID, c.id, err)
+			h.unregisterClient(c.id)
+		}
+	}
+}
+
 func (h *Hub) PushMessageWaitAck(userID int64, data any, timeout time.Duration) PushAckResult {
 	result := PushAckResult{UserID: userID}
 	if userID == 0 {

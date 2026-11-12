@@ -812,6 +812,18 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(handler.NewFileHandler))
 	must(container.Provide(handler.NewProxyHandler))
 	must(container.Provide(realtime.NewHub))
+	// 回填 ContainerManager 的实时推送出口：容器创建 / 删除时向所有在线客户端广播
+	// 「队列状态变化」，用于刷新前端 ContainerQueueMonitor。
+	//
+	// 位置是硬约束：dig 的 Invoke 会**立即**解析依赖，所以必须写在
+	// Provide(realtime.NewHub) 之后；挪到前面就会报 “missing type: *realtime.Hub”
+	// （这就是之前 startup panic 的原因）。
+	//
+	// 用 Invoke 回填而不是给 NewContainerManager 加构造参数，是为了让
+	// 「创建 Manager」不被「注册 Hub」的位置绑定 —— 否则以后有人调整顺序又会被绊到。
+	must(container.Invoke(func(mgr *manager.ContainerManager, hub *realtime.Hub) {
+		mgr.SetHub(hub)
+	}))
 	must(container.Provide(handler.NewRealtimeHandler))
 	// RuntimeContextResolver：把业务 env(type,id) 解析为系统提示词 + 工作目录，
 	// 供 Agent 会话（AgentHandler）使用。

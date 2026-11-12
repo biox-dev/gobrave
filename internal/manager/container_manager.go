@@ -16,6 +16,7 @@ import (
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/realtime"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"gorm.io/gorm"
@@ -42,6 +43,19 @@ type ContainerManager struct {
 	res              ContainerRuntimeResolver
 	cfg              *config.Config
 	monitorOnce      sync.Once
+
+	// hub 是实时推送出口：容器创建 / 删除这类「与用户无关」的全局变化
+	// 需要推给所有在线客户端（见 broadcastContainerChanged）。为空时静默跳过。
+	//
+	// 用 SetHub 在装配阶段回填，而不是放进构造函数，因为 *realtime.Hub 可能在
+	// ContainerManager 之前还没被 Provide：dig 的 Invoke 是**立即**解析依赖的，
+	// 而 Provide 只是注册。真实失败就是 container.go 里回填 Invoke 写在了
+	// Provide(realtime.NewHub) 之前 → “missing type: *realtime.Hub”。
+	// 回填写法让「创建 Manager」与「注册 Hub」的先后顺序不再互相约束。
+	//
+	// 注意：这里**不是**包级循环依赖 —— internal/realtime 不 import manager/handler，
+	// NewHub 只依赖 *config.Config。真正需要避免的是装配顺序耦合。
+	hub *realtime.Hub
 
 	// lifecycle 收敛状态迁移 / 运行时解析 / spec 组装等与 ContainerCreateWorker
 	// 共享的地基层能力，避免 Manager 与 Worker 相互持有指针（见 container_lifecycle.go）。
@@ -76,6 +90,16 @@ func NewContainerManager(
 		// lifecycle 由 DI 单例注入，与 ContainerCreateWorker 共享同一实例。
 		lifecycle: lifecycle,
 	}
+}
+
+// SetHub 回填实时推送出口（由容器装配阶段调用一次）。
+//
+// 不走构造函数的原因见 hub 字段的注释：这是装配顺序问题，不是包级循环依赖。
+func (s *ContainerManager) SetHub(hub *realtime.Hub) {
+	if s == nil {
+		return
+	}
+	s.hub = hub
 }
 
 // Lifecycle 返回 Manager 持有的共享生命周期基础设施，供 ContainerCreateWorker 注入使用。
@@ -228,6 +252,7 @@ func (s *ContainerManager) notifyInstanceStatus(instanceID int64, status types.C
 	}
 }
 
+// concurrencyOccupiedStatuses 返回占用创建并发额度的状态集合。
 func concurrencyOccupiedStatuses() []types.ContainerStatus {
 	return []types.ContainerStatus{
 		types.ContainerCreating,
@@ -240,6 +265,42 @@ func concurrencyOccupiedStatuses() []types.ContainerStatus {
 
 func (s *ContainerManager) GetMaxConcurrency() int {
 	return s.lifecycle.MaxConcurrency()
+}
+
+// ContainerQueueRealtimeCategory 是「容器队列」实时通知在前端的组件类目。
+//
+// 前端 ContainerQueueMonitor 用 useComponentStore 注册 category=container-queue 的
+// handler（method=containerChanged），后端每次推送都会触发它重新拉取
+// /container/queue/status。
+const ContainerQueueRealtimeCategory = "container-queue"
+
+// broadcastContainerChanged 通知所有在线客户端「容器集合发生了变化」。
+//
+// 容器创建 / 删除会改变 /container/queue/status 的 active_count / pending_count，
+// 而这份状态与具体用户无关，因此走 hub.Broadcast（而不是按 userID 推送）。
+// 前端只需要收到一条 component.invoke 就会重新拉一次队列状态，不依赖具体参数。
+func (m *ContainerManager) broadcastContainerChanged(ctx context.Context, evt string, inst *types.ContainerInstance) {
+	if m.hub == nil || inst == nil {
+		return
+	}
+
+	args := map[string]any{
+		"event": evt,
+		"id":    strconv.FormatInt(inst.ID, 10),
+	}
+	if status := strings.ToLower(strings.TrimSpace(string(inst.Status))); status != "" {
+		args["status"] = status
+	}
+
+	m.hub.Broadcast(map[string]any{
+		"action": "component.invoke",
+		"payload": map[string]any{
+			"category": ContainerQueueRealtimeCategory,
+			"id":       "*",
+			"method":   "containerChanged",
+			"args":     args,
+		},
+	})
 }
 
 // func (m *ContainerManager) Create(ctx context.Context, spec Spec) error {
@@ -405,6 +466,9 @@ func (m *ContainerManager) CreateByTemplateWithOptions(ctx context.Context, opts
 	}
 
 	logger.Infof(ctx, "[ContainerManager] enqueued create request, instance_id=%d name=%s", inst.ID, opts.Name)
+	// 实例已落库：容器集合发生变化（active / pending 计数都会变），
+	// 立即广播给所有在线客户端刷新队列状态。
+	// m.broadcastContainerChanged(ctx, "ContainerCreated", inst)
 	return inst, nil
 }
 
@@ -445,6 +509,8 @@ func (m *ContainerManager) createByTemplateSync(ctx context.Context, inst *types
 	if latest, err := m.containerRepo.GetContainerInstanceByID(ctx, inst.ID); err == nil && latest != nil {
 		inst = latest
 	}
+	// 同步创建已完成：实例已经是 running，广播一次让队列状态 / 列表刷新。
+	// m.broadcastContainerChanged(ctx, "ContainerCreated", inst)
 	return inst, nil
 }
 
@@ -835,6 +901,9 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 		}
 		// _ = m.transition(ctx, inst, fsm.Running, "ContainerStarted")
 		_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerRunning, "ContainerStarted")
+		// 容器进入 running：active_count 变化（creating → running 仍是占用态，
+		// 但 started_at / IP 等展示字段已就绪），推送一次让队列状态与列表刷新。
+		m.broadcastContainerChanged(ctx, "ContainerStarted", inst)
 
 	case "ContainerPaused":
 		// _ = m.transition(ctx, inst, fsm.Paused, "ContainerPaused")
@@ -903,6 +972,8 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 			if err := m.containerRepo.DeleteContainerInstance(ctx, inst.ID); err != nil {
 				logger.Warnf(ctx, "[ContainerManager] delete container instance failed, instance_id=%d runtime_id=%s err=%v", inst.ID, e.RuntimeID, err)
 			}
+			// 实例记录已删除：容器集合发生变化，广播给所有在线客户端刷新队列状态。
+			m.broadcastContainerChanged(ctx, "ContainerDeleted", inst)
 		}
 
 		// default:
