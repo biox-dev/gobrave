@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/logger"
 )
 
 // downloadFile 把 url 下载到 dst，支持断点续传。
@@ -31,14 +33,17 @@ func downloadFile(ctx context.Context, client *http.Client, url, dst, checksum s
 	// 已下载完成且校验通过：直接复用。
 	if st, err := os.Stat(dst); err == nil && st.Size() > 0 {
 		if checksum == "" || verifySHA256(dst, checksum) == nil {
+			logger.Infof(ctx, "[wsl] downloadFile: reuse existing %s (%d bytes)", dst, st.Size())
 			return nil
 		}
+		logger.Warnf(ctx, "[wsl] downloadFile: existing %s failed checksum, removing", dst)
 		_ = os.Remove(dst)
 	}
 
 	var offset int64
 	if st, err := os.Stat(part); err == nil {
 		offset = st.Size()
+		logger.Infof(ctx, "[wsl] downloadFile: resuming from %s at offset %d", part, offset)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -58,10 +63,15 @@ func downloadFile(ctx context.Context, client *http.Client, url, dst, checksum s
 	switch resp.StatusCode {
 	case http.StatusOK:
 		// 服务端不支持续传，从头写入。
+		if offset > 0 {
+			logger.Warnf(ctx, "[wsl] downloadFile: server ignored Range request, restarting from 0 (was %d)", offset)
+		}
 		offset = 0
 	case http.StatusPartialContent:
 		// 正常续传。
+		logger.Infof(ctx, "[wsl] downloadFile: server accepted resume from offset %d", offset)
 	default:
+		logger.Errorf(ctx, "[wsl] downloadFile: unexpected status %s for %s", resp.Status, url)
 		return fmt.Errorf("download %s: unexpected status %s", url, resp.Status)
 	}
 
@@ -69,6 +79,7 @@ func downloadFile(ctx context.Context, client *http.Client, url, dst, checksum s
 	if resp.ContentLength > 0 {
 		total = offset + resp.ContentLength
 	}
+	logger.Infof(ctx, "[wsl] downloadFile: GET %s offset=%d total=%d", url, offset, total)
 
 	flag := os.O_CREATE | os.O_WRONLY
 	if offset == 0 {
@@ -108,15 +119,20 @@ func downloadFile(ctx context.Context, client *http.Client, url, dst, checksum s
 	}
 
 	if checksum != "" {
+		logger.Infof(ctx, "[wsl] downloadFile: verifying sha256 of %s", part)
 		if err := verifySHA256(part, checksum); err != nil {
+			logger.Errorf(ctx, "[wsl] downloadFile: checksum verification failed, removing %s: %v", part, err)
 			_ = os.Remove(part)
 			return err
 		}
+		logger.Infof(ctx, "[wsl] downloadFile: checksum ok")
 	}
 
 	if err := os.Rename(part, dst); err != nil {
+		logger.Errorf(ctx, "[wsl] downloadFile: finalize %s -> %s failed: %v", part, dst, err)
 		return fmt.Errorf("finalize %s: %w", dst, err)
 	}
+	logger.Infof(ctx, "[wsl] downloadFile: completed %s (%d bytes)", dst, written)
 	return nil
 }
 

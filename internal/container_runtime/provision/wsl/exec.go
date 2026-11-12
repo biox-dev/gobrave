@@ -9,8 +9,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/biox-dev/gobrave/internal/logger"
 )
 
 // wslExePath 返回 wsl.exe 的绝对路径。
@@ -37,8 +40,13 @@ func wslExePath() (string, error) {
 func runWSL(ctx context.Context, args ...string) (string, error) {
 	exe, err := wslExePath()
 	if err != nil {
+		logger.Errorf(ctx, "[wsl] resolve wsl.exe failed: %v", err)
 		return "", err
 	}
+
+	cmdline := formatArgv(exe, args)
+	logger.Infof(ctx, "[wsl] exec: %s", cmdline)
+	start := time.Now()
 
 	cmd := exec.CommandContext(ctx, exe, args...)
 	var stdout, stderr bytes.Buffer
@@ -50,9 +58,51 @@ func runWSL(ctx context.Context, args ...string) (string, error) {
 		if msg == "" {
 			msg = strings.TrimSpace(decodeOutput(stdout.Bytes()))
 		}
+		logger.Errorf(ctx, "[wsl] exec failed after %s: %s: err=%v stderr=%q stdout=%q",
+			time.Since(start).Round(time.Millisecond), cmdline, err, msg, strings.TrimSpace(decodeOutput(stdout.Bytes())))
 		return decodeOutput(stdout.Bytes()), fmt.Errorf("wsl %s: %w: %s", strings.Join(args, " "), err, msg)
 	}
-	return decodeOutput(stdout.Bytes()), nil
+
+	out := decodeOutput(stdout.Bytes())
+	logger.Debugf(ctx, "[wsl] exec ok in %s: %s: stdout=%q stderr=%q",
+		time.Since(start).Round(time.Millisecond), cmdline, strings.TrimSpace(out), strings.TrimSpace(decodeOutput(stderr.Bytes())))
+	return out, nil
+}
+
+// formatArgv 把可执行文件与参数拼成一行可复制的命令行，便于排查。
+//
+// 含空白或引号的参数用双引号包裹，避免日志里的命令行被误读。
+func formatArgv(exe string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, quoteArg(exe))
+	for _, a := range args {
+		parts = append(parts, quoteArg(a))
+	}
+	return strings.Join(parts, " ")
+}
+
+// quoteArg 在必要时给参数加双引号。
+func quoteArg(s string) string {
+	if s == "" || strings.ContainsAny(s, " \t\"'") {
+		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	}
+	return s
+}
+
+// compactScript 把多行脚本压成单行，便于写进一行日志。
+//
+// 保留换行分隔的命令边界（用 "; " 连接），去掉空行，避免日志被拉长。
+func compactScript(script string) string {
+	lines := strings.Split(script, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		kept = append(kept, l)
+	}
+	return strings.Join(kept, "; ")
 }
 
 // runInDistro 以 root 身份在指定发行版里执行一条 shell 命令。
@@ -60,12 +110,16 @@ func runWSL(ctx context.Context, args ...string) (string, error) {
 // 统一用 sh -lc：交互式登录 shell 会加载 profile，可能改写 PATH / 启动额外进程，
 // 而这里需要的是可预测的最小环境。
 func runInDistro(ctx context.Context, distro, script string) (string, error) {
+	logger.Debugf(ctx, "[wsl] run in distro %s: %s", distro, compactScript(script))
 	return runWSL(ctx, "-d", distro, "-u", "root", "--", "sh", "-lc", script)
 }
 
 // runInDistroQuiet 同 runInDistro，但忽略失败只返回退出码是否成功。
 func runInDistroQuiet(ctx context.Context, distro, script string) bool {
 	_, err := runInDistro(ctx, distro, script)
+	if err != nil {
+		logger.Debugf(ctx, "[wsl] quiet probe in distro %s failed (treated as false): %s: %v", distro, compactScript(script), err)
+	}
 	return err == nil
 }
 
@@ -135,7 +189,9 @@ func listDistros(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return splitDistroList(out), nil
+	names := splitDistroList(out)
+	logger.Debugf(ctx, "[wsl] installed distros: %v", names)
+	return names, nil
 }
 
 // runningDistros 返回正在运行的发行版名列表。

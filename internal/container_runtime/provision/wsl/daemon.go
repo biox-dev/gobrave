@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/docker/docker/client"
 )
 
@@ -61,13 +62,17 @@ func (p *WSLProvisioner) tcpListening(ctx context.Context, distro string, port i
 // 已运行则直接返回 nil（幂等）：Start 每次进程启动都会被调用，
 // 不能因为重复调用而重启 daemon。
 func (p *WSLProvisioner) startDaemon(ctx context.Context, distro string, port int) error {
+	logger.Infof(ctx, "[wsl] startDaemon: distro=%s port=%d", distro, port)
 	if p.daemonRunning(ctx, distro) && p.tcpListening(ctx, distro, port) {
+		logger.Infof(ctx, "[wsl] startDaemon: dockerd already running in %s and listening on :%d, skip", distro, port)
 		return nil
 	}
 
 	script := fmt.Sprintf("mkdir -p %s\n%v", distroRoot,
 		buildStartScript(port))
+	logger.Infof(ctx, "[wsl] startDaemon: launching dockerd in %s, script: %s", distro, compactScript(script))
 	if _, err := runInDistro(ctx, distro, script); err != nil {
+		logger.Errorf(ctx, "[wsl] startDaemon: start dockerd in %s failed: %v", distro, err)
 		return fmt.Errorf("start dockerd in %s: %w", distro, err)
 	}
 
@@ -78,15 +83,20 @@ func (p *WSLProvisioner) startDaemon(ctx context.Context, distro string, port in
 	for i := 0; i < daemonReadyTries; i++ {
 		select {
 		case <-ctx.Done():
+			logger.Warnf(ctx, "[wsl] startDaemon: context done while waiting dockerd in %s (try %d/%d): %v", distro, i+1, daemonReadyTries, ctx.Err())
 			return ctx.Err()
 		default:
 		}
-		if p.tcpListening(ctx, distro, port) && p.probeFromWindows(ctx, distro, port) {
+		listening := p.tcpListening(ctx, distro, port)
+		if listening && p.probeFromWindows(ctx, distro, port) {
+			logger.Infof(ctx, "[wsl] startDaemon: dockerd ready in %s on :%d after %d tries", distro, port, i+1)
 			return nil
 		}
 		lastErr = fmt.Errorf("dockerd not reachable on :%d yet", port)
+		logger.Debugf(ctx, "[wsl] startDaemon: not ready yet (try %d/%d), listening_in_distro=%t", i+1, daemonReadyTries, listening)
 		time.Sleep(daemonReadyDelay)
 	}
+	logger.Errorf(ctx, "[wsl] startDaemon: dockerd did not become ready in %s after %d tries: %v", distro, daemonReadyTries, lastErr)
 	return fmt.Errorf("dockerd did not become ready: %w", lastErr)
 }
 
@@ -103,14 +113,18 @@ func buildStartScript(port int) string {
 //
 // 只需建立 TCP 连接：这里验证的是「网络可达」，docker 协议探活由 resolveEndpoint 负责。
 func (p *WSLProvisioner) probeFromWindows(ctx context.Context, distro string, port int) bool {
-	for _, host := range p.endpointCandidatesFromWindows(ctx, distro, port) {
+	candidates := p.endpointCandidatesFromWindows(ctx, distro, port)
+	for _, host := range candidates {
 		conn, err := net.DialTimeout("tcp", host, 500*time.Millisecond)
 		if err != nil {
+			logger.Debugf(ctx, "[wsl] probeFromWindows: dial %s failed: %v", host, err)
 			continue
 		}
 		_ = conn.Close()
+		logger.Debugf(ctx, "[wsl] probeFromWindows: dial %s ok", host)
 		return true
 	}
+	logger.Debugf(ctx, "[wsl] probeFromWindows: none reachable, candidates=%v", candidates)
 	return false
 }
 
@@ -170,6 +184,7 @@ func (p *WSLProvisioner) resolveEndpoint(ctx context.Context, distro string, por
 	for _, host := range p.endpointCandidatesFromWindows(ctx, distro, port) {
 		candidates = append(candidates, "tcp://"+host)
 	}
+	logger.Infof(ctx, "[wsl] resolveEndpoint: distro=%s port=%d candidates=%v", distro, port, candidates)
 
 	seen := map[string]struct{}{}
 	var lastErr error
@@ -179,11 +194,14 @@ func (p *WSLProvisioner) resolveEndpoint(ctx context.Context, distro string, por
 		}
 		seen[ep] = struct{}{}
 		if err := pingDocker(ctx, ep); err != nil {
+			logger.Debugf(ctx, "[wsl] resolveEndpoint: ping %s failed: %v", ep, err)
 			lastErr = err
 			continue
 		}
+		logger.Infof(ctx, "[wsl] resolveEndpoint: using %s", ep)
 		return ep, nil
 	}
+	logger.Errorf(ctx, "[wsl] resolveEndpoint: no reachable endpoint for %s: %v", distro, lastErr)
 	return "", fmt.Errorf("dockerd is running in %s but not reachable from windows: %w", distro, lastErr)
 }
 
@@ -197,15 +215,18 @@ func (p *WSLProvisioner) distroIP(ctx context.Context, distro string) string {
 	const ipScript = `ip -4 -o addr show 2>/dev/null | awk '$2!="lo:" && $2!="docker0:" {print $2, $4}'`
 	if out, err := runInDistro(ctx, distro, ipScript); err == nil {
 		if ip := pickDistroIP(out, "eth0"); ip != "" {
+			logger.Debugf(ctx, "[wsl] distroIP: %s -> %s (from ip -4 -o addr)", distro, ip)
 			return ip
 		}
 	}
 
 	if out, err := runInDistro(ctx, distro, `hostname -I 2>/dev/null`); err == nil {
 		if ip := pickDistroIP(out, ""); ip != "" {
+			logger.Debugf(ctx, "[wsl] distroIP: %s -> %s (from hostname -I)", distro, ip)
 			return ip
 		}
 	}
+	logger.Warnf(ctx, "[wsl] distroIP: could not determine IPv4 for distro %s", distro)
 	return ""
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/container_runtime/provision/types"
+	"github.com/biox-dev/gobrave/internal/logger"
 )
 
 // Config 是 WSL 发行版预置的构造参数。
@@ -51,10 +52,13 @@ func New(cfg Config) *WSLProvisioner {
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{}
 	}
-	return &WSLProvisioner{
+	p := &WSLProvisioner{
 		cfg:    cfg,
 		layout: newLayout(cfg.BaseDir),
 	}
+	logger.Infof(context.Background(), "[wsl] provisioner created: base_dir=%s data_dir=%s distro=%s port=%d download_url=%s",
+		cfg.BaseDir, p.layout.Root(), cfg.Distro, cfg.Port, cfg.DownloadURL)
+	return p
 }
 
 var _ types.Provisioner = (*WSLProvisioner)(nil)
@@ -68,6 +72,8 @@ func (p *WSLProvisioner) Status(ctx context.Context) (*types.RuntimeStatus, erro
 		DataDir:     p.layout.Root(),
 		DownloadURL: p.cfg.DownloadURL,
 	}
+	logger.Debugf(ctx, "[wsl] Status: installed=%t downloaded=%t rootfs=%s state=%s",
+		p.layout.installed(), p.layout.downloaded(), p.layout.RootfsPath(), p.layout.StatePath())
 
 	// 已安装：以 state.json + distro 目录 + wsl 注册表三重确认。
 	if p.layout.installed() {
@@ -148,16 +154,25 @@ func (p *WSLProvisioner) Status(ctx context.Context) (*types.RuntimeStatus, erro
 func (p *WSLProvisioner) Download(ctx context.Context, progress types.ProgressFunc) error {
 	url := strings.TrimSpace(p.cfg.DownloadURL)
 	if url == "" {
+		logger.Errorf(ctx, "[wsl] Download: rootfs download url is not configured")
 		return errors.New("rootfs download url is not configured")
 	}
 	if err := p.layout.EnsureDirs(); err != nil {
+		logger.Errorf(ctx, "[wsl] Download: ensure dirs %s failed: %v", p.layout.Root(), err)
 		return err
 	}
 
+	logger.Infof(ctx, "[wsl] Download: url=%s dst=%s", url, p.layout.RootfsPath())
 	types.Report(progress, "download", 0, "resolving checksum")
 	checksum := fetchChecksum(ctx, p.cfg.HTTPClient, url)
+	if checksum == "" {
+		logger.Warnf(ctx, "[wsl] Download: no checksum available for %s, skipping verification", url)
+	} else {
+		logger.Infof(ctx, "[wsl] Download: expecting sha256=%s", checksum)
+	}
 
 	types.Report(progress, "download", 0, "downloading %s", url)
+	start := time.Now()
 	err := downloadFile(ctx, p.cfg.HTTPClient, url, p.layout.RootfsPath(), checksum,
 		func(done, total int64) {
 			percent := -1
@@ -167,8 +182,10 @@ func (p *WSLProvisioner) Download(ctx context.Context, progress types.ProgressFu
 			types.Report(progress, "download", percent, "downloaded %d / %d bytes", done, total)
 		})
 	if err != nil {
+		logger.Errorf(ctx, "[wsl] Download: failed after %s: %v", time.Since(start).Round(time.Millisecond), err)
 		return err
 	}
+	logger.Infof(ctx, "[wsl] Download: finished in %s -> %s", time.Since(start).Round(time.Millisecond), p.layout.RootfsPath())
 	types.Report(progress, "download", 100, "download finished")
 	return nil
 }
@@ -182,51 +199,64 @@ func (p *WSLProvisioner) Download(ctx context.Context, progress types.ProgressFu
 // 导入路径的任何一步失败都会尽力回滚（注销发行版），避免留下半安装状态；
 // 接管路径失败时绝不注销用户自己的发行版。
 func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFunc) error {
+	logger.Infof(ctx, "[wsl] Install: begin, distro=%s installed=%t downloaded=%t",
+		p.cfg.Distro, p.layout.installed(), p.layout.downloaded())
 	if p.layout.installed() {
+		logger.Infof(ctx, "[wsl] Install: already installed, nothing to do")
 		return nil
 	}
 
 	registered, regErr := p.distroRegistered(ctx)
 	if regErr != nil {
+		logger.Errorf(ctx, "[wsl] Install: list wsl distros failed: %v", regErr)
 		return fmt.Errorf("list wsl distros: %w", regErr)
 	}
 	if registered {
+		logger.Infof(ctx, "[wsl] Install: distro %s already registered in WSL, adopting instead of importing", p.cfg.Distro)
 		types.Report(progress, "adopt", 0, "distro %s already installed, starting dockerd directly", p.cfg.Distro)
 		return p.adopt(ctx, progress)
 	}
 
 	// 原有导入流程。
 	if !p.layout.downloaded() {
+		logger.Errorf(ctx, "[wsl] Install: rootfs not downloaded: %s", p.layout.RootfsPath())
 		return fmt.Errorf("%w: %s", types.ErrNotDownloaded, p.layout.RootfsPath())
 	}
 	if err := p.layout.EnsureDirs(); err != nil {
+		logger.Errorf(ctx, "[wsl] Install: ensure dirs failed: %v", err)
 		return err
 	}
 
 	types.Report(progress, "import", 0, "importing distro %s", p.cfg.Distro)
 	// distro 目录必须是空的：wsl --import 要求目标是空目录或不存在。
 	if entries, err := os.ReadDir(p.layout.DistroDir()); err == nil && len(entries) > 0 {
+		logger.Infof(ctx, "[wsl] Install: clearing %d existing entries in %s", len(entries), p.layout.DistroDir())
 		for _, e := range entries {
 			_ = os.RemoveAll(filepath.Join(p.layout.DistroDir(), e.Name()))
 		}
 	}
 
+	logger.Infof(ctx, "[wsl] Install: importing distro %s from %s into %s",
+		p.cfg.Distro, p.layout.RootfsPath(), p.layout.DistroDir())
 	if _, err := runWSL(ctx,
 		"--import", p.cfg.Distro, p.layout.DistroDir(), p.layout.RootfsPath(),
 		"--version", "2",
 	); err != nil {
+		logger.Errorf(ctx, "[wsl] Install: import distro failed: %v", err)
 		return fmt.Errorf("import distro: %w", err)
 	}
 
 	rollback := true
 	defer func() {
 		if rollback {
+			logger.Warnf(ctx, "[wsl] Install: rolling back by unregistering distro %s", p.cfg.Distro)
 			_, _ = runWSL(context.WithoutCancel(ctx), "--unregister", p.cfg.Distro)
 		}
 	}()
 
 	types.Report(progress, "import", 60, "distro imported, initializing")
 	if _, err := runInDistro(ctx, p.cfg.Distro, "true"); err != nil {
+		logger.Errorf(ctx, "[wsl] Install: initialize distro %s failed: %v", p.cfg.Distro, err)
 		return fmt.Errorf("initialize distro %s: %w", p.cfg.Distro, err)
 	}
 
@@ -234,6 +264,7 @@ func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFun
 	// （在线安装依赖外网与 apt 源，不适合放在安装向导的隐式步骤里）。
 	types.Report(progress, "configure", 70, "checking dockerd")
 	if out, err := runInDistro(ctx, p.cfg.Distro, "command -v dockerd || exit 127"); err != nil {
+		logger.Errorf(ctx, "[wsl] Install: dockerd missing in rootfs, output=%q err=%v", strings.TrimSpace(out), err)
 		return fmt.Errorf("dockerd not found in distro, the rootfs package is invalid: %w (%s)", err, strings.TrimSpace(out))
 	}
 
@@ -249,9 +280,11 @@ func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFun
 		InstalledAt: time.Now(),
 	}
 	if err := writeState(p.layout.StatePath(), st); err != nil {
+		logger.Errorf(ctx, "[wsl] Install: write state %s failed: %v", p.layout.StatePath(), err)
 		return err
 	}
 	rollback = false
+	logger.Infof(ctx, "[wsl] Install: state written to %s (version=%q)", p.layout.StatePath(), st.Version)
 
 	types.Report(progress, "start", 95, "resolving endpoint")
 	ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.Port)
@@ -259,6 +292,7 @@ func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFun
 		return err
 	}
 	p.setEndpoint(ep)
+	logger.Infof(ctx, "[wsl] Install: done, endpoint=%s", ep)
 	types.Report(progress, "start", 100, "installed, endpoint %s", ep)
 	return nil
 }
@@ -269,34 +303,45 @@ func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFun
 // 绝不 wsl --unregister 用户自己的发行版，也保留 dockerd 二进制与标记。
 func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 	st, _ := readState(p.layout.StatePath())
+	logger.Infof(ctx, "[wsl] Uninstall: begin, distro=%s installed=%t state=%+v",
+		p.cfg.Distro, p.layout.installed(), st)
 	if st != nil && st.Adopted {
+		logger.Infof(ctx, "[wsl] Uninstall: distro %s was adopted, stopping daemon only (will NOT unregister)", st.Distro)
 		_ = p.stopDaemon(ctx, st.Distro)
 		if err := os.RemoveAll(p.layout.AdoptPlaceholderDistroDir()); err != nil {
+			logger.Errorf(ctx, "[wsl] Uninstall: remove adopt placeholder dir failed: %v", err)
 			return fmt.Errorf("remove adopt placeholder dir: %w", err)
 		}
 		_ = os.Remove(p.layout.StatePath())
 		p.setEndpoint("")
+		logger.Infof(ctx, "[wsl] Uninstall: adopted distro released")
 		return nil
 	}
 
 	if !p.layout.installed() && !p.distroExistsInRegistry(ctx) {
 		// 未安装：仍清理残留目录，保证幂等。
+		logger.Infof(ctx, "[wsl] Uninstall: not installed and not registered, cleaning leftovers only")
 		_ = os.RemoveAll(p.layout.DistroDir())
 		_ = os.Remove(p.layout.StatePath())
 		return nil
 	}
 
 	// 先停 daemon，避免注销时进程占用 vhdx。
+	logger.Infof(ctx, "[wsl] Uninstall: stopping daemon in %s", p.cfg.Distro)
 	_ = p.stopDaemon(ctx, p.cfg.Distro)
 
+	logger.Infof(ctx, "[wsl] Uninstall: unregistering distro %s", p.cfg.Distro)
 	if _, err := runWSL(ctx, "--unregister", p.cfg.Distro); err != nil {
+		logger.Errorf(ctx, "[wsl] Uninstall: unregister distro %s failed: %v", p.cfg.Distro, err)
 		return fmt.Errorf("unregister distro %s: %w", p.cfg.Distro, err)
 	}
 	if err := os.RemoveAll(p.layout.DistroDir()); err != nil {
+		logger.Errorf(ctx, "[wsl] Uninstall: remove distro dir %s failed: %v", p.layout.DistroDir(), err)
 		return fmt.Errorf("remove distro dir: %w", err)
 	}
 	_ = os.Remove(p.layout.StatePath())
 	p.setEndpoint("")
+	logger.Infof(ctx, "[wsl] Uninstall: done")
 	return nil
 }
 
@@ -307,15 +352,20 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 //  2. 发行版既未安装也不存在时返回 ErrNotInstalled，不做任何修复；
 //  3. 已安装时幂等：daemon 已在跑就只探活，不重复启动。
 func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
+	logger.Infof(ctx, "[wsl] Start: begin, installed=%t distro=%s", p.layout.installed(), p.cfg.Distro)
 	if !p.layout.installed() {
 		registered, err := p.distroRegistered(ctx)
 		if err != nil {
+			logger.Errorf(ctx, "[wsl] Start: list wsl distros failed: %v", err)
 			return "", fmt.Errorf("list wsl distros: %w", err)
 		}
 		if !registered {
+			logger.Warnf(ctx, "[wsl] Start: distro %s neither installed nor registered, returning ErrNotInstalled", p.cfg.Distro)
 			return "", types.ErrNotInstalled
 		}
+		logger.Infof(ctx, "[wsl] Start: distro %s exists in WSL but not adopted, adopting", p.cfg.Distro)
 		if err := p.adopt(ctx, nil); err != nil {
+			logger.Errorf(ctx, "[wsl] Start: adopt failed: %v", err)
 			p.setErr(err)
 			return "", err
 		}
@@ -323,6 +373,7 @@ func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
 
 	st, err := readState(p.layout.StatePath())
 	if err != nil {
+		logger.Errorf(ctx, "[wsl] Start: read install state %s failed: %v", p.layout.StatePath(), err)
 		return "", fmt.Errorf("read install state: %w", err)
 	}
 	distro := p.cfg.Distro
@@ -330,33 +381,40 @@ func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
 		distro = st.Distro
 	}
 	port := p.port(st)
+	logger.Infof(ctx, "[wsl] Start: state resolved, distro=%s port=%d adopted=%t", distro, port, st.Adopted)
 
 	// 注册信息可能因用户手动 wsl --unregister 而丢失，这里做一次事实校验。
 	registered, err := p.distroRegistered(ctx)
 	if err != nil {
+		logger.Errorf(ctx, "[wsl] Start: verify registration failed: %v", err)
 		return "", err
 	}
 	if !registered {
+		logger.Errorf(ctx, "[wsl] Start: distro %s is not registered in WSL anymore", distro)
 		return "", fmt.Errorf("%w: distro %s is not registered in WSL", types.ErrNotInstalled, distro)
 	}
 
 	if err := p.startDaemon(ctx, distro, port); err != nil {
+		logger.Errorf(ctx, "[wsl] Start: startDaemon failed: %v", err)
 		p.setErr(err)
 		return "", err
 	}
 
 	ep, err := p.resolveEndpoint(ctx, distro, port)
 	if err != nil {
+		logger.Errorf(ctx, "[wsl] Start: resolveEndpoint failed: %v", err)
 		p.setErr(err)
 		return "", err
 	}
 	p.setEndpoint(ep)
+	logger.Infof(ctx, "[wsl] Start: ready, endpoint=%s", ep)
 	return ep, nil
 }
 
 // Stop 停止 daemon（保持安装状态）。
 func (p *WSLProvisioner) Stop(ctx context.Context) error {
 	if !p.layout.installed() {
+		logger.Warnf(ctx, "[wsl] Stop: distro %s not installed", p.cfg.Distro)
 		return types.ErrNotInstalled
 	}
 	st, _ := readState(p.layout.StatePath())
@@ -364,10 +422,13 @@ func (p *WSLProvisioner) Stop(ctx context.Context) error {
 	if st != nil && strings.TrimSpace(st.Distro) != "" {
 		distro = st.Distro
 	}
+	logger.Infof(ctx, "[wsl] Stop: stopping dockerd in %s", distro)
 	if err := p.stopDaemon(ctx, distro); err != nil {
+		logger.Errorf(ctx, "[wsl] Stop: stopDaemon failed: %v", err)
 		return err
 	}
 	p.setEndpoint("")
+	logger.Infof(ctx, "[wsl] Stop: done")
 	return nil
 }
 
@@ -442,21 +503,27 @@ func (p *WSLProvisioner) detectVersion(ctx context.Context, distro string) strin
 // dockerd 缺失时尝试在发行版内安装（仅 apt 系发行版）；装不上则明确报错，
 // 并保留标记文件，使下一次 Start 不必重复安装。
 func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc) error {
+	logger.Infof(ctx, "[wsl] adopt: begin, distro=%s", p.cfg.Distro)
 	if err := p.layout.EnsureAdoptDirs(); err != nil {
+		logger.Errorf(ctx, "[wsl] adopt: ensure adopt dirs failed: %v", err)
 		return err
 	}
 
 	types.Report(progress, "adopt", 10, "checking distro %s", p.cfg.Distro)
 	if _, err := runInDistro(ctx, p.cfg.Distro, "true"); err != nil {
+		logger.Errorf(ctx, "[wsl] adopt: distro %s cannot be started: %v", p.cfg.Distro, err)
 		return fmt.Errorf("distro %s cannot be started: %w", p.cfg.Distro, err)
 	}
 
 	types.Report(progress, "adopt", 30, "checking dockerd")
 	if !runInDistroQuiet(ctx, p.cfg.Distro, "command -v dockerd >/dev/null 2>&1") {
+		logger.Warnf(ctx, "[wsl] adopt: dockerd not found in %s, running install script", p.cfg.Distro)
 		types.Report(progress, "adopt", 40, "dockerd not found, installing docker.io")
-		if _, err := runInDistro(ctx, p.cfg.Distro, installDockerScript); err != nil {
+		if out, err := runInDistro(ctx, p.cfg.Distro, installDockerScript); err != nil {
+			logger.Errorf(ctx, "[wsl] adopt: install dockerd failed, output=%q err=%v", strings.TrimSpace(out), err)
 			return fmt.Errorf("install dockerd in %s: %w (install docker manually and retry)", p.cfg.Distro, err)
 		}
+		logger.Infof(ctx, "[wsl] adopt: dockerd installed in %s", p.cfg.Distro)
 	}
 
 	types.Report(progress, "adopt", 75, "starting dockerd")
@@ -466,7 +533,10 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 
 	// 标记文件写入失败不应中断接管：dockerd 已启动，state.json 才是判据。
 	// 标记仅用于排查归属，缺失会在下次 adopt 时补写。
-	_, _ = runInDistro(ctx, p.cfg.Distro, "echo \"$(date -Is) port="+strconv.Itoa(p.cfg.Port)+"\" > "+managedMarkerPath)
+	markerCmd := "echo \"$(date -Is) port=" + strconv.Itoa(p.cfg.Port) + "\" > " + managedMarkerPath
+	if _, err := runInDistro(ctx, p.cfg.Distro, markerCmd); err != nil {
+		logger.Warnf(ctx, "[wsl] adopt: write managed marker failed (ignored): %v", err)
+	}
 
 	st := &state{
 		Distro:      p.cfg.Distro,
@@ -476,8 +546,10 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 		Adopted:     true,
 	}
 	if err := writeState(p.layout.StatePath(), st); err != nil {
+		logger.Errorf(ctx, "[wsl] adopt: write state %s failed: %v", p.layout.StatePath(), err)
 		return err
 	}
+	logger.Infof(ctx, "[wsl] adopt: state written to %s (version=%q)", p.layout.StatePath(), st.Version)
 
 	types.Report(progress, "adopt", 95, "resolving endpoint")
 	ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.Port)
@@ -485,6 +557,7 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 		return err
 	}
 	p.setEndpoint(ep)
+	logger.Infof(ctx, "[wsl] adopt: done, endpoint=%s", ep)
 	types.Report(progress, "adopt", 100, "adopted %s, endpoint %s", p.cfg.Distro, ep)
 	return nil
 }
