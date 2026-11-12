@@ -144,7 +144,8 @@ type RuntimeStatus struct {
 
 ```
 Start(ctx):
-  1. 若未安装（dataDir/distro 不存在，或 wsl -l -q 查不到）→ return ErrNotInstalled
+  0. 未安装但 wsl -l -q 中已有同名发行版 → 接管（adopt）：确保 dockerd → 启动 → 写接管状态
+  1. 若既未安装、系统中也不存在 → return ErrNotInstalled
   2. 已安装但未运行 → wsl -d <distro> -u root 启动 dockerd（常驻）
   3. dockerd 已在运行 → 跳过启动
   4. 解析 endpoint：
@@ -155,8 +156,26 @@ Start(ctx):
   5. 缓存 endpoint 到 Manager，返回
 ```
 
-**“未安装不做处理”是硬约束**：`Start` 里只有一条 `ErrNotInstalled` 提前返回，
-任何安装/下载动作都不允许出现在 `Start` 的调用链上。
+**“未安装不做处理”的边界**：发行版既没有 gobrave 的安装状态、WSL 注册表里也
+没有同名的才返回 `ErrNotInstalled`；**已有同名发行版（如用户自己装好的
+`Ubuntu`）属于已就绪条件，直接接管启动，不下载、不导入**。
+
+### 接管（adopt）已有发行版
+
+配置 `container.docker.provision.distro: Ubuntu` 时，如果 `wsl -l` 已列出
+`Ubuntu`，无需 `download_url`：
+
+- `Status`：`not_installed`，`detail` 说明可直接安装（响应不变，UI 逻辑无需改）；
+- `Install`：跳过下载与 `wsl --import`，校验发行版可启动 → 缺 `dockerd` 时用
+  `apt-get install docker.io`（`dnf`/`yum` 兜底）→ 启动 dockerd；
+- `Start`：同理自动接管，首次启动即完成；
+- 接管时在 `state.json` 记 `adopted: true`，并在发行版根目录写
+  `/.gobrave-docker-runtime` 标记；
+- `Uninstall`：只停 daemon、删 `state.json` 与 `distro-external/`，**绝不
+  `wsl --unregister` 用户自己的发行版**。
+
+接管占位目录：`<base_dir>/wsl/distro-external/`（仅放 `state.json` 的判定依据，
+不含 vhdx），与 `distro/` 隔离，删除逻辑互不影响。
 
 ## 6. 与 DockerRuntime 的接入
 

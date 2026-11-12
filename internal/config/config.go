@@ -304,8 +304,12 @@ type RuntimeProvisionConfig struct {
 	// 与平台无关：Windows 上拉起 WSL 内的 dockerd，Linux 上拉起本机 dockerd。
 	Enabled bool `yaml:"enabled" json:"enabled"`
 	// Distro 导入到 WSL 的发行版名，默认 gobrave-ubuntu-docker。仅 Windows 生效。
+	//
+	// 若系统上已存在同名发行版（例如 Ubuntu），安装/启动时直接接管并启动
+	// dockerd，无需 DownloadURL、也不会重新导入。
 	Distro string `yaml:"distro" json:"distro"`
-	// DownloadURL rootfs 包下载地址（安装向导使用）。仅 Windows 生效。
+	// DownloadURL rootfs 包下载地址（安装向导使用）。仅 Windows 生效；
+	// 接管已存在的同名发行版时可为空。
 	DownloadURL string `yaml:"download_url" json:"download_url"`
 	// Port dockerd 监听的 TCP 端口，默认 2375。仅 Windows 生效。
 	Port int `yaml:"port" json:"port"`

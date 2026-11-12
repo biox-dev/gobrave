@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -112,6 +113,14 @@ func (p *WSLProvisioner) Status(ctx context.Context) (*types.RuntimeStatus, erro
 		return status, nil
 	}
 
+	// 未安装但系统上已有该发行版（例如用户已装好的 Ubuntu）：
+	// 直接安装即可接管，无需下载 rootfs。
+	if registered, err := p.distroRegistered(ctx); err == nil && registered {
+		status.State = types.StateNotInstalled
+		status.Detail = fmt.Sprintf("distro %s is already installed in WSL, install will start it directly without downloading", p.cfg.Distro)
+		return status, nil
+	}
+
 	status.State = types.StateNotInstalled
 	return status, nil
 }
@@ -145,16 +154,31 @@ func (p *WSLProvisioner) Download(ctx context.Context, progress types.ProgressFu
 	return nil
 }
 
-// Install 导入发行版并完成 dockerd 初始化。
+// Install 让发行版就绪并完成 dockerd 初始化。
 //
-// 步骤：wsl --import → 写 state.json → 启动并探活 daemon。
-// 任何一步失败都会尽力回滚（注销发行版），避免留下半安装状态。
+// 两条路径：
+//   - 系统上已有同名发行版（Registered）：直接接管，校验/启动 dockerd，不下载不导入；
+//   - 否则：要求已 Download，执行 wsl --import 后再初始化。
+//
+// 导入路径的任何一步失败都会尽力回滚（注销发行版），避免留下半安装状态；
+// 接管路径失败时绝不注销用户自己的发行版。
 func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFunc) error {
-	if !p.layout.downloaded() {
-		return fmt.Errorf("%w: %s", types.ErrNotDownloaded, p.layout.RootfsPath())
-	}
 	if p.layout.installed() {
 		return nil
+	}
+
+	registered, regErr := p.distroRegistered(ctx)
+	if regErr != nil {
+		return fmt.Errorf("list wsl distros: %w", regErr)
+	}
+	if registered {
+		types.Report(progress, "adopt", 0, "distro %s already installed, starting dockerd directly", p.cfg.Distro)
+		return p.adopt(ctx, progress)
+	}
+
+	// 原有导入流程。
+	if !p.layout.downloaded() {
+		return fmt.Errorf("%w: %s", types.ErrNotDownloaded, p.layout.RootfsPath())
 	}
 	if err := p.layout.EnsureDirs(); err != nil {
 		return err
@@ -201,7 +225,7 @@ func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFun
 
 	st := &state{
 		Distro:      p.cfg.Distro,
-		Version:     p.detectVersion(ctx),
+		Version:     p.detectVersion(ctx, p.cfg.Distro),
 		Port:        p.cfg.Port,
 		InstalledAt: time.Now(),
 	}
@@ -221,7 +245,21 @@ func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFun
 }
 
 // Uninstall 注销发行版并删除数据目录（保留下载缓存以便重装）。
+//
+// 接管来的发行版不属于 gobrave：只停止 daemon、清理 state.json 与占位目录，
+// 绝不 wsl --unregister 用户自己的发行版，也保留 dockerd 二进制与标记。
 func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
+	st, _ := readState(p.layout.StatePath())
+	if st != nil && st.Adopted {
+		_ = p.stopDaemon(ctx, st.Distro)
+		if err := os.RemoveAll(p.layout.AdoptPlaceholderDistroDir()); err != nil {
+			return fmt.Errorf("remove adopt placeholder dir: %w", err)
+		}
+		_ = os.Remove(p.layout.StatePath())
+		p.setEndpoint("")
+		return nil
+	}
+
 	if !p.layout.installed() && !p.distroExistsInRegistry(ctx) {
 		// 未安装：仍清理残留目录，保证幂等。
 		_ = os.RemoveAll(p.layout.DistroDir())
@@ -245,12 +283,23 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 
 // Start 确保运行时可用并返回 endpoint。
 //
-// 这是每次进程启动都会调用的入口，满足两条硬约束：
-//  1. 未安装时返回 ErrNotInstalled，不做任何修复（安装交给安装向导）；
-//  2. 已安装时幂等：daemon 已在跑就只探活，不重复启动。
+// 这是每次进程启动都会调用的入口，满足以下约束：
+//  1. 未安装但系统上已有同名发行版时，直接接管（启动 dockerd）而不是返回 ErrNotInstalled；
+//  2. 发行版既未安装也不存在时返回 ErrNotInstalled，不做任何修复；
+//  3. 已安装时幂等：daemon 已在跑就只探活，不重复启动。
 func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
 	if !p.layout.installed() {
-		return "", types.ErrNotInstalled
+		registered, err := p.distroRegistered(ctx)
+		if err != nil {
+			return "", fmt.Errorf("list wsl distros: %w", err)
+		}
+		if !registered {
+			return "", types.ErrNotInstalled
+		}
+		if err := p.adopt(ctx, nil); err != nil {
+			p.setErr(err)
+			return "", err
+		}
 	}
 
 	st, err := readState(p.layout.StatePath())
@@ -358,11 +407,81 @@ func (p *WSLProvisioner) distroExistsInRegistry(ctx context.Context) bool {
 }
 
 // detectVersion 读取发行版标识作为版本号（用于 UI 展示）。
-func (p *WSLProvisioner) detectVersion(ctx context.Context) string {
-	if out, err := runInDistro(ctx, p.cfg.Distro, `(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") || uname -r`); err == nil {
+func (p *WSLProvisioner) detectVersion(ctx context.Context, distro string) string {
+	if out, err := runInDistro(ctx, distro, `(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") || uname -r`); err == nil {
 		if v := strings.TrimSpace(out); v != "" {
 			return v
 		}
 	}
 	return time.Now().Format("2006-01-02")
 }
+
+// adopt 接管系统上已存在（已注册）的发行版：确保 dockerd 可用后写接管状态。
+//
+// 前提：调用方已确认 distro 在 wsl -l -q 中（由 Install / Start 负责）。
+//
+// dockerd 缺失时尝试在发行版内安装（仅 apt 系发行版）；装不上则明确报错，
+// 并保留标记文件，使下一次 Start 不必重复安装。
+func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc) error {
+	if err := p.layout.EnsureAdoptDirs(); err != nil {
+		return err
+	}
+
+	types.Report(progress, "adopt", 10, "checking distro %s", p.cfg.Distro)
+	if _, err := runInDistro(ctx, p.cfg.Distro, "true"); err != nil {
+		return fmt.Errorf("distro %s cannot be started: %w", p.cfg.Distro, err)
+	}
+
+	types.Report(progress, "adopt", 30, "checking dockerd")
+	if !runInDistroQuiet(ctx, p.cfg.Distro, "command -v dockerd >/dev/null 2>&1") {
+		types.Report(progress, "adopt", 40, "dockerd not found, installing docker.io")
+		if _, err := runInDistro(ctx, p.cfg.Distro, installDockerScript); err != nil {
+			return fmt.Errorf("install dockerd in %s: %w (install docker manually and retry)", p.cfg.Distro, err)
+		}
+	}
+
+	types.Report(progress, "adopt", 75, "starting dockerd")
+	if err := p.startDaemon(ctx, p.cfg.Distro, p.cfg.Port); err != nil {
+		return err
+	}
+
+	if _, err := runInDistro(ctx, p.cfg.Distro, "echo \"$(date -Is) port="+strconv.Itoa(p.cfg.Port)+"\" > "+managedMarkerPath); err != nil {
+		return fmt.Errorf("write managed marker in %s: %w", p.cfg.Distro, err)
+	}
+
+	st := &state{
+		Distro:      p.cfg.Distro,
+		Version:     p.detectVersion(ctx, p.cfg.Distro),
+		Port:        p.cfg.Port,
+		InstalledAt: time.Now(),
+		Adopted:     true,
+	}
+	if err := writeState(p.layout.StatePath(), st); err != nil {
+		return err
+	}
+
+	types.Report(progress, "adopt", 95, "resolving endpoint")
+	ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.Port)
+	if err != nil {
+		return err
+	}
+	p.setEndpoint(ep)
+	types.Report(progress, "adopt", 100, "adopted %s, endpoint %s", p.cfg.Distro, ep)
+	return nil
+}
+
+// installDockerScript 在发行版内安装 dockerd（仅 apt 系；非 apt 系直接失败）。
+const installDockerScript = `set -e
+export DEBIAN_FRONTEND=noninteractive
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update -y
+  apt-get install -y docker.io
+elif command -v dnf >/dev/null 2>&1; then
+  dnf install -y docker
+elif command -v yum >/dev/null 2>&1; then
+  yum install -y docker
+else
+  echo "unsupported distro: no apt-get/dnf/yum" >&2
+  exit 127
+fi
+command -v dockerd >/dev/null 2>&1`

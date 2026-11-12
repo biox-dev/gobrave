@@ -17,6 +17,12 @@ const (
 	DefaultRootfsName = "gobrave-ubuntu-docker-amd64.tar"
 	// DefaultDaemonPort 是 WSL 内 dockerd 监听的 TCP 端口。
 	DefaultDaemonPort = 2375
+	// managedMarkerPath 是 gobrave 在发行版根目录留下的归属标记。
+	//
+	// 用于区分「系统上本来就有、且由 gobrave 启动过 dockerd 的发行版」与
+	// 用户自己的普通发行版：只有带标记的发行版才会被直接接管启动，
+	// 避免把用户环境改成 TCP 暴露 dockerd。
+	managedMarkerPath = "/.gobrave-docker-runtime"
 )
 
 // layout 描述 <base_dir>/wsl 下的目录结构。
@@ -49,11 +55,27 @@ func (l layout) PartPath() string { return l.RootfsPath() + ".part" }
 // StatePath state.json 路径。
 func (l layout) StatePath() string { return filepath.Join(l.root, "state.json") }
 
+// AdoptPlaceholderDistroDir 为「接管已注册发行版」准备的占位目录。
+//
+// 接管场景下发行版的 vhdx 由 WSL 自己管理（位于 %LOCALAPPDATA%\wsl 下），
+// 这里只放 state.json，让 installed() 的目录判据成立；不参与任何删除逻辑。
+func (l layout) AdoptPlaceholderDistroDir() string { return filepath.Join(l.root, "distro-external") }
+
 // LogPath dockerd 日志路径。
 func (l layout) LogPath() string { return filepath.Join(l.root, "dockerd.log") }
 
 // PidPath dockerd 进程号文件路径。
 func (l layout) PidPath() string { return filepath.Join(l.root, "dockerd.pid") }
+
+// EnsureAdoptDirs 创建 root / cache / 接管占位目录（不创建 distro 目录）。
+func (l layout) EnsureAdoptDirs() error {
+	for _, dir := range []string{l.root, l.CacheDir(), l.AdoptPlaceholderDistroDir()} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create dir %s: %w", dir, err)
+		}
+	}
+	return nil
+}
 
 // EnsureDirs 创建 root / cache / distro 目录。
 func (l layout) EnsureDirs() error {
@@ -88,8 +110,11 @@ type state struct {
 	Version string `json:"version"`
 	// Port dockerd 监听的 TCP 端口。
 	Port int `json:"port"`
-	// InstalledAt 安装时间。
+	// InstalledAt 安装时间（接管场景即接管时间）。
 	InstalledAt time.Time `json:"installed_at"`
+	// Adopted 表示该发行版不是由 gobrave 导入的，而是系统上已存在后被接管。
+	// 卸载时只清理 state.json，绝不 wsl --unregister 用户自己的发行版。
+	Adopted bool `json:"adopted,omitempty"`
 }
 
 // readState 读取 state.json；文件不存在或损坏时返回错误。
