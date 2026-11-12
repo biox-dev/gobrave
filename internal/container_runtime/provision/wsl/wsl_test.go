@@ -103,6 +103,78 @@ func TestStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBuildStartScriptBindsAllInterfaces(t *testing.T) {
+	// WSL2 NAT：Windows 的流量从 eth0 进入，绑 127.0.0.1 一律被拒，必须 0.0.0.0。
+	script := buildStartScript(2375)
+	if !strings.Contains(script, "--host=tcp://0.0.0.0:2375") {
+		t.Errorf("start script must bind tcp on 0.0.0.0:%d, got:\n%s", 2375, script)
+	}
+	if strings.Contains(script, "tcp://127.0.0.1") {
+		t.Errorf("start script must not bind loopback only, got:\n%s", script)
+	}
+	if strings.Contains(script, "%!") {
+		t.Errorf("start script has unsubstituted format verbs:\n%s", script)
+	}
+	if !strings.Contains(script, "mkdir -p /var/log "+distroRoot) {
+		t.Errorf("start script must create pid/log dir %s, got:\n%s", distroRoot, script)
+	}
+}
+
+func TestPickDistroIPSkipsInternalIfaces(t *testing.T) {
+	// 真实 `ip -4 -o addr show` 输出形态。
+	out := `1: lo    inet 127.0.0.1/8 scope host lo
+2: eth0    inet 172.27.140.255/18 brd 172.27.191.255 scope global eth0
+3: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0
+4: br-1a2b3c    inet 172.18.0.1/16 scope global br-1a2b3c`
+	if got := pickDistroIP(out, "eth0"); got != "172.27.140.255" {
+		t.Errorf("pickDistroIP = %q, want eth0 address 172.27.140.255", got)
+	}
+}
+
+func TestPickDistroIPFallsBackWhenNoEth0(t *testing.T) {
+	// 没有 eth0（例如发行版内网卡名不是 eth0）时，取第一个非内部接口。
+	out := `1: lo    inet 127.0.0.1/8 scope host lo
+2: enp0s1    inet 172.28.1.5/20 scope global enp0s1
+3: docker0    inet 172.17.0.1/16 scope global docker0`
+	if got := pickDistroIP(out, "eth0"); got != "172.28.1.5" {
+		t.Errorf("pickDistroIP = %q, want 172.28.1.5", got)
+	}
+}
+
+func TestPickDistroIPHostnameIShape(t *testing.T) {
+	// hostname -I：一行多个纯 IP，无接口名；必须跳过 docker0 地址。
+	out := "172.17.0.1 172.27.140.255 \n"
+	// 无接口信息时无法识别 docker0，取第一个，但绝不能返回回环地址。
+	if got := pickDistroIP("127.0.0.1 172.27.140.255\n", ""); got != "172.27.140.255" {
+		t.Errorf("pickDistroIP(hostname -I) = %q, want 172.27.140.255", got)
+	}
+	if got := pickDistroIP(out, ""); got == "" {
+		t.Error("pickDistroIP should return some IPv4 for hostname -I shape")
+	}
+}
+
+func TestPickDistroIPEmpty(t *testing.T) {
+	for _, in := range []string{"", "\n", "127.0.0.1/8\n"} {
+		if got := pickDistroIP(in, "eth0"); got != "" {
+			t.Errorf("pickDistroIP(%q) = %q, want empty", in, got)
+		}
+	}
+}
+
+func TestIsInternalIface(t *testing.T) {
+	internal := []string{"lo", "lo:", "docker0", "docker0:", "docker_gwbridge", "br-abc123", "veth1234"}
+	for _, n := range internal {
+		if !isInternalIface(n) {
+			t.Errorf("isInternalIface(%q) = false, want true", n)
+		}
+	}
+	for _, n := range []string{"eth0", "eth0:", "enp0s1", "wlan0"} {
+		if isInternalIface(n) {
+			t.Errorf("isInternalIface(%q) = true, want false", n)
+		}
+	}
+}
+
 func TestDownloadedFalseWhenMissing(t *testing.T) {
 	l := newLayout(t.TempDir())
 	if l.downloaded() {

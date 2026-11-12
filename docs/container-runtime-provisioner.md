@@ -177,6 +177,36 @@ Start(ctx):
 接管占位目录：`<base_dir>/wsl/distro-external/`（仅放 `state.json` 的判定依据，
 不含 vhdx），与 `distro/` 隔离，删除逻辑互不影响。
 
+## 5.1 WSL2 网络：Windows 如何访问 dockerd 与容器端口
+
+这是最容易踩坑的部分，两种网络模式的通路完全不同：
+
+| 模式 | dockerd 监听 | Windows 侧 endpoint |
+|---|---|---|
+| NAT（默认） | **`tcp://0.0.0.0:<port>`** | `tcp://<发行版 IP>:<port>`（`hostname -I` 首个地址） |
+| mirrored（Win11 22H2+） | `tcp://0.0.0.0:<port>` | `tcp://127.0.0.1:<port>` 也可直达 |
+
+**必须绑 `0.0.0.0`**：NAT 模式下 Windows 发往发行版 IP 的流量从 eth0 进入，
+绑在 `127.0.0.1` 的监听收不到，症状正是「发行版内 `dockerd` 正常、
+Windows 连 `127.0.0.1:2375` 被 actively refused」。发行版处于 WSL 私有虚拟
+网络（`172.x`），不对局域网暴露，因此绑全接口是可接受的安全边界。
+
+**容器组件（如 RStudio 的 8787）**：容器 IP（`172.17.0.x`）是发行版内 docker0
+网桥地址，**Windows 无法路由，不要尝试直连**。正确做法是发布端口：
+
+```
+gobrave: HostConfig.PortBindings = {"8787/tcp": [{HostIP:"0.0.0.0", HostPort:"8787"}]}
+等效:    docker run -p 0.0.0.0:8787:8787
+访问:    http://<发行版 IP>:8787   （mirrored 模式下也可 http://127.0.0.1:8787）
+```
+
+`spec.ExposedPort > 0` 时 docker runtime 自动按上述规则发布（`toPortBindings`）。
+注意：`ExposeService` / `ExposedPort` 目前只由容器模板绑定行填充，
+RStudio 之类的内置模板需显式配置端口才会发布。
+
+`WSLProvisioner.DistroIP(ctx)` 暴露发行版 IP，供 UI / 装配层把
+`http://<distroIP>:<port>` 拼出来给用户点击。
+
 ## 6. 与 DockerRuntime 的接入
 
 现状：`DockerRuntime.getClient` 用 `client.FromEnv`，靠 `DOCKER_HOST` 环境变量。
