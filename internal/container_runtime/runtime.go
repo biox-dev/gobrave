@@ -45,6 +45,12 @@ type RuntimeImageManager interface {
 type RuntimeInspection struct {
 	IPAddress string
 	NodeName  string
+
+	// HostAddress / HostPort 是容器端口发布到宿主后的可达地址（仅 PublishPort 时非空）。
+	// IPAddress 是容器网络内地址，HostAddress 是 gobrave 所在主机能访问到的地址，
+	// 两者语义不同：WSL2 NAT 下前者（172.17.x.x）不可路由，后者才是可用的。
+	HostAddress string
+	HostPort    int
 }
 
 // RuntimeInspector is an optional extension interface. Implementations can expose

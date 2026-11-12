@@ -191,6 +191,16 @@ container:
     #   distro: gobrave-ubuntu-docker
     #   download_url: ""
     #   port: 2375
+  #
+  # 应用容器端口的访问方式。
+  #   container_ip（默认）：gobrave 直接访问容器 IP（docker0 / Pod IP），
+  #                          不占用宿主机端口，多个同类应用（如两个 RStudio）不会冲突。
+  #                          要求 gobrave 进程能路由到容器网络。
+  #   host_port：容器端口随机发布到宿主机（-p 0.0.0.0:0:<port>），gobrave 通过
+  #              127.0.0.1:<随机端口> 访问。用于无法路由容器 IP 的场景，
+  #              典型是 Windows + WSL2 自管 dockerd（容器 IP 位于发行版的 docker0，
+  #              Windows 不可路由）。
+  network_mode: container_ip
   # 服务启动时是否自动恢复 job_status=running 的 analysis DAG。
   # true: 扫描并尝试恢复；false: 不自动恢复。
   recover_running_dag_on_start: true

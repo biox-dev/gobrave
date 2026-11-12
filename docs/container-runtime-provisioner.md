@@ -192,20 +192,25 @@ Windows 连 `127.0.0.1:2375` 被 actively refused」。发行版处于 WSL 私�
 网络（`172.x`），不对局域网暴露，因此绑全接口是可接受的安全边界。
 
 **容器组件（如 RStudio 的 8787）**：容器 IP（`172.17.0.x`）是发行版内 docker0
-网桥地址，**Windows 无法路由，不要尝试直连**。正确做法是发布端口：
+网桥地址，**Windows 无法路由，不要尝试直连**。由 `container.network_mode` 决定：
+
+| network_mode | docker PortBindings | 路由 Backend | 适用 |
+|---|---|---|---|
+| `container_ip`（默认） | 无 | `<容器IP>:<端口>` | Linux、Docker Desktop、k8s |
+| `host_port` | `0.0.0.0:0 → <端口>`（随机） | `127.0.0.1:<HostPort>` | Windows + WSL2 NAT |
 
 ```
-gobrave: HostConfig.PortBindings = {"8787/tcp": [{HostIP:"0.0.0.0", HostPort:"8787"}]}
-等效:    docker run -p 0.0.0.0:8787:8787
-访问:    http://<发行版 IP>:8787   （mirrored 模式下也可 http://127.0.0.1:8787）
+host_port 模式等效: docker run -p 0.0.0.0:0:8787
+访问:              http://127.0.0.1:<随机端口>
 ```
 
-`spec.ExposedPort > 0` 时 docker runtime 自动按上述规则发布（`toPortBindings`）。
-注意：`ExposeService` / `ExposedPort` 目前只由容器模板绑定行填充，
-RStudio 之类的内置模板需显式配置端口才会发布。
+关键点：**宿主机端口永远由 docker 随机分配**（`HostPort: ""`），不使用固定
+`8787`——否则第二个 RStudio 必然报 `port is already allocated`。实际端口在
+`Inspect()` 里从 `NetworkSettings.Ports` 读回（`publishedAddress`），存进
+`ContainerInstance.HostPort`，再由 `route/handler.go` 用作路由后端。
 
-`WSLProvisioner.DistroIP(ctx)` 暴露发行版 IP，供 UI / 装配层把
-`http://<distroIP>:<port>` 拼出来给用户点击。
+`spec.PublishPort` 只在 web 形态、且 `network_mode=host_port` 时为 true；
+terminal / dag_node 容器一律不发布端口。
 
 ## 6. 与 DockerRuntime 的接入
 

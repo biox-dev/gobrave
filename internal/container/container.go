@@ -408,6 +408,12 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 				paths := containerruntime.NewPathMapper(config.StorageBaseDir(cfg), wslDaemon)
 				opts = append(opts, dockerruntime.WithPathMapper(paths))
 
+				// 容器端口是否发布到宿主机：默认不发布（直连容器 IP）。
+				// host_port 模式用于 gobrave 无法路由容器 IP 的场景（如 Windows + WSL2 自管 dockerd）。
+				if config.ResolveContainerNetworkMode(cfg) == config.ContainerNetworkModeHostPort {
+					opts = append(opts, dockerruntime.WithPublishPort(true))
+				}
+
 				rt := dockerruntime.NewDockerRuntime(opts...)
 				reg.Register(rt.Name(), rt)
 			case "k8s", "k3s":

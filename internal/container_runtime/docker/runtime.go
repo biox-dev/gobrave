@@ -24,6 +24,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/go-connections/nat"
 )
 
 type DockerRuntime struct {
@@ -38,6 +39,10 @@ type DockerRuntime struct {
 	// host 是显式指定的 daemon 地址（如预置 WSL dockerd 的 tcp://ip:port）。
 	// 为空时回退 client.FromEnv，保持历史行为不变。
 	host string
+
+	// publishPort 为 true 时把容器端口随机发布到宿主机，供 gobrave 之外的
+	// 进程访问（Windows + WSL2 无法路由容器 IP 的场景）。
+	publishPort bool
 
 	once    sync.Once
 	client  *client.Client
@@ -63,6 +68,17 @@ func WithPathMapper(paths *containerruntime.PathMapper) DockerRuntimeOption {
 func WithHost(host string) DockerRuntimeOption {
 	return func(d *DockerRuntime) {
 		d.host = strings.TrimSpace(host)
+	}
+}
+
+// WithPublishPort 让容器端口以随机宿主机端口发布（默认关闭）。
+//
+// 默认关闭：gobrave 通过容器 IP 直连应用，不需要占用宿主机端口，
+// 多实例同时运行也不会冲突。开启后每次 create 都由 docker 分配空闲端口，
+// 实际端口通过 Inspect 读回（HostPort）。
+func WithPublishPort(publish bool) DockerRuntimeOption {
+	return func(d *DockerRuntime) {
+		d.publishPort = publish
 	}
 }
 
@@ -564,7 +580,36 @@ func (d *DockerRuntime) Inspect(ctx context.Context, id string) (*containerrunti
 		}
 	}
 
-	return &containerruntime.RuntimeInspection{IPAddress: ip}, nil
+	hostAddress, hostPort := publishedAddress(info)
+	return &containerruntime.RuntimeInspection{
+		IPAddress:   ip,
+		HostAddress: hostAddress,
+		HostPort:    hostPort,
+	}, nil
+}
+
+// publishedAddress 从 inspect 结果里读出实际发布的宿主机地址与端口。
+//
+// 端口由 daemon 随机分配，只有 inspect 才能知道真实值；HostIP 为 0.0.0.0
+// 或 :: 时表示监听全部接口，这里统一归一成 127.0.0.1，保证调用方能直接访问。
+func publishedAddress(info container.InspectResponse) (string, int) {
+	if info.NetworkSettings == nil {
+		return "", 0
+	}
+	for _, bindings := range info.NetworkSettings.Ports {
+		for _, b := range bindings {
+			port, err := strconv.Atoi(strings.TrimSpace(b.HostPort))
+			if err != nil || port <= 0 {
+				continue
+			}
+			host := strings.TrimSpace(b.HostIP)
+			if host == "" || host == "0.0.0.0" || host == "::" {
+				host = "127.0.0.1"
+			}
+			return host, port
+		}
+	}
+	return "", 0
 }
 
 func (d *DockerRuntime) Describe(ctx context.Context, id string) (*containerruntime.RuntimeDescription, error) {
@@ -769,12 +814,34 @@ func (d *DockerRuntime) toHostConfig(spec *types.ContainerSpec) *container.HostC
 
 	return &container.HostConfig{
 		Resources: resources,
+		// 端口发布策略见 WithPublishPort：默认不发布（gobrave 直连容器 IP），
+		// 只有 gobrave 无法路由容器 IP 时才开启，并把宿主机端口交给 docker 分配。
+		PortBindings: toPortBindings(spec.PublishPort, spec.ExposedPort),
 		// 用 Mounts 而不是 Binds：Mounts 是结构化字段，Source/Target 分开传递，
 		// 不会被 docker 再按 ":" 切分，因此 Windows 宿主路径（D:\a\b）不会被误判。
 		// Binds 的 "src:dst:mode" 语法对含盘符的路径无解（too many colons）。
 		Mounts:   mounts,
 		GroupAdd: groupAdd,
 		Tmpfs:    toTmpfsOptions(spec.Tmpfs),
+	}
+}
+
+// toPortBindings 按需把容器端口发布到宿主机。
+//
+// HostPort 留空表示「由 docker 分配空闲端口」：多个同类容器（如两个
+// RStudio 8797）不会争抢同一个宿主机端口，实际端口由 Inspect 读回。
+// HostIP 为 0.0.0.0，使 WSL2 的 NAT 与 mirrored 两种模式下都能访问。
+// publish 为 false 或 port<=0 时返回 nil（不发布任何端口）。
+func toPortBindings(publish bool, port int) nat.PortMap {
+	if !publish || port <= 0 {
+		return nil
+	}
+	containerPort := nat.Port(strconv.Itoa(port) + "/tcp")
+	return nat.PortMap{
+		containerPort: []nat.PortBinding{{
+			HostIP:   "0.0.0.0",
+			HostPort: "", // 由 daemon 分配空闲端口
+		}},
 	}
 }
 

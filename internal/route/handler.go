@@ -64,11 +64,18 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 			logger.Warnf(ctx, "[RouteRegistryHandler] skip register route key=%s: unresolved backend port", routeKey)
 			return
 		}
-		if strings.TrimSpace(inst.IPAddress) == "" {
-			logger.Warnf(ctx, "[RouteRegistryHandler] skip register route key=%s: empty container ip", routeKey)
+		// Backend 优先用「发布到宿主机」的地址：host_port 模式下容器 IP 对 gobrave
+		// 可能不可路由（Windows + WSL2 NAT），此时只有宿主机端口是可达的。
+		backendHost := strings.TrimSpace(inst.IPAddress)
+		backendPort := port
+		if inst.HostPort > 0 {
+			backendHost = "127.0.0.1"
+			backendPort = inst.HostPort
+		}
+		if backendHost == "" {
+			logger.Warnf(ctx, "[RouteRegistryHandler] skip register route key=%s: empty backend host", routeKey)
 			return
 		}
-
 		runtimeName := inst.RuntimeName
 		reg := Registration{
 			RouteKey:            routeKey,
@@ -76,8 +83,8 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 			IsTrimPrefix:        true,
 			PathPrefix:          fmt.Sprintf("%s/%d", config.ResolveAppsPathPrefix(h.cfg), appSession.ID),
 			Backend: Backend{
-				Host: strings.TrimSpace(inst.IPAddress),
-				Port: port,
+				Host: backendHost,
+				Port: backendPort,
 			},
 			Metadata: map[string]string{
 				"owner_type":            string(inst.OwnerType),

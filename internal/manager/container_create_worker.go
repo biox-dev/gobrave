@@ -519,6 +519,9 @@ func (w *ContainerCreateWorker) buildInstanceSpec(
 		// web：跑模板命令并通过模板端口暴露给网关。
 		spec.WorkloadKind = "deployment"
 		spec.ExposeService = tpl.Port > 0
+		// 默认不发布宿主机端口（gobrave 直连容器 IP，不占端口也不冲突）；
+		// 仅 container.network_mode=host_port 时才随机发布。
+		spec.PublishPort = tpl.Port > 0 && config.ResolveContainerNetworkMode(w.cfg) == config.ContainerNetworkModeHostPort
 	}
 
 	return spec

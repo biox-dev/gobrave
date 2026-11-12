@@ -246,6 +246,49 @@ type ContainerConfig struct {
 	// ,string 让 JSON 同时接受字符串与数字：int64 主键超出 JS 安全整数范围，
 	// 前端以字符串传递，不加该标记会报 cannot unmarshal string into int64。
 	BashContainerTemplateID int64 `yaml:"bash_container_template_id" json:"bash_container_template_id,string"`
+
+	// NetworkMode 决定应用容器端口的可达方式（container.network_mode）。
+	//
+	// 默认 container_ip：gobrave 直接访问容器 IP（docker0 / k8s Pod IP），
+	// 不占用宿主机端口；适用于 Linux、Docker Desktop 等能与 daemon 共享网络的主机。
+	//
+	// host_port：容器端口随机发布到宿主机（-p 0.0.0.0:<random>:<port>），
+	// gobrave 通过 宿主机地址 + 随机端口 访问；多实例不会端口冲突。
+	// 用于「gobrave 无法路由容器 IP」的场景，典型是 Windows + WSL2 自管 dockerd
+	// （容器 IP 在发行版内的 docker0 网桥上，Windows 不可路由）。
+	NetworkMode string `yaml:"network_mode" json:"network_mode"`
+}
+
+// 容器端口访问模式。
+const (
+	// ContainerNetworkModeContainerIP 直接访问容器 IP，不发布宿主机端口（默认）。
+	ContainerNetworkModeContainerIP = "container_ip"
+	// ContainerNetworkModeHostPort 随机发布到宿主机端口，经宿主机地址访问。
+	ContainerNetworkModeHostPort = "host_port"
+)
+
+// NormalizeContainerNetworkMode 归一化容器网络模式：空值回退 container_ip，非法值报错。
+func NormalizeContainerNetworkMode(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", ContainerNetworkModeContainerIP:
+		return ContainerNetworkModeContainerIP, nil
+	case ContainerNetworkModeHostPort:
+		return ContainerNetworkModeHostPort, nil
+	default:
+		return "", fmt.Errorf("unsupported container.network_mode %q, expected one of %s, %s", mode, ContainerNetworkModeContainerIP, ContainerNetworkModeHostPort)
+	}
+}
+
+// ResolveContainerNetworkMode 返回生效的容器网络模式（未配置或非法值一律回退默认）。
+func ResolveContainerNetworkMode(cfg *Config) string {
+	if cfg == nil || cfg.Container == nil {
+		return ContainerNetworkModeContainerIP
+	}
+	mode, err := NormalizeContainerNetworkMode(cfg.Container.NetworkMode)
+	if err != nil {
+		return ContainerNetworkModeContainerIP
+	}
+	return mode
 }
 
 // bash 工具的执行模式。

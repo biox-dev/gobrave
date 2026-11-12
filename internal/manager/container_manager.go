@@ -1329,6 +1329,10 @@ func (m *ContainerManager) syncInstanceIPAddress(ctx context.Context, rt contain
 		inst.IPAddress = ip
 		changed = true
 	}
+	if inspection.HostPort > 0 && inspection.HostPort != inst.HostPort {
+		inst.HostPort = inspection.HostPort
+		changed = true
+	}
 	if nodeName != "" && nodeName != inst.RuntimeNodeName {
 		inst.RuntimeNodeName = nodeName
 		changed = true

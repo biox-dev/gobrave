@@ -459,6 +459,11 @@ type ContainerInstance struct {
 	IPAddress       string `json:"ip_address" gorm:"type:varchar(128)"`
 	RuntimeNodeName string `json:"runtime_node_name" gorm:"type:varchar(255);index"`
 
+	// HostPort 是容器端口发布到宿主机后的实际端口（0 表示未发布）。
+	// 只有 container.network_mode=host_port 时非 0；由运行时 Inspect 读回，
+	// 供路由层用「宿主机 + HostPort」代替「容器 IP + 容器端口」。
+	HostPort int `json:"host_port" gorm:"not null;default:0"`
+
 	ExitCode *int `json:"exit_code"`
 
 	StartedAt *time.Time `json:"started_at"`
@@ -603,6 +608,13 @@ type ContainerSpec struct {
 	WorkloadKind     string
 	ExposedPort      int
 	ExposeService    bool
+
+	// PublishPort 为 true 时把 ExposedPort 以随机宿主机端口发布（-p 0.0.0.0:0:<port>），
+	// 供 gobrave 之外的进程（如 Windows 宿主浏览器）访问。
+	//
+	// docker 与 k8s 语义不同：docker 由 docker runtime 落地为 PortBindings；
+	// k8s 的 ExposeService 已经通过 Service/Ingress 暴露，不读取本字段。
+	PublishPort bool
 }
 
 type ContainerSchedulingSelector struct {
