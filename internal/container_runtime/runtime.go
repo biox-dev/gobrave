@@ -114,6 +114,14 @@ type RuntimeHealth struct {
 	EndpointSource string `json:"endpoint_source,omitempty"`
 	// ServerVersion 对端版本号（docker daemon / kubernetes apiserver）。
 	ServerVersion string `json:"server_version,omitempty"`
+
+	// ProvisionEnabled 是否启用运行时预置（container.docker.provision.enabled）。
+	// 为 true 时前端才展示「容器运行时安装向导」入口。
+	ProvisionEnabled bool `json:"provision_enabled"`
+	// BashExecutionMode bash 工具执行位置：host（宿主机）/ container（容器）。
+	BashExecutionMode string `json:"bash_execution_mode"`
+	// BashContainerTemplateID container 模式下 bash 工具使用的容器模板 ID。
+	BashContainerTemplateID int64 `json:"bash_container_template_id,string"`
 }
 
 // MaskEndpoint 把地址里的 user:password@ 部分替换成 user:***@，避免凭据泄露到前端。

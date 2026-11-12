@@ -996,6 +996,19 @@ func (h *ContainerHandler) GetContainerRuntimeInfo(c *gin.Context) {
 	result := containerruntime.RuntimeHealth{
 		HostOS:   runtime.GOOS,
 		HostArch: runtime.GOARCH,
+		// 运行时预置开关与 bash 执行位置属于「配置态」信息，与运行时是否可用无关，
+		// 因此无论探测成功与否都返回，前端据此决定是否展示安装向导入口。
+		ProvisionEnabled:        config.RuntimeProvisionEnabled(h.cfg),
+		BashExecutionMode:       config.BashExecutionModeHost,
+		BashContainerTemplateID: config.DefaultBashContainerTemplateID,
+	}
+	if h.cfg != nil && h.cfg.Container != nil {
+		if mode, err := config.NormalizeBashExecutionMode(h.cfg.Container.BashExecutionMode); err == nil {
+			result.BashExecutionMode = mode
+		}
+		if h.cfg.Container.BashContainerTemplateID > 0 {
+			result.BashContainerTemplateID = h.cfg.Container.BashContainerTemplateID
+		}
 	}
 
 	rt, err := h.containerManager.GetRuntime()
