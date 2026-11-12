@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -965,19 +966,21 @@ func (h *ContainerHandler) GetQueueStatus(c *gin.Context) {
 // 不可达时检测接口长时间挂住。
 const runtimeHealthCheckTimeout = 5 * time.Second
 
-// CheckContainerRuntime godoc
-// @Summary      容器运行时检测
-// @Description  检测默认运行时是否可用：运行时名称由容器实际执行时同一份逻辑解析
+// GetContainerRuntimeInfo godoc
+// @Summary      容器运行时环境信息
+// @Description  返回默认运行时信息：运行时名称由容器实际执行时同一份逻辑解析
 // @Description  （manager.ContainerLifecycle.ResolveRuntimeName：container.default_runtime →
 // @Description  container.runtimes[0] → 唯一已注册运行时 → docker），并探测其依赖
 // @Description  （docker daemon Ping、k8s apiserver ServerVersion）。
+// @Description  同时返回宿主操作系统 / 架构、实际连接地址（已脱敏）与对端版本，
+// @Description  供前端在页面上展示运行环境。
 // @Tags         容器管理
 // @Produce      json
 // @Success      200  {object}  containerruntime.RuntimeHealth
 // @Failure      401  {object}  errors.AppError
 // @Security     Bearer
-// @Router       /container/runtime/check [get]
-func (h *ContainerHandler) CheckContainerRuntime(c *gin.Context) {
+// @Router       /container/runtime/info [get]
+func (h *ContainerHandler) GetContainerRuntimeInfo(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
@@ -990,27 +993,45 @@ func (h *ContainerHandler) CheckContainerRuntime(c *gin.Context) {
 		return
 	}
 
+	result := containerruntime.RuntimeHealth{
+		HostOS:   runtime.GOOS,
+		HostArch: runtime.GOARCH,
+	}
+
 	rt, err := h.containerManager.GetRuntime()
 	if rt == nil || err != nil {
 		msg := "container runtime is not available"
 		if err != nil {
 			msg = err.Error()
 		}
-		c.JSON(http.StatusOK, containerruntime.RuntimeHealth{
-			Name:  h.containerManager.ResolveRuntimeName(),
-			Error: msg,
-		})
+		result.Name = h.containerManager.ResolveRuntimeName()
+		result.Error = msg
+		c.JSON(http.StatusOK, result)
 		return
 	}
 
-	result := containerruntime.RuntimeHealth{Name: rt.Name(), Registered: true, Healthy: true}
+	result.Name = rt.Name()
+	result.Registered = true
+	result.Healthy = true
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), runtimeHealthCheckTimeout)
+	defer cancel()
+
 	if checker, ok := rt.(containerruntime.RuntimeHealthChecker); ok {
 		result.Checkable = true
-		ctx, cancel := context.WithTimeout(c.Request.Context(), runtimeHealthCheckTimeout)
-		defer cancel()
 		if err := checker.HealthCheck(ctx); err != nil {
 			result.Healthy = false
 			result.Error = err.Error()
+		}
+	}
+
+	// 连接地址与对端版本属于「附加信息」：获取失败不影响健康结论。
+	if reporter, ok := rt.(containerruntime.RuntimeEndpointReporter); ok {
+		result.Endpoint, result.EndpointSource = reporter.Endpoint()
+	}
+	if reporter, ok := rt.(containerruntime.RuntimeVersionReporter); ok {
+		if version, verr := reporter.ServerVersion(ctx); verr == nil {
+			result.ServerVersion = version
 		}
 	}
 

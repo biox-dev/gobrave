@@ -63,6 +63,8 @@ type KubernetesRuntime struct {
 	clientset  kubernetes.Interface
 	restConfig *rest.Config
 	monitor    KubernetesRuntimeMonitor
+	// inCluster 记录是否通过 ServiceAccount 在集群内运行，仅用于 endpoint 来源展示。
+	inCluster bool
 
 	handler containerruntime.RuntimeEventHandler
 }
@@ -95,7 +97,13 @@ func NewKubernetesRuntimeWithOptions(cfg KubernetesRuntimeConfig, opts ...Kubern
 		return nil, fmt.Errorf("init kubernetes client: %w", err)
 	}
 
-	runtime := &KubernetesRuntime{name: runtimeName, namespace: namespace, clientset: cs, restConfig: restCfg}
+	runtime := &KubernetesRuntime{
+		name:       runtimeName,
+		namespace:  namespace,
+		clientset:  cs,
+		restConfig: restCfg,
+		inCluster:  cfg.InCluster,
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(runtime)
@@ -126,6 +134,34 @@ func (k *KubernetesRuntime) HealthCheck(ctx context.Context) error {
 		return fmt.Errorf("connect kubernetes apiserver: %w", err)
 	}
 	return nil
+}
+
+// Endpoint satisfies containerruntime.RuntimeEndpointReporter.
+// 返回 apiserver 地址（来自 kubeconfig / 集群内 ServiceAccount），已脱敏。
+func (k *KubernetesRuntime) Endpoint() (string, string) {
+	if k == nil || k.restConfig == nil {
+		return "", ""
+	}
+	source := "kubeconfig"
+	if k.inCluster {
+		source = "in-cluster"
+	}
+	return containerruntime.MaskEndpoint(k.restConfig.Host), source
+}
+
+// ServerVersion satisfies containerruntime.RuntimeVersionReporter.
+func (k *KubernetesRuntime) ServerVersion(ctx context.Context) (string, error) {
+	if k == nil || k.clientset == nil {
+		return "", errors.New("kubernetes client is not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	info, err := k.clientset.Discovery().ServerVersion()
+	if err != nil {
+		return "", fmt.Errorf("get kubernetes server version: %w", err)
+	}
+	return info.GitVersion, nil
 }
 
 // EnsureImage satisfies containerruntime.RuntimeImageManager.

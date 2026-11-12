@@ -616,6 +616,44 @@ func (d *DockerRuntime) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
+// Endpoint satisfies containerruntime.RuntimeEndpointReporter.
+// 返回最终生效的 daemon 地址（显式 host 优先，否则为 Docker SDK 从环境变量推断的结果）。
+func (d *DockerRuntime) Endpoint() (string, string) {
+	source := "env"
+	if strings.TrimSpace(d.host) != "" {
+		source = "explicit"
+	}
+
+	addr := strings.TrimSpace(d.host)
+	// client 未初始化失败时也尽力返回配置值，便于前端看到「本该连接哪里」。
+	if cli, err := d.getClient(); err == nil && cli != nil {
+		if h := strings.TrimSpace(cli.DaemonHost()); h != "" {
+			addr = h
+			if source == "env" && strings.TrimSpace(d.host) == "" && os.Getenv("DOCKER_HOST") == "" {
+				source = "default"
+			}
+		}
+	}
+
+	return containerruntime.MaskEndpoint(addr), source
+}
+
+// ServerVersion satisfies containerruntime.RuntimeVersionReporter.
+func (d *DockerRuntime) ServerVersion(ctx context.Context) (string, error) {
+	cli, err := d.getClient()
+	if err != nil {
+		return "", err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ver, err := cli.ServerVersion(ctx)
+	if err != nil {
+		return "", fmt.Errorf("get docker daemon version: %w", err)
+	}
+	return ver.Version, nil
+}
+
 func (d *DockerRuntime) getClient() (*client.Client, error) {
 	d.once.Do(func() {
 		opts := []client.Opt{client.WithAPIVersionNegotiation()}

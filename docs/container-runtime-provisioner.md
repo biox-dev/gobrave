@@ -172,7 +172,7 @@ Start(ctx):
    - `ErrNotInstalled` → 不注入 host，回退 `FromEnv`（保持“未安装不做处理”），
      同时 PathMapper 保持配置推断的语义。
 3. 启动不应阻塞：`Start` 用独立 goroutine + 超时（建议 20s），失败只记日志。
-   桌面端首页会调用 `/container/runtime/check` 暴露真实状态给 UI。
+   桌面端首页会调用 `/container/runtime/info` 暴露真实状态给 UI。
 
 ## 7. HTTP 接口（安装向导）
 

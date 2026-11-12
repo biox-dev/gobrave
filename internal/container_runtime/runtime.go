@@ -2,6 +2,7 @@ package containerruntime
 
 import (
 	"context"
+	"strings"
 
 	"github.com/biox-dev/gobrave/internal/types"
 )
@@ -78,7 +79,19 @@ type RuntimeHealthChecker interface {
 	HealthCheck(ctx context.Context) error
 }
 
-// RuntimeHealth 描述运行时注册 / 可用性检测结果。
+// RuntimeEndpointReporter 是可选扩展接口：运行时报告它实际连接到哪个 daemon / apiserver。
+// 返回的地址用于前端展示，实现方需自行脱敏（见 MaskEndpoint）。
+type RuntimeEndpointReporter interface {
+	// Endpoint 返回（脱敏后的）连接地址及地址来源，例如 unix:///var/run/docker.sock + env。
+	Endpoint() (address string, source string)
+}
+
+// RuntimeVersionReporter 是可选扩展接口：报告对端（docker daemon / apiserver）版本号。
+type RuntimeVersionReporter interface {
+	ServerVersion(ctx context.Context) (string, error)
+}
+
+// RuntimeHealth 描述运行时注册 / 可用性与宿主环境信息。
 type RuntimeHealth struct {
 	// Name 运行时名称（docker / k8s / k3s）。
 	Name string `json:"name"`
@@ -90,6 +103,39 @@ type RuntimeHealth struct {
 	Checkable bool `json:"checkable"`
 	// Error 检测失败原因，正常时为空。
 	Error string `json:"error,omitempty"`
+
+	// HostOS 后端进程所在宿主操作系统（runtime.GOOS：linux / windows / darwin）。
+	HostOS string `json:"host_os"`
+	// HostArch 后端进程所在宿主 CPU 架构（runtime.GOARCH）。
+	HostArch string `json:"host_arch"`
+	// Endpoint 运行时实际连接地址（已脱敏，密码以 *** 代替）。
+	Endpoint string `json:"endpoint,omitempty"`
+	// EndpointSource 地址来源：explicit / env / default / kubeconfig / in-cluster。
+	EndpointSource string `json:"endpoint_source,omitempty"`
+	// ServerVersion 对端版本号（docker daemon / kubernetes apiserver）。
+	ServerVersion string `json:"server_version,omitempty"`
+}
+
+// MaskEndpoint 把地址里的 user:password@ 部分替换成 user:***@，避免凭据泄露到前端。
+func MaskEndpoint(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	idx := strings.Index(raw, "://")
+	if idx < 0 {
+		return raw
+	}
+	scheme, rest := raw[:idx+3], raw[idx+3:]
+	at := strings.LastIndex(rest, "@")
+	if at < 0 {
+		return raw
+	}
+	userInfo := rest[:at]
+	if colon := strings.Index(userInfo, ":"); colon >= 0 {
+		userInfo = userInfo[:colon] + ":***"
+	}
+	return scheme + userInfo + rest[at:]
 }
 
 type RuntimeEvent struct {
