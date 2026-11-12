@@ -35,6 +35,10 @@ type DockerRuntime struct {
 	// bind source path does not exist / mount path must be absolute。
 	paths *containerruntime.PathMapper
 
+	// host 是显式指定的 daemon 地址（如预置 WSL dockerd 的 tcp://ip:port）。
+	// 为空时回退 client.FromEnv，保持历史行为不变。
+	host string
+
 	once    sync.Once
 	client  *client.Client
 	initErr error
@@ -49,6 +53,16 @@ func WithPathMapper(paths *containerruntime.PathMapper) DockerRuntimeOption {
 		if paths != nil {
 			d.paths = paths
 		}
+	}
+}
+
+// WithHost 显式指定 daemon 地址，绕过 FromEnv 的环境变量推断。
+//
+// 预置流程（provision.Manager.Start）产出的 endpoint 通过它注入，
+// 使运行时地址由安装状态决定，而不是依赖外部设置的 DOCKER_HOST。
+func WithHost(host string) DockerRuntimeOption {
+	return func(d *DockerRuntime) {
+		d.host = strings.TrimSpace(host)
 	}
 }
 
@@ -68,11 +82,29 @@ func NewDockerRuntime(opts ...DockerRuntimeOption) *DockerRuntime {
 // npipe://（Docker Desktop 的 Windows daemon）不参与推断：它的文件系统就是 Windows，
 // bind mount 的 Source 仍应是 Windows 盘符路径。
 func AutoDetectWSLDaemon() bool {
+	return AutoDetectWSLDaemonFor("")
+}
+
+// AutoDetectWSLDaemonFor 依据显式 daemon 地址 host 与 DOCKER_HOST 推断是否连接
+// WSL2 内的 dockerd。
+//
+// host 是预置（provision）流程解析出的 daemon 地址（如 tcp://172.24.1.10:2375）；
+// 为空时只看 DOCKER_HOST。判定条件：
+//   - 仅在 Windows 上成立：Linux 的 provision 产出的同样是 unix:// 本机 socket，
+//     其文件系统与宿主一致，不存在 /mnt/<drive> 这层翻译；
+//   - 地址为 tcp:// 或 http://（unix:// / npipe:// 都表示「与宿主共享文件系统」）。
+func AutoDetectWSLDaemonFor(host string) bool {
 	if runtime.GOOS != "windows" {
 		return false
 	}
-	host := strings.ToLower(strings.TrimSpace(os.Getenv("DOCKER_HOST")))
-	return strings.HasPrefix(host, "tcp://") || strings.HasPrefix(host, "http://")
+	candidates := []string{strings.TrimSpace(host), os.Getenv("DOCKER_HOST")}
+	for _, c := range candidates {
+		lower := strings.ToLower(c)
+		if strings.HasPrefix(lower, "tcp://") || strings.HasPrefix(lower, "http://") {
+			return true
+		}
+	}
+	return false
 }
 
 // WSLDaemon 报告当前是否按 WSL2 daemon 语义翻译挂载路径。
@@ -586,7 +618,16 @@ func (d *DockerRuntime) HealthCheck(ctx context.Context) error {
 
 func (d *DockerRuntime) getClient() (*client.Client, error) {
 	d.once.Do(func() {
-		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+		opts := []client.Opt{client.WithAPIVersionNegotiation()}
+		// host 非空时显式指定 daemon 地址（例如预置的 WSL dockerd endpoint）。
+		// 为空时保持历史行为：从 DOCKER_HOST 等环境变量推断。
+		if host := strings.TrimSpace(d.host); host != "" {
+			opts = append([]client.Opt{client.WithHost(host)}, opts...)
+		} else {
+			opts = append([]client.Opt{client.FromEnv}, opts...)
+		}
+
+		cli, err := client.NewClientWithOpts(opts...)
 		if err != nil {
 			d.initErr = fmt.Errorf("init docker client: %w", err)
 			return

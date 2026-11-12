@@ -323,6 +323,16 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	// 运行时检测：只校验默认运行时（container.default_runtime，缺省 docker）
 	// 是否已注册且依赖可用（docker daemon / apiserver）。
 	r.GET("/container/runtime/check", handler.CheckContainerRuntime)
+	// 容器运行时预置（安装向导 + 启动自检）：
+	//   status  —— 只读探测当前状态（含进行中的进度快照）；
+	//   download/install —— 异步执行，202 返回后由前端轮询 status；
+	//   uninstall —— 同步执行，必须 confirm=true；
+	//   start —— 手动触发一次启动自检（与进程启动时行为一致）。
+	r.GET("/container/runtime/provision/status", handler.GetRuntimeProvisionStatus)
+	r.POST("/container/runtime/provision/download", handler.DownloadRuntimeProvision)
+	r.POST("/container/runtime/provision/install", handler.InstallRuntimeProvision)
+	r.POST("/container/runtime/provision/uninstall", handler.UninstallRuntimeProvision)
+	r.POST("/container/runtime/provision/start", handler.StartRuntimeProvision)
 	r.GET("/container/queue/status", handler.GetQueueStatus)
 }
 

@@ -179,6 +179,18 @@ container:
     # 不配置时（注释掉）Windows + DOCKER_HOST=tcp://… 自动视为 WSL daemon；其余情况为 false。
     # npipe://（Docker Desktop Windows daemon）不要开启。
     # wsl_daemon: true
+    #
+    # 运行时预置（provision）：由 gobrave 自己管理 dockerd 的启动，而不是依赖
+    # 用户已经跑起来的 daemon。默认关闭；开启后每次启动做一次幂等的 Start 自检。
+    #   enabled:      与平台无关。Windows 上拉起自管 WSL 发行版内的 dockerd，
+    #                 Linux 上执行 systemctl start docker 管理本机 dockerd。
+    #   distro / download_url / port: 仅 Windows 生效，Linux 实现会忽略。
+    # 未安装时不会自动安装，只等 UI 安装向导。
+    # provision:
+    #   enabled: true
+    #   distro: gobrave-ubuntu-docker
+    #   download_url: ""
+    #   port: 2375
   # 服务启动时是否自动恢复 job_status=running 的 analysis DAG。
   # true: 扫描并尝试恢复；false: 不自动恢复。
   recover_running_dag_on_start: true

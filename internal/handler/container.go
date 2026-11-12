@@ -10,6 +10,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/config"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
+	"github.com/biox-dev/gobrave/internal/container_runtime/provision"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -24,6 +25,7 @@ type ContainerHandler struct {
 	workflowService  interfaces.WorkflowService
 	containerManager *manager.ContainerManager
 	terminalRegistry *manager.TerminalSessionRegistry
+	provisionManager *provision.Manager
 	cfg              *config.Config
 }
 
@@ -67,6 +69,7 @@ func NewContainerHandler(containerService interfaces.ContainerService,
 	analysisService interfaces.AnalysisService, workflowService interfaces.WorkflowService,
 	containerManager *manager.ContainerManager,
 	terminalRegistry *manager.TerminalSessionRegistry,
+	provisionManager *provision.Manager,
 	cfg *config.Config) *ContainerHandler {
 	return &ContainerHandler{
 		containerService: containerService,
@@ -75,6 +78,7 @@ func NewContainerHandler(containerService interfaces.ContainerService,
 		workflowService:  workflowService,
 		containerManager: containerManager,
 		terminalRegistry: terminalRegistry,
+		provisionManager: provisionManager,
 		cfg:              cfg,
 	}
 }

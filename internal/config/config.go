@@ -286,6 +286,45 @@ type DockerRuntimeConfig struct {
 	// true：强制开启，bind mount 的 Source 会从 D:\x 翻译成 /mnt/d/x；
 	// false：强制关闭，Source 保持 Windows 盘符路径（Docker Desktop npipe 等）。
 	WSLDaemon *bool `yaml:"wsl_daemon" json:"wsl_daemon"`
+
+	// Provision 是 gobrave 自管运行时预置（Windows 上是 WSL 发行版，Linux 上是
+	// 本机 dockerd）的配置段。
+	Provision *RuntimeProvisionConfig `yaml:"provision" json:"provision"`
+}
+
+// RuntimeProvisionConfig 描述 gobrave 自管运行时预置的下载与运行参数。
+//
+// Enabled 与平台无关（Windows 上拉起自管 WSL 发行版内的 dockerd，Linux 上拉起
+// 本机 dockerd）；Distro / DownloadURL / Port 仅 Windows 实现使用，Linux 实现
+// 会忽略它们。
+type RuntimeProvisionConfig struct {
+	// Enabled 为 true 时启用运行时预置的启动自检：每次启动尝试 Start
+	// （已安装则拉起 daemon），未安装时不安装任何东西，等待 UI 安装向导。
+	//
+	// 与平台无关：Windows 上拉起 WSL 内的 dockerd，Linux 上拉起本机 dockerd。
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Distro 导入到 WSL 的发行版名，默认 gobrave-ubuntu-docker。仅 Windows 生效。
+	Distro string `yaml:"distro" json:"distro"`
+	// DownloadURL rootfs 包下载地址（安装向导使用）。仅 Windows 生效。
+	DownloadURL string `yaml:"download_url" json:"download_url"`
+	// Port dockerd 监听的 TCP 端口，默认 2375。仅 Windows 生效。
+	Port int `yaml:"port" json:"port"`
+}
+
+// 自管运行时预置的默认值。
+const (
+	// DefaultProvisionDistro 默认发行版名（仅 Windows 使用）。
+	DefaultProvisionDistro = "gobrave-ubuntu-docker"
+	// DefaultProvisionDaemonPort 默认 dockerd TCP 端口。
+	DefaultProvisionDaemonPort = 2375
+)
+
+// DefaultRuntimeProvisionConfig 返回预置段的默认配置。
+func DefaultRuntimeProvisionConfig() *RuntimeProvisionConfig {
+	return &RuntimeProvisionConfig{
+		Distro: DefaultProvisionDistro,
+		Port:   DefaultProvisionDaemonPort,
+	}
 }
 
 // DefaultContainerConfig 返回 container 段在代码中的默认配置。
@@ -294,7 +333,7 @@ func DefaultContainerConfig() *ContainerConfig {
 	return &ContainerConfig{
 		DefaultRuntime: "docker",
 		Kubernetes:     DefaultKubernetesRuntimeConfig(),
-		Docker:         &DockerRuntimeConfig{},
+		Docker:         &DockerRuntimeConfig{Provision: DefaultRuntimeProvisionConfig()},
 		// RefreshImageStatusOnStart:           true,
 		RecoverRunningDagOnStart:            true,
 		CleanupDagNodeContainersBeforeStart: true,
@@ -806,6 +845,13 @@ func LoadConfig() (*Config, error) {
 	cfg.Container.DagNodeCleanupOnFailed = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnFailed, "stop")
 	cfg.Container.DagNodeCleanupOnDagFinished = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnDagFinished, "delete")
 
+	// docker 段：预置子段缺失时补默认值，避免装配层到处判空。
+	// docker 段整体也可能被 `docker: null` 解成 nil，此时用默认值（即零值）重建。
+	if cfg.Container.Docker == nil {
+		cfg.Container.Docker = &DockerRuntimeConfig{}
+	}
+	normalizeRuntimeProvisionConfig(&cfg.Container.Docker)
+
 	if cfg.Route == nil {
 		cfg.Route = &RouteConfig{Registrys: []string{}}
 	}
@@ -934,6 +980,63 @@ func ResolveContainerRuntimes(cfg *Config) []string {
 		}
 	}
 	return []string{ResolveContainerRuntime(cfg)}
+}
+
+// ResolveRuntimeProvisionConfig 返回容器运行时预置（provision）段配置；
+// 任何一级缺失（cfg / container / docker / provision）都回退默认值。
+//
+// 该函数与平台无关：Windows 上参数用于自管 WSL 发行版，Linux 上 Distro /
+// DownloadURL / Port 被忽略，只用来构造本机 dockerd 的管理器。
+func ResolveRuntimeProvisionConfig(cfg *Config) *RuntimeProvisionConfig {
+	if cfg == nil || cfg.Container == nil || cfg.Container.Docker == nil {
+		return DefaultRuntimeProvisionConfig()
+	}
+	source := cfg.Container.Docker.Provision
+	if source == nil {
+		return DefaultRuntimeProvisionConfig()
+	}
+	out := *source
+	if strings.TrimSpace(out.Distro) == "" {
+		out.Distro = DefaultProvisionDistro
+	}
+	if out.Port <= 0 {
+		out.Port = DefaultProvisionDaemonPort
+	}
+	return &out
+}
+
+// RuntimeProvisionEnabled 报告是否启用容器运行时预置的启动自检
+// （container.docker.provision.enabled）。
+//
+// 与平台无关：Windows 上拉起 WSL 内的 dockerd，Linux 上拉起本机 dockerd。
+func RuntimeProvisionEnabled(cfg *Config) bool {
+	if cfg == nil || cfg.Container == nil || cfg.Container.Docker == nil {
+		return false
+	}
+	source := cfg.Container.Docker.Provision
+	return source != nil && source.Enabled
+}
+
+// normalizeRuntimeProvisionConfig 将预置段归一化到有效状态，
+// 段缺失或字段为空时回退默认值。原地修改 d 的字段。
+func normalizeRuntimeProvisionConfig(d **DockerRuntimeConfig) {
+	if d == nil || *d == nil {
+		return
+	}
+	docker := *d
+	if docker.Provision == nil {
+		docker.Provision = DefaultRuntimeProvisionConfig()
+		return
+	}
+	provisionCfg := docker.Provision
+	provisionCfg.Distro = strings.TrimSpace(provisionCfg.Distro)
+	if provisionCfg.Distro == "" {
+		provisionCfg.Distro = DefaultProvisionDistro
+	}
+	provisionCfg.DownloadURL = strings.TrimSpace(provisionCfg.DownloadURL)
+	if provisionCfg.Port <= 0 {
+		provisionCfg.Port = DefaultProvisionDaemonPort
+	}
 }
 
 // normalizeContainerRuntimes 归一化运行时名称并去重，保持首次出现的顺序。

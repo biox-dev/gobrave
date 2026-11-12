@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -39,6 +40,7 @@ import (
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	dockerruntime "github.com/biox-dev/gobrave/internal/container_runtime/docker"
 	kubernetesruntime "github.com/biox-dev/gobrave/internal/container_runtime/kubernetes"
+	"github.com/biox-dev/gobrave/internal/container_runtime/provision"
 	"github.com/biox-dev/gobrave/internal/dag"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/dag/executor"
@@ -295,6 +297,65 @@ func resolveDockerWSLDaemon(cfg *config.Config) bool {
 	return dockerruntime.AutoDetectWSLDaemon()
 }
 
+// runtimeProvisionManager 构造运行时预置管理器。
+//
+// 返回 nil 表示「不启用自管预置」：此时 docker runtime 完全沿用历史行为
+// （client.FromEnv），不产生任何额外的 WSL / systemctl 调用。
+//
+// 启用条件是显式配置 container.docker.provision.enabled=true。
+// 该开关与平台无关：Windows 上预置的是自管 WSL 发行版，Linux 上预置的是本机 dockerd；
+// 参数（Distro / DownloadURL / Port）在 Linux 上被实现忽略。
+//
+// 默认关闭是刻意的：多数用户用 Docker Desktop 或已自行安装 dockerd，
+// 启动时静默启动 daemon 属于有副作用的操作，必须由配置授权。
+func runtimeProvisionManager(cfg *config.Config) *provision.Manager {
+	if !config.RuntimeProvisionEnabled(cfg) {
+		return nil
+	}
+	provCfg := config.ResolveRuntimeProvisionConfig(cfg)
+	inner := provision.New(provision.Config{
+		BaseDir:     config.StorageBaseDir(cfg),
+		DownloadURL: provCfg.DownloadURL,
+		Distro:      provCfg.Distro,
+		Port:        provCfg.Port,
+	})
+	return provision.NewManager(inner)
+}
+
+// startRuntimeProvision 执行一次启动自检并返回可用的 endpoint。
+//
+// 语义（与 provision.Provisioner.Start 一致）：
+//   - mgr 为 nil（未启用）→ 返回空串，调用方保持历史行为；
+//   - 未安装 → 静默返回空串，等待 UI 安装向导；
+//   - 已安装 → 确保 daemon 启动并返回 endpoint，失败仅记录日志。
+//
+// 该函数不得阻塞启动流程过久：用独立超时兜底，超时视为失败。
+func startRuntimeProvision(ctx context.Context, mgr *provision.Manager) string {
+	if mgr == nil {
+		return ""
+	}
+	runCtx, cancel := context.WithTimeout(ctx, runtimeProvisionTimeout)
+	defer cancel()
+
+	endpoint, err := mgr.Start(runCtx)
+	if err != nil {
+		if errors.Is(err, provision.ErrNotInstalled) {
+			logger.Infof(ctx, "[Container] container runtime provision: not installed, waiting for setup wizard")
+			return ""
+		}
+		logger.Warnf(ctx, "[Container] container runtime provision failed: %v", err)
+		return ""
+	}
+	logger.Infof(ctx, "[Container] container runtime provision ready: %s", endpoint)
+	return endpoint
+}
+
+// runtimeProvisionTimeout 是启动自检的超时上限。
+//
+// dockerd 冷启动（WSL 实例唤醒 + 容器运行时初始化）通常 3-15s，
+// 给 30s 上限既避免误判，也不会让启动流程无限挂起。
+const runtimeProvisionTimeout = 30 * time.Second
+
 // BuildContainer 注册依赖并返回容器。
 // cfg 由调用方（main）提前加载，因此 Gin 模式等需要在容器构建前生效的配置
 // 可以直接从 cfg 读取，避免重复解析 config.yml。
@@ -317,16 +378,37 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Invoke(func(reg containerruntime.MonitoringRegistry) {
 		containerruntime.SetMonitoringRegistry(reg)
 	}))
+	must(container.Provide(func(cfg *config.Config) *provision.Manager {
+		return runtimeProvisionManager(cfg)
+	}))
 	// Register container runtimes based on configuration
-	must(container.Invoke(func(cfg *config.Config, reg *containerruntime.Registry) error {
+	must(container.Invoke(func(cfg *config.Config, reg *containerruntime.Registry, provMgr *provision.Manager) error {
 		runtimes := config.ResolveContainerRuntimes(cfg)
 		for _, name := range runtimes {
 			switch name {
 			case "docker":
+				var opts []dockerruntime.DockerRuntimeOption
+
+				// 启动自检：已安装则确保 dockerd 启动并拿到 endpoint；
+				// 未安装时什么都不做（等待 UI 安装向导），保持历史行为。
+				endpoint := startRuntimeProvision(ctx, provMgr)
+				if endpoint != "" {
+					opts = append(opts, dockerruntime.WithHost(endpoint))
+				}
+
 				// 路径语义统一交给 PathMapper：storage.base_dir 决定宿主盘符，
 				// WSL 探测决定 bind Source 是否需要翻译成 daemon 视角。
-				paths := containerruntime.NewPathMapper(config.StorageBaseDir(cfg), resolveDockerWSLDaemon(cfg))
-				rt := dockerruntime.NewDockerRuntime(dockerruntime.WithPathMapper(paths))
+				//
+				// 注意不能写成 `resolveDockerWSLDaemon(cfg) || endpoint != ""`：
+				// endpoint 非空只说明 daemon 可用，并不代表 daemon 跑在 WSL2 里。
+				// Linux 上 provision 返回的是本机 unix:// socket，若因此把 wslDaemon
+				// 置 true，POSIX 宿主路径会被 ToWSLDaemonPath 当作「已在 daemon 视角」，
+				// 而 Windows 风格路径会被错误翻译成 /mnt/<drive>/...，导致 bind 失败。
+				wslDaemon := resolveDockerWSLDaemon(cfg) || dockerruntime.AutoDetectWSLDaemonFor(endpoint)
+				paths := containerruntime.NewPathMapper(config.StorageBaseDir(cfg), wslDaemon)
+				opts = append(opts, dockerruntime.WithPathMapper(paths))
+
+				rt := dockerruntime.NewDockerRuntime(opts...)
 				reg.Register(rt.Name(), rt)
 			case "k8s", "k3s":
 				kcfg := &config.KubernetesRuntimeConfig{Namespace: "default"}
