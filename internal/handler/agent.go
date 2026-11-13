@@ -12,6 +12,7 @@ import (
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
+	"github.com/biox-dev/gobrave/internal/agent/tool"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/realtime"
@@ -35,6 +36,8 @@ type AgentHandler struct {
 
 	skills     *skill.Registry
 	skillStore *skill.Store
+	// tools 是进程内工具注册表（只读）：供工具目录接口列出 / 查看内置工具定义。
+	tools *tool.Registry
 
 	runtimeCtx *RuntimeContextResolver
 
@@ -44,13 +47,14 @@ type AgentHandler struct {
 }
 
 // NewAgentHandler 创建 AgentHandler。
-func NewAgentHandler(svc *agentservice.AgentService, chat *agentservice.ChatService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry, skillStore *skill.Store) *AgentHandler {
+func NewAgentHandler(svc *agentservice.AgentService, chat *agentservice.ChatService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry, skillStore *skill.Store, tools *tool.Registry) *AgentHandler {
 	return &AgentHandler{
 		svc:        svc,
 		chat:       chat,
 		hub:        hub,
 		skills:     skills,
 		skillStore: skillStore,
+		tools:      tools,
 		runtimeCtx: runtimeCtx,
 	}
 }
@@ -169,6 +173,7 @@ type profileSaveRequest struct {
 	SystemPrompt string                   `json:"system_prompt"`
 	Model        string                   `json:"model"`
 	Skills       []string                 `json:"skills"`
+	Tools        []string                 `json:"tools"` // 工具名白名单；为空表示注入全部工具
 	Context      agenttypes.ContextConfig `json:"context"`
 	IsDefault    bool                     `json:"is_default"`
 }
@@ -367,6 +372,86 @@ func (h *AgentHandler) DescribeEnv(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, info)
+}
+
+// agentToolInfo 是工具目录接口的响应体。
+//
+// InputSchema 是工具入参的 JSON Schema（object），前端据此渲染参数说明。
+type agentToolInfo struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	InputSchema map[string]any `json:"input_schema"`
+}
+
+// toAgentToolInfo 把工具定义转换为响应体。
+func toAgentToolInfo(def tool.Definition) agentToolInfo {
+	return agentToolInfo{
+		Name:        def.Name,
+		Description: def.Description,
+		InputSchema: def.InputSchema,
+	}
+}
+
+// ListTools godoc
+// @Summary      查看 Agent 工具
+// @Description  返回当前工具注册表中的全部工具（内置 + 编码类 + 外部 MCP）的元信息；详情请调用 /agent/tool/get
+// @Tags         Agent
+// @Produce      json
+// @Success      200  {array}   handler.agentToolInfo
+// @Failure      401  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/tool/list [get]
+func (h *AgentHandler) ListTools(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	if h.tools == nil {
+		c.JSON(http.StatusOK, []agentToolInfo{})
+		return
+	}
+
+	defs := h.tools.List()
+	out := make([]agentToolInfo, 0, len(defs))
+	for _, def := range defs {
+		out = append(out, toAgentToolInfo(def))
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// GetTool godoc
+// @Summary      查看单个 Agent 工具
+// @Description  按工具名返回工具定义（描述 + 参数 JSON Schema + 来源），供前端展示工具详情
+// @Tags         Agent
+// @Produce      json
+// @Param        id   query     string  true  "工具名"
+// @Success      200  {object}  handler.agentToolInfo
+// @Failure      400  {object}  errors.AppError
+// @Failure      401  {object}  errors.AppError
+// @Failure      404  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/tool/get [get]
+func (h *AgentHandler) GetTool(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var q taskIDQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.Error(errors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if h.tools == nil {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+	def, ok := h.tools.Definition(q.ID)
+	if !ok {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+	c.JSON(http.StatusOK, toAgentToolInfo(def))
 }
 
 // ListSkills godoc
@@ -685,6 +770,7 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 		existing.SystemPrompt = req.SystemPrompt
 		existing.Model = req.Model
 		existing.Skills = req.Skills
+		existing.Tools = req.Tools
 		existing.Context = req.Context
 		existing.IsDefault = req.IsDefault
 		profile = existing
@@ -695,6 +781,7 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 			SystemPrompt: req.SystemPrompt,
 			Model:        req.Model,
 			Skills:       req.Skills,
+			Tools:        req.Tools,
 			Context:      req.Context,
 			IsDefault:    req.IsDefault,
 		}

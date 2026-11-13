@@ -302,8 +302,11 @@ func (a *copilotAgent) buildTools(rt agentinterfaces.Runtime, req agenttypes.Req
 	rc := agentruntime.ToolRuntimeContextFromRequest(req)
 
 	if a.opts.Tools != nil {
-		runnerExec := agentruntime.NewToolRunner(tool.NewExecutor(a.opts.Tools), rt)
-		defs := a.opts.Tools.List()
+		// 按 Profile 的工具白名单裁剪（req.Tools 为空表示不限制）。
+		// 执行器与暴露给模型的列表必须同源，否则模型看到白名单外的工具调用会失败。
+		registry := tool.NewRegistryWith(a.opts.Tools.Filter(req.Tools)...)
+		runnerExec := agentruntime.NewToolRunner(tool.NewExecutor(registry), rt)
+		defs := registry.List()
 		for _, def := range defs {
 			name := def.Name
 			out = append(out, copilot.Tool{

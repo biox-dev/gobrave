@@ -10,6 +10,8 @@
 package builtin
 
 import (
+	"sort"
+
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
@@ -42,4 +44,20 @@ func All(d Deps) []tool.Tool {
 		skill.GetSkill(d.Skills),
 		skill.LoadSkillResource(d.Skills),
 	}
+}
+
+// Names 返回框架内置工具的名称列表（升序）。
+//
+// 只构造工具定义、不执行工具，因此可以安全地传入零值 Deps。供内置 Profile 显式
+// 声明工具白名单使用：名单与 All 同源，新增内置工具会自动进入名单，不会漂移。
+func Names() []string {
+	tools := All(Deps{})
+	names := make([]string, 0, len(tools))
+	for _, t := range tools {
+		if name := t.Definition().Name; name != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }

@@ -2,6 +2,7 @@ package tool
 
 import (
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -15,6 +16,9 @@ type Registry struct {
 }
 
 // NewRegistry 创建空注册表。
+//
+// 进程内单例通常由装配方构造一次（见 container.buildAgentTools），再注册全部工具
+// 后交给 Provider 与查询接口共享。
 func NewRegistry() *Registry {
 	return &Registry{tools: make(map[string]Tool)}
 }
@@ -102,4 +106,67 @@ func (r *Registry) Names() []string {
 		names = append(names, d.Name)
 	}
 	return names
+}
+
+// Filter 按名称白名单挑选工具（按名称升序，与 Tools 一致）。
+//
+// names 为空表示「不限制」，返回全部工具；这是 Profile 未配置工具白名单时的语义。
+// 名称前后空白会被忽略，重复名只取一次；白名单中未注册的名称静默跳过，
+// 调用方如需告警可用 Has 先行校验。
+func (r *Registry) Filter(names []string) []Tool {
+	if len(names) == 0 {
+		return r.Tools()
+	}
+
+	r.mu.RLock()
+	tools := make([]Tool, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		key := strings.TrimSpace(name)
+		if key == "" {
+			continue
+		}
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		if t, ok := r.tools[key]; ok {
+			tools = append(tools, t)
+		}
+	}
+	r.mu.RUnlock()
+
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].Definition().Name < tools[j].Definition().Name
+	})
+	return tools
+}
+
+// Missing 返回 names 中尚未注册的工具名（去空白、去重、保持输入顺序）。
+//
+// 供白名单校验使用：Profile 里写错的工具名不应让调用失败，但需要留痕。
+func (r *Registry) Missing(names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var out []string
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		key := strings.TrimSpace(name)
+		if key == "" {
+			continue
+		}
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		if _, ok := r.tools[key]; !ok {
+			out = append(out, key)
+		}
+	}
+	return out
 }

@@ -503,6 +503,10 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 	r.POST("/agent/skill/save", handler.SaveSkill)
 	r.POST("/agent/skill/delete", handler.DeleteSkill)
 
+	// 工具目录：从进程内工具注册表读取（与 Provider 实际注入给模型的工具同源）。
+	r.GET("/agent/tool/list", handler.ListTools)
+	r.GET("/agent/tool/get", handler.GetTool)
+
 	r.GET("/agent/profile/list", handler.ListProfiles)
 	r.GET("/agent/profile/get", handler.GetProfile)
 	r.POST("/agent/profile/save", handler.SaveProfile)

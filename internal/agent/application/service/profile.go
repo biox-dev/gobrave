@@ -8,11 +8,25 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/skill"
+	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
+	"github.com/biox-dev/gobrave/internal/agent/tool/coder"
 	. "github.com/biox-dev/gobrave/internal/agent/types"
 	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
+
+// builtinToolNames 返回内置工具（框架 builtin + coder）的全部名称（升序）。
+//
+// 内置 Profile 用它显式声明工具白名单（而不是留空表示“全部”），使「该 Profile 能用
+// 哪些工具」在代码里可直接审计；名单与 builtin.All / coder.All 同源，新增内置工具会
+// 自动进入名单。外部 MCP 工具不在此列：MCP 工具由配置决定，需要时请在自定义 Profile
+// 的 Tools 中显式添加。
+func builtinToolNames() []string {
+	names := append(builtin.Names(), coder.Names()...)
+	sort.Strings(names)
+	return names
+}
 
 // builtinPromptDir 是内置提示词目录的绝对路径（相对工作目录解析）。
 var builtinPromptDir string
@@ -50,7 +64,9 @@ func BuiltinProfiles() []*Profile {
 			SystemPrompt: mustReadBuiltinPrompt(BuiltinPromptDefault),
 			// 分析编码 / 科研写作等具体规范全部由内置技能提供（正文按需通过 get_skill 加载），
 			// 因此默认 Profile 注入全部内置技能的元信息。
-			Skills:    skill.BuiltinNames(),
+			Skills: skill.BuiltinNames(),
+			// 显式列出全部内置工具（builtin + coder），便于在代码里审计本 Profile 的能力面。
+			Tools:     builtinToolNames(),
 			Model:     "deepseek-v4-flash",
 			Provider:  ProviderCustom,
 			Context:   ContextConfig{InjectMemory: true},
@@ -63,11 +79,13 @@ func BuiltinProfiles() []*Profile {
 			Description:  "用于生成项目 / 分析 / 分析节点的摘要与总结：按学术规范概括结果、指出问题并提出改进建议。",
 			IsBuiltin:    true,
 			SystemPrompt: mustReadBuiltinPrompt(BuiltinPromptSummary),
-			Context:      ContextConfig{InjectMemory: true},
-			CreatedAt:    now,
-			Model:        "deepseek-v4-flash",
-			Provider:     ProviderCustom,
-			UpdatedAt:    now,
+			// 与默认 Profile 一致：显式声明全部内置工具，后续可按摘要场景收窄。
+			Tools:     builtinToolNames(),
+			Context:   ContextConfig{InjectMemory: true},
+			CreatedAt: now,
+			Model:     "deepseek-v4-flash",
+			Provider:  ProviderCustom,
+			UpdatedAt: now,
 		},
 	}
 }

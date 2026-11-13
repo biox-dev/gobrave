@@ -40,6 +40,11 @@ type Request struct {
 	ProfileID int64 `json:"profile_id,omitempty,string"`
 	// Skills 可选：本次调用启用的技能名列表；为空表示使用默认全部技能。
 	Skills []string `json:"skills,omitempty"`
+	// Tools 可选：本次调用暴露给模型的工具名白名单；为空表示注入全部工具。
+	//
+	// 通常由 AgentService 依据 Profile.Tools 覆盖（见 applyProfileOverrides），
+	// Provider 在组装工具时据此裁剪注册表，未注册的名称会被忽略。
+	Tools []string `json:"tools,omitempty"`
 	// RuntimeContext 是本轮调用的业务上下文（业务类型 / 模板变量）。
 	//
 	// 由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到

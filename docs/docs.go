@@ -1085,7 +1085,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "返回当前可用的全部技能（内置 + 用户自定义），包含名称、描述与 SKILL.md 路径",
+                "description": "返回当前可用的全部技能（内置 + 用户自定义）的元信息，不包含指令正文；正文请调用 /agent/skill/get",
                 "produces": [
                     "application/json"
                 ],
@@ -1683,6 +1683,92 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/tool/get": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按工具名返回工具定义（描述 + 参数 JSON Schema + 来源），供前端展示工具详情",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "查看单个 Agent 工具",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "工具名",
+                        "name": "id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.agentToolInfo"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/tool/list": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回当前工具注册表中的全部工具（内置 + 编码类 + 外部 MCP）的元信息；详情请调用 /agent/tool/get",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "查看 Agent 工具",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/handler.agentToolInfo"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -4356,6 +4442,37 @@ const docTemplate = `{
                 }
             }
         },
+        "/container/runtime/info": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回默认运行时信息：运行时名称由容器实际执行时同一份逻辑解析\n（manager.ContainerLifecycle.ResolveRuntimeName：container.default_runtime →\ncontainer.runtimes[0] → 唯一已注册运行时 → docker），并探测其依赖\n（docker daemon Ping、k8s apiserver ServerVersion）。\n同时返回宿主操作系统 / 架构、实际连接地址（已脱敏）与对端版本，\n供前端在页面上展示运行环境。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "容器运行时环境信息",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/containerruntime.RuntimeHealth"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/container/runtime/monitoring/list": {
             "get": {
                 "security": [
@@ -4377,6 +4494,200 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/runtime/provision/download": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "异步下载 rootfs 包（支持断点续传），进度通过 status 接口轮询。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "下载容器运行时包",
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/runtime/provision/install": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "异步导入发行版并启动 dockerd（要求已下载），进度通过 status 接口轮询。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "安装容器运行时",
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/runtime/provision/start": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "手动触发一次启动自检（与进程启动时的行为一致）：已安装则确保 daemon 运行并返回 endpoint，\n未安装返回 409，由前端引导至安装向导。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "启动容器运行时",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/runtime/provision/status": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回自管容器运行时的安装/运行状态（Windows 上是 WSL 发行版，Linux 上是本机 dockerd）。\n未启用预置时 state 恒为 not_installed 并给出 detail 说明。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "容器运行时安装状态",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/provision.RuntimeStatus"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/runtime/provision/uninstall": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "注销发行版并删除数据目录（同步执行）。必须显式传 confirm=true。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "卸载容器运行时",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
                         }
                     },
                     "401": {
@@ -9932,6 +10243,68 @@ const docTemplate = `{
                 }
             }
         },
+        "/project/package-project-report-item": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "把报告条目树按层级导出到报告工作目录的 results 子目录：目录名即条目标题；custom 写入 README.md，analysis_node 拷贝节点输出目录，ai_summary 拷贝摘要正文文件，analysis 暂不处理。重复调用会覆盖上一次的打包结果。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "打包报告条目树内容",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "报告ID",
+                        "name": "report_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/project/project-report-content": {
             "get": {
                 "security": [
@@ -13268,6 +13641,64 @@ const docTemplate = `{
                 }
             }
         },
+        "containerruntime.RuntimeHealth": {
+            "type": "object",
+            "properties": {
+                "bash_container_template_id": {
+                    "description": "BashContainerTemplateID container 模式下 bash 工具使用的容器模板 ID。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "bash_execution_mode": {
+                    "description": "BashExecutionMode bash 工具执行位置：host（宿主机）/ container（容器）。",
+                    "type": "string"
+                },
+                "checkable": {
+                    "description": "Checkable 运行时是否实现了 RuntimeHealthChecker（false 表示只做了注册检查）。",
+                    "type": "boolean"
+                },
+                "endpoint": {
+                    "description": "Endpoint 运行时实际连接地址（已脱敏，密码以 *** 代替）。",
+                    "type": "string"
+                },
+                "endpoint_source": {
+                    "description": "EndpointSource 地址来源：explicit / env / default / kubeconfig / in-cluster。",
+                    "type": "string"
+                },
+                "error": {
+                    "description": "Error 检测失败原因，正常时为空。",
+                    "type": "string"
+                },
+                "healthy": {
+                    "description": "Healthy 依赖探测是否通过；未注册时必然为 false。",
+                    "type": "boolean"
+                },
+                "host_arch": {
+                    "description": "HostArch 后端进程所在宿主 CPU 架构（runtime.GOARCH）。",
+                    "type": "string"
+                },
+                "host_os": {
+                    "description": "HostOS 后端进程所在宿主操作系统（runtime.GOOS：linux / windows / darwin）。",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name 运行时名称（docker / k8s / k3s）。",
+                    "type": "string"
+                },
+                "provision_enabled": {
+                    "description": "ProvisionEnabled 是否启用运行时预置（container.docker.provision.enabled）。\n为 true 时前端才展示「容器运行时安装向导」入口。",
+                    "type": "boolean"
+                },
+                "registered": {
+                    "description": "Registered 是否在运行时注册表中（即启动装配阶段是否成功注册）。",
+                    "type": "boolean"
+                },
+                "server_version": {
+                    "description": "ServerVersion 对端版本号（docker daemon / kubernetes apiserver）。",
+                    "type": "string"
+                }
+            }
+        },
         "errors.AppError": {
             "type": "object",
             "properties": {
@@ -13997,6 +14428,21 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/types.TaskStatus"
                     }
+                }
+            }
+        },
+        "handler.agentToolInfo": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "input_schema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string"
                 }
             }
         },
@@ -14998,6 +15444,13 @@ const docTemplate = `{
                 },
                 "system_prompt": {
                     "type": "string"
+                },
+                "tools": {
+                    "description": "工具名白名单；为空表示注入全部工具",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -15804,6 +16257,43 @@ const docTemplate = `{
                 }
             }
         },
+        "provision.RuntimeStatus": {
+            "type": "object",
+            "properties": {
+                "data_dir": {
+                    "description": "DataDir 预置数据的根目录（\u003cstorage.base_dir\u003e/wsl）。",
+                    "type": "string"
+                },
+                "detail": {
+                    "description": "Detail 人类可读的补充信息（daemon 版本、错误原因等）。",
+                    "type": "string"
+                },
+                "distro": {
+                    "description": "Distro 发行版名（Windows 上是 WSL 发行版；Linux 上为 \"local\"）。",
+                    "type": "string"
+                },
+                "download_url": {
+                    "description": "DownloadURL 当前配置的 rootfs 下载地址，供 UI 展示。",
+                    "type": "string"
+                },
+                "endpoint": {
+                    "description": "Endpoint 可用的 daemon 地址，例如 tcp://172.24.1.10:2375；未运行时为空。",
+                    "type": "string"
+                },
+                "state": {
+                    "description": "State 当前状态。",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.State"
+                        }
+                    ]
+                },
+                "version": {
+                    "description": "Version 已安装 rootfs 的版本号（来自 state.json）。",
+                    "type": "string"
+                }
+            }
+        },
         "runtimecontext.RuntimeContext": {
             "type": "object",
             "properties": {
@@ -16348,6 +16838,10 @@ const docTemplate = `{
                 "project_id": {
                     "type": "string",
                     "example": "0"
+                },
+                "session_kind": {
+                    "description": "SessionKind 标记会话的「种类」，取值见 AppSessionKind*：\n  - web      ：ContainerService.CreateAppSessionByTemplate（容器跑模板命令，前端经网关访问应用）；\n  - terminal ：终端会话注册表 createOrAdopt（容器常驻，交互式 shell 由运行时 exec 打开）。\n\n它描述会话本身，而不是「谁创建的」：创建者见 AgentSessionID，生命周期策略见 Persistent。\n历史行在加列之前就已存在，回填见 migrations/2026-11-06-app-session-kind；\n仍为空时读取方用 NormalizedSessionKind 兜底。",
+                    "type": "string"
                 },
                 "started_at": {
                     "type": "string"
@@ -17214,6 +17708,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "description": {
+                    "description": "Description 是 Profile 的展示说明，仅用于前端列表 / 详情展示，不参与逻辑判断。",
                     "type": "string"
                 },
                 "id": {
@@ -17239,6 +17734,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "skills": {
+                    "description": "Skills 是本 Profile 启用的技能名列表；为空时回退到请求级 Skills（即默认全部技能）。",
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -17246,6 +17742,13 @@ const docTemplate = `{
                 },
                 "system_prompt": {
                     "type": "string"
+                },
+                "tools": {
+                    "description": "Tools 是本 Profile 启用的工具名白名单（tool.Registry 中的工具名，如 read_file /\nterminal_exec）；为空表示不限制，注入注册表中的全部工具。\n\n它在运行时由 applyProfileOverrides 写入 Request.Tools，Provider 据此裁剪\n本次调用暴露给模型的工具集合（内置 ask_user / agent 工具始终可用）。",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "updated_at": {
                     "type": "string"
@@ -17611,6 +18114,13 @@ const docTemplate = `{
                 "stream": {
                     "description": "Stream 可选：任务模式下是否使用流式调用；默认 false 使用 Invoke。",
                     "type": "boolean"
+                },
+                "tools": {
+                    "description": "Tools 可选：本次调用暴露给模型的工具名白名单；为空表示注入全部工具。\n\n通常由 AgentService 依据 Profile.Tools 覆盖（见 applyProfileOverrides），\nProvider 在组装工具时据此裁剪注册表，未注册的名称会被忽略。",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -17818,6 +18328,21 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "types.State": {
+            "type": "string",
+            "enum": [
+                "not_installed",
+                "downloaded",
+                "installed",
+                "running"
+            ],
+            "x-enum-varnames": [
+                "StateNotInstalled",
+                "StateDownloaded",
+                "StateInstalled",
+                "StateRunning"
+            ]
         },
         "types.SummaryOwnerType": {
             "type": "string",

@@ -58,11 +58,11 @@ type ContextConfig struct {
 	InjectMemory bool `json:"inject_memory"`
 }
 
-// Profile 描述一类任务的 Agent 配置（系统提示词 + 技能 + 上下文注入开关）。
+// Profile 描述一类任务的 Agent 配置（系统提示词 + 技能 + 工具 + 上下文注入开关）。
 //
 // 与 Options / Request（每次调用的动态参数）不同，Profile 是「按任务类型选择」的静态
 // 配置快照：HTTP 层或前端在发起调用时通过 Request.ProfileID 指定 Profile，AgentService
-// 在调用前按 ID 解析并应用（合并系统提示词、过滤技能、按开关注入背景）。
+// 在调用前按 ID 解析并应用（合并系统提示词、过滤技能 / 工具、按开关注入背景）。
 //
 // Name 仅用于展示；Profile 的查询 / 引用一律使用 ID。
 // Profile 不再按用户隔离：所有 Profile 全局可见。
@@ -80,9 +80,16 @@ type Profile struct {
 	Model string `json:"model" gorm:"column:model;type:varchar(128)"`
 	// Provider 指定本 Profile 使用的 Agent（Provider）名称（mock | claude_code | codex | copilot | custom）。
 	// 为空时回退到请求级 req.Provider（若仍未指定则由 Client 的默认 Provider 兜底）。
-	Provider string        `json:"provider" gorm:"column:provider;type:varchar(64)"`
-	Skills   []string      `json:"skills" gorm:"column:skills;serializer:json"`
-	Context  ContextConfig `json:"context" gorm:"column:context;serializer:json"`
+	Provider string `json:"provider" gorm:"column:provider;type:varchar(64)"`
+	// Skills 是本 Profile 启用的技能名列表；为空时回退到请求级 Skills（即默认全部技能）。
+	Skills []string `json:"skills" gorm:"column:skills;serializer:json"`
+	// Tools 是本 Profile 启用的工具名白名单（tool.Registry 中的工具名，如 read_file /
+	// terminal_exec）；为空表示不限制，注入注册表中的全部工具。
+	//
+	// 它在运行时由 applyProfileOverrides 写入 Request.Tools，Provider 据此裁剪
+	// 本次调用暴露给模型的工具集合（内置 ask_user / agent 工具始终可用）。
+	Tools   []string      `json:"tools" gorm:"column:tools;serializer:json"`
+	Context ContextConfig `json:"context" gorm:"column:context;serializer:json"`
 
 	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt time.Time `json:"updated_at" gorm:"column:updated_at"`

@@ -208,19 +208,86 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 	return tools
 }
 
-// buildAgentClient 根据配置构建 Agent 调用门面。
-// 模型提供商配置表（按模型名索引）由 config.agent.providers 实时映射进 Options.Providers，
-// 供 Provider 在每次调用时按 Profile.Model 解析出 base_url / api_key 等 LLM 配置。
-// 使用哪个 Agent（Provider）由 Profile.Provider 决定。
+// agentToolDeps 汇总构建工具注册表所需的进程级静态依赖。
 //
-// 本函数是内置 / coder 工具静态依赖的单点装配处：runner / agentAnalysisRunner /
-// fileReader / scriptCreator / nodeCreator / paramsBuilder / nodeUpdater / memorySaver /
-// browser / skills / files / lspMgr 全部在这里装入 builtin.Deps 与 coder.Deps，
-// 通过工具构造函数注入；Options 不再承载服务对象，Provider 只注入请求级上下文。
+// 用 dig.In 聚合注入，避免 buildAgentTools / buildAgentClient 维护超长参数列表；
+// 新增工具的依赖只需在这里加一个字段。
+type agentToolDeps struct {
+	dig.In
+
+	Config         *config.Config
+	Runner         runtimecontext.AnalysisNodeRunner
+	AgentRunner    runtimecontext.AgentAnalysisRunner
+	Terminal       runtimecontext.ContainerTerminalRunner
+	ContainerShell hostshell.ContainerShellService
+	FileReader     runtimecontext.FileReader
+	ScriptCreator  runtimecontext.ScriptCreator
+	NodeCreator    runtimecontext.AnalysisNodeCreator
+	ParamsBuilder  runtimecontext.AnalysisNodeParamsBuilder
+	NodeUpdater    runtimecontext.AnalysisNodeUpdater
+	MemorySaver    runtimecontext.MemorySaver
+	Browser        *projectResourceBrowser
+	Skills         *skill.Registry
+	Files          agentinterfaces.HistoryService
+	LSP            *lspmanager.Manager
+}
+
+// buildAgentTools 构造工具注册表，并把内置 / coder / MCP 工具注册进去。
+//
+// 注册表交给 dig 管理为进程内单例：Provider（暴露给模型）与工具目录接口
+// （/agent/tool/*）拿到的是同一个实例。本函数是工具依赖的单点装配处：进程级
+// 静态服务在这里装入 builtin.Deps / coder.Deps；Provider 只负责每次调用时注入
+// RuntimeContext / TaskFacts / 权限等请求级上下文。
+func buildAgentTools(in agentToolDeps) *tool.Registry {
+	tools := tool.NewRegistry()
+	var skillResolver runtimecontext.SkillResolver
+	if in.Skills != nil {
+		skillResolver = in.Skills.Resolver()
+	}
+	builtinDeps := builtin.Deps{
+		Runner:          in.Runner,
+		AgentRunner:     in.AgentRunner,
+		Terminal:        in.Terminal,
+		FileReader:      in.FileReader,
+		ScriptCreator:   in.ScriptCreator,
+		NodeCreator:     in.NodeCreator,
+		ParamsBuilder:   in.ParamsBuilder,
+		NodeUpdater:     in.NodeUpdater,
+		MemorySaver:     in.MemorySaver,
+		ScriptBrowser:   in.Browser,
+		NodeBrowser:     in.Browser,
+		TemplateBrowser: in.Browser,
+		DatasetBrowser:  in.Browser,
+		DatasetWriter:   in.Browser,
+		ReportContext:   in.Browser,
+		Skills:          skillResolver,
+	}
+	for _, t := range builtin.All(builtinDeps) {
+		tools.Register(t)
+	}
+	for _, t := range coder.All(coder.Deps{History: in.Files, LSP: in.LSP, Config: in.Config, ContainerShell: in.ContainerShell}) {
+		tools.Register(t)
+	}
+	// 外部 MCP 服务提供的工具：工具名为 <服务名>_<工具名>，与内置工具同池调度（权限门禁复用）。
+	for _, t := range buildMCPTools(in.Config) {
+		tools.Register(t)
+	}
+	return tools
+}
+
+// buildAgentClient 构建 Agent 调用门面。
+//
+// 模型提供商配置表（按模型名索引）由 config.agent.providers 实时映射进
+// Options.ProviderSource，供 Provider 每次调用时按 Profile.Model 解析出
+// base_url / api_key 等 LLM 配置；用哪个 Agent（Provider）由 Profile.Provider 决定。
+// 工具注册表由 buildAgentTools 准备（同一份单例也供 /agent/tool/* 查询）。
 // sessions / messages 是会话与消息服务：供 custom Provider 为子 Agent 创建子会话并落库。
-// containerShell 供 bash 工具在 container 模式下执行命令（与宿主机 shell 同构）。
-func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, terminalRunner runtimecontext.ContainerTerminalRunner, containerShell hostshell.ContainerShellService, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
-	opts := agentclient.Options{}
+func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, tools *tool.Registry, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
+	opts := agentclient.Options{
+		Tools:    tools,
+		Sessions: sessions,
+		Messages: messages,
+	}
 
 	// 模型提供商配置表按需实时生成：可视化配置页保存 agent 段后，内存中的 cfg 会被立即更新，
 	// 下一次请求即可读到新的 providers，无需重启进程。
@@ -229,43 +296,6 @@ func buildAgentClient(cfg *config.Config, registry *agentclient.Registry, runner
 			return agentProviders(cfg)
 		}
 	}
-
-	// 单点装配：内置 / coder 工具的进程级静态依赖在这里一次性构造注入。
-	// Provider 只负责注入随请求变化的 RuntimeContext / TaskFacts / 权限。
-	var skillResolver runtimecontext.SkillResolver
-	if skills != nil {
-		skillResolver = skills.Resolver()
-	}
-	builtinDeps := builtin.Deps{
-		Runner:          runner,
-		AgentRunner:     agentAnalysisRunner,
-		Terminal:        terminalRunner,
-		FileReader:      fileReader,
-		ScriptCreator:   scriptCreator,
-		NodeCreator:     nodeCreator,
-		ParamsBuilder:   paramsBuilder,
-		NodeUpdater:     nodeUpdater,
-		MemorySaver:     memorySaver,
-		ScriptBrowser:   browser,
-		NodeBrowser:     browser,
-		TemplateBrowser: browser,
-		DatasetBrowser:  browser,
-		DatasetWriter:   browser,
-		ReportContext:   browser,
-		Skills:          skillResolver,
-	}
-	opts.Tools = tool.NewRegistryWith(append(
-		builtin.All(builtinDeps),
-		coder.All(coder.Deps{History: files, LSP: lspMgr, Config: cfg, ContainerShell: containerShell})...,
-	)...)
-	// 外部 MCP 服务提供的工具：工具名为 <服务名>_<工具名>，与内置工具同池调度（权限门禁复用）。
-	for _, t := range buildMCPTools(cfg) {
-		opts.Tools.Register(t)
-	}
-	// 会话 / 消息服务：custom Provider 通过它们为子 Agent 创建子会话（ParentSessionID = 父会话）
-	// 并写入子 Agent 的 reasoning / tool_call / tool_result / 最终回答。
-	opts.Sessions = sessions
-	opts.Messages = messages
 
 	return agentclient.NewClient(registry, opts)
 }
@@ -533,9 +563,11 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 长期记忆写回器：把「保存一条用户记忆」能力暴露给内置工具 save_memory，
 	// 使模型可把「遇到的可复现错误 / 注意事项」写入记忆，后续轮次随背景注入避免重复踩坑。
 	must(container.Provide(newMemorySaver))
-	must(container.Provide(func(cfg *config.Config, registry *agentclient.Registry, runner runtimecontext.AnalysisNodeRunner, agentAnalysisRunner runtimecontext.AgentAnalysisRunner, terminalRunner runtimecontext.ContainerTerminalRunner, containerShell hostshell.ContainerShellService, fileReader runtimecontext.FileReader, scriptCreator runtimecontext.ScriptCreator, nodeCreator runtimecontext.AnalysisNodeCreator, paramsBuilder runtimecontext.AnalysisNodeParamsBuilder, nodeUpdater runtimecontext.AnalysisNodeUpdater, memorySaver runtimecontext.MemorySaver, browser *projectResourceBrowser, skills *skill.Registry, files agentinterfaces.HistoryService, lspMgr *lspmanager.Manager, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) *agentclient.Client {
-		return buildAgentClient(cfg, registry, runner, agentAnalysisRunner, terminalRunner, containerShell, fileReader, scriptCreator, nodeCreator, paramsBuilder, nodeUpdater, memorySaver, browser, skills, files, lspMgr, sessions, messages)
-	}))
+	// 工具注册表：进程内单例。buildAgentTools 构造注册表并注册全部工具，同一份
+	// 实例同时交给 Agent Client（Provider 暴露给模型）与工具目录接口
+	//（/agent/tool/*），保证两边口径一致。
+	must(container.Provide(buildAgentTools))
+	must(container.Provide(buildAgentClient))
 	// Provide AgentService：编排层（任务/权限/事件/恢复）。
 	// Repository 切换到数据库实现，使任务 / 权限 / 事件状态跨进程重启持久化。
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.TaskRepository {

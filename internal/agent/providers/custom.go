@@ -75,7 +75,7 @@ func (a *customAgent) run(ctx context.Context, req agenttypes.Request, rt agenti
 
 	nativeAgent := &native.Config{
 		Client:             client,
-		Tools:              a.toolRegistry(req, rt),
+		Tools:              a.toolRegistry(ctx, req, rt),
 		PrepareToolContext: a.toolContext(req, rt),
 		// 宿主机持久 shell 的生命周期 = 一次 Agent 请求：会话内复用（cwd/env 保留），
 		// 请求结束立即退出进程。
@@ -162,12 +162,12 @@ func (a *customAgent) llmOptions(ctx context.Context, req agenttypes.Request, fa
 
 // toolRegistry 组合本次调用可用的工具：注册表工具 + 内置 ask_user + 子 Agent 工具。
 //
+// 注册表工具按 req.Tools（由 Profile.Tools 覆盖而来）裁剪：白名单为空时注入全部工具，
+// 非空时只暴露白名单内的工具。ask_user / agent 是框架能力，不受白名单限制。
 // ask_user 依赖 Runtime 阻塞等待用户作答，因此只在有 Runtime 时注册。
-func (a *customAgent) toolRegistry(req agenttypes.Request, rt agentinterfaces.Runtime) *tool.Registry {
+func (a *customAgent) toolRegistry(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) *tool.Registry {
 	items := make([]tool.Tool, 0)
-	if a.opts.Tools != nil {
-		items = append(items, a.opts.Tools.Tools()...)
-	}
+	items = append(items, a.profileTools(ctx, req, rt)...)
 	if rt != nil {
 		items = append(items, askUserTool(rt))
 	}
@@ -175,6 +175,22 @@ func (a *customAgent) toolRegistry(req agenttypes.Request, rt agentinterfaces.Ru
 	// 只读子 Agent，避免父 Agent 上下文被大量中间结果占满。
 	items = append(items, a.newAgentTool(req, rt))
 	return tool.NewRegistryWith(items...)
+}
+
+// profileTools 返回本次调用暴露给模型的注册表工具。
+//
+// 白名单（req.Tools）为空表示不限制；非空时按名称裁剪，未注册的名称只告警不阻断
+// （常见于 Profile 里写错工具名或工具被下线），避免整次任务因配置陈旧而失败。
+func (a *customAgent) profileTools(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) []tool.Tool {
+	if a.opts.Tools == nil {
+		return nil
+	}
+	tools := a.opts.Tools.Filter(req.Tools)
+	if missing := a.opts.Tools.Missing(req.Tools); len(missing) > 0 {
+		logger.Warnf(ctx, "[Agent] profile tools not registered (session=%d): %s",
+			agentruntime.FactsOf(rt).SessionID, strings.Join(missing, ", "))
+	}
+	return tools
 }
 
 // newAgentTool 构建 agent 工具：复用父请求的模型 / 厂商配置启动一个只读子 Agent。

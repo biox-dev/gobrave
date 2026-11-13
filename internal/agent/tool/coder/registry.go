@@ -9,7 +9,11 @@
 //     tool.RequirePermission，由 ctx 中的 PermissionRequester 桥接到 Runtime。
 package coder
 
-import "github.com/biox-dev/gobrave/internal/agent/tool"
+import (
+	"sort"
+
+	"github.com/biox-dev/gobrave/internal/agent/tool"
+)
 
 // All 返回全部 coder 工具。新增工具时在此追加即可自动接入各 Provider。
 // All 返回全部 coder 工具。静态依赖（文件历史 / LSP）由 container 在构建期注入。
@@ -27,4 +31,20 @@ func All(deps Deps) []tool.Tool {
 		NewSourcegraph(),
 		NewDiagnostics(deps),
 	}
+}
+
+// Names 返回全部 coder 工具名（升序）。
+//
+// 只构造工具定义、不执行工具，因此可以安全地传入零值 Deps。供内置 Profile 显式
+// 声明工具白名单使用：名单与 All 同源，新增 coder 工具会自动进入名单。
+func Names() []string {
+	tools := All(Deps{})
+	names := make([]string, 0, len(tools))
+	for _, t := range tools {
+		if name := t.Definition().Name; name != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
