@@ -371,7 +371,7 @@ func (h *AgentHandler) DescribeEnv(c *gin.Context) {
 
 // ListSkills godoc
 // @Summary      查看 Agent 技能
-// @Description  返回当前可用的全部技能（内置 + 用户自定义），包含名称、描述与 SKILL.md 路径
+// @Description  返回当前可用的全部技能（内置 + 用户自定义）的元信息，不包含指令正文；正文请调用 /agent/skill/get
 // @Tags         Agent
 // @Produce      json
 // @Success      200  {array}   skill.Skill
@@ -387,7 +387,21 @@ func (h *AgentHandler) ListSkills(c *gin.Context) {
 		c.JSON(http.StatusOK, []*skill.Skill{})
 		return
 	}
-	c.JSON(http.StatusOK, h.skills.List())
+
+	// 列表只返回元信息：指令正文可能较大，按需由前端展开时调用 GetSkill 拉取。
+	// 注意 Registry.List 返回的是注册表中的指针，这里必须复制一份再清空，
+	// 否则会污染内存中的技能注册表。
+	list := h.skills.List()
+	out := make([]*skill.Skill, 0, len(list))
+	for _, s := range list {
+		if s == nil {
+			continue
+		}
+		summary := *s
+		summary.Instructions = ""
+		out = append(out, &summary)
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // skillSaveRequest 是创建 / 更新技能的请求体。
