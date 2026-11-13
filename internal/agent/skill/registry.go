@@ -140,9 +140,11 @@ func (r *Registry) Filter(names ...string) *Registry {
 	return NewRegistryWith(r.selectSkills(names)...)
 }
 
-// PromptBlock 把技能元信息（selected 为空表示全部）拼接为注入系统提示词的 markdown 块。
+// PromptBlock 把技能元信息（selected 为空表示全部）拼接为注入系统提示词的块：
+// markdown 前言（promptHeader）+ 仅供模型调用的 <available_skills> XML。
 //
-// 仅注入 name / description / location，不含指令正文；无匹配技能时返回空字符串。
+// 仅注入 name / description，刻意不含 location 与指令正文（引导语要让模型主动调用
+// get_skill 加载）；无匹配技能或全部技能被 disable-model-invocation 排除时返回空字符串。
 func (r *Registry) PromptBlock(selected ...string) string {
 	if r == nil {
 		return ""

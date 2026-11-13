@@ -144,6 +144,16 @@ func TestRegistryPromptBlock(t *testing.T) {
 	if got := NewRegistry().PromptBlock(); got != "" {
 		t.Fatalf("empty registry = %q, want empty", got)
 	}
+	// 全部技能都被 disable-model-invocation 排除时，不应输出空的 <available_skills> 外壳。
+	allHidden := NewRegistryWith(
+		&Skill{Name: "hidden", Description: "quiet", DisableModelInvocation: true, SkillFilePath: "x"},
+	)
+	if got := allHidden.PromptBlock(); got != "" {
+		t.Fatalf("all-disabled registry = %q, want empty", got)
+	}
+	if got := ToPromptXML(allHidden.List()); got != "" {
+		t.Fatalf("ToPromptXML(all disabled) = %q, want empty", got)
+	}
 }
 
 func TestGetSkillTool(t *testing.T) {

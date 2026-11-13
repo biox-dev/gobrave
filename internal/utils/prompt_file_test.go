@@ -52,10 +52,8 @@ func TestReadBuiltinPromptFallsBackToEmbedded(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nonexistent")
 
 	for name, marker := range map[string]string{
-		"default":        "workspace_directory",
-		"analysis_coder": "run_analysis_node",
-		"article_writer": "科研写作助手",
-		"summary":        "生物信息学分析助手",
+		"default": "生物信息学分析编码助手",
+		"summary": "生物信息学分析助手",
 	} {
 		got, err := ReadBuiltinPrompt(dir, name)
 		if err != nil {

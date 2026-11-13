@@ -2,6 +2,7 @@ package types
 
 import (
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -12,10 +13,20 @@ import (
 // Profile 的查询 / 引用一律使用 ID；Name 仅用于展示。
 const (
 	BuiltinDefaultProfileID int64 = -1 // 内置默认 Profile
-	BuiltinAnalysisCoderID  int64 = -2 // 内置「分析代码编写」Profile
-	BuiltinArticleWriterID  int64 = -3 // 内置「科研文章撰写」Profile
 	BuiltinSummaryProfileID int64 = -4 // 内置「摘要总结」Profile
 )
+
+// RemovedBuiltinProfileIDs 是已删除的历史内置 Profile ID。
+//
+// 「分析代码编写」(-2) 与「科研文章撰写」(-3) 已统一使用默认 Profile，
+// 具体写作 / 编码细节由注入的内置技能提供。启动同步时会删除这些历史记录；
+// 存量用户的 agent_config / ai_summaries 仍可能引用它们，Resolve 时回退到默认 Profile。
+var RemovedBuiltinProfileIDs = []int64{-2, -3}
+
+// IsRemovedBuiltinProfileID 报告 id 是否为已删除的历史内置 Profile。
+func IsRemovedBuiltinProfileID(id int64) bool {
+	return slices.Contains(RemovedBuiltinProfileIDs, id)
+}
 
 // BuiltinDefaultProfileName 是内置默认 Profile 的展示名。用于无需查询数据库即可获得
 // 展示名的场景（如 DefaultUserAgentConfig）。
@@ -25,10 +36,8 @@ const BuiltinDefaultProfileName = "通用助手"
 // （utils.BuiltinPromptDir，即 builtin/prompts）读取同名 .md 文件：
 // 文件名 = 提示词名（不含 .md 后缀），内容为 pongo2 模板。
 const (
-	BuiltinPromptDefault       = "default"        // builtin/prompts/default.md
-	BuiltinPromptAnalysisCoder = "analysis_coder" // builtin/prompts/analysis_coder.md
-	BuiltinPromptArticleWriter = "article_writer" // builtin/prompts/article_writer.md
-	BuiltinPromptSummary       = "summary"        // builtin/prompts/summary.md
+	BuiltinPromptDefault = "default" // builtin/prompts/default.md
+	BuiltinPromptSummary = "summary" // builtin/prompts/summary.md
 	// BuiltinPromptBaseCoder 是所有 Profile 共用的基础编码提示词（拷自 opencode 的
 	// baseAnthropicCoderPrompt），作为系统提示词的前置部分统一注入，见 buildSystemPrompt。
 	BuiltinPromptBaseCoder = "base_coder" // builtin/prompts/base_coder.md
@@ -60,7 +69,8 @@ type ContextConfig struct {
 type Profile struct {
 	ID int64 `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
 	// Name 仅作为展示名使用，不参与任何查询。
-	Name         string `json:"name" gorm:"column:name;type:varchar(128)"`
+	Name string `json:"name" gorm:"column:name;type:varchar(128)"`
+	// Description 是 Profile 的展示说明，仅用于前端列表 / 详情展示，不参与逻辑判断。
 	Description  string `json:"description" gorm:"column:description;type:text"`
 	IsDefault    bool   `json:"is_default" gorm:"column:is_default"`
 	IsBuiltin    bool   `json:"is_builtin" gorm:"column:is_builtin"`

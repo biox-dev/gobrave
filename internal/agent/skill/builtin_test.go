@@ -1,10 +1,14 @@
 package skill
 
 import (
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/biox-dev/gobrave/builtin"
 )
 
 // 内置技能来自 builtin/skills 下的 SKILL.md，必须能解析并通过校验，
@@ -26,34 +30,85 @@ func TestBuiltinSkillsParse(t *testing.T) {
 			t.Fatalf("builtin skill %q has empty instructions", sk.Name)
 		}
 	}
-	// 每个内置技能都要有可辨识的正文片段，避免 SKILL.md 被截断 / 写错。
-	markers := map[string]string{
-		BuiltinAnalysisScriptSkillName:     "create_script",
-		BuiltinAnalysisNodeScriptSkillName: "run_analysis_node",
-		BuiltinAnalysisScriptSpecSkillName: "io_schema_path",
+}
+
+// 内嵌副本随二进制分发，打包后必须含有全部内置技能；列表与内嵌目录应一致。
+func TestBuiltinSkillsEmbedded(t *testing.T) {
+	entries, err := fs.ReadDir(builtin.SkillFiles, builtin.SkillFSRoot)
+	if err != nil {
+		t.Fatalf("read embedded skills: %v", err)
 	}
-	for _, sk := range skills {
-		marker, ok := markers[sk.Name]
-		if !ok {
-			t.Fatalf("builtin skill %q has no marker registered in this test", sk.Name)
+	var embedded []string
+	for _, e := range entries {
+		if _, err := fs.Stat(builtin.SkillFiles, path.Join(builtin.SkillFSRoot, e.Name(), SkillFileName)); err == nil {
+			embedded = append(embedded, e.Name())
 		}
-		if !strings.Contains(sk.Instructions, marker) {
-			t.Fatalf("builtin skill %q instructions look truncated (missing %q)", sk.Name, marker)
+	}
+	if len(embedded) == 0 {
+		t.Fatalf("embedded filesystem has no builtin skills")
+	}
+	for _, name := range embedded {
+		if !IsBuiltin(name) {
+			t.Fatalf("embedded skill %q missing from BuiltinNames(): %v", name, BuiltinNames())
 		}
+	}
+}
+
+// firstBuiltinName 返回列表中第一个内置技能名，供具体用例避免硬编码技能名。
+func firstBuiltinName(t *testing.T) string {
+	t.Helper()
+	names := BuiltinNames()
+	if len(names) == 0 {
+		t.Fatalf("no builtin skills found")
+	}
+	return names[0]
+}
+
+// 新增内置技能只需在 builtin/skills 下新建 <name>/SKILL.md，无需改代码即可被发现。
+func TestBuiltinSkillsDiscoveredByScan(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, dir, "brand-new-skill", "---\nname: brand-new-skill\ndescription: workspace skill\n---\n\nfrom scan\n")
+	// 没有 SKILL.md 的目录应被忽略。
+	if err := os.MkdirAll(filepath.Join(dir, "not-a-skill"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	t.Cleanup(func() { SetBuiltinSkillDir("") })
+	SetBuiltinSkillDir(dir)
+
+	if !IsBuiltin("brand-new-skill") {
+		t.Fatalf("new skill directory not discovered: %v", BuiltinNames())
+	}
+	if IsBuiltin("not-a-skill") {
+		t.Fatalf("directory without SKILL.md should be ignored")
+	}
+	var found *Skill
+	for _, s := range Builtin() {
+		if s.Name == "brand-new-skill" {
+			found = s
+		}
+	}
+	if found == nil || !strings.Contains(found.Instructions, "from scan") {
+		t.Fatalf("builtin skill content not loaded from disk")
+	}
+}
+
+// writeSkillFile 在 base/<name>/SKILL.md 写入技能文件。
+func writeSkillFile(t *testing.T, base, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(base, name), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(base, name, SkillFileName), []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
 	}
 }
 
 // 磁盘上的 builtin/skills 是唯一真实来源，运行期读到的正文应与文件内容一致。
 func TestBuiltinSkillsReadFromDisk(t *testing.T) {
+	name := firstBuiltinName(t)
 	dir := t.TempDir()
-	name := BuiltinAnalysisScriptSkillName
-	custom := "---\nname: " + name + "\ndescription: custom\n---\n\nfrom disk\n"
-	if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, name, SkillFileName), []byte(custom), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	writeSkillFile(t, dir, name, "---\nname: "+name+"\ndescription: custom\n---\n\nfrom disk\n")
 
 	t.Cleanup(func() { SetBuiltinSkillDir("") })
 	SetBuiltinSkillDir(dir)
@@ -73,38 +128,41 @@ func readBuiltinSkillFileForTest(t *testing.T, name string) string {
 
 func TestEnsureBuiltinSkillsWritesAndOverwrites(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, BuiltinAnalysisScriptSkillName, SkillFileName)
+	names := BuiltinNames()
+	name := names[0]
 
 	// 先写一份过期内容，确保启动时的写入是覆盖而不是仅在缺失时创建。
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte("stale"), 0o644); err != nil {
-		t.Fatalf("write stale: %v", err)
-	}
+	writeSkillFile(t, dir, name, "stale")
 
 	if err := EnsureBuiltinSkills(dir); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
 
-	found := false
+	// 列表中的每个内置技能都应写入并可被 Discover 加载。
+	got := make(map[string]bool, len(names))
 	for _, s := range Discover([]string{dir}) {
-		if s.Name == BuiltinAnalysisScriptSkillName {
-			found = true
-			if !strings.Contains(s.Instructions, "create_script") {
-				t.Fatalf("written skill content looks wrong")
-			}
+		got[s.Name] = true
+	}
+	for _, n := range names {
+		if !got[n] {
+			t.Fatalf("builtin skill %q not discoverable after EnsureBuiltinSkills", n)
 		}
 	}
-	if !found {
-		t.Fatalf("builtin skill not discoverable after EnsureBuiltinSkills")
+
+	// 覆盖写入：内容应与源码 / 内嵌副本一致，而不是保留旧的 stale。
+	content, err := os.ReadFile(filepath.Join(dir, name, SkillFileName))
+	if err != nil {
+		t.Fatalf("read written skill: %v", err)
+	}
+	if string(content) != readBuiltinSkillFileForTest(t, name) {
+		t.Fatalf("written skill %q was not overwritten with builtin content", name)
 	}
 
 	// 空目录参数应为无操作。
 	if err := EnsureBuiltinSkills(""); err != nil {
 		t.Fatalf("empty dir should be a no-op: %v", err)
 	}
-	if !IsBuiltin(BuiltinAnalysisScriptSkillName) {
+	if !IsBuiltin(name) {
 		t.Fatalf("IsBuiltin should report the builtin skill")
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/biox-dev/gobrave/builtin"
@@ -15,6 +17,11 @@ import (
 // 由 go:embed 打包进二进制；系统启动时读出并覆盖写入用户技能目录
 // （$BaseDir/.skills/<name>/SKILL.md）。
 //
+// 新增内置技能不需要改代码：在 builtin/skills 下新建 <name>/SKILL.md 即可
+// （frontmatter 的 name 必须与目录名一致）。技能名由 builtinSkillNames 在运行期
+// 扫描磁盘目录与内嵌副本自动得出，因此打包成单文件二进制后同样生效。
+// 注意：go:embed 会忽略以 "." 或 "_" 开头的目录，技能目录名不要使用这类前缀。
+//
 // 为什么用「启动时覆盖写文件」而不是内存注入：技能的加载 / 热更新 / 前端查看 / 删除
 // 都只走一条路径（磁盘 + Discover），内置技能因此不需要额外的合并逻辑；同时运维可以
 // 直接打开对应文件查看模型实际拿到的内容。
@@ -22,13 +29,9 @@ import (
 // 注意：内置技能写入后与用户技能同处一个目录，前端删除后在下次启动时会再次出现。
 const (
 	// BuiltinSkillDir 是内置技能源码目录（相对工作目录，与内置提示词一致）。
+	//
+	// 子目录名即技能名（必须与 SKILL.md frontmatter 的 name 一致）。
 	BuiltinSkillDir = "builtin/skills"
-	// BuiltinAnalysisScriptSkillName 是「创建分析脚本流程」内置技能名。
-	BuiltinAnalysisScriptSkillName = "analysis-script-workflow"
-	// BuiltinAnalysisNodeScriptSkillName 是「分析节点脚本修改」内置技能名。
-	BuiltinAnalysisNodeScriptSkillName = "analysis-node-script-editing"
-	// BuiltinAnalysisScriptSpecSkillName 是「分析脚本修改规范」内置技能名。
-	BuiltinAnalysisScriptSpecSkillName = "analysis-script-spec"
 )
 
 // builtinSkillBaseDirs 是运行期查找内置技能源码的目录列表（按顺序，先磁盘后内嵌）。
@@ -45,11 +48,39 @@ func SetBuiltinSkillDir(dir string) {
 	builtinSkillBaseDirs = []string{dir}
 }
 
-// builtinSkillNames 是全部内置技能名（新增内置技能时在此追加）。
-var builtinSkillNames = []string{
-	BuiltinAnalysisScriptSkillName,
-	BuiltinAnalysisNodeScriptSkillName,
-	BuiltinAnalysisScriptSpecSkillName,
+// builtinSkillNames 扫描全部内置技能名：磁盘目录 <base>/<name>/SKILL.md 与内嵌副本
+// builtin.SkillFSRoot/<name>/SKILL.md，去重后按名称升序返回。
+//
+// 采用扫描而不是维护名字清单，新增内置技能只需新增目录，无需改代码。
+func builtinSkillNames() []string {
+	seen := make(map[string]struct{})
+
+	for _, base := range builtinSkillBaseDirs {
+		entries, err := os.ReadDir(base)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if _, err := os.Stat(filepath.Join(base, e.Name(), SkillFileName)); err == nil {
+				seen[e.Name()] = struct{}{}
+			}
+		}
+	}
+
+	if entries, err := fs.ReadDir(builtin.SkillFiles, builtin.SkillFSRoot); err == nil {
+		for _, e := range entries {
+			if _, err := fs.Stat(builtin.SkillFiles, path.Join(builtin.SkillFSRoot, e.Name(), SkillFileName)); err == nil {
+				seen[e.Name()] = struct{}{}
+			}
+		}
+	}
+
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Builtin 读取全部内置技能（磁盘优先，缺失时回退到 go:embed 副本）。
@@ -57,7 +88,7 @@ var builtinSkillNames = []string{
 // 读取 / 解析失败的技能会被跳过，不影响其余技能。
 func Builtin() []*Skill {
 	var out []*Skill
-	for _, name := range builtinSkillNames {
+	for _, name := range builtinSkillNames() {
 		if s, err := readBuiltinSkill(name); err == nil && s != nil {
 			out = append(out, s)
 		}
@@ -65,19 +96,14 @@ func Builtin() []*Skill {
 	return out
 }
 
-// BuiltinNames 返回全部内置技能名。
+// BuiltinNames 返回全部内置技能名（按名称升序）。
 func BuiltinNames() []string {
-	return append([]string(nil), builtinSkillNames...)
+	return builtinSkillNames()
 }
 
 // IsBuiltin 报告 name 是否为内置技能名。
 func IsBuiltin(name string) bool {
-	for _, n := range builtinSkillNames {
-		if n == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(builtinSkillNames(), name)
 }
 
 // EnsureBuiltinSkills 把内置技能写入 dir（通常为 $BaseDir/.skills），每次启动都覆盖。
@@ -89,7 +115,7 @@ func EnsureBuiltinSkills(dir string) error {
 		return nil
 	}
 	var firstErr error
-	for _, name := range builtinSkillNames {
+	for _, name := range builtinSkillNames() {
 		if err := writeBuiltinSkill(dir, name); err != nil && firstErr == nil {
 			firstErr = err
 		}

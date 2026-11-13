@@ -51,7 +51,7 @@ type CreateAgentAnalysisOutput struct {
 func createAgentAnalysisDescription() string {
 	return `创建一个命令型分析节点：给定节点名称与一段 shell 命令（container_template_id 可选，留空时使用系统默认容器模板），系统在节点工作目录下生成 run.sh。run 可选，默认 true：为 true 时立即提交容器执行并等待结束，返回状态、退出码与命令日志；为 false 时只创建节点不运行，之后可用 run_analysis_node 再运行该节点。所属项目取自当前会话上下文，无需传入。
 
-Reference chips（界面插入的引用）：用户消息里可能出现 @container:<id>（选中的容器模板）、@dataset:<id>（选中的数据集）、@file:<id>（文件）、@report:<id>（项目报告）、@analysis_node:<id>（选中的分析节点）。遇到 @container:<id> 时，直接把冒号后的 ID 作为 container_template_id 传入，不要丢弃或改写；需要确认模板用途时先调用 get_container_template（返回 display_name 与 description）。遇到 @dataset:<id> 时可用 get_dataset 获取其工作目录绝对路径，并在 command 中直接使用该路径。遇到 @report:<id> 时可用 get_report_context 获取报告标题、工作目录与条目清单。遇到 @analysis_node:<id> 时可用 get_analysis_node 查看节点名称 / 类型 / 工作目录 / 参数（该工具会容错剥离 @analysis_node: 前缀）。
+Reference chips（界面插入的引用）：用户消息里可能出现 @container:<id>（选中的容器模板）、@dataset:<id>（选中的数据集）、@file:<id>（文件）、@report:<id>（项目报告）、@analysis_node:<id>（选中的分析节点）。遇到 @container:<id> 时，直接把冒号后的 ID 作为 container_template_id 传入，不要丢弃或改写；需要确认模板用途时先调用 get_container_template（返回 display_name 与 description）。遇到 @dataset:<id> 时可用 get_dataset 获取其工作目录绝对路径，并在 command 中直接使用该路径。遇到 @report:<id> 时可用 get_report_context 获取报告标题、工作目录与条目清单。遇到 @analysis_node:<id> 时可用 get_analysis_node 查看节点名称 / 类型 / 工作目录 / 参数（该工具会容错剥离 @analysis_node: 前缀）。遇到 @script:<id> 时可用 get_script 查看脚本名称 / 描述 / 容器模板 / 脚本文件与 io_schema 路径（该工具会容错剥离 @script: 前缀）；不确定脚本 ID 时先用 list_project_scripts 列出当前项目脚本。
 
 Before executing the command, please follow these steps:
 

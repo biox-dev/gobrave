@@ -311,18 +311,23 @@ func sortSkills(skills []*Skill) {
 //
 // 仅包含元信息（name / description），刻意不含指令正文与文件路径——正文与附属资源
 // 都由模型通过工具（get_skill / load_skill_resource）按需加载，避免一次性塞满
-// 上下文。DisableModelInvocation 的技能会被排除。
+// 上下文。DisableModelInvocation 的技能会被排除；若排除后无可用技能，返回空字符串
+// （而不是空的 <available_skills> 外壳，避免提示词声称有技能却一个都没列出）。
 func ToPromptXML(skills []*Skill) string {
-	if len(skills) == 0 {
+	visible := make([]*Skill, 0, len(skills))
+	for _, s := range skills {
+		if s == nil || s.DisableModelInvocation {
+			continue
+		}
+		visible = append(visible, s)
+	}
+	if len(visible) == 0 {
 		return ""
 	}
 
 	var sb strings.Builder
 	sb.WriteString("<available_skills>\n")
-	for _, s := range skills {
-		if s.DisableModelInvocation {
-			continue
-		}
+	for _, s := range visible {
 		sb.WriteString("  <skill>\n")
 		fmt.Fprintf(&sb, "    <name>%s</name>\n", escape(s.Name))
 		fmt.Fprintf(&sb, "    <description>%s</description>\n", escape(s.Description))

@@ -37,13 +37,15 @@ func TestProfileManagerResolveBuiltin(t *testing.T) {
 		t.Fatalf("default context = %+v, want memory on", p.Context)
 	}
 
-	// 指定内置 ID → 命中内置 Profile。
-	p, err = m.Resolve(ctx, BuiltinArticleWriterID)
-	if err != nil {
-		t.Fatalf("resolve article_writer: %v", err)
-	}
-	if p.Name != "科研文章撰写" {
-		t.Fatalf("article_writer name = %q", p.Name)
+	// 已删除的历史内置 Profile（-2 / -3）→ 回退到默认 Profile。
+	for _, id := range RemovedBuiltinProfileIDs {
+		p, err = m.Resolve(ctx, id)
+		if err != nil {
+			t.Fatalf("resolve removed profile %d: %v", id, err)
+		}
+		if p.ID != BuiltinDefaultProfileID {
+			t.Fatalf("resolve removed profile %d = %d, want default %d", id, p.ID, BuiltinDefaultProfileID)
+		}
 	}
 }
 

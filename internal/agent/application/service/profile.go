@@ -44,49 +44,23 @@ func BuiltinProfiles() []*Profile {
 		{
 			ID:           BuiltinDefaultProfileID,
 			Name:         BuiltinDefaultProfileName,
-			Description:  "默认配置：不附加领域提示词；注入记忆。",
+			Description:  "默认配置：注入全部内置技能（分析编码、科研报告撰写等）与记忆，由模型按当前任务自动选用对应技能。",
 			IsDefault:    true,
 			IsBuiltin:    true,
 			SystemPrompt: mustReadBuiltinPrompt(BuiltinPromptDefault),
-			Model:        "deepseek-v4-flash",
-			Provider:     ProviderCustom,
-			Context:      ContextConfig{InjectMemory: true},
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		},
-		{
-			ID:           BuiltinAnalysisCoderID,
-			Name:         "分析代码编写",
-			Description:  "用于撰写生物信息学分析代码：强调代码规范、可复现性与执行约束。",
-			IsBuiltin:    true,
-			SystemPrompt: mustReadBuiltinPrompt(BuiltinPromptAnalysisCoder),
-			Skills: []string{
-				skill.BuiltinAnalysisScriptSkillName,
-				skill.BuiltinAnalysisNodeScriptSkillName,
-				skill.BuiltinAnalysisScriptSpecSkillName,
-			},
-			Context:   ContextConfig{InjectMemory: true},
-			CreatedAt: now,
+			// 分析编码 / 科研写作等具体规范全部由内置技能提供（正文按需通过 get_skill 加载），
+			// 因此默认 Profile 注入全部内置技能的元信息。
+			Skills:    skill.BuiltinNames(),
 			Model:     "deepseek-v4-flash",
 			Provider:  ProviderCustom,
+			Context:   ContextConfig{InjectMemory: true},
+			CreatedAt: now,
 			UpdatedAt: now,
-		},
-		{
-			ID:           BuiltinArticleWriterID,
-			Name:         "科研文章撰写",
-			Description:  "用于撰写科研报告 / 文章：按学术规范写作。",
-			IsBuiltin:    true,
-			SystemPrompt: mustReadBuiltinPrompt(BuiltinPromptArticleWriter),
-			Context:      ContextConfig{InjectMemory: true},
-			CreatedAt:    now,
-			Model:        "deepseek-v4-flash",
-			Provider:     ProviderCustom,
-			UpdatedAt:    now,
 		},
 		{
 			ID:           BuiltinSummaryProfileID,
 			Name:         "摘要总结",
-			Description:  "用于生成分析 / 节点的摘要：按学术规范写作。",
+			Description:  "用于生成项目 / 分析 / 分析节点的摘要与总结：按学术规范概括结果、指出问题并提出改进建议。",
 			IsBuiltin:    true,
 			SystemPrompt: mustReadBuiltinPrompt(BuiltinPromptSummary),
 			Context:      ContextConfig{InjectMemory: true},
@@ -121,6 +95,13 @@ func EnsureBuiltinProfiles(ctx context.Context, repo ProfileRepository) error {
 			return err
 		}
 	}
+
+	// 清理已删除的历史内置 Profile（旧库里可能仍有 -2 / -3 两条记录）。
+	for _, id := range RemovedBuiltinProfileIDs {
+		if err := repo.Delete(ctx, id); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -135,8 +116,11 @@ func NewProfileManager(repo ProfileRepository) *ProfileManager {
 }
 
 // Resolve 按 ID 解析 Profile（id 为 0 时回退到内置默认 Profile）。
+//
+// 已删除的历史内置 Profile（-2 / -3）统一回退到默认 Profile，避免存量用户的
+// agent_config.profile_id 指向已删除记录时任务直接失败。
 func (m *ProfileManager) Resolve(ctx context.Context, id int64) (*Profile, error) {
-	if id == 0 {
+	if id == 0 || IsRemovedBuiltinProfileID(id) {
 		id = BuiltinDefaultProfileID
 	}
 	p, err := m.repo.Get(ctx, id)

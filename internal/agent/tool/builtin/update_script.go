@@ -109,8 +109,15 @@ func UpdateScript(updater runtimecontext.ScriptUpdater) tool.Tool {
 }
 
 // parseScriptID 解析必填的脚本 ID：为空或非法时返回错误。
+//
+// 容错处理用户 / 模型可能带上的 "@script:" 引用前缀（如 "@script:2109711590457610240"）：
+// 该前缀来自界面「Ask Agent」插入的引用 chip（脚本面板），
+// 模型可原样把 chip 文本传进来，这里统一剥离后再解析。
 func parseScriptID(raw string) (int64, error) {
 	idStr := strings.TrimSpace(raw)
+	if idx := strings.Index(idStr, "@script:"); idx >= 0 {
+		idStr = strings.TrimSpace(idStr[idx+len("@script:"):])
+	}
 	if idStr == "" {
 		return 0, fmt.Errorf("script_id is required")
 	}
