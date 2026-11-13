@@ -43,6 +43,27 @@ func WithToolPermission(ctx context.Context, rt Runtime) context.Context {
 	return tool.WithPermissionRequester(ctx, toolPermissionRequester{rt: rt})
 }
 
+// toolRuntimeKey 是 ToolRuntimeFrom 的 ctx key。
+type toolRuntimeKey struct{}
+
+// WithToolRuntime 把 Runtime 本身注入工具执行 ctx。
+//
+// 供注册表级（进程内单例）工具在执行期取回 Runtime 的阻塞交互能力，典型场景是
+// ask_user：工具在容器装配时只注册一次，执行时再从 ctx 拿到本轮任务的 Runtime
+// 阻塞等待用户作答。rt 为 nil 时原样返回 ctx。
+func WithToolRuntime(ctx context.Context, rt Runtime) context.Context {
+	if rt == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, toolRuntimeKey{}, rt)
+}
+
+// ToolRuntimeFrom 返回 WithToolRuntime 注入的 Runtime；未注入时返回 nil。
+func ToolRuntimeFrom(ctx context.Context) Runtime {
+	rt, _ := ctx.Value(toolRuntimeKey{}).(Runtime)
+	return rt
+}
+
 type toolPermissionRequester struct {
 	rt Runtime
 }

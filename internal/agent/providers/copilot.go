@@ -2,7 +2,6 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -316,6 +315,8 @@ func (a *copilotAgent) buildTools(rt agentinterfaces.Runtime, req agenttypes.Req
 				Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
 					ctx := agentruntime.WithToolPermission(inv.TraceContext, rt)
 					ctx = agentruntime.WithToolFacts(ctx, rt)
+					// Runtime 注入 ctx：ask_user 等注册表级工具在执行期靠它阻塞等待用户。
+					ctx = agentruntime.WithToolRuntime(ctx, rt)
 					res := runnerExec.Run(agentruntime.WithToolRuntimeContext(ctx, rc), agenttypes.ToolCall{
 						ID:        inv.ToolCallID,
 						Name:      name,
@@ -327,33 +328,7 @@ func (a *copilotAgent) buildTools(rt agentinterfaces.Runtime, req agenttypes.Req
 		}
 	}
 
-	// ask_user：内置提问工具，阻塞等待用户在 UI 作答后把答案回填给模型。
-	out = append(out, a.askUserTool(rt))
 	return out
-}
-
-// askUserTool 构建 ask_user 工具：解析模型入参 → Runtime.AskUser 阻塞等待作答 →
-// 把答案（JSON）作为工具结果回填给模型。无 UI 时 Runtime 返回错误，转为失败结果。
-func (a *copilotAgent) askUserTool(rt agentinterfaces.Runtime) copilot.Tool {
-	def := agentruntime.AskUserToolDefinition()
-	return copilot.Tool{
-		Name:        def.Name,
-		Description: def.Description,
-		Parameters:  def.InputSchema,
-		Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
-			var in agenttypes.AskUserInput
-			raw, _ := json.Marshal(inv.Arguments)
-			if err := json.Unmarshal(raw, &in); err != nil {
-				return copilot.ToolResult{TextResultForLLM: err.Error(), ResultType: "failure", Error: err.Error()}, nil
-			}
-			answer, err := rt.AskUser(inv.TraceContext, in)
-			if err != nil {
-				return copilot.ToolResult{TextResultForLLM: err.Error(), ResultType: "failure", Error: err.Error()}, nil
-			}
-			content, _ := json.Marshal(answer)
-			return copilot.ToolResult{TextResultForLLM: string(content), ResultType: "success"}, nil
-		},
-	}
 }
 
 // toCopilotToolResult 把框架的 tool.Result 转换为 Copilot 的 ToolResult。

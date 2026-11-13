@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	"github.com/biox-dev/gobrave/internal/agent/llm/provider"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
@@ -334,12 +333,22 @@ func (s *fakeSubAgentStore) AppendUserMessage(_ context.Context, sessionID int64
 	return s.add(sessionID, "user", "user", content)
 }
 
+// AppendEvent 内联最小投影：测试只关心事件类型对应的消息 kind。
+//
+// 不直接复用 service.ProjectTimelineEvent：agent 工具迁入 tool/builtin 后，
+// native 的测试导入 service 会构成 service → builtin → native 的测试导入环。
 func (s *fakeSubAgentStore) AppendEvent(_ context.Context, sessionID int64, event agenttypes.StreamEvent) error {
-	params, ok := agentservice.ProjectTimelineEvent(sessionID, 0, event)
-	if !ok {
+	switch event.Type {
+	case agenttypes.StreamEventReasoning:
+		content, _ := event.Data.(agenttypes.ReasoningBlock)
+		return s.add(sessionID, agenttypes.RoleAssistant, agenttypes.KindReasoning, content.Content)
+	case agenttypes.StreamEventToolCall:
+		return s.add(sessionID, agenttypes.RoleAssistant, agenttypes.KindToolCall, "")
+	case agenttypes.StreamEventToolResult:
+		return s.add(sessionID, agenttypes.RoleAssistant, agenttypes.KindToolResult, "")
+	default:
 		return nil
 	}
-	return s.add(sessionID, params.Role, params.Kind, params.Content)
 }
 
 func (s *fakeSubAgentStore) AppendFinalMessage(_ context.Context, sessionID int64, content string) error {

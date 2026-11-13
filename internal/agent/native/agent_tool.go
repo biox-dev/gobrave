@@ -175,6 +175,9 @@ func TaskAgentTools() []tool.Tool {
 }
 
 // NewAgentTool 构建 agent 工具：启动一个只读子 Agent 执行 prompt，并返回其最终回答。
+//
+// 注意：注册表级的 agent 工具（tool/builtin.AgentTool）会按执行 ctx 组装本结构后
+// 委托执行，因此这里保留「每次请求构造一次」的语义。
 func NewAgentTool(cfg AgentToolConfig) tool.Tool {
 	return &agentTool{cfg: cfg}
 }
@@ -183,8 +186,10 @@ type agentTool struct {
 	cfg AgentToolConfig
 }
 
-// Definition 实现 tool.Tool。
-func (t *agentTool) Definition() tool.Definition {
+// AgentToolDefinition 返回 agent 工具的定义（名称 / 描述 / 入参 schema）。
+//
+// 导出供注册表级实现（tool/builtin.AgentTool）复用，避免定义在两处漂移。
+func AgentToolDefinition() tool.Definition {
 	return tool.Definition{
 		Name:        AgentToolName,
 		Description: agentToolDescription,
@@ -206,6 +211,9 @@ func (t *agentTool) Definition() tool.Definition {
 		}),
 	}
 }
+
+// Definition 实现 tool.Tool。
+func (t *agentTool) Definition() tool.Definition { return AgentToolDefinition() }
 
 // Execute 实现 tool.Tool：单任务直接返回；多任务并发执行并按输入顺序汇总。
 func (t *agentTool) Execute(ctx context.Context, args json.RawMessage) (any, error) {

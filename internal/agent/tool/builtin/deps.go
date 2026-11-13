@@ -1,13 +1,15 @@
 package builtin
 
-import "github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+import (
+	"github.com/biox-dev/gobrave/internal/agent/native"
+	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+)
 
 // Deps 是内置工具集的进程级静态依赖。
 //
 // 这些能力在进程启动时由 container 一次性装配（见 buildAgentClient），随工具构造函数
 // 注入，而不是在每次调用时塞进 context：工具依赖因此对编译器可见、可单测，也不再需要
 // 为每个能力维护一套 With/From。
-//
 // 与业务相关的动态事实（RuntimeContext / TaskFacts / 权限）仍然走工具执行 ctx，
 // 因为它们随请求变化、且 RuntimeContext 会随 agent_tasks.request 序列化落库。
 //
@@ -45,6 +47,12 @@ type Deps struct {
 
 	// Skills 技能解析能力（get_skill / load_skill_resource）。
 	Skills runtimecontext.SkillResolver
+
+	// SubAgentSessions 子 Agent 的会话 / 消息落库（agent 工具使用）。
+	//
+	// 进程级服务（会话 + 消息服务）由 container 装配成该端口；agent 工具的其余
+	// 请求级依赖（LLM 客户端工厂 / Runtime）在执行期从工具 ctx 读取。
+	SubAgentSessions native.SubAgentSessionStore
 }
 
 // scriptUpdater 返回「更新脚本基本信息」能力。

@@ -1749,7 +1749,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "返回当前工具注册表中的全部工具（内置 + 编码类 + 外部 MCP）的元信息；详情请调用 /agent/tool/get",
+                "description": "返回模型实际可用的全部工具（工具注册表：内置 + 编码类 + 外部 MCP；加上 Provider 固定注入的 ask_user / agent 框架工具）的元信息；详情请调用 /agent/tool/get",
                 "produces": [
                     "application/json"
                 ],

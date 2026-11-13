@@ -43,6 +43,10 @@ func All(d Deps) []tool.Tool {
 		// 技能：指令正文与附属资源都按需通过工具加载（渐进式披露）。
 		skill.GetSkill(d.Skills),
 		skill.LoadSkillResource(d.Skills),
+		// 交互：向用户提问（执行期从工具 ctx 取 Runtime 阻塞等待作答）。
+		AskUserTool(),
+		// 子 Agent：把多轮检索委派给只读子 Agent（请求级依赖由 ctx 注入）。
+		AgentTool(d),
 	}
 }
 

@@ -21,11 +21,13 @@ type subAgentSessionStore struct {
 	messages agentinterfaces.MessageService
 }
 
-// newSubAgentSessionStore 构建子 Agent 持久化适配器；任一服务缺失时返回 nil。
+// NewSubAgentSessionStore 构建子 Agent 持久化适配器（native.SubAgentSessionStore 实现）；
+// 任一服务缺失时返回 nil。
 //
-// SessionStore 现在是子 Agent 的必需依赖（子 Agent 始终要落一个完整会话），
+// SessionStore 是子 Agent 的必需依赖（子 Agent 始终要落一个完整会话），
 // 因此返回 nil 会让子 Agent 执行失败，而不是静默降级为无会话运行。
-func newSubAgentSessionStore(sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) native.SubAgentSessionStore {
+// 供容器构建 builtin.Deps.SubAgentSessions（注册表级 agent 工具）。
+func NewSubAgentSessionStore(sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService) native.SubAgentSessionStore {
 	if sessions == nil || messages == nil {
 		return nil
 	}

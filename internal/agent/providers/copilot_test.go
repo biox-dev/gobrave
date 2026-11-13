@@ -6,6 +6,7 @@ import (
 
 	agentclient "github.com/biox-dev/gobrave/internal/agent/client"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	copilot "github.com/github/copilot-sdk/go"
 )
@@ -22,17 +23,24 @@ func newEchoTool() tool.Tool {
 }
 
 func TestBuildTools(t *testing.T) {
-	reg := tool.NewRegistryWith(newEchoTool())
+	// ask_user 与普通工具一样来自注册表（容器装配时登记）。
+	reg := tool.NewRegistryWith(newEchoTool(), builtin.AskUserTool())
 	a := &copilotAgent{opts: agentclient.Options{Tools: reg}}
 
 	tools := a.buildTools(nil, agenttypes.Request{})
-	// echo（注册表工具）+ ask_user（内置提问工具）。
+	// echo + ask_user（均为注册表工具）。
 	if len(tools) != 2 {
 		t.Fatalf("tools = %d, want 2", len(tools))
 	}
-	ct := tools[0]
-	if ct.Name != "echo" {
-		t.Fatalf("tool name = %q, want echo", ct.Name)
+
+	var ct *copilot.Tool
+	for i := range tools {
+		if tools[i].Name == "echo" {
+			ct = &tools[i]
+		}
+	}
+	if ct == nil {
+		t.Fatalf("echo tool not found in %v", tools)
 	}
 	if ct.Description == "" {
 		t.Fatalf("tool description is empty")
@@ -61,10 +69,10 @@ func TestBuildTools(t *testing.T) {
 func TestBuildToolsNilRegistry(t *testing.T) {
 	a := &copilotAgent{opts: agentclient.Options{}}
 
-	// 无注册表工具时仍应暴露内置 ask_user 工具。
+	// 无注册表 = 无工具（ask_user 也由注册表提供，不再由 Provider 硬编码追加）。
 	tools := a.buildTools(nil, agenttypes.Request{})
-	if len(tools) != 1 || tools[0].Name != agenttypes.AskUserToolName {
-		t.Fatalf("tools = %v, want single %q", tools, agenttypes.AskUserToolName)
+	if len(tools) != 0 {
+		t.Fatalf("tools = %v, want empty", tools)
 	}
 }
 

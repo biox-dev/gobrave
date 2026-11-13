@@ -230,6 +230,9 @@ type agentToolDeps struct {
 	Skills         *skill.Registry
 	Files          agentinterfaces.HistoryService
 	LSP            *lspmanager.Manager
+	// Sessions / Messages 供注册表级 agent 工具（子 Agent）落库自己的会话。
+	Sessions agentinterfaces.SessionService
+	Messages agentinterfaces.MessageService
 }
 
 // buildAgentTools 构造工具注册表，并把内置 / coder / MCP 工具注册进去。
@@ -261,6 +264,8 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		DatasetWriter:   in.Browser,
 		ReportContext:   in.Browser,
 		Skills:          skillResolver,
+		// 子 Agent 工具的进程级依赖：会话 / 消息服务在容器里装配成 native.SubAgentSessionStore。
+		SubAgentSessions: agentproviders.NewSubAgentSessionStore(in.Sessions, in.Messages),
 	}
 	for _, t := range builtin.All(builtinDeps) {
 		tools.Register(t)

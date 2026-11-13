@@ -2,7 +2,6 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -160,21 +159,13 @@ func (a *customAgent) llmOptions(ctx context.Context, req agenttypes.Request, fa
 	}, nil
 }
 
-// toolRegistry 组合本次调用可用的工具：注册表工具 + 内置 ask_user + 子 Agent 工具。
+// toolRegistry 组合本次调用可用的工具：注册表工具（含内置 ask_user / agent）。
 //
 // 注册表工具按 req.Tools（由 Profile.Tools 覆盖而来）裁剪：白名单为空时注入全部工具，
-// 非空时只暴露白名单内的工具。ask_user / agent 是框架能力，不受白名单限制。
-// ask_user 依赖 Runtime 阻塞等待用户作答，因此只在有 Runtime 时注册。
+// 非空时只暴露白名单内的工具。ask_user / agent 都已在 builtin 工具集中登记（与其它
+// 内置工具一致），它们的请求级 Runtime / 客户端工厂由 toolContext 注入；这里不再另行追加。
 func (a *customAgent) toolRegistry(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) *tool.Registry {
-	items := make([]tool.Tool, 0)
-	items = append(items, a.profileTools(ctx, req, rt)...)
-	if rt != nil {
-		items = append(items, askUserTool(rt))
-	}
-	// 子 Agent 工具（迁移自 opencode NewAgentTool）：模型可把「多轮检索」委派给
-	// 只读子 Agent，避免父 Agent 上下文被大量中间结果占满。
-	items = append(items, a.newAgentTool(req, rt))
-	return tool.NewRegistryWith(items...)
+	return tool.NewRegistryWith(a.profileTools(ctx, req, rt)...)
 }
 
 // profileTools 返回本次调用暴露给模型的注册表工具。
@@ -193,75 +184,48 @@ func (a *customAgent) profileTools(ctx context.Context, req agenttypes.Request, 
 	return tools
 }
 
-// newAgentTool 构建 agent 工具：复用父请求的模型 / 厂商配置启动一个只读子 Agent。
-//
-// 与 opencode NewAgentTool 的差异：子 Agent 同步运行原生 Agent 循环并直接返回最终回答
-// （见 native.NewAgentTool）；会话由 native 通过 SessionStore 创建（父请求有会话时为
-// 子会话，否则为独立会话）。
-func (a *customAgent) newAgentTool(req agenttypes.Request, rt agentinterfaces.Runtime) tool.Tool {
-	prepare := a.toolContext(req, rt)
-	facts := agentruntime.FactsOf(rt)
-	workingDir := firstNonEmpty(strings.TrimSpace(facts.WorkingDir), strings.TrimSpace(a.opts.WorkingDir))
-	return native.NewAgentTool(native.AgentToolConfig{
-		// 子 Agent 沿用父请求的模型 / 厂商配置，只替换系统提示词；配置错误在执行期
-		// 转为工具失败结果，由父 Agent 决定是否重试。
-		NewClient: func(ctx context.Context) (provider.Client, error) {
-			subReq := req
-			subReq.SystemPrompt = native.TaskAgentSystemPrompt
-			llmOpts, err := a.llmOptions(ctx, subReq, facts)
-			if err != nil {
-				logger.Errorf(ctx, "custom provider: sub-agent llm options failed (model=%s session=%d): %v", subReq.ModelID, facts.SessionID, err)
-				return nil, err
-			}
-			client, err := provider.New(llmOpts)
-			if err != nil {
-				logger.Errorf(ctx, "custom provider: sub-agent client creation failed (model=%s session=%d): %v", subReq.ModelID, facts.SessionID, err)
-				return nil, err
-			}
-			return client, nil
-		},
-		PrepareToolContext: prepare,
-		WorkingDir:         workingDir,
-		SystemPrompt:       native.TaskAgentSystemPrompt,
-		// 子会话落库：有父会话时创建 ParentSessionID = 父会话的子会话，并把子 Agent 的
-		// reasoning / tool_call / tool_result / 最终回答写入 agent_messages。
-		SessionStore: newSubAgentSessionStore(a.opts.Sessions, a.opts.Messages),
-		// 子 Agent 的权限 / 提问委托给父 Runtime（事件仍只写子会话）。
-		ParentRuntime: rt,
-		Provider:      strings.TrimSpace(req.Provider),
-		Model:         strings.TrimSpace(req.ModelID),
-		// 回退值：工具执行 ctx 缺少 RuntimeContext 时也能拿到父会话 / 用户。
-		ParentSessionID: facts.SessionID,
-		UserID:          facts.UserID,
-	})
-}
-
-// toolContext 返回工具执行前的 ctx 装饰函数：注入权限、请求事实与运行时业务变量。
+// toolContext 返回工具执行前的 ctx 装饰函数：注入权限、请求事实、运行时业务变量，
+// 以及注册表级工具（ask_user / agent）需要的请求级能力。
 //
 // 进程级静态服务（分析节点执行器、脚本 / 报告浏览器、技能解析等）已在构建工具注册表时
 // 通过构造注入（builtin.Deps / coder.Deps），这里不再逐项注入 ctx。
 func (a *customAgent) toolContext(req agenttypes.Request, rt agentinterfaces.Runtime) func(context.Context) context.Context {
 	rc := agentruntime.ToolRuntimeContextFromRequest(req)
+	facts := agentruntime.FactsOf(rt)
 	return func(ctx context.Context) context.Context {
 		ctx = agentruntime.WithToolPermission(ctx, rt)
 		ctx = agentruntime.WithToolFacts(ctx, rt)
+		// Runtime 本身也注入 ctx：注册表级工具（ask_user / agent）在执行期靠它阻塞交互。
+		ctx = agentruntime.WithToolRuntime(ctx, rt)
 		ctx = agentruntime.WithToolRuntimeContext(ctx, rc)
+		// 子 Agent 工具（agent）需要请求级的 LLM 客户端工厂与溯源信息（模型 / 厂商）。
+		ctx = native.WithSubAgentOptions(ctx, native.SubAgentOptions{
+			NewClient: a.subAgentClientFactory(req, facts),
+			Provider:  strings.TrimSpace(req.Provider),
+			Model:     strings.TrimSpace(req.ModelID),
+		})
 		return ctx
 	}
 }
 
-// askUserTool 构建 ask_user 工具：解析模型入参 → Runtime.AskUser 阻塞等待作答 →
-// 把答案格式化为可读文本回填给模型。无 UI 时 Runtime 返回错误，执行器转为失败结果。
-func askUserTool(rt agentinterfaces.Runtime) tool.Tool {
-	def := agentruntime.AskUserToolDefinition()
-	return tool.NewFunc(def.Name, def.Description, def.InputSchema,
-		func(ctx context.Context, in agenttypes.AskUserInput) (string, error) {
-			answer, err := rt.AskUser(ctx, in)
-			if err != nil {
-				return "", err
-			}
-			return formatAskUserAnswer(in, answer), nil
-		})
+// subAgentClientFactory 返回子 Agent 的 LLM 客户端工厂：沿用父请求的模型 / 厂商配置，
+// 只把系统提示词换成子 Agent 专用的 TaskAgentSystemPrompt。
+func (a *customAgent) subAgentClientFactory(req agenttypes.Request, facts agenttypes.TaskFacts) func(context.Context) (provider.Client, error) {
+	return func(ctx context.Context) (provider.Client, error) {
+		subReq := req
+		subReq.SystemPrompt = native.TaskAgentSystemPrompt
+		llmOpts, err := a.llmOptions(ctx, subReq, facts)
+		if err != nil {
+			logger.Errorf(ctx, "custom provider: sub-agent llm options failed (model=%s session=%d): %v", subReq.ModelID, facts.SessionID, err)
+			return nil, err
+		}
+		client, err := provider.New(llmOpts)
+		if err != nil {
+			logger.Errorf(ctx, "custom provider: sub-agent client creation failed (model=%s session=%d): %v", subReq.ModelID, facts.SessionID, err)
+			return nil, err
+		}
+		return client, nil
+	}
 }
 
 // inferProviderFromModel 在未显式配置厂商类型时，按模型名前缀推断厂商。
@@ -296,86 +260,4 @@ func providerType(pc agentclient.ModelProviderConfig) string {
 		return strings.ToLower(name)
 	}
 	return strings.ToLower(strings.TrimSpace(pc.Extra["type"]))
-}
-
-// formatAskUserAnswer 把用户作答格式化为人类可读摘要（作为 ask_user 工具结果文本）。
-func formatAskUserAnswer(in agenttypes.AskUserInput, answer agenttypes.AskUserAnswer) string {
-	byID := make(map[string]agenttypes.QuestionAnswer, len(answer.Answers))
-	for _, ans := range answer.Answers {
-		if ans.ID != "" {
-			byID[ans.ID] = ans
-		}
-	}
-
-	var b strings.Builder
-	if title := strings.TrimSpace(in.Title); title != "" {
-		b.WriteString(title)
-		b.WriteString("\n")
-	}
-	written := 0
-	for _, q := range in.Questions {
-		ans, ok := byID[q.ID]
-		if !ok {
-			continue
-		}
-		text := formatQuestionAnswer(ans)
-		if text == "" {
-			continue
-		}
-		if written > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString("- ")
-		b.WriteString(strings.TrimSpace(q.Title))
-		b.WriteString(": ")
-		b.WriteString(text)
-		written++
-	}
-	// questions 未声明但作答中出现的答案（模型自定义 ID）原样追加。
-	declared := make(map[string]bool, len(in.Questions))
-	for _, q := range in.Questions {
-		declared[q.ID] = true
-	}
-	for _, ans := range answer.Answers {
-		if declared[ans.ID] || ans.ID == "" {
-			continue
-		}
-		text := formatQuestionAnswer(ans)
-		if text == "" {
-			continue
-		}
-		if written > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString("- ")
-		b.WriteString(ans.ID)
-		b.WriteString(": ")
-		b.WriteString(text)
-		written++
-	}
-	if written == 0 {
-		if data, err := json.Marshal(answer); err == nil {
-			return string(data)
-		}
-		return "用户未作有效选择"
-	}
-	return b.String()
-}
-
-// formatQuestionAnswer 把单个答案拼接为文本（多选用逗号分隔，自定义输入用括号标注）。
-func formatQuestionAnswer(ans agenttypes.QuestionAnswer) string {
-	parts := make([]string, 0, len(ans.Values)+1)
-	parts = append(parts, ans.Values...)
-	if value := strings.TrimSpace(ans.Value); value != "" {
-		parts = append(parts, value)
-	}
-	text := strings.Join(parts, ", ")
-	if custom := strings.TrimSpace(ans.Custom); custom != "" {
-		if text == "" {
-			text = custom
-		} else if text != custom {
-			text += "（自定义：" + custom + "）"
-		}
-	}
-	return text
 }
