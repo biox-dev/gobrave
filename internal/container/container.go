@@ -130,8 +130,10 @@ func buildSkillStore(cfg *config.Config) *skill.Store {
 
 // ensureBuiltinSkills 在启动时把内置技能写入用户技能目录（$BaseDir/.skills）。
 //
-// 每次都覆盖写入，保证磁盘上的内置技能与代码中的定义一致；写入失败只记录日志，
-// 不阻断启动（技能缺失不影响主流程，可随下次重启重新写入）。
+// 是否覆盖已存在的 SKILL.md 由 config.agent.overwrite_builtin_skills 决定：
+// 未配置 / true 时每次启动都覆盖（保证磁盘上的内置技能与代码中的定义一致）；
+// false 时只补齐缺失的内置技能，保留用户对已有文件的修改。
+// 写入失败只记录日志，不阻断启动（技能缺失不影响主流程，可随下次重启重新写入）。
 func ensureBuiltinSkills(cfg *config.Config) error {
 	dir := resolveSkillsDir(cfg)
 	if dir == "" {
@@ -141,9 +143,14 @@ func ensureBuiltinSkills(cfg *config.Config) error {
 		logger.Warnf(context.Background(), "[Container] Failed to create skills directory: %v", err)
 		return err
 	}
-	if err := skill.EnsureBuiltinSkills(dir); err != nil {
+	overwrite := config.ResolveOverwriteBuiltinSkills(cfg)
+	opts := skill.BuiltinWriteOptions{Overwrite: overwrite}
+	if err := skill.EnsureBuiltinSkillsWithOptions(dir, opts); err != nil {
 		logger.Warnf(context.Background(), "[Container] Failed to write builtin skills: %v", err)
 		return err
+	}
+	if !overwrite {
+		logger.Infof(context.Background(), "[Container] agent.overwrite_builtin_skills=false, existing builtin skills under %s are kept as-is", dir)
 	}
 	return nil
 }

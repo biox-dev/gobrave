@@ -157,6 +157,30 @@ type AgentConfig struct {
 	// Providers 是「模型提供商」配置表，key 为模型名（与 Profile.Model 对应）。
 	// 一次请求使用的模型由 Profile.Model 指定，据此在此表中查找 base_url / api_key 等 LLM 配置。
 	Providers map[string]ModelProviderConfig `yaml:"providers" json:"providers"`
+
+	// OverwriteBuiltinSkills 控制启动时把内置技能落盘时，是否覆盖已存在的 SKILL.md。
+	//
+	// nil（未配置）/ true：覆盖写入，保证 $BaseDir/.skills 下的内置技能与二进制内置版本一致（历史行为）。
+	// false：仅在文件缺失时写入；已存在的同名 SKILL.md 保留用户改动，不再随启动被覆盖
+	// （内置技能升级后也不会自动同步，需要手动删除对应目录或改回 true）。
+	OverwriteBuiltinSkills *bool `yaml:"overwrite_builtin_skills" json:"overwrite_builtin_skills"`
+}
+
+// OverwriteBuiltinSkillsEnabled 报告启动时是否覆盖已存在的内置技能文件。
+// 未配置时返回 true，保持「内置技能以代码为准」的历史行为。
+func (c *AgentConfig) OverwriteBuiltinSkillsEnabled() bool {
+	if c == nil || c.OverwriteBuiltinSkills == nil {
+		return true
+	}
+	return *c.OverwriteBuiltinSkills
+}
+
+// ResolveOverwriteBuiltinSkills 返回当前配置下启动时是否覆盖已存在的内置技能文件。
+func ResolveOverwriteBuiltinSkills(cfg *Config) bool {
+	if cfg == nil {
+		return true
+	}
+	return cfg.Agent.OverwriteBuiltinSkillsEnabled()
 }
 
 // ModelProviderConfig 描述一个「模型提供商」的连接配置（base_url / api_key / 类型等）。

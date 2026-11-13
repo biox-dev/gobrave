@@ -166,3 +166,36 @@ func TestEnsureBuiltinSkillsWritesAndOverwrites(t *testing.T) {
 		t.Fatalf("IsBuiltin should report the builtin skill")
 	}
 }
+
+// Overwrite=false（config.agent.overwrite_builtin_skills=false）时，
+// 已存在的 SKILL.md 保留用户修改，只补齐缺失的内置技能。
+func TestEnsureBuiltinSkillsKeepsExistingWhenOverwriteDisabled(t *testing.T) {
+	dir := t.TempDir()
+	names := BuiltinNames()
+	name := names[0]
+
+	const custom = "---\nname: local-edit\ndescription: local edits\n---\n\nlocal edits\n"
+	writeSkillFile(t, dir, name, custom)
+
+	if err := EnsureBuiltinSkillsWithOptions(dir, BuiltinWriteOptions{Overwrite: false}); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, name, SkillFileName))
+	if err != nil {
+		t.Fatalf("read written skill: %v", err)
+	}
+	if string(content) != custom {
+		t.Fatalf("existing skill %q should be preserved when overwrite is disabled, got %q", name, string(content))
+	}
+
+	// 其余缺失的内置技能仍会补齐。
+	for _, n := range names {
+		if n == name {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, n, SkillFileName)); err != nil {
+			t.Fatalf("missing builtin skill %q should be written even when overwrite is disabled: %v", n, err)
+		}
+	}
+}

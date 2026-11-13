@@ -115,6 +115,12 @@ llm:
 
 # AI Agent 调用框架配置。用于灵活切换第三方 Agent 与后续自研 Agent。
 agent:
+  # 启动时是否用二进制内置的 SKILL.md 覆盖 $BaseDir/.skills 下的同名文件。
+  # 未配置 / true：每次启动都覆盖，保证磁盘上的内置技能与代码内置版本一致（默认）。
+  # false：只在文件缺失时写入，已存在的文件保留用户的修改（内置技能升级后不会自动同步，
+  # 需要手动删除对应目录或改回 true）。
+  overwrite_builtin_skills: true
+
   # 模型提供商配置表（key 为模型名，与 Profile.model 对应，统一小写）。
   # 一次请求使用的模型由 Profile.model 指定，据此在此表中查找 base_url / api_key 等 LLM 配置。
   #

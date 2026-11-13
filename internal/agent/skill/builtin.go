@@ -26,7 +26,8 @@ import (
 // 都只走一条路径（磁盘 + Discover），内置技能因此不需要额外的合并逻辑；同时运维可以
 // 直接打开对应文件查看模型实际拿到的内容。
 //
-// 注意：内置技能写入后与用户技能同处一个目录，前端删除后在下次启动时会再次出现。
+// 注意：内置技能写入后与用户技能同处一个目录，前端删除后在下次启动时会再次出现
+// （config.agent.overwrite_builtin_skills=false 时，已存在的文件不会被覆盖）。
 const (
 	// BuiltinSkillDir 是内置技能源码目录（相对工作目录，与内置提示词一致）。
 	//
@@ -106,16 +107,36 @@ func IsBuiltin(name string) bool {
 	return slices.Contains(builtinSkillNames(), name)
 }
 
+// BuiltinWriteOptions 控制内置技能落盘行为。
+type BuiltinWriteOptions struct {
+	// Overwrite 为 true 时覆盖已存在的 SKILL.md；为 false 时仅在文件缺失时写入，
+	// 已存在的文件原样保留（用户在 $BaseDir/.skills 下对内置技能的修改不会被冲掉）。
+	Overwrite bool
+}
+
 // EnsureBuiltinSkills 把内置技能写入 dir（通常为 $BaseDir/.skills），每次启动都覆盖。
 //
 // 写入内容来自 builtin/skills 下的 SKILL.md 原文（不再重新序列化），保证磁盘与源码一致。
 // dir 为空时无操作；写入失败只记录第一个错误，不影响其他技能继续写入。
 func EnsureBuiltinSkills(dir string) error {
+	return EnsureBuiltinSkillsWithOptions(dir, BuiltinWriteOptions{Overwrite: true})
+}
+
+// EnsureBuiltinSkillsWithOptions 按 opts 把内置技能写入 dir。
+//
+// Overwrite 为 false 时，目标 <dir>/<name>/SKILL.md 已存在则跳过，只补齐缺失的内置技能；
+// 这对应 config.agent.overwrite_builtin_skills=false 的场景。
+func EnsureBuiltinSkillsWithOptions(dir string, opts BuiltinWriteOptions) error {
 	if dir == "" {
 		return nil
 	}
 	var firstErr error
 	for _, name := range builtinSkillNames() {
+		if !opts.Overwrite {
+			if _, err := os.Stat(filepath.Join(dir, name, SkillFileName)); err == nil {
+				continue
+			}
+		}
 		if err := writeBuiltinSkill(dir, name); err != nil && firstErr == nil {
 			firstErr = err
 		}
