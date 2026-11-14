@@ -19,12 +19,6 @@ const (
 	DefaultDaemonPort = 2375
 	// DefaultEndpoint 是 Windows 平台上自管 dockerd 的默认地址。
 	DefaultEndpoint = "tcp://localhost:2375"
-	// managedMarkerPath 是 gobrave 在发行版根目录留下的归属标记。
-	//
-	// 用于区分「系统上本来就有、且由 gobrave 启动过 dockerd 的发行版」与
-	// 用户自己的普通发行版：只有带标记的发行版才会被直接接管启动，
-	// 避免把用户环境改成 TCP 暴露 dockerd。
-	managedMarkerPath = "/.gobrave-docker-runtime"
 )
 
 // layout 描述 <base_dir>/wsl 下的目录结构。
@@ -62,12 +56,6 @@ func (l layout) StatePath() string { return filepath.Join(l.root, "state.json") 
 // 接管场景下发行版的 vhdx 由 WSL 自己管理（位于 %LOCALAPPDATA%\wsl 下），
 // 这里只放 state.json，让 installed() 的目录判据成立；不参与任何删除逻辑。
 func (l layout) AdoptPlaceholderDistroDir() string { return filepath.Join(l.root, "distro-external") }
-
-// LogPath dockerd 日志路径。
-func (l layout) LogPath() string { return filepath.Join(l.root, "dockerd.log") }
-
-// PidPath dockerd 进程号文件路径。
-func (l layout) PidPath() string { return filepath.Join(l.root, "dockerd.pid") }
 
 // EnsureAdoptDirs 创建 root / cache / 接管占位目录（不创建 distro 目录）。
 func (l layout) EnsureAdoptDirs() error {

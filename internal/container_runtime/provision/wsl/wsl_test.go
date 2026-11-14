@@ -74,7 +74,7 @@ func TestLayoutPaths(t *testing.T) {
 		t.Errorf("DistroDir = %q, want %q", got, want)
 	}
 	// 所有派生路径都必须位于 wsl 根目录之下。
-	for _, p := range []string{l.RootfsPath(), l.DistroDir(), l.StatePath(), l.LogPath()} {
+	for _, p := range []string{l.RootfsPath(), l.DistroDir(), l.StatePath()} {
 		if !strings.HasPrefix(p, l.Root()) {
 			t.Errorf("%q should be under %q", p, l.Root())
 		}
@@ -104,75 +104,63 @@ func TestStateRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBuildStartScriptBindsAllInterfaces(t *testing.T) {
-	// WSL2 NAT：Windows 的流量从 eth0 进入，绑 127.0.0.1 一律被拒，必须 0.0.0.0。
-	script := buildStartScript(2375)
-	if !strings.Contains(script, "--host=tcp://0.0.0.0:2375") {
-		t.Errorf("start script must bind tcp on 0.0.0.0:%d, got:\n%s", 2375, script)
+func TestConfigEndpointPrefersExplicit(t *testing.T) {
+	// 与 Linux 实现一致：显式配置优先。
+	if got := (Config{Endpoint: "tcp://192.168.1.50:2376"}).endpoint(); got != "tcp://192.168.1.50:2376" {
+		t.Errorf("endpoint() = %q, want explicit value", got)
 	}
-	if strings.Contains(script, "tcp://127.0.0.1") {
-		t.Errorf("start script must not bind loopback only, got:\n%s", script)
-	}
-	if strings.Contains(script, "%!") {
-		t.Errorf("start script has unsubstituted format verbs:\n%s", script)
-	}
-	if !strings.Contains(script, "mkdir -p /var/log "+distroRoot) {
-		t.Errorf("start script must create pid/log dir %s, got:\n%s", distroRoot, script)
+	if got := (Config{Endpoint: "  "}).endpoint(); got != DefaultEndpoint {
+		t.Errorf("endpoint() = %q, want default %q", got, DefaultEndpoint)
 	}
 }
 
-func TestPickDistroIPSkipsInternalIfaces(t *testing.T) {
-	// 真实 `ip -4 -o addr show` 输出形态。
-	out := `1: lo    inet 127.0.0.1/8 scope host lo
-2: eth0    inet 172.27.140.255/18 brd 172.27.191.255 scope global eth0
-3: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0
-4: br-1a2b3c    inet 172.18.0.1/16 scope global br-1a2b3c`
-	if got := pickDistroIP(out, "eth0"); got != "172.27.140.255" {
-		t.Errorf("pickDistroIP = %q, want eth0 address 172.27.140.255", got)
+func TestConfigPortFollowsEndpoint(t *testing.T) {
+	cases := []struct {
+		endpoint string
+		want     int
+	}{
+		{"tcp://localhost:2375", 2375},
+		{"tcp://192.168.1.50:2376", 2376},
+		{"unix:///var/run/docker.sock", DefaultDaemonPort},
+		{"", DefaultDaemonPort},
 	}
-}
-
-func TestPickDistroIPFallsBackWhenNoEth0(t *testing.T) {
-	// 没有 eth0（例如发行版内网卡名不是 eth0）时，取第一个非内部接口。
-	out := `1: lo    inet 127.0.0.1/8 scope host lo
-2: enp0s1    inet 172.28.1.5/20 scope global enp0s1
-3: docker0    inet 172.17.0.1/16 scope global docker0`
-	if got := pickDistroIP(out, "eth0"); got != "172.28.1.5" {
-		t.Errorf("pickDistroIP = %q, want 172.28.1.5", got)
-	}
-}
-
-func TestPickDistroIPHostnameIShape(t *testing.T) {
-	// hostname -I：一行多个纯 IP，无接口名；必须跳过 docker0 地址。
-	out := "172.17.0.1 172.27.140.255 \n"
-	// 无接口信息时无法识别 docker0，取第一个，但绝不能返回回环地址。
-	if got := pickDistroIP("127.0.0.1 172.27.140.255\n", ""); got != "172.27.140.255" {
-		t.Errorf("pickDistroIP(hostname -I) = %q, want 172.27.140.255", got)
-	}
-	if got := pickDistroIP(out, ""); got == "" {
-		t.Error("pickDistroIP should return some IPv4 for hostname -I shape")
-	}
-}
-
-func TestPickDistroIPEmpty(t *testing.T) {
-	for _, in := range []string{"", "\n", "127.0.0.1/8\n"} {
-		if got := pickDistroIP(in, "eth0"); got != "" {
-			t.Errorf("pickDistroIP(%q) = %q, want empty", in, got)
+	for _, c := range cases {
+		if got := (Config{Endpoint: c.endpoint}).port(); got != c.want {
+			t.Errorf("port(%q) = %d, want %d", c.endpoint, got, c.want)
 		}
 	}
 }
 
-func TestIsInternalIface(t *testing.T) {
-	internal := []string{"lo", "lo:", "docker0", "docker0:", "docker_gwbridge", "br-abc123", "veth1234"}
-	for _, n := range internal {
-		if !isInternalIface(n) {
-			t.Errorf("isInternalIface(%q) = false, want true", n)
+func TestProvisionerPortIgnoresStaleState(t *testing.T) {
+	// state.json 里的旧端口不再覆盖配置：改 endpoint 后无需删 state 即可生效。
+	p := New(Config{Endpoint: "tcp://localhost:2376"})
+	if got := p.port(&state{Port: 2375}); got != 2376 {
+		t.Errorf("port(stale state) = %d, want 2376", got)
+	}
+}
+
+func TestEndpointHost(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"tcp://localhost:2375", "localhost"},
+		{"tcp://172.24.1.10:2375", "172.24.1.10"},
+		{"http://example.com:2375", "example.com"},
+		{"", "localhost"},
+		{"not a url", "localhost"},
+	}
+	for _, c := range cases {
+		if got := endpointHost(c.in); got != c.want {
+			t.Errorf("endpointHost(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
-	for _, n := range []string{"eth0", "eth0:", "enp0s1", "wlan0"} {
-		if isInternalIface(n) {
-			t.Errorf("isInternalIface(%q) = true, want false", n)
-		}
+}
+
+func TestStopDaemonScriptUsesSystemd(t *testing.T) {
+	// dockerd 由发行版自己维护，gobrave 只经 systemd 请求停止。
+	if !strings.Contains(stopDaemonScript, "systemctl stop") {
+		t.Errorf("stopDaemonScript must stop docker via systemctl, got:\n%s", stopDaemonScript)
+	}
+	if strings.Contains(stopDaemonScript, "pkill") {
+		t.Error("stopDaemonScript must not kill dockerd directly")
 	}
 }
 

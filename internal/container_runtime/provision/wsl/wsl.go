@@ -25,8 +25,8 @@ type Config struct {
 	DownloadURL string
 	// Distro 发行版名，默认 DefaultDistro。
 	Distro string
-	// Endpoint daemon 地址，默认 DefaultEndpoint（tcp://localhost:2375）；
-	// 仅支持 tcp://，取值形如 tcp://localhost:2375。
+	// Endpoint daemon 地址；留空表示使用平台默认（DefaultEndpoint）。
+	// config 有配置时优先使用配置值。
 	Endpoint string
 	// HTTPClient 用于下载；nil 时使用内置 client（大文件不设总超时）。
 	HTTPClient *http.Client
@@ -63,12 +63,22 @@ func New(cfg Config) *WSLProvisioner {
 	return p
 }
 
+// endpoint 返回显式配置的 daemon 地址；为空时回退 DefaultEndpoint。
+//
+// 与 Linux 实现一致：显式配置优先，绝不从 WSL 运行时反推地址。
+func (c Config) endpoint() string {
+	if ep := strings.TrimSpace(c.Endpoint); ep != "" {
+		return ep
+	}
+	return DefaultEndpoint
+}
+
 // port 从 Endpoint 解析出 TCP 端口；无法解析时回退默认端口。
 //
-// 端口只用于 dockerd 的 --host=tcp://0.0.0.0:<port> 与监听探测，
+// 端口只用于启动发行版后探测 daemon 是否就绪，
 // 因此 unix:// 等非 TCP 地址一律回退默认值。
 func (c Config) port() int {
-	u, err := url.Parse(string(c.Endpoint))
+	u, err := url.Parse(c.endpoint())
 	if err != nil || u.Port() == "" {
 		return DefaultDaemonPort
 	}
@@ -115,19 +125,14 @@ func (p *WSLProvisioner) Status(ctx context.Context) (*types.RuntimeStatus, erro
 			return status, nil
 		}
 
-		port := p.port(st)
-		if p.daemonRunning(ctx, status.Distro) && p.tcpListening(ctx, status.Distro, port) {
-			status.State = types.StateRunning
-			if ep, err := p.resolveEndpoint(ctx, status.Distro, port); err == nil {
-				status.Endpoint = ep
-				status.Detail = "dockerd is running"
-			} else {
-				status.Detail = err.Error()
-			}
+		if err := p.pingEndpoint(ctx); err != nil {
+			status.State = types.StateInstalled
+			status.Detail = "dockerd is not reachable at " + p.cfg.endpoint() + ": " + err.Error()
 			return status, nil
 		}
-		status.State = types.StateInstalled
-		status.Detail = "dockerd is not running"
+		status.State = types.StateRunning
+		status.Endpoint = p.cfg.endpoint()
+		status.Detail = "dockerd is running"
 		return status, nil
 	}
 
@@ -148,15 +153,10 @@ func (p *WSLProvisioner) Status(ctx context.Context) (*types.RuntimeStatus, erro
 	}
 	if registered {
 		status.Distro = p.cfg.Distro
-		if p.daemonRunning(ctx, p.cfg.Distro) && p.tcpListening(ctx, p.cfg.Distro, p.cfg.port()) {
+		if err := p.pingEndpoint(ctx); err == nil {
 			status.State = types.StateRunning
-			if ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.port()); err == nil {
-				status.Endpoint = ep
-				status.Detail = "dockerd is running in existing distro (not yet adopted, click install to adopt)"
-			} else {
-				status.State = types.StateInstalled
-				status.Detail = err.Error()
-			}
+			status.Endpoint = p.cfg.endpoint()
+			status.Detail = "dockerd is running in existing distro (not yet adopted, click install to adopt)"
 			return status, nil
 		}
 		status.State = types.StateNotInstalled
@@ -208,11 +208,11 @@ func (p *WSLProvisioner) Download(ctx context.Context, progress types.ProgressFu
 	return nil
 }
 
-// Install 让发行版就绪并完成 dockerd 初始化。
+// Install 让发行版就绪。
 //
 // 两条路径：
-//   - 系统上已有同名发行版（Registered）：直接接管，校验/启动 dockerd，不下载不导入；
-//   - 否则：要求已 Download，执行 wsl --import 后再初始化。
+//   - 系统上已有同名发行版（Registered）：直接接管，不下载不导入；
+//   - 否则：要求已 Download，执行 wsl --import。
 //
 // 导入路径的任何一步失败都会尽力回滚（注销发行版），避免留下半安装状态；
 // 接管路径失败时绝不注销用户自己的发行版。
@@ -231,7 +231,7 @@ func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFun
 	}
 	if registered {
 		logger.Infof(ctx, "[wsl] Install: distro %s already registered in WSL, adopting instead of importing", p.cfg.Distro)
-		types.Report(progress, "adopt", 0, "distro %s already installed, starting dockerd directly", p.cfg.Distro)
+		types.Report(progress, "adopt", 0, "distro %s already installed, adopting", p.cfg.Distro)
 		return p.adopt(ctx, progress)
 	}
 
@@ -272,25 +272,7 @@ func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFun
 		}
 	}()
 
-	types.Report(progress, "import", 60, "distro imported, initializing")
-	if _, err := runInDistro(ctx, p.cfg.Distro, "true"); err != nil {
-		logger.Errorf(ctx, "[wsl] Install: initialize distro %s failed: %v", p.cfg.Distro, err)
-		return fmt.Errorf("initialize distro %s: %w", p.cfg.Distro, err)
-	}
-
-	// 预置镜像内已包含 dockerd；若缺失则明确报错而不是尝试在线安装
-	// （在线安装依赖外网与 apt 源，不适合放在安装向导的隐式步骤里）。
-	types.Report(progress, "configure", 70, "checking dockerd")
-	if out, err := runInDistro(ctx, p.cfg.Distro, "command -v dockerd || exit 127"); err != nil {
-		logger.Errorf(ctx, "[wsl] Install: dockerd missing in rootfs, output=%q err=%v", strings.TrimSpace(out), err)
-		return fmt.Errorf("dockerd not found in distro, the rootfs package is invalid: %w (%s)", err, strings.TrimSpace(out))
-	}
-
-	types.Report(progress, "configure", 80, "starting dockerd")
-	if err := p.startDaemon(ctx, p.cfg.Distro, p.cfg.port()); err != nil {
-		return err
-	}
-
+	types.Report(progress, "configure", 60, "writing install state")
 	st := &state{
 		Distro:      p.cfg.Distro,
 		Version:     p.detectVersion(ctx, p.cfg.Distro),
@@ -304,14 +286,12 @@ func (p *WSLProvisioner) Install(ctx context.Context, progress types.ProgressFun
 	rollback = false
 	logger.Infof(ctx, "[wsl] Install: state written to %s (version=%q)", p.layout.StatePath(), st.Version)
 
-	types.Report(progress, "start", 95, "resolving endpoint")
-	ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.port())
-	if err != nil {
+	types.Report(progress, "start", 80, "booting distro")
+	if ep, err := p.Start(ctx); err != nil {
 		return err
+	} else {
+		types.Report(progress, "start", 100, "installed, endpoint %s", ep)
 	}
-	p.setEndpoint(ep)
-	logger.Infof(ctx, "[wsl] Install: done, endpoint=%s", ep)
-	types.Report(progress, "start", 100, "installed, endpoint %s", ep)
 	return nil
 }
 
@@ -326,6 +306,8 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 	if st != nil && st.Adopted {
 		logger.Infof(ctx, "[wsl] Uninstall: distro %s was adopted, stopping daemon only (will NOT unregister)", st.Distro)
 		_ = p.stopDaemon(ctx, st.Distro)
+		// 发行版仍需终止，否则 vhdx 一直被占用。
+		_, _ = runWSL(ctx, "--terminate", st.Distro)
 		if err := os.RemoveAll(p.layout.AdoptPlaceholderDistroDir()); err != nil {
 			logger.Errorf(ctx, "[wsl] Uninstall: remove adopt placeholder dir failed: %v", err)
 			return fmt.Errorf("remove adopt placeholder dir: %w", err)
@@ -347,6 +329,7 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 	// 先停 daemon，避免注销时进程占用 vhdx。
 	logger.Infof(ctx, "[wsl] Uninstall: stopping daemon in %s", p.cfg.Distro)
 	_ = p.stopDaemon(ctx, p.cfg.Distro)
+	_, _ = runWSL(ctx, "--terminate", p.cfg.Distro)
 
 	logger.Infof(ctx, "[wsl] Uninstall: unregistering distro %s", p.cfg.Distro)
 	if _, err := runWSL(ctx, "--unregister", p.cfg.Distro); err != nil {
@@ -366,9 +349,9 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 // Start 确保运行时可用并返回 endpoint。
 //
 // 这是每次进程启动都会调用的入口，满足以下约束：
-//  1. 未安装但系统上已有同名发行版时，直接接管（启动 dockerd）而不是返回 ErrNotInstalled；
+//  1. 未安装但系统上已有同名发行版时，直接接管（启动发行版）而不是返回 ErrNotInstalled；
 //  2. 发行版既未安装也不存在时返回 ErrNotInstalled，不做任何修复；
-//  3. 已安装时幂等：daemon 已在跑就只探活，不重复启动。
+//  3. 已安装时幂等：启动发行版后只探测 endpoint 是否连通。
 func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
 	logger.Infof(ctx, "[wsl] Start: begin, installed=%t distro=%s", p.layout.installed(), p.cfg.Distro)
 	if !p.layout.installed() {
@@ -412,15 +395,16 @@ func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("%w: distro %s is not registered in WSL", types.ErrNotInstalled, distro)
 	}
 
-	if err := p.startDaemon(ctx, distro, port); err != nil {
-		logger.Errorf(ctx, "[wsl] Start: startDaemon failed: %v", err)
+	// 只负责「启动发行版」：dockerd 由发行版自己维护，这里不执行 docker 命令。
+	if err := p.bootDistro(ctx, distro); err != nil {
+		logger.Errorf(ctx, "[wsl] Start: bootDistro failed: %v", err)
 		p.setErr(err)
 		return "", err
 	}
 
-	ep, err := p.resolveEndpoint(ctx, distro, port)
-	if err != nil {
-		logger.Errorf(ctx, "[wsl] Start: resolveEndpoint failed: %v", err)
+	ep := p.cfg.endpoint()
+	if err := p.waitEndpoint(ctx, ep, port); err != nil {
+		logger.Errorf(ctx, "[wsl] Start: endpoint %s not reachable: %v", ep, err)
 		p.setErr(err)
 		return "", err
 	}
@@ -440,7 +424,7 @@ func (p *WSLProvisioner) Stop(ctx context.Context) error {
 	if st != nil && strings.TrimSpace(st.Distro) != "" {
 		distro = st.Distro
 	}
-	logger.Infof(ctx, "[wsl] Stop: stopping dockerd in %s", distro)
+	logger.Infof(ctx, "[wsl] Stop: stopping dockerd via systemd in %s", distro)
 	if err := p.stopDaemon(ctx, distro); err != nil {
 		logger.Errorf(ctx, "[wsl] Stop: stopDaemon failed: %v", err)
 		return err
@@ -450,15 +434,53 @@ func (p *WSLProvisioner) Stop(ctx context.Context) error {
 	return nil
 }
 
-// HealthCheck 探测当前 endpoint。
+// HealthCheck 探测当前 endpoint（与 Linux 实现一致：只探活，不注入副作用）。
 func (p *WSLProvisioner) HealthCheck(ctx context.Context) error {
-	if ep := p.Endpoint(); ep != "" {
-		if err := pingDocker(ctx, ep); err == nil {
+	if err := p.pingEndpoint(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+// pingEndpoint 对配置的 daemon 地址做一次 docker Ping。
+func (p *WSLProvisioner) pingEndpoint(ctx context.Context) error {
+	return pingDocker(ctx, p.cfg.endpoint())
+}
+
+// waitEndpoint 轮询等待配置的 daemon 地址可用。
+//
+// port > 0 时先做一次宿主机 TCP 探活（快速失败），再 ping docker 协议。
+func (p *WSLProvisioner) waitEndpoint(ctx context.Context, endpoint string, port int) error {
+	var lastErr error
+	for i := 0; i < daemonReadyTries; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		if port > 0 && !probeHostPort(endpoint, port) {
+			lastErr = fmt.Errorf("%s is not reachable from host", endpoint)
+		} else if err := pingDocker(ctx, endpoint); err != nil {
+			lastErr = err
+		} else {
 			return nil
 		}
+		logger.Debugf(ctx, "[wsl] waitEndpoint: %s not ready yet (try %d/%d): %v", endpoint, i+1, daemonReadyTries, lastErr)
+		time.Sleep(daemonReadyDelay)
 	}
-	_, err := p.Start(ctx)
-	return err
+	return fmt.Errorf("dockerd is not reachable at %s: %w", endpoint, lastErr)
+}
+
+// bootDistro 只启动发行版本身。
+//
+// 发行版内的 dockerd 由它自己维护（systemd 等），gobrave 不执行任何 docker 命令，
+// 启动后仅到宿主机侧探测配置的 endpoint 是否连通。
+func (p *WSLProvisioner) bootDistro(ctx context.Context, distro string) error {
+	logger.Infof(ctx, "[wsl] bootDistro: starting distro %s", distro)
+	if _, err := runInDistro(ctx, distro, "true"); err != nil {
+		return fmt.Errorf("boot distro %s: %w", distro, err)
+	}
+	return nil
 }
 
 // Endpoint 返回最近一次成功解析的 endpoint（可能为空）。
@@ -481,11 +503,10 @@ func (p *WSLProvisioner) setErr(err error) {
 	p.lastErr = err
 }
 
-// port 返回 state 中的端口，缺失时回退配置中的 endpoint。
-func (p *WSLProvisioner) port(st *state) int {
-	if st != nil && st.Port > 0 {
-		return st.Port
-	}
+// port 返回配置中的端口（显式配置优先）。
+//
+// state.json 中的旧端口不再覆盖配置：修改 endpoint 后无需删除 state 即可生效。
+func (p *WSLProvisioner) port(*state) int {
 	return p.cfg.port()
 }
 
@@ -514,12 +535,10 @@ func (p *WSLProvisioner) detectVersion(ctx context.Context, distro string) strin
 	return time.Now().Format("2006-01-02")
 }
 
-// adopt 接管系统上已存在（已注册）的发行版：确保 dockerd 可用后写接管状态。
+// adopt 接管系统上已存在（已注册）的发行版：启动它并等待 endpoint 可用。
 //
 // 前提：调用方已确认 distro 在 wsl -l -q 中（由 Install / Start 负责）。
-//
-// dockerd 缺失时尝试在发行版内安装（仅 apt 系发行版）；装不上则明确报错，
-// 并保留标记文件，使下一次 Start 不必重复安装。
+// gobrave 不安装 / 启动 dockerd：发行版内的 dockerd 由它自己维护。
 func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc) error {
 	logger.Infof(ctx, "[wsl] adopt: begin, distro=%s", p.cfg.Distro)
 	if err := p.layout.EnsureAdoptDirs(); err != nil {
@@ -527,33 +546,9 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 		return err
 	}
 
-	types.Report(progress, "adopt", 10, "checking distro %s", p.cfg.Distro)
-	if _, err := runInDistro(ctx, p.cfg.Distro, "true"); err != nil {
-		logger.Errorf(ctx, "[wsl] adopt: distro %s cannot be started: %v", p.cfg.Distro, err)
-		return fmt.Errorf("distro %s cannot be started: %w", p.cfg.Distro, err)
-	}
-
-	types.Report(progress, "adopt", 30, "checking dockerd")
-	if !runInDistroQuiet(ctx, p.cfg.Distro, "command -v dockerd >/dev/null 2>&1") {
-		logger.Warnf(ctx, "[wsl] adopt: dockerd not found in %s, running install script", p.cfg.Distro)
-		types.Report(progress, "adopt", 40, "dockerd not found, installing docker.io")
-		if out, err := runInDistro(ctx, p.cfg.Distro, installDockerScript); err != nil {
-			logger.Errorf(ctx, "[wsl] adopt: install dockerd failed, output=%q err=%v", strings.TrimSpace(out), err)
-			return fmt.Errorf("install dockerd in %s: %w (install docker manually and retry)", p.cfg.Distro, err)
-		}
-		logger.Infof(ctx, "[wsl] adopt: dockerd installed in %s", p.cfg.Distro)
-	}
-
-	types.Report(progress, "adopt", 75, "starting dockerd")
-	if err := p.startDaemon(ctx, p.cfg.Distro, p.cfg.port()); err != nil {
+	types.Report(progress, "adopt", 30, "booting distro %s", p.cfg.Distro)
+	if err := p.bootDistro(ctx, p.cfg.Distro); err != nil {
 		return err
-	}
-
-	// 标记文件写入失败不应中断接管：dockerd 已启动，state.json 才是判据。
-	// 标记仅用于排查归属，缺失会在下次 adopt 时补写。
-	markerCmd := "echo \"$(date -Is) endpoint=" + p.cfg.Endpoint + "\" > " + managedMarkerPath
-	if _, err := runInDistro(ctx, p.cfg.Distro, markerCmd); err != nil {
-		logger.Warnf(ctx, "[wsl] adopt: write managed marker failed (ignored): %v", err)
 	}
 
 	st := &state{
@@ -569,9 +564,9 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 	}
 	logger.Infof(ctx, "[wsl] adopt: state written to %s (version=%q)", p.layout.StatePath(), st.Version)
 
-	types.Report(progress, "adopt", 95, "resolving endpoint")
-	ep, err := p.resolveEndpoint(ctx, p.cfg.Distro, p.cfg.port())
-	if err != nil {
+	types.Report(progress, "adopt", 75, "waiting for endpoint")
+	ep := p.cfg.endpoint()
+	if err := p.waitEndpoint(ctx, ep, st.Port); err != nil {
 		return err
 	}
 	p.setEndpoint(ep)
@@ -579,19 +574,3 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 	types.Report(progress, "adopt", 100, "adopted %s, endpoint %s", p.cfg.Distro, ep)
 	return nil
 }
-
-// installDockerScript 在发行版内安装 dockerd（仅 apt 系；非 apt 系直接失败）。
-const installDockerScript = `set -e
-export DEBIAN_FRONTEND=noninteractive
-if command -v apt-get >/dev/null 2>&1; then
-  apt-get update -y
-  apt-get install -y docker.io
-elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y docker
-elif command -v yum >/dev/null 2>&1; then
-  yum install -y docker
-else
-  echo "unsupported distro: no apt-get/dnf/yum" >&2
-  exit 127
-fi
-command -v dockerd >/dev/null 2>&1`

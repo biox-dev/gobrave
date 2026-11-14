@@ -114,15 +114,6 @@ func runInDistro(ctx context.Context, distro, script string) (string, error) {
 	return runWSL(ctx, "-d", distro, "-u", "root", "--", "sh", "-lc", script)
 }
 
-// runInDistroQuiet 同 runInDistro，但忽略失败只返回退出码是否成功。
-func runInDistroQuiet(ctx context.Context, distro, script string) bool {
-	_, err := runInDistro(ctx, distro, script)
-	if err != nil {
-		logger.Debugf(ctx, "[wsl] quiet probe in distro %s failed (treated as false): %s: %v", distro, compactScript(script), err)
-	}
-	return err == nil
-}
-
 // decodeOutput 把 wsl.exe 的输出解码成 UTF-8。
 //
 // 判据：若字节流中含有大量 0x00（UTF-16LE 的 ASCII 高位），按 UTF-16LE 解码；

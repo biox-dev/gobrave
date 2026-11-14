@@ -409,6 +409,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 						opts = append(opts, dockerruntime.WithHost(endpoint))
 					}
 				}
+				logger.Infof(ctx, "[Container] docker runtime endpoint=%q (provision_enabled=%v)", endpoint, config.RuntimeProvisionEnabled(cfg))
 
 				// 路径语义统一交给 PathMapper：storage.base_dir 决定宿主盘符，
 				// WSL 探测决定 bind Source 是否需要翻译成 daemon 视角。
@@ -419,6 +420,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 				// 置 true，POSIX 宿主路径会被 ToWSLDaemonPath 当作「已在 daemon 视角」，
 				// 而 Windows 风格路径会被错误翻译成 /mnt/<drive>/...，导致 bind 失败。
 				wslDaemon := resolveDockerWSLDaemon(cfg) || dockerruntime.AutoDetectWSLDaemonFor(endpoint)
+				logger.Infof(ctx, "[Container] docker wsl_daemon=%v (configured=%v, auto_detected=%v)", wslDaemon, resolveDockerWSLDaemon(cfg), dockerruntime.AutoDetectWSLDaemonFor(endpoint))
 				paths := containerruntime.NewPathMapper(config.StorageBaseDir(cfg), wslDaemon)
 				opts = append(opts, dockerruntime.WithPathMapper(paths))
 

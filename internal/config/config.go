@@ -361,25 +361,28 @@ type DockerRuntimeConfig struct {
 
 // RuntimeProvisionConfig 描述 gobrave 自管运行时预置的下载与运行参数。
 //
-// Enabled 与平台无关（Windows 上拉起自管 WSL 发行版内的 dockerd，Linux 上拉起
-// 本机 dockerd）；Distro / DownloadURL / Endpoint 仅 Windows 实现使用，Linux 实现
-// 会忽略它们。
+// Enabled 与平台无关（Windows 上启动自管 WSL 发行版，Linux 上拉起本机
+// dockerd）；Distro / DownloadURL 仅 Windows 实现使用；Endpoint 两端都生效。
 type RuntimeProvisionConfig struct {
 	// Enabled 为 true 时启用运行时预置的启动自检：每次启动尝试 Start
 	// （已安装则拉起 daemon），未安装时不安装任何东西，等待 UI 安装向导。
 	//
-	// 与平台无关：Windows 上拉起 WSL 内的 dockerd，Linux 上拉起本机 dockerd。
+	// 与平台无关：Windows 上启动 WSL 发行版（dockerd 由其内置 systemd 管理），
+	// Linux 上拉起本机 dockerd。
 	Enabled bool `yaml:"enabled" json:"enabled"`
 	// Distro 导入到 WSL 的发行版名，默认 gobrave-ubuntu-docker。仅 Windows 生效。
 	//
 	// 若系统上已存在同名发行版（例如 Ubuntu），安装/启动时直接接管并启动
-	// dockerd，无需 DownloadURL、也不会重新导入。
+	// 该发行版，无需 DownloadURL、也不会重新导入。
 	Distro string `yaml:"distro" json:"distro"`
 	// DownloadURL rootfs 包下载地址（安装向导使用）。仅 Windows 生效；
 	// 接管已存在的同名发行版时可为空。
 	DownloadURL string `yaml:"download_url" json:"download_url"`
 	// Endpoint 是 daemon 地址，取值形如 tcp://localhost:2375 或
-	// unix:///var/run/docker.sock。仅 Windows 生效：Linux 实现固定用本机 socket。
+	// unix:///var/run/docker.sock。
+	//
+	// 显式配置优先（与 Linux 实现一致）：非空时直接使用该地址，不再从运行时
+	// 反推；为空时 Windows 回退 tcp://localhost:2375，Linux 回退本机 socket。
 	Endpoint string `yaml:"endpoint" json:"endpoint"`
 }
 
@@ -387,15 +390,12 @@ type RuntimeProvisionConfig struct {
 const (
 	// DefaultProvisionDistro 默认发行版名（仅 Windows 使用）。
 	DefaultProvisionDistro = "gobrave-ubuntu-docker"
-	// DefaultProvisionEndpoint 默认 daemon 地址。
-	DefaultProvisionEndpoint = "tcp://localhost:2375"
 )
 
 // DefaultRuntimeProvisionConfig 返回预置段的默认配置。
 func DefaultRuntimeProvisionConfig() *RuntimeProvisionConfig {
 	return &RuntimeProvisionConfig{
 		Distro: DefaultProvisionDistro,
-		// Endpoint: DefaultProvisionEndpoint,
 	}
 }
 
@@ -1065,8 +1065,7 @@ func ResolveContainerRuntimes(cfg *Config) []string {
 // ResolveRuntimeProvisionConfig 返回容器运行时预置（provision）段配置；
 // 任何一级缺失（cfg / container / docker / provision）都回退默认值。
 //
-// 该函数与平台无关：Windows 上参数用于自管 WSL 发行版，Linux 上 Distro /
-// DownloadURL / Endpoint 被忽略，只用来构造本机 dockerd 的管理器。
+// 该函数与平台无关：Distro / DownloadURL 仅 Windows 实现使用，Endpoint 两端都生效。
 func ResolveRuntimeProvisionConfig(cfg *Config) *RuntimeProvisionConfig {
 	if cfg == nil || cfg.Container == nil || cfg.Container.Docker == nil {
 		return DefaultRuntimeProvisionConfig()
