@@ -120,6 +120,10 @@ const (
 	// WSL 在最后一个会话退出后会终止发行版（其中的 dockerd 也随之停止），
 	// 所以需要一个一直活着的前台进程把发行版撑住。
 	distroKeepAliveScript = "sleep infinity"
+	// distroBootInterval 是轮询「发行版是否已进入 Running」的间隔。
+	distroBootInterval = 200 * time.Millisecond
+	// distroBootTimeout 是等待「发行版是否已进入 Running」的上限。
+	distroBootTimeout = 5 * time.Second
 )
 
 // startDistroInBackground 执行
@@ -240,6 +244,31 @@ func distroRunning(ctx context.Context, distro string) (bool, error) {
 		return false, err
 	}
 	return containsDistro(names, distro), nil
+}
+
+// waitDistroRunning 轮询等待发行版进入 Running 状态。
+//
+// 拉起常驻会话后 wsl.exe 返回不代表发行版已进入 Running，
+// 中间这个窗口正是并发调用重复拉起的原因，所以启动后要等它落定。
+func waitDistroRunning(ctx context.Context, distro string) error {
+	deadline := time.Now().Add(distroBootTimeout)
+	for {
+		running, err := distroRunning(ctx, distro)
+		if err != nil {
+			return err
+		}
+		if running {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("distro %s is not running after %s", distro, distroBootTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(distroBootInterval):
+		}
+	}
 }
 
 // splitDistroList 把 wsl -l -q 的多行输出拆成名字列表。

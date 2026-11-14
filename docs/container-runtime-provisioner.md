@@ -163,6 +163,11 @@ Start(ctx):
 作业不允许脱离时降级为普通后台进程），由这个长驻 `sleep infinity` 撑住发行版；
 它不随 gobrave 退出而结束，下次 `Start` 因「已在运行」直接复用，不会重复拉起。
 
+**并发幂等**：`bootDistro` 用互斥锁串行化，并在拉起后轮询等待发行版真正进入
+`Running`（上限 5s）才返回。因此并发 `Start` 最多只产生一个常驻会话：先到的负责
+拉起，后到的在锁释放后直接读到 `Running` 并复用。多个 `sleep infinity` 本身无害
+（每个约 1MB，且 `wsl --terminate` 一并清理），只是没必要。
+
 **endpoint 只来自配置**：`Config.Endpoint`（默认 `tcp://localhost:2375`）在构造
 `WSLProvisioner` 时解析一次并保存在实例上，之后 `Endpoint()` 恒定返回它，
 不依赖 `.wslconfig`、`wsl hostname -I` 等运行时信息，`Stop` / `Uninstall` 也不清空。

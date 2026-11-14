@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/container_runtime/provision/types"
@@ -35,6 +36,10 @@ type Config struct {
 type WSLProvisioner struct {
 	cfg    Config
 	layout layout
+
+	// bootMu 串行化 bootDistro：并发 Start 时只让一个 goroutine 真正拉起
+	// 常驻 wsl.exe 会话，其余等待后直接看到「已在运行」并复用。
+	bootMu sync.Mutex
 
 	// endpoint 在构造时由配置（或平台默认）确定，之后不再变化：
 	// 启动、停止、卸载都不改写它，避免装配层或其他调用方读到空地址。
@@ -489,19 +494,32 @@ func (p *WSLProvisioner) waitEndpoint(ctx context.Context, endpoint string, port
 // `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"` 常驻占住它；
 // 该进程脱离 gobrave，gobrave 退出不影响它。发行版内的 dockerd
 // 仍由它自己维护（systemd 等），gobrave 不执行任何 docker 命令。
+//
+// 幂等：进程内用 bootMu 串行化，启动后等发行版真正进入 Running 才返回，
+// 因此并发调用最多只拉起一个常驻会话。
 func (p *WSLProvisioner) bootDistro(ctx context.Context, distro string) error {
-	running, err := distroRunning(ctx, distro)
-	if err != nil {
-		// 无法查询运行状态（旧版 WSL）：当作未运行，直接拉起常驻会话。
-		logger.Warnf(ctx, "[wsl] bootDistro: query running distros failed: %v, starting anyway", err)
-	}
-	if running {
+	p.bootMu.Lock()
+	defer p.bootMu.Unlock()
+
+	running, queryErr := distroRunning(ctx, distro)
+	if queryErr == nil && running {
 		logger.Infof(ctx, "[wsl] bootDistro: distro %s is already running", distro)
 		return nil
 	}
+	if queryErr != nil {
+		// 无法查询运行状态（旧版 WSL 不支持 --running）：直接拉起，不等待确认。
+		logger.Warnf(ctx, "[wsl] bootDistro: query running distros failed: %v, starting anyway", queryErr)
+	}
+
 	if err := startDistroInBackground(ctx, distro); err != nil {
 		logger.Errorf(ctx, "[wsl] bootDistro: start distro %s failed: %v", distro, err)
 		return fmt.Errorf("boot distro %s: %w", distro, err)
+	}
+	if queryErr == nil {
+		if err := waitDistroRunning(ctx, distro); err != nil {
+			// 不作为失败：真正的可用性由后续 endpoint 探测判定。
+			logger.Warnf(ctx, "[wsl] bootDistro: distro %s has not reported running: %v", distro, err)
+		}
 	}
 	logger.Infof(ctx, "[wsl] bootDistro: distro %s started in background", distro)
 	return nil
