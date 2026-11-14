@@ -442,13 +442,17 @@ func (p *WSLProvisioner) pingEndpoint(ctx context.Context) error {
 // waitEndpoint 轮询等待配置的 daemon 地址可用。
 //
 // port > 0 时先做一次宿主机 TCP 探活（快速失败），再 ping docker 协议。
+// 每 1s 轮询一次；等待总时长由 ctx 截止时间决定（StartAsync 默认 3 分钟），
+// ctx 没有截止时间时以 daemonReadyMaxWait 兜底。
 func (p *WSLProvisioner) waitEndpoint(ctx context.Context, endpoint string, port int) error {
+	deadline := time.Now().Add(daemonReadyMaxWait)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
 	var lastErr error
-	for i := 0; i < daemonReadyTries; i++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if port > 0 && !probeHostPort(endpoint, port) {
 			lastErr = fmt.Errorf("%s is not reachable from host", endpoint)
@@ -457,8 +461,23 @@ func (p *WSLProvisioner) waitEndpoint(ctx context.Context, endpoint string, port
 		} else {
 			return nil
 		}
-		logger.Debugf(ctx, "[wsl] waitEndpoint: %s not ready yet (try %d/%d): %v", endpoint, i+1, daemonReadyTries, lastErr)
-		time.Sleep(daemonReadyDelay)
+
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		if remaining > daemonReadyInterval {
+			remaining = daemonReadyInterval
+		}
+		logger.Infof(ctx, "[wsl] waitEndpoint: %s not ready yet (try %d): %v", endpoint, attempt, lastErr)
+
+		timer := time.NewTimer(remaining)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 	return fmt.Errorf("dockerd is not reachable at %s: %w", endpoint, lastErr)
 }

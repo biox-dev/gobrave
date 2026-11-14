@@ -66,8 +66,9 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 // StartTimeout 是 StartAsync 的默认超时上限。
 //
 // dockerd 冷启动（WSL 实例唤醒 + 容器运行时初始化）通常 3-15s，
-// 给 30s 上限既避免误判，也不会留下长期挂起的 goroutine。
-const StartTimeout = 30 * time.Second
+// 但首次唤醒 / 镜像层较多时可能更久，给 3 分钟上限避免误判，
+// 同时仍有明确上限，不会留下长期挂起的 goroutine。
+const StartTimeout = 3 * time.Minute
 
 // StartAsync 在后台启动运行时，立即返回，不阻塞调用方（如进程启动 / 界面打开）。
 //

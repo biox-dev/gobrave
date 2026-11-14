@@ -150,7 +150,8 @@ Start(ctx):
   1. 若既未安装、系统中也不存在 → return ErrNotInstalled
   2. 已安装：校验发行版仍在 WSL 注册表中
   3. 启动发行版（dockerd 由发行版自己维护，gobrave 不执行任何 docker 命令）
-  4. 轮询探测配置的 endpoint（先 TCP 探活，再 docker Ping）直到就绪
+  4. 轮询探测配置的 endpoint（先 TCP 探活，再 docker Ping，每 1s 一次）直到就绪，
+     总时长受 ctx 截止时间约束（`StartAsync` 默认 3 分钟）
   5. 返回该 endpoint
 ```
 
@@ -232,7 +233,7 @@ terminal / dag_node 容器一律不发布端口。
    - 成功 → `WithHost(endpoint)`，且 PathMapper 的 `wslDaemon=true`；
    - `ErrNotInstalled` → 不注入 host，回退 `FromEnv`（保持“未安装不做处理”），
      同时 PathMapper 保持配置推断的语义。
-3. 启动不应阻塞：`Start` 用独立 goroutine + 超时（建议 20s），失败只记日志。
+3. 启动不应阻塞：`Start` 用独立 goroutine + 超时（默认 3 分钟），失败只记日志。
    桌面端首页会调用 `/container/runtime/info` 暴露真实状态给 UI。
 
 ## 7. HTTP 接口（安装向导）

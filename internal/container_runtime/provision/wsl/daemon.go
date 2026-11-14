@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	// daemonReadyTries / daemonReadyDelay 控制等待 daemon 就绪的轮询上限。
-	daemonReadyTries = 40
-	daemonReadyDelay = 500 * time.Millisecond
+	// daemonReadyInterval 是等待 daemon 就绪的轮询间隔。
+	daemonReadyInterval = 1 * time.Second
+	// daemonReadyMaxWait 是 ctx 没有截止时间时的兜底等待上限；
+	// 与 provision.StartTimeout 保持一致，避免无限等待。
+	daemonReadyMaxWait = 3 * time.Minute
 )
 
 // stopDaemonScript 通过发行版内置的 systemd 停止 dockerd。
