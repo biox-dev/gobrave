@@ -176,6 +176,20 @@ func normalizeContainerConfig(c *ContainerConfig) error {
 	}
 	c.Kubernetes.Kubeconfig = strings.TrimSpace(c.Kubernetes.Kubeconfig)
 
+	// 容器端口访问模式：空值回退 container_ip；非法值直接拒绝保存，避免写入无法生效的配置。
+	networkMode, err := NormalizeContainerNetworkMode(c.NetworkMode)
+	if err != nil {
+		return err
+	}
+	c.NetworkMode = networkMode
+
+	// docker 段：UI 未提交该段（null）时用默认值重建，避免落盘后变成空段。
+	if c.Docker == nil {
+		c.Docker = DefaultContainerConfig().Docker
+	} else {
+		normalizeRuntimeProvisionConfig(&c.Docker)
+	}
+
 	// bash 工具的执行位置：空值回退宿主机；非法值直接拒绝保存，避免写入无法生效的配置。
 	mode, err := NormalizeBashExecutionMode(c.BashExecutionMode)
 	if err != nil {

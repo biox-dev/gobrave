@@ -176,14 +176,44 @@ func (h *ConfigHandler) UpdateConfigSection(c *gin.Context) {
 		return
 	}
 
+	// container.network_mode 等字段只在运行时构造时读取一次（见 container.BuildContainer），
+	// 保存后修改内存配置不会立即生效；把它改回落盘前的值，保证「内存配置 == 实际生效配置」，
+	// 避免前端保存成功却提示已生效。
+	networkMode := snapshotContainerNetworkMode(h.cfg)
 	if err := section.Apply(h.cfg, value); err != nil {
 		c.Error(errors.NewInternalServerError("failed to apply config section").WithDetails(err.Error()))
 		return
 	}
+	restoreRuntimeOnlyContainerFields(h.cfg, networkMode)
 
 	c.JSON(http.StatusOK, updateConfigSectionResponse{
 		ConfigPath: path,
 		Section:    section.Key,
 		Value:      section.Effective(h.cfg),
 	})
+}
+
+// snapshotContainerNetworkMode 读取当前内存中的 container.network_mode。
+//
+// 返回值用于 restoreRuntimeOnlyContainerFields：保存配置后把「只在运行时构造时读取一次」
+// 的字段改回旧值，使内存配置与进程实际使用的配置保持一致。
+func snapshotContainerNetworkMode(cfg *config.Config) string {
+	if cfg == nil || cfg.Container == nil {
+		return ""
+	}
+	return cfg.Container.NetworkMode
+}
+
+// restoreRuntimeOnlyContainerFields 让仅在运行时构造时读取的字段不随保存立即生效。
+//
+// container.network_mode 在 container.BuildContainer 里被用来决定 docker runtime 是否
+// 发布宿主机端口；它写进 config.yml 后需要重启进程才会真正生效。若这里直接改内存，
+// 前端 token 会误以为已生效（并且 ConfigHandler 读到的值与实际运行的 runtime 不一致）。
+//
+// 因此保存后把这几个字段恢复成保存前的值，响应里的 value 仍然是刚落盘的内容。
+func restoreRuntimeOnlyContainerFields(cfg *config.Config, networkMode string) {
+	if cfg == nil || cfg.Container == nil {
+		return
+	}
+	cfg.Container.NetworkMode = networkMode
 }

@@ -917,6 +917,14 @@ func LoadConfig() (*Config, error) {
 	cfg.Container.DagNodeCleanupOnFailed = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnFailed, "stop")
 	cfg.Container.DagNodeCleanupOnDagFinished = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnDagFinished, "delete")
 
+	// 容器端口访问模式：空值 / 非法值一律回退 container_ip（避免因配置笔误导致启动失败）。
+	if mode, err := NormalizeContainerNetworkMode(cfg.Container.NetworkMode); err != nil {
+		logger.Warnf(context.Background(), "[Config] %v; falling back to %s", err, ContainerNetworkModeContainerIP)
+		cfg.Container.NetworkMode = ContainerNetworkModeContainerIP
+	} else {
+		cfg.Container.NetworkMode = mode
+	}
+
 	// docker 段：预置子段缺失时补默认值，避免装配层到处判空。
 	// docker 段整体也可能被 `docker: null` 解成 nil，此时用默认值（即零值）重建。
 	if cfg.Container.Docker == nil {
@@ -1071,7 +1079,7 @@ func ResolveRuntimeProvisionConfig(cfg *Config) *RuntimeProvisionConfig {
 	if strings.TrimSpace(out.Distro) == "" {
 		out.Distro = DefaultProvisionDistro
 	}
-	// Endpoint 保持原样（可能为空）：默认值由平台实现决定。
+	// Endpoint 不给默认值：留空表示由平台实现（provision.New）选择默认地址。
 	out.Endpoint = strings.TrimSpace(out.Endpoint)
 	return &out
 }
@@ -1105,7 +1113,7 @@ func normalizeRuntimeProvisionConfig(d **DockerRuntimeConfig) {
 		provisionCfg.Distro = DefaultProvisionDistro
 	}
 	provisionCfg.DownloadURL = strings.TrimSpace(provisionCfg.DownloadURL)
-	// Endpoint 允许为空：默认值由平台实现（provision.New）选择。
+	// Endpoint 允许为空：默认值由平台实现（provision.New）选择，config 不注入默认值。
 	provisionCfg.Endpoint = strings.TrimSpace(provisionCfg.Endpoint)
 }
 

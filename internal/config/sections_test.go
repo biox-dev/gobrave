@@ -131,6 +131,56 @@ func TestSectionDecodeRejectsInvalidContainer(t *testing.T) {
 	}
 }
 
+// TestSectionDecodeContainerNetworkAndProvision 校验可视化配置保存 container 段时，
+// network_mode 会被归一化/校验，docker.provision 会补齐默认值。
+func TestSectionDecodeContainerNetworkAndProvision(t *testing.T) {
+	section, ok := FindSection("container")
+	if !ok {
+		t.Fatalf("container section not registered")
+	}
+
+	value, err := section.Decode(json.RawMessage(`{
+		"default_runtime": "docker",
+		"runtimes": ["docker"],
+		"network_mode": " HOST_PORT ",
+		"docker": {"provision": {"enabled": true, "distro": "  ", "endpoint": "  "}}
+	}`))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	cc, ok := value.(*ContainerConfig)
+	if !ok {
+		t.Fatalf("unexpected decode type %T", value)
+	}
+	if cc.NetworkMode != ContainerNetworkModeHostPort {
+		t.Fatalf("expected host_port, got %q", cc.NetworkMode)
+	}
+	if cc.Docker == nil || cc.Docker.Provision == nil {
+		t.Fatalf("expected docker.provision to be normalized")
+	}
+	if cc.Docker.Provision.Distro != DefaultProvisionDistro {
+		t.Fatalf("expected empty distro to fall back to default, got %q", cc.Docker.Provision.Distro)
+	}
+	// Endpoint 不在 config 层注入默认值：留空表示由平台实现决定。
+	if cc.Docker.Provision.Endpoint != "" {
+		t.Fatalf("expected empty endpoint to stay empty, got %q", cc.Docker.Provision.Endpoint)
+	}
+
+	// docker 段整段缺失时也要补齐，避免落盘后变成空段。
+	value, err = section.Decode(json.RawMessage(`{"default_runtime": "docker", "runtimes": ["docker"]}`))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if cc := value.(*ContainerConfig); cc.Docker == nil || cc.Docker.Provision == nil {
+		t.Fatalf("expected default docker.provision when docker section is absent")
+	}
+
+	// 非法 network_mode 直接拒绝保存。
+	if _, err := section.Decode(json.RawMessage(`{"network_mode": "bridge"}`)); err == nil {
+		t.Fatalf("expected error for unsupported network_mode")
+	}
+}
+
 func TestSectionDecodeRejectsUnknownDatabaseDriver(t *testing.T) {
 	section, _ := FindSection("database")
 
