@@ -21,6 +21,28 @@ type Manager struct {
 	mu      sync.RWMutex
 	started bool
 	lastErr error
+
+	// onReady 在 Start 成功（底层实现已等到 endpoint 连通）后回调，
+	// 由装配层注入实时推送出口，用于通知前端刷新运行时状态。
+	onReady func(ctx context.Context, endpoint string)
+}
+
+// SetOnReady 注册「运行时就绪」回调（装配阶段回填，可为 nil）。
+//
+// 若注入时运行时已经就绪（StartAsync 的 goroutine 先一步完成），
+// 会立即用当前 endpoint 回调一次，避免装配顺序导致事件丢失。
+func (m *Manager) SetOnReady(fn func(ctx context.Context, endpoint string)) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.onReady = fn
+	started := m.started
+	m.mu.Unlock()
+
+	if started && fn != nil {
+		fn(context.Background(), m.Endpoint())
+	}
 }
 
 // NewManager 包装给定实现；inner 为 nil 时返回 nil（调用方按「无预置能力」处理）。
@@ -43,6 +65,9 @@ func (m *Manager) Inner() Provisioner {
 //
 // 未安装时返回 ErrNotInstalled（调用方应静默忽略并等待 UI 安装向导）；
 // 其他错误视为真实故障。
+//
+// 成功代表底层 waitEndpoint 已确认 endpoint 连通，此时会触发 onReady，
+// 让前端 runtime-status 刷新为可用。
 func (m *Manager) Start(ctx context.Context) (string, error) {
 	if m == nil || m.inner == nil {
 		return "", ErrUnsupported
@@ -50,17 +75,22 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 	ep, err := m.inner.Start(ctx)
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if err != nil {
 		m.lastErr = err
 		if !errors.Is(err, ErrNotInstalled) {
 			m.started = false
 		}
-		return "", err
+	} else {
+		m.started = true
+		m.lastErr = nil
 	}
-	m.started = true
-	m.lastErr = nil
-	return ep, nil
+	onReady := m.onReady
+	m.mu.Unlock()
+
+	if err == nil && onReady != nil {
+		onReady(ctx, ep)
+	}
+	return ep, err
 }
 
 // StartTimeout 是 StartAsync 的默认超时上限。

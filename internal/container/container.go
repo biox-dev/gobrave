@@ -338,6 +338,12 @@ func resolveDockerWSLDaemon(cfg *config.Config) bool {
 	return dockerruntime.AutoDetectWSLDaemon()
 }
 
+// runtimeStatusRealtimeCategory 是前端 RuntimeStatus 组件注册的组件类目。
+//
+// 后端起在 runtime 就绪后以 component.invoke(category, id=*, method=runtimeChanged)
+// 广播；前端 useComponentStore 收到后重新拉取 /container/runtime/info。
+const runtimeStatusRealtimeCategory = "runtime-status"
+
 // runtimeProvisionManager 构造运行时预置管理器，并在后台拉起 daemon。
 //
 // 返回 nil 表示「不启用自管预置」：此时 docker runtime 完全沿用历史行为
@@ -847,6 +853,26 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 「创建 Manager」不被「注册 Hub」的位置绑定 —— 否则以后有人调整顺序又会被绊到。
 	must(container.Invoke(func(mgr *manager.ContainerManager, hub *realtime.Hub) {
 		mgr.SetHub(hub)
+	}))
+	// 运行时就绪（waitEndpoint 连通）后广播 component.invoke，
+	// 前端 runtime-status 收到后重拉 /container/runtime/info，无需轮询。
+	// 同样必须在 Provide(realtime.NewHub) 之后 Invoke。
+	must(container.Invoke(func(provMgr *provision.Manager, hub *realtime.Hub) {
+		provMgr.SetOnReady(func(ctx context.Context, endpoint string) {
+			hub.Broadcast(map[string]any{
+				"action": "component.invoke",
+				"payload": map[string]any{
+					"category": runtimeStatusRealtimeCategory,
+					"id":       "*",
+					"method":   "runtimeChanged",
+					"args": map[string]any{
+						"status":   "ready",
+						"endpoint": endpoint,
+					},
+				},
+			})
+			logger.Infof(ctx, "[Container] runtime ready event broadcast, endpoint=%s", endpoint)
+		})
 	}))
 	must(container.Provide(handler.NewRealtimeHandler))
 	// RuntimeContextResolver：把业务 env(type,id) 解析为系统提示词 + 工作目录，
