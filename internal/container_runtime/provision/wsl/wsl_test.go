@@ -114,6 +114,17 @@ func TestConfigEndpointPrefersExplicit(t *testing.T) {
 	}
 }
 
+func TestNewSeedsEndpointFromConfig(t *testing.T) {
+	// 装配层在 StartAsync 之后立刻读取 Endpoint()，因此构造后必须已可用，
+	// 不能等到 Start 成功才赋值。
+	if got := New(Config{Endpoint: "tcp://192.168.1.50:2376"}).Endpoint(); got != "tcp://192.168.1.50:2376" {
+		t.Errorf("Endpoint() = %q, want explicit value", got)
+	}
+	if got := New(Config{}).Endpoint(); got != DefaultEndpoint {
+		t.Errorf("Endpoint() = %q, want default %q", got, DefaultEndpoint)
+	}
+}
+
 func TestConfigPortFollowsEndpoint(t *testing.T) {
 	cases := []struct {
 		endpoint string

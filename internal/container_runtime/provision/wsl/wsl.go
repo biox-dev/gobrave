@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/container_runtime/provision/types"
@@ -37,10 +36,10 @@ type WSLProvisioner struct {
 	cfg    Config
 	layout layout
 
-	// mu 保护 endpoint 缓存与「最近一次探测结果」，避免并发调用重复拉起 daemon。
-	mu       sync.Mutex
+	// endpoint 在构造时由配置（或平台默认）确定，之后不再变化：
+	// 启动、停止、卸载都不改写它，避免装配层或其他调用方读到空地址。
+	// 与 Linux 实现（systemdProvisioner.endpoint）保持一致。
 	endpoint string
-	lastErr  error
 }
 
 // New 构造 WSLProvisioner。
@@ -48,18 +47,18 @@ func New(cfg Config) *WSLProvisioner {
 	if strings.TrimSpace(cfg.Distro) == "" {
 		cfg.Distro = DefaultDistro
 	}
-	if strings.TrimSpace(cfg.Endpoint) == "" {
-		cfg.Endpoint = DefaultEndpoint
-	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{}
 	}
+	// 不修改 cfg.Endpoint：留空时由 endpoint() 回退默认值。
+	endpoint := cfg.endpoint()
 	p := &WSLProvisioner{
-		cfg:    cfg,
-		layout: newLayout(cfg.BaseDir),
+		cfg:      cfg,
+		layout:   newLayout(cfg.BaseDir),
+		endpoint: endpoint,
 	}
 	logger.Infof(context.Background(), "[wsl] provisioner created: base_dir=%s data_dir=%s distro=%s endpoint=%s download_url=%s",
-		cfg.BaseDir, p.layout.Root(), cfg.Distro, cfg.Endpoint, cfg.DownloadURL)
+		cfg.BaseDir, p.layout.Root(), cfg.Distro, endpoint, cfg.DownloadURL)
 	return p
 }
 
@@ -127,11 +126,11 @@ func (p *WSLProvisioner) Status(ctx context.Context) (*types.RuntimeStatus, erro
 
 		if err := p.pingEndpoint(ctx); err != nil {
 			status.State = types.StateInstalled
-			status.Detail = "dockerd is not reachable at " + p.cfg.endpoint() + ": " + err.Error()
+			status.Detail = "dockerd is not reachable at " + p.endpoint + ": " + err.Error()
 			return status, nil
 		}
 		status.State = types.StateRunning
-		status.Endpoint = p.cfg.endpoint()
+		status.Endpoint = p.endpoint
 		status.Detail = "dockerd is running"
 		return status, nil
 	}
@@ -155,7 +154,7 @@ func (p *WSLProvisioner) Status(ctx context.Context) (*types.RuntimeStatus, erro
 		status.Distro = p.cfg.Distro
 		if err := p.pingEndpoint(ctx); err == nil {
 			status.State = types.StateRunning
-			status.Endpoint = p.cfg.endpoint()
+			status.Endpoint = p.endpoint
 			status.Detail = "dockerd is running in existing distro (not yet adopted, click install to adopt)"
 			return status, nil
 		}
@@ -313,7 +312,6 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 			return fmt.Errorf("remove adopt placeholder dir: %w", err)
 		}
 		_ = os.Remove(p.layout.StatePath())
-		p.setEndpoint("")
 		logger.Infof(ctx, "[wsl] Uninstall: adopted distro released")
 		return nil
 	}
@@ -341,7 +339,6 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 		return fmt.Errorf("remove distro dir: %w", err)
 	}
 	_ = os.Remove(p.layout.StatePath())
-	p.setEndpoint("")
 	logger.Infof(ctx, "[wsl] Uninstall: done")
 	return nil
 }
@@ -367,7 +364,6 @@ func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
 		logger.Infof(ctx, "[wsl] Start: distro %s exists in WSL but not adopted, adopting", p.cfg.Distro)
 		if err := p.adopt(ctx, nil); err != nil {
 			logger.Errorf(ctx, "[wsl] Start: adopt failed: %v", err)
-			p.setErr(err)
 			return "", err
 		}
 	}
@@ -398,17 +394,14 @@ func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
 	// 只负责「启动发行版」：dockerd 由发行版自己维护，这里不执行 docker 命令。
 	if err := p.bootDistro(ctx, distro); err != nil {
 		logger.Errorf(ctx, "[wsl] Start: bootDistro failed: %v", err)
-		p.setErr(err)
 		return "", err
 	}
 
-	ep := p.cfg.endpoint()
+	ep := p.endpoint
 	if err := p.waitEndpoint(ctx, ep, port); err != nil {
 		logger.Errorf(ctx, "[wsl] Start: endpoint %s not reachable: %v", ep, err)
-		p.setErr(err)
 		return "", err
 	}
-	p.setEndpoint(ep)
 	logger.Infof(ctx, "[wsl] Start: ready, endpoint=%s", ep)
 	return ep, nil
 }
@@ -429,7 +422,6 @@ func (p *WSLProvisioner) Stop(ctx context.Context) error {
 		logger.Errorf(ctx, "[wsl] Stop: stopDaemon failed: %v", err)
 		return err
 	}
-	p.setEndpoint("")
 	logger.Infof(ctx, "[wsl] Stop: done")
 	return nil
 }
@@ -444,7 +436,7 @@ func (p *WSLProvisioner) HealthCheck(ctx context.Context) error {
 
 // pingEndpoint 对配置的 daemon 地址做一次 docker Ping。
 func (p *WSLProvisioner) pingEndpoint(ctx context.Context) error {
-	return pingDocker(ctx, p.cfg.endpoint())
+	return pingDocker(ctx, p.endpoint)
 }
 
 // waitEndpoint 轮询等待配置的 daemon 地址可用。
@@ -483,24 +475,13 @@ func (p *WSLProvisioner) bootDistro(ctx context.Context, distro string) error {
 	return nil
 }
 
-// Endpoint 返回最近一次成功解析的 endpoint（可能为空）。
+// Endpoint 返回 daemon 地址。
+//
+// 地址在构造时由配置（含默认值）确定，之后恒定返回同一个值：
+// Stop / Uninstall 不清空，调用方任何时候读到的都是本实例配置的地址。
+// 与 Linux 实现一致：不从 WSL 运行时反推地址。
 func (p *WSLProvisioner) Endpoint() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	return p.endpoint
-}
-
-func (p *WSLProvisioner) setEndpoint(ep string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.endpoint = ep
-	p.lastErr = nil
-}
-
-func (p *WSLProvisioner) setErr(err error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.lastErr = err
 }
 
 // port 返回配置中的端口（显式配置优先）。
@@ -565,11 +546,10 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 	logger.Infof(ctx, "[wsl] adopt: state written to %s (version=%q)", p.layout.StatePath(), st.Version)
 
 	types.Report(progress, "adopt", 75, "waiting for endpoint")
-	ep := p.cfg.endpoint()
+	ep := p.endpoint
 	if err := p.waitEndpoint(ctx, ep, st.Port); err != nil {
 		return err
 	}
-	p.setEndpoint(ep)
 	logger.Infof(ctx, "[wsl] adopt: done, endpoint=%s", ep)
 	types.Report(progress, "adopt", 100, "adopted %s, endpoint %s", p.cfg.Distro, ep)
 	return nil

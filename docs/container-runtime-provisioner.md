@@ -46,7 +46,7 @@ internal/container_runtime/provision/
 ├── provisioner.go          # 类型别名再导出，调用方只 import provision 一个包
 ├── platform_windows.go     # //go:build windows：构造 WSL 实现
 ├── platform_unix.go        # //go:build !windows：构造本机 daemon 实现
-├── manager.go              # Manager：Start 幂等包装 + endpoint 缓存
+├── manager.go              # Manager：Start 幂等包装 + endpoint 只读透传
 ├── local.go                # Linux/macOS：管理本机 dockerd（systemctl）
 └── wsl/                    # Windows + WSL 实现
     ├── wsl.go              # WSLProvisioner：接口实现
@@ -98,8 +98,10 @@ type Provisioner interface {
 }
 ```
 
-`Start` 返回 endpoint 而不是只返回 error，是因为**连接地址是运行时的产出物**
-（WSL2 NAT 模式下 IP 每次启动可能变化），调用方不能预先知道。
+`Start` 返回 endpoint 而不是只返回 error，是因为调用方需要在启动后立即知道
+实际使用的连接地址。地址本身来自配置（`container.docker.provision.endpoint`，
+留空则用平台默认值），实现不从运行时反推，因此 `Endpoint()` 在任何时刻都返回
+同一个非空地址：`Stop` / `Uninstall` 也不会清空它。
 
 ## 4. 状态机
 
@@ -144,17 +146,17 @@ type RuntimeStatus struct {
 
 ```
 Start(ctx):
-  0. 未安装但 wsl -l -q 中已有同名发行版 → 接管（adopt）：确保 dockerd → 启动 → 写接管状态
+  0. 未安装但 wsl -l -q 中已有同名发行版 → 接管（adopt）：启动发行版 → 写接管状态
   1. 若既未安装、系统中也不存在 → return ErrNotInstalled
-  2. 已安装但未运行 → wsl -d <distro> -u root 启动 dockerd（常驻）
-  3. dockerd 已在运行 → 跳过启动
-  4. 解析 endpoint：
-       a. 读 .wslconfig 判断 networkingMode=mirrored
-       b. mirrored → 试 tcp://127.0.0.1:<port>
-       c. 否则取 wsl hostname -I 首个地址 → tcp://<ip>:<port>
-       d. 对候选地址逐个 Ping，第一个通的即为 endpoint
-  5. 缓存 endpoint 到 Manager，返回
+  2. 已安装：校验发行版仍在 WSL 注册表中
+  3. 启动发行版（dockerd 由发行版自己维护，gobrave 不执行任何 docker 命令）
+  4. 轮询探测配置的 endpoint（先 TCP 探活，再 docker Ping）直到就绪
+  5. 返回该 endpoint
 ```
+
+**endpoint 只来自配置**：`Config.Endpoint`（默认 `tcp://localhost:2375`）在构造
+`WSLProvisioner` 时解析一次并保存在实例上，之后 `Endpoint()` 恒定返回它，
+不依赖 `.wslconfig`、`wsl hostname -I` 等运行时信息，`Stop` / `Uninstall` 也不清空。
 
 **“未安装不做处理”的边界**：发行版既没有 gobrave 的安装状态、WSL 注册表里也
 没有同名的才返回 `ErrNotInstalled`；**已有同名发行版（如用户自己装好的

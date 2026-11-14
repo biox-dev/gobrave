@@ -97,8 +97,8 @@ func (m *Manager) StartAsync(ctx context.Context) {
 	}()
 }
 
-// Endpoint 返回 daemon 地址（由底层实现提供，如 WSL 侧解析出的发行版地址）；
-// 未启用或未启动时为空。
+// Endpoint 返回 daemon 地址（由底层实现按配置给出：配置的地址在启动前即可读，
+// 不需要等 Start 完成）；未启用预置时为空。
 func (m *Manager) Endpoint() string {
 	if m == nil || m.inner == nil {
 		return ""
