@@ -31,6 +31,7 @@ import (
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	apprepo "github.com/biox-dev/gobrave/internal/application/repository"
 	"github.com/biox-dev/gobrave/internal/appsrv"
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/handler"
 	"github.com/biox-dev/gobrave/internal/middleware"
 	"github.com/biox-dev/gobrave/internal/runtime"
@@ -190,7 +191,15 @@ func main() {
 
 	// 1) 以库函数方式启动后端：加载配置 → 构建 DI 容器 → 监听端口。
 	//    Address 用 127.0.0.1:<port>，避免把服务暴露到外网。
+	//    桌面端传入 LoadOptions{Desktop: true}：Windows 上默认开启运行时预置
+	//    （container.docker.provision.enabled），并使用 host_port 网络模式；
+	//    config.yml 中的显式配置仍然优先生效。
+	cfg, err := config.LoadConfigWith(config.LoadOptions{Desktop: true})
+	if err != nil {
+		log.Fatalf("[desktop] 加载配置失败: %v", err)
+	}
 	srv, err := appsrv.New(appsrv.Options{
+		Config:        cfg,
 		Address:       net.JoinHostPort(desktopbackend.DefaultHost, strconv.Itoa(*port)),
 		InitSnowflake: true,
 		HandleSignals: false, // 生命周期由本进程控制
@@ -211,12 +220,12 @@ func main() {
 	log.Printf("[desktop] 内嵌后端已启动: http://%s", srv.Address())
 
 	// 后端地址以实际监听地址为准（--port=0 时是随机端口）。
-	cfg := desktopbackend.Config{
+	backendCfg := desktopbackend.Config{
 		Scheme: "http",
 		Host:   desktopbackend.DefaultHost,
 		Port:   portOf(srv.Address()),
 	}
-	manager := desktopbackend.NewManager(cfg)
+	manager := desktopbackend.NewManager(backendCfg)
 	// 让 /health 探针与反代都指向真实地址。
 	manager.SetBaseURL("http://" + srv.Address())
 

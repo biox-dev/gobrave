@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -280,6 +281,9 @@ type ContainerConfig struct {
 	// gobrave 通过 宿主机地址 + 随机端口 访问；多实例不会端口冲突。
 	// 用于「gobrave 无法路由容器 IP」的场景，典型是 Windows + WSL2 自管 dockerd
 	// （容器 IP 在发行版内的 docker0 网桥上，Windows 不可路由）。
+	//
+	// 默认 container_ip；Windows 桌面端（config.LoadOptions{Desktop: true}）
+	// 默认 host_port。config.yml 中显式声明的取值始终优先。
 	NetworkMode string `yaml:"network_mode" json:"network_mode"`
 }
 
@@ -369,6 +373,8 @@ type RuntimeProvisionConfig struct {
 	//
 	// 与平台无关：Windows 上启动 WSL 发行版（dockerd 由其内置 systemd 管理），
 	// Linux 上拉起本机 dockerd。
+	//
+	// 默认 false；Windows 桌面端（config.LoadOptions{Desktop: true}）默认 true。
 	Enabled bool `yaml:"enabled" json:"enabled"`
 	// Distro 导入到 WSL 的发行版名，默认 gobrave-ubuntu-docker。仅 Windows 生效。
 	//
@@ -708,10 +714,59 @@ func StorageDrive(cfg *Config) string {
 // 	ParserCallbackSecret    string `yaml:"parser_callback_secret" json:"parser_callback_secret"`
 // }
 
+// LoadOptions 选择加载配置时使用的形态默认值。
+//
+// 零值即服务端（命令行）形态。桌面端传入 Desktop，使 Windows 上的
+// 默认值与单机场景对齐：自管运行时默认开启，容器端口走宿主机端口。
+// config.yml 中显式声明的键始终覆盖这些默认值。
+type LoadOptions struct {
+	// Desktop 表示桌面端（单机）进程。仅 Windows 生效，见 desktopDefaults。
+	Desktop bool
+}
+
+// desktopDefaults 报告是否应用桌面端默认值。
+//
+// 只在 Windows 桌面端生效：容器 IP 位于 WSL 发行版的 docker0 网桥上，
+// Windows 侧不可路由，且 dockerd 需要由 gobrave 自己拉起。
+func desktopDefaults(opts LoadOptions) bool {
+	return opts.Desktop && runtime.GOOS == "windows"
+}
+
+// defaultContainerNetworkMode 返回该形态下未配置 container.network_mode 时的默认值。
+func defaultContainerNetworkMode(opts LoadOptions) string {
+	if desktopDefaults(opts) {
+		return ContainerNetworkModeHostPort
+	}
+	return ContainerNetworkModeContainerIP
+}
+
+// resolveContainerNetworkMode 归一化 container.network_mode：
+// 空值回退本形态的默认值，非法值告警后同样回退。
+func resolveContainerNetworkMode(c *ContainerConfig, opts LoadOptions) string {
+	defaultMode := defaultContainerNetworkMode(opts)
+	if c == nil || strings.TrimSpace(c.NetworkMode) == "" {
+		return defaultMode
+	}
+	mode, err := NormalizeContainerNetworkMode(c.NetworkMode)
+	if err != nil {
+		logger.Warnf(context.Background(), "[Config] %v; falling back to %s", err, defaultMode)
+		return defaultMode
+	}
+	return mode
+}
+
 // defaultConfig 返回代码内置的默认配置：config.yml 不存在、缺少某个键，
 // 或某个键取值为空时都以它为准。
 // LoadConfig 先构造默认配置，再用 config.yml 覆盖其中显式声明的键。
-func defaultConfig() *Config {
+func defaultConfig(opts LoadOptions) *Config {
+	container := DefaultContainerConfig()
+	if desktopDefaults(opts) {
+		// Windows 桌面端开箱即用：默认启用运行时预置的启动自检，
+		// 并通过宿主机端口访问应用容器。
+		container.NetworkMode = ContainerNetworkModeHostPort
+		container.Docker.Provision.Enabled = true
+	}
+
 	return &Config{
 		Server: &ServerConfig{
 			Port: 8082,
@@ -785,7 +840,7 @@ func defaultConfig() *Config {
 			Providers: defaultBuiltinModelProviders(),
 		},
 		MCP:       DefaultMCPConfig(),
-		Container: DefaultContainerConfig(),
+		Container: container,
 		DebugConfig: &DebugConfig{
 			EnableDagOrchestrator: false,
 		},
@@ -796,10 +851,15 @@ func defaultConfig() *Config {
 	}
 }
 
-// LoadConfig 加载配置：先取代码内置默认值，再用 config.yml 覆盖。
-// 文件中没有出现的键会保留默认值，具体语义见 applyConfigData。
+// LoadConfig 以服务端默认值加载配置。
 func LoadConfig() (*Config, error) {
-	cfg := defaultConfig()
+	return LoadConfigWith(LoadOptions{})
+}
+
+// LoadConfigWith 加载配置：先取代码内置默认值，再用 config.yml 覆盖。
+// 文件中没有出现的键会保留默认值，具体语义见 applyConfigData。
+func LoadConfigWith(opts LoadOptions) (*Config, error) {
+	cfg := defaultConfig(opts)
 
 	// Resolve config file path: CLI --config > BRAVE_CONFIG_DIR > cwd/config.yml
 	configPath, err := ConfigFilePath()
@@ -819,7 +879,7 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
 
-	if err := applyConfigData(cfg, data); err != nil {
+	if err := applyConfigData(cfg, data, opts); err != nil {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
 
@@ -917,13 +977,9 @@ func LoadConfig() (*Config, error) {
 	cfg.Container.DagNodeCleanupOnFailed = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnFailed, "stop")
 	cfg.Container.DagNodeCleanupOnDagFinished = normalizeContainerCleanupPolicy(cfg.Container.DagNodeCleanupOnDagFinished, "delete")
 
-	// 容器端口访问模式：空值 / 非法值一律回退 container_ip（避免因配置笔误导致启动失败）。
-	if mode, err := NormalizeContainerNetworkMode(cfg.Container.NetworkMode); err != nil {
-		logger.Warnf(context.Background(), "[Config] %v; falling back to %s", err, ContainerNetworkModeContainerIP)
-		cfg.Container.NetworkMode = ContainerNetworkModeContainerIP
-	} else {
-		cfg.Container.NetworkMode = mode
-	}
+	// 容器端口访问模式：空值回退本形态的默认值；非法值告警后同样回退，
+	// 避免因配置笔误导致启动失败。
+	cfg.Container.NetworkMode = resolveContainerNetworkMode(cfg.Container, opts)
 
 	// docker 段：预置子段缺失时补默认值，避免装配层到处判空。
 	// docker 段整体也可能被 `docker: null` 解成 nil，此时用默认值（即零值）重建。
@@ -992,17 +1048,17 @@ func applyLogConfig(cfg *Config) {
 // applyConfigData 把 config.yml 的内容合并到 cfg 上，
 // 只有 data 中显式出现的键才会覆盖 cfg，未出现的键保持原值。
 //
-// 因此 cfg 必须先由 defaultConfig() 填好默认值再传入；
+// 因此 cfg 必须先由 defaultConfig(opts) 填好默认值再传入；
 // 空文件与纯空白文件按“没有任何键”处理，直接保留默认值。
 //
 // 注意：YAML 里的空段（如 `server:`）解码结果是 null，会把整个指针段置空，
 // 这里统一回退到默认值。另外 goccy/go-yaml 对结构体成员是逐字段覆盖的，
 // 但 map 与 slice 会被整体替换，所以不要给这两类字段设置非空默认值。
-func applyConfigData(cfg *Config, data []byte) error {
+func applyConfigData(cfg *Config, data []byte, opts LoadOptions) error {
 	if strings.TrimSpace(string(data)) == "" {
 		return nil
 	}
-	defaults := defaultConfig()
+	defaults := defaultConfig(opts)
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return err
 	}

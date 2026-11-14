@@ -23,8 +23,11 @@ cmd/desktop/
 
 ## 启动流程（main.go）
 
-1. `appsrv.New(Options{Address: "127.0.0.1:<port>", InitSnowflake: true})`
-   → 加载 config.yml → 构建 DI 容器（`container.BuildContainer`）。
+1. `config.LoadConfigWith(LoadOptions{Desktop: true})` → `appsrv.New(Options{Config: cfg, Address: "127.0.0.1:<port>", InitSnowflake: true})`
+   → 构建 DI 容器（`container.BuildContainer`）。
+   - `Desktop: true` 在 Windows 上把 `container.docker.provision.enabled` 默认设为
+     `true`、`container.network_mode` 默认设为 `host_port`；
+     `config.yml` 中显式声明的键仍然优先生效。
 2. `srv.Start()` → `cmd.ListenWithRetry` 监听 → 后台 `http.Serve`。
    - `-port 0` 时用随机空闲端口，实际地址由 `srv.Address()` 回读。
 3. `backend.Manager.SetBaseURL("http://"+srv.Address())` 让反代/探针指向真实地址。

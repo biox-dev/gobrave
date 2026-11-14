@@ -96,8 +96,8 @@ func TestLoadConfigEmptySectionFallsBackToDefaults(t *testing.T) {
 // TestApplyConfigDataBlankFileKeepsDefaults 校验空文件 / 纯空白文件不修改默认值。
 func TestApplyConfigDataBlankFileKeepsDefaults(t *testing.T) {
 	for _, data := range []string{"", "   ", "\n# only a comment\n"} {
-		cfg := defaultConfig()
-		if err := applyConfigData(cfg, []byte(data)); err != nil {
+		cfg := defaultConfig(LoadOptions{})
+		if err := applyConfigData(cfg, []byte(data), LoadOptions{}); err != nil {
 			t.Fatalf("applyConfigData(%q): %v", data, err)
 		}
 		if cfg.Server.Port != 8082 || cfg.Server.Host != "0.0.0.0" {
@@ -112,7 +112,7 @@ func TestApplyConfigDataBlankFileKeepsDefaults(t *testing.T) {
 // TestGitConfigDefaultsAndResolve 校验 git 段的默认值与身份解析回退逻辑。
 func TestGitConfigDefaultsAndResolve(t *testing.T) {
 	// 默认配置应带上内置的 git 身份。
-	cfg := defaultConfig()
+	cfg := defaultConfig(LoadOptions{})
 	if cfg.Git == nil {
 		t.Fatal("defaultConfig().Git is nil")
 	}
@@ -121,8 +121,8 @@ func TestGitConfigDefaultsAndResolve(t *testing.T) {
 	}
 
 	// 空 git 段（yaml 里的 `git:`）应回退到默认值而不是 nil。
-	cfg = defaultConfig()
-	if err := applyConfigData(cfg, []byte("git:\n")); err != nil {
+	cfg = defaultConfig(LoadOptions{})
+	if err := applyConfigData(cfg, []byte("git:\n"), LoadOptions{}); err != nil {
 		t.Fatalf("applyConfigData: %v", err)
 	}
 	if cfg.Git == nil {
@@ -133,8 +133,8 @@ func TestGitConfigDefaultsAndResolve(t *testing.T) {
 	}
 
 	// 显式配置应按配置取值。
-	cfg = defaultConfig()
-	if err := applyConfigData(cfg, []byte("git:\n  user: alice\n  email: alice@example.com\n")); err != nil {
+	cfg = defaultConfig(LoadOptions{})
+	if err := applyConfigData(cfg, []byte("git:\n  user: alice\n  email: alice@example.com\n"), LoadOptions{}); err != nil {
 		t.Fatalf("applyConfigData: %v", err)
 	}
 	if name, email := ResolveGitIdentity(cfg); name != "alice" || email != "alice@example.com" {
@@ -142,7 +142,7 @@ func TestGitConfigDefaultsAndResolve(t *testing.T) {
 	}
 
 	// 部分字段缺失或仅含空白时逐项回退。
-	cfg = defaultConfig()
+	cfg = defaultConfig(LoadOptions{})
 	cfg.Git = &GitConfig{User: "  ", Email: ""}
 	if name, email := ResolveGitIdentity(cfg); name != DefaultGitUser || email != DefaultGitEmail {
 		t.Fatalf("ResolveGitIdentity fallback = %s <%s>, want defaults", name, email)
@@ -158,7 +158,7 @@ func TestGitConfigDefaultsAndResolve(t *testing.T) {
 // 未配置 / 空值 / 非法值都收敛到 warn，别名 warning 视作 warn，大小写与空白被忽略。
 func TestResolveDatabaseLogLevel(t *testing.T) {
 	// 默认配置应为 warn。
-	if got := ResolveDatabaseLogLevel(defaultConfig()); got != DatabaseLogLevelWarn {
+	if got := ResolveDatabaseLogLevel(defaultConfig(LoadOptions{})); got != DatabaseLogLevelWarn {
 		t.Fatalf("default level = %q, want %q", got, DatabaseLogLevelWarn)
 	}
 
@@ -179,7 +179,7 @@ func TestResolveDatabaseLogLevel(t *testing.T) {
 		{"trace", DatabaseLogLevelWarn},   // 非法值回退（GORM 无 trace 级别）
 	}
 	for _, tc := range cases {
-		cfg := defaultConfig()
+		cfg := defaultConfig(LoadOptions{})
 		cfg.Database.LogLevel = tc.raw
 		if got := ResolveDatabaseLogLevel(cfg); got != tc.want {
 			t.Errorf("ResolveDatabaseLogLevel(%q) = %q, want %q", tc.raw, got, tc.want)

@@ -201,6 +201,11 @@ Windows 连 `127.0.0.1:2375` 被 actively refused」。发行版处于 WSL 私�
 | `container_ip`（默认） | 无 | `<容器IP>:<端口>` | Linux、Docker Desktop、k8s |
 | `host_port` | `0.0.0.0:0 → <端口>`（随机） | `127.0.0.1:<HostPort>` | Windows + WSL2 NAT |
 
+**Windows 桌面端默认 `host_port`**：`cmd/desktop` 以
+`config.LoadOptions{Desktop: true}` 加载配置，Windows 上把 `network_mode`
+的默认值改成 `host_port`、`container.docker.provision.enabled` 默认改成 `true`；
+`config.yml` 中显式声明的键仍然覆盖这两个默认值（服务端形态不受影响）。
+
 ```
 host_port 模式等效: docker run -p 0.0.0.0:0:8787
 访问:              http://127.0.0.1:<随机端口>
