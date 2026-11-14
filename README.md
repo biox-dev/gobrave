@@ -172,6 +172,40 @@ go build -tags embed_frontend -o gobrave .
 ./gobrave
 ```
 
+### Build the Desktop App (Wails v3)
+
+The desktop client lives in `cmd/desktop`. Its `main.go` is guarded by the `//go:build gtk3`
+tag, so **`gtk3` must always be passed explicitly** (the tag has no side effect on Windows).
+`embed_frontend` bundles `frontend/web` into the executable.
+
+```bash
+# 1) Build frontend artifacts into gobrave/frontend/web first (for example: copy brave-ui dist)
+
+# Windows ARM64 desktop
+GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -tags "gtk3 embed_frontend" \
+  -o gobrave-windows-arm64-desktop.exe ./cmd/desktop
+
+# Windows AMD64 desktop
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags "gtk3 embed_frontend" \
+  -o gobrave-windows-amd64-desktop.exe ./cmd/desktop
+
+# Linux AMD64 desktop (needs libgtk-3-dev, libwebkit2gtk-4.1-dev, pkg-config; CGO required)
+CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags "gtk3 embed_frontend" \
+  -o gobrave-linux-amd64-desktop ./cmd/desktop
+```
+
+With a tag version in the output name (matches the CI release artifacts):
+
+```bash
+TAG=v1.0.0
+GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -tags "gtk3 embed_frontend" \
+  -o "release/gobrave-${TAG}-windows-arm64-desktop.exe" ./cmd/desktop
+```
+
+> **Note:** Windows desktop builds use the pure-Go path (`CGO_ENABLED=0`) and can be
+> cross-compiled from Linux/macOS. The Windows ARM64 build still requires the
+> `WebView2` runtime on the target machine.
+
 ### Run with Docker
 
 ```bash
