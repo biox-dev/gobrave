@@ -404,7 +404,7 @@ func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
 	}
 
 	ep := p.endpoint
-	if err := p.waitEndpoint(ctx, ep, port); err != nil {
+	if err := p.waitEndpoint(ctx); err != nil {
 		logger.Errorf(ctx, "[wsl] Start: endpoint %s not reachable: %v", ep, err)
 		return "", err
 	}
@@ -445,47 +445,53 @@ func (p *WSLProvisioner) pingEndpoint(ctx context.Context) error {
 	return pingDocker(ctx, p.endpoint)
 }
 
-// waitEndpoint 轮询等待配置的 daemon 地址可用。
+// waitEndpoint 轮询等待本实例配置的 daemon 地址可用。
 //
-// port > 0 时先做一次宿主机 TCP 探活（快速失败），再 ping docker 协议。
-// 每 1s 轮询一次；等待总时长由 ctx 截止时间决定（StartAsync 默认 3 分钟），
-// ctx 没有截止时间时以 daemonReadyMaxWait 兜底。
-func (p *WSLProvisioner) waitEndpoint(ctx context.Context, endpoint string, port int) error {
-	deadline := time.Now().Add(daemonReadyMaxWait)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
+// 总等待上限为 min(ctx 截止时间, daemonReadyMaxWait)，单次探测（TCP 探活与
+// docker Ping）也受同一 ctx 约束，避免探测自身阻塞绕过上限。
+// TCP endpoint 先做一次宿主机探活（快速失败），再走 docker 协议 Ping；
+// 每 1s 轮询一次，client 在整轮等待中复用。
+func (p *WSLProvisioner) waitEndpoint(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, daemonReadyMaxWait)
+	defer cancel()
+
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("dockerd is not reachable at %s: %w", p.endpoint, err)
 	}
+
+	addr := endpointAddr(p.endpoint)
+	cli, err := newDockerClient(p.endpoint)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	ticker := time.NewTicker(daemonReadyInterval)
+	defer ticker.Stop()
+
 	var lastErr error
 	for attempt := 1; ; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if port > 0 && !probeHostPort(endpoint, port) {
-			lastErr = fmt.Errorf("%s is not reachable from host", endpoint)
-		} else if err := pingDocker(ctx, endpoint); err != nil {
+		if addr != "" && !probeHostPort(ctx, addr) {
+			lastErr = fmt.Errorf("%s is not reachable from host", addr)
+		} else if err := pingDockerWith(ctx, cli, p.endpoint); err != nil {
 			lastErr = err
 		} else {
 			return nil
 		}
 
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			break
+		// 首轮与每 10 轮打 Info 便于观察进度，其余降为 Debug，避免 3 分钟刷 180 行。
+		if attempt == 1 || attempt%10 == 0 {
+			logger.Infof(ctx, "[wsl] waitEndpoint: %s not ready yet (try %d): %v", p.endpoint, attempt, lastErr)
+		} else {
+			logger.Debugf(ctx, "[wsl] waitEndpoint: %s not ready yet (try %d): %v", p.endpoint, attempt, lastErr)
 		}
-		if remaining > daemonReadyInterval {
-			remaining = daemonReadyInterval
-		}
-		logger.Infof(ctx, "[wsl] waitEndpoint: %s not ready yet (try %d): %v", endpoint, attempt, lastErr)
 
-		timer := time.NewTimer(remaining)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+			return fmt.Errorf("dockerd is not reachable at %s: %w (last error: %v)", p.endpoint, ctx.Err(), lastErr)
+		case <-ticker.C:
 		}
 	}
-	return fmt.Errorf("dockerd is not reachable at %s: %w", endpoint, lastErr)
 }
 
 // bootDistro 启动发行版：已在运行则直接复用，否则拉起一个后台 wsl.exe 会话。
@@ -597,7 +603,7 @@ func (p *WSLProvisioner) adopt(ctx context.Context, progress types.ProgressFunc)
 
 	types.Report(progress, "adopt", 75, "waiting for endpoint")
 	ep := p.endpoint
-	if err := p.waitEndpoint(ctx, ep, st.Port); err != nil {
+	if err := p.waitEndpoint(ctx); err != nil {
 		return err
 	}
 	logger.Infof(ctx, "[wsl] adopt: done, endpoint=%s", ep)

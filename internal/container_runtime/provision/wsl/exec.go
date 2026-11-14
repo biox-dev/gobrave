@@ -250,23 +250,39 @@ func distroRunning(ctx context.Context, distro string) (bool, error) {
 //
 // 拉起常驻会话后 wsl.exe 返回不代表发行版已进入 Running，
 // 中间这个窗口正是并发调用重复拉起的原因，所以启动后要等它落定。
+// 等待上限为 min(ctx 截止时间, distroBootTimeout)，每 distroBootInterval 轮询一次；
+// 与 waitEndpoint 一致：首轮及每 5 轮打 Info，其余降为 Debug，避免刷屏。
 func waitDistroRunning(ctx context.Context, distro string) error {
-	deadline := time.Now().Add(distroBootTimeout)
-	for {
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, distroBootTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(distroBootInterval)
+	defer ticker.Stop()
+
+	var lastErr error
+	for attempt := 1; ; attempt++ {
 		running, err := distroRunning(ctx, distro)
 		if err != nil {
-			return err
+			return fmt.Errorf("query running state of distro %s: %w", distro, err)
 		}
 		if running {
+			logger.Infof(ctx, "[wsl] waitDistroRunning: %s is running (try %d, took %s)", distro, attempt, time.Since(start).Round(time.Millisecond))
 			return nil
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("distro %s is not running after %s", distro, distroBootTimeout)
+		lastErr = fmt.Errorf("distro %s is still not in Running state", distro)
+
+		if attempt == 1 || attempt%5 == 0 {
+			logger.Infof(ctx, "[wsl] waitDistroRunning: %s not running yet (try %d): %v", distro, attempt, lastErr)
+		} else {
+			logger.Debugf(ctx, "[wsl] waitDistroRunning: %s not running yet (try %d): %v", distro, attempt, lastErr)
 		}
+
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(distroBootInterval):
+			return fmt.Errorf("%w: distro %s is not running after %s (last error: %v)",
+				ctx.Err(), distro, time.Since(start).Round(time.Millisecond), lastErr)
+		case <-ticker.C:
 		}
 	}
 }

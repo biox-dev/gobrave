@@ -165,6 +165,22 @@ func TestEndpointHost(t *testing.T) {
 	}
 }
 
+func TestEndpointAddr(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"tcp://localhost:2375", "localhost:2375"},
+		{"tcp://172.24.1.10:2376", "172.24.1.10:2376"},
+		{"tcp://localhost", "localhost:2375"},
+		{"unix:///var/run/docker.sock", ""},
+		{"", ""},
+		{"not a url", ""},
+	}
+	for _, c := range cases {
+		if got := endpointAddr(c.in); got != c.want {
+			t.Errorf("endpointAddr(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestStopDaemonScriptUsesSystemd(t *testing.T) {
 	// dockerd 由发行版自己维护，gobrave 只经 systemd 请求停止。
 	if !strings.Contains(stopDaemonScript, "systemctl stop") {
