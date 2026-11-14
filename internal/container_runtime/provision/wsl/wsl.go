@@ -348,7 +348,8 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 // 这是每次进程启动都会调用的入口，满足以下约束：
 //  1. 未安装但系统上已有同名发行版时，直接接管（启动发行版）而不是返回 ErrNotInstalled；
 //  2. 发行版既未安装也不存在时返回 ErrNotInstalled，不做任何修复；
-//  3. 已安装时幂等：启动发行版后只探测 endpoint 是否连通。
+//  3. 已安装时幂等：发行版未运行才拉起一个脱离 gobrave 的常驻后台进程
+//     （`sh -lc "sleep infinity"`）占住它，已在运行则直接复用；之后只探测 endpoint 是否连通。
 func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
 	logger.Infof(ctx, "[wsl] Start: begin, installed=%t distro=%s", p.layout.installed(), p.cfg.Distro)
 	if !p.layout.installed() {
@@ -482,15 +483,27 @@ func (p *WSLProvisioner) waitEndpoint(ctx context.Context, endpoint string, port
 	return fmt.Errorf("dockerd is not reachable at %s: %w", endpoint, lastErr)
 }
 
-// bootDistro 只启动发行版本身。
+// bootDistro 启动发行版：已在运行则直接复用，否则拉起一个后台 wsl.exe 会话。
 //
-// 发行版内的 dockerd 由它自己维护（systemd 等），gobrave 不执行任何 docker 命令，
-// 启动后仅到宿主机侧探测配置的 endpoint 是否连通。
+// WSL 在最后一个会话退出后会终止发行版（dockerd 随之停止），所以用
+// `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"` 常驻占住它；
+// 该进程脱离 gobrave，gobrave 退出不影响它。发行版内的 dockerd
+// 仍由它自己维护（systemd 等），gobrave 不执行任何 docker 命令。
 func (p *WSLProvisioner) bootDistro(ctx context.Context, distro string) error {
-	logger.Infof(ctx, "[wsl] bootDistro: starting distro %s", distro)
-	if _, err := runInDistro(ctx, distro, "true"); err != nil {
+	running, err := distroRunning(ctx, distro)
+	if err != nil {
+		// 无法查询运行状态（旧版 WSL）：当作未运行，直接拉起常驻会话。
+		logger.Warnf(ctx, "[wsl] bootDistro: query running distros failed: %v, starting anyway", err)
+	}
+	if running {
+		logger.Infof(ctx, "[wsl] bootDistro: distro %s is already running", distro)
+		return nil
+	}
+	if err := startDistroInBackground(ctx, distro); err != nil {
+		logger.Errorf(ctx, "[wsl] bootDistro: start distro %s failed: %v", distro, err)
 		return fmt.Errorf("boot distro %s: %w", distro, err)
 	}
+	logger.Infof(ctx, "[wsl] bootDistro: distro %s started in background", distro)
 	return nil
 }
 

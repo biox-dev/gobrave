@@ -114,6 +114,41 @@ func runInDistro(ctx context.Context, distro, script string) (string, error) {
 	return runWSL(ctx, "-d", distro, "-u", "root", "--", "sh", "-lc", script)
 }
 
+const (
+	// distroKeepAliveScript 占住发行版的常驻脚本。
+	//
+	// WSL 在最后一个会话退出后会终止发行版（其中的 dockerd 也随之停止），
+	// 所以需要一个一直活着的前台进程把发行版撑住。
+	distroKeepAliveScript = "sleep infinity"
+)
+
+// startDistroInBackground 执行
+// `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"`，让发行版后台常驻。
+//
+// 只 Start 不 Wait：该进程要活过 gobrave 本身（gobrave 退出不影响它），
+// 所以 stdin/stdout/stderr 全部丢弃，避免继承 gobrave 的管道被牵连。
+func startDistroInBackground(ctx context.Context, distro string) error {
+	exe, err := wslExePath()
+	if err != nil {
+		return err
+	}
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", os.DevNull, err)
+	}
+	defer devNull.Close()
+
+	args := []string{"-d", distro, "-u", "root", "--", "sh", "-lc", distroKeepAliveScript}
+	logger.Infof(ctx, "[wsl] start background: %s", formatArgv(exe, args))
+	cmd, err := startDetached(exe, args, devNull)
+	if err != nil {
+		logger.Errorf(ctx, "[wsl] start background failed: %v", err)
+		return fmt.Errorf("start wsl background process: %w", err)
+	}
+	logger.Infof(ctx, "[wsl] background wsl.exe started, pid=%d", cmd.Process.Pid)
+	return cmd.Process.Release()
+}
+
 // decodeOutput 把 wsl.exe 的输出解码成 UTF-8。
 //
 // 判据：若字节流中含有大量 0x00（UTF-16LE 的 ASCII 高位），按 UTF-16LE 解码；
@@ -189,10 +224,22 @@ func listDistros(ctx context.Context) ([]string, error) {
 func runningDistros(ctx context.Context) ([]string, error) {
 	out, err := runWSL(ctx, "-l", "--running", "-q")
 	if err != nil {
-		// 旧版 WSL 不支持 --running：降级为空列表，由上层用「能否执行命令」判断。
+		// 旧版 WSL 不支持 --running；由调用方决定降级策略。
 		return nil, err
 	}
 	return splitDistroList(out), nil
+}
+
+// distroRunning 判断发行版当前是否在运行。
+//
+// 用 `wsl -l --running -q` 而不是 `-l -v`：只输出名字，
+// 不受 STATE 列本地化、发行版名含空格、旧版 WSL 不支持 -v 的影响。
+func distroRunning(ctx context.Context, distro string) (bool, error) {
+	names, err := runningDistros(ctx)
+	if err != nil {
+		return false, err
+	}
+	return containsDistro(names, distro), nil
 }
 
 // splitDistroList 把 wsl -l -q 的多行输出拆成名字列表。

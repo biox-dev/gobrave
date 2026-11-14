@@ -149,11 +149,19 @@ Start(ctx):
   0. 未安装但 wsl -l -q 中已有同名发行版 → 接管（adopt）：启动发行版 → 写接管状态
   1. 若既未安装、系统中也不存在 → return ErrNotInstalled
   2. 已安装：校验发行版仍在 WSL 注册表中
-  3. 启动发行版（dockerd 由发行版自己维护，gobrave 不执行任何 docker 命令）
+  3. 启动发行版（dockerd 由发行版自己维护，gobrave 不执行任何 docker 命令）：
+     `wsl -l --running -q` 里已有该发行版 → 直接复用；
+     否则后台执行 `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"`
   4. 轮询探测配置的 endpoint（先 TCP 探活，再 docker Ping，每 1s 一次）直到就绪，
      总时长受 ctx 截止时间约束（`StartAsync` 默认 3 分钟）
   5. 返回该 endpoint
 ```
+
+**常驻会话：为什么要 `sleep infinity`**：WSL 在最后一个会话退出后会终止发行版，
+其中的 dockerd 也随之停止。因此发行版未运行时，gobrave 只拉起一次后台 wsl.exe
+（`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`，
+作业不允许脱离时降级为普通后台进程），由这个长驻 `sleep infinity` 撑住发行版；
+它不随 gobrave 退出而结束，下次 `Start` 因「已在运行」直接复用，不会重复拉起。
 
 **endpoint 只来自配置**：`Config.Endpoint`（默认 `tcp://localhost:2375`）在构造
 `WSLProvisioner` 时解析一次并保存在实例上，之后 `Endpoint()` 恒定返回它，
