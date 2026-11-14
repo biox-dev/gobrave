@@ -13,12 +13,13 @@
 package windows
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"net/url"
 	"strings"
 	"sync"
 
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -313,7 +314,7 @@ func (m *Manager) profileFor(u *url.URL) (title string, width int, height int) {
 func parseOrigin(raw string) shellOrigin {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Host == "" {
-		log.Printf("[windows] 无法解析外壳地址 %q: %v", raw, err)
+		logger.Warnf(context.Background(), "[windows] 无法解析外壳地址 %q: %v", raw, err)
 		return shellOrigin{}
 	}
 	scheme := u.Scheme

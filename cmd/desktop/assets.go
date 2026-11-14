@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"io/fs"
-	"log"
 	"os"
 	"path/filepath"
 
 	frontendassets "github.com/biox-dev/gobrave/frontend"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
 
@@ -25,10 +26,10 @@ func resolveWebFS() fs.FS {
 	if root, ok := frontendassets.EmbeddedFrontendFS(); ok {
 		webFS, err := fs.Sub(root, "web")
 		if err == nil {
-			log.Printf("[desktop] 使用内嵌前端资源 (frontend/web)")
+			logger.Infof(context.Background(), "[desktop] 使用内嵌前端资源 (frontend/web)")
 			return webFS
 		}
-		log.Printf("[desktop] 无法从内嵌资源中提取 web 子目录: %v", err)
+		logger.Warnf(context.Background(), "[desktop] 无法从内嵌资源中提取 web 子目录: %v", err)
 	}
 
 	for _, candidate := range []string{"web", filepath.Join("frontend", "web")} {
@@ -37,15 +38,15 @@ func resolveWebFS() fs.FS {
 			continue
 		}
 		if _, statErr := fs.Stat(os.DirFS(absDir), "index.html"); statErr == nil {
-			log.Printf("[desktop] 使用磁盘前端资源: %s", absDir)
+			logger.Infof(context.Background(), "[desktop] 使用磁盘前端资源: %s", absDir)
 			return os.DirFS(absDir)
 		}
 	}
 
 	webDir := filepath.Join("frontend", "web")
 	if _, err := os.Stat(filepath.Join(webDir, "index.html")); err != nil {
-		log.Printf("[desktop] 未找到前端资源，请先构建 frontend/web（或使用 -tags embed_frontend）")
+		logger.Warnf(context.Background(), "[desktop] 未找到前端资源，请先构建 frontend/web（或使用 -tags embed_frontend）")
 	}
-	log.Printf("[desktop] 回退到工作目录: %s", webDir)
+	logger.Infof(context.Background(), "[desktop] 回退到工作目录: %s", webDir)
 	return os.DirFS(webDir)
 }

@@ -100,6 +100,9 @@ log:
   path: ""
   # 颜色模式：auto（仅终端着色）/ always / never。
   color: auto
+  # 输出去向：auto（stdout + 文件，默认）/ file（仅文件）/ stdout（仅标准输出）。
+  # 无控制台的 GUI 进程（如桌面端打包版）建议设为 file。
+  output: auto
 
 llm:
   cli_url: "localhost:4321"

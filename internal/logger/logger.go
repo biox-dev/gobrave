@@ -293,6 +293,22 @@ type Options struct {
 	Path string
 	// Color 颜色模式：auto（默认，仅终端着色）/always/never。
 	Color string
+	// Output 输出去向：auto（默认，stdout + 文件）/file（仅文件）/stdout（仅标准输出）。
+	// 桌面端这类没有控制台的 GUI 进程应使用 file，避免写无效的 stdout。
+	Output string
+}
+
+// resolveOutput 解析 Options.Output，返回是否写 stdout、是否写文件。
+// 无法识别的取值（含空）按默认行为处理：两者都写。
+func resolveOutput(output string) (stdout, file bool) {
+	switch strings.ToLower(strings.TrimSpace(output)) {
+	case "file":
+		return false, true
+	case "stdout", "console":
+		return true, false
+	default:
+		return true, true
+	}
 }
 
 // resolveLevel 计算最终生效的日志级别。
@@ -338,25 +354,40 @@ func Configure(opts Options) {
 
 	appLogger.SetLevel(resolveLevel(opts))
 
-	writer := io.Writer(os.Stdout)
-	logPath := strings.TrimSpace(opts.Path)
-	if envPath := strings.TrimSpace(os.Getenv("LOG_PATH")); envPath != "" {
-		logPath = filepath.Clean(envPath)
-	}
-	if logPath == "" {
-		logPath = defaultLogPath()
-	}
-	if logPath != "" {
-		file, err := openLogFile(logPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "logger: failed to open log file %s: %v\n", logPath, err)
-		} else {
-			activeLogFile = file
-			writer = io.MultiWriter(os.Stdout, file)
+	useStdout, useFile := resolveOutput(opts.Output)
+
+	var logFile io.WriteCloser
+	if useFile {
+		logPath := strings.TrimSpace(opts.Path)
+		if envPath := strings.TrimSpace(os.Getenv("LOG_PATH")); envPath != "" {
+			logPath = filepath.Clean(envPath)
+		}
+		if logPath == "" {
+			logPath = defaultLogPath()
+		}
+		if logPath != "" {
+			file, err := openLogFile(logPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "logger: failed to open log file %s: %v\n", logPath, err)
+			} else {
+				logFile = file
+				activeLogFile = file
+			}
 		}
 	}
 
-	// 默认继续输出到 stdout，同时在可用时落盘到文件
+	// 默认同时输出到 stdout 与文件。
+	// 文件必须排在前面：GUI 进程（如 Windows -H windowsgui）的 stdout 句柄无效，
+	// io.MultiWriter 在第一个 writer 出错后就不再继续，放后面会让落盘静默失效。
+	var writer io.Writer = io.Discard
+	switch {
+	case logFile != nil && useStdout:
+		writer = io.MultiWriter(logFile, os.Stdout)
+	case logFile != nil:
+		writer = logFile
+	case useStdout:
+		writer = os.Stdout
+	}
 	appLogger.SetOutput(writer)
 
 	// 设置日志格式而不修改全局时区

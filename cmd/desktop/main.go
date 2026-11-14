@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -33,6 +32,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/appsrv"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/handler"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/middleware"
 	"github.com/biox-dev/gobrave/internal/runtime"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -196,7 +196,7 @@ func main() {
 	//    config.yml 中的显式配置仍然优先生效。
 	cfg, err := config.LoadConfigWith(config.LoadOptions{Desktop: true})
 	if err != nil {
-		log.Fatalf("[desktop] 加载配置失败: %v", err)
+		logger.Fatalf(context.Background(), "[desktop] 加载配置失败: %v", err)
 	}
 	srv, err := appsrv.New(appsrv.Options{
 		Config:        cfg,
@@ -205,19 +205,19 @@ func main() {
 		HandleSignals: false, // 生命周期由本进程控制
 	})
 	if err != nil {
-		log.Fatalf("[desktop] 后端初始化失败: %v", err)
+		logger.Fatalf(context.Background(), "[desktop] 后端初始化失败: %v", err)
 	}
 
 	// 容器就绪：确保内置 ADMIN 用户已持久化并完成初始化（默认项目）。
 	if adminUser, err = ensureAdminUser(); err != nil {
-		log.Fatalf("[desktop] 初始化内置用户失败: %v", err)
+		logger.Fatalf(context.Background(), "[desktop] 初始化内置用户失败: %v", err)
 	}
-	log.Printf("[desktop] 已关闭 API 认证，当前用户 %d (%s)", adminUser.ID, adminUser.Username)
+	logger.Infof(context.Background(), "[desktop] 已关闭 API 认证，当前用户 %d (%s)", adminUser.ID, adminUser.Username)
 
 	if err := srv.Start(); err != nil {
-		log.Fatalf("[desktop] 后端启动失败: %v", err)
+		logger.Fatalf(context.Background(), "[desktop] 后端启动失败: %v", err)
 	}
-	log.Printf("[desktop] 内嵌后端已启动: http://%s", srv.Address())
+	logger.Infof(context.Background(), "[desktop] 内嵌后端已启动: http://%s", srv.Address())
 
 	// 后端地址以实际监听地址为准（--port=0 时是随机端口）。
 	backendCfg := desktopbackend.Config{
@@ -234,7 +234,7 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if stopErr := srv.Shutdown(ctx); stopErr != nil {
-			log.Printf("[desktop] 后端关闭异常: %v", stopErr)
+			logger.Errorf(context.Background(), "[desktop] 后端关闭异常: %v", stopErr)
 		}
 	}()
 
@@ -278,9 +278,9 @@ func main() {
 			WailsHandler:   transport.Handler(),
 		}))
 		if err != nil {
-			log.Fatal(err)
+			logger.Fatalf(context.Background(), "[desktop] 本地页面服务启动失败: %v", err)
 		}
-		log.Printf("[desktop] 本地页面服务: %s", local.URL())
+		logger.Infof(context.Background(), "[desktop] 本地页面服务: %s", local.URL())
 		pageURL = local.URL() + "/"
 
 		defer func() {
@@ -299,9 +299,9 @@ func main() {
 			}),
 		)
 		if err != nil {
-			log.Fatalf("[desktop] 开发代理启动失败: %v", err)
+			logger.Fatalf(context.Background(), "[desktop] 开发代理启动失败: %v", err)
 		}
-		log.Printf("[desktop] 开发代理已启动: %s -> %s", devProxy.URL(), pageURL)
+		logger.Infof(context.Background(), "[desktop] 开发代理已启动: %s -> %s", devProxy.URL(), pageURL)
 		// WebView 加载代理地址：页面 origin 与 Wails 运行时一致，
 		// `/wails/runtime` 才能被 transport 中间件处理。
 		pageURL = devProxy.URL() + "/"
@@ -344,7 +344,7 @@ func main() {
 	go handleSignals(app)
 
 	if err := app.Run(); err != nil {
-		log.Fatal(err)
+		logger.Fatalf(context.Background(), "[desktop] 应用退出异常: %v", err)
 	}
 }
 
@@ -353,7 +353,7 @@ func handleSignals(app *application.App) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	<-signals
-	log.Printf("[desktop] 收到退出信号，正在关闭窗口...")
+	logger.Infof(context.Background(), "[desktop] 收到退出信号，正在关闭窗口...")
 	app.Quit()
 }
 

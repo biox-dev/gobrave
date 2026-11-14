@@ -34,6 +34,18 @@ cmd/desktop/
 4. `backend.StartLocalServer(NewHandler(...))` 起页面服务（WebView 加载它）。
 5. `app.Run()`；退出时 `defer` 先关页面服务、再 `srv.Shutdown()` 停后端。
 
+## 日志
+
+桌面端统一走 `internal/logger`（与后端一致），不再使用标准库 `log`：
+
+- 输出同时写到 stdout 与 `gobrave.log`（lumberjack 轮转），格式为
+  `时间 级别 [caller] 消息`，级别受 `config.yml` 的 `log.level` / `LOG_LEVEL` 控制；
+- 错误分支用 `logger.Fatalf/Errorf`，正常流程用 `logger.Infof`，可恢复异常用 `logger.Warnf`；
+  日志前缀（`[desktop]` / `[proxy]` / `[windows]`）保留，便于 grep。
+- Windows GUI 打包（`-H windowsgui`）没有控制台，stdout 句柄无效：
+  `logger.Configure` 把文件放在 `io.MultiWriter` 的第一位，保证落盘不被无效 stdout 中断；
+  需要彻底关闭 stdout 时在 `config.yml` 的 `log` 段设 `output: file`。
+
 ## 为什么用本地 http.Server 而不是 Wails Assets
 
 WebKitGTK 的 URI-scheme handler 不传递 POST 请求体，`wails://` 下所有 POST 到达

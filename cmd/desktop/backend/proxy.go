@@ -2,7 +2,6 @@ package backend
 
 import (
 	"io/fs"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/biox-dev/gobrave/internal/logger"
 )
 
 // debugProxy 为 true 时打印每个被转发的请求，便于排查前端请求是否到达外壳。
@@ -121,7 +122,7 @@ func NewHandler(opts HandlerOptions) http.Handler {
 
 		if shouldProxy(p) {
 			if debugProxy {
-				log.Printf("[proxy] %s %s -> %s (ContentLength=%d, TransferEncoding=%v, HasBody=%v)",
+				logger.Infof(r.Context(), "[proxy] %s %s -> %s (ContentLength=%d, TransferEncoding=%v, HasBody=%v)",
 					r.Method, p, target.String()+p, r.ContentLength, r.TransferEncoding, r.Body != nil)
 			}
 			proxy.ServeHTTP(w, r)

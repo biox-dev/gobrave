@@ -126,11 +126,14 @@ type LogConfig struct {
 	Path string `yaml:"path" json:"path"`
 	// Color 颜色模式：auto（默认，仅终端着色）/always/never。
 	Color string `yaml:"color" json:"color"`
+	// Output 输出去向：auto（默认，stdout + 文件）/file（仅文件）/stdout（仅标准输出）。
+	// 无控制台的 GUI 进程（如桌面端打包版）应设为 file。
+	Output string `yaml:"output" json:"output"`
 }
 
 // DefaultLogConfig 返回 log 段在代码中的默认配置。
 func DefaultLogConfig() *LogConfig {
-	return &LogConfig{Level: "info", Color: "auto"}
+	return &LogConfig{Level: "info", Color: "auto", Output: "auto"}
 }
 
 type UserConfig struct {
@@ -1039,9 +1042,10 @@ func applyLogConfig(cfg *Config) {
 		cfg.Log = logCfg
 	}
 	logger.Configure(logger.Options{
-		Level: logCfg.Level,
-		Path:  logCfg.Path,
-		Color: logCfg.Color,
+		Level:  logCfg.Level,
+		Path:   logCfg.Path,
+		Color:  logCfg.Color,
+		Output: logCfg.Output,
 	})
 }
 
