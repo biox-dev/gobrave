@@ -159,9 +159,20 @@ Start(ctx):
 
 **常驻会话：为什么要 `sleep infinity`**：WSL 在最后一个会话退出后会终止发行版，
 其中的 dockerd 也随之停止。因此发行版未运行时，gobrave 只拉起一次后台 wsl.exe
-（`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`，
-作业不允许脱离时降级为普通后台进程），由这个长驻 `sleep infinity` 撑住发行版；
-它不随 gobrave 退出而结束，下次 `Start` 因「已在运行」直接复用，不会重复拉起。
+（`CREATE_NO_WINDOW`），由这个长驻 `sleep infinity` 撑住发行版；下次 `Start`
+因「已在运行」直接复用，不会重复拉起。
+
+**常驻会话的生命周期（`provision.detach`）**：默认 `detach: false`，wsl.exe 被加入
+一个 kill-on-close 作业对象，gobrave 退出（正常或崩溃）时系统关闭作业句柄，该进程
+连同发行版会话一起结束。置为 `true` 时改用
+`CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB` 启动，进程脱离 gobrave，
+退出后继续运行（作业不允许脱离时降级为普通后台进程）。两种方式都只 `Start` 不
+`Wait`，不阻塞调用方。
+
+**静默启动（不弹窗）**：wsl.exe 是控制台程序，从 GUI 进程（自身没有控制台）拉起时
+会自己 `AllocConsole`，于是弹出黑框窗口。因此包括常驻会话在内的所有 wsl.exe 调用
+都用 `CREATE_NO_WINDOW`（隐藏控制台）启动，而不是 `DETACHED_PROCESS`（后者让子进程
+完全没有控制台，wsl.exe 反而会自己申请并弹窗）。
 
 **并发幂等**：`bootDistro` 用互斥锁串行化，并在拉起后轮询等待发行版真正进入
 `Running`（上限 5s）才返回。因此并发 `Start` 最多只产生一个常驻会话：先到的负责

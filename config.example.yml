@@ -196,12 +196,14 @@ container:
     #                 Linux 上执行 systemctl start docker 管理本机 dockerd。
     #   distro / download_url / endpoint: 仅 Windows 生效，Linux 实现会忽略。
     #   endpoint:      daemon 地址，tcp://localhost:2375 或 unix:///var/run/docker.sock。
+    #   detach:        常驻 wsl.exe 会话是否脱离 gobrave，默认 false（随 gobrave 退出结束）。
     # 未安装时不会自动安装，只等 UI 安装向导。
     # provision:
     #   enabled: true
     #   distro: gobrave-ubuntu-docker
     #   download_url: ""
     #   endpoint: tcp://localhost:2375
+    #   detach: false
   #
   # 应用容器端口的访问方式。
   #   container_ip（默认；Windows 桌面端默认 host_port）：gobrave 直接访问容器 IP

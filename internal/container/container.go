@@ -366,6 +366,7 @@ func runtimeProvisionManager(cfg *config.Config) *provision.Manager {
 		DownloadURL: provCfg.DownloadURL,
 		Distro:      provCfg.Distro,
 		Endpoint:    provCfg.Endpoint,
+		Detach:      provCfg.Detach,
 	})
 	mgr := provision.NewManager(inner)
 	mgr.StartAsync(context.Background())

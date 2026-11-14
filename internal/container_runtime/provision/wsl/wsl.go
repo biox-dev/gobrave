@@ -28,6 +28,10 @@ type Config struct {
 	// Endpoint daemon 地址；留空表示使用平台默认（DefaultEndpoint）。
 	// config 有配置时优先使用配置值。
 	Endpoint string
+	// Detach 控制常驻 wsl.exe 会话是否脱离 gobrave 进程。
+	// false（默认）时随 gobrave 退出一起结束，发行版与 dockerd 随之停止；
+	// true 时脱离 gobrave，退出后继续运行。两种取值都不阻塞启动。
+	Detach bool
 	// HTTPClient 用于下载；nil 时使用内置 client（大文件不设总超时）。
 	HTTPClient *http.Client
 }
@@ -62,8 +66,8 @@ func New(cfg Config) *WSLProvisioner {
 		layout:   newLayout(cfg.BaseDir),
 		endpoint: endpoint,
 	}
-	logger.Infof(context.Background(), "[wsl] provisioner created: base_dir=%s data_dir=%s distro=%s endpoint=%s download_url=%s",
-		cfg.BaseDir, p.layout.Root(), cfg.Distro, endpoint, cfg.DownloadURL)
+	logger.Infof(context.Background(), "[wsl] provisioner created: base_dir=%s data_dir=%s distro=%s endpoint=%s detach=%t download_url=%s",
+		cfg.BaseDir, p.layout.Root(), cfg.Distro, endpoint, cfg.Detach, cfg.DownloadURL)
 	return p
 }
 
@@ -353,8 +357,9 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 // 这是每次进程启动都会调用的入口，满足以下约束：
 //  1. 未安装但系统上已有同名发行版时，直接接管（启动发行版）而不是返回 ErrNotInstalled；
 //  2. 发行版既未安装也不存在时返回 ErrNotInstalled，不做任何修复；
-//  3. 已安装时幂等：发行版未运行才拉起一个脱离 gobrave 的常驻后台进程
-//     （`sh -lc "sleep infinity"`）占住它，已在运行则直接复用；之后只探测 endpoint 是否连通。
+//  3. 已安装时幂等：发行版未运行才拉起一个常驻后台进程
+//     （`sh -lc "sleep infinity"`）占住它，已在运行则直接复用；该进程是否随
+//     gobrave 退出而结束由配置 detach 决定（默认跟随退出）；之后只探测 endpoint 是否连通。
 func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
 	logger.Infof(ctx, "[wsl] Start: begin, installed=%t distro=%s", p.layout.installed(), p.cfg.Distro)
 	if !p.layout.installed() {
@@ -497,9 +502,12 @@ func (p *WSLProvisioner) waitEndpoint(ctx context.Context) error {
 // bootDistro 启动发行版：已在运行则直接复用，否则拉起一个后台 wsl.exe 会话。
 //
 // WSL 在最后一个会话退出后会终止发行版（dockerd 随之停止），所以用
-// `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"` 常驻占住它；
-// 该进程脱离 gobrave，gobrave 退出不影响它。发行版内的 dockerd
+// `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"` 常驻占住它。
+// 该进程是否随 gobrave 退出而结束由 cfg.Detach 决定（默认跟随退出）；
+// 无论哪种方式都只 Start 不 Wait，不阻塞调用方。发行版内的 dockerd
 // 仍由它自己维护（systemd 等），gobrave 不执行任何 docker 命令。
+//
+// 静默：wsl.exe 以隐藏控制台（CREATE_NO_WINDOW）方式拉起，不会弹出控制台窗口。
 //
 // 幂等：进程内用 bootMu 串行化，启动后等发行版真正进入 Running 才返回，
 // 因此并发调用最多只拉起一个常驻会话。
@@ -517,7 +525,7 @@ func (p *WSLProvisioner) bootDistro(ctx context.Context, distro string) error {
 		logger.Warnf(ctx, "[wsl] bootDistro: query running distros failed: %v, starting anyway", queryErr)
 	}
 
-	if err := startDistroInBackground(ctx, distro); err != nil {
+	if err := startDistroInBackground(ctx, distro, p.cfg.Detach); err != nil {
 		logger.Errorf(ctx, "[wsl] bootDistro: start distro %s failed: %v", distro, err)
 		return fmt.Errorf("boot distro %s: %w", distro, err)
 	}

@@ -17,6 +17,7 @@ func New(cfg Config) Provisioner {
 		DownloadURL: cfg.DownloadURL,
 		Distro:      cfg.Distro,
 		Endpoint:    cfg.Endpoint,
+		Detach:      cfg.Detach,
 	})
 }
 

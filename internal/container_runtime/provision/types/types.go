@@ -126,4 +126,7 @@ type Config struct {
 	// Endpoint daemon 地址；为空时由平台实现选择默认值
 	// （Windows 上是 tcp://localhost:2375，Linux / macOS 上是本机 unix socket）。
 	Endpoint string
+	// Detach 控制平台实现拉起的 daemon 后台进程是否脱离 gobrave（仅 Windows 生效）。
+	// false（默认）时随 gobrave 退出一起结束；true 时继续运行。两种情况都不阻塞。
+	Detach bool
 }

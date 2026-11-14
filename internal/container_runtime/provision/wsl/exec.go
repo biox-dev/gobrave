@@ -49,6 +49,9 @@ func runWSL(ctx context.Context, args ...string) (string, error) {
 	start := time.Now()
 
 	cmd := exec.CommandContext(ctx, exe, args...)
+	// 每次调用都隐藏控制台：GUI 版 gobrave 没有控制台，wsl.exe 会自己申请一个
+	// 并弹出黑框窗口，同步调用同样需要抑制。
+	hideConsoleWindow(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -129,9 +132,11 @@ const (
 // startDistroInBackground 执行
 // `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"`，让发行版后台常驻。
 //
-// 只 Start 不 Wait：该进程要活过 gobrave 本身（gobrave 退出不影响它），
-// 所以 stdin/stdout/stderr 全部丢弃，避免继承 gobrave 的管道被牵连。
-func startDistroInBackground(ctx context.Context, distro string) error {
+// 只 Start 不 Wait，因此不阻塞调用方。detach 决定该进程是否脱离 gobrave：
+// false（默认）时随 gobrave 退出一起结束，true 时 gobrave 退出后继续运行。
+// stdin/stdout/stderr 全部丢弃，避免继承 gobrave 的管道被牵连；
+// 同时以隐藏控制台方式启动（见 startBackground），后台静默运行、不弹窗。
+func startDistroInBackground(ctx context.Context, distro string, detach bool) error {
 	exe, err := wslExePath()
 	if err != nil {
 		return err
@@ -143,8 +148,8 @@ func startDistroInBackground(ctx context.Context, distro string) error {
 	defer devNull.Close()
 
 	args := []string{"-d", distro, "-u", "root", "--", "sh", "-lc", distroKeepAliveScript}
-	logger.Infof(ctx, "[wsl] start background: %s", formatArgv(exe, args))
-	cmd, err := startDetached(exe, args, devNull)
+	logger.Infof(ctx, "[wsl] start background: %s (detach=%t)", formatArgv(exe, args), detach)
+	cmd, err := startBackground(exe, args, devNull, detach)
 	if err != nil {
 		logger.Errorf(ctx, "[wsl] start background failed: %v", err)
 		return fmt.Errorf("start wsl background process: %w", err)

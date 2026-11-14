@@ -393,6 +393,12 @@ type RuntimeProvisionConfig struct {
 	// 显式配置优先（与 Linux 实现一致）：非空时直接使用该地址，不再从运行时
 	// 反推；为空时 Windows 回退 tcp://localhost:2375，Linux 回退本机 socket。
 	Endpoint string `yaml:"endpoint" json:"endpoint"`
+	// Detach 控制常驻 wsl.exe 会话是否脱离 gobrave 进程（仅 Windows 生效）。
+	//
+	// false（默认）：随 gobrave 退出（含异常退出）一起结束，发行版与其中的
+	// dockerd 随之停止；true：脱离 gobrave，退出后继续运行。
+	// 无论取值如何，启动都是异步的，不会阻塞 gobrave。
+	Detach bool `yaml:"detach" json:"detach"`
 }
 
 // 自管运行时预置的默认值。
