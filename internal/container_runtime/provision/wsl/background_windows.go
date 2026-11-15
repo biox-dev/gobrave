@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -153,4 +154,54 @@ func killOnCloseJob() (windows.Handle, error) {
 		job = h
 	})
 	return job, jobErr
+}
+
+// stillActive 是 GetExitCodeProcess 表示「进程仍在运行」的退出码。
+const stillActive = 259
+
+// processAlive 报告 pid 对应的进程是否仍在运行。
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(h)
+	var code uint32
+	if err := windows.GetExitCodeProcess(h, &code); err != nil {
+		return false
+	}
+	return code == stillActive
+}
+
+// processStartedAt 返回进程的创建时间；进程不存在时 ok=false。
+//
+// 配合记录下来的拉起时间识别 pid 复用：pid 相同但创建时间对不上，
+// 说明原进程早已退出、pid 被别的进程占用。
+func processStartedAt(pid int) (time.Time, bool) {
+	if pid <= 0 {
+		return time.Time{}, false
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return time.Time{}, false
+	}
+	defer windows.CloseHandle(h)
+	var creation, exit, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(h, &creation, &exit, &kernel, &user); err != nil {
+		return time.Time{}, false
+	}
+	return time.Unix(0, creation.Nanoseconds()), true
+}
+
+// terminateProcess 结束 pid 对应的进程。
+func terminateProcess(pid int) error {
+	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h)
+	return windows.TerminateProcess(h, 1)
 }

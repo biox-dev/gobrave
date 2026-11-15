@@ -51,6 +51,9 @@ func (l layout) PartPath() string { return l.RootfsPath() + ".part" }
 // StatePath state.json 路径。
 func (l layout) StatePath() string { return filepath.Join(l.root, "state.json") }
 
+// KeeperPath 常驻会话（keeper.json）路径。
+func (l layout) KeeperPath() string { return filepath.Join(l.root, "keeper.json") }
+
 // AdoptPlaceholderDistroDir 为「接管已注册发行版」准备的占位目录。
 //
 // 接管场景下发行版的 vhdx 由 WSL 自己管理（位于 %LOCALAPPDATA%\wsl 下），

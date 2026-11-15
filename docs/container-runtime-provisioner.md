@@ -150,24 +150,38 @@ Start(ctx):
   1. 若既未安装、系统中也不存在 → return ErrNotInstalled
   2. 已安装：校验发行版仍在 WSL 注册表中
   3. 启动发行版（dockerd 由发行版自己维护，gobrave 不执行任何 docker 命令）：
-     `wsl -l --running -q` 里已有该发行版 → 直接复用；
-     否则后台执行 `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"`
+     只认「本进程持有的常驻会话」——已有存活会话则复用（detach 模式下还会认领
+     上次 gobrave 留下的会话）；否则后台执行
+     `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"`
   4. 轮询探测配置的 endpoint（先 TCP 探活，再 docker Ping，每 1s 一次）直到就绪，
      总时长受 ctx 截止时间约束（`StartAsync` 默认 3 分钟）
   5. 返回该 endpoint
 ```
 
 **常驻会话：为什么要 `sleep infinity`**：WSL 在最后一个会话退出后会终止发行版，
-其中的 dockerd 也随之停止。因此发行版未运行时，gobrave 只拉起一次后台 wsl.exe
-（`CREATE_NO_WINDOW`），由这个长驻 `sleep infinity` 撑住发行版；下次 `Start`
-因「已在运行」直接复用，不会重复拉起。
+其中的 dockerd 也随之停止。因此需要一条长驻的 `sleep infinity` 会话把发行版撑住。
+
+**「运行中」不等于「被持有」**：`wsl -l --running` 只说明此刻还有会话存在。
+gobrave 退出后，它拉起的会话被系统回收需要一点时间，期间发行版仍显示 Running；
+若此时重启 gobrave 并据此跳过拉起，等系统回收完毕发行版就会悄悄终止（dockerd 随之
+下线）。因此 `bootDistro` 不采信 Running 状态，只认「本进程持有、且仍活着」的会话，
+没有就补拉一个——多一个会话无害（约 1MB），漏拉则会让守护进程意外消失。
+
+**收尾竞争**：上一个会话正在退出时拉起的新会话，可能被 WSL 的收尾动作连带终止。
+因此当拉起前发行版已处于 Running 时，`bootDistro` 会等 500ms 再确认会话仍存活；
+没了就再拉一次（最多 2 次），仍失败才返回错误。
+
+**常驻会话的身份（`keeper.json`）**：会话记录为 `{pid, detach, owner, started_at}`，
+存活判断在 pid 之上再核对进程创建时间，避免 pid 被系统复用后把无关进程误认成自己的
+会话。文件位于 `<base_dir>/wsl/keeper.json`，仅在 detach 模式下跨进程有效：
+随 gobrave 退出的会话必然已经结束。
 
 **常驻会话的生命周期（`provision.detach`）**：默认 `detach: false`，wsl.exe 被加入
 一个 kill-on-close 作业对象，gobrave 退出（正常或崩溃）时系统关闭作业句柄，该进程
 连同发行版会话一起结束。置为 `true` 时改用
 `CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB` 启动，进程脱离 gobrave，
-退出后继续运行（作业不允许脱离时降级为普通后台进程）。两种方式都只 `Start` 不
-`Wait`，不阻塞调用方。
+退出后继续运行（作业不允许脱离时降级为普通后台进程），下次启动直接认领它，
+不会重复拉起。两种方式都只 `Start` 不 `Wait`，不阻塞调用方。
 
 **静默启动（不弹窗）**：wsl.exe 是控制台程序，从 GUI 进程（自身没有控制台）拉起时
 会自己 `AllocConsole`，于是弹出黑框窗口。因此包括常驻会话在内的所有 wsl.exe 调用
@@ -176,8 +190,7 @@ Start(ctx):
 
 **并发幂等**：`bootDistro` 用互斥锁串行化，并在拉起后轮询等待发行版真正进入
 `Running`（上限 5s）才返回。因此并发 `Start` 最多只产生一个常驻会话：先到的负责
-拉起，后到的在锁释放后直接读到 `Running` 并复用。多个 `sleep infinity` 本身无害
-（每个约 1MB，且 `wsl --terminate` 一并清理），只是没必要。
+拉起，后到的在锁释放后看到进程内的 keeper 已存活并复用。
 
 **endpoint 只来自配置**：`Config.Endpoint`（默认 `tcp://localhost:2375`）在构造
 `WSLProvisioner` 时解析一次并保存在实例上，之后 `Endpoint()` 恒定返回它，

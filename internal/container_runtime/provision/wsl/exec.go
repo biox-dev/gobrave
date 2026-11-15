@@ -127,23 +127,31 @@ const (
 	distroBootInterval = 200 * time.Millisecond
 	// distroBootTimeout 是等待「发行版是否已进入 Running」的上限。
 	distroBootTimeout = 5 * time.Second
+	// distroBootAttempts 是拉起常驻会话的最大尝试次数。
+	distroBootAttempts = 2
+	// keeperSettleDelay 是确认常驻会话存活前的观察窗口。
+	//
+	// WSL 回收上一个会话需要一点时间，期间拉起的新会话可能被连带终止；
+	// 稍等再看，才能发现「刚拉起就没了」。
+	keeperSettleDelay = 500 * time.Millisecond
 )
 
 // startDistroInBackground 执行
-// `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"`，让发行版后台常驻。
+// `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"`，让发行版后台常驻，
+// 并返回该 wsl.exe 的 pid。
 //
 // 只 Start 不 Wait，因此不阻塞调用方。detach 决定该进程是否脱离 gobrave：
 // false（默认）时随 gobrave 退出一起结束，true 时 gobrave 退出后继续运行。
 // stdin/stdout/stderr 全部丢弃，避免继承 gobrave 的管道被牵连；
 // 同时以隐藏控制台方式启动（见 startBackground），后台静默运行、不弹窗。
-func startDistroInBackground(ctx context.Context, distro string, detach bool) error {
+func startDistroInBackground(ctx context.Context, distro string, detach bool) (int, error) {
 	exe, err := wslExePath()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", os.DevNull, err)
+		return 0, fmt.Errorf("open %s: %w", os.DevNull, err)
 	}
 	defer devNull.Close()
 
@@ -152,10 +160,11 @@ func startDistroInBackground(ctx context.Context, distro string, detach bool) er
 	cmd, err := startBackground(exe, args, devNull, detach)
 	if err != nil {
 		logger.Errorf(ctx, "[wsl] start background failed: %v", err)
-		return fmt.Errorf("start wsl background process: %w", err)
+		return 0, fmt.Errorf("start wsl background process: %w", err)
 	}
-	logger.Infof(ctx, "[wsl] background wsl.exe started, pid=%d", cmd.Process.Pid)
-	return cmd.Process.Release()
+	pid := cmd.Process.Pid
+	logger.Infof(ctx, "[wsl] background wsl.exe started, pid=%d", pid)
+	return pid, cmd.Process.Release()
 }
 
 // decodeOutput 把 wsl.exe 的输出解码成 UTF-8。

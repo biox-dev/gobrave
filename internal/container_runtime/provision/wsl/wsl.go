@@ -45,6 +45,10 @@ type WSLProvisioner struct {
 	// 常驻 wsl.exe 会话，其余等待后直接看到「已在运行」并复用。
 	bootMu sync.Mutex
 
+	// keeper 是本进程持有的常驻会话；nil 表示尚未拉起或已结束。
+	// 受 bootMu 保护，只在 bootDistro 内读写。
+	keeper *keeper
+
 	// endpoint 在构造时由配置（或平台默认）确定，之后不再变化：
 	// 启动、停止、卸载都不改写它，避免装配层或其他调用方读到空地址。
 	// 与 Linux 实现（systemdProvisioner.endpoint）保持一致。
@@ -321,6 +325,7 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 			return fmt.Errorf("remove adopt placeholder dir: %w", err)
 		}
 		_ = os.Remove(p.layout.StatePath())
+		_ = os.Remove(p.layout.KeeperPath())
 		logger.Infof(ctx, "[wsl] Uninstall: adopted distro released")
 		return nil
 	}
@@ -330,6 +335,7 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 		logger.Infof(ctx, "[wsl] Uninstall: not installed and not registered, cleaning leftovers only")
 		_ = os.RemoveAll(p.layout.DistroDir())
 		_ = os.Remove(p.layout.StatePath())
+		_ = os.Remove(p.layout.KeeperPath())
 		return nil
 	}
 
@@ -348,6 +354,7 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 		return fmt.Errorf("remove distro dir: %w", err)
 	}
 	_ = os.Remove(p.layout.StatePath())
+	_ = os.Remove(p.layout.KeeperPath())
 	logger.Infof(ctx, "[wsl] Uninstall: done")
 	return nil
 }
@@ -357,9 +364,9 @@ func (p *WSLProvisioner) Uninstall(ctx context.Context) error {
 // 这是每次进程启动都会调用的入口，满足以下约束：
 //  1. 未安装但系统上已有同名发行版时，直接接管（启动发行版）而不是返回 ErrNotInstalled；
 //  2. 发行版既未安装也不存在时返回 ErrNotInstalled，不做任何修复；
-//  3. 已安装时幂等：发行版未运行才拉起一个常驻后台进程
-//     （`sh -lc "sleep infinity"`）占住它，已在运行则直接复用；该进程是否随
-//     gobrave 退出而结束由配置 detach 决定（默认跟随退出）；之后只探测 endpoint 是否连通。
+//  3. 已安装时幂等：只认本进程持有的常驻会话；没有就补拉一个
+//     （`sh -lc "sleep infinity"`）占住发行版，是否随 gobrave 退出由配置 detach 决定；
+//     之后只探测 endpoint 是否连通。
 func (p *WSLProvisioner) Start(ctx context.Context) (string, error) {
 	logger.Infof(ctx, "[wsl] Start: begin, installed=%t distro=%s", p.layout.installed(), p.cfg.Distro)
 	if !p.layout.installed() {
@@ -499,44 +506,100 @@ func (p *WSLProvisioner) waitEndpoint(ctx context.Context) error {
 	}
 }
 
-// bootDistro 启动发行版：已在运行则直接复用，否则拉起一个后台 wsl.exe 会话。
+// bootDistro 确保发行版由一个常驻会话撑住。
 //
-// WSL 在最后一个会话退出后会终止发行版（dockerd 随之停止），所以用
-// `wsl.exe -d <distro> -u root -- sh -lc "sleep infinity"` 常驻占住它。
-// 该进程是否随 gobrave 退出而结束由 cfg.Detach 决定（默认跟随退出）；
-// 无论哪种方式都只 Start 不 Wait，不阻塞调用方。发行版内的 dockerd
-// 仍由它自己维护（systemd 等），gobrave 不执行任何 docker 命令。
+// 「发行版是否 Running」不能作为「已有常驻会话」的证据：WSL 的 Running 只说明
+// 此刻还有会话存在，上一个 gobrave 的常驻会话可能正被系统回收，紧接着发行版
+// 就会被终止（dockerd 随之停止）。因此这里只认「本进程持有、且仍活着」的会话：
+//
+//  1. 本进程已有存活的 keeper → 直接复用；
+//  2. 配置为 detach 时，若记录里上次 gobrave 留下的脱离会话仍活着 → 认领它；
+//  3. 其余情况一律补拉一个：多一个 keepalive 会话无害（约 1MB），
+//     而漏拉会导致发行版在稍后悄悄退出。
+//
+// 「我在跑」与「我持有」分离后，进程重启时的 Running 残留不再是问题：
+// 老会话消失、新会话接手，发行版始终有一条命被本进程握着。
 //
 // 静默：wsl.exe 以隐藏控制台（CREATE_NO_WINDOW）方式拉起，不会弹出控制台窗口。
-//
-// 幂等：进程内用 bootMu 串行化，启动后等发行版真正进入 Running 才返回，
-// 因此并发调用最多只拉起一个常驻会话。
+// 幂等：用 bootMu 串行化，拉起后等发行版真正进入 Running 才返回。
 func (p *WSLProvisioner) bootDistro(ctx context.Context, distro string) error {
 	p.bootMu.Lock()
 	defer p.bootMu.Unlock()
 
-	running, queryErr := distroRunning(ctx, distro)
-	if queryErr == nil && running {
-		logger.Infof(ctx, "[wsl] bootDistro: distro %s is already running", distro)
+	if p.keeper.alive() {
+		logger.Infof(ctx, "[wsl] bootDistro: keeper pid=%d is alive, reuse it", p.keeper.PID)
 		return nil
 	}
+
+	previous := p.readKeeper(ctx)
+	p.keeper = nil
+	if previous.alive() {
+		switch {
+		case p.cfg.Detach && previous.Detach:
+			// 脱离 gobrave 的会话会一直存活，直接认领，避免每次启动都多一个。
+			p.keeper = previous
+			logger.Infof(ctx, "[wsl] bootDistro: adopting detached keeper pid=%d", previous.PID)
+			return nil
+		case !processAlive(previous.Owner):
+			// 会话的 owner 已退出，说明这是上个 gobrave 遗留的（例如 detach 被改回 false）：
+			// 先结束它，再由本进程重新拉起，避免留下无人管理的常驻会话。
+			logger.Infof(ctx, "[wsl] bootDistro: terminating stale keeper pid=%d (owner %d is gone)", previous.PID, previous.Owner)
+			if err := terminateProcess(previous.PID); err != nil {
+				logger.Warnf(ctx, "[wsl] bootDistro: terminate stale keeper pid=%d failed: %v", previous.PID, err)
+			}
+		}
+	}
+
+	running, queryErr := distroRunning(ctx, distro)
 	if queryErr != nil {
 		// 无法查询运行状态（旧版 WSL 不支持 --running）：直接拉起，不等待确认。
 		logger.Warnf(ctx, "[wsl] bootDistro: query running distros failed: %v, starting anyway", queryErr)
+	} else if running {
+		logger.Infof(ctx, "[wsl] bootDistro: distro %s is running but no keeper is held by this process, starting one", distro)
 	}
+	// 拉起前已 Running：可能是上一个 gobrave 的会话还没被系统回收完，
+	// 新会话有被连带终止的风险，需要确认它稳定存活。
+	winding := queryErr == nil && running
 
-	if err := startDistroInBackground(ctx, distro, p.cfg.Detach); err != nil {
-		logger.Errorf(ctx, "[wsl] bootDistro: start distro %s failed: %v", distro, err)
-		return fmt.Errorf("boot distro %s: %w", distro, err)
-	}
-	if queryErr == nil {
-		if err := waitDistroRunning(ctx, distro); err != nil {
-			// 不作为失败：真正的可用性由后续 endpoint 探测判定。
-			logger.Warnf(ctx, "[wsl] bootDistro: distro %s has not reported running: %v", distro, err)
+	held := false
+	for attempt := 1; attempt <= distroBootAttempts && !held; attempt++ {
+		pid, err := startDistroInBackground(ctx, distro, p.cfg.Detach)
+		if err != nil {
+			logger.Errorf(ctx, "[wsl] bootDistro: start distro %s failed: %v", distro, err)
+			return fmt.Errorf("boot distro %s: %w", distro, err)
+		}
+		p.keeper = &keeper{PID: pid, Detach: p.cfg.Detach, Owner: os.Getpid(), StartedAt: time.Now()}
+		p.writeKeeper(ctx, p.keeper)
+
+		if queryErr == nil {
+			if err := waitDistroRunning(ctx, distro); err != nil {
+				// 不作为失败：真正的可用性由后续 endpoint 探测判定。
+				logger.Warnf(ctx, "[wsl] bootDistro: distro %s has not reported running: %v", distro, err)
+			}
+		}
+		held = !winding || p.keeperSettled(ctx, pid)
+		if !held {
+			logger.Warnf(ctx, "[wsl] bootDistro: keeper pid=%d exited while the previous session was winding down (attempt %d/%d)", pid, attempt, distroBootAttempts)
+			p.keeper = nil
 		}
 	}
-	logger.Infof(ctx, "[wsl] bootDistro: distro %s started in background", distro)
+	if !held {
+		return fmt.Errorf("boot distro %s: keeper did not survive WSL teardown", distro)
+	}
+	logger.Infof(ctx, "[wsl] bootDistro: distro %s started in background (detach=%t, pid=%d)", distro, p.cfg.Detach, p.keeper.PID)
 	return nil
+}
+
+// keeperSettled 观察一小段时间，确认刚拉起的常驻会话没有被 WSL 的收尾动作连带终止。
+//
+// 只在「拉起前发行版已 Running」时使用：那说明还有上一个会话在退出，
+// 新会话可能刚好撞上发行版的终止过程。
+func (p *WSLProvisioner) keeperSettled(ctx context.Context, pid int) bool {
+	select {
+	case <-ctx.Done():
+	case <-time.After(keeperSettleDelay):
+	}
+	return p.keeper != nil && p.keeper.PID == pid && p.keeper.alive()
 }
 
 // Endpoint 返回 daemon 地址。
