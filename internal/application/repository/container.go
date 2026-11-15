@@ -574,6 +574,28 @@ func (r *containerRepository) MarkOutboxEventPending(ctx context.Context, id int
 		Where("id = ?", id).
 		Update("status", "pending").Error
 }
+
+// ResetStaleProcessingOutboxEvent 回收卡在 processing 的事件。
+//
+// dispatcher 只有在投递前把事件置为 processing，处理器成功后才回写 sent/pending；
+// 进程在中间崩溃时事件会永远停在 processing，ListPendingOutboxEvent 再也选不到它。
+// 这里按 updated_at 超时把这类事件放回 pending，让下一轮轮询重新投递。
+// 阈值必须大于任何 handler 的最长执行时间，避免误重置正在处理的事件。
+func (r *containerRepository) ResetStaleProcessingOutboxEvent(ctx context.Context, olderThan time.Duration) (int64, error) {
+	if olderThan <= 0 {
+		return 0, errors.New("olderThan must be positive")
+	}
+	cutoff := time.Now().Add(-olderThan)
+	result := r.db.WithContext(ctx).
+		Model(&types.OutboxEvent{}).
+		Where("status = ? AND updated_at < ?", "processing", cutoff).
+		Update("status", "pending")
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
 func (r *containerRepository) MarkOutboxEventFailed(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).
 		Model(&types.OutboxEvent{}).

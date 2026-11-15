@@ -57,7 +57,14 @@ type OutboxDispatcher struct {
 	bus          event.Bus
 	batchSize    int
 	pollInterval time.Duration
+	// recoverAfter 是 processing 事件被判定为「卡死」的超时阈值。
+	// 必须大于任何 handler 的最长执行时间，否则可能重置正在处理的事件。
+	recoverAfter time.Duration
 }
+
+// defaultOutboxStaleAfter 默认的 processing 超时阈值：创建链路在冷启动拉镜像时
+// 可能持续数分钟，取 10 分钟留足余量。
+const defaultOutboxStaleAfter = 10 * time.Minute
 
 func NewOutboxDispatcher(repo interfaces.ContainerRepository, bus event.Bus) *OutboxDispatcher {
 	return &OutboxDispatcher{
@@ -65,6 +72,7 @@ func NewOutboxDispatcher(repo interfaces.ContainerRepository, bus event.Bus) *Ou
 		bus:          bus,
 		batchSize:    100,
 		pollInterval: time.Second,
+		recoverAfter: defaultOutboxStaleAfter,
 	}
 }
 
@@ -207,14 +215,26 @@ func (d *OutboxDispatcher) dispatchOnce(ctx context.Context) {
 // recoverStaleProcessing resets outbox events that have been stuck in
 // "processing" state for too long (e.g. due to a crash) back to "pending"
 // so they can be retried.
+//
+// ListPendingOutboxEvent only selects "pending" rows, so an event whose handler
+// died between MarkOutboxEventProcessing and MarkOutboxEventSent/Pending would
+// otherwise stay stuck forever. The staleness window must be longer than the
+// slowest handler (container create/start can legitimately take minutes on a
+// cold image pull), which is why it is measured from updated_at and kept well
+// above the per-request wait budget.
 func (d *OutboxDispatcher) recoverStaleProcessing(ctx context.Context) {
-	// The repository already handles this via ListPendingOutboxEvent which
-	// only returns "pending" events. Stale "processing" events need a
-	// separate recovery path.
-	//
-	// For now, we rely on the fact that OutboxCreateRequestEvent handlers
-	// are idempotent: if a handler crashes before marking as sent, the
-	// event stays "processing" and won't be picked up again. A future
-	// enhancement could add a staleness timeout with a dedicated repo method.
-	_ = ctx
+	// 阈值取得比任何 handler 的最长执行时间都大：创建/启动链路在冷启动拉镜像时
+	// 可能持续数分钟，误重置正在处理的事件会导致重复投递。
+	staleAfter := d.recoverAfter
+	if staleAfter <= 0 {
+		staleAfter = defaultOutboxStaleAfter
+	}
+	reset, err := d.repo.ResetStaleProcessingOutboxEvent(ctx, staleAfter)
+	if err != nil {
+		logger.Errorf(ctx, "[OutboxDispatcher] reset stale processing outbox failed: %v", err)
+		return
+	}
+	if reset > 0 {
+		logger.Warnf(ctx, "[OutboxDispatcher] reset %d stale processing outbox events back to pending, stale_after=%s", reset, staleAfter)
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/biox-dev/gobrave/internal/config"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
@@ -284,7 +285,7 @@ func (m *mockContainerRepo) CreateContainerInstance(ctx context.Context, item *t
 func (m *mockContainerRepo) GetContainerInstanceByID(ctx context.Context, id int64) (*types.ContainerInstance, error) {
 	item, ok := m.instances[id]
 	if !ok {
-		return nil, errors.New("container instance not found")
+		return nil, gorm.ErrRecordNotFound
 	}
 	return item, nil
 }
@@ -295,7 +296,7 @@ func (m *mockContainerRepo) GetContainerInstanceByRuntimeID(ctx context.Context,
 			return v, nil
 		}
 	}
-	return nil, errors.New("container instance not found")
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (m *mockContainerRepo) GetContainerInstanceByOwner(ctx context.Context, ownerType types.ContainerOwnerType, ownerID int64) (*types.ContainerInstance, error) {
@@ -304,7 +305,7 @@ func (m *mockContainerRepo) GetContainerInstanceByOwner(ctx context.Context, own
 			return v, nil
 		}
 	}
-	return nil, errors.New("container instance not found")
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (m *mockContainerRepo) UpdateContainerInstance(ctx context.Context, item *types.ContainerInstance) error {
@@ -535,6 +536,26 @@ func (m *mockContainerRepo) PageOutboxEvent(ctx context.Context, pagination *typ
 	return m.outbox, int64(len(m.outbox)), nil
 }
 
+func (m *mockContainerRepo) ResetStaleProcessingOutboxEvent(ctx context.Context, olderThan time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-olderThan)
+	var reset int64
+	for _, v := range m.outbox {
+		if v.Status != "processing" {
+			continue
+		}
+		updated := v.UpdatedAt
+		if updated.IsZero() {
+			// 测试里没显式设置时间：按「很久以前」处理，模拟崩溃残留。
+			updated = cutoff.Add(-time.Minute)
+		}
+		if updated.Before(cutoff) {
+			v.Status = "pending"
+			reset++
+		}
+	}
+	return reset, nil
+}
+
 type dockerMockRuntime struct {
 	handler    containerruntime.RuntimeEventHandler
 	runtimeID  string
@@ -682,7 +703,7 @@ func TestContainerManager_CreateByTemplate_StaysCreatingUntilStartedEvent(t *tes
 	}
 }
 
-func TestContainerManager_OnEvent_ContainerDeleted_DeletesContainerInstance(t *testing.T) {
+func TestContainerManager_OnEvent_ContainerDeleted_KeepsInstanceAsDeleted(t *testing.T) {
 	ctx := context.Background()
 	repo := newMockContainerRepo()
 	rt := &dockerMockRuntime{}
@@ -694,8 +715,15 @@ func TestContainerManager_OnEvent_ContainerDeleted_DeletesContainerInstance(t *t
 	}
 
 	mgr.OnEvent(containerruntime.RuntimeEvent{Type: "ContainerDeleted", RuntimeID: inst.RuntimeID, Message: "container not found"})
-	if _, err := repo.GetContainerInstanceByID(ctx, inst.ID); err == nil {
-		t.Fatalf("expected container instance deleted after ContainerDeleted event")
+
+	// 行必须保留：删除命令（ContainerDeleteRequest）晚到 / 重放时仍需要按 ID 找到实例，
+	// 否则会 record not found 并被无限重试。
+	stored, err := repo.GetContainerInstanceByID(ctx, inst.ID)
+	if err != nil {
+		t.Fatalf("expected container instance to be kept after ContainerDeleted event, got err=%v", err)
+	}
+	if stored.Status != types.ContainerDeleted {
+		t.Fatalf("expected status %s, got %s", types.ContainerDeleted, stored.Status)
 	}
 }
 

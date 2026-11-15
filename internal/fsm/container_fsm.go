@@ -46,7 +46,7 @@ func (f *FSM) Transition(
 
 		// 如果容器运行太快，ContainerStarted与 ContainerExited可能会竞争
 	case types.ContainerCreating:
-		if to == types.ContainerRunning || to == types.ContainerFailed || to == types.ContainerStopped || to == types.ContainerDeletePending {
+		if to == types.ContainerRunning || to == types.ContainerFailed || to == types.ContainerStopped || to == types.ContainerDeletePending || to == types.ContainerDeleted {
 			return nil
 		}
 
@@ -57,6 +57,7 @@ func (f *FSM) Transition(
 			to == types.ContainerDeletePending ||
 			to == types.ContainerReCreatePending ||
 			to == types.ContainerPaused ||
+			to == types.ContainerDeleted ||
 			to == types.ContainerFailed {
 			return nil
 		}
@@ -105,6 +106,12 @@ func (f *FSM) Transition(
 		if to == types.ContainerDeletePending || to == types.ContainerRunning || to == types.ContainerStopped || to == types.ContainerReCreatePending || to == types.ContainerDeleted {
 			return nil
 		}
+
+	// ContainerDeleted 是终态汇点：运行时的删除事件可以从任意活动状态直接到达
+	// （例如容器被外部 kubectl/docker 删掉时，实例可能还处于 running）。
+	// 它没有任何出口，行删除由删除命令的消费方（executeDelete）负责。
+	case types.ContainerDeleted:
+		return errors.New("invalid transition: deleted is a terminal state")
 	}
 
 	return errors.New("invalid transition")

@@ -967,12 +967,17 @@ func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent) {
 			_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerCreatePending, OutboxEventTypeCreateRequest)
 
 		} else {
-			_ = m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerDeleted, "ContainerDeleted")
-
-			if err := m.containerRepo.DeleteContainerInstance(ctx, inst.ID); err != nil {
-				logger.Warnf(ctx, "[ContainerManager] delete container instance failed, instance_id=%d runtime_id=%s err=%v", inst.ID, e.RuntimeID, err)
+			// 只把实例收敛到 deleted，不在事件回调里删行。
+			//
+			// 行是「实例身份」的真相源：如果在这里删掉，晚到 / 重放的
+			// ContainerDeleteRequest、ContainerStopRequest 会直接 record not found
+			// 并被当作失败无限重试，DAG 协调器与状态等待方也会静默丢事件。
+			// 真正的行删除由删除命令的消费方（executeDelete）或终端容器清理负责，
+			// 那里能观察到 runtime 删除的成功，也能容忍记录已经不存在。
+			if err := m.TransitionContainerAndEnqueueOutbox(ctx, inst, types.ContainerDeleted, "ContainerDeleted"); err != nil {
+				logger.Warnf(ctx, "[ContainerManager] transition to deleted failed, instance_id=%d runtime_id=%s err=%v", inst.ID, e.RuntimeID, err)
 			}
-			// 实例记录已删除：容器集合发生变化，广播给所有在线客户端刷新队列状态。
+			// 容器集合发生变化，广播给所有在线客户端刷新队列状态。
 			m.broadcastContainerChanged(ctx, "ContainerDeleted", inst)
 		}
 

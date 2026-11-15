@@ -22,6 +22,9 @@ import (
 
 var (
 	errWorkerInvalidState = errors.New("worker event invalid for current state")
+	// errWorkerInstanceGone 表示实例记录已经不存在：对删除命令而言目标状态已达成，
+	// 不是可重试错误（与 errWorkerInvalidState 的「状态不匹配」语义区分开）。
+	errWorkerInstanceGone = errors.New("worker container instance already gone")
 	// errBraveEnvFileCreate marks the brave-env.sh preparation step so callers can
 	// report the historical ContainerCreateBraveEnvFailed event.
 	errBraveEnvFileCreate = errors.New("create brave-env.sh")
@@ -268,10 +271,10 @@ func (w *ContainerCreateWorker) handleDeleteRequest(ctx context.Context, req Out
 	// }
 
 	if err := w.executeDelete(execCtx, payload.ContainerInstanceID); err != nil {
-		if errors.Is(err, errWorkerInvalidState) {
-			// 实例记录已被删掉（runtime 的 ContainerDeleted 事件已经清理过实例），
-			// 删除的目标状态已达成，直接标记 sent，否则会每秒重试一次 record not found。
-			logger.Warnf(ctx, "[ContainerCreateWorker] skip stale delete request, outbox_id=%d instance_id=%d err=%v",
+		if errors.Is(err, errWorkerInstanceGone) {
+			// 实例已经不在了：删除的目标状态已达成（runtime 事件先前已收敛删除，
+			// 或上一次重试已经删掉了行），直接标记 sent，避免每秒重试 record not found。
+			logger.Warnf(ctx, "[ContainerCreateWorker] skip delete request, instance already gone, outbox_id=%d instance_id=%d err=%v",
 				req.OutboxID, payload.ContainerInstanceID, err)
 			_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
 			return
@@ -657,21 +660,40 @@ func (w *ContainerCreateWorker) executeStart(ctx context.Context, instanceID int
 
 // executeDelete performs the actual container delete. It is called by
 // ContainerCreateWorker.handleDeleteRequest (async path).
+//
+// 删除命令是幂等的：实例记录不存在说明删除已经完成（可能是 runtime 的
+// ContainerDeleted 事件先一步收敛，或上一次重试已经删掉了行），返回
+// errWorkerInstanceGone 让调用方把 outbox 标记为 sent 而不是无限重试。
+//
+// 行删除由这里负责（OnEvent 不再删行）：只有删除命令的消费方才能确认运行时
+// 资源确实被删掉，并且能容忍记录已经不存在。
 func (w *ContainerCreateWorker) executeDelete(ctx context.Context, instanceID int64) error {
 	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
 	if err != nil {
-		// 实例记录不存在说明它已经被删除（例如 runtime 的 ContainerDeleted 事件先一步
-		// 清理了实例），这是删除的终态而不是可重试的错误，返回 errWorkerInvalidState
-		// 让调用方按「已完成」处理，避免 outbox 事件被无限重试。
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("%w: instance already deleted, instance_id=%d", errWorkerInvalidState, instanceID)
+			return fmt.Errorf("%w: instance_id=%d", errWorkerInstanceGone, instanceID)
 		}
 		return err
 	}
 
-	// Transition to deleting.
-	if err := w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerDeleting, "ContainerDeleting"); err != nil {
-		return err
+	// 删除命令的入口状态取决于调用方：outbox 链路已在 DeleteContainer 里迁移到
+	// delete_pending，其它直接调用（测试 / 终端清理）可能仍处于活动状态。
+	// FSM 只有 delete_pending → deleting 这条边，因此非删除态必须先补一次
+	// delete_pending 迁移，而不是直接从 running 跳到 deleting。
+	switch inst.Status {
+	case types.ContainerDeleting, types.ContainerDeleted:
+		// 已在删除中 / 已删除，无需再迁移。
+	case types.ContainerDeletePending:
+		if err := w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerDeleting, "ContainerDeleting"); err != nil {
+			return err
+		}
+	default:
+		if err := w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerDeletePending, "ContainerDeletePending"); err != nil {
+			return err
+		}
+		if err := w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerDeleting, "ContainerDeleting"); err != nil {
+			return err
+		}
 	}
 
 	// Resolve runtime and delete the runtime resource.
@@ -683,16 +705,13 @@ func (w *ContainerCreateWorker) executeDelete(ctx context.Context, instanceID in
 		}
 	}
 
-	// Transition to stopped, then delete the DB record.
-	// _ = w.transition(ctx, inst, fsm.Stopped, "ContainerDeleted")
-	// _ = w.createContainerEvent(ctx, inst.ID, "ContainerDeleted", "container deleted")
-
-	// 删除ContainerInstance由 runtime event 触发，见 kubernetes_executor.go#L103
-	// func (m *ContainerManager) OnEvent(e containerruntime.RuntimeEvent)
-
-	// if err := w.repo.DeleteContainerInstance(ctx, inst.ID); err != nil {
-	// 	return err
-	// }
+	// 运行时删除完成后由本命令负责删行（OnEvent 只收敛状态，不删行）。
+	if err := w.repo.DeleteContainerInstance(ctx, inst.ID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return fmt.Errorf("delete container instance %d: %w", inst.ID, err)
+	}
 
 	return nil
 }
