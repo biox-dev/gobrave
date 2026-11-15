@@ -1161,6 +1161,9 @@ func (r *TerminalSessionRegistry) StartMaintenance(ctx context.Context) {
 
 // maintain 是终端会话的定期维护：同步活跃时间 + 回收空闲超时的会话。
 //
+// 只处理「终端会话」（SessionKind=terminal）：Web 应用会话（SessionKind=web）
+// 不在这里回收，它们的生命周期由业务侧显式启停 / 删除决定。
+//
 // 是否回收只看持久层的 last_access_at（数据库是唯一真相），不再按内存里的
 // lastActive 自行算一遍 TTL：两套时钟会各判一次，导致同一会话被重复回收，
 // 或者内存里的时间被每轮刷新后永远不满足回收条件。
@@ -1198,6 +1201,11 @@ func (r *TerminalSessionRegistry) maintain(ctx context.Context) {
 		return
 	}
 	for _, rec := range rows {
+		// Web 应用会话不参与本维护：它没有 PTY，也没有 WS 接入，
+		// 用 last_access_at 判空闲会把用户还在用的 Web 应用误回收。
+		if rec.NormalizedSessionKind() != types.AppSessionKindTerminal {
+			continue
+		}
 		if rec.LastAccessAt == nil || now.Sub(*rec.LastAccessAt) <= ttl {
 			continue
 		}

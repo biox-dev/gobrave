@@ -17,6 +17,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"gorm.io/gorm"
 )
 
 var (
@@ -267,6 +268,14 @@ func (w *ContainerCreateWorker) handleDeleteRequest(ctx context.Context, req Out
 	// }
 
 	if err := w.executeDelete(execCtx, payload.ContainerInstanceID); err != nil {
+		if errors.Is(err, errWorkerInvalidState) {
+			// 实例记录已被删掉（runtime 的 ContainerDeleted 事件已经清理过实例），
+			// 删除的目标状态已达成，直接标记 sent，否则会每秒重试一次 record not found。
+			logger.Warnf(ctx, "[ContainerCreateWorker] skip stale delete request, outbox_id=%d instance_id=%d err=%v",
+				req.OutboxID, payload.ContainerInstanceID, err)
+			_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
+			return
+		}
 		logger.Errorf(ctx, "[ContainerCreateWorker] execute delete failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
 		_ = w.repo.MarkOutboxEventPending(ctx, req.OutboxID)
 		return
@@ -651,6 +660,12 @@ func (w *ContainerCreateWorker) executeStart(ctx context.Context, instanceID int
 func (w *ContainerCreateWorker) executeDelete(ctx context.Context, instanceID int64) error {
 	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
 	if err != nil {
+		// 实例记录不存在说明它已经被删除（例如 runtime 的 ContainerDeleted 事件先一步
+		// 清理了实例），这是删除的终态而不是可重试的错误，返回 errWorkerInvalidState
+		// 让调用方按「已完成」处理，避免 outbox 事件被无限重试。
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: instance already deleted, instance_id=%d", errWorkerInvalidState, instanceID)
+		}
 		return err
 	}
 
