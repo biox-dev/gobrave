@@ -103,7 +103,10 @@ func (f *FSM) Transition(
 		}
 
 	case types.ContainerFailed:
-		if to == types.ContainerDeletePending || to == types.ContainerRunning || to == types.ContainerStopped || to == types.ContainerReCreatePending || to == types.ContainerDeleted {
+		// failed 允许被重新拉起：start_pending 走「重新 start 已有运行时资源」的链路，
+		// re_create_pending 走「销毁后按模板重建」的链路，两者都在 failed 上有意义
+		// （例如容器因启动命令失败进入 failed，用户修好后直接 Start）。
+		if to == types.ContainerDeletePending || to == types.ContainerRunning || to == types.ContainerStopped || to == types.ContainerStartPending || to == types.ContainerReCreatePending || to == types.ContainerDeleted {
 			return nil
 		}
 
