@@ -44,5 +44,7 @@ func (p *analysisRequestParser) ParseRequestParam(
 		return nil, nil
 	}
 
-	return analysisform.BuildParseAnalysisResult(ctx, p.dataService, requestParam, formJSONWrap)
+	// 运行期只关心 resolved_inputs，没有节点名称可传，因此结果里的
+	// analysis_name 为空串，不会被误当成真实名称。
+	return analysisform.BuildParseAnalysisResult(ctx, p.dataService, requestParam, formJSONWrap, "")
 }

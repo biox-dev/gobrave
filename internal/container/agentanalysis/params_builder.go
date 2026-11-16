@@ -112,7 +112,7 @@ func (b *analysisNodeParamsBuilder) BuildAnalysisNodeParams(ctx context.Context,
 	}
 
 	// 与 handler 保存 / 运行节点一致：按脚本表单解析 request_param。
-	resolvedInputs, err := analysisform.BuildParseAnalysisResult(ctx, b.dataSvc, in.RequestParam, formJSONWrap)
+	resolvedInputs, err := analysisform.BuildParseAnalysisResult(ctx, b.dataSvc, in.RequestParam, formJSONWrap, node.NodeName)
 	if err != nil {
 		return result, fmt.Errorf("failed to parse request_param with script io_schema: %w", err)
 	}

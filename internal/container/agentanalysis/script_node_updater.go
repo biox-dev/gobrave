@@ -69,7 +69,7 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 			return result, fmt.Errorf("update_script_analysis: failed to load script form (io_schema.json): %w", err)
 		}
 
-		resolvedInputs, err := analysisform.BuildParseAnalysisResult(ctx, u.dataSvc, in.RequestParam, formJSONWrap)
+		resolvedInputs, err := analysisform.BuildParseAnalysisResult(ctx, u.dataSvc, in.RequestParam, formJSONWrap, node.NodeName)
 		if err != nil {
 			return result, fmt.Errorf("update_script_analysis: failed to parse request_param with script io_schema: %w", err)
 		}

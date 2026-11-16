@@ -279,12 +279,11 @@ func (h *AnalysisHandler) ParseParams(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to get workflow visualization").WithDetails(err.Error()))
 		return
 	}
-	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
+	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap, strings.TrimSpace(req.NodeName))
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
 		return
 	}
-	parseAnalysisResult["analysis_name"] = strings.TrimSpace(req.NodeName)
 
 	runtimeDAG, err := compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, req.compileParams(), dagDefinition)
 	if err != nil {
@@ -368,12 +367,11 @@ func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 		return
 	}
 
-	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
+	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap, nodeName)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
 		return
 	}
-	parseAnalysisResult["analysis_name"] = nodeName
 
 	dagDefinition, err := h.workflowService.GetWorkflowVisByWorkflowID(c.Request.Context(), workflowID)
 	if err != nil {

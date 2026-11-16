@@ -103,19 +103,20 @@ func NewAnalysisNodeFromScript(
 		requestParam = map[string]any{}
 	}
 
+	nodeName := strings.TrimSpace(spec.NodeName)
+	if nodeName == "" {
+		nodeName = strings.TrimSpace(script.Name)
+	}
+
 	var resolvedInputs map[string]any
 	if len(requestParam) > 0 {
-		built, err := BuildParseAnalysisResult(ctx, dataService, requestParam, scriptFormJSON)
+		built, err := BuildParseAnalysisResult(ctx, dataService, requestParam, scriptFormJSON, nodeName)
 		if err != nil {
 			return result, fmt.Errorf("failed to parse request_param with script io_schema: %w", err)
 		}
 		resolvedInputs = built
 	}
 
-	nodeName := strings.TrimSpace(spec.NodeName)
-	if nodeName == "" {
-		nodeName = strings.TrimSpace(script.Name)
-	}
 	executor := strings.TrimSpace(spec.Executor)
 	if executor == "" {
 		executor = "local"

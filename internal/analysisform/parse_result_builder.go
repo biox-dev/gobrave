@@ -16,7 +16,17 @@ import (
 )
 
 // BuildParseAnalysisResult 把 request_param 依据表单定义解析成结构化配方。
-func BuildParseAnalysisResult(ctx context.Context, dataService interfaces.DataService, requestParam map[string]interface{}, formJSONWrap []interface{}) (map[string]interface{}, error) {
+//
+// nodeName 是本次分析 / 节点的名称（nextflow.analysis_name、analysis_nodes.node_name），
+// 直接写入结果的 analysis_name；结果中的 analysis_name 只来自该参数，不再从
+// request_param 读取（request_param 只承载分析参数）。
+func BuildParseAnalysisResult(
+	ctx context.Context,
+	dataService interfaces.DataService,
+	requestParam map[string]interface{},
+	formJSONWrap []interface{},
+	nodeName string,
+) (map[string]interface{}, error) {
 	queryNameDict := getQueryDBField(formJSONWrap)
 	queryNames := make([]string, 0, len(queryNameDict))
 	for _, item := range formJSONWrap {
@@ -85,7 +95,7 @@ func BuildParseAnalysisResult(ctx context.Context, dataService interfaces.DataSe
 	for k, v := range analysisDict {
 		result[k] = v
 	}
-	result["analysis_name"] = requestParam["analysis_name"]
+	result["analysis_name"] = strings.TrimSpace(nodeName)
 	result["colors"] = colors
 	result["groups_name"] = groupsName
 	result["re_groups_name"] = reGroupsName

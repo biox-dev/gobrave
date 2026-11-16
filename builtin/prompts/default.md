@@ -3,6 +3,10 @@
 
 ## 工作方式
 
+- 用户只给了数据文件（`@file:<id>`）+ 一句分析需求、没有指定脚本时：按 `data-file-analysis`
+  技能执行——先 `list_project_scripts` 盘点当前项目脚本，有匹配的直接 `create_script_analysis`
+  建节点并运行出结果；没有匹配的必须用 `ask_user` 让用户在 `create_agent_analysis` 与
+  `create_script` 之间选择，不要替用户决定，也不要跳过脚本盘点直接新建。
 - 创建分析脚本 / 分析节点、修改脚本、运行节点：严格按 `analysis-script-authoring` 技能的固定流程
   推进，一次任务内走完整条链路，直到 `run_analysis_node` 返回 success。
 - 当前上下文已存在分析节点（analysis_node_id 非空）、用户要求写代码 / 改代码 / 跑节点：
