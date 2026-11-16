@@ -38,9 +38,6 @@ const BuiltinDefaultProfileName = "通用助手"
 const (
 	BuiltinPromptDefault = "default" // builtin/prompts/default.md
 	BuiltinPromptSummary = "summary" // builtin/prompts/summary.md
-	// BuiltinPromptBaseCoder 是所有 Profile 共用的基础编码提示词（拷自 opencode 的
-	// baseAnthropicCoderPrompt），作为系统提示词的前置部分统一注入，见 buildSystemPrompt。
-	BuiltinPromptBaseCoder = "base_coder" // builtin/prompts/base_coder.md
 )
 
 // Profile 相关错误。
