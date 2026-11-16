@@ -1,7 +1,6 @@
 ---
 name: analysis-script-workflow
 description: 创建 / 修改生物信息学分析脚本并跑通分析节点的固定流程：create_script → 确认 io_schema 契约 → 写脚本 → create_script_analysis → build_analysis_node_params → run_analysis_node，包含 io_schema.json 生成规则、FileSelect 输入输出写法、生物分组不明确时必须先 ask_user 询问用户，以及失败迭代约束。用户要求新建分析脚本 / 分析节点、修改脚本或运行节点时使用。
-user-invocable: true
 ---
 
 ## 创建脚本工作空间的固定流程

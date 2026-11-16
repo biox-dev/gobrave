@@ -1,7 +1,6 @@
 ---
 name: analysis-io-schema-spec
 description: 生成 / 修改脚本 io_schema.json（get_script 返回的 io_schema_path）的输入契约规范：只允许 BaseInput、BaseTextArea、BaseTextAreaNum、BaseInputNumber、BaseSwitch、BaseColorPicker、ThreeColorPicker、Divider、BaseSelect、FileSelect 十种类型；逐项说明字段写法、request_param 取值与后端解析后的 params.json 结构；其中 FileSelect 给出完整字段表、UI 渲染与 request_param 形态、后端合并文件记录的解析规则、脚本读取方式与常见错误。编写、校验 io_schema.json 或推算 params.json 时使用。
-user-invocable: true
 disable-render: true
 ---
 

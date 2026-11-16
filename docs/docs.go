@@ -15890,9 +15890,6 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
-                },
-                "user_invocable": {
-                    "type": "boolean"
                 }
             }
         },
@@ -16425,9 +16422,6 @@ const docTemplate = `{
                 "skill_file_path": {
                     "description": "SKILL.md 路径",
                     "type": "string"
-                },
-                "user_invocable": {
-                    "type": "boolean"
                 },
                 "version": {
                     "type": "string"

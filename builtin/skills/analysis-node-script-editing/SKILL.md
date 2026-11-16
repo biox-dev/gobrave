@@ -1,7 +1,6 @@
 ---
 name: analysis-node-script-editing
 description: 在已创建的分析节点里撰写 / 修改 qmd 分析脚本：从 script_file_path 与 params.json 编写最简代码、tidyverse 读取表格、knitr::kable 打印、按 io_schema outputs 写 outputs.json，以及用 run_analysis_node 运行并迭代。用户要求在分析节点中写代码、改代码或运行当前节点时使用。
-user-invocable: true
 ---
 
 ## 分析节点脚本修改

@@ -1,7 +1,6 @@
 ---
 name: analysis-script-spec
 description: 分析脚本修改规范总入口：修改 / 补充脚本时必须遵守的约定，目前覆盖输出约定（读 get_script 返回的 io_schema_path 中的 io_schema.json，按 outputs 的 name / type / role 在 script_file_path 的脚本里产出文件，并在 params$output_dir 下写出 outputs.json），其余约定后续补充。用户要求修改脚本、补充输出或节点提示缺少产物时使用。
-user-invocable: true
 ---
 
 ## 分析脚本修改规范

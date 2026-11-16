@@ -15,7 +15,6 @@ import (
 const sampleSKILL = `---
 name: demo-skill
 description: A demo skill for tests.
-user-invocable: true
 ---
 
 # Demo
@@ -42,9 +41,6 @@ func TestParseContent(t *testing.T) {
 	}
 	if s.Name != "demo-skill" || s.Description != "A demo skill for tests." {
 		t.Fatalf("metadata = %+v", s)
-	}
-	if !s.UserInvocable {
-		t.Fatalf("user-invocable not parsed")
 	}
 	if !strings.Contains(s.Instructions, "Follow these steps.") {
 		t.Fatalf("instructions = %q", s.Instructions)

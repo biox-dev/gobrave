@@ -50,7 +50,6 @@ type Skill struct {
 	Name                   string `yaml:"name" json:"name"`
 	Description            string `yaml:"description" json:"description"`
 	ManifestVersion        string `yaml:"version,omitempty" json:"version,omitempty"`
-	UserInvocable          bool   `yaml:"user-invocable" json:"user_invocable"`
 	DisableModelInvocation bool   `yaml:"disable-model-invocation" json:"disable_model_invocation"`
 	// DisableRender 为 true 时，get_skill / load_skill_resource 原样返回技能文本，
 	// 不按本轮 RuntimeContext 的业务变量做 pongo2 模板渲染。
@@ -148,7 +147,6 @@ type frontmatter struct {
 	Name                   string `yaml:"name"`
 	Description            string `yaml:"description"`
 	Version                string `yaml:"version,omitempty"`
-	UserInvocable          bool   `yaml:"user-invocable,omitempty"`
 	DisableModelInvocation bool   `yaml:"disable-model-invocation,omitempty"`
 	DisableRender          bool   `yaml:"disable-render,omitempty"`
 }
@@ -161,7 +159,6 @@ func (s *Skill) Marshal() ([]byte, error) {
 		Name:                   s.Name,
 		Description:            s.Description,
 		Version:                s.ManifestVersion,
-		UserInvocable:          s.UserInvocable,
 		DisableModelInvocation: s.DisableModelInvocation,
 		DisableRender:          s.DisableRender,
 	})

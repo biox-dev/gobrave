@@ -15883,9 +15883,6 @@
                 },
                 "name": {
                     "type": "string"
-                },
-                "user_invocable": {
-                    "type": "boolean"
                 }
             }
         },
@@ -16418,9 +16415,6 @@
                 "skill_file_path": {
                     "description": "SKILL.md 路径",
                     "type": "string"
-                },
-                "user_invocable": {
-                    "type": "boolean"
                 },
                 "version": {
                     "type": "string"

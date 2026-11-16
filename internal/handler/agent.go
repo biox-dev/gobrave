@@ -495,7 +495,6 @@ type skillSaveRequest struct {
 	ID                     string `json:"id"`
 	Name                   string `json:"name" binding:"required"`
 	Description            string `json:"description" binding:"required"`
-	UserInvocable          bool   `json:"user_invocable"`
 	DisableModelInvocation bool   `json:"disable_model_invocation"`
 	// DisableRender 为 true 时，技能文本（指令正文 / 附属资源）不做 pongo2 模板渲染。
 	DisableRender bool   `json:"disable_render"`
@@ -614,7 +613,6 @@ func (h *AgentHandler) SaveSkill(c *gin.Context) {
 	sk := &skill.Skill{
 		Name:                   strings.TrimSpace(req.Name),
 		Description:            strings.TrimSpace(req.Description),
-		UserInvocable:          req.UserInvocable,
 		DisableModelInvocation: req.DisableModelInvocation,
 		DisableRender:          req.DisableRender,
 		Instructions:           req.Instructions,
