@@ -89,8 +89,10 @@ type AnalysisNodeRunResult struct {
 	RequestParam map[string]any `json:"request_param,omitempty"`
 	// ResolvedInputs 是按脚本 io_schema 解析 request_param 后的结构化输入。
 	ResolvedInputs map[string]any `json:"resolved_inputs,omitempty"`
-	// InputValidationErrors / OutputValidationErrors 是本次运行前写回节点的校验错误
-	// 快照（运行前会被清空，由编排器在运行期重新填充）。
+	// InputValidationErrors / OutputValidationErrors 是本次运行结束后的校验错误快照：
+	// 运行前会被清空，编排器只在本次运行失败时重新填充，因此成功终态一定为空
+	// （不会携带上一轮运行遗留的缺失产物）。仅在节点进入终态时回传；超时 / 取消
+	// 不带这两个字段（避免把历史快照当成结论）。
 	InputValidationErrors  []any `json:"input_validation_errors,omitempty"`
 	OutputValidationErrors []any `json:"output_validation_errors,omitempty"`
 	// ParamsWarnings 是参数解析阶段发现的非致命问题（如缺少必填输入、

@@ -53,8 +53,10 @@ type RunAnalysisNodeOutput struct {
 	ParamsJSON string `json:"params_json,omitempty"`
 	// ParamsUpdated 表示本次运行前是否按 io_schema 解析并更新了节点参数（命令型节点为 false）。
 	ParamsUpdated bool `json:"params_updated,omitempty"`
-	// InputValidationErrors / OutputValidationErrors 是本次运行前写回节点的校验错误快照
-	// （运行前会被清空，由编排器在运行期重新填充）。
+	// InputValidationErrors / OutputValidationErrors 是本次运行结束后的校验错误快照：
+	// 运行前会被清空，编排器只在本次运行失败时重新填充，因此成功终态一定为空
+	// （不会携带上一轮运行遗留的缺失产物）。仅在节点进入终态时回传；超时 / 取消
+	// 不带这两个字段（避免把历史快照当成结论）。
 	InputValidationErrors  []any `json:"input_validation_errors,omitempty"`
 	OutputValidationErrors []any `json:"output_validation_errors,omitempty"`
 	// ParamsWarnings 是参数解析阶段的非致命提示（如缺少必填输入、存在 io_schema 未声明的键）。
@@ -86,7 +88,7 @@ func runAnalysisNodeDescription() string {
 - **workspace_dir / command_path / params_path**：节点根目录、本次实际执行的 run.sh、本次运行的 params.json。
 - **request_param / resolved_inputs / params_json**：本次实际生效的请求参数、按 io_schema 解析后的结构化输入，以及 params.json 正文。
 - **params_updated**：本次运行前是否按 io_schema 解析并更新了节点参数（命令型节点为 false）。
-- **input_validation_errors / output_validation_errors / params_warnings**：本次运行前写回节点的校验错误快照与参数解析阶段的非致命提示。
+- **input_validation_errors / output_validation_errors / params_warnings**：本次运行结束后的输入 / 输出校验错误快照（仅在节点进入终态时回传；成功终态为空，不会携带上一轮运行遗留的缺失产物；超时 / 取消不带这两个字段）与参数解析阶段的非致命提示。
 - **error**：失败原因（如有）。
 
 ## 后续工具

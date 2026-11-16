@@ -258,13 +258,10 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	if len(result.ParamsWarnings) == 0 {
 		result.ParamsWarnings = warnings
 	}
-	// 参数解析阶段已清空上一轮的校验错误；这里回传本次运行前落库的快照。
-	if result.InputValidationErrors == nil && len(node.InputValidationErrors) > 0 {
-		result.InputValidationErrors = []any(node.InputValidationErrors)
-	}
-	if result.OutputValidationErrors == nil && len(node.OutputValidationErrors) > 0 {
-		result.OutputValidationErrors = []any(node.OutputValidationErrors)
-	}
+	// 校验错误只在终态回传，且来自 waitForCompletion 在本轮运行结束后读取的节点：
+	// 运行前已清空上一轮错误，编排器只在本次失败时重新写入，成功终态必为空。
+	// 超时 / 取消等非终态不回传校验错误（避免把历史快照当成结论），需要时可用
+	// get_analysis_node 查看节点当前记录。
 	return result, runErr
 }
 
@@ -292,7 +289,18 @@ func (r *analysisNodeRunner) resetAndRun(ctx context.Context, node *types.Analys
 		return runtimecontext.AnalysisNodeRunResult{NodeID: node.ID}, fmt.Errorf("failed to submit analysis node: %w", err)
 	}
 
-	return r.waitForCompletion(ctx, node.ID, strings.TrimSpace(node.LogPath), timeout)
+	return r.waitForCompletion(ctx, node, timeout)
+}
+
+// validationErrorSnapshot 把节点记录上的校验错误拷成 []any 快照。
+//
+// 返回值恒为非 nil：调用方用 nil 表示「还没拿到运行后的快照」，用空切片表示「本次
+// 运行没有校验错误」。这样才能区分「无错误」与「尚未读取」，同时避免成功运行因为 nil
+// 再多读一次节点。
+func validationErrorSnapshot(errors types.JSONSlice) []any {
+	snapshot := make([]any, len(errors))
+	copy(snapshot, errors)
+	return snapshot
 }
 
 // readParamsJSON 读取节点 params.json 正文；读取失败或为空时返回空字符串（不视为错误）。
@@ -319,34 +327,46 @@ func readParamsJSON(paramsPath string) string {
 //
 // 每次被唤醒都会重新读取节点并检查终态，因此事件只是「提前唤醒信号」，最终是否结束
 // 仍以节点持久化状态为准，避免把事件与状态不一致的情形误判为已完成。
-func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64, logPath string, timeout time.Duration) (runtimecontext.AnalysisNodeRunResult, error) {
+//
+// node 是调用方已经加载的节点记录（resetAndRun 提交运行前的那一份），这里不再重复读库：
+// 订阅所需的 analysis_id、事件过滤所需的主键、以及超时 / 取消分支回传的路径都从它取。
+// 首次读库发生在被事件或兜底轮询唤醒之后，即「运行有进展后再查」，避免每次运行都多一次
+// 与后续读库重复的查询。
+func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, node *types.AnalysisNode, timeout time.Duration) (runtimecontext.AnalysisNodeRunResult, error) {
+	if node == nil {
+		return runtimecontext.AnalysisNodeRunResult{}, fmt.Errorf("analysis node is required to wait for completion")
+	}
 	deadline := time.Now().Add(timeout)
 
-	node, err := r.analysisSvc.GetAnalysisNodeByID(ctx, nodeID)
-	if err != nil {
-		return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("failed to get analysis node: %w", err)
-	}
 	analysisID := node.AnalysisID
+	// AnalysisNode.ID 是主键（int64），而 AnalysisNode.AnalysisNodeID 是业务字符串 ID；
+	// RuntimeEvent.AnalysisNodeID 的类型是 int64，NodeCompletionCoordinator.
+	// publishNodeResult 填入的正是 node.ID，因此节点维度的匹配用它。
+	// EventRouter 的 sink 只按 analysis_id 分桶（sinks[RuntimeEvent.AnalysisID]），
+	// 所以订阅必须用 analysisID，nodeID 只能在过滤器里收窄到本节点。
+	nodeID := node.ID
 	scriptID := node.ScriptID
-	// 运行期路径全部由节点的 WorkspaceDir 派生，这里先取一份，保证取消 / 超时等
+	// 运行期路径全部由节点的 WorkspaceDir 派生，这里取一份，保证取消 / 超时等
 	// 非终态返回也能告诉模型文件在哪。
 	workspaceDir := strings.TrimSpace(node.WorkspaceDir)
 	commandPath := strings.TrimSpace(node.CommandPath)
 	paramsPath := strings.TrimSpace(node.ParamsPath)
-	// 注意：AnalysisNode.ID 是主键（int64），而 AnalysisNode.AnalysisNodeID 是业务
-	// 字符串 ID；RuntimeEvent.AnalysisNodeID 的类型是 int64，NodeCompletionCoordinator.
-	// publishNodeResult 填入的正是 node.ID，因此这里也按主键匹配。
-	primaryKey := node.ID
+	logPath := strings.TrimSpace(node.LogPath)
 
 	// 订阅 NodeCompletionCoordinator.publishNodeResult 发出的节点完成 / 失败事件。
 	// 过滤器只放行本节点的这两类事件，避免无关节点 / 事件唤醒本 runner。
+	//
+	// 注意：同一 analysis 只保留一个 sink，RegisterWithFilter 遇到已存在的 sink 会直接
+	// 返回它并保留其原有过滤器（例如 DAG 调度器的 SchedulerEventFilter）。因此过滤器
+	// 只是一个「尽量少唤醒」的优化；循环里按 nodeID 重新读库并判定终态才是正确性保证，
+	// 收到其他节点的事件也只会多一次读库，不会误判终态。
 	var (
 		nodeEvents <-chan dagruntime.RuntimeEvent
 		unsub      func()
 	)
 	if r.router != nil {
 		sink := r.router.RegisterWithFilter(analysisID, func(evt dagruntime.RuntimeEvent) bool {
-			if evt.AnalysisNodeID != primaryKey {
+			if evt.AnalysisNodeID != nodeID {
 				return false
 			}
 			switch strings.TrimSpace(evt.Name) {
@@ -418,6 +438,10 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, nodeID int64
 					ParamsPath:   node.ParamsPath,
 					LogPath:      logPath,
 					ParamsJSON:   readParamsJSON(node.ParamsPath),
+					// 校验错误取本次运行结束后的节点快照：运行前已清空上一轮错误，
+					// 编排器只在本次失败时填充，成功终态必然为空。
+					InputValidationErrors:  validationErrorSnapshot(node.InputValidationErrors),
+					OutputValidationErrors: validationErrorSnapshot(node.OutputValidationErrors),
 				}
 				if !success {
 					msg := strings.TrimSpace(node.ErrorMessage)
