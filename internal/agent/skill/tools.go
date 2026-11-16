@@ -43,11 +43,15 @@ type GetSkillInput struct {
 }
 
 // GetSkillOutput 是 get_skill 工具返回给模型的结果。
+//
+// 刻意不包含技能所在磁盘路径：技能目录布局固定为 <skills_root>/<name>（见 Store.SkillPath），
+// 与 name 完全冗余；且技能正文/资源只能经 get_skill / load_skill_resource 加载，
+// 回给模型一个绝对路径只会诱导它绕过这两个工具直接访问宿主文件系统。
+// 需要展示路径的 HTTP 接口请用 AgentSkillDetail。
 type GetSkillOutput struct {
 	Name         string   `json:"name"`
 	Description  string   `json:"description,omitempty"`
 	Version      string   `json:"version,omitempty"`
-	SkillPath    string   `json:"skill_path,omitempty"`
 	Resources    []string `json:"resources,omitempty"`
 	Instructions string   `json:"instructions"`
 	Error        string   `json:"error,omitempty"`
@@ -64,10 +68,11 @@ type LoadSkillResourceInput struct {
 }
 
 // LoadSkillResourceOutput 是 load_skill_resource 工具返回给模型的结果。
+//
+// 与 GetSkillOutput 同理，不回传绝对路径：调用方只需要 name + 相对 path 就能再次定位资源。
 type LoadSkillResourceOutput struct {
 	Name    string `json:"name"`
 	Path    string `json:"path"`
-	AbsPath string `json:"abs_path,omitempty"`
 	Content string `json:"content,omitempty"`
 	Error   string `json:"error,omitempty"`
 }
@@ -142,10 +147,20 @@ func ResolveSkillOutput(ctx context.Context, resolver runtimecontext.SkillResolv
 		Name:         info.Name,
 		Description:  info.Description,
 		Version:      s.SkillVersion(),
-		SkillPath:    info.SkillPath,
 		Resources:    s.SkillResources(),
 		Instructions: instructions,
 	}, nil
+}
+
+// AgentSkillDetail 是 HTTP 接口（GET /agent/skill/resolve）返回给前端的技能详情。
+//
+// 它在 GetSkillOutput 之上补充了仅对「人」有意义的磁盘路径：前端详情弹窗用它
+// 展示技能所在目录。工具（get_skill）不返回该字段，避免模型拿到路径后绕过
+// get_skill / load_skill_resource 去直接读文件。
+type AgentSkillDetail struct {
+	GetSkillOutput
+	// SkillPath 是技能目录的绝对路径（<skills_root>/<name>）。
+	SkillPath string `json:"skill_path,omitempty"`
 }
 
 // LoadSkillResource 返回「加载技能附属资源」工具。
@@ -182,7 +197,7 @@ func LoadSkillResource(resolver runtimecontext.SkillResolver) tool.Tool {
 				return out, nil
 			}
 
-			content, abs, err := s.ReadSkillResource(out.Path)
+			content, err := s.ReadSkillResource(out.Path)
 			if err != nil {
 				out.Error = err.Error()
 				return out, nil
@@ -197,7 +212,6 @@ func LoadSkillResource(resolver runtimecontext.SkillResolver) tool.Tool {
 			}
 
 			out.Name = s.SkillInfo().Name
-			out.AbsPath = abs
 			out.Content = content
 			return out, nil
 		},

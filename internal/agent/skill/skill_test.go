@@ -229,9 +229,6 @@ func TestLoadSkillResourceTool(t *testing.T) {
 	if got.Error != "" || got.Content != "# Design" {
 		t.Fatalf("result = %+v", got)
 	}
-	if !filepath.IsAbs(got.AbsPath) {
-		t.Fatalf("abs_path = %q", got.AbsPath)
-	}
 
 	// 目录穿越被拒绝。
 	if out := runTool(t, ctx, LoadSkillResource(resolver), `{"name":"demo-skill","path":"../../etc/passwd"}`); !strings.Contains(string(out), "escapes the skill directory") {

@@ -1140,7 +1140,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/skill.GetSkillOutput"
+                            "$ref": "#/definitions/skill.AgentSkillDetail"
                         }
                     },
                     "400": {
@@ -1749,7 +1749,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "返回模型实际可用的全部工具（工具注册表：内置 + 编码类 + 外部 MCP；加上 Provider 固定注入的 ask_user / agent 框架工具）的元信息；详情请调用 /agent/tool/get",
+                "description": "返回当前工具注册表中的全部工具（内置 + 编码类 + 外部 MCP）的元信息；详情请调用 /agent/tool/get",
                 "produces": [
                     "application/json"
                 ],
@@ -13983,9 +13983,16 @@ const docTemplate = `{
                 "is_report": {
                     "type": "boolean"
                 },
+                "node_name": {
+                    "type": "string"
+                },
                 "request_param": {
                     "type": "object",
                     "additionalProperties": true
+                },
+                "script_id": {
+                    "type": "string",
+                    "example": "0"
                 },
                 "server_status": {
                     "type": "string"
@@ -14027,6 +14034,10 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "workflow_id": {
+                    "type": "string",
+                    "example": "0"
                 }
             }
         },
@@ -16366,7 +16377,7 @@ const docTemplate = `{
                 }
             }
         },
-        "skill.GetSkillOutput": {
+        "skill.AgentSkillDetail": {
             "type": "object",
             "properties": {
                 "description": {
@@ -16388,6 +16399,7 @@ const docTemplate = `{
                     }
                 },
                 "skill_path": {
+                    "description": "SkillPath 是技能目录的绝对路径（\u003cskills_root\u003e/\u003cname\u003e）。",
                     "type": "string"
                 },
                 "version": {

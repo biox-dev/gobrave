@@ -541,7 +541,7 @@ func (h *AgentHandler) GetSkill(c *gin.Context) {
 // @Tags         Agent
 // @Produce      json
 // @Param        id   query     string  true  "技能名"
-// @Success      200  {object}  skill.GetSkillOutput
+// @Success      200  {object}  skill.AgentSkillDetail
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
@@ -583,7 +583,13 @@ func (h *AgentHandler) ResolveSkill(c *gin.Context) {
 		handleAgentError(c, err, "failed to resolve agent skill")
 		return
 	}
-	c.JSON(http.StatusOK, out)
+	// 工具出参不含磁盘路径（对模型无用且可能诱导绕过 get_skill 读文件），
+	// 但前端详情弹窗需要展示技能所在目录，因此在 HTTP 层补上 skill_path。
+	resp := skill.AgentSkillDetail{GetSkillOutput: out}
+	if s, ok := h.skills.Get(q.ID); ok {
+		resp.SkillPath = s.SkillInfo().SkillPath
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // SaveSkill godoc

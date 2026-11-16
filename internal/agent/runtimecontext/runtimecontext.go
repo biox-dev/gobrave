@@ -716,8 +716,8 @@ type SkillResource interface {
 	SkillVersion() string
 	// SkillResources 返回技能目录下的附属资源相对路径（已排序）。
 	SkillResources() []string
-	// ReadSkillResource 读取技能目录内的附属资源（相对路径），返回内容与绝对路径。
-	ReadSkillResource(path string) (content string, absPath string, err error)
+	// ReadSkillResource 读取技能目录内的附属资源（相对路径），返回文件内容。
+	ReadSkillResource(path string) (content string, err error)
 }
 
 // SkillInfo 是技能的最小元信息 + 指令正文。

@@ -510,7 +510,8 @@ func (s *Skill) SkillVersion() string { return s.Version() }
 // SkillResources 返回技能目录下的附属资源相对路径（不含 SKILL.md / manifest.json）。
 func (s *Skill) SkillResources() []string { return s.ListResources() }
 
-// ReadSkillResource 读取技能目录内的附属资源，返回内容与绝对路径。
-func (s *Skill) ReadSkillResource(path string) (string, string, error) {
-	return s.ReadResource(path)
+// ReadSkillResource 读取技能目录内的附属资源内容。
+func (s *Skill) ReadSkillResource(path string) (string, error) {
+	content, _, err := s.ReadResource(path)
+	return content, err
 }
