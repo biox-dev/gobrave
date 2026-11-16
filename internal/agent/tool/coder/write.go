@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/logging"
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
@@ -58,7 +57,7 @@ FEATURES:
 - Avoids unnecessary writes when content hasn't changed
 
 LIMITATIONS:
-- You should read a file before writing to it to avoid conflicts
+- Overwrites the whole file; read it first if you need to keep existing content
 - Cannot append to files (rewrites the entire file)
 
 
@@ -106,15 +105,6 @@ func (w *writeTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 	if err == nil {
 		if fileInfo.IsDir() {
 			return nil, toolError(fmt.Sprintf("Path is a directory, not a file: %s", filePath))
-		}
-
-		status := CheckFileRead(filePath, fileInfo)
-		switch {
-		case !status.Read:
-			return nil, toolError(fmt.Sprintf("File %s has not been read yet.\n\nPlease read the file with the View tool before writing it, so the existing content is not overwritten blindly.", filePath))
-		case status.Modified:
-			return nil, toolError(fmt.Sprintf("File %s has been modified since it was last read.\nLast modification: %s\nLast read: %s\n\nPlease read the file again before modifying it.",
-				filePath, status.ModTime.Format(time.RFC3339), status.LastRead.Format(time.RFC3339)))
 		}
 
 		oldContent, readErr := os.ReadFile(filePath)
@@ -175,8 +165,6 @@ func (w *writeTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 		}
 	}
 
-	recordFileWrite(filePath)
-	recordFileRead(filePath)
 	waitForLspDiagnostics(ctx, filePath, w.lspClients)
 
 	result := fmt.Sprintf("<result>\nFile successfully written: %s\n</result>", filePath)

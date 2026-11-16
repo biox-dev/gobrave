@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -133,6 +134,60 @@ func TestWriterEditSkillRejectsSkillOutsideStore(t *testing.T) {
 
 	if _, err := w.PlanEdit("external-skill", "Follow these steps.", "Do it."); err == nil {
 		t.Fatalf("expected not-user-managed error")
+	}
+}
+
+// TestWriterNoticesBuiltinOverwrite 验证：overwrite_builtin_skills=true（默认）时，
+// 修改内置技能的写计划会带上「重启后被内置覆盖」的提醒；关闭后不再提醒。
+func TestWriterNoticesBuiltinOverwrite(t *testing.T) {
+	names := BuiltinNames()
+	if len(names) == 0 {
+		t.Skip("no builtin skills available in this build")
+	}
+	name := names[0]
+	content := strings.Replace(sampleSKILL, "name: demo-skill", "name: "+name, 1)
+
+	dir := t.TempDir()
+	path := writeSkill(t, dir, name, content)
+	reg := NewRegistryWith(&Skill{
+		Name:          name,
+		Description:   "A demo skill for tests.",
+		Path:          filepath.Join(dir, name),
+		SkillFilePath: path,
+	})
+
+	// 默认（覆盖）：必须提醒用户如何保留修改。
+	plan, err := NewWriter(reg, NewStore(dir)).PlanEdit(name, "Follow these steps.", "Do it.")
+	if err != nil {
+		t.Fatalf("PlanEdit: %v", err)
+	}
+	if !strings.Contains(plan.Notice, "overwrite_builtin_skills") {
+		t.Fatalf("notice = %q, want overwrite_builtin_skills hint", plan.Notice)
+	}
+
+	// overwrite_builtin_skills=false：修改会被保留，无需提醒。
+	plan, err = NewWriter(reg, NewStore(dir), WithOverwriteBuiltinSkills(false)).PlanEdit(name, "Follow these steps.", "Do it.")
+	if err != nil {
+		t.Fatalf("PlanEdit: %v", err)
+	}
+	if plan.Notice != "" {
+		t.Fatalf("notice = %q, want empty when overwrite is disabled", plan.Notice)
+	}
+
+	// 非内置技能不应出现提醒。
+	plainPath := writeSkill(t, dir, "plain-skill", strings.Replace(sampleSKILL, "name: demo-skill", "name: plain-skill", 1))
+	reg.Register(&Skill{
+		Name:          "plain-skill",
+		Description:   "A demo skill for tests.",
+		Path:          filepath.Join(dir, "plain-skill"),
+		SkillFilePath: plainPath,
+	})
+	plan, err = NewWriter(reg, NewStore(dir)).PlanEdit("plain-skill", "Follow these steps.", "Do it.")
+	if err != nil {
+		t.Fatalf("PlanEdit: %v", err)
+	}
+	if plan.Notice != "" {
+		t.Fatalf("notice = %q, want empty for non-builtin skill", plan.Notice)
 	}
 }
 

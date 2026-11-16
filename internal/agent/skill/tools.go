@@ -91,7 +91,9 @@ type SkillWriteOutput struct {
 	Name      string `json:"name"`
 	SkillPath string `json:"skill_path,omitempty"`
 	SkillFile string `json:"skill_file,omitempty"`
-	Error     string `json:"error,omitempty"`
+	// Notice 是写入成功后需要转告用户的提醒（如内置技能会被下次启动覆盖）。
+	Notice string `json:"notice,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // GetSkill 返回「按名称加载技能指令」工具。
@@ -241,7 +243,7 @@ func CreateSkill(writer runtimecontext.SkillWriter) tool.Tool {
 			if err != nil {
 				return SkillWriteOutput{Name: strings.TrimSpace(in.Name), Error: err.Error()}, nil
 			}
-			return newSkillWriteOutput(info), nil
+			return newSkillWriteOutput(info, plan.Notice), nil
 		},
 	)
 }
@@ -281,17 +283,20 @@ func EditSkill(writer runtimecontext.SkillWriter) tool.Tool {
 			if err != nil {
 				return SkillWriteOutput{Name: strings.TrimSpace(in.Name), Error: err.Error()}, nil
 			}
-			return newSkillWriteOutput(info), nil
+			return newSkillWriteOutput(info, plan.Notice), nil
 		},
 	)
 }
 
 // newSkillWriteOutput 把技能视图映射为工具结果。
-func newSkillWriteOutput(info runtimecontext.SkillInfo) SkillWriteOutput {
+//
+// notice 为写入计划携带的提醒（可为空），会原样返回给模型，由模型转告用户。
+func newSkillWriteOutput(info runtimecontext.SkillInfo, notice string) SkillWriteOutput {
 	return SkillWriteOutput{
 		Name:      info.Name,
 		SkillPath: info.SkillPath,
 		SkillFile: info.SkillFile,
+		Notice:    notice,
 	}
 }
 

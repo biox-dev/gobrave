@@ -96,7 +96,7 @@ func (p *patchTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 		return filepath.Join(wd, path)
 	}
 
-	// Identify all files needed for the patch and verify they've been read
+	// Identify all files needed for the patch and verify they exist
 	filesToRead := diff.IdentifyFilesNeeded(params.PatchText)
 	for _, filePath := range filesToRead {
 		path := absPath(filePath)
@@ -109,9 +109,6 @@ func (p *patchTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 		}
 		if fileInfo.IsDir() {
 			return nil, toolError(fmt.Sprintf("path is a directory, not a file: %s", path))
-		}
-		if msg, ok := guardFileModify(path, fileInfo); !ok {
-			return nil, toolError(msg)
 		}
 	}
 
@@ -246,8 +243,6 @@ func (p *patchTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 			}
 		}
 
-		recordFileWrite(target)
-		recordFileRead(target)
 	}
 
 	for _, filePath := range changedFiles {

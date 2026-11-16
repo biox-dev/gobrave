@@ -16,11 +16,51 @@ import (
 type Writer struct {
 	registry *Registry
 	store    *Store
+	// overwriteBuiltinSkills 与 config.agent.overwrite_builtin_skills 保持一致：
+	// 为 true（配置默认值）时，每次启动都会用内置版本覆盖同名 SKILL.md，
+	// 因此对内置技能的修改会在系统重启后丢失，写入计划需要附带提醒。
+	overwriteBuiltinSkills bool
+}
+
+// WriterOption 配置 Writer 的可选行为。
+type WriterOption func(*Writer)
+
+// WithOverwriteBuiltinSkills 声明启动时是否会覆盖已存在的内置技能文件
+// （对应 config.agent.overwrite_builtin_skills）。
+//
+// 为 true 时，对内置技能的修改会在系统重启后被内置版本覆盖；Writer 会在写入计划
+// 中附带提醒，引导用户设置 agent.overwrite_builtin_skills: false 以保留修改。
+func WithOverwriteBuiltinSkills(enabled bool) WriterOption {
+	return func(w *Writer) {
+		if w != nil {
+			w.overwriteBuiltinSkills = enabled
+		}
+	}
 }
 
 // NewWriter 创建技能写入器：registry 用于解析与热更新，store 用于落盘。
-func NewWriter(registry *Registry, store *Store) *Writer {
-	return &Writer{registry: registry, store: store}
+//
+// 未显式传入 WithOverwriteBuiltinSkills 时按配置默认值（覆盖）处理，
+// 使内置技能的写入提醒默认生效，避免用户误以为修改会被长期保留。
+func NewWriter(registry *Registry, store *Store, opts ...WriterOption) *Writer {
+	w := &Writer{registry: registry, store: store, overwriteBuiltinSkills: true}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(w)
+		}
+	}
+	return w
+}
+
+// overwriteNotice 返回本次写入需要提醒用户的事项；无需提醒时返回空串。
+//
+// 内置技能在 overwrite_builtin_skills=true（默认）下会在系统重启时被内置版本覆盖，
+// 因此这里提示用户如何保留自己的修改。
+func (w *Writer) overwriteNotice(name string) string {
+	if w == nil || !w.overwriteBuiltinSkills || !IsBuiltin(name) {
+		return ""
+	}
+	return fmt.Sprintf("skill %q is a builtin skill: this change will be overwritten by the builtin version when the system restarts. To keep it, set agent.overwrite_builtin_skills: false in config.yml (default is true).", name)
 }
 
 // PlanCreate 实现 runtimecontext.SkillWriter：校验入参并计算新建技能的写入计划（不落盘）。
@@ -60,6 +100,8 @@ func (w *Writer) PlanCreate(in runtimecontext.SkillCreateInput) (runtimecontext.
 		Name:     name,
 		FilePath: path,
 		After:    string(content),
+		// 与内置技能同名的新建会在下次启动被内置版本覆盖，提前提醒用户。
+		Notice: w.overwriteNotice(name),
 	}, nil
 }
 
@@ -123,6 +165,8 @@ func (w *Writer) PlanEdit(name, oldString, newString string) (runtimecontext.Ski
 		FilePath: existing.SkillFilePath,
 		Before:   oldContent,
 		After:    newContent,
+		// 内置技能（位于用户技能目录内，可编辑）在重启后会被内置版本覆盖。
+		Notice: w.overwriteNotice(name),
 	}, nil
 }
 

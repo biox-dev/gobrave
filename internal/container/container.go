@@ -250,9 +250,11 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		skillResolver = in.Skills.Resolver()
 	}
 	// 技能写能力：注册表负责热更新，Store 负责落盘（与前端技能管理走同一套路径）。
+	// 同时告知 Writer 启动时是否会覆盖内置技能，使其能提醒用户「本次修改会在重启后被覆盖」。
 	var skillWriter runtimecontext.SkillWriter
 	if in.Skills != nil && in.SkillStore != nil {
-		skillWriter = skill.NewWriter(in.Skills, in.SkillStore)
+		skillWriter = skill.NewWriter(in.Skills, in.SkillStore,
+			skill.WithOverwriteBuiltinSkills(config.ResolveOverwriteBuiltinSkills(in.Config)))
 	}
 	builtinDeps := builtin.Deps{
 		Runner:          in.Runner,

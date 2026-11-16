@@ -145,7 +145,6 @@ func (v *viewTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 	}
 	output += "\n</file>\n"
 	output += getDiagnostics(filePath, clients)
-	recordFileRead(filePath)
 	return output, nil
 }
 

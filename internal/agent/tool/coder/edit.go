@@ -203,9 +203,6 @@ func (e *editTool) createNewFile(ctx context.Context, filePath, content string) 
 		}
 	}
 
-	recordFileWrite(filePath)
-	recordFileRead(filePath)
-
 	return WithResponseMetadata(
 		NewTextResponse("File created: "+filePath),
 		EditResponseMetadata{
@@ -227,10 +224,6 @@ func (e *editTool) deleteContent(ctx context.Context, filePath, oldString string
 
 	if fileInfo.IsDir() {
 		return NewTextErrorResponse(fmt.Sprintf("path is a directory, not a file: %s", filePath)), nil
-	}
-
-	if msg, ok := guardFileModify(filePath, fileInfo); !ok {
-		return NewTextErrorResponse(msg), nil
 	}
 
 	content, err := os.ReadFile(filePath)
@@ -295,9 +288,6 @@ func (e *editTool) deleteContent(ctx context.Context, filePath, oldString string
 		}
 	}
 
-	recordFileWrite(filePath)
-	recordFileRead(filePath)
-
 	return WithResponseMetadata(
 		NewTextResponse("Content deleted from file: "+filePath),
 		EditResponseMetadata{
@@ -319,10 +309,6 @@ func (e *editTool) replaceContent(ctx context.Context, filePath, oldString, newS
 
 	if fileInfo.IsDir() {
 		return NewTextErrorResponse(fmt.Sprintf("path is a directory, not a file: %s", filePath)), nil
-	}
-
-	if msg, ok := guardFileModify(filePath, fileInfo); !ok {
-		return NewTextErrorResponse(msg), nil
 	}
 
 	content, err := os.ReadFile(filePath)
@@ -388,9 +374,6 @@ func (e *editTool) replaceContent(ctx context.Context, filePath, oldString, newS
 			logging.Debug("Error creating file history version", "error", err)
 		}
 	}
-
-	recordFileWrite(filePath)
-	recordFileRead(filePath)
 
 	return WithResponseMetadata(
 		NewTextResponse("Content replaced in file: "+filePath),

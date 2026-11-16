@@ -757,6 +757,11 @@ type SkillWritePlan struct {
 	Before string
 	// After 是校验通过、待写入的 SKILL.md 原文。
 	After string
+	// Notice 是写入后需要提醒用户的事项（可为空）。
+	//
+	// 典型场景：agent.overwrite_builtin_skills=true（默认）时修改内置技能，
+	// 该技能会在系统重启后被内置版本覆盖，需要提示用户如何保留修改。
+	Notice string
 }
 
 // SkillCreateInput 是 create_skill 的入参。
