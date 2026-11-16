@@ -228,8 +228,10 @@ type agentToolDeps struct {
 	MemorySaver    runtimecontext.MemorySaver
 	Browser        *projectResourceBrowser
 	Skills         *skill.Registry
-	Files          agentinterfaces.HistoryService
-	LSP            *lspmanager.Manager
+	// SkillStore 用户技能的文件存储（create_skill / edit_skill 落盘用）。
+	SkillStore *skill.Store
+	Files      agentinterfaces.HistoryService
+	LSP        *lspmanager.Manager
 	// Sessions / Messages 供注册表级 agent 工具（子 Agent）落库自己的会话。
 	Sessions agentinterfaces.SessionService
 	Messages agentinterfaces.MessageService
@@ -246,6 +248,11 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 	var skillResolver runtimecontext.SkillResolver
 	if in.Skills != nil {
 		skillResolver = in.Skills.Resolver()
+	}
+	// 技能写能力：注册表负责热更新，Store 负责落盘（与前端技能管理走同一套路径）。
+	var skillWriter runtimecontext.SkillWriter
+	if in.Skills != nil && in.SkillStore != nil {
+		skillWriter = skill.NewWriter(in.Skills, in.SkillStore)
 	}
 	builtinDeps := builtin.Deps{
 		Runner:          in.Runner,
@@ -264,6 +271,7 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		DatasetWriter:   in.Browser,
 		ReportContext:   in.Browser,
 		Skills:          skillResolver,
+		SkillWriter:     skillWriter,
 		// 子 Agent 工具的进程级依赖：会话 / 消息服务在容器里装配成 native.SubAgentSessionStore。
 		SubAgentSessions: agentproviders.NewSubAgentSessionStore(in.Sessions, in.Messages),
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/agent/tool/coder/diff"
 )
 
 // 技能工具的入参 / 出参定义。
@@ -16,14 +17,20 @@ import (
 // 工具调用按需加载（渐进式披露）：
 //
 //   - get_skill：按名称（可选版本）加载 SKILL.md 的指令正文与必要元信息；
-//   - load_skill_resource：加载技能目录内的附属资源（参考文档 / 脚本 / 模板 / Schema）。
+//   - load_skill_resource：加载技能目录内的附属资源（参考文档 / 脚本 / 模板 / Schema）；
+//   - create_skill / edit_skill：创建技能，或按 old_string → new_string 局部修改技能。
 //
-// 两者都是只读工具，免授权（技能来自 $BaseDir/.skills，属于框架受控目录）。
+// 前两者是只读工具，免授权（技能来自 $BaseDir/.skills，属于框架受控目录）；
+// 后两者通过注入的 runtimecontext.SkillWriter 落盘并热更新注册表。
 const (
 	// GetSkillToolName 是「加载技能指令」工具名。
 	GetSkillToolName = "get_skill"
 	// LoadSkillResourceToolName 是「加载技能附属资源」工具名。
 	LoadSkillResourceToolName = "load_skill_resource"
+	// CreateSkillToolName 是「创建技能」工具名。
+	CreateSkillToolName = "create_skill"
+	// EditSkillToolName 是「编辑技能」工具名。
+	EditSkillToolName = "edit_skill"
 )
 
 // GetSkillInput 是 get_skill 工具的入参。
@@ -63,6 +70,28 @@ type LoadSkillResourceOutput struct {
 	AbsPath string `json:"abs_path,omitempty"`
 	Content string `json:"content,omitempty"`
 	Error   string `json:"error,omitempty"`
+}
+
+// CreateSkillInput 是 create_skill 工具的入参。
+type CreateSkillInput struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Instructions string `json:"instructions"`
+}
+
+// EditSkillInput 是 edit_skill 工具的入参。
+type EditSkillInput struct {
+	Name      string `json:"name"`
+	OldString string `json:"old_string"`
+	NewString string `json:"new_string"`
+}
+
+// SkillWriteOutput 是 create_skill / edit_skill 工具返回给模型的结果。
+type SkillWriteOutput struct {
+	Name      string `json:"name"`
+	SkillPath string `json:"skill_path,omitempty"`
+	SkillFile string `json:"skill_file,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // GetSkill 返回「按名称加载技能指令」工具。
@@ -171,6 +200,107 @@ func LoadSkillResource(resolver runtimecontext.SkillResolver) tool.Tool {
 			return out, nil
 		},
 	)
+}
+
+// CreateSkill 返回「创建技能」工具。
+//
+// 与 coder 的 write 工具定位一致：一次写入完整技能（frontmatter 由 Skill.Marshal 生成，
+// 入参只提供 name / description / instructions），适合从零新建；只改局部内容请用 edit_skill。
+func CreateSkill(writer runtimecontext.SkillWriter) tool.Tool {
+	return tool.NewFunc(
+		CreateSkillToolName,
+		"Create a new agent skill: a SKILL.md file (YAML name/description frontmatter + markdown instructions body) stored under the skills directory and registered immediately. Use it when the user asks to create / save a reusable skill or workflow. The name must be unique and use only letters, digits and hyphens (no leading/trailing/consecutive hyphens). To change an existing skill, use edit_skill instead.",
+		tool.Schema("创建技能的入参", map[string]any{
+			"name":         tool.StringProperty("技能名：字母数字与连字符，不能与已有技能重名（同时作为技能目录名）。"),
+			"description":  tool.StringProperty("技能描述：会注入系统提示词，模型据此判断何时加载该技能。"),
+			"instructions": tool.StringProperty("SKILL.md 的 markdown 正文（不含 YAML frontmatter）。"),
+		}, "name", "description", "instructions"),
+		func(ctx context.Context, in CreateSkillInput) (SkillWriteOutput, error) {
+			if writer == nil {
+				return SkillWriteOutput{}, fmt.Errorf("%s: skill store is not available in this runtime", CreateSkillToolName)
+			}
+			// 先算计划：校验入参并生成待写入的 SKILL.md（不落盘），供授权前展示 diff。
+			plan, err := writer.PlanCreate(runtimecontext.SkillCreateInput{
+				Name:         in.Name,
+				Description:  in.Description,
+				Instructions: in.Instructions,
+			})
+			if err != nil {
+				return SkillWriteOutput{Name: strings.TrimSpace(in.Name), Error: err.Error()}, nil
+			}
+			// 写技能会落盘并改变后续提示词，与 coder 的 write / edit 一致：先请求写授权（附 diff）。
+			if err := tool.RequirePermission(ctx, tool.PermissionRequest{
+				ToolName:    CreateSkillToolName,
+				Action:      "write",
+				Description: fmt.Sprintf("Create skill %s", plan.Name),
+				Params:      skillDiffPreview(plan),
+			}); err != nil {
+				return SkillWriteOutput{}, err
+			}
+			info, err := writer.Apply(plan)
+			if err != nil {
+				return SkillWriteOutput{Name: strings.TrimSpace(in.Name), Error: err.Error()}, nil
+			}
+			return newSkillWriteOutput(info), nil
+		},
+	)
+}
+
+// EditSkill 返回「编辑技能」工具。
+//
+// 语义与 coder 的 edit 工具一致：按技能名定位 SKILL.md，用 old_string → new_string
+// 做一次唯一文本替换。调用前应先用 get_skill 读取技能全文，确保 old_string 精确匹配。
+func EditSkill(writer runtimecontext.SkillWriter) tool.Tool {
+	return tool.NewFunc(
+		EditSkillToolName,
+		"Edit an existing agent skill by replacing text in its SKILL.md. Read the skill first with get_skill, then pass a name plus an old_string that appears exactly once in the file (include enough surrounding context) and the new_string to replace it with. The edited SKILL.md is re-validated before being saved and the registry is refreshed immediately.",
+		tool.Schema("编辑技能的入参", map[string]any{
+			"name":       tool.StringProperty("技能名，必须与 available_skills 中的 name 完全一致。"),
+			"old_string": tool.StringProperty("要替换的原文，必须在 SKILL.md 中唯一出现（含空白与换行需完全一致）。"),
+			"new_string": tool.StringProperty("替换后的文本。"),
+		}, "name", "old_string", "new_string"),
+		func(ctx context.Context, in EditSkillInput) (SkillWriteOutput, error) {
+			if writer == nil {
+				return SkillWriteOutput{}, fmt.Errorf("%s: skill store is not available in this runtime", EditSkillToolName)
+			}
+			// 先算计划：读取当前 SKILL.md 并得到替换后的内容（不落盘），供授权前展示 diff。
+			plan, err := writer.PlanEdit(in.Name, in.OldString, in.NewString)
+			if err != nil {
+				return SkillWriteOutput{Name: strings.TrimSpace(in.Name), Error: err.Error()}, nil
+			}
+			// 写技能会落盘并改变后续提示词，与 coder 的 write / edit 一致：先请求写授权（附 diff）。
+			if err := tool.RequirePermission(ctx, tool.PermissionRequest{
+				ToolName:    EditSkillToolName,
+				Action:      "write",
+				Description: fmt.Sprintf("Edit skill %s", plan.Name),
+				Params:      skillDiffPreview(plan),
+			}); err != nil {
+				return SkillWriteOutput{}, err
+			}
+			info, err := writer.Apply(plan)
+			if err != nil {
+				return SkillWriteOutput{Name: strings.TrimSpace(in.Name), Error: err.Error()}, nil
+			}
+			return newSkillWriteOutput(info), nil
+		},
+	)
+}
+
+// newSkillWriteOutput 把技能视图映射为工具结果。
+func newSkillWriteOutput(info runtimecontext.SkillInfo) SkillWriteOutput {
+	return SkillWriteOutput{
+		Name:      info.Name,
+		SkillPath: info.SkillPath,
+		SkillFile: info.SkillFile,
+	}
+}
+
+// skillDiffPreview 把写入计划转为授权预览：file_path / diff 与 coder edit / write 的
+// 授权参数同键（tool.PermissionPreview），上层会放进 Operation.Metadata 供前端在
+// 用户批准前渲染 unified diff。
+func skillDiffPreview(plan runtimecontext.SkillWritePlan) tool.PermissionPreview {
+	text, _, _ := diff.GenerateDiff(plan.Before, plan.After, plan.FilePath)
+	return tool.PermissionPreview{FilePath: plan.FilePath, Diff: text}
 }
 
 // resolveSkill 按名称（与可选版本）解析技能。

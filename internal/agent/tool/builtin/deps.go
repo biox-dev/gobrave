@@ -47,6 +47,8 @@ type Deps struct {
 
 	// Skills 技能解析能力（get_skill / load_skill_resource）。
 	Skills runtimecontext.SkillResolver
+	// SkillWriter 技能写能力（create_skill / edit_skill）。
+	SkillWriter runtimecontext.SkillWriter
 
 	// SubAgentSessions 子 Agent 的会话 / 消息落库（agent 工具使用）。
 	//

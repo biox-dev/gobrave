@@ -732,6 +732,43 @@ type SkillInfo struct {
 	DisableRender bool
 }
 
+// SkillWriter 抽象「创建 / 编辑技能」的能力，供 create_skill / edit_skill 工具使用。
+//
+// 写能力拆成两步：Plan* 只校验并计算「写入计划」（不落盘），供工具在授权前把目标
+// 文件与 unified diff 展示给用户；Apply 在授权通过后落盘并热更新注册表。
+//
+// 由 skill.Writer 实现，并由 container 在构造 builtin.Deps 时注入。
+type SkillWriter interface {
+	// PlanCreate 校验入参并计算新建技能的写入计划（不落盘）。
+	PlanCreate(in SkillCreateInput) (SkillWritePlan, error)
+	// PlanEdit 校验入参并计算编辑技能的写入计划（不落盘）。
+	PlanEdit(name, oldString, newString string) (SkillWritePlan, error)
+	// Apply 按计划落盘并注册技能，返回保存后的技能信息。
+	Apply(plan SkillWritePlan) (SkillInfo, error)
+}
+
+// SkillWritePlan 是一次技能写入的计划，工具据此生成授权前的 diff 预览。
+type SkillWritePlan struct {
+	// Name 是技能名（同时是技能目录名）。
+	Name string
+	// FilePath 是目标 SKILL.md 的绝对路径。
+	FilePath string
+	// Before 是写入前的 SKILL.md 原文（新建时为空）。
+	Before string
+	// After 是校验通过、待写入的 SKILL.md 原文。
+	After string
+}
+
+// SkillCreateInput 是 create_skill 的入参。
+type SkillCreateInput struct {
+	// Name 是技能名，同时作为技能目录名（字母数字与连字符，不能与已有技能重名）。
+	Name string
+	// Description 是注入系统提示词的技能描述（必填）。
+	Description string
+	// Instructions 是 SKILL.md 的 markdown 正文（不含 frontmatter）。
+	Instructions string
+}
+
 // ScriptCreateInput 是「创建脚本」的入参（不创建分析节点）。
 type ScriptCreateInput struct {
 	// ProjectID 是脚本所属项目（取自 RuntimeContext.ProjectID）。
