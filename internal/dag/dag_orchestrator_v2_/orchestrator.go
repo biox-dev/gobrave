@@ -2,10 +2,8 @@ package orchestratorv2
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/compiler"
@@ -300,19 +298,15 @@ func compileGraph(analysisID int64, parseAnalysisResult, requestParam, dagDefini
 	return NewGraph(analysisID, compiled)
 }
 
-// analysisRequestParam 读取 analysis.request_param 并解析成 map，供编译器为节点
-// 生成 analysis_node.request_param。读取或解析失败时返回空 map（不阻断调度）。
+// analysisRequestParam 返回 analysis 的编译期参数（request_param + analysis_name），
+// 供编译器为节点生成 analysis_node.request_param。读取失败时返回空 map（不阻断调度）。
 func (o *Orchestrator) analysisRequestParam(ctx context.Context, analysisID int64) map[string]any {
 	if o.repo == nil {
 		return map[string]any{}
 	}
 	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
-	if err != nil || analysis == nil || strings.TrimSpace(analysis.RequestParam) == "" {
+	if err != nil {
 		return map[string]any{}
 	}
-	out := map[string]any{}
-	if err := json.Unmarshal([]byte(analysis.RequestParam), &out); err != nil {
-		return map[string]any{}
-	}
-	return out
+	return analysis.CompileParams()
 }

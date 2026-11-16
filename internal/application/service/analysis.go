@@ -90,14 +90,10 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 	if input == nil || input.RequestParam == nil {
 		return nil, fmt.Errorf("request_param is required")
 	}
-	// analysisType := strings.TrimSpace(toString(input.RequestParam["analysis_type"]))
-	// if analysisType == "" {
-	// 	return nil, fmt.Errorf("request_param.analysis_type is required")
-	// }
 	// workflow_id 是工作流 int64 主键（pipeline_components_relation.id）。
-	workflowID := parseWorkflowID(input.RequestParam["workflow_id"])
+	workflowID := input.WorkflowID
 	if workflowID <= 0 {
-		return nil, fmt.Errorf("request_param.workflow_id is required")
+		return nil, fmt.Errorf("workflow_id is required")
 	}
 	workflow, err := s.workflowRepo.GetWorkflowByID(ctx, workflowID)
 	if err != nil {
@@ -106,55 +102,31 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 	if workflow == nil {
 		return nil, fmt.Errorf("workflow not found for id: %d", workflowID)
 	}
-	// var workflowID string
-	// switch analysisType {
-	// case "workflow":
-	// 	workflowID = strings.TrimSpace(toString(input.RequestParam["relation_id"]))
-	// 	if workflowID == "" {
-	// 		return nil, fmt.Errorf("request_param.relation_id is required")
-	// 	}
-	// case "script":
-	// 	workflowID = strings.TrimSpace(toString(input.RequestParam["script_id"]))
-	// 	if workflowID == "" {
-	// 		return nil, fmt.Errorf("request_param.script_id is required")
-	// 	}
-	// default:
-	// 	return nil, fmt.Errorf("request_param.relation_id or script_id is required")
-	// }
 
-	// projectID := strings.TrimSpace(toString(input.RequestParam["project"]))
 	if input.Project == nil {
-		return nil, fmt.Errorf("request_param.project is required")
+		return nil, fmt.Errorf("project is required")
 	}
 
-	analysisName := strings.TrimSpace(toString(input.RequestParam["analysis_name"]))
+	analysisName := strings.TrimSpace(input.NodeName)
 	if analysisName == "" {
-		return nil, fmt.Errorf("request_param.analysis_name is required")
+		return nil, fmt.Errorf("node_name is required")
 	}
 
 	parseResult := input.ParseAnalysisResult
 	if parseResult == nil {
 		parseResult = map[string]any{}
 	}
-	analysisIDStr := strings.TrimSpace(toString(input.RequestParam["analysis_id"]))
-	// analysisIDStr 转 int64
-	analysisID, err := strconv.ParseInt(analysisIDStr, 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid analysis_id: %v", err)
-	}
-	// analysisID := 0
-	// sessionID, err := strconv.ParseInt(sessionIDParam, 0, 64)
+	analysisID := input.AnalysisID
 
-	cacheType := intFromAny(input.RequestParam["cache_type"], types.CacheTypeRerunAll)
-	if _, ok := input.RequestParam["cache_type"]; !ok {
+	// cache_type 由请求顶层字段提供；未显式指定时回退到历史 request_param.is_cache。
+	cacheType := input.CacheType
+	if cacheType < types.CacheTypeRerunAll || cacheType > types.CacheTypeReuseWhenScriptAndParamsUnchanged {
 		if toBool(input.RequestParam["is_cache"]) {
 			cacheType = types.CacheTypeReuseExistingNode
+		} else {
+			cacheType = types.CacheTypeRerunAll
 		}
 	}
-	if cacheType < types.CacheTypeRerunAll || cacheType > types.CacheTypeReuseWhenScriptAndParamsUnchanged {
-		cacheType = types.CacheTypeRerunAll
-	}
-	input.RequestParam["cache_type"] = cacheType
 	dataComponentIDs := toString(input.RequestParam["data_component_ids"])
 
 	var saved *types.Analysis
@@ -194,8 +166,8 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 
 		paramsPath := utils.AnalysisLayoutFor(workspaceDir).ParamsPath
 
+		// request_param 只保存分析参数；主键 / 工作流 / 名称 / 缓存策略都是独立列。
 		parseResult["tools_output_dir"] = workspaceDir
-		input.RequestParam["analysis_id"] = fmt.Sprintf("%d", analysisID)
 
 		if err := utils.WriteJSONFile(paramsPath, parseResult); err != nil {
 			return err
@@ -581,20 +553,6 @@ func toString(v any) string {
 		return s
 	}
 	return fmt.Sprintf("%v", v)
-}
-
-// parseWorkflowID 解析 request_param 里的 workflow_id（工作流 int64 主键）。
-// 非法或缺省返回 0。
-func parseWorkflowID(v any) int64 {
-	s := strings.TrimSpace(toString(v))
-	if s == "" {
-		return 0
-	}
-	id, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || id <= 0 {
-		return 0
-	}
-	return id
 }
 
 func fallbackString(value string, fallback string) string {

@@ -2,7 +2,6 @@ package dataflow
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -116,22 +115,18 @@ func (o *dataflowDagOrchestratorV3) resolveProjectID(ctx context.Context, analys
 	return analysis.ProjectID
 }
 
-// analysisRequestParamMap loads the analysis's raw request_param and parses it into a
-// map, so each node's request_param can be derived the same way the compiler does
-// (keys filtered by the node's input handles).
+// analysisRequestParamMap loads the analysis's compile-time params (request_param +
+// analysis_name), so each node's request_param can be derived the same way the
+// compiler does (keys filtered by the node's input handles).
 func (o *dataflowDagOrchestratorV3) analysisRequestParamMap(ctx context.Context, analysisID int64) map[string]any {
 	if o == nil || o.repo == nil || analysisID <= 0 {
 		return map[string]any{}
 	}
 	analysis, err := o.repo.GetAnalysisByID(ctx, analysisID)
-	if err != nil || analysis == nil || strings.TrimSpace(analysis.RequestParam) == "" {
+	if err != nil {
 		return map[string]any{}
 	}
-	out := map[string]any{}
-	if err := json.Unmarshal([]byte(analysis.RequestParam), &out); err != nil {
-		return map[string]any{}
-	}
-	return out
+	return analysis.CompileParams()
 }
 
 // StartAsync implements interfaces.DagOrchestrator and launches a dataflow run// in the background, returning immediately.

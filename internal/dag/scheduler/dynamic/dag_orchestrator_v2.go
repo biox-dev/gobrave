@@ -2,7 +2,6 @@ package dynamic
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -1292,18 +1291,11 @@ func dynamicCloneAnyMap(src map[string]any) map[string]any {
 	return out
 }
 
-// dynamicAnalysisRequestParam 解析 analysis.request_param（原始 JSON 字符串）成 map，
+// dynamicAnalysisRequestParam 返回编译期参数（request_param + analysis_name），
 // 供编译器把它作为每个 runtime 节点的 analysis_node.request_param 下发。
 // 解析失败或为空时返回空 map，让下游落库保持空值而不是报错。
 func dynamicAnalysisRequestParam(analysis *types.Analysis) map[string]any {
-	if analysis == nil || strings.TrimSpace(analysis.RequestParam) == "" {
-		return map[string]any{}
-	}
-	out := map[string]any{}
-	if err := json.Unmarshal([]byte(analysis.RequestParam), &out); err != nil {
-		return map[string]any{}
-	}
-	return out
+	return analysis.CompileParams()
 }
 
 // dynamicToStringSlice converts a mixed array payload into normalized []string.

@@ -191,6 +191,27 @@ func (t *Analysis) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// CompileParams 返回编译期使用的参数：解析后的 request_param + analysis_name。
+//
+// request_param 只保存分析参数，analysis_name 是独立的列；编译期为实例命名
+// （见 compiler 的 expand 阶段）需要它，因此在这里合并，而不写回 request_param。
+func (t *Analysis) CompileParams() map[string]any {
+	params := map[string]any{}
+	if t == nil {
+		return params
+	}
+	if strings.TrimSpace(t.RequestParam) != "" {
+		// 解析失败时按空 map 处理，保持调度不中断。
+		if err := json.Unmarshal([]byte(t.RequestParam), &params); err != nil {
+			params = map[string]any{}
+		}
+	}
+	if name := strings.TrimSpace(t.AnalysisName); name != "" {
+		params["analysis_name"] = name
+	}
+	return params
+}
+
 const (
 	CacheTypeRerunAll                          = 1
 	CacheTypeReuseExistingNode                 = 2
@@ -429,6 +450,10 @@ func (AnalysisEdge) TableName() string {
 	return "analysis_edges"
 }
 
+// AnalysisControllerSaveInput 是保存一次分析的入参。
+//
+// RequestParam 只承载分析参数；分析主键、工作流、名称、缓存策略等元数据
+// 由以下显式字段承载，不再混进 RequestParam，保证落库的 request_param 纯净。
 type AnalysisControllerSaveInput struct {
 	RequestParam        map[string]any
 	ParseAnalysisResult map[string]any
@@ -436,6 +461,14 @@ type AnalysisControllerSaveInput struct {
 	Project             *Project
 	IsRunNode           bool
 	IsReport            bool
+	// AnalysisID 为空时由服务层生成新主键。
+	AnalysisID int64
+	// WorkflowID 是工作流主键（pipeline_components_relation.id）。
+	WorkflowID int64
+	// NodeName 是分析名称，落库到 nextflow.analysis_name。
+	NodeName string
+	// CacheType 是缓存策略，落库到 nextflow.cache_type。
+	CacheType int
 	// SchedulerMode 由各控制入口显式声明，标识谁来推进这次分析。
 	// 为空时保持库中原值不变（更新路径）或按 legacy 处理（新建路径）。
 	SchedulerMode string

@@ -26,7 +26,7 @@ disable-render: true
 与 `run_analysis_node` 每次执行都会重新读取最新的 `io_schema.json`。
 
 > 本技能只覆盖 `inputs`（表单输入）。`outputs` / `params` / `resources` / `ui` / `scatter` / `workflow`
-> 等其余顶层键沿用 `analysis-script-spec`、`analysis-script-workflow` 两个技能的约定，不要在这里发明新结构。
+> 等其余顶层键沿用 `analysis-script-authoring` 技能的约定，不要在这里发明新结构。
 
 ---
 

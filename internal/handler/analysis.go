@@ -56,6 +56,7 @@ type EditParamsV2Response struct {
 	IsReport       bool                   `json:"is_report"`
 	CacheType      int                    `json:"cache_type"`
 	AnalysisID     string                 `json:"analysis_id"`
+	WorkflowID     int64                  `json:"workflow_id,string"`
 	Status         string                 `json:"status"`
 	ServerStatus   string                 `json:"server_status"`
 	RequestParam   map[string]interface{} `json:"request_param"`
@@ -65,6 +66,8 @@ type EditParamsV2Response struct {
 
 type EditNodeParamsResponse struct {
 	AnalysisName   string                 `json:"analysis_name"`
+	NodeName       string                 `json:"node_name"`
+	ScriptID       int64                  `json:"script_id,string"`
 	IsReport       bool                   `json:"is_report"`
 	CacheType      int                    `json:"cache_type"`
 	AnalysisID     int64                  `json:"analysis_id,string"`
@@ -162,9 +165,26 @@ type listAnalysisTreeParent struct {
 	Children []listAnalysisTreeChild `json:"children"`
 }
 
+// analysisControllerRequest 是流程分析 / 脚本节点保存入口的统一请求体。
+//
+// request_param 只承载分析参数；工作流、脚本、节点、名称、缓存策略等分析元数据
+// 一律走顶层字段，避免污染落库的 request_param。
 type analysisControllerRequest struct {
-	RequestParam   map[string]interface{} `json:"request_param" binding:"required"`
-	AnalysisNodeID string                 `json:"analysis_node_id"`
+	RequestParam map[string]interface{} `json:"request_param" binding:"required"`
+	// AnalysisID 是更新已有分析时的主键；为空表示新建（由后端生成）。
+	AnalysisID int64ID `json:"analysis_id"`
+	// WorkflowID 是工作流主键（pipeline_components_relation.id），仅流程分析需要。
+	WorkflowID int64ID `json:"workflow_id"`
+	// ScriptID 是脚本主键，仅脚本节点需要；更新已有节点时以节点记录为准。
+	ScriptID int64ID `json:"script_id"`
+	// AnalysisNodeID 是更新已有脚本节点时的节点主键。
+	AnalysisNodeID int64ID `json:"analysis_node_id"`
+	// NodeName 是分析 / 节点名称（落库到 analysis_name / node_name）。
+	NodeName string `json:"node_name"`
+	// CacheType 是缓存策略，仅流程分析使用（analysis.cache_type）。
+	CacheType int `json:"cache_type"`
+	// Executor 是脚本节点的执行器，为空时按 local 处理。
+	Executor string `json:"executor"`
 	// Scheduler selects which registered orchestrator advances this analysis. It
 	// is persisted as analysis.scheduler_mode; empty falls back to the default
 	// (static graph) scheduler.
@@ -172,6 +192,18 @@ type analysisControllerRequest struct {
 	Save      bool   `json:"save"`
 	IsSubmit  bool   `json:"is_submit"`
 	IsReport  bool   `json:"is_report"`
+}
+
+// compileParams 返回编译期参数：request_param 原样 + 分析名称。
+//
+// analysis_name 只用于编译期实例命名（见 compiler 的 expand 阶段），
+// 不写回 request_param，保证落库的分析参数保持纯净。
+func (r analysisControllerRequest) compileParams() map[string]any {
+	params := cloneAnyMapForNode(r.RequestParam)
+	if name := strings.TrimSpace(r.NodeName); name != "" {
+		params["analysis_name"] = name
+	}
+	return params
 }
 
 type analysisNodeByProjectPageRequest struct {
@@ -220,34 +252,23 @@ func NewAnalysisHandler(
 }
 
 func (h *AnalysisHandler) ParseParams(c *gin.Context) {
-	params := make(map[string]interface{})
-	if err := c.ShouldBindJSON(&params); err != nil {
+	var req analysisControllerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
 		return
 	}
-	requestParam, ok := params["request_param"].(map[string]interface{})
-	// analysisID, _ := requestParam["analysis_id"].(string)
-	// if strings.TrimSpace(analysisID) == "" {
-	// 	analysisID = "preview"
-	// }
-	analysisIDStr := strings.TrimSpace(toString(requestParam["analysis_id"]))
-	// analysisIDStr 转 int64
-	analysisID, err := strconv.ParseInt(analysisIDStr, 10, 64)
-	// analysisID := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_id"]))
-	if analysisID == 0 {
-		analysisID = 0
-	}
-
-	if !ok {
+	if req.RequestParam == nil {
 		c.Error(errors.NewValidationError("request_param is required and must be an object"))
 		return
 	}
 	// workflow_id 是工作流 int64 主键（pipeline_components_relation.id）。
-	workflowID := parsePositiveInt64(requestParam["workflow_id"])
+	workflowID := int64(req.WorkflowID)
 	if workflowID <= 0 {
-		c.Error(errors.NewValidationError("request_param.workflow_id is required and must be a positive integer"))
+		c.Error(errors.NewValidationError("workflow_id is required and must be a positive integer"))
 		return
 	}
+	analysisID := int64(req.AnalysisID)
+
 	formJSONWrap, err := h.workflowService.GetFormJSONByWorkflowID(c.Request.Context(), workflowID)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to get form JSON").WithDetails(err.Error()))
@@ -258,87 +279,38 @@ func (h *AnalysisHandler) ParseParams(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to get workflow visualization").WithDetails(err.Error()))
 		return
 	}
-	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, requestParam, formJSONWrap)
-	// 将requestParam+formJSONWrap写入json文件，方便调试
-	if true {
-		baseDir := h.config.Storage.BaseDir
-		debugDir := filepath.Join(baseDir, "debug", "parse_analysis_result", analysisIDStr)
-		_ = os.MkdirAll(debugDir, os.ModePerm)
-		debugPath := filepath.Join(debugDir, fmt.Sprintf("input.json"))
-		f, err := os.Create(debugPath)
-		if err == nil {
-			encoder := json.NewEncoder(f)
-			encoder.SetIndent("", "  ")
-			_ = encoder.Encode(map[string]interface{}{
-				"request_param": requestParam,
-				"form_json":     formJSONWrap,
-			})
-			f.Close()
-			logger.Infof(context.Background(), "debug parse analysis result, analysis_id: %d, debug_path: %s", analysisID, debugPath)
-		}
-		// 将 parseAnalysisResult 写入json文件
-		resultPath := filepath.Join(debugDir, "result.json")
-		f, err = os.Create(resultPath)
-		if err == nil {
-			encoder := json.NewEncoder(f)
-			encoder.SetIndent("", "  ")
-			_ = encoder.Encode(parseAnalysisResult)
-			f.Close()
-			logger.Infof(context.Background(), "debug parse analysis result, analysis_id: %d, result_path: %s", analysisID, resultPath)
-		}
-		dagDefinitionPath := filepath.Join(debugDir, "dag_definition.json")
-		f, err = os.Create(dagDefinitionPath)
-		if err == nil {
-			encoder := json.NewEncoder(f)
-			encoder.SetIndent("", "  ")
-			_ = encoder.Encode(dagDefinition)
-			f.Close()
-			logger.Infof(context.Background(), "debug parse analysis result, analysis_id: %d, dag_definition_path: %s", analysisID, dagDefinitionPath)
-		}
-
-	}
+	parseAnalysisResult, err := analysisform.BuildParseAnalysisResult(c.Request.Context(), h.dataService, req.RequestParam, formJSONWrap)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
 		return
 	}
+	parseAnalysisResult["analysis_name"] = strings.TrimSpace(req.NodeName)
 
-	runtimeDAG, err := compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, requestParam, dagDefinition)
-	if true {
-		// 将 parseAnalysisResult+dagDefinition 写入json文件
-
-		baseDir := h.config.Storage.BaseDir
-		dagDebug := filepath.Join(baseDir, "debug", "dag", analysisIDStr)
-		_ = os.MkdirAll(dagDebug, os.ModePerm)
-		paramsPath := filepath.Join(dagDebug, "params.json")
-		f, err := os.Create(paramsPath)
-		if err == nil {
-			encoder := json.NewEncoder(f)
-			encoder.SetIndent("", "  ")
-			_ = encoder.Encode(map[string]interface{}{
-				"parse_analysis_result": parseAnalysisResult,
-				"dag_definition":        dagDefinition,
-				"analysis_id":           analysisID,
-			})
-			f.Close()
-			logger.Infof(context.Background(), "debug compile runtime dag, analysis_id: %d, params_path: %s", analysisID, paramsPath)
-		}
-
-		resultPath := filepath.Join(dagDebug, "runtime_dag.json")
-		f, err = os.Create(resultPath)
-		if err == nil {
-			encoder := json.NewEncoder(f)
-			encoder.SetIndent("", "  ")
-			_ = encoder.Encode(runtimeDAG)
-			f.Close()
-			logger.Infof(context.Background(), "debug compile runtime dag, analysis_id: %d, runtime_dag_path: %s", analysisID, resultPath)
-		}
-
-	}
-
+	runtimeDAG, err := compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, req.compileParams(), dagDefinition)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to compile runtime dag").WithDetails(err.Error()))
 		return
 	}
+
+	// 调试产物：把本次解析 / 编译的入参与结果落盘，便于排查参数解析问题。
+	debugKey := "preview"
+	if analysisID > 0 {
+		debugKey = strconv.FormatInt(analysisID, 10)
+	}
+	parseDebugDir := filepath.Join("parse_analysis_result", debugKey)
+	h.dumpDebugJSON(parseDebugDir, "input.json", map[string]interface{}{
+		"request_param": req.RequestParam,
+		"form_json":     formJSONWrap,
+	})
+	h.dumpDebugJSON(parseDebugDir, "result.json", parseAnalysisResult)
+	h.dumpDebugJSON(parseDebugDir, "dag_definition.json", dagDefinition)
+	dagDebugDir := filepath.Join("dag", debugKey)
+	h.dumpDebugJSON(dagDebugDir, "params.json", map[string]interface{}{
+		"parse_analysis_result": parseAnalysisResult,
+		"dag_definition":        dagDefinition,
+		"analysis_id":           analysisID,
+	})
+	h.dumpDebugJSON(dagDebugDir, "runtime_dag.json", runtimeDAG)
 
 	c.JSON(http.StatusOK, gin.H{
 		"form_json":             formJSONWrap,
@@ -379,9 +351,14 @@ func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 	}
 
 	// workflow_id 是工作流 int64 主键（pipeline_components_relation.id）。
-	workflowID := parsePositiveInt64(req.RequestParam["workflow_id"])
+	workflowID := int64(req.WorkflowID)
 	if workflowID <= 0 {
-		c.Error(errors.NewValidationError("request_param.workflow_id is required and must be a positive integer"))
+		c.Error(errors.NewValidationError("workflow_id is required and must be a positive integer"))
+		return
+	}
+	nodeName := strings.TrimSpace(req.NodeName)
+	if nodeName == "" {
+		c.Error(errors.NewValidationError("node_name is required"))
 		return
 	}
 
@@ -396,6 +373,7 @@ func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to build parse analysis result").WithDetails(err.Error()))
 		return
 	}
+	parseAnalysisResult["analysis_name"] = nodeName
 
 	dagDefinition, err := h.workflowService.GetWorkflowVisByWorkflowID(c.Request.Context(), workflowID)
 	if err != nil {
@@ -403,18 +381,12 @@ func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 		return
 	}
 
-	analysisIDStr := strings.TrimSpace(toString(req.RequestParam["analysis_id"]))
-	analysisID, err := strconv.ParseInt(analysisIDStr, 10, 64)
-	if analysisID == 0 {
-		if req.Save {
-			analysisID = utils.GenerateID()
-			req.RequestParam["analysis_id"] = analysisID
-		} else {
-			analysisID = 0
-		}
+	analysisID := int64(req.AnalysisID)
+	if analysisID == 0 && req.Save {
+		analysisID = utils.GenerateID()
 	}
 
-	dagRuntime, err := compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, req.RequestParam, dagDefinition)
+	dagRuntime, err := compiler.BuildRuntimeTasks(analysisID, parseAnalysisResult, req.compileParams(), dagDefinition)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to compile runtime dag").WithDetails(err.Error()))
 		return
@@ -436,6 +408,10 @@ func (h *AnalysisHandler) SaveAnalysisController(c *gin.Context) {
 		IsReport:            req.IsReport,
 		Project:             project,
 		SchedulerMode:       orchestrator.Name(),
+		AnalysisID:          analysisID,
+		WorkflowID:          workflowID,
+		NodeName:            nodeName,
+		CacheType:           req.CacheType,
 	}
 	// Static-graph schedulers need analysis_nodes/analysis_edges persisted with the
 	// analysis; runtime-materializing schedulers ignore the graph.
@@ -515,20 +491,7 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 	}
 	projectID := activeProject.ID
 
-	// analysisID := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_id"]))
-	// if analysisID == "" || analysisID == "<nil>" {
-	// 	if req.Save {
-	// 		analysisID = uuid.NewString()
-	// 		req.RequestParam["analysis_id"] = analysisID
-	// 	} else {
-	// 		analysisID = "preview"
-	// 	}
-	// }
-
-	requestedNodeID := parsePositiveInt64(req.RequestParam["analysis_node_id"])
-	if requestedNodeID <= 0 {
-		requestedNodeID = parsePositiveInt64(req.AnalysisNodeID)
-	}
+	requestedNodeID := int64(req.AnalysisNodeID)
 
 	var existing *types.AnalysisNode
 	if requestedNodeID > 0 {
@@ -544,22 +507,10 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 	}
 
 	// script_id 的来源取决于节点是否已存在：更新已有节点时以节点记录的 ScriptID 为准，
-	// 避免前端漏传/篡改 script_id 导致节点被改绑到其它脚本；新建节点时才从 request_param 取。
-	var scriptIDInt int64
+	// 避免前端漏传/篡改 script_id 导致节点被改绑到其它脚本；新建节点时才使用请求中的 script_id。
+	scriptIDInt := int64(req.ScriptID)
 	if existing != nil {
 		scriptIDInt = existing.ScriptID
-	} else {
-		scriptIDStr, ok := req.RequestParam["script_id"].(string)
-		if !ok || strings.TrimSpace(scriptIDStr) == "" {
-			c.Error(errors.NewValidationError("request_param.script_id is required and must be a string"))
-			return
-		}
-		parsed, parseErr := strconv.ParseInt(strings.TrimSpace(scriptIDStr), 10, 64)
-		if parseErr != nil || parsed <= 0 {
-			c.Error(errors.NewValidationError("request_param.script_id must be a valid integer string").WithDetails(fmt.Sprint(parseErr)))
-			return
-		}
-		scriptIDInt = parsed
 	}
 	if scriptIDInt <= 0 {
 		c.Error(errors.NewValidationError("script_id is required"))
@@ -573,12 +524,12 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		return
 	}
 
-	nodeName := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["analysis_name"]))
-	executorName := strings.TrimSpace(fmt.Sprintf("%v", req.RequestParam["executor"]))
 	// 未指定名称时沿用原逻辑：用脚本 ID 兜底。
-	if nodeName == "" || nodeName == "<nil>" {
+	nodeName := strings.TrimSpace(req.NodeName)
+	if nodeName == "" {
 		nodeName = strconv.FormatInt(scriptIDInt, 10)
 	}
+	executorName := strings.TrimSpace(req.Executor)
 	// 预览与保存共用同一次构建：request_param 为空时不解析参数，节点 ResolvedInputs 为空。
 	built, err := analysisform.NewAnalysisNodeFromScript(c.Request.Context(), h.dataService, h.workflowService, script, analysisform.AnalysisNodeSpec{
 		ProjectID:      projectID,
@@ -908,6 +859,28 @@ func standaloneStorageBaseDir(cfg *config.Config) string {
 		}
 	}
 	return "."
+}
+
+// dumpDebugJSON 把调试数据写入 <base_dir>/debug/<dir>/<name>。
+//
+// 调试产物只用于排查参数解析 / DAG 编译问题，写入失败不影响主流程。
+func (h *AnalysisHandler) dumpDebugJSON(dir, name string, payload any) {
+	baseDir := standaloneStorageBaseDir(h.config)
+	targetDir := filepath.Join(baseDir, "debug", dir)
+	if err := os.MkdirAll(targetDir, os.ModePerm); err != nil {
+		return
+	}
+	path := filepath.Join(targetDir, name)
+	f, err := os.Create(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	encoder := json.NewEncoder(f)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(payload); err != nil {
+		logger.Warnf(context.Background(), "failed to write debug json %s: %v", path, err)
+	}
 }
 
 // regenerateNodeRunScript rebuilds the run script for an existing analysis node
@@ -1385,8 +1358,6 @@ func (h *AnalysisHandler) EditParamsV2(c *gin.Context) {
 			return
 		}
 	}
-	// requestParam["analysis_type"] = "workflow"
-	requestParam["analysis_id"] = fmt.Sprintf("%d", analysisItem.ID)
 
 	// TODO data的projectId 没有修改
 	project, err := h.projectRepo.GetProjectByID(c.Request.Context(), analysisItem.ProjectID)
@@ -1414,6 +1385,7 @@ func (h *AnalysisHandler) EditParamsV2(c *gin.Context) {
 		IsReport:     analysisItem.IsReport,
 		CacheType:    analysisItem.CacheType,
 		AnalysisID:   analysisItem.AnalysisID,
+		WorkflowID:   analysisItem.WorkflowID,
 		Status:       analysisItem.JobStatus,
 		// ServerStatus:   analysisItem.ServerStatus,
 		RequestParam:   requestParam,
@@ -1479,9 +1451,6 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 			return
 		}
 	}
-	// requestParam["analysis_node_id"] = analysisNodeID
-	// requestParam["analysis_type"] = "workflow"
-	requestParam["analysis_node_id"] = fmt.Sprintf("%d", analysisNode.ID)
 	analysisName := analysisNode.NodeName
 	isReport := false
 	cacheType := types.CacheTypeRerunAll
@@ -1539,9 +1508,6 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 		// 		}
 		// 	}
 		// }
-		requestParam["analysis_name"] = analysisNode.NodeName
-		requestParam["script_id"] = fmt.Sprintf("%d", script.ID)
-
 		// formJSON, err := h.workflowService.GetScriptFormJSONByID(c.Request.Context(), script.ID)
 
 		project, err := h.projectRepo.GetProjectByID(c.Request.Context(), analysisNode.ProjectID)
@@ -1557,6 +1523,8 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 		}
 		c.JSON(http.StatusOK, EditNodeParamsResponse{
 			AnalysisName:   analysisName,
+			NodeName:       analysisNode.NodeName,
+			ScriptID:       script.ID,
 			IsReport:       isReport,
 			CacheType:      cacheType,
 			AnalysisResult: analysisResult,
@@ -1592,6 +1560,8 @@ func (h *AnalysisHandler) EditNodeParams(c *gin.Context) {
 		}
 		c.JSON(http.StatusOK, EditNodeParamsResponse{
 			AnalysisName:   analysisName,
+			NodeName:       analysisNode.NodeName,
+			ScriptID:       script.ID,
 			IsReport:       isReport,
 			CacheType:      cacheType,
 			AnalysisID:     analysisIDValue,
