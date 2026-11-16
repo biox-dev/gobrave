@@ -231,3 +231,96 @@ func TestEventRouterRegisterAcceptsEveryEvent(t *testing.T) {
 		t.Fatalf("unfiltered sink buffered %d events, want %d", got, want)
 	}
 }
+
+// TestEventRouterRoutesByNodeIDForStandaloneNodes pins the case that analysis_id
+// cannot route: independently created analysis nodes have AnalysisID == 0, so two
+// waiters keyed on the analysis would share (and race for) one sink. Routing by
+// the node primary key keeps them independent.
+func TestEventRouterRoutesByNodeIDForStandaloneNodes(t *testing.T) {
+	router := NewEventRouter()
+	sinkA := router.RegisterForNode(101, nil)
+	sinkB := router.RegisterForNode(102, nil)
+
+	if sinkA == sinkB {
+		t.Fatal("node-scoped sinks must not be shared across nodes with AnalysisID == 0")
+	}
+
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 0, AnalysisNodeID: 101})
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 0, AnalysisNodeID: 102})
+	// A node nobody waits for must be dropped without panicking.
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 0, AnalysisNodeID: 103})
+
+	if got, want := len(sinkA.events), 1; got != want {
+		t.Fatalf("node 101 sink buffered %d events, want %d", got, want)
+	}
+	if got, want := len(sinkB.events), 1; got != want {
+		t.Fatalf("node 102 sink buffered %d events, want %d", got, want)
+	}
+	if evt := <-sinkA.events; evt.AnalysisNodeID != 101 {
+		t.Fatalf("node 101 sink received %+v, want analysis_node_id 101", evt)
+	}
+}
+
+// TestEventRouterDeliversToNodeAndAnalysisSinks pins that node-scoped routing is
+// additive: a scheduler watching the analysis keeps receiving the event.
+func TestEventRouterDeliversToNodeAndAnalysisSinks(t *testing.T) {
+	router := NewEventRouter()
+	analysisSink := router.RegisterWithFilter(7, SchedulerEventFilter)
+	nodeSink := router.RegisterForNode(70, SchedulerEventFilter)
+
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 7, AnalysisNodeID: 70})
+
+	if got, want := len(analysisSink.events), 1; got != want {
+		t.Fatalf("analysis sink buffered %d events, want %d", got, want)
+	}
+	if got, want := len(nodeSink.events), 1; got != want {
+		t.Fatalf("node sink buffered %d events, want %d", got, want)
+	}
+}
+
+// TestEventRouterUnregisterNodeKeepsAnalysisSink pins that a single-node waiter
+// finishing never retires the analysis sink a scheduler owns.
+func TestEventRouterUnregisterNodeKeepsAnalysisSink(t *testing.T) {
+	router := NewEventRouter()
+	analysisSink := router.RegisterWithFilter(8, SchedulerEventFilter)
+	nodeSink := router.RegisterForNode(80, SchedulerEventFilter)
+
+	router.UnregisterNode(80)
+	// Idempotent and safe for an unknown node.
+	router.UnregisterNode(80)
+	router.UnregisterNode(999)
+
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 8, AnalysisNodeID: 80})
+
+	if got, want := len(analysisSink.events), 1; got != want {
+		t.Fatalf("analysis sink buffered %d events after node unregister, want %d", got, want)
+	}
+	if got := len(nodeSink.events); got != 0 {
+		t.Fatalf("retired node sink received %d events, want 0", got)
+	}
+
+	// Re-registering the node must yield a fresh, live sink.
+	fresh := router.RegisterForNode(80, SchedulerEventFilter)
+	if fresh == nodeSink {
+		t.Fatal("re-register after unregister must create a new node sink")
+	}
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 8, AnalysisNodeID: 80})
+	if got, want := len(fresh.events), 1; got != want {
+		t.Fatalf("fresh node sink buffered %d events, want %d", got, want)
+	}
+}
+
+// TestEventRouterRegisterForNodeIgnoresUnroutableNodeID pins that a zero primary
+// key degrades to a detached sink instead of joining (and stealing) another
+// waiter's event stream.
+func TestEventRouterRegisterForNodeIgnoresUnroutableNodeID(t *testing.T) {
+	router := NewEventRouter()
+	sink := router.RegisterForNode(0, nil)
+
+	router.Handle(RuntimeEvent{Name: EventNodeCompleted, AnalysisID: 0, AnalysisNodeID: 0})
+	if got := len(sink.events); got != 0 {
+		t.Fatalf("unroutable node sink received %d events, want 0", got)
+	}
+
+	router.UnregisterNode(0) // must not panic
+}

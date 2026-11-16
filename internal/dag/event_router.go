@@ -168,11 +168,25 @@ func (s *AnalysisEventSink) retire() {
 // With the router there is exactly one subscriber and routing is an O(1) map
 // lookup.
 //
-// The instance is created once by the DI container (internal/container) and
-// injected into every scheduler that needs runtime events.
+// Two routing scopes exist side by side: analysis-scoped sinks (a scheduler
+// watching every node of one analysis) and node-scoped sinks (a single waiter
+// that only cares about one node, such as run_analysis_node). Node-scoped
+// routing is additive - an event is delivered to both sinks when both are
+// registered - so a waiter never steals events from a scheduler.
 type EventRouter struct {
 	mu    sync.RWMutex
 	sinks map[int64]*AnalysisEventSink
+	// nodeSinks holds node-scoped waiters keyed by analysis_nodes.id, which is the
+	// value carried in RuntimeEvent.AnalysisNodeID.
+	//
+	// This map exists because analysis_id cannot route a single-node waiter: an
+	// independently created analysis node (agent / script node not attached to an
+	// analysis) has AnalysisID == 0, so every such node would share sinks[0] -
+	// RegisterWithFilter hands the first caller's keep filter to all later ones,
+	// the waiters race for the same channel, and whichever unregisters first
+	// retires the sink for everybody. The node primary key is always set, so it is
+	// the correct routing key here.
+	nodeSinks map[int64]*AnalysisEventSink
 }
 
 var _ event.Handler = (*EventRouter)(nil)
@@ -180,7 +194,10 @@ var _ event.Handler = (*EventRouter)(nil)
 // NewEventRouter builds an empty router. The caller is responsible for
 // subscribing it to the event bus exactly once.
 func NewEventRouter() *EventRouter {
-	return &EventRouter{sinks: make(map[int64]*AnalysisEventSink)}
+	return &EventRouter{
+		sinks:     make(map[int64]*AnalysisEventSink),
+		nodeSinks: make(map[int64]*AnalysisEventSink),
+	}
 }
 
 // Handle implements event.Handler.
@@ -197,14 +214,18 @@ func (r *EventRouter) Handle(evt event.Event) {
 	}
 
 	r.mu.RLock()
-	sink := r.sinks[runtimeEvt.AnalysisID]
+	analysisSink := r.sinks[runtimeEvt.AnalysisID]
+	nodeSink := r.nodeSinks[runtimeEvt.AnalysisNodeID]
 	r.mu.RUnlock()
-	if sink == nil {
-		// No run is listening (not started yet, already finished, or not a
-		// dynamically scheduled run).
-		return
+
+	// The two scopes are independent subscribers, not alternatives: a scheduler
+	// watching the analysis and a waiter watching one node both need this event.
+	if analysisSink != nil {
+		analysisSink.Enqueue(runtimeEvt)
 	}
-	sink.Enqueue(runtimeEvt)
+	if nodeSink != nil {
+		nodeSink.Enqueue(runtimeEvt)
+	}
 }
 
 // Register creates the sink for analysisID, or returns the existing one when the
@@ -252,6 +273,62 @@ func (r *EventRouter) Unregister(analysisID int64) {
 	sink, ok := r.sinks[analysisID]
 	if ok {
 		delete(r.sinks, analysisID)
+	}
+	r.mu.Unlock()
+
+	if ok {
+		sink.retire()
+	}
+}
+
+// RegisterForNode creates the node-scoped sink for nodeID (the analysis_nodes
+// primary key), or returns the existing one when that node is already registered.
+//
+// A single-node waiter must key on the node, not on the analysis: independently
+// created analysis nodes have AnalysisID == 0, so analysis-scoped registration
+// would collapse every such node into the same sink (first filter wins, waiters
+// race for one channel, first unregister retires it for all). The node primary
+// key is always set and is exactly what RuntimeEvent.AnalysisNodeID carries.
+//
+// keep narrows what the sink receives; a nil keep accepts every event for that
+// node. Node and analysis sinks are independent: an event reaches both when both
+// are registered, so adding a node waiter never starves a scheduler.
+func (r *EventRouter) RegisterForNode(nodeID int64, keep EventSinkFilter) *AnalysisEventSink {
+	if r == nil || nodeID <= 0 {
+		// Defensive: without a routable key the caller still gets a usable sink, it
+		// just never receives events. Callers keep their polling fallback, so an
+		// unroutable node degrades to polling instead of sharing another node's sink.
+		return newAnalysisEventSink(keep)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.nodeSinks == nil {
+		r.nodeSinks = make(map[int64]*AnalysisEventSink)
+	}
+	if sink, ok := r.nodeSinks[nodeID]; ok {
+		return sink
+	}
+	sink := newAnalysisEventSink(keep)
+	r.nodeSinks[nodeID] = sink
+	return sink
+}
+
+// UnregisterNode retires and removes the node-scoped sink for nodeID. It is safe
+// to call more than once and safe for an unknown node.
+//
+// It never touches the analysis-scoped sink, so a scheduler waiting on the same
+// analysis is unaffected by a single-node waiter finishing.
+func (r *EventRouter) UnregisterNode(nodeID int64) {
+	if r == nil || nodeID <= 0 {
+		return
+	}
+
+	r.mu.Lock()
+	sink, ok := r.nodeSinks[nodeID]
+	if ok {
+		delete(r.nodeSinks, nodeID)
 	}
 	r.mu.Unlock()
 

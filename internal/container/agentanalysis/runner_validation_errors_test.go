@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
@@ -104,5 +105,37 @@ func TestWaitForCompletionDoesNotReadNodeBeforeFirstWake(t *testing.T) {
 	}
 	if svc.getCalls != 0 {
 		t.Fatalf("expected no node read before the first wake, got %d", svc.getCalls)
+	}
+}
+
+// 独立分析节点（不挂在任何 analysis 下）的 AnalysisID 恒为 0：事件必须能按节点主键
+// 路由到等待者，否则只能等 5 分钟的兼底轮询。这里把 pollInterval 设为 1 小时，只有
+// 事件路径能在毫秒级返回。
+func TestWaitForCompletionWakesOnNodeScopedEventWhenAnalysisIDIsZero(t *testing.T) {
+	router := dagruntime.NewEventRouter()
+	// 预注册同一节点：sink 已存在，事件在 waitForCompletion 开始接收前就能落入缓冲，
+	// 用例因此不依赖 goroutine 时序。
+	router.RegisterForNode(13, nil)
+
+	svc := &stubAnalysisService{node: &types.AnalysisNode{ID: 13, AnalysisID: 0, Status: "done"}}
+	runner := &analysisNodeRunner{
+		analysisSvc:  svc,
+		router:       router,
+		pollInterval: time.Hour,
+		maxLogBytes:  1024,
+	}
+
+	router.Handle(dagruntime.RuntimeEvent{
+		Name:           dagruntime.EventNodeCompleted,
+		AnalysisID:     0,
+		AnalysisNodeID: 13,
+	})
+
+	result, err := runner.waitForCompletion(context.Background(), &types.AnalysisNode{ID: 13, AnalysisID: 0}, time.Second)
+	if err != nil {
+		t.Fatalf("expected the node-scoped event to complete the wait, got %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected status done to be reported as successful")
 	}
 }

@@ -319,7 +319,7 @@ func readParamsJSON(paramsPath string) string {
 // waitForCompletion 等待节点进入终态或超时，返回最终结果（含日志）。
 //
 // 终态判定有两条通道，谁先到谁先返回：
-//  1. 事件（主路径）：订阅 EventRouter 上针对本节点 analysis_node_id 的
+//  1. 事件（主路径）：订阅 EventRouter 上本节点（按节点主键）的
 //     dag.node.completed / dag.node.failed 事件（即 NodeCompletionCoordinator.
 //     publishNodeResult 发出的那两条），收到后立即读取节点并判定终态。
 //  2. 状态兜底轮询（次路径）：按 pollInterval 读取节点状态，仅在事件丢失 /
@@ -329,7 +329,7 @@ func readParamsJSON(paramsPath string) string {
 // 仍以节点持久化状态为准，避免把事件与状态不一致的情形误判为已完成。
 //
 // node 是调用方已经加载的节点记录（resetAndRun 提交运行前的那一份），这里不再重复读库：
-// 订阅所需的 analysis_id、事件过滤所需的主键、以及超时 / 取消分支回传的路径都从它取。
+// 订阅所需的节点主键、以及超时 / 取消分支回传的路径都从它取。
 // 首次读库发生在被事件或兜底轮询唤醒之后，即「运行有进展后再查」，避免每次运行都多一次
 // 与后续读库重复的查询。
 func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, node *types.AnalysisNode, timeout time.Duration) (runtimecontext.AnalysisNodeRunResult, error) {
@@ -338,12 +338,9 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, node *types.
 	}
 	deadline := time.Now().Add(timeout)
 
-	analysisID := node.AnalysisID
 	// AnalysisNode.ID 是主键（int64），而 AnalysisNode.AnalysisNodeID 是业务字符串 ID；
 	// RuntimeEvent.AnalysisNodeID 的类型是 int64，NodeCompletionCoordinator.
 	// publishNodeResult 填入的正是 node.ID，因此节点维度的匹配用它。
-	// EventRouter 的 sink 只按 analysis_id 分桶（sinks[RuntimeEvent.AnalysisID]），
-	// 所以订阅必须用 analysisID，nodeID 只能在过滤器里收窄到本节点。
 	nodeID := node.ID
 	scriptID := node.ScriptID
 	// 运行期路径全部由节点的 WorkspaceDir 派生，这里取一份，保证取消 / 超时等
@@ -354,18 +351,22 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, node *types.
 	logPath := strings.TrimSpace(node.LogPath)
 
 	// 订阅 NodeCompletionCoordinator.publishNodeResult 发出的节点完成 / 失败事件。
-	// 过滤器只放行本节点的这两类事件，避免无关节点 / 事件唤醒本 runner。
 	//
-	// 注意：同一 analysis 只保留一个 sink，RegisterWithFilter 遇到已存在的 sink 会直接
-	// 返回它并保留其原有过滤器（例如 DAG 调度器的 SchedulerEventFilter）。因此过滤器
-	// 只是一个「尽量少唤醒」的优化；循环里按 nodeID 重新读库并判定终态才是正确性保证，
-	// 收到其他节点的事件也只会多一次读库，不会误判终态。
+	// 订阅按「节点主键」而不是 analysis_id：独立分析节点（Agent 单独创建、不挂在任何
+	// analysis 下）的 AnalysisID 恒为 0，按 analysis_id 订阅会让所有这类节点共用一个
+	// sink——先注册者的过滤器生效、多个等待者抢同一个 channel、任一退出还会把这个共享
+	// sink 注销掉。节点主键一定有值，且完成 / 失败事件必然携带它（EventRouter.
+	// RegisterForNode 按 RuntimeEvent.AnalysisNodeID 分桶），这才是单节点等待者的正确路由键。
+	//
+	// 节点 sink 与 analysis sink 相互独立：同一 analysis 下的调度器照样收到事件，
+	// UnregisterNode 也不会影响它。过滤器只需保留完成 / 失败两类事件；AnalysisNodeID
+	// 再校验一次，防止主键被复用时收到陈旧事件。
 	var (
 		nodeEvents <-chan dagruntime.RuntimeEvent
 		unsub      func()
 	)
-	if r.router != nil {
-		sink := r.router.RegisterWithFilter(analysisID, func(evt dagruntime.RuntimeEvent) bool {
+	if r.router != nil && nodeID > 0 {
+		sink := r.router.RegisterForNode(nodeID, func(evt dagruntime.RuntimeEvent) bool {
 			if evt.AnalysisNodeID != nodeID {
 				return false
 			}
@@ -377,7 +378,7 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, node *types.
 			}
 		})
 		nodeEvents = sink.Events()
-		unsub = func() { r.router.Unregister(analysisID) }
+		unsub = func() { r.router.UnregisterNode(nodeID) }
 		defer unsub()
 	}
 
