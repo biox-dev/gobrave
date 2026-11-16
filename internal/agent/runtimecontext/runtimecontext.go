@@ -511,7 +511,7 @@ type ScriptBrowser interface {
 type AnalysisNodeBrowser interface {
 	// GetAnalysisNodeByID 按主键读取分析节点（必须属于当前激活项目，否则返回错误）。
 	//
-	// 返回的 WorkspaceDir 是绝对路径，ParamsPath 由 WorkspaceDir 派生。
+	// 返回的 WorkspaceDir 是绝对路径，ParamsPath 与 OutputDir 均由 WorkspaceDir 派生。
 	GetAnalysisNodeByID(ctx context.Context, projectID int64, nodeID int64) (AnalysisNodeBrief, error)
 }
 
@@ -620,12 +620,14 @@ type AnalysisNodeBrief struct {
 	// NodeType 是归一化后的节点类型（agent / script / scheduler）。
 	NodeType string `json:"node_type,omitempty"`
 	// NodeTypeDescription 是节点类型的中文说明（含可用的更新 / 运行工具指引）。
-	NodeTypeDescription string         `json:"node_type_description,omitempty"`
-	ScriptID            int64          `json:"script_id,omitempty"`
-	WorkspaceDir        string         `json:"workspace_dir"`
-	CommandPath         string         `json:"command_path,omitempty"`
-	ParamsPath          string         `json:"params_path"`
-	RequestParam        map[string]any `json:"request_param,omitempty"`
+	NodeTypeDescription string `json:"node_type_description,omitempty"`
+	ScriptID            int64  `json:"script_id,omitempty"`
+	WorkspaceDir        string `json:"workspace_dir"`
+	CommandPath         string `json:"command_path,omitempty"`
+	ParamsPath          string `json:"params_path"`
+	// OutputDir 是节点输出目录的绝对路径（WorkspaceDir/output），每次运行前会被清空。
+	OutputDir    string         `json:"output_dir"`
+	RequestParam map[string]any `json:"request_param,omitempty"`
 }
 
 // ContainerTemplateBrief 是容器模板的只读摘要（工具回传给模型的最小字段集）。

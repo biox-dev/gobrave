@@ -213,6 +213,14 @@ func (w *ContainerCreateWorker) handleRecreateRequest(ctx context.Context, req O
 	execCtx := ctx
 
 	if err := w.executeRecreate(execCtx, payload.ContainerInstanceID); err != nil {
+		if errors.Is(err, errWorkerInstanceGone) {
+			// 实例行已经被删除（例如会话容器先被删除命令收敛掉了行）：recreate 的对象
+			// 已不存在，重试永远不会成功，直接标记 sent 停止每秒重试 record not found。
+			logger.Warnf(ctx, "[ContainerCreateWorker] skip recreate request, instance already gone, outbox_id=%d instance_id=%d err=%v",
+				req.OutboxID, payload.ContainerInstanceID, err)
+			_ = w.repo.MarkOutboxEventSent(ctx, req.OutboxID)
+			return
+		}
 		logger.Errorf(ctx, "[ContainerCreateWorker] execute recreate failed, instance_id=%d err=%v", payload.ContainerInstanceID, err)
 		_ = w.repo.MarkOutboxEventPending(ctx, req.OutboxID)
 		return
@@ -542,11 +550,34 @@ func (w *ContainerCreateWorker) buildInstanceSpec(
 func (w *ContainerCreateWorker) executeRecreate(ctx context.Context, instanceID int64) error {
 	inst, err := w.repo.GetContainerInstanceByID(ctx, instanceID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: instance_id=%d", errWorkerInstanceGone, instanceID)
+		}
 		return err
+	}
+
+	// 只有 recreate_pending 是 recreate 的入口。
+	//
+	// 其它状态说明这条命令已经被处理过，或实例已经往前走/被删除：
+	//   - recreating / create_pending / creating / running：运行时资源已经删过、
+	//     重建链路已经接管，再删一次会把刚建出来的新容器删掉；
+	//   - delete_pending / deleting / deleted / stopped / failed 等：目标对象已不再是
+	//     「需要重建的运行中容器」。
+	// FSM 也只有 recreate_pending → recreating 这一条边，直接再迁移会返回
+	// invalid transition，被当成可重试错误后每秒重试。
+	// 因此非入口状态按「目标状态已达成」幂等返回。
+	if inst.Status != types.ContainerReCreatePending {
+		logger.Infof(ctx, "[ContainerCreateWorker] skip recreate request, instance status=%s instance_id=%d",
+			inst.Status, instanceID)
+		return nil
 	}
 
 	// Transition to recreating.
 	if err := w.lifecycle.TransitionAndEnqueue(ctx, inst, types.ContainerReCreating, "ContainerReCreating"); err != nil {
+		// 迁移事务内会重新读取实例，可能正好被删除命令删掉了行。
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: instance_id=%d", errWorkerInstanceGone, instanceID)
+		}
 		return err
 	}
 

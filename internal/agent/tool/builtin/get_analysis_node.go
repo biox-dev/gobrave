@@ -23,7 +23,7 @@ type GetAnalysisNodeInput struct {
 
 // GetAnalysisNodeOutput 是 get_analysis_node 工具返回给模型的结果。
 //
-// WorkspaceDir 是节点根目录（绝对路径），ParamsPath 由它派生。
+// WorkspaceDir 是节点根目录（绝对路径），ParamsPath 与 OutputDir 均由它派生。
 //
 // 节点类型只有三种，由 CreationSource 标识，NodeType 是其归一化结果（两者取值一致）：
 //   - agent：Agent 命令节点（无脚本，run.sh 由 Agent 生成），用 update_agent_analysis 修改；
@@ -49,6 +49,8 @@ type GetAnalysisNodeOutput struct {
 	// CommandPath 仅 agent 命令节点返回，是节点本次执行的 run.sh 绝对路径。
 	CommandPath string `json:"command_path,omitempty"`
 	ParamsPath  string `json:"params_path"`
+	// OutputDir 是节点输出目录的绝对路径（WorkspaceDir/output），每次运行前会被清空。
+	OutputDir string `json:"output_dir"`
 	// RequestParam 仅 script / scheduler 节点返回（键为脚本 io_schema inputs 的 name）；agent 节点不返回。
 	RequestParam map[string]any `json:"request_param,omitempty"`
 	Error        string         `json:"error,omitempty"`
@@ -59,13 +61,50 @@ type GetAnalysisNodeOutput struct {
 // 这里用字面量而不是引用 types 包，是为了避免 builtin → types → agent → builtin 的循环依赖。
 const analysisNodeTypeAgent = "agent"
 
+// getAnalysisNodeDescription 返回 get_analysis_node 的工具描述（Markdown 格式）。
+//
+// 与 bash 工具（bashDescription）同风格：把回传字段、按节点类型区分的字段口径、
+// 「解释分析结果时优先读 output_dir/output.md」的要求，以及后续该用哪个更新 / 运行工具
+// 直接写进描述，模型只看工具描述就能正确选工具并基于真实产物作答。
+func getAnalysisNodeDescription() string {
+	return `## 用途
+
+按 analysis_node_id 查看分析节点。用于回答用户对 @analysis_node:<id> 引用的提问：直接使用冒号后的 ID 作为 analysis_node_id（例如 @analysis_node:2121123876845916160 → analysis_node_id 传 2121123876845916160）。
+
+## 返回字段
+
+- **node_name**：节点名称。
+- **node_type / creation_source**：节点类型，取值为 agent（Agent 命令节点）、script（脚本节点）、scheduler（DAG 调度器节点）。
+- **node_type_description**：类型说明及可用工具。
+- **workspace_dir**：节点工作目录绝对路径，output / params.json / run.sh / command.log 均在其下。
+- **params_path**：节点 params.json 路径。
+- **output_dir**：节点输出目录绝对路径（即 workspace_dir/output），运行前会被清空，运行产物（含分析报告 output.md）在此目录下可直接读取。
+
+回传字段按节点类型区分：
+
+- node_type=agent：返回 **command_path**（节点 run.sh 绝对路径，可直接读取以复核命令），不返回 script_id / request_param。
+- node_type=script / scheduler：返回 **script_id** 与 **request_param**（节点上已保存的请求参数，键为脚本 io_schema 中的 name），不返回 command_path。
+
+## 解释分析结果
+
+当用户输入 @analysis_node:<id>（如 @analysis_node:xxxxxxx）并询问对分析结果的解释时，必须查看本工具返回的 **output_dir** 路径下的内容，基于真实产物进行解释：
+
+1. **优先读取 output_dir/output.md**：它是该节点的分析报告（脚本节点为渲染后的分析结论），先完整读其内容，据此解释分析结果。
+2. output.md 不存在或为空时，尝试读取目录下其他文件的内容再解释。
+3. 禁止只凭节点名称 / 参数臆造结果；产物缺失或为空时必须明确说明。
+
+## 后续工具
+
+修改节点前先看 node_type：agent 类型用 update_agent_analysis，script / scheduler 类型用 update_script_analysis；三种类型都可以用 run_analysis_node 运行，脚本型节点重算参数用 build_analysis_node_params。`
+}
+
 // GetAnalysisNode 返回一个「按 ID 查看分析节点」工具。
 //
 // 行为：
 //   - 解析必填入参 analysis_node_id（容错剥离 @analysis_node: 引用前缀）；
 //   - 项目归属取自执行事实（tool.ProjectIDFrom），节点必须属于当前激活项目，否则报错。
 //   - 回传节点名称、节点类型（creation_source / node_type：agent / script / scheduler）、
-//     工作目录（绝对路径）与 params.json 路径；
+//     工作目录（绝对路径）、params.json 路径与输出目录（output）绝对路径；
 //   - 按类型区分回传字段：agent 节点回传 command_path（run.sh 绝对路径），
 //     不回传 script_id / request_param；script / scheduler 节点回传 script_id 与
 //     已保存的 request_param，不回传 command_path。
@@ -74,7 +113,7 @@ const analysisNodeTypeAgent = "agent"
 func GetAnalysisNode(browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
 	return tool.NewFunc(
 		GetAnalysisNodeToolName,
-		"按 analysis_node_id 查看分析节点（用于回答用户对 @analysis_node:<id> 引用的提问：直接使用冒号后的 ID 作为 analysis_node_id）。返回 node_name（节点名称）、node_type / creation_source（节点类型：agent 为 Agent 命令节点、script 为脚本节点、scheduler 为 DAG 调度器节点）与 node_type_description（类型说明及可用工具）、workspace_dir（节点工作目录绝对路径，output / params.json / run.sh / command.log 均在其下）与 params_path（节点 params.json 路径）。返回字段按节点类型区分：node_type=agent 时返回 command_path（节点 run.sh 绝对路径，可直接读取以复核命令），不返回 script_id / request_param；node_type=script / scheduler 时返回 script_id 与 request_param（节点上已保存的请求参数，键为脚本 io_schema 中的 name），不返回 command_path。修改节点前先看 node_type：agent 类型用 update_agent_analysis，script / scheduler 类型用 update_script_analysis；三种类型都可以用 run_analysis_node 运行，脚本型节点重算参数用 build_analysis_node_params。",
+		getAnalysisNodeDescription(),
 		tool.Schema("按 ID 查看分析节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("分析节点主键 ID（必填，整数，字符串以保精度）。来自用户输入里的 @analysis_node:<id> 引用时直接使用冒号后的 ID。"),
 		}, "analysis_node_id"),
@@ -109,6 +148,7 @@ func GetAnalysisNode(browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
 				NodeTypeDescription: node.NodeTypeDescription,
 				WorkspaceDir:        node.WorkspaceDir,
 				ParamsPath:          node.ParamsPath,
+				OutputDir:           node.OutputDir,
 			}
 			if isAgentAnalysisNode(node.NodeType) {
 				// Agent 命令节点没有脚本与脚本参数，只回传 run.sh 路径。

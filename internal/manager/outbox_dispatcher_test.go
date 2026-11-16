@@ -151,3 +151,81 @@ func TestContainerCreateWorker_ExecuteDelete_DeletesInstanceRow(t *testing.T) {
 		t.Fatalf("expected instance row deleted by executeDelete")
 	}
 }
+
+// 重建命令同样必须幂等：实例记录已不存在时应返回 errWorkerInstanceGone，
+// 由 handleRecreateRequest 标记 sent，而不是每秒重试 record not found。
+func TestContainerCreateWorker_ExecuteRecreate_InstanceGone(t *testing.T) {
+	ctx := context.Background()
+	repo := newMockContainerRepo()
+	rt := &dockerMockRuntime{}
+	_, worker := newTestManagerWithWorker(repo, rt)
+
+	err := worker.executeRecreate(ctx, 424242)
+	if !errors.Is(err, errWorkerInstanceGone) {
+		t.Fatalf("expected errWorkerInstanceGone, got %v", err)
+	}
+}
+
+// 重复投递的重建命令不能再次删除运行时资源：此时新的容器可能已经建好，
+// 再删一次会把刚重建出来的容器杀掉。非 recreate_pending 状态按无操作处理。
+func TestContainerCreateWorker_ExecuteRecreate_SkipsWhenAlreadyAdvanced(t *testing.T) {
+	ctx := context.Background()
+	repo := newMockContainerRepo()
+	rt := &dockerMockRuntime{}
+	_, worker := newTestManagerWithWorker(repo, rt)
+
+	inst := &types.ContainerInstance{RuntimeID: "docker-new-1", Status: types.ContainerRunning, Name: "demo"}
+	if err := repo.CreateContainerInstance(ctx, inst); err != nil {
+		t.Fatalf("seed instance failed: %v", err)
+	}
+	inst.Status = types.ContainerRunning
+
+	if err := worker.executeRecreate(ctx, inst.ID); err != nil {
+		t.Fatalf("executeRecreate should be idempotent no-op, got %v", err)
+	}
+	if len(repo.outbox) != 0 {
+		t.Fatalf("expected no outbox event when recreate already advanced, got %d", len(repo.outbox))
+	}
+	latest, err := repo.GetContainerInstanceByID(ctx, inst.ID)
+	if err != nil {
+		t.Fatalf("get instance failed: %v", err)
+	}
+	if latest.Status != types.ContainerRunning {
+		t.Fatalf("expected instance status untouched, got %s", latest.Status)
+	}
+}
+
+// 正常入口 recreate_pending：迁移到 recreating 并写 ContainerReCreating 事件。
+func TestContainerCreateWorker_ExecuteRecreate_TransitionsFromRecreatePending(t *testing.T) {
+	ctx := context.Background()
+	repo := newMockContainerRepo()
+	rt := &dockerMockRuntime{}
+	_, worker := newTestManagerWithWorker(repo, rt)
+
+	inst := &types.ContainerInstance{RuntimeID: "docker-old-1", Status: types.ContainerReCreatePending, Name: "demo"}
+	if err := repo.CreateContainerInstance(ctx, inst); err != nil {
+		t.Fatalf("seed instance failed: %v", err)
+	}
+	inst.Status = types.ContainerReCreatePending
+
+	if err := worker.executeRecreate(ctx, inst.ID); err != nil {
+		t.Fatalf("executeRecreate failed: %v", err)
+	}
+	latest, err := repo.GetContainerInstanceByID(ctx, inst.ID)
+	if err != nil {
+		t.Fatalf("get instance failed: %v", err)
+	}
+	if latest.Status != types.ContainerReCreating {
+		t.Fatalf("expected status %s, got %s", types.ContainerReCreating, latest.Status)
+	}
+
+	found := false
+	for _, evt := range repo.outbox {
+		if evt.Type == "ContainerReCreating" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected ContainerReCreating outbox event, got %d events", len(repo.outbox))
+	}
+}

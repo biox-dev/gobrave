@@ -62,6 +62,38 @@ type RunAnalysisNodeOutput struct {
 	Error          string   `json:"error,omitempty"` // 失败原因（如有）
 }
 
+// runAnalysisNodeDescription 返回 run_analysis_node 的工具描述（Markdown 格式）。
+//
+// 与 getAnalysisNodeDescription 同风格：把适用节点类型、运行前行为（参数解析 / 清空 output）、
+// 回传字段口径，以及后续该用哪个工具改参数 / 查看结果直接写进描述，
+// 模型只看工具描述就能正确调用并基于真实产物作答。
+func runAnalysisNodeDescription() string {
+	return `## 用途
+
+按 analysis_node_id 运行分析节点。三种节点类型（node_type / creation_source = agent / script / scheduler，即 get_analysis_node 返回的 node_type 均可）全部支持。
+
+## 运行前行为
+
+- **agent 命令节点**（无脚本）：直接运行节点自身的 run.sh。
+- **script / scheduler 脚本节点**：使用节点上已保存的 request_param（本工具不接受 request_param；要改参数请先用 build_analysis_node_params，或直接用 update_script_analysis 改参数并立即运行）。运行前按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param，并清空上一轮 input_validation_errors / output_validation_errors。
+- 运行前会清空节点输出目录（output），因此返回结果只包含本次运行的产物。
+
+## 返回字段
+
+- **status / success**：节点终态（如 success / failed / timeout）及是否成功。
+- **script_id**：节点绑定的脚本 ID（便于接着用 get_script 查看脚本）。
+- **log / log_path**：command.log 内容；日志被截断时用 log_path 读取完整日志。
+- **workspace_dir / command_path / params_path**：节点根目录、本次实际执行的 run.sh、本次运行的 params.json。
+- **request_param / resolved_inputs / params_json**：本次实际生效的请求参数、按 io_schema 解析后的结构化输入，以及 params.json 正文。
+- **params_updated**：本次运行前是否按 io_schema 解析并更新了节点参数（命令型节点为 false）。
+- **input_validation_errors / output_validation_errors / params_warnings**：本次运行前写回节点的校验错误快照与参数解析阶段的非致命提示。
+- **error**：失败原因（如有）。
+
+## 后续工具
+
+- 查看节点名称、工作目录与已保存参数用 get_analysis_node。`
+}
+
 // RunAnalysisNode 返回一个「运行分析节点」工具。
 //
 // 适用节点类型：全部三种（creation_source = agent / script / scheduler），
@@ -87,7 +119,7 @@ type RunAnalysisNodeOutput struct {
 func RunAnalysisNode(runner runtimecontext.AnalysisNodeRunner) tool.Tool {
 	return tool.NewFunc(
 		RunAnalysisNodeToolName,
-		"运行指定分析节点（analysis_node_id 必填），可运行所有节点类型（creation_source = agent / script / scheduler，即 get_analysis_node 返回的 node_type 均可）。等待其完成后返回节点状态、绑定的 script_id、执行日志（log；截断时用 log_path 读取完整日志）、params_path、params.json 正文与本次生效的 request_param。agent 命令节点（无脚本）直接运行节点自身的 run.sh；script / scheduler 脚本节点使用节点上已保存的 request_param（修改参数请用 build_analysis_node_params；update_script_analysis 默认更新后运行，适合「改参数并立即运行」），运行前会按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param 并清空上一轮 input_validation_errors / output_validation_errors；运行前还会清空节点输出目录（output），因此输出只包含本次运行的产物。",
+		runAnalysisNodeDescription(),
 		tool.Schema("运行分析节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("要运行的分析节点 ID（必填，字符串以保精度）。"),
 			"timeout_seconds":  tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600。"),
@@ -99,7 +131,7 @@ func RunAnalysisNode(runner runtimecontext.AnalysisNodeRunner) tool.Tool {
 			}
 
 			if runner == nil {
-				return RunAnalysisNodeOutput{}, fmt.Errorf("run_analysis_node: analysis node runner is not available in this runtime")
+				return RunAnalysisNodeOutput{}, fmt.Errorf("%s: analysis node runner is not available in this runtime", RunAnalysisNodeToolName)
 			}
 
 			// 参数解析 / 落库 / 写出 params.json 全部由 runner 完成；
