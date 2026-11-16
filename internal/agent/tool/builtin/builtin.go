@@ -45,6 +45,8 @@ func All(d Deps) []tool.Tool {
 		skill.LoadSkillResource(d.Skills),
 		skill.CreateSkill(d.SkillWriter),
 		skill.EditSkill(d.SkillWriter),
+		// Profile：修改当前 Profile 的系统提示词（update_profile_prompt）。
+		UpdateProfilePrompt(d.ProfilePromptWriter),
 		// 交互：向用户提问（执行期从工具 ctx 取 Runtime 阻塞等待作答）。
 		AskUserTool(),
 		// 子 Agent：把多轮检索委派给只读子 Agent（请求级依赖由 ctx 注入）。

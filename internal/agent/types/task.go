@@ -59,11 +59,14 @@ type Task struct {
 	// ProjectID 是任务所属项目（创建时由调用方提供），0 表示未知。
 	ProjectID int64 `json:"project_id,string,omitempty" gorm:"column:project_id;type:bigint;index"`
 	// UserID 是任务归属用户（0 表示后台任务 / 无登录用户）。
-	UserID     int64      `json:"user_id,string,omitempty" gorm:"column:user_id;type:bigint;index"`
-	Provider   string     `json:"provider" gorm:"column:provider;type:varchar(64)"`
-	Model      string     `json:"model,omitempty" gorm:"column:model;type:varchar(128)"`
-	Status     TaskStatus `json:"status" gorm:"column:status;type:varchar(32);index"`
-	WorkingDir string     `json:"working_dir,omitempty" gorm:"column:working_dir;type:text"`
+	UserID   int64  `json:"user_id,string,omitempty" gorm:"column:user_id;type:bigint;index"`
+	Provider string `json:"provider" gorm:"column:provider;type:varchar(64)"`
+	Model    string `json:"model,omitempty" gorm:"column:model;type:varchar(128)"`
+	// ResolvedProfileID 是本轮实际使用的 Agent Profile ID（已按 0 → 内置默认）解析），
+	// 在 run 开始时写入（见 AgentService.run）。供工具在执行期定位当前 Profile。
+	ResolvedProfileID int64      `json:"resolved_profile_id,string,omitempty" gorm:"column:resolved_profile_id;type:bigint"`
+	Status            TaskStatus `json:"status" gorm:"column:status;type:varchar(32);index"`
+	WorkingDir        string     `json:"working_dir,omitempty" gorm:"column:working_dir;type:text"`
 
 	// Request 保存原始请求，用于恢复时重建上下文。
 	Request Request `json:"request,omitempty" gorm:"serializer:json"`
@@ -111,6 +114,9 @@ type TaskFacts struct {
 	ProjectID  int64
 	UserID     int64
 	WorkingDir string
+	// ProfileID 是本轮任务使用的 Agent Profile ID（0 表示未显式指定，
+	// 即使用内置默认 Profile）。供 update_profile_prompt 等工具定位当前 Profile。
+	ProfileID int64
 }
 
 // Facts 返回任务的只读事实快照；nil 任务返回零值。
@@ -124,6 +130,7 @@ func (t *Task) Facts() TaskFacts {
 		ProjectID:  t.ProjectID,
 		UserID:     t.UserID,
 		WorkingDir: t.WorkingDir,
+		ProfileID:  t.ResolvedProfileID,
 	}
 }
 
@@ -134,18 +141,19 @@ func (t *Task) Facts() TaskFacts {
 func NewTask(req Request, facts TaskFacts) *Task {
 	now := time.Now()
 	return &Task{
-		SessionID:   facts.SessionID,
-		ProjectID:   facts.ProjectID,
-		UserID:      facts.UserID,
-		Provider:    req.Provider,
-		Model:       req.ModelID,
-		Status:      TaskCreated,
-		WorkingDir:  facts.WorkingDir,
-		Request:     req,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Resumable:   false,
-		ResumeState: nil,
+		SessionID:         facts.SessionID,
+		ProjectID:         facts.ProjectID,
+		UserID:            facts.UserID,
+		Provider:          req.Provider,
+		Model:             req.ModelID,
+		ResolvedProfileID: req.ProfileID,
+		Status:            TaskCreated,
+		WorkingDir:        facts.WorkingDir,
+		Request:           req,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		Resumable:         false,
+		ResumeState:       nil,
 	}
 }
 

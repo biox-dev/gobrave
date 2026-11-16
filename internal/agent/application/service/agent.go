@@ -252,7 +252,9 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	}
 
 	// 有效请求在内存中构造；task.Request 保持创建时的原样（审计与恢复重建都依赖它），
-	// 只把派生出的模型 / Provider 回写到任务列。
+	// 只把派生出的模型 / Provider / Profile 回写到任务列。
+	// 先记录已解析的 Profile ID：工具（如 update_profile_prompt）在执行期据此定位当前 Profile。
+	task.ResolvedProfileID = profile.ID
 	facts := task.Facts()
 	req := applyProfileOverrides(task.Request, profile)
 	req.SystemPrompt = s.GetSystemPromptByProfileWithContext(ctx, profile, req.RuntimeContext, facts, req.Skills)

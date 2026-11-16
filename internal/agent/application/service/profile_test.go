@@ -15,7 +15,7 @@ import (
 func newTestProfileManager(t *testing.T) *ProfileManager {
 	t.Helper()
 	repo := agentrepository.NewGormProfileRepository(newTestDB(t))
-	if err := EnsureBuiltinProfiles(context.Background(), repo); err != nil {
+	if err := EnsureBuiltinProfiles(context.Background(), repo, true); err != nil {
 		t.Fatalf("seed builtin profiles: %v", err)
 	}
 	return NewProfileManager(repo)
@@ -93,7 +93,7 @@ func TestEnsureBuiltinProfilesCreateOnly(t *testing.T) {
 	ctx := context.Background()
 
 	// 首次同步：新增。
-	if err := EnsureBuiltinProfiles(ctx, repo); err != nil {
+	if err := EnsureBuiltinProfiles(ctx, repo, true); err != nil {
 		t.Fatalf("first seed: %v", err)
 	}
 	all, err := repo.List(ctx)
@@ -104,7 +104,7 @@ func TestEnsureBuiltinProfilesCreateOnly(t *testing.T) {
 		t.Fatalf("profile count = %d, want %d", len(all), len(BuiltinProfiles()))
 	}
 
-	// 修改数据库中的一条内置记录，再同步：应保留改动（不再覆盖）。
+	// 修改数据库中的一条内置记录，再以 overwritePrompt=false 同步：应保留改动。
 	before, err := repo.Get(ctx, BuiltinDefaultProfileID)
 	if err != nil {
 		t.Fatalf("get default: %v", err)
@@ -113,7 +113,7 @@ func TestEnsureBuiltinProfilesCreateOnly(t *testing.T) {
 	if err := repo.Update(ctx, before); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if err := EnsureBuiltinProfiles(ctx, repo); err != nil {
+	if err := EnsureBuiltinProfiles(ctx, repo, false); err != nil {
 		t.Fatalf("second seed: %v", err)
 	}
 	after, err := repo.Get(ctx, BuiltinDefaultProfileID)

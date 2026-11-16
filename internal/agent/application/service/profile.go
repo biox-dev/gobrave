@@ -91,7 +91,14 @@ func BuiltinProfiles() []*Profile {
 }
 
 // EnsureBuiltinProfiles 把内置 Profile 同步到仓库（数据库初始化工具）。
-func EnsureBuiltinProfiles(ctx context.Context, repo ProfileRepository) error {
+//
+// overwritePrompt 控制批量时是否覆盖已存在内置 Profile 的 SystemPrompt：
+//   - true（config.agent.overwrite_builtin_prompts 默认值）：用代码内置的
+//     builtin/prompts/*.md 覆盖，保证升级提示词后自动生效；
+//   - false：保留数据库中已有的 SystemPrompt（模型 / 用户对内置 Profile 的修改会被保留）。
+//
+// 其余字段（名称 / 技能 / 工具 / 模型等）始终以内置定义为准确认，避免历史默认值漂移。
+func EnsureBuiltinProfiles(ctx context.Context, repo ProfileRepository, overwritePrompt bool) error {
 	if repo == nil {
 		return nil
 	}
@@ -101,6 +108,10 @@ func EnsureBuiltinProfiles(ctx context.Context, repo ProfileRepository) error {
 		case err == nil:
 			if existing != nil {
 				p.CreatedAt = existing.CreatedAt
+				if !overwritePrompt {
+					// 保留用户 / 模型已修改的提示词。
+					p.SystemPrompt = existing.SystemPrompt
+				}
 			}
 			if err := repo.Update(ctx, p); err != nil {
 				return err

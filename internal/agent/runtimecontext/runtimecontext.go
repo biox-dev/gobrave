@@ -774,6 +774,47 @@ type SkillCreateInput struct {
 	Instructions string
 }
 
+// ProfilePromptWriter 抽象「修改当前 Agent Profile 的 SystemPrompt」的能力，
+// 供 update_profile_prompt 工具使用。
+//
+// 与 SkillWriter 同构：PlanEdit 只读取并计算「写入计划」（不落库），供工具在授权前
+// 把 unified diff 展示给用户；Apply 在授权通过后写库。
+//
+// 由 agentservice.ProfilePromptWriter 实现，并由 container 在构造 builtin.Deps 时注入。
+type ProfilePromptWriter interface {
+	// PlanEdit 按 Profile ID 计算一次唯一文本替换的写入计划（不落库）。
+	PlanEdit(ctx context.Context, profileID int64, oldString, newString string) (ProfilePromptPlan, error)
+	// Apply 按计划写回 Profile.SystemPrompt，返回保存后的 Profile 信息。
+	Apply(ctx context.Context, plan ProfilePromptPlan) (ProfilePromptInfo, error)
+}
+
+// ProfilePromptPlan 是一次 Profile 系统提示词写入的计划，工具据此生成授权前的 diff 预览。
+type ProfilePromptPlan struct {
+	// ProfileID 是目标 Profile 的 ID。
+	ProfileID int64
+	// Name 是 Profile 展示名。
+	Name string
+	// FilePath 是 diff 预览中展示的路径（提示词真实存储在数据库中）。
+	FilePath string
+	// Before 是写入前的 SystemPrompt。
+	Before string
+	// After 是替换后的 SystemPrompt。
+	After string
+	// Notice 是写入后需要提醒用户的事项（可为空）。
+	//
+	// 典型场景：agent.overwrite_builtin_prompts=true（默认）时修改内置 Profile，
+	// 该修改会在系统重启后被内置提示词覆盖，需要提示用户如何保留修改。
+	Notice string
+}
+
+// ProfilePromptInfo 是 Profile 系统提示词写入完成后的结果。
+type ProfilePromptInfo struct {
+	ProfileID int64
+	Name      string
+	// Notice 与 ProfilePromptPlan.Notice 一致，由工具转告用户。
+	Notice string
+}
+
 // ScriptCreateInput 是「创建脚本」的入参（不创建分析节点）。
 type ScriptCreateInput struct {
 	// ProjectID 是脚本所属项目（取自 RuntimeContext.ProjectID）。

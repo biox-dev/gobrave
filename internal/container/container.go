@@ -230,8 +230,10 @@ type agentToolDeps struct {
 	Skills         *skill.Registry
 	// SkillStore 用户技能的文件存储（create_skill / edit_skill 落盘用）。
 	SkillStore *skill.Store
-	Files      agentinterfaces.HistoryService
-	LSP        *lspmanager.Manager
+	// Profiles Profile 管理器（update_profile_prompt 修改当前 Profile 的系统提示词）。
+	Profiles *agentservice.ProfileManager
+	Files    agentinterfaces.HistoryService
+	LSP      *lspmanager.Manager
 	// Sessions / Messages 供注册表级 agent 工具（子 Agent）落库自己的会话。
 	Sessions agentinterfaces.SessionService
 	Messages agentinterfaces.MessageService
@@ -274,6 +276,9 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		ReportContext:   in.Browser,
 		Skills:          skillResolver,
 		SkillWriter:     skillWriter,
+		// Profile 写能力：修改当前 Profile 的系统提示词（update_profile_prompt）。
+		// 同时告知 Writer 启动时是否会覆盖内置提示词，使其能提醒用户「本次修改会在重启后被覆盖」。
+		ProfilePromptWriter: profilePromptWriter(in),
 		// 子 Agent 工具的进程级依赖：会话 / 消息服务在容器里装配成 native.SubAgentSessionStore。
 		SubAgentSessions: agentproviders.NewSubAgentSessionStore(in.Sessions, in.Messages),
 	}
@@ -288,6 +293,17 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		tools.Register(t)
 	}
 	return tools
+}
+
+// profilePromptWriter 构造 Profile 系统提示词写能力（update_profile_prompt 工具）。
+//
+// 同时告知 Writer 启动同步内置 Profile 时是否会覆盖已有 system_prompt，
+// 使其能在修改内置 Profile 时提醒用户「本次修改会在重启后被覆盖」。
+func profilePromptWriter(in agentToolDeps) runtimecontext.ProfilePromptWriter {
+	if in.Profiles == nil {
+		return nil
+	}
+	return agentservice.NewProfilePromptWriter(in.Profiles, config.ResolveOverwriteBuiltinPrompts(in.Config))
 }
 
 // buildAgentClient 构建 Agent 调用门面。
@@ -609,9 +625,15 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.ProfileRepository {
 		return agentrepository.NewGormProfileRepository(db)
 	}))
+	// ProfileManager 以具体类型提供一次：既供 AgentService 使用，也供 update_profile_prompt
+	// 工具（ProfilePromptWriter）复用同一个实例。
+	must(container.Provide(func(repo agentinterfaces.ProfileRepository) *agentservice.ProfileManager {
+		return agentservice.NewProfileManager(repo)
+	}))
 	// 系统启动时同步内置 Profile 到数据库（按 ID 判断：不存在则新增、已存在则更新）。
-	must(container.Invoke(func(repo agentinterfaces.ProfileRepository) error {
-		return agentservice.EnsureBuiltinProfiles(ctx, repo)
+	// 是否覆盖已有 system_prompt 由 config.agent.overwrite_builtin_prompts 决定。
+	must(container.Invoke(func(cfg *config.Config, repo agentinterfaces.ProfileRepository) error {
+		return agentservice.EnsureBuiltinProfiles(ctx, repo, config.ResolveOverwriteBuiltinPrompts(cfg))
 	}))
 	// 说明：默认容器模板的兜底（EnsureDefaultContainerTemplate）只在下面的
 	// InstallBuiltinContainerTemplates 之后执行一次，避免在内置模板导入前
@@ -624,7 +646,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		questions agentinterfaces.QuestionRepository,
 		messages agentinterfaces.MessageService,
 		mems *agentservice.MemoryManager,
-		profiles agentinterfaces.ProfileRepository,
+		profiles *agentservice.ProfileManager,
 		skills *skill.Registry,
 		userRepo interfaces.UserRepository,
 	) *agentservice.AgentService {
@@ -637,7 +659,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 			// 时间线消息（agent_messages）由 AgentService 在轮内即时持久化。
 			Messages: messages,
 			Memory:   mems,
-			Profiles: agentservice.NewProfileManager(profiles),
+			Profiles: profiles,
 			Skills:   skills,
 			Policy:   agentpolicy.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
 		})

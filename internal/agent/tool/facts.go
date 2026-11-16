@@ -39,3 +39,9 @@ func SessionIDFrom(ctx context.Context) int64 { return TaskFactsFrom(ctx).Sessio
 
 // ProjectIDFrom 取出执行事实中的项目 ID（0 表示未解析到激活项目）。
 func ProjectIDFrom(ctx context.Context) int64 { return TaskFactsFrom(ctx).ProjectID }
+
+// ProfileIDFrom 取出执行事实中的 Agent Profile ID（0 表示使用内置默认 Profile）。
+//
+// 供 update_profile_prompt 等「修改当前 Profile」的工具在执行期定位目标 Profile，
+// 不需要模型自行填写 ID。
+func ProfileIDFrom(ctx context.Context) int64 { return TaskFactsFrom(ctx).ProfileID }

@@ -55,7 +55,7 @@ func newTestServiceWithDB(t *testing.T, extra ...agentclient.Provider) (*agentse
 	db := newTestDB(t)
 	// 生产环境由容器启动时调用 EnsureBuiltinProfiles；测试库同样需要内置默认 Profile，
 	// 否则 run 解析 ProfileID=0 会失败。
-	if err := agentservice.EnsureBuiltinProfiles(context.Background(), agentrepository.NewGormProfileRepository(db)); err != nil {
+	if err := agentservice.EnsureBuiltinProfiles(context.Background(), agentrepository.NewGormProfileRepository(db), true); err != nil {
 		t.Fatalf("seed builtin profiles: %v", err)
 	}
 

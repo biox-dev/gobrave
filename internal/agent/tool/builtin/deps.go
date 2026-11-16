@@ -49,6 +49,8 @@ type Deps struct {
 	Skills runtimecontext.SkillResolver
 	// SkillWriter 技能写能力（create_skill / edit_skill）。
 	SkillWriter runtimecontext.SkillWriter
+	// ProfilePromptWriter 修改当前 Profile 系统提示词的能力（update_profile_prompt）。
+	ProfilePromptWriter runtimecontext.ProfilePromptWriter
 
 	// SubAgentSessions 子 Agent 的会话 / 消息落库（agent 工具使用）。
 	//
