@@ -169,29 +169,30 @@ type AgentConfig struct {
 	// （内置技能升级后也不会自动同步，需要手动删除对应目录或改回 true）。
 	OverwriteBuiltinSkills *bool `yaml:"overwrite_builtin_skills" json:"overwrite_builtin_skills"`
 
-	// OverwriteBuiltinPrompts 控制启动时同步内置 Profile 的系统提示词时，是否覆盖数据库中的已有内容。
+	// OverwriteBuiltinProfile 控制启动时同步内置 Profile 时，是否覆盖数据库中已存在的记录。
 	//
-	// nil（未配置）/ true：用代码内置的 builtin/prompts/*.md 覆盖内置 Profile 的 system_prompt，
-	// 保证升级提示词后自动生效（历史行为）。
-	// false：保留数据库中已有的 system_prompt（即用户 / 模型对内置 Profile 的修改会在重启后保留）。
-	OverwriteBuiltinPrompts *bool `yaml:"overwrite_builtin_prompts" json:"overwrite_builtin_prompts"`
+	// nil（未配置）/ true：用代码内置的 Profile 定义覆盖已存在的内置 Profile（含
+	// builtin/prompts/*.md 的 system_prompt 与名称 / 技能 / 工具 / 模型等字段），
+	// 保证升级后自动生效（历史行为）。
+	// false：已存在的内置 Profile 保持原样、不再更新，仅创建数据库中缺失的记录。
+	OverwriteBuiltinProfile *bool `yaml:"overwrite_builtin_profile" json:"overwrite_builtin_profile"`
 }
 
-// OverwriteBuiltinPromptsEnabled 报告启动同步内置 Profile 时是否覆盖已有 system_prompt。
-// 未配置时返回 true，保持「内置提示词以代码为准」的历史行为。
-func (c *AgentConfig) OverwriteBuiltinPromptsEnabled() bool {
-	if c == nil || c.OverwriteBuiltinPrompts == nil {
+// OverwriteBuiltinProfileEnabled 报告启动同步内置 Profile 时是否覆盖已存在的记录。
+// 未配置时返回 true，保持「内置 Profile 以代码为准」的历史行为。
+func (c *AgentConfig) OverwriteBuiltinProfileEnabled() bool {
+	if c == nil || c.OverwriteBuiltinProfile == nil {
 		return true
 	}
-	return *c.OverwriteBuiltinPrompts
+	return *c.OverwriteBuiltinProfile
 }
 
-// ResolveOverwriteBuiltinPrompts 返回当前配置下启动同步内置 Profile 时是否覆盖已有 system_prompt。
-func ResolveOverwriteBuiltinPrompts(cfg *Config) bool {
+// ResolveOverwriteBuiltinProfile 返回当前配置下启动同步内置 Profile 时是否覆盖已存在的记录。
+func ResolveOverwriteBuiltinProfile(cfg *Config) bool {
 	if cfg == nil {
 		return true
 	}
-	return cfg.Agent.OverwriteBuiltinPromptsEnabled()
+	return cfg.Agent.OverwriteBuiltinProfileEnabled()
 }
 
 // OverwriteBuiltinSkillsEnabled 报告启动时是否覆盖已存在的内置技能文件。

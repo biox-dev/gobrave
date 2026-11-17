@@ -124,11 +124,11 @@ agent:
   # 需要手动删除对应目录或改回 true）。
   overwrite_builtin_skills: true
 
-  # 启动同步内置 Profile 时，是否用内置提示词（builtin/prompts/*.md，如 default.md）
-  # 覆盖数据库中已有的 system_prompt。
-  # 未配置 / true：每次启动都覆盖，保证升级提示词后自动生效（默认）。
-  # false：保留数据库中已有的提示词，即模型 / 用户对内置 Profile 的修改会在重启后保留。
-  overwrite_builtin_prompts: true
+  # 启动同步内置 Profile 时，是否覆盖数据库中已存在的内置 Profile 记录。
+  # 未配置 / true：每次启动都用代码内置的定义（builtin/prompts/*.md 的系统提示词
+  # 以及名称 / 技能 / 工具 / 模型等字段）覆盖，保证升级后自动生效（默认）。
+  # false：已存在的内置 Profile 保持原样、不再更新，仅创建数据库中缺失的记录。
+  overwrite_builtin_profile: true
 
   # 模型提供商配置表（key 为模型名，与 Profile.model 对应，统一小写）。
   # 一次请求使用的模型由 Profile.model 指定，据此在此表中查找 base_url / api_key 等 LLM 配置。

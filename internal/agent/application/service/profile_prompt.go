@@ -17,21 +17,21 @@ import (
 // Apply 在授权通过后写库。
 //
 // 内置 Profile 的系统提示词来源是代码内置的 builtin/prompts/<name>.md（如 default.md），
-// 启动时由 EnsureBuiltinProfiles 同步进数据库。是否覆盖数据库中的已有内容由
-// config.agent.overwrite_builtin_prompts 决定，因此这里会在修改内置 Profile 时，
+// 启动时由 EnsureBuiltinProfiles 同步进数据库。是否覆盖已存在的内置 Profile 由
+// config.agent.overwrite_builtin_profile 决定，因此这里会在修改内置 Profile 时，
 // 用 Notice 提醒用户「重启后可能被内置提示词覆盖」。
 type ProfilePromptWriter struct {
 	repo *ProfileManager
-	// overwriteBuiltinPrompts 与 config.agent.overwrite_builtin_prompts 保持一致。
-	overwriteBuiltinPrompts bool
+	// overwriteBuiltinProfile 与 config.agent.overwrite_builtin_profile 保持一致。
+	overwriteBuiltinProfile bool
 }
 
 // NewProfilePromptWriter 创建 Profile 提示词写入器。
 //
-// overwriteBuiltinPrompts 为 true（配置默认值）时，对内置 Profile 的修改会在系统重启后被
+// overwriteBuiltinProfile 为 true（配置默认值）时，对内置 Profile 的修改会在系统重启后被
 // 内置提示词覆盖，写入计划会附带提醒。
-func NewProfilePromptWriter(repo *ProfileManager, overwriteBuiltinPrompts bool) *ProfilePromptWriter {
-	return &ProfilePromptWriter{repo: repo, overwriteBuiltinPrompts: overwriteBuiltinPrompts}
+func NewProfilePromptWriter(repo *ProfileManager, overwriteBuiltinProfile bool) *ProfilePromptWriter {
+	return &ProfilePromptWriter{repo: repo, overwriteBuiltinProfile: overwriteBuiltinProfile}
 }
 
 // PlanEdit 实现 runtimecontext.ProfilePromptWriter：按 ID 计算唯一文本替换的写入计划（不落盘）。
@@ -107,13 +107,13 @@ func (w *ProfilePromptWriter) Apply(ctx context.Context, plan runtimecontext.Pro
 
 // overwriteNotice 返回本次写入需要提醒用户的事项；无需提醒时返回空串。
 //
-// 内置 Profile 的系统提示词在启动时会由 EnsureBuiltinProfiles 用内置提示词重新同步；
-// overwrite_builtin_prompts=true（默认）时该同步会覆盖本次修改，因此提前提醒用户。
+// 内置 Profile 在启动时会由 EnsureBuiltinProfiles 重新同步；
+// overwrite_builtin_profile=true（默认）时该同步会覆盖本次修改，因此提前提醒用户。
 func (w *ProfilePromptWriter) overwriteNotice(profile *Profile) string {
-	if w == nil || !w.overwriteBuiltinPrompts || !IsBuiltinProfileID(profile.ID) {
+	if w == nil || !w.overwriteBuiltinProfile || !IsBuiltinProfileID(profile.ID) {
 		return ""
 	}
-	return fmt.Sprintf("profile %q is a builtin profile: this change will be overwritten by the builtin prompt when the system restarts. To keep it, set agent.overwrite_builtin_prompts: false in config.yml (default is true), or edit the prompt file directly.", profile.Name)
+	return fmt.Sprintf("profile %q is a builtin profile: this change will be overwritten by the builtin definition when the system restarts. To keep it, set agent.overwrite_builtin_profile: false in config.yml (default is true), or edit the prompt file directly.", profile.Name)
 }
 
 // profilePromptPath 返回 Profile 提示词在 diff 预览中展示的路径。

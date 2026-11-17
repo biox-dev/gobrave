@@ -303,7 +303,7 @@ func profilePromptWriter(in agentToolDeps) runtimecontext.ProfilePromptWriter {
 	if in.Profiles == nil {
 		return nil
 	}
-	return agentservice.NewProfilePromptWriter(in.Profiles, config.ResolveOverwriteBuiltinPrompts(in.Config))
+	return agentservice.NewProfilePromptWriter(in.Profiles, config.ResolveOverwriteBuiltinProfile(in.Config))
 }
 
 // buildAgentClient 构建 Agent 调用门面。
@@ -631,9 +631,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		return agentservice.NewProfileManager(repo)
 	}))
 	// 系统启动时同步内置 Profile 到数据库（按 ID 判断：不存在则新增、已存在则更新）。
-	// 是否覆盖已有 system_prompt 由 config.agent.overwrite_builtin_prompts 决定。
+	// 已存在的内置 Profile 是否覆盖由 config.agent.overwrite_builtin_profile 决定。
 	must(container.Invoke(func(cfg *config.Config, repo agentinterfaces.ProfileRepository) error {
-		return agentservice.EnsureBuiltinProfiles(ctx, repo, config.ResolveOverwriteBuiltinPrompts(cfg))
+		return agentservice.EnsureBuiltinProfiles(ctx, repo, config.ResolveOverwriteBuiltinProfile(cfg))
 	}))
 	// 说明：默认容器模板的兜底（EnsureDefaultContainerTemplate）只在下面的
 	// InstallBuiltinContainerTemplates 之后执行一次，避免在内置模板导入前

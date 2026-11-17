@@ -104,12 +104,13 @@ func TestEnsureBuiltinProfilesCreateOnly(t *testing.T) {
 		t.Fatalf("profile count = %d, want %d", len(all), len(BuiltinProfiles()))
 	}
 
-	// 修改数据库中的一条内置记录，再以 overwritePrompt=false 同步：应保留改动。
+	// 修改数据库中的一条内置记录，再以 overwriteProfile=false 同步：应保留改动。
 	before, err := repo.Get(ctx, BuiltinDefaultProfileID)
 	if err != nil {
 		t.Fatalf("get default: %v", err)
 	}
 	before.SystemPrompt = "changed"
+	before.Name = "renamed"
 	if err := repo.Update(ctx, before); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -122,5 +123,8 @@ func TestEnsureBuiltinProfilesCreateOnly(t *testing.T) {
 	}
 	if after.SystemPrompt != "changed" {
 		t.Fatalf("default system_prompt = %q, want preserved %q", after.SystemPrompt, "changed")
+	}
+	if after.Name != "renamed" {
+		t.Fatalf("default name = %q, want preserved %q", after.Name, "renamed")
 	}
 }

@@ -839,8 +839,8 @@ type ProfilePromptPlan struct {
 	After string
 	// Notice 是写入后需要提醒用户的事项（可为空）。
 	//
-	// 典型场景：agent.overwrite_builtin_prompts=true（默认）时修改内置 Profile，
-	// 该修改会在系统重启后被内置提示词覆盖，需要提示用户如何保留修改。
+	// 典型场景：agent.overwrite_builtin_profile=true（默认）时修改内置 Profile，
+	// 该修改会在系统重启后被内置定义覆盖，需要提示用户如何保留修改。
 	Notice string
 }
 

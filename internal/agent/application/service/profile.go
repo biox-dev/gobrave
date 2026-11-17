@@ -92,13 +92,13 @@ func BuiltinProfiles() []*Profile {
 
 // EnsureBuiltinProfiles 把内置 Profile 同步到仓库（数据库初始化工具）。
 //
-// overwritePrompt 控制批量时是否覆盖已存在内置 Profile 的 SystemPrompt：
-//   - true（config.agent.overwrite_builtin_prompts 默认值）：用代码内置的
-//     builtin/prompts/*.md 覆盖，保证升级提示词后自动生效；
-//   - false：保留数据库中已有的 SystemPrompt（模型 / 用户对内置 Profile 的修改会被保留）。
-//
-// 其余字段（名称 / 技能 / 工具 / 模型等）始终以内置定义为准确认，避免历史默认值漂移。
-func EnsureBuiltinProfiles(ctx context.Context, repo ProfileRepository, overwritePrompt bool) error {
+// overwriteProfile 控制已存在内置 Profile 是否被覆盖：
+//   - true（config.agent.overwrite_builtin_profile 默认值）：用代码内置的定义
+//     （含 builtin/prompts/*.md 的 SystemPrompt，以及名称 / 技能 / 工具 / 模型等字段）
+//     覆盖，保证升级后自动生效；
+//   - false：已存在的内置 Profile 保持原样、完全不更新，仅创建数据库中缺失的记录
+//     （模型 / 用户对内置 Profile 的修改会在重启后保留）。
+func EnsureBuiltinProfiles(ctx context.Context, repo ProfileRepository, overwriteProfile bool) error {
 	if repo == nil {
 		return nil
 	}
@@ -106,12 +106,12 @@ func EnsureBuiltinProfiles(ctx context.Context, repo ProfileRepository, overwrit
 		existing, err := repo.Get(ctx, p.ID)
 		switch {
 		case err == nil:
+			if !overwriteProfile {
+				// 已存在的内置 Profile 不覆盖：保留数据库中的全部字段。
+				continue
+			}
 			if existing != nil {
 				p.CreatedAt = existing.CreatedAt
-				if !overwritePrompt {
-					// 保留用户 / 模型已修改的提示词。
-					p.SystemPrompt = existing.SystemPrompt
-				}
 			}
 			if err := repo.Update(ctx, p); err != nil {
 				return err
