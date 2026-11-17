@@ -15,18 +15,23 @@ import (
 // previewRowLimit 是文件内容预览的最大行数（列名之外）。
 const previewRowLimit = 5
 
-// fileReader 实现 runtimecontext.FileReader：把「按 go_file 主键 ID 读取文件内容预览」的业务能力
-// 暴露给内置工具 read_file_by_id。
+// sheetTab 是单个 sheet 的内容预览。
+type sheetTab struct {
+	Name    string
+	Columns []string
+	Rows    []map[string]any
+}
+
+// fileReader 实现 runtimecontext.FileReader：按 go_file 主键解析文件路径，并读取 Excel 工作簿预览，
+// 供 coder 的 view 工具使用（支持 @file:<id> 与直接传入 xlsx 路径）。
 //
-// 它复用 DataService（ID → 文件元信息 / path）与 SheetFileService（表格解析）：对
-// tsv / csv / xlsx（全部 sheet）解析出每个 sheet 的列名与前若干行数据；其它格式只返回
-// 文件路径（Message 说明「不解析内容」）。
+// 它复用 DataService（ID → 文件元信息 / path）与 SheetFileService（Excel 解析）。
 type fileReader struct {
 	dataService  interfaces.DataService
 	sheetService interfaces.SheetFileService
 }
 
-// newFileReader 构建文件读取器并注入内置工具体系。
+// newFileReader 构建文件读取器并注入工具体系。
 func newFileReader(dataService interfaces.DataService, sheetService interfaces.SheetFileService) runtimecontext.FileReader {
 	return &fileReader{
 		dataService:  dataService,
@@ -34,7 +39,7 @@ func newFileReader(dataService interfaces.DataService, sheetService interfaces.S
 	}
 }
 
-// ReadFileByID 按 go_file 主键 ID 读取文件，返回文件元信息与内容预览。
+// ReadFileByID 按 go_file 主键 ID 查询文件元信息（含真实路径）。
 func (r *fileReader) ReadFileByID(ctx context.Context, fileID int64) (runtimecontext.FileReadResult, error) {
 	if fileID <= 0 {
 		return runtimecontext.FileReadResult{FileID: fileID}, fmt.Errorf("invalid file id")
@@ -51,42 +56,58 @@ func (r *fileReader) ReadFileByID(ctx context.Context, fileID int64) (runtimecon
 		return runtimecontext.FileReadResult{FileID: fileID}, fmt.Errorf("file %d not found", fileID)
 	}
 
-	result := runtimecontext.FileReadResult{
+	return runtimecontext.FileReadResult{
 		FileID:   file.ID,
 		FileName: file.FileName,
 		FilePath: file.Path,
-		Format:   normalizePreviewFormat(file.Format, file.Path),
-	}
-
-	// 仅对 tsv / csv / xlsx 解析内容；其它格式只返回路径。
-	switch result.Format {
-	case "tsv", "csv", "xlsx":
-	default:
-		result.Message = "该文件格式暂不支持内容预览，仅返回文件路径。"
-		return result, nil
-	}
-
-	if r.sheetService == nil {
-		result.Message = "表格服务不可用，仅返回文件路径。"
-		return result, nil
-	}
-
-	read, err := r.sheetService.ReadWorkbook(ctx, file.Path, "")
-	if err != nil {
-		// 解析失败不阻断：仍返回路径，把原因写进 Message 供模型参考。
-		result.Message = fmt.Sprintf("解析文件内容失败：%v", err)
-		return result, nil
-	}
-
-	result.Sheets = buildSheetPreviews(read.WorkbookData)
-	if len(result.Sheets) == 0 {
-		result.Message = "文件无可预览的表格数据。"
-	}
-	return result, nil
+		Format:   normalizeFormat(file.Format, file.Path),
+	}, nil
 }
 
-// normalizePreviewFormat 推断文件预览用的格式：优先用 file.Format，为空时回退到路径后缀。
-func normalizePreviewFormat(format, path string) string {
+// ReadSpreadsheet 按路径读取 Excel 工作簿，返回每个 sheet 的列名与前若干行预览。
+func (r *fileReader) ReadSpreadsheet(ctx context.Context, path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("spreadsheet path is required")
+	}
+	if r.sheetService == nil {
+		return "", fmt.Errorf("sheet service is not configured")
+	}
+
+	read, err := r.sheetService.ReadWorkbook(ctx, path, "")
+	if err != nil {
+		return "", fmt.Errorf("failed to read workbook: %w", err)
+	}
+	tabs := buildSheetPreviews(read.WorkbookData)
+	if len(tabs) == 0 {
+		return "", fmt.Errorf("no previewable sheets in %s", path)
+	}
+	return formatSheetTabs(tabs), nil
+}
+
+// formatSheetTabs 把 sheet 预览渲染为紧凑文本：每个 sheet 一段，首行列名，其后为数据行。
+func formatSheetTabs(tabs []sheetTab) string {
+	var b strings.Builder
+	for i, tab := range tabs {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "[sheet] %s\n", tab.Name)
+		fmt.Fprintf(&b, "columns: %s\n", strings.Join(tab.Columns, "\t"))
+		for _, row := range tab.Rows {
+			cells := make([]string, len(tab.Columns))
+			for j, col := range tab.Columns {
+				if v := row[col]; v != nil {
+					cells[j] = fmt.Sprint(v)
+				}
+			}
+			b.WriteString(strings.Join(cells, "\t") + "\n")
+		}
+	}
+	return b.String()
+}
+
+// normalizeFormat 推断文件格式：优先用 file.Format，为空时回退到路径后缀。
+func normalizeFormat(format, path string) string {
 	normalized := strings.TrimSpace(strings.ToLower(strings.TrimPrefix(format, ".")))
 	if normalized == "" {
 		normalized = strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
@@ -102,7 +123,7 @@ func normalizePreviewFormat(format, path string) string {
 //
 // 其中 cellData 的键是「行下标字符串」，值是「列下标字符串 → {v: 值}」。因此第一行
 // （下标 "0"）被视为表头，其余前 previewRowLimit 行作为数据行。
-func buildSheetPreviews(workbookData map[string]any) []runtimecontext.FileSheetTab {
+func buildSheetPreviews(workbookData map[string]any) []sheetTab {
 	if workbookData == nil {
 		return nil
 	}
@@ -115,14 +136,14 @@ func buildSheetPreviews(workbookData map[string]any) []runtimecontext.FileSheetT
 	// 按 sheetOrder 排序，缺省时按 sheetID 升序，保证输出稳定。
 	order := sheetOrderOf(workbookData, rawSheets)
 
-	out := make([]runtimecontext.FileSheetTab, 0, len(order))
+	out := make([]sheetTab, 0, len(order))
 	for _, sheetID := range order {
 		rawSheet, ok := rawSheets[sheetID].(map[string]any)
 		if !ok {
 			continue
 		}
 
-		tab := runtimecontext.FileSheetTab{Name: sheetNameOf(rawSheet, sheetID)}
+		tab := sheetTab{Name: sheetNameOf(rawSheet, sheetID)}
 		tab.Columns, tab.Rows = previewFromCellData(cellDataOf(rawSheet))
 		out = append(out, tab)
 	}

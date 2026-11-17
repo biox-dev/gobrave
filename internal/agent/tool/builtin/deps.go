@@ -22,8 +22,6 @@ type Deps struct {
 	AgentRunner runtimecontext.AgentAnalysisRunner
 	// Terminal 向用户的持久终端会话写入命令（terminal_exec）。
 	Terminal runtimecontext.ContainerTerminalRunner
-	// FileReader 按 go_file 主键读取文件（read_file_by_id）。
-	FileReader runtimecontext.FileReader
 	// ScriptCreator 创建脚本（create_script）；同时实现 ScriptUpdater 时也用于 update_script。
 	ScriptCreator runtimecontext.ScriptCreator
 	// NodeCreator 为已有脚本创建分析节点（create_script_analysis）。

@@ -37,7 +37,6 @@ func All(d Deps) []tool.Tool {
 		UpdateAgentAnalysis(d.NodeUpdater, d.Runner, d.NodeBrowser),
 		UpdateScriptAnalysis(d.NodeUpdater, d.Runner, d.NodeBrowser),
 		CreateAgentAnalysis(d.AgentRunner),
-		ReadFileByID(d.FileReader),
 		SaveMemory(d.MemorySaver),
 		GetReportContext(d.ReportContext),
 		// 技能：指令正文与附属资源都按需通过工具加载（渐进式披露）。

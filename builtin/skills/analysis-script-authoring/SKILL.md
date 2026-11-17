@@ -36,7 +36,7 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
    - `io_schema_path` 是参数契约的唯一来源：后续 request_param 的键、params.json 的键、
      脚本内读取的参数名，全部以它为准，不要自行发明参数名。
 
-2) **先确认契约**：结合用户需求与 `read_file_by_id` 拿到的数据结构（列名 / 维度 / 分组字段），
+2) **先确认契约**：结合用户需求与 `view` 读到的数据结构（列名 / 维度 / 分组字段），
    把 io_schema.json 的 inputs / outputs 改成真实契约。
    - inputs 的 `name` 就是 params.json 里的键，也是脚本里取参数用的名字；
    - 输出项按实际产物命名（通常 type 为 file，表格类给 role=TABLE）；
@@ -117,7 +117,7 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
 
 提问要求：
 
-- 提问前先用 `read_file_by_id` / 查看数据结构，把**真实的候选列名与取值**写进问题里，
+- 提问前先用 `view`（`file_path` 填 `@file:<id>`）/ 查看数据结构，把**真实的候选列名与取值**写进问题里，
   不要让用户从零描述（例如：「检测到 `group` 列取值为 `A/B`，哪一组是对照组？」）；
 - `questions[].id` 使用稳定英文短标识，如 `group_column`、`group_levels`、`control_group`、`batch_column`；
 - 选项类问题用 single_choice / multiple_choice，option 用「label（人类可读）+ value（真实列名 / 取值）」，

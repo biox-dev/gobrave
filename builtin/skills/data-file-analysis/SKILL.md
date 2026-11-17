@@ -40,9 +40,11 @@ description: 用户只给出数据文件（@file:<id>）并要求完成某个分
 
 ## 二、先读文件结构（无论走哪条路径都要做）
 
-- 调用 `read_file_by_id`，`file_id` 取 `@file:<id>` 冒号后的数字（多个文件就逐个读）。
-- 拿到 `file_path`（后续作为节点输入参数的真实路径）、`format`、`sheets[].columns` 与预览行。
-- 用列名 / 取值确认数据能否支撑用户的需求；**输入文件路径一律用返回的 `file_path`**，
+- 调用 `view`，`file_path` 直接填用户输入里的 `@file:<id>`（多个文件就逐个读）；
+  工具会按 ID 解析出真实路径并返回文件内容：xlsx 返回各 sheet 的列名与预览行，
+  文本表格（csv / tsv）首行即列名。
+- 输出开头的 `resolved_path` 就是后续作为节点输入参数的真实路径，务必记下来。
+- 用列名 / 取值确认数据能否支撑用户的需求；**输入文件路径一律用 `resolved_path`**，
   不要用 `find` 扫描工作区猜路径。
 - 若需求涉及分组（实验组 / 对照组、处理 / 未处理等）而分组列或组含义不明确，
   先按 `analysis-script-authoring` 技能的「生物分组不明确时必须先 ask_user」提问，
@@ -57,8 +59,8 @@ description: 用户只给出数据文件（@file:<id>）并要求完成某个分
 2. 调用 `create_script_analysis`：
    - `script_id`：匹配到的脚本 ID；
    - `node_name`：按本次需求起名（如 `deseq2_<数据名>`），同一脚本多次分析时便于区分；
-   - `request_param`：键 = io_schema `inputs[].name`；文件类输入填 `read_file_by_id` 返回的
-     `file_path`（`FileSelect` 的对象形态见 `analysis-io-schema-spec`）；数字 / 布尔用原生
+   - `request_param`：键 = io_schema `inputs[].name`；文件类输入填 `view` 解析 `@file:<id>` 后返回的
+     `resolved_path`（`FileSelect` 的对象形态见 `analysis-io-schema-spec`）；数字 / 布尔用原生
      JSON 类型，`BaseTextAreaNum` 用逗号分隔字符串；
    - `run` 默认 `true`（创建后立即运行并返回 status / success / log）；大文件可加大 `timeout_seconds`。
 3. 运行失败（`success=false` 或带 `error`）：先读 `log_path` 定位原因；
@@ -87,7 +89,7 @@ description: 用户只给出数据文件（@file:<id>）并要求完成某个分
 - **`agent_analysis`** → 按 `create_agent_analysis` 的工具描述写 `command`：
   以 `mkdir -p output` 开头，成果写到 `output/` 第一级，中间文件放 `output/tmp/`；
   重要表格 / 文本产物登记到 `output/outputs.json`（不登记图片与日志）；输入路径直接用
-  `read_file_by_id` 返回的 `file_path`。创建后默认立即运行，失败先读 `log_path`，
+  `view` 解析 `@file:<id>` 后返回的 `resolved_path`。创建后默认立即运行，失败先读 `log_path`，
   再用 `update_agent_analysis` 或改 `command_path` 后 `run_analysis_node` 修复，不要反复新建节点。
 - **`script`** → 按 `analysis-script-authoring` 技能的固定流程推进：
   `create_script`（一次给出真实 inputs / outputs）→ 确认 `io_schema_path` 契约 →
@@ -102,6 +104,6 @@ description: 用户只给出数据文件（@file:<id>）并要求完成某个分
 - 未调用 `list_project_scripts` 就建脚本或命令型节点。
 - 存在能做该分析的脚本时，另外新建一个重复脚本。
 - 没有可用脚本时，不询问用户就直接选一种创建方式。
-- 凭脚本名猜参数名，或把 `@file:<id>` 当作文件路径传给节点（必须先 `read_file_by_id` 拿 `file_path`）。
-- 用 `find` 全盘扫描工作区找输入文件；路径取自 `read_file_by_id`、`params.json`、上游节点产物。
+- 凭脚本名猜参数名，或把 `@file:<id>` 当作文件路径传给节点（必须先用 `view` 解析成 `resolved_path`）。
+- 用 `find` 全盘扫描工作区找输入文件；路径取自 `view` 的 `resolved_path`、`params.json`、上游节点产物。
 - 只建了脚本或节点就宣布完成：任务完成的标准是节点运行 `success=true` 且产物符合 `outputs`。

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestNormalizePreviewFormat(t *testing.T) {
+func TestNormalizeFormat(t *testing.T) {
 	cases := []struct {
 		format string
 		path   string
@@ -17,9 +17,21 @@ func TestNormalizePreviewFormat(t *testing.T) {
 		{"", "a/b.unknown", "unknown"},
 	}
 	for _, tc := range cases {
-		if got := normalizePreviewFormat(tc.format, tc.path); got != tc.want {
-			t.Fatalf("normalizePreviewFormat(%q,%q)=%q want %q", tc.format, tc.path, got, tc.want)
+		if got := normalizeFormat(tc.format, tc.path); got != tc.want {
+			t.Fatalf("normalizeFormat(%q,%q)=%q want %q", tc.format, tc.path, got, tc.want)
 		}
+	}
+}
+
+func TestFormatSheetTabs(t *testing.T) {
+	tabs := []sheetTab{{
+		Name:    "Sheet1",
+		Columns: []string{"name", "age"},
+		Rows:    []map[string]any{{"name": "alice", "age": "30"}},
+	}}
+	want := "[sheet] Sheet1\ncolumns: name\tage\nalice\t30\n"
+	if got := formatSheetTabs(tabs); got != want {
+		t.Fatalf("formatSheetTabs() = %q, want %q", got, want)
 	}
 }
 

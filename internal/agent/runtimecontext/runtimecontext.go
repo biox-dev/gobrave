@@ -262,38 +262,28 @@ type ContainerTerminalExecResult struct {
 	OutputTruncated bool    `json:"output_truncated,omitempty"`
 }
 
-// FileReader 抽象「按 go_file 主键 ID 读取文件」的业务能力。
+// FileReader 抽象「按 go_file 主键解析文件路径」与「读取 Excel 工作簿预览」的能力。
 //
-// 它把「file_id → 文件元信息（含 path）+ 内容预览」的业务细节收敛在上层实现
-// （见 container），tool 包只负责把它暴露给模型。对 tsv / csv / xlsx（全部 sheet）
-// 会解析出列信息与前若干行数据；其它格式只返回文件路径。
+// 它把「file_id → 真实路径」与「xlsx → 列名/预览行文本」的业务细节收敛在上层实现
+// （见 container），tool 包只负责把它暴露给模型。
 //
-// 与 AnalysisNodeRunner 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入。
+// 与 AnalysisNodeRunner 一样，它是进程级静态依赖，由 builtin.Deps / coder.Deps 在构造工具时注入。
 type FileReader interface {
-	// ReadFileByID 按 go_file 主键 ID 读取文件，返回文件元信息与内容预览。
+	// ReadFileByID 按 go_file 主键 ID 查询文件元信息（含真实路径）。
 	//
 	// fileID 非法（<=0）或文件不存在时返回错误。
 	ReadFileByID(ctx context.Context, fileID int64) (FileReadResult, error)
+	// ReadSpreadsheet 读取 Excel 工作簿（xlsx），返回可直接展示的文本预览：
+	// 每个 sheet 的名称、列名与前若干行数据。
+	ReadSpreadsheet(ctx context.Context, path string) (string, error)
 }
 
-// FileReadResult 是一次「按 ID 读取文件」的结果。
-//
-// 对 tsv / csv / xlsx：Sheets 承载每个 sheet 的列名与预览行；对其它格式：
-// Sheets 为空，仅 FilePath 有效。
+// FileReadResult 是按 ID 查询文件的结果（只含文件元信息）。
 type FileReadResult struct {
-	FileID   int64          `json:"file_id"`
-	FileName string         `json:"file_name,omitempty"`
-	FilePath string         `json:"file_path"`
-	Format   string         `json:"format,omitempty"`
-	Sheets   []FileSheetTab `json:"sheets,omitempty"`
-	Message  string         `json:"message,omitempty"`
-}
-
-// FileSheetTab 是单个 sheet / 数据表的内容预览。
-type FileSheetTab struct {
-	Name    string           `json:"name"`
-	Columns []string         `json:"columns,omitempty"`
-	Rows    []map[string]any `json:"rows,omitempty"`
+	FileID   int64  `json:"file_id"`
+	FileName string `json:"file_name,omitempty"`
+	FilePath string `json:"file_path"`
+	Format   string `json:"format,omitempty"`
 }
 
 // ScriptCreator 抽象「创建脚本」的业务能力（create_script）。
