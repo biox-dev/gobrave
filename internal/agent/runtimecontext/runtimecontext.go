@@ -250,6 +250,21 @@ type ContainerTerminalExecInput struct {
 	Persistent bool
 }
 
+// UIActionPusher 抽象「把一条 UI 动作推给当前用户的在线前端」的能力（ui_action）。
+//
+// 它只负责「投递」：动作语义（action 名 + payload 结构）由前端 ActionDispatcher 定义，
+// 后端不解释 payload，因此新增动作（路由跳转 / 表单填充 / 提示消息 …）不需要改动本接口。
+//
+// 与 ContainerTerminalRunner 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入；
+// 推送目标是哪个用户取自执行事实（tool.UserIDFrom），不由模型提供。
+type UIActionPusher interface {
+	// PushUIAction 向 userID 的在线客户端推送一条 {action, payload} 消息。
+	//
+	// userID <= 0（无登录用户）或当前无在线客户端时返回 nil：UI 动作是尽力而为的
+	// 「显示层提示」，不应让工具调用失败。
+	PushUIAction(ctx context.Context, userID int64, action string, payload map[string]any) error
+}
+
 // ContainerTerminalExecResult 是一次 terminal_exec 调用的执行结果。
 type ContainerTerminalExecResult struct {
 	SessionID       string  `json:"session_id,omitempty"`

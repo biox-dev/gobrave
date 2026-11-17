@@ -32,6 +32,8 @@ func All(d Deps) []tool.Tool {
 		ListContainerTemplates(d.TemplateBrowser),
 		GetContainerTemplate(d.TemplateBrowser),
 		TerminalExec(d.Terminal),
+		// 界面：驱动用户前端执行动作（ui_action，目前只有路由跳转）。
+		UIAction(d.UIActions),
 		GetDataset(d.DatasetBrowser),
 		GetProjectDatabasePath(d.DatasetWriter),
 		AddFileToDataset(d.DatasetWriter),

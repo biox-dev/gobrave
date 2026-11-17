@@ -216,10 +216,12 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 type agentToolDeps struct {
 	dig.In
 
-	Config          *config.Config
-	Runner          runtimecontext.AnalysisNodeRunner
-	AgentRunner     runtimecontext.AgentAnalysisRunner
-	Terminal        runtimecontext.ContainerTerminalRunner
+	Config      *config.Config
+	Runner      runtimecontext.AnalysisNodeRunner
+	AgentRunner runtimecontext.AgentAnalysisRunner
+	Terminal    runtimecontext.ContainerTerminalRunner
+	// UIActions 把 Agent 的 UI 动作推给当前用户（ui_action）。
+	UIActions       runtimecontext.UIActionPusher
 	ContainerShell  hostshell.ContainerShellService
 	FileReader      runtimecontext.FileReader
 	ScriptCreator   runtimecontext.ScriptCreator
@@ -265,6 +267,7 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		Runner:          in.Runner,
 		AgentRunner:     in.AgentRunner,
 		Terminal:        in.Terminal,
+		UIActions:       in.UIActions,
 		FileReader:      in.FileReader,
 		ScriptCreator:   in.ScriptCreator,
 		NodeCreator:     in.NodeCreator,
@@ -886,6 +889,14 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(handler.NewFileHandler))
 	must(container.Provide(handler.NewProxyHandler))
 	must(container.Provide(realtime.NewHub))
+	// ui_action 的推送出口：把 Agent 的 UI 动作推给当前用户的在线前端。
+	//
+	// 位置同样是硬约束：它依赖 *realtime.Hub，而 dig 的 Provide 虽然惰性，但
+	// buildAgentTools（依赖 UIActionPusher）在本文件后面才被 Invoke —— 只要本句写在
+	// Provide(realtime.NewHub) 之后即可解析成功。注意别挪到 Hub 注册之前。
+	must(container.Provide(func(hub *realtime.Hub) runtimecontext.UIActionPusher {
+		return manager.NewUIActionPusher(hub)
+	}))
 	// 回填 ContainerManager 的实时推送出口：容器创建 / 删除时向所有在线客户端广播
 	// 「队列状态变化」，用于刷新前端 ContainerQueueMonitor。
 	//
