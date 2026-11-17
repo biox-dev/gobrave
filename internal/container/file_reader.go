@@ -23,7 +23,7 @@ type sheetTab struct {
 }
 
 // fileReader 实现 runtimecontext.FileReader：按 go_file 主键解析文件路径，并读取 Excel 工作簿预览，
-// 供 coder 的 view 工具使用（支持 @file:<id> 与直接传入 xlsx 路径）。
+// 供内置工具 get_file 使用（agent 传 @file:<id> 冒号后的裸 ID）。
 //
 // 它复用 DataService（ID → 文件元信息 / path）与 SheetFileService（Excel 解析）。
 type fileReader struct {

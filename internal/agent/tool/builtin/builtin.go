@@ -25,6 +25,8 @@ func All(d Deps) []tool.Tool {
 		UpdateScript(d.scriptUpdater()),
 		ListProjectScripts(d.ScriptBrowser),
 		GetScript(d.ScriptBrowser),
+		// 文件引用：读取用户输入 @file:<id> 指向的文件内容（agent 传裸 ID）。
+		GetFile(d.FileReader),
 		GetAnalysisNode(d.NodeBrowser),
 		ListContainerTemplates(d.TemplateBrowser),
 		GetContainerTemplate(d.TemplateBrowser),

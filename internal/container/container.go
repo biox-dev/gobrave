@@ -262,6 +262,7 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		Runner:          in.Runner,
 		AgentRunner:     in.AgentRunner,
 		Terminal:        in.Terminal,
+		FileReader:      in.FileReader,
 		ScriptCreator:   in.ScriptCreator,
 		NodeCreator:     in.NodeCreator,
 		ParamsBuilder:   in.ParamsBuilder,
@@ -284,7 +285,7 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 	for _, t := range builtin.All(builtinDeps) {
 		tools.Register(t)
 	}
-	for _, t := range coder.All(coder.Deps{History: in.Files, LSP: in.LSP, Config: in.Config, ContainerShell: in.ContainerShell, FileReader: in.FileReader}) {
+	for _, t := range coder.All(coder.Deps{History: in.Files, LSP: in.LSP, Config: in.Config, ContainerShell: in.ContainerShell}) {
 		tools.Register(t)
 	}
 	// 外部 MCP 服务提供的工具：工具名为 <服务名>_<工具名>，与内置工具同池调度（权限门禁复用）。
@@ -576,8 +577,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(registry *manager.TerminalSessionRegistry) hostshell.ContainerShellService {
 		return registry
 	}))
-	// 文件读取器：把「按 go_file 主键解析文件路径 + 读取 Excel 工作簿预览」能力暴露给 coder 的
-	// view 工具，同时支撑用户输入里的 @file:<id> 引用与直接传入 xlsx 路径。
+	// 文件读取器：把「按 go_file 主键解析文件路径 + 读取 Excel 工作簿预览」能力暴露给内置工具
+	// get_file，用于读取用户输入 @file:<id> 引用指向的文件（agent 传裸 ID）。
 	must(container.Provide(newFileReader))
 	// 脚本业务能力：agentscript.Creator 同时实现 runtimecontext.ScriptCreator（create_script）与
 	// runtimecontext.ScriptUpdater（update_script），故只需注入一次。
