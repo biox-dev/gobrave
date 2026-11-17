@@ -8,6 +8,7 @@ import (
 	agent "github.com/biox-dev/gobrave/internal/agent/types"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // NewGormSessionStore 创建基于数据库的会话 Store。
@@ -62,8 +63,8 @@ func (r *gormSessionStore) Delete(ctx context.Context, id int64) error {
 //   - UpToSeq > 0 时只复制 seq <= UpToSeq 的历史（从某条消息处分叉）；
 //   - CopyFiles 时只复制每个 path 的最新版本，版本号重置为 initial。
 //
-// 事务只覆盖「会话行 + 消息行」；文件复制在事务内通过独立连接执行，失败时整体回滚
-// 并补偿删除已复制的文件行（见 copyLatestFiles 的注释）。
+// 事务只覆盖「会话行 + 消息行」；文件复制在事务提交后用独立连接执行，失败时补偿
+// 删除刚建好的会话（级联删消息与已复制的文件行，见 copyLatestFiles 的注释）。
 func (r *gormSessionStore) Fork(ctx context.Context, params agent.SessionForkParams) (*agent.Session, error) {
 	var forked agent.Session
 	var source agent.Session
@@ -149,54 +150,54 @@ func (r *gormSessionStore) Fork(ctx context.Context, params agent.SessionForkPar
 
 // copyLatestFiles 把源会话中每个 path 的最新版本复制为新会话的 initial 版本。
 //
-// 两点约束：
+// 三点约束：
 //   - 查询走独立的 db 连接（不在事务 Statement 上复用）：事务内先 Create 过会话行，
 //     GORM 的链式 API 会把 statement 条件（session_id = forked.ID）带到后续查询里，
 //     导致这里把目标会话自己的行当成源数据；
-//   - 取最新版本按 id 最大，而不是 created_at（同毫秒内的多版本时间戳相同）。
+//   - 取最新版本按 id 最大，而不是 created_at（同毫秒内的多版本时间戳相同）；
+//     用一条 JOIN 一次取出全部 path 的最新行，不再按 path 循环查询；
+//   - 写入带 ON DUPLICATE KEY UPDATE（clause.OnConflict{DoNothing}）：唯一键正常是
+//     (session_id, path, version)，新会话不会冲突；但 MySQL 的 utf8mb4_*_ai_ci 排序
+//     规则把仅大小写不同（以及尾部空格）的 path 视为同一个值，源会话里同时存在
+//     a.R / A.r 时第二条会撞键。此时跳过而不是让整个 fork 失败——缺的那条会在该
+//     文件第一次被写入时由 Write/Edit 重新以 initial 版本补上。
+//
+// 注意：若部署库里 uk_history_session_path_version 仍是旧的 (path, version)（早期
+// 模型定义，AutoMigrate 不会改写已存在的索引），复制会因跨会话同路径同版本而
+// 全部被跳过，fork 仍能成功但不会带上文件历史。修复见
+// migrations/2026-11-17-agent-history-unique-session-path-version。
 func (r *gormSessionStore) copyLatestFiles(ctx context.Context, sourceID, targetID int64, now time.Time) error {
-	var paths []string
-	if err := r.db.WithContext(ctx).Model(&agent.File{}).
+	latestIDs := r.db.WithContext(ctx).Model(&agent.File{}).
+		Select("path, MAX(id) AS max_id").
 		Where("session_id = ?", sourceID).
-		Group("path").
-		Pluck("path", &paths).Error; err != nil {
+		Group("path")
+
+	var sources []*agent.File
+	if err := r.db.WithContext(ctx).
+		Table("agent_history_files AS f").
+		Joins("INNER JOIN (?) AS latest ON f.id = latest.max_id", latestIDs).
+		Where("f.session_id = ?", sourceID).
+		Find(&sources).Error; err != nil {
 		return err
 	}
-	if len(paths) == 0 {
+	if len(sources) == 0 {
 		return nil
 	}
 
-	latestByPath := make(map[string]*agent.File, len(paths))
-	for _, path := range paths {
-		var latest agent.File
-		if err := r.db.WithContext(ctx).
-			Where("session_id = ? AND path = ?", sourceID, path).
-			Order("id DESC").
-			Take(&latest).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				continue
-			}
-			return err
-		}
-		latestByPath[path] = &latest
-	}
-
-	// 复制同样走独立连接（与事务分离）：fork 事务只负责新建会话行与消息行，
-	// 文件复制失败时由调用方整体回滚（会话行随事务消失，文件行需显式清理）。
-	for _, latest := range latestByPath {
-		copied := &agent.File{
+	copied := make([]*agent.File, 0, len(sources))
+	for _, src := range sources {
+		copied = append(copied, &agent.File{
 			SessionID: targetID,
-			Path:      latest.Path,
-			Content:   latest.Content,
+			Path:      src.Path,
+			Content:   src.Content,
 			Version:   agent.InitialVersion,
 			CreatedAt: now,
 			UpdatedAt: now,
-		}
-		if err := r.db.WithContext(ctx).Create(copied).Error; err != nil {
-			return err
-		}
+		})
 	}
-	return nil
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Create(&copied).Error
 }
 
 func (r *gormSessionStore) List(ctx context.Context, params agent.SessionListParams) ([]*agent.Session, int64, error) {
