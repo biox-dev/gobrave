@@ -15,6 +15,8 @@ type SessionService interface {
 	CreateTaskSession(ctx context.Context, toolCallID, parentSessionID int64, title string) (types.Session, error)
 	// CreateChildSession 创建 ParentSessionID 指向父会话的子会话（主键由雪花 ID 生成）。
 	CreateChildSession(ctx context.Context, params types.SessionChildParams) (types.Session, error)
+	// Fork 把源会话的历史复制到一个新会话，返回新会话。
+	Fork(ctx context.Context, params types.SessionForkParams) (types.Session, error)
 	Get(ctx context.Context, id int64) (types.Session, error)
 	List(ctx context.Context, params types.SessionListParams) ([]types.Session, int64, error)
 	Save(ctx context.Context, session types.Session) (types.Session, error)

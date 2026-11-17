@@ -84,3 +84,19 @@ type SessionListParams struct {
 	Offset    int
 	Limit     int
 }
+
+// SessionForkParams 是 fork 会话（复制历史到新会话）的入参。
+type SessionForkParams struct {
+	// SourceSessionID 是被 fork 的源会话。
+	SourceSessionID int64
+	// UserID 是发起者，用于归属校验：只允许 fork 自己的会话。
+	UserID int64
+	// Title 是新会话标题；为空时沿用原标题并追加 " (fork)"。
+	Title string
+	// UpToSeq 是复制的截止消息序号（含该条）：只复制 seq <= UpToSeq 的历史，
+	// 用于「从某条消息处分叉」。为 nil 时不设上限（复制到会话末尾）；
+	// 用指针是为了区分「未指定」和「指定为 0（只复制第一条）」。
+	UpToSeq *int
+	// CopyFiles 为真时把源会话每个文件的最新版本作为初始版本写入新会话。
+	CopyFiles bool
+}

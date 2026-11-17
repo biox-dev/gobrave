@@ -82,6 +82,11 @@ type SessionStore interface {
 	Update(ctx context.Context, s *types.Session) error
 	Delete(ctx context.Context, id int64) error
 	List(ctx context.Context, params types.SessionListParams) ([]*types.Session, int64, error)
+	// Fork 在一个事务内复制源会话的消息（可选复制文件历史最新版本）到新会话。
+	//
+	// 事务内完成「创建新会话 + 逐条复制消息 + 复制最新文件版本」，任一环节失败
+	// 整体回滚，不会留下半成品会话。
+	Fork(ctx context.Context, params types.SessionForkParams) (*types.Session, error)
 }
 
 // MessageStore 是 Message 的持久化端口。

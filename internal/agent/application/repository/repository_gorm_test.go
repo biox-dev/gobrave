@@ -170,6 +170,119 @@ func TestGormMessageStoreListPage(t *testing.T) {
 	}
 }
 
+// TestGormSessionStoreFork 校验 fork 会话：消息复制、Seq 重排、错误消息与 TaskID 不带入、
+// 文件历史只复制最新版本、归属校验，以及源会话不受影响。
+func TestGormSessionStoreFork(t *testing.T) {
+	ctx := context.Background()
+	db := newGormTestDB(t)
+	sessions := agentservice.NewSessionService(NewGormSessionStore(db))
+	messages := agentservice.NewMessageService(NewGormMessageStore(db))
+	files := agentservice.NewHistoryService(NewGormHistoryStore(db))
+
+	src, err := sessions.Create(ctx, agenttypes.SessionCreateParams{
+		UserID: 1, Title: "origin", Provider: agenttypes.ProviderMock, Model: "m",
+	})
+	if err != nil {
+		t.Fatalf("create source session: %v", err)
+	}
+	for _, in := range []agenttypes.MessageCreateParams{
+		{SessionID: src.ID, Role: agenttypes.RoleUser, Kind: agenttypes.KindUser, Content: "q1"},
+		{SessionID: src.ID, Role: agenttypes.RoleAssistant, Kind: agenttypes.KindAssistantFinal, Content: "a1", TaskID: 99},
+		{SessionID: src.ID, Role: agenttypes.RoleAssistant, Kind: agenttypes.KindError, Content: "boom", TaskID: 99},
+	} {
+		if _, err := messages.Create(ctx, in); err != nil {
+			t.Fatalf("create message: %v", err)
+		}
+	}
+	// 同一文件两个版本：fork 只应复制最新版本（v1 的内容）。
+	// 直接用 Store 写入，避免 HistoryService 的版本推导干扰断言。
+	fileStore := NewGormHistoryStore(db)
+	for _, in := range []struct{ content, version string }{
+		{"v0", agenttypes.InitialVersion},
+		{"v1", "v1"},
+	} {
+		if err := fileStore.Create(ctx, &agenttypes.File{
+			SessionID: src.ID, Path: "/a.txt", Content: in.content, Version: in.version,
+		}); err != nil {
+			t.Fatalf("create file history %s: %v", in.version, err)
+		}
+	}
+
+	forked, err := sessions.Fork(ctx, agenttypes.SessionForkParams{
+		SourceSessionID: src.ID, UserID: 1, CopyFiles: true,
+	})
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	if forked.ID == src.ID || forked.ID == 0 {
+		t.Fatalf("forked session should have a new id, got %d", forked.ID)
+	}
+	if forked.ParentSessionID != 0 || forked.CurrentTaskID != 0 || forked.ProjectID != src.ProjectID {
+		t.Fatalf("unexpected forked session: %+v", forked)
+	}
+	if forked.Title != "origin (fork)" {
+		t.Fatalf("title = %q, want %q", forked.Title, "origin (fork)")
+	}
+
+	copied, err := messages.List(ctx, forked.ID)
+	if err != nil {
+		t.Fatalf("list forked messages: %v", err)
+	}
+	// error 消息被跳过，剩下 2 条且 Seq 从 0 重新排。
+	if len(copied) != 2 {
+		t.Fatalf("forked messages = %d, want 2", len(copied))
+	}
+	if copied[0].Seq != 0 || copied[1].Seq != 1 || copied[0].Content != "q1" {
+		t.Fatalf("unexpected forked messages: %+v", copied)
+	}
+	if copied[1].TaskID != 0 {
+		t.Fatalf("task id should be cleared on fork, got %d", copied[1].TaskID)
+	}
+	if copied[0].ID == 0 || copied[0].ID == copied[1].ID {
+		t.Fatalf("copied messages should get new ids")
+	}
+
+	// 文件历史独立：新会话只有一条 initial 版本，内容为源会话最新版本。
+	forkedFiles, err := files.ListLatestSessionFiles(ctx, forked.ID)
+	if err != nil {
+		t.Fatalf("list forked files: %v", err)
+	}
+	if len(forkedFiles) != 1 || forkedFiles[0].Content != "v1" || forkedFiles[0].Version != agenttypes.InitialVersion {
+		t.Fatalf("unexpected forked files: %+v", forkedFiles)
+	}
+
+	// 源会话保持不变。
+	srcMsgs, err := messages.List(ctx, src.ID)
+	if err != nil || len(srcMsgs) != 3 {
+		t.Fatalf("source messages changed: len=%d err=%v", len(srcMsgs), err)
+	}
+
+	// 归属校验：他人 fork 视为不存在。
+	if _, err := sessions.Fork(ctx, agenttypes.SessionForkParams{SourceSessionID: src.ID, UserID: 2}); !errors.Is(err, agenttypes.ErrSessionNotFound) {
+		t.Fatalf("fork by other user: err=%v, want ErrSessionNotFound", err)
+	}
+	// 不存在的源会话。
+	if _, err := sessions.Fork(ctx, agenttypes.SessionForkParams{SourceSessionID: 123, UserID: 1}); !errors.Is(err, agenttypes.ErrSessionNotFound) {
+		t.Fatalf("fork missing session: err=%v, want ErrSessionNotFound", err)
+	}
+
+	// UpToSeq：只复制截止到该 seq（含）的历史。源会话 seq 0=q1, 1=a1。
+	upTo := 0
+	partial, err := sessions.Fork(ctx, agenttypes.SessionForkParams{
+		SourceSessionID: src.ID, UserID: 1, UpToSeq: &upTo,
+	})
+	if err != nil {
+		t.Fatalf("fork up_to_seq: %v", err)
+	}
+	partialMsgs, err := messages.List(ctx, partial.ID)
+	if err != nil {
+		t.Fatalf("list partial messages: %v", err)
+	}
+	if len(partialMsgs) != 1 || partialMsgs[0].Content != "q1" || partialMsgs[0].Seq != 0 {
+		t.Fatalf("up_to_seq=0 should copy only first message, got %+v", partialMsgs)
+	}
+}
+
 func TestGormSessionAndMessageStores(t *testing.T) {
 	ctx := context.Background()
 	db := newGormTestDB(t)

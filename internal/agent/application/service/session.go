@@ -61,6 +61,18 @@ func (s *sessionService) CreateChildSession(ctx context.Context, params SessionC
 	})
 }
 
+// Fork 把源会话的历史复制到一个新会话（真 fork：分支独立，可并行继续对话）。
+func (s *sessionService) Fork(ctx context.Context, params SessionForkParams) (Session, error) {
+	if params.SourceSessionID <= 0 {
+		return Session{}, ErrSessionNotFound
+	}
+	forked, err := s.store.Fork(ctx, params)
+	if err != nil {
+		return Session{}, err
+	}
+	return *forked, nil
+}
+
 func (s *sessionService) CreateTitleSession(ctx context.Context, parentSessionID int64) (Session, error) {
 	return s.Create(ctx, SessionCreateParams{
 		ParentSessionID: parentSessionID,

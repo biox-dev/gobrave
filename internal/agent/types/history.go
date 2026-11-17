@@ -33,8 +33,9 @@ var (
 // "Error 1071 (42000): Specified key was too long; max key length is 3072 bytes"。
 // 这里取 512，为将来调整 version 长度留出余量。
 type File struct {
-	ID        int64     `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	SessionID int64     `json:"session_id,string" gorm:"column:session_id;type:bigint;index:idx_history_session_path,priority:1"`
+	ID int64 `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
+	// 唯一键必须是 (session_id, path, version)：不同会话记录同一路径时互不影响。
+	SessionID int64     `json:"session_id,string" gorm:"column:session_id;type:bigint;index:idx_history_session_path,priority:1;uniqueIndex:uk_history_session_path_version,priority:1"`
 	Path      string    `json:"path" gorm:"column:path;type:varchar(512);index:idx_history_session_path,priority:2;uniqueIndex:uk_history_session_path_version,priority:2"`
 	Content   string    `json:"content" gorm:"column:content;type:longtext"`
 	Version   string    `json:"version" gorm:"column:version;type:varchar(64);uniqueIndex:uk_history_session_path_version,priority:3"`

@@ -493,9 +493,11 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 
 	r.POST("/agent/session/page", handler.PageSessions)
 	r.GET("/agent/session/get", handler.GetSession)
+	r.POST("/agent/session/fork", handler.ForkSession)
 	// 兼容旧路径（前端仍在使用 /agent/conversation/*）。
 	r.POST("/agent/conversation/page", handler.PageSessions)
 	r.GET("/agent/conversation/get", handler.GetSession)
+	r.POST("/agent/conversation/fork", handler.ForkSession)
 
 	r.GET("/agent/skill/list", handler.ListSkills)
 	r.GET("/agent/skill/get", handler.GetSkill)

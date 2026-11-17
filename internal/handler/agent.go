@@ -1161,6 +1161,61 @@ func (h *AgentHandler) GetSession(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
+// sessionForkRequest 是 fork 会话的请求体。
+type sessionForkRequest struct {
+	ID    string `json:"id" binding:"required"` // 源会话 ID
+	Title string `json:"title"`                 // 为空则沿用原标题 + " (fork)"
+	// UpToSeq 只复制 seq <= up_to_seq 的历史（含该条）；未传则复制到末尾。
+	// 用指针区分「未传」与「传 0（只复制第一条）」。
+	UpToSeq   *int `json:"up_to_seq"`
+	CopyFiles bool `json:"copy_files"` // 是否同时复制文件历史最新版本
+}
+
+// ForkSession godoc
+// @Summary      Fork 会话（复制历史到新的独立会话）
+// @Description  把源会话的消息复制成一个新的顶层会话并返回其详情（含首屏消息），源会话不变；
+// @Description  up_to_seq 可指定只复制到某条消息为止的历史（从该消息处分叉）。
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.sessionForkRequest  true  "fork 参数"
+// @Success      200      {object}  agentservice.SessionDetail
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/session/fork [post]
+func (h *AgentHandler) ForkSession(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req sessionForkRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+	id, err := parseAgentID(req.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
+
+	detail, err := h.chat.ForkSession(c.Request.Context(), agenttypes.SessionForkParams{
+		SourceSessionID: id,
+		UserID:          userID,
+		Title:           strings.TrimSpace(req.Title),
+		UpToSeq:         req.UpToSeq,
+		CopyFiles:       req.CopyFiles,
+	})
+	if err != nil {
+		handleAgentError(c, err, "failed to fork session")
+		return
+	}
+	c.JSON(http.StatusOK, detail)
+}
+
 // PagePermissions godoc
 // @Summary      分页查询权限请求
 // @Tags         Agent

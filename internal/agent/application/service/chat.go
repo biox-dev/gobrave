@@ -442,6 +442,19 @@ func (s *ChatService) GetSession(ctx context.Context, id int64, q SessionMessage
 	}, nil
 }
 
+// ForkSession 把源会话的历史复制成一个新的独立会话。
+//
+// 与 opencode 的「分叉对话」一致：新会话是顶层会话（出现在会话列表中），
+// 消息、Seq 重新分配，不带 CurrentTaskID，因此可以直接继续对话；
+// 源会话保持不变，两个分支互不影响（per-session 轮次锁天然隔离）。
+func (s *ChatService) ForkSession(ctx context.Context, params SessionForkParams) (SessionDetail, error) {
+	forked, err := s.sessions.Fork(ctx, params)
+	if err != nil {
+		return SessionDetail{}, err
+	}
+	return s.GetSession(ctx, forked.ID, SessionMessageQuery{})
+}
+
 // getOrCreate 加载已有会话；SessionID 为 0 时创建新会话。
 func (s *ChatService) getOrCreate(ctx context.Context, in TurnInput) (Session, error) {
 	if in.SessionID == 0 {
