@@ -119,6 +119,17 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Sess
 		return nil, Session{}, err
 	}
 
+	// 首轮对话时用用户输入初始化会话标题（与 opencode 一致：截断到固定长度）。
+	// 标题一旦有值（用户改名 / 已有历史）就不再覆盖，避免多轮对话把标题改掉。
+	if strings.TrimSpace(sess.Title) == "" {
+		if title := sessionTitleFromMessage(in.Message); title != "" {
+			sess.Title = title
+			if saved, saveErr := s.sessions.Save(ctx, sess); saveErr == nil {
+				sess = saved
+			}
+		}
+	}
+
 	l := s.lockFor(sess.ID)
 	l.Lock()
 
@@ -277,6 +288,28 @@ func promptMessagesForRequest(history []Message) []Message {
 		out = append(out, Message{Role: m.Role, Content: m.Content})
 	}
 	return out
+}
+
+// sessionTitleMaxRunes 是自动生成的会话标题最大字符数（与 opencode 一致）。
+const sessionTitleMaxRunes = 50
+
+// sessionTitleFromMessage 从首条用户消息生成会话标题。
+//
+// 只取第一行非空内容并压缩连续空白；超长时截断到 sessionTitleMaxRunes 个字符
+// （按 rune 截断，避免把中文 / emoji 切成乱码）。空消息返回空串，调用方保持原标题。
+func sessionTitleFromMessage(message string) string {
+	for _, line := range strings.Split(message, "\n") {
+		title := strings.Join(strings.Fields(line), " ")
+		if title == "" {
+			continue
+		}
+		runes := []rune(title)
+		if len(runes) > sessionTitleMaxRunes {
+			title = string(runes[:sessionTitleMaxRunes]) + "…"
+		}
+		return title
+	}
+	return ""
 }
 
 func shouldIncludeInPrompt(m Message) bool {

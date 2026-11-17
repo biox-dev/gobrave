@@ -1095,19 +1095,11 @@ func (h *AgentHandler) PageSessions(c *gin.Context) {
 		return
 	}
 
-	// 会话列表按原 API 结构附带消息（Session 本身不内嵌 Messages）。
-	items := make([]agentservice.SessionDetail, 0, len(sessions))
-	for _, sess := range sessions {
-		msgs, err := h.chat.ListMessages(c.Request.Context(), sess.ID)
-		if err != nil {
-			handleAgentError(c, err, "failed to load session messages")
-			return
-		}
-		items = append(items, agentservice.SessionDetail{Session: sess, Messages: msgs})
-	}
-
+	// 会话列表只返回会话本体（含 Title），不再附带历史消息：
+	// 消息体积大且列表不使用，拉取全部会话消息会造成明显的额外开销。
+	// 需要消息时由前端按会话 ID 调用 GetSession 分页获取。
 	c.JSON(http.StatusOK, gin.H{
-		"data":      items,
+		"data":      sessions,
 		"total":     total,
 		"page":      req.GetPage(),
 		"page_size": req.GetPageSize(),

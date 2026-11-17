@@ -80,7 +80,10 @@ func (r *gormSessionStore) Fork(ctx context.Context, params agent.SessionForkPar
 			return agent.ErrSessionNotFound
 		}
 
-		now := time.Now()
+		// 统一用 UTC：GORM 的 NowFunc 与 MySQL(loc=UTC)/Postgres(TimeZone=UTC)
+		// 都是 UTC，若这里用 time.Now()（本地时区）就会同一行出现
+		// created_at=+08:00、updated_at=Z 的混用格式。
+		now := time.Now().UTC()
 		title := params.Title
 		if title == "" {
 			title = source.Title + " (fork)"

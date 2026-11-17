@@ -20,7 +20,9 @@ func NewSessionService(store SessionStore) SessionService {
 }
 
 func (s *sessionService) Create(ctx context.Context, params SessionCreateParams) (Session, error) {
-	now := time.Now()
+	// 与 GORM NowFunc / 数据库连接时区一致，统一写 UTC，避免 created_at 与
+	// updated_at 出现不同时区后缀（+08:00 vs Z）。
+	now := time.Now().UTC()
 	session := &Session{
 		ID:              params.ID,
 		ProjectID:       params.ProjectID,
@@ -101,7 +103,7 @@ func (s *sessionService) List(ctx context.Context, params SessionListParams) ([]
 }
 
 func (s *sessionService) Save(ctx context.Context, session Session) (Session, error) {
-	session.UpdatedAt = time.Now()
+	session.UpdatedAt = time.Now().UTC()
 	if err := s.store.Update(ctx, &session); err != nil {
 		return Session{}, err
 	}
