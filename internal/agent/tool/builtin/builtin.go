@@ -21,13 +21,14 @@ func All(d Deps) []tool.Tool {
 	return []tool.Tool{
 		GetWeather(),
 		CreateScript(d.ScriptCreator),
-		CreateScriptAnalysis(d.NodeCreator, d.Runner),
 		UpdateScript(d.scriptUpdater()),
 		ListProjectScripts(d.ScriptBrowser),
 		GetScript(d.ScriptBrowser),
 		// 文件引用：读取用户输入 @file:<id> 指向的文件内容（agent 传裸 ID）。
 		GetFile(d.FileReader),
 		GetAnalysisNode(d.NodeBrowser),
+		CreateAnalysisNodeScript(d.NodeCreator, d.Runner),
+		CreateAnalysisNodeAgent(d.AgentRunner),
 		ListContainerTemplates(d.TemplateBrowser),
 		GetContainerTemplate(d.TemplateBrowser),
 		TerminalExec(d.Terminal),
@@ -36,9 +37,8 @@ func All(d Deps) []tool.Tool {
 		AddFileToDataset(d.DatasetWriter),
 		BuildAnalysisNodeParams(d.ParamsBuilder),
 		RunAnalysisNode(d.Runner),
-		UpdateAgentAnalysis(d.NodeUpdater, d.Runner, d.NodeBrowser),
-		UpdateScriptAnalysis(d.NodeUpdater, d.Runner, d.NodeBrowser),
-		CreateAgentAnalysis(d.AgentRunner),
+		UpdateAnalysisNodeScript(d.NodeUpdater, d.Runner, d.NodeBrowser),
+		UpdateAnalysisNodeAgent(d.NodeUpdater, d.Runner, d.NodeBrowser),
 		SaveMemory(d.MemorySaver),
 		GetReportContext(d.ReportContext),
 		// 技能：指令正文与附属资源都按需通过工具加载（渐进式披露）。

@@ -361,7 +361,7 @@ func (t *AnalysisNode) IsCommandNode() bool {
 //
 // 取值在节点创建时由创建方写入，之后不再变化：
 //   - agent：Agent 会话直接创建的命令型节点（无脚本，run.sh 由 Agent 生成）；
-//   - script：由脚本契约创建的节点（前端独立节点 / create_script_analysis）；
+//   - script：由脚本契约创建的节点（前端独立节点 / create_analysis_node_script）；
 //   - scheduler：由 DAG 调度器按流程物化的节点（绑定脚本）。
 const (
 	// AnalysisNodeCreationSourceAgent 是 Agent 命令节点（无脚本）。
@@ -377,7 +377,7 @@ const (
 // 优先读取 creation_source（三种规范值）；同时兼容历史取值：
 //   - standalone（前端独立节点）视为 script；
 //   - agent_session（Agent 命令节点）视为 agent；
-//   - 旧 create_script_analysis 曾把脚本节点标记为 agent，这里按「绑定脚本」纠正为 script。
+//   - 旧 create_analysis_node_script 曾把脚本节点标记为 agent，这里按「绑定脚本」纠正为 script。
 //
 // creation_source 为空或未知时按节点形状推断；仍无法判定时返回空串。
 func (t *AnalysisNode) NodeType() string {

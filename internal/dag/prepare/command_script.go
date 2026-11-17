@@ -14,7 +14,7 @@ var (
 // WriteCommandRunScript 把命令正文写入命令节点的 run.sh。
 //
 // 命令节点的命令不再落库（AnalysisNode 没有 Command 字段）：创建 / 更新入口
-// （create_agent_analysis、update_agent_analysis、手动建节点）直接调用本函数写盘，
+// （create_analysis_node_agent、update_analysis_node_agent、手动建节点）直接调用本函数写盘，
 // Prepare 只负责目录、params.json 与 env.sh，不会覆盖 run.sh。
 //
 // 内容口径：去掉首尾空白后补齐结尾换行；命令为空时返回错误，避免写出空脚本。

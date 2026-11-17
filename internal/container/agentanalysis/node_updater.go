@@ -7,10 +7,10 @@ import (
 )
 
 // analysisNodeUpdater 实现 runtimecontext.AnalysisNodeUpdater：把「更新分析节点」的业务能力
-// 暴露给内置工具 update_agent_analysis / update_script_analysis。
+// 暴露给内置工具 update_analysis_node_agent / update_analysis_node_script。
 //
 // 按节点类型细分的更新（命令型 / 脚本型）见 agent_node_updater.go / script_node_updater.go。
-// 节点参数由 build_analysis_node_params / run_analysis_node 或 update_script_analysis 负责，
+// 节点参数由 build_analysis_node_params / run_analysis_node 或 update_analysis_node_script 负责，
 // patterns 由 io_schema 决定，运行状态由编排器维护。
 type analysisNodeUpdater struct {
 	analysisSvc interfaces.AnalysisService

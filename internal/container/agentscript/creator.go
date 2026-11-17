@@ -20,7 +20,7 @@ import (
 // scriptCreator 实现 runtimecontext.ScriptCreator：把「创建脚本」能力暴露给内置工具 create_script。
 //
 // 脚本与节点是两个独立资源：为脚本创建分析节点由 agentanalysis.ScriptNodeCreator
-// （create_script_analysis）负责，本类型不触碰 AnalysisNode。
+// （create_analysis_node_script）负责，本类型不触碰 AnalysisNode。
 //
 // Script 落 pipeline_components；脚本目录为
 // <base_dir>/data/<project>/pipeline/script/<scriptID>/（由 types.Script.Files 推导）。
@@ -58,7 +58,7 @@ func NewCreator(
 // CreateScript 只创建脚本（不创建分析节点），返回脚本 ID 与关键路径。
 //
 // 步骤：解析默认容器模板 → 落库 Script → 初始化脚本目录（主文件 + io_schema.json）。
-// 分析节点由 create_script_analysis（agentanalysis）单独创建，因此这里不需要任何节点名称 / 节点目录。
+// 分析节点由 create_analysis_node_script（agentanalysis）单独创建，因此这里不需要任何节点名称 / 节点目录。
 func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.ScriptCreateInput) (runtimecontext.ScriptCreateResult, error) {
 	if in.ProjectID <= 0 {
 		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: project_id is required")

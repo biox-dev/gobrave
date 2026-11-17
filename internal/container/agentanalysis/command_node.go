@@ -29,7 +29,7 @@ type agentRunAnalysis struct {
 	cfg           *config.Config
 }
 
-// NewAgentAnalysisRunner 构建 create_agent_analysis 工具的执行器。
+// NewAgentAnalysisRunner 构建 create_analysis_node_agent 工具的执行器。
 func NewAgentAnalysisRunner(
 	analysisRepo interfaces.AnalysisRepository,
 	containerRepo interfaces.ContainerRepository,

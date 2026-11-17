@@ -37,7 +37,7 @@ type CreateScriptInput struct {
 //   - ScriptFilePath：脚本主文件（如 main.R），由 types.Script.Files 推导；
 //   - IOSchemaPath：脚本目录下的 io_schema.json，同样取自 types.Script.Files。
 //
-// 需要运行脚本时，再用 create_script_analysis 建节点（节点 ID / 工作目录 / params.json
+// 需要运行脚本时，再用 create_analysis_node_script 建节点（节点 ID / 工作目录 / params.json
 // 路径由该工具返回）。
 type CreateScriptOutput struct {
 	ScriptID       int64  `json:"script_id,string"`
@@ -64,7 +64,7 @@ type CreateScriptOutput struct {
 //   - container_template_id 为空时由 ScriptCreator 解析系统默认容器模板，
 //     没有默认模板时回到模型一个错误提示，让用户先去容器模板页配置默认模板；
 //   - inputs / outputs 非空时写入脚本目录的 io_schema.json（这是脚本的参数契约，
-//     之后 create_script_analysis 会按它初始化节点的 inputs_patterns / output_patterns）；
+//     之后 create_analysis_node_script 会按它初始化节点的 inputs_patterns / output_patterns）；
 //   - 通过注入的 ScriptCreator 落库 Script 并初始化脚本目录（主文件、io_schema.json）；
 //   - 把新脚本主文件路径与 io_schema.json 路径回传给模型。
 //
@@ -72,7 +72,7 @@ type CreateScriptOutput struct {
 func CreateScript(creator runtimecontext.ScriptCreator) tool.Tool {
 	return tool.NewFunc(
 		CreateScriptToolName,
-		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径，可据此编写脚本内容、补充参数契约。所属项目取自当前会话上下文，无需传入。请在调用时一次性给出 inputs / outputs（脚本输入输出契约，参数名将与 params.json 的键、脚本内读取的参数名一一对应；不传则使用默认 input1/output）。需要运行脚本时，再调用 create_script_analysis（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。\n\n用户消息里可能出现界面插入的引用 chip：@container:<id> 表示用户选中的容器模板（对应 container_template_id），@dataset:<id> 表示用户选中的数据集，@file:<id> 表示文件，@report:<id> 表示项目报告，@analysis_node:<id> 表示分析节点。遇到 @container:<id> 时，直接把冒号后的 ID 作为 container_template_id 传入，不要丢弃或改写；需要确认该模板的展示名 / 描述时先调用 get_container_template；遇到 @dataset:<id> 时可用 get_dataset 获取其工作目录路径；遇到 @file:<id> 时可用 get_file 读取文件内容与真实路径（传冒号后的裸 ID）；遇到 @report:<id> 时可用 get_report_context 获取报告上下文；遇到 @analysis_node:<id> 时可用 get_analysis_node 查看节点名称 / 类型 / 工作目录 / 参数。",
+		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径，可据此编写脚本内容、补充参数契约。所属项目取自当前会话上下文，无需传入。请在调用时一次性给出 inputs / outputs（脚本输入输出契约，参数名将与 params.json 的键、脚本内读取的参数名一一对应；不传则使用默认 input1/output）。需要运行脚本时，再调用 create_analysis_node_script（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。\n\n用户消息里可能出现界面插入的引用 chip：@container:<id> 表示用户选中的容器模板（对应 container_template_id），@dataset:<id> 表示用户选中的数据集，@file:<id> 表示文件，@report:<id> 表示项目报告，@analysis_node:<id> 表示分析节点。遇到 @container:<id> 时，直接把冒号后的 ID 作为 container_template_id 传入，不要丢弃或改写；需要确认该模板的展示名 / 描述时先调用 get_container_template；遇到 @dataset:<id> 时可用 get_dataset 获取其工作目录路径；遇到 @file:<id> 时可用 get_file 读取文件内容与真实路径（传冒号后的裸 ID）；遇到 @report:<id> 时可用 get_report_context 获取报告上下文；遇到 @analysis_node:<id> 时可用 get_analysis_node 查看节点名称 / 类型 / 工作目录 / 参数。",
 		tool.Schema("创建脚本的入参", map[string]any{
 			"name":                  tool.StringProperty("脚本名称（同名脚本在同一项目下应唯一，由业务侧校验）。"),
 			"description":           tool.StringProperty("脚本用途描述（可选），用于说明该脚本做什么。"),

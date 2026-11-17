@@ -15,7 +15,7 @@ const GetContainerTemplateToolName = "get_container_template"
 //
 // ContainerTemplateID 对应用户消息里的 @container:<id> 引用（如 "@container:2109711590457610240"），
 // 它是 go_container_template_definition 主键，可直接作为 create_script /
-// create_agent_analysis 的 container_template_id 使用。
+// create_analysis_node_agent 的 container_template_id 使用。
 type GetContainerTemplateInput struct {
 	ContainerTemplateID string `json:"container_template_id"` // 容器模板 ID（支持 "@container:<id>" 形式）
 }
@@ -49,7 +49,7 @@ type GetContainerTemplateOutput struct {
 func GetContainerTemplate(browser runtimecontext.ContainerTemplateBrowser) tool.Tool {
 	return tool.NewFunc(
 		GetContainerTemplateToolName,
-		"按 container_template_id 查看单个可运行容器模板（ContainerTemplateDefinition）。用于回答用户对 @container:<id> 引用的提问，也用于在创建脚本 / 分析节点前确认模板用途。返回 display_name（模板展示名）、description（模板自身的长描述）、image_name、pull_policy、is_default（是否系统默认模板）与 spec_name（关联的共享运行配置名）。该 ID 可原样作为 create_script / create_agent_analysis 的 container_template_id。不确定有哪些模板时先用 list_container_templates 列出全部模板。",
+		"按 container_template_id 查看单个可运行容器模板（ContainerTemplateDefinition）。用于回答用户对 @container:<id> 引用的提问，也用于在创建脚本 / 分析节点前确认模板用途。返回 display_name（模板展示名）、description（模板自身的长描述）、image_name、pull_policy、is_default（是否系统默认模板）与 spec_name（关联的共享运行配置名）。该 ID 可原样作为 create_script / create_analysis_node_agent 的 container_template_id。不确定有哪些模板时先用 list_container_templates 列出全部模板。",
 		tool.Schema("按 ID 查看容器模板的入参", map[string]any{
 			"container_template_id": tool.StringProperty("容器模板 ID（go_container_template_definition 主键）。来自用户输入里的 @container:<id> 引用或 list_container_templates 的结果；字符串以保精度。"),
 		}, "container_template_id"),

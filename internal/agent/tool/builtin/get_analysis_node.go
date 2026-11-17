@@ -26,9 +26,9 @@ type GetAnalysisNodeInput struct {
 // WorkspaceDir 是节点根目录（绝对路径），ParamsPath 与 OutputDir 均由它派生。
 //
 // 节点类型只有三种，由 CreationSource 标识，NodeType 是其归一化结果（两者取值一致）：
-//   - agent：Agent 命令节点（无脚本，run.sh 由 Agent 生成），用 update_agent_analysis 修改；
-//   - script：脚本节点（前端独立节点 / create_script_analysis 创建），用 update_script_analysis 修改；
-//   - scheduler：DAG 调度器节点（绑定脚本），用 update_script_analysis 修改。
+//   - agent：Agent 命令节点（无脚本，run.sh 由 Agent 生成），用 update_analysis_node_agent 修改；
+//   - script：脚本节点（前端独立节点 / create_analysis_node_script 创建），用 update_analysis_node_script 修改；
+//   - scheduler：DAG 调度器节点（绑定脚本），用 update_analysis_node_script 修改。
 //
 // 回传字段按节点类型区分，避免模型拿错口径：
 //   - agent：返回 command_path（run.sh 绝对路径），不返回 script_id / request_param；
@@ -95,7 +95,7 @@ func getAnalysisNodeDescription() string {
 
 ## 后续工具
 
-修改节点前先看 node_type：agent 类型用 update_agent_analysis，script / scheduler 类型用 update_script_analysis；三种类型都可以用 run_analysis_node 运行，脚本型节点重算参数用 build_analysis_node_params。`
+修改节点前先看 node_type：agent 类型用 update_analysis_node_agent，script / scheduler 类型用 update_analysis_node_script；三种类型都可以用 run_analysis_node 运行，脚本型节点重算参数用 build_analysis_node_params。`
 }
 
 // GetAnalysisNode 返回一个「按 ID 查看分析节点」工具。

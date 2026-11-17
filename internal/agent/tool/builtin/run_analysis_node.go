@@ -17,7 +17,7 @@ const RunAnalysisNodeToolName = "run_analysis_node"
 //
 // AnalysisNodeID 为必填：模型必须显式给出要运行的分析节点 ID，不再从运行时上下文回退。
 // 工具不接受 request_param：脚本型节点使用节点上已保存的 request_param（由
-// build_analysis_node_params / create_script_analysis 写入），命令型节点直接运行
+// build_analysis_node_params / create_analysis_node_script 写入），命令型节点直接运行
 // 节点自身的 run.sh。
 type RunAnalysisNodeInput struct {
 	AnalysisNodeID string `json:"analysis_node_id"` // 分析节点 ID（必填，字符串以保精度）
@@ -77,7 +77,7 @@ func runAnalysisNodeDescription() string {
 ## 运行前行为
 
 - **agent 命令节点**（无脚本）：直接运行节点自身的 run.sh。
-- **script / scheduler 脚本节点**：使用节点上已保存的 request_param（本工具不接受 request_param；要改参数请先用 build_analysis_node_params，或直接用 update_script_analysis 改参数并立即运行）。运行前按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param，并清空上一轮 input_validation_errors / output_validation_errors。
+- **script / scheduler 脚本节点**：使用节点上已保存的 request_param（本工具不接受 request_param；要改参数请先用 build_analysis_node_params，或直接用 update_analysis_node_script 改参数并立即运行）。运行前按脚本最新 io_schema.json 解析参数并重新生成 params.json，同时刷新节点的 inputs_patterns / output_patterns / resolved_inputs / request_param，并清空上一轮 input_validation_errors / output_validation_errors。
 - 运行前会清空节点输出目录（output），因此返回结果只包含本次运行的产物。
 
 ## 返回字段
@@ -103,8 +103,8 @@ func runAnalysisNodeDescription() string {
 //
 // 行为：
 //   - 解析必填入参 analysis_node_id；
-//   - agent 命令节点（create_agent_analysis 创建、无脚本）：按节点自身的 run.sh 运行；
-//   - script / scheduler 脚本节点（create_script_analysis / 前端独立节点 / DAG 调度器）：
+//   - agent 命令节点（create_analysis_node_agent 创建、无脚本）：按节点自身的 run.sh 运行；
+//   - script / scheduler 脚本节点（create_analysis_node_script / 前端独立节点 / DAG 调度器）：
 //     使用节点上已保存的 request_param，按脚本最新 io_schema.json 解析并回写节点，
 //     然后重新生成 params.json 再提交运行；
 //   - 等待节点进入终态，返回执行日志、params_path、params.json 正文与本次生效的

@@ -9,14 +9,14 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
-// CreateAgentAnalysisToolName 是「创建命令型分析节点（可选运行）」的工具名。
-const CreateAgentAnalysisToolName = "create_agent_analysis"
+// CreateAnalysisNodeAgentToolName 是「创建命令型分析节点（可选运行）」的工具名。
+const CreateAnalysisNodeAgentToolName = "create_analysis_node_agent"
 
-// CreateAgentAnalysisInput 是 create_agent_analysis 工具的入参。
+// CreateAnalysisNodeAgentInput 是 create_analysis_node_agent 工具的入参。
 //
 // ProjectID 不由模型提供：它取自执行事实（tool.ProjectIDFrom，当前用户激活项目），
 // 避免把任务写到别的项目下。
-type CreateAgentAnalysisInput struct {
+type CreateAnalysisNodeAgentInput struct {
 	Name string `json:"name"` // 节点名称（也用作容器资源名）
 	// ContainerTemplateID 可选：为空时使用系统默认容器模板（is_default）。
 	ContainerTemplateID string `json:"container_template_id"` // 容器模板 ID（字符串以保精度）
@@ -26,8 +26,8 @@ type CreateAgentAnalysisInput struct {
 	TimeoutSeconds int   `json:"timeout_seconds"` // 等待完成的超时（秒），可选
 }
 
-// CreateAgentAnalysisOutput 是 create_agent_analysis 工具返回给模型的结果。
-type CreateAgentAnalysisOutput struct {
+// CreateAnalysisNodeAgentOutput 是 create_analysis_node_agent 工具返回给模型的结果。
+type CreateAnalysisNodeAgentOutput struct {
 	AgentAnalysisID     int64  `json:"agent_analysis_id,string"`
 	ContainerInstanceID int64  `json:"container_instance_id,string,omitempty"`
 	Status              string `json:"status"`
@@ -43,12 +43,12 @@ type CreateAgentAnalysisOutput struct {
 	Error        string `json:"error,omitempty"`
 }
 
-// createAgentAnalysisDescription 返回 create_agent_analysis 的工具描述。
+// createAnalysisNodeAgentDescription 返回 create_analysis_node_agent 的工具描述。
 //
 // 与 bash 工具（bashDescription）同风格：把执行步骤、产物目录约定与 outputs.json 的登记
 // 规则直接写进描述，模型只看工具描述就能写出「命令 + output/ 产物 + outputs.json 索引」的
 // 正确用法，而无需额外翻查技能文档。
-func createAgentAnalysisDescription() string {
+func createAnalysisNodeAgentDescription() string {
 	return `创建一个命令型分析节点：给定节点名称与一段 shell 命令（container_template_id 可选，留空时使用系统默认容器模板），系统在节点工作目录下生成 run.sh。run 可选，默认 true：为 true 时立即提交容器执行并等待结束，返回状态、退出码与命令日志；为 false 时只创建节点不运行，之后可用 run_analysis_node 再运行该节点。所属项目取自当前会话上下文，无需传入。
 
 Reference chips（界面插入的引用）：用户消息里可能出现 @container:<id>（选中的容器模板）、@dataset:<id>（选中的数据集）、@file:<id>（文件）、@report:<id>（项目报告）、@analysis_node:<id>（选中的分析节点）。遇到 @container:<id> 时，直接把冒号后的 ID 作为 container_template_id 传入，不要丢弃或改写；需要确认模板用途时先调用 get_container_template（返回 display_name 与 description）。遇到 @dataset:<id> 时可用 get_dataset 获取其工作目录绝对路径，并在 command 中直接使用该路径。遇到 @file:<id> 时可用 get_file 读取文件内容并拿到真实路径 file_path，command 中直接使用该路径（传冒号后的裸 ID，不要传 @file: 前缀）。遇到 @report:<id> 时可用 get_report_context 获取报告标题、工作目录与条目清单。遇到 @analysis_node:<id> 时可用 get_analysis_node 查看节点名称 / 类型 / 工作目录 / 参数（该工具会容错剥离 @analysis_node: 前缀）。遇到 @script:<id> 时可用 get_script 查看脚本名称 / 描述 / 容器模板 / 脚本文件与 io_schema 路径（该工具会容错剥离 @script: 前缀）；不确定脚本 ID 时先用 list_project_scripts 列出当前项目脚本。
@@ -98,7 +98,7 @@ Before executing the command, please follow these steps:
 4. Failure Handling（失败处理）:
  - 返回 success=false 或带 error 时，先读 log_path 定位原因，再修复后重新运行，不要反复新建节点。
  - 修复方式二选一：直接修改 command_path 指向的 run.sh，再调用 run_analysis_node；或调用
-   update_agent_analysis 更新 command（会重写 run.sh），默认更新后立即运行，无需再调用
+   update_analysis_node_agent 更新 command（会重写 run.sh），默认更新后立即运行，无需再调用
    run_analysis_node（只想更新不运行时传 run=false）。
 
 5. Usage notes:
@@ -110,7 +110,7 @@ Before executing the command, please follow these steps:
    与其它业务写入类工具共用许可策略。`
 }
 
-// CreateAgentAnalysis 返回一个「创建命令型分析节点（可选运行）」工具。
+// CreateAnalysisNodeAgent 返回一个「创建命令型分析节点（可选运行）」工具。
 //
 // 行为：
 //   - 从 RuntimeContext 取当前项目 ID；
@@ -121,10 +121,10 @@ Before executing the command, please follow these steps:
 //
 // 该工具会创建分析节点（写库并写出 run.sh），默认还会触发一次运行，因此声明 write 授权，
 // 与其它业务写入类工具共用许可策略。
-func CreateAgentAnalysis(runner runtimecontext.AgentAnalysisRunner) tool.Tool {
+func CreateAnalysisNodeAgent(runner runtimecontext.AgentAnalysisRunner) tool.Tool {
 	return tool.NewFunc(
-		CreateAgentAnalysisToolName,
-		createAgentAnalysisDescription(),
+		CreateAnalysisNodeAgentToolName,
+		createAnalysisNodeAgentDescription(),
 		tool.Schema("创建命令型分析节点的入参", map[string]any{
 			"name":                  tool.StringProperty("节点名称（简短英文/数字，也用作容器资源名）。"),
 			"container_template_id": tool.StringProperty("容器模板 ID（整数，字符串以保精度），必须是已存在的容器模板；可直接使用用户消息里的 @container:<id>（冒号后的 ID）。可选：留空时使用系统默认容器模板（is_default）。"),
@@ -132,28 +132,28 @@ func CreateAgentAnalysis(runner runtimecontext.AgentAnalysisRunner) tool.Tool {
 			"run":                   tool.BooleanProperty("是否在创建后立即运行，可选，默认 true。传 false 时只创建节点并生成 run.sh，不提交运行。"),
 			"timeout_seconds":       tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 1800；run=false 时忽略。"),
 		}, "name", "command"),
-		func(ctx context.Context, in CreateAgentAnalysisInput) (CreateAgentAnalysisOutput, error) {
+		func(ctx context.Context, in CreateAnalysisNodeAgentInput) (CreateAnalysisNodeAgentOutput, error) {
 			projectID := tool.ProjectIDFrom(ctx)
 			if projectID <= 0 {
-				return CreateAgentAnalysisOutput{}, fmt.Errorf("create_agent_analysis: project_id is required (no active project in this conversation)")
+				return CreateAnalysisNodeAgentOutput{}, fmt.Errorf("create_analysis_node_agent: project_id is required (no active project in this conversation)")
 			}
 
 			name := strings.TrimSpace(in.Name)
 			if name == "" {
-				return CreateAgentAnalysisOutput{}, fmt.Errorf("create_agent_analysis: name is required")
+				return CreateAnalysisNodeAgentOutput{}, fmt.Errorf("create_analysis_node_agent: name is required")
 			}
 			// container_template_id 可选：为空时解析为 0，由 runner 回退到系统默认容器模板。
 			containerTemplateID, err := parseContainerTemplateID(in.ContainerTemplateID)
 			if err != nil {
-				return CreateAgentAnalysisOutput{}, fmt.Errorf("create_agent_analysis: %w", err)
+				return CreateAnalysisNodeAgentOutput{}, fmt.Errorf("create_analysis_node_agent: %w", err)
 			}
 			command := strings.TrimSpace(in.Command)
 			if command == "" {
-				return CreateAgentAnalysisOutput{}, fmt.Errorf("create_agent_analysis: command is required")
+				return CreateAnalysisNodeAgentOutput{}, fmt.Errorf("create_analysis_node_agent: command is required")
 			}
 
 			if runner == nil {
-				return CreateAgentAnalysisOutput{}, fmt.Errorf("create_agent_analysis: agent analysis runner is not available in this runtime")
+				return CreateAnalysisNodeAgentOutput{}, fmt.Errorf("create_analysis_node_agent: agent analysis runner is not available in this runtime")
 			}
 
 			// run 可选且默认为 true：nil 视为未传，按默认运行处理。
@@ -171,7 +171,7 @@ func CreateAgentAnalysis(runner runtimecontext.AgentAnalysisRunner) tool.Tool {
 				TimeoutSeconds:      in.TimeoutSeconds,
 			})
 
-			out := CreateAgentAnalysisOutput{
+			out := CreateAnalysisNodeAgentOutput{
 				AgentAnalysisID:     result.AgentAnalysisID,
 				ContainerInstanceID: result.ContainerInstanceID,
 				Status:              result.Status,
@@ -188,11 +188,11 @@ func CreateAgentAnalysis(runner runtimecontext.AgentAnalysisRunner) tool.Tool {
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "创建命令型分析节点（默认立即运行该节点）", previewCreateAgentAnalysis)
+	).WithPermissionPreview("write", "", "创建命令型分析节点（默认立即运行该节点）", previewCreateAnalysisNodeAgent)
 }
 
-// previewCreateAgentAnalysis 生成批准前预览：新节点 run.sh 将写入的命令内容（新增文件 diff）。
-func previewCreateAgentAnalysis(_ context.Context, in CreateAgentAnalysisInput) tool.PermissionPreview {
+// previewCreateAnalysisNodeAgent 生成批准前预览：新节点 run.sh 将写入的命令内容（新增文件 diff）。
+func previewCreateAnalysisNodeAgent(_ context.Context, in CreateAnalysisNodeAgentInput) tool.PermissionPreview {
 	command := strings.TrimSpace(in.Command)
 	if command == "" {
 		return tool.PermissionPreview{}

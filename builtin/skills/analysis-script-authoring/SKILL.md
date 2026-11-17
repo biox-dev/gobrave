@@ -1,6 +1,6 @@
 ---
 name: analysis-script-authoring
-description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体，到 create_script_analysis 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、在已创建节点里写 / 改脚本代码的约定（最简写法、tidyverse 读表、knitr::kable 打印、按 outputs 写 outputs.json）、生物分组不明确时必须先 ask_user、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码或运行节点时使用。
+description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体，到 create_analysis_node_script 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、在已创建节点里写 / 改脚本代码的约定（最简写法、tidyverse 读表、knitr::kable 打印、按 outputs 写 outputs.json）、生物分组不明确时必须先 ask_user、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码或运行节点时使用。
 ---
 
 ## 脚本创建与修改规范（总入口）
@@ -49,7 +49,7 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
    - 不要硬编码路径、样本名或分组，一律通过参数传入；
    - 具体写法见第四节「脚本代码怎么写」。
 
-4) `create_script_analysis`（`script_id` = 第 1 步返回值，可给 `node_name`）：创建分析节点，
+4) `create_analysis_node_script`（`script_id` = 第 1 步返回值，可给 `node_name`）：创建分析节点，
    得到 `analysis_node_id` / `workspace_dir` / `params_path`。
    - **默认 run=true：创建后立即运行该节点并等待结束**，返回 status / success / log / log_path。
      只想建节点、稍后自己控制运行时机时传 `run=false`。
@@ -77,14 +77,14 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
   request_param。只需按新契约重新调用 `build_analysis_node_params`，再运行即可。
 - 修改 `script_file_path` 指向的脚本内容后同样**无需重建 script 或节点**，直接调用 `run_analysis_node`
   即可运行最新代码；只有参数也要变化时才再调用 `build_analysis_node_params`。
-- **改 request_param 用 `build_analysis_node_params`，改 node_name 用 `update_script_analysis`
+- **改 request_param 用 `build_analysis_node_params`，改 node_name 用 `update_analysis_node_script`
   （analysis_node_id + node_name，默认更新后立即运行，只想改名时传 run=false），都不需要重建节点。**
-- 需要在同一脚本上做多次独立分析时，用 `create_script_analysis`（script_id + node_name + 可选
+- 需要在同一脚本上做多次独立分析时，用 `create_analysis_node_script`（script_id + node_name + 可选
   request_param）再建一个节点，各自持有自己的参数与工作目录，互不覆盖。
 - `run_analysis_node` 不接受 request_param：脚本型节点直接使用节点上已保存的 request_param
-  （由 `build_analysis_node_params` / `create_script_analysis` 写入），运行前按最新 io_schema 重新解析，
+  （由 `build_analysis_node_params` / `create_analysis_node_script` 写入），运行前按最新 io_schema 重新解析，
   并刷新 inputs_patterns / output_patterns / resolved_inputs / request_param、清空上一轮校验错误；
-  命令型节点（`create_agent_analysis` 创建）直接运行自身 run.sh。
+  命令型节点（`create_analysis_node_agent` 创建）直接运行自身 run.sh。
 - `run_analysis_node` 与 `build_analysis_node_params` 职责不同：前者只负责运行，后者负责修改参数。
   **禁止在脚本型节点未调用 `build_analysis_node_params`（节点上无参数）的情况下直接运行节点。**
 - 每次运行只改必要的地方：先用日志定位失败原因，避免整段重写脚本。
@@ -379,7 +379,7 @@ jsonlite::write_json(outputs, file.path(params$output_dir, "outputs.json"), auto
 
 - 同一个工具在同一任务内连续失败 2 次以上，且报错文本相同或高度相似；
 - 同一个错误在**不同任务 / 不同会话**中重复出现（说明是稳定的坑，不是偶发）；
-- create_script / create_script_analysis / build_analysis_node_params 报错提示需要用户配置环境
+- create_script / create_analysis_node_script / build_analysis_node_params 报错提示需要用户配置环境
   （容器模板、路径、依赖）等无法由代码修好的问题；
 - 使用 ask_user 向用户确认后，用户明确纠正了某个参数格式 / 字段名 / 流程顺序。
 

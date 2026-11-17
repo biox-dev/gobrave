@@ -291,7 +291,7 @@ type FileReadResult struct {
 // 职责刻意与节点创建拆开（脚本与节点是两个独立资源）：
 //   - CreateScript 只落库 Script（pipeline_components）并初始化脚本目录
 //     （主文件 / io_schema.json），不创建任何分析节点；
-//   - 为脚本创建节点由 AnalysisNodeCreator 负责（见 create_script_analysis）。
+//   - 为脚本创建节点由 AnalysisNodeCreator 负责（见 create_analysis_node_script）。
 //
 // 这样模型可以先把脚本与 io_schema.json 写好，再决定要建几个节点；不需要节点的
 // 场景（只写脚本）也不必凭空造一个节点。这些细节收敛在上层实现（见 container），
@@ -341,7 +341,7 @@ type AnalysisNodeCreateResult struct {
 }
 
 // AnalysisNodeCreator 抽象「为已有脚本创建独立分析节点」的业务能力
-// （create_script_analysis）。
+// （create_analysis_node_script）。
 //
 // 它属于分析节点域（而非脚本域）：脚本必须已存在且 io_schema.json 已写好，
 // 创建时落地节点的 inputs_patterns / output_patterns 并准备好工作目录。
@@ -862,7 +862,7 @@ type ScriptCreateInput struct {
 // ScriptCreateResult 是「创建脚本」的结果（回传给模型）。
 //
 // 只包含脚本自身的产物路径：模型据此直接编辑脚本主文件与 io_schema.json，
-// 之后再按需调用 create_script_analysis 创建节点。
+// 之后再按需调用 create_analysis_node_script 创建节点。
 type ScriptCreateResult struct {
 	ScriptID int64 `json:"script_id,string"`
 	// ScriptKey 是 Script.ScriptID（组件业务 ID，脚本目录名）。

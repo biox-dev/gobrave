@@ -551,7 +551,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// dag.node.completed / dag.node.failed 事件，仅保留低频状态轮询兜底。
 	must(container.Provide(agentanalysis.NewNodeRunner))
 	// 命令型分析节点执行器：把「创建命令节点 + 等待结束 + 读取日志」能力暴露给
-	// 内置工具 create_agent_analysis，由 Provider 在执行工具前注入工具 ctx。
+	// 内置工具 create_analysis_node_agent，由 Provider 在执行工具前注入工具 ctx。
 	must(container.Provide(agentanalysis.NewAgentAnalysisRunner))
 	// 终端会话注册表：把「模板 → 持久 PTY」的会话收敛到进程内，供 UI / Agent 共用。
 	// 容器创建统一由 ContainerCreateWorker 负责（实例 + runtime.Create + runtime.Start）。
@@ -584,13 +584,13 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// runtimecontext.ScriptUpdater（update_script），故只需注入一次。
 	must(container.Provide(agentscript.NewCreator))
 	// 脚本分析节点创建器：把「读取脚本契约 → 创建独立分析节点 → 准备工作目录」能力
-	// 暴露给内置工具 create_script_analysis。
+	// 暴露给内置工具 create_analysis_node_script。
 	must(container.Provide(agentanalysis.NewScriptNodeCreator))
 	// 分析节点参数生成器：把「按脚本 io_schema 解析 request_param → 刷新节点 → 写出
 	// params.json」能力暴露给内置工具 build_analysis_node_params。
 	must(container.Provide(agentanalysis.NewParamsBuilder))
 	// 分析节点更新器：把「更新分析节点名称 / 命令型节点 / 脚本型节点」能力暴露给内置工具
-	// update_agent_analysis / update_script_analysis。
+	// update_analysis_node_agent / update_analysis_node_script。
 	must(container.Provide(agentanalysis.NewNodeUpdater))
 	// 项目资源浏览器：把「脚本 / 分析节点 / 容器模板 / 数据集 / 报告上下文」只读能力
 	// 统一提供给内置只读工具。

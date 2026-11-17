@@ -16,9 +16,9 @@ import (
 // 字段按工具消费者拆成窄接口（见 runtimecontext 包），容器用一个实现即可同时满足；
 // 测试 fake 只需实现被用到的那一个。
 type Deps struct {
-	// Runner 运行分析节点（run_analysis_node / create_script_analysis / update_*）。
+	// Runner 运行分析节点（run_analysis_node / create_analysis_node_script / update_*）。
 	Runner runtimecontext.AnalysisNodeRunner
-	// AgentRunner 创建并（可选）运行命令型分析节点（create_agent_analysis）。
+	// AgentRunner 创建并（可选）运行命令型分析节点（create_analysis_node_agent）。
 	AgentRunner runtimecontext.AgentAnalysisRunner
 	// Terminal 向用户的持久终端会话写入命令（terminal_exec）。
 	Terminal runtimecontext.ContainerTerminalRunner
@@ -26,11 +26,11 @@ type Deps struct {
 	FileReader runtimecontext.FileReader
 	// ScriptCreator 创建脚本（create_script）；同时实现 ScriptUpdater 时也用于 update_script。
 	ScriptCreator runtimecontext.ScriptCreator
-	// NodeCreator 为已有脚本创建分析节点（create_script_analysis）。
+	// NodeCreator 为已有脚本创建分析节点（create_analysis_node_script）。
 	NodeCreator runtimecontext.AnalysisNodeCreator
 	// ParamsBuilder 按 io_schema 生成节点参数（build_analysis_node_params）。
 	ParamsBuilder runtimecontext.AnalysisNodeParamsBuilder
-	// NodeUpdater 更新分析节点（update_agent_analysis / update_script_analysis）。
+	// NodeUpdater 更新分析节点（update_analysis_node_agent / update_analysis_node_script）。
 	NodeUpdater runtimecontext.AnalysisNodeUpdater
 	// MemorySaver 保存用户长期记忆（save_memory）。
 	MemorySaver runtimecontext.MemorySaver

@@ -18,12 +18,12 @@ import (
 //
 // 节点类型只有三种，统一引用 types 中的规范取值，避免各处再写字面量：
 //   - agent：Agent 会话直接创建的命令节点（无脚本）；
-//   - script：由脚本契约创建的节点（前端独立节点 / create_script_analysis）；
+//   - script：由脚本契约创建的节点（前端独立节点 / create_analysis_node_script）；
 //   - scheduler：由 DAG 调度器按流程物化的节点。
 const (
-	// NodeCreationSourceAgent 是 Agent 会话（create_agent_analysis）直接创建的命令节点。
+	// NodeCreationSourceAgent 是 Agent 会话（create_analysis_node_agent）直接创建的命令节点。
 	NodeCreationSourceAgent = types.AnalysisNodeCreationSourceAgent
-	// NodeCreationSourceScript 是由脚本契约创建的节点（前端独立节点 / create_script_analysis）。
+	// NodeCreationSourceScript 是由脚本契约创建的节点（前端独立节点 / create_analysis_node_script）。
 	NodeCreationSourceScript = types.AnalysisNodeCreationSourceScript
 	// NodeCreationSourceScheduler 是 DAG 调度器物化的节点。
 	NodeCreationSourceScheduler = types.AnalysisNodeCreationSourceScheduler

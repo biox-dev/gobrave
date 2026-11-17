@@ -23,25 +23,25 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 	result := runtimecontext.ScriptAnalysisUpdateResult{AnalysisNodeID: in.AnalysisNodeID}
 
 	if in.ProjectID <= 0 {
-		return result, fmt.Errorf("update_script_analysis: project_id is required")
+		return result, fmt.Errorf("update_analysis_node_script: project_id is required")
 	}
 	if in.AnalysisNodeID <= 0 {
-		return result, fmt.Errorf("update_script_analysis: analysis_node_id is required")
+		return result, fmt.Errorf("update_analysis_node_script: analysis_node_id is required")
 	}
 	if u.analysisSvc == nil {
-		return result, fmt.Errorf("update_script_analysis: required services are not configured")
+		return result, fmt.Errorf("update_analysis_node_script: required services are not configured")
 	}
 	if in.NodeName == nil && in.RequestParam == nil {
-		return result, fmt.Errorf("update_script_analysis: at least one of node_name / request_param must be provided")
+		return result, fmt.Errorf("update_analysis_node_script: at least one of node_name / request_param must be provided")
 	}
 
-	node, err := u.loadNodeForProject(ctx, in.ProjectID, in.AnalysisNodeID, "update_script_analysis")
+	node, err := u.loadNodeForProject(ctx, in.ProjectID, in.AnalysisNodeID, "update_analysis_node_script")
 	if err != nil {
 		return result, err
 	}
 	nodeType := node.NodeType()
 	if node.ScriptID <= 0 || (nodeType != types.AnalysisNodeCreationSourceScript && nodeType != types.AnalysisNodeCreationSourceScheduler) {
-		return result, fmt.Errorf("update_script_analysis: analysis node %d is a %s node; only script / scheduler nodes (with a bound script) can be updated with this tool, use update_agent_analysis for agent nodes", node.ID, node.NodeTypeDescription())
+		return result, fmt.Errorf("update_analysis_node_script: analysis node %d is a %s node; only script / scheduler nodes (with a bound script) can be updated with this tool, use update_analysis_node_agent for agent nodes", node.ID, node.NodeTypeDescription())
 	}
 
 	update := make(map[string]any, 6)
@@ -50,7 +50,7 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 	if in.NodeName != nil {
 		name := strings.TrimSpace(*in.NodeName)
 		if name == "" {
-			return result, fmt.Errorf("update_script_analysis: node_name must not be empty")
+			return result, fmt.Errorf("update_analysis_node_script: node_name must not be empty")
 		}
 		if name != node.NodeName {
 			update["node_name"] = name
@@ -62,16 +62,16 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 	var warnings []string
 	if in.RequestParam != nil {
 		if u.workflowSvc == nil {
-			return result, fmt.Errorf("update_script_analysis: workflow service is not configured")
+			return result, fmt.Errorf("update_analysis_node_script: workflow service is not configured")
 		}
 		formJSONWrap, scriptIOSchema, err := u.workflowSvc.GetScriptFormJSONByID(ctx, node.ScriptID)
 		if err != nil {
-			return result, fmt.Errorf("update_script_analysis: failed to load script form (io_schema.json): %w", err)
+			return result, fmt.Errorf("update_analysis_node_script: failed to load script form (io_schema.json): %w", err)
 		}
 
 		resolvedInputs, err := analysisform.BuildParseAnalysisResult(ctx, u.dataSvc, in.RequestParam, formJSONWrap, node.NodeName)
 		if err != nil {
-			return result, fmt.Errorf("update_script_analysis: failed to parse request_param with script io_schema: %w", err)
+			return result, fmt.Errorf("update_analysis_node_script: failed to parse request_param with script io_schema: %w", err)
 		}
 		if resolvedInputs == nil {
 			resolvedInputs = map[string]any{}
@@ -84,7 +84,7 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 
 		requestParamBytes, err := json.Marshal(in.RequestParam)
 		if err != nil {
-			return result, fmt.Errorf("update_script_analysis: failed to serialize request_param: %w", err)
+			return result, fmt.Errorf("update_analysis_node_script: failed to serialize request_param: %w", err)
 		}
 		update["inputs_patterns"] = types.JSONMap(utils.FormatIOSchemaItems(scriptIOSchema["inputs"]))
 		update["output_patterns"] = types.JSONMap(utils.FormatIOSchemaItems(scriptIOSchema["outputs"]))
@@ -105,19 +105,19 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 
 	if len(update) > 0 {
 		if err := u.analysisSvc.UpdateAnalysisNodeByID(ctx, node.ID, update); err != nil {
-			return result, fmt.Errorf("update_script_analysis: failed to update node %d: %w", node.ID, err)
+			return result, fmt.Errorf("update_analysis_node_script: failed to update node %d: %w", node.ID, err)
 		}
 	}
 
 	if in.RequestParam != nil {
 		if u.preparer == nil {
-			return result, fmt.Errorf("update_script_analysis: node runtime preparer is not configured")
+			return result, fmt.Errorf("update_analysis_node_script: node runtime preparer is not configured")
 		}
 		node.HydrateDerivedPaths()
 		// 不携带 prepare.WithSkipCleanOutput：参数变更后旧输出已失效，重建运行期文件时
 		// 一并清空 output，避免后续把上一轮结果当成新参数的结果。
 		if err := u.preparer.Prepare(ctx, node); err != nil {
-			return result, fmt.Errorf("update_script_analysis: node %d updated but failed to regenerate runtime files: %w", node.ID, err)
+			return result, fmt.Errorf("update_analysis_node_script: node %d updated but failed to regenerate runtime files: %w", node.ID, err)
 		}
 	}
 

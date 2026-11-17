@@ -22,24 +22,24 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 	result := runtimecontext.AgentAnalysisUpdateResult{AnalysisNodeID: in.AnalysisNodeID}
 
 	if in.ProjectID <= 0 {
-		return result, fmt.Errorf("update_agent_analysis: project_id is required")
+		return result, fmt.Errorf("update_analysis_node_agent: project_id is required")
 	}
 	if in.AnalysisNodeID <= 0 {
-		return result, fmt.Errorf("update_agent_analysis: analysis_node_id is required")
+		return result, fmt.Errorf("update_analysis_node_agent: analysis_node_id is required")
 	}
 	if u.analysisSvc == nil {
-		return result, fmt.Errorf("update_agent_analysis: required services are not configured")
+		return result, fmt.Errorf("update_analysis_node_agent: required services are not configured")
 	}
 	if in.NodeName == nil && in.Command == nil && in.ContainerTemplateID == nil {
-		return result, fmt.Errorf("update_agent_analysis: at least one of node_name / command / container_template_id must be provided")
+		return result, fmt.Errorf("update_analysis_node_agent: at least one of node_name / command / container_template_id must be provided")
 	}
 
-	node, err := u.loadNodeForProject(ctx, in.ProjectID, in.AnalysisNodeID, "update_agent_analysis")
+	node, err := u.loadNodeForProject(ctx, in.ProjectID, in.AnalysisNodeID, "update_analysis_node_agent")
 	if err != nil {
 		return result, err
 	}
 	if node.NodeType() != types.AnalysisNodeCreationSourceAgent {
-		return result, fmt.Errorf("update_agent_analysis: analysis node %d is a %s node; only agent (command) nodes can be updated with this tool, use update_script_analysis for script / scheduler nodes", node.ID, node.NodeTypeDescription())
+		return result, fmt.Errorf("update_analysis_node_agent: analysis node %d is a %s node; only agent (command) nodes can be updated with this tool, use update_analysis_node_script for script / scheduler nodes", node.ID, node.NodeTypeDescription())
 	}
 	// 派生路径以 WorkspaceDir 为准随时重算，下面比较 / 写入 run.sh 都要用到 CommandPath。
 	node.HydrateDerivedPaths()
@@ -53,7 +53,7 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 	if in.NodeName != nil {
 		name := strings.TrimSpace(*in.NodeName)
 		if name == "" {
-			return result, fmt.Errorf("update_agent_analysis: node_name must not be empty")
+			return result, fmt.Errorf("update_analysis_node_agent: node_name must not be empty")
 		}
 		if name != node.NodeName {
 			update["node_name"] = name
@@ -65,12 +65,12 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 	if in.Command != nil {
 		command := strings.TrimSpace(*in.Command)
 		if command == "" {
-			return result, fmt.Errorf("update_agent_analysis: command must not be empty")
+			return result, fmt.Errorf("update_analysis_node_agent: command must not be empty")
 		}
 		// 命令只存在于 run.sh：与磁盘上的旧正文比较，决定是否需要重建运行期文件。
 		current, readErr := prepare.ReadCommandRunScript(node.CommandPath)
 		if readErr != nil {
-			return result, fmt.Errorf("update_agent_analysis: failed to read run.sh of node %d: %w", node.ID, readErr)
+			return result, fmt.Errorf("update_analysis_node_agent: failed to read run.sh of node %d: %w", node.ID, readErr)
 		}
 		commandText = command
 		if command != strings.TrimSpace(current) {
@@ -82,9 +82,9 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 	if in.ContainerTemplateID != nil {
 		templateID := *in.ContainerTemplateID
 		if templateID <= 0 {
-			return result, fmt.Errorf("update_agent_analysis: container_template_id must be a positive integer")
+			return result, fmt.Errorf("update_analysis_node_agent: container_template_id must be a positive integer")
 		}
-		if err := u.ensureContainerTemplateExists(ctx, templateID, "update_agent_analysis"); err != nil {
+		if err := u.ensureContainerTemplateExists(ctx, templateID, "update_analysis_node_agent"); err != nil {
 			return result, err
 		}
 		if templateID != node.ContainerTemplateID {
@@ -96,26 +96,26 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 
 	if len(update) > 0 {
 		if err := u.analysisSvc.UpdateAnalysisNodeByID(ctx, node.ID, update); err != nil {
-			return result, fmt.Errorf("update_agent_analysis: failed to update node %d: %w", node.ID, err)
+			return result, fmt.Errorf("update_analysis_node_agent: failed to update node %d: %w", node.ID, err)
 		}
 	}
 
 	if reprepare {
 		if u.preparer == nil {
-			return result, fmt.Errorf("update_agent_analysis: node runtime preparer is not configured")
+			return result, fmt.Errorf("update_analysis_node_agent: node runtime preparer is not configured")
 		}
 		node.HydrateDerivedPaths()
 		// 不携带 prepare.WithSkipCleanOutput：命令变更后旧输出已失效，重建运行期文件时
 		// 一并清空 output，避免后续把上一轮结果当成新命令的结果。
 		if err := u.preparer.Prepare(ctx, node); err != nil {
-			return result, fmt.Errorf("update_agent_analysis: node %d updated but failed to regenerate runtime files: %w", node.ID, err)
+			return result, fmt.Errorf("update_analysis_node_agent: node %d updated but failed to regenerate runtime files: %w", node.ID, err)
 		}
 	}
 
 	// 命令变更时把新正文直接写入 run.sh（Prepare 只负责目录 / params.json / env.sh）。
 	if commandText != "" {
 		if err := prepare.WriteCommandRunScript(node.CommandPath, commandText); err != nil {
-			return result, fmt.Errorf("update_agent_analysis: node %d updated but failed to write run.sh: %w", node.ID, err)
+			return result, fmt.Errorf("update_analysis_node_agent: node %d updated but failed to write run.sh: %w", node.ID, err)
 		}
 	}
 

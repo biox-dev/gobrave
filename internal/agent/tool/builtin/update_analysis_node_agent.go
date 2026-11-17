@@ -10,14 +10,14 @@ import (
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 )
 
-// UpdateAgentAnalysisToolName 是「更新命令型分析节点」工具名。
-const UpdateAgentAnalysisToolName = "update_agent_analysis"
+// UpdateAnalysisNodeAgentToolName 是「更新命令型分析节点」工具名。
+const UpdateAnalysisNodeAgentToolName = "update_analysis_node_agent"
 
-// UpdateAgentAnalysisInput 是 update_agent_analysis 工具的入参。
+// UpdateAnalysisNodeAgentInput 是 update_analysis_node_agent 工具的入参。
 //
 // AnalysisNodeID 为必填：模型必须显式给出要更新的 command 节点 ID。
 // 其余字段均可选：留空表示不修改对应字段；至少需要给出一个可更新字段。
-type UpdateAgentAnalysisInput struct {
+type UpdateAnalysisNodeAgentInput struct {
 	AnalysisNodeID      string `json:"analysis_node_id"`      // 分析节点 ID（必填，字符串以保精度）
 	NodeName            string `json:"node_name"`             // 新节点名称，留空表示不修改
 	Command             string `json:"command"`               // 新 shell 命令（写入 run.sh），留空表示不修改
@@ -28,8 +28,8 @@ type UpdateAgentAnalysisInput struct {
 	TimeoutSeconds int `json:"timeout_seconds"`
 }
 
-// UpdateAgentAnalysisOutput 是 update_agent_analysis 工具返回给模型的结果。
-type UpdateAgentAnalysisOutput struct {
+// UpdateAnalysisNodeAgentOutput 是 update_analysis_node_agent 工具返回给模型的结果。
+type UpdateAnalysisNodeAgentOutput struct {
 	AnalysisNodeID      int64    `json:"analysis_node_id,string"`
 	NodeName            string   `json:"node_name,omitempty"`
 	Command             string   `json:"command,omitempty"`
@@ -48,11 +48,11 @@ type UpdateAgentAnalysisOutput struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// UpdateAgentAnalysis 返回一个「更新 Agent 命令节点」工具。
+// UpdateAnalysisNodeAgent 返回一个「更新 Agent 命令节点」工具。
 //
 // 适用节点类型：仅 creation_source=agent（get_analysis_node 返回 node_type=agent）的
-// 命令型节点，即 create_agent_analysis 创建、无绑定脚本、run.sh 由 Agent 生成的节点。
-// script / scheduler 类型（绑定脚本）请改用 update_script_analysis。
+// 命令型节点，即 create_analysis_node_agent 创建、无绑定脚本、run.sh 由 Agent 生成的节点。
+// script / scheduler 类型（绑定脚本）请改用 update_analysis_node_script。
 //
 // 行为：
 //   - analysis_node_id 必填；node_name / command / container_template_id 至少给出一个；
@@ -64,10 +64,10 @@ type UpdateAgentAnalysisOutput struct {
 //     run=false 时只更新节点，不提交运行。
 //
 // 该工具会修改业务数据并重写运行期文件，并在默认情况下触发一次节点运行，因此声明 write 授权。
-func UpdateAgentAnalysis(updater runtimecontext.AnalysisNodeUpdater, runner runtimecontext.AnalysisNodeRunner, browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
+func UpdateAnalysisNodeAgent(updater runtimecontext.AnalysisNodeUpdater, runner runtimecontext.AnalysisNodeRunner, browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
 	return tool.NewFunc(
-		UpdateAgentAnalysisToolName,
-		"更新 Agent 命令节点（creation_source=agent，无绑定脚本，run.sh 由 Agent 生成），默认更新后运行。仅适用于 get_analysis_node 返回 node_type=agent 的节点；script / scheduler 类型（绑定脚本）请改用 update_script_analysis。analysis_node_id 必填；可选给出 node_name / command / container_template_id，至少给出一个；未给出的字段保持原值。command 会直接写入节点 run.sh（命令不落库），并清空节点输出目录（output）。run 可选，默认 true：为 true 时更新成功后立即运行该节点并等待结束，返回状态、执行日志与日志路径；为 false 时只更新节点不运行（之后可用 run_analysis_node 运行）。timeout_seconds 可选，默认 600，run=false 时忽略。",
+		UpdateAnalysisNodeAgentToolName,
+		"更新 Agent 命令节点（creation_source=agent，无绑定脚本，run.sh 由 Agent 生成），默认更新后运行。仅适用于 get_analysis_node 返回 node_type=agent 的节点；script / scheduler 类型（绑定脚本）请改用 update_analysis_node_script。analysis_node_id 必填；可选给出 node_name / command / container_template_id，至少给出一个；未给出的字段保持原值。command 会直接写入节点 run.sh（命令不落库），并清空节点输出目录（output）。run 可选，默认 true：为 true 时更新成功后立即运行该节点并等待结束，返回状态、执行日志与日志路径；为 false 时只更新节点不运行（之后可用 run_analysis_node 运行）。timeout_seconds 可选，默认 600，run=false 时忽略。",
 		tool.Schema("更新 agent（命令）节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("要更新的分析节点 ID（必填，整数，字符串以保精度）。"),
 			"node_name":        tool.StringProperty("新的节点名称，留空表示不修改。"),
@@ -77,15 +77,15 @@ func UpdateAgentAnalysis(updater runtimecontext.AnalysisNodeUpdater, runner runt
 			"run":             tool.BooleanProperty("是否在更新后立即运行，可选，默认 true。传 false 时只更新节点，不提交运行。"),
 			"timeout_seconds": tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600；run=false 时忽略。"),
 		}, "analysis_node_id"),
-		func(ctx context.Context, in UpdateAgentAnalysisInput) (UpdateAgentAnalysisOutput, error) {
-			projectID, err := requireProjectID(ctx, UpdateAgentAnalysisToolName)
+		func(ctx context.Context, in UpdateAnalysisNodeAgentInput) (UpdateAnalysisNodeAgentOutput, error) {
+			projectID, err := requireProjectID(ctx, UpdateAnalysisNodeAgentToolName)
 			if err != nil {
-				return UpdateAgentAnalysisOutput{}, err
+				return UpdateAnalysisNodeAgentOutput{}, err
 			}
 
 			nodeID, err := parseAnalysisNodeID(in.AnalysisNodeID)
 			if err != nil {
-				return UpdateAgentAnalysisOutput{}, wrapToolNameError(UpdateAgentAnalysisToolName, err)
+				return UpdateAnalysisNodeAgentOutput{}, wrapToolNameError(UpdateAnalysisNodeAgentToolName, err)
 			}
 
 			name := strings.TrimSpace(in.NodeName)
@@ -95,20 +95,20 @@ func UpdateAgentAnalysis(updater runtimecontext.AnalysisNodeUpdater, runner runt
 			if strings.TrimSpace(in.ContainerTemplateID) != "" {
 				id, err := parseContainerTemplateID(in.ContainerTemplateID)
 				if err != nil {
-					return UpdateAgentAnalysisOutput{}, wrapToolNameError(UpdateAgentAnalysisToolName, err)
+					return UpdateAnalysisNodeAgentOutput{}, wrapToolNameError(UpdateAnalysisNodeAgentToolName, err)
 				}
 				if id <= 0 {
-					return UpdateAgentAnalysisOutput{}, fmt.Errorf("%s: container_template_id must be a positive integer", UpdateAgentAnalysisToolName)
+					return UpdateAnalysisNodeAgentOutput{}, fmt.Errorf("%s: container_template_id must be a positive integer", UpdateAnalysisNodeAgentToolName)
 				}
 				templateID = &id
 			}
 
 			if name == "" && command == "" && templateID == nil {
-				return UpdateAgentAnalysisOutput{}, fmt.Errorf("%s: at least one of node_name / command / container_template_id must be provided", UpdateAgentAnalysisToolName)
+				return UpdateAnalysisNodeAgentOutput{}, fmt.Errorf("%s: at least one of node_name / command / container_template_id must be provided", UpdateAnalysisNodeAgentToolName)
 			}
 
 			if updater == nil {
-				return UpdateAgentAnalysisOutput{}, fmt.Errorf("%s: analysis node updater is not available in this runtime", UpdateAgentAnalysisToolName)
+				return UpdateAnalysisNodeAgentOutput{}, fmt.Errorf("%s: analysis node updater is not available in this runtime", UpdateAnalysisNodeAgentToolName)
 			}
 
 			input := runtimecontext.AgentAnalysisUpdateInput{
@@ -125,7 +125,7 @@ func UpdateAgentAnalysis(updater runtimecontext.AnalysisNodeUpdater, runner runt
 
 			result, err := updater.UpdateAgentAnalysis(ctx, input)
 			if err != nil {
-				return UpdateAgentAnalysisOutput{
+				return UpdateAnalysisNodeAgentOutput{
 					AnalysisNodeID: nodeID,
 					Error:          err.Error(),
 				}, nil
@@ -137,7 +137,7 @@ func UpdateAgentAnalysis(updater runtimecontext.AnalysisNodeUpdater, runner runt
 				run = *in.Run
 			}
 
-			out := UpdateAgentAnalysisOutput{
+			out := UpdateAnalysisNodeAgentOutput{
 				AnalysisNodeID:      result.AnalysisNodeID,
 				NodeName:            result.NodeName,
 				Command:             result.Command,
@@ -154,7 +154,7 @@ func UpdateAgentAnalysis(updater runtimecontext.AnalysisNodeUpdater, runner runt
 
 			if runner == nil {
 				out.Ran = false
-				out.Error = "update_agent_analysis: analysis node runner is not available in this runtime; the node was updated but not run"
+				out.Error = "update_analysis_node_agent: analysis node runner is not available in this runtime; the node was updated but not run"
 				return out, nil
 			}
 
@@ -175,16 +175,16 @@ func UpdateAgentAnalysis(updater runtimecontext.AnalysisNodeUpdater, runner runt
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "更新 Agent 命令节点（写库并重建 run.sh，默认更新后运行）", func(ctx context.Context, in UpdateAgentAnalysisInput) tool.PermissionPreview {
-		return previewUpdateAgentAnalysis(ctx, browser, in)
+	).WithPermissionPreview("write", "", "更新 Agent 命令节点（写库并重建 run.sh，默认更新后运行）", func(ctx context.Context, in UpdateAnalysisNodeAgentInput) tool.PermissionPreview {
+		return previewUpdateAnalysisNodeAgent(ctx, browser, in)
 	})
 }
 
-// previewUpdateAgentAnalysis 生成批准前预览：run.sh 旧内容 → 新内容的 diff。
+// previewUpdateAnalysisNodeAgent 生成批准前预览：run.sh 旧内容 → 新内容的 diff。
 //
 // 旧内容直接从磁盘上的 run.sh 读取（命令不再落库）；读取失败时退化为「新增 / 覆盖
 // run.sh」的预览，不影响授权流程本身。
-func previewUpdateAgentAnalysis(ctx context.Context, browser runtimecontext.AnalysisNodeBrowser, in UpdateAgentAnalysisInput) tool.PermissionPreview {
+func previewUpdateAnalysisNodeAgent(ctx context.Context, browser runtimecontext.AnalysisNodeBrowser, in UpdateAnalysisNodeAgentInput) tool.PermissionPreview {
 	command := strings.TrimSpace(in.Command)
 	if command == "" {
 		return tool.PermissionPreview{}
@@ -192,7 +192,7 @@ func previewUpdateAgentAnalysis(ctx context.Context, browser runtimecontext.Anal
 
 	path := runScriptPath("", "")
 	before := ""
-	if current, ok := analysisNodeForPreview(ctx, browser, UpdateAgentAnalysisToolName, in.AnalysisNodeID); ok {
+	if current, ok := analysisNodeForPreview(ctx, browser, UpdateAnalysisNodeAgentToolName, in.AnalysisNodeID); ok {
 		path = runScriptPath(current.CommandPath, current.WorkspaceDir)
 		if content, err := prepare.ReadCommandRunScript(current.CommandPath); err == nil {
 			before = runScriptContent(content)

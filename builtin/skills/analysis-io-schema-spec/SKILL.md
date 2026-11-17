@@ -10,7 +10,7 @@ disable-render: true
 同时被三处消费，因此写错一处就会三处全错：
 
 1. **人类表单**：`inputs[]` 被渲染成用户在分析节点面板里填写的控件（由 `type` 决定控件形态）；
-2. **`request_param`**：`build_analysis_node_params` / `create_script_analysis` 的入参键名，
+2. **`request_param`**：`build_analysis_node_params` / `create_analysis_node_script` 的入参键名，
    必须与 `inputs[].name` 一一对应；
 3. **`params.json`**：后端 `analysisform.BuildParseAnalysisResult` 把 `request_param` 按 `inputs[]`
    解析后写出 `params.json`，脚本从这里读参数。

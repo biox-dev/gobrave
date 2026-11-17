@@ -1,6 +1,6 @@
 ---
 name: data-file-analysis
-description: 用户只给出数据文件（@file:<id>）并要求完成某个分析时的入口技能：必须先调用 list_project_scripts 盘点当前项目已有脚本，看是否有能满足需求的脚本；有则直接用 create_script_analysis 建节点运行出结果，没有则用 ask_user 询问用户改用 create_agent_analysis（命令型节点）还是 create_script（可复用脚本）后再继续。包含读文件结构、脚本匹配判断、request_param 组织、运行失败迭代与结果汇报。用户拖入数据文件说「帮我分析这个数据」且未指定脚本时使用。
+description: 用户只给出数据文件（@file:<id>）并要求完成某个分析时的入口技能：必须先调用 list_project_scripts 盘点当前项目已有脚本，看是否有能满足需求的脚本；有则直接用 create_analysis_node_script 建节点运行出结果，没有则用 ask_user 询问用户改用 create_analysis_node_agent（命令型节点）还是 create_script（可复用脚本）后再继续。包含读文件结构、脚本匹配判断、request_param 组织、运行失败迭代与结果汇报。用户拖入数据文件说「帮我分析这个数据」且未指定脚本时使用。
 ---
 
 # 数据文件驱动的分析入口
@@ -17,9 +17,9 @@ description: 用户只给出数据文件（@file:<id>）并要求完成某个分
 
 1. **第一步必须 `list_project_scripts`**：不带参数（项目取自当前会话的激活项目），
    拿到当前项目全部脚本的 `script_id` / `script_name` / `description` / `script_type`。
-   **不得跳过这一步直接 `create_script` 或 `create_agent_analysis`。**
+   **不得跳过这一步直接 `create_script` 或 `create_analysis_node_agent`。**
 2. **先判断有没有满足需求的脚本**：
-   - 有 → 走「三、已有匹配脚本」：直接 `create_script_analysis` 建节点并运行；
+   - 有 → 走「三、已有匹配脚本」：直接 `create_analysis_node_script` 建节点并运行；
    - 没有（含 `total=0`）→ 走「四、没有可用脚本」：**用 `ask_user` 问用户选哪种创建方式**，
      不要替用户做决定。
 3. **不要制造重复脚本**：能复用已有脚本时，不要再建一个功能相同的新脚本。
@@ -52,11 +52,11 @@ description: 用户只给出数据文件（@file:<id>）并要求完成某个分
 
 ---
 
-## 三、已有匹配脚本：直接 `create_script_analysis`
+## 三、已有匹配脚本：直接 `create_analysis_node_script`
 
 1. 用 `get_script`（`script_id` + `io_schema_path`）确认该脚本 inputs 的 **name 与类型**，
    参数键一律以 `io_schema.json` 为准，不要凭脚本名或经验发明参数名。
-2. 调用 `create_script_analysis`：
+2. 调用 `create_analysis_node_script`：
    - `script_id`：匹配到的脚本 ID；
    - `node_name`：按本次需求起名（如 `deseq2_<数据名>`），同一脚本多次分析时便于区分；
    - `request_param`：键 = io_schema `inputs[].name`；文件类输入填 `get_file` 返回的
@@ -75,7 +75,7 @@ description: 用户只给出数据文件（@file:<id>）并要求完成某个分
 用 `ask_user` 提问（一次问清，不要反复打断用户），把两种方式的差异讲明白：
 
 - `questions[0].id` 用 `analysis_mode`，`type` 用 `single_choice`，至少给两个 option：
-  - `label`: 「命令型节点（create_agent_analysis）」，
+  - `label`: 「命令型节点（create_analysis_node_agent）」,
     `value`: `agent_analysis`，
     说明：一次性分析，直接写 shell / R / python 命令并跑出结果，产物落在 `output/`，不沉淀可复用脚本。
   - `label`: 「分析脚本 + 节点（create_script）」，
@@ -86,14 +86,14 @@ description: 用户只给出数据文件（@file:<id>）并要求完成某个分
 
 拿到答复后：
 
-- **`agent_analysis`** → 按 `create_agent_analysis` 的工具描述写 `command`：
+- **`agent_analysis`** → 按 `create_analysis_node_agent` 的工具描述写 `command`：
   以 `mkdir -p output` 开头，成果写到 `output/` 第一级，中间文件放 `output/tmp/`；
   重要表格 / 文本产物登记到 `output/outputs.json`（不登记图片与日志）；输入路径直接用
   `get_file` 返回的 `file_path`。创建后默认立即运行，失败先读 `log_path`，
-  再用 `update_agent_analysis` 或改 `command_path` 后 `run_analysis_node` 修复，不要反复新建节点。
+  再用 `update_analysis_node_agent` 或改 `command_path` 后 `run_analysis_node` 修复，不要反复新建节点。
 - **`script`** → 按 `analysis-script-authoring` 技能的固定流程推进：
   `create_script`（一次给出真实 inputs / outputs）→ 确认 `io_schema_path` 契约 →
-  写 `script_file_path` 脚本主体 → `create_script_analysis` 建节点并运行 →
+  写 `script_file_path` 脚本主体 → `create_analysis_node_script` 建节点并运行 →
   失败迭代（`build_analysis_node_params` / 改脚本）→ 直到 `run_analysis_node` 返回 success。
 - 用户选不到、答复含糊或直接反问时，按 `ask_user` 再澄清一次；**不得自行假定一种方式继续**。
 
