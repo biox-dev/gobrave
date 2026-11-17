@@ -170,8 +170,8 @@ func TestGormMessageStoreListPage(t *testing.T) {
 	}
 }
 
-// TestGormSessionStoreFork 校验 fork 会话：消息复制、Seq 重排、错误消息与 TaskID 不带入、
-// 文件历史只复制最新版本、归属校验，以及源会话不受影响。
+// TestGormSessionStoreFork 校验 fork 会话：消息复制、Seq 重排、错误消息不带入、
+// 消息 TaskID 保留、文件历史只复制最新版本、归属校验，以及源会话不受影响。
 func TestGormSessionStoreFork(t *testing.T) {
 	ctx := context.Background()
 	db := newGormTestDB(t)
@@ -235,8 +235,8 @@ func TestGormSessionStoreFork(t *testing.T) {
 	if copied[0].Seq != 0 || copied[1].Seq != 1 || copied[0].Content != "q1" {
 		t.Fatalf("unexpected forked messages: %+v", copied)
 	}
-	if copied[1].TaskID != 0 {
-		t.Fatalf("task id should be cleared on fork, got %d", copied[1].TaskID)
+	if copied[1].TaskID != 99 {
+		t.Fatalf("task id should be preserved on fork, got %d", copied[1].TaskID)
 	}
 	if copied[0].ID == 0 || copied[0].ID == copied[1].ID {
 		t.Fatalf("copied messages should get new ids")

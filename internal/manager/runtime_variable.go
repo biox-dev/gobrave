@@ -234,9 +234,9 @@ func (w *ContainerCreateWorker) buildAppSessionVariables(ctx context.Context, se
 	set.add("USER_CONFIG_DIR", userConfigDir)
 
 	if in.ownerCtx.node != nil && w.workflowService != nil {
-		scriptDir, mainFile, err := w.workflowService.GetScriptFileByScriptID(ctx, in.ownerCtx.node.ScriptID)
-		if err == nil && strings.TrimSpace(mainFile) != "" && strings.TrimSpace(scriptDir) != "" {
-			set.add("SCRIPT_FILE", filepath.Join(scriptDir, mainFile))
+		files, err := w.workflowService.GetScriptFileByScriptID(ctx, in.ownerCtx.node.ScriptID)
+		if err == nil && strings.TrimSpace(files.MainPath) != "" {
+			set.add("SCRIPT_FILE", files.MainPath)
 		}
 	}
 

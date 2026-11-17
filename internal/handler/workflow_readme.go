@@ -4,7 +4,6 @@ import (
 	stderrs "errors"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -160,14 +159,9 @@ func (h *WorkflowHandler) SaveScriptReadme(c *gin.Context) {
 		return
 	}
 
-	scriptDir := utils.GetScriptFileDir(baseDir, project.ID, script.ScriptID)
-	// if err := h.commitDirReadme(scriptDir, readmeCommitMessage(req.CommitMessage, "script", script.ScriptID)); err != nil {
-	// 	c.Error(errors.NewInternalServerError("failed to commit script readme").WithDetails(err.Error()))
-	// 	return
-	// }
-
+	// 版本提交由发布入口触发，这里只落盘（与 GetScriptReadme 使用同一条路径口径）。
 	c.JSON(http.StatusOK, readmeResponse{
-		Path:    filepath.Join(scriptDir, utils.ReadmeFileName),
+		Path:    utils.ScriptReadmePath(baseDir, project.ID, script.ScriptID),
 		Content: req.Content,
 	})
 }
@@ -259,14 +253,9 @@ func (h *WorkflowHandler) SaveWorkflowReadme(c *gin.Context) {
 		return
 	}
 
-	workflowDir := utils.GetWorkflowFileDir(baseDir, project.ID, workflow.WorkflowID)
-	// if err := h.commitDirReadme(workflowDir, readmeCommitMessage(req.CommitMessage, "workflow", workflow.WorkflowID)); err != nil {
-	// 	c.Error(errors.NewInternalServerError("failed to commit workflow readme").WithDetails(err.Error()))
-	// 	return
-	// }
-
+	// 版本提交由发布入口触发，这里只落盘（与 GetWorkflowReadme 使用同一条路径口径）。
 	c.JSON(http.StatusOK, readmeResponse{
-		Path:    filepath.Join(workflowDir, utils.ReadmeFileName),
+		Path:    utils.WorkflowReadmePath(baseDir, project.ID, workflow.WorkflowID),
 		Content: req.Content,
 	})
 }

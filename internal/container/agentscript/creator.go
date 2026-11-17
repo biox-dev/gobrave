@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
@@ -24,7 +23,7 @@ import (
 // （create_script_analysis）负责，本类型不触碰 AnalysisNode。
 //
 // Script 落 pipeline_components；脚本目录为
-// <base_dir>/data/<project>/scripts/<scriptID>/（由 utils.GetScriptFile 推导）。
+// <base_dir>/data/<project>/pipeline/script/<scriptID>/（由 types.Script.Files 推导）。
 //
 // 创建时不做 git 提交：脚本目录写完即处于 dirty 状态，与「保存组件」语义一致，
 // 提交仍由用户通过发布 / 提交版本入口触发。
@@ -124,13 +123,12 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.Scri
 	if err != nil {
 		return runtimecontext.ScriptCreateResult{}, err
 	}
-	scriptDir, scriptFile, _ := utils.GetScriptFile(baseDir, project.ID, script.ScriptType, script.ScriptID)
-	scriptFilePath := filepath.Join(scriptDir, scriptFile)
-	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+	files := script.Files(baseDir)
+	if err := os.MkdirAll(files.Dir, 0o755); err != nil {
 		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to prepare script dir: %w", err)
 	}
-	if _, statErr := os.Stat(scriptFilePath); os.IsNotExist(statErr) {
-		if err := os.WriteFile(scriptFilePath, []byte(defaultScriptInitContent(script.ScriptType)), 0o644); err != nil {
+	if _, statErr := os.Stat(files.MainPath); os.IsNotExist(statErr) {
+		if err := os.WriteFile(files.MainPath, []byte(defaultScriptInitContent(script.ScriptType)), 0o644); err != nil {
 			return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to create script file: %w", err)
 		}
 	}
@@ -142,8 +140,8 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.Scri
 		ScriptID:              script.ID,
 		ScriptKey:             script.ScriptID,
 		ScriptName:            script.Name,
-		ScriptFilePath:        scriptFilePath,
-		IOSchemaPath:          utils.ScriptIOSchemaPath(baseDir, project.ID, script.ScriptID),
+		ScriptFilePath:        files.MainPath,
+		IOSchemaPath:          files.IOSchema,
 		ScriptType:            script.ScriptType,
 		ContainerTemplateID:   containerTemplateID,
 		ContainerTemplateName: containerTemplateName,

@@ -48,6 +48,13 @@ func (t *Script) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// Files 返回脚本目录下各文件的绝对路径（目录 / 主文件 / io_schema.json / README.md）。
+//
+// 派生路径的唯一入口：调用方不再各自 filepath.Join，避免目录口径与文件名常量漂移。
+func (t *Script) Files(baseDir string) utils.ScriptFiles {
+	return utils.ScriptLayout(baseDir, t.ProjectID, t.ScriptType, t.ScriptID)
+}
+
 type Workflow struct {
 	// ID                 uint           `json:"id" gorm:"primaryKey;autoIncrement"`
 	ID        int64          `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
@@ -140,7 +147,8 @@ type WorkflowVersion struct {
 	// CreatedAt          time.Time      `json:"created_at"`
 	// UpdatedAt          time.Time      `json:"updated_at"`
 	Workflow
-	StorePath    string `json:"store_path"`
+	StorePath string `json:"store_path"`
+	// WorkflowPath 是工作流目录（与 WorkflowFiles.Dir 同口径），不是某个具体文件。
 	WorkflowPath string `json:"workflow_path"`
 	// DagDefinition 实时读取自工作流目录的 dag_definition.json（不再是数据库字段）。
 	// 用于工作流可视化编辑与 DAG 运行时编译（见 GetWorkflowVisByWorkflowID / SaveWorkflow）。
@@ -160,7 +168,9 @@ type WorkflowVersion struct {
 type ScriptVersion struct {
 	Script
 	// StoreVersion string `json:"store_version"`
-	StorePath  string `json:"store_path"`
+	StorePath string `json:"store_path"`
+	// ScriptPath 是脚本目录（不是主文件路径），前端用作标题与定位；
+	// 主文件 / io_schema.json / README.md 的完整路径见 Script.Files(baseDir)。
 	ScriptPath string `json:"script_path"`
 	// IOSchema 实时读取自脚本目录的 io_schema.json（不再是数据库字段）。
 	IOSchema string `json:"io_schema"`

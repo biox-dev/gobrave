@@ -32,25 +32,3 @@ func TestRenderShellTemplateUndefinedVariableUsesPongo2Default(t *testing.T) {
 		t.Fatalf("unexpected rendered template: got=%q want=%q", rendered, "echo ")
 	}
 }
-
-func TestMainFileByScriptType(t *testing.T) {
-	cases := []struct {
-		name       string
-		scriptType string
-		want       string
-	}{
-		{name: "r", scriptType: "r", want: "main.R"},
-		{name: "python", scriptType: "python", want: "main.py"},
-		{name: "shell", scriptType: "shell", want: "main.sh"},
-		{name: "jupyter fallback", scriptType: "jupyter", want: "main.sh"},
-		{name: "empty fallback", scriptType: "", want: "main.sh"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := mainFileByScriptType(tc.scriptType); got != tc.want {
-				t.Fatalf("unexpected main file: got=%q want=%q", got, tc.want)
-			}
-		})
-	}
-}

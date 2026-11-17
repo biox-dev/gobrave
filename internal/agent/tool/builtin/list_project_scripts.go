@@ -19,16 +19,9 @@ type ListProjectScriptsInput struct{}
 
 // ProjectScriptItem 是单个脚本的摘要（工具回传给模型的字段）。
 //
-// ScriptFilePath / IOSchemaPath 由 utils.GetScriptFile / utils.WorkflowIOSchemaPath 推导，
-// 模型可直接按这两个路径读写脚本主文件与 io_schema.json。
-type ProjectScriptItem struct {
-	ScriptID       int64  `json:"script_id,string"`
-	ScriptName     string `json:"script_name"`
-	Description    string `json:"description,omitempty"`
-	ScriptType     string `json:"script_type,omitempty"`
-	ScriptFilePath string `json:"script_file_path"`
-	IOSchemaPath   string `json:"io_schema_path"`
-}
+// 直接复用 runtimecontext.ScriptBrief：路径字段由 types.Script.Files 统一推导，
+// 工具层不再重复声明一份同构字段。
+type ProjectScriptItem = runtimecontext.ScriptBrief
 
 // ListProjectScriptsOutput 是 list_project_scripts 工具返回给模型的结果。
 type ListProjectScriptsOutput struct {
@@ -77,14 +70,7 @@ func ListProjectScripts(browser runtimecontext.ScriptBrowser) tool.Tool {
 				Scripts:   make([]ProjectScriptItem, 0, len(scripts)),
 			}
 			for _, s := range scripts {
-				out.Scripts = append(out.Scripts, ProjectScriptItem{
-					ScriptID:       s.ScriptID,
-					ScriptName:     s.ScriptName,
-					Description:    s.Description,
-					ScriptType:     s.ScriptType,
-					ScriptFilePath: s.ScriptFilePath,
-					IOSchemaPath:   s.IOSchemaPath,
-				})
+				out.Scripts = append(out.Scripts, s)
 			}
 			if out.Total == 0 {
 				out.Message = "当前项目下还没有脚本。"

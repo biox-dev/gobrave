@@ -22,19 +22,11 @@ type GetScriptInput struct {
 
 // GetScriptOutput 是 get_script 工具返回给模型的结果。
 //
-// ScriptFilePath / IOSchemaPath 由 utils.GetScriptFile / utils.WorkflowIOSchemaPath 推导，
-// 模型可直接按这两个路径读写脚本主文件与 io_schema.json。
+// 直接内嵌 runtimecontext.ScriptBrief（与 list_project_scripts 同构），只额外补 error：
+// 路径字段由 types.Script.Files 推导，工具层不再重复声明。
 type GetScriptOutput struct {
-	ScriptID int64 `json:"script_id,string"`
-	// ContainerTemplateID 是脚本绑定的容器模板 ID（go_container_template_definition 主键，
-	// 即对外 ContainerTemplate.ID）；0 表示脚本尚未绑定容器模板。
-	ContainerTemplateID int64  `json:"container_template_id,string"`
-	ScriptName          string `json:"script_name"`
-	Description         string `json:"description,omitempty"`
-	ScriptType          string `json:"script_type,omitempty"`
-	ScriptFilePath      string `json:"script_file_path"`
-	IOSchemaPath        string `json:"io_schema_path"`
-	Error               string `json:"error,omitempty"`
+	runtimecontext.ScriptBrief
+	Error string `json:"error,omitempty"`
 }
 
 // GetScript 返回一个「按 ID 查看脚本」工具。
@@ -70,20 +62,12 @@ func GetScript(browser runtimecontext.ScriptBrowser) tool.Tool {
 			script, err := browser.GetScriptByID(ctx, projectID, scriptID)
 			if err != nil {
 				return GetScriptOutput{
-					ScriptID: scriptID,
-					Error:    err.Error(),
+					ScriptBrief: runtimecontext.ScriptBrief{ScriptID: scriptID},
+					Error:       err.Error(),
 				}, nil
 			}
 
-			return GetScriptOutput{
-				ScriptID:            script.ScriptID,
-				ContainerTemplateID: script.ContainerTemplateID,
-				ScriptName:          script.ScriptName,
-				Description:         script.Description,
-				ScriptType:          script.ScriptType,
-				ScriptFilePath:      script.ScriptFilePath,
-				IOSchemaPath:        script.IOSchemaPath,
-			}, nil
+			return GetScriptOutput{ScriptBrief: script}, nil
 		},
 	).WithPermission("read", "", "按 ID 查看脚本基本信息与文件路径")
 }

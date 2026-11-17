@@ -26,7 +26,7 @@ type CreateScriptAnalysisInput struct {
 // CreateScriptAnalysisOutput 是 create_script_analysis 工具返回给模型的结果。
 //
 // 除节点自身的路径（WorkspaceDir / ParamsPath）之外，也回传脚本在磁盘上的关键路径：
-//   - ScriptFilePath：脚本主文件（如 main.R），由 utils.GetScriptFile 推导；
+//   - ScriptFilePath：脚本主文件（如 main.R），由 types.Script.Files 推导；
 //   - IOSchemaPath：脚本目录下的 io_schema.json（节点 patterns 的来源）。
 type CreateScriptAnalysisOutput struct {
 	AnalysisNodeID int64          `json:"analysis_node_id,string,omitempty"`

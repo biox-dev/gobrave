@@ -139,14 +139,14 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 			var dir string
 			switch envType {
 			case EnvTypeScript:
-				dir, _, err = r.workflowSvc.GetScriptFileByScriptID(ctx, id)
-				if err != nil {
-					return nil, fmt.Errorf("failed to get script file by script id: %w", err)
+				files, fErr := r.workflowSvc.GetScriptFileByScriptID(ctx, id)
+				if fErr != nil {
+					return nil, fmt.Errorf("failed to get script file by script id: %w", fErr)
 				}
 				if s, sErr := r.workflowSvc.GetScriptByID(ctx, id); sErr == nil {
 					label = s.Name
 				}
-				vars["script_workspace_directory"] = dir
+				vars["script_workspace_directory"] = files.Dir
 
 			case EnvTypeAnalysisNode:
 				node, nodeErr := r.analysisSvc.GetAnalysisNodeByID(ctx, id)
@@ -158,22 +158,15 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 				if err != nil {
 					return nil, fmt.Errorf("failed to get script by id: %w", err)
 				}
-				project, err := r.projectSvc.GetProjectByID(ctx, node.ProjectID)
-				if err != nil {
-					return nil, fmt.Errorf("failed to get project by id: %w", err)
-				}
-				// 获取Script File
-				scriptDir, scriptFile, _ := utils.GetScriptFile(r.cfg.Storage.BaseDir, project.ID, script.ScriptType, script.ScriptID)
-				scriptFilePath := filepath.Join(scriptDir, scriptFile)
-
-				ioSchemaPath := utils.ScriptIOSchemaPath(r.cfg.Storage.BaseDir, project.ID, script.ScriptID)
+				// 脚本主文件与 io_schema.json 路径由脚本目录布局统一推导（不再需要 project）。
+				files := script.Files(r.cfg.Storage.BaseDir)
 
 				dir = node.WorkspaceDir
 				label = node.NodeName
 
-				vars["script_file_path"] = scriptFilePath
+				vars["script_file_path"] = files.MainPath
 				vars["params_file_path"] = node.ParamsPath
-				vars["io_schema_path"] = ioSchemaPath
+				vars["io_schema_path"] = files.IOSchema
 				vars["output_directory"] = node.OutputDir
 				vars["script_type"] = script.ScriptType
 				vars["analysis_node_id"] = strconv.FormatInt(node.ID, 10)

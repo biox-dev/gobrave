@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/types"
-	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -80,9 +78,9 @@ func (c *scriptCreator) UpdateScriptInfo(ctx context.Context, in runtimecontext.
 	}
 	baseDir := c.storageBaseDir()
 	if baseDir != "" {
-		scriptDir, scriptFile, _ := utils.GetScriptFile(baseDir, script.ProjectID, script.ScriptType, script.ScriptID)
-		result.ScriptFilePath = filepath.Join(scriptDir, scriptFile)
-		result.IOSchemaPath = utils.ScriptIOSchemaPath(baseDir, script.ProjectID, script.ScriptID)
+		files := script.Files(baseDir)
+		result.ScriptFilePath = files.MainPath
+		result.IOSchemaPath = files.IOSchema
 	}
 	return result, nil
 }

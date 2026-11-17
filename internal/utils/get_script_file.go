@@ -17,16 +17,8 @@ func projectDirName(projectID int64) string {
 	return strconv.FormatInt(projectID, 10)
 }
 
-func GetScriptFile(baseDir string, projectID int64, scriptType, scriptID string) (string, string, error) {
-	resolvedScriptID := strings.TrimSpace(scriptID)
-	if resolvedScriptID == "" {
-		resolvedScriptID = strings.TrimSpace(scriptID)
-	}
-
-	// return "pipeline/script/" + resolvedScriptID, mainFileByScriptType(scriptType), nil
-	scriptDir := GetScriptDir(baseDir, projectID)
-	return filepath.Join(scriptDir, scriptID), mainFileByScriptType(scriptType), nil
-}
+// GetScriptFileDir 返回脚本目录（<base>/data/<project>/pipeline/script/<scriptID>）。
+// 目录内含主文件 / io_schema.json / README.md，一次性取全部路径请用 ScriptLayout。
 func GetScriptFileDir(baseDir string, projectID int64, scriptID string) string {
 	scriptDir := GetScriptDir(baseDir, projectID)
 	return filepath.Join(scriptDir, scriptID)
@@ -140,6 +132,10 @@ func GetWorkflowOrScriptStoreDir(baseDir, id string) string {
 	return filepath.Join(baseDir, RelStoreDir(id))
 }
 
+// mainFileByScriptType 是「脚本类型 → 主文件名」的唯一映射（ScriptLayout 使用）。
+//
+// 不要再在其它包里复制一份：dag/prepare 曾经有一份只支持 r/python/shell、
+// 且默认回退成 main.sh 的副本，导致 jupyter / qmd 脚本在节点运行期软链到不存在的文件。
 func mainFileByScriptType(scriptType string) string {
 	switch strings.ToLower(strings.TrimSpace(scriptType)) {
 	case "r":

@@ -341,7 +341,7 @@ type AnalysisNodeCreateResult struct {
 	// ScriptName / ScriptType 是脚本的基本信息（便于模型确认节点绑定哪个脚本）。
 	ScriptName string `json:"script_name,omitempty"`
 	ScriptType string `json:"script_type,omitempty"`
-	// ScriptFilePath 是脚本主文件（如 main.R）的绝对路径，由 utils.GetScriptFile 推导。
+	// ScriptFilePath 是脚本主文件（如 main.R）的绝对路径，由 types.Script.Files 推导。
 	ScriptFilePath string `json:"script_file_path,omitempty"`
 	// IOSchemaPath 是脚本目录下 io_schema.json 的绝对路径（节点 patterns 的来源）。
 	IOSchemaPath string         `json:"io_schema_path,omitempty"`
@@ -598,10 +598,13 @@ type ProjectReportContextResolver interface {
 
 // ScriptBrief 是脚本的只读摘要（工具回传给模型的最小字段集）。
 //
-// ScriptFilePath / IOSchemaPath 由 utils.GetScriptFile / utils.WorkflowIOSchemaPath 推导，
+// ScriptFilePath / IOSchemaPath 由 types.Script.Files（utils.ScriptLayout）推导，
 // 模型可直接按这两个路径读写脚本主文件与 io_schema.json。
+// 所有回传脚本摘要的工具（list_project_scripts / get_script）共用本类型，
+// 避免各自维护一份同名字段。
 type ScriptBrief struct {
-	ScriptID int64 `json:"script_id"`
+	// ScriptID 以字符串形式回传，避免大整数在模型侧丢失精度。
+	ScriptID int64 `json:"script_id,string"`
 	// ContainerTemplateID 是脚本绑定的容器模板 ID（go_container_template_definition 主键，
 	// 即对外 ContainerTemplate.ID），可直接用于 list_container_templates 的查询结果对账 /
 	// 运行配置核对；0 表示脚本尚未绑定容器模板。

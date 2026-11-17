@@ -58,7 +58,8 @@ func (r *gormSessionStore) Delete(ctx context.Context, id int64) error {
 //   - 新会话是顶层会话（ParentSessionID = 0），CurrentTaskID 清 0，避免前端误判为
 //     有可续跑的任务；
 //   - 消息 ID / Seq 重新分配（雪花 ID + 会话内自增序号）；
-//   - TaskID 清 0：fork 出的分支与原任务无关，否则按任务回填时间线会互相污染；
+//   - 消息的 TaskID 原样保留：前端按 task_id 分组回填时间线，若清 0 会导致
+//     历史消息失去任务归属、与 fork 分支中的新消息混在一起；
 //   - kind=error 的消息跳过（上一轮失败的产物不属于新分支）；
 //   - UpToSeq > 0 时只复制 seq <= UpToSeq 的历史（从某条消息处分叉）；
 //   - CopyFiles 时只复制每个 path 的最新版本，版本号重置为 initial。
@@ -121,6 +122,7 @@ func (r *gormSessionStore) Fork(ctx context.Context, params agent.SessionForkPar
 				Seq:       seq,
 				Role:      m.Role,
 				Kind:      m.Kind,
+				TaskID:    m.TaskID,
 				Content:   m.Content,
 				Data:      m.Data,
 				CreatedAt: now,

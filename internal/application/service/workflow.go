@@ -229,22 +229,22 @@ func countDagNodesByScriptID(dagDefinition string, scriptID string) int {
 	return count
 }
 
-func (s *workflowService) GetScriptFileByScriptID(ctx context.Context, scriptID int64) (string, string, error) {
+func (s *workflowService) GetScriptFileByScriptID(ctx context.Context, scriptID int64) (utils.ScriptFiles, error) {
 	script, err := s.workflowRepo.GetScriptByID(ctx, scriptID)
 	if err != nil {
-		return "", "", err
+		return utils.ScriptFiles{}, err
 	}
 	if script == nil {
-		return "", "", nil
+		return utils.ScriptFiles{}, nil
 	}
 	project, err := s.projectRepo.GetProjectByID(ctx, script.ProjectID)
 	if err != nil {
-		return "", "", err
+		return utils.ScriptFiles{}, err
 	}
 	if project == nil {
-		return "", "", nil
+		return utils.ScriptFiles{}, nil
 	}
-	return utils.GetScriptFile(s.cfg.Storage.BaseDir, project.ID, script.ScriptType, script.ScriptID)
+	return utils.ScriptLayout(s.cfg.Storage.BaseDir, project.ID, script.ScriptType, script.ScriptID), nil
 }
 
 // func (s *workflowService) GetScriptMainFileByScriptID(ctx context.Context, scriptID string) (string, string, error) {

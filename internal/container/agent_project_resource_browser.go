@@ -33,9 +33,9 @@ import (
 //   - add_file_to_dataset：把文件登记到当前项目的数据集；
 //   - get_report_context：按 @report:<id> 引用解析报告标题 / 工作目录 / 条目清单。
 //
-// 路径口径与 create_script / update_script 完全一致：脚本主文件走
-// utils.GetScriptFile，io_schema 走 utils.WorkflowIOSchemaPath（工作流与脚本共用同一份
-// io_schema.json 布局），节点工作目录与 params.json 取自 analysisRepository 在读取时
+// 路径口径与 create_script / update_script 完全一致：脚本主文件 / io_schema.json / README.md
+// 一律由 types.Script.Files（utils.ScriptLayout）推导，不在各调用点手写 join；
+// 节点工作目录与 params.json 取自 analysisRepository 在读取时
 // 还原的绝对路径（WorkspaceDir 落库为相对 storage.base_dir 的路径）。
 
 // projectResourceBrowser 同时实现 runtimecontext 的多个窄接口，由 container 单点装配。
@@ -630,10 +630,9 @@ func (b *projectResourceBrowser) toScriptBrief(baseDir string, script *types.Scr
 	if baseDir == "" {
 		return brief
 	}
-	scriptDir, scriptFile, _ := utils.GetScriptFile(baseDir, script.ProjectID, script.ScriptType, script.ScriptID)
-	brief.ScriptFilePath = filepath.Join(scriptDir, scriptFile)
-	// 脚本与工作流共用同一份 io_schema.json 布局（<dir>/io_schema.json），故复用工作流侧的路径解析。
-	brief.IOSchemaPath = utils.ScriptIOSchemaPath(baseDir, script.ProjectID, script.ScriptID)
+	files := script.Files(baseDir)
+	brief.ScriptFilePath = files.MainPath
+	brief.IOSchemaPath = files.IOSchema
 	return brief
 }
 

@@ -3,7 +3,6 @@ package agentanalysis
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
@@ -12,7 +11,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
-	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 // scriptNodeCreator 实现 runtimecontext.AnalysisNodeCreator：为已有脚本创建一个独立分析节点
@@ -98,9 +96,9 @@ func (c *scriptNodeCreator) CreateAnalysisNode(ctx context.Context, in runtimeco
 		RequestParam:   in.RequestParam,
 	}
 	if baseDir := c.storageBaseDir(); baseDir != "" {
-		scriptDir, scriptFile, _ := utils.GetScriptFile(baseDir, script.ProjectID, script.ScriptType, script.ScriptID)
-		result.ScriptFilePath = filepath.Join(scriptDir, scriptFile)
-		result.IOSchemaPath = utils.ScriptIOSchemaPath(baseDir, script.ProjectID, script.ScriptID)
+		files := script.Files(baseDir)
+		result.ScriptFilePath = files.MainPath
+		result.IOSchemaPath = files.IOSchema
 	}
 	return result, nil
 }

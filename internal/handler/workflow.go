@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -289,17 +288,17 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 		}
 	}
 
-	scriptDir, scriptFile, _ := utils.GetScriptFile(h.cfg.Storage.BaseDir, project.ID, item.ScriptType, item.ScriptID)
+	files := item.Files(h.cfg.Storage.BaseDir)
 	// io_schema 落盘到脚本目录的 io_schema.json；该文件是 IOSchema 的唯一数据源，
 	// 读取侧统一通过 utils.ReadScriptIOSchema 从该文件获取。
 	if err := utils.WriteScriptIOSchema(h.cfg.Storage.BaseDir, project.ID, item.ScriptID, req.IOSchema); err != nil {
 		c.Error(errors.NewInternalServerError("failed to write io_schema file").WithDetails(err.Error()))
 		return
 	}
-	scriptFilePath := filepath.Join(scriptDir, scriptFile)
+	scriptFilePath := files.MainPath
 	// 如果不存在脚本文件，则创建一个空的脚本文件
 	if _, err := os.Stat(scriptFilePath); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(scriptFilePath), 0o755); err != nil {
+		if err := os.MkdirAll(files.Dir, 0o755); err != nil {
 			c.Error(errors.NewInternalServerError("failed to prepare script directory").WithDetails(err.Error()))
 			return
 		}
@@ -322,7 +321,7 @@ func (h *WorkflowHandler) SaveScript(c *gin.Context) {
 	}
 	if _, err := codec.WriteScriptFiles(c.Request.Context(), exportcodec.ScriptWriteRequest{
 		ScriptPK:  item.ID,
-		ScriptDir: scriptDir,
+		ScriptDir: files.Dir,
 	}); err != nil {
 		c.Error(errors.NewInternalServerError("failed to write script files").WithDetails(err.Error()))
 		return
@@ -1278,20 +1277,20 @@ func (h *WorkflowHandler) GetScriptById(c *gin.Context) {
 		return
 	}
 
-	scriptPath := utils.GetScriptFileDir(h.cfg.Storage.BaseDir, project.ID, script.ScriptID)
+	scriptFiles := script.Files(h.cfg.Storage.BaseDir)
 
 	// io_schema 从脚本目录的 io_schema.json 实时读取（不再是数据库字段）。
 	ioSchema, _ := utils.ReadScriptIOSchemaFile(h.cfg.Storage.BaseDir, project.ID, script.ScriptID)
 
 	// GitState 从磁盘 git 元数据实时推导：本地未提交改动 / 本地领先 store / store 领先本地，
 	// 以及 store 裸仓库上配置的远程仓库列表（remotes，发布到远程时写入）。
-	gitState := utils.ReadGitSyncState(scriptPath, storePath)
+	gitState := utils.ReadGitSyncState(scriptFiles.Dir, storePath)
 
 	scriptVersion := &types.ScriptVersion{
 		Script: *script,
 		// StoreVersion: storeVersion,
 		StorePath:  storePath,
-		ScriptPath: scriptPath,
+		ScriptPath: scriptFiles.Dir,
 		IOSchema:   string(ioSchema),
 		GitState:   &gitState,
 		// StoreURL:   storeUrl,

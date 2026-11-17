@@ -34,8 +34,8 @@ type CreateScriptInput struct {
 // CreateScriptOutput 是 create_script 工具返回给模型的结果。
 //
 // 除 ID 之外，把新脚本在磁盘上的关键路径一并返回，模型可直接读写：
-//   - ScriptFilePath：脚本主文件（如 main.R），由 utils.GetScriptFile 推导；
-//   - IOSchemaPath：脚本目录下的 io_schema.json，由 utils.ScriptIOSchemaPath 推导。
+//   - ScriptFilePath：脚本主文件（如 main.R），由 types.Script.Files 推导；
+//   - IOSchemaPath：脚本目录下的 io_schema.json，同样取自 types.Script.Files。
 //
 // 需要运行脚本时，再用 create_script_analysis 建节点（节点 ID / 工作目录 / params.json
 // 路径由该工具返回）。
