@@ -515,3 +515,23 @@ func (s *Skill) ReadSkillResource(path string) (string, error) {
 	content, _, err := s.ReadResource(path)
 	return content, err
 }
+
+// ReadSkillSource 返回 SKILL.md 的磁盘原文（含 YAML frontmatter，未做模板渲染）。
+//
+// 与 SkillInfo().Instructions 的区别：Instructions 只是 TrimSpace 后的正文，且 get_skill
+// 默认会做 pongo2 渲染；而 edit_skill 的 old_string 是在磁盘原文（原文 + frontmatter）
+// 上做唯一匹配，所以 raw 模式必须返回未经任何改写的文件内容。
+func (s *Skill) ReadSkillSource() (string, error) {
+	if s == nil {
+		return "", errors.New("skill is nil")
+	}
+	path := strings.TrimSpace(s.SkillFilePath)
+	if path == "" {
+		return "", errors.New("skill source path is not set")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read skill source: %w", err)
+	}
+	return string(content), nil
+}

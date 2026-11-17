@@ -718,6 +718,11 @@ type SkillResource interface {
 	SkillResources() []string
 	// ReadSkillResource 读取技能目录内的附属资源（相对路径），返回文件内容。
 	ReadSkillResource(path string) (content string, err error)
+	// ReadSkillSource 返回 SKILL.md 的磁盘原文（含 YAML frontmatter，未做模板渲染）。
+	//
+	// 供 get_skill 的 raw 模式使用：edit_skill 的 old_string 是在磁盘原文上做唯一匹配，
+	// 模型必须拿到未渲染的原文才能精确命中（指令正文可能含 {{ var }} 且不含 frontmatter）。
+	ReadSkillSource() (content string, err error)
 }
 
 // SkillInfo 是技能的最小元信息 + 指令正文。
@@ -743,6 +748,10 @@ type SkillWriter interface {
 	PlanCreate(in SkillCreateInput) (SkillWritePlan, error)
 	// PlanEdit 校验入参并计算编辑技能的写入计划（不落盘）。
 	PlanEdit(name, oldString, newString string) (SkillWritePlan, error)
+	// PlanUpdate 按结构化字段（description / instructions）计算写入计划（不落盘）。
+	//
+	// 与 PlanEdit 互补：调用方不需要提供可精确匹配的原文，适合长技能或含模板变量的技能。
+	PlanUpdate(name string, in SkillUpdateInput) (SkillWritePlan, error)
 	// Apply 按计划落盘并注册技能，返回保存后的技能信息。
 	Apply(plan SkillWritePlan) (SkillInfo, error)
 }
@@ -771,6 +780,17 @@ type SkillCreateInput struct {
 	// Description 是注入系统提示词的技能描述（必填）。
 	Description string
 	// Instructions 是 SKILL.md 的 markdown 正文（不含 frontmatter）。
+	Instructions string
+}
+
+// SkillUpdateInput 是 edit_skill 结构化更新的入参。
+//
+// 字段为空串表示「保持不变」：只改 description 时不传 Instructions，反之亦然。
+// 与 SkillCreateInput 对齐，调用方直接给新值，无需先从磁盘复制原文。
+type SkillUpdateInput struct {
+	// Description 是新的技能描述（空串表示不变）。
+	Description string
+	// Instructions 是 SKILL.md 的新正文（不含 frontmatter；空串表示不变）。
 	Instructions string
 }
 

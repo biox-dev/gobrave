@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	yaml "github.com/goccy/go-yaml"
 )
 
 // Writer 组合技能注册表与文件存储，实现技能的运行期写入（create_skill / edit_skill）。
@@ -170,10 +171,130 @@ func (w *Writer) PlanEdit(name, oldString, newString string) (runtimecontext.Ski
 	}, nil
 }
 
+// PlanUpdate 实现 runtimecontext.SkillWriter：按结构化字段（description / instructions）
+// 计算写入计划（不落盘）。
+//
+// 与 PlanEdit 互补：old_string 唯一匹配要求模型先把原文逐字拷贝出来，对长技能或含
+// {{ var }} 的模板技能很容易失配；这里直接给新值即可（空串字段表示保持不变）。
+//
+// 写入时尽量保留原文：只改 instructions 时原样保留 frontmatter；改 description 时用
+// 有序映射重写 frontmatter，未知字段与字段顺序都不会丢失。
+func (w *Writer) PlanUpdate(name string, in runtimecontext.SkillUpdateInput) (runtimecontext.SkillWritePlan, error) {
+	if !w.available() {
+		return runtimecontext.SkillWritePlan{}, errors.New("skill store is not configured")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return runtimecontext.SkillWritePlan{}, errors.New("name is required")
+	}
+	description := strings.TrimSpace(in.Description)
+	instructions := strings.TrimSpace(in.Instructions)
+	if description == "" && instructions == "" {
+		return runtimecontext.SkillWritePlan{}, errors.New("description or instructions is required")
+	}
+
+	existing, ok := w.registry.Get(name)
+	if !ok {
+		return runtimecontext.SkillWritePlan{}, fmt.Errorf("skill %q not found", name)
+	}
+	// 与 PlanEdit 一致：只允许修改用户技能存储目录内的技能。
+	if !w.store.Contains(existing.SkillFilePath) {
+		return runtimecontext.SkillWritePlan{}, fmt.Errorf("skill %q is not user-managed and cannot be edited", name)
+	}
+
+	raw, err := os.ReadFile(existing.SkillFilePath)
+	if err != nil {
+		return runtimecontext.SkillWritePlan{}, fmt.Errorf("failed to read skill file: %w", err)
+	}
+	oldContent := string(raw)
+
+	descChanged := description != "" && description != existing.Description
+	instrChanged := instructions != "" && instructions != strings.TrimSpace(existing.Instructions)
+	if !descChanged && !instrChanged {
+		return runtimecontext.SkillWritePlan{}, errors.New("new content is the same as old content. No changes made")
+	}
+
+	frontmatter, body, err := splitFrontmatter(oldContent)
+	if err != nil {
+		return runtimecontext.SkillWritePlan{}, fmt.Errorf("edited skill is invalid: %w", err)
+	}
+	if descChanged {
+		frontmatter, err = setFrontmatterField(frontmatter, "description", description)
+		if err != nil {
+			return runtimecontext.SkillWritePlan{}, fmt.Errorf("edited skill is invalid: %w", err)
+		}
+	}
+	if instrChanged {
+		body = instructions
+	}
+	newContent := composeSkillSource(frontmatter, body)
+
+	// 与 PlanEdit 一致：替换后的内容必须能被重新解析并校验通过。
+	updated, err := ParseContent([]byte(newContent))
+	if err != nil {
+		return runtimecontext.SkillWritePlan{}, fmt.Errorf("edited skill is invalid: %w", err)
+	}
+	updated.Path = existing.Path
+	updated.SkillFilePath = existing.SkillFilePath
+	if err := updated.Validate(); err != nil {
+		return runtimecontext.SkillWritePlan{}, fmt.Errorf("edited skill is invalid: %w", err)
+	}
+
+	return runtimecontext.SkillWritePlan{
+		Name:     name,
+		FilePath: existing.SkillFilePath,
+		Before:   oldContent,
+		After:    newContent,
+		// 内置技能（位于用户技能目录内，可编辑）在重启后会被内置版本覆盖。
+		Notice: w.overwriteNotice(name),
+	}, nil
+}
+
+// setFrontmatterField 在 frontmatter 文本中设置一个顶层字段，保留其它字段与顺序。
+//
+// 用有序映射（yaml.MapSlice）而不是重新 Marshal Skill 结构体：后者会丢掉规范之外的
+// 未知字段（如 license / allowed-tools / metadata），造成用户数据丢失。
+func setFrontmatterField(frontmatter, key, value string) (string, error) {
+	var doc yaml.MapSlice
+	if err := yaml.Unmarshal([]byte(frontmatter), &doc); err != nil {
+		return "", fmt.Errorf("parsing frontmatter: %w", err)
+	}
+	replaced := false
+	for i := range doc {
+		if k, ok := doc[i].Key.(string); ok && k == key {
+			doc[i].Value = value
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		doc = append(doc, yaml.MapItem{Key: key, Value: value})
+	}
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return "", fmt.Errorf("marshal frontmatter: %w", err)
+	}
+	return string(out), nil
+}
+
+// composeSkillSource 把 frontmatter 与正文拼回 SKILL.md 文本（排版与 Skill.Marshal 一致）。
+func composeSkillSource(frontmatter, body string) string {
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	sb.WriteString(strings.TrimRight(frontmatter, "\n"))
+	sb.WriteString("\n---\n")
+	if body = strings.TrimSpace(body); body != "" {
+		sb.WriteString("\n")
+		sb.WriteString(body)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
 // Apply 实现 runtimecontext.SkillWriter：把计划落盘为 SKILL.md 并热更新注册表。
 //
 // 写入前再次核对磁盘现状（预览后文件若被改动则拒绝，避免覆盖他人修改），并直接写回
-// 原文（不经 Marshal），保留 frontmatter 字段顺序与未知字段。
+// 计划中的原文（不经 Marshal），保留 frontmatter 字段顺序与未知字段。
 func (w *Writer) Apply(plan runtimecontext.SkillWritePlan) (runtimecontext.SkillInfo, error) {
 	if !w.available() {
 		return runtimecontext.SkillInfo{}, errors.New("skill store is not configured")

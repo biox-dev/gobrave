@@ -135,6 +135,115 @@ func TestWriterEditSkillRejectsSkillOutsideStore(t *testing.T) {
 	if _, err := w.PlanEdit("external-skill", "Follow these steps.", "Do it."); err == nil {
 		t.Fatalf("expected not-user-managed error")
 	}
+	if _, err := w.PlanUpdate("external-skill", runtimecontext.SkillUpdateInput{Description: "x"}); err == nil {
+		t.Fatalf("expected not-user-managed error for field update")
+	}
+}
+
+// TestWriterUpdateSkill 校验结构化字段覆盖：只改传入字段、保留其它 frontmatter 字段，
+// 并在 Apply 后热更新注册表。
+func TestWriterUpdateSkill(t *testing.T) {
+	// license 是规范之外的字段，用于校验覆盖 description 时不会被丢掉。
+	const raw = "---\nname: field-skill\ndescription: old desc\nlicense: MIT\n---\n\n# Demo\n\nStep 1.\n"
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "field-skill", raw)
+
+	s, err := Parse(path)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	reg := NewRegistryWith(s)
+	w := NewWriter(reg, NewStore(dir))
+
+	// 只改 description：正文与未知字段（license）都必须保留。
+	info := updateSkill(t, w, "field-skill", runtimecontext.SkillUpdateInput{Description: "new desc"})
+	if info.Description != "new desc" {
+		t.Fatalf("description = %q", info.Description)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(content), "license: MIT") || !strings.Contains(string(content), "Step 1.") {
+		t.Fatalf("field update should preserve body and unknown frontmatter fields:\n%s", content)
+	}
+
+	// 只改 instructions：frontmatter 文本保持原样。
+	info = updateSkill(t, w, "field-skill", runtimecontext.SkillUpdateInput{Instructions: "# Demo\n\nStep 2."})
+	if !strings.Contains(info.Instructions, "Step 2.") {
+		t.Fatalf("instructions = %q", info.Instructions)
+	}
+	content, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(content), "description: new desc") || !strings.Contains(string(content), "license: MIT") {
+		t.Fatalf("body update should keep frontmatter as-is:\n%s", content)
+	}
+	if strings.Contains(string(content), "Step 1.") {
+		t.Fatalf("old body should be replaced:\n%s", content)
+	}
+	// 注册表热更新。
+	if s, _ := reg.Get("field-skill"); s.Description != "new desc" || !strings.Contains(s.Instructions, "Step 2.") {
+		t.Fatalf("registry not refreshed: %+v", s)
+	}
+
+	// 空字段 / 值无变化 / 技能不存在都应该报错。
+	if _, err := w.PlanUpdate("field-skill", runtimecontext.SkillUpdateInput{}); err == nil {
+		t.Fatalf("expected missing field error")
+	}
+	if _, err := w.PlanUpdate("field-skill", runtimecontext.SkillUpdateInput{Description: "new desc"}); err == nil {
+		t.Fatalf("expected no-change error")
+	}
+	if _, err := w.PlanUpdate("missing", runtimecontext.SkillUpdateInput{Description: "d"}); err == nil {
+		t.Fatalf("expected not found error")
+	}
+}
+
+// TestEditSkillFieldOverwrite 校验 edit_skill 的结构化覆盖模式：一次带入 description 与
+// instructions，两种编辑模式混用时必须拒绝。
+func TestEditSkillFieldOverwrite(t *testing.T) {
+	const raw = "---\nname: field-skill\ndescription: old desc\nlicense: MIT\n---\n\nStep 1.\n"
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "field-skill", raw)
+	s, err := Parse(path)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	reg := NewRegistryWith(s)
+	w := NewWriter(reg, NewStore(dir))
+	ctx := tool.WithPermissionRequester(context.Background(), &allowPermissionRequester{})
+
+	var out SkillWriteOutput
+	res := runTool(t, ctx, EditSkill(w), `{"name":"field-skill","description":"tool desc","instructions":"Step 2."}`)
+	if err := json.Unmarshal(res, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Error != "" {
+		t.Fatalf("unexpected error: %s", out.Error)
+	}
+	if s, _ := reg.Get("field-skill"); s.Description != "tool desc" || !strings.Contains(s.Instructions, "Step 2.") {
+		t.Fatalf("skill not updated: %+v", s)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(content), "license: MIT") {
+		t.Fatalf("unknown frontmatter field lost:\n%s", content)
+	}
+
+	// 两种模式混用必须拒绝，且不落盘。
+	res = runTool(t, ctx, EditSkill(w), `{"name":"field-skill","description":"x","old_string":"Step 2.","new_string":"Step 3."}`)
+	if err := json.Unmarshal(res, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !strings.Contains(out.Error, "choose one edit mode") {
+		t.Fatalf("err = %q, want mode conflict", out.Error)
+	}
+	if s, _ := reg.Get("field-skill"); s.Description != "tool desc" {
+		t.Fatalf("conflicting edit should not change the skill: %+v", s)
+	}
 }
 
 // TestWriterNoticesBuiltinOverwrite 验证：overwrite_builtin_skills=true（默认）时，
@@ -199,6 +308,16 @@ type denyPermissionRequester struct {
 func (d *denyPermissionRequester) RequestPermission(_ context.Context, req tool.PermissionRequest) bool {
 	d.got = req
 	return false
+}
+
+// allowPermissionRequester 记录授权请求并一律放行（用于执行写入链路）。
+type allowPermissionRequester struct {
+	got tool.PermissionRequest
+}
+
+func (a *allowPermissionRequester) RequestPermission(_ context.Context, req tool.PermissionRequest) bool {
+	a.got = req
+	return true
 }
 
 func TestSkillWriteToolsRequireWritePermission(t *testing.T) {
@@ -270,6 +389,20 @@ func editSkill(t *testing.T, w *Writer, name, oldString, newString string) runti
 	plan, err := w.PlanEdit(name, oldString, newString)
 	if err != nil {
 		t.Fatalf("PlanEdit: %v", err)
+	}
+	info, err := w.Apply(plan)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	return info
+}
+
+// updateSkill 通过 PlanUpdate + Apply 按字段覆盖技能（测试内的便捷封装）。
+func updateSkill(t *testing.T, w *Writer, name string, in runtimecontext.SkillUpdateInput) runtimecontext.SkillInfo {
+	t.Helper()
+	plan, err := w.PlanUpdate(name, in)
+	if err != nil {
+		t.Fatalf("PlanUpdate: %v", err)
 	}
 	info, err := w.Apply(plan)
 	if err != nil {

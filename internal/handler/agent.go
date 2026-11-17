@@ -578,7 +578,8 @@ func (h *AgentHandler) ResolveSkill(c *gin.Context) {
 	}
 
 	// version 留空：HTTP 接口使用当前已安装版本（与 get_skill 不传 version 时一致）。
-	out, err := skill.ResolveSkillOutput(ctx, h.skills.Resolver(), q.ID, "")
+	// raw=false：接口返回渲染后的指令正文（前端详情弹窗展示用），原文模式仅供 agent 编辑技能。
+	out, err := skill.ResolveSkillOutput(ctx, h.skills.Resolver(), q.ID, "", false)
 	if err != nil {
 		handleAgentError(c, err, "failed to resolve agent skill")
 		return

@@ -17,8 +17,10 @@ import (
 // 工具调用按需加载（渐进式披露）：
 //
 //   - get_skill：按名称（可选版本）加载 SKILL.md 的指令正文与必要元信息；
+//     raw: true 时返回未渲染的磁盘原文（含 frontmatter），供 edit_skill 做精确文本替换；
 //   - load_skill_resource：加载技能目录内的附属资源（参考文档 / 脚本 / 模板 / Schema）；
-//   - create_skill / edit_skill：创建技能，或按 old_string → new_string 局部修改技能。
+//   - create_skill / edit_skill：创建技能，或按 old_string → new_string 局部修改、
+//     或按 description / instructions 字段整体覆盖。
 //
 // 前两者是只读工具，免授权（技能来自 $BaseDir/.skills，属于框架受控目录）；
 // 后两者通过注入的 runtimecontext.SkillWriter 落盘并热更新注册表。
@@ -40,6 +42,12 @@ type GetSkillInput struct {
 	// Version 是可选的版本约束；当前只支持精确匹配（与 manifest.json /
 	// frontmatter 的 version 比对），留空表示使用已发现的当前版本。
 	Version string `json:"version,omitempty"`
+	// Raw 为 true 时返回 SKILL.md 的磁盘原文（含 YAML frontmatter、不做 pongo2 渲染），
+	// 而不是渲染后的指令正文。
+	//
+	// edit_skill 的 old_string 是在磁盘原文上做唯一匹配，因此修改技能前应先用 raw 模式
+	// 取得原文：默认指令正文既不含 frontmatter，又可能已被 {{ var }} 渲染，无法直接命中。
+	Raw bool `json:"raw,omitempty"`
 }
 
 // GetSkillOutput 是 get_skill 工具返回给模型的结果。
@@ -49,12 +57,17 @@ type GetSkillInput struct {
 // 回给模型一个绝对路径只会诱导它绕过这两个工具直接访问宿主文件系统。
 // 需要展示路径的 HTTP 接口请用 AgentSkillDetail。
 type GetSkillOutput struct {
-	Name         string   `json:"name"`
-	Description  string   `json:"description,omitempty"`
-	Version      string   `json:"version,omitempty"`
-	Resources    []string `json:"resources,omitempty"`
-	Instructions string   `json:"instructions"`
-	Error        string   `json:"error,omitempty"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Version     string   `json:"version,omitempty"`
+	Resources   []string `json:"resources,omitempty"`
+	// Instructions 是技能内容：默认为渲染后的指令正文；Raw=true 时为 SKILL.md 磁盘原文
+	// （含 YAML frontmatter）。
+	Instructions string `json:"instructions"`
+	// Raw 标记 Instructions 是否为 SKILL.md 原文（未渲染、含 frontmatter），
+	// 供模型判断能否把其中的文本直接用作 edit_skill 的 old_string。
+	Raw   bool   `json:"raw,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 // LoadSkillResourceInput 是 load_skill_resource 工具的入参。
@@ -85,10 +98,19 @@ type CreateSkillInput struct {
 }
 
 // EditSkillInput 是 edit_skill 工具的入参。
+//
+// 支持两种互斥的编辑方式：
+//   - 文本替换：old_string → new_string，要求原文在 SKILL.md 中唯一出现
+//     （需先用 get_skill 的 raw 模式拿到逐字节原文）；
+//   - 结构化覆盖：只给 description / instructions 即可，无需精确原文。
 type EditSkillInput struct {
 	Name      string `json:"name"`
-	OldString string `json:"old_string"`
-	NewString string `json:"new_string"`
+	OldString string `json:"old_string,omitempty"`
+	NewString string `json:"new_string,omitempty"`
+	// Description 是可选的新技能描述：非空时覆盖 frontmatter 的 description。
+	Description string `json:"description,omitempty"`
+	// Instructions 是可选的新正文：非空时整篇替换 SKILL.md 正文（不含 frontmatter）。
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // SkillWriteOutput 是 create_skill / edit_skill 工具返回给模型的结果。
@@ -105,13 +127,14 @@ type SkillWriteOutput struct {
 func GetSkill(resolver runtimecontext.SkillResolver) tool.Tool {
 	return tool.NewFunc(
 		GetSkillToolName,
-		"Load a skill's full instructions (the body of its SKILL.md) by name. When the user's request matches an available skill's description, call this first and follow the returned instructions. Returns instructions plus the skill description, version and the list of bundled resources (read them with load_skill_resource).",
+		"Load a skill's full instructions (the body of its SKILL.md) by name. When the user's request matches an available skill's description, call this first and follow the returned instructions. Returns instructions plus the skill description, version and the list of bundled resources (read them with load_skill_resource). Set `raw: true` to get the unrendered SKILL.md source exactly as stored on disk (including YAML frontmatter); use raw mode before edit_skill so that old_string matches the file verbatim.",
 		tool.Schema("加载技能指令的入参", map[string]any{
 			"name":    tool.StringProperty("技能名称，必须与系统提示词 available_skills 中的 name 完全一致。"),
 			"version": tool.StringProperty("可选：技能版本（精确匹配）。留空表示使用当前已安装版本。"),
+			"raw":     tool.BooleanProperty("可选：true 时返回 SKILL.md 磁盘原文（含 frontmatter、不渲染模板），修改技能前用它取得可精确匹配的原文。"),
 		}, "name"),
 		func(ctx context.Context, in GetSkillInput) (GetSkillOutput, error) {
-			return ResolveSkillOutput(ctx, resolver, in.Name, in.Version)
+			return ResolveSkillOutput(ctx, resolver, in.Name, in.Version, in.Raw)
 		},
 	)
 }
@@ -121,9 +144,12 @@ func GetSkill(resolver runtimecontext.SkillResolver) tool.Tool {
 // 它解析技能并用 ctx 中注入的 RuntimeContext 变量渲染指令正文，保证工具执行期与
 // 前端 / 调试接口看到的技能内容一致。
 //
+// raw 为 true 时返回 SKILL.md 的磁盘原文（含 frontmatter、不做渲染）：edit_skill 在原文
+// 上做 old_string 唯一匹配，因此修改技能前必须能拿到逐字节一致的文本。
+//
 // 返回 error 仅表示调用方环境缺失（如未注入 SkillResolver）；技能不存在、版本不匹配、
 // 渲染失败等业务错误通过 GetSkillOutput.Error 返回（与工具反馈给模型的口径一致）。
-func ResolveSkillOutput(ctx context.Context, resolver runtimecontext.SkillResolver, name, version string) (GetSkillOutput, error) {
+func ResolveSkillOutput(ctx context.Context, resolver runtimecontext.SkillResolver, name, version string, raw bool) (GetSkillOutput, error) {
 	if resolver == nil {
 		return GetSkillOutput{}, fmt.Errorf("%s: skill registry is not available in this runtime", GetSkillToolName)
 	}
@@ -134,6 +160,21 @@ func ResolveSkillOutput(ctx context.Context, resolver runtimecontext.SkillResolv
 	}
 
 	info := s.SkillInfo()
+
+	if raw {
+		source, err := s.ReadSkillSource()
+		if err != nil {
+			return GetSkillOutput{Name: info.Name, Raw: true, Error: err.Error()}, nil
+		}
+		return GetSkillOutput{
+			Name:         info.Name,
+			Description:  info.Description,
+			Version:      s.SkillVersion(),
+			Resources:    s.SkillResources(),
+			Instructions: source,
+			Raw:          true,
+		}, nil
+	}
 
 	// SKILL.md 正文同样是 pongo2 模板：用本轮 RuntimeContext 的业务变量渲染，
 	// 使技能能按当前场景（如 workspace_directory / analysis_node_id）生成差异化指令。
@@ -264,23 +305,47 @@ func CreateSkill(writer runtimecontext.SkillWriter) tool.Tool {
 
 // EditSkill 返回「编辑技能」工具。
 //
-// 语义与 coder 的 edit 工具一致：按技能名定位 SKILL.md，用 old_string → new_string
-// 做一次唯一文本替换。调用前应先用 get_skill 读取技能全文，确保 old_string 精确匹配。
+// 支持两种互斥模式：
+//   - 与 coder 的 edit 工具一致：按技能名定位 SKILL.md，用 old_string → new_string
+//     做一次唯一文本替换（调用前应先用 get_skill 的 raw 模式读取原文）；
+//   - 结构化覆盖：直接给 description / instructions 新值，不需要精确原文，
+//     适合长技能或含 {{ var }} 模板变量的技能。
 func EditSkill(writer runtimecontext.SkillWriter) tool.Tool {
 	return tool.NewFunc(
 		EditSkillToolName,
-		"Edit an existing agent skill by replacing text in its SKILL.md. Read the skill first with get_skill, then pass a name plus an old_string that appears exactly once in the file (include enough surrounding context) and the new_string to replace it with. The edited SKILL.md is re-validated before being saved and the registry is refreshed immediately.",
+		"Edit an existing agent skill's SKILL.md. Choose exactly one mode. (1) Text replacement: pass name + old_string + new_string; old_string must appear exactly once, so call get_skill with raw:true first to copy the file verbatim. (2) Field overwrite: pass name + description and/or instructions to replace those fields without needing the original text (omitted/empty fields stay unchanged). Do not combine both modes. The edited SKILL.md is re-validated before being saved and the registry is refreshed immediately.",
 		tool.Schema("编辑技能的入参", map[string]any{
-			"name":       tool.StringProperty("技能名，必须与 available_skills 中的 name 完全一致。"),
-			"old_string": tool.StringProperty("要替换的原文，必须在 SKILL.md 中唯一出现（含空白与换行需完全一致）。"),
-			"new_string": tool.StringProperty("替换后的文本。"),
-		}, "name", "old_string", "new_string"),
+			"name":         tool.StringProperty("技能名，必须与 available_skills 中的 name 完全一致。"),
+			"old_string":   tool.StringProperty("文本替换模式：要替换的原文，必须在 SKILL.md 中唯一出现（含空白与换行需完全一致）。"),
+			"new_string":   tool.StringProperty("文本替换模式：替换后的文本。"),
+			"description":  tool.StringProperty("字段覆盖模式：新的技能描述（覆盖 frontmatter 的 description）。"),
+			"instructions": tool.StringProperty("字段覆盖模式：新的 SKILL.md 正文（不含 frontmatter，整篇替换）。"),
+		}, "name"),
 		func(ctx context.Context, in EditSkillInput) (SkillWriteOutput, error) {
 			if writer == nil {
 				return SkillWriteOutput{}, fmt.Errorf("%s: skill store is not available in this runtime", EditSkillToolName)
 			}
-			// 先算计划：读取当前 SKILL.md 并得到替换后的内容（不落盘），供授权前展示 diff。
-			plan, err := writer.PlanEdit(in.Name, in.OldString, in.NewString)
+
+			// 两种模式互斥：同时给原文和目标值会让「最终结果为哪一版」不可预测。
+			fieldEdit := strings.TrimSpace(in.Description) != "" || strings.TrimSpace(in.Instructions) != ""
+			var plan runtimecontext.SkillWritePlan
+			var err error
+			if fieldEdit {
+				if strings.TrimSpace(in.OldString) != "" || strings.TrimSpace(in.NewString) != "" {
+					return SkillWriteOutput{
+						Name:  strings.TrimSpace(in.Name),
+						Error: "old_string/new_string cannot be combined with description/instructions: choose one edit mode",
+					}, nil
+				}
+				// 字段覆盖：校验字段并计算替换后的 SKILL.md（保留 frontmatter 未知字段）。
+				plan, err = writer.PlanUpdate(in.Name, runtimecontext.SkillUpdateInput{
+					Description:  in.Description,
+					Instructions: in.Instructions,
+				})
+			} else {
+				// 文本替换：读取当前 SKILL.md 并得到替换后的内容（不落盘），供授权前展示 diff。
+				plan, err = writer.PlanEdit(in.Name, in.OldString, in.NewString)
+			}
 			if err != nil {
 				return SkillWriteOutput{Name: strings.TrimSpace(in.Name), Error: err.Error()}, nil
 			}

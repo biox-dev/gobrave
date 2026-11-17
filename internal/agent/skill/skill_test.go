@@ -322,6 +322,49 @@ func TestSkillTemplateRenderSwitch(t *testing.T) {
 	}
 }
 
+// TestGetSkillRawSource 校验 raw 模式返回 SKILL.md 磁盘原文（含 frontmatter、不渲染），
+// 使 edit_skill 的 old_string 能精确命中；默认模式仍返回渲染后的正文。
+func TestGetSkillRawSource(t *testing.T) {
+	const tpl = "---\nname: raw-skill\ndescription: raw source\n---\n\nworkspace: {{ workspace_directory }}\n"
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "raw-skill", tpl)
+
+	s, err := Parse(path)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	ctx := runtimecontext.WithRuntimeContext(context.Background(), &runtimecontext.RuntimeContext{
+		SystemPromptVars: map[string]any{"workspace_directory": "/w/demo"},
+	})
+	resolver := NewRegistryWith(s).Resolver()
+
+	var got GetSkillOutput
+	if err := json.Unmarshal(runTool(t, ctx, GetSkill(resolver), `{"name":"raw-skill","raw":true}`), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !got.Raw {
+		t.Fatalf("raw flag should be true: %+v", got)
+	}
+	if got.Instructions != tpl {
+		t.Fatalf("raw instructions should equal the file content verbatim:\n%q", got.Instructions)
+	}
+
+	// 原文（含 frontmatter）可直接用作 edit_skill 的 old_string。
+	writer := NewWriter(NewRegistryWith(s), NewStore(dir))
+	if _, err := writer.PlanEdit("raw-skill", "description: raw source", "description: updated"); err != nil {
+		t.Fatalf("old_string from raw source should match: %v", err)
+	}
+
+	// 默认模式仍返回渲染后的正文（不含 frontmatter）。
+	got = GetSkillOutput{}
+	if err := json.Unmarshal(runTool(t, ctx, GetSkill(resolver), `{"name":"raw-skill"}`), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Raw || strings.Contains(got.Instructions, "name: raw-skill") || !strings.Contains(got.Instructions, "workspace: /w/demo") {
+		t.Fatalf("default instructions should be the rendered body: %+v", got)
+	}
+}
+
 func TestDeduplicateAndFilter(t *testing.T) {
 	a1 := &Skill{Name: "dup", Description: "builtin"}
 	a2 := &Skill{Name: "dup", Description: "user"}
