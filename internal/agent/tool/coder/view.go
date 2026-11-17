@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/tool"
@@ -35,24 +34,21 @@ WHEN TO USE THIS TOOL:
 
 HOW TO USE:
 - Provide the path to the file you want to view
-- The path may be an @file:<id> reference from the user message (e.g. "@file:2109711590457610240"); it is resolved to the real file path by ID first
 - Optionally specify an offset to start reading from a specific line
 - Optionally specify a limit to control how many lines are read
 
 FEATURES:
 - Displays file contents with line numbers for easy reference
-- Resolves @file:<id> references and reports the resolved real path (resolved_path)
-- Excel workbooks (.xlsx / .xlsm) are rendered as sheet, column and preview-row text
 - Can read from any position in a file using the offset parameter
 - Handles large files by limiting the number of lines read
 - Automatically truncates very long lines for better display
 - Suggests similar file names when the requested file isn't found
 
 LIMITATIONS:
-- Maximum file size is 250KB (Excel workbooks only render a preview, so they are not size-limited)
+- Maximum file size is 250KB
 - Default reading limit is 2000 lines
 - Lines longer than 2000 characters are truncated
-- Binary files other than Excel workbooks cannot be displayed
+- Cannot display binary files or images
 - Images can be identified but not displayed
 
 TIPS:
@@ -61,7 +57,7 @@ TIPS:
 - When viewing large files, use the offset parameter to read specific sections`
 )
 
-// NewView 返回 view 工具（带行号读取文件并附带 LSP 诊断，支持 @file:<id> 引用）。
+// NewView 返回 view 工具（带行号读取文件并附带 LSP 诊断）。
 func NewView(deps Deps) tool.Tool { return &viewTool{deps: deps} }
 
 type viewTool struct{ deps Deps }
@@ -72,7 +68,7 @@ func (v *viewTool) Definition() tool.Definition {
 		Name:        ViewToolName,
 		Description: viewDescription,
 		InputSchema: tool.Schema("view 工具入参", map[string]any{
-			"file_path": tool.StringProperty("The path to the file to read, or an @file:<id> reference from the user message (e.g. \"@file:2109711590457610240\")"),
+			"file_path": tool.StringProperty("The path to the file to read"),
 			"offset":    tool.IntegerProperty("The line number to start reading from (0-based)"),
 			"limit":     tool.IntegerProperty("The number of lines to read (defaults to 2000)"),
 		}, "file_path"),
@@ -89,9 +85,9 @@ func (v *viewTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 		return nil, toolError("file_path is required")
 	}
 
-	filePath, resolvedFromID, err := v.resolveFilePath(ctx, params.FilePath)
-	if err != nil {
-		return nil, err
+	filePath := params.FilePath
+	if !filepath.IsAbs(filePath) {
+		filePath = filepath.Join(workingDir(ctx), filePath)
 	}
 
 	fileInfo, err := os.Stat(filePath)
@@ -124,9 +120,6 @@ func (v *viewTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 	if fileInfo.IsDir() {
 		return nil, toolError(fmt.Sprintf("Path is a directory, not a file: %s", filePath))
 	}
-	if isSpreadsheetFile(filePath) {
-		return v.viewSpreadsheet(ctx, filePath, resolvedFromID)
-	}
 	if fileInfo.Size() > MaxReadSize {
 		return nil, toolError(fmt.Sprintf("File is too large (%d bytes). Maximum size is %d bytes", fileInfo.Size(), MaxReadSize))
 	}
@@ -144,11 +137,7 @@ func (v *viewTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 
 	clients := v.deps.lspClients()
 	notifyLspOpenFile(ctx, filePath, clients)
-	output := ""
-	if resolvedFromID {
-		output = fmt.Sprintf("resolved_path: %s\n", filePath)
-	}
-	output += "<file>\n"
+	output := "<file>\n"
 	output += addLineNumbers(content, params.Offset+1)
 	if lineCount > params.Offset+len(strings.Split(content, "\n")) {
 		output += fmt.Sprintf("\n\n(File has more lines. Use 'offset' parameter to read beyond line %d)",
@@ -157,66 +146,6 @@ func (v *viewTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 	output += "\n</file>\n"
 	output += getDiagnostics(filePath, clients)
 	return output, nil
-}
-
-// resolveFilePath 把 file_path 解析为可读取的真实路径。
-//
-// 支持用户输入里的 @file:<id> 引用：先按 go_file 主键查出文件路径，再交给后续读取逻辑；
-// 其它路径按工作目录补全相对路径。resolvedFromID 表示路径是否来自 @file 引用，此时会在
-// 输出里附带 resolved_path，供模型作为节点输入参数使用。
-func (v *viewTool) resolveFilePath(ctx context.Context, ref string) (path string, resolvedFromID bool, err error) {
-	const prefix = "@file:"
-	ref = strings.TrimSpace(ref)
-	if !strings.HasPrefix(ref, prefix) {
-		if filepath.IsAbs(ref) {
-			return ref, false, nil
-		}
-		return filepath.Join(workingDir(ctx), ref), false, nil
-	}
-
-	id, err := strconv.ParseInt(strings.TrimSpace(strings.TrimPrefix(ref, prefix)), 10, 64)
-	if err != nil || id <= 0 {
-		return "", false, toolError(fmt.Sprintf("invalid file reference %q: expected @file:<id>", ref))
-	}
-	if v.deps.FileReader == nil {
-		return "", false, toolError("@file references are not available in this runtime")
-	}
-	result, err := v.deps.FileReader.ReadFileByID(ctx, id)
-	if err != nil {
-		return "", false, toolError(fmt.Sprintf("failed to resolve %s: %s", ref, err))
-	}
-	if result.FilePath == "" {
-		return "", false, toolError(fmt.Sprintf("file %s has no readable path", ref))
-	}
-	return result.FilePath, true, nil
-}
-
-// isSpreadsheetFile 判断是否为需要用表格解析渲染的 Excel 工作簿。
-//
-// csv / tsv 是纯文本，直接按文本读取即可；xlsx / xlsm 是二进制格式，交给 FileReader 渲染。
-func isSpreadsheetFile(filePath string) bool {
-	switch strings.ToLower(filepath.Ext(filePath)) {
-	case ".xlsx", ".xlsm":
-		return true
-	default:
-		return false
-	}
-}
-
-// viewSpreadsheet 渲染 Excel 工作簿的 sheet / 列名 / 预览行。
-func (v *viewTool) viewSpreadsheet(ctx context.Context, filePath string, resolvedFromID bool) (any, error) {
-	if v.deps.FileReader == nil {
-		return nil, toolError("spreadsheet viewing is not available in this runtime")
-	}
-	preview, err := v.deps.FileReader.ReadSpreadsheet(ctx, filePath)
-	if err != nil {
-		return nil, toolError(fmt.Sprintf("error reading spreadsheet: %s", err))
-	}
-	output := ""
-	if resolvedFromID {
-		output = fmt.Sprintf("resolved_path: %s\n", filePath)
-	}
-	return output + "<spreadsheet>\n" + preview + "</spreadsheet>\n", nil
 }
 
 func addLineNumbers(content string, startLine int) string {

@@ -2,7 +2,6 @@ package coder
 
 import (
 	"github.com/biox-dev/gobrave/internal/agent/lsp"
-	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool/coder/hostshell"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/config"
@@ -28,10 +27,6 @@ type Deps struct {
 	// 为 nil 时 bash 一律在宿主机执行：仓库级单元测试等没有容器运行时的场景
 	// 不必装配它。bash 用哪种执行位置由 container.bash_execution_mode 决定。
 	ContainerShell hostshell.ContainerShellService
-	// FileReader 解析 view 的 @file:<id> 文件引用，并读取 Excel 工作簿预览。
-	//
-	// 为 nil 时（如只读子 Agent）@file 引用与 Excel 预览不可用，普通路径仍可正常读取。
-	FileReader runtimecontext.FileReader
 }
 
 // bashExecution 返回 bash 工具当前的执行位置配置（每次调用实时读取）。
