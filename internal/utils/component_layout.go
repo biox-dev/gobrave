@@ -14,14 +14,14 @@ import "path/filepath"
 //
 // Dir / MainFile 由脚本目录与脚本类型决定，其余文件与脚本类型无关：
 //   - MainPath：脚本主文件（main.R / main.py / main.sh / ...），模型与节点运行期直接读写；
-//   - IOSchema：io_schema.json，输入输出契约（唯一数据源，不落库）；
-//   - Readme：README.md，脚本说明文档。
+//   - IOSchemaFile：io_schema.json，输入输出契约（唯一数据源，不落库）；
+//   - ReadmeFile：README.md，脚本说明文档。
 type ScriptFiles struct {
-	Dir      string
-	MainFile string
-	MainPath string
-	IOSchema string
-	Readme   string
+	Dir          string
+	MainFile     string
+	MainPath     string
+	IOSchemaFile string
+	ReadmeFile   string
 }
 
 // ScriptLayout 计算脚本目录布局。scriptType 决定主文件名（见 mainFileByScriptType）。
@@ -29,24 +29,24 @@ func ScriptLayout(baseDir string, projectID int64, scriptType, scriptID string) 
 	dir := GetScriptFileDir(baseDir, projectID, scriptID)
 	mainFile := mainFileByScriptType(scriptType)
 	return ScriptFiles{
-		Dir:      dir,
-		MainFile: mainFile,
-		MainPath: filepath.Join(dir, mainFile),
-		IOSchema: filepath.Join(dir, IOSchemaFileName),
-		Readme:   filepath.Join(dir, ReadmeFileName),
+		Dir:          dir,
+		MainFile:     mainFile,
+		MainPath:     filepath.Join(dir, mainFile),
+		IOSchemaFile: filepath.Join(dir, IOSchemaFileName),
+		ReadmeFile:   filepath.Join(dir, ReadmeFileName),
 	}
 }
 
 // WorkflowFiles 是工作流目录下各文件的绝对路径集合。
 //
 //   - DagDefinition：dag_definition.json，DAG 定义（唯一数据源，不落库）；
-//   - IOSchema：io_schema.json，工作流级输入输出契约（唯一数据源，不落库）；
-//   - Readme：README.md，工作流说明文档。
+//   - IOSchemaFile：io_schema.json，工作流级输入输出契约（唯一数据源，不落库）；
+//   - ReadmeFile：README.md，工作流说明文档。
 type WorkflowFiles struct {
 	Dir           string
 	DagDefinition string
-	IOSchema      string
-	Readme        string
+	IOSchemaFile  string
+	ReadmeFile    string
 }
 
 // WorkflowLayout 计算工作流目录布局。
@@ -55,7 +55,7 @@ func WorkflowLayout(baseDir string, projectID int64, workflowID string) Workflow
 	return WorkflowFiles{
 		Dir:           dir,
 		DagDefinition: filepath.Join(dir, DagDefinitionFileName),
-		IOSchema:      filepath.Join(dir, IOSchemaFileName),
-		Readme:        filepath.Join(dir, ReadmeFileName),
+		IOSchemaFile:  filepath.Join(dir, IOSchemaFileName),
+		ReadmeFile:    filepath.Join(dir, ReadmeFileName),
 	}
 }

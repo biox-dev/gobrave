@@ -38,11 +38,11 @@ func TestScriptLayout(t *testing.T) {
 			if files.MainPath != filepath.Join(wantDir, tc.wantMain) {
 				t.Fatalf("unexpected main path: got=%q", files.MainPath)
 			}
-			if files.IOSchema != filepath.Join(wantDir, IOSchemaFileName) {
-				t.Fatalf("unexpected io schema path: got=%q", files.IOSchema)
+			if files.IOSchemaFile != filepath.Join(wantDir, IOSchemaFileName) {
+				t.Fatalf("unexpected io schema path: got=%q", files.IOSchemaFile)
 			}
-			if files.Readme != filepath.Join(wantDir, ReadmeFileName) {
-				t.Fatalf("unexpected readme path: got=%q", files.Readme)
+			if files.ReadmeFile != filepath.Join(wantDir, ReadmeFileName) {
+				t.Fatalf("unexpected readme path: got=%q", files.ReadmeFile)
 			}
 		})
 	}
@@ -63,10 +63,10 @@ func TestWorkflowLayout(t *testing.T) {
 	if files.DagDefinition != filepath.Join(wantDir, DagDefinitionFileName) {
 		t.Fatalf("unexpected dag definition path: got=%q", files.DagDefinition)
 	}
-	if files.IOSchema != filepath.Join(wantDir, IOSchemaFileName) {
-		t.Fatalf("unexpected io schema path: got=%q", files.IOSchema)
+	if files.IOSchemaFile != filepath.Join(wantDir, IOSchemaFileName) {
+		t.Fatalf("unexpected io schema path: got=%q", files.IOSchemaFile)
 	}
-	if files.Readme != filepath.Join(wantDir, ReadmeFileName) {
-		t.Fatalf("unexpected readme path: got=%q", files.Readme)
+	if files.ReadmeFile != filepath.Join(wantDir, ReadmeFileName) {
+		t.Fatalf("unexpected readme path: got=%q", files.ReadmeFile)
 	}
 }

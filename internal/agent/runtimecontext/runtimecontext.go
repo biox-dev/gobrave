@@ -598,8 +598,8 @@ type ProjectReportContextResolver interface {
 
 // ScriptBrief 是脚本的只读摘要（工具回传给模型的最小字段集）。
 //
-// ScriptFilePath / IOSchemaPath 由 types.Script.Files（utils.ScriptLayout）推导，
-// 模型可直接按这两个路径读写脚本主文件与 io_schema.json。
+// ScriptFilePath / IOSchemaPath / ReadmeFile 由 types.Script.Files（utils.ScriptLayout）
+// 推导，模型可直接按这三个路径读写脚本主文件、io_schema.json 与 README.md。
 // 所有回传脚本摘要的工具（list_project_scripts / get_script）共用本类型，
 // 避免各自维护一份同名字段。
 type ScriptBrief struct {
@@ -607,13 +607,15 @@ type ScriptBrief struct {
 	ScriptID int64 `json:"script_id,string"`
 	// ContainerTemplateID 是脚本绑定的容器模板 ID（go_container_template_definition 主键，
 	// 即对外 ContainerTemplate.ID），可直接用于 list_container_templates 的查询结果对账 /
-	// 运行配置核对；0 表示脚本尚未绑定容器模板。
-	ContainerTemplateID int64  `json:"container_template_id,omitempty"`
+	// 运行配置核对；0 表示脚本尚未绑定容器模板。同样以字符串形式回传以避免精度丢失。
+	ContainerTemplateID int64  `json:"container_template_id,omitempty,string"`
 	ScriptName          string `json:"script_name"`
 	Description         string `json:"description,omitempty"`
 	ScriptType          string `json:"script_type,omitempty"`
 	ScriptFilePath      string `json:"script_file_path"`
 	IOSchemaPath        string `json:"io_schema_path"`
+	// ReadmeFile 是脚本目录下 README.md 的绝对路径（脚本说明文档）。
+	ReadmeFile string `json:"readme_file,omitempty"`
 }
 
 // AnalysisNodeBrief 是分析节点的只读摘要（工具回传给模型的最小字段集）。

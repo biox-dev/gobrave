@@ -98,7 +98,7 @@ func (c *scriptNodeCreator) CreateAnalysisNode(ctx context.Context, in runtimeco
 	if baseDir := c.storageBaseDir(); baseDir != "" {
 		files := script.Files(baseDir)
 		result.ScriptFilePath = files.MainPath
-		result.IOSchemaPath = files.IOSchema
+		result.IOSchemaPath = files.IOSchemaFile
 	}
 	return result, nil
 }

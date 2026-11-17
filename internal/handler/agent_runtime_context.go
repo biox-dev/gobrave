@@ -166,7 +166,7 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 
 				vars["script_file_path"] = files.MainPath
 				vars["params_file_path"] = node.ParamsPath
-				vars["io_schema_path"] = files.IOSchema
+				vars["io_schema_path"] = files.IOSchemaFile
 				vars["output_directory"] = node.OutputDir
 				vars["script_type"] = script.ScriptType
 				vars["analysis_node_id"] = strconv.FormatInt(node.ID, 10)

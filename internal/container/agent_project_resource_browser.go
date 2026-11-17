@@ -632,7 +632,8 @@ func (b *projectResourceBrowser) toScriptBrief(baseDir string, script *types.Scr
 	}
 	files := script.Files(baseDir)
 	brief.ScriptFilePath = files.MainPath
-	brief.IOSchemaPath = files.IOSchema
+	brief.IOSchemaPath = files.IOSchemaFile
+	brief.ReadmeFile = files.ReadmeFile
 	return brief
 }
 

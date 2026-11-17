@@ -141,7 +141,7 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.Scri
 		ScriptKey:             script.ScriptID,
 		ScriptName:            script.Name,
 		ScriptFilePath:        files.MainPath,
-		IOSchemaPath:          files.IOSchema,
+		IOSchemaPath:          files.IOSchemaFile,
 		ScriptType:            script.ScriptType,
 		ContainerTemplateID:   containerTemplateID,
 		ContainerTemplateName: containerTemplateName,

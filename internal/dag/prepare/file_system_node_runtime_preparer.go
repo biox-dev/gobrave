@@ -138,7 +138,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	}
 
 	// synlink io_schema.json：同样在目标失效或指向错误时重建。
-	ioSchemaPath := files.IOSchema
+	ioSchemaPath := files.IOSchemaFile
 	scriptWorkspaceIoSchemaPath := filepath.Join(node.WorkspaceDir, utils.IOSchemaFileName)
 	if _, err := os.Lstat(ioSchemaPath); err == nil {
 		if err := ensureSymlink(scriptWorkspaceIoSchemaPath, ioSchemaPath); err != nil {

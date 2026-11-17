@@ -80,7 +80,7 @@ func (c *scriptCreator) UpdateScriptInfo(ctx context.Context, in runtimecontext.
 	if baseDir != "" {
 		files := script.Files(baseDir)
 		result.ScriptFilePath = files.MainPath
-		result.IOSchemaPath = files.IOSchema
+		result.IOSchemaPath = files.IOSchemaFile
 	}
 	return result, nil
 }
