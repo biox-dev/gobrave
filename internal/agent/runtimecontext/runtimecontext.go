@@ -506,7 +506,8 @@ type ScriptBrowser interface {
 	// GetScriptByID 按主键读取脚本（必须属于当前激活项目，否则返回错误）。
 	//
 	// projectID 取自执行事实，scriptID 是 pipeline_components 主键。
-	GetScriptByID(ctx context.Context, projectID int64, scriptID int64) (ScriptBrief, error)
+	// 返回的 ScriptDetail 除摘要外还附带 README.md 正文（文件不存在时为空）。
+	GetScriptByID(ctx context.Context, projectID int64, scriptID int64) (ScriptDetail, error)
 }
 
 // AnalysisNodeBrowser 抽象「按 ID 查看分析节点」的只读能力（get_analysis_node 与更新类工具的预览）。
@@ -616,6 +617,17 @@ type ScriptBrief struct {
 	IOSchemaPath        string `json:"io_schema_path"`
 	// ReadmeFile 是脚本目录下 README.md 的绝对路径（脚本说明文档）。
 	ReadmeFile string `json:"readme_file,omitempty"`
+}
+
+// ScriptDetail 是单个脚本的只读详情（get_script 回传）。
+//
+// 与 ScriptBrief 分开：列表（list_project_scripts）只需要路径，按 ID 查看单个脚本时
+// 才把 README.md 正文一并带回，避免列表把每个脚本的说明文档都塞进上下文。
+// 内嵌 ScriptBrief 后 JSON 仍为扁平字段，与 ScriptBrief 的输出保持兼容。
+type ScriptDetail struct {
+	ScriptBrief
+	// ReadmeContent 是 README.md 的正文内容；文件不存在时为空（不视为错误）。
+	ReadmeContent string `json:"readme_content,omitempty"`
 }
 
 // AnalysisNodeBrief 是分析节点的只读摘要（工具回传给模型的最小字段集）。

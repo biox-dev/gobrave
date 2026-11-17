@@ -24,7 +24,7 @@ import (
 //
 // 只读内置工具共用同一份实现：
 //   - list_project_scripts：按 RuntimeContext.ProjectID 列出全部脚本；
-//   - get_script：按 script_id 查看脚本名称 / 描述 / 主文件路径 / io_schema.json 路径；
+//   - get_script：按 script_id 查看脚本名称 / 描述 / 主文件路径 / io_schema.json 路径 / README.md 正文；
 //   - get_analysis_node：按 analysis_node_id（兼容 @analysis_node:<id> 引用）查看节点名称 / 工作目录 / params.json / 输出目录 / 参数；
 //   - list_container_templates：列出全部容器模板（definition ID + spec 的 name / description）；
 //   - get_container_template：按 @container:<id> 引用查看绑定行的 display_name / description；
@@ -103,31 +103,41 @@ func (b *projectResourceBrowser) ListScriptsByProject(ctx context.Context, proje
 }
 
 // GetScriptByID 按主键读取脚本，并校验其属于当前激活项目。
-func (b *projectResourceBrowser) GetScriptByID(ctx context.Context, projectID int64, scriptID int64) (runtimecontext.ScriptBrief, error) {
+//
+// 除摘要（含 README.md 路径）外，一并读回 README.md 正文：模型查看单个脚本时
+// 无需再单独读盘就能知道脚本的用途与用法。README 不存在时正文为空；读取失败
+// 不影响详情返回（路径仍在 readme_file 里，可自行读取）。
+func (b *projectResourceBrowser) GetScriptByID(ctx context.Context, projectID int64, scriptID int64) (runtimecontext.ScriptDetail, error) {
 	if projectID <= 0 {
-		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: project_id is required")
+		return runtimecontext.ScriptDetail{}, fmt.Errorf("get_script: project_id is required")
 	}
 	if scriptID <= 0 {
-		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: script_id is required")
+		return runtimecontext.ScriptDetail{}, fmt.Errorf("get_script: script_id is required")
 	}
 	if b.workflowSvc == nil {
-		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: required services are not configured")
+		return runtimecontext.ScriptDetail{}, fmt.Errorf("get_script: required services are not configured")
 	}
 
 	script, err := b.workflowSvc.GetScriptByID(ctx, scriptID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: script %d not found", scriptID)
+			return runtimecontext.ScriptDetail{}, fmt.Errorf("get_script: script %d not found", scriptID)
 		}
-		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: failed to load script: %w", err)
+		return runtimecontext.ScriptDetail{}, fmt.Errorf("get_script: failed to load script: %w", err)
 	}
 	if script == nil || script.ID == 0 {
-		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: script %d not found", scriptID)
+		return runtimecontext.ScriptDetail{}, fmt.Errorf("get_script: script %d not found", scriptID)
 	}
 	if script.ProjectID != projectID {
-		return runtimecontext.ScriptBrief{}, fmt.Errorf("get_script: script %d does not belong to the active project %d", script.ID, projectID)
+		return runtimecontext.ScriptDetail{}, fmt.Errorf("get_script: script %d does not belong to the active project %d", script.ID, projectID)
 	}
-	return b.toScriptBrief(b.storageBaseDir(), script), nil
+
+	baseDir := b.storageBaseDir()
+	detail := runtimecontext.ScriptDetail{ScriptBrief: b.toScriptBrief(baseDir, script)}
+	if readme, readErr := utils.ReadScriptReadme(baseDir, script.ProjectID, script.ScriptID); readErr == nil {
+		detail.ReadmeContent = string(readme)
+	}
+	return detail, nil
 }
 
 // GetAnalysisNodeByID 按主键读取分析节点，并校验其属于当前激活项目。
