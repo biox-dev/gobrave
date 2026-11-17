@@ -26,6 +26,9 @@ import (
 //   - list_project_scripts：按 RuntimeContext.ProjectID 列出全部脚本；
 //   - get_script：按 script_id 查看脚本名称 / 描述 / 主文件路径 / io_schema.json 路径 / README.md 正文；
 //   - get_analysis_node：按 analysis_node_id（兼容 @analysis_node:<id> 引用）查看节点名称 / 工作目录 / params.json / 输出目录 / 参数；
+//   - list_project_workflow：按 RuntimeContext.ProjectID 列出全部工作流（摘要 + DAG 节点 / 连线数）；
+//   - get_workflow：按 workflow_id（兼容 @workflow:<id> 引用）查看工作流元数据、DAG 定义与 io_schema 原文；
+//   - get_analysis：按 analysis_id（兼容 @analysis:<id> 引用）查看一次分析运行的状态 / 参数 / 节点分布；
 //   - list_container_templates：列出全部容器模板（definition ID + spec 的 name / description）；
 //   - get_container_template：按 @container:<id> 引用查看绑定行的 display_name / description；
 //   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径；
@@ -185,6 +188,233 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 		OutputDir:           node.OutputDir,
 		RequestParam:        agentanalysis.DecodeRequestParam(node.RequestParam),
 	}, nil
+}
+
+// ListWorkflowsByProject 返回指定项目下的全部工作流（按 id 倒序，不分页）。
+//
+// 项目内工作流数量有限，用足够大的页长一次性取回，避免模型还要拼分页参数；
+// 每项只带摘要与目录内文件路径，DAG / io_schema 正文留给 get_workflow 按需读取。
+func (b *projectResourceBrowser) ListWorkflowsByProject(ctx context.Context, projectID int64) ([]runtimecontext.WorkflowBrief, error) {
+	if projectID <= 0 {
+		return nil, fmt.Errorf("list_project_workflow: project_id is required")
+	}
+	if b.workflowSvc == nil {
+		return nil, fmt.Errorf("list_project_workflow: required services are not configured")
+	}
+
+	pagination := &types.Pagination{Page: 1, PageSize: 1000}
+	query := &types.WorkflowPageQuery{ProjectID: projectID}
+	workflows, _, err := b.workflowSvc.PageWorkflow(ctx, pagination, query)
+	if err != nil {
+		return nil, fmt.Errorf("list_project_workflow: failed to list workflows: %w", err)
+	}
+
+	baseDir := b.storageBaseDir()
+	out := make([]runtimecontext.WorkflowBrief, 0, len(workflows))
+	for _, workflow := range workflows {
+		if workflow == nil {
+			continue
+		}
+		out = append(out, b.workflowBrief(baseDir, workflow))
+	}
+	return out, nil
+}
+
+// GetWorkflowByID 按主键读取工作流，并校验其属于当前激活项目。
+//
+// dag_definition.json / io_schema.json / README.md 一律从工作流目录读取（目录内文件是
+// 唯一数据源，不落库）：原始文本随详情一起回传，模型可直接据此编辑后再调用
+// update_workflow；解析失败不影响详情返回（原始文本仍在）。
+func (b *projectResourceBrowser) GetWorkflowByID(ctx context.Context, projectID int64, workflowID int64) (runtimecontext.WorkflowDetail, error) {
+	if projectID <= 0 {
+		return runtimecontext.WorkflowDetail{}, fmt.Errorf("get_workflow: project_id is required")
+	}
+	if workflowID <= 0 {
+		return runtimecontext.WorkflowDetail{}, fmt.Errorf("get_workflow: workflow_id is required")
+	}
+	if b.workflowSvc == nil {
+		return runtimecontext.WorkflowDetail{}, fmt.Errorf("get_workflow: required services are not configured")
+	}
+
+	workflow, err := b.workflowSvc.GetWorkflowByID(ctx, workflowID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return runtimecontext.WorkflowDetail{}, fmt.Errorf("get_workflow: workflow %d not found", workflowID)
+		}
+		return runtimecontext.WorkflowDetail{}, fmt.Errorf("get_workflow: failed to load workflow: %w", err)
+	}
+	if workflow == nil || workflow.ID == 0 {
+		return runtimecontext.WorkflowDetail{}, fmt.Errorf("get_workflow: workflow %d not found", workflowID)
+	}
+	if workflow.ProjectID != projectID {
+		return runtimecontext.WorkflowDetail{}, fmt.Errorf("get_workflow: workflow %d does not belong to the active project %d", workflow.ID, projectID)
+	}
+
+	baseDir := b.storageBaseDir()
+	detail := runtimecontext.WorkflowDetail{WorkflowBrief: b.workflowBrief(baseDir, workflow)}
+
+	// DAG 定义：原文回传 + 引用脚本（节点 / 连线数已由 workflowBrief 填好）。
+	if raw, readErr := utils.ReadWorkflowDagDefinitionFile(baseDir, workflow.ProjectID, workflow.WorkflowID); readErr == nil && len(raw) > 0 {
+		detail.DagDefinition = strings.TrimSpace(string(raw))
+	}
+	if dagDefinition, parseErr := utils.ReadWorkflowDagDefinition(baseDir, workflow.ProjectID, workflow.WorkflowID); parseErr == nil {
+		_, _, detail.Scripts = b.workflowGraphSummary(ctx, workflow.ProjectID, dagDefinition)
+	}
+
+	// 工作流级 io_schema：原文回传 + inputs 表单（运行分析时的参数键）。
+	if raw, readErr := utils.ReadWorkflowIOSchemaFile(baseDir, workflow.ProjectID, workflow.WorkflowID); readErr == nil && len(raw) > 0 {
+		detail.IOSchema = strings.TrimSpace(string(raw))
+	}
+	if schema, readErr := utils.ReadWorkflowIOSchema(baseDir, workflow.ProjectID, workflow.WorkflowID); readErr == nil {
+		if inputs, ok := schema["inputs"].([]any); ok {
+			detail.Inputs = inputs
+		}
+	}
+
+	if readme, readErr := utils.ReadWorkflowReadme(baseDir, workflow.ProjectID, workflow.WorkflowID); readErr == nil {
+		detail.ReadmeContent = string(readme)
+	}
+	return detail, nil
+}
+
+// workflowGraphSummary 统计 DAG 的节点 / 连线数，并按 script_id 去重回查脚本名称。
+//
+// dag_definition 非法或缺字段时返回零值，不视为错误（原始文本仍会回传给模型）。
+func (b *projectResourceBrowser) workflowGraphSummary(ctx context.Context, projectID int64, dagDefinition map[string]any) (int, int, []runtimecontext.WorkflowScriptBrief) {
+	nodes, _ := dagDefinition["nodes"].([]any)
+	edges, _ := dagDefinition["edges"].([]any)
+
+	scripts := make([]runtimecontext.WorkflowScriptBrief, 0, len(nodes))
+	seen := make(map[string]struct{}, len(nodes))
+	for _, nodeAny := range nodes {
+		node, ok := nodeAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		scriptKey, _ := node["script_id"].(string)
+		scriptKey = strings.TrimSpace(scriptKey)
+		if scriptKey == "" {
+			continue
+		}
+		if _, exists := seen[scriptKey]; exists {
+			continue
+		}
+		seen[scriptKey] = struct{}{}
+		if b.workflowSvc == nil {
+			continue
+		}
+		script, err := b.workflowSvc.GetScriptByScriptID(ctx, projectID, scriptKey)
+		if err != nil || script == nil || script.ID == 0 {
+			continue
+		}
+		scripts = append(scripts, runtimecontext.WorkflowScriptBrief{
+			ScriptID:   script.ID,
+			ScriptKey:  script.ScriptID,
+			ScriptName: script.Name,
+		})
+	}
+	return len(nodes), len(edges), scripts
+}
+
+// GetAnalysisByID 按主键读取一次分析运行（nextflow 行），并校验其属于当前激活项目。
+//
+// WorkspaceDir 由 repository 还原成绝对路径，ParamsPath 按 WorkspaceDir 派生；
+// 同时回传工作流名称与节点状态分布，便于模型判断这次运行当前处于什么阶段。
+func (b *projectResourceBrowser) GetAnalysisByID(ctx context.Context, projectID int64, analysisID int64) (runtimecontext.AnalysisDetail, error) {
+	if projectID <= 0 {
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: project_id is required")
+	}
+	if analysisID <= 0 {
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: analysis_id is required")
+	}
+	if b.analysisRepo == nil {
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: required services are not configured")
+	}
+
+	analysis, err := b.analysisRepo.GetAnalysisByID(ctx, analysisID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: analysis %d not found", analysisID)
+		}
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: failed to load analysis: %w", err)
+	}
+	if analysis == nil || analysis.ID == 0 {
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: analysis %d not found", analysisID)
+	}
+	if analysis.ProjectID != projectID {
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: analysis %d does not belong to the active project %d", analysis.ID, projectID)
+	}
+
+	// 兜底：个别读取路径可能没有填充派生路径，这里按 WorkspaceDir 再推导一次（幂等）。
+	if analysis.ParamsPath == "" && analysis.WorkspaceDir != "" {
+		analysis.HydrateDerivedPaths()
+	}
+
+	brief := runtimecontext.AnalysisBrief{
+		AnalysisID:    analysis.ID,
+		AnalysisKey:   analysis.AnalysisID,
+		AnalysisName:  analysis.AnalysisName,
+		ProjectID:     analysis.ProjectID,
+		WorkflowID:    analysis.WorkflowID,
+		JobStatus:     analysis.JobStatus,
+		SchedulerMode: types.NormalizeSchedulerMode(analysis.SchedulerMode),
+		CacheType:     analysis.CacheType,
+		WorkspaceDir:  analysis.WorkspaceDir,
+		ParamsPath:    analysis.ParamsPath,
+		RequestParam:  agentanalysis.DecodeRequestParam(analysis.RequestParam),
+	}
+	if b.workflowSvc != nil && analysis.WorkflowID > 0 {
+		if workflow, wfErr := b.workflowSvc.GetWorkflowByID(ctx, analysis.WorkflowID); wfErr == nil && workflow != nil {
+			brief.WorkflowName = workflow.Name
+		}
+	}
+
+	nodes, nodeErr := b.analysisRepo.ListAnalysisNodesByAnalysisID(ctx, analysis.ID)
+	if nodeErr == nil {
+		counts := make(map[string]int, 8)
+		for _, node := range nodes {
+			if node == nil {
+				continue
+			}
+			status := strings.TrimSpace(node.Status)
+			if status == "" {
+				status = "unknown"
+			}
+			counts[status]++
+		}
+		brief.NodeCount = len(nodes)
+		if len(counts) > 0 {
+			brief.NodeStatusCounts = counts
+		}
+	}
+
+	return runtimecontext.AnalysisDetail{AnalysisBrief: brief}, nil
+}
+
+// workflowBrief 构造工作流的只读摘要：元数据 + 目录内文件路径 + DAG 节点 / 连线数。
+//
+// DAG 文件缺失 / 非法时节点数保持 0（不视为错误）；正文由调用方按需读取。
+func (b *projectResourceBrowser) workflowBrief(baseDir string, workflow *types.Workflow) runtimecontext.WorkflowBrief {
+	files := utils.WorkflowLayout(baseDir, workflow.ProjectID, workflow.WorkflowID)
+	brief := runtimecontext.WorkflowBrief{
+		WorkflowID:        workflow.ID,
+		WorkflowKey:       workflow.WorkflowID,
+		Name:              workflow.Name,
+		Description:       workflow.Description,
+		Category:          workflow.Category,
+		ProjectID:         workflow.ProjectID,
+		WorkflowDir:       files.Dir,
+		DagDefinitionPath: files.DagDefinition,
+		IOSchemaPath:      files.IOSchemaFile,
+		ReadmeFile:        files.ReadmeFile,
+	}
+	if dagDefinition, err := utils.ReadWorkflowDagDefinition(baseDir, workflow.ProjectID, workflow.WorkflowID); err == nil {
+		nodes, _ := dagDefinition["nodes"].([]any)
+		edges, _ := dagDefinition["edges"].([]any)
+		brief.NodeCount = len(nodes)
+		brief.EdgeCount = len(edges)
+	}
+	return brief
 }
 
 // ListContainerTemplates 返回全部可运行容器模板：每行一个绑定行（definition），

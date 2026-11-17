@@ -508,6 +508,227 @@ type AnalysisNodeBrowser interface {
 	GetAnalysisNodeByID(ctx context.Context, projectID int64, nodeID int64) (AnalysisNodeBrief, error)
 }
 
+// WorkflowBrowser 抽象「按 ID 查看工作流」的只读能力（get_workflow）。
+//
+// 工作流按当前激活项目隔离，projectID 由调用方从执行事实（TaskFacts）取得。
+type WorkflowBrowser interface {
+	// ListWorkflowsByProject 返回指定项目下的全部工作流（按 id 倒序，不分页）。
+	//
+	// 每一项是 WorkflowBrief（元数据 + 目录内文件路径 + DAG 节点 / 连线数），
+	// 不含 dag_definition / io_schema 正文；需要正文时再用 GetWorkflowByID。
+	// projectID 必须为正数。
+	ListWorkflowsByProject(ctx context.Context, projectID int64) ([]WorkflowBrief, error)
+
+	// GetWorkflowByID 按主键读取工作流（必须属于当前激活项目，否则返回错误）。
+	//
+	// workflowID 是 pipeline_components_relation 主键（不是 relation_id UUID）。
+	// 返回的 DagDefinition / IOSchema 是工作流目录下文件的原始 JSON 文本，
+	// 目录内文件是唯一数据源（不落库），模型可直接据此编辑后再调用 update_workflow。
+	GetWorkflowByID(ctx context.Context, projectID int64, workflowID int64) (WorkflowDetail, error)
+}
+
+// WorkflowCreator 抽象「创建工作流」的业务能力（create_workflow）。
+//
+// 与 ScriptCreator 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入。
+type WorkflowCreator interface {
+	// CreateWorkflow 新建一个工作流：落库 pipeline_components_relation 行，并初始化工作流目录
+	// （dag_definition.json / io_schema.json / README.md 中实际给出的那几份）。
+	//
+	// projectID 取自执行事实（当前激活项目），必须为正数。
+	CreateWorkflow(ctx context.Context, input WorkflowCreateInput) (WorkflowCreateResult, error)
+}
+
+// WorkflowUpdater 抽象「更新工作流」的业务能力（update_workflow）。
+//
+// 实现是「读改写」：先按 workflow_id 读出完整记录，只覆盖请求中给出的字段再整体回写
+// （workflowRepository.UpdateWorkflow 是整体替换语义）。
+type WorkflowUpdater interface {
+	// UpdateWorkflow 更新工作流的元数据与 DAG 定义 / io_schema。
+	//
+	// 指针 / 非空字符串表示「修改该字段」，nil / 空串表示「保持原值」。
+	// 工作流必须属于 projectID，否则返回错误。
+	UpdateWorkflow(ctx context.Context, input WorkflowUpdateInput) (WorkflowUpdateResult, error)
+}
+
+// AnalysisBrowser 抽象「按 ID 查看分析运行」的只读能力（get_analysis）。
+//
+// 这里的 analysis 指 nextflow 表的一行（一次工作流运行），不是单个节点。
+type AnalysisBrowser interface {
+	// GetAnalysisByID 按主键读取分析运行（必须属于当前激活项目，否则返回错误）。
+	//
+	// analysisID 是 nextflow 主键（int64），不是 analysis_id UUID。
+	GetAnalysisByID(ctx context.Context, projectID int64, analysisID int64) (AnalysisDetail, error)
+}
+
+// AnalysisUpdater 抽象「更新分析运行」的业务能力（update_analysis）。
+type AnalysisUpdater interface {
+	// UpdateAnalysis 更新分析运行的分析名称 / 请求参数 / 缓存策略。
+	//
+	// RequestParam 非 nil 时按工作流表单重新解析，并重写分析目录下的 params.json
+	// （空对象表示清空参数）。运行中的分析不允许修改，返回错误。
+	UpdateAnalysis(ctx context.Context, input AnalysisUpdateInput) (AnalysisUpdateResult, error)
+}
+
+// AnalysisRunner 抽象「提交/重跑一次分析运行」的业务能力（run_analysis）。
+type AnalysisRunner interface {
+	// RunAnalysis 提交分析运行：按工作流 DAG 物化节点并交给所属调度器异步推进。
+	//
+	// 不等待分析结束（工作流运行是长任务），只返回提交是否成功与所属调度器。
+	// 运行中的分析不允许重复提交，返回错误。
+	RunAnalysis(ctx context.Context, input AnalysisRunInput) (AnalysisRunResult, error)
+}
+
+// WorkflowBrief 是工作流的只读摘要（get_workflow / create_workflow / update_workflow 共用）。
+//
+// WorkflowKey 是 relation_id（UUID，工作流目录名），WorkflowDir / DagDefinitionPath /
+// IOSchemaPath / ReadmeFile 由 utils.WorkflowLayout 推导，模型可据此直接读写目录内文件。
+type WorkflowBrief struct {
+	WorkflowID  int64  `json:"workflow_id,string"`
+	WorkflowKey string `json:"workflow_key"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Category    string `json:"category,omitempty"`
+	ProjectID   int64  `json:"project_id,string"`
+
+	WorkflowDir       string `json:"workflow_dir"`
+	DagDefinitionPath string `json:"dag_definition_path"`
+	IOSchemaPath      string `json:"io_schema_path"`
+	ReadmeFile        string `json:"readme_file,omitempty"`
+
+	// NodeCount / EdgeCount 是 DAG 定义中的节点数与连线数（无 DAG 时为 0）。
+	NodeCount int `json:"node_count"`
+	EdgeCount int `json:"edge_count"`
+}
+
+// WorkflowDetail 是单个工作流的只读详情（get_workflow 回传）。
+//
+// DagDefinition / IOSchema 是磁盘文件的原始 JSON 文本（唯一数据源，不落库）；
+// Inputs 是 io_schema.inputs 解析后的表单（运行分析时的参数键）；
+// Scripts 是 DAG 中引用到的脚本（按 script_id 去重）。
+type WorkflowDetail struct {
+	WorkflowBrief
+	DagDefinition string                `json:"dag_definition,omitempty"`
+	IOSchema      string                `json:"io_schema,omitempty"`
+	Inputs        []any                 `json:"inputs,omitempty"`
+	ReadmeContent string                `json:"readme_content,omitempty"`
+	Scripts       []WorkflowScriptBrief `json:"scripts,omitempty"`
+}
+
+// WorkflowScriptBrief 是工作流 DAG 引用到的一个脚本。
+type WorkflowScriptBrief struct {
+	ScriptID   int64  `json:"script_id,string"`
+	ScriptKey  string `json:"script_key"`
+	ScriptName string `json:"script_name"`
+}
+
+// WorkflowCreateInput 是「创建工作流」的入参。
+//
+// DagDefinition / IOSchema 是 JSON 文本（可为空）：为空时不写对应文件。
+// 合法 JSON 由实现校验，非法时返回错误且不落库。
+type WorkflowCreateInput struct {
+	ProjectID     int64  `json:"project_id,string"`
+	Name          string `json:"name"`
+	Description   string `json:"description,omitempty"`
+	Category      string `json:"category,omitempty"`
+	DagDefinition string `json:"dag_definition,omitempty"`
+	IOSchema      string `json:"io_schema,omitempty"`
+	Readme        string `json:"readme,omitempty"`
+}
+
+// WorkflowCreateResult 是「创建工作流」的结果（回传给模型）。
+type WorkflowCreateResult struct {
+	WorkflowBrief
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// WorkflowUpdateInput 是「更新工作流」的入参。
+//
+// 所有可选字段用指针表示：nil 表示不修改。DagDefinition / IOSchema 非 nil 时
+// 覆盖磁盘文件（空串表示不写，保留原文件）。
+type WorkflowUpdateInput struct {
+	ProjectID     int64   `json:"project_id,string"`
+	WorkflowID    int64   `json:"workflow_id,string"`
+	Name          *string `json:"name,omitempty"`
+	Description   *string `json:"description,omitempty"`
+	Category      *string `json:"category,omitempty"`
+	DagDefinition *string `json:"dag_definition,omitempty"`
+	IOSchema      *string `json:"io_schema,omitempty"`
+}
+
+// WorkflowUpdateResult 是「更新工作流」的结果（回传给模型）。
+type WorkflowUpdateResult struct {
+	WorkflowBrief
+	Changed  []string `json:"changed,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// AnalysisBrief 是一次分析运行（nextflow 行）的只读摘要。
+//
+// AnalysisKey 是 analysis_id（UUID，对外展示用），AnalysisID 是 nextflow 主键；
+// WorkspaceDir / ParamsPath 是分析根目录与本次运行的参数文件（绝对路径）。
+type AnalysisBrief struct {
+	AnalysisID   int64  `json:"analysis_id,string"`
+	AnalysisKey  string `json:"analysis_key"`
+	AnalysisName string `json:"analysis_name"`
+	ProjectID    int64  `json:"project_id,string"`
+	WorkflowID   int64  `json:"workflow_id,string"`
+	WorkflowName string `json:"workflow_name,omitempty"`
+
+	JobStatus     string `json:"job_status"`
+	SchedulerMode string `json:"scheduler_mode"`
+	CacheType     int    `json:"cache_type"`
+
+	WorkspaceDir string         `json:"workspace_dir"`
+	ParamsPath   string         `json:"params_path,omitempty"`
+	RequestParam map[string]any `json:"request_param,omitempty"`
+
+	NodeCount        int            `json:"node_count"`
+	NodeStatusCounts map[string]int `json:"node_status_counts,omitempty"`
+}
+
+// AnalysisDetail 是单次分析运行的只读详情（get_analysis 回传）。
+type AnalysisDetail struct {
+	AnalysisBrief
+}
+
+// AnalysisUpdateInput 是「更新分析运行」的入参。
+//
+// AnalysisName / CacheType / RequestParam 为 nil 表示不修改。
+type AnalysisUpdateInput struct {
+	ProjectID    int64          `json:"project_id,string"`
+	AnalysisID   int64          `json:"analysis_id,string"`
+	AnalysisName *string        `json:"analysis_name,omitempty"`
+	RequestParam map[string]any `json:"request_param,omitempty"`
+	CacheType    *int           `json:"cache_type,omitempty"`
+}
+
+// AnalysisUpdateResult 是「更新分析运行」的结果（回传给模型）。
+type AnalysisUpdateResult struct {
+	AnalysisBrief
+	Changed []string `json:"changed,omitempty"`
+}
+
+// AnalysisRunInput 是「提交分析运行」的入参。
+//
+// RequestParam / CacheType 为 nil 时沿用分析记录上已保存的值；
+// 非 nil 时先按新值更新分析记录再提交运行。
+type AnalysisRunInput struct {
+	ProjectID    int64          `json:"project_id,string"`
+	AnalysisID   int64          `json:"analysis_id,string"`
+	RequestParam map[string]any `json:"request_param,omitempty"`
+	CacheType    *int           `json:"cache_type,omitempty"`
+}
+
+// AnalysisRunResult 是「提交分析运行」的结果（回传给模型）。
+type AnalysisRunResult struct {
+	AnalysisID  int64  `json:"analysis_id,string"`
+	AnalysisKey string `json:"analysis_key"`
+	Scheduler   string `json:"scheduler"`
+	// Started 为 true 表示已成功提交给调度器异步推进。
+	Started   bool   `json:"started"`
+	JobStatus string `json:"job_status,omitempty"`
+}
+
 // ContainerTemplateBrowser 抽象「浏览容器模板」的只读能力（list_container_templates / get_container_template）。
 //
 // 容器模板是全局资产（不属于某个项目），因此 ListContainerTemplates 不需要 projectID。

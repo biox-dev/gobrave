@@ -125,7 +125,7 @@ func operationFromToolPermission(ctx context.Context, req tool.PermissionRequest
 		return Operation{Type: OperationRead, Path: path, Description: desc, Metadata: meta}
 	case "fetch", "network":
 		return Operation{Type: OperationNetwork, Path: path, Description: desc, Metadata: meta}
-	case "analysis_node", "analysisnode":
+	case "analysis", "analysis_node", "analysisnode":
 		return Operation{Type: OperationAnalysisNode, Path: path, Description: desc, Metadata: meta}
 	default:
 		return Operation{Type: OperationExecute, Path: path, Description: desc, Metadata: meta}

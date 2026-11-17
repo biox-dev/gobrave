@@ -43,32 +43,41 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
    - io_schema.json 也用于给人类用户渲染表单，label / description 要写清楚含义；
    - 需要新增 / 调整参数时直接编辑 `io_schema_path` 指向的 JSON（规则见第三节）。
 
-3) **再写脚本主体**（写入 `script_file_path`）：
-   - 从 params.json 读取输入，读取的键名必须与 io_schema inputs 的 name 完全一致；
+3) **先摸清脚本真正读哪些参数键**（写脚本 / 建节点之前，一次 grep 代替后面反复试错）：
+   - qmd / R：`grep -n 'params\$' <script_file_path>`；python：`grep -n 'params\[' <script_file_path>`；
+   - 脚本实际读取的键才是 params.json 必须提供的键。io_schema 的 inputs 只负责表单渲染，
+     既有脚本常常还读 `params$analysis_name` 这类 **io_schema 未声明的扁平键**；
+   - 这些未声明键**同样要写进 request_param**（后端把它们当未知键原样透传进 params.json，只给 warning），
+     不要等脚本报 `argument is of length zero` 才发现键缺失。
+
+4) **写脚本主体**（写入 `script_file_path`）：
+   - 从 params.json 读取输入，键名以第 3 步 grep 结果为准（io_schema 声明的名字必须对得上）；
    - 产物写入 params.json 中的 `output_dir`，命名与 io_schema outputs 对应；
    - 不要硬编码路径、样本名或分组，一律通过参数传入；
-   - 具体写法见第四节「脚本代码怎么写」。
+   - 具体写法见第三节「脚本代码怎么写」。
 
-4) `create_analysis_node_script`（`script_id` = 第 1 步返回值，可给 `node_name`）：创建分析节点，
-   得到 `analysis_node_id` / `workspace_dir` / `params_path`。
-   - **默认 run=true：创建后立即运行该节点并等待结束**，返回 status / success / log / log_path。
-     只想建节点、稍后自己控制运行时机时传 `run=false`。
-   - 返回结果同时也包括 `script_file_path`（脚本主文件）、`io_schema_path`（脚本 io_schema.json）与
-     `request_param`（节点当前保存的请求参数），无需再去 create_script 结果或磁盘上找这些路径。
-   - `request_param` 是可选输入：传入时按脚本 io_schema.json 解析并生成 params.json，结果与
-     `build_analysis_node_params` 完全一致。可用返回的 `params_path` 查看 params.json 是否符合预期：
-     不符合则调用 `build_analysis_node_params` 修改参数；符合则直接 `run_analysis_node` 运行。
+5) **建节点 = 一次 `create_analysis_node_script`（run=true）**，这是默认路径，一步到底：
+   - 传入 `script_id` + `node_name` + **完整的 request_param**（= 第 3 步摸到的全部键，含未声明的扁平键）；
+   - 默认 run=true：建好即跑完，返回 status / success / log，以及 `workspace_dir` / `params_path` /
+     `log_path` / `script_file_path` / `io_schema_path`，直接拿来用，不必再去磁盘找路径；
+   - **不要为了「先看 params 再决定」而传 run=false，再补 `build_analysis_node_params` + `run_analysis_node`**：
+     带 request_param 时写入的参数与 `build_analysis_node_params` 完全一致，想核对直接读返回的
+     `params_path`，确实要改才用 `build_analysis_node_params` 覆盖；
+   - 只有用户明确要求「先别跑」时才传 run=false。
 
-5) `build_analysis_node_params`：按 io_schema inputs 的 name 组织 request_param（键 = name），
-   把参数保存到分析节点并生成 params.json。若返回 warnings（缺必填项、存在 io_schema
-   未声明的键），先修正再继续。
+6) `build_analysis_node_params`：**仅用于「节点已存在、要改参数」**——按 io_schema inputs 的 name
+   组织 request_param，覆盖节点已有参数并重写 params.json。返回 warnings 时先确认是不是第 3 步摸到的
+   未声明扁平键：属实的未声明键可以保留（它们确实要进 params.json）。
 
-6) `run_analysis_node` 运行并查看日志；失败时必须继续迭代：读日志定位原因 → 改脚本或改参数
-   → 重新 `build_analysis_node_params`（参数有变化时）→ 再次 `run_analysis_node`，
+7) `run_analysis_node` 运行并查看日志；失败时必须继续迭代：读日志定位原因 → 改脚本或改参数
+   → 参数有变化才重新 `build_analysis_node_params` → 再次 `run_analysis_node`，
    直到返回 success=true 才算完成本次任务。
 
 ### 流程约束
 
+- **无依赖的工具调用必须同一轮合并发出**：`list_project_scripts` + `get_file` + 读文件头几行、
+  `get_script` + 读 io_schema.json + `grep params$` 脚本，这几组内部互不依赖，
+  应在同一轮里并行调用，不要按上面的编号串行等待（编号是逻辑顺序，不是调用批次）。
 - 任务未完成的标准只有一个：`run_analysis_node` 返回 success=true 且产物符合 io_schema outputs。
   不得在脚本尚未跑通时结束任务，也不得把「脚本已写好」「节点已创建」当作完成。
 - `create_script` 只建脚本；**它返回结果里没有 analysis_node_id**，不要把它当作已可运行的节点。
@@ -85,8 +94,9 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
   （由 `build_analysis_node_params` / `create_analysis_node_script` 写入），运行前按最新 io_schema 重新解析，
   并刷新 inputs_patterns / output_patterns / resolved_inputs / request_param、清空上一轮校验错误；
   命令型节点（`create_analysis_node_agent` 创建）直接运行自身 run.sh。
-- `run_analysis_node` 与 `build_analysis_node_params` 职责不同：前者只负责运行，后者负责修改参数。
-  **禁止在脚本型节点未调用 `build_analysis_node_params`（节点上无参数）的情况下直接运行节点。**
+- `run_analysis_node` 与 `build_analysis_node_params` 职责不同：前者只负责运行，后者负责**修改既有节点的参数**。
+  用 `create_analysis_node_script`（带 request_param、run=true）建节点时参数已经写入，**这是默认路径，不需要先 build**；
+  只有节点已存在、要换参数时才用 `build_analysis_node_params`。
 - 每次运行只改必要的地方：先用日志定位失败原因，避免整段重写脚本。
 - 需要完整日志时读取 `run_analysis_node` 返回的 `log_path`。
 - 若失败原因在可用信息范围内无法确定（需求歧义、缺少必要数据 / 参数 / 环境、多种方案取舍、
@@ -117,7 +127,7 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
 
 提问要求：
 
-- 提问前先用 `get_file`（`file_id` 填 `@file:<id>` 冒号后的裸 ID）/ 查看数据结构，把**真实的候选列名与取值**写进问题里，
+- 提问前先用 `get_file` / 查看数据结构，把**真实的候选列名与取值**写进问题里，
   不要让用户从零描述（例如：「检测到 `group` 列取值为 `A/B`，哪一组是对照组？」）；
 - `questions[].id` 使用稳定英文短标识，如 `group_column`、`group_levels`、`control_group`、`batch_column`；
 - 选项类问题用 single_choice / multiple_choice，option 用「label（人类可读）+ value（真实列名 / 取值）」，
@@ -185,8 +195,11 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
 
 补充约定：
 
-- 只使用上表列出的类型；更细的字段写法（BaseSelect 的 `data` / `dataKey`、ThreeColorPicker 等）
+- 新建脚本**优先只使用上表列出的类型**；更细的字段写法（BaseSelect 的 `data` / `dataKey`、ThreeColorPicker 等）
   见 `analysis-io-schema-spec`。
+- 项目里既有脚本已经在用复合类型（`GroupSelectAssayButton` 等，通常配合 `workflow` / `groups` / `colors`
+  等顶层键）。**沿用既有 io_schema 时原样保留，不要改成上表的简单类型**：这类条目不产生 params 键，
+  只决定样本 / 分组选择面板（详见 `analysis-io-schema-spec` 第 3.1 节）。
 - `BaseSelect` 的候选项由数据源提供（`dataKey` / `resolver.accept_formats`）。固定取值（枚举）时，
   把候选值写在条目的 `data` 里（`[{ "label": "...", "value": "..." }]` 或字符串数组），
   `request_param` 里填这些 `value` 之一；不要填展示用的 label。

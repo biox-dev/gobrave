@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	"github.com/biox-dev/gobrave/internal/agent/tool/coder/diff"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 // 本文件提供「授权前预览」的公共构造。
@@ -47,6 +49,23 @@ func paramsJSONContent(params map[string]any) string {
 		return ""
 	}
 	return string(content) + "\n"
+}
+
+// formattedJSONContent 按落盘口径（utils.FormatJSONIndent）格式化 JSON 文本并补结尾换行。
+// 内容非法时原样返回（真正的校验错误仍由工具主体报给模型）。
+func formattedJSONContent(content string) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	formatted, err := utils.FormatJSONIndent([]byte(content))
+	if err != nil {
+		return content
+	}
+	text := string(formatted)
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	return text
 }
 
 // textDiffPreview 生成 before → after 的 unified diff 预览。

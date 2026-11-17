@@ -36,6 +36,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/container/agentanalysis"
 	"github.com/biox-dev/gobrave/internal/container/agentscript"
+	"github.com/biox-dev/gobrave/internal/container/agentworkflow"
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	dockerruntime "github.com/biox-dev/gobrave/internal/container_runtime/docker"
 	kubernetesruntime "github.com/biox-dev/gobrave/internal/container_runtime/kubernetes"
@@ -215,19 +216,21 @@ func buildMCPTools(cfg *config.Config) []tool.Tool {
 type agentToolDeps struct {
 	dig.In
 
-	Config         *config.Config
-	Runner         runtimecontext.AnalysisNodeRunner
-	AgentRunner    runtimecontext.AgentAnalysisRunner
-	Terminal       runtimecontext.ContainerTerminalRunner
-	ContainerShell hostshell.ContainerShellService
-	FileReader     runtimecontext.FileReader
-	ScriptCreator  runtimecontext.ScriptCreator
-	NodeCreator    runtimecontext.AnalysisNodeCreator
-	ParamsBuilder  runtimecontext.AnalysisNodeParamsBuilder
-	NodeUpdater    runtimecontext.AnalysisNodeUpdater
-	MemorySaver    runtimecontext.MemorySaver
-	Browser        *projectResourceBrowser
-	Skills         *skill.Registry
+	Config          *config.Config
+	Runner          runtimecontext.AnalysisNodeRunner
+	AgentRunner     runtimecontext.AgentAnalysisRunner
+	Terminal        runtimecontext.ContainerTerminalRunner
+	ContainerShell  hostshell.ContainerShellService
+	FileReader      runtimecontext.FileReader
+	ScriptCreator   runtimecontext.ScriptCreator
+	NodeCreator     runtimecontext.AnalysisNodeCreator
+	ParamsBuilder   runtimecontext.AnalysisNodeParamsBuilder
+	NodeUpdater     runtimecontext.AnalysisNodeUpdater
+	WorkflowCreator runtimecontext.WorkflowCreator
+	AnalysisRunner  runtimecontext.AnalysisRunner
+	MemorySaver     runtimecontext.MemorySaver
+	Browser         *projectResourceBrowser
+	Skills          *skill.Registry
 	// SkillStore 用户技能的文件存储（create_skill / edit_skill 落盘用）。
 	SkillStore *skill.Store
 	// Profiles Profile 管理器（update_profile_prompt 修改当前 Profile 的系统提示词）。
@@ -267,9 +270,13 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		NodeCreator:     in.NodeCreator,
 		ParamsBuilder:   in.ParamsBuilder,
 		NodeUpdater:     in.NodeUpdater,
+		WorkflowCreator: in.WorkflowCreator,
+		AnalysisRunner:  in.AnalysisRunner,
 		MemorySaver:     in.MemorySaver,
 		ScriptBrowser:   in.Browser,
 		NodeBrowser:     in.Browser,
+		WorkflowBrowser: in.Browser,
+		AnalysisBrowser: in.Browser,
 		TemplateBrowser: in.Browser,
 		DatasetBrowser:  in.Browser,
 		DatasetWriter:   in.Browser,
@@ -592,6 +599,10 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 分析节点更新器：把「更新分析节点名称 / 命令型节点 / 脚本型节点」能力暴露给内置工具
 	// update_analysis_node_agent / update_analysis_node_script。
 	must(container.Provide(agentanalysis.NewNodeUpdater))
+	// 工作流写能力：创建工作流 / 更新工作流（create_workflow / update_workflow）。
+	must(container.Provide(agentworkflow.NewManager))
+	// 分析运行能力：更新分析运行 / 提交分析运行（update_analysis / run_analysis）。
+	must(container.Provide(agentanalysis.NewManager))
 	// 项目资源浏览器：把「脚本 / 分析节点 / 容器模板 / 数据集 / 报告上下文」只读能力
 	// 统一提供给内置只读工具。
 	must(container.Provide(newProjectResourceBrowser))

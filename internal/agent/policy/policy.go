@@ -10,7 +10,7 @@ import (
 
 // defaultPermissionPolicy 是框架默认策略：
 //   - network：直接允许；
-//   - read / write / delete / move / execute / analysis_node：需要人工确认；
+//   - read / write / delete / move / execute / analysis_node（含 analysis 运行提交）：需要人工确认；
 //   - 未知类型：保守地要求人工确认。
 type defaultPermissionPolicy struct{}
 

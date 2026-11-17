@@ -1,6 +1,6 @@
 ---
 name: analysis-io-schema-spec
-description: 生成 / 修改脚本 io_schema.json（get_script 返回的 io_schema_path）的输入契约规范：只允许 BaseInput、BaseTextArea、BaseTextAreaNum、BaseInputNumber、BaseSwitch、BaseColorPicker、ThreeColorPicker、Divider、BaseSelect、FileSelect 十种类型；逐项说明字段写法、request_param 取值与后端解析后的 params.json 结构；其中 FileSelect 给出完整字段表、UI 渲染与 request_param 形态、后端合并文件记录的解析规则、脚本读取方式与常见错误。编写、校验 io_schema.json 或推算 params.json 时使用。
+description: 生成 / 修改脚本 io_schema.json（get_script 返回的 io_schema_path）的输入契约规范：只允许 BaseInput、BaseTextArea、BaseTextAreaNum、BaseInputNumber、BaseSwitch、BaseColorPicker、ThreeColorPicker、Divider、BaseSelect、FileSelect 十种基础控件类型；逐项说明字段写法、request_param 取值与后端解析后的 params.json 结构；其中 FileSelect 给出完整字段表、UI 渲染与 request_param 形态、后端合并文件记录的解析规则、脚本读取方式与常见错误。编写、校验 io_schema.json 或推算 params.json 时使用。
 disable-render: true
 ---
 
@@ -84,7 +84,9 @@ disable-render: true
 
 ## 3. 支持的 10 种控件类型
 
-只允许下表这些 `type`，不要使用其它控件类型（其余类型尚未验证，渲染 / 解析行为不保证）。
+只允许下表这些**基础** `type`，不要为新建脚本发明其它控件类型（其余类型尚未验证，渲染 / 解析行为不保证）。
+项目既有脚本里已经出现的复合类型（`GroupSelectAssayButton` 等）见第 3.1 节，
+编辑既有 io_schema 时原样保留即可。
 
 | `type` | 表单控件 | `request_param` 值 | `params.json` 值 | 脚本读取 |
 | --- | --- | --- | --- | --- |
@@ -112,6 +114,19 @@ disable-render: true
   - 项目级数据源：`dataKey`（如 `group_field`）由前端 `dataMap` 解析，渲染器支持但编辑器不暴露该字段，
     只在确有项目级候选列表时使用；
   - 需要多选时控件本身支持 `"mode": "multiple"`（值变成数组），同样属于编辑器之外的字段，非必要不要用。
+
+---
+
+## 3.1 项目既有复合类型：不产生 params 键
+
+除上表 10 种基础控件，项目里既有脚本还在用复合类型。**编辑既有 io_schema 时原样保留**：
+
+| `type` | 配套字段 / 顶层键 | params.json 里出现的键 | 脚本读取 |
+| --- | --- | --- | --- |
+| `GroupSelectAssayButton` | 写在 `workflow[]` 里，`input_type: "assay"` | 不产生 params 键（只决定样本 / 分组选择面板） | 不要读取 |
+
+判断脚本到底读哪些键，最可靠的办法是直接 grep 脚本：
+`grep -n 'params\$' <script_file_path>`（qmd / R）或 `grep -n 'params\[' <script_file_path>`（python）。
 
 ---
 

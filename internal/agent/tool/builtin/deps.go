@@ -32,12 +32,18 @@ type Deps struct {
 	ParamsBuilder runtimecontext.AnalysisNodeParamsBuilder
 	// NodeUpdater 更新分析节点（update_analysis_node_agent / update_analysis_node_script）。
 	NodeUpdater runtimecontext.AnalysisNodeUpdater
+	// WorkflowCreator 创建工作流（create_workflow）；同时实现 WorkflowUpdater 时也用于 update_workflow。
+	WorkflowCreator runtimecontext.WorkflowCreator
+	// AnalysisRunner 提交分析运行（run_analysis）；同时实现 AnalysisUpdater 时也用于 update_analysis。
+	AnalysisRunner runtimecontext.AnalysisRunner
 	// MemorySaver 保存用户长期记忆（save_memory）。
 	MemorySaver runtimecontext.MemorySaver
 
 	// 以下为只读浏览能力，按资源拆成窄接口。
 	ScriptBrowser   runtimecontext.ScriptBrowser
 	NodeBrowser     runtimecontext.AnalysisNodeBrowser
+	WorkflowBrowser runtimecontext.WorkflowBrowser
+	AnalysisBrowser runtimecontext.AnalysisBrowser
 	TemplateBrowser runtimecontext.ContainerTemplateBrowser
 	DatasetBrowser  runtimecontext.DatasetBrowser
 	ReportContext   runtimecontext.ProjectReportContextResolver
@@ -65,6 +71,28 @@ type Deps struct {
 // 因此 Deps 只暴露 ScriptCreator，这里按需断言，避免调用方重复装配两个字段。
 func (d Deps) scriptUpdater() runtimecontext.ScriptUpdater {
 	if updater, ok := d.ScriptCreator.(runtimecontext.ScriptUpdater); ok {
+		return updater
+	}
+	return nil
+}
+
+// workflowUpdater 返回「更新工作流」能力。
+//
+// 容器侧的工作流实现同时实现 WorkflowCreator 与 WorkflowUpdater（同一份读改写逻辑），
+// 因此 Deps 只暴露 WorkflowCreator，这里按需断言。
+func (d Deps) workflowUpdater() runtimecontext.WorkflowUpdater {
+	if updater, ok := d.WorkflowCreator.(runtimecontext.WorkflowUpdater); ok {
+		return updater
+	}
+	return nil
+}
+
+// analysisUpdater 返回「更新分析运行」能力。
+//
+// 容器侧的分析运行实现同时实现 AnalysisRunner 与 AnalysisUpdater（共用同一份保存流程），
+// 因此 Deps 只暴露 AnalysisRunner，这里按需断言。
+func (d Deps) analysisUpdater() runtimecontext.AnalysisUpdater {
+	if updater, ok := d.AnalysisRunner.(runtimecontext.AnalysisUpdater); ok {
 		return updater
 	}
 	return nil
