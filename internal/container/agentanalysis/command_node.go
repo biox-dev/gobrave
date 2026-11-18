@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
@@ -26,7 +28,9 @@ type agentRunAnalysis struct {
 	containerRepo interfaces.ContainerRepository
 	preparer      prepare.NodeRuntimePreparer
 	nodeRunner    runtimecontext.AnalysisNodeRunner
-	cfg           *config.Config
+	// resources 记录「当前会话 ↔ 分析节点」的关联。
+	resources agentinterfaces.SessionResourceService
+	cfg       *config.Config
 }
 
 // NewAgentAnalysisRunner 构建 create_analysis_node_agent 工具的执行器。
@@ -35,6 +39,7 @@ func NewAgentAnalysisRunner(
 	containerRepo interfaces.ContainerRepository,
 	preparer prepare.NodeRuntimePreparer,
 	nodeRunner runtimecontext.AnalysisNodeRunner,
+	resources agentinterfaces.SessionResourceService,
 	cfg *config.Config,
 ) runtimecontext.AgentAnalysisRunner {
 	return &agentRunAnalysis{
@@ -42,6 +47,7 @@ func NewAgentAnalysisRunner(
 		containerRepo: containerRepo,
 		preparer:      preparer,
 		nodeRunner:    nodeRunner,
+		resources:     resources,
 		cfg:           cfg,
 	}
 }
@@ -89,6 +95,10 @@ func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in runtimeco
 	}
 	if err := r.analysisRepo.CreateAnalysisNodes(ctx, []*types.AnalysisNode{node}); err != nil {
 		return result, fmt.Errorf("create analysis node: %w", err)
+	}
+	// 记录「当前会话创建了该分析节点」；关联失败不影响创建结果。
+	if r.resources != nil {
+		_ = r.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeAnalysisNode, node.ID)
 	}
 	if err := r.preparer.Prepare(ctx, node); err != nil {
 		return result, fmt.Errorf("prepare node workspace: %w", err)

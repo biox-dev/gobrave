@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
@@ -36,7 +38,9 @@ type analysisNodeParamsBuilder struct {
 	workflowSvc  interfaces.WorkflowService
 	dataSvc      interfaces.DataService
 	preparer     prepare.NodeRuntimePreparer
-	cfg          *config.Config
+	// resources 记录「当前会话 ↔ 分析节点」的关联（修改节点参数后写入）。
+	resources agentinterfaces.SessionResourceService
+	cfg       *config.Config
 }
 
 // NewParamsBuilder 构建「生成分析节点参数」执行器并注入内置工具体系。
@@ -46,6 +50,7 @@ func NewParamsBuilder(
 	workflowSvc interfaces.WorkflowService,
 	dataSvc interfaces.DataService,
 	preparer prepare.NodeRuntimePreparer,
+	resources agentinterfaces.SessionResourceService,
 	cfg *config.Config,
 ) runtimecontext.AnalysisNodeParamsBuilder {
 	return &analysisNodeParamsBuilder{
@@ -54,6 +59,7 @@ func NewParamsBuilder(
 		workflowSvc:  workflowSvc,
 		dataSvc:      dataSvc,
 		preparer:     preparer,
+		resources:    resources,
 		cfg:          cfg,
 	}
 }
@@ -141,6 +147,11 @@ func (b *analysisNodeParamsBuilder) BuildAnalysisNodeParams(ctx context.Context,
 	}
 	if err := b.analysisRepo.UpdateAnalysisNodeByID(ctx, node.ID, update); err != nil {
 		return result, fmt.Errorf("failed to update analysis node %d: %w", node.ID, err)
+	}
+
+	// 记录「当前会话修改了该分析节点」：别的会话修改同一节点时会各记一条关联。
+	if b.resources != nil {
+		_ = b.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeAnalysisNode, node.ID)
 	}
 
 	// 让内存中的节点与刚写入的字段一致，Prepare 会依据它们构建 params.json。

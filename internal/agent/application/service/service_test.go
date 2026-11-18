@@ -33,7 +33,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("get sql db: %v", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&agenttypes.Task{}, &agenttypes.PermissionRequest{}, &agenttypes.QuestionRequest{}, &agenttypes.Session{}, &agenttypes.Message{}, &agenttypes.Memory{}, &agenttypes.Profile{}); err != nil {
+	if err := db.AutoMigrate(&agenttypes.Task{}, &agenttypes.PermissionRequest{}, &agenttypes.QuestionRequest{}, &agenttypes.Session{}, &agenttypes.Message{}, &agenttypes.Memory{}, &agenttypes.Profile{}, &agenttypes.SessionResource{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return db

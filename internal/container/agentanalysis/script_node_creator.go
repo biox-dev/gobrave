@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
@@ -32,7 +34,9 @@ type scriptNodeCreator struct {
 	dataSvc interfaces.DataService
 	// preparer 负责写节点 params.json / run.sh / env.sh，并软链脚本与 io_schema.json。
 	preparer prepare.NodeRuntimePreparer
-	cfg      *config.Config
+	// resources 记录「当前会话 ↔ 分析节点」的关联。
+	resources agentinterfaces.SessionResourceService
+	cfg       *config.Config
 }
 
 // NewScriptNodeCreator 构建「为已有脚本创建分析节点」执行器并注入内置工具体系。
@@ -41,6 +45,7 @@ func NewScriptNodeCreator(
 	analysisRepo interfaces.AnalysisRepository,
 	dataSvc interfaces.DataService,
 	preparer prepare.NodeRuntimePreparer,
+	resources agentinterfaces.SessionResourceService,
 	cfg *config.Config,
 ) runtimecontext.AnalysisNodeCreator {
 	return &scriptNodeCreator{
@@ -48,6 +53,7 @@ func NewScriptNodeCreator(
 		analysisRepo: analysisRepo,
 		dataSvc:      dataSvc,
 		preparer:     preparer,
+		resources:    resources,
 		cfg:          cfg,
 	}
 }
@@ -123,6 +129,11 @@ func (c *scriptNodeCreator) createNode(ctx context.Context, script *types.Script
 
 	if err := c.analysisRepo.CreateAnalysisNodes(ctx, []*types.AnalysisNode{node}); err != nil {
 		return nil, fmt.Errorf("failed to create analysis node: %w", err)
+	}
+
+	// 记录「当前会话创建了该分析节点」；关联失败不影响创建结果。
+	if c.resources != nil {
+		_ = c.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeAnalysisNode, node.ID)
 	}
 
 	// 运行期文件（params.json / run.sh / env.sh 与软链）；有 request_param 时 params.json 即已就绪。

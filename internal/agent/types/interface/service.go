@@ -23,6 +23,15 @@ type SessionService interface {
 	Delete(ctx context.Context, id int64) error
 }
 
+// SessionResourceService 记录并查询「会话 ↔ 资源」关联。
+type SessionResourceService interface {
+	// LinkFromContext 记录当前工具执行会话与资源的关联。
+	// 非 Agent 会话触发的写操作（ctx 中没有会话 ID）会静默跳过，不视为错误。
+	LinkFromContext(ctx context.Context, resourceType types.SessionResourceType, resourceIDs ...int64) error
+	// List 返回某个会话关联的指定类型资源（按创建时间倒序）。
+	List(ctx context.Context, sessionID int64, resourceType types.SessionResourceType) ([]types.SessionResource, error)
+}
+
 // MessageService 提供消息的增删改查。
 type MessageService interface {
 	Create(ctx context.Context, params types.MessageCreateParams) (types.Message, error)

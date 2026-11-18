@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/types"
 	"gorm.io/gorm"
 )
@@ -66,6 +67,11 @@ func (c *scriptCreator) UpdateScriptInfo(ctx context.Context, in runtimecontext.
 			return runtimecontext.ScriptUpdateResult{}, fmt.Errorf("update_script: script %d not found", script.ID)
 		}
 		return runtimecontext.ScriptUpdateResult{}, fmt.Errorf("update_script: failed to update script: %w", err)
+	}
+
+	// 记录「当前会话修改了该脚本」：别的会话修改同一脚本时会各记一条关联。
+	if c.resources != nil {
+		_ = c.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeScript, script.ID)
 	}
 
 	// 3) 回传脚本在磁盘上的关键路径，便于模型继续读写脚本内容。

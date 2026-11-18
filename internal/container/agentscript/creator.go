@@ -9,6 +9,8 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool/builtin"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -33,7 +35,9 @@ type scriptCreator struct {
 	projectRepo interfaces.ProjectRepository
 	// containerRepo 用于解析默认容器模板（create_script 未传 container_template_id 时）。
 	containerRepo interfaces.ContainerRepository
-	cfg           *config.Config
+	// resources 记录「当前会话 ↔ 脚本」的关联（创建 / 更新成功后写入）。
+	resources agentinterfaces.SessionResourceService
+	cfg       *config.Config
 }
 
 // NewCreator 构建「创建脚本」执行器并注入内置工具体系。
@@ -45,12 +49,14 @@ func NewCreator(
 	workflowSvc interfaces.WorkflowService,
 	projectRepo interfaces.ProjectRepository,
 	containerRepo interfaces.ContainerRepository,
+	resources agentinterfaces.SessionResourceService,
 	cfg *config.Config,
 ) runtimecontext.ScriptCreator {
 	return &scriptCreator{
 		workflowSvc:   workflowSvc,
 		projectRepo:   projectRepo,
 		containerRepo: containerRepo,
+		resources:     resources,
 		cfg:           cfg,
 	}
 }
@@ -116,6 +122,11 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.Scri
 	}
 	if err := c.workflowSvc.CreateScript(ctx, script); err != nil {
 		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to create script: %w", err)
+	}
+
+	// 记录「当前会话创建了该脚本」；关联失败不影响创建结果。
+	if c.resources != nil {
+		_ = c.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeScript, script.ID)
 	}
 
 	// 2) 初始化脚本目录：主文件 + io_schema.json。

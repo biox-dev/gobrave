@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/types"
 	"gorm.io/gorm"
@@ -124,6 +125,10 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 	currentCommand := ""
 	if content, readErr := prepare.ReadCommandRunScript(node.CommandPath); readErr == nil {
 		currentCommand = strings.TrimSpace(content)
+	}
+	// 记录「当前会话修改了该分析节点」：别的会话修改同一节点时会各记一条关联。
+	if u.resources != nil {
+		_ = u.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeAnalysisNode, node.ID)
 	}
 	return runtimecontext.AgentAnalysisUpdateResult{
 		AnalysisNodeID:      node.ID,

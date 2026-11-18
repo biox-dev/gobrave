@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -125,6 +126,11 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 	requestParam := DecodeRequestParam(node.RequestParam)
 	if in.RequestParam != nil {
 		requestParam = in.RequestParam
+	}
+
+	// 记录「当前会话修改了该分析节点」：别的会话修改同一节点时会各记一条关联。
+	if u.resources != nil {
+		_ = u.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeAnalysisNode, node.ID)
 	}
 
 	return runtimecontext.ScriptAnalysisUpdateResult{

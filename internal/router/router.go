@@ -47,6 +47,8 @@ type RouterParams struct {
 	RealtimeHandler  *handler.RealtimeHandler
 	AISummaryHandler *handler.AISummaryHandler
 	AgentHandler     *handler.AgentHandler
+	// SessionResourceHandler 提供会话结果（脚本 / 工作流 / 分析节点）查询。
+	SessionResourceHandler *handler.SessionResourceHandler
 }
 
 func NewRouter(params RouterParams) *gin.Engine {
@@ -107,7 +109,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterFileRoutes(v1, params.FileHandler)
 		RegisterRealtimeRoutes(v1, params.RealtimeHandler)
 		RegisterAISummaryRoutes(v1, params.AISummaryHandler)
-		RegisterAgentRoutes(v1, params.AgentHandler)
+		RegisterAgentRoutes(v1, params.AgentHandler, params.SessionResourceHandler)
 	}
 
 	// r.Any("/brave-api", params.ProxyHandler.BraveAPIProxy)
@@ -471,7 +473,7 @@ func RegisterAISummaryRoutes(r *gin.RouterGroup, handler *handler.AISummaryHandl
 	r.POST("/ai-summary/delete", handler.DeleteAISummary)
 }
 
-func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
+func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler, sessionResources *handler.SessionResourceHandler) {
 	r.POST("/agent/chat", handler.Chat)
 	r.POST("/agent/env/describe", handler.DescribeEnv)
 	r.POST("/agent/task/create", handler.CreateTask)
@@ -494,6 +496,8 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler) {
 	r.POST("/agent/session/page", handler.PageSessions)
 	r.GET("/agent/session/get", handler.GetSession)
 	r.POST("/agent/session/fork", handler.ForkSession)
+	// 会话结果：按资源类型（script / workflow / analysis_node）查询该会话关联的脚本 / 工作流 / 分析节点。
+	r.GET("/agent/session/resources", sessionResources.ListSessionResources)
 	// 兼容旧路径（前端仍在使用 /agent/conversation/*）。
 	r.POST("/agent/conversation/page", handler.PageSessions)
 	r.GET("/agent/conversation/get", handler.GetSession)

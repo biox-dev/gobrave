@@ -104,6 +104,17 @@ type MessageStore interface {
 	DeleteBySession(ctx context.Context, sessionID int64) error
 }
 
+// SessionResourceStore 是「会话 ↔ 资源」关联的持久化端口。
+type SessionResourceStore interface {
+	// Link 记录会话与资源（脚本 / 工作流 / 分析节点）的关联。
+	// 同一 (session_id, resource_type, resource_id) 重复写入时静默跳过，保证关联不重复。
+	Link(ctx context.Context, sessionID int64, resourceType types.SessionResourceType, resourceIDs []int64) error
+	// List 返回某个会话关联的指定类型资源（按创建时间倒序）。
+	List(ctx context.Context, sessionID int64, resourceType types.SessionResourceType) ([]*types.SessionResource, error)
+	// DeleteBySession 删除某个会话的全部资源关联（会话删除时级联清理）。
+	DeleteBySession(ctx context.Context, sessionID int64) error
+}
+
 // HistoryStore 是文件历史的持久化端口。
 type HistoryStore interface {
 	Create(ctx context.Context, file *types.File) error

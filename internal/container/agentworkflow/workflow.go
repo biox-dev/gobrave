@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/exportcodec"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -32,7 +34,9 @@ type workflowManager struct {
 	workflowSvc interfaces.WorkflowService
 	projectRepo interfaces.ProjectRepository
 	codecs      *exportcodec.Registry
-	cfg         *config.Config
+	// resources 记录「当前会话 ↔ 工作流」的关联（创建 / 更新成功后写入）。
+	resources agentinterfaces.SessionResourceService
+	cfg       *config.Config
 }
 
 // NewManager 构建「创建工作流 / 更新工作流」执行器并注入内置工具体系。
@@ -44,12 +48,14 @@ func NewManager(
 	workflowSvc interfaces.WorkflowService,
 	projectRepo interfaces.ProjectRepository,
 	codecs *exportcodec.Registry,
+	resources agentinterfaces.SessionResourceService,
 	cfg *config.Config,
 ) runtimecontext.WorkflowCreator {
 	return &workflowManager{
 		workflowSvc: workflowSvc,
 		projectRepo: projectRepo,
 		codecs:      codecs,
+		resources:   resources,
 		cfg:         cfg,
 	}
 }
@@ -105,6 +111,11 @@ func (m *workflowManager) CreateWorkflow(ctx context.Context, in runtimecontext.
 	}
 	if err := m.workflowSvc.CreateWorkflow(ctx, workflow); err != nil {
 		return runtimecontext.WorkflowCreateResult{}, fmt.Errorf("create_workflow: failed to create workflow: %w", err)
+	}
+
+	// 记录「当前会话创建了该工作流」；关联失败不影响创建结果。
+	if m.resources != nil {
+		_ = m.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeWorkflow, workflow.ID)
 	}
 
 	// 2) 初始化工作流目录：dag_definition.json / io_schema.json / README.md。
@@ -210,6 +221,11 @@ func (m *workflowManager) UpdateWorkflow(ctx context.Context, in runtimecontext.
 	warnings := make([]string, 0, 1)
 	if warn := m.regenerateWorkflowJSON(ctx, workflow, baseDir); warn != "" {
 		warnings = append(warnings, warn)
+	}
+
+	// 记录「当前会话修改了该工作流」：别的会话修改同一工作流时会各记一条关联。
+	if m.resources != nil {
+		_ = m.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeWorkflow, workflow.ID)
 	}
 
 	return runtimecontext.WorkflowUpdateResult{

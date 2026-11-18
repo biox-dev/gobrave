@@ -2,6 +2,7 @@ package agentanalysis
 
 import (
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 )
@@ -22,6 +23,8 @@ type analysisNodeUpdater struct {
 	containerRepo interfaces.ContainerRepository
 	// preparer 负责在 command / request_param 变更后重新生成 run.sh / params.json 等运行期文件。
 	preparer prepare.NodeRuntimePreparer
+	// resources 记录「当前会话 ↔ 分析节点」的关联（更新成功后写入）。
+	resources agentinterfaces.SessionResourceService
 }
 
 // NewNodeUpdater 构建「更新分析节点」执行器并注入内置工具体系。
@@ -31,6 +34,7 @@ func NewNodeUpdater(
 	dataSvc interfaces.DataService,
 	containerRepo interfaces.ContainerRepository,
 	preparer prepare.NodeRuntimePreparer,
+	resources agentinterfaces.SessionResourceService,
 ) runtimecontext.AnalysisNodeUpdater {
 	return &analysisNodeUpdater{
 		analysisSvc:   analysisSvc,
@@ -38,5 +42,6 @@ func NewNodeUpdater(
 		dataSvc:       dataSvc,
 		containerRepo: containerRepo,
 		preparer:      preparer,
+		resources:     resources,
 	}
 }

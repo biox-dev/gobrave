@@ -683,6 +683,13 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.SessionService {
 		return agentservice.NewSessionService(agentrepository.NewGormSessionStore(db))
 	}))
+	// 会话资源关联：记录「会话 ↔ 脚本 / 工作流 / 分析节点」的结果关系。
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.SessionResourceStore {
+		return agentrepository.NewGormSessionResourceStore(db)
+	}))
+	must(container.Provide(func(store agentinterfaces.SessionResourceStore) agentinterfaces.SessionResourceService {
+		return agentservice.NewSessionResourceService(store)
+	}))
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.MessageService {
 		return agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))
 	}))
@@ -935,6 +942,8 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(handler.NewRuntimeContextResolver))
 	must(container.Provide(handler.NewAISummaryHandler))
 	must(container.Provide(handler.NewAgentHandler))
+	// 会话结果查询：按资源类型返回会话关联的脚本 / 工作流 / 分析节点。
+	must(container.Provide(handler.NewSessionResourceHandler))
 	// must(container.Provide(handler.NewTraceHandler))
 
 	// must(container.Provide(grpcserver.NewTraceServer))
@@ -1254,6 +1263,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&agenttypes.Session{},
 		&agenttypes.Message{},
 		&agenttypes.File{},
+		&agenttypes.SessionResource{},
 		&agenttypes.Memory{},
 		&agenttypes.Profile{},
 	// &types.Trace{},

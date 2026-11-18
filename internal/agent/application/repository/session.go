@@ -48,6 +48,10 @@ func (r *gormSessionStore) Delete(ctx context.Context, id int64) error {
 		if err := tx.Where("session_id = ?", id).Delete(&agent.File{}).Error; err != nil {
 			return err
 		}
+		// 会话删除时级联清理资源关联，避免留下指向已删除会话的孤儿记录。
+		if err := tx.Where("session_id = ?", id).Delete(&agent.SessionResource{}).Error; err != nil {
+			return err
+		}
 		return tx.Where("id = ?", id).Delete(&agent.Session{}).Error
 	})
 }
