@@ -366,6 +366,8 @@ type AppSession struct {
 type AppSessionPageQuery struct {
 	AnalysisNodeID *int64 `json:"analysis_node_id,string,omitempty"`
 	ProjectID      *int64 `json:"project_id,omitempty"`
+	// AgentSessionID 限定「由某个 Agent 会话创建」的会话（AppSession.AgentSessionID）。
+	AgentSessionID *int64 `json:"agent_session_id,string,omitempty"`
 }
 
 func (AppSession) TableName() string {
