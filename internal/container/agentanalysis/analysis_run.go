@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/analysisform"
 	"github.com/biox-dev/gobrave/internal/compiler"
 	"github.com/biox-dev/gobrave/internal/dag/scheduler"
@@ -14,8 +16,9 @@ import (
 )
 
 // 本文件实现「分析运行（nextflow 行）」级别的能力：
-//   - runtimecontext.AnalysisUpdater（update_analysis）：改名 / 改参数 / 改缓存策略；
-//   - runtimecontext.AnalysisRunner（run_analysis）：提交一次运行交给所属调度器。
+//   - runtimecontext.AnalysisCreator（create_analysis_workflow）：为工作流新建一次运行，见 analysis_create.go；
+//   - runtimecontext.AnalysisUpdater（update_analysis_workflow）：改名 / 改参数 / 改缓存策略；
+//   - runtimecontext.AnalysisRunner（run_analysis_workflow）：提交一次运行交给所属调度器。
 //
 // 两者共用同一个「保存 + 编译」流程，与 handler.SaveAnalysisController 完全同口径：
 //  1. 按工作流表单（analysisform.BuildParseAnalysisResult）把 request_param 解析成
@@ -23,26 +26,29 @@ import (
 //  2. 静态图调度器需要时把 DAG 编译成 analysis_nodes / analysis_edges 并随保存落库
 //     （compiler.BuildRuntimeTasks）；
 //  3. analysisService.SaveAnalysisController 负责写 params.json、重置节点状态与缓存策略；
-//  4. run_analysis 额外调用 orchestrator.StartAsync 异步推进。
+//  4. run_analysis_workflow 额外调用 orchestrator.StartAsync 异步推进。
 //
 // 这样 Agent 侧的分析提交与 UI 侧不会产生两套语义。
 
-// analysisManager 同时实现 runtimecontext.AnalysisUpdater 与 runtimecontext.AnalysisRunner。
+// analysisManager 同时实现 runtimecontext.AnalysisCreator / AnalysisUpdater / AnalysisRunner。
 type analysisManager struct {
 	analysisSvc interfaces.AnalysisService
 	workflowSvc interfaces.WorkflowService
 	projectRepo interfaces.ProjectRepository
 	dataSvc     interfaces.DataService
 	schedulers  *scheduler.Registry
+	// resources 记录「当前会话 ↔ 分析运行」的关联（创建 / 更新 / 提交成功后写入）。
+	resources agentinterfaces.SessionResourceService
 }
 
-// NewManager 构建「更新分析运行 / 提交分析运行」执行器并注入内置工具体系。
+// NewManager 构建「创建 / 更新 / 提交分析运行」执行器并注入内置工具体系。
 func NewManager(
 	analysisSvc interfaces.AnalysisService,
 	workflowSvc interfaces.WorkflowService,
 	projectRepo interfaces.ProjectRepository,
 	dataSvc interfaces.DataService,
 	schedulers *scheduler.Registry,
+	resources agentinterfaces.SessionResourceService,
 ) runtimecontext.AnalysisRunner {
 	return &analysisManager{
 		analysisSvc: analysisSvc,
@@ -50,6 +56,7 @@ func NewManager(
 		projectRepo: projectRepo,
 		dataSvc:     dataSvc,
 		schedulers:  schedulers,
+		resources:   resources,
 	}
 }
 
@@ -61,15 +68,20 @@ func (m *analysisManager) UpdateAnalysis(ctx context.Context, in runtimecontext.
 		analysisName: in.AnalysisName,
 		requestParam: in.RequestParam,
 		cacheType:    in.CacheType,
-	}, "update_analysis")
+	}, "update_analysis_workflow")
 	if err != nil {
 		return runtimecontext.AnalysisUpdateResult{}, err
 	}
 	originalName := prepared.analysis.AnalysisName
 
-	saved, _, _, err := m.save(ctx, prepared, "update_analysis")
+	saved, _, _, err := m.save(ctx, prepared, "update_analysis_workflow")
 	if err != nil {
 		return runtimecontext.AnalysisUpdateResult{}, err
+	}
+
+	// 记录「当前会话修改了该分析运行」；关联失败不影响更新结果。
+	if m.resources != nil {
+		_ = m.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeAnalysis, saved.ID)
 	}
 
 	changed := make([]string, 0, 3)
@@ -96,20 +108,25 @@ func (m *analysisManager) RunAnalysis(ctx context.Context, in runtimecontext.Ana
 		analysisID:   in.AnalysisID,
 		requestParam: in.RequestParam,
 		cacheType:    in.CacheType,
-	}, "run_analysis")
+	}, "run_analysis_workflow")
 	if err != nil {
 		return runtimecontext.AnalysisRunResult{}, err
 	}
 
-	saved, parseResult, dagDefinition, err := m.save(ctx, prepared, "run_analysis")
+	saved, parseResult, dagDefinition, err := m.save(ctx, prepared, "run_analysis_workflow")
 	if err != nil {
 		return runtimecontext.AnalysisRunResult{}, err
+	}
+
+	// 提交运行同样会重写分析记录，视为本会话「修改了该分析运行」。
+	if m.resources != nil {
+		_ = m.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeAnalysis, saved.ID)
 	}
 
 	// 与 handler.SaveAnalysisController 一致：StartAsync 需要 parse_analysis_result 与
 	// DAG 定义，由调度器按各自策略使用（运行时物化的调度器忽略持久化的图）。
 	if err := prepared.orchestrator.StartAsync(ctx, saved.ID, parseResult, dagDefinition); err != nil {
-		return runtimecontext.AnalysisRunResult{}, fmt.Errorf("run_analysis: failed to start scheduler %s: %w", prepared.orchestrator.Name(), err)
+		return runtimecontext.AnalysisRunResult{}, fmt.Errorf("run_analysis_workflow: failed to start scheduler %s: %w", prepared.orchestrator.Name(), err)
 	}
 
 	brief := m.brief(ctx, saved, prepared.orchestrator)
@@ -224,7 +241,7 @@ func (m *analysisManager) save(
 	toolName string,
 ) (*types.Analysis, map[string]any, map[string]any, error) {
 	analysis := prepared.analysis
-	parseResult, dagDefinition, err := m.buildParseResult(ctx, analysis, prepared.name, prepared.requestParam)
+	parseResult, dagDefinition, err := m.buildParseResult(ctx, analysis.WorkflowID, prepared.name, prepared.requestParam)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", toolName, err)
 	}
@@ -273,18 +290,18 @@ func (m *analysisManager) save(
 }
 
 // buildParseResult 按工作流表单把 request_param 解析成 parse_analysis_result。
-func (m *analysisManager) buildParseResult(ctx context.Context, analysis *types.Analysis, analysisName string, requestParam map[string]any) (map[string]any, map[string]any, error) {
-	formJSON, err := m.workflowSvc.GetFormJSONByWorkflowID(ctx, analysis.WorkflowID)
+func (m *analysisManager) buildParseResult(ctx context.Context, workflowID int64, analysisName string, requestParam map[string]any) (map[string]any, map[string]any, error) {
+	formJSON, err := m.workflowSvc.GetFormJSONByWorkflowID(ctx, workflowID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load workflow %d form: %w", analysis.WorkflowID, err)
+		return nil, nil, fmt.Errorf("failed to load workflow %d form: %w", workflowID, err)
 	}
 	parseResult, err := analysisform.BuildParseAnalysisResult(ctx, m.dataSvc, requestParam, formJSON, analysisName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse request_param: %w", err)
 	}
-	dagDefinition, err := m.workflowSvc.GetWorkflowVisByWorkflowID(ctx, analysis.WorkflowID)
+	dagDefinition, err := m.workflowSvc.GetWorkflowVisByWorkflowID(ctx, workflowID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load workflow %d dag_definition: %w", analysis.WorkflowID, err)
+		return nil, nil, fmt.Errorf("failed to load workflow %d dag_definition: %w", workflowID, err)
 	}
 	return parseResult, dagDefinition, nil
 }

@@ -17,6 +17,9 @@ const (
 	SessionResourceTypeWorkflow SessionResourceType = "workflow"
 	// SessionResourceTypeAnalysisNode 对应 create_analysis_node_* / update_analysis_node_* 产出或修改的分析节点。
 	SessionResourceTypeAnalysisNode SessionResourceType = "analysis_node"
+	// SessionResourceTypeAnalysis 对应 create_analysis_workflow / update_analysis_workflow /
+	// run_analysis_workflow 创建或修改的分析运行（工作流的一次提交）。
+	SessionResourceTypeAnalysis SessionResourceType = "analysis"
 	// SessionResourceTypeAppSession 对应 AppSession.AgentSessionID 指向该会话的应用 / 终端会话。
 	// 它不落 agent_session_resources，而是按 AgentSessionID 实时查询 AppSession。
 	SessionResourceTypeAppSession SessionResourceType = "app_session"
@@ -26,7 +29,8 @@ const (
 func (t SessionResourceType) Valid() bool {
 	switch t {
 	case SessionResourceTypeScript, SessionResourceTypeWorkflow,
-		SessionResourceTypeAnalysisNode, SessionResourceTypeAppSession:
+		SessionResourceTypeAnalysisNode, SessionResourceTypeAnalysis,
+		SessionResourceTypeAppSession:
 		return true
 	default:
 		return false

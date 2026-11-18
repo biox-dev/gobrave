@@ -565,7 +565,7 @@ type WorkflowUpdater interface {
 	UpdateWorkflow(ctx context.Context, input WorkflowUpdateInput) (WorkflowUpdateResult, error)
 }
 
-// AnalysisBrowser 抽象「按 ID 查看分析运行」的只读能力（get_analysis）。
+// AnalysisBrowser 抽象「按 ID 查看分析运行」的只读能力（get_analysis_workflow）。
 //
 // 这里的 analysis 指 nextflow 表的一行（一次工作流运行），不是单个节点。
 type AnalysisBrowser interface {
@@ -575,7 +575,19 @@ type AnalysisBrowser interface {
 	GetAnalysisByID(ctx context.Context, projectID int64, analysisID int64) (AnalysisDetail, error)
 }
 
-// AnalysisUpdater 抽象「更新分析运行」的业务能力（update_analysis）。
+// AnalysisCreator 抽象「为工作流新建一次分析运行」的业务能力（create_analysis_workflow）。
+//
+// 创建与提交是两步：创建只落库 + 写 params.json（job_status=created），
+// 提交运行由 AnalysisRunner 负责（可先建后跑，也可建完即跑）。
+type AnalysisCreator interface {
+	// CreateAnalysis 在当前激活项目下为指定工作流新建一次分析运行（不提交运行）。
+	//
+	// RequestParam 按工作流表单解析并落库（空 map 表示无参数）；AnalysisName 为空时
+	// 使用工作流名称。工作流必须属于当前激活项目，否则返回错误。
+	CreateAnalysis(ctx context.Context, input AnalysisCreateInput) (AnalysisCreateResult, error)
+}
+
+// AnalysisUpdater 抽象「更新分析运行」的业务能力（update_analysis_workflow）。
 type AnalysisUpdater interface {
 	// UpdateAnalysis 更新分析运行的分析名称 / 请求参数 / 缓存策略。
 	//
@@ -584,7 +596,7 @@ type AnalysisUpdater interface {
 	UpdateAnalysis(ctx context.Context, input AnalysisUpdateInput) (AnalysisUpdateResult, error)
 }
 
-// AnalysisRunner 抽象「提交/重跑一次分析运行」的业务能力（run_analysis）。
+// AnalysisRunner 抽象「提交/重跑一次分析运行」的业务能力（run_analysis_workflow）。
 type AnalysisRunner interface {
 	// RunAnalysis 提交分析运行：按工作流 DAG 物化节点并交给所属调度器异步推进。
 	//
@@ -701,8 +713,25 @@ type AnalysisBrief struct {
 	NodeStatusCounts map[string]int `json:"node_status_counts,omitempty"`
 }
 
-// AnalysisDetail 是单次分析运行的只读详情（get_analysis 回传）。
+// AnalysisDetail 是单次分析运行的只读详情（get_analysis_workflow 回传）。
 type AnalysisDetail struct {
+	AnalysisBrief
+}
+
+// AnalysisCreateInput 是「为工作流新建一次分析运行」的入参。
+//
+// WorkflowID 是工作流主键（pipeline_components_relation.id）；AnalysisName 为空时
+// 回退到工作流名称；RequestParam 为 nil / 空 map 时表示本次运行没有参数。
+type AnalysisCreateInput struct {
+	ProjectID    int64          `json:"project_id,string"`
+	WorkflowID   int64          `json:"workflow_id,string"`
+	AnalysisName string         `json:"analysis_name,omitempty"`
+	RequestParam map[string]any `json:"request_param,omitempty"`
+	CacheType    *int           `json:"cache_type,omitempty"`
+}
+
+// AnalysisCreateResult 是「为工作流新建一次分析运行」的结果（回传给模型）。
+type AnalysisCreateResult struct {
 	AnalysisBrief
 }
 

@@ -10,24 +10,24 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
-// GetAnalysisToolName 是「按 ID 查看分析运行」工具名。
-const GetAnalysisToolName = "get_analysis"
+// GetAnalysisWorkflowToolName 是「按 ID 查看分析运行（工作流运行）」工具名。
+const GetAnalysisWorkflowToolName = "get_analysis_workflow"
 
-// GetAnalysisInput 是 get_analysis 工具的入参。
+// GetAnalysisWorkflowInput 是 get_analysis_workflow 工具的入参。
 //
 // AnalysisID 是一次分析运行的主键（nextflow 表 id），不是分析节点 ID。
-type GetAnalysisInput struct {
+type GetAnalysisWorkflowInput struct {
 	AnalysisID string `json:"analysis_id"` // 分析运行主键 ID（必填，支持 "@analysis:<id>" 形式，字符串以保精度）
 }
 
-// GetAnalysisOutput 是 get_analysis 工具返回给模型的结果。
-type GetAnalysisOutput struct {
+// GetAnalysisWorkflowOutput 是 get_analysis_workflow 工具返回给模型的结果。
+type GetAnalysisWorkflowOutput struct {
 	runtimecontext.AnalysisDetail
 	Error string `json:"error,omitempty"`
 }
 
-// getAnalysisDescription 返回 get_analysis 的工具描述（Markdown 格式）。
-func getAnalysisDescription() string {
+// getAnalysisWorkflowDescription 返回 get_analysis_workflow 的工具描述（Markdown 格式）。
+func getAnalysisWorkflowDescription() string {
 	return `## 用途
 
 按 analysis_id 查看一次「分析运行」（nextflow 表的一行：某个工作流的一次提交）。用于回答用户对 @analysis:<id> 引用的提问：直接使用冒号后的 ID 作为 analysis_id。
@@ -49,35 +49,35 @@ func getAnalysisDescription() string {
 ## 后续工具
 
 - 看单个节点的参数与产物用 get_analysis_node（节点 ID 来自 UI 或项目分析树）。
-- 改名称 / 参数 / 缓存策略用 update_analysis；重新提交运行用 run_analysis。
+- 改名称 / 参数 / 缓存策略用 update_analysis_workflow；新建一次运行用 create_analysis_workflow，重新提交运行用 run_analysis_workflow。
 - 看工作流定义用 get_workflow（workflow_id 已随本工具回传）。`
 }
 
-// GetAnalysis 返回一个「按 ID 查看分析运行」工具。
+// GetAnalysisWorkflow 返回一个「按 ID 查看分析运行」工具。
 //
 // 该工具是只读的，因此声明 read 授权。
-func GetAnalysis(browser runtimecontext.AnalysisBrowser) tool.Tool {
+func GetAnalysisWorkflow(browser runtimecontext.AnalysisBrowser) tool.Tool {
 	return tool.NewFunc(
-		GetAnalysisToolName,
-		getAnalysisDescription(),
+		GetAnalysisWorkflowToolName,
+		getAnalysisWorkflowDescription(),
 		tool.Schema("按 ID 查看分析运行的入参", map[string]any{
 			"analysis_id": tool.StringProperty("分析运行主键 ID（必填，整数，字符串以保精度）。来自用户输入里的 @analysis:<id> 引用时直接使用冒号后的 ID。"),
 		}, "analysis_id"),
-		func(ctx context.Context, in GetAnalysisInput) (GetAnalysisOutput, error) {
-			projectID, err := requireProjectID(ctx, GetAnalysisToolName)
+		func(ctx context.Context, in GetAnalysisWorkflowInput) (GetAnalysisWorkflowOutput, error) {
+			projectID, err := requireProjectID(ctx, GetAnalysisWorkflowToolName)
 			if err != nil {
-				return GetAnalysisOutput{}, err
+				return GetAnalysisWorkflowOutput{}, err
 			}
 			analysisID, err := parseAnalysisID(in.AnalysisID)
 			if err != nil {
-				return GetAnalysisOutput{}, wrapToolNameError(GetAnalysisToolName, err)
+				return GetAnalysisWorkflowOutput{}, wrapToolNameError(GetAnalysisWorkflowToolName, err)
 			}
 			if browser == nil {
-				return GetAnalysisOutput{}, fmt.Errorf("%s: analysis browser is not available in this runtime", GetAnalysisToolName)
+				return GetAnalysisWorkflowOutput{}, fmt.Errorf("%s: analysis browser is not available in this runtime", GetAnalysisWorkflowToolName)
 			}
 
 			detail, loadErr := browser.GetAnalysisByID(ctx, projectID, analysisID)
-			out := GetAnalysisOutput{AnalysisDetail: detail}
+			out := GetAnalysisWorkflowOutput{AnalysisDetail: detail}
 			if loadErr != nil {
 				out.Error = loadErr.Error()
 			}

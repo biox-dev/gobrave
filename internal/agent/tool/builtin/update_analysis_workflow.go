@@ -8,39 +8,39 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 )
 
-// UpdateAnalysisToolName 是「更新分析运行」工具名。
-const UpdateAnalysisToolName = "update_analysis"
+// UpdateAnalysisWorkflowToolName 是「更新分析运行（工作流运行）」工具名。
+const UpdateAnalysisWorkflowToolName = "update_analysis_workflow"
 
-// UpdateAnalysisInput 是 update_analysis 工具的入参。
+// UpdateAnalysisWorkflowInput 是 update_analysis_workflow 工具的入参。
 //
 // 所有可选字段用指针 / nil map 表示：nil 表示不修改，非 nil 时按值覆盖。
 // RequestParam 显式传空对象（{}）表示清空参数。
-type UpdateAnalysisInput struct {
+type UpdateAnalysisWorkflowInput struct {
 	AnalysisID   string         `json:"analysis_id"`
 	AnalysisName *string        `json:"analysis_name"`
 	RequestParam map[string]any `json:"request_param"`
 	CacheType    *int           `json:"cache_type"`
 }
 
-// UpdateAnalysisOutput 是 update_analysis 工具返回给模型的结果。
-type UpdateAnalysisOutput struct {
+// UpdateAnalysisWorkflowOutput 是 update_analysis_workflow 工具返回给模型的结果。
+type UpdateAnalysisWorkflowOutput struct {
 	runtimecontext.AnalysisUpdateResult
 	Error string `json:"error,omitempty"`
 }
 
-// UpdateAnalysis 返回一个「更新分析运行」工具。
+// UpdateAnalysisWorkflow 返回一个「更新分析运行」工具。
 //
 // 行为：
 //   - analysis_id 必填，且分析必须属于当前激活项目；
 //   - 只覆盖本次给出的字段；未给出的保持原值；
 //   - request_param 非 nil 时按工作流表单重新解析并重写 params.json，节点状态按
-//     cache_type 重置（不做提交，运行请用 run_analysis）；
+//     cache_type 重置（不做提交，运行请用 run_analysis_workflow）；
 //   - 运行中的分析（running / stopping）拒绝修改。
 //
 // 该工具会写库并重写 params.json，因此声明 write 授权。
-func UpdateAnalysis(updater runtimecontext.AnalysisUpdater, browser runtimecontext.AnalysisBrowser) tool.Tool {
+func UpdateAnalysisWorkflow(updater runtimecontext.AnalysisUpdater, browser runtimecontext.AnalysisBrowser) tool.Tool {
 	return tool.NewFunc(
-		UpdateAnalysisToolName,
+		UpdateAnalysisWorkflowToolName,
 		`更新一次分析运行（nextflow 行）的分析名称 / 请求参数 / 缓存策略，不会提交运行。
 
 analysis_id 必填；analysis_name / request_param / cache_type 至少给出一个，未给出的字段保持原值。
@@ -50,7 +50,7 @@ analysis_id 必填；analysis_name / request_param / cache_type 至少给出一�
 - request_param：请求参数对象，键为工作流 io_schema.inputs 中各条目的 name。给出时会按工作流表单重新解析并重写分析目录下的 params.json，同时按 cache_type 重置节点状态；显式传空对象（{}）表示清空参数。
 - cache_type：缓存策略。1=全量重跑；2=复用已有节点；3=脚本未变则复用；4=脚本与参数都未变才复用。
 
-运行中的分析（job_status=running / stopping）不允许修改，需要先停止。要改完立即运行，改完再调用 run_analysis（或直接用 run_analysis 传 request_param 一步完成）。
+运行中的分析（job_status=running / stopping）不允许修改，需要先停止。要改完立即运行，改完再调用 run_analysis_workflow（或直接用 run_analysis_workflow 传 request_param 一步完成）。
 
 返回：更新后的分析摘要（含 job_status / scheduler_mode / params_path / request_param / 节点状态分布）与 changed。`,
 		tool.Schema("更新分析运行的入参", map[string]any{
@@ -62,20 +62,20 @@ analysis_id 必填；analysis_name / request_param / cache_type 至少给出一�
 			},
 			"cache_type": tool.IntegerProperty("缓存策略：1 全量重跑；2 复用已有节点；3 脚本未变则复用；4 脚本与参数都未变才复用。不修改时留空。"),
 		}, "analysis_id"),
-		func(ctx context.Context, in UpdateAnalysisInput) (UpdateAnalysisOutput, error) {
-			projectID, err := requireProjectID(ctx, UpdateAnalysisToolName)
+		func(ctx context.Context, in UpdateAnalysisWorkflowInput) (UpdateAnalysisWorkflowOutput, error) {
+			projectID, err := requireProjectID(ctx, UpdateAnalysisWorkflowToolName)
 			if err != nil {
-				return UpdateAnalysisOutput{}, err
+				return UpdateAnalysisWorkflowOutput{}, err
 			}
 			analysisID, err := parseAnalysisID(in.AnalysisID)
 			if err != nil {
-				return UpdateAnalysisOutput{}, wrapToolNameError(UpdateAnalysisToolName, err)
+				return UpdateAnalysisWorkflowOutput{}, wrapToolNameError(UpdateAnalysisWorkflowToolName, err)
 			}
 			if in.AnalysisName == nil && in.RequestParam == nil && in.CacheType == nil {
-				return UpdateAnalysisOutput{}, fmt.Errorf("%s: at least one of analysis_name / request_param / cache_type must be provided", UpdateAnalysisToolName)
+				return UpdateAnalysisWorkflowOutput{}, fmt.Errorf("%s: at least one of analysis_name / request_param / cache_type must be provided", UpdateAnalysisWorkflowToolName)
 			}
 			if updater == nil {
-				return UpdateAnalysisOutput{}, fmt.Errorf("%s: analysis updater is not available in this runtime", UpdateAnalysisToolName)
+				return UpdateAnalysisWorkflowOutput{}, fmt.Errorf("%s: analysis updater is not available in this runtime", UpdateAnalysisWorkflowToolName)
 			}
 
 			result, updateErr := updater.UpdateAnalysis(ctx, runtimecontext.AnalysisUpdateInput{
@@ -85,14 +85,14 @@ analysis_id 必填；analysis_name / request_param / cache_type 至少给出一�
 				RequestParam: in.RequestParam,
 				CacheType:    in.CacheType,
 			})
-			out := UpdateAnalysisOutput{AnalysisUpdateResult: result}
+			out := UpdateAnalysisWorkflowOutput{AnalysisUpdateResult: result}
 			if updateErr != nil {
 				out.Error = updateErr.Error()
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "更新分析运行的名称 / 参数 / 缓存策略（写库并重写 params.json）", func(ctx context.Context, in UpdateAnalysisInput) tool.PermissionPreview {
-		return previewAnalysisParams(ctx, browser, UpdateAnalysisToolName, in.AnalysisID, in.RequestParam)
+	).WithPermissionPreview("write", "", "更新分析运行的名称 / 参数 / 缓存策略（写库并重写 params.json）", func(ctx context.Context, in UpdateAnalysisWorkflowInput) tool.PermissionPreview {
+		return previewAnalysisParams(ctx, browser, UpdateAnalysisWorkflowToolName, in.AnalysisID, in.RequestParam)
 	})
 }
 

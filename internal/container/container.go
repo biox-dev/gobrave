@@ -604,7 +604,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(agentanalysis.NewNodeUpdater))
 	// 工作流写能力：创建工作流 / 更新工作流（create_workflow / update_workflow）。
 	must(container.Provide(agentworkflow.NewManager))
-	// 分析运行能力：更新分析运行 / 提交分析运行（update_analysis / run_analysis）。
+	// 分析运行能力：创建 / 更新 / 提交分析运行（create_analysis_workflow / update_analysis_workflow / run_analysis_workflow）。
 	must(container.Provide(agentanalysis.NewManager))
 	// 项目资源浏览器：把「脚本 / 分析节点 / 容器模板 / 数据集 / 报告上下文」只读能力
 	// 统一提供给内置只读工具。

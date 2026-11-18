@@ -79,7 +79,7 @@ func CreateWorkflow(creator runtimecontext.WorkflowCreator) tool.Tool {
 		CreateWorkflowToolName,
 		`在当前激活项目下创建一个新的分析工作流。
 
-创建工作流只产出「空壳 + 目录」：随后用 update_workflow 或直接编辑 dag_definition_path 指向的文件补 DAG 与 io_schema，再用 run_analysis 提交运行。
+创建工作流只产出「空壳 + 目录」：随后用 update_workflow 或直接编辑 dag_definition_path 指向的文件补 DAG 与 io_schema，再用 create_analysis_workflow（或对已有分析运行 run_analysis_workflow）提交运行。
 
 入参说明：
 - name：工作流名称（必填）。
@@ -87,7 +87,7 @@ func CreateWorkflow(creator runtimecontext.WorkflowCreator) tool.Tool {
 - dag_definition：DAG 定义。既可直接写 JSON 对象（推荐），也可写 JSON 字符串。结构为 {"nodes": [...], "edges": [...]}：
   - nodes[] 至少包含 id（节点唯一标识）、name（节点名）、script_id（引用的脚本 script_key，即脚本目录名 UUID）、inputs / outputs（句柄契约）；
   - edges[] 为 {"source": 源节点 id, "sourceHandle": 源输出句柄, "target": 目标节点 id, "targetHandle": 目标输入句柄}。
-- io_schema：工作流级输入契约，结构为 {"inputs": [...], "outputs": [...]}，inputs 的 name 就是 run_analysis 时 request_param 的键。
+- io_schema：工作流级输入契约，结构为 {"inputs": [...], "outputs": [...]}，inputs 的 name 就是 create_analysis_workflow 时 request_param 的键。
 - readme：工作流说明文档正文（写入工作流目录的 README.md），可留空。
 
 返回：workflow_id（主键，后续工具都用它）、workflow_key（relation_id，目录名）、workflow_dir、dag_definition_path、io_schema_path、readme_file 与 warning（workflow.json 重新生成失败时的提示）。所属项目取自当前会话上下文，无需传入。`,

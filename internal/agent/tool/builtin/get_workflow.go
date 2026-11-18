@@ -51,7 +51,7 @@ func getWorkflowDescription() string {
 ## 后续工具
 
 - 改名称 / 描述 / DAG / io_schema 用 update_workflow。
-- 用该工作流跑一次分析：先看 scripts 确认节点绑定的脚本，再提交分析运行（run_analysis，需要已存在的 analysis 记录）。
+- 用该工作流跑一次分析：先看 scripts 确认节点绑定的脚本，再用 create_analysis_workflow 建一次分析运行（默认创建后提交；已有分析运行时用 run_analysis_workflow）。
 - 查看单个脚本的输入输出契约用 get_script。`
 }
 

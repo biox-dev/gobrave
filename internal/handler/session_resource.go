@@ -14,9 +14,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SessionResourceHandler 提供会话结果（脚本 / 工作流 / 分析节点 / 应用会话）的查询接口。
+// SessionResourceHandler 提供会话结果（脚本 / 工作流 / 分析节点 / 分析运行 / 应用会话）的查询接口。
 //
-// 脚本 / 工作流 / 分析节点来自 agent_session_resources 关联表；应用 / 终端会话
+// 脚本 / 工作流 / 分析节点 / 分析运行来自 agent_session_resources 关联表；应用 / 终端会话
 // 不落关联表，而是按 AppSession.AgentSessionID 实时查询。资源名称在返回时按主键补全；
 // 资源已被删除时名称留空，但记录仍返回，便于前端提示「资源已不存在」而不是静默丢失。
 type SessionResourceHandler struct {
@@ -54,11 +54,11 @@ type sessionResourceItem struct {
 
 // ListSessionResources godoc
 // @Summary      查询会话关联的资源
-// @Description  按资源类型返回当前用户的某个会话产生 / 修改过的结果（脚本 / 工作流 / 分析节点 / 应用会话）
+// @Description  按资源类型返回当前用户的某个会话产生 / 修改过的结果（脚本 / 工作流 / 分析节点 / 分析运行 / 应用会话）
 // @Tags         Agent
 // @Produce      json
 // @Param        session_id     query     string  true  "会话 ID"
-// @Param        resource_type  query     string  true  "资源类型：script / workflow / analysis_node / app_session"
+// @Param        resource_type  query     string  true  "资源类型：script / workflow / analysis_node / analysis / app_session"
 // @Success      200  {object}  map[string]interface{}
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
@@ -78,7 +78,7 @@ func (h *SessionResourceHandler) ListSessionResources(c *gin.Context) {
 	}
 	resourceType := agenttypes.SessionResourceType(strings.TrimSpace(c.Query("resource_type")))
 	if !resourceType.Valid() {
-		c.Error(errors.NewValidationError("invalid resource_type; expected script / workflow / analysis_node / app_session"))
+		c.Error(errors.NewValidationError("invalid resource_type; expected script / workflow / analysis_node / analysis / app_session"))
 		return
 	}
 
@@ -175,6 +175,13 @@ func (h *SessionResourceHandler) resolveName(ctx context.Context, resourceType a
 		}
 		if node, err := h.analysisRepo.GetAnalysisNodeByID(ctx, resourceID); err == nil && node != nil {
 			return node.NodeName
+		}
+	case agenttypes.SessionResourceTypeAnalysis:
+		if h.analysisRepo == nil {
+			return ""
+		}
+		if analysis, err := h.analysisRepo.GetAnalysisByID(ctx, resourceID); err == nil && analysis != nil {
+			return strings.TrimSpace(analysis.AnalysisName)
 		}
 	}
 	return ""

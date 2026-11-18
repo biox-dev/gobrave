@@ -41,14 +41,15 @@ func All(d Deps) []tool.Tool {
 		RunAnalysisNode(d.Runner),
 		UpdateAnalysisNodeScript(d.NodeUpdater, d.Runner, d.NodeBrowser),
 		UpdateAnalysisNodeAgent(d.NodeUpdater, d.Runner, d.NodeBrowser),
-		// 工作流与分析运行：列出 / 创建工作流、查看 / 更新，以及分析运行的查看 / 更新 / 提交。
+		// 工作流与分析运行：列出 / 创建工作流、查看 / 更新，以及分析运行的创建 / 查看 / 更新 / 提交。
 		ListProjectWorkflows(d.WorkflowBrowser),
 		CreateWorkflow(d.WorkflowCreator),
 		GetWorkflow(d.WorkflowBrowser),
 		UpdateWorkflow(d.workflowUpdater(), d.WorkflowBrowser),
-		GetAnalysis(d.AnalysisBrowser),
-		UpdateAnalysis(d.analysisUpdater(), d.AnalysisBrowser),
-		RunAnalysis(d.AnalysisRunner, d.AnalysisBrowser),
+		CreateAnalysisWorkflow(d.analysisCreator(), d.AnalysisRunner),
+		GetAnalysisWorkflow(d.AnalysisBrowser),
+		UpdateAnalysisWorkflow(d.analysisUpdater(), d.AnalysisBrowser),
+		RunAnalysisWorkflow(d.AnalysisRunner, d.AnalysisBrowser),
 		SaveMemory(d.MemorySaver),
 		GetReportContext(d.ReportContext),
 		// 技能：指令正文与附属资源都按需通过工具加载（渐进式披露）。

@@ -36,7 +36,8 @@ type Deps struct {
 	NodeUpdater runtimecontext.AnalysisNodeUpdater
 	// WorkflowCreator 创建工作流（create_workflow）；同时实现 WorkflowUpdater 时也用于 update_workflow。
 	WorkflowCreator runtimecontext.WorkflowCreator
-	// AnalysisRunner 提交分析运行（run_analysis）；同时实现 AnalysisUpdater 时也用于 update_analysis。
+	// AnalysisRunner 提交分析运行（run_analysis_workflow）；同时实现 AnalysisUpdater 时也用于
+	// update_analysis_workflow，实现 AnalysisCreator 时也用于 create_analysis_workflow。
 	AnalysisRunner runtimecontext.AnalysisRunner
 	// MemorySaver 保存用户长期记忆（save_memory）。
 	MemorySaver runtimecontext.MemorySaver
@@ -96,6 +97,17 @@ func (d Deps) workflowUpdater() runtimecontext.WorkflowUpdater {
 func (d Deps) analysisUpdater() runtimecontext.AnalysisUpdater {
 	if updater, ok := d.AnalysisRunner.(runtimecontext.AnalysisUpdater); ok {
 		return updater
+	}
+	return nil
+}
+
+// analysisCreator 返回「为工作流创建一次分析运行」能力。
+//
+// 容器侧的分析运行实现同时实现 AnalysisRunner / AnalysisUpdater / AnalysisCreator
+// （共用同一份保存流程），因此 Deps 只暴露 AnalysisRunner，这里按需断言。
+func (d Deps) analysisCreator() runtimecontext.AnalysisCreator {
+	if creator, ok := d.AnalysisRunner.(runtimecontext.AnalysisCreator); ok {
+		return creator
 	}
 	return nil
 }

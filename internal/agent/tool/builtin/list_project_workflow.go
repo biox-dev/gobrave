@@ -44,7 +44,7 @@ type ListProjectWorkflowsOutput struct {
 func ListProjectWorkflows(browser runtimecontext.WorkflowBrowser) tool.Tool {
 	return tool.NewFunc(
 		ListProjectWorkflowsToolName,
-		"列出当前激活项目下的全部分析工作流（按创建 id 倒序）。返回每个工作流的 workflow_id（字符串形式，避免大整数精度丢失，可直接传给 get_workflow / update_workflow）、workflow_key（relation_id，工作流目录名）、name（名称）、description（描述）、category（分类）、workflow_dir（工作流目录绝对路径）、dag_definition_path / io_schema_path / readme_file（目录内文件路径，可直接读写）、node_count / edge_count（DAG 节点数与连线数，0 表示还没有 DAG，可用 update_workflow 补）。需要查看 DAG 与 io_schema 正文时，再用 get_workflow 按 workflow_id 查询。工作流只是一次次分析的载体：要提交运行还需要分析运行 ID（run_analysis）。所属项目取自当前会话上下文，无需传入。",
+		"列出当前激活项目下的全部分析工作流（按创建 id 倒序）。返回每个工作流的 workflow_id（字符串形式，避免大整数精度丢失，可直接传给 get_workflow / update_workflow）、workflow_key（relation_id，工作流目录名）、name（名称）、description（描述）、category（分类）、workflow_dir（工作流目录绝对路径）、dag_definition_path / io_schema_path / readme_file（目录内文件路径，可直接读写）、node_count / edge_count（DAG 节点数与连线数，0 表示还没有 DAG，可用 update_workflow 补）。需要查看 DAG 与 io_schema 正文时，再用 get_workflow 按 workflow_id 查询。工作流只是一次次分析的载体：要真正跑一遍，先用 create_analysis_workflow 按 workflow_id 建一条分析运行（默认创建后提交），已有分析运行时用 run_analysis_workflow 提交。所属项目取自当前会话上下文，无需传入。",
 		tool.Schema("列出当前项目全部工作流的入参（无需参数）", map[string]any{}),
 		func(ctx context.Context, _ ListProjectWorkflowsInput) (ListProjectWorkflowsOutput, error) {
 			projectID, err := requireProjectID(ctx, ListProjectWorkflowsToolName)

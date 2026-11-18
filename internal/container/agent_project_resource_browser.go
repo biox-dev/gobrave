@@ -28,7 +28,7 @@ import (
 //   - get_analysis_node：按 analysis_node_id（兼容 @analysis_node:<id> 引用）查看节点名称 / 工作目录 / params.json / 输出目录 / 参数；
 //   - list_project_workflow：按 RuntimeContext.ProjectID 列出全部工作流（摘要 + DAG 节点 / 连线数）；
 //   - get_workflow：按 workflow_id（兼容 @workflow:<id> 引用）查看工作流元数据、DAG 定义与 io_schema 原文；
-//   - get_analysis：按 analysis_id（兼容 @analysis:<id> 引用）查看一次分析运行的状态 / 参数 / 节点分布；
+//   - get_analysis_workflow：按 analysis_id（兼容 @analysis:<id> 引用）查看一次分析运行的状态 / 参数 / 节点分布；
 //   - list_container_templates：列出全部容器模板（definition ID + spec 的 name / description）；
 //   - get_container_template：按 @container:<id> 引用查看绑定行的 display_name / description；
 //   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径；
@@ -322,27 +322,27 @@ func (b *projectResourceBrowser) workflowGraphSummary(ctx context.Context, proje
 // 同时回传工作流名称与节点状态分布，便于模型判断这次运行当前处于什么阶段。
 func (b *projectResourceBrowser) GetAnalysisByID(ctx context.Context, projectID int64, analysisID int64) (runtimecontext.AnalysisDetail, error) {
 	if projectID <= 0 {
-		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: project_id is required")
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis_workflow: project_id is required")
 	}
 	if analysisID <= 0 {
-		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: analysis_id is required")
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis_workflow: analysis_id is required")
 	}
 	if b.analysisRepo == nil {
-		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: required services are not configured")
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis_workflow: required services are not configured")
 	}
 
 	analysis, err := b.analysisRepo.GetAnalysisByID(ctx, analysisID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: analysis %d not found", analysisID)
+			return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis_workflow: analysis %d not found", analysisID)
 		}
-		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: failed to load analysis: %w", err)
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis_workflow: failed to load analysis: %w", err)
 	}
 	if analysis == nil || analysis.ID == 0 {
-		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: analysis %d not found", analysisID)
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis_workflow: analysis %d not found", analysisID)
 	}
 	if analysis.ProjectID != projectID {
-		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis: analysis %d does not belong to the active project %d", analysis.ID, projectID)
+		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis_workflow: analysis %d does not belong to the active project %d", analysis.ID, projectID)
 	}
 
 	// 兜底：个别读取路径可能没有填充派生路径，这里按 WorkspaceDir 再推导一次（幂等）。

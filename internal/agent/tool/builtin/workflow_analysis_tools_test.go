@@ -136,15 +136,99 @@ func (f *fakeAnalysisRunner) UpdateAnalysis(_ context.Context, in runtimecontext
 	return runtimecontext.AnalysisUpdateResult{AnalysisBrief: runtimecontext.AnalysisBrief{AnalysisID: in.AnalysisID}}, nil
 }
 
-func TestUpdateAnalysisToolKeepsEmptyParamObject(t *testing.T) {
-	fake := &fakeAnalysisRunner{}
-	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 3})
+// fakeAnalysisCreator 记录创建工作流的一次分析运行的入参，并回显一条摘要。
+type fakeAnalysisCreator struct {
+	input runtimecontext.AnalysisCreateInput
+}
 
-	raw, err := UpdateAnalysis(fake, nil).Execute(ctx, json.RawMessage(`{"analysis_id":"11","request_param":{}}`))
+func (f *fakeAnalysisCreator) CreateAnalysis(_ context.Context, in runtimecontext.AnalysisCreateInput) (runtimecontext.AnalysisCreateResult, error) {
+	f.input = in
+	return runtimecontext.AnalysisCreateResult{
+		AnalysisBrief: runtimecontext.AnalysisBrief{
+			AnalysisID:   31,
+			AnalysisKey:  "analysis-key",
+			AnalysisName: in.AnalysisName,
+			WorkflowID:   in.WorkflowID,
+			JobStatus:    "created",
+		},
+	}, nil
+}
+
+func TestCreateAnalysisWorkflowToolCreatesAndRuns(t *testing.T) {
+	creator := &fakeAnalysisCreator{}
+	runner := &fakeAnalysisRunner{}
+	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 4})
+
+	raw, err := CreateAnalysisWorkflow(creator, runner).Execute(ctx, json.RawMessage(`{
+		"workflow_id": "@workflow:7",
+		"analysis_name": "first run",
+		"request_param": {"fastq1": "a.fq"},
+		"cache_type": 3
+	}`))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	out, ok := raw.(UpdateAnalysisOutput)
+	out, ok := raw.(CreateAnalysisWorkflowOutput)
+	if !ok {
+		t.Fatalf("unexpected output type %T", raw)
+	}
+	if out.Error != "" {
+		t.Fatalf("unexpected error: %s", out.Error)
+	}
+	if creator.input.ProjectID != 4 || creator.input.WorkflowID != 7 {
+		t.Fatalf("create input ids = (%d, %d), want (4, 7)", creator.input.ProjectID, creator.input.WorkflowID)
+	}
+	if creator.input.AnalysisName != "first run" {
+		t.Fatalf("analysis_name = %q", creator.input.AnalysisName)
+	}
+	if creator.input.CacheType == nil || *creator.input.CacheType != 3 {
+		t.Fatalf("cache_type = %v, want 3", creator.input.CacheType)
+	}
+	if got := creator.input.RequestParam["fastq1"]; got != "a.fq" {
+		t.Fatalf("request_param = %#v", creator.input.RequestParam)
+	}
+	// 默认 run=true：创建后立即提交运行，且复用创建时保存的参数（传 nil）。
+	if !out.Ran || !out.Started || out.Scheduler != "dag" {
+		t.Fatalf("ran/started/scheduler = %v/%v/%q", out.Ran, out.Started, out.Scheduler)
+	}
+	if runner.runInput.AnalysisID != 31 || runner.runInput.ProjectID != 4 {
+		t.Fatalf("run input ids = (%d, %d), want (31, 4)", runner.runInput.AnalysisID, runner.runInput.ProjectID)
+	}
+	if runner.runInput.RequestParam != nil {
+		t.Fatalf("run request_param should stay nil, got %#v", runner.runInput.RequestParam)
+	}
+}
+
+func TestCreateAnalysisWorkflowToolSkipsRun(t *testing.T) {
+	creator := &fakeAnalysisCreator{}
+	runner := &fakeAnalysisRunner{}
+	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 6})
+
+	raw, err := CreateAnalysisWorkflow(creator, runner).Execute(ctx, json.RawMessage(`{"workflow_id":"9","run":false}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	out := raw.(CreateAnalysisWorkflowOutput)
+	if out.Error != "" {
+		t.Fatalf("unexpected error: %s", out.Error)
+	}
+	if out.Ran || out.Started {
+		t.Fatalf("run=false must not submit: ran=%v started=%v", out.Ran, out.Started)
+	}
+	if runner.runInput.AnalysisID != 0 {
+		t.Fatalf("runner must not be called, got analysis id %d", runner.runInput.AnalysisID)
+	}
+}
+
+func TestUpdateAnalysisWorkflowToolKeepsEmptyParamObject(t *testing.T) {
+	fake := &fakeAnalysisRunner{}
+	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 3})
+
+	raw, err := UpdateAnalysisWorkflow(fake, nil).Execute(ctx, json.RawMessage(`{"analysis_id":"11","request_param":{}}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	out, ok := raw.(UpdateAnalysisWorkflowOutput)
 	if !ok {
 		t.Fatalf("unexpected output type %T", raw)
 	}
@@ -162,15 +246,15 @@ func TestUpdateAnalysisToolKeepsEmptyParamObject(t *testing.T) {
 	}
 }
 
-func TestRunAnalysisToolForwardsCacheType(t *testing.T) {
+func TestRunAnalysisWorkflowToolForwardsCacheType(t *testing.T) {
 	fake := &fakeAnalysisRunner{}
 	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 5})
 
-	raw, err := RunAnalysis(fake, nil).Execute(ctx, json.RawMessage(`{"analysis_id":"12","cache_type":2}`))
+	raw, err := RunAnalysisWorkflow(fake, nil).Execute(ctx, json.RawMessage(`{"analysis_id":"12","cache_type":2}`))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	out, ok := raw.(RunAnalysisOutput)
+	out, ok := raw.(RunAnalysisWorkflowOutput)
 	if !ok {
 		t.Fatalf("unexpected output type %T", raw)
 	}
@@ -263,9 +347,10 @@ func TestBuiltinNamesIncludeWorkflowAndAnalysisTools(t *testing.T) {
 		CreateWorkflowToolName,
 		GetWorkflowToolName,
 		UpdateWorkflowToolName,
-		GetAnalysisToolName,
-		UpdateAnalysisToolName,
-		RunAnalysisToolName,
+		GetAnalysisWorkflowToolName,
+		UpdateAnalysisWorkflowToolName,
+		RunAnalysisWorkflowToolName,
+		CreateAnalysisWorkflowToolName,
 	} {
 		if _, ok := index[want]; !ok {
 			t.Fatalf("tool %q not registered in Names()", want)
