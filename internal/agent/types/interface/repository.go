@@ -113,7 +113,8 @@ type MessageStore interface {
 type SessionResourceStore interface {
 	// Link 记录会话与资源（脚本 / 工作流 / 分析节点）的关联。
 	// 同一 (session_id, resource_type, resource_id) 重复写入时静默跳过，保证关联不重复。
-	Link(ctx context.Context, sessionID int64, resourceType types.SessionResourceType, resourceIDs []int64) error
+	// inserted 是本次真正新增的行数：0 表示全是已存在的关联（不算「有新数据」）。
+	Link(ctx context.Context, sessionID int64, resourceType types.SessionResourceType, resourceIDs []int64) (inserted int64, err error)
 	// List 返回某个会话关联的指定类型资源（按创建时间倒序）。
 	List(ctx context.Context, sessionID int64, resourceType types.SessionResourceType) ([]*types.SessionResource, error)
 	// ListBySession 返回某个会话关联的全部类型资源（按创建时间倒序）。

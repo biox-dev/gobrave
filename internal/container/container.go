@@ -687,8 +687,11 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.SessionResourceStore {
 		return agentrepository.NewGormSessionResourceStore(db)
 	}))
-	must(container.Provide(func(store agentinterfaces.SessionResourceStore) agentinterfaces.SessionResourceService {
-		return agentservice.NewSessionResourceService(store)
+	// 新增关联时推送 component.invoke(agent-session-resource)，刷新前端会话资源面板。
+	// 注意：dig 的 Provide 惰性解析，但依赖 *realtime.Hub，因此本句必须写在
+	// Provide(realtime.NewHub) 之后（见本文件后面对 UIActionPusher 的同款说明）。
+	must(container.Provide(func(store agentinterfaces.SessionResourceStore, hub *realtime.Hub) agentinterfaces.SessionResourceService {
+		return agentservice.NewSessionResourceService(store, hub)
 	}))
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.MessageService {
 		return agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))

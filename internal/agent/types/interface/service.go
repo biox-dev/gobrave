@@ -27,6 +27,8 @@ type SessionService interface {
 type SessionResourceService interface {
 	// LinkFromContext 记录当前工具执行会话与资源的关联。
 	// 非 Agent 会话触发的写操作（ctx 中没有会话 ID）会静默跳过，不视为错误。
+	// 只有真正新增关联时才向前端推送一次 component.invoke（agent-session-resource），
+	// 用于刷新会话资源面板；重复关联不推送。
 	LinkFromContext(ctx context.Context, resourceType types.SessionResourceType, resourceIDs ...int64) error
 	// List 返回某个会话关联的指定类型资源（按创建时间倒序）。
 	List(ctx context.Context, sessionID int64, resourceType types.SessionResourceType) ([]types.SessionResource, error)

@@ -19,9 +19,12 @@ type gormSessionResourceStore struct {
 }
 
 // Link 批量写入关联；已存在的 (session_id, resource_type, resource_id) 直接跳过。
-func (r *gormSessionResourceStore) Link(ctx context.Context, sessionID int64, resourceType agent.SessionResourceType, resourceIDs []int64) error {
+//
+// 返回值 inserted 表示本次真正写进数据库的行数：冲突跳过的关联不算新增
+// （「别的会话再次修改同一脚本」只是重复关联，前端视图不会多出一行）。
+func (r *gormSessionResourceStore) Link(ctx context.Context, sessionID int64, resourceType agent.SessionResourceType, resourceIDs []int64) (int64, error) {
 	if sessionID <= 0 || len(resourceIDs) == 0 {
-		return nil
+		return 0, nil
 	}
 	seen := make(map[int64]struct{}, len(resourceIDs))
 	rows := make([]*agent.SessionResource, 0, len(resourceIDs))
@@ -40,11 +43,15 @@ func (r *gormSessionResourceStore) Link(ctx context.Context, sessionID int64, re
 		})
 	}
 	if len(rows) == 0 {
-		return nil
+		return 0, nil
 	}
-	return r.db.WithContext(ctx).
+	result := r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{DoNothing: true}).
-		Create(&rows).Error
+		Create(&rows)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
 }
 
 func (r *gormSessionResourceStore) List(ctx context.Context, sessionID int64, resourceType agent.SessionResourceType) ([]*agent.SessionResource, error) {
