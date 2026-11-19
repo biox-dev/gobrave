@@ -103,6 +103,8 @@ type ContainerRepository interface {
 	DeleteAppSession(ctx context.Context, id int64) error
 	ListAppSession(ctx context.Context) ([]*types.AppSession, error)
 	PageAppSessionByUserID(ctx context.Context, userID int64, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error)
+	// PageAppSession 按查询条件分页，不加 user_id 过滤（供按 AgentSessionID 等归属字段查询）。
+	PageAppSession(ctx context.Context, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error)
 
 	// CreateContainerInstance 落库容器实例；(owner_type, owner_id) 已存在时原地更新
 	// （主键保持不变），否则新建，保证一个 owner 只有一条实例记录。

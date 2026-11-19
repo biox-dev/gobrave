@@ -307,6 +307,52 @@ func (r *containerRepository) PageAppSessionByUserID(ctx context.Context, userID
 	return items, total, nil
 }
 
+// PageAppSession 按查询条件分页返回应用 / 终端会话，不加 user_id 过滤。
+//
+// 用于归属已由其它字段（如 AgentSessionID）唯一确定的场景；按用户列举仍用
+// PageAppSessionByUserID，以免把别人的会话一并返回。
+func (r *containerRepository) PageAppSession(ctx context.Context, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	items := make([]*types.AppSession, 0)
+	var total int64
+
+	dbQuery := r.db.WithContext(ctx).Model(&types.AppSession{})
+	if query != nil && query.AnalysisNodeID != nil {
+		dbQuery = dbQuery.Where("analysis_node_id = ?", *query.AnalysisNodeID)
+	}
+	if query != nil && query.ProjectID != nil {
+		dbQuery = dbQuery.Where("project_id = ?", *query.ProjectID)
+	}
+	if query != nil && query.AgentSessionID != nil {
+		dbQuery = dbQuery.Where("agent_session_id = ?", *query.AgentSessionID)
+	}
+	// 统一关键字搜索：命中会话名称。
+	if keyword := pagination.GetKeyword(); keyword != "" {
+		dbQuery = dbQuery.Where("name LIKE ?", "%"+keyword+"%")
+	}
+	if err := dbQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := dbQuery.
+		Order("id DESC").
+		Offset(pagination.Offset()).
+		Limit(pagination.Limit()).
+		Find(&items).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if len(items) == 0 {
+		return []*types.AppSession{}, total, nil
+	}
+
+	return items, total, nil
+}
+
 // CreateContainerInstance 落库容器实例。
 //
 // 同一个 (owner_type, owner_id) 只保留一条实例：已存在时原地更新（主键不变），

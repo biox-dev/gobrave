@@ -101,7 +101,7 @@ func (h *SessionResourceHandler) ListSessionResources(c *gin.Context) {
 
 	// app_session 不走关联表，而是按 AppSession.AgentSessionID 实时查询。
 	if resourceType == agenttypes.SessionResourceTypeAppSession {
-		items, err := h.listAppSessions(ctx, userID, sessionID)
+		items, err := h.listAppSessions(ctx, sessionID)
 		if err != nil {
 			handleAgentError(c, err, "failed to list session app sessions")
 			return
@@ -195,7 +195,7 @@ func (h *SessionResourceHandler) ListAllSessionResources(c *gin.Context) {
 	}
 
 	// 应用 / 终端会话不落关联表，按 AppSession.AgentSessionID 实时查询。
-	appSessions, err := h.listAppSessions(ctx, userID, sessionID)
+	appSessions, err := h.listAppSessions(ctx, sessionID)
 	if err != nil {
 		handleAgentError(c, err, "failed to list session app sessions")
 		return
@@ -223,13 +223,15 @@ func (h *SessionResourceHandler) buildItems(ctx context.Context, rows []agenttyp
 //
 // 这里按 AppSession.AgentSessionID 实时查询，而不是读 agent_session_resources：
 // 应用会话的归属是 AppSession 上的字段，没有必要再维护一份关联副本。
-func (h *SessionResourceHandler) listAppSessions(ctx context.Context, userID, agentSessionID int64) ([]sessionResourceItem, error) {
+func (h *SessionResourceHandler) listAppSessions(ctx context.Context, agentSessionID int64) ([]sessionResourceItem, error) {
 	if h.containerRepo == nil {
 		return []sessionResourceItem{}, nil
 	}
 	query := &types.AppSessionPageQuery{AgentSessionID: &agentSessionID}
 	pagination := &types.Pagination{Page: 1, PageSize: 1000}
-	rows, _, err := h.containerRepo.PageAppSessionByUserID(ctx, userID, pagination, query)
+	// 归属已由 AgentSessionID 唯一确定，不再叠加 user_id 过滤：会话按项目共享，
+	// 项目成员都可能看到别人在该会话下创建的应用会话。
+	rows, _, err := h.containerRepo.PageAppSession(ctx, pagination, query)
 	if err != nil {
 		return nil, err
 	}
