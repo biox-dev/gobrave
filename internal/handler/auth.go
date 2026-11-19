@@ -529,72 +529,9 @@ func (h *AuthHandler) UpdateAgentEnv(c *gin.Context) {
 	})
 }
 
-// UpdateMenuConfig godoc
-// @Summary      更新当前用户在当前项目下的主标签页配置
-// @Description  保存主区域标签页（URL + 显示名）到当前激活项目的 user_project.menu_config，前端刷新时从 /auth/me 的 user.menu_config 回填
-// @Tags         认证
-// @Accept       json
-// @Produce      json
-// @Param        request  body      object{tabs=[]types.UserMenuTab}  true  "标签页列表（数组顺序即标签栏顺序）"
-// @Success      200      {object}  map[string]interface{}            "更新成功"
-// @Failure      400      {object}  errors.AppError                   "请求参数错误"
-// @Failure      404      {object}  errors.AppError                   "没有激活项目"
-// @Security     Bearer
-// @Router       /auth/menu-config [post]
-func (h *AuthHandler) UpdateMenuConfig(c *gin.Context) {
-	ctx := c.Request.Context()
-
-	user, err := h.userService.GetCurrentUser(ctx)
-	if err != nil {
-		logger.Errorf(ctx, "Failed to get current user: %v", err)
-		appErr := errors.NewUnauthorizedError("Failed to get user information").WithDetails(err.Error())
-		c.Error(appErr)
-		return
-	}
-
-	var req struct {
-		Tabs []types.UserMenuTab `json:"tabs"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		logger.Error(ctx, "Failed to parse menu config update request", err)
-		appErr := errors.NewValidationError("Invalid menu config update request").WithDetails(err.Error())
-		c.Error(appErr)
-		return
-	}
-
-	// 菜单配置按项目落库（user_project.menu_config）：先取当前激活项目的配置，
-	// 再只整体替换主区域标签页，底部面板（终端 / 日志）配置保持不变。
-	menuConfig, err := h.projectService.GetActiveUserMenuConfig(ctx, user.ID)
-	if err != nil {
-		logger.Errorf(ctx, "Failed to get menu config of active project: %v", err)
-		appErr := errors.NewInternalServerError("Failed to get menu config").WithDetails(err.Error())
-		c.Error(appErr)
-		return
-	}
-	menuConfig.Tabs = req.Tabs
-	menuConfig.NormalizeTabs()
-	if err := h.projectService.UpdateActiveUserMenuConfig(ctx, user.ID, menuConfig); err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			c.Error(errors.NewNotFoundError("no active project"))
-			return
-		}
-		logger.Errorf(ctx, "Failed to update project menu config: %v", err)
-		appErr := errors.NewInternalServerError("Failed to update menu config").WithDetails(err.Error())
-		c.Error(appErr)
-		return
-	}
-
-	logger.Infof(ctx, "User %d menu config updated: tabs=%d", user.ID, len(menuConfig.Tabs))
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Menu config updated",
-		"tabs":    menuConfig.Tabs,
-	})
-}
-
 // UpdateBottomPanel godoc
 // @Summary      更新当前用户在当前项目下的底部面板配置
-// @Description  保存底部面板的标签列表 / 激活标签 / 展开态 / 高度，与主区域标签页一起落在当前激活项目的 user_project.menu_config
+// @Description  保存底部面板的标签列表 / 激活标签 / 展开态 / 高度到当前激活项目的 user_project.menu_config
 // @Tags         认证
 // @Accept       json
 // @Produce      json
@@ -628,7 +565,7 @@ func (h *AuthHandler) UpdateBottomPanel(c *gin.Context) {
 		return
 	}
 
-	// 整体替换底部面板；主区域标签页（Tabs）保持不变。
+	// 整体替换底部面板。
 	menuConfig, err := h.projectService.GetActiveUserMenuConfig(ctx, user.ID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to get menu config of active project: %v", err)

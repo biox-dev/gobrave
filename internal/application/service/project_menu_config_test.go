@@ -34,8 +34,10 @@ func (r *stubActiveUserProjectRepo) UpdateUserProjectMenuConfig(_ context.Contex
 // TestGetActiveUserMenuConfigReturnsProjectConfig 确认 /auth/me 读到的是激活项目的配置。
 func TestGetActiveUserMenuConfigReturnsProjectConfig(t *testing.T) {
 	repo := &stubActiveUserProjectRepo{up: &types.UserProject{
-		ProjectID:  9,
-		MenuConfig: types.UserMenuConfig{Tabs: []types.UserMenuTab{{URL: "/c/scripts/1"}}},
+		ProjectID: 9,
+		MenuConfig: types.UserMenuConfig{
+			Bottom: &types.UserBottomPanel{Open: true, Active: "terminal:1", Height: 320},
+		},
 	}}
 	svc := &projectService{projectRepo: repo}
 
@@ -43,7 +45,7 @@ func TestGetActiveUserMenuConfigReturnsProjectConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get active user menu config: %v", err)
 	}
-	if len(cfg.Tabs) != 1 || cfg.Tabs[0].URL != "/c/scripts/1" {
+	if cfg.Bottom == nil || cfg.Bottom.Active != "terminal:1" {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
 }
@@ -56,7 +58,7 @@ func TestGetActiveUserMenuConfigWithoutActiveProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cfg.Tabs) != 0 || cfg.Bottom != nil {
+	if cfg.Bottom != nil {
 		t.Fatalf("expected empty config, got %+v", cfg)
 	}
 }
@@ -66,11 +68,11 @@ func TestUpdateActiveUserMenuConfigTargetsActiveProject(t *testing.T) {
 	repo := &stubActiveUserProjectRepo{up: &types.UserProject{ProjectID: 9}}
 	svc := &projectService{projectRepo: repo}
 
-	next := types.UserMenuConfig{Tabs: []types.UserMenuTab{{URL: "/new"}}}
+	next := types.UserMenuConfig{Bottom: &types.UserBottomPanel{Open: true, Active: "terminal:2", Height: 200}}
 	if err := svc.UpdateActiveUserMenuConfig(context.Background(), 1, next); err != nil {
 		t.Fatalf("update active user menu config: %v", err)
 	}
-	if repo.updatedFor != 9 || repo.updatedConf == nil || repo.updatedConf.Tabs[0].URL != "/new" {
+	if repo.updatedFor != 9 || repo.updatedConf == nil || repo.updatedConf.Bottom == nil || repo.updatedConf.Bottom.Active != "terminal:2" {
 		t.Fatalf("unexpected update: project=%d config=%+v", repo.updatedFor, repo.updatedConf)
 	}
 }

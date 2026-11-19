@@ -44,9 +44,6 @@ type ProjectListItem struct {
 	ShareEnabled bool   `json:"share_enabled"`
 }
 
-// MaxUserMenuTabs 是主区域标签页配置允许保存的最大数量，超出的按「最近使用」截断。
-const MaxUserMenuTabs = 16
-
 // MaxUserBottomTabs 是主区域底部面板（终端 / 日志等）允许保存的最大标签数。
 const MaxUserBottomTabs = 8
 
@@ -55,15 +52,6 @@ const (
 	MinUserBottomPanelHeight = 120
 	MaxUserBottomPanelHeight = 800
 )
-
-// UserMenuTab 是主区域一个标签页的状态。
-//
-// URL 是标签页对应的路由地址（pathname + search），前端直接 navigate(URL) 即可切换；
-// Title 是该标签页最近一次登记的显示名（如分析节点名），可为空 —— 为空时前端回退到静态标题规则。
-type UserMenuTab struct {
-	URL   string `json:"url"`
-	Title string `json:"title,omitempty"`
-}
 
 // UserBottomTab 是底部面板的一个标签页。
 //
@@ -87,52 +75,20 @@ type UserBottomPanel struct {
 	Tabs   []UserBottomTab `json:"tabs,omitempty"`
 }
 
-// UserMenuConfig 是「某用户在某项目下」的菜单配置（主区域标签页 + 底部面板），
+// UserMenuConfig 是「某用户在某项目下」的菜单配置（目前只有底部面板），
 // 以 JSON 形式落库在 user_project.menu_config。
-//
-// 用「有序数组」而不是「urls + titles 两张表」：顺序即标签栏顺序，标题跟着自己的 URL 走，
-// 序列化 / 回填都是一次读写。
 type UserMenuConfig struct {
-	Tabs []UserMenuTab `json:"tabs,omitempty"`
 	// Bottom 为空表示底部面板没有打开的标签（前端据此不渲染面板）。
 	Bottom *UserBottomPanel `json:"bottom,omitempty"`
 }
 
-// Normalize 清洗整份菜单配置（标签页 + 底部面板）。
+// Normalize 清洗菜单配置（底部面板）。
 // 调用方（handler）在写库前调用，避免把脏数据或超长字符串落库。
 func (c *UserMenuConfig) Normalize() {
 	if c == nil {
 		return
 	}
-	c.NormalizeTabs()
 	c.NormalizeBottom()
-}
-
-// NormalizeTabs 清洗主区域标签页列表：去空白、去重（保留首次出现）、丢弃根路由，并按上限截断尾部。
-func (c *UserMenuConfig) NormalizeTabs() {
-	if c == nil {
-		return
-	}
-	seen := make(map[string]struct{}, len(c.Tabs))
-	tabs := make([]UserMenuTab, 0, len(c.Tabs))
-	for _, tab := range c.Tabs {
-		url := strings.TrimSpace(tab.URL)
-		if url == "" || url == "/" {
-			continue
-		}
-		if _, exists := seen[url]; exists {
-			continue
-		}
-		seen[url] = struct{}{}
-		tabs = append(tabs, UserMenuTab{
-			URL:   truncateRunes(url, 512),
-			Title: truncateRunes(strings.TrimSpace(tab.Title), 200),
-		})
-	}
-	if len(tabs) > MaxUserMenuTabs {
-		tabs = tabs[len(tabs)-MaxUserMenuTabs:]
-	}
-	c.Tabs = tabs
 }
 
 // NormalizeBottom 清洗底部面板：去空白、去重（按 Key）、丢弃缺少 Kind 的项、按上限截断尾部，
@@ -224,8 +180,8 @@ type UserProject struct {
 	ShareCode string `json:"share_code" gorm:"type:varchar(64);index"`
 	// ShareEnabled toggles whether the project can be shared via ShareCode.
 	ShareEnabled bool `json:"share_enabled" gorm:"default:false"`
-	// MenuConfig 是「该用户在这个项目下」的菜单配置（主区域标签页 + 底部面板）。
-	// 标签页、终端等界面状态都是项目维度的，所以随 user_project 一起落库。
+	// MenuConfig 是「该用户在这个项目下」的菜单配置（底部面板）。
+	// 终端等界面状态都是项目维度的，所以随 user_project 一起落库。
 	MenuConfig UserMenuConfig `json:"menu_config" gorm:"serializer:json"`
 	CreatedAt  time.Time      `json:"created_at"`
 }

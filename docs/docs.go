@@ -3112,7 +3112,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "保存底部面板的标签列表 / 激活标签 / 展开态 / 高度，与主区域标签页一起落在当前激活项目的 user_project.menu_config",
+                "description": "保存底部面板的标签列表 / 激活标签 / 展开态 / 高度到当前激活项目的 user_project.menu_config",
                 "consumes": [
                     "application/json"
                 ],
@@ -3331,66 +3331,6 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "未授权",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/auth/menu-config": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "保存主区域标签页（URL + 显示名）到当前激活项目的 user_project.menu_config，前端刷新时从 /auth/me 的 user.menu_config 回填",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "认证"
-                ],
-                "summary": "更新当前用户在当前项目下的主标签页配置",
-                "parameters": [
-                    {
-                        "description": "标签页列表（数组顺序即标签栏顺序）",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "tabs": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/types.UserMenuTab"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "更新成功",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "请求参数错误",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "没有激活项目",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -18567,17 +18507,6 @@ const docTemplate = `{
                     "additionalProperties": {}
                 },
                 "title": {
-                    "type": "string"
-                }
-            }
-        },
-        "types.UserMenuTab": {
-            "type": "object",
-            "properties": {
-                "title": {
-                    "type": "string"
-                },
-                "url": {
                     "type": "string"
                 }
             }

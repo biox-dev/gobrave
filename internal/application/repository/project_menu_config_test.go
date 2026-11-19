@@ -38,7 +38,6 @@ func TestUserProjectMenuConfigRoundTrip(t *testing.T) {
 		IsActive:  true,
 		CreatedAt: time.Now(),
 		MenuConfig: types.UserMenuConfig{
-			Tabs: []types.UserMenuTab{{URL: "/c/scripts/1", Title: "old"}},
 			Bottom: &types.UserBottomPanel{
 				Open:   true,
 				Active: "terminal:1",
@@ -56,7 +55,7 @@ func TestUserProjectMenuConfigRoundTrip(t *testing.T) {
 		ProjectID:  3,
 		IsActive:   false,
 		CreatedAt:  time.Now(),
-		MenuConfig: types.UserMenuConfig{Tabs: []types.UserMenuTab{{URL: "/inactive"}}},
+		MenuConfig: types.UserMenuConfig{Bottom: &types.UserBottomPanel{Active: "terminal:inactive"}},
 	}); err != nil {
 		t.Fatalf("add inactive user project: %v", err)
 	}
@@ -65,14 +64,14 @@ func TestUserProjectMenuConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get active user project: %v", err)
 	}
-	if got.ProjectID != 2 || len(got.MenuConfig.Tabs) != 1 || got.MenuConfig.Tabs[0].URL != "/c/scripts/1" {
+	if got.ProjectID != 2 || got.MenuConfig.Bottom == nil || got.MenuConfig.Bottom.Active != "terminal:1" {
 		t.Fatalf("unexpected active binding: %+v", got)
 	}
-	if got.MenuConfig.Bottom == nil || got.MenuConfig.Bottom.Active != "terminal:1" {
+	if got.MenuConfig.Bottom.Height != 317 || len(got.MenuConfig.Bottom.Tabs) != 1 {
 		t.Fatalf("bottom panel not persisted: %+v", got.MenuConfig.Bottom)
 	}
 
-	next := types.UserMenuConfig{Tabs: []types.UserMenuTab{{URL: "/new", Title: "new"}}}
+	next := types.UserMenuConfig{Bottom: &types.UserBottomPanel{Open: true, Active: "terminal:2", Height: 240}}
 	if err := repo.UpdateUserProjectMenuConfig(ctx, 1, 2, next); err != nil {
 		t.Fatalf("update menu config: %v", err)
 	}
@@ -80,10 +79,7 @@ func TestUserProjectMenuConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload user project: %v", err)
 	}
-	if len(reloaded.MenuConfig.Tabs) != 1 || reloaded.MenuConfig.Tabs[0].URL != "/new" {
+	if reloaded.MenuConfig.Bottom == nil || reloaded.MenuConfig.Bottom.Active != "terminal:2" {
 		t.Fatalf("menu config not overwritten: %+v", reloaded.MenuConfig)
-	}
-	if reloaded.MenuConfig.Bottom != nil {
-		t.Fatalf("bottom panel should be cleared by the full replacement: %+v", reloaded.MenuConfig.Bottom)
 	}
 }

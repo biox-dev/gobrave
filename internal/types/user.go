@@ -139,7 +139,7 @@ type UserInfo struct {
 	Email       string          `json:"email"`
 	Avatar      string          `json:"avatar"`
 	AgentConfig UserAgentConfig `json:"agent_config"`
-	// MenuConfig 是用户在「当前激活项目」下的菜单配置（主区域标签页 + 底部面板），
+	// MenuConfig 是用户在「当前激活项目」下的菜单配置（底部面板），
 	// 数据存在 user_project.menu_config。字段名保持 menu_config 不变，前端无需改动。
 	MenuConfig UserMenuConfig `json:"menu_config"`
 	// AgentProfile 是 agent_config.ProfileID 对应的 Profile 摘要（DTO，按需填充，可能为空）。

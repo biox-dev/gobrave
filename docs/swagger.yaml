@@ -3704,13 +3704,6 @@ definitions:
       title:
         type: string
     type: object
-  types.UserMenuTab:
-    properties:
-      title:
-        type: string
-      url:
-        type: string
-    type: object
   types.Workflow:
     properties:
       category:
@@ -5879,7 +5872,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 保存底部面板的标签列表 / 激活标签 / 展开态 / 高度，与主区域标签页一起落在当前激活项目的 user_project.menu_config
+      description: 保存底部面板的标签列表 / 激活标签 / 展开态 / 高度到当前激活项目的 user_project.menu_config
       parameters:
       - description: 底部面板状态
         in: body
@@ -6021,45 +6014,6 @@ paths:
       security:
       - Bearer: []
       summary: 获取当前用户信息
-      tags:
-      - 认证
-  /auth/menu-config:
-    post:
-      consumes:
-      - application/json
-      description: 保存主区域标签页（URL + 显示名）到当前激活项目的 user_project.menu_config，前端刷新时从 /auth/me
-        的 user.menu_config 回填
-      parameters:
-      - description: 标签页列表（数组顺序即标签栏顺序）
-        in: body
-        name: request
-        required: true
-        schema:
-          properties:
-            tabs:
-              items:
-                $ref: '#/definitions/types.UserMenuTab'
-              type: array
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: 更新成功
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: 请求参数错误
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: 没有激活项目
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 更新当前用户在当前项目下的主标签页配置
       tags:
       - 认证
   /auth/profile:
