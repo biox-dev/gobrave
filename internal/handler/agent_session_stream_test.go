@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"testing"
+	"time"
 
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 )
@@ -32,23 +33,56 @@ func TestSessionEventBridgeSubscribe(t *testing.T) {
 	if len(b.subs) != 0 {
 		t.Fatalf("session entry not cleaned up: %v", b.subs)
 	}
+	if len(b.byUser) != 0 {
+		t.Fatalf("byUser index not cleaned up: %v", b.byUser)
+	}
 }
 
-// TestSessionEventBridgeDispatchTerminalDropsSubscriptions 验证任务终态会清理会话订阅，
-// 而非终态事件不会。
-func TestSessionEventBridgeDispatchTerminalDropsSubscriptions(t *testing.T) {
+// TestSessionEventBridgeKeepsSubscriptionAcrossTurns 验证本轮任务结束不会踢掉订阅者：
+// 停留在会话页的用户应该继续收到该会话后续每一轮的实时流。
+func TestSessionEventBridgeKeepsSubscriptionAcrossTurns(t *testing.T) {
 	b := newSessionEventBridge(nil)
 	ctx := context.Background()
 
 	b.subscribe(10, 1)
-	b.dispatch(ctx, agenttypes.AgentEvent{SessionID: 10, Type: agenttypes.EventStream})
+	for _, typ := range []agenttypes.AgentEventType{
+		agenttypes.EventTaskStarted,
+		agenttypes.EventTaskWaiting,
+		agenttypes.EventTaskCompleted,
+		agenttypes.EventTaskFailed,
+		agenttypes.EventTaskCanceled,
+	} {
+		b.dispatch(ctx, agenttypes.AgentEvent{SessionID: 10, Type: typ})
+	}
 	if got := len(b.subscribers(10)); got != 1 {
-		t.Fatalf("non-terminal event dropped subscription, subscribers = %d", got)
+		t.Fatalf("subscription dropped on task end, subscribers = %d", got)
+	}
+}
+
+// TestSessionEventBridgeOfflineGrace 验证离线宽限期的两个方向：
+// 宽限期内重连保留订阅；超时未重连则清理该用户的全部会话订阅。
+func TestSessionEventBridgeOfflineGrace(t *testing.T) {
+	b := newSessionEventBridge(nil)
+	b.grace = 20 * time.Millisecond
+	b.subscribe(10, 1)
+	b.subscribe(11, 1)
+
+	// 刷新 / 重连：连接短暂归零后又恢复，不应清理。
+	b.setOnline(1, false)
+	b.setOnline(1, true)
+	time.Sleep(60 * time.Millisecond)
+	if got := len(b.subscribers(10)); got != 1 {
+		t.Fatalf("reconnected user lost subscription, subscribers = %d", got)
 	}
 
-	b.dispatch(ctx, agenttypes.AgentEvent{SessionID: 10, Type: agenttypes.EventTaskCompleted})
-	if got := len(b.subscribers(10)); got != 0 {
-		t.Fatalf("terminal event did not drop subscription, subscribers = %d", got)
+	// 真正离开：宽限期后按用户一次性清理全部会话订阅。
+	b.setOnline(1, false)
+	time.Sleep(80 * time.Millisecond)
+	if got := len(b.subscribers(10)) + len(b.subscribers(11)); got != 0 {
+		t.Fatalf("offline user subscriptions not cleaned, remaining = %d", got)
+	}
+	if len(b.byUser) != 0 {
+		t.Fatalf("byUser index not cleaned up: %v", b.byUser)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"time"
 
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/errors"
@@ -19,19 +20,39 @@ import (
 //   - 事件本身已经带 SessionID，用它做路由键可以让一次订阅覆盖该会话的所有轮次。
 //
 // 订阅关系只存在内存中：它描述的是「谁正在看这个会话」，不是持久状态。
-// 订阅生命周期只有两个撤销入口：页面离开时的显式退订，以及任务进入终态
-// （会话结束）时的批量清理；单次推送失败不会改变订阅关系。
+//
+// 清理策略（不再在本轮任务结束时清空）：
+//   - 快速路径：页面离开时显式退订；
+//   - 兜底路径：用户的最后一条实时连接断开后，宽限期结束仍未重连，才移除
+//     该用户的全部会话订阅。
+//
+// 兜底的依据是 realtime.Hub 的连接生命周期，而不是「某次推送失败」：单次推送失败
+// 可能只是 WS 正在重连，据此退订会让仍停留在会话页的用户永久失去实时流。
 type sessionEventBridge struct {
-	hub *realtime.Hub
+	hub   *realtime.Hub
+	grace time.Duration
 
-	mu   sync.RWMutex
+	mu   sync.Mutex
 	subs map[int64]map[int64]struct{} // sessionID → 订阅用户集合
+	// byUser 是 subs 的反向索引：用户离线时按用户一次性清掉其全部会话订阅。
+	byUser map[int64]map[int64]struct{} // userID → sessionID 集合
+	// offlineTimers 保存等待中的离线清理定时器（重连即取消）。
+	offlineTimers map[int64]*time.Timer
 }
+
+// offlineGrace 是「最后一条连接断开」到「真正清理订阅」之间的宽限期。
+//
+// 覆盖页面刷新 / WS 自动重连 / 网络抖动：这些场景下连接会短暂归零，
+// 但用户其实还停留在会话页，不应被当成离开。
+const offlineGrace = 60 * time.Second
 
 func newSessionEventBridge(hub *realtime.Hub) *sessionEventBridge {
 	return &sessionEventBridge{
-		hub:  hub,
-		subs: make(map[int64]map[int64]struct{}),
+		hub:           hub,
+		grace:         offlineGrace,
+		subs:          make(map[int64]map[int64]struct{}),
+		byUser:        make(map[int64]map[int64]struct{}),
+		offlineTimers: make(map[int64]*time.Timer),
 	}
 }
 
@@ -41,13 +62,26 @@ func (b *sessionEventBridge) subscribe(sessionID, userID int64) {
 		return
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	users := b.subs[sessionID]
 	if users == nil {
 		users = make(map[int64]struct{}, 1)
 		b.subs[sessionID] = users
 	}
 	users[userID] = struct{}{}
+
+	sessions := b.byUser[userID]
+	if sessions == nil {
+		sessions = make(map[int64]struct{}, 1)
+		b.byUser[userID] = sessions
+	}
+	sessions[sessionID] = struct{}{}
+	b.mu.Unlock()
+
+	// HTTP 订阅可能早于 WS 建连：此时用户还没有在线连接，先按离线安排兜底清理；
+	// 建连后 presence(online) 会取消它（宽限期远大于握手时间）。
+	if b.hub != nil && !b.hub.IsUserOnline(userID) {
+		b.setOnline(userID, false)
+	}
 }
 
 // unsubscribe 撤销单个用户对会话的订阅；会话没有订阅者时删除整条记录。
@@ -55,23 +89,82 @@ func (b *sessionEventBridge) unsubscribe(sessionID, userID int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	users, ok := b.subs[sessionID]
-	if !ok {
-		return
+	if ok {
+		delete(users, userID)
+		if len(users) == 0 {
+			delete(b.subs, sessionID)
+		}
 	}
-	delete(users, userID)
-	if len(users) == 0 {
-		delete(b.subs, sessionID)
+	if sessions, ok := b.byUser[userID]; ok {
+		delete(sessions, sessionID)
+		if len(sessions) == 0 {
+			delete(b.byUser, userID)
+		}
 	}
 }
 
-// dropSession 取消会话下所有用户的订阅（会话本轮结束）。
-func (b *sessionEventBridge) dropSession(sessionID int64) {
-	if sessionID <= 0 {
+// removeUserLocked 移除某个用户的全部会话订阅（用户已离线且超过宽限期）。
+func (b *sessionEventBridge) removeUserLocked(userID int64) {
+	sessions := b.byUser[userID]
+	delete(b.byUser, userID)
+	for sessionID := range sessions {
+		users := b.subs[sessionID]
+		delete(users, userID)
+		if len(users) == 0 {
+			delete(b.subs, sessionID)
+		}
+	}
+}
+
+// setOnline 由 realtime.Hub 的连接生命周期驱动。
+//
+//   - online：用户（重新）有了连接，取消等待中的离线清理；
+//   - offline：最后一条连接断开，宽限期后清理该用户的全部会话订阅。
+//
+// 宽限期让页面刷新 / 短暂断网不会被误判为「离开页面」，也避免了在每条事件上
+// 做「连接还在不在」的探测。
+func (b *sessionEventBridge) setOnline(userID int64, online bool) {
+	if userID <= 0 {
 		return
 	}
 	b.mu.Lock()
-	delete(b.subs, sessionID)
-	b.mu.Unlock()
+	defer b.mu.Unlock()
+
+	if online {
+		if timer, ok := b.offlineTimers[userID]; ok {
+			timer.Stop()
+			delete(b.offlineTimers, userID)
+		}
+		return
+	}
+
+	if _, exists := b.offlineTimers[userID]; exists {
+		return
+	}
+	if _, hasSubs := b.byUser[userID]; !hasSubs {
+		return
+	}
+
+	b.offlineTimers[userID] = time.AfterFunc(b.grace, func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		delete(b.offlineTimers, userID)
+		// 宽限期内已重连（presence online 与定时器可能擦肩而过）：以连接状态为准。
+		if b.hub != nil && b.hub.IsUserOnline(userID) {
+			return
+		}
+		b.removeUserLocked(userID)
+	})
+}
+
+// stop 停止所有离线清理定时器（容器关闭 / 测试清理）。
+func (b *sessionEventBridge) stop() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for userID, timer := range b.offlineTimers {
+		timer.Stop()
+		delete(b.offlineTimers, userID)
+	}
 }
 
 // dispatch 是事件桥入口：只推给该会话的订阅者。
@@ -99,39 +192,22 @@ func (b *sessionEventBridge) dispatch(_ context.Context, ev agenttypes.AgentEven
 		for _, userID := range users {
 			// 推送失败只丢弃这一帧（hub 内部已记录日志），不动订阅关系：
 			// 页面仍然打开、只是 WS 正在重连时，退订会造成实时流永久静默。
-			// 死连接留下的订阅由会话结束时的 dropSession 统一清理。
+			// 用户真正离开由 Hub 的连接断开 + 离线宽限期清理（见 setOnline）。
 			_ = b.hub.PushMessage(userID, msg)
 		}
-	}
-
-	// 本轮任务结束 = 会话结束：取消该会话下所有用户订阅。
-	// 事件本身已经先推送出去（task.completed / failed / canceled 是最后一帧）；
-	// 发起新一轮时 /agent/chat 会把发起人重新登记为订阅者。
-	if isSessionEndEvent(ev.Type) {
-		b.dropSession(ev.SessionID)
 	}
 }
 
 // subscribers 返回会话订阅者的快照（在锁外推送，避免同步分发时持锁）。
 func (b *sessionEventBridge) subscribers(sessionID int64) []int64 {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	users := b.subs[sessionID]
 	out := make([]int64, 0, len(users))
 	for userID := range users {
 		out = append(out, userID)
 	}
 	return out
-}
-
-// isSessionEndEvent 判断事件是否代表会话本轮结束（任务终态）。
-func isSessionEndEvent(t agenttypes.AgentEventType) bool {
-	switch t {
-	case agenttypes.EventTaskCompleted, agenttypes.EventTaskFailed, agenttypes.EventTaskCanceled:
-		return true
-	default:
-		return false
-	}
 }
 
 // ---- HTTP：会话实时订阅 ----

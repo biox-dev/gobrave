@@ -50,6 +50,8 @@ type AgentHandler struct {
 	mu sync.Mutex
 	// unsub 是全局事件订阅的取消函数（由 StartEventStream 注册）。
 	unsub func()
+	// presenceUnsub 是连接在线状态订阅的取消函数（由 StartEventStream 注册）。
+	presenceUnsub func()
 }
 
 // NewAgentHandler 创建 AgentHandler。
@@ -1727,7 +1729,7 @@ func (h *AgentHandler) ResumeTask(c *gin.Context) {
 		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
 		return
 	}
-	// 上一轮终态时订阅已被清理：续跑前把发起人重新登记为订阅者（需先拿到 SessionID）。
+	// 续跑也会产生实时事件：把发起人登记为订阅者（幂等；需先拿到 SessionID）。
 	if task, taskErr := h.svc.GetTask(c.Request.Context(), id); taskErr == nil && task != nil {
 		h.subscribeSession(task.SessionID, userID)
 	}
@@ -1749,6 +1751,10 @@ func (h *AgentHandler) ResumeTask(c *gin.Context) {
 //   - 没有打开会话页的用户不会收到任何 Agent 事件。
 //
 // 未绑定会话的一次性任务（SessionID == 0）仍按事件归属用户直推（见 dispatch）。
+//
+// 同时订阅 realtime.Hub 的连接在线状态：用户最后一条连接断开超过宽限期后，
+// 清理该用户的全部会话订阅——这是显式退订之外唯一的兜底，且不会因某一轮任务
+// 结束而把仍在会话页的其他用户踢掉。
 func (h *AgentHandler) StartEventStream() {
 	if h.svc == nil || h.hub == nil || h.stream == nil {
 		return
@@ -1764,17 +1770,24 @@ func (h *AgentHandler) StartEventStream() {
 		h.stream.dispatch(ctx, ev)
 		return nil
 	})
+	h.presenceUnsub = h.hub.SubscribePresence(h.stream.setOnline)
 }
 
 // StopEventStream 取消全局事件订阅（供容器关闭 / 测试清理使用）。
 func (h *AgentHandler) StopEventStream() {
 	h.mu.Lock()
 	unsub := h.unsub
+	presenceUnsub := h.presenceUnsub
 	h.unsub = nil
+	h.presenceUnsub = nil
 	h.mu.Unlock()
 	if unsub != nil {
 		unsub()
 	}
+	if presenceUnsub != nil {
+		presenceUnsub()
+	}
+	h.stream.stop()
 }
 
 // getCurrentUser 从 gin 上下文读取当前登录用户（由认证中间件注入）。

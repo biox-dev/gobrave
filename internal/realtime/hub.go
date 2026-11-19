@@ -64,6 +64,9 @@ type Hub struct {
 
 	inboundMu   sync.RWMutex
 	inboundSubs map[string]func(InboundMessage)
+
+	presenceMu   sync.RWMutex
+	presenceSubs map[string]func(userID int64, online bool)
 }
 
 type client struct {
@@ -143,6 +146,7 @@ func NewHub(cfg *config.Config) *Hub {
 		clientsByUser: make(map[int64][]*client),
 		clientByID:    make(map[string]*client),
 		inboundSubs:   make(map[string]func(InboundMessage)),
+		presenceSubs:  make(map[string]func(userID int64, online bool)),
 	}
 }
 
@@ -175,12 +179,53 @@ func (h *Hub) dispatchInbound(msg InboundMessage) {
 	}
 }
 
+// SubscribePresence 订阅「用户是否还有在线连接」的变化（连接数 0 → 1 / 1 → 0）。
+//
+// 这是订阅层判断「用户是否还在看页面」的唯一可靠信号：连接关闭由服务端感知
+// （WS 读写失败 / ping 超时 / 浏览器关闭），不依赖客户端是否来得及发退订请求。
+// 回调在 Hub 锁外同步执行，实现方不应阻塞。
+func (h *Hub) SubscribePresence(handler func(userID int64, online bool)) func() {
+	if handler == nil {
+		return func() {}
+	}
+	subID := uuid.NewString()
+	h.presenceMu.Lock()
+	h.presenceSubs[subID] = handler
+	h.presenceMu.Unlock()
+
+	return func() {
+		h.presenceMu.Lock()
+		delete(h.presenceSubs, subID)
+		h.presenceMu.Unlock()
+	}
+}
+
+func (h *Hub) dispatchPresence(userID int64, online bool) {
+	h.presenceMu.RLock()
+	subs := make([]func(int64, bool), 0, len(h.presenceSubs))
+	for _, handler := range h.presenceSubs {
+		subs = append(subs, handler)
+	}
+	h.presenceMu.RUnlock()
+
+	for _, handler := range subs {
+		handler(userID, online)
+	}
+}
+
 func (h *Hub) Transport() Transport {
 	return h.transport
 }
 
 func (h *Hub) MaxConnectionsPerUser() int {
 	return h.maxConnectionsPerUser
+}
+
+// IsUserOnline 返回该用户当前是否还有实时连接。
+func (h *Hub) IsUserOnline(userID int64) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clientsByUser[userID]) > 0
 }
 
 func (h *Hub) Stats() Stats {
@@ -470,6 +515,8 @@ func (h *Hub) registerClient(c *client) {
 		// share the same cleanup behavior.
 		h.unregisterClient(evicted.id)
 	}
+	// 该用户从「无连接」变成「有连接」：订阅层据此取消待执行的离线清理。
+	h.dispatchPresence(c.userID, true)
 }
 
 func (h *Hub) unregisterClient(clientID string) {
@@ -488,7 +535,8 @@ func (h *Hub) unregisterClient(clientID string) {
 			filtered = append(filtered, item)
 		}
 	}
-	if len(filtered) == 0 {
+	removedLast := len(filtered) == 0
+	if removedLast {
 		delete(h.clientsByUser, c.userID)
 	} else {
 		h.clientsByUser[c.userID] = filtered
@@ -496,6 +544,11 @@ func (h *Hub) unregisterClient(clientID string) {
 	h.mu.Unlock()
 
 	c.close()
+
+	// 最后一条连接断开：订阅层开始计算离线宽限期（覆盖重连 / 刷新）。
+	if removedLast {
+		h.dispatchPresence(c.userID, false)
+	}
 }
 
 func (h *Hub) snapshotUserClients(userID int64) []*client {
