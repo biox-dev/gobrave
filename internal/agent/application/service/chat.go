@@ -404,7 +404,9 @@ func (s *ChatService) ListTaskMessages(ctx context.Context, sessionID, taskID in
 
 // GetTaskTimeline 按任务 ID 返回该任务的执行时间线（已落库的事实流）。
 //
-// 校验任务归属：只有任务所属用户才能读取自己的时间线，避免越权。
+// 访问控制与会话详情一致：会话按项目共享，项目成员都可以读取该会话下任务的
+// 时间线（其他用户打开同一会话页时也能回填实时流）；不属于任何会话的一次性
+// 任务仍然只允许任务归属者读取。
 func (s *ChatService) GetTaskTimeline(ctx context.Context, taskID, userID int64) ([]Message, error) {
 	task, err := s.agent.GetTask(ctx, taskID)
 	if err != nil {
@@ -413,14 +415,60 @@ func (s *ChatService) GetTaskTimeline(ctx context.Context, taskID, userID int64)
 	if task == nil {
 		return nil, ErrTaskNotFound
 	}
-	// 后台任务（UserID == 0）不对外暴露；其它任务必须归属请求者。
-	if task.Facts().UserID == 0 || task.Facts().UserID != userID {
+	// 后台任务（UserID == 0）不对外暴露。
+	if task.Facts().UserID == 0 {
 		return nil, ErrTaskNotFound
 	}
 	if task.SessionID <= 0 {
+		if task.Facts().UserID != userID {
+			return nil, ErrTaskNotFound
+		}
 		return []Message{}, nil
 	}
+	// 项目归属优先取任务自带的 ProjectID：它是任务创建时写入的生命周期属性
+	// （见 NewTask ← TaskFacts），直接用它省掉一次会话查询。
+	projectID := task.ProjectID
+	if projectID <= 0 {
+		// 历史任务该列为 0（AutoMigrate 补列 / 创建时无激活项目）：回退到会话的项目，
+		// 保证与 /agent/session/get 的可见性判定一致。
+		sess, err := s.sessions.Get(ctx, task.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if sess.ProjectID <= 0 {
+			// 会话未归属项目时退化为「仅发起人可见」。
+			if sess.UserID != userID {
+				return nil, ErrTaskNotFound
+			}
+			return s.ListTaskMessages(ctx, task.SessionID, task.ID)
+		}
+		projectID = sess.ProjectID
+	}
+	if err := s.ensureProjectMember(ctx, projectID, userID); err != nil {
+		return nil, err
+	}
 	return s.ListTaskMessages(ctx, task.SessionID, task.ID)
+}
+
+// ensureProjectMember 校验用户是否属于指定项目。
+//
+// 会话 / 任务按项目共享：项目成员即可读取；项目未归属（projectID <= 0）或
+// 未注入 ProjectService 时一律拒绝。不可访问时返回 ErrTaskNotFound
+// （不暴露资源是否存在）。
+func (s *ChatService) ensureProjectMember(ctx context.Context, projectID, userID int64) error {
+	if projectID <= 0 || userID <= 0 || s.projects == nil {
+		return ErrTaskNotFound
+	}
+	projectUserIDs, err := s.projects.ListProjectUserIDs(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	for _, id := range projectUserIDs {
+		if id == userID {
+			return nil
+		}
+	}
+	return ErrTaskNotFound
 }
 
 // 会话详情分页参数默认值与上限。

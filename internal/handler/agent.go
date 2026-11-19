@@ -973,6 +973,8 @@ func (h *AgentHandler) GetTaskRequest(c *gin.Context) {
 // @Description  返回该任务已落库的时间线消息（reasoning / assistant / tool_call / tool_result / error），
 // @Description  用于前端刷新 / 切换会话后回填「事实流」：增量事件（text / reasoning_delta）只广播
 // @Description  不落库，完整块事件由 TimelineRecorder 即时写入 agent_messages。
+// @Description  访问控制与会话详情一致：会话所属项目的成员都可以读取该会话下任务的时间线；
+// @Description  不属于任何会话的一次性任务仍然只允许任务归属者读取（不可访问时返回 404）。
 // @Tags         Agent
 // @Produce      json
 // @Param        task_id  query     string  true  "任务 ID"
