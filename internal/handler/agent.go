@@ -24,12 +24,12 @@ import (
 // AgentHandler 处理 Agent 任务与权限相关接口。
 //
 // 职责边界（对应 design.md）：
-//   - HTTP 是 command（创建任务 / 批准 / 拒绝）；
-//   - WS 是 notification（StartEventBridge 全局订阅事件，按 AgentEvent.UserID 推送）；
+//   - HTTP 是 command（创建任务 / 批准 / 拒绝 / 订阅会话）；
+//   - WS 是 notification（会话订阅后按 AgentEvent.SessionID 推送）；
 //   - AgentService / Repository 是真正的 state。
 //
-// 事件订阅不按任务维护：AgentEvent 自带 UserID，因此所有任务启动路径（含
-// ResumeTask / Recover 自动续跑）都无需再显式挂订阅。
+// 实时流按「会话」订阅而不是按用户全局推送：进入会话页时登记订阅，离开时撤销，
+// 项目内所有成员看到的同一会话事件流完全一致。
 type AgentHandler struct {
 	svc  *agentservice.AgentService
 	chat *agentservice.ChatService
@@ -41,11 +41,14 @@ type AgentHandler struct {
 	tools *tool.Registry
 
 	runtimeCtx *RuntimeContextResolver
-	// projects 用于会话可见性判断：会话按项目隔离，项目成员都能查看。
+	// projects 用于会话可见性判断：会话按项目隔离，项目成员都能查看与订阅。
 	projects interfaces.ProjectService
 
+	// stream 是会话级实时事件路由（SessionID → 订阅用户集合）。
+	stream *sessionEventBridge
+
 	mu sync.Mutex
-	// unsub 是全局事件订阅的取消函数（由 StartEventBridge 注册）。
+	// unsub 是全局事件订阅的取消函数（由 StartEventStream 注册）。
 	unsub func()
 }
 
@@ -60,6 +63,7 @@ func NewAgentHandler(svc *agentservice.AgentService, chat *agentservice.ChatServ
 		tools:      tools,
 		runtimeCtx: runtimeCtx,
 		projects:   projects,
+		stream:     newSessionEventBridge(hub),
 	}
 }
 
@@ -197,7 +201,7 @@ func parseOptionalAgentID(s string) (int64, error) {
 
 // CreateTask godoc
 // @Summary      创建 Agent 任务
-// @Description  创建任务并异步启动执行；实时事件由全局事件桥按任务归属用户推送到 WS
+// @Description  创建任务并异步启动执行；实时事件推送给订阅了该任务会话的用户（见 /agent/session/subscribe）
 // @Tags         Agent
 // @Accept       json
 // @Produce      json
@@ -251,7 +255,7 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 		return
 	}
 
-	// 2) 启动异步执行（实时事件由全局事件桥按 UserID 推送，无需逐任务订阅）。
+	// 2) 启动异步执行（实时事件只推给订阅了该会话的用户，无需逐任务订阅）。
 	if err := h.svc.StartTask(c.Request.Context(), task.ID); err != nil {
 		handleAgentError(c, err, "failed to start agent task")
 		return
@@ -338,8 +342,12 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		return
 	}
 
+	// 发起人隐式订阅该会话：新建会话时页面还没有会话 ID，无法自行订阅；
+	// 若页面已订阅，这里是幂等的。必须在 StartTurn 之前登记，避免错过早期事件。
+	h.subscribeSession(sess.ID, userID)
+
 	// 2) 启动执行（异步，assistant 回复在轮次结束时自动写回会话历史）。
-	// 实时事件由全局事件桥按 UserID 推送，无需逐任务订阅。
+	// 实时事件只推给订阅了该会话的用户。
 	if err := h.chat.StartTurn(c.Request.Context(), task.ID); err != nil {
 		handleAgentError(c, err, "failed to start conversation turn")
 		return
@@ -1703,7 +1711,8 @@ func (h *AgentHandler) CancelTask(c *gin.Context) {
 // @Security     Bearer
 // @Router       /agent/task/resume [post]
 func (h *AgentHandler) ResumeTask(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
 		return
 	}
 
@@ -1718,6 +1727,10 @@ func (h *AgentHandler) ResumeTask(c *gin.Context) {
 		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
 		return
 	}
+	// 上一轮终态时订阅已被清理：续跑前把发起人重新登记为订阅者（需先拿到 SessionID）。
+	if task, taskErr := h.svc.GetTask(c.Request.Context(), id); taskErr == nil && task != nil {
+		h.subscribeSession(task.SessionID, userID)
+	}
 	if err := h.svc.ResumeTask(c.Request.Context(), id); err != nil {
 		handleAgentError(c, err, "failed to resume agent task")
 		return
@@ -1725,17 +1738,19 @@ func (h *AgentHandler) ResumeTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
 }
 
-// StartEventBridge 注册全局 Agent 事件订阅，把事件按 AgentEvent.UserID 推送到对应的 WS 连接。
+// StartEventStream 订阅进程内 Agent 事件，并交给 sessionEventBridge 按会话路由。
 //
-// 为什么是全局订阅而不是逐任务订阅：
-//   - 事件已经自带归属用户（服务层从 TaskFacts 填充），路由不需要任务表；
-//   - 任务可能在 HTTP 请求之外的路径启动（ResumeTask / Recover 自动续跑 /
-//     权限决策后续跑），逐任务订阅必须覆盖每个启动点，容易遗漏；
-//   - 订阅没有 per-task 状态，不存在“终态未到导致订阅泄漏”的问题。
+// 这里仍然只向 EventBus 订阅一次（而不是每个页面订阅一次）：订阅关系保存在
+// sessionEventBridge 的注册表里，事件到达时按 SessionID 查表决定推给谁；
+// 页面只调用 /agent/session/subscribe 登记、/agent/session/unsubscribe 撤销。
 //
-// 后台任务（无登录用户，UserID == 0）不推送。历史时间线仍以 agent_messages 为准。
-func (h *AgentHandler) StartEventBridge() {
-	if h.svc == nil || h.hub == nil {
+// 不在推送时按 UserID 直推，因此：
+//   - 同一会话 / 项目内的多个用户可以同时看到同一份实时流；
+//   - 没有打开会话页的用户不会收到任何 Agent 事件。
+//
+// 未绑定会话的一次性任务（SessionID == 0）仍按事件归属用户直推（见 dispatch）。
+func (h *AgentHandler) StartEventStream() {
+	if h.svc == nil || h.hub == nil || h.stream == nil {
 		return
 	}
 
@@ -1745,21 +1760,14 @@ func (h *AgentHandler) StartEventBridge() {
 		return
 	}
 
-	h.unsub = h.svc.Subscribe(0, func(_ context.Context, ev agenttypes.AgentEvent) error {
-		if ev.UserID == 0 {
-			return nil
-		}
-		_ = h.hub.PushMessage(ev.UserID, agentWSEvent{
-			Type:   "agent.event",
-			TaskID: ev.TaskID,
-			Event:  ev,
-		})
+	h.unsub = h.svc.Subscribe(func(ctx context.Context, ev agenttypes.AgentEvent) error {
+		h.stream.dispatch(ctx, ev)
 		return nil
 	})
 }
 
-// StopEventBridge 取消全局事件订阅（供容器关闭 / 测试清理使用）。
-func (h *AgentHandler) StopEventBridge() {
+// StopEventStream 取消全局事件订阅（供容器关闭 / 测试清理使用）。
+func (h *AgentHandler) StopEventStream() {
 	h.mu.Lock()
 	unsub := h.unsub
 	h.unsub = nil

@@ -495,6 +495,10 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler, sess
 	r.POST("/agent/session/page", handler.PageSessions)
 	r.GET("/agent/session/get", handler.GetSession)
 	r.POST("/agent/session/fork", handler.ForkSession)
+	// 会话实时流订阅：进入会话页时订阅、离开时退订（项目内成员均可订阅）。
+	// 订阅粒度为会话而不是任务，一次订阅覆盖该会话的所有轮次。
+	r.POST("/agent/session/subscribe", handler.SubscribeSession)
+	r.POST("/agent/session/unsubscribe", handler.UnsubscribeSession)
 	// 会话结果：按资源类型（script / workflow / analysis_node）查询该会话关联的脚本 / 工作流 / 分析节点。
 	r.GET("/agent/session/resources", sessionResources.ListSessionResources)
 	// 会话结果：一次返回该会话的全部资源，并按资源类型分组（前端只发一次请求）。

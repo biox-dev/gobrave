@@ -66,11 +66,13 @@ type CheckpointRuntime interface {
 // 状态源是 agent_tasks（任务）与 agent_messages（时间线）；EventBus 之上接
 // WS / SSE 做实时推送。
 type EventBus interface {
-	// Publish 发布一个事件给订阅了该任务（或全部任务）的订阅者。
+	// Publish 发布一个事件给全部订阅者。
 	Publish(ctx context.Context, event types.AgentEvent)
-	// Subscribe 订阅某任务的事件；taskID 为空表示订阅全部任务。
-	// 返回的 unsubscribe 用于取消订阅。
-	Subscribe(taskID int64, handler types.EventHandler) (unsubscribe func())
+	// Subscribe 订阅全部事件，返回的 unsubscribe 用于取消订阅。
+	//
+	// 事件范围（任务 / 会话 / 用户）由订阅方按 AgentEvent 上的字段自行过滤，
+	// 总线只做进程内广播：会话级订阅与路由见 handler.sessionEventBridge。
+	Subscribe(handler types.EventHandler) (unsubscribe func())
 }
 
 // PermissionPolicy 判断一个 Operation 应被允许、拒绝，还是需要人工确认。

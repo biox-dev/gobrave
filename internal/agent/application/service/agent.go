@@ -499,14 +499,16 @@ func (s *AgentService) PagePermissions(ctx context.Context, offset, limit int, t
 	return s.perms.Page(ctx, offset, limit, taskID, statuses...)
 }
 
-// Subscribe 订阅任务事件（taskID 为 0 表示订阅全部任务），返回取消订阅函数。
-// 供 WS / SSE 实时推送层使用；刷新后的历史请从 agent_messages 读取
-// （事件流仅用于实时广播，不再持久化）。
-func (s *AgentService) Subscribe(taskID int64, handler EventHandler) func() {
+// Subscribe 订阅全部 Agent 事件，返回取消订阅函数。
+//
+// 供 WS / SSE 实时推送层使用：事件范围（任务 / 会话 / 用户）由订阅方按
+// AgentEvent 上的字段自行过滤（会话级路由见 handler.sessionEventBridge）。
+// 刷新后的历史请从 agent_messages 读取（事件流仅用于实时广播，不再持久化）。
+func (s *AgentService) Subscribe(handler EventHandler) func() {
 	if s.bus == nil {
 		return func() {}
 	}
-	return s.bus.Subscribe(taskID, handler)
+	return s.bus.Subscribe(handler)
 }
 
 // factsForTask 按任务 ID 加载只读事实（用户 / 会话 / 项目），供没有 *Task 在手的事件

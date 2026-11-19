@@ -79,7 +79,7 @@ func TestServiceFullPermissionFlow(t *testing.T) {
 	defer cancel()
 
 	events := make(chan agenttypes.AgentEvent, 128)
-	unsub := svc.Subscribe(0, func(_ context.Context, ev agenttypes.AgentEvent) error {
+	unsub := svc.Subscribe(func(_ context.Context, ev agenttypes.AgentEvent) error {
 		events <- ev
 		return nil
 	})
@@ -164,7 +164,7 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 	defer cancel()
 
 	events := make(chan agenttypes.AgentEvent, 128)
-	unsub := svc.Subscribe(0, func(_ context.Context, ev agenttypes.AgentEvent) error {
+	unsub := svc.Subscribe(func(_ context.Context, ev agenttypes.AgentEvent) error {
 		events <- ev
 		return nil
 	})
