@@ -57,6 +57,7 @@ func (t *agentTool) Execute(ctx context.Context, args json.RawMessage) (any, err
 		Model:           opts.Model,
 		ParentSessionID: facts.SessionID,
 		UserID:          facts.UserID,
+		ProfileID:       facts.ProfileID,
 	})
 	return inner.Execute(ctx, args)
 }

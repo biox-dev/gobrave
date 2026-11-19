@@ -118,12 +118,13 @@ type AgentToolConfig struct {
 	// Provider / Model 是写入子会话的溯源信息（可为空）。
 	Provider string
 	Model    string
-	// ParentSessionID / UserID 是父请求的会话与用户 ID（回退值）。
+	// ParentSessionID / UserID / ProfileID 是父请求的会话、用户与 Profile ID（回退值）。
 	//
 	// 正常情况下从工具执行 ctx 的 RuntimeContext 读取；ctx 没有时用这里的值，
 	// 保证 Request.SessionID 设置了但 RuntimeContext 缺失的场景也能落库。
 	ParentSessionID int64
 	UserID          int64
+	ProfileID       int64
 }
 
 // SubAgentSessionInfo 是创建子会话所需的信息。
@@ -151,13 +152,14 @@ type SubAgentSessionStore interface {
 	CreateChildSession(ctx context.Context, info SubAgentSessionInfo) (int64, error)
 	// CreateSession 创建一个独立会话（无父会话时使用）并返回会话 ID。
 	CreateSession(ctx context.Context, info SubAgentSessionInfo) (int64, error)
-	// AppendUserMessage 追加子任务的 user 消息。
-	AppendUserMessage(ctx context.Context, sessionID int64, content string) error
+	// AppendUserMessage 追加子任务的 user 消息；ownerID 为发起用户 ID。
+	AppendUserMessage(ctx context.Context, sessionID, ownerID int64, content string) error
 	// AppendEvent 把一条流式事件投影为子会话消息（投影规则由实现方决定，通常复用
 	// agentservice.ProjectTimelineEvent；不产生消息的事件直接忽略）。
-	AppendEvent(ctx context.Context, sessionID int64, event agenttypes.StreamEvent) error
-	// AppendFinalMessage 追加子 Agent 的最终回答（或错误信息）。
-	AppendFinalMessage(ctx context.Context, sessionID int64, content string) error
+	// ownerID 为子 Agent 使用的 Profile ID。
+	AppendEvent(ctx context.Context, sessionID, ownerID int64, event agenttypes.StreamEvent) error
+	// AppendFinalMessage 追加子 Agent 的最终回答（或错误信息）；ownerID 为子 Agent 使用的 Profile ID。
+	AppendFinalMessage(ctx context.Context, sessionID, ownerID int64, content string) error
 }
 
 // TaskAgentTools 返回子 Agent 的只读工具集合（对齐 opencode TaskAgentTools）。
@@ -320,7 +322,7 @@ func (t *agentTool) runTask(ctx context.Context, task AgentTaskParams) agentRunR
 	}
 
 	// 子 Agent 始终拥有自己的会话 + 记录型 Runtime。
-	sessionID, rt, err := t.sessionRuntime(ctx, task)
+	sessionID, ownerID, rt, err := t.sessionRuntime(ctx, task)
 	if err != nil {
 		result.err = fmt.Errorf("error preparing agent session: %s", err)
 		return result
@@ -332,16 +334,16 @@ func (t *agentTool) runTask(ctx context.Context, task AgentTaskParams) agentRunR
 	}, rt)
 	if err != nil {
 		result.err = fmt.Errorf("error generating agent: %s", err)
-		t.appendFinal(ctx, sessionID, "error: "+result.err.Error())
+		t.appendFinal(ctx, sessionID, ownerID, "error: "+result.err.Error())
 		return result
 	}
 	if answer == nil || strings.TrimSpace(answer.Content) == "" {
 		result.err = fmt.Errorf("no response from agent")
-		t.appendFinal(ctx, sessionID, "error: "+result.err.Error())
+		t.appendFinal(ctx, sessionID, ownerID, "error: "+result.err.Error())
 		return result
 	}
 	result.content = answer.Content
-	t.appendFinal(ctx, sessionID, answer.Content)
+	t.appendFinal(ctx, sessionID, ownerID, answer.Content)
 	return result
 }
 
@@ -352,13 +354,16 @@ func (t *agentTool) runTask(ctx context.Context, task AgentTaskParams) agentRunR
 //   - 否则（如 AI 摘要等无会话任务）：创建一个独立会话。
 //
 // 会话创建失败视为该子任务失败，不再降级为无会话执行。返回的 recordingRuntime 把
-// reasoning / tool_call / tool_result 写入子会话，权限 / 提问委托给父 Runtime。
-func (t *agentTool) sessionRuntime(ctx context.Context, task AgentTaskParams) (int64, agentinterfaces.Runtime, error) {
+// reasoning / tool_call / tool_result 写入子会话（owner 为子 Agent 的 Profile ID），
+// 权限 / 提问委托给父 Runtime。
+//
+// 返回的 ownerID 同时用于子 Agent 最终消息落库。
+func (t *agentTool) sessionRuntime(ctx context.Context, task AgentTaskParams) (sessionID, ownerID int64, rt agentinterfaces.Runtime, err error) {
 	if t.cfg.SessionStore == nil {
-		return 0, nil, fmt.Errorf("agent tool: session store is required")
+		return 0, 0, nil, fmt.Errorf("agent tool: session store is required")
 	}
 
-	// 子 Agent 沿用父执行的执行事实（用户 / 项目 / 工作目录），并补上父会话回退值。
+	// 子 Agent 沿用父执行的执行事实（用户 / 项目 / 工作目录 / Profile），并补上回退值。
 	facts := tool.TaskFactsFrom(ctx)
 	if facts.WorkingDir == "" {
 		facts.WorkingDir = t.cfg.WorkingDir
@@ -369,45 +374,45 @@ func (t *agentTool) sessionRuntime(ctx context.Context, task AgentTaskParams) (i
 	if facts.UserID <= 0 {
 		facts.UserID = t.cfg.UserID
 	}
+	if facts.ProfileID == 0 {
+		facts.ProfileID = t.cfg.ProfileID
+	}
 
-	userID := facts.UserID
 	info := SubAgentSessionInfo{
 		ProjectID:       facts.ProjectID,
 		ParentSessionID: facts.SessionID,
 		Title:           subAgentSessionTitle(task),
-		UserID:          userID,
+		UserID:          facts.UserID,
 		Provider:        t.cfg.Provider,
 		Model:           t.cfg.Model,
 	}
 
-	var (
-		sessionID int64
-		err       error
-	)
 	if info.ParentSessionID > 0 {
 		sessionID, err = t.cfg.SessionStore.CreateChildSession(ctx, info)
 	} else {
 		sessionID, err = t.cfg.SessionStore.CreateSession(ctx, info)
 	}
 	if err != nil {
-		return 0, nil, fmt.Errorf("create session: %w", err)
+		return 0, 0, nil, fmt.Errorf("create session: %w", err)
 	}
 	if sessionID <= 0 {
-		return 0, nil, fmt.Errorf("create session: empty session id")
+		return 0, 0, nil, fmt.Errorf("create session: empty session id")
 	}
 
-	if err := t.cfg.SessionStore.AppendUserMessage(ctx, sessionID, task.Prompt); err != nil {
+	// 子会话的用户消息归属发起人；Agent 侧消息归属实际执行的 Profile。
+	if err := t.cfg.SessionStore.AppendUserMessage(ctx, sessionID, facts.UserID, task.Prompt); err != nil {
 		logging.Warn("sub-agent: append user message failed", "sessionID", sessionID, "err", err)
 	}
-	return sessionID, &recordingRuntime{store: t.cfg.SessionStore, sessionID: sessionID, parent: t.cfg.ParentRuntime}, nil
+	ownerID = facts.ProfileID
+	return sessionID, ownerID, &recordingRuntime{store: t.cfg.SessionStore, sessionID: sessionID, ownerID: ownerID, parent: t.cfg.ParentRuntime}, nil
 }
 
 // appendFinal 把子 Agent 的最终回答（或错误）写入子会话；未落库时直接跳过。
-func (t *agentTool) appendFinal(ctx context.Context, sessionID int64, content string) {
+func (t *agentTool) appendFinal(ctx context.Context, sessionID, ownerID int64, content string) {
 	if sessionID <= 0 || t.cfg.SessionStore == nil {
 		return
 	}
-	if err := t.cfg.SessionStore.AppendFinalMessage(ctx, sessionID, content); err != nil {
+	if err := t.cfg.SessionStore.AppendFinalMessage(ctx, sessionID, ownerID, content); err != nil {
 		logging.Warn("sub-agent: append final message failed", "sessionID", sessionID, "err", err)
 	}
 }
@@ -421,11 +426,13 @@ func (t *agentTool) appendFinal(ctx context.Context, sessionID int64, content st
 type recordingRuntime struct {
 	store     SubAgentSessionStore
 	sessionID int64
-	parent    agentinterfaces.Runtime
+	// ownerID 是子 Agent 消息的归属者（子 Agent 使用的 Profile ID）。
+	ownerID int64
+	parent  agentinterfaces.Runtime
 }
 
 func (r *recordingRuntime) Emit(ctx context.Context, event agenttypes.StreamEvent) error {
-	err := r.store.AppendEvent(ctx, r.sessionID, event)
+	err := r.store.AppendEvent(ctx, r.sessionID, r.ownerID, event)
 	if err != nil {
 		logging.Warn("sub-agent: persist message failed", "sessionID", r.sessionID, "event", event.Type, "err", err)
 	}

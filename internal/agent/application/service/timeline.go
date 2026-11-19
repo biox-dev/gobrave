@@ -21,8 +21,9 @@ import (
 // ProjectTimelineEvent 把一条流式完整块事件投影为可持久化的会话消息。
 //
 // sessionID / taskID 写入消息归属；taskID 为 0 表示不属于 agent_tasks（如子 Agent 会话）。
+// ownerID 是消息归属者：这些消息均由 Agent 产出，因此写入实际执行的 Profile ID。
 // 返回 ok=false 表示该事件不应落库。
-func ProjectTimelineEvent(sessionID, taskID int64, event StreamEvent) (MessageCreateParams, bool) {
+func ProjectTimelineEvent(sessionID, taskID, ownerID int64, event StreamEvent) (MessageCreateParams, bool) {
 	switch event.Type {
 	case StreamEventReasoning:
 		content, ok := ReasoningBlockContent(event.Data)
@@ -34,6 +35,7 @@ func ProjectTimelineEvent(sessionID, taskID int64, event StreamEvent) (MessageCr
 			Role:      RoleAssistant,
 			Kind:      KindReasoning,
 			TaskID:    taskID,
+			UserID:    ownerID,
 			Content:   content,
 			Data:      event.Data,
 		}, true
@@ -43,6 +45,7 @@ func ProjectTimelineEvent(sessionID, taskID int64, event StreamEvent) (MessageCr
 			Role:      RoleAssistant,
 			Kind:      KindToolCall,
 			TaskID:    taskID,
+			UserID:    ownerID,
 			Content:   TimelineEventSummary("tool", event.Data),
 			Data:      event.Data,
 		}, true
@@ -57,6 +60,7 @@ func ProjectTimelineEvent(sessionID, taskID int64, event StreamEvent) (MessageCr
 			Role:      RoleAssistant,
 			Kind:      KindAssistant,
 			TaskID:    taskID,
+			UserID:    ownerID,
 			Content:   content,
 			Data:      event.Data,
 		}, true
@@ -66,6 +70,7 @@ func ProjectTimelineEvent(sessionID, taskID int64, event StreamEvent) (MessageCr
 			Role:      RoleAssistant,
 			Kind:      KindToolResult,
 			TaskID:    taskID,
+			UserID:    ownerID,
 			Content:   TimelineEventSummary("tool_result", event.Data),
 			Data:      event.Data,
 		}, true
@@ -170,9 +175,10 @@ func (r *TimelineRecorder) Forget(taskID int64) {
 
 // Record 把一条事件 payload 投影为会话消息并落库；不可投影时静默跳过。
 //
+// ownerID 是消息归属者（Agent 侧消息写 Profile ID）。
 // 这是 Emit 的热点路径：只处理完整块事件，增量事件在 publish 侧就不会进来；
 // 落库失败只记 Warn，绝不影响 Agent 主流程。
-func (r *TimelineRecorder) Record(ctx context.Context, sessionID, taskID int64, payload any) {
+func (r *TimelineRecorder) Record(ctx context.Context, sessionID, taskID, ownerID int64, payload any) {
 	if r == nil || r.messages == nil || taskID == 0 || sessionID <= 0 {
 		return
 	}
@@ -185,7 +191,7 @@ func (r *TimelineRecorder) Record(ctx context.Context, sessionID, taskID int64, 
 	// 落库是「事后必须完成」的动作，这里解绑取消信号，避免消息静默丢失。
 	persistCtx := context.WithoutCancel(ctx)
 
-	params, ok := ProjectTimelineEvent(sessionID, taskID, event)
+	params, ok := ProjectTimelineEvent(sessionID, taskID, ownerID, event)
 	if !ok {
 		return
 	}
@@ -206,7 +212,7 @@ func (r *TimelineRecorder) Record(ctx context.Context, sessionID, taskID int64, 
 //
 // 已经有 KindAssistant 块（Record 落过）时直接跳过，避免历史里出现两份相同文本。
 // 必须在任务进入终态（Forget 清理缓存）之前调用。
-func (r *TimelineRecorder) RecordResult(ctx context.Context, sessionID, taskID int64, content string) {
+func (r *TimelineRecorder) RecordResult(ctx context.Context, sessionID, taskID, ownerID int64, content string) {
 	if r == nil || r.messages == nil || taskID == 0 || sessionID <= 0 {
 		return
 	}
@@ -228,6 +234,7 @@ func (r *TimelineRecorder) RecordResult(ctx context.Context, sessionID, taskID i
 		Role:      RoleAssistant,
 		Kind:      KindAssistantFinal,
 		TaskID:    taskID,
+		UserID:    ownerID,
 		Content:   content,
 	}); err != nil {
 		logger.Warnf(persistCtx, "[agent] persist assistant_final failed: task=%d err=%v", taskID, err)

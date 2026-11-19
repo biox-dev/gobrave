@@ -270,6 +270,7 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 // @Success      200      {object}  gin.H
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
+// @Failure      403      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
 // @Security     Bearer
 // @Router       /agent/chat [post]
@@ -308,6 +309,16 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		sessionID, err = parseAgentID(req.SessionID)
 		if err != nil {
 			c.Error(errors.NewValidationError("invalid conversation_id").WithDetails(err.Error()))
+			return
+		}
+		// 续接已有会话时校验可见性：会话按项目共享，只有项目成员才能继续对话。
+		existing, err := h.chat.GetSessionMeta(c.Request.Context(), sessionID)
+		if err != nil {
+			handleAgentError(c, err, "failed to get session")
+			return
+		}
+		if err := ensureProjectAccessible(c.Request.Context(), h.projects, existing.ProjectID, userID); err != nil {
+			c.Error(err)
 			return
 		}
 	}

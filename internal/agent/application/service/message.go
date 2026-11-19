@@ -24,6 +24,7 @@ func (s *messageService) Create(ctx context.Context, params MessageCreateParams)
 		Role:      params.Role,
 		Kind:      params.Kind,
 		TaskID:    params.TaskID,
+		UserID:    params.UserID,
 		Content:   params.Content,
 		Data:      params.Data,
 		CreatedAt: time.Now(),

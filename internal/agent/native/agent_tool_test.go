@@ -329,7 +329,7 @@ func (s *fakeSubAgentStore) CreateSession(_ context.Context, info SubAgentSessio
 	return 777, nil
 }
 
-func (s *fakeSubAgentStore) AppendUserMessage(_ context.Context, sessionID int64, content string) error {
+func (s *fakeSubAgentStore) AppendUserMessage(_ context.Context, sessionID, _ int64, content string) error {
 	return s.add(sessionID, "user", "user", content)
 }
 
@@ -337,7 +337,7 @@ func (s *fakeSubAgentStore) AppendUserMessage(_ context.Context, sessionID int64
 //
 // 不直接复用 service.ProjectTimelineEvent：agent 工具迁入 tool/builtin 后，
 // native 的测试导入 service 会构成 service → builtin → native 的测试导入环。
-func (s *fakeSubAgentStore) AppendEvent(_ context.Context, sessionID int64, event agenttypes.StreamEvent) error {
+func (s *fakeSubAgentStore) AppendEvent(_ context.Context, sessionID, _ int64, event agenttypes.StreamEvent) error {
 	switch event.Type {
 	case agenttypes.StreamEventReasoning:
 		content, _ := event.Data.(agenttypes.ReasoningBlock)
@@ -351,7 +351,7 @@ func (s *fakeSubAgentStore) AppendEvent(_ context.Context, sessionID int64, even
 	}
 }
 
-func (s *fakeSubAgentStore) AppendFinalMessage(_ context.Context, sessionID int64, content string) error {
+func (s *fakeSubAgentStore) AppendFinalMessage(_ context.Context, sessionID, _ int64, content string) error {
 	return s.add(sessionID, "assistant", "assistant_final", content)
 }
 

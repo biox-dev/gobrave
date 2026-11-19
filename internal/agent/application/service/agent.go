@@ -255,6 +255,11 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	// 只把派生出的模型 / Provider / Profile 回写到任务列。
 	// 先记录已解析的 Profile ID：工具（如 update_profile_prompt）在执行期据此定位当前 Profile。
 	task.ResolvedProfileID = profile.ID
+	// Runtime 的事实快照是在 Profile 解析之前拍的，这里回填已解析的 Profile ID，
+	// 使轮内时间线消息（Agent 侧）能写入正确的归属者。
+	if tr, ok := rt.(*taskRuntime); ok {
+		tr.facts.ProfileID = profile.ID
+	}
 	facts := task.Facts()
 	req := applyProfileOverrides(task.Request, profile)
 	req.SystemPrompt = s.GetSystemPromptByProfileWithContext(ctx, profile, req.RuntimeContext, facts, req.Skills)
@@ -288,7 +293,7 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	default:
 		// Provider 只发增量（没有完整 message 块）时，用最终结果补一条 assistant_final。
 		// 必须在 transitionTask 之前：终态会清理时间线缓存。
-		s.timeline.RecordResult(ctx, task.SessionID, task.ID, result.Content)
+		s.timeline.RecordResult(ctx, task.SessionID, task.ID, profile.ID, result.Content)
 		_ = s.transitionTask(ctx, task, TaskCompleted, "")
 		// 任务成功完成后，从本轮执行中提取值得长期记住的记忆。
 		s.extractMemory(ctx, task, req, result)
@@ -553,7 +558,7 @@ func (s *AgentService) publish(ctx context.Context, facts TaskFacts, typ AgentEv
 	// 	_ = s.events.Append(ctx, e)
 	// }
 	if persist && typ == EventStream {
-		s.timeline.Record(ctx, facts.SessionID, facts.TaskID, payload)
+		s.timeline.Record(ctx, facts.SessionID, facts.TaskID, facts.ProfileID, payload)
 	}
 	if s.bus != nil {
 		s.bus.Publish(ctx, *e)

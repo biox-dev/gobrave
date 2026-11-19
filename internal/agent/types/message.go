@@ -53,6 +53,11 @@ type Message struct {
 	Role      string `json:"role" gorm:"column:role;type:varchar(32)"`
 	Kind      string `json:"kind,omitempty" gorm:"column:kind;type:varchar(32);index"`
 	TaskID    int64  `json:"task_id,string,omitempty" gorm:"column:task_id;type:bigint;index"`
+	// UserID 是消息的归属者（一个会话可被多个用户共同使用）：
+	//   - 用户消息（KindUser）写发起人的用户 ID；
+	//   - Agent 侧消息（assistant / reasoning / tool_* / error）写实际执行的 Profile ID。
+	// 仅作归属标识，不参与 Prompt 拼接。
+	UserID int64 `json:"user_id,string,omitempty" gorm:"column:user_id;type:bigint;index"`
 	// Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。
 	Content   string    `json:"content,omitempty" gorm:"column:content;type:longtext"`
 	Data      any       `json:"data,omitempty" gorm:"serializer:json"`
@@ -71,11 +76,14 @@ func (m *Message) BeforeCreate(_ *gorm.DB) error {
 }
 
 // MessageCreateParams 是写入一条消息的入参。
+//
+// UserID 是消息归属者：用户消息为用户 ID，Agent 侧消息为 Profile ID（见 Message.UserID）。
 type MessageCreateParams struct {
 	SessionID int64
 	Role      string
 	Kind      string
 	TaskID    int64
+	UserID    int64
 	Content   string
 	Data      any
 }

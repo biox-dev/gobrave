@@ -66,13 +66,13 @@ func (s subAgentSessionStore) CreateSession(ctx context.Context, info native.Sub
 }
 
 // AppendUserMessage 实现 native.SubAgentSessionStore。
-func (s subAgentSessionStore) AppendUserMessage(ctx context.Context, sessionID int64, content string) error {
-	return s.append(ctx, sessionID, agenttypes.RoleUser, agenttypes.KindUser, content, nil)
+func (s subAgentSessionStore) AppendUserMessage(ctx context.Context, sessionID, ownerID int64, content string) error {
+	return s.append(ctx, sessionID, ownerID, agenttypes.RoleUser, agenttypes.KindUser, content, nil)
 }
 
 // AppendEvent 实现 native.SubAgentSessionStore：复用父会话同一条投影规则。
-func (s subAgentSessionStore) AppendEvent(ctx context.Context, sessionID int64, event agenttypes.StreamEvent) error {
-	params, ok := agentservice.ProjectTimelineEvent(sessionID, 0, event)
+func (s subAgentSessionStore) AppendEvent(ctx context.Context, sessionID, ownerID int64, event agenttypes.StreamEvent) error {
+	params, ok := agentservice.ProjectTimelineEvent(sessionID, 0, ownerID, event)
 	if !ok {
 		return nil
 	}
@@ -81,18 +81,19 @@ func (s subAgentSessionStore) AppendEvent(ctx context.Context, sessionID int64, 
 }
 
 // AppendFinalMessage 实现 native.SubAgentSessionStore。
-func (s subAgentSessionStore) AppendFinalMessage(ctx context.Context, sessionID int64, content string) error {
+func (s subAgentSessionStore) AppendFinalMessage(ctx context.Context, sessionID, ownerID int64, content string) error {
 	if content = strings.TrimSpace(content); content == "" {
 		return nil
 	}
-	return s.append(ctx, sessionID, agenttypes.RoleAssistant, agenttypes.KindAssistantFinal, content, nil)
+	return s.append(ctx, sessionID, ownerID, agenttypes.RoleAssistant, agenttypes.KindAssistantFinal, content, nil)
 }
 
-func (s subAgentSessionStore) append(ctx context.Context, sessionID int64, role, kind, content string, data any) error {
+func (s subAgentSessionStore) append(ctx context.Context, sessionID, ownerID int64, role, kind, content string, data any) error {
 	_, err := s.messages.Create(ctx, agenttypes.MessageCreateParams{
 		SessionID: sessionID,
 		Role:      role,
 		Kind:      kind,
+		UserID:    ownerID,
 		Content:   content,
 		Data:      data,
 	})

@@ -90,7 +90,7 @@ func (s *ChatService) onTaskFinished(_ context.Context, task *Task) {
 	// failed 且仍有检查点时不要把 CurrentTaskID 清成 0：会话需要继续指向这个
 	// 中断任务，前端才能展示「Continue」并从 /agent/task/resume 续跑。
 	keepCurrentTask := task.Status == TaskFailed && task.Resumable
-	s.finishTurn(task.ID, task.SessionID, task.Error, keepCurrentTask)
+	s.finishTurn(task.ID, task.SessionID, task.ResolvedProfileID, task.Error, keepCurrentTask)
 }
 
 // lockFor 返回会话级锁（惰性创建）。
@@ -138,6 +138,7 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Sess
 		SessionID: sess.ID,
 		Role:      RoleUser,
 		Kind:      KindUser,
+		UserID:    in.UserID,
 		Content:   in.Message,
 	}); err != nil {
 		l.Unlock()
@@ -202,13 +203,15 @@ func (s *ChatService) StartTurn(ctx context.Context, taskID int64) error {
 	}
 
 	if err := s.agent.StartTask(ctx, taskID); err != nil {
-		s.finishTurn(taskID, 0, err.Error(), false)
+		s.finishTurn(taskID, 0, 0, err.Error(), false)
 		return err
 	}
 	return nil
 }
 
 // finishTurn 在本轮结束时收尾：补写错误消息，释放会话锁并清理中间态。
+//
+// ownerID 是错误消息的归属者：错误由 Agent 侧产生，通常传任务的 ResolvedProfileID。
 //
 // 触发点有两个：
 //   - AgentService 的任务终态回调（onTaskFinished，主路径）；
@@ -219,7 +222,7 @@ func (s *ChatService) StartTurn(ctx context.Context, taskID int64) error {
 //   - 若未登记（后端重启后内存态丢失），仍按 sessionID 做数据库层收尾，
 //     但不释放任何锁（旧进程的锁已随进程消失）；
 //   - 错误消息写入前先查重，避免恢复路径与重复回调产生两条相同错误。
-func (s *ChatService) finishTurn(taskID, sessionID int64, errMsg string, keepCurrentTask bool) {
+func (s *ChatService) finishTurn(taskID, sessionID, ownerID int64, errMsg string, keepCurrentTask bool) {
 	s.mu.Lock()
 	ts, registered := s.turns[taskID]
 	if registered {
@@ -246,6 +249,7 @@ func (s *ChatService) finishTurn(taskID, sessionID int64, errMsg string, keepCur
 			Role:      RoleAssistant,
 			Kind:      KindError,
 			TaskID:    taskID,
+			UserID:    ownerID,
 			Content:   errMsg,
 		})
 	}
@@ -479,6 +483,11 @@ func (s *ChatService) GetSession(ctx context.Context, id int64, q SessionMessage
 		HasMore:    hasMore,
 		NextCursor: nextCursor,
 	}, nil
+}
+
+// GetSessionMeta 只返回会话本体（不含历史消息），用于鉴权等轻量场景。
+func (s *ChatService) GetSessionMeta(ctx context.Context, id int64) (Session, error) {
+	return s.sessions.Get(ctx, id)
 }
 
 // ForkSession 把源会话的历史复制成一个新的独立会话。

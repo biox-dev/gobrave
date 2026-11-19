@@ -128,6 +128,7 @@ func (r *gormSessionStore) Fork(ctx context.Context, params agent.SessionForkPar
 				Role:      m.Role,
 				Kind:      m.Kind,
 				TaskID:    m.TaskID,
+				UserID:    m.UserID,
 				Content:   m.Content,
 				Data:      m.Data,
 				CreatedAt: now,

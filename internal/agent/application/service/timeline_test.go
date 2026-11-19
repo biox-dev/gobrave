@@ -18,12 +18,15 @@ func TestProjectTimelineEventMessageBlock(t *testing.T) {
 		},
 	}
 
-	params, ok := ProjectTimelineEvent(11, 22, event)
+	params, ok := ProjectTimelineEvent(11, 22, 33, event)
 	if !ok {
 		t.Fatalf("assistant message block should be projected")
 	}
 	if params.SessionID != 11 || params.TaskID != 22 {
 		t.Fatalf("owner = (%d,%d), want (11,22)", params.SessionID, params.TaskID)
+	}
+	if params.UserID != 33 {
+		t.Fatalf("user id = %d, want 33", params.UserID)
 	}
 	if params.Role != RoleAssistant || params.Kind != KindAssistant {
 		t.Fatalf("role/kind = %s/%s, want %s/%s",
@@ -40,7 +43,7 @@ func TestProjectTimelineEventMessageBlock(t *testing.T) {
 // TestProjectTimelineEventSkipsEmptyMessageBlock 验证「只发起工具调用、正文为空」的块
 // 不产生时间线消息，避免历史里出现空气泡。
 func TestProjectTimelineEventSkipsEmptyMessageBlock(t *testing.T) {
-	if _, ok := ProjectTimelineEvent(1, 2, StreamEvent{
+	if _, ok := ProjectTimelineEvent(1, 2, 3, StreamEvent{
 		Type: StreamEventMessage,
 		Data: MessageBlock{ID: "m1", ToolCalls: []ToolCall{{ID: "t1", Name: "echo"}}},
 	}); ok {
@@ -55,7 +58,7 @@ func TestProjectTimelineEventIgnoresLifecycleEvents(t *testing.T) {
 		StreamEventTurnStart, StreamEventTurnEnd,
 		StreamEventDone, StreamEventError,
 	} {
-		if _, ok := ProjectTimelineEvent(1, 2, StreamEvent{Type: typ}); ok {
+		if _, ok := ProjectTimelineEvent(1, 2, 3, StreamEvent{Type: typ}); ok {
 			t.Fatalf("%s should not be projected", typ)
 		}
 	}
