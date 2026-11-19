@@ -13,8 +13,11 @@ import (
 // SessionResourceRealtimeCategory 是「会话资源」实时推送的组件类目。
 //
 // 与前端 brave-ui/src/event-bus/stores/components.ts 注册的 category 一致：
-// 后端推 component.invoke(category, id="*", method=sessionResourcesChanged)，
-// 前端 SessionResourcePanel 收到后刷新 useAgentSessionResources（所有分区共享同一份数据）。
+// 后端推 component.invoke(category, id=<session_id>, method=sessionResourcesChanged)，
+// 前端 SessionResourceStack 收到后刷新 useAgentSessionResources（所有分区共享同一份数据）。
+//
+// id 直接用会话 ID 而不是 "*"：事件本身就是会话维度的，定向投递到该会话的前端
+// 实例即可，其它会话的面板自然不会被误触发；前端同时也注册了 "*" 以兼容广播。
 const SessionResourceRealtimeCategory = "agent-session-resource"
 
 // SessionResourceRealtimeMethod 是「会话资源有新增」时推送的方法名。
@@ -70,14 +73,16 @@ func (s *sessionResourceService) notify(ctx context.Context, sessionID int64, re
 	if userID == 0 {
 		return
 	}
+	sessionKey := strconv.FormatInt(sessionID, 10)
 	_ = s.hub.PushMessage(userID, map[string]any{
 		"action": "component.invoke",
 		"payload": map[string]any{
 			"category": SessionResourceRealtimeCategory,
-			"id":       "*",
-			"method":   SessionResourceRealtimeMethod,
+			// 用会话 ID 定位监听实例（前端按 sessionId 注册），而不是广播用的 "*"。
+			"id":     sessionKey,
+			"method": SessionResourceRealtimeMethod,
 			"args": map[string]any{
-				"session_id":    strconv.FormatInt(sessionID, 10),
+				"session_id":    sessionKey,
 				"resource_type": string(resourceType),
 				"added":         inserted,
 			},
