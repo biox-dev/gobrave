@@ -443,6 +443,9 @@ type SessionMessageQuery struct {
 type SessionDetail struct {
 	Session
 	Messages []Message `json:"messages"`
+	// Users 是使用过该会话的用户（发过 user 消息的用户，去重后按用户 ID 升序）。
+	// 由消息表实时统计 + users 表回填用户名，不需要额外维护 session_user 关系表。
+	Users []SessionUser `json:"users"`
 	// HasMore 表示是否还有更早的消息（前端向上滚动时继续加载）。
 	HasMore bool `json:"has_more"`
 	// NextCursor 是继续向上翻页的游标（本页最小 Seq）；HasMore 为 false 时无意义。
@@ -472,6 +475,14 @@ func (s *ChatService) GetSession(ctx context.Context, id int64, q SessionMessage
 		return SessionDetail{}, err
 	}
 
+	// 使用过该会话的用户（去重）：直接统计 user 消息，避免维护 session_user 关系表。
+	// 与消息分页解耦：每次打开会话 / 翻页都会重新统计（命中复合索引，代价很小），
+	// 用户改名或多用户接入后无需任何回填 / 同步逻辑。
+	users, err := s.messages.ListParticipants(ctx, id)
+	if err != nil {
+		return SessionDetail{}, err
+	}
+
 	// 本页最小 Seq 即下一页的游标（Seq 升序，第一页为最早一条）。
 	nextCursor := 0
 	if len(msgs) > 0 {
@@ -480,6 +491,7 @@ func (s *ChatService) GetSession(ctx context.Context, id int64, q SessionMessage
 	return SessionDetail{
 		Session:    sess,
 		Messages:   msgs,
+		Users:      users,
 		HasMore:    hasMore,
 		NextCursor: nextCursor,
 	}, nil

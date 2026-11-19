@@ -53,6 +53,16 @@ func (s *Session) BeforeCreate(_ *gorm.DB) error {
 // TitleSessionTitle 是标题生成子会话的固定标题（与 opencode 保持一致）。
 const TitleSessionTitle = "Generate a title"
 
+// SessionUser 是「使用过某会话的用户」（会话详情返回的去重参与者）。
+//
+// 数据来源是 agent_messages 中 RoleUser 的消息（source of truth），因此无需额外
+// 维护 session ↔ user 关系表：用户在会话里发过言就会被统计到，消息被删除后自然消失。
+// Username 在读取时从 users 表回填，避免用户改名后展示陈旧名称。
+type SessionUser struct {
+	ID       int64  `json:"id,string"`
+	Username string `json:"username,omitempty"`
+}
+
 // SessionCreateParams 是创建会话的入参。
 type SessionCreateParams struct {
 	// ID 可选：指定会话主键（如 CreateTaskSession 以 toolCallID 作为会话 ID）；

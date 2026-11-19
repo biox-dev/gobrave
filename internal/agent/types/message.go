@@ -48,16 +48,16 @@ const (
 // （Role / Content / Kind / TaskID / Data），因此 agent.Request.Messages 直接复用该类型。
 type Message struct {
 	ID        int64  `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	SessionID int64  `json:"session_id,string" gorm:"column:session_id;type:bigint;index"`
+	SessionID int64  `json:"session_id,string" gorm:"column:session_id;type:bigint;index;index:idx_agent_messages_session_participant,priority:1"`
 	Seq       int    `json:"seq" gorm:"column:seq;index"`
-	Role      string `json:"role" gorm:"column:role;type:varchar(32)"`
+	Role      string `json:"role" gorm:"column:role;type:varchar(32);index:idx_agent_messages_session_participant,priority:2"`
 	Kind      string `json:"kind,omitempty" gorm:"column:kind;type:varchar(32);index"`
 	TaskID    int64  `json:"task_id,string,omitempty" gorm:"column:task_id;type:bigint;index"`
 	// UserID 是消息的归属者（一个会话可被多个用户共同使用）：
 	//   - 用户消息（KindUser）写发起人的用户 ID；
 	//   - Agent 侧消息（assistant / reasoning / tool_* / error）写实际执行的 Profile ID。
 	// 仅作归属标识，不参与 Prompt 拼接。
-	UserID int64 `json:"user_id,string,omitempty" gorm:"column:user_id;type:bigint;index"`
+	UserID int64 `json:"user_id,string,omitempty" gorm:"column:user_id;type:bigint;index;index:idx_agent_messages_session_participant,priority:3"`
 	// Username 是用户消息所属用户的显示名。它不是 agent_messages 表的列：会话详情
 	// 接口会按 UserID 批量（IN 查询）从 users 表回填，用于前端在用户头像下展示。
 	Username string `json:"username,omitempty" gorm:"-"`

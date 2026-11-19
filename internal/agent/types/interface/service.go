@@ -43,6 +43,8 @@ type MessageService interface {
 	// ListPage 分页查询某会话的消息（按 Seq 升序）；beforeSeq 为向上翻页游标，
 	// 0 表示取最新一页；hasMore 表示还有更早的消息。
 	ListPage(ctx context.Context, sessionID int64, beforeSeq, limit int) ([]types.Message, bool, error)
+	// ListParticipants 返回在某会话中发过言（写过 user 消息）的用户 ID 与显示名（去重）。
+	ListParticipants(ctx context.Context, sessionID int64) ([]types.SessionUser, error)
 	Delete(ctx context.Context, id int64) error
 	DeleteSessionMessages(ctx context.Context, sessionID int64) error
 }

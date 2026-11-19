@@ -167,3 +167,46 @@ func (r *gormMessageStore) Delete(ctx context.Context, id int64) error {
 func (r *gormMessageStore) DeleteBySession(ctx context.Context, sessionID int64) error {
 	return r.db.WithContext(ctx).Where("session_id = ?", sessionID).Delete(&agent.Message{}).Error
 }
+
+// ListParticipants 返回在某会话中发过言（写过 user 消息）的用户（去重，按用户 ID 升序）。
+//
+// 直接用消息表作为 source of truth，不维护额外的 session_user 关系表：
+//   - 查询条件固定为 session_id + role = 'user' + user_id > 0，命中复合索引
+//     (session_id, role, user_id) 时只扫索引，不回表，代价与消息条数同阶但极小；
+//   - 用户名在读取时从 users 表回填（IN 查询），用户改名后不会展示旧名字；
+//   - 精简库（单测）没有 users 表时只返回 ID，Username 为空。
+func (r *gormMessageStore) ListParticipants(ctx context.Context, sessionID int64) ([]agent.SessionUser, error) {
+	var ids []int64
+	if err := r.db.WithContext(ctx).Model(&agent.Message{}).
+		Where("session_id = ? AND role = ? AND user_id > 0", sessionID, agent.RoleUser).
+		Distinct().
+		Order("user_id").
+		Pluck("user_id", &ids).Error; err != nil {
+		return nil, err
+	}
+
+	// 无参与者时返回空切片（而不是 nil），保证 JSON 序列化为 []。
+	users := make([]agent.SessionUser, 0, len(ids))
+	if len(ids) == 0 {
+		return users, nil
+	}
+
+	names := make(map[int64]string, len(ids))
+	if r.db.Migrator().HasTable("users") {
+		var rows []struct {
+			ID       int64
+			Username string
+		}
+		if err := r.db.WithContext(ctx).Table("users").
+			Select("id, username").Where("id IN ?", ids).Scan(&rows).Error; err == nil {
+			for _, u := range rows {
+				names[u.ID] = u.Username
+			}
+		}
+	}
+
+	for _, id := range ids {
+		users = append(users, agent.SessionUser{ID: id, Username: names[id]})
+	}
+	return users, nil
+}

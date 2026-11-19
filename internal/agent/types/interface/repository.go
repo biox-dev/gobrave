@@ -100,6 +100,11 @@ type MessageStore interface {
 	// beforeSeq > 0 时只返回 Seq 更小的消息（向上翻页），0 表示从最新消息开始。
 	// hasMore 表示在本次返回的最早一条消息之前仍有消息。
 	ListPage(ctx context.Context, sessionID int64, beforeSeq, limit int) ([]*types.Message, bool, error)
+	// ListParticipants 返回在某会话中发过言（写过 user 消息）的用户 ID 与显示名（去重）。
+	//
+	// 只统计 RoleUser 且 UserID > 0 的消息（Agent 侧消息的 UserID 是 Profile ID）；
+	// 用户名从 users 表回填，精简库（无 users 表）下 Username 为空但不影响 ID 返回。
+	ListParticipants(ctx context.Context, sessionID int64) ([]types.SessionUser, error)
 	Delete(ctx context.Context, id int64) error
 	DeleteBySession(ctx context.Context, sessionID int64) error
 }

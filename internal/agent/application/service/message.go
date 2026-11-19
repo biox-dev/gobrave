@@ -75,6 +75,11 @@ func (s *messageService) ListPage(ctx context.Context, sessionID int64, beforeSe
 	return out, hasMore, nil
 }
 
+// ListParticipants 返回会话的用户参与者（发过 user 消息的用户，去重）。
+func (s *messageService) ListParticipants(ctx context.Context, sessionID int64) ([]SessionUser, error) {
+	return s.store.ListParticipants(ctx, sessionID)
+}
+
 func (s *messageService) Delete(ctx context.Context, id int64) error {
 	return s.store.Delete(ctx, id)
 }
