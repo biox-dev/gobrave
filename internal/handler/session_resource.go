@@ -25,6 +25,8 @@ type SessionResourceHandler struct {
 	workflowSvc   interfaces.WorkflowService
 	analysisRepo  interfaces.AnalysisRepository
 	containerRepo interfaces.ContainerRepository
+	// projects 用于会话可见性判断：会话按项目隔离，项目成员都能查看。
+	projects interfaces.ProjectService
 }
 
 // NewSessionResourceHandler 创建会话资源处理器。
@@ -34,6 +36,7 @@ func NewSessionResourceHandler(
 	workflowSvc interfaces.WorkflowService,
 	analysisRepo interfaces.AnalysisRepository,
 	containerRepo interfaces.ContainerRepository,
+	projects interfaces.ProjectService,
 ) *SessionResourceHandler {
 	return &SessionResourceHandler{
 		sessions:      sessions,
@@ -41,6 +44,7 @@ func NewSessionResourceHandler(
 		workflowSvc:   workflowSvc,
 		analysisRepo:  analysisRepo,
 		containerRepo: containerRepo,
+		projects:      projects,
 	}
 }
 
@@ -62,6 +66,7 @@ type sessionResourceItem struct {
 // @Success      200  {object}  map[string]interface{}
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
+// @Failure      403  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
 // @Security     Bearer
 // @Router       /agent/session/resources [get]
@@ -88,9 +93,9 @@ func (h *SessionResourceHandler) ListSessionResources(c *gin.Context) {
 		handleAgentError(c, err, "failed to get session")
 		return
 	}
-	// 归属校验，防止越权查看他人会话的结果。
-	if session.UserID != userID {
-		c.Error(errors.NewNotFoundError("record not found"))
+	// 可见性校验：会话按项目共享，项目成员都能查看；非项目成员返回 403。
+	if err := ensureProjectAccessible(ctx, h.projects, session.ProjectID, userID); err != nil {
+		c.Error(err)
 		return
 	}
 
@@ -134,6 +139,7 @@ type sessionResourceGroups struct {
 // @Success      200  {object}  map[string]interface{}
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
+// @Failure      403  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
 // @Security     Bearer
 // @Router       /agent/session/resources/all [get]
@@ -155,9 +161,9 @@ func (h *SessionResourceHandler) ListAllSessionResources(c *gin.Context) {
 		handleAgentError(c, err, "failed to get session")
 		return
 	}
-	// 归属校验，防止越权查看他人会话的结果。
-	if session.UserID != userID {
-		c.Error(errors.NewNotFoundError("record not found"))
+	// 可见性校验：会话按项目共享，项目成员都能查看；非项目成员返回 403。
+	if err := ensureProjectAccessible(ctx, h.projects, session.ProjectID, userID); err != nil {
+		c.Error(err)
 		return
 	}
 

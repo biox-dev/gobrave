@@ -17,6 +17,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/realtime"
 	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 )
 
@@ -40,6 +41,8 @@ type AgentHandler struct {
 	tools *tool.Registry
 
 	runtimeCtx *RuntimeContextResolver
+	// projects 用于会话可见性判断：会话按项目隔离，项目成员都能查看。
+	projects interfaces.ProjectService
 
 	mu sync.Mutex
 	// unsub 是全局事件订阅的取消函数（由 StartEventBridge 注册）。
@@ -47,7 +50,7 @@ type AgentHandler struct {
 }
 
 // NewAgentHandler 创建 AgentHandler。
-func NewAgentHandler(svc *agentservice.AgentService, chat *agentservice.ChatService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry, skillStore *skill.Store, tools *tool.Registry) *AgentHandler {
+func NewAgentHandler(svc *agentservice.AgentService, chat *agentservice.ChatService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry, skillStore *skill.Store, tools *tool.Registry, projects interfaces.ProjectService) *AgentHandler {
 	return &AgentHandler{
 		svc:        svc,
 		chat:       chat,
@@ -56,6 +59,7 @@ func NewAgentHandler(svc *agentservice.AgentService, chat *agentservice.ChatServ
 		skillStore: skillStore,
 		tools:      tools,
 		runtimeCtx: runtimeCtx,
+		projects:   projects,
 	}
 }
 
@@ -1122,6 +1126,7 @@ func (h *AgentHandler) PageSessions(c *gin.Context) {
 // @Success      200  {object}  agentservice.SessionDetail
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
+// @Failure      403  {object}  errors.AppError
 // @Failure      404  {object}  errors.AppError
 // @Security     Bearer
 // @Router       /agent/session/get [get]
@@ -1150,9 +1155,9 @@ func (h *AgentHandler) GetSession(c *gin.Context) {
 		handleAgentError(c, err, "failed to get session")
 		return
 	}
-	// 校验归属，防止越权访问他人会话。
-	if detail.UserID != userID {
-		c.Error(errors.NewNotFoundError("record not found"))
+	// 可见性校验：会话按项目共享，项目成员都能查看；非项目成员返回 403。
+	if err := ensureProjectAccessible(c.Request.Context(), h.projects, detail.ProjectID, userID); err != nil {
+		c.Error(err)
 		return
 	}
 	c.JSON(http.StatusOK, detail)

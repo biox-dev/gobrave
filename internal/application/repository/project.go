@@ -25,6 +25,24 @@ func (r *projectRepository) AddUserProject(ctx context.Context, up *types.UserPr
 	return r.db.WithContext(ctx).Create(up).Error
 }
 
+// ListUserIDsByProjectID 返回项目下的全部用户 ID。
+// 只按 project_id 过滤，不关心 is_active：通过分享码加入项目的用户也要算项目成员。
+func (r *projectRepository) ListUserIDsByProjectID(ctx context.Context, projectID int64) ([]int64, error) {
+	userIDs := make([]int64, 0)
+	if projectID <= 0 {
+		return userIDs, nil
+	}
+	err := r.db.WithContext(ctx).
+		Model(&types.UserProject{}).
+		Where("project_id = ?", projectID).
+		Order("id ASC").
+		Pluck("user_id", &userIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	return userIDs, nil
+}
+
 func (r *projectRepository) ExistsUserProject(ctx context.Context, userID int64, projectID int64) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&types.UserProject{}).

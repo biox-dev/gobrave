@@ -14,6 +14,9 @@ type ProjectService interface {
 	GetProjectByID(ctx context.Context, id int64) (*types.Project, error)
 	AddUserProject(ctx context.Context, userID int64, projectID int64) error
 	AddUserProjectByShareCode(ctx context.Context, userID int64, shareCode string) error
+	// ListProjectUserIDs 返回项目下的全部用户 ID（user_project 关系表）。
+	// 用于「按项目共享」的资源鉴权：项目成员都能查看该项目下的资源。
+	ListProjectUserIDs(ctx context.Context, projectID int64) ([]int64, error)
 	UpdateProjectSharing(ctx context.Context, userID int64, projectID int64, enabled bool) (string, error)
 	ActivateUserProject(ctx context.Context, userID int64, projectID int64) error
 	DeleteUserProject(ctx context.Context, userID int64, projectID int64) error
@@ -79,6 +82,8 @@ type ProjectRepository interface {
 	GetActiveProjectByUserID(ctx context.Context, userID int64) (*types.Project, error)
 	CreateProject(ctx context.Context, project *types.Project) error
 	AddUserProject(ctx context.Context, up *types.UserProject) error
+	// ListUserIDsByProjectID 返回项目下的全部用户 ID（user_project.project_id -> user_id）。
+	ListUserIDsByProjectID(ctx context.Context, projectID int64) ([]int64, error)
 	ExistsUserProject(ctx context.Context, userID int64, projectID int64) (bool, error)
 	GetUserProject(ctx context.Context, userID int64, projectID int64) (*types.UserProject, error)
 	// GetActiveUserProjectByUserID 返回用户当前激活的项目绑定（含该项目下的菜单配置）。

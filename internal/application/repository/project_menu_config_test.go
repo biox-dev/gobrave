@@ -83,3 +83,37 @@ func TestUserProjectMenuConfigRoundTrip(t *testing.T) {
 		t.Fatalf("menu config not overwritten: %+v", reloaded.MenuConfig)
 	}
 }
+
+// TestListUserIDsByProjectID 确认按项目 ID 能取到该项目下的全部用户，
+// 且不会带出其他项目的用户；非激活绑定同样算项目成员。
+func TestListUserIDsByProjectID(t *testing.T) {
+	ctx := context.Background()
+	repo := NewProjectRepository(newUserProjectTestDB(t))
+
+	rows := []*types.UserProject{
+		{UserID: 11, ProjectID: 100, IsActive: true, CreatedAt: time.Now()},
+		{UserID: 12, ProjectID: 100, IsActive: false, CreatedAt: time.Now()},
+		{UserID: 13, ProjectID: 200, IsActive: true, CreatedAt: time.Now()},
+	}
+	for _, row := range rows {
+		if err := repo.AddUserProject(ctx, row); err != nil {
+			t.Fatalf("add user project: %v", err)
+		}
+	}
+
+	got, err := repo.ListUserIDsByProjectID(ctx, 100)
+	if err != nil {
+		t.Fatalf("list user ids by project id: %v", err)
+	}
+	if len(got) != 2 || got[0] != 11 || got[1] != 12 {
+		t.Fatalf("unexpected user ids: %v", got)
+	}
+
+	empty, err := repo.ListUserIDsByProjectID(ctx, 0)
+	if err != nil {
+		t.Fatalf("list user ids for zero project id: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("expected empty result for project 0, got %v", empty)
+	}
+}

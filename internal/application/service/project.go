@@ -71,6 +71,11 @@ func (s *projectService) GetProjectByID(ctx context.Context, id int64) (*types.P
 	return s.projectRepo.GetProjectByID(ctx, id)
 }
 
+// ListProjectUserIDs 返回项目下的全部用户 ID，供「按项目共享」的资源鉴权使用。
+func (s *projectService) ListProjectUserIDs(ctx context.Context, projectID int64) ([]int64, error) {
+	return s.projectRepo.ListUserIDsByProjectID(ctx, projectID)
+}
+
 func (s *projectService) AddUserProject(ctx context.Context, userID int64, projectID int64) error {
 	exists, err := s.projectRepo.ExistsUserProject(ctx, userID, projectID)
 	if err != nil {
