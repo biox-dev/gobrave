@@ -88,7 +88,76 @@ func (r *gormMessageStore) ListPage(ctx context.Context, sessionID int64, before
 	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
 		rows[i], rows[j] = rows[j], rows[i]
 	}
+	r.fillOwnerNames(ctx, rows)
 	return rows, hasMore, nil
+}
+
+// fillOwnerNames 按 UserID 批量回填消息归属者的展示名（IN 查询，避免 N+1）：
+//
+//   - 用户消息（RoleUser）的 UserID 是用户 ID → users.username；
+//   - Agent 侧消息的 UserID 是 Profile ID → agent_profiles.name。
+//
+// 精简库（单测）没有 users / agent_profiles 表时静默跳过，保持回填前的行为。
+func (r *gormMessageStore) fillOwnerNames(ctx context.Context, rows []*agent.Message) {
+	if len(rows) == 0 {
+		return
+	}
+
+	var userIDs, profileIDs []int64
+	seenUser := make(map[int64]struct{}, len(rows))
+	seenProfile := make(map[int64]struct{}, len(rows))
+	for _, row := range rows {
+		if row.UserID == 0 {
+			continue
+		}
+		seen := seenProfile
+		ids := &profileIDs
+		if row.Role == agent.RoleUser {
+			seen = seenUser
+			ids = &userIDs
+		}
+		if _, ok := seen[row.UserID]; ok {
+			continue
+		}
+		seen[row.UserID] = struct{}{}
+		*ids = append(*ids, row.UserID)
+	}
+
+	userNames := make(map[int64]string, len(userIDs))
+	if len(userIDs) > 0 && r.db.Migrator().HasTable("users") {
+		var users []struct {
+			ID       int64
+			Username string
+		}
+		if err := r.db.WithContext(ctx).Table("users").
+			Select("id, username").Where("id IN ?", userIDs).Scan(&users).Error; err == nil {
+			for _, u := range users {
+				userNames[u.ID] = u.Username
+			}
+		}
+	}
+
+	profileNames := make(map[int64]string, len(profileIDs))
+	if len(profileIDs) > 0 && r.db.Migrator().HasTable("agent_profiles") {
+		var profiles []struct {
+			ID   int64
+			Name string
+		}
+		if err := r.db.WithContext(ctx).Table("agent_profiles").
+			Select("id, name").Where("id IN ?", profileIDs).Scan(&profiles).Error; err == nil {
+			for _, p := range profiles {
+				profileNames[p.ID] = p.Name
+			}
+		}
+	}
+
+	for _, row := range rows {
+		if row.Role == agent.RoleUser {
+			row.Username = userNames[row.UserID]
+			continue
+		}
+		row.ProfileName = profileNames[row.UserID]
+	}
 }
 
 func (r *gormMessageStore) Delete(ctx context.Context, id int64) error {

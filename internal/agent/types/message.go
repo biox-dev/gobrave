@@ -58,6 +58,12 @@ type Message struct {
 	//   - Agent 侧消息（assistant / reasoning / tool_* / error）写实际执行的 Profile ID。
 	// 仅作归属标识，不参与 Prompt 拼接。
 	UserID int64 `json:"user_id,string,omitempty" gorm:"column:user_id;type:bigint;index"`
+	// Username 是用户消息所属用户的显示名。它不是 agent_messages 表的列：会话详情
+	// 接口会按 UserID 批量（IN 查询）从 users 表回填，用于前端在用户头像下展示。
+	Username string `json:"username,omitempty" gorm:"-"`
+	// ProfileName 是 Agent 侧消息执行者的 Profile 展示名。它不是 agent_messages 表的列：
+	// 会话详情接口会按 UserID 批量（IN 查询）从 agent_profiles 表回填。
+	ProfileName string `json:"profile_name,omitempty" gorm:"-"`
 	// Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。
 	Content   string    `json:"content,omitempty" gorm:"column:content;type:longtext"`
 	Data      any       `json:"data,omitempty" gorm:"serializer:json"`
