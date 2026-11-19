@@ -201,12 +201,18 @@ func (r *containerRepository) PageContainerTemplate(ctx context.Context, paginat
 
 	var total int64
 	// 分页主体就是绑定行表，count 不需要任何 join。
-	if err := r.db.WithContext(ctx).Model(&types.ContainerTemplateDefinition{}).Count(&total).Error; err != nil {
+	// 统一关键字搜索：命中展示名 / 镜像名。
+	base := r.db.WithContext(ctx).Model(&types.ContainerTemplateDefinition{})
+	if keyword := pagination.GetKeyword(); keyword != "" {
+		like := "%" + keyword + "%"
+		base = base.Where("(display_name LIKE ? OR image_name LIKE ?)", like, like)
+	}
+	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	definitions := make([]*types.ContainerTemplateDefinition, 0)
-	if err := r.db.WithContext(ctx).
+	if err := base.
 		Order("id DESC").
 		Offset(pagination.Offset()).
 		Limit(pagination.Limit()).
@@ -276,6 +282,10 @@ func (r *containerRepository) PageAppSessionByUserID(ctx context.Context, userID
 	}
 	if query != nil && query.AgentSessionID != nil {
 		dbQuery = dbQuery.Where("agent_session_id = ?", *query.AgentSessionID)
+	}
+	// 统一关键字搜索：命中会话名称。
+	if keyword := pagination.GetKeyword(); keyword != "" {
+		dbQuery = dbQuery.Where("name LIKE ?", "%"+keyword+"%")
 	}
 	if err := dbQuery.Count(&total).Error; err != nil {
 		return nil, 0, err

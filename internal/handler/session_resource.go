@@ -111,16 +111,106 @@ func (h *SessionResourceHandler) ListSessionResources(c *gin.Context) {
 		return
 	}
 
+	c.JSON(http.StatusOK, gin.H{"data": h.buildItems(ctx, rows)})
+}
+
+// sessionResourceGroups 是按资源类型分组的会话结果。
+//
+// 每个分组始终返回数组（无结果时为 `[]`），前端一次请求即可拿到全部分区的内容。
+type sessionResourceGroups struct {
+	Script       []sessionResourceItem `json:"script"`
+	Workflow     []sessionResourceItem `json:"workflow"`
+	AnalysisNode []sessionResourceItem `json:"analysis_node"`
+	Analysis     []sessionResourceItem `json:"analysis"`
+	AppSession   []sessionResourceItem `json:"app_session"`
+}
+
+// ListAllSessionResources godoc
+// @Summary      一次查询会话关联的全部资源（按类型分组）
+// @Description  返回当前用户的某个会话产生 / 修改过的全部结果，并按资源类型分组
+// @Tags         Agent
+// @Produce      json
+// @Param        session_id  query     string  true  "会话 ID"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      400  {object}  errors.AppError
+// @Failure      401  {object}  errors.AppError
+// @Failure      404  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/session/resources/all [get]
+func (h *SessionResourceHandler) ListAllSessionResources(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	sessionID, err := parseAgentID(c.Query("session_id"))
+	if err != nil || sessionID <= 0 {
+		c.Error(errors.NewValidationError("invalid session_id"))
+		return
+	}
+
+	ctx := c.Request.Context()
+	session, err := h.sessions.Get(ctx, sessionID)
+	if err != nil {
+		handleAgentError(c, err, "failed to get session")
+		return
+	}
+	// 归属校验，防止越权查看他人会话的结果。
+	if session.UserID != userID {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+
+	groups := sessionResourceGroups{
+		Script:       []sessionResourceItem{},
+		Workflow:     []sessionResourceItem{},
+		AnalysisNode: []sessionResourceItem{},
+		Analysis:     []sessionResourceItem{},
+		AppSession:   []sessionResourceItem{},
+	}
+
+	// 关联表一次查出所有类型，避免前端按类型发多次请求。
+	rows, err := h.resources.ListBySession(ctx, sessionID)
+	if err != nil {
+		handleAgentError(c, err, "failed to list session resources")
+		return
+	}
+	for _, item := range h.buildItems(ctx, rows) {
+		switch agenttypes.SessionResourceType(item.ResourceType) {
+		case agenttypes.SessionResourceTypeScript:
+			groups.Script = append(groups.Script, item)
+		case agenttypes.SessionResourceTypeWorkflow:
+			groups.Workflow = append(groups.Workflow, item)
+		case agenttypes.SessionResourceTypeAnalysisNode:
+			groups.AnalysisNode = append(groups.AnalysisNode, item)
+		case agenttypes.SessionResourceTypeAnalysis:
+			groups.Analysis = append(groups.Analysis, item)
+		}
+	}
+
+	// 应用 / 终端会话不落关联表，按 AppSession.AgentSessionID 实时查询。
+	appSessions, err := h.listAppSessions(ctx, userID, sessionID)
+	if err != nil {
+		handleAgentError(c, err, "failed to list session app sessions")
+		return
+	}
+	groups.AppSession = append(groups.AppSession, appSessions...)
+
+	c.JSON(http.StatusOK, gin.H{"data": groups})
+}
+
+// buildItems 把关联记录转换成返回项，并按资源主键补全展示名。
+func (h *SessionResourceHandler) buildItems(ctx context.Context, rows []agenttypes.SessionResource) []sessionResourceItem {
 	items := make([]sessionResourceItem, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, sessionResourceItem{
 			ResourceID:   row.ResourceID,
 			ResourceType: string(row.ResourceType),
-			Name:         h.resolveName(ctx, resourceType, row.ResourceID),
+			Name:         h.resolveName(ctx, row.ResourceType, row.ResourceID),
 			CreatedAt:    row.CreatedAt,
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"data": items})
+	return items
 }
 
 // listAppSessions 返回由 AgentSessionID 指向该会话的应用 / 终端会话。

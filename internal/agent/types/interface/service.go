@@ -30,6 +30,8 @@ type SessionResourceService interface {
 	LinkFromContext(ctx context.Context, resourceType types.SessionResourceType, resourceIDs ...int64) error
 	// List 返回某个会话关联的指定类型资源（按创建时间倒序）。
 	List(ctx context.Context, sessionID int64, resourceType types.SessionResourceType) ([]types.SessionResource, error)
+	// ListBySession 返回某个会话关联的全部类型资源（按创建时间倒序）。
+	ListBySession(ctx context.Context, sessionID int64) ([]types.SessionResource, error)
 }
 
 // MessageService 提供消息的增删改查。

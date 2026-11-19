@@ -111,6 +111,8 @@ type SessionResourceStore interface {
 	Link(ctx context.Context, sessionID int64, resourceType types.SessionResourceType, resourceIDs []int64) error
 	// List 返回某个会话关联的指定类型资源（按创建时间倒序）。
 	List(ctx context.Context, sessionID int64, resourceType types.SessionResourceType) ([]*types.SessionResource, error)
+	// ListBySession 返回某个会话关联的全部类型资源（按创建时间倒序）。
+	ListBySession(ctx context.Context, sessionID int64) ([]*types.SessionResource, error)
 	// DeleteBySession 删除某个会话的全部资源关联（会话删除时级联清理）。
 	DeleteBySession(ctx context.Context, sessionID int64) error
 }

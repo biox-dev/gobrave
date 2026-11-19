@@ -229,6 +229,10 @@ func (r *projectRepository) PageProjectReportByProjectID(ctx context.Context, pa
 		Model(&types.ProjectReport{}).
 		Select("id, project_id, title, created_at, updated_at").
 		Where("project_id = ?", projectID)
+	// 统一关键字搜索：命中报告标题。
+	if keyword := pagination.GetKeyword(); keyword != "" {
+		base = base.Where("title LIKE ?", "%"+keyword+"%")
+	}
 
 	var total int64
 	if err := base.Count(&total).Error; err != nil {
@@ -434,6 +438,10 @@ func (r *projectRepository) PageLiteratureByProjectID(ctx context.Context, pagin
 		Table("t_literature AS l").
 		Joins("INNER JOIN project_literature pl ON pl.literature_id = l.id").
 		Where("pl.project_id = ?", projectID)
+	// 统一关键字搜索：命中文献标题。
+	if keyword := pagination.GetKeyword(); keyword != "" {
+		base = base.Where("l.title LIKE ?", "%"+keyword+"%")
+	}
 
 	var total int64
 	if err := base.Count(&total).Error; err != nil {

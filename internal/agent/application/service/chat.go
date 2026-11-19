@@ -328,21 +328,27 @@ func shouldIncludeInPrompt(m Message) bool {
 	}
 }
 
-// ListSessions 分页查询会话。
+// ListSessions 分页查询当前激活项目下的所有会话（不限定发起人）。
 //
 // 会话按用户当前激活项目隔离：先用 GetActiveProjectByUserID 取出活动项目，
-// 再按 ProjectID 过滤；userID 为 0 表示全部用户（不做项目过滤）。
-func (s *ChatService) ListSessions(ctx context.Context, userID int64, offset, limit int) ([]Session, int64, error) {
+// 再按 ProjectID 过滤，因此同一项目内不同用户发起的会话都会返回（带 username）。
+// keyword 会同时匹配会话标题与发起人用户名，结果按 updated_at 倒序。
+// 用户没有激活项目时退化为「仅当前用户的会话」，避免把全部项目的会话混在一起。
+func (s *ChatService) ListSessions(ctx context.Context, userID int64, keyword string, offset, limit int) ([]Session, int64, error) {
 	projectID, err := s.activeProjectID(ctx, userID)
 	if err != nil {
 		return nil, 0, err
 	}
-	return s.sessions.List(ctx, SessionListParams{
-		UserID:    userID,
+	params := SessionListParams{
 		ProjectID: projectID,
+		Keyword:   keyword,
 		Offset:    offset,
 		Limit:     limit,
-	})
+	}
+	if projectID == 0 {
+		params.UserID = userID
+	}
+	return s.sessions.List(ctx, params)
 }
 
 // activeProjectID 返回用户当前激活项目 ID；未注入项目服务、没有活动项目或 userID 为 0 时返回 0（不按项目过滤）。

@@ -56,6 +56,16 @@ func (r *gormSessionResourceStore) List(ctx context.Context, sessionID int64, re
 	return rows, err
 }
 
+// ListBySession 返回某个会话关联的全部类型资源（按创建时间倒序）。
+func (r *gormSessionResourceStore) ListBySession(ctx context.Context, sessionID int64) ([]*agent.SessionResource, error) {
+	var rows []*agent.SessionResource
+	err := r.db.WithContext(ctx).
+		Where("session_id = ?", sessionID).
+		Order("created_at DESC, id DESC").
+		Find(&rows).Error
+	return rows, err
+}
+
 func (r *gormSessionResourceStore) DeleteBySession(ctx context.Context, sessionID int64) error {
 	return r.db.WithContext(ctx).
 		Where("session_id = ?", sessionID).

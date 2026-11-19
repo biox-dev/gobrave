@@ -264,6 +264,12 @@ func (r *analysisRepository) PageAnalysisByProjectID(ctx context.Context, pagina
 	base := r.db.WithContext(ctx).Model(&types.Analysis{}).Where("project_id = ?", projectID)
 
 	applyFilters := func(db *gorm.DB) *gorm.DB {
+		// 统一关键字搜索（types.Pagination.Keyword）：命中分析名称 / 分析 ID。
+		if keyword := pagination.GetKeyword(); keyword != "" {
+			like := "%" + keyword + "%"
+			db = db.Where("(analysis_name LIKE ? OR analysis_id LIKE ?)", like, like)
+		}
+
 		if query == nil {
 			return db
 		}
@@ -405,6 +411,15 @@ func (r *analysisRepository) PageAnalysisNodesByProjectID(ctx context.Context, p
 	}
 	if analysisID != 0 {
 		query = query.Where("analysis_nodes.analysis_id = ?", analysisID)
+	}
+	if pagination != nil {
+		// 统一关键字搜索：命中节点名称 / 节点 ID / 脚本名。
+		if keyword := pagination.GetKeyword(); keyword != "" {
+			like := "%" + keyword + "%"
+			query = query.
+				Joins("LEFT JOIN pipeline_components AS kw_pc ON kw_pc.id = analysis_nodes.script_id").
+				Where("(analysis_nodes.node_name LIKE ? OR analysis_nodes.analysis_node_id LIKE ? OR kw_pc.component_name LIKE ?)", like, like, like)
+		}
 	}
 
 	var total int64

@@ -1053,6 +1053,9 @@ func (h *AgentHandler) PageTasks(c *gin.Context) {
 }
 
 // sessionPageRequest 是会话列表分页请求。
+//
+// 关键字搜索复用 types.Pagination 的 keyword 字段（project 内所有会话按标题 /
+// 发起人用户名模糊搜索），因此这里不再单独声明。
 type sessionPageRequest struct {
 	types.Pagination
 }
@@ -1068,7 +1071,8 @@ type sessionGetQuery struct {
 }
 
 // PageSessions godoc
-// @Summary      分页查询当前用户的会话
+// @Summary      分页查询当前项目下的所有会话
+// @Description  返回当前激活项目下的所有会话（不限定发起人），带 username；按 updated_at 倒序，支持 keyword 标题/用户名搜索
 // @Tags         Agent
 // @Accept       json
 // @Produce      json
@@ -1090,7 +1094,7 @@ func (h *AgentHandler) PageSessions(c *gin.Context) {
 		return
 	}
 
-	sessions, total, err := h.chat.ListSessions(c.Request.Context(), userID, req.Offset(), req.Limit())
+	sessions, total, err := h.chat.ListSessions(c.Request.Context(), userID, req.GetKeyword(), req.Offset(), req.Limit())
 	if err != nil {
 		handleAgentError(c, err, "failed to page sessions")
 		return

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	agent "github.com/biox-dev/gobrave/internal/agent/types"
@@ -210,12 +211,26 @@ func (r *gormSessionStore) List(ctx context.Context, params agent.SessionListPar
 	// 会话列表只展示顶层会话：子 Agent / 标题生成等子会话通过 parent_session_id 关联，
 	// 不属于会话列表（需要时按父会话单独查询）。
 	q := r.db.WithContext(ctx).Model(&agent.Session{}).Where("parent_session_id = 0")
+	// users 表只在真实库中存在；单测等精简库里没有 users，跳过 join 与用户名回填。
+	hasUsers := r.db.Migrator().HasTable("users")
+	if hasUsers {
+		// LEFT JOIN users 用于「按发起人用户名搜索」；注意限定表名，避免 id / created_at 等列歧义。
+		q = q.Joins("LEFT JOIN users ON users.id = agent_sessions.user_id")
+	}
 	if params.UserID != 0 {
 		q = q.Where("user_id = ?", params.UserID)
 	}
 	// ProjectID 用于会话按项目隔离：0 表示不按项目过滤。
 	if params.ProjectID != 0 {
 		q = q.Where("project_id = ?", params.ProjectID)
+	}
+	if keyword := strings.TrimSpace(params.Keyword); keyword != "" {
+		like := "%" + keyword + "%"
+		if hasUsers {
+			q = q.Where("(agent_sessions.title LIKE ? OR users.username LIKE ?)", like, like)
+		} else {
+			q = q.Where("agent_sessions.title LIKE ?", like)
+		}
 	}
 
 	var total int64
@@ -224,8 +239,48 @@ func (r *gormSessionStore) List(ctx context.Context, params agent.SessionListPar
 	}
 
 	var rows []*agent.Session
-	if err := q.Order("updated_at DESC").Offset(params.Offset).Limit(params.Limit).Find(&rows).Error; err != nil {
+	// join 后必须限定选择列，否则 users.id 会覆盖会话主键。
+	if err := q.Select("agent_sessions.*").Order("agent_sessions.updated_at DESC").Offset(params.Offset).Limit(params.Limit).Find(&rows).Error; err != nil {
 		return nil, 0, err
 	}
+	if hasUsers {
+		r.fillUsernames(ctx, rows)
+	}
 	return rows, total, nil
+}
+
+// fillUsernames 按 UserID 批量回填用户显示名（一次查询，避免 N+1）。
+func (r *gormSessionStore) fillUsernames(ctx context.Context, rows []*agent.Session) {
+	if len(rows) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(rows))
+	seen := make(map[int64]struct{}, len(rows))
+	for _, row := range rows {
+		if row.UserID == 0 {
+			continue
+		}
+		if _, ok := seen[row.UserID]; ok {
+			continue
+		}
+		seen[row.UserID] = struct{}{}
+		ids = append(ids, row.UserID)
+	}
+	if len(ids) == 0 {
+		return
+	}
+	var users []struct {
+		ID       int64
+		Username string
+	}
+	if err := r.db.WithContext(ctx).Table("users").Select("id, username").Where("id IN ?", ids).Scan(&users).Error; err != nil {
+		return
+	}
+	names := make(map[int64]string, len(users))
+	for _, u := range users {
+		names[u.ID] = u.Username
+	}
+	for _, row := range rows {
+		row.Username = names[row.UserID]
+	}
 }

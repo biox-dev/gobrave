@@ -498,6 +498,8 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler, sess
 	r.POST("/agent/session/fork", handler.ForkSession)
 	// 会话结果：按资源类型（script / workflow / analysis_node）查询该会话关联的脚本 / 工作流 / 分析节点。
 	r.GET("/agent/session/resources", sessionResources.ListSessionResources)
+	// 会话结果：一次返回该会话的全部资源，并按资源类型分组（前端只发一次请求）。
+	r.GET("/agent/session/resources/all", sessionResources.ListAllSessionResources)
 	// 兼容旧路径（前端仍在使用 /agent/conversation/*）。
 	r.POST("/agent/conversation/page", handler.PageSessions)
 	r.GET("/agent/conversation/get", handler.GetSession)

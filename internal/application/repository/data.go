@@ -88,6 +88,12 @@ func (r *dataRepository) PageDatasetByProjectID(ctx context.Context, pagination 
 	}
 
 	applyFilters := func(db *gorm.DB) *gorm.DB {
+		// 统一关键字搜索：命中数据集名称 / 业务键 / 描述。
+		if keyword := pagination.GetKeyword(); keyword != "" {
+			like := "%" + keyword + "%"
+			db = db.Where("(dataset.dataset_name LIKE ? OR dataset.dataset_key LIKE ? OR dataset.description LIKE ?)", like, like, like)
+		}
+
 		if query == nil {
 			return db
 		}
@@ -360,6 +366,11 @@ func (r *dataRepository) PageFileByProjectID(ctx context.Context, pagination *ty
 		if len(roles) > 0 {
 			db = db.Where("file.role IN ?", roles)
 		}
+		// 统一关键字搜索：命中文件名 / 路径。
+		if keyword := pagination.GetKeyword(); keyword != "" {
+			like := "%" + keyword + "%"
+			db = db.Where("(file.file_name LIKE ? OR file.path LIKE ?)", like, like)
+		}
 		return db
 	}
 
@@ -509,11 +520,17 @@ func (r *dataRepository) PageFileByProjectIDViaAnalysisNode(ctx context.Context,
 	var total int64
 
 	buildQuery := func() *gorm.DB {
-		return r.db.WithContext(ctx).
+		query := r.db.WithContext(ctx).
 			Table("analysis_nodes AS an").
 			Joins("JOIN t_project AS p ON p.id = an.project_id").
 			Joins("JOIN go_file AS f ON f.analysis_node_id = an.id").
 			Where("p.id = ?", projectID)
+		// 统一关键字搜索：命中文件名 / 路径。
+		if keyword := pagination.GetKeyword(); keyword != "" {
+			like := "%" + keyword + "%"
+			query = query.Where("(f.file_name LIKE ? OR f.path LIKE ?)", like, like)
+		}
+		return query
 	}
 
 	if err := buildQuery().Select("COUNT(DISTINCT f.id)").Scan(&total).Error; err != nil {
@@ -680,7 +697,17 @@ func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *t
 	items := make([]*types.AssayWithDatasetInfo, 0)
 	var total int64
 
-	if err := r.assayByProjectBase(ctx, projectID).
+	// 统一关键字搜索：命中样本名 / assay 类型 / 角色。
+	base := func() *gorm.DB {
+		query := r.assayByProjectBase(ctx, projectID)
+		if keyword := pagination.GetKeyword(); keyword != "" {
+			like := "%" + keyword + "%"
+			query = query.Where("(a.sample_name LIKE ? OR a.assay_type LIKE ? OR a.role LIKE ?)", like, like, like)
+		}
+		return query
+	}
+
+	if err := base().
 		Select("COUNT(DISTINCT a.id)").
 		Scan(&total).Error; err != nil {
 		return nil, 0, err
@@ -689,7 +716,7 @@ func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *t
 	// Grouping by the joined PKs (a.id, d.id) keeps the extra columns valid
 	// under MySQL's ONLY_FULL_GROUP_BY while collapsing the row to one per assay
 	// (an assay bound to several datasets would otherwise duplicate).
-	err := r.assayByProjectBase(ctx, projectID).
+	err := base().
 		Group("a.id, d.id").
 		Order("a.id DESC").
 		Offset(pagination.Offset()).

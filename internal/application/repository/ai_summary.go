@@ -52,9 +52,14 @@ func (r *aiSummaryRepository) PageAISummariesByProjectID(ctx context.Context, pa
 	}
 
 	buildQuery := func() *gorm.DB {
-		return r.db.WithContext(ctx).
+		query := r.db.WithContext(ctx).
 			Model(&types.AISummary{}).
 			Where("project_id = ?", projectID)
+		// 统一关键字搜索：命中摘要标题。
+		if keyword := pagination.GetKeyword(); keyword != "" {
+			query = query.Where("title LIKE ?", "%"+keyword+"%")
+		}
+		return query
 	}
 
 	var total int64

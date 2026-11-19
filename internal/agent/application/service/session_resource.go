@@ -42,11 +42,27 @@ func (s *sessionResourceService) List(ctx context.Context, sessionID int64, reso
 	if err != nil {
 		return nil, err
 	}
+	return sessionResourceValues(rows), nil
+}
+
+func (s *sessionResourceService) ListBySession(ctx context.Context, sessionID int64) ([]agenttypes.SessionResource, error) {
+	if s == nil || s.store == nil {
+		return nil, nil
+	}
+	rows, err := s.store.ListBySession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return sessionResourceValues(rows), nil
+}
+
+// sessionResourceValues 把指针列表转换为值列表，忽略 nil 行。
+func sessionResourceValues(rows []*agenttypes.SessionResource) []agenttypes.SessionResource {
 	out := make([]agenttypes.SessionResource, 0, len(rows))
 	for _, row := range rows {
 		if row != nil {
 			out = append(out, *row)
 		}
 	}
-	return out, nil
+	return out
 }

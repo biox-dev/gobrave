@@ -26,8 +26,11 @@ type Session struct {
 	ParentSessionID int64  `json:"parent_session_id,string" gorm:"column:parent_session_id;type:bigint;index"`
 	Title           string `json:"title" gorm:"column:title;type:varchar(255)"`
 	UserID          int64  `json:"user_id,string" gorm:"column:user_id;type:bigint;index"`
-	Provider        string `json:"provider" gorm:"column:provider;type:varchar(64)"`
-	Model           string `json:"model" gorm:"column:model;type:varchar(128)"`
+	// Username 是会话所属用户的显示名。它不是 agent_sessions 表的列：会话列表接口
+	// 会按 UserID 批量从 users 表回填，用于「项目内所有会话」视图展示发起人。
+	Username string `json:"username,omitempty" gorm:"-"`
+	Provider string `json:"provider" gorm:"column:provider;type:varchar(64)"`
+	Model    string `json:"model" gorm:"column:model;type:varchar(128)"`
 	// CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；
 	// 轮次正常结束时置空。failed 但仍有检查点（可续跑）的任务会保留该指针，
 	// 供前端刷新 / 切换会话时展示「Continue」并从 /agent/task/resume 恢复执行。
@@ -81,8 +84,10 @@ type SessionListParams struct {
 	UserID int64 // 0 表示全部用户
 	// ProjectID 限定只返回该项目的会话；0 表示不按项目过滤。
 	ProjectID int64
-	Offset    int
-	Limit     int
+	// Keyword 按会话标题 / 发起人用户名模糊搜索（空表示不过滤）。
+	Keyword string
+	Offset  int
+	Limit   int
 }
 
 // SessionForkParams 是 fork 会话（复制历史到新会话）的入参。

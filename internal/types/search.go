@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Pagination represents the pagination parameters
@@ -12,6 +13,18 @@ type Pagination struct {
 	Page int `form:"page"      json:"page"      binding:"omitempty,min=1"`
 	// Page size
 	PageSize int `form:"page_size" json:"page_size" binding:"omitempty,min=1,max=1000"`
+	// Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+	// 统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+	// 仓储层按各自实体的名称列实现 LIKE 过滤。
+	Keyword string `form:"keyword" json:"keyword"`
+}
+
+// GetKeyword 返回去掉首尾空白后的搜索关键字。
+func (p *Pagination) GetKeyword() string {
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.Keyword)
 }
 
 // GetPage gets the page number, default is 1
