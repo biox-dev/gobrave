@@ -129,22 +129,37 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.Scri
 		_ = c.resources.LinkFromContext(ctx, agenttypes.SessionResourceTypeScript, script.ID)
 	}
 
-	// 2) 初始化脚本目录：主文件 + io_schema.json。
-	ioSchemaJSON, err := buildIOSchemaJSON(in.Inputs, in.Outputs)
-	if err != nil {
-		return runtimecontext.ScriptCreateResult{}, err
-	}
+	// 2) 初始化脚本目录：主文件 + io_schema.json（+ 可选 README.md）。
+	//
+	// 工具可直接传入三类文件正文（script_content / io_schema / readme），
+	// 因此模型创建脚本时无需再走 coder write / bash；未传时保持原默认行为。
 	files := script.Files(baseDir)
 	if err := os.MkdirAll(files.Dir, 0o755); err != nil {
 		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to prepare script dir: %w", err)
 	}
-	if _, statErr := os.Stat(files.MainPath); os.IsNotExist(statErr) {
-		if err := os.WriteFile(files.MainPath, []byte(defaultScriptInitContent(script.ScriptType)), 0o644); err != nil {
-			return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to create script file: %w", err)
+	scriptContent := in.ScriptContent
+	if strings.TrimSpace(scriptContent) == "" {
+		scriptContent = defaultScriptInitContent(script.ScriptType)
+	}
+	if err := utils.WriteScriptFileContent(baseDir, project.ID, script.ScriptType, script.ScriptID, scriptContent); err != nil {
+		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to create script file: %w", err)
+	}
+
+	ioSchemaJSON := in.IOSchema
+	if strings.TrimSpace(ioSchemaJSON) == "" {
+		generated, err := buildIOSchemaJSON(in.Inputs, in.Outputs)
+		if err != nil {
+			return runtimecontext.ScriptCreateResult{}, err
 		}
+		ioSchemaJSON = generated
 	}
 	if err := utils.WriteScriptIOSchema(baseDir, project.ID, script.ScriptID, ioSchemaJSON); err != nil {
 		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to write io_schema.json: %w", err)
+	}
+	if strings.TrimSpace(in.Readme) != "" {
+		if err := utils.WriteScriptReadme(baseDir, project.ID, script.ScriptID, in.Readme); err != nil {
+			return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to write README.md: %w", err)
+		}
 	}
 
 	return runtimecontext.ScriptCreateResult{

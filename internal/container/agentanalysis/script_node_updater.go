@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
@@ -32,8 +33,12 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 	if u.analysisSvc == nil {
 		return result, fmt.Errorf("update_analysis_node_script: required services are not configured")
 	}
-	if in.NodeName == nil && in.RequestParam == nil {
-		return result, fmt.Errorf("update_analysis_node_script: at least one of node_name / request_param must be provided")
+	fileEdit := runtimecontext.ResourceFileEdit{File: in.File, Content: in.Content, OldString: in.OldString, NewString: in.NewString}
+	if in.NodeName == nil && in.RequestParam == nil && fileEdit.IsZero() {
+		return result, fmt.Errorf("update_analysis_node_script: at least one of node_name / request_param / file edit must be provided")
+	}
+	if !fileEdit.IsZero() && fileEdit.File != runtimecontext.ResourceFileParams {
+		return result, fmt.Errorf("update_analysis_node_script: unsupported file %q (expected params)", fileEdit.File)
 	}
 
 	node, err := u.loadNodeForProject(ctx, in.ProjectID, in.AnalysisNodeID, "update_analysis_node_script")
@@ -43,6 +48,27 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 	nodeType := node.NodeType()
 	if node.ScriptID <= 0 || (nodeType != types.AnalysisNodeCreationSourceScript && nodeType != types.AnalysisNodeCreationSourceScheduler) {
 		return result, fmt.Errorf("update_analysis_node_script: analysis node %d is a %s node; only script / scheduler nodes (with a bound script) can be updated with this tool, use update_analysis_node_agent for agent nodes", node.ID, node.NodeTypeDescription())
+	}
+
+	// params.json 文件编辑：以磁盘正文为基准编辑，再解析回request_param走统一校验流程。
+	if !fileEdit.IsZero() {
+		node.HydrateDerivedPaths()
+		current, readErr := os.ReadFile(node.ParamsPath)
+		if readErr != nil {
+			if !os.IsNotExist(readErr) {
+				return result, fmt.Errorf("update_analysis_node_script: failed to read params.json of node %d: %w", node.ID, readErr)
+			}
+			current = nil
+		}
+		after, applyErr := fileEdit.Apply(string(current))
+		if applyErr != nil {
+			return result, fmt.Errorf("update_analysis_node_script: %w", applyErr)
+		}
+		params := map[string]any{}
+		if err := json.Unmarshal([]byte(after), &params); err != nil {
+			return result, fmt.Errorf("update_analysis_node_script: params edit produced invalid JSON: %w", err)
+		}
+		in.RequestParam = params
 	}
 
 	update := make(map[string]any, 6)

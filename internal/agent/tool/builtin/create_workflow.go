@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
-	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 // CreateWorkflowToolName 是「创建工作流」工具名。
@@ -114,6 +114,15 @@ func CreateWorkflow(creator runtimecontext.WorkflowCreator) tool.Tool {
 				return CreateWorkflowOutput{}, fmt.Errorf("%s: workflow creator is not available in this runtime", CreateWorkflowToolName)
 			}
 
+			preview := previewNewFiles([]newFilePreview{
+				{Path: "dag_definition.json", Content: formattedJSONContent(in.DagDefinition.value())},
+				{Path: "io_schema.json", Content: formattedJSONContent(in.IOSchema.value())},
+				{Path: "README.md", Content: in.Readme},
+			})
+			if err := authorizeResourceWrite(ctx, CreateWorkflowToolName, fmt.Sprintf("Create workflow %s", strings.TrimSpace(in.Name)), preview); err != nil {
+				return CreateWorkflowOutput{}, err
+			}
+
 			result, createErr := creator.CreateWorkflow(ctx, runtimecontext.WorkflowCreateInput{
 				ProjectID:     projectID,
 				Name:          in.Name,
@@ -130,16 +139,5 @@ func CreateWorkflow(creator runtimecontext.WorkflowCreator) tool.Tool {
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "创建工作流（写库并初始化工作流目录）", previewCreateWorkflow)
-}
-
-// previewCreateWorkflow 生成批准前预览：新建 dag_definition.json 的内容。
-//
-// 未给出 dag_definition 时没有文件改动可预览（只建空目录），回退到工具入参。
-func previewCreateWorkflow(_ context.Context, in CreateWorkflowInput) tool.PermissionPreview {
-	content := in.DagDefinition.value()
-	if content == "" {
-		return tool.PermissionPreview{}
-	}
-	return textDiffPreview(utils.DagDefinitionFileName, "", formattedJSONContent(content))
+	)
 }

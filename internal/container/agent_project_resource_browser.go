@@ -144,6 +144,52 @@ func (b *projectResourceBrowser) GetScriptByID(ctx context.Context, projectID in
 	return detail, nil
 }
 
+// ReadScriptFile 直接读取脚本目录下指定文件的正文。
+func (b *projectResourceBrowser) ReadScriptFile(ctx context.Context, projectID int64, scriptID int64, file runtimecontext.ResourceFile) (runtimecontext.ResourceFileContent, error) {
+	if projectID <= 0 {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read script file: project_id is required")
+	}
+	if scriptID <= 0 {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read script file: script_id is required")
+	}
+	if !isOneOfResourceFile(file, runtimecontext.ResourceFileScript, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme) {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read script file: unsupported file %q", file)
+	}
+	if b.workflowSvc == nil {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read script file: required services are not configured")
+	}
+
+	script, err := b.workflowSvc.GetScriptByID(ctx, scriptID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return runtimecontext.ResourceFileContent{}, fmt.Errorf("read script file: script %d not found", scriptID)
+		}
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read script file: failed to load script: %w", err)
+	}
+	if script == nil || script.ID == 0 {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read script file: script %d not found", scriptID)
+	}
+	if script.ProjectID != projectID {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read script file: script %d does not belong to the active project %d", script.ID, projectID)
+	}
+
+	files := script.Files(b.storageBaseDir())
+	path := ""
+	switch file {
+	case runtimecontext.ResourceFileScript:
+		path = files.MainPath
+	case runtimecontext.ResourceFileIOSchema:
+		path = files.IOSchemaFile
+	case runtimecontext.ResourceFileReadme:
+		path = files.ReadmeFile
+	}
+	data, err := readFileIfExists(path)
+	if err != nil {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read script file: %w", err)
+	}
+	return runtimecontext.NewResourceFileContent(file, path, data), nil
+}
+
 // GetAnalysisNodeByID 按主键读取分析节点，并校验其属于当前激活项目。
 func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projectID int64, nodeID int64) (runtimecontext.AnalysisNodeBrief, error) {
 	if projectID <= 0 {
@@ -189,6 +235,41 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 		OutputDir:           node.OutputDir,
 		RequestParam:        agentanalysis.DecodeRequestParam(node.RequestParam),
 	}, nil
+}
+
+// ReadAnalysisNodeFile 直接读取节点工作目录下指定文件的正文（command / params）。
+func (b *projectResourceBrowser) ReadAnalysisNodeFile(ctx context.Context, projectID int64, nodeID int64, file runtimecontext.ResourceFile) (runtimecontext.ResourceFileContent, error) {
+	if !isOneOfResourceFile(file, runtimecontext.ResourceFileCommand, runtimecontext.ResourceFileParams) {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: unsupported file %q", file)
+	}
+	if b.analysisRepo == nil {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: required services are not configured")
+	}
+
+	node, err := b.analysisRepo.GetAnalysisNodeByID(ctx, nodeID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: analysis node %d not found", nodeID)
+		}
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: failed to load node: %w", err)
+	}
+	if node == nil || node.ID == 0 {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: analysis node %d not found", nodeID)
+	}
+	if node.ProjectID != projectID {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: analysis node %d does not belong to the active project %d", node.ID, projectID)
+	}
+	node.HydrateDerivedPaths()
+
+	path := node.CommandPath
+	if file == runtimecontext.ResourceFileParams {
+		path = node.ParamsPath
+	}
+	data, err := readFileIfExists(path)
+	if err != nil {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: %w", err)
+	}
+	return runtimecontext.NewResourceFileContent(file, path, data), nil
 }
 
 // ListWorkflowsByProject 返回指定项目下的全部工作流（按 id 倒序，不分页）。
@@ -276,6 +357,47 @@ func (b *projectResourceBrowser) GetWorkflowByID(ctx context.Context, projectID 
 		detail.ReadmeContent = string(readme)
 	}
 	return detail, nil
+}
+
+// ReadWorkflowFile 直接读取工作流目录下指定文件的正文
+// （dag_definition / io_schema / readme）。
+func (b *projectResourceBrowser) ReadWorkflowFile(ctx context.Context, projectID int64, workflowID int64, file runtimecontext.ResourceFile) (runtimecontext.ResourceFileContent, error) {
+	if !isOneOfResourceFile(file, runtimecontext.ResourceFileDagDefinition, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme) {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read workflow file: unsupported file %q", file)
+	}
+	if b.workflowSvc == nil {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read workflow file: required services are not configured")
+	}
+
+	workflow, err := b.workflowSvc.GetWorkflowByID(ctx, workflowID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return runtimecontext.ResourceFileContent{}, fmt.Errorf("read workflow file: workflow %d not found", workflowID)
+		}
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read workflow file: failed to load workflow: %w", err)
+	}
+	if workflow == nil || workflow.ID == 0 {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read workflow file: workflow %d not found", workflowID)
+	}
+	if workflow.ProjectID != projectID {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read workflow file: workflow %d does not belong to the active project %d", workflow.ID, projectID)
+	}
+
+	files := utils.WorkflowLayout(b.storageBaseDir(), workflow.ProjectID, workflow.WorkflowID)
+	path := ""
+	switch file {
+	case runtimecontext.ResourceFileDagDefinition:
+		path = files.DagDefinition
+	case runtimecontext.ResourceFileIOSchema:
+		path = files.IOSchemaFile
+	case runtimecontext.ResourceFileReadme:
+		path = files.ReadmeFile
+	}
+	data, err := readFileIfExists(path)
+	if err != nil {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read workflow file: %w", err)
+	}
+	return runtimecontext.NewResourceFileContent(file, path, data), nil
 }
 
 // workflowGraphSummary 统计 DAG 的节点 / 连线数，并按 script_id 去重回查脚本名称。
@@ -390,6 +512,37 @@ func (b *projectResourceBrowser) GetAnalysisByID(ctx context.Context, projectID 
 	}
 
 	return runtimecontext.AnalysisDetail{AnalysisBrief: brief}, nil
+}
+
+// ReadAnalysisFile 直接读取分析运行目录下指定文件的正文（params）。
+func (b *projectResourceBrowser) ReadAnalysisFile(ctx context.Context, projectID int64, analysisID int64, file runtimecontext.ResourceFile) (runtimecontext.ResourceFileContent, error) {
+	if file != runtimecontext.ResourceFileParams {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis file: unsupported file %q", file)
+	}
+	if b.analysisRepo == nil {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis file: required services are not configured")
+	}
+
+	analysis, err := b.analysisRepo.GetAnalysisByID(ctx, analysisID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis file: analysis %d not found", analysisID)
+		}
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis file: failed to load analysis: %w", err)
+	}
+	if analysis == nil || analysis.ID == 0 {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis file: analysis %d not found", analysisID)
+	}
+	if analysis.ProjectID != projectID {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis file: analysis %d does not belong to the active project %d", analysis.ID, projectID)
+	}
+	analysis.HydrateDerivedPaths()
+
+	data, err := readFileIfExists(analysis.ParamsPath)
+	if err != nil {
+		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis file: %w", err)
+	}
+	return runtimecontext.NewResourceFileContent(file, analysis.ParamsPath, data), nil
 }
 
 // workflowBrief 构造工作流的只读摘要：元数据 + 目录内文件路径 + DAG 节点 / 连线数。
@@ -935,4 +1088,29 @@ func (b *projectResourceBrowser) storageBaseDir() string {
 		}
 	}
 	return "."
+}
+
+// readFileIfExists 读取文件正文；文件不存在时返回 nil（不视为错误）。
+func readFileIfExists(path string) ([]byte, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return data, nil
+}
+
+// isOneOfResourceFile 判断 file 是否属于 allowed。
+func isOneOfResourceFile(file runtimecontext.ResourceFile, allowed ...runtimecontext.ResourceFile) bool {
+	for _, candidate := range allowed {
+		if file == candidate {
+			return true
+		}
+	}
+	return false
 }

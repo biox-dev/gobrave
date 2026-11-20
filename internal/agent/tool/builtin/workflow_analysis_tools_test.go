@@ -290,6 +290,10 @@ func (f *fakeWorkflowBrowser) GetWorkflowByID(_ context.Context, _ int64, workfl
 	return runtimecontext.WorkflowDetail{}, nil
 }
 
+func (f *fakeWorkflowBrowser) ReadWorkflowFile(_ context.Context, _ int64, _ int64, file runtimecontext.ResourceFile) (runtimecontext.ResourceFileContent, error) {
+	return runtimecontext.ResourceFileContent{File: file}, nil
+}
+
 func TestListProjectWorkflowsTool(t *testing.T) {
 	browser := &fakeWorkflowBrowser{workflows: []runtimecontext.WorkflowBrief{
 		{WorkflowID: 21, WorkflowKey: "wf-key", Name: "rnaseq", NodeCount: 3, EdgeCount: 2},

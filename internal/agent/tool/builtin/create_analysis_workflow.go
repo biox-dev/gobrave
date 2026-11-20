@@ -90,6 +90,10 @@ func CreateAnalysisWorkflow(creator runtimecontext.AnalysisCreator, runner runti
 				return CreateAnalysisWorkflowOutput{}, fmt.Errorf("%s: analysis creator is not available in this runtime", CreateAnalysisWorkflowToolName)
 			}
 
+			if err := authorizeResourceWrite(ctx, CreateAnalysisWorkflowToolName, fmt.Sprintf("Create analysis run for workflow %d", workflowID), previewCreateAnalysisWorkflow(ctx, in)); err != nil {
+				return CreateAnalysisWorkflowOutput{}, err
+			}
+
 			result, createErr := creator.CreateAnalysis(ctx, runtimecontext.AnalysisCreateInput{
 				ProjectID:    projectID,
 				WorkflowID:   workflowID,
@@ -134,7 +138,7 @@ func CreateAnalysisWorkflow(creator runtimecontext.AnalysisCreator, runner runti
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("analysis", "", "创建工作流的一次分析运行（默认创建后提交运行）", previewCreateAnalysisWorkflow)
+	)
 }
 
 // previewCreateAnalysisWorkflow 生成批准前预览：新分析运行 params.json 将写入的请求参数

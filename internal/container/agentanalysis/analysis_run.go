@@ -2,7 +2,9 @@ package agentanalysis
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
@@ -62,6 +64,35 @@ func NewManager(
 
 // UpdateAnalysis 更新分析运行的分析名称 / 请求参数 / 缓存策略。
 func (m *analysisManager) UpdateAnalysis(ctx context.Context, in runtimecontext.AnalysisUpdateInput) (runtimecontext.AnalysisUpdateResult, error) {
+	// params.json 文件编辑：以磁盘正文为基准编辑，再解析回 request_param 走统一校验流程。
+	if in.File != "" {
+		if in.File != runtimecontext.ResourceFileParams {
+			return runtimecontext.AnalysisUpdateResult{}, fmt.Errorf("update_analysis_workflow: unsupported file %q (expected params)", in.File)
+		}
+		if in.RequestParam != nil {
+			return runtimecontext.AnalysisUpdateResult{}, fmt.Errorf("update_analysis_workflow: file edit cannot be combined with request_param; choose one style")
+		}
+		analysis, err := m.analysisSvc.GetAnalysisByID(ctx, in.AnalysisID)
+		if err != nil {
+			return runtimecontext.AnalysisUpdateResult{}, fmt.Errorf("update_analysis_workflow: failed to load analysis %d: %w", in.AnalysisID, err)
+		}
+		analysis.HydrateDerivedPaths()
+		current, err := os.ReadFile(analysis.ParamsPath)
+		if err != nil && !os.IsNotExist(err) {
+			return runtimecontext.AnalysisUpdateResult{}, fmt.Errorf("update_analysis_workflow: failed to read params.json: %w", err)
+		}
+		edit := runtimecontext.ResourceFileEdit{File: in.File, Content: in.Content, OldString: in.OldString, NewString: in.NewString}
+		after, err := edit.Apply(string(current))
+		if err != nil {
+			return runtimecontext.AnalysisUpdateResult{}, fmt.Errorf("update_analysis_workflow: %w", err)
+		}
+		params := map[string]any{}
+		if err := json.Unmarshal([]byte(after), &params); err != nil {
+			return runtimecontext.AnalysisUpdateResult{}, fmt.Errorf("update_analysis_workflow: params edit produced invalid JSON: %w", err)
+		}
+		in.RequestParam = params
+	}
+
 	prepared, err := m.prepare(ctx, analysisUpdateRequest{
 		projectID:    in.ProjectID,
 		analysisID:   in.AnalysisID,

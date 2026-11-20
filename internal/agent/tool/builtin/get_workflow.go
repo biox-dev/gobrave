@@ -18,16 +18,18 @@ const GetWorkflowToolName = "get_workflow"
 // WorkflowID 为必填：模型必须显式给出要查看的工作流 ID，不再从运行时上下文回退。
 // 可以直接传用户消息里的 @workflow:<id> 引用文本（前缀会被容错剥离）。
 type GetWorkflowInput struct {
-	WorkflowID string `json:"workflow_id"` // 工作流主键 ID（必填，支持 "@workflow:<id>" 形式，字符串以保精度）
+	WorkflowID string   `json:"workflow_id"` // 工作流主键 ID（必填，支持 "@workflow:<id>" 形式，字符串以保精度）
+	Files      []string `json:"files"`       // dag_definition / io_schema / readme；留空时全部返回
 }
 
 // GetWorkflowOutput 是 get_workflow 工具返回给模型的结果。
 //
 // 内嵌 runtimecontext.WorkflowDetail：工作流摘要 + dag_definition / io_schema 原文 +
-// 工作流级 inputs + 引用到的脚本列表 + README 正文。
+// 工作流级 inputs + 引用到的脚本列表 + README 正文；Files 按文件类型回传正文。
 type GetWorkflowOutput struct {
 	runtimecontext.WorkflowDetail
-	Error string `json:"error,omitempty"`
+	Files map[string]runtimecontext.ResourceFileContent `json:"files,omitempty"`
+	Error string                                        `json:"error,omitempty"`
 }
 
 // getWorkflowDescription 返回 get_workflow 的工具描述（Markdown 格式）。
@@ -69,6 +71,7 @@ func GetWorkflow(browser runtimecontext.WorkflowBrowser) tool.Tool {
 		getWorkflowDescription(),
 		tool.Schema("按 ID 查看工作流的入参", map[string]any{
 			"workflow_id": tool.StringProperty("工作流主键 ID（必填，整数，字符串以保精度）。来自用户输入里的 @workflow:<id> 引用时直接使用冒号后的 ID。"),
+			"files":       resourceFilesSchema("要直接读取正文的文件列表；留空时返回全部三个文件。", runtimecontext.ResourceFileDagDefinition, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme),
 		}, "workflow_id"),
 		func(ctx context.Context, in GetWorkflowInput) (GetWorkflowOutput, error) {
 			projectID, err := requireProjectID(ctx, GetWorkflowToolName)
@@ -87,7 +90,24 @@ func GetWorkflow(browser runtimecontext.WorkflowBrowser) tool.Tool {
 			out := GetWorkflowOutput{WorkflowDetail: detail}
 			if loadErr != nil {
 				out.Error = loadErr.Error()
+				return out, nil
 			}
+
+			files, err := collectResourceFiles(in.Files, GetWorkflowToolName,
+				[]runtimecontext.ResourceFile{runtimecontext.ResourceFileDagDefinition, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme},
+				runtimecontext.ResourceFileDagDefinition, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme)
+			if err != nil {
+				out.Error = err.Error()
+				return out, nil
+			}
+			contents, err := readResourceFiles(files, func(file runtimecontext.ResourceFile) (runtimecontext.ResourceFileContent, error) {
+				return browser.ReadWorkflowFile(ctx, projectID, workflowID, file)
+			})
+			if err != nil {
+				out.Error = err.Error()
+				return out, nil
+			}
+			out.Files = contents
 			return out, nil
 		},
 	).WithPermission("read", "", "按 ID 查看工作流元数据、DAG 定义与 io_schema")

@@ -9,6 +9,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/types"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -32,8 +33,9 @@ func (c *scriptCreator) UpdateScriptInfo(ctx context.Context, in runtimecontext.
 	if c.workflowSvc == nil {
 		return runtimecontext.ScriptUpdateResult{}, fmt.Errorf("update_script: required services are not configured")
 	}
-	if in.Name == nil && in.Description == nil {
-		return runtimecontext.ScriptUpdateResult{}, fmt.Errorf("update_script: at least one of name / description is required")
+	fileEdit := in.ResourceFileEdit()
+	if in.Name == nil && in.Description == nil && fileEdit.IsZero() {
+		return runtimecontext.ScriptUpdateResult{}, fmt.Errorf("update_script: at least one of name / description / file edit is required")
 	}
 	if in.Name != nil && strings.TrimSpace(*in.Name) == "" {
 		return runtimecontext.ScriptUpdateResult{}, fmt.Errorf("update_script: name must not be empty")
@@ -46,7 +48,7 @@ func (c *scriptCreator) UpdateScriptInfo(ctx context.Context, in runtimecontext.
 	}
 
 	// 2) 以库中完整记录为基准，只覆盖给出的字段（整体替换语义）。
-	changed := make([]string, 0, 2)
+	changed := make([]string, 0, 3)
 	if in.Name != nil {
 		name := strings.TrimSpace(*in.Name)
 		if name != script.Name {
@@ -60,6 +62,18 @@ func (c *scriptCreator) UpdateScriptInfo(ctx context.Context, in runtimecontext.
 			changed = append(changed, "description")
 		}
 		script.Description = description
+	}
+
+	baseDir := c.storageBaseDir()
+	// 2.1) 文件编辑（script_file / io_schema / readme）：字段覆盖或唯一文本替换。
+	if !fileEdit.IsZero() {
+		if baseDir == "" {
+			return runtimecontext.ScriptUpdateResult{}, fmt.Errorf("update_script: storage.base_dir is empty")
+		}
+		if err := c.applyFileEdit(baseDir, script, fileEdit); err != nil {
+			return runtimecontext.ScriptUpdateResult{}, err
+		}
+		changed = append(changed, "file:"+string(fileEdit.File))
 	}
 
 	if err := c.workflowSvc.UpdateScript(ctx, script); err != nil {
@@ -82,13 +96,51 @@ func (c *scriptCreator) UpdateScriptInfo(ctx context.Context, in runtimecontext.
 		ScriptType:  script.ScriptType,
 		Changed:     changed,
 	}
-	baseDir := c.storageBaseDir()
 	if baseDir != "" {
 		files := script.Files(baseDir)
 		result.ScriptFilePath = files.MainPath
 		result.IOSchemaPath = files.IOSchemaFile
 	}
 	return result, nil
+}
+
+// applyFileEdit 读取脚本目录下的目标文件、应用编辑并落盘。
+func (c *scriptCreator) applyFileEdit(baseDir string, script *types.Script, edit runtimecontext.ResourceFileEdit) error {
+	var (
+		before []byte
+		err    error
+	)
+	switch edit.File {
+	case runtimecontext.ResourceFileScript:
+		before, err = utils.ReadScriptFileContent(baseDir, script.ProjectID, script.ScriptType, script.ScriptID)
+	case runtimecontext.ResourceFileIOSchema:
+		before, err = utils.ReadScriptIOSchemaFile(baseDir, script.ProjectID, script.ScriptID)
+	case runtimecontext.ResourceFileReadme:
+		before, err = utils.ReadScriptReadme(baseDir, script.ProjectID, script.ScriptID)
+	default:
+		return fmt.Errorf("update_script: unsupported file %q (expected script_file / io_schema / readme)", edit.File)
+	}
+	if err != nil {
+		return fmt.Errorf("update_script: failed to read %s: %w", edit.File, err)
+	}
+
+	after, err := edit.Apply(string(before))
+	if err != nil {
+		return fmt.Errorf("update_script: %w", err)
+	}
+
+	switch edit.File {
+	case runtimecontext.ResourceFileScript:
+		err = utils.WriteScriptFileContent(baseDir, script.ProjectID, script.ScriptType, script.ScriptID, after)
+	case runtimecontext.ResourceFileIOSchema:
+		err = utils.WriteScriptIOSchema(baseDir, script.ProjectID, script.ScriptID, after)
+	case runtimecontext.ResourceFileReadme:
+		err = utils.WriteScriptReadme(baseDir, script.ProjectID, script.ScriptID, after)
+	}
+	if err != nil {
+		return fmt.Errorf("update_script: failed to write %s: %w", edit.File, err)
+	}
+	return nil
 }
 
 // locateScript 按主键定位脚本，并校验其属于当前激活项目。

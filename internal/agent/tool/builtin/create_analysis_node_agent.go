@@ -156,6 +156,10 @@ func CreateAnalysisNodeAgent(runner runtimecontext.AgentAnalysisRunner) tool.Too
 				return CreateAnalysisNodeAgentOutput{}, fmt.Errorf("create_analysis_node_agent: agent analysis runner is not available in this runtime")
 			}
 
+			if err := authorizeResourceWrite(ctx, CreateAnalysisNodeAgentToolName, fmt.Sprintf("Create analysis node %s", name), previewCreateAnalysisNodeAgent(ctx, in)); err != nil {
+				return CreateAnalysisNodeAgentOutput{}, err
+			}
+
 			// run 可选且默认为 true：nil 视为未传，按默认运行处理。
 			run := true
 			if in.Run != nil {
@@ -188,7 +192,7 @@ func CreateAnalysisNodeAgent(runner runtimecontext.AgentAnalysisRunner) tool.Too
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "创建命令型分析节点（默认立即运行该节点）", previewCreateAnalysisNodeAgent)
+	)
 }
 
 // previewCreateAnalysisNodeAgent 生成批准前预览：新节点 run.sh 将写入的命令内容（新增文件 diff）。

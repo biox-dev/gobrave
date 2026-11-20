@@ -17,13 +17,15 @@ const GetAnalysisWorkflowToolName = "get_analysis_workflow"
 //
 // AnalysisID 是一次分析运行的主键（nextflow 表 id），不是分析节点 ID。
 type GetAnalysisWorkflowInput struct {
-	AnalysisID string `json:"analysis_id"` // 分析运行主键 ID（必填，支持 "@analysis:<id>" 形式，字符串以保精度）
+	AnalysisID string   `json:"analysis_id"` // 分析运行主键 ID（必填，支持 "@analysis:<id>" 形式，字符串以保精度）
+	Files      []string `json:"files"`       // params（params.json）；留空时默认返回
 }
 
 // GetAnalysisWorkflowOutput 是 get_analysis_workflow 工具返回给模型的结果。
 type GetAnalysisWorkflowOutput struct {
 	runtimecontext.AnalysisDetail
-	Error string `json:"error,omitempty"`
+	Files map[string]runtimecontext.ResourceFileContent `json:"files,omitempty"`
+	Error string                                        `json:"error,omitempty"`
 }
 
 // getAnalysisWorkflowDescription 返回 get_analysis_workflow 的工具描述（Markdown 格式）。
@@ -62,6 +64,7 @@ func GetAnalysisWorkflow(browser runtimecontext.AnalysisBrowser) tool.Tool {
 		getAnalysisWorkflowDescription(),
 		tool.Schema("按 ID 查看分析运行的入参", map[string]any{
 			"analysis_id": tool.StringProperty("分析运行主键 ID（必填，整数，字符串以保精度）。来自用户输入里的 @analysis:<id> 引用时直接使用冒号后的 ID。"),
+			"files":       resourceFilesSchema("要直接读取正文的文件列表；留空时返回 params。", runtimecontext.ResourceFileParams),
 		}, "analysis_id"),
 		func(ctx context.Context, in GetAnalysisWorkflowInput) (GetAnalysisWorkflowOutput, error) {
 			projectID, err := requireProjectID(ctx, GetAnalysisWorkflowToolName)
@@ -80,7 +83,22 @@ func GetAnalysisWorkflow(browser runtimecontext.AnalysisBrowser) tool.Tool {
 			out := GetAnalysisWorkflowOutput{AnalysisDetail: detail}
 			if loadErr != nil {
 				out.Error = loadErr.Error()
+				return out, nil
 			}
+			files, err := collectResourceFiles(in.Files, GetAnalysisWorkflowToolName,
+				[]runtimecontext.ResourceFile{runtimecontext.ResourceFileParams}, runtimecontext.ResourceFileParams)
+			if err != nil {
+				out.Error = err.Error()
+				return out, nil
+			}
+			contents, err := readResourceFiles(files, func(file runtimecontext.ResourceFile) (runtimecontext.ResourceFileContent, error) {
+				return browser.ReadAnalysisFile(ctx, projectID, analysisID, file)
+			})
+			if err != nil {
+				out.Error = err.Error()
+				return out, nil
+			}
+			out.Files = contents
 			return out, nil
 		},
 	).WithPermission("read", "", "按 ID 查看一次分析运行的名称、状态、参数与节点分布")

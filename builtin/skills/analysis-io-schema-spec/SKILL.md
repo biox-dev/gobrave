@@ -6,7 +6,7 @@ disable-render: true
 
 ## 脚本 io_schema.json 输入契约规范
 
-`get_script` 返回的 `io_schema_path` 就是脚本目录下的 `io_schema.json`。它是一份**唯一**的契约，
+用 `get_script`（`files=["io_schema"]`）直接读回的正文就是脚本目录下的 `io_schema.json`（`io_schema_path` 是它的路径）。它是一份**唯一**的契约，
 同时被三处消费，因此写错一处就会三处全错：
 
 1. **人类表单**：`inputs[]` 被渲染成用户在分析节点面板里填写的控件（由 `type` 决定控件形态）；
@@ -22,7 +22,7 @@ disable-render: true
             →  脚本读 params
 ~~~
 
-**只改 `io_schema_path` 指向的 JSON 即可**，不需要重建 script 或分析节点：`build_analysis_node_params`
+**用 `update_script`（`file=io_schema` + `content` 或 `old_string`/`new_string`）改 JSON 即可**，不需要重建 script 或分析节点：`build_analysis_node_params`
 与 `run_analysis_node` 每次执行都会重新读取最新的 `io_schema.json`。
 
 > 本技能只覆盖 `inputs`（表单输入）。`outputs` / `params` / `resources` / `ui` / `scatter` / `workflow`
@@ -126,7 +126,7 @@ disable-render: true
 | `GroupSelectAssayButton` | 写在 `workflow[]` 里，`input_type: "assay"` | 不产生 params 键（只决定样本 / 分组选择面板） | 不要读取 |
 
 判断脚本到底读哪些键，最可靠的办法是直接 grep 脚本：
-`grep -n 'params\$' <script_file_path>`（qmd / R）或 `grep -n 'params\[' <script_file_path>`（python）。
+用 `get_script`（`files=["script_file"]`）读正文后检查 `params$`（qmd / R）或 `params[`（python）。
 
 ---
 

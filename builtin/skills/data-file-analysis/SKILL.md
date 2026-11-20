@@ -1,6 +1,6 @@
 ---
 name: data-file-analysis
-description: 用户只给出数据文件（@file:<id>）并要求完成某个分析时的入口技能：先 list_project_scripts 盘点项目脚本 + get_file 看文件内容；有可用脚本则用 get_script 读其 README（脚本使用方法、参数说明、示例 request_param）直接组织参数建节点运行（节点名必须以输入文件名去扩展名为前缀，如 spleen_gene_count_SP_vs_SA），README 为空或不可用时才读 script_file_path 与 io_schema_path；再 decide 用 create_analysis_node_script 渲染跑结果。没有可用脚本则 ask_user 让用户在 create_analysis_node_agent 与 create_script 之间选。用户拖入数据文件说「帮我分析这个数据」且未指定脚本时使用。
+description: 用户只给出数据文件（@file:<id>）并要求完成某个分析时的入口技能：先 list_project_scripts 盘点项目脚本 + get_file 看文件内容；有可用脚本则用 get_script 读其 README（脚本使用方法、参数说明、示例 request_param）直接组织参数建节点运行（节点名必须以输入文件名去扩展名为前缀，如 spleen_gene_count_SP_vs_SA），README 为空或不可用时才用 get_script 的 files 参数读 script_file 与 io_schema 正文；再 decide 用 create_analysis_node_script 渲染跑结果。没有可用脚本则 ask_user 让用户在 create_analysis_node_agent 与 create_script 之间选。用户拖入数据文件说「帮我分析这个数据」且未指定脚本时使用。
 ---
 
 # 数据文件驱动的分析入口
@@ -18,7 +18,7 @@ list_project_scripts（脚本清单）  +  get_file（文件内容）        ←
         ↓ 找到匹配脚本
 get_script（readme_content = 脚本使用方法）
         ↓ README 为空 / 不可用
-读 script_file_path + io_schema_path（兜底才读）
+用 get_script files=[script_file,io_schema] 读正文（兜底才读）
         ↓
 create_analysis_node_script(request_param, run=true)  →  出结果
 ~~~
@@ -35,7 +35,7 @@ create_analysis_node_script(request_param, run=true)  →  出结果
 - 首轮**不要**同时 `head` io_schema.json 或 `grep` 脚本主体：`get_script` 的 `readme_content`
   通常已包含参数说明与示例 request_param，直接读 README 比翻脚本更快、更省。
 - 只有 README 缺失 / 不可用时，才在后续轮次补 `head io_schema.json` 与
-  `grep -n 'params\$' <script_file_path>`（python 用 `grep -n 'params\[' main.py`）。
+  用 `get_script`（`files=["script_file"]`）读到正文后检查 `params$`（python 用 `params[`）。
 
 ### 2. README 优先，脚本体是兜底
 
@@ -44,7 +44,7 @@ create_analysis_node_script(request_param, run=true)  →  出结果
 
 - **可用**（非空，且能看到参数说明、输入要求或 `request_param` 示例）→ 直接据此组织参数建节点，
   **不要再读 io_schema、也不要 grep 脚本**。
-- **不可用**（空、只有标题一行、或没写清参数）→ 才读 `io_schema_path` + grep `script_file_path`，
+- **不可用**（空、只有标题一行、或没写清参数）→ 才用 `get_script`（`files=["io_schema","script_file"]`）读两份正文，
   搞清楚必须提供哪些键，然后再建节点。
 
 顺手把「README 不可用」当成待改进项：跑完后建议用户（或直接）给该脚本补 README，
@@ -139,8 +139,8 @@ README 里通常会写明：输入数据要求、参数表（键 / 类型 / 说�
 
 ### 3. README 不可用时才读脚本内部
 
-`head -c 2000 <io_schema_path>` 看 inputs 条目，`grep -n 'params\$' <script_file_path>`（qmd / R）
-或 `grep -n 'params\[' <script_file_path>`（python）确认 params.json 必须提供哪些键。
+用 `get_script`（`files=["io_schema","script_file"]`）直接读 io_schema 的 inputs 与脚本正文，
+检查 `params$`（qmd / R）或 `params[`（python）确认 params.json 必须提供哪些键。
 不要凭脚本名或经验发明参数名。
 
 ### 4. 建节点并运行
@@ -169,7 +169,7 @@ create_analysis_node_script(
 
 `success=false` 或带 `error`：先读 `log_path` 定位原因；
 **参数写错用 `build_analysis_node_params` 改参数后重跑**，不要为此新建脚本或新节点；
-脚本逻辑错才改 `script_file_path` 后 `run_analysis_node`。
+脚本逻辑错才用 `update_script`（`file=script_file`）改脚本后 `run_analysis_node`。
 
 ### 6. 汇报
 
@@ -200,8 +200,8 @@ create_analysis_node_script(
   `get_file` 返回的 `file_path`。创建后默认立即运行，失败先读 `log_path`，
   再用 `update_analysis_node_agent` 或改 `command_path` 后 `run_analysis_node` 修复，不要反复新建节点。
 - **`script`** → 按 `analysis-script-authoring` 技能的固定流程推进：
-  `create_script`（一次给出真实 inputs / outputs）→ 确认 `io_schema_path` 契约 →
-  写 `script_file_path` 脚本主体 → **同时写 `readme_file`（README.md）**：
+  `create_script`（一次给出真实 inputs / outputs，或直接传 `script_content` / `io_schema` / `readme`）→ 确认 io_schema 契约 →
+  用 `update_script`（`file=script_file`）写脚本主体 → **`file=readme` 写 README.md**：
   写清输入数据要求、参数表（键 / 类型 / 说明）、可直接复制的示例 `request_param`、产物说明、
   以及「哪些扁平键必须平铺」这类坑 → `create_analysis_node_script` 建节点并运行 →
   失败迭代（`build_analysis_node_params` / 改脚本）→ 直到 `run_analysis_node` 返回 success。

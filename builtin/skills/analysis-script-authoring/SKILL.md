@@ -28,7 +28,8 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
 
 1) `create_script` → 只创建脚本，得到 `script_id` / `script_file_path` / `io_schema_path`
    （**不会创建分析节点**）。
-   - 调用时一次性给出 inputs / outputs（真实的参数契约），避免创建后再补齐。
+   - 调用时一次性给出 inputs / outputs（真实的参数契约），避免创建后再补齐；
+     也可以直接传 `script_content` / `io_schema` / `readme` 写入脚本主文件、io_schema.json、README.md。
    - **create_script 的 `inputs` 就是 io_schema.json 的 `inputs`，`outputs` 就是 io_schema.json 的 `outputs`**：
      工具会把这两个数组原样写成 io_schema.json（并补齐 label / required，outputs 的 type 默认 file），
      不会再额外生成别的结构。因此这里填的每个条目都必须满足下文「io_schema.json 的生成规则」：
@@ -41,17 +42,18 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
    - inputs 的 `name` 就是 params.json 里的键，也是脚本里取参数用的名字；
    - 输出项按实际产物命名（通常 type 为 file，表格类给 role=TABLE）；
    - io_schema.json 也用于给人类用户渲染表单，label / description 要写清楚含义；
-   - 需要新增 / 调整参数时直接编辑 `io_schema_path` 指向的 JSON（规则见第三节）。
+   - 需要新增 / 调整参数时用 `update_script`（`file=io_schema` + `content` 整体覆盖，或 `old_string` / `new_string` 唯一替换）；
+     查看当前正文用 `get_script`（`files=["io_schema"]`），**不要用 view / write / edit / bash 直接改路径**（规则见第三节）。
 
-3) **先摸清脚本真正读哪些参数键**（写脚本 / 建节点之前，一次 grep 代替后面反复试错）：
-   - qmd / R：`grep -n 'params\$' <script_file_path>`；python：`grep -n 'params\[' <script_file_path>`；
+3) **先摸清脚本真正读哪些参数键**（写脚本 / 建节点之前，一次读取代替后面反复试错）：
+   - 用 `get_script`（`files=["script_file"]`）直接拿到脚本正文，检查 `params$`（qmd / R）或 `params[`（python）的读取键；
    - 脚本实际读取的键才是 params.json 必须提供的键。io_schema 的 inputs 只负责表单渲染，
      既有脚本常常还读 `params$analysis_name` 这类 **io_schema 未声明的扁平键**；
    - 这些未声明键**同样要写进 request_param**（后端把它们当未知键原样透传进 params.json，只给 warning），
      不要等脚本报 `argument is of length zero` 才发现键缺失。
 
-4) **写脚本主体**（写入 `script_file_path`）：
-   - 从 params.json 读取输入，键名以第 3 步 grep 结果为准（io_schema 声明的名字必须对得上）；
+4) **写脚本主体**：用 `update_script`（`file=script_file` + `content` 整体覆盖，或 `old_string` / `new_string` 局部替换）写入脚本文件，无需再走 write / bash：
+   - 从 params.json 读取输入，键名以第 3 步读到的结果为准（io_schema 声明的名字必须对得上）；
    - 产物写入 params.json 中的 `output_dir`，命名与 io_schema outputs 对应；
    - 不要硬编码路径、样本名或分组，一律通过参数传入；
    - 具体写法见第三节「脚本代码怎么写」。
@@ -84,7 +86,7 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
 - 修改 io_schema.json 的 inputs / outputs 后**无需重新建 script 或节点**：`build_analysis_node_params`
   与 `run_analysis_node` 每次都会读取最新的 io_schema.json，并刷新节点的 patterns / resolved_inputs /
   request_param。只需按新契约重新调用 `build_analysis_node_params`，再运行即可。
-- 修改 `script_file_path` 指向的脚本内容后同样**无需重建 script 或节点**，直接调用 `run_analysis_node`
+- 修改脚本内容用 `update_script`（`file=script_file`），同样**无需重建 script 或节点**，直接调用 `run_analysis_node`
   即可运行最新代码；只有参数也要变化时才再调用 `build_analysis_node_params`。
 - **改 request_param 用 `build_analysis_node_params`，改 node_name 用 `update_analysis_node_script`
   （analysis_node_id + node_name，默认更新后立即运行，只想改名时传 run=false），都不需要重建节点。**
@@ -317,9 +319,9 @@ exp <- read.delim(exp_path, check.names = FALSE)
 
 ## 三、脚本代码怎么写
 
-基于 `script_file_path` 与 params.json 中的内容，根据用户要求完成代码撰写：
+用 `get_script`（`files=["script_file"]`）拿到脚本正文与 params.json 中的内容，根据用户要求完成代码撰写：
 **使用最简单的代码，尽量不使用函数**；图片直接在 qmd 中打印；不要读取其他文件，
-只需要修改 `script_file_path` 文件中的内容。
+只需要用 `update_script`（`file=script_file`）修改脚本正文。
 
 - 读取 tsv / csv 时使用 tidyverse；无需确认 / 查找 R 包（用户手动安装），只需保证代码简洁清楚。
 - qmd 中打印表格需要使用 `knitr::kable()`。
@@ -331,7 +333,7 @@ exp <- read.delim(exp_path, check.names = FALSE)
 
 #### 1. 先读 io_schema.json 拿到 outputs
 
-- 调用 `get_script`（需要 script_id），用返回的 `io_schema_path` 读取这份 io_schema.json；
+- 调用 `get_script`（需要 script_id，`files=["io_schema"]`）直接拿到 io_schema.json 正文；
   节点上下文里已给出 io_schema.json 时也可直接查看。
 - 只看 `outputs` 数组，逐项确认：
   - `name`：产物名，也是 outputs.json 的键名；
@@ -339,7 +341,7 @@ exp <- read.delim(exp_path, check.names = FALSE)
   - `role`：用途（如 TABLE / FIGURE），决定产物格式倾向。
 - `outputs` 为空数组时，脚本不需要写 outputs.json。
 
-#### 2. 按 outputs 修改 script_file_path 的脚本
+#### 2. 按 outputs 用 update_script 修改脚本
 
 - `outputs` 有几项，脚本就要产出几项；产物路径一律拼在 `params$output_dir` 下。
 - 产物格式与 `type` / `role` 对应：`role: TABLE` 用 tsv / csv，`role: FIGURE` 用 png / pdf。

@@ -401,6 +401,19 @@ type ScriptUpdateInput struct {
 	// Name / Description 为 nil 表示不修改；非 nil 时覆盖对应字段。
 	Name        *string `json:"name,omitempty"`
 	Description *string `json:"description,omitempty"`
+	// File 指向要编辑的脚本文件（script_file / io_schema / readme）。
+	//
+	// File 非空时按 ResourceFileEdit 的语义编辑该文件：Content != nil 为整体覆盖，
+	// 否则按 OldString → NewString 做唯一替换；元数据与文件编辑可在同一次调用中完成。
+	File      ResourceFile `json:"file,omitempty"`
+	Content   *string      `json:"content,omitempty"`
+	OldString string       `json:"old_string,omitempty"`
+	NewString string       `json:"new_string,omitempty"`
+}
+
+// ResourceFileEdit 返回本次的文件编辑（未指定文件时 IsZero 为 true）。
+func (in ScriptUpdateInput) ResourceFileEdit() ResourceFileEdit {
+	return ResourceFileEdit{File: in.File, Content: in.Content, OldString: in.OldString, NewString: in.NewString}
 }
 
 // ScriptUpdateResult 是「更新脚本基本信息」的结果（回传给模型）。
@@ -454,6 +467,11 @@ type AgentAnalysisUpdateInput struct {
 	Command *string `json:"command,omitempty"`
 	// ContainerTemplateID 为 nil 表示不修改；非 nil 时覆盖节点容器模板（必须为正数）。
 	ContainerTemplateID *int64 `json:"container_template_id,omitempty,string"`
+	// File 固定为 command（run.sh）；非空时按 Content / OldString → NewString 编辑 run.sh。
+	File      ResourceFile `json:"file,omitempty"`
+	Content   *string      `json:"content,omitempty"`
+	OldString string       `json:"old_string,omitempty"`
+	NewString string       `json:"new_string,omitempty"`
 }
 
 // AgentAnalysisUpdateResult 是「更新 agent 节点」的结果（回传给模型）。
@@ -482,6 +500,11 @@ type ScriptAnalysisUpdateInput struct {
 	NodeName *string `json:"node_name,omitempty"`
 	// RequestParam 为 nil 表示不修改；非 nil 时按脚本 io_schema 重新解析并覆盖节点参数。
 	RequestParam map[string]any `json:"request_param,omitempty"`
+	// File 固定为 params（params.json）；非空时把编辑后的 params.json 解析为 RequestParam。
+	File      ResourceFile `json:"file,omitempty"`
+	Content   *string      `json:"content,omitempty"`
+	OldString string       `json:"old_string,omitempty"`
+	NewString string       `json:"new_string,omitempty"`
 }
 
 // ScriptAnalysisUpdateResult 是「更新 script / scheduler 节点」的结果（回传给模型）。
@@ -513,6 +536,11 @@ type ScriptBrowser interface {
 	// projectID 取自执行事实，scriptID 是 pipeline_components 主键。
 	// 返回的 ScriptDetail 除摘要外还附带 README.md 正文（文件不存在时为空）。
 	GetScriptByID(ctx context.Context, projectID int64, scriptID int64) (ScriptDetail, error)
+
+	// ReadScriptFile 直接读取脚本目录下指定文件的正文（script_file / io_schema / readme）。
+	//
+	// 工具层据此把文件内容直接回传给模型，不再需要 view / bash。
+	ReadScriptFile(ctx context.Context, projectID int64, scriptID int64, file ResourceFile) (ResourceFileContent, error)
 }
 
 // AnalysisNodeBrowser 抽象「按 ID 查看分析节点」的只读能力（get_analysis_node 与更新类工具的预览）。
@@ -521,6 +549,9 @@ type AnalysisNodeBrowser interface {
 	//
 	// 返回的 WorkspaceDir 是绝对路径，ParamsPath 与 OutputDir 均由 WorkspaceDir 派生。
 	GetAnalysisNodeByID(ctx context.Context, projectID int64, nodeID int64) (AnalysisNodeBrief, error)
+
+	// ReadAnalysisNodeFile 直接读取节点工作目录下指定文件的正文（command / params）。
+	ReadAnalysisNodeFile(ctx context.Context, projectID int64, nodeID int64, file ResourceFile) (ResourceFileContent, error)
 }
 
 // WorkflowBrowser 抽象「按 ID 查看工作流」的只读能力（get_workflow）。
@@ -540,6 +571,10 @@ type WorkflowBrowser interface {
 	// 返回的 DagDefinition / IOSchema 是工作流目录下文件的原始 JSON 文本，
 	// 目录内文件是唯一数据源（不落库），模型可直接据此编辑后再调用 update_workflow。
 	GetWorkflowByID(ctx context.Context, projectID int64, workflowID int64) (WorkflowDetail, error)
+
+	// ReadWorkflowFile 直接读取工作流目录下指定文件的正文
+	// （dag_definition / io_schema / readme）。
+	ReadWorkflowFile(ctx context.Context, projectID int64, workflowID int64, file ResourceFile) (ResourceFileContent, error)
 }
 
 // WorkflowCreator 抽象「创建工作流」的业务能力（create_workflow）。
@@ -573,6 +608,9 @@ type AnalysisBrowser interface {
 	//
 	// analysisID 是 nextflow 主键（int64），不是 analysis_id UUID。
 	GetAnalysisByID(ctx context.Context, projectID int64, analysisID int64) (AnalysisDetail, error)
+
+	// ReadAnalysisFile 直接读取分析运行目录下指定文件的正文（params）。
+	ReadAnalysisFile(ctx context.Context, projectID int64, analysisID int64, file ResourceFile) (ResourceFileContent, error)
 }
 
 // AnalysisCreator 抽象「为工作流新建一次分析运行」的业务能力（create_analysis_workflow）。
@@ -680,6 +718,15 @@ type WorkflowUpdateInput struct {
 	Category      *string `json:"category,omitempty"`
 	DagDefinition *string `json:"dag_definition,omitempty"`
 	IOSchema      *string `json:"io_schema,omitempty"`
+	// File 指向要编辑的工作流文件（dag_definition / io_schema / readme）。
+	//
+	// File 非空时按 ResourceFileEdit 的语义编辑该文件：Content != nil 为整体覆盖，
+	// 否则按 OldString → NewString 做唯一替换。DagDefinition / IOSchema 是旧字段，
+	// 等价于 File + Content（整体替换）。
+	File      ResourceFile `json:"file,omitempty"`
+	Content   *string      `json:"content,omitempty"`
+	OldString string       `json:"old_string,omitempty"`
+	NewString string       `json:"new_string,omitempty"`
 }
 
 // WorkflowUpdateResult 是「更新工作流」的结果（回传给模型）。
@@ -744,6 +791,11 @@ type AnalysisUpdateInput struct {
 	AnalysisName *string        `json:"analysis_name,omitempty"`
 	RequestParam map[string]any `json:"request_param,omitempty"`
 	CacheType    *int           `json:"cache_type,omitempty"`
+	// File 固定为 params（params.json）；非空时把编辑后的 params.json 解析为 RequestParam。
+	File      ResourceFile `json:"file,omitempty"`
+	Content   *string      `json:"content,omitempty"`
+	OldString string       `json:"old_string,omitempty"`
+	NewString string       `json:"new_string,omitempty"`
 }
 
 // AnalysisUpdateResult 是「更新分析运行」的结果（回传给模型）。
@@ -1226,6 +1278,12 @@ type ScriptCreateInput struct {
 	// 每一项至少应包含 name / type，可选 label / required / description 等字段。
 	Inputs  []map[string]any `json:"inputs,omitempty"`
 	Outputs []map[string]any `json:"outputs,omitempty"`
+	// ScriptContent 是脚本主文件正文；为空时使用该脚本类型的默认模板。
+	ScriptContent string `json:"script_content,omitempty"`
+	// IOSchema 是 io_schema.json 原文；为空时由 Inputs / Outputs 生成。
+	IOSchema string `json:"io_schema,omitempty"`
+	// Readme 是 README.md 正文；为空时不写 README。
+	Readme string `json:"readme,omitempty"`
 }
 
 // ScriptCreateResult 是「创建脚本」的结果（回传给模型）。

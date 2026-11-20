@@ -18,15 +18,19 @@ const GetScriptToolName = "get_script"
 // 项目归属取自执行事实（tool.ProjectIDFrom），脚本必须属于当前激活项目。
 type GetScriptInput struct {
 	ScriptID string `json:"script_id"` // 脚本主键 ID（必填，支持 "@script:<id>" 形式，字符串以保精度）
+	// Files 指定要直接读取正文的脚本文件（script_file / io_schema / readme）。
+	// 留空时返回全部三个文件，模型无需再用 view / bash 读取。
+	Files []string `json:"files"`
 }
 
 // GetScriptOutput 是 get_script 工具返回给模型的结果。
 //
-// 直接内嵌 runtimecontext.ScriptDetail（摘要 + README.md 正文），只额外补 error：
-// 路径字段由 types.Script.Files 推导，工具层不再重复声明。
+// 直接内嵌 runtimecontext.ScriptDetail（摘要 + README.md 正文），并额外回传 Files：
+// 指定文件的正文按 file 名索引，路径字段由 types.Script.Files 推导。
 type GetScriptOutput struct {
 	runtimecontext.ScriptDetail
-	Error string `json:"error,omitempty"`
+	Files map[string]runtimecontext.ResourceFileContent `json:"files,omitempty"`
+	Error string                                        `json:"error,omitempty"`
 }
 
 // GetScript 返回一个「按 ID 查看脚本」工具。
@@ -41,9 +45,10 @@ type GetScriptOutput struct {
 func GetScript(browser runtimecontext.ScriptBrowser) tool.Tool {
 	return tool.NewFunc(
 		GetScriptToolName,
-		"按 script_id 查看单个分析脚本的基本信息（用于回答用户对 @script:<id> 引用的提问：直接使用冒号后的 ID 作为 script_id）。返回 name（脚本名称）、description（描述）、container_template_id（脚本绑定的容器模板 ID，字符串形式以保精度）、script_file_path（脚本主文件路径，可直接读写以修改脚本内容）、io_schema_path（脚本输入输出契约 io_schema.json 的路径）、readme_file（脚本说明文档 README.md 的路径）与 readme_content（README.md 的正文，已直接读回，无需再读盘；为空表示没有 README）。不确定 script_id 时先用 list_project_scripts 列出当前项目脚本。",
+		"按 script_id 查看单个分析脚本。返回 name / description / container_template_id 与三个文件路径（script_file_path / io_schema_path / readme_file），并直接回传文件正文（files：script_file / io_schema / readme，留空时全部返回），无需再用 view / bash 读取。不确定 script_id 时先用 list_project_scripts 列出当前项目脚本。修改脚本用 update_script（file + content 或 old_string/new_string）。",
 		tool.Schema("按 ID 查看脚本的入参", map[string]any{
 			"script_id": tool.StringProperty("脚本主键 ID（必填，整数，字符串以保精度）。来自用户输入里的 @script:<id> 引用时直接使用冒号后的 ID，也可来自 list_project_scripts 的结果。"),
+			"files":     resourceFilesSchema("要直接读取正文的文件列表；留空时返回全部三个文件。", runtimecontext.ResourceFileScript, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme),
 		}, "script_id"),
 		func(ctx context.Context, in GetScriptInput) (GetScriptOutput, error) {
 			projectID, err := requireProjectID(ctx, GetScriptToolName)
@@ -68,7 +73,19 @@ func GetScript(browser runtimecontext.ScriptBrowser) tool.Tool {
 				}, nil
 			}
 
-			return GetScriptOutput{ScriptDetail: script}, nil
+			files, err := collectResourceFiles(in.Files, GetScriptToolName,
+				[]runtimecontext.ResourceFile{runtimecontext.ResourceFileScript, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme},
+				runtimecontext.ResourceFileScript, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme)
+			if err != nil {
+				return GetScriptOutput{ScriptDetail: script, Error: err.Error()}, nil
+			}
+			contents, err := readResourceFiles(files, func(file runtimecontext.ResourceFile) (runtimecontext.ResourceFileContent, error) {
+				return browser.ReadScriptFile(ctx, projectID, scriptID, file)
+			})
+			if err != nil {
+				return GetScriptOutput{ScriptDetail: script, Error: err.Error()}, nil
+			}
+			return GetScriptOutput{ScriptDetail: script, Files: contents}, nil
 		},
 	).WithPermission("read", "", "按 ID 查看脚本基本信息与文件路径")
 }

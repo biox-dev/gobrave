@@ -15,14 +15,20 @@ const UpdateScriptToolName = "update_script"
 
 // UpdateScriptInput 是 update_script 工具的入参。
 //
-// 只开放 name / description 两个元数据字段：脚本内容由模型直接写文件，io_schema 与
-// 容器模板有各自的维护入口，不在本工具职责内。
+// 两类修改可在同一次调用中完成：
+//   - 元数据：name / description（空串表示不修改）；
+//   - 文件：file（script_file / io_schema / readme）+ content（整体覆盖）
+//     或 old_string → new_string（唯一文本替换）。
 //
 // ScriptID 为必填：模型必须显式给出要更新的脚本 ID，不再从运行时上下文回退。
 type UpdateScriptInput struct {
-	ScriptID    string `json:"script_id"`   // 脚本主键 ID（必填，字符串以保精度）
-	Name        string `json:"name"`        // 新脚本名称，留空表示不修改
-	Description string `json:"description"` // 新脚本描述，留空表示不修改
+	ScriptID    string  `json:"script_id"`   // 脚本主键 ID（必填，字符串以保精度）
+	Name        string  `json:"name"`        // 新脚本名称，留空表示不修改
+	Description string  `json:"description"` // 新脚本描述，留空表示不修改
+	File        string  `json:"file"`        // script_file / io_schema / readme，留空表示不改文件
+	Content     *string `json:"content"`     // 整体覆盖正文；nil 表示不覆盖
+	OldString   string  `json:"old_string"`  // 文本替换的原文（必须唯一出现）
+	NewString   string  `json:"new_string"`  // 文本替换后的内容
 }
 
 // UpdateScriptOutput 是 update_script 工具返回给模型的结果。
@@ -49,14 +55,18 @@ type UpdateScriptOutput struct {
 //   - 回传更新后的名称 / 描述与脚本主文件、io_schema.json 路径。
 //
 // 该工具会修改业务数据（写库），因此声明 write 授权：上层在执行前会先走权限门禁。
-func UpdateScript(updater runtimecontext.ScriptUpdater) tool.Tool {
+func UpdateScript(updater runtimecontext.ScriptUpdater, browser runtimecontext.ScriptBrowser) tool.Tool {
 	return tool.NewFunc(
 		UpdateScriptToolName,
-		"更新已有分析脚本的基本信息（name / description）。script_id 必填。只改元数据，不修改脚本内容（脚本内容请直接写脚本主文件）、io_schema 与容器模板；未给出的字段保持原值。返回更新后的名称、描述与脚本主文件路径。",
-		tool.Schema("更新脚本基本信息的入参", map[string]any{
+		"更新已有分析脚本。script_id 必填。可同时修改元数据（name / description）与脚本文件：file 取 script_file / io_schema / readme，配合 content（整体覆盖）或 old_string → new_string（唯一文本替换）直接编辑文件正文，无需再用 write / edit / bash。未给出的字段保持原值；返回更新后的名称、描述与脚本文件路径。",
+		tool.Schema("更新脚本的入参", map[string]any{
 			"script_id":   tool.StringProperty("脚本主键 ID（必填，整数，字符串以保精度）。"),
-			"name":        tool.StringProperty("新的脚本名称（同一项目下应唯一，由业务侧校验）。留空表示不修改名称。"),
-			"description": tool.StringProperty("新的脚本描述。留空表示不修改描述（如需清空描述请明确说明，本工具不会把空串当作清空）。"),
+			"name":        tool.StringProperty("新的脚本名称。留空表示不修改名称。"),
+			"description": tool.StringProperty("新的脚本描述。留空表示不修改描述。"),
+			"file":        tool.StringProperty("要编辑的脚本文件：script_file / io_schema / readme。留空表示不改文件。"),
+			"content":     tool.StringProperty("整体覆盖该文件正文；与 old_string/new_string 二选一。"),
+			"old_string":  tool.StringProperty("文本替换模式：要替换的原文，必须在文件中唯一出现。"),
+			"new_string":  tool.StringProperty("文本替换模式：替换后的文本。"),
 		}, "script_id"),
 		func(ctx context.Context, in UpdateScriptInput) (UpdateScriptOutput, error) {
 			projectID := tool.ProjectIDFrom(ctx)
@@ -66,8 +76,18 @@ func UpdateScript(updater runtimecontext.ScriptUpdater) tool.Tool {
 
 			name := strings.TrimSpace(in.Name)
 			description := strings.TrimSpace(in.Description)
-			if name == "" && description == "" {
-				return UpdateScriptOutput{}, fmt.Errorf("update_script: at least one of name / description must be provided")
+
+			file, err := parseResourceFile(in.File, UpdateScriptToolName,
+				runtimecontext.ResourceFileScript, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme)
+			if err != nil {
+				return UpdateScriptOutput{}, err
+			}
+			edit, err := resourceEditFrom(UpdateScriptToolName, file, in.Content, in.OldString, in.NewString)
+			if err != nil {
+				return UpdateScriptOutput{}, err
+			}
+			if name == "" && description == "" && edit.IsZero() {
+				return UpdateScriptOutput{}, fmt.Errorf("update_script: at least one of name / description / file edit must be provided")
 			}
 
 			if updater == nil {
@@ -79,9 +99,37 @@ func UpdateScript(updater runtimecontext.ScriptUpdater) tool.Tool {
 				return UpdateScriptOutput{}, fmt.Errorf("update_script: %w", err)
 			}
 
+			// 先算 diff：读取目标文件当前正文，按编辑模式得到 after，授权前展示给用户。
+			preview := tool.PermissionPreview{}
+			if !edit.IsZero() {
+				if browser == nil {
+					// 无浏览器时退化为「无旧值」的预览，不影响授权与写入本身。
+					if edit.Content != nil {
+						preview = previewNewFiles([]newFilePreview{{Path: string(file), Content: *edit.Content}})
+					}
+				} else {
+					current, readErr := browser.ReadScriptFile(ctx, projectID, scriptID, file)
+					if readErr != nil {
+						return UpdateScriptOutput{ScriptID: scriptID, Error: readErr.Error()}, nil
+					}
+					after, applyErr := edit.Apply(current.Content)
+					if applyErr != nil {
+						return UpdateScriptOutput{ScriptID: scriptID, Error: applyErr.Error()}, nil
+					}
+					preview = previewFileEdit(current.Path, current.Content, after)
+				}
+			}
+			if err := authorizeResourceWrite(ctx, UpdateScriptToolName, fmt.Sprintf("Update script %d", scriptID), preview); err != nil {
+				return UpdateScriptOutput{}, err
+			}
+
 			updateInput := runtimecontext.ScriptUpdateInput{
 				ProjectID: projectID,
 				ScriptID:  scriptID,
+				File:      edit.File,
+				Content:   edit.Content,
+				OldString: edit.OldString,
+				NewString: edit.NewString,
 			}
 			if name != "" {
 				updateInput.Name = &name
@@ -105,7 +153,7 @@ func UpdateScript(updater runtimecontext.ScriptUpdater) tool.Tool {
 				Changed:        result.Changed,
 			}, nil
 		},
-	).WithPermission("write", "", "更新脚本名称 / 描述（写库）")
+	)
 }
 
 // parseScriptID 解析必填的脚本 ID：为空或非法时返回错误。

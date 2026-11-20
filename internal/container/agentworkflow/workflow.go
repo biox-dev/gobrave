@@ -149,8 +149,11 @@ func (m *workflowManager) UpdateWorkflow(ctx context.Context, in runtimecontext.
 	if m.workflowSvc == nil {
 		return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: required services are not configured")
 	}
-	if in.Name == nil && in.Description == nil && in.Category == nil && in.DagDefinition == nil && in.IOSchema == nil {
-		return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: at least one of name / description / category / dag_definition / io_schema is required")
+	if in.Name == nil && in.Description == nil && in.Category == nil && in.DagDefinition == nil && in.IOSchema == nil && in.File == "" && in.Content == nil && strings.TrimSpace(in.OldString) == "" {
+		return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: at least one of name / description / category / dag_definition / io_schema / file edit is required")
+	}
+	if in.File != "" && (in.DagDefinition != nil || in.IOSchema != nil) {
+		return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: file edit cannot be combined with dag_definition / io_schema; choose one style")
 	}
 	if in.Name != nil && strings.TrimSpace(*in.Name) == "" {
 		return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: name must not be empty")
@@ -215,7 +218,41 @@ func (m *workflowManager) UpdateWorkflow(ctx context.Context, in runtimecontext.
 	if baseDir == "" {
 		return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: storage.base_dir is empty")
 	}
-	if err := m.writeWorkflowFiles(ctx, workflow, baseDir, dagDefinition, ioSchema, ""); err != nil {
+
+	// 文件编辑（dag_definition / io_schema / readme）：字段覆盖或唯一文本替换。
+	readme := ""
+	if in.File != "" {
+		edit := runtimecontext.ResourceFileEdit{File: in.File, Content: in.Content, OldString: in.OldString, NewString: in.NewString}
+		before, err := m.readWorkflowFile(baseDir, workflow, edit.File)
+		if err != nil {
+			return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: %w", err)
+		}
+		after, err := edit.Apply(before)
+		if err != nil {
+			return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: %w", err)
+		}
+		switch edit.File {
+		case runtimecontext.ResourceFileDagDefinition:
+			if err := validateJSONObject("dag_definition", after); err != nil {
+				return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: %w", err)
+			}
+			dagDefinition = after
+			changed = append(changed, "dag_definition")
+		case runtimecontext.ResourceFileIOSchema:
+			if err := validateJSONObject("io_schema", after); err != nil {
+				return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: %w", err)
+			}
+			ioSchema = after
+			changed = append(changed, "io_schema")
+		case runtimecontext.ResourceFileReadme:
+			readme = after
+			changed = append(changed, "readme")
+		default:
+			return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: unsupported file %q (expected dag_definition / io_schema / readme)", edit.File)
+		}
+	}
+
+	if err := m.writeWorkflowFiles(ctx, workflow, baseDir, dagDefinition, ioSchema, readme); err != nil {
 		return runtimecontext.WorkflowUpdateResult{}, fmt.Errorf("update_workflow: %w", err)
 	}
 	warnings := make([]string, 0, 1)
@@ -254,6 +291,23 @@ func (m *workflowManager) locateWorkflow(ctx context.Context, projectID, workflo
 		return nil, fmt.Errorf("update_workflow: workflow %d does not belong to the active project %d", workflow.ID, projectID)
 	}
 	return workflow, nil
+}
+
+// readWorkflowFile 读取工作流目录下指定文件的当前正文（文件不存在时为空串）。
+func (m *workflowManager) readWorkflowFile(baseDir string, workflow *types.Workflow, file runtimecontext.ResourceFile) (string, error) {
+	switch file {
+	case runtimecontext.ResourceFileDagDefinition:
+		data, err := utils.ReadWorkflowDagDefinitionFile(baseDir, workflow.ProjectID, workflow.WorkflowID)
+		return string(data), err
+	case runtimecontext.ResourceFileIOSchema:
+		data, err := utils.ReadWorkflowIOSchemaFile(baseDir, workflow.ProjectID, workflow.WorkflowID)
+		return string(data), err
+	case runtimecontext.ResourceFileReadme:
+		data, err := utils.ReadWorkflowReadme(baseDir, workflow.ProjectID, workflow.WorkflowID)
+		return string(data), err
+	default:
+		return "", fmt.Errorf("unsupported file %q (expected dag_definition / io_schema / readme)", file)
+	}
 }
 
 // writeWorkflowFiles 把 dag_definition / io_schema / README 写入工作流目录。

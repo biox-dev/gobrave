@@ -84,6 +84,14 @@ func RunAnalysisWorkflow(runner runtimecontext.AnalysisRunner, browser runtimeco
 				return RunAnalysisWorkflowOutput{}, fmt.Errorf("%s: analysis runner is not available in this runtime", RunAnalysisWorkflowToolName)
 			}
 
+			preview, err := previewAnalysisParams(ctx, browser, projectID, analysisID, in.RequestParam, runtimecontext.ResourceFileEdit{})
+			if err != nil {
+				return RunAnalysisWorkflowOutput{Error: err.Error()}, nil
+			}
+			if err := authorizeResourceWrite(ctx, RunAnalysisWorkflowToolName, fmt.Sprintf("Run analysis %d", analysisID), preview); err != nil {
+				return RunAnalysisWorkflowOutput{}, err
+			}
+
 			result, runErr := runner.RunAnalysis(ctx, runtimecontext.AnalysisRunInput{
 				ProjectID:    projectID,
 				AnalysisID:   analysisID,
@@ -96,7 +104,5 @@ func RunAnalysisWorkflow(runner runtimecontext.AnalysisRunner, browser runtimeco
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("analysis", "", "提交分析运行（解析参数、编译 DAG 并交给调度器异步推进）", func(ctx context.Context, in RunAnalysisWorkflowInput) tool.PermissionPreview {
-		return previewAnalysisParams(ctx, browser, RunAnalysisWorkflowToolName, in.AnalysisID, in.RequestParam)
-	})
+	)
 }

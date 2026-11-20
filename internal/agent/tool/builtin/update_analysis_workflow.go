@@ -20,6 +20,11 @@ type UpdateAnalysisWorkflowInput struct {
 	AnalysisName *string        `json:"analysis_name"`
 	RequestParam map[string]any `json:"request_param"`
 	CacheType    *int           `json:"cache_type"`
+	// File 固定为 params（params.json 文件编辑），配合 content 或 old_string → new_string。
+	File      string  `json:"file"`
+	Content   *string `json:"content"`
+	OldString string  `json:"old_string"`
+	NewString string  `json:"new_string"`
 }
 
 // UpdateAnalysisWorkflowOutput 是 update_analysis_workflow 工具返回给模型的结果。
@@ -61,6 +66,10 @@ analysis_id 必填；analysis_name / request_param / cache_type 至少给出一�
 				"description": "新的请求参数对象，键为工作流 io_schema.inputs 中各条目的 name。缺省表示不修改；显式传空对象（{}）表示清空参数。",
 			},
 			"cache_type": tool.IntegerProperty("缓存策略：1 全量重跑；2 复用已有节点；3 脚本未变则复用；4 脚本与参数都未变才复用。不修改时留空。"),
+			"file":       tool.StringProperty("要直接编辑的文件：params（params.json）。留空表示不改文件。"),
+			"content":    tool.StringProperty("整体覆盖 params.json 正文（必须是合法 JSON 对象）；与 old_string/new_string 二选一。"),
+			"old_string": tool.StringProperty("文本替换模式：要替换的原文，必须在 params.json 中唯一出现。"),
+			"new_string": tool.StringProperty("文本替换模式：替换后的文本。"),
 		}, "analysis_id"),
 		func(ctx context.Context, in UpdateAnalysisWorkflowInput) (UpdateAnalysisWorkflowOutput, error) {
 			projectID, err := requireProjectID(ctx, UpdateAnalysisWorkflowToolName)
@@ -71,11 +80,30 @@ analysis_id 必填；analysis_name / request_param / cache_type 至少给出一�
 			if err != nil {
 				return UpdateAnalysisWorkflowOutput{}, wrapToolNameError(UpdateAnalysisWorkflowToolName, err)
 			}
-			if in.AnalysisName == nil && in.RequestParam == nil && in.CacheType == nil {
-				return UpdateAnalysisWorkflowOutput{}, fmt.Errorf("%s: at least one of analysis_name / request_param / cache_type must be provided", UpdateAnalysisWorkflowToolName)
+			file, err := parseResourceFile(in.File, UpdateAnalysisWorkflowToolName, runtimecontext.ResourceFileParams)
+			if err != nil {
+				return UpdateAnalysisWorkflowOutput{}, err
+			}
+			edit, err := resourceEditFrom(UpdateAnalysisWorkflowToolName, file, in.Content, in.OldString, in.NewString)
+			if err != nil {
+				return UpdateAnalysisWorkflowOutput{}, err
+			}
+			if !edit.IsZero() && in.RequestParam != nil {
+				return UpdateAnalysisWorkflowOutput{}, fmt.Errorf("%s: file edit cannot be combined with request_param; choose one style", UpdateAnalysisWorkflowToolName)
+			}
+			if in.AnalysisName == nil && in.RequestParam == nil && in.CacheType == nil && edit.IsZero() {
+				return UpdateAnalysisWorkflowOutput{}, fmt.Errorf("%s: at least one of analysis_name / request_param / cache_type / file edit must be provided", UpdateAnalysisWorkflowToolName)
 			}
 			if updater == nil {
 				return UpdateAnalysisWorkflowOutput{}, fmt.Errorf("%s: analysis updater is not available in this runtime", UpdateAnalysisWorkflowToolName)
+			}
+
+			preview, err := previewAnalysisParams(ctx, browser, projectID, analysisID, in.RequestParam, edit)
+			if err != nil {
+				return UpdateAnalysisWorkflowOutput{Error: err.Error()}, nil
+			}
+			if err := authorizeResourceWrite(ctx, UpdateAnalysisWorkflowToolName, fmt.Sprintf("Update analysis run %d", analysisID), preview); err != nil {
+				return UpdateAnalysisWorkflowOutput{}, err
 			}
 
 			result, updateErr := updater.UpdateAnalysis(ctx, runtimecontext.AnalysisUpdateInput{
@@ -84,6 +112,10 @@ analysis_id 必填；analysis_name / request_param / cache_type 至少给出一�
 				AnalysisName: in.AnalysisName,
 				RequestParam: in.RequestParam,
 				CacheType:    in.CacheType,
+				File:         edit.File,
+				Content:      edit.Content,
+				OldString:    edit.OldString,
+				NewString:    edit.NewString,
 			})
 			out := UpdateAnalysisWorkflowOutput{AnalysisUpdateResult: result}
 			if updateErr != nil {
@@ -91,54 +123,43 @@ analysis_id 必填；analysis_name / request_param / cache_type 至少给出一�
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "更新分析运行的名称 / 参数 / 缓存策略（写库并重写 params.json）", func(ctx context.Context, in UpdateAnalysisWorkflowInput) tool.PermissionPreview {
-		return previewAnalysisParams(ctx, browser, UpdateAnalysisWorkflowToolName, in.AnalysisID, in.RequestParam)
-	})
+	)
 }
 
-// previewAnalysisParams 生成批准前预览：params.json 中请求参数的旧值 → 新值 diff。
+// previewAnalysisParams 生成批准前预览：params.json 旧内容 → 新内容 diff。
 //
-// 未给出 request_param 时没有参数改动可预览（仅改名 / 缓存策略不会展示 diff）；
-// 读取不到分析当前参数时退化为「覆盖 params.json」的预览，不影响授权流程本身。
-func previewAnalysisParams(ctx context.Context, browser runtimecontext.AnalysisBrowser, toolName, rawAnalysisID string, requestParam map[string]any) tool.PermissionPreview {
-	if requestParam == nil {
-		return tool.PermissionPreview{}
-	}
-	after := paramsJSONContent(requestParam)
-	if after == "" {
-		return tool.PermissionPreview{}
-	}
-
-	path := "params.json"
-	before := ""
-	if detail, ok := analysisForPreview(ctx, browser, toolName, rawAnalysisID); ok {
-		if detail.ParamsPath != "" {
-			path = detail.ParamsPath
-		}
-		before = paramsJSONContent(detail.RequestParam)
-	}
-	return textDiffPreview(path, before, after)
-}
-
-// analysisForPreview 读取分析运行当前状态，用于生成更新类工具的 diff 预览。
-//
-// 任何失败（上下文缺项目 / ID 非法 / 未注入浏览器 / 分析不存在）都返回 ok=false，
-// 由调用方退化为「无旧值」的预览；真正的错误仍由工具主体返回给模型。
-func analysisForPreview(ctx context.Context, browser runtimecontext.AnalysisBrowser, toolName, rawAnalysisID string) (runtimecontext.AnalysisDetail, bool) {
-	projectID, err := requireProjectID(ctx, toolName)
-	if err != nil {
-		return runtimecontext.AnalysisDetail{}, false
-	}
-	analysisID, err := parseAnalysisID(rawAnalysisID)
-	if err != nil {
-		return runtimecontext.AnalysisDetail{}, false
+// 仅改名 / 缓存策略时没有文件改动可预览；旧内容通过浏览器直接读取。
+func previewAnalysisParams(ctx context.Context, browser runtimecontext.AnalysisBrowser, projectID, analysisID int64, requestParam map[string]any, edit runtimecontext.ResourceFileEdit) (tool.PermissionPreview, error) {
+	if requestParam == nil && edit.IsZero() {
+		return tool.PermissionPreview{}, nil
 	}
 	if browser == nil {
-		return runtimecontext.AnalysisDetail{}, false
+		// 无浏览器时退化为「无旧值」的预览，不影响授权与写入本身。
+		if requestParam != nil {
+			return textDiffPreview("params.json", "", paramsJSONContent(requestParam)), nil
+		}
+		return tool.PermissionPreview{}, nil
 	}
-	detail, err := browser.GetAnalysisByID(ctx, projectID, analysisID)
+	current, err := browser.ReadAnalysisFile(ctx, projectID, analysisID, runtimecontext.ResourceFileParams)
 	if err != nil {
-		return runtimecontext.AnalysisDetail{}, false
+		return tool.PermissionPreview{}, err
 	}
-	return detail, true
+	before := current.Content
+	after := ""
+	if !edit.IsZero() {
+		after, err = edit.Apply(before)
+		if err != nil {
+			return tool.PermissionPreview{}, err
+		}
+	} else {
+		after = paramsJSONContent(requestParam)
+	}
+	if after == "" {
+		return tool.PermissionPreview{}, nil
+	}
+	path := current.Path
+	if path == "" {
+		path = "params.json"
+	}
+	return textDiffPreview(path, before, after), nil
 }

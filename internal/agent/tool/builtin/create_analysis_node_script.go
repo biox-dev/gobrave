@@ -90,6 +90,10 @@ func CreateAnalysisNodeScript(creator runtimecontext.AnalysisNodeCreator, runner
 				return CreateAnalysisNodeScriptOutput{}, fmt.Errorf("create_analysis_node_script: analysis node creator is not available in this runtime")
 			}
 
+			if err := authorizeResourceWrite(ctx, CreateAnalysisNodeScriptToolName, fmt.Sprintf("Create analysis node from script %d", scriptID), previewCreateAnalysisNodeScript(ctx, in)); err != nil {
+				return CreateAnalysisNodeScriptOutput{}, err
+			}
+
 			result, err := creator.CreateAnalysisNode(ctx, runtimecontext.AnalysisNodeCreateInput{
 				ProjectID:    projectID,
 				ScriptID:     scriptID,
@@ -147,7 +151,7 @@ func CreateAnalysisNodeScript(creator runtimecontext.AnalysisNodeCreator, runner
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "为已有脚本创建分析节点（默认立即运行该节点）", previewCreateAnalysisNodeScript)
+	)
 }
 
 // previewCreateAnalysisNodeScript 生成批准前预览：新节点 params.json 将写入的请求参数

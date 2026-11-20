@@ -7,7 +7,6 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
-	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 // UpdateWorkflowToolName 是「更新工作流」工具名。
@@ -24,6 +23,12 @@ type UpdateWorkflowInput struct {
 	Category      *string   `json:"category"`
 	DagDefinition *JSONText `json:"dag_definition"`
 	IOSchema      *JSONText `json:"io_schema"`
+	// File + Content / OldString → NewString 可以直接编辑工作流目录内的
+	// dag_definition / io_schema / readme，无需再用 write / edit / bash。
+	File      string  `json:"file"`
+	Content   *string `json:"content"`
+	OldString string  `json:"old_string"`
+	NewString string  `json:"new_string"`
 }
 
 // UpdateWorkflowOutput 是 update_workflow 工具返回给模型的结果。
@@ -68,6 +73,10 @@ func UpdateWorkflow(updater runtimecontext.WorkflowUpdater, browser runtimeconte
 				"type":        "object",
 				"description": "新的工作流级输入输出契约（整体替换，也接受 JSON 字符串）：{\"inputs\": [...], \"outputs\": [...]}。不修改时留空。",
 			},
+			"file":       tool.StringProperty("要编辑的工作流文件：dag_definition / io_schema / readme。留空表示不改文件。"),
+			"content":    tool.StringProperty("整体覆盖该文件正文；与 old_string/new_string 二选一（不能与 dag_definition / io_schema 同时使用）。"),
+			"old_string": tool.StringProperty("文本替换模式：要替换的原文，必须在文件中唯一出现。"),
+			"new_string": tool.StringProperty("文本替换模式：替换后的文本。"),
 		}, "workflow_id"),
 		func(ctx context.Context, in UpdateWorkflowInput) (UpdateWorkflowOutput, error) {
 			projectID, err := requireProjectID(ctx, UpdateWorkflowToolName)
@@ -82,9 +91,26 @@ func UpdateWorkflow(updater runtimecontext.WorkflowUpdater, browser runtimeconte
 				return UpdateWorkflowOutput{}, fmt.Errorf("%s: workflow updater is not available in this runtime", UpdateWorkflowToolName)
 			}
 
+			file, err := parseResourceFile(in.File, UpdateWorkflowToolName,
+				runtimecontext.ResourceFileDagDefinition, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme)
+			if err != nil {
+				return UpdateWorkflowOutput{}, err
+			}
+			edit, err := resourceEditFrom(UpdateWorkflowToolName, file, in.Content, in.OldString, in.NewString)
+			if err != nil {
+				return UpdateWorkflowOutput{}, err
+			}
+			if !edit.IsZero() && (strings.TrimSpace(in.DagDefinition.value()) != "" || strings.TrimSpace(in.IOSchema.value()) != "") {
+				return UpdateWorkflowOutput{}, fmt.Errorf("%s: file edit cannot be combined with dag_definition / io_schema", UpdateWorkflowToolName)
+			}
+
 			input := runtimecontext.WorkflowUpdateInput{
 				ProjectID:  projectID,
 				WorkflowID: workflowID,
+				File:       edit.File,
+				Content:    edit.Content,
+				OldString:  edit.OldString,
+				NewString:  edit.NewString,
 			}
 			// 空串统一视为「不修改」：避免模型用空值误清空名称 / 描述 / 分类。
 			if in.Name != nil && strings.TrimSpace(*in.Name) != "" {
@@ -106,6 +132,14 @@ func UpdateWorkflow(updater runtimecontext.WorkflowUpdater, browser runtimeconte
 				input.IOSchema = &ioSchema
 			}
 
+			preview, err := updateWorkflowPreview(ctx, browser, projectID, workflowID, edit)
+			if err != nil {
+				return UpdateWorkflowOutput{Error: err.Error()}, nil
+			}
+			if err := authorizeResourceWrite(ctx, UpdateWorkflowToolName, fmt.Sprintf("Update workflow %d", workflowID), preview); err != nil {
+				return UpdateWorkflowOutput{}, err
+			}
+
 			result, updateErr := updater.UpdateWorkflow(ctx, input)
 			out := UpdateWorkflowOutput{WorkflowUpdateResult: result}
 			if updateErr != nil {
@@ -113,51 +147,29 @@ func UpdateWorkflow(updater runtimecontext.WorkflowUpdater, browser runtimeconte
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "更新工作流元数据与 DAG 定义（写库并重写工作流目录文件）", func(ctx context.Context, in UpdateWorkflowInput) tool.PermissionPreview {
-		return previewUpdateWorkflow(ctx, browser, in)
-	})
+	)
 }
 
-// previewUpdateWorkflow 生成批准前预览：dag_definition.json 旧内容 → 新内容的 diff。
-//
-// 未给出 dag_definition 时没有文件改动可预览（仅改元数据）；读取不到旧 DAG 时
-// 退化为「覆盖 dag_definition.json」的预览，不影响授权流程本身。
-func previewUpdateWorkflow(ctx context.Context, browser runtimecontext.WorkflowBrowser, in UpdateWorkflowInput) tool.PermissionPreview {
-	after := in.DagDefinition.value()
-	if strings.TrimSpace(after) == "" {
-		return tool.PermissionPreview{}
-	}
-
-	path := utils.DagDefinitionFileName
-	before := ""
-	if workflow, ok := workflowForPreview(ctx, browser, UpdateWorkflowToolName, in.WorkflowID); ok {
-		if workflow.DagDefinitionPath != "" {
-			path = workflow.DagDefinitionPath
-		}
-		before = formattedJSONContent(workflow.DagDefinition)
-	}
-	return textDiffPreview(path, before, formattedJSONContent(after))
-}
-
-// workflowForPreview 读取工作流当前状态，用于生成更新类工具的 diff 预览。
-//
-// 任何失败（上下文缺项目 / ID 非法 / 未注入浏览器 / 工作流不存在）都返回 ok=false，
-// 由调用方退化为「无旧值」的预览；真正的错误仍由工具主体返回给模型。
-func workflowForPreview(ctx context.Context, browser runtimecontext.WorkflowBrowser, toolName, rawWorkflowID string) (runtimecontext.WorkflowDetail, bool) {
-	projectID, err := requireProjectID(ctx, toolName)
-	if err != nil {
-		return runtimecontext.WorkflowDetail{}, false
-	}
-	workflowID, err := parseWorkflowID(rawWorkflowID)
-	if err != nil {
-		return runtimecontext.WorkflowDetail{}, false
+// updateWorkflowPreview 生成批准前预览：优先展示 file 编辑的 before → after diff；
+// 未指定 file 但给出 dag_definition 时，退化为 DAG 文件覆盖预览。
+func updateWorkflowPreview(ctx context.Context, browser runtimecontext.WorkflowBrowser, projectID, workflowID int64, edit runtimecontext.ResourceFileEdit) (tool.PermissionPreview, error) {
+	if edit.IsZero() {
+		return tool.PermissionPreview{}, nil
 	}
 	if browser == nil {
-		return runtimecontext.WorkflowDetail{}, false
+		// 无浏览器时退化为「无旧值」的预览，不影响授权与写入本身。
+		if edit.Content != nil {
+			return tool.PermissionPreview{FilePath: string(edit.File), Diff: formattedJSONContent(*edit.Content)}, nil
+		}
+		return tool.PermissionPreview{}, nil
 	}
-	detail, err := browser.GetWorkflowByID(ctx, projectID, workflowID)
+	current, err := browser.ReadWorkflowFile(ctx, projectID, workflowID, edit.File)
 	if err != nil {
-		return runtimecontext.WorkflowDetail{}, false
+		return tool.PermissionPreview{}, err
 	}
-	return detail, true
+	after, err := edit.Apply(current.Content)
+	if err != nil {
+		return tool.PermissionPreview{}, err
+	}
+	return previewFileEdit(current.Path, current.Content, after), nil
 }

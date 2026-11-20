@@ -7,7 +7,6 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
-	"github.com/biox-dev/gobrave/internal/dag/prepare"
 )
 
 // UpdateAnalysisNodeAgentToolName 是「更新命令型分析节点」工具名。
@@ -18,10 +17,14 @@ const UpdateAnalysisNodeAgentToolName = "update_analysis_node_agent"
 // AnalysisNodeID 为必填：模型必须显式给出要更新的 command 节点 ID。
 // 其余字段均可选：留空表示不修改对应字段；至少需要给出一个可更新字段。
 type UpdateAnalysisNodeAgentInput struct {
-	AnalysisNodeID      string `json:"analysis_node_id"`      // 分析节点 ID（必填，字符串以保精度）
-	NodeName            string `json:"node_name"`             // 新节点名称，留空表示不修改
-	Command             string `json:"command"`               // 新 shell 命令（写入 run.sh），留空表示不修改
-	ContainerTemplateID string `json:"container_template_id"` // 新容器模板 ID（字符串以保精度），留空表示不修改
+	AnalysisNodeID      string  `json:"analysis_node_id"`      // 分析节点 ID（必填，字符串以保精度）
+	NodeName            string  `json:"node_name"`             // 新节点名称，留空表示不修改
+	Command             string  `json:"command"`               // 新 shell 命令（写入 run.sh），留空表示不修改
+	ContainerTemplateID string  `json:"container_template_id"` // 新容器模板 ID（字符串以保精度），留空表示不修改
+	File                string  `json:"file"`                  // 固定为 command（run.sh 文件编辑）
+	Content             *string `json:"content"`               // 整体覆盖 run.sh 正文
+	OldString           string  `json:"old_string"`            // 文本替换原文
+	NewString           string  `json:"new_string"`            // 文本替换后的内容
 	// Run 可选：更新后是否立即运行该节点。nil / true 表示运行（默认），false 表示只更新不运行。
 	Run *bool `json:"run"`
 	// TimeoutSeconds 是等待节点完成的超时（秒），可选；run=false 时忽略。
@@ -74,6 +77,10 @@ func UpdateAnalysisNodeAgent(updater runtimecontext.AnalysisNodeUpdater, runner 
 			"command":          tool.StringProperty("新的 shell 命令（多行可用换行分隔），留空表示不修改。命令会写入节点 run.sh，更新后立即生效。"),
 			"container_template_id": tool.StringProperty(
 				"新的容器模板 ID（整数，字符串以保精度），留空表示不修改；给出时必须是已存在的容器模板。"),
+			"file":            tool.StringProperty("要直接编辑的文件：command（run.sh）。留空表示不改文件。"),
+			"content":         tool.StringProperty("整体覆盖 run.sh 正文；与 old_string/new_string 二选一。"),
+			"old_string":      tool.StringProperty("文本替换模式：要替换的原文，必须在 run.sh 中唯一出现。"),
+			"new_string":      tool.StringProperty("文本替换模式：替换后的文本。"),
 			"run":             tool.BooleanProperty("是否在更新后立即运行，可选，默认 true。传 false 时只更新节点，不提交运行。"),
 			"timeout_seconds": tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600；run=false 时忽略。"),
 		}, "analysis_node_id"),
@@ -103,18 +110,39 @@ func UpdateAnalysisNodeAgent(updater runtimecontext.AnalysisNodeUpdater, runner 
 				templateID = &id
 			}
 
-			if name == "" && command == "" && templateID == nil {
-				return UpdateAnalysisNodeAgentOutput{}, fmt.Errorf("%s: at least one of node_name / command / container_template_id must be provided", UpdateAnalysisNodeAgentToolName)
+			file, err := parseResourceFile(in.File, UpdateAnalysisNodeAgentToolName, runtimecontext.ResourceFileCommand)
+			if err != nil {
+				return UpdateAnalysisNodeAgentOutput{}, err
+			}
+			edit, err := resourceEditFrom(UpdateAnalysisNodeAgentToolName, file, in.Content, in.OldString, in.NewString)
+			if err != nil {
+				return UpdateAnalysisNodeAgentOutput{}, err
+			}
+
+			if name == "" && command == "" && templateID == nil && edit.IsZero() {
+				return UpdateAnalysisNodeAgentOutput{}, fmt.Errorf("%s: at least one of node_name / command / container_template_id / file edit must be provided", UpdateAnalysisNodeAgentToolName)
 			}
 
 			if updater == nil {
 				return UpdateAnalysisNodeAgentOutput{}, fmt.Errorf("%s: analysis node updater is not available in this runtime", UpdateAnalysisNodeAgentToolName)
 			}
 
+			preview, err := previewUpdateAnalysisNodeAgent(ctx, browser, projectID, nodeID, command, edit)
+			if err != nil {
+				return UpdateAnalysisNodeAgentOutput{AnalysisNodeID: nodeID, Error: err.Error()}, nil
+			}
+			if err := authorizeResourceWrite(ctx, UpdateAnalysisNodeAgentToolName, fmt.Sprintf("Update analysis node %d", nodeID), preview); err != nil {
+				return UpdateAnalysisNodeAgentOutput{}, err
+			}
+
 			input := runtimecontext.AgentAnalysisUpdateInput{
 				ProjectID:           projectID,
 				AnalysisNodeID:      nodeID,
 				ContainerTemplateID: templateID,
+				File:                edit.File,
+				Content:             edit.Content,
+				OldString:           edit.OldString,
+				NewString:           edit.NewString,
 			}
 			if name != "" {
 				input.NodeName = &name
@@ -175,28 +203,42 @@ func UpdateAnalysisNodeAgent(updater runtimecontext.AnalysisNodeUpdater, runner 
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "更新 Agent 命令节点（写库并重建 run.sh，默认更新后运行）", func(ctx context.Context, in UpdateAnalysisNodeAgentInput) tool.PermissionPreview {
-		return previewUpdateAnalysisNodeAgent(ctx, browser, in)
-	})
+	)
 }
 
 // previewUpdateAnalysisNodeAgent 生成批准前预览：run.sh 旧内容 → 新内容的 diff。
 //
-// 旧内容直接从磁盘上的 run.sh 读取（命令不再落库）；读取失败时退化为「新增 / 覆盖
-// run.sh」的预览，不影响授权流程本身。
-func previewUpdateAnalysisNodeAgent(ctx context.Context, browser runtimecontext.AnalysisNodeBrowser, in UpdateAnalysisNodeAgentInput) tool.PermissionPreview {
-	command := strings.TrimSpace(in.Command)
-	if command == "" {
-		return tool.PermissionPreview{}
+// 旧内容通过浏览器直接读取（命令不再落库）；读取失败时退化为「新增 / 覆盖 run.sh」的预览。
+func previewUpdateAnalysisNodeAgent(ctx context.Context, browser runtimecontext.AnalysisNodeBrowser, projectID, nodeID int64, command string, edit runtimecontext.ResourceFileEdit) (tool.PermissionPreview, error) {
+	if edit.IsZero() && strings.TrimSpace(command) == "" {
+		return tool.PermissionPreview{}, nil
 	}
-
-	path := runScriptPath("", "")
-	before := ""
-	if current, ok := analysisNodeForPreview(ctx, browser, UpdateAnalysisNodeAgentToolName, in.AnalysisNodeID); ok {
-		path = runScriptPath(current.CommandPath, current.WorkspaceDir)
-		if content, err := prepare.ReadCommandRunScript(current.CommandPath); err == nil {
-			before = runScriptContent(content)
+	if browser == nil {
+		// 无浏览器时退化为「无旧值」的预览，不影响授权与写入本身。
+		if !edit.IsZero() && edit.Content != nil {
+			return textDiffPreview("run.sh", "", runScriptContent(*edit.Content)), nil
 		}
+		if edit.IsZero() {
+			return textDiffPreview("run.sh", "", runScriptContent(command)), nil
+		}
+		return tool.PermissionPreview{}, nil
 	}
-	return textDiffPreview(path, before, runScriptContent(command))
+	current, err := browser.ReadAnalysisNodeFile(ctx, projectID, nodeID, runtimecontext.ResourceFileCommand)
+	if err != nil {
+		return tool.PermissionPreview{}, err
+	}
+	path := current.Path
+	if path == "" {
+		path = runScriptPath("", "")
+	}
+	after := ""
+	if !edit.IsZero() {
+		after, err = edit.Apply(current.Content)
+		if err != nil {
+			return tool.PermissionPreview{}, err
+		}
+	} else {
+		after = runScriptContent(command)
+	}
+	return textDiffPreview(path, current.Content, after), nil
 }

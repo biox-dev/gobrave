@@ -18,7 +18,8 @@ const GetAnalysisNodeToolName = "get_analysis_node"
 // 可以直接传用户消息里的 @analysis_node:<id> 引用文本（前缀会被容错剥离）。
 // 项目归属取自执行事实（tool.ProjectIDFrom），节点必须属于当前激活项目。
 type GetAnalysisNodeInput struct {
-	AnalysisNodeID string `json:"analysis_node_id"` // 分析节点主键 ID（必填，支持 "@analysis_node:<id>" 形式，字符串以保精度）
+	AnalysisNodeID string   `json:"analysis_node_id"` // 分析节点主键 ID（必填，支持 "@analysis_node:<id>" 形式，字符串以保精度）
+	Files          []string `json:"files"`            // command / params；留空时不回传文件正文
 }
 
 // GetAnalysisNodeOutput 是 get_analysis_node 工具返回给模型的结果。
@@ -53,7 +54,9 @@ type GetAnalysisNodeOutput struct {
 	OutputDir string `json:"output_dir"`
 	// RequestParam 仅 script / scheduler 节点返回（键为脚本 io_schema inputs 的 name）；agent 节点不返回。
 	RequestParam map[string]any `json:"request_param,omitempty"`
-	Error        string         `json:"error,omitempty"`
+	// Files 是指定文件的正文（command → run.sh，params → params.json）。
+	Files map[string]runtimecontext.ResourceFileContent `json:"files,omitempty"`
+	Error string                                        `json:"error,omitempty"`
 }
 
 // analysisNodeTypeAgent 是 Agent 命令节点的归一化类型值（与 types.AnalysisNode.NodeType 取值一致）。
@@ -116,6 +119,7 @@ func GetAnalysisNode(browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
 		getAnalysisNodeDescription(),
 		tool.Schema("按 ID 查看分析节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("分析节点主键 ID（必填，整数，字符串以保精度）。来自用户输入里的 @analysis_node:<id> 引用时直接使用冒号后的 ID。"),
+			"files":            resourceFilesSchema("要直接读取正文的文件列表（command → run.sh，params → params.json）；留空时不回传文件正文。", runtimecontext.ResourceFileCommand, runtimecontext.ResourceFileParams),
 		}, "analysis_node_id"),
 		func(ctx context.Context, in GetAnalysisNodeInput) (GetAnalysisNodeOutput, error) {
 			projectID, err := requireProjectID(ctx, GetAnalysisNodeToolName)
@@ -157,6 +161,23 @@ func GetAnalysisNode(browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
 				// script / scheduler 节点绑定脚本，回传脚本 ID 与已保存的脚本参数。
 				out.ScriptID = node.ScriptID
 				out.RequestParam = node.RequestParam
+			}
+
+			files, err := collectResourceFiles(in.Files, GetAnalysisNodeToolName, nil,
+				runtimecontext.ResourceFileCommand, runtimecontext.ResourceFileParams)
+			if err != nil {
+				out.Error = err.Error()
+				return out, nil
+			}
+			if len(files) > 0 {
+				contents, err := readResourceFiles(files, func(file runtimecontext.ResourceFile) (runtimecontext.ResourceFileContent, error) {
+					return browser.ReadAnalysisNodeFile(ctx, projectID, nodeID, file)
+				})
+				if err != nil {
+					out.Error = err.Error()
+					return out, nil
+				}
+				out.Files = contents
 			}
 			return out, nil
 		},

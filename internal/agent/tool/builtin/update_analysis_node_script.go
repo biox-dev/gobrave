@@ -23,6 +23,10 @@ type UpdateAnalysisNodeScriptInput struct {
 	AnalysisNodeID string         `json:"analysis_node_id"` // 分析节点 ID（必填，字符串以保精度）
 	NodeName       string         `json:"node_name"`        // 新节点名称，留空表示不修改
 	RequestParam   map[string]any `json:"request_param"`    // 新请求参数，nil 表示不修改
+	File           string         `json:"file"`             // 固定为 params（params.json 文件编辑）
+	Content        *string        `json:"content"`          // 整体覆盖 params.json 正文
+	OldString      string         `json:"old_string"`       // 文本替换原文
+	NewString      string         `json:"new_string"`       // 文本替换后的内容
 	// Run 可选：更新后是否立即运行该节点。nil / true 表示运行（默认），false 表示只更新不运行。
 	Run *bool `json:"run"`
 	// TimeoutSeconds 是等待节点完成的超时（秒），可选；run=false 时忽略。
@@ -77,6 +81,10 @@ func UpdateAnalysisNodeScript(updater runtimecontext.AnalysisNodeUpdater, runner
 				"type":        "object",
 				"description": "新的请求参数对象，键为脚本 io_schema.json inputs 中各条目的 name。缺省表示不修改；显式传空对象（{}）表示清空参数。",
 			},
+			"file":            tool.StringProperty("要直接编辑的文件：params（params.json）。留空表示不改文件。"),
+			"content":         tool.StringProperty("整体覆盖 params.json 正文（必须是合法 JSON 对象）；与 old_string/new_string 二选一。"),
+			"old_string":      tool.StringProperty("文本替换模式：要替换的原文，必须在 params.json 中唯一出现。"),
+			"new_string":      tool.StringProperty("文本替换模式：替换后的文本。"),
 			"run":             tool.BooleanProperty("是否在更新后立即运行，可选，默认 true。传 false 时只更新节点，不提交运行。"),
 			"timeout_seconds": tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 600；run=false 时忽略。"),
 		}, "analysis_node_id"),
@@ -92,18 +100,41 @@ func UpdateAnalysisNodeScript(updater runtimecontext.AnalysisNodeUpdater, runner
 			}
 
 			name := strings.TrimSpace(in.NodeName)
-			if name == "" && in.RequestParam == nil {
-				return UpdateAnalysisNodeScriptOutput{}, fmt.Errorf("%s: at least one of node_name / request_param must be provided", UpdateAnalysisNodeScriptToolName)
+			file, err := parseResourceFile(in.File, UpdateAnalysisNodeScriptToolName, runtimecontext.ResourceFileParams)
+			if err != nil {
+				return UpdateAnalysisNodeScriptOutput{}, err
+			}
+			edit, err := resourceEditFrom(UpdateAnalysisNodeScriptToolName, file, in.Content, in.OldString, in.NewString)
+			if err != nil {
+				return UpdateAnalysisNodeScriptOutput{}, err
+			}
+			if name == "" && in.RequestParam == nil && edit.IsZero() {
+				return UpdateAnalysisNodeScriptOutput{}, fmt.Errorf("%s: at least one of node_name / request_param / file edit must be provided", UpdateAnalysisNodeScriptToolName)
+			}
+			if !edit.IsZero() && in.RequestParam != nil {
+				return UpdateAnalysisNodeScriptOutput{}, fmt.Errorf("%s: file edit cannot be combined with request_param; choose one style", UpdateAnalysisNodeScriptToolName)
 			}
 
 			if updater == nil {
 				return UpdateAnalysisNodeScriptOutput{}, fmt.Errorf("%s: analysis node updater is not available in this runtime", UpdateAnalysisNodeScriptToolName)
 			}
 
+			preview, err := previewUpdateAnalysisNodeScript(ctx, browser, projectID, nodeID, in.RequestParam, edit)
+			if err != nil {
+				return UpdateAnalysisNodeScriptOutput{AnalysisNodeID: nodeID, Error: err.Error()}, nil
+			}
+			if err := authorizeResourceWrite(ctx, UpdateAnalysisNodeScriptToolName, fmt.Sprintf("Update analysis node %d", nodeID), preview); err != nil {
+				return UpdateAnalysisNodeScriptOutput{}, err
+			}
+
 			input := runtimecontext.ScriptAnalysisUpdateInput{
 				ProjectID:      projectID,
 				AnalysisNodeID: nodeID,
 				RequestParam:   in.RequestParam,
+				File:           edit.File,
+				Content:        edit.Content,
+				OldString:      edit.OldString,
+				NewString:      edit.NewString,
 			}
 			if name != "" {
 				input.NodeName = &name
@@ -165,31 +196,44 @@ func UpdateAnalysisNodeScript(updater runtimecontext.AnalysisNodeUpdater, runner
 			}
 			return out, nil
 		},
-	).WithPermissionPreview("write", "", "更新脚本节点（script / scheduler；写库并重建 params.json，默认更新后运行）", func(ctx context.Context, in UpdateAnalysisNodeScriptInput) tool.PermissionPreview {
-		return previewUpdateAnalysisNodeScript(ctx, browser, in)
-	})
+	)
 }
 
-// previewUpdateAnalysisNodeScript 生成批准前预览：params.json 中请求参数的旧值 → 新值 diff。
+// previewUpdateAnalysisNodeScript 生成批准前预览：params.json 旧内容 → 新内容 diff。
 //
-// 未给出 request_param 时没有参数改动可预览（仅改名不会展示 diff）；读取不到节点
-// 当前参数时退化为「覆盖 params.json」的预览，不影响授权流程本身。
-func previewUpdateAnalysisNodeScript(ctx context.Context, browser runtimecontext.AnalysisNodeBrowser, in UpdateAnalysisNodeScriptInput) tool.PermissionPreview {
-	if in.RequestParam == nil {
-		return tool.PermissionPreview{}
+// 未给出 request_param 且没有文件编辑时没有改动可预览（仅改名）；旧内容通过浏览器
+// 直接读取，避免再走 view / bash。
+func previewUpdateAnalysisNodeScript(ctx context.Context, browser runtimecontext.AnalysisNodeBrowser, projectID, nodeID int64, requestParam map[string]any, edit runtimecontext.ResourceFileEdit) (tool.PermissionPreview, error) {
+	if requestParam == nil && edit.IsZero() {
+		return tool.PermissionPreview{}, nil
 	}
-	after := paramsJSONContent(in.RequestParam)
-	if after == "" {
-		return tool.PermissionPreview{}
-	}
-
-	path := "params.json"
-	before := ""
-	if current, ok := analysisNodeForPreview(ctx, browser, UpdateAnalysisNodeScriptToolName, in.AnalysisNodeID); ok {
-		if current.ParamsPath != "" {
-			path = current.ParamsPath
+	if browser == nil {
+		// 无浏览器时退化为「无旧值」的预览，不影响授权与写入本身。
+		if requestParam != nil {
+			return textDiffPreview("params.json", "", paramsJSONContent(requestParam)), nil
 		}
-		before = paramsJSONContent(current.RequestParam)
+		return tool.PermissionPreview{}, nil
 	}
-	return textDiffPreview(path, before, after)
+	current, err := browser.ReadAnalysisNodeFile(ctx, projectID, nodeID, runtimecontext.ResourceFileParams)
+	if err != nil {
+		return tool.PermissionPreview{}, err
+	}
+	before := current.Content
+	after := ""
+	if !edit.IsZero() {
+		after, err = edit.Apply(before)
+		if err != nil {
+			return tool.PermissionPreview{}, err
+		}
+	} else {
+		after = paramsJSONContent(requestParam)
+	}
+	if after == "" {
+		return tool.PermissionPreview{}, nil
+	}
+	path := current.Path
+	if path == "" {
+		path = "params.json"
+	}
+	return textDiffPreview(path, before, after), nil
 }

@@ -17,56 +17,70 @@ import (
 )
 
 // All 返回框架内置的全部工具。新增内置工具时在此追加，并把所需依赖从 Deps 传入。
+//
+// 排序按资源域分组（同一资源的 list / get / create / update 相邻），便于对照维护：
+// 交互 → 文件 / 数据集 → 容器模板 → 脚本 → 分析节点 → 工作流 → 分析运行 → 报告 → 技能 / Profile。
 func All(d Deps) []tool.Tool {
 	return []tool.Tool{
+		// 交互与通用能力。
 		GetWeather(),
-		CreateScript(d.ScriptCreator),
-		UpdateScript(d.scriptUpdater()),
-		ListProjectScripts(d.ScriptBrowser),
-		GetScript(d.ScriptBrowser),
-		// 文件引用：读取用户输入 @file:<id> 指向的文件内容（agent 传裸 ID）。
-		GetFile(d.FileReader),
-		GetAnalysisNode(d.NodeBrowser),
-		CreateAnalysisNodeScript(d.NodeCreator, d.Runner),
-		CreateAnalysisNodeAgent(d.AgentRunner),
-		ListContainerTemplates(d.TemplateBrowser),
-		GetContainerTemplate(d.TemplateBrowser),
+		AskUserTool(),
+		AgentTool(d),
 		TerminalExec(d.Terminal),
-		// 界面：驱动用户前端执行动作（ui_action，目前只有路由跳转）。
 		UIAction(d.UIActions),
+		SaveMemory(d.MemorySaver),
+
+		// 文件 / 数据集。
+		GetFile(d.FileReader),
 		GetDataset(d.DatasetBrowser),
 		GetProjectDatabasePath(d.DatasetWriter),
 		AddFileToDataset(d.DatasetWriter),
-		BuildAnalysisNodeParams(d.ParamsBuilder),
-		RunAnalysisNode(d.Runner),
+
+		// 容器模板。
+		ListContainerTemplates(d.TemplateBrowser),
+		GetContainerTemplate(d.TemplateBrowser),
+
+		// 脚本：列出 / 查看 / 创建 / 更新。
+		ListProjectScripts(d.ScriptBrowser),
+		GetScript(d.ScriptBrowser),
+		CreateScript(d.ScriptCreator),
+		UpdateScript(d.scriptUpdater(), d.ScriptBrowser),
+
+		// 分析节点：查看 / 创建 / 更新 / 参数 / 运行。
+		GetAnalysisNode(d.NodeBrowser),
+		CreateAnalysisNodeScript(d.NodeCreator, d.Runner),
+		CreateAnalysisNodeAgent(d.AgentRunner),
 		UpdateAnalysisNodeScript(d.NodeUpdater, d.Runner, d.NodeBrowser),
 		UpdateAnalysisNodeAgent(d.NodeUpdater, d.Runner, d.NodeBrowser),
-		// 工作流与分析运行：列出 / 创建工作流、查看 / 更新，以及分析运行的创建 / 查看 / 更新 / 提交。
+		BuildAnalysisNodeParams(d.ParamsBuilder),
+		RunAnalysisNode(d.Runner),
+
+		// 工作流：列出 / 查看 / 创建 / 更新。
 		ListProjectWorkflows(d.WorkflowBrowser),
-		CreateWorkflow(d.WorkflowCreator),
 		GetWorkflow(d.WorkflowBrowser),
+		CreateWorkflow(d.WorkflowCreator),
 		UpdateWorkflow(d.workflowUpdater(), d.WorkflowBrowser),
+
+		// 分析运行：创建 / 查看 / 更新 / 提交。
 		CreateAnalysisWorkflow(d.analysisCreator(), d.AnalysisRunner),
 		GetAnalysisWorkflow(d.AnalysisBrowser),
 		UpdateAnalysisWorkflow(d.analysisUpdater(), d.AnalysisBrowser),
 		RunAnalysisWorkflow(d.AnalysisRunner, d.AnalysisBrowser),
-		SaveMemory(d.MemorySaver),
+
+		// 项目报告：查看 / 创建 / 更新（含正文 output.md 的读写）。
 		GetReportContext(d.ReportContext),
-		// 报告：查看 / 创建 / 更新项目报告（含报告正文文件 output.md 的读写）。
 		GetReport(d.ReportBrowser),
 		CreateReport(d.ReportWriter),
 		UpdateReport(d.ReportWriter),
+
 		// 技能：指令正文与附属资源都按需通过工具加载（渐进式披露）。
 		skill.GetSkill(d.Skills),
 		skill.LoadSkillResource(d.Skills),
 		skill.CreateSkill(d.SkillWriter),
 		skill.EditSkill(d.SkillWriter),
+
 		// Profile：修改当前 Profile 的系统提示词（update_profile_prompt）。
 		UpdateProfilePrompt(d.ProfilePromptWriter),
-		// 交互：向用户提问（执行期从工具 ctx 取 Runtime 阻塞等待作答）。
-		AskUserTool(),
-		// 子 Agent：把多轮检索委派给只读子 Agent（请求级依赖由 ctx 注入）。
-		AgentTool(d),
 	}
 }
 

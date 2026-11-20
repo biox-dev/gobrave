@@ -29,6 +29,13 @@ type CreateScriptInput struct {
 	// 为空时使用系统的默认 schema。
 	Inputs  []map[string]any `json:"inputs"`
 	Outputs []map[string]any `json:"outputs"`
+	// 以下三个字段允许在创建时直接写入文件正文，避免再走 coder write / bash：
+	// ScriptContent 是脚本主文件正文（为空时用该脚本类型的默认模板）；
+	// IOSchema 是 io_schema.json 原文（为空时由 Inputs / Outputs 生成）；
+	// Readme 是 README.md 正文（为空时不写 README）。
+	ScriptContent string `json:"script_content"`
+	IOSchema      string `json:"io_schema"`
+	Readme        string `json:"readme"`
 }
 
 // CreateScriptOutput 是 create_script 工具返回给模型的结果。
@@ -72,12 +79,15 @@ type CreateScriptOutput struct {
 func CreateScript(creator runtimecontext.ScriptCreator) tool.Tool {
 	return tool.NewFunc(
 		CreateScriptToolName,
-		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径，可据此编写脚本内容、补充参数契约。所属项目取自当前会话上下文，无需传入。请在调用时一次性给出 inputs / outputs（脚本输入输出契约，参数名将与 params.json 的键、脚本内读取的参数名一一对应；不传则使用默认 input1/output）。需要运行脚本时，再调用 create_analysis_node_script（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。\n\n用户消息里可能出现界面插入的引用 chip：@container:<id> 表示用户选中的容器模板（对应 container_template_id），@dataset:<id> 表示用户选中的数据集，@file:<id> 表示文件，@report:<id> 表示项目报告，@analysis_node:<id> 表示分析节点。遇到 @container:<id> 时，直接把冒号后的 ID 作为 container_template_id 传入，不要丢弃或改写；需要确认该模板的展示名 / 描述时先调用 get_container_template；遇到 @dataset:<id> 时可用 get_dataset 获取其工作目录路径；遇到 @file:<id> 时可用 get_file 读取文件内容与真实路径（传冒号后的裸 ID）；遇到 @report:<id> 时可用 get_report_context 获取报告上下文；遇到 @analysis_node:<id> 时可用 get_analysis_node 查看节点名称 / 类型 / 工作目录 / 参数。",
+		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径。可直接用 script_content / io_schema / readme 一次性写入三个文件正文（对应 script_file / io_schema / readme），无需再用 write / edit / bash；inputs / outputs 仅在未提供 io_schema 时用于生成 io_schema.json。需要运行脚本时，再调用 create_analysis_node_script（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。用户消息里的 @container:<id> 直接把冒号后的 ID 作为 container_template_id；需要确认模板时可先调用 get_container_template。",
 		tool.Schema("创建脚本的入参", map[string]any{
 			"name":                  tool.StringProperty("脚本名称（同名脚本在同一项目下应唯一，由业务侧校验）。"),
 			"description":           tool.StringProperty("脚本用途描述（可选），用于说明该脚本做什么。"),
 			"container_template_id": tool.StringProperty("容器运行配置 ID（整数，字符串以保精度）；可直接使用用户消息里的 @container:<id>（冒号后的 ID）。为空时使用系统默认容器模板。"),
 			"script_type":           tool.StringProperty("脚本类型：qmd（默认）/ r / python / shell / jupyter（决定主文件名与初始化模板）。"),
+			"script_content":        tool.StringProperty("脚本主文件正文（write to script_file）。为空时使用该脚本类型的默认模板。"),
+			"io_schema":             tool.StringProperty("io_schema.json 原文（write to io_schema）。给出时忽略 inputs / outputs；为空时按 inputs / outputs 生成。"),
+			"readme":                tool.StringProperty("README.md 正文（write to readme）。为空时不写 README。"),
 			"inputs":                ioItemsSchema("脚本输入契约列表（io_schema.json 的 inputs）。name 即 params.json 中的参数名，脚本内需按该名取参数；type 常见值：BaseInput / file / string / number / boolean 等。"),
 			"outputs":               ioItemsSchema("脚本输出契约列表（io_schema.json 的 outputs）。name 为输出名，type 通常为 file。"),
 		}, "name"),
@@ -105,6 +115,15 @@ func CreateScript(creator runtimecontext.ScriptCreator) tool.Tool {
 				return CreateScriptOutput{}, fmt.Errorf("create_script: script creator is not available in this runtime")
 			}
 
+			preview := previewNewFiles([]newFilePreview{
+				{Path: "script_file", Content: in.ScriptContent},
+				{Path: "io_schema.json", Content: in.IOSchema},
+				{Path: "README.md", Content: in.Readme},
+			})
+			if err := authorizeResourceWrite(ctx, CreateScriptToolName, fmt.Sprintf("Create script %s", name), preview); err != nil {
+				return CreateScriptOutput{}, err
+			}
+
 			result, err := creator.CreateScript(ctx, runtimecontext.ScriptCreateInput{
 				ProjectID:           projectID,
 				Name:                name,
@@ -113,6 +132,9 @@ func CreateScript(creator runtimecontext.ScriptCreator) tool.Tool {
 				ScriptType:          scriptType,
 				Inputs:              normalizeIOSchemaItems(in.Inputs),
 				Outputs:             normalizeIOSchemaItems(in.Outputs),
+				ScriptContent:       in.ScriptContent,
+				IOSchema:            in.IOSchema,
+				Readme:              in.Readme,
 			})
 			if err != nil {
 				return CreateScriptOutput{Error: err.Error()}, nil
@@ -131,7 +153,7 @@ func CreateScript(creator runtimecontext.ScriptCreator) tool.Tool {
 
 			return out, nil
 		},
-	).WithPermission("write", "", "创建脚本（写库并初始化脚本目录）")
+	)
 }
 
 // ioItemsSchema 构造 io_schema inputs / outputs 的 JSON Schema（对象数组）。

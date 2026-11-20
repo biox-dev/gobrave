@@ -31,8 +31,12 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 	if u.analysisSvc == nil {
 		return result, fmt.Errorf("update_analysis_node_agent: required services are not configured")
 	}
-	if in.NodeName == nil && in.Command == nil && in.ContainerTemplateID == nil {
-		return result, fmt.Errorf("update_analysis_node_agent: at least one of node_name / command / container_template_id must be provided")
+	fileEdit := runtimecontext.ResourceFileEdit{File: in.File, Content: in.Content, OldString: in.OldString, NewString: in.NewString}
+	if in.NodeName == nil && in.Command == nil && in.ContainerTemplateID == nil && fileEdit.IsZero() {
+		return result, fmt.Errorf("update_analysis_node_agent: at least one of node_name / command / container_template_id / file edit must be provided")
+	}
+	if !fileEdit.IsZero() && fileEdit.File != runtimecontext.ResourceFileCommand {
+		return result, fmt.Errorf("update_analysis_node_agent: unsupported file %q (expected command)", fileEdit.File)
 	}
 
 	node, err := u.loadNodeForProject(ctx, in.ProjectID, in.AnalysisNodeID, "update_analysis_node_agent")
@@ -63,12 +67,26 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 		}
 	}
 
+	command := ""
 	if in.Command != nil {
-		command := strings.TrimSpace(*in.Command)
-		if command == "" {
+		command = strings.TrimSpace(*in.Command)
+		if command == "" && fileEdit.IsZero() {
 			return result, fmt.Errorf("update_analysis_node_agent: command must not be empty")
 		}
-		// 命令只存在于 run.sh：与磁盘上的旧正文比较，决定是否需要重建运行期文件。
+	}
+	if !fileEdit.IsZero() {
+		// 文件编辑以 run.sh 当前正文为基准：Content 覆盖，或 old_string → new_string 唯一替换。
+		current, readErr := prepare.ReadCommandRunScript(node.CommandPath)
+		if readErr != nil {
+			return result, fmt.Errorf("update_analysis_node_agent: failed to read run.sh of node %d: %w", node.ID, readErr)
+		}
+		after, applyErr := fileEdit.Apply(current)
+		if applyErr != nil {
+			return result, fmt.Errorf("update_analysis_node_agent: %w", applyErr)
+		}
+		command = strings.TrimSpace(after)
+	}
+	if command != "" {
 		current, readErr := prepare.ReadCommandRunScript(node.CommandPath)
 		if readErr != nil {
 			return result, fmt.Errorf("update_analysis_node_agent: failed to read run.sh of node %d: %w", node.ID, readErr)
