@@ -274,6 +274,24 @@ func (m *mockContainerRepo) PageAppSessionByUserID(ctx context.Context, userID i
 	return items, int64(len(items)), nil
 }
 
+// PageAppSession 按查询条件分页，不加 user_id 过滤（与 DB 实现语义一致）。
+func (m *mockContainerRepo) PageAppSession(ctx context.Context, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error) {
+	items := make([]*types.AppSession, 0)
+	for _, v := range m.sessions {
+		if query != nil && query.AnalysisNodeID != nil && v.AnalysisNodeID != *query.AnalysisNodeID {
+			continue
+		}
+		if query != nil && query.ProjectID != nil && v.ProjectID != *query.ProjectID {
+			continue
+		}
+		if query != nil && query.AgentSessionID != nil && v.AgentSessionID != *query.AgentSessionID {
+			continue
+		}
+		items = append(items, v)
+	}
+	return items, int64(len(items)), nil
+}
+
 func (m *mockContainerRepo) CreateContainerInstance(ctx context.Context, item *types.ContainerInstance) error {
 	if item.ID == 0 {
 		item.ID = m.next()

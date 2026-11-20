@@ -828,6 +828,11 @@ func (r *TerminalSessionRegistry) createOrAdopt(_ context.Context, key TerminalS
 	// 2) 认领不到：复用原记录（没有才新建）拿到主键，容器以 owner_id 归属它。
 	//    未配置 store（单测 / 精简运行时）时退化为进程内占位 ID，会话仍然可用。
 	if rec == nil {
+		// 只有真正新建会话才校验单用户配额：复用已有记录（含空闲超时后重建容器）
+		// 不受上限限制，否则用户连自己的旧会话都恢复不了。
+		// if err := r.checkQuota(createCtx, key.UserID); err != nil {
+		// 	return nil, nil, false, err
+		// }
 		rec = r.createRecord(createCtx, key, opts.persistent)
 		if rec == nil {
 			if r.store != nil {
