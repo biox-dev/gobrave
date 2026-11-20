@@ -550,6 +550,32 @@ func (s *ChatService) GetSessionMeta(ctx context.Context, id int64) (Session, er
 	return s.sessions.Get(ctx, id)
 }
 
+// DeleteSession 删除会话，并级联清理其全部关联数据（含子会话）：
+// 消息、文件历史、任务、权限 / 提问请求、会话资源关联与归属该会话的记忆。
+// 资源关联只删除「会话 ↔ 资源」的关联行，不删除脚本 / 工作流等资源本身。
+//
+// 会话仍有正在执行的一轮任务时拒绝删除：执行中的轮次会继续向该会话写入消息，
+// 删除后会产生孤儿数据。前端需先取消本轮任务，或等本轮结束后再删除。
+func (s *ChatService) DeleteSession(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return ErrSessionNotFound
+	}
+	sess, err := s.sessions.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if sess.CurrentTaskID != 0 {
+		// 只拦截本进程内仍在执行的轮次；failed 且可续跑的任务不在 turns 中，允许删除。
+		s.mu.Lock()
+		_, running := s.turns[sess.CurrentTaskID]
+		s.mu.Unlock()
+		if running {
+			return ErrSessionBusy
+		}
+	}
+	return s.sessions.Delete(ctx, id)
+}
+
 // ForkSession 把源会话的历史复制成一个新的独立会话。
 //
 // 与 opencode 的「分叉对话」一致：新会话是顶层会话（出现在会话列表中），

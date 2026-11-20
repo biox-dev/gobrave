@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,21 +41,77 @@ func (r *gormSessionStore) Update(ctx context.Context, s *agent.Session) error {
 	return r.db.WithContext(ctx).Save(s).Error
 }
 
-// Delete 删除会话，并级联清理其消息与文件历史。
+// Delete 删除会话，并级联清理该会话（含其子会话）的全部关联数据：
+//
+//   - 消息（agent_messages）与文件历史（agent_history_files）；
+//   - 任务（agent_tasks）、权限请求（agent_permission_requests）与提问（agent_question_requests）；
+//   - 会话结果关联（agent_session_resources）——只删除「会话 ↔ 资源」的关联行，
+//     不删除资源本身（脚本 / 工作流 / 分析节点 / 分析运行仍然保留）；
+//   - 归属该会话的记忆（agent_memories，仅 session_id 指向该会话的条目）。
+//
+// 子会话（parent_session_id 指向本会话的标题生成 / 子 Agent 会话）是内部实现细节，
+// 不会出现在会话列表中，因此一并删除，避免留下不可见的孤儿数据。
 func (r *gormSessionStore) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("session_id = ?", id).Delete(&agent.Message{}).Error; err != nil {
+		ids, err := collectSessionTree(tx, id)
+		if err != nil {
 			return err
 		}
-		if err := tx.Where("session_id = ?", id).Delete(&agent.File{}).Error; err != nil {
+		// 权限 / 提问的 session_id 是以十进制字符串保存的会话主键。
+		sessionRefs := make([]string, 0, len(ids))
+		for _, sessionID := range ids {
+			sessionRefs = append(sessionRefs, strconv.FormatInt(sessionID, 10))
+		}
+
+		if err := tx.Where("session_id IN ?", ids).Delete(&agent.Message{}).Error; err != nil {
 			return err
 		}
-		// 会话删除时级联清理资源关联，避免留下指向已删除会话的孤儿记录。
-		if err := tx.Where("session_id = ?", id).Delete(&agent.SessionResource{}).Error; err != nil {
+		if err := tx.Where("session_id IN ?", ids).Delete(&agent.File{}).Error; err != nil {
 			return err
 		}
-		return tx.Where("id = ?", id).Delete(&agent.Session{}).Error
+		if err := tx.Where("session_id IN ?", ids).Delete(&agent.Task{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("session_id IN ?", sessionRefs).Delete(&agent.PermissionRequest{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("session_id IN ?", sessionRefs).Delete(&agent.QuestionRequest{}).Error; err != nil {
+			return err
+		}
+		// 只删除关联，不删除被关联的资源本身。
+		if err := tx.Where("session_id IN ?", ids).Delete(&agent.SessionResource{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("session_id IN ?", ids).Delete(&agent.Memory{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id IN ?", ids).Delete(&agent.Session{}).Error
 	})
+}
+
+// collectSessionTree 返回 root 及其全部后代会话 ID（BFS，按父会话逐层展开）。
+func collectSessionTree(tx *gorm.DB, root int64) ([]int64, error) {
+	ids := []int64{root}
+	seen := map[int64]struct{}{root: {}}
+	frontier := []int64{root}
+	for len(frontier) > 0 {
+		var children []int64
+		if err := tx.Model(&agent.Session{}).
+			Where("parent_session_id IN ?", frontier).
+			Pluck("id", &children).Error; err != nil {
+			return nil, err
+		}
+		frontier = frontier[:0]
+		for _, child := range children {
+			if _, ok := seen[child]; ok {
+				continue
+			}
+			seen[child] = struct{}{}
+			ids = append(ids, child)
+			frontier = append(frontier, child)
+		}
+	}
+	return ids, nil
 }
 
 // Fork 在一个事务内把源会话的历史复制到新会话。

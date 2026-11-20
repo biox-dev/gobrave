@@ -9,22 +9,19 @@ import (
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/errors"
-	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 )
 
-// SessionResourceHandler 提供会话结果（脚本 / 工作流 / 分析节点 / 分析运行 / 应用会话）的查询接口。
+// SessionResourceHandler 提供会话结果（脚本 / 工作流 / 分析节点 / 分析运行）的查询接口。
 //
-// 脚本 / 工作流 / 分析节点 / 分析运行来自 agent_session_resources 关联表；应用 / 终端会话
-// 不落关联表，而是按 AppSession.AgentSessionID 实时查询。资源名称在返回时按主键补全；
-// 资源已被删除时名称留空，但记录仍返回，便于前端提示「资源已不存在」而不是静默丢失。
+// 脚本 / 工作流 / 分析节点 / 分析运行来自 agent_session_resources 关联表。资源名称在返回时
+// 按主键补全；资源已被删除时名称留空，但记录仍返回，便于前端提示「资源已不存在」而不是静默丢失。
 type SessionResourceHandler struct {
-	sessions      agentinterfaces.SessionService
-	resources     agentinterfaces.SessionResourceService
-	workflowSvc   interfaces.WorkflowService
-	analysisRepo  interfaces.AnalysisRepository
-	containerRepo interfaces.ContainerRepository
+	sessions     agentinterfaces.SessionService
+	resources    agentinterfaces.SessionResourceService
+	workflowSvc  interfaces.WorkflowService
+	analysisRepo interfaces.AnalysisRepository
 	// projects 用于会话可见性判断：会话按项目隔离，项目成员都能查看。
 	projects interfaces.ProjectService
 }
@@ -35,16 +32,14 @@ func NewSessionResourceHandler(
 	resources agentinterfaces.SessionResourceService,
 	workflowSvc interfaces.WorkflowService,
 	analysisRepo interfaces.AnalysisRepository,
-	containerRepo interfaces.ContainerRepository,
 	projects interfaces.ProjectService,
 ) *SessionResourceHandler {
 	return &SessionResourceHandler{
-		sessions:      sessions,
-		resources:     resources,
-		workflowSvc:   workflowSvc,
-		analysisRepo:  analysisRepo,
-		containerRepo: containerRepo,
-		projects:      projects,
+		sessions:     sessions,
+		resources:    resources,
+		workflowSvc:  workflowSvc,
+		analysisRepo: analysisRepo,
+		projects:     projects,
 	}
 }
 
@@ -58,11 +53,11 @@ type sessionResourceItem struct {
 
 // ListSessionResources godoc
 // @Summary      查询会话关联的资源
-// @Description  按资源类型返回当前用户的某个会话产生 / 修改过的结果（脚本 / 工作流 / 分析节点 / 分析运行 / 应用会话）
+// @Description  按资源类型返回当前用户的某个会话产生 / 修改过的结果（脚本 / 工作流 / 分析节点 / 分析运行）
 // @Tags         Agent
 // @Produce      json
 // @Param        session_id     query     string  true  "会话 ID"
-// @Param        resource_type  query     string  true  "资源类型：script / workflow / analysis_node / analysis / app_session"
+// @Param        resource_type  query     string  true  "资源类型：script / workflow / analysis_node / analysis"
 // @Success      200  {object}  map[string]interface{}
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
@@ -83,7 +78,7 @@ func (h *SessionResourceHandler) ListSessionResources(c *gin.Context) {
 	}
 	resourceType := agenttypes.SessionResourceType(strings.TrimSpace(c.Query("resource_type")))
 	if !resourceType.Valid() {
-		c.Error(errors.NewValidationError("invalid resource_type; expected script / workflow / analysis_node / analysis / app_session"))
+		c.Error(errors.NewValidationError("invalid resource_type; expected script / workflow / analysis_node / analysis"))
 		return
 	}
 
@@ -96,17 +91,6 @@ func (h *SessionResourceHandler) ListSessionResources(c *gin.Context) {
 	// 可见性校验：会话按项目共享，项目成员都能查看；非项目成员返回 403。
 	if err := ensureProjectAccessible(ctx, h.projects, session.ProjectID, userID); err != nil {
 		c.Error(err)
-		return
-	}
-
-	// app_session 不走关联表，而是按 AppSession.AgentSessionID 实时查询。
-	if resourceType == agenttypes.SessionResourceTypeAppSession {
-		items, err := h.listAppSessions(ctx, sessionID)
-		if err != nil {
-			handleAgentError(c, err, "failed to list session app sessions")
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"data": items})
 		return
 	}
 
@@ -127,7 +111,6 @@ type sessionResourceGroups struct {
 	Workflow     []sessionResourceItem `json:"workflow"`
 	AnalysisNode []sessionResourceItem `json:"analysis_node"`
 	Analysis     []sessionResourceItem `json:"analysis"`
-	AppSession   []sessionResourceItem `json:"app_session"`
 }
 
 // ListAllSessionResources godoc
@@ -172,7 +155,6 @@ func (h *SessionResourceHandler) ListAllSessionResources(c *gin.Context) {
 		Workflow:     []sessionResourceItem{},
 		AnalysisNode: []sessionResourceItem{},
 		Analysis:     []sessionResourceItem{},
-		AppSession:   []sessionResourceItem{},
 	}
 
 	// 关联表一次查出所有类型，避免前端按类型发多次请求。
@@ -194,14 +176,6 @@ func (h *SessionResourceHandler) ListAllSessionResources(c *gin.Context) {
 		}
 	}
 
-	// 应用 / 终端会话不落关联表，按 AppSession.AgentSessionID 实时查询。
-	appSessions, err := h.listAppSessions(ctx, sessionID)
-	if err != nil {
-		handleAgentError(c, err, "failed to list session app sessions")
-		return
-	}
-	groups.AppSession = append(groups.AppSession, appSessions...)
-
 	c.JSON(http.StatusOK, gin.H{"data": groups})
 }
 
@@ -217,37 +191,6 @@ func (h *SessionResourceHandler) buildItems(ctx context.Context, rows []agenttyp
 		})
 	}
 	return items
-}
-
-// listAppSessions 返回由 AgentSessionID 指向该会话的应用 / 终端会话。
-//
-// 这里按 AppSession.AgentSessionID 实时查询，而不是读 agent_session_resources：
-// 应用会话的归属是 AppSession 上的字段，没有必要再维护一份关联副本。
-func (h *SessionResourceHandler) listAppSessions(ctx context.Context, agentSessionID int64) ([]sessionResourceItem, error) {
-	if h.containerRepo == nil {
-		return []sessionResourceItem{}, nil
-	}
-	query := &types.AppSessionPageQuery{AgentSessionID: &agentSessionID}
-	pagination := &types.Pagination{Page: 1, PageSize: 1000}
-	// 归属已由 AgentSessionID 唯一确定，不再叠加 user_id 过滤：会话按项目共享，
-	// 项目成员都可能看到别人在该会话下创建的应用会话。
-	rows, _, err := h.containerRepo.PageAppSession(ctx, pagination, query)
-	if err != nil {
-		return nil, err
-	}
-	items := make([]sessionResourceItem, 0, len(rows))
-	for _, row := range rows {
-		if row == nil {
-			continue
-		}
-		items = append(items, sessionResourceItem{
-			ResourceID:   row.ID,
-			ResourceType: string(agenttypes.SessionResourceTypeAppSession),
-			Name:         row.Name,
-			CreatedAt:    row.CreatedAt,
-		})
-	}
-	return items, nil
 }
 
 // resolveName 按资源类型补全展示名；资源已删除或读取失败时返回空串。

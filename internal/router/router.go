@@ -495,6 +495,7 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler, sess
 	r.POST("/agent/session/page", handler.PageSessions)
 	r.GET("/agent/session/get", handler.GetSession)
 	r.POST("/agent/session/fork", handler.ForkSession)
+	r.POST("/agent/session/delete", handler.DeleteSession)
 	// 会话实时流订阅：进入会话页时订阅、离开时退订（项目内成员均可订阅）。
 	// 订阅粒度为会话而不是任务，一次订阅覆盖该会话的所有轮次。
 	r.POST("/agent/session/subscribe", handler.SubscribeSession)
@@ -507,6 +508,7 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler, sess
 	r.POST("/agent/conversation/page", handler.PageSessions)
 	r.GET("/agent/conversation/get", handler.GetSession)
 	r.POST("/agent/conversation/fork", handler.ForkSession)
+	r.POST("/agent/conversation/delete", handler.DeleteSession)
 
 	r.GET("/agent/skill/list", handler.ListSkills)
 	r.GET("/agent/skill/get", handler.GetSkill)

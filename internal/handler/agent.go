@@ -1241,6 +1241,59 @@ func (h *AgentHandler) ForkSession(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
+// DeleteSession godoc
+// @Summary      删除 Agent 会话
+// @Description  删除会话（含子会话）并级联清理消息、文件历史、任务、权限 / 提问请求、
+// @Description  会话资源关联与归属该会话的记忆；资源关联只删除关联行，不删除脚本 / 工作流等资源本身；
+// @Description  会话按项目共享，项目成员均可删除；仍有正在执行的一轮任务时返回 409，需先取消任务或等待本轮结束
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      taskIDBody  true  "会话 ID"
+// @Success      200      {object}  gin.H
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      403      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/session/delete [post]
+func (h *AgentHandler) DeleteSession(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body taskIDBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+
+	id, err := parseAgentID(body.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
+
+	// 与 GetSession 一致：会话按项目共享，项目成员都能删除。
+	sess, err := h.chat.GetSessionMeta(c.Request.Context(), id)
+	if err != nil {
+		handleAgentError(c, err, "failed to get session")
+		return
+	}
+	if err := ensureProjectAccessible(c.Request.Context(), h.projects, sess.ProjectID, userID); err != nil {
+		c.Error(err)
+		return
+	}
+
+	if err := h.chat.DeleteSession(c.Request.Context(), id); err != nil {
+		handleAgentError(c, err, "failed to delete session")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
+}
+
 // PagePermissions godoc
 // @Summary      分页查询权限请求
 // @Tags         Agent
@@ -1820,7 +1873,8 @@ func handleAgentError(c *gin.Context, err error, internalMsg string) {
 		stderrs.Is(err, agenttypes.ErrInvalidQuestionTransition),
 		stderrs.Is(err, agenttypes.ErrUnknownQuestionID),
 		stderrs.Is(err, agenttypes.ErrTaskAlreadyRunning),
-		stderrs.Is(err, agenttypes.ErrTaskNotResumable):
+		stderrs.Is(err, agenttypes.ErrTaskNotResumable),
+		stderrs.Is(err, agenttypes.ErrSessionBusy):
 		c.Error(errors.NewConflictError(err.Error()))
 	default:
 		c.Error(errors.NewInternalServerError(internalMsg).WithDetails(err.Error()))

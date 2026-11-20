@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
@@ -360,13 +362,70 @@ func TestGormSessionAndMessageStores(t *testing.T) {
 		t.Fatalf("List user-1: total=%d len=%d err=%v", total, len(page), err)
 	}
 
-	// 删除会话应级联清理消息。
+	// 关联数据：任务 / 权限 / 提问 / 会话资源关联 / 记忆 / 文件历史（含子会话消息）。
+	task := agenttypes.NewTask(agenttypes.Request{Provider: agenttypes.ProviderMock}, agenttypes.TaskFacts{SessionID: sess.ID})
+	if err := db.Create(task).Error; err != nil {
+		t.Fatalf("Create task: %v", err)
+	}
+	sessionRef := strconv.FormatInt(sess.ID, 10)
+	perm := agenttypes.NewPermissionRequest(task.ID, sessionRef, agenttypes.Operation{Type: agenttypes.OperationWrite, Path: "/a/b"})
+	if err := db.Create(perm).Error; err != nil {
+		t.Fatalf("Create permission: %v", err)
+	}
+	question := agenttypes.NewQuestionRequest(task.ID, sessionRef, agenttypes.AskUserInput{
+		Title:     "confirm",
+		Questions: []agenttypes.Question{{ID: "q1", Type: agenttypes.QuestionTypeText, Title: "ok?"}},
+	})
+	if err := db.Create(question).Error; err != nil {
+		t.Fatalf("Create question: %v", err)
+	}
+	link := &agenttypes.SessionResource{SessionID: sess.ID, ResourceType: agenttypes.SessionResourceTypeScript, ResourceID: 424242}
+	if err := db.Create(link).Error; err != nil {
+		t.Fatalf("Create session resource: %v", err)
+	}
+	memory := agenttypes.NewMemory(1, 0, sess.ID, agenttypes.MemoryKindSummary, "session summary")
+	if err := db.Create(memory).Error; err != nil {
+		t.Fatalf("Create memory: %v", err)
+	}
+	now := time.Now()
+	file := &agenttypes.File{SessionID: sess.ID, Path: "/tmp/a.txt", Content: "x", Version: agenttypes.InitialVersion, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(file).Error; err != nil {
+		t.Fatalf("Create history file: %v", err)
+	}
+	if _, err := messages.Create(ctx, agenttypes.MessageCreateParams{SessionID: childSess.ID, Role: agenttypes.RoleUser, Kind: agenttypes.KindUser, Content: "child"}); err != nil {
+		t.Fatalf("Create child message: %v", err)
+	}
+
+	// 删除会话应级联清理消息、任务、权限、提问、资源关联、记忆、文件历史与子会话。
 	if err := sessions.Delete(ctx, sess.ID); err != nil {
 		t.Fatalf("Delete session: %v", err)
 	}
 	if msgs, err := messages.List(ctx, sess.ID); err != nil || len(msgs) != 0 {
 		t.Fatalf("messages not cascaded: len=%d err=%v", len(msgs), err)
 	}
+	if msgs, err := messages.List(ctx, childSess.ID); err != nil || len(msgs) != 0 {
+		t.Fatalf("child messages not cascaded: len=%d err=%v", len(msgs), err)
+	}
+	if _, err := sessions.Get(ctx, taskSess.ID); !errors.Is(err, agenttypes.ErrSessionNotFound) {
+		t.Fatalf("child session not cascaded: err=%v", err)
+	}
+
+	assertCount := func(model any, where string, args ...any) {
+		t.Helper()
+		var n int64
+		if err := db.Model(model).Where(where, args...).Count(&n).Error; err != nil {
+			t.Fatalf("count %T: %v", model, err)
+		}
+		if n != 0 {
+			t.Fatalf("%T still has %d row(s) after session delete", model, n)
+		}
+	}
+	assertCount(&agenttypes.Task{}, "session_id = ?", sess.ID)
+	assertCount(&agenttypes.PermissionRequest{}, "task_id = ?", task.ID)
+	assertCount(&agenttypes.QuestionRequest{}, "task_id = ?", task.ID)
+	assertCount(&agenttypes.SessionResource{}, "session_id = ?", sess.ID)
+	assertCount(&agenttypes.Memory{}, "session_id = ?", sess.ID)
+	assertCount(&agenttypes.File{}, "session_id = ?", sess.ID)
 }
 
 // TestGormMemoryRepositoryRoundTrip 校验 GORM 记忆仓库的往返（含 Metadata 序列化）。

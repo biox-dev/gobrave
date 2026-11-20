@@ -11,6 +11,9 @@ import (
 // ErrSessionNotFound 表示会话不存在。
 var ErrSessionNotFound = errors.New("session: not found")
 
+// ErrSessionBusy 表示会话仍有正在执行的一轮任务，暂不允许删除。
+var ErrSessionBusy = errors.New("session: turn is running")
+
 // ErrInvalidParentSession 表示创建子会话时父会话 ID 无效。
 var ErrInvalidParentSession = errors.New("session: parent session id is required")
 
