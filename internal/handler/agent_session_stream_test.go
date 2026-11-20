@@ -94,3 +94,33 @@ func TestSessionEventBridgeIgnoresSessionlessEvents(t *testing.T) {
 		t.Fatalf("unexpected subscription entries: %v", b.subs)
 	}
 }
+
+// TestSessionEventBridgeDropSession 验证会话删除后清理其全部订阅：
+// 该会话的记录消失、byUser 里的对应项摘掉，其他会话的订阅不受影响。
+func TestSessionEventBridgeDropSession(t *testing.T) {
+	b := newSessionEventBridge(nil)
+	b.subscribe(10, 1)
+	b.subscribe(10, 2)
+	b.subscribe(11, 2)
+
+	b.dropSession(10)
+	if got := len(b.subscribers(10)); got != 0 {
+		t.Fatalf("subscribers of dropped session = %d, want 0", got)
+	}
+	if _, ok := b.byUser[1]; ok {
+		t.Fatalf("byUser still holds user without subscriptions: %v", b.byUser)
+	}
+	if got := len(b.subscribers(11)); got != 1 {
+		t.Fatalf("other session subscription lost, subscribers = %d", got)
+	}
+	if got := len(b.byUser[2]); got != 1 {
+		t.Fatalf("user 2 remaining sessions = %d, want 1", got)
+	}
+
+	// 幂等：重复清理不 panic，也不会影响其他会话。
+	b.dropSession(10)
+	b.dropSession(0)
+	if got := len(b.subscribers(11)); got != 1 {
+		t.Fatalf("subscription lost after idempotent drop, subscribers = %d", got)
+	}
+}

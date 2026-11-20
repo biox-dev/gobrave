@@ -1291,6 +1291,9 @@ func (h *AgentHandler) DeleteSession(c *gin.Context) {
 		handleAgentError(c, err, "failed to delete session")
 		return
 	}
+	// 会话已不存在：清掉所有用户（含其他项目成员）在该会话上的实时订阅，
+	// 避免事件桥残留永远不会再有事件的记录。
+	h.dropSessionSubscribers(id)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
 }
 

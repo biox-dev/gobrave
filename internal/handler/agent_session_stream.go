@@ -103,6 +103,36 @@ func (b *sessionEventBridge) unsubscribe(sessionID, userID int64) {
 	}
 }
 
+// dropSession 移除某个会话的全部订阅（会话被删除时调用）。
+//
+// 订阅只描述「谁正在看这个会话」，会话已不存在时继续保留只会让桥里残留
+// 再也不会产生事件的记录；同时把这些会话从 byUser 反向索引中摘掉，
+// 避免用户离线清理时再做一次无效遍历。
+func (b *sessionEventBridge) dropSession(sessionID int64) {
+	if sessionID <= 0 {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for userID := range b.subs[sessionID] {
+		sessions, ok := b.byUser[userID]
+		if !ok {
+			continue
+		}
+		delete(sessions, sessionID)
+		if len(sessions) > 0 {
+			continue
+		}
+		delete(b.byUser, userID)
+		// 该用户已没有任何订阅：等待中的离线清理不需要再跑。
+		if timer, ok := b.offlineTimers[userID]; ok {
+			timer.Stop()
+			delete(b.offlineTimers, userID)
+		}
+	}
+	delete(b.subs, sessionID)
+}
+
 // removeUserLocked 移除某个用户的全部会话订阅（用户已离线且超过宽限期）。
 func (b *sessionEventBridge) removeUserLocked(userID int64) {
 	sessions := b.byUser[userID]
@@ -271,7 +301,17 @@ func (h *AgentHandler) setSessionSubscribed(c *gin.Context, subscribed bool) {
 		return
 	}
 
-	// 订阅是项目内共享的：只有会话所属项目的成员才能订阅 / 退订。
+	// 退订只移除调用者自己在内存里的订阅，不读取任何会话数据，因此必须先于
+	// 会话查询处理：页面离开（含删除会话后跳转）时 effect 清理会带着可能已删除
+	// 的会话 ID 再调一次，若这里查会话就会 404，把一次正常的清理变成用户可见错误。
+	// 也不做项目校验：退订只影响调用者自身，且对不存在的会话天然幂等。
+	if !subscribed {
+		h.unsubscribeSession(sessionID, userID)
+		c.JSON(http.StatusOK, gin.H{"ok": true, "session_id": body.SessionID, "subscribed": false})
+		return
+	}
+
+	// 订阅是项目内共享的：只有会话所属项目的成员才能订阅。
 	meta, err := h.chat.GetSessionMeta(c.Request.Context(), sessionID)
 	if err != nil {
 		handleAgentError(c, err, "failed to get session")
@@ -282,12 +322,8 @@ func (h *AgentHandler) setSessionSubscribed(c *gin.Context, subscribed bool) {
 		return
 	}
 
-	if subscribed {
-		h.subscribeSession(sessionID, userID)
-	} else {
-		h.unsubscribeSession(sessionID, userID)
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "session_id": body.SessionID, "subscribed": subscribed})
+	h.subscribeSession(sessionID, userID)
+	c.JSON(http.StatusOK, gin.H{"ok": true, "session_id": body.SessionID, "subscribed": true})
 }
 
 // subscribeSession / unsubscribeSession 是内部入口（nil-safe），供 Chat / ResumeTask 复用。
@@ -300,5 +336,15 @@ func (h *AgentHandler) subscribeSession(sessionID, userID int64) {
 func (h *AgentHandler) unsubscribeSession(sessionID, userID int64) {
 	if h.stream != nil {
 		h.stream.unsubscribe(sessionID, userID)
+	}
+}
+
+// dropSessionSubscribers 在会话被删除后清掉该会话的全部订阅（nil-safe）。
+//
+// 删除时只有删除者自己可能会显式退订，其他正在看这个会话的成员不会收到通知，
+// 订阅只存在服务端内存里，因此由删除入口统一清理。
+func (h *AgentHandler) dropSessionSubscribers(sessionID int64) {
+	if h.stream != nil {
+		h.stream.dropSession(sessionID)
 	}
 }
