@@ -41,6 +41,17 @@ func (r *gormSessionStore) Update(ctx context.Context, s *agent.Session) error {
 	return r.db.WithContext(ctx).Save(s).Error
 }
 
+func (r *gormSessionStore) UpdateTitleIfUnchanged(ctx context.Context, id int64, priorTitle, title string) (bool, error) {
+	res := r.db.WithContext(ctx).
+		Model(&agent.Session{}).
+		Where("id = ? AND title = ?", id, priorTitle).
+		Updates(map[string]any{"title": title, "updated_at": time.Now().UTC()})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
 // Delete 删除会话，并级联清理该会话（含其子会话）的全部关联数据：
 //
 //   - 消息（agent_messages）与文件历史（agent_history_files）；

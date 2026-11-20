@@ -173,7 +173,8 @@ func (a *customAgent) toolRegistry(ctx context.Context, req agenttypes.Request, 
 // 白名单（req.Tools）为空表示不限制；非空时按名称裁剪，未注册的名称只告警不阻断
 // （常见于 Profile 里写错工具名或工具被下线），避免整次任务因配置陈旧而失败。
 func (a *customAgent) profileTools(ctx context.Context, req agenttypes.Request, rt agentinterfaces.Runtime) []tool.Tool {
-	if a.opts.Tools == nil {
+	// 内部一次性补全（如标题生成）显式要求不暴露工具。
+	if req.DisableTools || a.opts.Tools == nil {
 		return nil
 	}
 	tools := a.opts.Tools.Filter(req.Tools)

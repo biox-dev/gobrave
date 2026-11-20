@@ -110,6 +110,10 @@ func (s *sessionService) Save(ctx context.Context, session Session) (Session, er
 	return session, nil
 }
 
+func (s *sessionService) UpdateTitleIfUnchanged(ctx context.Context, id int64, priorTitle, title string) (bool, error) {
+	return s.store.UpdateTitleIfUnchanged(ctx, id, priorTitle, title)
+}
+
 func (s *sessionService) Delete(ctx context.Context, id int64) error {
 	return s.store.Delete(ctx, id)
 }

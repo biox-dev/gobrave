@@ -293,6 +293,11 @@ func (a *copilotAgent) sessionConfig(ctx context.Context, req agenttypes.Request
 //	ToolInvocation → agenttypes.ToolCall → 输出 tool_call 事件 → 执行 → tool.Result
 //	  → 输出 tool_result 事件 → copilot.ToolResult → 回传给模型
 func (a *copilotAgent) buildTools(rt agentinterfaces.Runtime, req agenttypes.Request) []copilot.Tool {
+	// DisableTools 优先于 Profile 白名单：内部一次性调用（如标题生成）不暴露任何工具。
+	if req.DisableTools {
+		return nil
+	}
+
 	out := make([]copilot.Tool, 0)
 
 	// 工具执行上下文 = 本轮业务事实（RuntimeContext / TaskFacts）+ 权限。

@@ -20,6 +20,8 @@ type SessionService interface {
 	Get(ctx context.Context, id int64) (types.Session, error)
 	List(ctx context.Context, params types.SessionListParams) ([]types.Session, int64, error)
 	Save(ctx context.Context, session types.Session) (types.Session, error)
+	// UpdateTitleIfUnchanged 仅当当前标题仍等于 priorTitle 时更新标题，返回是否命中。
+	UpdateTitleIfUnchanged(ctx context.Context, id int64, priorTitle, title string) (bool, error)
 	Delete(ctx context.Context, id int64) error
 }
 

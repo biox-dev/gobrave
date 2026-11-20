@@ -45,6 +45,11 @@ type Request struct {
 	// 通常由 AgentService 依据 Profile.Tools 覆盖（见 applyProfileOverrides），
 	// Provider 在组装工具时据此裁剪注册表，未注册的名称会被忽略。
 	Tools []string `json:"tools,omitempty"`
+	// DisableTools 为真时本次调用不向模型暴露任何工具（优先于 Profile / 全局注册表）。
+	//
+	// 供标题生成等内部一次性文本补全使用：这些调用只需要模型输出文本，
+	// 不应携带工具定义，也不应触发工具调用。
+	DisableTools bool `json:"disable_tools,omitempty"`
 	// RuntimeContext 是本轮调用的业务上下文（业务类型 / 模板变量）。
 	//
 	// 由 HTTP Handler 的 RuntimeContextResolver 解析 env(type,id) 产出，随请求一路传到

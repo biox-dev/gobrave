@@ -80,6 +80,11 @@ type SessionStore interface {
 	Create(ctx context.Context, s *types.Session) error
 	Get(ctx context.Context, id int64) (*types.Session, error)
 	Update(ctx context.Context, s *types.Session) error
+	// UpdateTitleIfUnchanged 仅当当前标题仍等于 priorTitle 时更新标题，返回是否命中。
+	//
+	// 用一条原子 UPDATE 完成「比较 + 写入」：避免异步标题生成与用户改名 /
+	// 轮次收尾（同样是整行 Save）并发时互相覆盖。
+	UpdateTitleIfUnchanged(ctx context.Context, id int64, priorTitle, title string) (bool, error)
 	Delete(ctx context.Context, id int64) error
 	List(ctx context.Context, params types.SessionListParams) ([]*types.Session, int64, error)
 	// Fork 在一个事务内复制源会话的消息（可选复制文件历史最新版本）到新会话。

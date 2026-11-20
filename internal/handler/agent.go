@@ -269,6 +269,7 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 // Chat godoc
 // @Summary      多轮对话
 // @Description  发送一条消息：新建会话或续接已有会话；返回本轮任务 ID，实时内容走 WS 推送
+// @Description  新建会话时先用首条问题写入占位标题，再异步调用 Agent 生成更贴切的标题（不阻塞本轮）
 // @Tags         Agent
 // @Accept       json
 // @Produce      json

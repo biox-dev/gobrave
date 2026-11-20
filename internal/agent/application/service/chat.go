@@ -114,12 +114,15 @@ func (s *ChatService) lockFor(sessionID int64) *sync.Mutex {
 //
 // 锁在本轮结束时由 finishTurn 释放。
 func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Session, error) {
+	isNewSession := in.SessionID == 0
+
 	sess, err := s.getOrCreate(ctx, in)
 	if err != nil {
 		return nil, Session{}, err
 	}
 
-	// 首轮对话时用用户输入初始化会话标题（与 opencode 一致：截断到固定长度）。
+	// 首轮对话时先用用户输入写入「占位标题」（截断到固定长度），保证会话列表立即可读；
+	// 新建会话时会再异步调用 Agent 生成更贴切的标题并覆盖这个占位值。
 	// 标题一旦有值（用户改名 / 已有历史）就不再覆盖，避免多轮对话把标题改掉。
 	if strings.TrimSpace(sess.Title) == "" {
 		if title := sessionTitleFromMessage(in.Message); title != "" {
@@ -186,6 +189,12 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Sess
 	s.mu.Lock()
 	s.turns[task.ID] = &turnState{sessionID: sess.ID, unlock: l.Unlock}
 	s.mu.Unlock()
+
+	// 新建会话：异步用 Agent 根据用户问题生成标题并回写。
+	// 不阻塞本轮执行；失败时保留上面的占位标题。
+	if isNewSession {
+		s.scheduleSessionTitle(ctx, sess, in)
+	}
 
 	return task, sess, nil
 }
