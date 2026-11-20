@@ -159,3 +159,31 @@ func TestProjectReportWriterApplyRejectsChangedFile(t *testing.T) {
 		t.Fatalf("expected error when file changed since the diff was prepared")
 	}
 }
+
+func TestProjectResourceBrowserGetReportByID(t *testing.T) {
+	stub := &stubReportProjectService{
+		report:  &types.ProjectReport{ID: 42, ProjectID: 7, Title: "QC report"},
+		content: "# QC report\n",
+	}
+	baseDir := t.TempDir()
+	b := &projectResourceBrowser{projectSvc: stub, cfg: &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}}}
+
+	detail, err := b.GetReportByID(context.Background(), 1, 7, 42)
+	if err != nil {
+		t.Fatalf("get report: %v", err)
+	}
+	wantFile := stub.report.OutputFile(baseDir)
+	if detail.ReportID != 42 || detail.ProjectID != 7 || detail.Title != "QC report" {
+		t.Fatalf("detail = %+v", detail)
+	}
+	if detail.FilePath != wantFile || detail.Content != "# QC report\n" {
+		t.Fatalf("file/content = %q/%q", detail.FilePath, detail.Content)
+	}
+
+	if _, err := b.GetReportByID(context.Background(), 1, 8, 42); err == nil {
+		t.Fatalf("expected error for report outside the active project")
+	}
+	if _, err := b.GetReportByID(context.Background(), 1, 7, 99); err == nil {
+		t.Fatalf("expected error for missing report")
+	}
+}

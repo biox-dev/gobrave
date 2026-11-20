@@ -50,6 +50,8 @@ type Deps struct {
 	TemplateBrowser runtimecontext.ContainerTemplateBrowser
 	DatasetBrowser  runtimecontext.DatasetBrowser
 	ReportContext   runtimecontext.ProjectReportContextResolver
+	// ReportBrowser 按 ID 查看项目报告及正文（get_report）。
+	ReportBrowser runtimecontext.ProjectReportBrowser
 	// DatasetWriter 准备已知 key 的数据集 / 向数据集登记文件
 	// （get_project_database_path / add_file_to_dataset）。
 	DatasetWriter runtimecontext.DatasetWriter

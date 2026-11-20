@@ -34,6 +34,7 @@ import (
 //   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径；
 //   - get_project_database_path：按固定 dataset_key=DATABASES 准备并返回项目数据库目录；
 //   - add_file_to_dataset：把文件登记到当前项目的数据集；
+//   - get_report：按 @report:<id> 引用读回报告标题 / 正文文件路径 / 正文内容；
 //   - get_report_context：按 @report:<id> 引用解析报告标题 / 工作目录 / 条目清单。
 //
 // 路径口径与 create_script / update_script 完全一致：脚本主文件 / io_schema.json / README.md
@@ -709,6 +710,55 @@ func (b *projectResourceBrowser) resolveDatasetFilePath(toolName string, project
 		return "", fmt.Errorf("%s: failed to resolve storage base dir: %w", toolName, err)
 	}
 	return filepath.Join(utils.GetDatasetDir(absBaseDir, projectID, datasetID), path), nil
+}
+
+// GetReportByID 按主键读取项目报告及其正文（get_report）。
+//
+// 复用 service 的归属校验：GetProjectReportDetailByID 会校验报告所属项目已绑定
+// 当前用户（越权时按 not found 处理），GetProjectReportFile 负责读 output.md
+// （文件不存在时返回空串）。这里只额外校验报告属于当前激活项目，避免跨项目读文件。
+func (b *projectResourceBrowser) GetReportByID(ctx context.Context, userID int64, projectID int64, reportID int64) (runtimecontext.ProjectReportDetail, error) {
+	const toolName = "get_report"
+	if userID <= 0 {
+		return runtimecontext.ProjectReportDetail{}, fmt.Errorf("%s: user_id is required", toolName)
+	}
+	if projectID <= 0 {
+		return runtimecontext.ProjectReportDetail{}, fmt.Errorf("%s: project_id is required", toolName)
+	}
+	if reportID <= 0 {
+		return runtimecontext.ProjectReportDetail{}, fmt.Errorf("%s: report_id is required", toolName)
+	}
+	if b.projectSvc == nil {
+		return runtimecontext.ProjectReportDetail{}, fmt.Errorf("%s: required services are not configured", toolName)
+	}
+
+	report, err := b.projectSvc.GetProjectReportDetailByID(ctx, userID, reportID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return runtimecontext.ProjectReportDetail{}, fmt.Errorf("%s: project report %d not found", toolName, reportID)
+		}
+		return runtimecontext.ProjectReportDetail{}, fmt.Errorf("%s: failed to load project report: %w", toolName, err)
+	}
+	if report == nil || report.ID == 0 {
+		return runtimecontext.ProjectReportDetail{}, fmt.Errorf("%s: project report %d not found", toolName, reportID)
+	}
+	// 报告按当前激活项目隔离，避免跨项目读到别的报告正文。
+	if report.ProjectID != projectID {
+		return runtimecontext.ProjectReportDetail{}, fmt.Errorf("%s: project report %d does not belong to the active project %d", toolName, reportID, projectID)
+	}
+
+	content, err := b.projectSvc.GetProjectReportFile(ctx, userID, reportID)
+	if err != nil {
+		return runtimecontext.ProjectReportDetail{}, fmt.Errorf("%s: failed to read report file: %w", toolName, err)
+	}
+
+	return runtimecontext.ProjectReportDetail{
+		ReportID:  report.ID,
+		ProjectID: report.ProjectID,
+		Title:     report.Title,
+		FilePath:  report.OutputFile(b.storageBaseDir()),
+		Content:   content,
+	}, nil
 }
 
 // GetReportContext 按报告 ID 解析报告标题 / 工作目录 / 输出文件与条目列表。

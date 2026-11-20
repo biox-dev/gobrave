@@ -286,6 +286,7 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		DatasetBrowser:  in.Browser,
 		DatasetWriter:   in.Browser,
 		ReportContext:   in.Browser,
+		ReportBrowser:   in.Browser,
 		ReportWriter:    in.ReportWriter,
 		Skills:          skillResolver,
 		SkillWriter:     skillWriter,

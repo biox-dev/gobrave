@@ -852,6 +852,33 @@ type ProjectReportContextResolver interface {
 	GetReportContext(ctx context.Context, userID int64, projectID int64, reportID int64) (ProjectReportContext, error)
 }
 
+// ProjectReportBrowser 抽象「按 ID 查看项目报告」的只读能力（get_report）。
+//
+// 与 ProjectReportContextResolver 互补：后者面向「撰写报告」给出工作目录与条目清单，
+// 本接口直接把报告正文（output.md）读回来，供模型回答「这份报告写了什么」或
+// 在 update_report 前确认当前内容。
+//
+// 由 container 的 projectResourceBrowser 实现，并在构造 builtin.Deps 时注入。
+type ProjectReportBrowser interface {
+	// GetReportByID 读取报告元信息与正文内容。
+	//
+	// reportID 必须属于当前激活项目（projectID），否则返回错误；userID 用于校验报告
+	// 所属项目已绑定该用户（越权时按 not found 处理）。正文文件不存在时 Content 为空串。
+	GetReportByID(ctx context.Context, userID int64, projectID int64, reportID int64) (ProjectReportDetail, error)
+}
+
+// ProjectReportDetail 是单个项目报告的只读详情（get_report 回传）。
+type ProjectReportDetail struct {
+	// ReportID / ProjectID 以字符串形式回传，避免大整数在模型侧丢失精度。
+	ReportID  int64  `json:"report_id,string"`
+	ProjectID int64  `json:"project_id,string"`
+	Title     string `json:"title"`
+	// FilePath 是报告正文文件（报告工作目录下的 output.md）的绝对路径。
+	FilePath string `json:"file_path"`
+	// Content 是报告正文（output.md）的当前内容；文件不存在时为空串。
+	Content string `json:"content"`
+}
+
 // ScriptBrief 是脚本的只读摘要（工具回传给模型的最小字段集）。
 //
 // ScriptFilePath / IOSchemaPath / ReadmeFile 由 types.Script.Files（utils.ScriptLayout）

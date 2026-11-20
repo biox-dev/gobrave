@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
@@ -57,6 +58,68 @@ func (f *fakeReportWriter) Apply(_ context.Context, plan runtimecontext.ProjectR
 // reportTestFacts 返回带用户 / 激活项目的执行事实 ctx。
 func reportTestFacts() context.Context {
 	return tool.WithTaskFacts(context.Background(), agenttypes.TaskFacts{UserID: 9, ProjectID: 7})
+}
+
+// fakeReportBrowser 是最小的 ProjectReportBrowser 实现，用于验证 get_report 行为。
+type fakeReportBrowser struct {
+	detail runtimecontext.ProjectReportDetail
+	err    error
+	gotIn  struct {
+		userID    int64
+		projectID int64
+		reportID  int64
+	}
+}
+
+func (f *fakeReportBrowser) GetReportByID(_ context.Context, userID int64, projectID int64, reportID int64) (runtimecontext.ProjectReportDetail, error) {
+	f.gotIn.userID = userID
+	f.gotIn.projectID = projectID
+	f.gotIn.reportID = reportID
+	if f.err != nil {
+		return runtimecontext.ProjectReportDetail{}, f.err
+	}
+	return f.detail, nil
+}
+
+func TestGetReportUsesFactsAndParsesReference(t *testing.T) {
+	b := &fakeReportBrowser{detail: runtimecontext.ProjectReportDetail{
+		ReportID:  42,
+		ProjectID: 7,
+		Title:     "QC report",
+		FilePath:  "/data/7/report/42/output.md",
+		Content:   "# QC report\n",
+	}}
+
+	out, err := GetReport(b).Execute(reportTestFacts(), json.RawMessage(`{"report_id":"@report:42"}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	res := out.(GetReportOutput)
+	if res.Error != "" {
+		t.Fatalf("unexpected error: %s", res.Error)
+	}
+	if b.gotIn.userID != 9 || b.gotIn.projectID != 7 || b.gotIn.reportID != 42 {
+		t.Fatalf("GetReportByID input = %+v", b.gotIn)
+	}
+	if res.Title != "QC report" || res.Content != "# QC report\n" || res.FilePath != "/data/7/report/42/output.md" {
+		t.Fatalf("output = %+v", res)
+	}
+}
+
+func TestGetReportReturnsBrowserErrorInOutput(t *testing.T) {
+	b := &fakeReportBrowser{err: errors.New("project report 42 not found")}
+
+	out, err := GetReport(b).Execute(reportTestFacts(), json.RawMessage(`{"report_id":"42"}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	res := out.(GetReportOutput)
+	if res.Error == "" {
+		t.Fatalf("expected error in output")
+	}
+	if res.ReportID != 42 {
+		t.Fatalf("report id = %d, want 42", res.ReportID)
+	}
 }
 
 func TestCreateReportUsesFactsAndApplies(t *testing.T) {
