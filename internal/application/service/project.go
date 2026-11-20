@@ -314,7 +314,7 @@ func (s *projectService) AddProjectReport(ctx context.Context, userID int64, rep
 // ensureProjectReportFile 确保报告工作目录与自身 markdown 文件存在。
 // 目录或文件已存在时不覆盖，任何失败都视为 best-effort 忽略。
 func (s *projectService) ensureProjectReportFile(report *types.ProjectReport) {
-	dir, err := s.projectReportDir(report)
+	dir, file, err := s.projectReportPaths(report)
 	if err != nil {
 		return
 	}
@@ -322,7 +322,6 @@ func (s *projectService) ensureProjectReportFile(report *types.ProjectReport) {
 		return
 	}
 
-	file := filepath.Join(dir, types.DefaultProjectReportFilename)
 	if _, statErr := os.Stat(file); statErr == nil {
 		return
 	}
@@ -942,14 +941,20 @@ func readMarkdownFile(dir string) string {
 }
 
 func (s *projectService) projectReportDir(report *types.ProjectReport) (string, error) {
-	if s.cfg == nil || s.cfg.Storage == nil {
-		return "", errors.New("storage config is missing")
-	}
-	baseDir := strings.TrimSpace(s.cfg.Storage.BaseDir)
+	dir, _, err := s.projectReportPaths(report)
+	return dir, err
+}
+
+// projectReportPaths 返回报告工作目录与其正文文件路径。
+//
+// 两者由 ProjectReport.WorkspaceDir / OutputFile 统一推导（单一事实源），
+// 调用方不再各自拼 utils.GetProjectReportDir + output.md。
+func (s *projectService) projectReportPaths(report *types.ProjectReport) (string, string, error) {
+	baseDir := s.storageBaseDir()
 	if baseDir == "" {
-		return "", errors.New("storage base dir is empty")
+		return "", "", errors.New("storage base dir is empty or not configured")
 	}
-	return utils.GetProjectReportDir(baseDir, report.ProjectID, strconv.FormatInt(report.ID, 10)), nil
+	return report.WorkspaceDir(baseDir), report.OutputFile(baseDir), nil
 }
 
 // projectReportDirByID 按报告主键解析报告工作目录（内部先做归属校验）。
@@ -974,7 +979,7 @@ func (s *projectService) GetProjectReportFile(ctx context.Context, userID int64,
 		return "", err
 	}
 
-	dir, err := s.projectReportDir(report)
+	dir, file, err := s.projectReportPaths(report)
 	if err != nil {
 		return "", err
 	}
@@ -982,7 +987,7 @@ func (s *projectService) GetProjectReportFile(ctx context.Context, userID int64,
 	// 报告文件所在目录从第一次读取起就纳入版本管理（best-effort：失败不影响读取）。
 	s.ensureProjectReportGitRepo(dir)
 
-	data, err := os.ReadFile(filepath.Join(dir, types.DefaultProjectReportFilename))
+	data, err := os.ReadFile(file)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -1001,7 +1006,7 @@ func (s *projectService) UpdateProjectReportFile(ctx context.Context, userID int
 		return err
 	}
 
-	dir, err := s.projectReportDir(report)
+	dir, file, err := s.projectReportPaths(report)
 	if err != nil {
 		return err
 	}
@@ -1009,7 +1014,7 @@ func (s *projectService) UpdateProjectReportFile(ctx context.Context, userID int
 		return err
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, types.DefaultProjectReportFilename), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
 		return err
 	}
 

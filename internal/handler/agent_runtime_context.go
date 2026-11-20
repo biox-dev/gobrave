@@ -184,11 +184,11 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 				if reportErr != nil {
 					return nil, reportErr
 				}
-				dir = utils.GetProjectReportDir(r.storageBaseDir(), report.ProjectID, fmt.Sprintf("%d", report.ID))
+				dir = report.WorkspaceDir(r.storageBaseDir())
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					return nil, fmt.Errorf("failed to create project report working directory: %w", err)
 				}
-				outputFile := utils.GetProjectReportOutputFile(dir)
+				outputFile := report.OutputFile(r.storageBaseDir())
 				label = report.Title
 				// 科研报告撰写提示词由 Profile 模板负责组织，这里只提供变量（输出文件路径等）。
 				vars["output_file"] = outputFile

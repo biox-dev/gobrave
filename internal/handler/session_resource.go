@@ -13,9 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SessionResourceHandler 提供会话结果（脚本 / 工作流 / 分析节点 / 分析运行）的查询接口。
+// SessionResourceHandler 提供会话结果（脚本 / 工作流 / 分析节点 / 分析运行 / 项目报告）的查询接口。
 //
-// 脚本 / 工作流 / 分析节点 / 分析运行来自 agent_session_resources 关联表。资源名称在返回时
+// 脚本 / 工作流 / 分析节点 / 分析运行 / 项目报告来自 agent_session_resources 关联表。资源名称在返回时
 // 按主键补全；资源已被删除时名称留空，但记录仍返回，便于前端提示「资源已不存在」而不是静默丢失。
 type SessionResourceHandler struct {
 	sessions     agentinterfaces.SessionService
@@ -53,11 +53,11 @@ type sessionResourceItem struct {
 
 // ListSessionResources godoc
 // @Summary      查询会话关联的资源
-// @Description  按资源类型返回当前用户的某个会话产生 / 修改过的结果（脚本 / 工作流 / 分析节点 / 分析运行）
+// @Description  按资源类型返回当前用户的某个会话产生 / 修改过的结果（脚本 / 工作流 / 分析节点 / 分析运行 / 项目报告）
 // @Tags         Agent
 // @Produce      json
 // @Param        session_id     query     string  true  "会话 ID"
-// @Param        resource_type  query     string  true  "资源类型：script / workflow / analysis_node / analysis"
+// @Param        resource_type  query     string  true  "资源类型：script / workflow / analysis_node / analysis / project_report"
 // @Success      200  {object}  map[string]interface{}
 // @Failure      400  {object}  errors.AppError
 // @Failure      401  {object}  errors.AppError
@@ -78,7 +78,7 @@ func (h *SessionResourceHandler) ListSessionResources(c *gin.Context) {
 	}
 	resourceType := agenttypes.SessionResourceType(strings.TrimSpace(c.Query("resource_type")))
 	if !resourceType.Valid() {
-		c.Error(errors.NewValidationError("invalid resource_type; expected script / workflow / analysis_node / analysis"))
+		c.Error(errors.NewValidationError("invalid resource_type; expected script / workflow / analysis_node / analysis / project_report"))
 		return
 	}
 
@@ -107,10 +107,11 @@ func (h *SessionResourceHandler) ListSessionResources(c *gin.Context) {
 //
 // 每个分组始终返回数组（无结果时为 `[]`），前端一次请求即可拿到全部分区的内容。
 type sessionResourceGroups struct {
-	Script       []sessionResourceItem `json:"script"`
-	Workflow     []sessionResourceItem `json:"workflow"`
-	AnalysisNode []sessionResourceItem `json:"analysis_node"`
-	Analysis     []sessionResourceItem `json:"analysis"`
+	Script        []sessionResourceItem `json:"script"`
+	Workflow      []sessionResourceItem `json:"workflow"`
+	AnalysisNode  []sessionResourceItem `json:"analysis_node"`
+	Analysis      []sessionResourceItem `json:"analysis"`
+	ProjectReport []sessionResourceItem `json:"project_report"`
 }
 
 // ListAllSessionResources godoc
@@ -151,10 +152,11 @@ func (h *SessionResourceHandler) ListAllSessionResources(c *gin.Context) {
 	}
 
 	groups := sessionResourceGroups{
-		Script:       []sessionResourceItem{},
-		Workflow:     []sessionResourceItem{},
-		AnalysisNode: []sessionResourceItem{},
-		Analysis:     []sessionResourceItem{},
+		Script:        []sessionResourceItem{},
+		Workflow:      []sessionResourceItem{},
+		AnalysisNode:  []sessionResourceItem{},
+		Analysis:      []sessionResourceItem{},
+		ProjectReport: []sessionResourceItem{},
 	}
 
 	// 关联表一次查出所有类型，避免前端按类型发多次请求。
@@ -173,6 +175,8 @@ func (h *SessionResourceHandler) ListAllSessionResources(c *gin.Context) {
 			groups.AnalysisNode = append(groups.AnalysisNode, item)
 		case agenttypes.SessionResourceTypeAnalysis:
 			groups.Analysis = append(groups.Analysis, item)
+		case agenttypes.SessionResourceTypeProjectReport:
+			groups.ProjectReport = append(groups.ProjectReport, item)
 		}
 	}
 
@@ -223,6 +227,13 @@ func (h *SessionResourceHandler) resolveName(ctx context.Context, resourceType a
 		}
 		if analysis, err := h.analysisRepo.GetAnalysisByID(ctx, resourceID); err == nil && analysis != nil {
 			return strings.TrimSpace(analysis.AnalysisName)
+		}
+	case agenttypes.SessionResourceTypeProjectReport:
+		if h.projects == nil {
+			return ""
+		}
+		if report, err := h.projects.GetProjectReportByID(ctx, resourceID); err == nil && report != nil {
+			return strings.TrimSpace(report.Title)
 		}
 	}
 	return ""

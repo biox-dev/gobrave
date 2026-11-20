@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -215,6 +216,25 @@ func (t *ProjectReport) BeforeCreate(_ *gorm.DB) error {
 
 func (ProjectReport) TableName() string {
 	return "t_project_report"
+}
+
+// WorkspaceDir 返回报告工作目录（<baseDir>/data/<projectId>/report/<reportId>）。
+//
+// 报告正文文件与报告目录的 git 版本管理都在该目录下。路径推导只保留这一处，
+// 调用方（service / handler / agent 工具）不再各自拼 utils.GetProjectReportDir。
+func (t *ProjectReport) WorkspaceDir(baseDir string) string {
+	if t == nil {
+		return ""
+	}
+	return utils.GetProjectReportDir(baseDir, t.ProjectID, strconv.FormatInt(t.ID, 10))
+}
+
+// OutputFile 返回报告正文文件（报告工作目录下的 output.md）。
+//
+// 这是「ProjectReport 的内容」与「磁盘文件」的唯一关联点：读取 / 写入 / 导出报告正文
+// 都通过它定位文件，调用方不再手写 filepath.Join(dir, DefaultProjectReportFilename)。
+func (t *ProjectReport) OutputFile(baseDir string) string {
+	return utils.GetProjectReportOutputFile(t.WorkspaceDir(baseDir))
 }
 
 // ProjectReportItemOwnerType 标识 ProjectReportItem 指向的内容来源类型。

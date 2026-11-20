@@ -742,7 +742,7 @@ func (b *projectResourceBrowser) GetReportContext(ctx context.Context, userID in
 
 	// 报告工作目录是报告撰写的事实工作区（git 仓库），使用前确保存在。
 	baseDir := b.storageBaseDir()
-	dir := utils.GetProjectReportDir(baseDir, report.ProjectID, fmt.Sprintf("%d", report.ID))
+	dir := report.WorkspaceDir(baseDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return runtimecontext.ProjectReportContext{}, fmt.Errorf("%s: failed to create report working directory: %w", toolName, err)
 	}
@@ -757,7 +757,7 @@ func (b *projectResourceBrowser) GetReportContext(ctx context.Context, userID in
 		ProjectID:   report.ProjectID,
 		ReportTitle: report.Title,
 		WorkingDir:  dir,
-		OutputFile:  filepath.Join(dir, types.DefaultProjectReportFilename),
+		OutputFile:  report.OutputFile(baseDir),
 		Items:       items,
 	}, nil
 }

@@ -968,6 +968,83 @@ type ProjectReportItemBrief struct {
 	OwnerType string `json:"owner_type"`
 }
 
+// ProjectReportWriter 抽象「创建 / 更新项目报告」的能力，供 create_report / update_report
+// 工具使用。
+//
+// 与 SkillWriter 同构：Plan* 只校验入参并计算「写入计划」（不写库、不落盘），供工具在
+// 授权前把报告正文文件（utils.GetProjectReportOutputFile，即报告目录下的 output.md）
+// 与 unified diff 展示给用户；Apply 在授权通过后写库（t_project_report）并落盘正文文件。
+//
+// 由 container 的 projectReportWriter 实现，并在构造 builtin.Deps 时注入。
+type ProjectReportWriter interface {
+	// PlanCreate 校验入参并计算新建报告的写入计划（不写库）。
+	PlanCreate(ctx context.Context, in ProjectReportCreateInput) (ProjectReportWritePlan, error)
+	// PlanEdit 按 old_string → new_string 计算一次唯一文本替换的写入计划（不落盘）。
+	PlanEdit(ctx context.Context, in ProjectReportEditInput) (ProjectReportWritePlan, error)
+	// PlanUpdate 按结构化字段（title / content）计算写入计划（不落盘）。
+	//
+	// 与 PlanEdit 互补：调用方无需提供可精确匹配的原文，直接给新标题 / 新正文即可。
+	PlanUpdate(ctx context.Context, in ProjectReportUpdateInput) (ProjectReportWritePlan, error)
+	// Apply 按计划写库并落盘 output.md，返回保存后的报告信息。
+	Apply(ctx context.Context, plan ProjectReportWritePlan) (ProjectReportWriteInfo, error)
+}
+
+// ProjectReportCreateInput 是 create_report 的入参。
+type ProjectReportCreateInput struct {
+	// UserID / ProjectID 取自执行事实（tool.UserIDFrom / tool.ProjectIDFrom）。
+	UserID    int64
+	ProjectID int64
+	// Title 是报告标题（必填）。
+	Title string
+	// Content 是报告正文（写入 output.md）；为空时按 "# <title>" 生成。
+	Content string
+}
+
+// ProjectReportEditInput 是 update_report 文本替换模式的入参。
+type ProjectReportEditInput struct {
+	UserID    int64
+	ReportID  int64
+	OldString string
+	NewString string
+}
+
+// ProjectReportUpdateInput 是 update_report 字段覆盖模式的入参。
+//
+// 字段为空串表示「保持不变」：只改标题时不传 Content，反之亦然。
+type ProjectReportUpdateInput struct {
+	UserID   int64
+	ReportID int64
+	// Title 是新的报告标题（空串表示不变）。
+	Title string
+	// Content 是新的完整正文（空串表示不变）。
+	Content string
+}
+
+// ProjectReportWritePlan 是一次报告写入的计划，工具据此生成授权前的 diff 预览。
+type ProjectReportWritePlan struct {
+	UserID    int64
+	ReportID  int64
+	ProjectID int64
+	// Title 是写入后的报告标题。
+	Title string
+	// FilePath 是报告正文文件（output.md）的绝对路径。
+	FilePath string
+	// Before 是写入前正文（新建时为空）。
+	Before string
+	// After 是待写入的正文。
+	After string
+	// Create 为 true 表示本次是新建报告。
+	Create bool
+}
+
+// ProjectReportWriteInfo 是报告写入完成后的结果。
+type ProjectReportWriteInfo struct {
+	ReportID  int64
+	ProjectID int64
+	Title     string
+	FilePath  string
+}
+
 // SkillResolver 抽象「按名称解析技能」的能力，供技能工具（get_skill /
 // load_skill_resource）在执行期读取技能指令与附属资源。
 //

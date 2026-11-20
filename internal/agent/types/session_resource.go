@@ -20,13 +20,16 @@ const (
 	// SessionResourceTypeAnalysis 对应 create_analysis_workflow / update_analysis_workflow /
 	// run_analysis_workflow 创建或修改的分析运行（工作流的一次提交）。
 	SessionResourceTypeAnalysis SessionResourceType = "analysis"
+	// SessionResourceTypeProjectReport 对应 create_report / update_report 创建或修改的项目报告。
+	SessionResourceTypeProjectReport SessionResourceType = "project_report"
 )
 
 // Valid 报告资源类型是否是受支持的取值。
 func (t SessionResourceType) Valid() bool {
 	switch t {
 	case SessionResourceTypeScript, SessionResourceTypeWorkflow,
-		SessionResourceTypeAnalysisNode, SessionResourceTypeAnalysis:
+		SessionResourceTypeAnalysisNode, SessionResourceTypeAnalysis,
+		SessionResourceTypeProjectReport:
 		return true
 	default:
 		return false

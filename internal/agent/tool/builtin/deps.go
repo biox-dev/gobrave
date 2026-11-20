@@ -53,6 +53,8 @@ type Deps struct {
 	// DatasetWriter 准备已知 key 的数据集 / 向数据集登记文件
 	// （get_project_database_path / add_file_to_dataset）。
 	DatasetWriter runtimecontext.DatasetWriter
+	// ReportWriter 创建 / 更新项目报告（create_report / update_report）。
+	ReportWriter runtimecontext.ProjectReportWriter
 
 	// Skills 技能解析能力（get_skill / load_skill_resource）。
 	Skills runtimecontext.SkillResolver

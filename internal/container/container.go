@@ -232,7 +232,9 @@ type agentToolDeps struct {
 	AnalysisRunner  runtimecontext.AnalysisRunner
 	MemorySaver     runtimecontext.MemorySaver
 	Browser         *projectResourceBrowser
-	Skills          *skill.Registry
+	// ReportWriter 创建 / 更新项目报告（create_report / update_report）。
+	ReportWriter *projectReportWriter
+	Skills       *skill.Registry
 	// SkillStore 用户技能的文件存储（create_skill / edit_skill 落盘用）。
 	SkillStore *skill.Store
 	// Profiles Profile 管理器（update_profile_prompt 修改当前 Profile 的系统提示词）。
@@ -284,6 +286,7 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		DatasetBrowser:  in.Browser,
 		DatasetWriter:   in.Browser,
 		ReportContext:   in.Browser,
+		ReportWriter:    in.ReportWriter,
 		Skills:          skillResolver,
 		SkillWriter:     skillWriter,
 		// Profile 写能力：修改当前 Profile 的系统提示词（update_profile_prompt）。
@@ -609,6 +612,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 项目资源浏览器：把「脚本 / 分析节点 / 容器模板 / 数据集 / 报告上下文」只读能力
 	// 统一提供给内置只读工具。
 	must(container.Provide(newProjectResourceBrowser))
+	// 项目报告写能力：创建 / 更新报告并落盘正文文件 output.md
+	// （create_report / update_report）。
+	must(container.Provide(newProjectReportWriter))
 	// 记忆管理器以具体类型提供一次：既供 AgentService 使用，也供 memorySaver（save_memory 工具）
 	// 复用同一个实例，避免记忆域出现两份独立的状态入口。
 	must(container.Provide(func(mems agentinterfaces.MemoryRepository) *agentservice.MemoryManager {
