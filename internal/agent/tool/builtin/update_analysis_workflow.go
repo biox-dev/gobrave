@@ -128,15 +128,40 @@ analysis_id 必填；analysis_name / request_param / cache_type 至少给出一�
 
 // previewAnalysisParams 生成批准前预览：params.json 旧内容 → 新内容 diff。
 //
-// 仅改名 / 缓存策略时没有文件改动可预览；旧内容通过浏览器直接读取。
+// 与 update_analysis_node_script 一样，request_param 是数据库字段
+// （Analysis.RequestParam），它的 before 必须取分析记录上的值，而不是 params.json
+// 文件内容（文件由保存流程重新生成，格式 / 内容可能与库中不一致）；只有
+// file=params 才以磁盘正文为基准。
 func previewAnalysisParams(ctx context.Context, browser runtimecontext.AnalysisBrowser, projectID, analysisID int64, requestParam map[string]any, edit runtimecontext.ResourceFileEdit) (tool.PermissionPreview, error) {
 	if requestParam == nil && edit.IsZero() {
 		return tool.PermissionPreview{}, nil
 	}
+
+	// 1) request_param（数据库字段）路径：before 取分析记录上的 RequestParam。
+	if requestParam != nil {
+		path := "params.json"
+		before := ""
+		if browser != nil {
+			current, err := browser.GetAnalysisByID(ctx, projectID, analysisID)
+			if err != nil {
+				return tool.PermissionPreview{}, err
+			}
+			if current.ParamsPath != "" {
+				path = current.ParamsPath
+			}
+			before = paramsJSONContent(current.RequestParam)
+		}
+		after := paramsJSONContent(requestParam)
+		if after == "" {
+			return tool.PermissionPreview{}, nil
+		}
+		return textDiffPreview(path, before, after), nil
+	}
+
+	// 2) file=params 路径：before 取 params.json 磁盘正文。
 	if browser == nil {
-		// 无浏览器时退化为「无旧值」的预览，不影响授权与写入本身。
-		if requestParam != nil {
-			return textDiffPreview("params.json", "", paramsJSONContent(requestParam)), nil
+		if edit.Content != nil {
+			return textDiffPreview("params.json", "", *edit.Content), nil
 		}
 		return tool.PermissionPreview{}, nil
 	}
@@ -144,15 +169,9 @@ func previewAnalysisParams(ctx context.Context, browser runtimecontext.AnalysisB
 	if err != nil {
 		return tool.PermissionPreview{}, err
 	}
-	before := current.Content
-	after := ""
-	if !edit.IsZero() {
-		after, err = edit.Apply(before)
-		if err != nil {
-			return tool.PermissionPreview{}, err
-		}
-	} else {
-		after = paramsJSONContent(requestParam)
+	after, err := edit.Apply(current.Content)
+	if err != nil {
+		return tool.PermissionPreview{}, err
 	}
 	if after == "" {
 		return tool.PermissionPreview{}, nil
@@ -161,5 +180,5 @@ func previewAnalysisParams(ctx context.Context, browser runtimecontext.AnalysisB
 	if path == "" {
 		path = "params.json"
 	}
-	return textDiffPreview(path, before, after), nil
+	return textDiffPreview(path, current.Content, after), nil
 }

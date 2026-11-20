@@ -201,16 +201,44 @@ func UpdateAnalysisNodeScript(updater runtimecontext.AnalysisNodeUpdater, runner
 
 // previewUpdateAnalysisNodeScript 生成批准前预览：params.json 旧内容 → 新内容 diff。
 //
-// 未给出 request_param 且没有文件编辑时没有改动可预览（仅改名）；旧内容通过浏览器
-// 直接读取，避免再走 view / bash。
+// 注意 request_param 的两种来源必须区分：
+//   - request_param 是数据库字段（AnalysisNode.RequestParam），预览的 before 必须取
+//     节点记录上的值，而不是读 params.json（该文件由 Prepare 重新生成，格式 / 内容
+//     可能与库中 request_param 不一致）；
+//   - file=params 才是编辑 params.json 文件，此时 before 取磁盘正文。
+//
+// 未给出 request_param 且没有文件编辑时没有改动可预览（仅改名）。
 func previewUpdateAnalysisNodeScript(ctx context.Context, browser runtimecontext.AnalysisNodeBrowser, projectID, nodeID int64, requestParam map[string]any, edit runtimecontext.ResourceFileEdit) (tool.PermissionPreview, error) {
 	if requestParam == nil && edit.IsZero() {
 		return tool.PermissionPreview{}, nil
 	}
+
+	// 1) request_param（数据库字段）路径：before 取节点记录上的 RequestParam。
+	if requestParam != nil {
+		path := "params.json"
+		before := ""
+		if browser != nil {
+			current, err := browser.GetAnalysisNodeByID(ctx, projectID, nodeID)
+			if err != nil {
+				return tool.PermissionPreview{}, err
+			}
+			if current.ParamsPath != "" {
+				path = current.ParamsPath
+			}
+			before = paramsJSONContent(current.RequestParam)
+		}
+		after := paramsJSONContent(requestParam)
+		if after == "" {
+			return tool.PermissionPreview{}, nil
+		}
+		return textDiffPreview(path, before, after), nil
+	}
+
+	// 2) file=params 路径：before 取 params.json 磁盘正文。
 	if browser == nil {
 		// 无浏览器时退化为「无旧值」的预览，不影响授权与写入本身。
-		if requestParam != nil {
-			return textDiffPreview("params.json", "", paramsJSONContent(requestParam)), nil
+		if edit.Content != nil {
+			return textDiffPreview("params.json", "", *edit.Content), nil
 		}
 		return tool.PermissionPreview{}, nil
 	}
@@ -218,15 +246,9 @@ func previewUpdateAnalysisNodeScript(ctx context.Context, browser runtimecontext
 	if err != nil {
 		return tool.PermissionPreview{}, err
 	}
-	before := current.Content
-	after := ""
-	if !edit.IsZero() {
-		after, err = edit.Apply(before)
-		if err != nil {
-			return tool.PermissionPreview{}, err
-		}
-	} else {
-		after = paramsJSONContent(requestParam)
+	after, err := edit.Apply(current.Content)
+	if err != nil {
+		return tool.PermissionPreview{}, err
 	}
 	if after == "" {
 		return tool.PermissionPreview{}, nil
@@ -235,5 +257,5 @@ func previewUpdateAnalysisNodeScript(ctx context.Context, browser runtimecontext
 	if path == "" {
 		path = "params.json"
 	}
-	return textDiffPreview(path, before, after), nil
+	return textDiffPreview(path, current.Content, after), nil
 }
