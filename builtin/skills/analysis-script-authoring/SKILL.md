@@ -1,16 +1,22 @@
 ---
 name: analysis-script-authoring
-description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体，到 create_analysis_node_script 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、在已创建节点里写 / 改脚本代码的约定（最简写法、tidyverse 读表、knitr::kable 打印、按 outputs 写 outputs.json）、生物分组不明确时必须先 ask_user、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码或运行节点时使用。
+description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体、写 README.md（request_param 规范）、到 create_analysis_node_script 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、README.md 的固定模板与 request_param 写法要求（可直接复制的参数示例、扁平键、FileSelect 对象形态、产物登记、常见报错），在已创建节点里写 / 改脚本代码的约定（最简写法、tidyverse 读表、knitr::kable 打印、按 outputs 写 outputs.json）、生物分组不明确时必须先 ask_user、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码、写 README 或运行节点时使用。
 ---
 
 ## 脚本创建与修改规范（总入口）
 
-本技能是「创建 / 修改分析脚本与分析节点」的唯一规范入口，覆盖四件事：
+本技能是「创建 / 修改分析脚本与分析节点」的唯一规范入口，覆盖五件事：
 
 1. **流程**：从建脚本到节点跑通要走的固定顺序；
 2. **契约**：io_schema.json 怎么写、request_param 怎么填；
 3. **代码**：脚本主体怎么写、产物怎么按 outputs 输出；
-4. **运行**：怎么跑、失败了怎么迭代。
+4. **README**：README.md 怎么写，才能让后续 agent 只读 README 就直接调
+   `create_analysis_node_script` 跑通（详见第三节）；
+5. **运行**：怎么跑、失败了怎么迭代。
+
+> README.md 与 io_schema.json 是同一份契约的两个视图：io_schema 给机器解析参数，
+> README 给人和其他 agent 快速上手。`data-file-analysis` 技能默认只读 `get_script` 返回的
+> `readme_content` 就组织 request_param，**README 写不清楚会直接导致后续分析跑不通**。
 
 > `inputs[]` 的逐字段细则（十种控件类型、FileSelect 完整字段表、后端解析后 params.json 的结构）
 > 见 `analysis-io-schema-spec` 技能；本技能只保留流程中必须立刻用到的要点。
@@ -43,7 +49,7 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
    - 输出项按实际产物命名（通常 type 为 file，表格类给 role=TABLE）；
    - io_schema.json 也用于给人类用户渲染表单，label / description 要写清楚含义；
    - 需要新增 / 调整参数时用 `update_script`（`file=io_schema` + `content` 整体覆盖，或 `old_string` / `new_string` 唯一替换）；
-     查看当前正文用 `get_script`（`files=["io_schema"]`），**不要用 view / write / edit / bash 直接改路径**（规则见第三节）。
+     查看当前正文用 `get_script`（`files=["io_schema"]`），**不要用 view / write / edit / bash 直接改路径**（规则见「流程约束」）。
 
 3) **先摸清脚本真正读哪些参数键**（写脚本 / 建节点之前，一次读取代替后面反复试错）：
    - 用 `get_script`（`files=["script_file"]`）直接拿到脚本正文，检查 `params$`（qmd / R）或 `params[`（python）的读取键；
@@ -56,9 +62,18 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
    - 从 params.json 读取输入，键名以第 3 步读到的结果为准（io_schema 声明的名字必须对得上）；
    - 产物写入 params.json 中的 `output_dir`，命名与 io_schema outputs 对应；
    - 不要硬编码路径、样本名或分组，一律通过参数传入；
-   - 具体写法见第三节「脚本代码怎么写」。
+   - 具体写法见第四节「脚本代码怎么写」。
 
-5) **建节点 = 一次 `create_analysis_node_script`（run=true）**，这是默认路径，一步到底：
+5) **写 README.md（创建与修改脚本时都必须做）**：用 `update_script`（`file=readme`）写入脚本目录的
+   README.md，按第三节「README.md：request_param 规范」的固定模板写：脚本用途 → 输入数据要求 →
+   参数说明表（request_param 键 / 类型 / 说明）→ **可直接复制的 request_param 示例** → 输出产物 →
+   注意事项。
+   - `create_script` 时也可以直接传 `readme` 一次写好；后续脚本有改动（新增 / 改名参数、改输出、改数据要求）
+     **必须同步更新 README**，并在写完代码、建节点之前完成，不要留到最后补。
+   - README 必须反映**当前**的 io_schema 与脚本实际读取的 `params$` 键，包括未声明的扁平键；
+     这是后续 agent 走 `data-file-analysis` 技能时唯一依赖的「使用方法」。
+
+6) **建节点 = 一次 `create_analysis_node_script`（run=true）**，这是默认路径，一步到底：
    - 传入 `script_id` + `node_name` + **完整的 request_param**（= 第 3 步摸到的全部键，含未声明的扁平键）；
    - 默认 run=true：建好即跑完，返回 status / success / log，以及 `workspace_dir` / `params_path` /
      `log_path` / `script_file_path` / `io_schema_path`，直接拿来用，不必再去磁盘找路径；
@@ -67,13 +82,17 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
      `params_path`，确实要改才用 `build_analysis_node_params` 覆盖；
    - 只有用户明确要求「先别跑」时才传 run=false。
 
-6) `build_analysis_node_params`：**仅用于「节点已存在、要改参数」**——按 io_schema inputs 的 name
+7) `build_analysis_node_params`：**仅用于「节点已存在、要改参数」**——按 io_schema inputs 的 name
    组织 request_param，覆盖节点已有参数并重写 params.json。返回 warnings 时先确认是不是第 3 步摸到的
    未声明扁平键：属实的未声明键可以保留（它们确实要进 params.json）。
 
-7) `run_analysis_node` 运行并查看日志；失败时必须继续迭代：读日志定位原因 → 改脚本或改参数
+8) `run_analysis_node` 运行并查看日志；失败时必须继续迭代：读日志定位原因 → 改脚本或改参数
    → 参数有变化才重新 `build_analysis_node_params` → 再次 `run_analysis_node`，
    直到返回 success=true 才算完成本次任务。
+
+9) **收尾前做 README 一致性检查**：脚本最终能跑通后，核对 README 的参数表 / 示例 request_param /
+   产物清单与最终 io_schema、脚本实际读取的键、outputs.json 键名是否完全一致；不一致就再改 README。
+   README 里必须能直接复制出一份**真的能跑通**的 request_param 示例。
 
 ### 流程约束
 
@@ -82,6 +101,11 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
   应在同一轮里并行调用，不要按上面的编号串行等待（编号是逻辑顺序，不是调用批次）。
 - 任务未完成的标准只有一个：`run_analysis_node` 返回 success=true 且产物符合 io_schema outputs。
   不得在脚本尚未跑通时结束任务，也不得把「脚本已写好」「节点已创建」当作完成。
+- **创建或修改脚本时必须同时创建 / 更新 README.md**：参数、输入要求、输出产物有任何变化都要同步；
+  `create_script` 时通过 `readme` 参数给，之后用 `update_script`（`file=readme`）维护。
+  只改脚本不更 README，会让后续 agent 按旧 README 组出错误的 request_param。
+- 修改 README 用 `update_script`（`file=readme`），与改脚本 / io_schema 一样**不需要重建 script 或节点**，
+  也不会触发运行；它是纯文档更新，但必须在收尾前完成。
 - `create_script` 只建脚本；**它返回结果里没有 analysis_node_id**，不要把它当作已可运行的节点。
 - 修改 io_schema.json 的 inputs / outputs 后**无需重新建 script 或节点**：`build_analysis_node_params`
   与 `run_analysis_node` 每次都会读取最新的 io_schema.json，并刷新节点的 patterns / resolved_inputs /
@@ -315,9 +339,151 @@ exp <- read.delim(exp_path, check.names = FALSE)
 - 若 `request_param` 出现 `inputs` 里没有的键，会被忽略并返回 warning，必须回到本节修正名字；
 - 若必填项缺失，也会返回 warning，补齐后再运行。
 
+> 这份键清单**不是只给自己用**：脚本创建 / 修改完成后，要把同一份清单写成 README.md 的参数表与
+> 可复制示例（见第三节），后续 agent 才会按正确键名组织 request_param。
+
 ---
 
-## 三、脚本代码怎么写
+## 三、README.md：request_param 规范
+
+README.md 是脚本的「使用方法」文档，存在脚本目录下（`get_script` 返回的 `readme_file`，
+`readme_content` 就是它的正文）。后续 agent 在 `data-file-analysis` 技能里**优先只读这份 README**
+就组织 request_param 调 `create_analysis_node_script`，因此它必须满足：
+
+- 读完就能写出**完整、可直接复制运行**的 request_param；
+- 参数表覆盖 io_schema 的全部 inputs **以及脚本额外读取的扁平键**；
+- 输入数据要求写清「必须是哪类表格、必须有哪些列」，让 agent 一眼判断当前数据能不能用；
+- 产物清单与 `outputs[].name` 一一对应，下游按 role 引用时才不会选错。
+
+### 何时必须写 / 更新 README
+
+- `create_script` 创建新脚本时 → 必须写（用 `readme` 参数，或创建后立刻 `update_script`（`file=readme`））；
+- 修改脚本时 → 只要发生下列任一变化就必须同步更新 README：
+  - 新增 / 删除 / 重命名 io_schema inputs 或 outputs；
+  - 脚本里新读取或不再读取某个 `params$` 键（含未声明的扁平键）；
+  - 输入数据的列要求、格式要求变化；
+  - 产物的文件名规则、列结构、outputs.json 键名变化；
+  - 参数取值约束变化（如某参数不可为空、枚举值改了）。
+
+### 固定模板（按此结构写，标题与顺序保持一致）
+
+~~~markdown
+# <脚本名称：一句话说清做什么分析>
+
+<2-4 句摘要：输入什么、比较什么、输出什么关键产物。>
+
+## 一、输入数据要求
+
+| 输入 | 格式 | 要求 |
+| --- | --- | --- |
+| `<输入参数名>`（表达矩阵） | TSV / XLS 表格，首行表头 | 必须含**基因标识列**（如 `gene_id`）与**每个样本一列**的原始 count；样本列名即 `control` / `treatment` 要填的值。 |
+| `<可选输入参数名>` | TSV | 说明用途与缺省行为（不提供时结果如何）。 |
+
+示例（本项目 <文件名> 前几列）：
+
+```
+gene_id   SP1    SP2   ...  gene_name  ...
+```
+
+## 二、参数说明
+
+| 参数（request_param 键） | 类型 | 说明 |
+| --- | --- | --- |
+| `count.file` | 字符串 | 表达矩阵的**文件 ID**（不是路径），填 `@file:<id>` 冒号后的数字；脚本从 `params$count$path` 读路径。 |
+| `count.feature` | 字符串 | count 表里作为基因标识的真实列名（如 `gene_id` / `gene_name`）。 |
+| `count.control` | 字符串数组 | 对照组样本名，必须是 count 表里的真实列名。 |
+| `analysis_name` | 字符串 | 产物文件名前缀。**不可为 null / 空串**。 |
+
+### 参数示例（可直接复制运行）
+
+```json
+{
+  "count": {
+    "file": "2121084345698488320",
+    "feature": "gene_name",
+    "control": ["SA1", "SA2", "SA3"],
+    "treatment": ["CF1", "CF2", "CF3"]
+  },
+  "gene_sig_type": "padj",
+  "gene_sig_threshold": 0.05,
+  "analysis_name": "CF_vs_SA"
+}
+```
+
+> 关键提醒：<列出最容易漏的扁平键 / 不可为空参数 / 类型坑，一段话或三条以内。>
+
+## 三、输出产物
+
+| 产物 | 契约名 | 内容 |
+| --- | --- | --- |
+| `<analysis_name>_deg.tsv` | `deg` | 全部基因差异结果，列：... |
+| `<analysis_name>_sig_deg.tsv` | `sig_deg` | 仅显著差异基因。 |
+| `outputs.json` | — | 上述表格的登记信息，供下游节点按契约名引用。 |
+
+## 四、运行方式
+
+### 1. 在节点里按表单跑（推荐）
+
+在项目里选本脚本建分析节点，按表单填 ... 然后运行。
+
+### 2. 用脚本 ID 直接建节点（Agent 调用方式）
+
+```
+create_analysis_node_script(
+  script_id: "<脚本 ID>",
+  node_name: "<输入文件名去扩展名>_<分析命名>",
+  request_param: <上面的参数示例>,
+  run: true
+)
+```
+
+同一套数据做多组比较时，对每个比较各建一个节点、各给一个 `analysis_name`，产物文件名互不覆盖。
+
+## 五、注意事项
+
+- <数据前提：如 count 必须是原始整数、每组至少 2 个样本、样本名必须与列名完全一致。>
+- <常见报错与排查：如 `argument is of length zero` → 检查某几个扁平键是否齐全非空。>
+~~~
+
+### README 中 request_param 的书写规则
+
+参数示例是 README 里最重要的一段，必须按以下规则写，示例要能被直接复制：
+
+1. **键名 = io_schema `inputs[].name`**，再叠加脚本实际读取但 io_schema 未声明的扁平键
+   （如 `gene_sig_type` / `analysis_name`），一个都不要漏；`Divider` 不产生参数，不要写进示例。
+2. **示例必须是完整的一份**：所有必填项都给真实值，不要写 `<待填>` 之类占位符；
+   可选输入（如 `anno`）在说明里写「不提供则如何」，在示例里可以整段省略。
+3. **FileSelect 输入写对象**，`file` 填文件 ID 字符串，其余键为列名：
+
+   ~~~json
+   { "count": { "file": "2121084345698488320", "feature": "gene_name",
+                "control": ["SA1", "SA2"], "treatment": ["CF1", "CF2"] } }
+   ~~~
+
+   并在参数表里写明「脚本从 `params$count$path` 读路径」，避免 agent 误传文件路径。
+4. **类型必须与控件一致**：`BaseInputNumber` 给 JSON 数字（`0.05`，不是 `"0.05"`）、
+   `BaseSwitch` 给布尔、`BaseTextAreaNum` 给逗号分隔字符串、`BaseSelect` 填 `value` 而非 `label`。
+5. **样本 / 分组类参数要在示例里给出真实列名形式**（如 `["SA1","SA2","SA3"]`），
+   并在参数表说明「必须是输入表里的真实列名，区分大小写与空格」。
+6. **命名类参数（如 `analysis_name`）必须写明非空要求与产物命名影响**：留空会导致产物文件名为空而报错。
+7. **参数表逐行对应 io_schema**：类型一列写「字符串 / 数字 / 布尔 / 字符串数组 / 对象（FileSelect）」，
+   说明里写清默认值、取值范围、与表单 label 的对应关系（方便人类用户按表单填写）。
+8. **不要在 README 里写死某次分析的样本名 / 文件 ID 作为唯一取值**：示例可以给真实值便于复制，
+   但参数表必须说明这些值要按当前数据替换。
+
+### 校验：README 与契约一致
+
+写完后逐条对一遍，任何一条不一致都要改 README：
+
+- io_schema `inputs[].name` 集合 ⊆ README 参数表的键集合 ∪ 脚本 `params$` 键集合；
+- README 参数表里的每个键，脚本里确实有对应的 `params$<key>` 读取（或说明为表单布局键）；
+- README 参数示例能通过 `build_analysis_node_params` 且无 `not declared in script io_schema inputs` /
+  `missing required io_schema input(s)` 之外的新增 warning；
+- README 产物契约名与 io_schema `outputs[].name`、脚本写出的 outputs.json 键名完全一致。
+
+---
+
+## 四、脚本代码怎么写
 
 用 `get_script`（`files=["script_file"]`）拿到脚本正文与 params.json 中的内容，根据用户要求完成代码撰写：
 **使用最简单的代码，尽量不使用函数**；图片直接在 qmd 中打印；不要读取其他文件，
@@ -327,7 +493,7 @@ exp <- read.delim(exp_path, check.names = FALSE)
 - qmd 中打印表格需要使用 `knitr::kable()`。
 - 路径一律由参数拼出（`params$output_dir`、`params$<FileSelect>$path`），不硬编码路径 / 样本名 / 分组。
 - 不引入多余抽象：不加参数校验层、异常包装层、日志框架、命令行框架；读出来直接用。
-- 最后一步总是写 outputs.json（见第四节）。
+- 最后一步总是写 outputs.json（见本节「输出约定」）。
 
 ### 输出约定：按 outputs 产出并写 outputs.json
 
@@ -373,9 +539,12 @@ jsonlite::write_json(outputs, file.path(params$output_dir, "outputs.json"), auto
 - 值写实际产物路径（由 `params$output_dir` 拼出的路径），不要写相对路径。
 - `outputs` 为空数组时不写 outputs.json。
 
+> 代码与 README 必须一致：脚本实际读取的每个 `params$` 键、实际产出的每个文件，
+> 都要对应到 README 的参数表 / 产物表；改完代码立刻回头同步 README（见第三节）。
+
 ---
 
-## 四、运行与迭代
+## 五、运行与迭代
 
 - 当用户说「运行当前节点 / 跑一下这个节点」时，调用 `run_analysis_node`，`analysis_node_id` 留空即运行
   当前上下文节点；用户给出其它节点 ID 时，把该 ID 原样传给 `analysis_node_id`。
@@ -383,10 +552,12 @@ jsonlite::write_json(outputs, file.path(params$output_dir, "outputs.json"), auto
 - **修改代码后总是需要调用 `run_analysis_node` 重新运行分析**，返回 success 才算完成；
   参数也变了时先 `build_analysis_node_params`。
 - 只改必要的地方，不要整段重写；需要完整日志时读返回的 `log_path`。
+- **跑通后仍要回看 README**：若本次调试中改了参数名 / 新增了扁平键 / 调整了产物，
+  收尾前用 `update_script`（`file=readme`）同步，确保下次别人照 README 能一次跑通。
 
 ---
 
-## 五、遇到重复性错误时写入 memory
+## 六、遇到重复性错误时写入 memory
 
 工具调用「连续出现同一类错误」时**必须**把「如何避免再犯」写入长期记忆，避免后续轮次重复踩坑。
 
