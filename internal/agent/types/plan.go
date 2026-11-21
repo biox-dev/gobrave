@@ -11,6 +11,9 @@ import (
 // ErrPlanNotFound 表示计划不存在。
 var ErrPlanNotFound = errors.New("plan: not found")
 
+// ErrPlanItemNotFound 表示节点不存在（或不属于该计划）。
+var ErrPlanItemNotFound = errors.New("plan: item not found")
+
 // PlanSource 标识计划节点的内容来源类型。
 //
 // 取值与 SessionResourceType 一致（custom 除外），因此计划节点可以直接引用
@@ -42,25 +45,6 @@ func (s PlanSource) Valid() bool {
 	}
 }
 
-// PlanItem 是计划中的一个节点（可嵌套）。
-//
-// ParentID 指向同一计划内的父节点（0 表示根），SortOrder 为同级顺序：前端据此渲染
-// 可拖拽的树，agent 据此按顺序执行 / 撰写。
-type PlanItem struct {
-	ID        int64      `json:"id,string"`
-	ParentID  int64      `json:"parent_id,string"`
-	Title     string     `json:"title"`
-	Summary   string     `json:"summary,omitempty"`
-	Source    PlanSource `json:"source"`
-	SourceID  int64      `json:"source_id,string"`
-	SortOrder int        `json:"sort_order"`
-	// Status 是节点执行状态（pending / in_progress / completed / skipped）。
-	//
-	// 不落这一列：运行态存在 agent_plan_item_states（AgentPlanItemState），读取计划时
-	// 由 PlanService 合并进来，写入结构时不会覆盖进度。空值等价于 pending。
-	Status PlanItemStatus `json:"status,omitempty" gorm:"-"`
-}
-
 // AgentPlan 是 agent 的计划：一组按树组织、可引用会话资源的步骤。
 //
 // 计划本身不生成报告，也不保存资源详情：它只描述「要做哪些步骤、每步依据哪个资源」，
@@ -70,12 +54,19 @@ type PlanItem struct {
 //
 // 计划是**项目级**产物，归属由 ProjectID 决定；它不持有 SessionID——「哪些会话
 // 参与过这份计划」是多对多关系，记录在 agent_session_resources（类型 plan）。
+//
+// 节点（PlanItem）是独立的一行（agent_plan_items）：节点 ID 因此可以作为
+// 「执行结果 → 计划节点」关联的外键目标。
+//
+// AgentPlan 只存计划头（标题 / 目标），节点树由 PlanStore 从 agent_plan_items
+// 读出后填入 Items——这个字段是**只读投影**，不落 agent_plans 表。
 type AgentPlan struct {
-	ID        int64      `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	ProjectID int64      `json:"project_id,string" gorm:"column:project_id;type:bigint;not null;index"`
-	Title     string     `json:"title" gorm:"column:title;type:varchar(255)"`
-	Goal      string     `json:"goal" gorm:"column:goal;type:text"`
-	Items     []PlanItem `json:"items" gorm:"column:items;serializer:json"`
+	ID        int64  `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
+	ProjectID int64  `json:"project_id,string" gorm:"column:project_id;type:bigint;not null;index"`
+	Title     string `json:"title" gorm:"column:title;type:varchar(255)"`
+	Goal      string `json:"goal" gorm:"column:goal;type:text"`
+	// Items 是节点树投影（数据源为 agent_plan_items），不落本表。
+	Items     []PlanItem `json:"items" gorm:"-"`
 	CreatedAt time.Time  `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt time.Time  `json:"updated_at" gorm:"column:updated_at"`
 }

@@ -706,17 +706,13 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		return agentservice.NewSessionResourceService(store, hub)
 	}))
 	// Agent 计划（跨会话共享的步骤树）：agent 工具（create / list / get / update / delete_plan）、
-	// 报告撰写会话与前端计划面板共用。
+	// 报告撰写会话与前端计划面板共用。计划头与节点分表（agent_plans + agent_plan_items）。
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.PlanStore {
 		return agentrepository.NewGormPlanStore(db)
 	}))
-	// 计划节点运行态（agent_plan_item_states）：与计划结构分开存放，避免结构更新覆盖进度。
-	must(container.Provide(func(db *gorm.DB) agentinterfaces.PlanStateStore {
-		return agentrepository.NewGormPlanStateStore(db)
-	}))
 	// 状态变化时推送 component.invoke(agent-plan-progress)，让前端实时刷新节点状态。
-	must(container.Provide(func(store agentinterfaces.PlanStore, states agentinterfaces.PlanStateStore, hub *realtime.Hub) agentinterfaces.PlanService {
-		return agentservice.NewPlanService(store, states, hub)
+	must(container.Provide(func(store agentinterfaces.PlanStore, hub *realtime.Hub) agentinterfaces.PlanService {
+		return agentservice.NewPlanService(store, hub)
 	}))
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.MessageService {
 		return agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))
@@ -1292,9 +1288,9 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&agenttypes.Message{},
 		&agenttypes.File{},
 		&agenttypes.SessionResource{},
-		// Agent 计划（跨会话共享的步骤树）。
+		// Agent 计划（跨会话共享的步骤树）：计划头 + 节点（一行一个）。
 		&agenttypes.AgentPlan{},
-		&agenttypes.AgentPlanItemState{},
+		&agenttypes.PlanItem{},
 		&agenttypes.Memory{},
 		&agenttypes.Profile{},
 	// &types.Trace{},

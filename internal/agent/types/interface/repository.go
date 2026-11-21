@@ -128,23 +128,18 @@ type SessionResourceStore interface {
 	DeleteBySession(ctx context.Context, sessionID int64) error
 }
 
-// PlanStore 是计划（agent_plans）的持久化端口。
+// PlanStore 是计划（agent_plans + agent_plan_items）的持久化端口。
+//
+// 计划头与节点分表存放（节点一行一条），但对外统一以 *AgentPlan 读写：
+// Get / ListByProject 会把节点树填进 Plan.Items；Save 会把 Plan.Items 同步到节点表。
 type PlanStore interface {
 	Save(ctx context.Context, plan *types.AgentPlan) error
 	Get(ctx context.Context, id int64) (*types.AgentPlan, error)
 	ListByProject(ctx context.Context, projectID int64) ([]*types.AgentPlan, error)
 	Delete(ctx context.Context, id int64) error
-}
-
-// PlanStateStore 是计划节点运行态（agent_plan_item_states）的持久化端口。
-//
-// 以 (plan_id, item_id) 为主键做 upsert：同一节点重复上报只保留最新一行。
-type PlanStateStore interface {
-	Upsert(ctx context.Context, states []*types.AgentPlanItemState) error
-	// ListByPlan 返回计划下全部有状态记录的节点（稀疏：未出现的节点即 pending）。
-	ListByPlan(ctx context.Context, planID int64) ([]*types.AgentPlanItemState, error)
-	// DeleteByPlan 删除计划的全部运行态（计划删除时级联清理）。
-	DeleteByPlan(ctx context.Context, planID int64) error
+	// UpdateItemStatus 只更新指定节点的 status / session_id / note 列（不动结构列）。
+	// 返回实际命中的行数：0 表示节点 ID 不属于该计划。
+	UpdateItemStatus(ctx context.Context, planID, sessionID int64, updates []types.PlanItemStatusUpdate) (int64, error)
 }
 
 // HistoryStore 是文件历史的持久化端口。
