@@ -80,7 +80,7 @@ type PlanBrief struct {
 func CreatePlan(svc planService, linker planSessionLinker) tool.Tool {
 	return tool.NewFunc(
 		CreatePlanToolName,
-		"Create a plan in the CURRENT project: a tree of steps (items) where each step may reference a session resource by source + source_id. The plan stores NO resource details — only titles and resource IDs; use get_plan to read it back and then fetch each resource with its own tool. Call list_session_resources first to get real resource IDs. Use it for multi-session work; a report can later be written from this plan via create_report(plan_id).",
+		"Create a plan in the CURRENT project: a tree of steps (items) where each step may reference a session resource by source + source_id. The plan stores NO resource details — only titles and resource IDs; use get_plan to read it back and then fetch each resource with its own tool. Call list_session_resources first to get real resource IDs. Use it for multi-session work; a report can later be written by reading this plan (and others) with get_plan.",
 		tool.Schema("创建计划的入参", map[string]any{
 			"title": tool.StringProperty("计划标题（必填）。"),
 			"goal":  tool.StringProperty("计划目标 / 执行要求（可选）。"),
@@ -173,11 +173,11 @@ func ListPlans(svc planService) tool.Tool {
 	).WithPermission("read", "", "列出 agent 计划")
 }
 
-// DeletePlan 删除一份计划。已引用该计划的报告不会被删除，只保留 PlanID 引用。
+// DeletePlan 删除一份计划。报告不保存计划引用，因此删除计划不会影响任何报告内容。
 func DeletePlan(svc planService) tool.Tool {
 	return tool.NewFunc(
 		DeletePlanToolName,
-		"Delete a plan by plan_id. Reports that referenced it are kept (their plan_id simply points to a removed plan). Confirm with the user before deleting.",
+		"Delete a plan by plan_id. Reports are not linked to plans, so deleting a plan does not affect any report. Confirm with the user before deleting.",
 		tool.Schema("删除计划的入参", map[string]any{
 			"plan_id": tool.StringProperty("计划 ID（必填）。"),
 		}, "plan_id"),

@@ -398,8 +398,6 @@ func (h *ProjectHandler) DeleteUserProject(c *gin.Context) {
 
 type addProjectReportRequest struct {
 	Title string `json:"title" binding:"required"`
-	// PlanID 可选：按某份大纲撰写报告（来自 @plan:<id> 或前端选择）。
-	PlanID int64 `json:"plan_id,string"`
 }
 
 // AddProjectReport godoc
@@ -443,7 +441,6 @@ func (h *ProjectHandler) AddProjectReport(c *gin.Context) {
 
 	report := &types.ProjectReport{
 		ProjectID: project.ID,
-		PlanID:    req.PlanID,
 		Title:     req.Title,
 	}
 
@@ -460,9 +457,8 @@ func (h *ProjectHandler) AddProjectReport(c *gin.Context) {
 }
 
 type updateProjectReportRequest struct {
-	ID     int64  `json:"id,string" binding:"required"`
-	PlanID int64  `json:"plan_id,string"`
-	Title  string `json:"title" binding:"required"`
+	ID    int64  `json:"id,string" binding:"required"`
+	Title string `json:"title" binding:"required"`
 }
 
 // UpdateProjectReport godoc
@@ -507,7 +503,6 @@ func (h *ProjectHandler) UpdateProjectReport(c *gin.Context) {
 	if err := h.projectService.UpdateProjectReport(ctx, userID, &types.ProjectReport{
 		ID:        req.ID,
 		ProjectID: project.ID,
-		PlanID:    req.PlanID,
 		Title:     req.Title,
 	}); err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
@@ -572,7 +567,6 @@ type projectReportDetailRequest struct {
 type projectReportListItem struct {
 	ID        string `json:"id"`
 	ProjectID int64  `json:"project_id,string"`
-	PlanID    int64  `json:"plan_id,string"`
 	Title     string `json:"title"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
@@ -581,7 +575,6 @@ type projectReportListItem struct {
 type projectReportDetailItem struct {
 	ID        string    `json:"id"`
 	ProjectID int64     `json:"project_id,string"`
-	PlanID    int64     `json:"plan_id,string"`
 	Title     string    `json:"title"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -631,7 +624,6 @@ func (h *ProjectHandler) ListProjectReport(c *gin.Context) {
 		result = append(result, projectReportListItem{
 			ID:        strconv.FormatInt(report.ID, 10),
 			ProjectID: report.ProjectID,
-			PlanID:    report.PlanID,
 			Title:     report.Title,
 			CreatedAt: report.CreatedAt.Format("2006-01-02 15:04:05"),
 			UpdatedAt: report.UpdatedAt.Format("2006-01-02 15:04:05"),
@@ -698,7 +690,6 @@ func (h *ProjectHandler) PageProjectReport(c *gin.Context) {
 		result = append(result, projectReportListItem{
 			ID:        strconv.FormatInt(report.ID, 10),
 			ProjectID: report.ProjectID,
-			PlanID:    report.PlanID,
 			Title:     report.Title,
 			CreatedAt: report.CreatedAt.Format("2006-01-02 15:04:05"),
 			UpdatedAt: report.UpdatedAt.Format("2006-01-02 15:04:05"),
@@ -762,7 +753,6 @@ func newProjectReportDetailItem(id string, report *types.ProjectReport) *project
 	return &projectReportDetailItem{
 		ID:        id,
 		ProjectID: report.ProjectID,
-		PlanID:    report.PlanID,
 		Title:     report.Title,
 		CreatedAt: report.CreatedAt,
 		UpdatedAt: report.UpdatedAt,

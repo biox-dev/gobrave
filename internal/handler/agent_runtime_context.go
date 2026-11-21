@@ -11,7 +11,6 @@ import (
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
-	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -70,8 +69,6 @@ type RuntimeContextResolver struct {
 	analysisSvc interfaces.AnalysisService
 	// summarySvc 用于解析项目报告中的 AI 摘要条目（标题 + 摘要文件路径）。
 	summarySvc interfaces.AISummaryService
-	// planSvc 读取报告绑定\u7684 agent 计划（引导提示词按计划组织章节）。
-	planSvc agentinterfaces.PlanService
 	// agentSvc 用于在 Describe 中按用户 Profile 渲染真正的系统提示词（可为空）。
 	agentSvc *agentservice.AgentService
 }
@@ -83,7 +80,6 @@ func NewRuntimeContextResolver(
 	workflowSvc interfaces.WorkflowService,
 	analysisSvc interfaces.AnalysisService,
 	summarySvc interfaces.AISummaryService,
-	planSvc agentinterfaces.PlanService,
 	agentSvc *agentservice.AgentService,
 ) *RuntimeContextResolver {
 	return &RuntimeContextResolver{
@@ -92,7 +88,6 @@ func NewRuntimeContextResolver(
 		workflowSvc: workflowSvc,
 		analysisSvc: analysisSvc,
 		summarySvc:  summarySvc,
-		planSvc:     planSvc,
 		agentSvc:    agentSvc,
 	}
 }
@@ -194,17 +189,11 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 				outputFile := report.OutputFile(r.storageBaseDir())
 				label = report.Title
 				// 科研报告撰写提示词由 Profile 模板负责组织，这里只提供变量（输出文件路径等）。
+				//
+				// 报告不绑定计划：一份报告可能综合多份 agent 计划。用户会在消息中指定依据哪些计划，
+				// agent 通过计划工具（list_plans / get_plan）自行查询，因此这里不再注入 plan_* 变量。
 				vars["output_file"] = outputFile
 				vars["report_title"] = report.Title
-				// 报告撰写依据的计划（agent 计划，跨会话共享）：模板可遍历 plan_items 组织章节。
-				vars["plan_id"] = strconv.FormatInt(report.PlanID, 10)
-				if report.PlanID > 0 && r.planSvc != nil {
-					if plan, planErr := r.planSvc.Get(ctx, report.PlanID); planErr == nil && plan != nil {
-						vars["plan_title"] = plan.Title
-						vars["plan_goal"] = plan.Goal
-						vars["plan_items"] = plan.Items
-					}
-				}
 
 			default:
 				return nil, fmt.Errorf("unsupported runtime env type: %s", envType)

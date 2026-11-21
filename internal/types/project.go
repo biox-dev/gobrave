@@ -198,14 +198,12 @@ const DefaultProjectReportFilename = utils.DefaultProjectReportFilename
 
 // ProjectReport 是一个报告容器：元信息 + 正文文件（工作目录下的 output.md）。
 //
-// 报告正文由 agent 工具（create_report / update_report）直接撰写；PlanID 指向撰写该报告
-// 所依据的 AgentPlan（agent 的计划），0 表示报告未绑定计划（例如简单任务的单会话报告）。
+// 报告正文由 agent 工具（create_report / update_report）直接撰写。报告不绑定某一份计划：
+// 一份报告可能综合多份 AgentPlan 的内容，具体依据哪些计划由用户在消息中指定、
+// agent 通过计划工具（get_plan / list_plans）自行查询。
 type ProjectReport struct {
-	ID        int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-	ProjectID int64 `json:"project_id,string" gorm:"type:bigint;not null;index"`
-	// PlanID 指向 agent_plans.id：报告按该计划撰写。
-	// 计划是跨会话共享的 agent 产物，因此同一计划可以被多份报告（或多个会话）复用。
-	PlanID    int64     `json:"plan_id,string" gorm:"column:plan_id;type:bigint;index"`
+	ID        int64     `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
+	ProjectID int64     `json:"project_id,string" gorm:"type:bigint;not null;index"`
 	Title     string    `json:"title" gorm:"type:varchar(255)"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

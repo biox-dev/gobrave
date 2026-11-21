@@ -1038,8 +1038,6 @@ type ProjectReportCreateInput struct {
 	// UserID / ProjectID 取自执行事实（tool.UserIDFrom / tool.ProjectIDFrom）。
 	UserID    int64
 	ProjectID int64
-	// PlanID 可选：按某份报告大纲撰写（0 表示不绑定大纲）。
-	PlanID int64
 	// Title 是报告标题（必填）。
 	Title string
 	// Content 是报告正文（写入 output.md）；为空时按 "# <title>" 生成。
@@ -1071,8 +1069,6 @@ type ProjectReportWritePlan struct {
 	UserID    int64
 	ReportID  int64
 	ProjectID int64
-	// PlanID 是报告撰写依据的大纲（0 表示未绑定大纲）。
-	PlanID int64
 	// Title 是写入后的报告标题。
 	Title string
 	// FilePath 是报告正文文件（output.md）的绝对路径。

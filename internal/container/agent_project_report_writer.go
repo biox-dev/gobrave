@@ -68,7 +68,6 @@ func (w *projectReportWriter) PlanCreate(_ context.Context, in runtimecontext.Pr
 		UserID:    in.UserID,
 		ReportID:  report.ID,
 		ProjectID: report.ProjectID,
-		PlanID:    in.PlanID,
 		Title:     title,
 		FilePath:  file,
 		After:     content,
@@ -114,7 +113,6 @@ func (w *projectReportWriter) PlanEdit(ctx context.Context, in runtimecontext.Pr
 		UserID:    in.UserID,
 		ReportID:  report.ID,
 		ProjectID: report.ProjectID,
-		PlanID:    report.PlanID,
 		Title:     report.Title,
 		FilePath:  file,
 		Before:    before,
@@ -159,7 +157,6 @@ func (w *projectReportWriter) PlanUpdate(ctx context.Context, in runtimecontext.
 		UserID:    in.UserID,
 		ReportID:  report.ID,
 		ProjectID: report.ProjectID,
-		PlanID:    report.PlanID,
 		Title:     newTitle,
 		FilePath:  file,
 		Before:    before,
@@ -177,7 +174,7 @@ func (w *projectReportWriter) Apply(ctx context.Context, plan runtimecontext.Pro
 	}
 
 	if plan.Create {
-		report := &types.ProjectReport{ID: plan.ReportID, ProjectID: plan.ProjectID, PlanID: plan.PlanID, Title: plan.Title}
+		report := &types.ProjectReport{ID: plan.ReportID, ProjectID: plan.ProjectID, Title: plan.Title}
 		if err := w.projectSvc.AddProjectReport(ctx, plan.UserID, report); err != nil {
 			return runtimecontext.ProjectReportWriteInfo{}, fmt.Errorf("failed to create project report: %w", err)
 		}
@@ -200,7 +197,6 @@ func (w *projectReportWriter) Apply(ctx context.Context, plan runtimecontext.Pro
 	if err := w.projectSvc.UpdateProjectReport(ctx, plan.UserID, &types.ProjectReport{
 		ID:        plan.ReportID,
 		ProjectID: plan.ProjectID,
-		PlanID:    plan.PlanID,
 		Title:     plan.Title,
 	}); err != nil {
 		return runtimecontext.ProjectReportWriteInfo{}, fmt.Errorf("failed to update project report: %w", err)

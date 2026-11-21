@@ -17,9 +17,7 @@ const CreateReportToolName = "create_report"
 //
 // 目标项目不由模型提供：它取自执行事实（tool.ProjectIDFrom，当前用户激活项目）。
 type CreateReportInput struct {
-	Title string `json:"title"`
-	// PlanID 可选：按某份报告大纲撰写（@plan:<id> 或 list_report_plans 得到）。
-	PlanID  string `json:"plan_id,omitempty"`
+	Title   string `json:"title"`
 	Content string `json:"content,omitempty"`
 }
 
@@ -41,10 +39,9 @@ type ReportWriteOutput struct {
 func CreateReport(writer runtimecontext.ProjectReportWriter) tool.Tool {
 	return tool.NewFunc(
 		CreateReportToolName,
-		"Create a project report in the CURRENT project: inserts a report record (title) and writes the report body to its markdown file (output.md). This tool ONLY writes report content; report structure (sections / which resources each section uses) is a report PLAN managed by create_report_plan / update_report_plan. For complex multi-session tasks, pass plan_id to bind the report to a plan and write the body section by section following that plan (use get_report_plan / list_session_resources to inspect sources). Pass the full markdown body in `content`; when omitted a `# <title>` heading is written. A diff is shown for approval before writing.",
+		"Create a project report in the CURRENT project: inserts a report record (title) and writes the report body to its markdown file (output.md). This tool ONLY writes report content; reports are not bound to any plan. When the user says which plans the report should be based on, use the plan tools (list_plans / get_plan) to read those plans yourself, then pass the full markdown body in `content`; when omitted a `# <title>` heading is written. A diff is shown for approval before writing.",
 		tool.Schema("创建项目报告的入参", map[string]any{
 			"title":   tool.StringProperty("报告标题（必填）。"),
-			"plan_id": tool.StringProperty("可选：按该报告大纲撰写（大纲 ID，来自 @plan:<id> 或 list_report_plans）。"),
 			"content": tool.StringProperty("报告正文（markdown，写入 output.md）。留空时写入 \"# <title>\"。"),
 		}, "title"),
 		func(ctx context.Context, in CreateReportInput) (ReportWriteOutput, error) {
@@ -61,18 +58,9 @@ func CreateReport(writer runtimecontext.ProjectReportWriter) tool.Tool {
 			}
 
 			// 先算计划：校验入参并生成待写入正文（不写库 / 不落盘），供授权前展示 diff。
-			var planID int64
-			if strings.TrimSpace(in.PlanID) != "" {
-				id, parseErr := parsePlanID(in.PlanID)
-				if parseErr != nil {
-					return ReportWriteOutput{Title: strings.TrimSpace(in.Title), Error: parseErr.Error()}, nil
-				}
-				planID = id
-			}
 			plan, err := writer.PlanCreate(ctx, runtimecontext.ProjectReportCreateInput{
 				UserID:    userID,
 				ProjectID: projectID,
-				PlanID:    planID,
 				Title:     in.Title,
 				Content:   in.Content,
 			})
