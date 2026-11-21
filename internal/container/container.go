@@ -710,8 +710,13 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.PlanStore {
 		return agentrepository.NewGormPlanStore(db)
 	}))
-	must(container.Provide(func(store agentinterfaces.PlanStore) agentinterfaces.PlanService {
-		return agentservice.NewPlanService(store)
+	// 计划节点运行态（agent_plan_item_states）：与计划结构分开存放，避免结构更新覆盖进度。
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.PlanStateStore {
+		return agentrepository.NewGormPlanStateStore(db)
+	}))
+	// 状态变化时推送 component.invoke(agent-plan-progress)，让前端实时刷新节点状态。
+	must(container.Provide(func(store agentinterfaces.PlanStore, states agentinterfaces.PlanStateStore, hub *realtime.Hub) agentinterfaces.PlanService {
+		return agentservice.NewPlanService(store, states, hub)
 	}))
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.MessageService {
 		return agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))
@@ -1289,6 +1294,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&agenttypes.SessionResource{},
 		// Agent 计划（跨会话共享的步骤树）。
 		&agenttypes.AgentPlan{},
+		&agenttypes.AgentPlanItemState{},
 		&agenttypes.Memory{},
 		&agenttypes.Profile{},
 	// &types.Trace{},

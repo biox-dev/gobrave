@@ -45,7 +45,7 @@ func (s PlanSource) Valid() bool {
 // PlanItem 是计划中的一个节点（可嵌套）。
 //
 // ParentID 指向同一计划内的父节点（0 表示根），SortOrder 为同级顺序：前端据此渲染
-// 可拖拽的树，agent 据此按顺序执行 / 撰写。Status 透传给后续「plan 驱动 agent 循环」。
+// 可拖拽的树，agent 据此按顺序执行 / 撰写。
 type PlanItem struct {
 	ID        int64      `json:"id,string"`
 	ParentID  int64      `json:"parent_id,string"`
@@ -54,8 +54,11 @@ type PlanItem struct {
 	Source    PlanSource `json:"source"`
 	SourceID  int64      `json:"source_id,string"`
 	SortOrder int        `json:"sort_order"`
-	// Status 是节点执行状态（pending / running / done），当前仅存储与透传。
-	Status string `json:"status,omitempty"`
+	// Status 是节点执行状态（pending / in_progress / completed / skipped）。
+	//
+	// 不落这一列：运行态存在 agent_plan_item_states（AgentPlanItemState），读取计划时
+	// 由 PlanService 合并进来，写入结构时不会覆盖进度。空值等价于 pending。
+	Status PlanItemStatus `json:"status,omitempty" gorm:"-"`
 }
 
 // AgentPlan 是 agent 的计划：一组按树组织、可引用会话资源的步骤。

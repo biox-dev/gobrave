@@ -74,7 +74,8 @@ func All(d Deps) []tool.Tool {
 		GetPlan(d.Plan),
 		UpdatePlan(d.Plan, d.planSessionLinker()),
 		DeletePlan(d.Plan),
-
+		// 进度上报：只改节点运行态，不动计划结构（因此无需写授权）。
+		ReportPlanProgress(d.Plan),
 		// 项目报告：正文读写（create_report / update_report）+ 按 ID 查看。
 		GetReport(d.ReportBrowser),
 		CreateReport(d.ReportWriter),

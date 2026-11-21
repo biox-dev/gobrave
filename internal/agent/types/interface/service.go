@@ -45,6 +45,11 @@ type PlanService interface {
 	Get(ctx context.Context, id int64) (*types.AgentPlan, error)
 	ListByProject(ctx context.Context, projectID int64) ([]*types.AgentPlan, error)
 	Delete(ctx context.Context, id int64) error
+	// UpdateItemStatus 上报若干计划节点的执行状态，返回合并状态后的完整计划。
+	//
+	// 只写运行态（agent_plan_item_states），不改计划结构；调用方（工具）从执行事实
+	// 取 SessionID。节点 ID 不存在时返回错误，避免 agent 写错目标。
+	UpdateItemStatus(ctx context.Context, planID int64, sessionID int64, updates []types.PlanItemStatusUpdate) (*types.AgentPlan, error)
 }
 
 // MessageService 提供消息的增删改查。

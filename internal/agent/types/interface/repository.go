@@ -136,6 +136,17 @@ type PlanStore interface {
 	Delete(ctx context.Context, id int64) error
 }
 
+// PlanStateStore 是计划节点运行态（agent_plan_item_states）的持久化端口。
+//
+// 以 (plan_id, item_id) 为主键做 upsert：同一节点重复上报只保留最新一行。
+type PlanStateStore interface {
+	Upsert(ctx context.Context, states []*types.AgentPlanItemState) error
+	// ListByPlan 返回计划下全部有状态记录的节点（稀疏：未出现的节点即 pending）。
+	ListByPlan(ctx context.Context, planID int64) ([]*types.AgentPlanItemState, error)
+	// DeleteByPlan 删除计划的全部运行态（计划删除时级联清理）。
+	DeleteByPlan(ctx context.Context, planID int64) error
+}
+
 // HistoryStore 是文件历史的持久化端口。
 type HistoryStore interface {
 	Create(ctx context.Context, file *types.File) error

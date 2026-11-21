@@ -18,6 +18,7 @@ type planService interface {
 	Get(ctx context.Context, id int64) (*agenttypes.AgentPlan, error)
 	ListByProject(ctx context.Context, projectID int64) ([]*agenttypes.AgentPlan, error)
 	Delete(ctx context.Context, id int64) error
+	UpdateItemStatus(ctx context.Context, planID int64, sessionID int64, updates []agenttypes.PlanItemStatusUpdate) (*agenttypes.AgentPlan, error)
 }
 
 // planSessionLinker 记录「当前会话 ↔ 计划」的关联（由 SessionResourceService 实现）。
@@ -38,6 +39,8 @@ const (
 	GetPlanToolName    = "get_plan"
 	UpdatePlanToolName = "update_plan"
 	DeletePlanToolName = "delete_plan"
+	// ReportPlanProgressToolName 上报计划节点执行状态（不影响计划结构）。
+	ReportPlanProgressToolName = "report_plan_progress"
 )
 
 // PlanItemInput 是计划节点的工具入参。
@@ -197,6 +200,64 @@ func DeletePlan(svc planService) tool.Tool {
 	).WithPermission("write", "", "删除 agent 计划")
 }
 
+// ReportPlanProgress 上报计划节点的执行状态（pending / in_progress / completed / skipped）。
+//
+// 这是执行过程中的「进度上报」，不是内容写操作：它只改运行态，不动计划结构，
+// 因此**不请求写授权**——否则 agent 每推进一步都会弹一次确认，把循环打断。
+// 上报后前端会实时收到计划变化事件，实时刷新节点状态。
+func ReportPlanProgress(svc planService) tool.Tool {
+	return tool.NewFunc(
+		ReportPlanProgressToolName,
+		"Report execution progress of plan items. Call it when you START an item (status=in_progress) and when you FINISH it (status=completed); use skipped for items you decide not to do. Report only the items that changed — do not resend the whole plan. This never changes the plan structure. The result returns the full item tree with merged status so you can verify your progress without calling get_plan.",
+		tool.Schema("上报计划节点状态的入参", map[string]any{
+			"plan_id": tool.StringProperty("计划 ID（必填）。"),
+			"items": map[string]any{
+				"type":        "array",
+				"description": "本次状态发生变化的节点列表（可一次上报多个）。",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"item_id": tool.StringProperty("节点 ID（必填，来自 get_plan 返回的 items[].id）。"),
+						"status":  tool.StringProperty("状态：pending | in_progress | completed | skipped。"),
+						"note":    tool.StringProperty("可选的简短说明（如产物 ID 或遇到的问题）。"),
+					},
+					"required": []string{"item_id", "status"},
+				},
+			},
+		}, "plan_id"),
+		func(ctx context.Context, in planProgressInput) (PlanOutput, error) {
+			planID, err := parsePlanID(in.PlanID)
+			if err != nil {
+				return PlanOutput{}, fmt.Errorf("%s: %w", ReportPlanProgressToolName, err)
+			}
+			if svc == nil {
+				return PlanOutput{}, fmt.Errorf("%s: plan service is not available", ReportPlanProgressToolName)
+			}
+			updates := make([]agenttypes.PlanItemStatusUpdate, 0, len(in.Items))
+			for _, item := range in.Items {
+				itemID, err := parsePositiveID(item.ItemID, "item_id")
+				if err != nil {
+					return PlanOutput{PlanID: planID, Error: err.Error()}, nil
+				}
+				status := agenttypes.PlanItemStatus(strings.ToLower(strings.TrimSpace(item.Status)))
+				if !status.Valid() {
+					return PlanOutput{PlanID: planID, Error: fmt.Sprintf("invalid status %q", item.Status)}, nil
+				}
+				updates = append(updates, agenttypes.PlanItemStatusUpdate{
+					ItemID: itemID,
+					Status: status,
+					Note:   item.Note,
+				})
+			}
+			plan, err := svc.UpdateItemStatus(ctx, planID, tool.SessionIDFrom(ctx), updates)
+			if err != nil {
+				return PlanOutput{PlanID: planID, Error: err.Error()}, nil
+			}
+			return newPlanOutput(ctx, plan), nil
+		},
+	)
+}
+
 type planWriteInput struct {
 	PlanID string          `json:"plan_id,omitempty"`
 	Title  string          `json:"title"`
@@ -206,6 +267,20 @@ type planWriteInput struct {
 
 type planReadInput struct {
 	PlanID string `json:"plan_id"`
+}
+
+// planProgressItemInput 是单个节点的状态上报入参。
+type planProgressItemInput struct {
+	ItemID string `json:"item_id"`
+	// Status 取 pending / in_progress / completed / skipped。
+	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
+}
+
+type planProgressInput struct {
+	PlanID string `json:"plan_id"`
+	// Items 按「只写变化的节点」上报：开始一步置 in_progress，完成置 completed。
+	Items []planProgressItemInput `json:"items,omitempty"`
 }
 
 // newPlanOutput 把计划实体转换为工具结果。
