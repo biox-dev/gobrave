@@ -9,36 +9,36 @@ import (
 	"gorm.io/gorm"
 )
 
-// NewGormReportPlanStore 创建基于数据库的报告大纲 Store。
-func NewGormReportPlanStore(db *gorm.DB) agentinterfaces.ReportPlanStore {
-	return &gormReportPlanStore{db: db}
+// NewGormPlanStore 创建基于数据库的计划 Store。
+func NewGormPlanStore(db *gorm.DB) agentinterfaces.PlanStore {
+	return &gormPlanStore{db: db}
 }
 
-type gormReportPlanStore struct {
+type gormPlanStore struct {
 	db *gorm.DB
 }
 
-func (r *gormReportPlanStore) Save(ctx context.Context, plan *agent.ReportPlan) error {
+func (r *gormPlanStore) Save(ctx context.Context, plan *agent.AgentPlan) error {
 	if plan == nil {
-		return errors.New("report plan is nil")
+		return errors.New("plan is nil")
 	}
 	return r.db.WithContext(ctx).Save(plan).Error
 }
 
-func (r *gormReportPlanStore) Get(ctx context.Context, id int64) (*agent.ReportPlan, error) {
-	var plan agent.ReportPlan
+func (r *gormPlanStore) Get(ctx context.Context, id int64) (*agent.AgentPlan, error) {
+	var plan agent.AgentPlan
 	if err := r.db.WithContext(ctx).Where("id = ?", id).Take(&plan).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, agent.ErrReportPlanNotFound
+			return nil, agent.ErrPlanNotFound
 		}
 		return nil, err
 	}
 	return &plan, nil
 }
 
-// ListByProject 返回项目下的全部大纲（按更新时间倒序）。
-func (r *gormReportPlanStore) ListByProject(ctx context.Context, projectID int64) ([]*agent.ReportPlan, error) {
-	var plans []*agent.ReportPlan
+// ListByProject 返回项目下的全部计划（按更新时间倒序）。
+func (r *gormPlanStore) ListByProject(ctx context.Context, projectID int64) ([]*agent.AgentPlan, error) {
+	var plans []*agent.AgentPlan
 	err := r.db.WithContext(ctx).
 		Where("project_id = ?", projectID).
 		Order("updated_at DESC, id DESC").
@@ -46,6 +46,6 @@ func (r *gormReportPlanStore) ListByProject(ctx context.Context, projectID int64
 	return plans, err
 }
 
-func (r *gormReportPlanStore) Delete(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&agent.ReportPlan{}).Error
+func (r *gormPlanStore) Delete(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&agent.AgentPlan{}).Error
 }

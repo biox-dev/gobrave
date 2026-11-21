@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	appservice "github.com/biox-dev/gobrave/internal/application/service"
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
@@ -20,13 +21,16 @@ import (
 
 type ProjectHandler struct {
 	projectService interfaces.ProjectService
-	config         *config.Config
-	htmlRenderer   *htmlreport.Renderer
+	// planService 是 agent 的计划服务（计划属于 agent 领域，不挂在 ProjectService 上）。
+	planService  agentinterfaces.PlanService
+	config       *config.Config
+	htmlRenderer *htmlreport.Renderer
 }
 
-func NewProjectHandler(projectService interfaces.ProjectService, cfg *config.Config) *ProjectHandler {
+func NewProjectHandler(projectService interfaces.ProjectService, planService agentinterfaces.PlanService, cfg *config.Config) *ProjectHandler {
 	return &ProjectHandler{
 		projectService: projectService,
+		planService:    planService,
 		config:         cfg,
 		htmlRenderer:   htmlreport.New(),
 	}

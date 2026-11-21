@@ -35,12 +35,6 @@ type ProjectService interface {
 	PageProjectReportByProjectID(ctx context.Context, userID int64, projectID int64, pagination *types.Pagination) ([]*types.ProjectReport, int64, error)
 	GetProjectReportDetailByID(ctx context.Context, userID int64, reportID int64) (*types.ProjectReport, error)
 	GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error)
-	// ProjectReportPlan 报告大纲（跨会话共享的报告结构）。
-	GetProjectReportPlanByID(ctx context.Context, userID int64, planID int64) (*types.ProjectReportPlan, error)
-	ListProjectReportPlansByProjectID(ctx context.Context, userID int64, projectID int64) ([]*types.ProjectReportPlan, error)
-	// SaveProjectReportPlan 新建（ID=0）或整体覆盖大纲，返回保存后的记录。
-	SaveProjectReportPlan(ctx context.Context, userID int64, plan *types.ProjectReportPlan) (*types.ProjectReportPlan, error)
-	DeleteProjectReportPlan(ctx context.Context, userID int64, planID int64) error
 	// GetProjectReportFile 读取报告工作目录下的自身 markdown 文件（output.md）内容。
 	GetProjectReportFile(ctx context.Context, userID int64, reportID int64) (string, error)
 	// UpdateProjectReportFile 覆写报告工作目录下的自身 markdown 文件（output.md）内容。
@@ -90,15 +84,6 @@ type ProjectRepository interface {
 	DeleteProjectReport(ctx context.Context, projectID int64, reportID int64) error
 	ListProjectReportByProjectID(ctx context.Context, projectID int64) ([]*types.ProjectReport, error)
 	PageProjectReportByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.ProjectReport, int64, error)
-	// ProjectReportPlan data access methods.
-	AddProjectReportPlan(ctx context.Context, plan *types.ProjectReportPlan) error
-	GetProjectReportPlanByID(ctx context.Context, planID int64) (*types.ProjectReportPlan, error)
-	UpdateProjectReportPlan(ctx context.Context, plan *types.ProjectReportPlan) error
-	DeleteProjectReportPlan(ctx context.Context, planID int64) error
-	ListProjectReportPlansByProjectID(ctx context.Context, projectID int64) ([]*types.ProjectReportPlan, error)
-	// ListProjectReportsByPlanID 返回按某大纲撰写的报告。
-	ListProjectReportsByPlanID(ctx context.Context, planID int64) ([]*types.ProjectReport, error)
-
 	// Literature data access methods.
 	CreateLiterature(ctx context.Context, literature *types.Literature) error
 	GetLiteratureByID(ctx context.Context, literatureID int64) (*types.Literature, error)

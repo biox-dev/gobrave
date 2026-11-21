@@ -281,62 +281,6 @@ func (r *projectRepository) ListProjectReportDetailByProjectID(ctx context.Conte
 	return reports, nil
 }
 
-// ---------- ProjectReportPlan ----------
-
-func (r *projectRepository) AddProjectReportPlan(ctx context.Context, plan *types.ProjectReportPlan) error {
-	return r.db.WithContext(ctx).Create(plan).Error
-}
-
-func (r *projectRepository) GetProjectReportPlanByID(ctx context.Context, planID int64) (*types.ProjectReportPlan, error) {
-	plan := &types.ProjectReportPlan{}
-	if err := r.db.WithContext(ctx).Where("id = ?", planID).Take(plan).Error; err != nil {
-		return nil, err
-	}
-	return plan, nil
-}
-
-// UpdateProjectReportPlan 整体覆盖标题 / 目标 / 章节树（sections 以 JSON 落库）。
-func (r *projectRepository) UpdateProjectReportPlan(ctx context.Context, plan *types.ProjectReportPlan) error {
-	return r.db.WithContext(ctx).
-		Model(&types.ProjectReportPlan{}).
-		Where("id = ?", plan.ID).
-		Updates(map[string]interface{}{
-			"title":      plan.Title,
-			"goal":       plan.Goal,
-			"sections":   plan.Sections,
-			"updated_at": plan.UpdatedAt,
-		}).Error
-}
-
-func (r *projectRepository) DeleteProjectReportPlan(ctx context.Context, planID int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", planID).Delete(&types.ProjectReportPlan{}).Error
-}
-
-func (r *projectRepository) ListProjectReportPlansByProjectID(ctx context.Context, projectID int64) ([]*types.ProjectReportPlan, error) {
-	plans := make([]*types.ProjectReportPlan, 0)
-	err := r.db.WithContext(ctx).
-		Where("project_id = ?", projectID).
-		Order("created_at DESC").
-		Find(&plans).Error
-	if err != nil {
-		return nil, err
-	}
-	return plans, nil
-}
-
-// ListProjectReportsByPlanID 返回按某大纲撰写的报告（跨会话共享大纲时可能有多个）。
-func (r *projectRepository) ListProjectReportsByPlanID(ctx context.Context, planID int64) ([]*types.ProjectReport, error) {
-	reports := make([]*types.ProjectReport, 0)
-	err := r.db.WithContext(ctx).
-		Where("plan_id = ?", planID).
-		Order("created_at ASC").
-		Find(&reports).Error
-	if err != nil {
-		return nil, err
-	}
-	return reports, nil
-}
-
 // ---------- Literature ----------
 
 func (r *projectRepository) CreateLiterature(ctx context.Context, literature *types.Literature) error {

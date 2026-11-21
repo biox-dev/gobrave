@@ -67,13 +67,15 @@ func All(d Deps) []tool.Tool {
 		UpdateAnalysisWorkflow(d.analysisUpdater(), d.AnalysisBrowser),
 		RunAnalysisWorkflow(d.AnalysisRunner, d.AnalysisBrowser),
 
-		// 项目报告：大纲（plan）+ 会话资源 + 正文读写。
-		// 报告正文只有 create_report / update_report 负责；结构（章节）由 report plan 管理。
+		// 计划（plan）：agent 的步骤树，可引用会话资源 ID（报告只是其中一种消费方式）。
 		ListSessionResources(d.SessionResources),
-		CreateReportPlan(d.ReportPlan),
-		ListReportPlans(d.ReportPlan),
-		GetReportPlan(d.ReportPlan),
-		UpdateReportPlan(d.ReportPlan),
+		CreatePlan(d.Plan),
+		ListPlans(d.Plan),
+		GetPlan(d.Plan),
+		UpdatePlan(d.Plan),
+		DeletePlan(d.Plan),
+
+		// 项目报告：正文读写（create_report / update_report）+ 按 ID 查看。
 		GetReport(d.ReportBrowser),
 		CreateReport(d.ReportWriter),
 		UpdateReport(d.ReportWriter),

@@ -178,11 +178,11 @@ func RegisterProjectRoutes(r *gin.RouterGroup, handler *handler.ProjectHandler, 
 	r.GET("/project/project-report-git-diff", handler.GetProjectReportGitDiff)
 	r.POST("/project/commit-project-report", handler.CommitProjectReport)
 	r.POST("/project/revert-project-report-file", handler.RevertProjectReportFile)
-	// 报告大纲（跨会话共享的报告结构，agent 与前端共用）。
-	r.GET("/project/list-project-report-plan", handler.ListProjectReportPlan)
-	r.GET("/project/project-report-plan-detail", handler.GetProjectReportPlanDetail)
-	r.POST("/project/save-project-report-plan", handler.SaveProjectReportPlan)
-	r.POST("/project/delete-project-report-plan", handler.DeleteProjectReportPlan)
+	// Agent 计划（跨会话共享的步骤树，agent 工具与前端共用）。
+	r.GET("/project/list-plan", handler.ListPlan)
+	r.GET("/project/plan-detail", handler.GetPlanDetail)
+	r.POST("/project/save-plan", handler.SavePlan)
+	r.POST("/project/delete-plan", handler.DeletePlan)
 	r.POST("/project/upload-image", uploadHandler.UploadImage)
 
 	r.POST("/project/add-literature", handler.AddLiterature)

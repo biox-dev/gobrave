@@ -11,22 +11,22 @@ import (
 	"github.com/biox-dev/gobrave/internal/utils"
 )
 
-// ReportPlanService 提供报告大纲的增删改查实现。
+// PlanService 提供计划（AgentPlan）的增删改查实现。
 //
-// 大纲是项目级实体：写入前由调用方（工具）用执行事实里的 ProjectID 赋值，
-// 因此这里不再额外做项目归属校验（越权由工具侧的 project 事实保证）。
-type reportPlanService struct {
-	store ReportPlanStore
+// 计划是项目级的 agent 产物：写入前由调用方（工具）用执行事实里的 ProjectID /
+// SessionID 赋值，因此这里不再做项目归属校验（越权由调用方的事实保证）。
+type planService struct {
+	store PlanStore
 }
 
-// NewReportPlanService 创建报告大纲服务。
-func NewReportPlanService(store ReportPlanStore) ReportPlanService {
-	return &reportPlanService{store: store}
+// NewPlanService 创建计划服务。
+func NewPlanService(store PlanStore) PlanService {
+	return &planService{store: store}
 }
 
-func (s *reportPlanService) Save(ctx context.Context, plan *ReportPlan) (*ReportPlan, error) {
+func (s *planService) Save(ctx context.Context, plan *AgentPlan) (*AgentPlan, error) {
 	if plan == nil {
-		return nil, errors.New("report plan is nil")
+		return nil, errors.New("plan is nil")
 	}
 	if plan.ProjectID <= 0 {
 		return nil, errors.New("project_id is required")
@@ -35,7 +35,7 @@ func (s *reportPlanService) Save(ctx context.Context, plan *ReportPlan) (*Report
 	if plan.Title == "" {
 		return nil, errors.New("title is required")
 	}
-	plan.Sections = NormalizeReportPlanSections(plan.Sections)
+	plan.Items = NormalizePlanItems(plan.Items)
 
 	now := time.Now()
 	plan.UpdatedAt = now
@@ -52,59 +52,59 @@ func (s *reportPlanService) Save(ctx context.Context, plan *ReportPlan) (*Report
 	return plan, nil
 }
 
-func (s *reportPlanService) Get(ctx context.Context, id int64) (*ReportPlan, error) {
+func (s *planService) Get(ctx context.Context, id int64) (*AgentPlan, error) {
 	if id <= 0 {
-		return nil, ErrReportPlanNotFound
+		return nil, ErrPlanNotFound
 	}
 	return s.store.Get(ctx, id)
 }
 
-func (s *reportPlanService) ListByProject(ctx context.Context, projectID int64) ([]*ReportPlan, error) {
+func (s *planService) ListByProject(ctx context.Context, projectID int64) ([]*AgentPlan, error) {
 	if projectID <= 0 {
 		return nil, nil
 	}
 	return s.store.ListByProject(ctx, projectID)
 }
 
-func (s *reportPlanService) Delete(ctx context.Context, id int64) error {
+func (s *planService) Delete(ctx context.Context, id int64) error {
 	return s.store.Delete(ctx, id)
 }
 
-// NormalizeReportPlanSections 清洗章节树：补齐 ID、去空白、丢弃空标题、校验来源类型、
+// NormalizePlanItems 清洗计划节点树：补齐 ID、去空白、丢弃空标题、校验来源类型、
 // 断开悬空 / 自引用的父节点（提升为根）。同级顺序由调用方按 SortOrder 维护。
-func NormalizeReportPlanSections(sections []ReportPlanSection) []ReportPlanSection {
-	if len(sections) == 0 {
+func NormalizePlanItems(items []PlanItem) []PlanItem {
+	if len(items) == 0 {
 		return nil
 	}
 
-	existing := make(map[int64]struct{}, len(sections))
-	for i := range sections {
-		if sections[i].ID <= 0 {
-			sections[i].ID = utils.GenerateID()
+	existing := make(map[int64]struct{}, len(items))
+	for i := range items {
+		if items[i].ID <= 0 {
+			items[i].ID = utils.GenerateID()
 		}
-		existing[sections[i].ID] = struct{}{}
+		existing[items[i].ID] = struct{}{}
 	}
 
-	out := make([]ReportPlanSection, 0, len(sections))
-	for _, section := range sections {
-		section.Title = strings.TrimSpace(section.Title)
-		if section.Title == "" {
+	out := make([]PlanItem, 0, len(items))
+	for _, item := range items {
+		item.Title = strings.TrimSpace(item.Title)
+		if item.Title == "" {
 			continue
 		}
-		section.Summary = strings.TrimSpace(section.Summary)
-		if !section.Source.Valid() {
-			section.Source = ReportPlanSourceCustom
+		item.Summary = strings.TrimSpace(item.Summary)
+		if !item.Source.Valid() {
+			item.Source = PlanSourceCustom
 		}
-		if section.Source == ReportPlanSourceCustom {
-			section.SourceID = 0
+		if item.Source == PlanSourceCustom {
+			item.SourceID = 0
 		}
-		if _, ok := existing[section.ParentID]; !ok || section.ParentID == section.ID {
-			section.ParentID = 0
+		if _, ok := existing[item.ParentID]; !ok || item.ParentID == item.ID {
+			item.ParentID = 0
 		}
-		if section.SortOrder < 0 {
-			section.SortOrder = 0
+		if item.SortOrder < 0 {
+			item.SortOrder = 0
 		}
-		out = append(out, section)
+		out = append(out, item)
 	}
 	if len(out) == 0 {
 		return nil

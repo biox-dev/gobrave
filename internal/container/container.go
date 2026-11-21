@@ -244,8 +244,8 @@ type agentToolDeps struct {
 	// Sessions / Messages 供注册表级 agent 工具（子 Agent）落库自己的会话。
 	Sessions agentinterfaces.SessionService
 	Messages agentinterfaces.MessageService
-	// ReportPlan 报告大纲读写（create / list / get / update_report_plan）。
-	ReportPlan agentinterfaces.ReportPlanService
+	// Plan agent 计划读写（create / list / get / update / delete_plan）。
+	Plan agentinterfaces.PlanService
 	// SessionResources 读取当前会话产出的资源（list_session_resources）。
 	SessionResources agentinterfaces.SessionResourceService
 }
@@ -291,7 +291,7 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		DatasetWriter:    in.Browser,
 		ReportBrowser:    in.Browser,
 		ReportWriter:     in.ReportWriter,
-		ReportPlan:       in.ReportPlan,
+		Plan:             in.Plan,
 		SessionResources: in.SessionResources,
 		Skills:           skillResolver,
 		SkillWriter:      skillWriter,
@@ -705,13 +705,13 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(store agentinterfaces.SessionResourceStore, hub *realtime.Hub) agentinterfaces.SessionResourceService {
 		return agentservice.NewSessionResourceService(store, hub)
 	}))
-	// 报告大纲（跨会话共享的报告结构）：agent 工具（create / list / get / update_report_plan）
-	// 与报告撰写会话共用。
-	must(container.Provide(func(db *gorm.DB) agentinterfaces.ReportPlanStore {
-		return agentrepository.NewGormReportPlanStore(db)
+	// Agent 计划（跨会话共享的步骤树）：agent 工具（create / list / get / update / delete_plan）、
+	// 报告撰写会话与前端计划面板共用。
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.PlanStore {
+		return agentrepository.NewGormPlanStore(db)
 	}))
-	must(container.Provide(func(store agentinterfaces.ReportPlanStore) agentinterfaces.ReportPlanService {
-		return agentservice.NewReportPlanService(store)
+	must(container.Provide(func(store agentinterfaces.PlanStore) agentinterfaces.PlanService {
+		return agentservice.NewPlanService(store)
 	}))
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.MessageService {
 		return agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))
@@ -1287,8 +1287,8 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&agenttypes.Message{},
 		&agenttypes.File{},
 		&agenttypes.SessionResource{},
-		// 报告大纲（跨会话共享的报告结构）。
-		&agenttypes.ReportPlan{},
+		// Agent 计划（跨会话共享的步骤树）。
+		&agenttypes.AgentPlan{},
 		&agenttypes.Memory{},
 		&agenttypes.Profile{},
 	// &types.Trace{},

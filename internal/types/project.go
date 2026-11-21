@@ -199,12 +199,12 @@ const DefaultProjectReportFilename = utils.DefaultProjectReportFilename
 // ProjectReport 是一个报告容器：元信息 + 正文文件（工作目录下的 output.md）。
 //
 // 报告正文由 agent 工具（create_report / update_report）直接撰写；PlanID 指向撰写该报告
-// 所依据的 ProjectReportPlan（大纲），0 表示报告未绑定大纲（例如简单任务的单会话报告）。
+// 所依据的 AgentPlan（agent 的计划），0 表示报告未绑定计划（例如简单任务的单会话报告）。
 type ProjectReport struct {
 	ID        int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 	ProjectID int64 `json:"project_id,string" gorm:"type:bigint;not null;index"`
-	// PlanID 指向 t_project_report_plan.id：报告按该大纲撰写。
-	// 大纲是跨会话共享的，因此同一大纲可以被多份报告（或多个会话）复用。
+	// PlanID 指向 agent_plans.id：报告按该计划撰写。
+	// 计划是跨会话共享的 agent 产物，因此同一计划可以被多份报告（或多个会话）复用。
 	PlanID    int64     `json:"plan_id,string" gorm:"column:plan_id;type:bigint;index"`
 	Title     string    `json:"title" gorm:"type:varchar(255)"`
 	CreatedAt time.Time `json:"created_at"`
@@ -239,86 +239,6 @@ func (t *ProjectReport) WorkspaceDir(baseDir string) string {
 // 都通过它定位文件，调用方不再手写 filepath.Join(dir, DefaultProjectReportFilename)。
 func (t *ProjectReport) OutputFile(baseDir string) string {
 	return utils.GetProjectReportOutputFile(t.WorkspaceDir(baseDir))
-}
-
-// ProjectReportPlanSectionSource 标识大纲章节的内容来源。
-//
-// 统一用「资源类型 + 资源 ID」，与 SessionResource 的取值保持一致，因此报告撰写 session
-// 可以直接用 session 资源（分析运行 / 分析节点 / 脚本 / 工作流）填充章节；
-// custom 表示不引用外部资源，正文由 agent 撰写时自行组织。
-type ProjectReportPlanSectionSource string
-
-const (
-	// ProjectReportPlanSourceCustom 是自定义章节（不引用外部资源）。
-	ProjectReportPlanSourceCustom ProjectReportPlanSectionSource = "custom"
-	// ProjectReportPlanSourceAnalysis 指向 Analysis（nextflow 表）的 ID。
-	ProjectReportPlanSourceAnalysis ProjectReportPlanSectionSource = "analysis"
-	// ProjectReportPlanSourceAnalysisNode 指向 AnalysisNode 的 ID。
-	ProjectReportPlanSourceAnalysisNode ProjectReportPlanSectionSource = "analysis_node"
-	// ProjectReportPlanSourceScript 指向 Script 的 ID。
-	ProjectReportPlanSourceScript ProjectReportPlanSectionSource = "script"
-	// ProjectReportPlanSourceWorkflow 指向 Workflow 的 ID。
-	ProjectReportPlanSourceWorkflow ProjectReportPlanSectionSource = "workflow"
-)
-
-// NormalizeProjectReportPlanSectionSource 校验并归一化章节来源类型。
-func NormalizeProjectReportPlanSectionSource(t string) (ProjectReportPlanSectionSource, bool) {
-	switch ProjectReportPlanSectionSource(strings.ToLower(strings.TrimSpace(t))) {
-	case ProjectReportPlanSourceCustom:
-		return ProjectReportPlanSourceCustom, true
-	case ProjectReportPlanSourceAnalysis:
-		return ProjectReportPlanSourceAnalysis, true
-	case ProjectReportPlanSourceAnalysisNode:
-		return ProjectReportPlanSourceAnalysisNode, true
-	case ProjectReportPlanSourceScript:
-		return ProjectReportPlanSourceScript, true
-	case ProjectReportPlanSourceWorkflow:
-		return ProjectReportPlanSourceWorkflow, true
-	default:
-		return "", false
-	}
-}
-
-// ProjectReportPlanSection 是大纲中的一个章节节点。
-//
-// ParentID 指向同一大纲内的父章节 ID（0 表示根节点），SortOrder 为同级顺序，
-// 因此前端可以直接渲染可拖拽的树；删除 / 移动只影响本大纲。
-type ProjectReportPlanSection struct {
-	ID        int64                          `json:"id,string"`
-	ParentID  int64                          `json:"parent_id,string"`
-	Title     string                         `json:"title"`
-	Summary   string                         `json:"summary,omitempty"`
-	Source    ProjectReportPlanSectionSource `json:"source"`
-	SourceID  int64                          `json:"source_id,string"`
-	SortOrder int                            `json:"sort_order"`
-}
-
-// ProjectReportPlan 是报告大纲（跨会话共享的报告结构）。
-//
-// 与 ProjectReport 的关系是「结构 → 内容」：Plan 只描述报告要写哪些章节、每章引用哪些
-// 会话资源；正文仍写在 ProjectReport 的 output.md 里。复杂任务（多个会话完成）先由
-// 独立会话创建 / 调整 Plan，再由报告撰写会话按 Plan 写正文。
-type ProjectReportPlan struct {
-	ID        int64     `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-	ProjectID int64     `json:"project_id,string" gorm:"type:bigint;not null;index"`
-	Title     string    `json:"title" gorm:"type:varchar(255)"`
-	Goal      string    `json:"goal" gorm:"type:text"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-
-	// Sections 是章节树（按树的前序遍历展示）；以 JSON 落库，避免为大纲再维护一张表。
-	Sections []ProjectReportPlanSection `json:"sections" gorm:"serializer:json"`
-}
-
-func (p *ProjectReportPlan) BeforeCreate(_ *gorm.DB) error {
-	if p.ID == 0 {
-		p.ID = utils.GenerateID()
-	}
-	return nil
-}
-
-func (ProjectReportPlan) TableName() string {
-	return "t_project_report_plan"
 }
 
 // ProjectReportGitDiff 是报告工作目录（<baseDir>/data/<projectId>/report/<reportId>）的本地变化。

@@ -51,8 +51,8 @@ type Deps struct {
 	DatasetBrowser  runtimecontext.DatasetBrowser
 	// ReportBrowser 按 ID 查看项目报告及正文（get_report）。
 	ReportBrowser runtimecontext.ProjectReportBrowser
-	// ReportPlan 报告大纲的读写能力（create / list / get / update_report_plan）。
-	ReportPlan reportPlanService
+	// Plan agent 计划的读写能力（create / list / get / update / delete_plan）。
+	Plan planService
 	// SessionResources 读取当前会话产出的资源（list_session_resources）。
 	SessionResources sessionResourceLister
 	// DatasetWriter 准备已知 key 的数据集 / 向数据集登记文件
