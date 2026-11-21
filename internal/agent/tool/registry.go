@@ -72,13 +72,55 @@ func (r *Registry) Definition(name string) (Definition, bool) {
 }
 
 // List 返回全部工具定义（按名称升序），供暴露给模型。
+//
+// 返回的 InputSchema 会自动追加一个公共的 purpose 属性（见 WithPurposeProperty），
+// 使模型可以在每次调用时附带一句人类可读的调用目的，供 UI 展示。
+// 这里返回的是拷贝，不会修改工具自身的 Definition。
 func (r *Registry) List() []Definition {
 	tools := r.Tools()
 	out := make([]Definition, 0, len(tools))
 	for _, t := range tools {
-		out = append(out, t.Definition())
+		out = append(out, withPurposeProperty(t.Definition()))
 	}
 	return out
+}
+
+// PurposePropertyName 是工具调用目的的公共入参名。
+//
+// 它在 Registry.List 时注入 schema、在 Agent 执行工具前被剥离，不进入工具实现。
+const PurposePropertyName = "purpose"
+
+// PurposePropertyDescription 是 purpose 属性的模型侧说明。
+const PurposePropertyDescription = "一句话说明本次调用该工具的用途，会展示给用户（建议 30 字以内，如：查看脚本 #42 的语言类型）。"
+
+// withPurposeProperty 复制定义并在 InputSchema.properties 中追加 purpose 属性。
+//
+// 只支持 object schema；缺少 properties 或已存在 purpose 时原样返回。
+func withPurposeProperty(def Definition) Definition {
+	props, ok := def.InputSchema["properties"].(map[string]any)
+	if !ok {
+		return def
+	}
+	if _, exists := props[PurposePropertyName]; exists {
+		return def
+	}
+
+	merged := make(map[string]any, len(props)+1)
+	for k, v := range props {
+		merged[k] = v
+	}
+	merged[PurposePropertyName] = map[string]any{
+		"type":        "string",
+		"description": PurposePropertyDescription,
+	}
+
+	schema := make(map[string]any, len(def.InputSchema))
+	for k, v := range def.InputSchema {
+		schema[k] = v
+	}
+	schema["properties"] = merged
+	def.InputSchema = schema
+	return def
 }
 
 // Tools 返回全部工具实例（按名称升序）。
