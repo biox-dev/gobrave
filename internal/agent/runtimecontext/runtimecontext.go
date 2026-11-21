@@ -543,8 +543,19 @@ type ScriptBrowser interface {
 	ReadScriptFile(ctx context.Context, projectID int64, scriptID int64, file ResourceFile) (ResourceFileContent, error)
 }
 
-// AnalysisNodeBrowser 抽象「按 ID 查看分析节点」的只读能力（get_analysis_node 与更新类工具的预览）。
+// AnalysisNodeBrowser 抽象「浏览项目分析节点」的只读能力
+// （list_project_analysis_node / get_analysis_node 与更新类工具的预览）。
 type AnalysisNodeBrowser interface {
+	// ListAnalysisNodesByProject 返回指定项目下的分析节点（按 id 倒序，不分页）。
+	//
+	// filters 为空时返回全部节点：后端会先按过滤条件筛选，未命中任何分析运行时再按
+	// 节点名 / 节点 ID / 脚本名关键字退化为「按名字搜索」；显式给出 filters.ScriptID
+	// 时则始终按脚本返回（跨分析运行），便于按脚本汇总节点。
+	// 每一项是 AnalysisNodeSummary（摘要 + 所属分析的执行事实 + 工作目录与产物路径），
+	// 不含 run.sh / params.json 正文；需要正文时再用 GetAnalysisNodeByID / ReadAnalysisNodeFile。
+	// projectID 必须为正数。
+	ListAnalysisNodesByProject(ctx context.Context, projectID int64, filters AnalysisNodeListFilters) ([]AnalysisNodeSummary, error)
+
 	// GetAnalysisNodeByID 按主键读取分析节点（必须属于当前激活项目，否则返回错误）。
 	//
 	// 返回的 WorkspaceDir 是绝对路径，ParamsPath 与 OutputDir 均由 WorkspaceDir 派生。
@@ -552,6 +563,55 @@ type AnalysisNodeBrowser interface {
 
 	// ReadAnalysisNodeFile 直接读取节点工作目录下指定文件的正文（command / params）。
 	ReadAnalysisNodeFile(ctx context.Context, projectID int64, nodeID int64, file ResourceFile) (ResourceFileContent, error)
+}
+
+// AnalysisNodeListFilters 是「列出项目分析节点」的过滤条件（全部可选）。
+//
+// 关键字统一走 Keyword；其余字段用于把结果限定到某次分析运行 / 某个工作流 / 某个脚本，
+// 或按节点状态筛选。空值表示该维度不过滤。
+type AnalysisNodeListFilters struct {
+	// Keyword 模糊匹配节点名称 / 节点 ID / 脚本名称。
+	Keyword string
+	// AnalysisID 是分析运行主键（nextflow.id）的字符串形式（避免大整数精度问题）。
+	AnalysisID string
+	// WorkflowID 是工作流主键（pipeline_components_relation.id）的字符串形式。
+	WorkflowID string
+	// ScriptID 是脚本主键（pipeline_components.id）的字符串形式；给出时按脚本返回全部节点。
+	ScriptID string
+	// Status 是节点状态（如 success / failed / running）。
+	Status string
+	// Limit 是返回条数上限（<=0 时取后端默认值，超出后端上限会被截断）。
+	Limit int
+}
+
+// AnalysisNodeSummary 是分析节点列表项的只读摘要（list_project_analysis_node 回传）。
+//
+// 内嵌 AnalysisNodeBrief（节点自身名称 / 类型 / 工作目录 / 参数），再补充「它属于哪次
+// 分析运行」的执行事实与运行状态，使模型无需再逐个 get_analysis_workflow 就能对账：
+//   - AnalysisRunID / AnalysisKey / AnalysisName / JobStatus 来自 nextflow 行；
+//   - NodeID 是 DAG 内的节点标识（analysis_nodes.node_id），SampleID 是样本标识；
+//   - ScriptName 是按 script_id join 取到的脚本名，Status / StartedAt / FinishedAt
+//     是节点的运行状态与起止时间。
+type AnalysisNodeSummary struct {
+	AnalysisNodeBrief
+	// AnalysisNodeKey 是 analysis_nodes.analysis_node_id（对外 UUID），Agent 命令节点的
+	// 节点 ID 与创建返回一致，便于与工具结果 / 用户引用对账。
+	AnalysisNodeKey string `json:"analysis_node_key,omitempty"`
+	NodeID          string `json:"node_id,omitempty"`
+	SampleID        string `json:"sample_id,omitempty"`
+	ScriptName      string `json:"script_name,omitempty"`
+
+	// AnalysisRunID 是所属分析运行的主键（nextflow.id，字符串以保精度）。
+	AnalysisRunID int64  `json:"analysis_run_id,string"`
+	AnalysisKey   string `json:"analysis_key,omitempty"`
+	AnalysisName  string `json:"analysis_name,omitempty"`
+	JobStatus     string `json:"job_status,omitempty"`
+	SchedulerMode string `json:"scheduler_mode,omitempty"`
+
+	Status     string `json:"status,omitempty"`
+	ExitCode   int    `json:"exit_code"`
+	StartedAt  string `json:"started_at,omitempty"`
+	FinishedAt string `json:"finished_at,omitempty"`
 }
 
 // WorkflowBrowser 抽象「按 ID 查看工作流」的只读能力（get_workflow）。
@@ -600,10 +660,19 @@ type WorkflowUpdater interface {
 	UpdateWorkflow(ctx context.Context, input WorkflowUpdateInput) (WorkflowUpdateResult, error)
 }
 
-// AnalysisBrowser 抽象「按 ID 查看分析运行」的只读能力（get_analysis_workflow）。
+// AnalysisBrowser 抽象「浏览分析运行」的只读能力
+// （list_project_analysis_workflow / get_analysis_workflow）。
 //
 // 这里的 analysis 指 nextflow 表的一行（一次工作流运行），不是单个节点。
 type AnalysisBrowser interface {
+	// ListAnalysesByProject 返回指定项目下的分析运行（按 id 倒序，不分页）。
+	//
+	// filters 为空时返回全部；各字段之间为「与」关系。每一项是 AnalysisBrief
+	// （名称 / 工作流 / 状态 / 调度器 / 缓存策略 / 工作目录 / 节点状态分布），
+	// 不含 params.json 正文；需要正文或按 ID 详情时再用 GetAnalysisByID。
+	// projectID 必须为正数。
+	ListAnalysesByProject(ctx context.Context, projectID int64, filters AnalysisListFilters) ([]AnalysisBrief, error)
+
 	// GetAnalysisByID 按主键读取分析运行（必须属于当前激活项目，否则返回错误）。
 	//
 	// analysisID 是 nextflow 主键（int64），不是 analysis_id UUID。
@@ -611,6 +680,25 @@ type AnalysisBrowser interface {
 
 	// ReadAnalysisFile 直接读取分析运行目录下指定文件的正文（params）。
 	ReadAnalysisFile(ctx context.Context, projectID int64, analysisID int64, file ResourceFile) (ResourceFileContent, error)
+}
+
+// AnalysisListFilters 是「列出项目分析运行」的过滤条件（全部可选）。
+//
+// 各字段之间为「与」关系；空值表示该维度不过滤。ID 类字段用字符串承载，
+// 避免大整数在模型侧丢失精度。
+type AnalysisListFilters struct {
+	// Keyword 模糊匹配分析名称 / analysis_id。
+	Keyword string
+	// WorkflowID 是工作流主键（pipeline_components_relation.id）的字符串形式。
+	WorkflowID string
+	// JobStatus 是运行状态（running / stopping / stopped / finished / failed 等）。
+	JobStatus string
+	// CacheType 是缓存策略（1 全量重跑，2 复用已有节点，3 脚本未变则复用，4 脚本与参数都未变才复用）。
+	CacheType int
+	// IsReport 非 nil 时按「是否为报告」过滤。
+	IsReport *bool
+	// Limit 是返回条数上限（<=0 时取后端默认值，超出后端上限会被截断）。
+	Limit int
 }
 
 // AnalysisCreator 抽象「为工作流新建一次分析运行」的业务能力（create_analysis_workflow）。

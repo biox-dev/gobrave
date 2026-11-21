@@ -46,7 +46,8 @@ func All(d Deps) []tool.Tool {
 		CreateScript(d.ScriptCreator),
 		UpdateScript(d.scriptUpdater(), d.ScriptBrowser),
 
-		// 分析节点：查看 / 创建 / 更新 / 参数 / 运行。
+		// 分析节点：列出 / 查看 / 创建 / 更新 / 参数 / 运行。
+		ListProjectAnalysisNodes(d.NodeBrowser),
 		GetAnalysisNode(d.NodeBrowser),
 		CreateAnalysisNodeScript(d.NodeCreator, d.Runner),
 		CreateAnalysisNodeAgent(d.AgentRunner),
@@ -61,7 +62,8 @@ func All(d Deps) []tool.Tool {
 		CreateWorkflow(d.WorkflowCreator),
 		UpdateWorkflow(d.workflowUpdater(), d.WorkflowBrowser),
 
-		// 分析运行：创建 / 查看 / 更新 / 提交。
+		// 分析运行：列出 / 创建 / 查看 / 更新 / 提交。
+		ListProjectAnalysesWorkflow(d.AnalysisBrowser),
 		CreateAnalysisWorkflow(d.analysisCreator(), d.AnalysisRunner),
 		GetAnalysisWorkflow(d.AnalysisBrowser),
 		UpdateAnalysisWorkflow(d.analysisUpdater(), d.AnalysisBrowser),
