@@ -46,7 +46,7 @@ func (h *ProjectHandler) GetProjectReportHTML(c *gin.Context) {
 		return
 	}
 
-	content, err := h.projectService.GetProjectReportContent(ctx, reportID)
+	content, err := h.projectService.GetProjectReportFile(ctx, userID, reportID)
 	if err != nil {
 		c.Error(errProjectReport(err))
 		return

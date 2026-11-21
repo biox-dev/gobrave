@@ -38,6 +38,15 @@ type SessionResourceService interface {
 	ListBySession(ctx context.Context, sessionID int64) ([]types.SessionResource, error)
 }
 
+// ReportPlanService 提供报告大纲（跨会话共享的报告结构）的增删改查。
+type ReportPlanService interface {
+	// Save 新建（ID=0）或覆盖大纲，返回保存后的记录。
+	Save(ctx context.Context, plan *types.ReportPlan) (*types.ReportPlan, error)
+	Get(ctx context.Context, id int64) (*types.ReportPlan, error)
+	ListByProject(ctx context.Context, projectID int64) ([]*types.ReportPlan, error)
+	Delete(ctx context.Context, id int64) error
+}
+
 // MessageService 提供消息的增删改查。
 type MessageService interface {
 	Create(ctx context.Context, params types.MessageCreateParams) (types.Message, error)

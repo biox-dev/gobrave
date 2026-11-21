@@ -17,62 +17,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// PublishProjectReportItemToDoc 是单条目发布入口（POST /project-report-item/:itemId/publish-to-doc）。
-// 它按 ProjectReportItem 的 OwnerType 解析出 OwnerID，并将对应内容发布到该条目所属
-// ProjectReport 的文档目录（见 utils.GetProjectDocDir）。
-//
-// 支持的 OwnerType：
-//   - analysis      → 发布 Analysis 及其节点输出
-//   - analysis_node → 发布单个 AnalysisNode 输出
-//   - ai_summary    → 发布 AI 摘要（同时拷贝其所属对象的输出目录以引用图片）
-func (h *AnalysisHandler) PublishProjectReportItemToDoc(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
-	if !ok {
-		return
-	}
-
-	itemID, err := strconv.ParseInt(strings.TrimSpace(c.Param("itemId")), 10, 64)
-	if err != nil || itemID <= 0 {
-		c.Error(errors.NewValidationError("invalid item_id").WithDetails(err.Error()))
-		return
-	}
-
-	ctx := c.Request.Context()
-
-	item, err := h.projectService.GetProjectReportItemDetailByID(ctx, userID, itemID)
-	if err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			c.Error(errors.NewNotFoundError("project report item not found"))
-			return
-		}
-		c.Error(errors.NewInternalServerError("failed to get project report item").WithDetails(err.Error()))
-		return
-	}
-
-	report, err := h.projectService.GetProjectReportDetailByID(ctx, userID, item.ProjectReportID)
-	if err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			c.Error(errors.NewNotFoundError("project report not found"))
-			return
-		}
-		c.Error(errors.NewInternalServerError("failed to get project report").WithDetails(err.Error()))
-		return
-	}
-
-	projectDocDir := utils.GetProjectDocDir(h.config.Storage.BaseDir, report.ProjectID, strconv.FormatInt(report.ID, 10))
-
-	if err := h.publishProjectReportItem(ctx, item, projectDocDir); err != nil {
-		c.Error(err)
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "project report item published to project doc dir successfully",
-	})
-}
-
-// PublishProjectReportToDoc 遍历报告下所有 ProjectReportItem 并逐个发布到报告文档目录
+// PublishProjectReportToDoc 把报告正文（output.md）发布到报告文档目录
 // （POST /project-report/:reportId/publish-to-doc）。
+//
+// 报告内容只有一个事实源（output.md），因此发布只需把该文件写入文档目录并登记到
+// SUMMARY.md，不再遍历条目。
 func (h *AnalysisHandler) PublishProjectReportToDoc(c *gin.Context) {
 	userID, ok := getCurrentUserID(c)
 	if !ok {
@@ -97,19 +46,16 @@ func (h *AnalysisHandler) PublishProjectReportToDoc(c *gin.Context) {
 		return
 	}
 
-	items, err := h.projectService.ListProjectReportItemsByReportID(ctx, userID, report.ID)
+	content, err := h.projectService.GetProjectReportFile(ctx, userID, report.ID)
 	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to list project report items").WithDetails(err.Error()))
+		c.Error(errors.NewInternalServerError("failed to read project report file").WithDetails(err.Error()))
 		return
 	}
 
 	projectDocDir := utils.GetProjectDocDir(h.config.Storage.BaseDir, report.ProjectID, strconv.FormatInt(report.ID, 10))
-
-	for _, item := range items {
-		if err := h.publishProjectReportItem(ctx, item, projectDocDir); err != nil {
-			c.Error(err)
-			return
-		}
+	if err := h.publishReportMarkdownToDoc(projectDocDir, report, content); err != nil {
+		c.Error(err)
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -117,40 +63,22 @@ func (h *AnalysisHandler) PublishProjectReportToDoc(c *gin.Context) {
 	})
 }
 
-// publishProjectReportItem 按条目的 OwnerType 解析出 OwnerID，并将对应内容发布到
-// 报告文档目录。单条目发布与整报告发布共用该方法。
-func (h *AnalysisHandler) publishProjectReportItem(ctx context.Context, item *types.ProjectReportItem, projectDocDir string) error {
-	if item == nil {
-		return errors.NewValidationError("project report item is nil")
+// publishReportMarkdownToDoc 把报告正文写入文档目录并登记到 SUMMARY.md。
+func (h *AnalysisHandler) publishReportMarkdownToDoc(projectDocDir string, report *types.ProjectReport, content string) error {
+	if report == nil {
+		return errors.NewValidationError("project report is nil")
 	}
-
-	switch item.OwnerType {
-	case types.ProjectReportItemOwnerAnalysis:
-		return h.publishAnalysisToDoc(ctx, item.OwnerID, projectDocDir, item.Title)
-	case types.ProjectReportItemOwnerAnalysisNode:
-		return h.publishAnalysisNodeToDoc(ctx, item.OwnerID, projectDocDir, item.Title)
-	case types.ProjectReportItemOwnerAISummary:
-		return h.publishAISummaryToDoc(ctx, item.OwnerID, projectDocDir, item.Title)
-	case types.ProjectReportItemOwnerCustom:
-		return h.publishCustomItemToDoc(item, projectDocDir)
-	default:
-		return errors.NewValidationError(fmt.Sprintf("unsupported owner_type: %s", item.OwnerType))
-	}
-}
-
-// publishCustomItemToDoc 将自定义内容条目（章节占位/自定义 markdown）的正文写入报告文档目录。
-func (h *AnalysisHandler) publishCustomItemToDoc(item *types.ProjectReportItem, projectDocDir string) error {
 	if err := os.MkdirAll(projectDocDir, 0o755); err != nil {
 		return errors.NewInternalServerError("failed to create project doc dir").WithDetails(err.Error())
 	}
 
-	entry := fmt.Sprintf("./%d.md", item.ID)
-	target := filepath.Join(projectDocDir, fmt.Sprintf("%d.md", item.ID))
-	if err := os.WriteFile(target, []byte(item.Content), 0o644); err != nil {
-		return errors.NewInternalServerError("failed to write custom item to project doc dir").WithDetails(err.Error())
+	entry := "./output.md"
+	target := filepath.Join(projectDocDir, "output.md")
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		return errors.NewInternalServerError("failed to write report to project doc dir").WithDetails(err.Error())
 	}
 
-	line := fmt.Sprintf("- [%s](%s)\n", docSectionTitle(item.Title, ""), entry)
+	line := fmt.Sprintf("- [%s](%s)\n", docSectionTitle(report.Title, "Report"), entry)
 	if err := appendProjectDocSummary(projectDocDir, entry, line); err != nil {
 		return errors.NewInternalServerError("failed to update SUMMARY.md").WithDetails(err.Error())
 	}

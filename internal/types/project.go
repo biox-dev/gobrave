@@ -1,7 +1,6 @@
 package types
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -197,11 +196,16 @@ func (UserProject) TableName() string {
 // 避免两处常量各自漂移。
 const DefaultProjectReportFilename = utils.DefaultProjectReportFilename
 
-// ProjectReport 是一个报告容器，只保存标题等元信息，不再承载文件内容。
-// 报告的内容由 ProjectReportItem 列表按顺序拼接而成。
+// ProjectReport 是一个报告容器：元信息 + 正文文件（工作目录下的 output.md）。
+//
+// 报告正文由 agent 工具（create_report / update_report）直接撰写；PlanID 指向撰写该报告
+// 所依据的 ProjectReportPlan（大纲），0 表示报告未绑定大纲（例如简单任务的单会话报告）。
 type ProjectReport struct {
-	ID        int64     `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-	ProjectID int64     `json:"project_id,string" gorm:"type:bigint;not null;index"`
+	ID        int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
+	ProjectID int64 `json:"project_id,string" gorm:"type:bigint;not null;index"`
+	// PlanID 指向 t_project_report_plan.id：报告按该大纲撰写。
+	// 大纲是跨会话共享的，因此同一大纲可以被多份报告（或多个会话）复用。
+	PlanID    int64     `json:"plan_id,string" gorm:"column:plan_id;type:bigint;index"`
 	Title     string    `json:"title" gorm:"type:varchar(255)"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -237,74 +241,84 @@ func (t *ProjectReport) OutputFile(baseDir string) string {
 	return utils.GetProjectReportOutputFile(t.WorkspaceDir(baseDir))
 }
 
-// ProjectReportItemOwnerType 标识 ProjectReportItem 指向的内容来源类型。
-type ProjectReportItemOwnerType string
+// ProjectReportPlanSectionSource 标识大纲章节的内容来源。
+//
+// 统一用「资源类型 + 资源 ID」，与 SessionResource 的取值保持一致，因此报告撰写 session
+// 可以直接用 session 资源（分析运行 / 分析节点 / 脚本 / 工作流）填充章节；
+// custom 表示不引用外部资源，正文由 agent 撰写时自行组织。
+type ProjectReportPlanSectionSource string
 
 const (
-	// ProjectReportItemOwnerAnalysis 指向 Analysis（nextflow 表）的 ID。
-	ProjectReportItemOwnerAnalysis ProjectReportItemOwnerType = "analysis"
-	// ProjectReportItemOwnerAnalysisNode 指向 AnalysisNode（analysis_nodes 表）的 ID。
-	ProjectReportItemOwnerAnalysisNode ProjectReportItemOwnerType = "analysis_node"
-	// ProjectReportItemOwnerAISummary 指向 AISummary 的 ID。
-	ProjectReportItemOwnerAISummary ProjectReportItemOwnerType = "ai_summary"
-	// ProjectReportItemOwnerCustom 是自定义内容条目，用于章节占位/自定义 markdown 段落。
-	// 它不引用外部 owner，标题与正文由用户直接编辑并持久化在本表。
-	ProjectReportItemOwnerCustom ProjectReportItemOwnerType = "custom"
+	// ProjectReportPlanSourceCustom 是自定义章节（不引用外部资源）。
+	ProjectReportPlanSourceCustom ProjectReportPlanSectionSource = "custom"
+	// ProjectReportPlanSourceAnalysis 指向 Analysis（nextflow 表）的 ID。
+	ProjectReportPlanSourceAnalysis ProjectReportPlanSectionSource = "analysis"
+	// ProjectReportPlanSourceAnalysisNode 指向 AnalysisNode 的 ID。
+	ProjectReportPlanSourceAnalysisNode ProjectReportPlanSectionSource = "analysis_node"
+	// ProjectReportPlanSourceScript 指向 Script 的 ID。
+	ProjectReportPlanSourceScript ProjectReportPlanSectionSource = "script"
+	// ProjectReportPlanSourceWorkflow 指向 Workflow 的 ID。
+	ProjectReportPlanSourceWorkflow ProjectReportPlanSectionSource = "workflow"
 )
 
-// NormalizeProjectReportItemOwnerType 校验并归一化 OwnerType。
-func NormalizeProjectReportItemOwnerType(t string) (ProjectReportItemOwnerType, bool) {
-	switch ProjectReportItemOwnerType(strings.ToLower(strings.TrimSpace(t))) {
-	case ProjectReportItemOwnerAnalysis:
-		return ProjectReportItemOwnerAnalysis, true
-	case ProjectReportItemOwnerAnalysisNode:
-		return ProjectReportItemOwnerAnalysisNode, true
-	case ProjectReportItemOwnerAISummary:
-		return ProjectReportItemOwnerAISummary, true
-	case ProjectReportItemOwnerCustom:
-		return ProjectReportItemOwnerCustom, true
+// NormalizeProjectReportPlanSectionSource 校验并归一化章节来源类型。
+func NormalizeProjectReportPlanSectionSource(t string) (ProjectReportPlanSectionSource, bool) {
+	switch ProjectReportPlanSectionSource(strings.ToLower(strings.TrimSpace(t))) {
+	case ProjectReportPlanSourceCustom:
+		return ProjectReportPlanSourceCustom, true
+	case ProjectReportPlanSourceAnalysis:
+		return ProjectReportPlanSourceAnalysis, true
+	case ProjectReportPlanSourceAnalysisNode:
+		return ProjectReportPlanSourceAnalysisNode, true
+	case ProjectReportPlanSourceScript:
+		return ProjectReportPlanSourceScript, true
+	case ProjectReportPlanSourceWorkflow:
+		return ProjectReportPlanSourceWorkflow, true
 	default:
 		return "", false
 	}
 }
 
-// ProjectReportItem 是 ProjectReport 下的一个内容条目，按 SortOrder 排序后拼接成报告正文。
-type ProjectReportItem struct {
-	ID              int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
-	ProjectReportID int64 `json:"project_report_id,string" gorm:"column:project_report_id;type:bigint;index:idx_project_report_items_report"`
-	// ParentID 指向同一报告下的父条目 ID，0 表示根节点。用于组织树形结构。
-	ParentID  int64                      `json:"parent_id,string" gorm:"column:parent_id;type:bigint;index:idx_project_report_items_parent"`
-	OwnerType ProjectReportItemOwnerType `json:"owner_type" gorm:"column:owner_type;type:varchar(32);index:idx_project_report_items_owner"`
-	// OwnerID 指向 OwnerType 对应的主键。
-	OwnerID   int64     `json:"owner_id,string" gorm:"column:owner_id;type:bigint;index:idx_project_report_items_owner"`
-	SortOrder int       `json:"sort_order" gorm:"column:sort_order;default:0"`
-	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
-	UpdatedAt time.Time `json:"updated_at" gorm:"column:updated_at"`
-
-	// Title 是展示用标题。仅 OwnerType=custom 时由用户编辑并持久化；
-	// 其他引用类型的标题由 owner 推导（读取时派生），写入时会清空，不落库。
-	Title string `json:"title" gorm:"type:varchar(255)"`
-	// Content 是自定义 markdown 正文，仅 OwnerType=custom 时持久化；
-	// 其他引用类型不存储内容。
-	Content string `json:"content" gorm:"type:longtext"`
+// ProjectReportPlanSection 是大纲中的一个章节节点。
+//
+// ParentID 指向同一大纲内的父章节 ID（0 表示根节点），SortOrder 为同级顺序，
+// 因此前端可以直接渲染可拖拽的树；删除 / 移动只影响本大纲。
+type ProjectReportPlanSection struct {
+	ID        int64                          `json:"id,string"`
+	ParentID  int64                          `json:"parent_id,string"`
+	Title     string                         `json:"title"`
+	Summary   string                         `json:"summary,omitempty"`
+	Source    ProjectReportPlanSectionSource `json:"source"`
+	SourceID  int64                          `json:"source_id,string"`
+	SortOrder int                            `json:"sort_order"`
 }
 
-func (t *ProjectReportItem) BeforeCreate(_ *gorm.DB) error {
-	if t.ID == 0 {
-		t.ID = utils.GenerateID()
+// ProjectReportPlan 是报告大纲（跨会话共享的报告结构）。
+//
+// 与 ProjectReport 的关系是「结构 → 内容」：Plan 只描述报告要写哪些章节、每章引用哪些
+// 会话资源；正文仍写在 ProjectReport 的 output.md 里。复杂任务（多个会话完成）先由
+// 独立会话创建 / 调整 Plan，再由报告撰写会话按 Plan 写正文。
+type ProjectReportPlan struct {
+	ID        int64     `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
+	ProjectID int64     `json:"project_id,string" gorm:"type:bigint;not null;index"`
+	Title     string    `json:"title" gorm:"type:varchar(255)"`
+	Goal      string    `json:"goal" gorm:"type:text"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+
+	// Sections 是章节树（按树的前序遍历展示）；以 JSON 落库，避免为大纲再维护一张表。
+	Sections []ProjectReportPlanSection `json:"sections" gorm:"serializer:json"`
+}
+
+func (p *ProjectReportPlan) BeforeCreate(_ *gorm.DB) error {
+	if p.ID == 0 {
+		p.ID = utils.GenerateID()
 	}
 	return nil
 }
 
-func (ProjectReportItem) TableName() string {
-	return "t_project_report_items"
-}
-
-// ProjectReportItemOrder 描述拖拽重排后单个条目的目标位置（父节点与同级顺序）。
-type ProjectReportItemOrder struct {
-	ID        int64
-	ParentID  int64
-	SortOrder int
+func (ProjectReportPlan) TableName() string {
+	return "t_project_report_plan"
 }
 
 // ProjectReportGitDiff 是报告工作目录（<baseDir>/data/<projectId>/report/<reportId>）的本地变化。
@@ -340,30 +354,4 @@ type ProjectReportCommitResult struct {
 	Commit string `json:"commit,omitempty"`
 	// CommitMessage 本次提交实际使用的 message（入参为空时为后端默认文案）。
 	CommitMessage string `json:"commit_message"`
-}
-
-// ProjectReportItemContent 是 ProjectReportItem 渲染后的内容片段。
-// Title 为展示标题，Content 为正文。
-//
-// 正文里的图片一律是以数据目录为根的绝对路径（如 /34/analysis_node/100/200/output/a.png）：
-// 节点完成时会把 output.md 里的相对图片路径改写掉（见 dag.NodeCompletionCoordinator），
-// 展示侧只需统一补上 /data-analysis 前缀，因此这里不再需要 Prefix。
-type ProjectReportItemContent struct {
-	Title     string                     `json:"title"`
-	Content   string                     `json:"content"`
-	OwnerType ProjectReportItemOwnerType `json:"owner_type"`
-}
-
-// Render 将片段渲染为 markdown 小节；正文为空时返回空串。
-// 正文已包含可供展示的图片绝对路径，渲染时不再做任何路径改写。
-func (c ProjectReportItemContent) Render() string {
-	content := c.Content
-	if strings.TrimSpace(content) == "" {
-		return ""
-	}
-	title := strings.TrimSpace(c.Title)
-	if title == "" {
-		title = "Untitled"
-	}
-	return fmt.Sprintf("# %s\n\n%s\n\n", title, content)
 }

@@ -244,6 +244,10 @@ type agentToolDeps struct {
 	// Sessions / Messages 供注册表级 agent 工具（子 Agent）落库自己的会话。
 	Sessions agentinterfaces.SessionService
 	Messages agentinterfaces.MessageService
+	// ReportPlan 报告大纲读写（create / list / get / update_report_plan）。
+	ReportPlan agentinterfaces.ReportPlanService
+	// SessionResources 读取当前会话产出的资源（list_session_resources）。
+	SessionResources agentinterfaces.SessionResourceService
 }
 
 // buildAgentTools 构造工具注册表，并把内置 / coder / MCP 工具注册进去。
@@ -266,30 +270,31 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 			skill.WithOverwriteBuiltinSkills(config.ResolveOverwriteBuiltinSkills(in.Config)))
 	}
 	builtinDeps := builtin.Deps{
-		Runner:          in.Runner,
-		AgentRunner:     in.AgentRunner,
-		Terminal:        in.Terminal,
-		UIActions:       in.UIActions,
-		FileReader:      in.FileReader,
-		ScriptCreator:   in.ScriptCreator,
-		NodeCreator:     in.NodeCreator,
-		ParamsBuilder:   in.ParamsBuilder,
-		NodeUpdater:     in.NodeUpdater,
-		WorkflowCreator: in.WorkflowCreator,
-		AnalysisRunner:  in.AnalysisRunner,
-		MemorySaver:     in.MemorySaver,
-		ScriptBrowser:   in.Browser,
-		NodeBrowser:     in.Browser,
-		WorkflowBrowser: in.Browser,
-		AnalysisBrowser: in.Browser,
-		TemplateBrowser: in.Browser,
-		DatasetBrowser:  in.Browser,
-		DatasetWriter:   in.Browser,
-		ReportContext:   in.Browser,
-		ReportBrowser:   in.Browser,
-		ReportWriter:    in.ReportWriter,
-		Skills:          skillResolver,
-		SkillWriter:     skillWriter,
+		Runner:           in.Runner,
+		AgentRunner:      in.AgentRunner,
+		Terminal:         in.Terminal,
+		UIActions:        in.UIActions,
+		FileReader:       in.FileReader,
+		ScriptCreator:    in.ScriptCreator,
+		NodeCreator:      in.NodeCreator,
+		ParamsBuilder:    in.ParamsBuilder,
+		NodeUpdater:      in.NodeUpdater,
+		WorkflowCreator:  in.WorkflowCreator,
+		AnalysisRunner:   in.AnalysisRunner,
+		MemorySaver:      in.MemorySaver,
+		ScriptBrowser:    in.Browser,
+		NodeBrowser:      in.Browser,
+		WorkflowBrowser:  in.Browser,
+		AnalysisBrowser:  in.Browser,
+		TemplateBrowser:  in.Browser,
+		DatasetBrowser:   in.Browser,
+		DatasetWriter:    in.Browser,
+		ReportBrowser:    in.Browser,
+		ReportWriter:     in.ReportWriter,
+		ReportPlan:       in.ReportPlan,
+		SessionResources: in.SessionResources,
+		Skills:           skillResolver,
+		SkillWriter:      skillWriter,
 		// Profile 写能力：修改当前 Profile 的系统提示词（update_profile_prompt）。
 		// 同时告知 Writer 启动时是否会覆盖内置提示词，使其能提醒用户「本次修改会在重启后被覆盖」。
 		ProfilePromptWriter: profilePromptWriter(in),
@@ -699,6 +704,14 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// Provide(realtime.NewHub) 之后（见本文件后面对 UIActionPusher 的同款说明）。
 	must(container.Provide(func(store agentinterfaces.SessionResourceStore, hub *realtime.Hub) agentinterfaces.SessionResourceService {
 		return agentservice.NewSessionResourceService(store, hub)
+	}))
+	// 报告大纲（跨会话共享的报告结构）：agent 工具（create / list / get / update_report_plan）
+	// 与报告撰写会话共用。
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.ReportPlanStore {
+		return agentrepository.NewGormReportPlanStore(db)
+	}))
+	must(container.Provide(func(store agentinterfaces.ReportPlanStore) agentinterfaces.ReportPlanService {
+		return agentservice.NewReportPlanService(store)
 	}))
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.MessageService {
 		return agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))
@@ -1242,7 +1255,6 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.Project{},
 		&types.UserProject{},
 		&types.ProjectReport{},
-		&types.ProjectReportItem{},
 		&types.Literature{},
 		&types.ProjectLiterature{},
 		&types.Dataset{},
@@ -1275,6 +1287,8 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&agenttypes.Message{},
 		&agenttypes.File{},
 		&agenttypes.SessionResource{},
+		// 报告大纲（跨会话共享的报告结构）。
+		&agenttypes.ReportPlan{},
 		&agenttypes.Memory{},
 		&agenttypes.Profile{},
 	// &types.Trace{},

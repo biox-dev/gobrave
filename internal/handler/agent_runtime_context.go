@@ -12,8 +12,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/config"
-	"github.com/biox-dev/gobrave/internal/logger"
-	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
@@ -193,12 +191,15 @@ func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env 
 				// 科研报告撰写提示词由 Profile 模板负责组织，这里只提供变量（输出文件路径等）。
 				vars["output_file"] = outputFile
 				vars["report_title"] = report.Title
-				// project_report_items 是报告条目列表，供 pongo2 模板遍历（每个条目仅含 name/content）。
-				itemVars, itemErr := r.resolveProjectReportItemVars(ctx, userID, report)
-				if itemErr != nil {
-					return nil, itemErr
+				// 报告撰写依据的大纲（跨会话共享）：模板可遍历 report_plan_sections 组织章节。
+				vars["report_plan_id"] = strconv.FormatInt(report.PlanID, 10)
+				if report.PlanID > 0 {
+					if plan, planErr := r.projectSvc.GetProjectReportPlanByID(ctx, userID, report.PlanID); planErr == nil && plan != nil {
+						vars["report_plan_title"] = plan.Title
+						vars["report_plan_goal"] = plan.Goal
+						vars["report_plan_sections"] = plan.Sections
+					}
 				}
-				vars["project_report_items"] = itemVars
 
 			default:
 				return nil, fmt.Errorf("unsupported runtime env type: %s", envType)
@@ -257,114 +258,12 @@ func (r *RuntimeContextResolver) ResolveWithFacts(ctx context.Context, userID in
 	}, nil
 }
 
-// ProjectReportItemVar 是暴露给 pongo2 模板遍历的项目报告条目变量。
-// 每个条目包含名称（Name）、内容（Content）与来源类型（OwnerType）：
-//   - analysis / analysis_node：名称取 AnalysisName / NodeName，内容为
-//     Analysis 工作目录 / 节点输出目录下的 output.md 文件路径；
-//   - ai_summary：名称取摘要标题，内容为摘要文件路径（见 utils.GetAISummaryFile）；
-//   - custom：名称取用户编辑的标题，内容为用户编辑的正文。
-//
-// OwnerType 为条目原始来源类型（取值见 types.ProjectReportItemOwnerType），供模板按来源
-// 区分处理（如 {% if item.OwnerType == "ai_summary" %}）。
-//
-// 字段刻意不加 json tag：SystemPromptVars 会随 agent_tasks.request 一起 JSON 往返，
-// 不加 tag 时字段名即 JSON 键（Name/Content/OwnerType），无论内存态还是反序列化后，
-// 模板都能统一用 {{ item.Name }} / {{ item.Content }} / {{ item.OwnerType }} 访问。
-//
-// OwnerType 特意声明为 string，而不是 types.ProjectReportItemOwnerType：pongo2 的
-// `==` 最终走 Go 的接口相等比较（见 pongo2.Value.EqualValueTo，仅整数/时间有特例），
-// 动态类型不同即判定不相等，具名字符串类型永远不等于字符串字面量。一旦这里保留具名
-// 类型，内存态渲染时 {% if item.OwnerType == "custom" %} 恒为假，循环体整段不输出；
-// 而经 JSON 往返后的副本（agent_tasks 恢复）却变回 string 又能命中，同一模板出现
-// 「首次不输出、恢复后正常」的诡异差异。构建时用 string(...) 显式转换即规避此坑。
-type ProjectReportItemVar struct {
-	Name      string
-	Content   string
-	OwnerType string
-}
-
-// resolveProjectReportItemVars 读取报告下的全部条目并解析为模板变量列表。
-// 单个条目解析失败（owner 记录缺失等）时跳过该条目并记录告警，
-// 避免一个失效引用导致整份报告上下文不可用。
-func (r *RuntimeContextResolver) resolveProjectReportItemVars(ctx context.Context, userID int64, report *types.ProjectReport) ([]ProjectReportItemVar, error) {
-	if report == nil {
-		return nil, nil
-	}
-
-	items, err := r.projectSvc.ListProjectReportItemsByReportID(ctx, userID, report.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list project report items: %w", err)
-	}
-
-	baseDir := r.storageBaseDir()
-	result := make([]ProjectReportItemVar, 0, len(items))
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		name, content, ok := r.resolveProjectReportItemVar(ctx, baseDir, report, item)
-		if !ok {
-			logger.Warnf(ctx, "[RuntimeContext] skip project report item, item_id=%d owner_type=%s owner_id=%d", item.ID, item.OwnerType, item.OwnerID)
-			continue
-		}
-		result = append(result, ProjectReportItemVar{Name: name, Content: content, OwnerType: string(item.OwnerType)})
-	}
-	return result, nil
-}
-
 // outputMarkdownPath 拼接 owner（Analysis / AnalysisNode）输出目录下的 output.md 路径。
 // 目录为空时返回空串，避免模板拿到悬空的 "output.md"（与 utils 派生路径的空值口径一致）。
 func outputMarkdownPath(dir string) string {
 	return utils.GetProjectReportOutputFile(dir)
 }
 
-// resolveProjectReportItemVar 按 owner 类型解析单个报告条目的名称与内容
-// （名称与内容的口径见 ProjectReportItemVar）。返回 ok=false 表示无法解析
-// （owner 缺失、服务不可用或 owner 类型不支持）。
-func (r *RuntimeContextResolver) resolveProjectReportItemVar(ctx context.Context, baseDir string, report *types.ProjectReport, item *types.ProjectReportItem) (string, string, bool) {
-	switch item.OwnerType {
-	case types.ProjectReportItemOwnerAnalysis:
-		analysis, err := r.analysisSvc.GetAnalysisByID(ctx, item.OwnerID)
-		if err != nil {
-			return "", "", false
-		}
-		// 内容给到 Analysis 工作目录下的 output.md，而不是目录本身：报告撰写
-		// 模板需要的是可直接读取的结果文件路径（与 ai_summary 条目的口径一致）。
-		return analysis.AnalysisName, outputMarkdownPath(analysis.WorkspaceDir), true
-
-	case types.ProjectReportItemOwnerAnalysisNode:
-		node, err := r.analysisSvc.GetAnalysisNodeByID(ctx, item.OwnerID)
-		if err != nil {
-			return "", "", false
-		}
-		// 同上：节点输出目录下的 output.md。
-		return node.NodeName, outputMarkdownPath(node.OutputDir), true
-
-	case types.ProjectReportItemOwnerAISummary:
-		if r.summarySvc == nil {
-			return "", "", false
-		}
-		summary, err := r.summarySvc.GetAISummaryByID(ctx, item.OwnerID)
-		if err != nil {
-			return "", "", false
-		}
-		// 摘要文件路径需要项目 ID：优先用摘要记录上的 ProjectID，
-		// 尚未回填时回退到报告所属项目，保证路径仍可定位。
-		projectID := summary.ProjectID
-		if projectID == 0 && report != nil {
-			projectID = report.ProjectID
-		}
-		return summary.Title, utils.GetAISummaryFile(baseDir, projectID, summary.ID), true
-
-	case types.ProjectReportItemOwnerCustom:
-		return item.Title, item.Content, true
-
-	default:
-		return "", "", false
-	}
-}
-
-// RuntimeContextInfo 是用于前端展示的轻量上下文描述。
 type RuntimeContextInfo struct {
 	Type         string         `json:"type"`                        // 归一化后的业务类型（空表示默认工作区）
 	Label        string         `json:"label"`                       // 人类可读的名称

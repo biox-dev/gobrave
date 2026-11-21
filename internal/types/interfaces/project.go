@@ -35,22 +35,12 @@ type ProjectService interface {
 	PageProjectReportByProjectID(ctx context.Context, userID int64, projectID int64, pagination *types.Pagination) ([]*types.ProjectReport, int64, error)
 	GetProjectReportDetailByID(ctx context.Context, userID int64, reportID int64) (*types.ProjectReport, error)
 	GetProjectReportByID(ctx context.Context, reportID int64) (*types.ProjectReport, error)
-	// ProjectReportItem business capabilities.
-	// ListProjectReportItemsByReportID 返回报告下全部条目，按树的前序遍历展开（与前端 tree 顺序一致）。
-	ListProjectReportItemsByReportID(ctx context.Context, userID int64, reportID int64) ([]*types.ProjectReportItem, error)
-	AddProjectReportItem(ctx context.Context, userID int64, item *types.ProjectReportItem) error
-	UpdateProjectReportItem(ctx context.Context, userID int64, item *types.ProjectReportItem) error
-	DeleteProjectReportItem(ctx context.Context, userID int64, itemID int64) error
-	// ReorderProjectReportItems 按拖拽结果批量更新条目的父节点与同级顺序。
-	ReorderProjectReportItems(ctx context.Context, userID int64, reportID int64, orders []types.ProjectReportItemOrder) error
-	GetProjectReportItemDetailByID(ctx context.Context, userID int64, itemID int64) (*types.ProjectReportItem, error)
-	// GetProjectReportItemContent 返回指定条目（入参为 ProjectReportItem ID）渲染后的内容片段。
-	GetProjectReportItemContent(ctx context.Context, itemID int64) (*types.ProjectReportItemContent, error)
-	// PackageProjectReportItems 按条目树把内容打包到报告工作目录的 results 子目录，返回结果目录路径。
-	// custom 写入 README.md；analysis_node 拷贝节点输出目录；ai_summary 拷贝摘要正文文件；analysis 暂不处理。
-	PackageProjectReportItems(ctx context.Context, userID int64, reportID int64) (string, error)
-	// GetProjectReportContent 汇总报告下所有条目，按顺序拼接成正文，仅返回拼接后的内容。
-	GetProjectReportContent(ctx context.Context, reportID int64) (string, error)
+	// ProjectReportPlan 报告大纲（跨会话共享的报告结构）。
+	GetProjectReportPlanByID(ctx context.Context, userID int64, planID int64) (*types.ProjectReportPlan, error)
+	ListProjectReportPlansByProjectID(ctx context.Context, userID int64, projectID int64) ([]*types.ProjectReportPlan, error)
+	// SaveProjectReportPlan 新建（ID=0）或整体覆盖大纲，返回保存后的记录。
+	SaveProjectReportPlan(ctx context.Context, userID int64, plan *types.ProjectReportPlan) (*types.ProjectReportPlan, error)
+	DeleteProjectReportPlan(ctx context.Context, userID int64, planID int64) error
 	// GetProjectReportFile 读取报告工作目录下的自身 markdown 文件（output.md）内容。
 	GetProjectReportFile(ctx context.Context, userID int64, reportID int64) (string, error)
 	// UpdateProjectReportFile 覆写报告工作目录下的自身 markdown 文件（output.md）内容。
@@ -100,20 +90,14 @@ type ProjectRepository interface {
 	DeleteProjectReport(ctx context.Context, projectID int64, reportID int64) error
 	ListProjectReportByProjectID(ctx context.Context, projectID int64) ([]*types.ProjectReport, error)
 	PageProjectReportByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.ProjectReport, int64, error)
-	// ProjectReportItem data access methods.
-	AddProjectReportItem(ctx context.Context, item *types.ProjectReportItem) error
-	GetProjectReportItemByID(ctx context.Context, itemID int64) (*types.ProjectReportItem, error)
-	UpdateProjectReportItem(ctx context.Context, item *types.ProjectReportItem) error
-	DeleteProjectReportItem(ctx context.Context, itemID int64) error
-	DeleteProjectReportItemsByIDs(ctx context.Context, itemIDs []int64) error
-	DeleteProjectReportItemsByReportID(ctx context.Context, reportID int64) error
-	// ListProjectReportItemsByReportID 按全局 sort_order 返回原始条目（未按树展开），
-	// 需要 tree 顺序时由 service 层调用 flattenProjectReportItems 重排。
-	ListProjectReportItemsByReportID(ctx context.Context, reportID int64) ([]*types.ProjectReportItem, error)
-	// ExistsProjectReportItemOwner 判断同一报告下是否已存在相同 owner 引用（owner_type + owner_id）的条目。
-	// excludeItemID 为需要排除的条目主键（更新场景排除自身），传 0 表示不排除。
-	ExistsProjectReportItemOwner(ctx context.Context, reportID int64, ownerType types.ProjectReportItemOwnerType, ownerID int64, excludeItemID int64) (bool, error)
-	ReorderProjectReportItems(ctx context.Context, reportID int64, orders []types.ProjectReportItemOrder) error
+	// ProjectReportPlan data access methods.
+	AddProjectReportPlan(ctx context.Context, plan *types.ProjectReportPlan) error
+	GetProjectReportPlanByID(ctx context.Context, planID int64) (*types.ProjectReportPlan, error)
+	UpdateProjectReportPlan(ctx context.Context, plan *types.ProjectReportPlan) error
+	DeleteProjectReportPlan(ctx context.Context, planID int64) error
+	ListProjectReportPlansByProjectID(ctx context.Context, projectID int64) ([]*types.ProjectReportPlan, error)
+	// ListProjectReportsByPlanID 返回按某大纲撰写的报告。
+	ListProjectReportsByPlanID(ctx context.Context, planID int64) ([]*types.ProjectReport, error)
 
 	// Literature data access methods.
 	CreateLiterature(ctx context.Context, literature *types.Literature) error

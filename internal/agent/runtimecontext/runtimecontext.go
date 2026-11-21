@@ -894,16 +894,6 @@ type DatasetFileAddResult struct {
 	Size      int64  `json:"size,omitempty"`
 }
 
-// ProjectReportContextResolver 抽象「按报告 ID 解析报告撰写上下文」的能力
-// （get_report_context）。
-type ProjectReportContextResolver interface {
-	// GetReportContext 返回报告标题、工作目录、输出文件与已解析的条目列表。
-	//
-	// reportID 必须属于当前激活项目（projectID），否则返回错误；userID 用于校验报告
-	// 条目列表的访问权限。
-	GetReportContext(ctx context.Context, userID int64, projectID int64, reportID int64) (ProjectReportContext, error)
-}
-
 // ProjectReportBrowser 抽象「按 ID 查看项目报告」的只读能力（get_report）。
 //
 // 与 ProjectReportContextResolver 互补：后者面向「撰写报告」给出工作目录与条目清单，
@@ -1022,31 +1012,6 @@ type DatasetBrief struct {
 	Path        string `json:"path"`
 }
 
-// ProjectReportContext 是项目报告的只读上下文（供 get_report_context 渲染模板）。
-type ProjectReportContext struct {
-	ReportID  int64 `json:"report_id"`
-	ProjectID int64 `json:"project_id"`
-	// ReportTitle 是报告标题。
-	ReportTitle string `json:"report_title"`
-	// WorkingDir 是报告工作目录（<baseDir>/data/<projectId>/report/<reportId>）。
-	WorkingDir string `json:"workspace_directory"`
-	// OutputFile 是报告输出文件（工作目录下的 output.md，见 types.DefaultProjectReportFilename）。
-	OutputFile string `json:"output_file"`
-	// Items 是报告条目（按树的前序遍历，与前端 tree 顺序一致）。
-	Items []ProjectReportItemBrief `json:"project_report_items"`
-}
-
-// ProjectReportItemBrief 是报告条目的只读摘要（供报告撰写模板遍历）。
-//
-// OwnerType 刻意声明为 string，而不是 types.ProjectReportItemOwnerType：pongo2 的 `==`
-// 最终走 Go 的接口相等比较，具名字符串类型永远不等于字符串字面量，会让
-// {% if item.OwnerType == "custom" %} 恒为假、循环体整段不输出。
-type ProjectReportItemBrief struct {
-	Name      string `json:"name"`
-	Content   string `json:"content"`
-	OwnerType string `json:"owner_type"`
-}
-
 // ProjectReportWriter 抽象「创建 / 更新项目报告」的能力，供 create_report / update_report
 // 工具使用。
 //
@@ -1073,6 +1038,8 @@ type ProjectReportCreateInput struct {
 	// UserID / ProjectID 取自执行事实（tool.UserIDFrom / tool.ProjectIDFrom）。
 	UserID    int64
 	ProjectID int64
+	// PlanID 可选：按某份报告大纲撰写（0 表示不绑定大纲）。
+	PlanID int64
 	// Title 是报告标题（必填）。
 	Title string
 	// Content 是报告正文（写入 output.md）；为空时按 "# <title>" 生成。
@@ -1104,6 +1071,8 @@ type ProjectReportWritePlan struct {
 	UserID    int64
 	ReportID  int64
 	ProjectID int64
+	// PlanID 是报告撰写依据的大纲（0 表示未绑定大纲）。
+	PlanID int64
 	// Title 是写入后的报告标题。
 	Title string
 	// FilePath 是报告正文文件（output.md）的绝对路径。

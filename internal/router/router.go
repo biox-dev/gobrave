@@ -169,7 +169,6 @@ func RegisterProjectRoutes(r *gin.RouterGroup, handler *handler.ProjectHandler, 
 	r.GET("/project/list-project-report", handler.ListProjectReport)
 	r.POST("/project/list-project-report-page", handler.PageProjectReport)
 	r.GET("/project/project-report-detail", handler.GetProjectReportDetail)
-	r.GET("/project/project-report-content", handler.GetProjectReportContent)
 	r.GET("/project/project-report-file", handler.GetProjectReportFile)
 	r.POST("/project/update-project-report-file", handler.UpdateProjectReportFile)
 	r.GET("/project/project-report-html", handler.GetProjectReportHTML)
@@ -179,14 +178,11 @@ func RegisterProjectRoutes(r *gin.RouterGroup, handler *handler.ProjectHandler, 
 	r.GET("/project/project-report-git-diff", handler.GetProjectReportGitDiff)
 	r.POST("/project/commit-project-report", handler.CommitProjectReport)
 	r.POST("/project/revert-project-report-file", handler.RevertProjectReportFile)
-	r.GET("/project/list-project-report-item", handler.ListProjectReportItem)
-	r.POST("/project/add-project-report-item", handler.AddProjectReportItem)
-	r.POST("/project/update-project-report-item", handler.UpdateProjectReportItem)
-	r.POST("/project/reorder-project-report-item", handler.ReorderProjectReportItem)
-	r.POST("/project/delete-project-report-item", handler.DeleteProjectReportItem)
-	r.GET("/project/project-report-item-detail", handler.GetProjectReportItemDetail)
-	r.GET("/project/project-report-item-content", handler.GetProjectReportItemContent)
-	r.GET("/project/package-project-report-item", handler.PackageProjectReportItem)
+	// 报告大纲（跨会话共享的报告结构，agent 与前端共用）。
+	r.GET("/project/list-project-report-plan", handler.ListProjectReportPlan)
+	r.GET("/project/project-report-plan-detail", handler.GetProjectReportPlanDetail)
+	r.POST("/project/save-project-report-plan", handler.SaveProjectReportPlan)
+	r.POST("/project/delete-project-report-plan", handler.DeleteProjectReportPlan)
 	r.POST("/project/upload-image", uploadHandler.UploadImage)
 
 	r.POST("/project/add-literature", handler.AddLiterature)
@@ -416,10 +412,7 @@ func RegisterConfigRoutes(r *gin.RouterGroup, handler *handler.ConfigHandler) {
 }
 
 func RegisterAnalysisRoutes(r *gin.RouterGroup, handler *handler.AnalysisHandler) {
-	// 发布到文档目录：
-	//   - 单条目：按 ProjectReportItem 的 OwnerType/OwnerID 发布
-	//   - 整报告：遍历报告下所有 ProjectReportItem 逐个发布
-	r.POST("/project-report-item/:itemId/publish-to-doc", handler.PublishProjectReportItemToDoc)
+	// 发布到文档目录：按报告正文（output.md）发布。
 	r.POST("/project-report/:reportId/publish-to-doc", handler.PublishProjectReportToDoc)
 
 	r.POST("/analysis/parse-params", handler.ParseParams)

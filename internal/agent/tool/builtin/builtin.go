@@ -67,8 +67,13 @@ func All(d Deps) []tool.Tool {
 		UpdateAnalysisWorkflow(d.analysisUpdater(), d.AnalysisBrowser),
 		RunAnalysisWorkflow(d.AnalysisRunner, d.AnalysisBrowser),
 
-		// 项目报告：查看 / 创建 / 更新（含正文 output.md 的读写）。
-		GetReportContext(d.ReportContext),
+		// 项目报告：大纲（plan）+ 会话资源 + 正文读写。
+		// 报告正文只有 create_report / update_report 负责；结构（章节）由 report plan 管理。
+		ListSessionResources(d.SessionResources),
+		CreateReportPlan(d.ReportPlan),
+		ListReportPlans(d.ReportPlan),
+		GetReportPlan(d.ReportPlan),
+		UpdateReportPlan(d.ReportPlan),
 		GetReport(d.ReportBrowser),
 		CreateReport(d.ReportWriter),
 		UpdateReport(d.ReportWriter),

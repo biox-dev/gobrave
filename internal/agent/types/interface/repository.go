@@ -128,6 +128,14 @@ type SessionResourceStore interface {
 	DeleteBySession(ctx context.Context, sessionID int64) error
 }
 
+// ReportPlanStore 是报告大纲（agent_report_plans）的持久化端口。
+type ReportPlanStore interface {
+	Save(ctx context.Context, plan *types.ReportPlan) error
+	Get(ctx context.Context, id int64) (*types.ReportPlan, error)
+	ListByProject(ctx context.Context, projectID int64) ([]*types.ReportPlan, error)
+	Delete(ctx context.Context, id int64) error
+}
+
 // HistoryStore 是文件历史的持久化端口。
 type HistoryStore interface {
 	Create(ctx context.Context, file *types.File) error

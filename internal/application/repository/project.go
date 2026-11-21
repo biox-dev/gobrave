@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"time"
 
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -282,119 +281,60 @@ func (r *projectRepository) ListProjectReportDetailByProjectID(ctx context.Conte
 	return reports, nil
 }
 
-// ---------- ProjectReportItem ----------
+// ---------- ProjectReportPlan ----------
 
-func (r *projectRepository) AddProjectReportItem(ctx context.Context, item *types.ProjectReportItem) error {
-	return r.db.WithContext(ctx).Create(item).Error
+func (r *projectRepository) AddProjectReportPlan(ctx context.Context, plan *types.ProjectReportPlan) error {
+	return r.db.WithContext(ctx).Create(plan).Error
 }
 
-func (r *projectRepository) GetProjectReportItemByID(ctx context.Context, itemID int64) (*types.ProjectReportItem, error) {
-	item := &types.ProjectReportItem{}
-	err := r.db.WithContext(ctx).
-		Where("id = ?", itemID).
-		Take(item).Error
-	if err != nil {
+func (r *projectRepository) GetProjectReportPlanByID(ctx context.Context, planID int64) (*types.ProjectReportPlan, error) {
+	plan := &types.ProjectReportPlan{}
+	if err := r.db.WithContext(ctx).Where("id = ?", planID).Take(plan).Error; err != nil {
 		return nil, err
 	}
-
-	return item, nil
+	return plan, nil
 }
 
-func (r *projectRepository) UpdateProjectReportItem(ctx context.Context, item *types.ProjectReportItem) error {
+// UpdateProjectReportPlan 整体覆盖标题 / 目标 / 章节树（sections 以 JSON 落库）。
+func (r *projectRepository) UpdateProjectReportPlan(ctx context.Context, plan *types.ProjectReportPlan) error {
 	return r.db.WithContext(ctx).
-		Model(&types.ProjectReportItem{}).
-		Where("id = ?", item.ID).
+		Model(&types.ProjectReportPlan{}).
+		Where("id = ?", plan.ID).
 		Updates(map[string]interface{}{
-			"parent_id":  item.ParentID,
-			"owner_type": item.OwnerType,
-			"owner_id":   item.OwnerID,
-			"sort_order": item.SortOrder,
-			"title":      item.Title,
-			"content":    item.Content,
+			"title":      plan.Title,
+			"goal":       plan.Goal,
+			"sections":   plan.Sections,
+			"updated_at": plan.UpdatedAt,
 		}).Error
 }
 
-func (r *projectRepository) DeleteProjectReportItem(ctx context.Context, itemID int64) error {
-	return r.db.WithContext(ctx).
-		Where("id = ?", itemID).
-		Delete(&types.ProjectReportItem{}).Error
+func (r *projectRepository) DeleteProjectReportPlan(ctx context.Context, planID int64) error {
+	return r.db.WithContext(ctx).Where("id = ?", planID).Delete(&types.ProjectReportPlan{}).Error
 }
 
-// DeleteProjectReportItemsByIDs 批量删除条目（用于删除某个节点及其子孙）。
-func (r *projectRepository) DeleteProjectReportItemsByIDs(ctx context.Context, itemIDs []int64) error {
-	if len(itemIDs) == 0 {
-		return nil
-	}
-	return r.db.WithContext(ctx).
-		Where("id IN ?", itemIDs).
-		Delete(&types.ProjectReportItem{}).Error
-}
-
-func (r *projectRepository) DeleteProjectReportItemsByReportID(ctx context.Context, reportID int64) error {
-	return r.db.WithContext(ctx).
-		Where("project_report_id = ?", reportID).
-		Delete(&types.ProjectReportItem{}).Error
-}
-
-func (r *projectRepository) ListProjectReportItemsByReportID(ctx context.Context, reportID int64) ([]*types.ProjectReportItem, error) {
-	items := make([]*types.ProjectReportItem, 0)
+func (r *projectRepository) ListProjectReportPlansByProjectID(ctx context.Context, projectID int64) ([]*types.ProjectReportPlan, error) {
+	plans := make([]*types.ProjectReportPlan, 0)
 	err := r.db.WithContext(ctx).
-		Model(&types.ProjectReportItem{}).
-		Where("project_report_id = ?", reportID).
-		Order("sort_order ASC").
-		Order("created_at ASC").
-		Find(&items).Error
+		Where("project_id = ?", projectID).
+		Order("created_at DESC").
+		Find(&plans).Error
 	if err != nil {
 		return nil, err
 	}
-
-	return items, nil
+	return plans, nil
 }
 
-// ExistsProjectReportItemOwner 判断同一报告下是否已存在相同 owner_type + owner_id 的条目。
-// 用于阻止同一条 owner 记录被重复添加到同一报告；excludeItemID > 0 时排除该条目自身（更新场景）。
-func (r *projectRepository) ExistsProjectReportItemOwner(ctx context.Context, reportID int64, ownerType types.ProjectReportItemOwnerType, ownerID int64, excludeItemID int64) (bool, error) {
-	if reportID <= 0 || ownerID <= 0 || ownerType == "" {
-		return false, nil
+// ListProjectReportsByPlanID 返回按某大纲撰写的报告（跨会话共享大纲时可能有多个）。
+func (r *projectRepository) ListProjectReportsByPlanID(ctx context.Context, planID int64) ([]*types.ProjectReport, error) {
+	reports := make([]*types.ProjectReport, 0)
+	err := r.db.WithContext(ctx).
+		Where("plan_id = ?", planID).
+		Order("created_at ASC").
+		Find(&reports).Error
+	if err != nil {
+		return nil, err
 	}
-
-	query := r.db.WithContext(ctx).
-		Model(&types.ProjectReportItem{}).
-		Where("project_report_id = ? AND owner_type = ? AND owner_id = ?", reportID, ownerType, ownerID)
-	if excludeItemID > 0 {
-		query = query.Where("id <> ?", excludeItemID)
-	}
-
-	var count int64
-	if err := query.Count(&count).Error; err != nil {
-		return false, err
-	}
-
-	return count > 0, nil
-}
-
-// ReorderProjectReportItems 在一个事务中批量更新条目的 parent_id 与 sort_order。
-func (r *projectRepository) ReorderProjectReportItems(ctx context.Context, reportID int64, orders []types.ProjectReportItemOrder) error {
-	if len(orders) == 0 {
-		return nil
-	}
-
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		now := time.Now()
-		for _, order := range orders {
-			err := tx.Model(&types.ProjectReportItem{}).
-				Where("id = ? AND project_report_id = ?", order.ID, reportID).
-				Updates(map[string]interface{}{
-					"parent_id":  order.ParentID,
-					"sort_order": order.SortOrder,
-					"updated_at": now,
-				}).Error
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return reports, nil
 }
 
 // ---------- Literature ----------
