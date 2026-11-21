@@ -5,6 +5,7 @@ import (
 	stderrs "errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/errors"
@@ -33,12 +34,26 @@ type deletePlanRequest struct {
 	ID int64 `json:"id,string" binding:"required"`
 }
 
+// planSummary 是计划列表项：只带表格需要的字段，不包含节点树。
+//
+// 节点树可能很大，列表页并不展示它（展开某一行时才按 ID 请求详情），
+// 因此这里只回传节点数量，避免每次打开列表都传输全部 items。
+type planSummary struct {
+	ID        int64     `json:"id,string"`
+	ProjectID int64     `json:"project_id,string"`
+	Title     string    `json:"title"`
+	Goal      string    `json:"goal"`
+	ItemCount int       `json:"item_count"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // ListPlan godoc
 // @Summary      查询项目计划列表
-// @Description  返回当前激活项目下的全部计划（含节点树）
+// @Description  返回当前激活项目下的全部计划（只含标题 / 目标 / 节点数，不含节点树）
 // @Tags         项目
 // @Produce      json
-// @Success      200  {array}  types.AgentPlan
+// @Success      200  {array}  planSummary
 // @Security     Bearer
 // @Router       /project/list-plan [get]
 func (h *ProjectHandler) ListPlan(c *gin.Context) {
@@ -60,10 +75,24 @@ func (h *ProjectHandler) ListPlan(c *gin.Context) {
 		h.respondPlanError(c, err)
 		return
 	}
-	if plans == nil {
-		plans = []*agenttypes.AgentPlan{}
+
+	// 始终返回数组（无计划时为 []），前端可以直接当表格数据源使用。
+	out := make([]planSummary, 0, len(plans))
+	for _, plan := range plans {
+		if plan == nil {
+			continue
+		}
+		out = append(out, planSummary{
+			ID:        plan.ID,
+			ProjectID: plan.ProjectID,
+			Title:     plan.Title,
+			Goal:      plan.Goal,
+			ItemCount: len(plan.Items),
+			CreatedAt: plan.CreatedAt,
+			UpdatedAt: plan.UpdatedAt,
+		})
 	}
-	c.JSON(http.StatusOK, plans)
+	c.JSON(http.StatusOK, out)
 }
 
 // GetPlanDetail godoc
