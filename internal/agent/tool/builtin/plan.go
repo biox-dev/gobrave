@@ -20,6 +20,14 @@ type planService interface {
 	Delete(ctx context.Context, id int64) error
 }
 
+// planSessionLinker 记录「当前会话 ↔ 计划」的关联（由 SessionResourceService 实现）。
+//
+// 计划是项目级产物，一个计划可由多个会话共同创建 / 修改；因此不把 SessionID 存进
+// AgentPlan，而是走会话资源关联表（agent_session_resources），与脚本 / 工作流等一致。
+type planSessionLinker interface {
+	LinkFromContext(ctx context.Context, resourceType agenttypes.SessionResourceType, resourceIDs ...int64) error
+}
+
 // 计划（plan）工具名。
 //
 // 计划是 agent 的通用能力：一组按树组织的步骤，每步可引用会话产出的资源 ID。
@@ -66,7 +74,10 @@ type PlanBrief struct {
 }
 
 // CreatePlan 创建计划（也可一次性写入完整节点树）。
-func CreatePlan(svc planService) tool.Tool {
+//
+// 写操作在执行前先算出计划预览（节点标题 + 来源资源 ID）请求用户批准，
+// 落库后再把「本会话 ↔ 计划」关联写进会话资源表（多会话协作时每个会话各一条）。
+func CreatePlan(svc planService, linker planSessionLinker) tool.Tool {
 	return tool.NewFunc(
 		CreatePlanToolName,
 		"Create a plan in the CURRENT project: a tree of steps (items) where each step may reference a session resource by source + source_id. The plan stores NO resource details — only titles and resource IDs; use get_plan to read it back and then fetch each resource with its own tool. Call list_session_resources first to get real resource IDs. Use it for multi-session work; a report can later be written from this plan via create_report(plan_id).",
@@ -76,13 +87,13 @@ func CreatePlan(svc planService) tool.Tool {
 			"items": planItemsProperty(),
 		}, "title"),
 		func(ctx context.Context, in planWriteInput) (PlanOutput, error) {
-			return savePlanFromInput(ctx, svc, CreatePlanToolName, 0, in)
+			return savePlanFromInput(ctx, svc, linker, CreatePlanToolName, 0, in)
 		},
-	).WithPermission("write", "", "创建 agent 计划")
+	)
 }
 
 // UpdatePlan 整体覆盖一份已有计划（节点树以本次入参为准）。
-func UpdatePlan(svc planService) tool.Tool {
+func UpdatePlan(svc planService, linker planSessionLinker) tool.Tool {
 	return tool.NewFunc(
 		UpdatePlanToolName,
 		"Overwrite an existing plan. Pass plan_id plus the COMPLETE item list you want the plan to have (items not included are removed). Keep item_id for items that already exist so their identity (and user edits) are preserved.",
@@ -97,9 +108,9 @@ func UpdatePlan(svc planService) tool.Tool {
 			if err != nil {
 				return PlanOutput{Error: err.Error()}, nil
 			}
-			return savePlanFromInput(ctx, svc, UpdatePlanToolName, planID, in)
+			return savePlanFromInput(ctx, svc, linker, UpdatePlanToolName, planID, in)
 		},
-	).WithPermission("write", "", "更新 agent 计划")
+	)
 }
 
 // GetPlan 读取单份计划及其节点树。
@@ -122,7 +133,7 @@ func GetPlan(svc planService) tool.Tool {
 			if err != nil {
 				return PlanOutput{PlanID: planID, Error: err.Error()}, nil
 			}
-			return newPlanOutput(plan), nil
+			return newPlanOutput(ctx, plan), nil
 		},
 	).WithPermission("read", "", "读取 agent 计划")
 }
@@ -198,14 +209,17 @@ type planReadInput struct {
 }
 
 // newPlanOutput 把计划实体转换为工具结果。
-func newPlanOutput(plan *agenttypes.AgentPlan) PlanOutput {
+//
+// PlanOutput.SessionID 是「本次操作所在的会话」，取自执行事实而不是计划实体：
+// 计划不持有 SessionID（会话 ↔ 计划的多对多关系记录在 agent_session_resources）。
+func newPlanOutput(ctx context.Context, plan *agenttypes.AgentPlan) PlanOutput {
 	if plan == nil {
 		return PlanOutput{}
 	}
 	return PlanOutput{
 		PlanID:    plan.ID,
 		ProjectID: plan.ProjectID,
-		SessionID: plan.SessionID,
+		SessionID: tool.SessionIDFrom(ctx),
 		Title:     plan.Title,
 		Goal:      plan.Goal,
 		Items:     plan.Items,
@@ -213,7 +227,11 @@ func newPlanOutput(plan *agenttypes.AgentPlan) PlanOutput {
 }
 
 // savePlanFromInput 把工具入参转为计划实体并保存（新建或覆盖）。
-func savePlanFromInput(ctx context.Context, svc planService, toolName string, planID int64, in planWriteInput) (PlanOutput, error) {
+//
+// 顺序：校验入参 → 算出计划预览并请求写授权 → 落库 → 记录会话资源关联。
+// 授权放在落库之前，因此被拒绝时不会留下任何写入；预览里的节点标题 / 来源 ID
+// 就是用户批准前能看到的内容（计划不落文件，没有 diff 可用）。
+func savePlanFromInput(ctx context.Context, svc planService, linker planSessionLinker, toolName string, planID int64, in planWriteInput) (PlanOutput, error) {
 	if svc == nil {
 		return PlanOutput{}, fmt.Errorf("%s: plan service is not available", toolName)
 	}
@@ -227,19 +245,80 @@ func savePlanFromInput(ctx context.Context, svc planService, toolName string, pl
 		return PlanOutput{Title: strings.TrimSpace(in.Title), Error: err.Error()}, nil
 	}
 
+	title := strings.TrimSpace(in.Title)
+	action := "Create"
+	if planID > 0 {
+		action = "Update"
+	}
+	if err := authorizeResourceWrite(ctx, toolName, fmt.Sprintf("%s plan %s", action, title), previewPlan(title, in.Goal, items)); err != nil {
+		return PlanOutput{}, err
+	}
+
 	plan, err := svc.Save(ctx, &agenttypes.AgentPlan{
 		ID:        planID,
 		ProjectID: projectID,
-		// 记录创建计划时所在的会话，便于追溯「这个计划由哪个会话产生」。
-		SessionID: tool.SessionIDFrom(ctx),
-		Title:     in.Title,
+		Title:     title,
 		Goal:      in.Goal,
 		Items:     items,
 	})
 	if err != nil {
-		return PlanOutput{Title: strings.TrimSpace(in.Title), Error: err.Error()}, nil
+		return PlanOutput{Title: title, Error: err.Error()}, nil
 	}
-	return newPlanOutput(plan), nil
+	// 记录「本会话 ↔ 计划」的多对多关联；非 agent 会话调用（ctx 无会话 ID）静默跳过。
+	if linker != nil {
+		_ = linker.LinkFromContext(ctx, agenttypes.SessionResourceTypePlan, plan.ID)
+	}
+	return newPlanOutput(ctx, plan), nil
+}
+
+// previewPlan 把计划节点树渲染为授权预览。
+//
+// 计划没有磁盘文件，因此不用 unified diff（Diff 里的行会被前端当作代码着色）；
+// 这里把节点树以缩进文本写进 Diff，并附一个可读的伪路径，让用户在批准前
+// 看清「将创建 / 覆盖哪些步骤、每步引用哪个资源」。
+func previewPlan(title, goal string, items []agenttypes.PlanItem) tool.PermissionPreview {
+	var b strings.Builder
+	fmt.Fprintf(&b, "+ # %s\n", title)
+	if goal = strings.TrimSpace(goal); goal != "" {
+		fmt.Fprintf(&b, "+ %s\n", goal)
+	}
+	b.WriteString("+\n")
+	depth := planItemDepths(items)
+	for _, item := range items {
+		indent := strings.Repeat("  ", depth[item.ID])
+		source := "custom"
+		if item.Source != "" && item.Source != agenttypes.PlanSourceCustom && item.SourceID > 0 {
+			source = fmt.Sprintf("%s:%d", item.Source, item.SourceID)
+		}
+		fmt.Fprintf(&b, "+ %s- %s (%s)\n", indent, item.Title, source)
+	}
+	return tool.PermissionPreview{FilePath: "plan.md", Diff: b.String()}
+}
+
+// planItemDepths 计算每个节点在树中的深度（根为 0）；父节点缺失时按根处理。
+func planItemDepths(items []agenttypes.PlanItem) map[int64]int {
+	byID := make(map[int64]agenttypes.PlanItem, len(items))
+	for _, item := range items {
+		byID[item.ID] = item
+	}
+	depths := make(map[int64]int, len(items))
+	for _, item := range items {
+		depth, seen := 0, map[int64]struct{}{item.ID: {}}
+		for parent := item.ParentID; parent > 0; {
+			p, ok := byID[parent]
+			if !ok {
+				break
+			}
+			if _, loop := seen[p.ID]; loop {
+				break
+			}
+			seen[p.ID] = struct{}{}
+			depth++
+			parent = p.ParentID
+		}
+		depths[item.ID] = depth
+	}
+	return depths
 }
 
 // toPlanItems 解析工具入参的节点 ID 字段（字符串→int64，保精度）。

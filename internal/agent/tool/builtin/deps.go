@@ -118,3 +118,15 @@ func (d Deps) analysisCreator() runtimecontext.AnalysisCreator {
 	}
 	return nil
 }
+
+// planSessionLinker 返回「记录会话 ↔ 计划关联」能力。
+//
+// 容器侧的 SessionResourceService 同时实现计划工具用到的两个窄端口
+// （list_session_resources 的列表 + create_plan / update_plan 的关联），
+// 因此 Deps 只暴露 SessionResources，这里按需断言避免重复装配。
+func (d Deps) planSessionLinker() planSessionLinker {
+	if linker, ok := d.SessionResources.(planSessionLinker); ok {
+		return linker
+	}
+	return nil
+}

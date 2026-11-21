@@ -22,6 +22,11 @@ const (
 	SessionResourceTypeAnalysis SessionResourceType = "analysis"
 	// SessionResourceTypeProjectReport 对应 create_report / update_report 创建或修改的项目报告。
 	SessionResourceTypeProjectReport SessionResourceType = "project_report"
+	// SessionResourceTypePlan 对应 create_plan / update_plan 创建或修改的 agent 计划。
+	//
+	// 计划本身是项目级产物（AgentPlan.ProjectID），通过关联表记录「哪些会话参与过它」：
+	// 多会话协作时每个会话各有一条关联，因此它是会话 ↔ 计划的多对多关系。
+	SessionResourceTypePlan SessionResourceType = "plan"
 )
 
 // Valid 报告资源类型是否是受支持的取值。
@@ -29,7 +34,7 @@ func (t SessionResourceType) Valid() bool {
 	switch t {
 	case SessionResourceTypeScript, SessionResourceTypeWorkflow,
 		SessionResourceTypeAnalysisNode, SessionResourceTypeAnalysis,
-		SessionResourceTypeProjectReport:
+		SessionResourceTypeProjectReport, SessionResourceTypePlan:
 		return true
 	default:
 		return false

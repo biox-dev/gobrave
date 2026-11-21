@@ -63,10 +63,12 @@ type PlanItem struct {
 // 计划本身不生成报告，也不保存资源详情：它只描述「要做哪些步骤、每步依据哪个资源」，
 // 因此 agent 可以跨会话查询它，再按节点来源 ID 去查询资源详情。
 // 报告撰写只是计划的一种消费方式：ProjectReport.PlanID 指向计划，撰写时按计划取素材。
+//
+// 计划是**项目级**产物，归属由 ProjectID 决定；它不持有 SessionID——「哪些会话
+// 参与过这份计划」是多对多关系，记录在 agent_session_resources（类型 plan）。
 type AgentPlan struct {
 	ID        int64      `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
 	ProjectID int64      `json:"project_id,string" gorm:"column:project_id;type:bigint;not null;index"`
-	SessionID int64      `json:"session_id,string" gorm:"column:session_id;type:bigint;index"`
 	Title     string     `json:"title" gorm:"column:title;type:varchar(255)"`
 	Goal      string     `json:"goal" gorm:"column:goal;type:text"`
 	Items     []PlanItem `json:"items" gorm:"column:items;serializer:json"`

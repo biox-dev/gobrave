@@ -69,10 +69,10 @@ func All(d Deps) []tool.Tool {
 
 		// 计划（plan）：agent 的步骤树，可引用会话资源 ID（报告只是其中一种消费方式）。
 		ListSessionResources(d.SessionResources),
-		CreatePlan(d.Plan),
+		CreatePlan(d.Plan, d.planSessionLinker()),
 		ListPlans(d.Plan),
 		GetPlan(d.Plan),
-		UpdatePlan(d.Plan),
+		UpdatePlan(d.Plan, d.planSessionLinker()),
 		DeletePlan(d.Plan),
 
 		// 项目报告：正文读写（create_report / update_report）+ 按 ID 查看。
