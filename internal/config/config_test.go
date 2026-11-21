@@ -51,8 +51,8 @@ llm:
 	if cfg.Realtime.Transport != "ws" || cfg.Realtime.AckMaxRetries != 3 {
 		t.Errorf("realtime not defaulted: %+v", *cfg.Realtime)
 	}
-	if cfg.Proxy.BraveAPI != "http://localhost:5000" {
-		t.Errorf("proxy not defaulted: %+v", *cfg.Proxy)
+	if cfg.Proxy == nil {
+		t.Errorf("proxy not defaulted: %+v", cfg.Proxy)
 	}
 	// container 段只声明了 default_runtime，布尔默认值不能被零值覆盖。
 	if cfg.Container.DefaultRuntime != "k8s" {
@@ -321,5 +321,36 @@ func TestProxyConfigIgnoresEnvironment(t *testing.T) {
 	var nilCfg *Config
 	if got, _ := nilCfg.ProxyFunc()(nilURL); got != nil {
 		t.Errorf("nil config proxy = %v, want direct", got)
+	}
+}
+
+// TestResolveContainerBaseURL 校验容器代理上游地址：
+// 未配置回退默认值，显式配置按文件取值，空白视为未配置。
+func TestResolveContainerBaseURL(t *testing.T) {
+	writeConfig(t, "container:\n  default_runtime: docker\n")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := ResolveContainerBaseURL(cfg); got != DefaultContainerBaseURL {
+		t.Errorf("default base_url = %q, want %q", got, DefaultContainerBaseURL)
+	}
+	// 默认配置本身也应已填好，避免路由层再写一份兜底。
+	if cfg.Container.BaseURL != DefaultContainerBaseURL {
+		t.Errorf("cfg.Container.BaseURL = %q, want %q", cfg.Container.BaseURL, DefaultContainerBaseURL)
+	}
+
+	writeConfig(t, "container:\n  base_url: http://localhost:80\n")
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := ResolveContainerBaseURL(cfg); got != "http://localhost:80" {
+		t.Errorf("base_url = %q, want http://localhost:80", got)
+	}
+
+	// nil / 缺段同样回退默认值。
+	if got := ResolveContainerBaseURL(nil); got != DefaultContainerBaseURL {
+		t.Errorf("nil cfg base_url = %q, want %q", got, DefaultContainerBaseURL)
 	}
 }

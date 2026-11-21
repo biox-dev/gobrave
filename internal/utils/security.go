@@ -14,8 +14,6 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
-
-	"golang.org/x/net/http/httpproxy"
 )
 
 // XSS 防护相关正则表达式
@@ -1012,19 +1010,5 @@ func ValidateURLForSSRF(rawURL string) error {
 
 // IsSystemProxy 判断是否为系统代理
 func IsSystemProxy(host string) bool {
-	proxyCfg := httpproxy.FromEnvironment()
-	for _, proxyUrl := range []string{
-		proxyCfg.HTTPProxy,
-		proxyCfg.HTTPSProxy,
-	} {
-		if proxyUrl == "" {
-			continue
-		}
-		if parse, err := url.Parse(proxyUrl); err == nil {
-			if parse.Host == host {
-				return true
-			}
-		}
-	}
-	return false
+	return SystemProxySettings().IsProxyHost(host)
 }

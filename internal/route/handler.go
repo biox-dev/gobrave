@@ -102,7 +102,7 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 		}
 
 		// UpsertRoute 仅针对外部注册中心（traefik / k8s-ingress）调用，
-		// 其 Backend 指向容器代理（ProxyConfig.Container）。
+		// 其 Backend 指向容器代理（container.base_url）。
 		if registryName, ok := runtimeMap[runtimeName]; ok {
 			if registry := h.registry.Get(registryName); registry != nil {
 
@@ -136,13 +136,10 @@ func (h *RouteRegistryHandler) Handle(evt event.Event) {
 	}
 }
 
-// resolveContainerProxyBackend 将 ProxyConfig.Container 解析为路由 Backend。
+// resolveContainerProxyBackend 将 container.base_url 解析为路由 Backend。
 // 供外部注册中心（traefik / k8s-ingress）转发到容器代理使用。
 func resolveContainerProxyBackend(cfg *config.Config) Backend {
-	target := "http://localhost:8089"
-	if cfg != nil && cfg.Proxy != nil && strings.TrimSpace(cfg.Proxy.Container) != "" {
-		target = strings.TrimSpace(cfg.Proxy.Container)
-	}
+	target := config.ResolveContainerBaseURL(cfg)
 
 	u, err := url.Parse(target)
 	if err != nil || u.Hostname() == "" {

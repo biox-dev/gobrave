@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/goccy/go-yaml"
-	"golang.org/x/net/http/httpproxy"
 )
 
 // CLIFlags holds command-line arguments that can override config.yml values.
@@ -313,7 +313,20 @@ type ContainerConfig struct {
 	// 默认 container_ip；Windows 桌面端（config.LoadOptions{Desktop: true}）
 	// 默认 host_port。config.yml 中显式声明的取值始终优先。
 	NetworkMode string `yaml:"network_mode" json:"network_mode"`
+
+	// BaseURL 是容器反向代理服务（container proxy）的上游地址
+	// （container.base_url）。
+	//
+	// 外部路由注册（traefik / k8s-ingress）把应用流量转发到这里，由容器代理
+	// 再按容器 IP 转发给具体应用；桌面端则是本地反代的目标。
+	//
+	// 为空时回退 DefaultContainerBaseURL。历史上它位于 proxy.container，
+	// 现在收敛到 container 段，因为它是容器能力的一部分，而非出站 HTTP 代理。
+	BaseURL string `yaml:"base_url" json:"base_url"`
 }
+
+// 容器代理上游的默认地址：为空或非法时使用。
+const DefaultContainerBaseURL = "http://localhost:8089"
 
 // 容器端口访问模式。
 const (
@@ -345,6 +358,18 @@ func ResolveContainerNetworkMode(cfg *Config) string {
 		return ContainerNetworkModeContainerIP
 	}
 	return mode
+}
+
+// ResolveContainerBaseURL 返回容器反向代理服务的上游地址
+// （container.base_url）；未配置时回退 DefaultContainerBaseURL。
+func ResolveContainerBaseURL(cfg *Config) string {
+	if cfg == nil || cfg.Container == nil {
+		return DefaultContainerBaseURL
+	}
+	if v := strings.TrimSpace(cfg.Container.BaseURL); v != "" {
+		return v
+	}
+	return DefaultContainerBaseURL
 }
 
 // bash 工具的执行模式。
@@ -446,6 +471,7 @@ func DefaultContainerConfig() *ContainerConfig {
 		DefaultRuntime: "docker",
 		Kubernetes:     DefaultKubernetesRuntimeConfig(),
 		Docker:         &DockerRuntimeConfig{Provision: DefaultRuntimeProvisionConfig()},
+		BaseURL:        DefaultContainerBaseURL,
 		// RefreshImageStatusOnStart:           true,
 		RecoverRunningDagOnStart:            true,
 		CleanupDagNodeContainersBeforeStart: true,
@@ -510,16 +536,15 @@ func ResolveGitIdentity(cfg *Config) (string, string) {
 	return name, email
 }
 
-// ProxyConfig 保存内部服务地址与出站网络代理配置。
+// ProxyConfig 只负责出站 HTTP 代理配置。
 //
-// 出站代理（http_proxy / https_proxy / no_proxy）是完全由配置驱动的通用能力：
+// 出站代理（http_proxy / https_proxy / no_proxy）的实际实现在
+// internal/utils（utils.ProxySettings），本类型只负责配置解析与字段绑定。
 // 任何需要访问外部网络的组件都可以通过 (*Config).NewHTTPClient /
 // NewHTTPTransport 复用，而不只是 fetch 工具。未配置时一律直连，不读取环境变量。
+//
+// 注意：内部服务地址（如容器代理上游）不属于出站代理，见 container.base_url。
 type ProxyConfig struct {
-	BraveAPI   string `yaml:"brave_api" json:"brave_api"`
-	Container  string `yaml:"container" json:"container"`
-	OnlyOffice string `yaml:"onlyoffice" json:"onlyoffice"`
-
 	// HTTPProxy 是出站 http:// 请求使用的代理地址，例如 http://10.110.1.11:7890。
 	// 为空表示不使用该协议的代理（不会回退到环境变量）。
 	HTTPProxy string `yaml:"http_proxy" json:"http_proxy"`
@@ -530,44 +555,33 @@ type ProxyConfig struct {
 	NoProxy string `yaml:"no_proxy" json:"no_proxy"`
 }
 
-// directProxy 表示直连：不经过任何代理。
-func directProxy(*url.URL) (*url.URL, error) { return nil, nil }
+// Settings 把 proxy 段转换为与配置包解耦的 utils.ProxySettings。
+// p 为 nil 时返回零值（即直连）。
+func (p *ProxyConfig) Settings() utils.ProxySettings {
+	if p == nil {
+		return utils.ProxySettings{}
+	}
+	return utils.ProxySettings{
+		HTTPProxy:  p.HTTPProxy,
+		HTTPSProxy: p.HTTPSProxy,
+		NoProxy:    p.NoProxy,
+	}
+}
 
-// ProxyFunc 返回按目标 URL 选择代理的函数。
-//
-// 行为完全由配置决定：http_proxy / https_proxy / no_proxy。
+// ProxyFunc 返回按目标 URL 选择代理的函数（实现见 utils.ProxySettings.ProxyFunc）。
 // 未配置（或 p 为 nil）时一律直连，不读取 http_proxy / https_proxy 等环境变量。
 func (p *ProxyConfig) ProxyFunc() func(*url.URL) (*url.URL, error) {
-	if p == nil {
-		return directProxy
-	}
-	httpProxy := strings.TrimSpace(p.HTTPProxy)
-	httpsProxy := strings.TrimSpace(p.HTTPSProxy)
-	if httpProxy == "" && httpsProxy == "" {
-		return directProxy
-	}
-	proxyCfg := httpproxy.Config{
-		HTTPProxy:  httpProxy,
-		HTTPSProxy: httpsProxy,
-		NoProxy:    strings.TrimSpace(p.NoProxy),
-	}
-	return proxyCfg.ProxyFunc()
+	return p.Settings().ProxyFunc()
 }
 
 // NewHTTPTransport 返回套用了代理配置的 Transport。
-// 可在需要自定义超时 / 连接池时作为任意出站 http.Client 的基础。
 func (p *ProxyConfig) NewHTTPTransport() *http.Transport {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	proxyFunc := p.ProxyFunc()
-	transport.Proxy = func(req *http.Request) (*url.URL, error) {
-		return proxyFunc(req.URL)
-	}
-	return transport
+	return p.Settings().NewHTTPTransport()
 }
 
 // NewHTTPClient 返回套用了代理配置的 http.Client。
 func (p *ProxyConfig) NewHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout, Transport: p.NewHTTPTransport()}
+	return p.Settings().NewHTTPClient(timeout)
 }
 
 // ProxyFunc 返回当前配置下的出站代理选择函数；cfg 或其 proxy 段为 nil、
@@ -819,11 +833,7 @@ func defaultConfig(opts LoadOptions) *Config {
 			Path:     "",
 			LogLevel: DefaultDatabaseLogLevel,
 		},
-		Proxy: &ProxyConfig{
-			BraveAPI:   "http://localhost:5000",
-			Container:  "http://localhost:8089",
-			OnlyOffice: "http://localhost:8080",
-		},
+		Proxy: &ProxyConfig{},
 		Route: &RouteConfig{
 			Registrys:  []string{},
 			AppsPrefix: defaultAppsPrefix,
@@ -955,6 +965,11 @@ func LoadConfigWith(opts LoadOptions) (*Config, error) {
 	}
 	if cfg.Container.BashContainerTemplateID <= 0 {
 		cfg.Container.BashContainerTemplateID = DefaultBashContainerTemplateID
+	}
+	// 容器代理上游地址：空值回退默认，避免路由层各写一份兜底值。
+	cfg.Container.BaseURL = strings.TrimSpace(cfg.Container.BaseURL)
+	if cfg.Container.BaseURL == "" {
+		cfg.Container.BaseURL = DefaultContainerBaseURL
 	}
 	if cfg.Realtime == nil {
 		cfg.Realtime = &RealtimeConfig{

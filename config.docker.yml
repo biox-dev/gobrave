@@ -20,11 +20,6 @@ database:
 #   parser_dispatch_batch_size: 100
 #   parser_callback_secret: ""
 
-proxy:
-  brave_api: http://localhost:5000
-  container: http://localhost:8089
-  onlyoffice: http://localhost:8080
-
 route:
   # gateway | traefik | k8s-ingress
   registry: traefik
@@ -66,6 +61,8 @@ container:
   runtimes: [docker]
   # 默认使用的运行时
   default_runtime: docker
+  # 容器代理上游地址（外部路由 / 桌面端反代的目标）
+  base_url: http://localhost:8089
   kubernetes:
     namespace: default
     kubeconfig: ""

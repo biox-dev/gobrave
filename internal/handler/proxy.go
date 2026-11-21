@@ -11,59 +11,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/route"
 	"github.com/gin-gonic/gin"
 )
 
-const (
-	defaultBraveAPITarget   = "http://localhost:5000"
-	defaultContainerTarget  = "http://localhost:8089"
-	defaultOnlyOfficeTarget = "http://localhost:8080"
-)
-
 type ProxyHandler struct {
-	braveAPIProxy   *httputil.ReverseProxy
-	containerProxy  *httputil.ReverseProxy
-	onlyOfficeProxy *httputil.ReverseProxy
-	pathResolver    route.PathRouteResolver
+	pathResolver route.PathRouteResolver
 }
 
-func NewProxyHandler(cfg *config.Config, resolver route.PathRouteResolver) (*ProxyHandler, error) {
-	braveAPITarget := defaultBraveAPITarget
-	containerTarget := defaultContainerTarget
-	onlyOfficeTarget := defaultOnlyOfficeTarget
-	if cfg != nil && cfg.Proxy != nil {
-		if v := strings.TrimSpace(cfg.Proxy.BraveAPI); v != "" {
-			braveAPITarget = v
-		}
-		if v := strings.TrimSpace(cfg.Proxy.Container); v != "" {
-			containerTarget = v
-		}
-		if v := strings.TrimSpace(cfg.Proxy.OnlyOffice); v != "" {
-			onlyOfficeTarget = v
-		}
-	}
-
-	braveAPIProxy, err := buildReverseProxy(braveAPITarget)
-	if err != nil {
-		return nil, err
-	}
-	containerProxy, err := buildReverseProxy(containerTarget)
-	if err != nil {
-		return nil, err
-	}
-	onlyOfficeProxy, err := buildReverseProxy(onlyOfficeTarget)
-	if err != nil {
-		return nil, err
-	}
-
-	return &ProxyHandler{
-		braveAPIProxy:   braveAPIProxy,
-		containerProxy:  containerProxy,
-		onlyOfficeProxy: onlyOfficeProxy,
-		pathResolver:    resolver,
-	}, nil
+// NewProxyHandler 构造代理处理器。
+//
+// 应用会话（AppSessionProxy）按请求动态构建上游；
+// 容器代理上游地址见 config.ResolveContainerBaseURL。
+func NewProxyHandler(resolver route.PathRouteResolver) (*ProxyHandler, error) {
+	return &ProxyHandler{pathResolver: resolver}, nil
 }
 
 func buildReverseProxy(target string) (*httputil.ReverseProxy, error) {
@@ -318,16 +279,6 @@ func hasExplicitPort(host string) bool {
 	return parsed.Port() != ""
 }
 
-func (h *ProxyHandler) BraveAPIProxy(c *gin.Context) {
-	h.braveAPIProxy.ServeHTTP(c.Writer, c.Request)
-	c.Abort()
-}
-
-func (h *ProxyHandler) ContainerProxy(c *gin.Context) {
-	h.containerProxy.ServeHTTP(c.Writer, c.Request)
-	c.Abort()
-}
-
 func (h *ProxyHandler) AppSessionProxy(c *gin.Context) {
 	if h.pathResolver == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "app route resolver is not enabled"})
@@ -357,22 +308,6 @@ func (h *ProxyHandler) AppSessionProxy(c *gin.Context) {
 	c.Request.Header.Set("X-Gateway-Backend", net.JoinHostPort(reg.Backend.Host, strconv.Itoa(reg.Backend.Port)))
 
 	proxy.ServeHTTP(c.Writer, c.Request)
-	c.Abort()
-}
-
-func (h *ProxyHandler) OnlyOfficeProxy(c *gin.Context) {
-	trimProxyPrefix(c.Request, "/onlyoffice")
-	h.onlyOfficeProxy.ServeHTTP(c.Writer, c.Request)
-	c.Abort()
-}
-
-func (h *ProxyHandler) FallbackProxy(c *gin.Context) {
-	// if !strings.HasPrefix(c.Request.URL.Path, "/api/v1/") {
-	// 	c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-	// 	return
-	// }
-
-	h.braveAPIProxy.ServeHTTP(c.Writer, c.Request)
 	c.Abort()
 }
 

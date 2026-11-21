@@ -87,7 +87,6 @@ func NewRouter(params RouterParams) *gin.Engine {
 	}
 	analysisAppsPrefix := config.ResolveAppsPathPrefix(params.Config)
 	serveFrontendStatic(r, params.Config)
-	handler.RegisterOnlyOfficeRoutes(r, params.ProxyHandler)
 
 	r.Use(middleware.Auth(params.UserService, params.Config))
 	handler.RegisterProjectDocsRoute(r, params.Config, params.ProjectService)
@@ -112,27 +111,9 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterAgentRoutes(v1, params.AgentHandler, params.SessionResourceHandler)
 	}
 
-	// r.Any("/brave-api", params.ProxyHandler.BraveAPIProxy)
-	// r.Any("/brave-api/*proxyPath", params.ProxyHandler.BraveAPIProxy)
-	// r.Any("/container", params.ProxyHandler.ContainerProxy)
-	// r.Any("/container/*proxyPath", params.ProxyHandler.ContainerProxy)
-
-	// r.Any("/apps", params.ProxyHandler.ContainerProxy)
-	// r.Any("/apps/*proxyPath", params.ProxyHandler.ContainerProxy)
 	r.Any(analysisAppsPrefix, params.ProxyHandler.AppSessionProxy)
 	r.Any(analysisAppsPrefix+"/*proxyPath", params.ProxyHandler.AppSessionProxy)
-	// if params.Config.Route.Registry == "gateway" {
-	// 	r.Any(analysisAppsPrefix, params.ProxyHandler.AppSessionProxy)
-	// 	r.Any(analysisAppsPrefix+"/*proxyPath", params.ProxyHandler.AppSessionProxy)
-	// } else {
-	// 	r.Any(analysisAppsPrefix, params.ProxyHandler.ContainerProxy)
-	// 	r.Any(analysisAppsPrefix+"/*proxyPath", params.ProxyHandler.ContainerProxy)
-	// }
 
-	// r.Any("/apps", params.ProxyHandler.AppSessionProxy)
-	// r.Any("/apps/*proxyPath", params.ProxyHandler.AppSessionProxy)
-
-	// r.NoRoute(params.ProxyHandler.FallbackProxy)
 	return r
 }
 
@@ -653,11 +634,7 @@ func mountFrontendStatic(r *gin.Engine, cfg *config.Config, frontendFS fs.FS, so
 			path == "/apps" ||
 			strings.HasPrefix(path, "/apps/") ||
 			path == analysisAppsPrefix ||
-			strings.HasPrefix(path, analysisAppsPrefix+"/") ||
-			path == "/onlyoffice" ||
-			strings.HasPrefix(path, "/onlyoffice/") ||
-			path == "/go-onlyoffice" ||
-			strings.HasPrefix(path, "/go-onlyoffice/") {
+			strings.HasPrefix(path, analysisAppsPrefix+"/") {
 			c.Next()
 			return
 		}
