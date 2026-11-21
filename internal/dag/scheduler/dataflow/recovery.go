@@ -43,7 +43,7 @@ func (o *dataflowDagOrchestratorV3) StopAsync(ctx context.Context, analysisID in
 //   - stopping: persist the stop signal and let the loop converge.
 //   - running:  rebuild the runtime inputs and restart with resume semantics; the
 //     cross-instance lease guard keeps a live run from being doubled.
-func (o *dataflowDagOrchestratorV3) RecoverRunningAnalyses(ctx context.Context, item *types.Analysis) (bool, error) {
+func (o *dataflowDagOrchestratorV3) RecoverRunningAnalyses(ctx context.Context, item *types.AnalysisWorkflow) (bool, error) {
 	if o == nil || o.repo == nil || item == nil || item.ID <= 0 {
 		return false, nil
 	}
@@ -69,7 +69,7 @@ func (o *dataflowDagOrchestratorV3) RecoverRunningAnalyses(ctx context.Context, 
 // loadRecoveryInputs rebuilds the two inputs a resumed dataflow run needs: the
 // submitted params (written to analysis.ParamsPath at save time) and the workflow
 // dag definition referenced by analysis.workflow_id.
-func (o *dataflowDagOrchestratorV3) loadRecoveryInputs(ctx context.Context, item *types.Analysis) (map[string]any, map[string]any, error) {
+func (o *dataflowDagOrchestratorV3) loadRecoveryInputs(ctx context.Context, item *types.AnalysisWorkflow) (map[string]any, map[string]any, error) {
 	if o.workflowService == nil {
 		return nil, nil, fmt.Errorf("workflow service is not configured, cannot rebuild dag definition")
 	}

@@ -15,17 +15,17 @@ func TestOwnsAnalysis(t *testing.T) {
 
 	cases := []struct {
 		name string
-		item *types.Analysis
+		item *types.AnalysisWorkflow
 		want bool
 	}{
 		{name: "nil analysis", item: nil, want: false},
-		{name: "zero id", item: &types.Analysis{ID: 0, SchedulerMode: types.SchedulerModeDynamic}, want: false},
-		{name: "v2 is owned", item: &types.Analysis{ID: 1, SchedulerMode: types.SchedulerModeDynamic}, want: true},
-		{name: "v2 ownership survives normalization", item: &types.Analysis{ID: 2, SchedulerMode: " Dynamic_V2 "}, want: true},
-		{name: "legacy is not owned", item: &types.Analysis{ID: 3, SchedulerMode: types.SchedulerModeDag}, want: false},
-		{name: "historical empty row is not owned", item: &types.Analysis{ID: 4}, want: false},
-		{name: "v3 is not owned", item: &types.Analysis{ID: 5, SchedulerMode: types.SchedulerModeDataflow}, want: false},
-		// {name: "node_v1 is not owned", item: &types.Analysis{ID: 6, SchedulerMode: types.SchedulerModeNodeV1}, want: false},
+		{name: "zero id", item: &types.AnalysisWorkflow{ID: 0, SchedulerMode: types.SchedulerModeDynamic}, want: false},
+		{name: "v2 is owned", item: &types.AnalysisWorkflow{ID: 1, SchedulerMode: types.SchedulerModeDynamic}, want: true},
+		{name: "v2 ownership survives normalization", item: &types.AnalysisWorkflow{ID: 2, SchedulerMode: " Dynamic_V2 "}, want: true},
+		{name: "legacy is not owned", item: &types.AnalysisWorkflow{ID: 3, SchedulerMode: types.SchedulerModeDag}, want: false},
+		{name: "historical empty row is not owned", item: &types.AnalysisWorkflow{ID: 4}, want: false},
+		{name: "v3 is not owned", item: &types.AnalysisWorkflow{ID: 5, SchedulerMode: types.SchedulerModeDataflow}, want: false},
+		// {name: "node_v1 is not owned", item: &types.AnalysisWorkflow{ID: 6, SchedulerMode: types.SchedulerModeNodeV1}, want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,14 +43,14 @@ func TestIsLeaseStale(t *testing.T) {
 
 	cases := []struct {
 		name string
-		item *types.Analysis
+		item *types.AnalysisWorkflow
 		want bool
 	}{
 		{name: "nil analysis", item: nil, want: false},
-		{name: "zero timestamp is stale", item: &types.Analysis{ID: 1}, want: true},
-		{name: "fresh heartbeat is live", item: &types.Analysis{ID: 2, UpdatedAt: time.Now().UTC()}, want: false},
-		{name: "heartbeat inside the lease is live", item: &types.Analysis{ID: 3, UpdatedAt: time.Now().UTC().Add(-dynamicV2LeaseTTL / 2)}, want: false},
-		{name: "heartbeat past the lease is stale", item: &types.Analysis{ID: 4, UpdatedAt: time.Now().UTC().Add(-dynamicV2LeaseTTL - time.Second)}, want: true},
+		{name: "zero timestamp is stale", item: &types.AnalysisWorkflow{ID: 1}, want: true},
+		{name: "fresh heartbeat is live", item: &types.AnalysisWorkflow{ID: 2, UpdatedAt: time.Now().UTC()}, want: false},
+		{name: "heartbeat inside the lease is live", item: &types.AnalysisWorkflow{ID: 3, UpdatedAt: time.Now().UTC().Add(-dynamicV2LeaseTTL / 2)}, want: false},
+		{name: "heartbeat past the lease is stale", item: &types.AnalysisWorkflow{ID: 4, UpdatedAt: time.Now().UTC().Add(-dynamicV2LeaseTTL - time.Second)}, want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

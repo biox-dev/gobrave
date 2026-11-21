@@ -1267,7 +1267,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&types.Store{},
 		&types.Script{},
 		&types.Workflow{},
-		&types.Analysis{},
+		&types.AnalysisWorkflow{},
 		&types.AnalysisNode{},
 		&types.AnalysisEdge{},
 		&types.AuthToken{},

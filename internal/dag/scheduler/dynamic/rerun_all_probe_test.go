@@ -33,7 +33,7 @@ func TestProbeWhichCacheTypesRequeueFreshlyCompletedNodes(t *testing.T) {
 					node.ParamsMD5 = fmt.Sprintf("params:%s:%v", node.NodeID, map[string]any(node.ResolvedInputs))
 				}
 			})
-			analysis := &types.Analysis{ID: 7, ProjectID: 1, CacheType: testCase.cacheType}
+			analysis := &types.AnalysisWorkflow{ID: 7, ProjectID: 1, CacheType: testCase.cacheType}
 
 			if err := orchestrator.reconcilePlan(context.Background(), analysis, plan); err != nil {
 				t.Fatalf("reconcile failed: %v", err)

@@ -286,7 +286,7 @@ func (p *FileSystemNodeRuntimePreparer) WriteCommand(node *types.AnalysisNode, s
 	return nil
 }
 
-func (p *FileSystemNodeRuntimePreparer) ensureNodePaths(node *types.AnalysisNode, analysis *types.Analysis) error {
+func (p *FileSystemNodeRuntimePreparer) ensureNodePaths(node *types.AnalysisNode, analysis *types.AnalysisWorkflow) error {
 	baseWorkspace := strings.TrimSpace(node.WorkspaceDir)
 	if baseWorkspace == "" {
 		analysisOutputDir := ""
@@ -322,7 +322,7 @@ func (p *FileSystemNodeRuntimePreparer) ensureNodePaths(node *types.AnalysisNode
 	return nil
 }
 
-func (p *FileSystemNodeRuntimePreparer) buildNodeParams(ctx context.Context, node *types.AnalysisNode, analysis *types.Analysis) (map[string]any, error) {
+func (p *FileSystemNodeRuntimePreparer) buildNodeParams(ctx context.Context, node *types.AnalysisNode, analysis *types.AnalysisWorkflow) (map[string]any, error) {
 	baseParams := map[string]any{}
 	if analysis != nil && strings.TrimSpace(analysis.ParamsPath) != "" {
 		raw, err := os.ReadFile(analysis.ParamsPath)
@@ -410,7 +410,7 @@ func cloneAnyMapForNode(in map[string]interface{}) map[string]interface{} {
 // 	ctx context.Context,
 // 	// scriptID int64,
 // 	node *types.AnalysisNode,
-// 	// analysis *types.Analysis,
+// 	// analysis *types.AnalysisWorkflow,
 // 	// artifacts *standaloneNodeArtifacts,
 // 	// params map[string]interface{},
 // ) error {

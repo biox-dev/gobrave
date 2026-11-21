@@ -61,7 +61,7 @@ type DagOrchestrator interface {
 	//   - stopping: converge the stop request, cancelling a live run or finalizing.
 	//
 	// It reports whether a live run is now tracked in this process.
-	RecoverRunningAnalyses(ctx context.Context, item *types.Analysis) (bool, error)
+	RecoverRunningAnalyses(ctx context.Context, item *types.AnalysisWorkflow) (bool, error)
 
 	// GetRunningInfo returns the in-memory running entry for analysisID, or nil
 	// when the run is not tracked by this process.

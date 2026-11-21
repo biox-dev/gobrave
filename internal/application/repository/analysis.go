@@ -39,7 +39,7 @@ func resolveStorageBaseDir(cfg *config.Config) string {
 // 数据库只保存相对 base_dir 的路径（唯一例外是历史行里遗留的绝对路径，
 // ResolvePath 会原样返回以保证兼容）。派生的子路径不落库，读取时统一重建。
 
-func (r *analysisRepository) resolveAnalysis(item *types.Analysis) *types.Analysis {
+func (r *analysisRepository) resolveAnalysis(item *types.AnalysisWorkflow) *types.AnalysisWorkflow {
 	if item == nil {
 		return nil
 	}
@@ -48,7 +48,7 @@ func (r *analysisRepository) resolveAnalysis(item *types.Analysis) *types.Analys
 	return item
 }
 
-func (r *analysisRepository) resolveAnalyses(items []*types.Analysis) []*types.Analysis {
+func (r *analysisRepository) resolveAnalyses(items []*types.AnalysisWorkflow) []*types.AnalysisWorkflow {
 	for _, item := range items {
 		r.resolveAnalysis(item)
 	}
@@ -135,7 +135,7 @@ func (r *analysisRepository) WithTransaction(ctx context.Context, fn func(interf
 	})
 }
 
-func (r *analysisRepository) CreateAnalysis(ctx context.Context, item *types.Analysis) error {
+func (r *analysisRepository) CreateAnalysis(ctx context.Context, item *types.AnalysisWorkflow) error {
 	if item == nil {
 		return nil
 	}
@@ -149,7 +149,7 @@ func (r *analysisRepository) CreateAnalysis(ctx context.Context, item *types.Ana
 
 func (r *analysisRepository) TryMarkAnalysisRunning(ctx context.Context, analysisID int64, now time.Time, staleBefore time.Time) (bool, error) {
 	result := r.db.WithContext(ctx).
-		Model(&types.Analysis{}).
+		Model(&types.AnalysisWorkflow{}).
 		Where("id = ? AND (job_status IS NULL OR job_status <> ? OR updated_at IS NULL OR updated_at < ?)", analysisID, "running", staleBefore).
 		Updates(map[string]any{
 			"job_status": "running",
@@ -166,32 +166,32 @@ func (r *analysisRepository) UpdateAnalysisByAnalysisID(ctx context.Context, ana
 	if len(values) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Model(&types.Analysis{}).Where("analysis_id = ?", analysisID).Updates(values).Error
+	return r.db.WithContext(ctx).Model(&types.AnalysisWorkflow{}).Where("analysis_id = ?", analysisID).Updates(values).Error
 }
 func (r *analysisRepository) UpdateAnalysisByID(ctx context.Context, analysisID int64, values map[string]any) error {
 	values = r.sanitizeAnalysisUpdate(values)
 	if len(values) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Model(&types.Analysis{}).Where("id = ?", analysisID).Updates(values).Error
+	return r.db.WithContext(ctx).Model(&types.AnalysisWorkflow{}).Where("id = ?", analysisID).Updates(values).Error
 }
-func (r *analysisRepository) GetAnalysisByID(ctx context.Context, analysisID int64) (*types.Analysis, error) {
-	item := &types.Analysis{}
+func (r *analysisRepository) GetAnalysisByID(ctx context.Context, analysisID int64) (*types.AnalysisWorkflow, error) {
+	item := &types.AnalysisWorkflow{}
 	if err := r.db.WithContext(ctx).Where("id = ?", analysisID).Take(item).Error; err != nil {
 		return nil, err
 	}
 	return r.resolveAnalysis(item), nil
 }
-func (r *analysisRepository) GetAnalysisByAnalysisID(ctx context.Context, analysisID string) (*types.Analysis, error) {
-	item := &types.Analysis{}
+func (r *analysisRepository) GetAnalysisByAnalysisID(ctx context.Context, analysisID string) (*types.AnalysisWorkflow, error) {
+	item := &types.AnalysisWorkflow{}
 	if err := r.db.WithContext(ctx).Where("analysis_id = ?", analysisID).Take(item).Error; err != nil {
 		return nil, err
 	}
 	return r.resolveAnalysis(item), nil
 }
 
-func (r *analysisRepository) ListAnalysisByJobStatus(ctx context.Context, jobStatus string) ([]*types.Analysis, error) {
-	items := make([]*types.Analysis, 0)
+func (r *analysisRepository) ListAnalysisByJobStatus(ctx context.Context, jobStatus string) ([]*types.AnalysisWorkflow, error) {
+	items := make([]*types.AnalysisWorkflow, 0)
 	err := r.db.WithContext(ctx).
 		Where("job_status = ?", jobStatus).
 		Order("updated_at ASC").
@@ -202,9 +202,9 @@ func (r *analysisRepository) ListAnalysisByJobStatus(ctx context.Context, jobSta
 	return r.resolveAnalyses(items), nil
 }
 
-func (r *analysisRepository) ListAnalysisByProjectID(ctx context.Context, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, error) {
-	items := make([]*types.Analysis, 0)
-	base := r.db.WithContext(ctx).Model(&types.Analysis{}).Where("project_id = ?", projectID)
+func (r *analysisRepository) ListAnalysisByProjectID(ctx context.Context, projectID int64, query *types.AnalysisQuey) ([]*types.AnalysisWorkflow, error) {
+	items := make([]*types.AnalysisWorkflow, 0)
+	base := r.db.WithContext(ctx).Model(&types.AnalysisWorkflow{}).Where("project_id = ?", projectID)
 
 	if query != nil {
 		if len(query.IDs) > 0 {
@@ -255,13 +255,13 @@ func (r *analysisRepository) ListAnalysisByProjectID(ctx context.Context, projec
 	return r.resolveAnalyses(items), nil
 }
 
-func (r *analysisRepository) PageAnalysisByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, int64, error) {
+func (r *analysisRepository) PageAnalysisByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, query *types.AnalysisQuey) ([]*types.AnalysisWorkflow, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
 
-	items := make([]*types.Analysis, 0)
-	base := r.db.WithContext(ctx).Model(&types.Analysis{}).Where("project_id = ?", projectID)
+	items := make([]*types.AnalysisWorkflow, 0)
+	base := r.db.WithContext(ctx).Model(&types.AnalysisWorkflow{}).Where("project_id = ?", projectID)
 
 	applyFilters := func(db *gorm.DB) *gorm.DB {
 		// 统一关键字搜索（types.Pagination.Keyword）：命中分析名称 / 分析 ID。
@@ -561,11 +561,11 @@ func (r *analysisRepository) CreateAnalysisEdges(ctx context.Context, items []*t
 }
 
 func (r *analysisRepository) DeleteAnalysisByID(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.Analysis{}).Error
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.AnalysisWorkflow{}).Error
 }
 
-func (r *analysisRepository) ListAnalysisByWorkflowID(ctx context.Context, workflowID int64) ([]*types.Analysis, error) {
-	items := make([]*types.Analysis, 0)
+func (r *analysisRepository) ListAnalysisByWorkflowID(ctx context.Context, workflowID int64) ([]*types.AnalysisWorkflow, error) {
+	items := make([]*types.AnalysisWorkflow, 0)
 	if workflowID <= 0 {
 		return items, nil
 	}

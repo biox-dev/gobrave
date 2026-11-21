@@ -17,9 +17,9 @@ func init() {
 	_ = utils.InitSnowflake(1)
 }
 
-func testAnalysis(t *testing.T) *types.Analysis {
+func testAnalysis(t *testing.T) *types.AnalysisWorkflow {
 	t.Helper()
-	return &types.Analysis{ID: 100, ProjectID: 7, WorkspaceDir: t.TempDir()}
+	return &types.AnalysisWorkflow{ID: 100, ProjectID: 7, WorkspaceDir: t.TempDir()}
 }
 
 func TestMaterializePersistsCanonicalLayout(t *testing.T) {
@@ -69,7 +69,7 @@ func TestMaterializePersistsCanonicalLayout(t *testing.T) {
 }
 
 func TestMaterializeLeavesPathsEmptyWithoutAnalysisOutputDir(t *testing.T) {
-	analysis := &types.Analysis{ID: 1, ProjectID: 1}
+	analysis := &types.AnalysisWorkflow{ID: 1, ProjectID: 1}
 	node, err := Materialize(MaterializeRequest{Analysis: analysis, Spec: &Spec{NodeID: "x"}, Status: dagruntime.StatusReady})
 	if err != nil {
 		t.Fatalf("Materialize failed: %v", err)

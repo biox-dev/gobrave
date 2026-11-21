@@ -68,11 +68,11 @@ func applyNodeUpdatesV3(node *types.AnalysisNode, values map[string]any) {
 
 // materializePersistedV3Node builds a finished node plus the analysis that owns it,
 // exactly the way a previous run would have persisted them.
-func materializePersistedV3Node(t *testing.T, cacheType int, commandMD5, paramsMD5 string) (*types.Analysis, *types.AnalysisNode, *stubCacheRepoV3) {
+func materializePersistedV3Node(t *testing.T, cacheType int, commandMD5, paramsMD5 string) (*types.AnalysisWorkflow, *types.AnalysisNode, *stubCacheRepoV3) {
 	t.Helper()
 	requireSnowflakeV3(t)
 
-	analysis := &types.Analysis{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir(), CacheType: cacheType}
+	analysis := &types.AnalysisWorkflow{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir(), CacheType: cacheType}
 	resolved := types.JSONMap{"bam": "a.bam"}
 
 	node, err := nodebuild.Materialize(nodebuild.MaterializeRequest{

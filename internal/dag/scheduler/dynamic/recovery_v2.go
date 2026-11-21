@@ -23,7 +23,7 @@ import (
 //   - stopping: a live run is cancelled, otherwise the analysis is finalized.
 //
 // It reports whether a live run is now tracked in this process.
-func (o *dynamicDagOrchestratorV2) RecoverRunningAnalyses(ctx context.Context, item *types.Analysis) (bool, error) {
+func (o *dynamicDagOrchestratorV2) RecoverRunningAnalyses(ctx context.Context, item *types.AnalysisWorkflow) (bool, error) {
 	if o == nil || o.repo == nil || !o.ownsAnalysis(item) {
 		return false, nil
 	}
@@ -57,7 +57,7 @@ func (o *dynamicDagOrchestratorV2) RecoverRunningAnalyses(ctx context.Context, i
 }
 
 // ownsAnalysis reports whether dynamic_v2 is the scheduler responsible for item.
-func (o *dynamicDagOrchestratorV2) ownsAnalysis(item *types.Analysis) bool {
+func (o *dynamicDagOrchestratorV2) ownsAnalysis(item *types.AnalysisWorkflow) bool {
 	if item == nil || item.ID <= 0 {
 		return false
 	}
@@ -69,7 +69,7 @@ func (o *dynamicDagOrchestratorV2) ownsAnalysis(item *types.Analysis) bool {
 // A live owner refreshes updated_at on every heartbeat, so a stale timestamp means
 // the owner is gone. This is only a cheap pre-filter: TryMarkAnalysisRunning inside
 // startAsyncV2 remains the authoritative, race-free gate.
-func (o *dynamicDagOrchestratorV2) isLeaseStale(item *types.Analysis) bool {
+func (o *dynamicDagOrchestratorV2) isLeaseStale(item *types.AnalysisWorkflow) bool {
 	if item == nil {
 		return false
 	}
@@ -81,7 +81,7 @@ func (o *dynamicDagOrchestratorV2) isLeaseStale(item *types.Analysis) bool {
 
 // recoverRunningAnalysis rebuilds the runtime inputs and hands the analysis back to
 // startAsyncV2 with resume semantics.
-func (o *dynamicDagOrchestratorV2) recoverRunningAnalysis(ctx context.Context, item *types.Analysis) error {
+func (o *dynamicDagOrchestratorV2) recoverRunningAnalysis(ctx context.Context, item *types.AnalysisWorkflow) error {
 	parseAnalysisResult, dagDefinition, err := o.loadRecoveryInputs(ctx, item)
 	if err != nil {
 		return err
@@ -96,7 +96,7 @@ func (o *dynamicDagOrchestratorV2) recoverRunningAnalysis(ctx context.Context, i
 //     file (analysis.ParamsPath), so the exact submitted params are on disk.
 //   - dagDefinition: re-read from the workflow referenced by analysis.workflow_id,
 //     the same call the submit handler makes.
-func (o *dynamicDagOrchestratorV2) loadRecoveryInputs(ctx context.Context, item *types.Analysis) (map[string]any, map[string]any, error) {
+func (o *dynamicDagOrchestratorV2) loadRecoveryInputs(ctx context.Context, item *types.AnalysisWorkflow) (map[string]any, map[string]any, error) {
 	if o.workflowService == nil {
 		return nil, nil, fmt.Errorf("workflow service is not configured, cannot rebuild dag definition")
 	}

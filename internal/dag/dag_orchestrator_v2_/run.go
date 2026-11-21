@@ -20,7 +20,7 @@ var errRunStopped = errors.New("dag run stopped")
 
 // runExecution is the mutable state of one scheduling loop.
 type runExecution struct {
-	analysis   *types.Analysis
+	analysis   *types.AnalysisWorkflow
 	graph      *Graph
 	tracker    *DependencyTracker
 	reconciler *Reconciler
@@ -115,7 +115,7 @@ func (o *Orchestrator) execute(ctx context.Context, analysisID int64, graph *Gra
 }
 
 // newRunExecution builds the per-run collaborators and seeds their state.
-func (o *Orchestrator) newRunExecution(ctx context.Context, analysis *types.Analysis, graph *Graph) (*runExecution, error) {
+func (o *Orchestrator) newRunExecution(ctx context.Context, analysis *types.AnalysisWorkflow, graph *Graph) (*runExecution, error) {
 	nodes, err := o.repo.ListAnalysisNodesByAnalysisID(ctx, analysis.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list analysis nodes failed: %w", err)
@@ -238,7 +238,7 @@ func (o *Orchestrator) isRunComplete(
 }
 
 // resetForRerun clears persisted runtime rows when the analysis disables cache.
-func (o *Orchestrator) resetForRerun(ctx context.Context, analysis *types.Analysis) error {
+func (o *Orchestrator) resetForRerun(ctx context.Context, analysis *types.AnalysisWorkflow) error {
 	if analysis.CacheType != types.CacheTypeRerunAll {
 		return nil
 	}

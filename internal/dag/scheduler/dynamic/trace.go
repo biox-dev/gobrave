@@ -91,7 +91,7 @@ func (o *dynamicDagOrchestratorV2) trace(analysisID int64, record *trace.Record)
 //
 // Tracing is best effort. A blank destination or an unwritable file only warns,
 // because losing the trace must not abort the run it was meant to explain.
-func (o *dynamicDagOrchestratorV2) openRunTrace(analysis *types.Analysis, resume bool) {
+func (o *dynamicDagOrchestratorV2) openRunTrace(analysis *types.AnalysisWorkflow, resume bool) {
 	if analysis == nil {
 		return
 	}

@@ -549,7 +549,7 @@ func (o *dynamicDagOrchestratorV2) isStopRequested(analysisID int64) bool {
 // of comparing analysis.CacheType here, so "what a cache type means" keeps exactly one
 // definition (internal/dag/cache_policy.go) across every scheduler. For the declared
 // cache types the answer is unchanged: only rerun_all resets.
-func (o *dynamicDagOrchestratorV2) prepareAnalysisForCacheRerun(ctx context.Context, analysis *types.Analysis) error {
+func (o *dynamicDagOrchestratorV2) prepareAnalysisForCacheRerun(ctx context.Context, analysis *types.AnalysisWorkflow) error {
 	if analysis == nil || !o.cachePolicies.ShouldResetGraph(analysis.CacheType) {
 		return nil
 	}
@@ -665,7 +665,7 @@ func (o *dynamicDagOrchestratorV2) pumpReadyQueue(ctx context.Context, runtime *
 // same pass - no re-arm, no hold-back. Iterating plan.order (the compiler's
 // topological order) guarantees ancestors are settled before their dependants are
 // queried, which is the only ordering requirement this relies on.
-func (o *dynamicDagOrchestratorV2) reconcilePlan(ctx context.Context, analysis *types.Analysis, plan *dynamicExecutionPlan) error {
+func (o *dynamicDagOrchestratorV2) reconcilePlan(ctx context.Context, analysis *types.AnalysisWorkflow, plan *dynamicExecutionPlan) error {
 	if plan == nil || len(plan.order) == 0 {
 		return nil
 	}
@@ -797,7 +797,7 @@ func (o *dynamicDagOrchestratorV2) reconcilePlan(ctx context.Context, analysis *
 // containers are already paid for, and rewriting them here would both lose the failure
 // evidence and risk orphaning a live container. Ready cache hits are preserved as well:
 // they are reusable results, not pending work, and already count as finished.
-func (o *dynamicDagOrchestratorV2) abortRemainingNodes(ctx context.Context, analysis *types.Analysis, plan *dynamicExecutionPlan, state *dynamicState) error {
+func (o *dynamicDagOrchestratorV2) abortRemainingNodes(ctx context.Context, analysis *types.AnalysisWorkflow, plan *dynamicExecutionPlan, state *dynamicState) error {
 	newItems := make([]*types.AnalysisNode, 0)
 	for _, nodeID := range plan.order {
 		current := state.nodes[nodeID]
@@ -860,7 +860,7 @@ func (o *dynamicDagOrchestratorV2) markNodeAborted(ctx context.Context, node *ty
 // registers it in the pass state so its dependants observe it immediately.
 func (o *dynamicDagOrchestratorV2) materializePlannedNode(
 	ctx context.Context,
-	analysis *types.Analysis,
+	analysis *types.AnalysisWorkflow,
 	plan *dynamicExecutionPlan,
 	state *dynamicState,
 	nodeID string,
@@ -928,7 +928,7 @@ func (o *dynamicDagOrchestratorV2) demoteNodeToPending(ctx context.Context, node
 // preparer.
 func (o *dynamicDagOrchestratorV2) decideExistingNode(
 	ctx context.Context,
-	analysis *types.Analysis,
+	analysis *types.AnalysisWorkflow,
 	plan *dynamicExecutionPlan,
 	state *dynamicState,
 	existing *types.AnalysisNode,
@@ -1294,7 +1294,7 @@ func dynamicCloneAnyMap(src map[string]any) map[string]any {
 // dynamicAnalysisRequestParam 返回编译期参数（request_param + analysis_name），
 // 供编译器把它作为每个 runtime 节点的 analysis_node.request_param 下发。
 // 解析失败或为空时返回空 map，让下游落库保持空值而不是报错。
-func dynamicAnalysisRequestParam(analysis *types.Analysis) map[string]any {
+func dynamicAnalysisRequestParam(analysis *types.AnalysisWorkflow) map[string]any {
 	return analysis.CompileParams()
 }
 

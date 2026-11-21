@@ -38,13 +38,13 @@ func (r *lifecycleRepoV3) UpdateAnalysisByID(_ context.Context, _ int64, values 
 	return nil
 }
 
-func (r *lifecycleRepoV3) GetAnalysisByID(_ context.Context, _ int64) (*types.Analysis, error) {
+func (r *lifecycleRepoV3) GetAnalysisByID(_ context.Context, _ int64) (*types.AnalysisWorkflow, error) {
 	if r.getErr != nil {
 		return nil, r.getErr
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return &types.Analysis{ID: 7, JobStatus: r.status}, nil
+	return &types.AnalysisWorkflow{ID: 7, JobStatus: r.status}, nil
 }
 
 func (r *lifecycleRepoV3) currentStatus() string {

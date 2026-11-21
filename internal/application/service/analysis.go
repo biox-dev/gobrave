@@ -43,15 +43,15 @@ func NewAnalysisService(
 	}
 }
 
-func (s *analysisService) GetAnalysisByAnalysisID(ctx context.Context, analysisID string) (*types.Analysis, error) {
+func (s *analysisService) GetAnalysisByAnalysisID(ctx context.Context, analysisID string) (*types.AnalysisWorkflow, error) {
 	return s.analysisRepo.GetAnalysisByAnalysisID(ctx, analysisID)
 }
 
-func (s *analysisService) ListAnalysisByProjectID(ctx context.Context, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, error) {
+func (s *analysisService) ListAnalysisByProjectID(ctx context.Context, projectID int64, query *types.AnalysisQuey) ([]*types.AnalysisWorkflow, error) {
 	return s.analysisRepo.ListAnalysisByProjectID(ctx, projectID, query)
 }
 
-func (s *analysisService) PageAnalysisByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, query *types.AnalysisQuey) ([]*types.Analysis, int64, error) {
+func (s *analysisService) PageAnalysisByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, query *types.AnalysisQuey) ([]*types.AnalysisWorkflow, int64, error) {
 	if pagination == nil {
 		pagination = &types.Pagination{}
 	}
@@ -59,7 +59,7 @@ func (s *analysisService) PageAnalysisByProjectID(ctx context.Context, paginatio
 	return s.analysisRepo.PageAnalysisByProjectID(ctx, pagination, projectID, query)
 }
 
-func (s *analysisService) GetAnalysisByID(ctx context.Context, analysisID int64) (*types.Analysis, error) {
+func (s *analysisService) GetAnalysisByID(ctx context.Context, analysisID int64) (*types.AnalysisWorkflow, error) {
 	return s.analysisRepo.GetAnalysisByID(ctx, analysisID)
 }
 
@@ -86,7 +86,7 @@ func (s *analysisService) ListAnalysisNodesByProjectIDAndScriptID(ctx context.Co
 	return s.analysisRepo.ListAnalysisNodesByProjectIDAndScriptID(ctx, projectID, scriptID)
 }
 
-func (s *analysisService) SaveAnalysisController(ctx context.Context, input *types.AnalysisControllerSaveInput) (*types.Analysis, error) {
+func (s *analysisService) SaveAnalysisController(ctx context.Context, input *types.AnalysisControllerSaveInput) (*types.AnalysisWorkflow, error) {
 	if input == nil || input.RequestParam == nil {
 		return nil, fmt.Errorf("request_param is required")
 	}
@@ -129,9 +129,9 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 	}
 	dataComponentIDs := toString(input.RequestParam["data_component_ids"])
 
-	var saved *types.Analysis
+	var saved *types.AnalysisWorkflow
 	saveErr := s.analysisRepo.WithTransaction(ctx, func(tx interfaces.AnalysisRepository) error {
-		var existing *types.Analysis
+		var existing *types.AnalysisWorkflow
 		if analysisID != 0 {
 			item, _ := tx.GetAnalysisByID(ctx, analysisID)
 			// if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
@@ -203,7 +203,7 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 				return err
 			}
 		} else {
-			newAnalysis := &types.Analysis{
+			newAnalysis := &types.AnalysisWorkflow{
 				ID:         analysisID,
 				ProjectID:  input.Project.ID,
 				AnalysisID: uuid.NewString(),
@@ -366,7 +366,7 @@ func (s *analysisService) DeleteAnalysis(ctx context.Context, id int64) error {
 	return s.analysisRepo.DeleteAnalysisByID(ctx, id)
 }
 
-func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces.AnalysisRepository, analysis *types.Analysis, dagRuntime map[string]any) error {
+func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces.AnalysisRepository, analysis *types.AnalysisWorkflow, dagRuntime map[string]any) error {
 	nodeRows := toMapSlice(dagRuntime["analysis_nodes"])
 	edgeRows := toMapSlice(dagRuntime["analysis_edges"])
 	useCache := analysis != nil && analysis.CacheType != types.CacheTypeRerunAll
@@ -513,7 +513,7 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 	return nil
 }
 
-func (s *analysisService) ListAnalysisByWorkflowID(ctx context.Context, workflowID int64) ([]*types.Analysis, error) {
+func (s *analysisService) ListAnalysisByWorkflowID(ctx context.Context, workflowID int64) ([]*types.AnalysisWorkflow, error) {
 	return s.analysisRepo.ListAnalysisByWorkflowID(ctx, workflowID)
 }
 func (s *analysisService) resolveStorageBaseDir() string {

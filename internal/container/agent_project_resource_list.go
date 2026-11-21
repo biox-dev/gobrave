@@ -73,7 +73,7 @@ func (b *projectResourceBrowser) ListAnalysesByProject(ctx context.Context, proj
 //
 // 节点状态分布复用 analysisRepo.ListAnalysisNodesByAnalysisID：统计失败不影响摘要返回
 // （此时 NodeCount 保持 0，避免把「统计失败」误报成「没有节点」）。
-func (b *projectResourceBrowser) analysisBrief(ctx context.Context, analysis *types.Analysis) runtimecontext.AnalysisBrief {
+func (b *projectResourceBrowser) analysisBrief(ctx context.Context, analysis *types.AnalysisWorkflow) runtimecontext.AnalysisBrief {
 	// repository 读取时已还原 WorkspaceDir 并填充派生路径；这里兜底再推导一次（幂等）。
 	if analysis.ParamsPath == "" && analysis.WorkspaceDir != "" {
 		analysis.HydrateDerivedPaths()
@@ -212,7 +212,7 @@ func (b *projectResourceBrowser) ListAnalysisNodesByProject(ctx context.Context,
 // 分析行缺失时只保留节点自身信息，不视为错误。
 func (b *projectResourceBrowser) analysisNodeSummaries(ctx context.Context, projectID int64, nodes []*types.AnalysisNode, limit int) []runtimecontext.AnalysisNodeSummary {
 	out := make([]runtimecontext.AnalysisNodeSummary, 0, minInt(len(nodes), limit))
-	analysisCache := make(map[int64]*types.Analysis)
+	analysisCache := make(map[int64]*types.AnalysisWorkflow)
 	for _, node := range nodes {
 		if node == nil || node.ProjectID != projectID {
 			continue
@@ -226,7 +226,7 @@ func (b *projectResourceBrowser) analysisNodeSummaries(ctx context.Context, proj
 }
 
 // analysisNodeSummary 组装单个节点的列表摘要（节点自身 + 所属分析运行）。
-func (b *projectResourceBrowser) analysisNodeSummary(ctx context.Context, cache map[int64]*types.Analysis, node *types.AnalysisNode) runtimecontext.AnalysisNodeSummary {
+func (b *projectResourceBrowser) analysisNodeSummary(ctx context.Context, cache map[int64]*types.AnalysisWorkflow, node *types.AnalysisNode) runtimecontext.AnalysisNodeSummary {
 	// 兜底：个别读取路径可能没有填充派生路径，这里按 WorkspaceDir 再推导一次（幂等）。
 	if (node.ParamsPath == "" || node.OutputDir == "" || node.CommandPath == "") && node.WorkspaceDir != "" {
 		node.HydrateDerivedPaths()

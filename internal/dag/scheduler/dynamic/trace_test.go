@@ -31,7 +31,7 @@ func readTraceLines(t *testing.T, path string) []string {
 // header plus one row per observation, node rows carry the node columns, and a
 // new run rewrites the file from scratch instead of appending to the old one.
 func TestRunTraceIsATruncatedAppendOnlyTable(t *testing.T) {
-	analysis := &types.Analysis{ID: 7, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 7, WorkspaceDir: t.TempDir()}
 	analysis.HydrateDerivedPaths()
 
 	orchestrator := &dynamicDagOrchestratorV2{}
@@ -95,7 +95,7 @@ func TestRunTraceIsATruncatedAppendOnlyTable(t *testing.T) {
 // unconditionally.
 func TestRunTraceIsOptionalAndNeverPanics(t *testing.T) {
 	orchestrator := &dynamicDagOrchestratorV2{}
-	analysis := &types.Analysis{ID: 7}
+	analysis := &types.AnalysisWorkflow{ID: 7}
 	analysis.HydrateDerivedPaths()
 	if analysis.TraceFile != "" {
 		t.Fatalf("a workspace-less analysis must not derive a trace path, got %q", analysis.TraceFile)
@@ -179,7 +179,7 @@ func TestNodeTraceFilterKeepsOnlyNodeLifecycleEvents(t *testing.T) {
 // columns of the node row: the events themselves only carry the numeric key, so the
 // row is what has to supply analysis_node_id.
 func TestTraceNodeEventRecordsRunningAndTerminalRows(t *testing.T) {
-	analysis := &types.Analysis{ID: 7, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 7, WorkspaceDir: t.TempDir()}
 	analysis.HydrateDerivedPaths()
 
 	repo := &traceNodeRepoStub{nodes: map[int64]*types.AnalysisNode{
@@ -237,7 +237,7 @@ func TestTraceNodeEventDegradesWithoutNodeRow(t *testing.T) {
 		Name: dagruntime.EventNodeRunning, AnalysisID: 7, AnalysisNodeID: 100, NodeID: "align",
 	})
 
-	analysis := &types.Analysis{ID: 7, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 7, WorkspaceDir: t.TempDir()}
 	analysis.HydrateDerivedPaths()
 	// The stub knows no rows, so the lookup fails.
 	orchestrator := &dynamicDagOrchestratorV2{repo: &traceNodeRepoStub{}}

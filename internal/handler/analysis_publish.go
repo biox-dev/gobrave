@@ -226,7 +226,7 @@ func (h *AnalysisHandler) copyAnalysisNodeOutput(ctx context.Context, analysisNo
 	return node, nil
 }
 
-func (h *AnalysisHandler) writeAnalysisToDoc(analysis *types.Analysis, targetAnalysisFile, analysisNodeTitleList string) error {
+func (h *AnalysisHandler) writeAnalysisToDoc(analysis *types.AnalysisWorkflow, targetAnalysisFile, analysisNodeTitleList string) error {
 	markdownContent := fmt.Sprintf("# %s\n\n%s\n", analysis.AnalysisName, analysisNodeTitleList)
 
 	if err := os.MkdirAll(filepath.Dir(targetAnalysisFile), 0o755); err != nil {

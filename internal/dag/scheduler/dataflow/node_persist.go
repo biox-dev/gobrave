@@ -315,7 +315,7 @@ func (r *persistentDataflowRuntime) buildAnalysisNode(ctx context.Context, scrip
 		return nil, err
 	}
 	if analysis == nil {
-		analysis = &types.Analysis{ID: payload.AnalysisID, ProjectID: r.projectID}
+		analysis = &types.AnalysisWorkflow{ID: payload.AnalysisID, ProjectID: r.projectID}
 	}
 
 	status := strings.ToLower(strings.TrimSpace(payload.Status))

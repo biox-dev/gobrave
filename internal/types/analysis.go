@@ -121,8 +121,8 @@ func normalizeJSONScanInput(value any) ([]byte, error) {
 	}
 }
 
-// Analysis maps to Python brave's nextflow table.
-type Analysis struct {
+// AnalysisWorkflow maps to Python brave's nextflow table.
+type AnalysisWorkflow struct {
 	// ID uint `json:"id" gorm:"primaryKey;autoIncrement"`
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 	// ProjectID   string `json:"project" gorm:"column:project;type:varchar(255)"`
@@ -174,7 +174,7 @@ type Analysis struct {
 
 // HydrateDerivedPaths 从 WorkspaceDir 推导出全部派生路径。
 // WorkspaceDir 为空时派生路径全部为空，避免产生悬空的文件名。
-func (t *Analysis) HydrateDerivedPaths() {
+func (t *AnalysisWorkflow) HydrateDerivedPaths() {
 	l := utils.AnalysisLayoutFor(t.WorkspaceDir)
 	t.ParamsPath = l.ParamsPath
 	t.CommandPath = l.CommandPath
@@ -184,7 +184,7 @@ func (t *Analysis) HydrateDerivedPaths() {
 	t.ExecutorLogFile = l.ExecutorLogFile
 }
 
-func (t *Analysis) BeforeCreate(_ *gorm.DB) error {
+func (t *AnalysisWorkflow) BeforeCreate(_ *gorm.DB) error {
 	if t.ID == 0 {
 		t.ID = utils.GenerateID()
 	}
@@ -195,7 +195,7 @@ func (t *Analysis) BeforeCreate(_ *gorm.DB) error {
 //
 // request_param 只保存分析参数，analysis_name 是独立的列；编译期为实例命名
 // （见 compiler 的 expand 阶段）需要它，因此在这里合并，而不写回 request_param。
-func (t *Analysis) CompileParams() map[string]any {
+func (t *AnalysisWorkflow) CompileParams() map[string]any {
 	params := map[string]any{}
 	if t == nil {
 		return params
@@ -263,7 +263,7 @@ func NormalizeSchedulerMode(mode string) string {
 	}
 }
 
-func (Analysis) TableName() string {
+func (AnalysisWorkflow) TableName() string {
 	return "nextflow"
 }
 

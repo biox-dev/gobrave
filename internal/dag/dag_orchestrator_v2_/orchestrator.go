@@ -211,7 +211,7 @@ func (o *Orchestrator) RequestStop(analysisID int64) bool {
 // scheduler_mode = dynamic_v2 and owns no analyses to recover. Recovery is served by
 // the wired orchestrator in internal/dag/dag_orchestrator_v2 (see its recovery_v2.go),
 // which the container recovery loop dispatches to by scheduler_mode.
-func (o *Orchestrator) RecoverRunningAnalyses(_ context.Context, _ *types.Analysis) (bool, error) {
+func (o *Orchestrator) RecoverRunningAnalyses(_ context.Context, _ *types.AnalysisWorkflow) (bool, error) {
 	return false, nil
 }
 

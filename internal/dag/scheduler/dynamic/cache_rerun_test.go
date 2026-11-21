@@ -13,12 +13,12 @@ import (
 // prepareAnalysisForCacheRerun makes, recording whether the graph was cleared.
 type graphResetRepoStub struct {
 	stubAnalysisRepo
-	analysis     *types.Analysis
+	analysis     *types.AnalysisWorkflow
 	clearedNodes bool
 	clearedEdges bool
 }
 
-func (r *graphResetRepoStub) GetAnalysisByID(context.Context, int64) (*types.Analysis, error) {
+func (r *graphResetRepoStub) GetAnalysisByID(context.Context, int64) (*types.AnalysisWorkflow, error) {
 	return r.analysis, nil
 }
 
@@ -63,7 +63,7 @@ func TestPrepareAnalysisForCacheRerunFollowsThePolicyRegistry(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			repo := &graphResetRepoStub{analysis: &types.Analysis{ID: 7, CacheType: testCase.cacheType}}
+			repo := &graphResetRepoStub{analysis: &types.AnalysisWorkflow{ID: 7, CacheType: testCase.cacheType}}
 			orchestrator := newGraphResetOrchestrator(repo)
 
 			if err := orchestrator.prepareAnalysisForCacheRerun(context.Background(), repo.analysis); err != nil {

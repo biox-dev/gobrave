@@ -19,7 +19,7 @@ import (
 
 type stubAnalysisRepoV3 struct {
 	interfaces.AnalysisRepository
-	analysis *types.Analysis
+	analysis *types.AnalysisWorkflow
 	nodes    []*types.AnalysisNode
 	created  int
 }
@@ -34,7 +34,7 @@ func (r *stubAnalysisRepoV3) CreateAnalysisNodes(_ context.Context, items []*typ
 	return nil
 }
 
-func (r *stubAnalysisRepoV3) GetAnalysisByID(_ context.Context, _ int64) (*types.Analysis, error) {
+func (r *stubAnalysisRepoV3) GetAnalysisByID(_ context.Context, _ int64) (*types.AnalysisWorkflow, error) {
 	return r.analysis, nil
 }
 
@@ -60,7 +60,7 @@ func requireSnowflakeV3(t *testing.T) {
 func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 	requireSnowflakeV3(t)
 
-	analysis := &types.Analysis{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
 	repo := &stubAnalysisRepoV3{analysis: analysis}
 	runtime := &persistentDataflowRuntime{
 		repo:         repo,
@@ -110,7 +110,7 @@ func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 func TestV3PersistReusesV2MaterializedNode(t *testing.T) {
 	requireSnowflakeV3(t)
 
-	analysis := &types.Analysis{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
 	resolved := types.JSONMap{"bam": "a.bam"}
 
 	// Simulate a previous run that persisted this node through the V2 path.

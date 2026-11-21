@@ -541,7 +541,7 @@ package dataflow
 
 // type inMemoryAnalysisRepo struct {
 // 	mu            sync.Mutex
-// 	analyses      map[string]*types.Analysis
+// 	analyses      map[string]*types.AnalysisWorkflow
 // 	nodesByID     map[int64]*types.AnalysisNode
 // 	nodesByAID    map[string][]*types.AnalysisNode
 // 	nextNodeIDSeq int64
@@ -551,14 +551,14 @@ package dataflow
 
 // func newInMemoryAnalysisRepo() *inMemoryAnalysisRepo {
 // 	return &inMemoryAnalysisRepo{
-// 		analyses:      map[string]*types.Analysis{},
+// 		analyses:      map[string]*types.AnalysisWorkflow{},
 // 		nodesByID:     map[int64]*types.AnalysisNode{},
 // 		nodesByAID:    map[string][]*types.AnalysisNode{},
 // 		nextNodeIDSeq: 100,
 // 	}
 // }
 
-// func (r *inMemoryAnalysisRepo) GetAnalysisByAnalysisID(_ context.Context, analysisID string) (*types.Analysis, error) {
+// func (r *inMemoryAnalysisRepo) GetAnalysisByAnalysisID(_ context.Context, analysisID string) (*types.AnalysisWorkflow, error) {
 // 	r.mu.Lock()
 // 	defer r.mu.Unlock()
 // 	item, ok := r.analyses[strings.TrimSpace(analysisID)]
@@ -569,7 +569,7 @@ package dataflow
 // 	return &out, nil
 // }
 
-// func (r *inMemoryAnalysisRepo) ListAnalysisByJobStatus(_ context.Context, _ string) ([]*types.Analysis, error) {
+// func (r *inMemoryAnalysisRepo) ListAnalysisByJobStatus(_ context.Context, _ string) ([]*types.AnalysisWorkflow, error) {
 // 	return nil, nil
 // }
 
@@ -616,7 +616,7 @@ package dataflow
 // 	return fn(r)
 // }
 
-// func (r *inMemoryAnalysisRepo) CreateAnalysis(_ context.Context, item *types.Analysis) error {
+// func (r *inMemoryAnalysisRepo) CreateAnalysis(_ context.Context, item *types.AnalysisWorkflow) error {
 // 	if item == nil {
 // 		return nil
 // 	}
@@ -943,7 +943,7 @@ package dataflow
 // 	analysisID, parseResult, dagDefinition := loadDataflowParamsFixture(t)
 
 // 	repo := newInMemoryAnalysisRepo()
-// 	if err := repo.CreateAnalysis(ctx, &types.Analysis{
+// 	if err := repo.CreateAnalysis(ctx, &types.AnalysisWorkflow{
 // 		AnalysisID: analysisID,
 // 		OutputDir:  "/tmp/dataflow-orchestrator-v3-test",
 // 		CacheType:  types.CacheTypeReuseExistingNode,
@@ -1051,7 +1051,7 @@ package dataflow
 // 	analysisID, parseResult, dagDefinition := loadDataflowParamsFixture(t)
 
 // 	repo := newInMemoryAnalysisRepo()
-// 	if err := repo.CreateAnalysis(ctx, &types.Analysis{
+// 	if err := repo.CreateAnalysis(ctx, &types.AnalysisWorkflow{
 // 		AnalysisID: analysisID,
 // 		OutputDir:  "/tmp/dataflow-orchestrator-v3-test",
 // 		CacheType:  types.CacheTypeReuseExistingNode,

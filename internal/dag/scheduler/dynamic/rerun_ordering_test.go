@@ -168,7 +168,7 @@ func nodeStatuses(repo *stubAnalysisRepo) map[string]string {
 // other two must wait for the rerun of the node they consume.
 func TestRerunHoldsBackDownstreamUntilUpstreamIsQueued(t *testing.T) {
 	orchestrator, repo, plan := newRerunOrderingFixture(t, nil)
-	analysis := &types.Analysis{ID: 7, ProjectID: 1, CacheType: types.CacheTypeReuseWhenScriptAndParamsUnchanged}
+	analysis := &types.AnalysisWorkflow{ID: 7, ProjectID: 1, CacheType: types.CacheTypeReuseWhenScriptAndParamsUnchanged}
 
 	if err := orchestrator.reconcilePlan(context.Background(), analysis, plan); err != nil {
 		t.Fatalf("reconcile failed: %v", err)
@@ -198,7 +198,7 @@ func TestRerunHoldsBackDownstreamUntilUpstreamIsQueued(t *testing.T) {
 // completion releases exactly the next layer.
 func TestRerunUnlocksOneLayerAtATime(t *testing.T) {
 	orchestrator, repo, plan := newRerunOrderingFixture(t, nil)
-	analysis := &types.Analysis{ID: 7, ProjectID: 1, CacheType: types.CacheTypeReuseWhenScriptAndParamsUnchanged}
+	analysis := &types.AnalysisWorkflow{ID: 7, ProjectID: 1, CacheType: types.CacheTypeReuseWhenScriptAndParamsUnchanged}
 	ctx := context.Background()
 
 	if err := orchestrator.reconcilePlan(ctx, analysis, plan); err != nil {
@@ -234,7 +234,7 @@ func TestRerunHoldsBackAlreadyClaimableDownstream(t *testing.T) {
 		nodes[1].Status = dagruntime.StatusReady
 		nodes[1].CacheHit = false
 	})
-	analysis := &types.Analysis{ID: 7, ProjectID: 1, CacheType: types.CacheTypeReuseWhenScriptAndParamsUnchanged}
+	analysis := &types.AnalysisWorkflow{ID: 7, ProjectID: 1, CacheType: types.CacheTypeReuseWhenScriptAndParamsUnchanged}
 
 	if err := orchestrator.reconcilePlan(context.Background(), analysis, plan); err != nil {
 		t.Fatalf("reconcile failed: %v", err)

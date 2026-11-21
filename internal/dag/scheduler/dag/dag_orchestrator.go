@@ -290,7 +290,7 @@ func (o *dagOrchestrator) StopAsync(ctx context.Context, analysisID int64) error
 //   - stopping: converge the stop request, cancelling a live run or finalizing.
 //
 // It reports whether a live run is now tracked in this process.
-func (o *dagOrchestrator) RecoverRunningAnalyses(ctx context.Context, item *types.Analysis) (bool, error) {
+func (o *dagOrchestrator) RecoverRunningAnalyses(ctx context.Context, item *types.AnalysisWorkflow) (bool, error) {
 	if o == nil || o.repo == nil || item == nil || item.ID <= 0 {
 		return false, nil
 	}

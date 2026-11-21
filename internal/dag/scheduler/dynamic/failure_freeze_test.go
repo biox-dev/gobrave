@@ -53,9 +53,9 @@ func failedThisRun(nodeID string) *types.AnalysisNode {
 	}
 }
 
-func freezeAnalysis(t *testing.T) *types.Analysis {
+func freezeAnalysis(t *testing.T) *types.AnalysisWorkflow {
 	t.Helper()
-	return &types.Analysis{ID: 7, ProjectID: 1, WorkspaceDir: t.TempDir(), CacheType: types.CacheTypeReuseExistingNode}
+	return &types.AnalysisWorkflow{ID: 7, ProjectID: 1, WorkspaceDir: t.TempDir(), CacheType: types.CacheTypeReuseExistingNode}
 }
 
 // TestFailureFreezeConvergesUnstartedNodesToSkipped covers the three shapes a

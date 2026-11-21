@@ -184,7 +184,7 @@ type analysisUpdateRequest struct {
 // analysis 保持库中读出的原样（analysisName 覆盖值单独保存），便于调用方对比改动；
 // 真正生效的名称一律走 name。
 type preparedAnalysis struct {
-	analysis     *types.Analysis
+	analysis     *types.AnalysisWorkflow
 	name         string
 	requestParam map[string]any
 	cacheType    int
@@ -270,7 +270,7 @@ func (m *analysisManager) save(
 	ctx context.Context,
 	prepared preparedAnalysis,
 	toolName string,
-) (*types.Analysis, map[string]any, map[string]any, error) {
+) (*types.AnalysisWorkflow, map[string]any, map[string]any, error) {
 	analysis := prepared.analysis
 	parseResult, dagDefinition, err := m.buildParseResult(ctx, analysis.WorkflowID, prepared.name, prepared.requestParam)
 	if err != nil {
@@ -338,7 +338,7 @@ func (m *analysisManager) buildParseResult(ctx context.Context, workflowID int64
 }
 
 // brief 构造分析运行的只读摘要（含工作流名称与节点状态分布）。
-func (m *analysisManager) brief(ctx context.Context, analysis *types.Analysis, orchestrator interfaces.DagOrchestrator) runtimecontext.AnalysisBrief {
+func (m *analysisManager) brief(ctx context.Context, analysis *types.AnalysisWorkflow, orchestrator interfaces.DagOrchestrator) runtimecontext.AnalysisBrief {
 	brief := runtimecontext.AnalysisBrief{
 		AnalysisID:    analysis.ID,
 		AnalysisKey:   analysis.AnalysisID,

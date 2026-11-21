@@ -62,7 +62,7 @@ func recoverAllAnalyses(
 		return
 	}
 
-	items := make([]*types.Analysis, 0)
+	items := make([]*types.AnalysisWorkflow, 0)
 	for _, jobStatus := range []string{types.AnalysisStatusRunning, types.AnalysisStatusStopping} {
 		found, err := repo.ListAnalysisByJobStatus(ctx, jobStatus)
 		if err != nil {
@@ -82,7 +82,7 @@ func recoverAllAnalyses(
 // never advanced by two schedulers at the same time.
 func recoverAnalysisByScheduler(
 	ctx context.Context,
-	item *types.Analysis,
+	item *types.AnalysisWorkflow,
 	schedulers *scheduler.Registry,
 ) {
 	if item == nil || item.ID <= 0 {

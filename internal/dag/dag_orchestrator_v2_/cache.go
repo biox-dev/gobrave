@@ -52,7 +52,7 @@ type CachePolicyRegistry struct {
 }
 
 // NewCachePolicyRegistry builds the default registry covering every cache type
-// declared in types.Analysis.
+// declared in types.AnalysisWorkflow.
 func NewCachePolicyRegistry() *CachePolicyRegistry {
 	registry := &CachePolicyRegistry{
 		policies: make(map[int]CachePolicy),

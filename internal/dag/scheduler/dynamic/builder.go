@@ -58,7 +58,7 @@ func scriptPrimaryKey(script *types.Script) int64 {
 func (o *dynamicDagOrchestratorV2) buildDynamicAnalysisNode(
 	ctx context.Context,
 	script *types.Script,
-	analysis *types.Analysis,
+	analysis *types.AnalysisWorkflow,
 	nodeID string,
 	row map[string]any,
 	incomingEdges []*types.AnalysisEdge,

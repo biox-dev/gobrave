@@ -17,7 +17,7 @@ type ReconcilerDeps struct {
 	// Workflows resolves script metadata for cache fingerprints.
 	Workflows interfaces.WorkflowRepository
 	// Analysis is the run being scheduled.
-	Analysis *types.Analysis
+	Analysis *types.AnalysisWorkflow
 	// Graph is the compiled template graph.
 	Graph *Graph
 	// Tracker answers readiness questions.
@@ -40,7 +40,7 @@ type ReconcilerDeps struct {
 type Reconciler struct {
 	analyses      interfaces.AnalysisRepository
 	workflows     interfaces.WorkflowRepository
-	analysis      *types.Analysis
+	analysis      *types.AnalysisWorkflow
 	graph         *Graph
 	tracker       *DependencyTracker
 	builder       *NodeBuilder

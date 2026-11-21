@@ -69,7 +69,7 @@ type Spec struct {
 type MaterializeRequest struct {
 	// Analysis is the owning analysis row; its output directory anchors the
 	// workspace and its project id is copied onto the node.
-	Analysis *types.Analysis
+	Analysis *types.AnalysisWorkflow
 	// Spec is the compiled process template.
 	Spec *Spec
 	// Status is the initial node status.
@@ -97,7 +97,7 @@ type MaterializeRequest struct {
 // ProbeRequest describes a re-evaluation of an already persisted node.
 type ProbeRequest struct {
 	// Analysis is the owning analysis row.
-	Analysis *types.Analysis
+	Analysis *types.AnalysisWorkflow
 	// Spec is the freshly compiled template to compare against.
 	Spec *Spec
 	// Existing is the node persisted by a previous run.
@@ -308,7 +308,7 @@ func MergeUpstreamInputs(
 func applyUpstreamBindings(
 	ctx context.Context,
 	parser dagruntime.NodeRequestParser,
-	analysis *types.Analysis,
+	analysis *types.AnalysisWorkflow,
 	spec *Spec,
 	incoming []*types.AnalysisEdge,
 	upstream map[string]*types.AnalysisNode,
@@ -353,7 +353,7 @@ func applyUpstreamBindings(
 func applyRequestParamParse(
 	ctx context.Context,
 	parser dagruntime.NodeRequestParser,
-	analysis *types.Analysis,
+	analysis *types.AnalysisWorkflow,
 	spec *Spec,
 	resolvedInputs types.JSONMap,
 	requestParam string,

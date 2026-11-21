@@ -57,7 +57,7 @@ func NewNodeBuilder() *NodeBuilder { return &NodeBuilder{} }
 
 // MaterializeRequest describes a node that does not exist yet for this run.
 type MaterializeRequest struct {
-	Analysis *types.Analysis
+	Analysis *types.AnalysisWorkflow
 	Spec     *NodeSpec
 	// ScriptID is the pipeline_components primary key resolved from
 	// Spec.ScriptID (the compiler emitted component id). The runtime preparer
@@ -71,7 +71,7 @@ type MaterializeRequest struct {
 
 // ProbeRequest describes a re-evaluation of an already persisted node.
 type ProbeRequest struct {
-	Analysis *types.Analysis
+	Analysis *types.AnalysisWorkflow
 	Spec     *NodeSpec
 	Existing *types.AnalysisNode
 	// ScriptID overrides the script primary key when it was resolved already.

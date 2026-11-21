@@ -21,7 +21,7 @@ import (
 // stay finished across reconcile passes instead of re-queueing its root.
 func TestRerunAllKeepsCompletedNodes(t *testing.T) {
 	orchestrator, repo, plan := newRerunOrderingFixture(t, nil)
-	analysis := &types.Analysis{ID: 7, ProjectID: 1, CacheType: types.CacheTypeRerunAll}
+	analysis := &types.AnalysisWorkflow{ID: 7, ProjectID: 1, CacheType: types.CacheTypeRerunAll}
 	ctx := context.Background()
 
 	for cycle := 1; cycle <= 3; cycle++ {
@@ -50,7 +50,7 @@ func TestRerunAllStillPromotesNodesWithoutResult(t *testing.T) {
 	orchestrator, repo, plan := newRerunOrderingFixture(t, func(nodes []*types.AnalysisNode) {
 		nodes[1].Status = dagruntime.StatusPending
 	})
-	analysis := &types.Analysis{ID: 7, ProjectID: 1, CacheType: types.CacheTypeRerunAll}
+	analysis := &types.AnalysisWorkflow{ID: 7, ProjectID: 1, CacheType: types.CacheTypeRerunAll}
 
 	if err := orchestrator.reconcilePlan(context.Background(), analysis, plan); err != nil {
 		t.Fatalf("reconcile failed: %v", err)

@@ -27,7 +27,7 @@ func TestBuildDynamicAnalysisNodeUsesSharedLayoutAndIdentity(t *testing.T) {
 	requireSnowflake(t)
 
 	orchestrator := &dynamicDagOrchestratorV2{}
-	analysis := &types.Analysis{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
 	row := map[string]any{
 		"node_id":         "align",
 		"node_name":       "align",

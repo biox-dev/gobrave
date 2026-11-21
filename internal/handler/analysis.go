@@ -2728,7 +2728,7 @@ func (h *AnalysisHandler) RuntimeSnapshot(c *gin.Context) {
 }
 
 // // resolveAnalysisByIDParam 兼容前端传数字主键或 analysis_id(UUID) 两种形式。
-// func (h *AnalysisHandler) resolveAnalysisByIDParam(ctx context.Context, raw string) (*types.Analysis, error) {
+// func (h *AnalysisHandler) resolveAnalysisByIDParam(ctx context.Context, raw string) (*types.AnalysisWorkflow, error) {
 // 	if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
 // 		item, err := h.analysisService.GetAnalysisByID(ctx, id)
 // 		if err == nil {
@@ -2745,7 +2745,7 @@ func (h *AnalysisHandler) RuntimeSnapshot(c *gin.Context) {
 // 调度器不可见时按 DB 状态兜底，保证 running_info 非空即代表 DAG 仍在运行。
 func (h *AnalysisHandler) resolveRunningInfo(
 	ctx context.Context,
-	analysis *types.Analysis,
+	analysis *types.AnalysisWorkflow,
 	snapshot *dagruntime.RuntimeSnapshot,
 ) *interfaces.DagRunningInfo {
 	if analysis == nil {
@@ -2793,7 +2793,7 @@ func buildRuntimeStatusCount(counts map[string]int) map[string]int {
 
 // resolveAnalysisIsCache 兼容 Python nextflow.is_cache：Go 侧持久化在 request_param.is_cache，
 // 未记录时回退到 cache_type（非 rerun_all 即视为启用缓存）。
-func resolveAnalysisIsCache(analysis *types.Analysis) bool {
+func resolveAnalysisIsCache(analysis *types.AnalysisWorkflow) bool {
 	if analysis == nil {
 		return false
 	}
