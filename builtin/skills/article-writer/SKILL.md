@@ -27,18 +27,30 @@ description: 撰写 / 整合生物信息学项目的科研分析报告：按科�
 
 # 二、分析结果来源
 
-分析证据来自 `get_report_context` 工具返回的报告条目清单。
+本技能不再依赖已删除的 `get_report_context` 工具。分析证据需要由你主动收集：
 
-- 撰写前先调用 `get_report_context`，`report_id` 取用户消息中 `@report:<id>` 冒号后的数字；
-- `custom` 条目：内容是用户提供的章节说明，只保留其核心含义，不得当作实验结果进行推断；
-- `analysis_node` 条目：只给出结果文件路径，必须读取该 Markdown 文件的实际内容，
-  并仅根据其中真实结果进行总结。
+1. 先调用 `list_session_resources` 拿到当前会话产出的资源清单（`resource_type` +
+   `resource_id`），重点关注 `analysis_node`、`analysis`（一次工作流运行）与
+   `project_report` 三类；
+2. 对每个 `analysis_node` 调用 `get_analysis_node`，拿到节点名称、`workspace_dir`、
+   `params_path` 与 `output_dir`，再用 `read_file` 读取 `output_dir` 下的结果
+   Markdown 文件（通常是分析报告 / 结果说明），**只依据其中真实结果进行总结**；
+3. 对每个 `analysis`（工作流运行）调用 `get_analysis_workflow`，用其
+   `workspace_dir` / `params_path` 与节点状态判断这次运行完成了什么；
+4. 若用户消息带 `@report:<id>` 引用，用 `get_report` 读取该报告标题与现有正文
+   （避免与已有内容冲突，或在用户要求「在已有报告基础上整合」时作为上下文）。
+
+用户消息中出现的 `custom` 章节说明（用户自己写的章节标题 / 引导语）：只保留其
+核心含义，**不得当作实验结果进行推断**。
+
+拿不到结果文件、或结果文件没有实际内容时，如实说明「该分析缺少可用证据」，不要
+编造。
 
 ---
 
 # 三、核心任务
 
-`get_report_context` 返回的报告条目是**分析证据来源**，不是最终报告章节。
+上面收集到的分析结果 / 报告条目是**分析证据来源**，不是最终报告章节。
 
 不要按照报告条目的顺序机械生成章节，而应根据科学问题对相关分析进行整合。
 

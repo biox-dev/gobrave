@@ -18,8 +18,8 @@ import (
 )
 
 // 本文件实现项目资源只读能力（按窄接口拆分：ScriptBrowser / AnalysisNodeBrowser /
-// ContainerTemplateBrowser / DatasetBrowser / ProjectReportContextResolver）：
-// 「浏览项目内的脚本 / 分析节点」与「浏览全局容器模板 / 数据集 / 报告上下文」。
+// ContainerTemplateBrowser / DatasetBrowser / ProjectReportBrowser）：
+// 「浏览项目内的脚本 / 分析节点」与「浏览全局容器模板 / 数据集 / 报告正文」。
 //
 // 只读内置工具共用同一份实现：
 //   - list_project_scripts：按 RuntimeContext.ProjectID 列出全部脚本；
@@ -33,8 +33,7 @@ import (
 //   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径；
 //   - get_project_database_path：按固定 dataset_key=DATABASES 准备并返回项目数据库目录；
 //   - add_file_to_dataset：把文件登记到当前项目的数据集；
-//   - get_report：按 @report:<id> 引用读回报告标题 / 正文文件路径 / 正文内容；
-//   - get_report_context：按 @report:<id> 引用解析报告标题 / 工作目录 / 条目清单。
+//   - get_report：按 @report:<id> 引用读回报告标题 / 正文文件路径 / 正文内容。
 //
 // 路径口径与 create_script / update_script 完全一致：脚本主文件 / io_schema.json / README.md
 // 一律由 types.Script.Files（utils.ScriptLayout）推导，不在各调用点手写 join；
@@ -47,9 +46,8 @@ type projectResourceBrowser struct {
 	analysisRepo interfaces.AnalysisRepository
 	containerSvc interfaces.ContainerService
 	dataSvc      interfaces.DataService
-	// projectSvc / analysisSvc 供 get_report_context 解析报告条目
-	// （标题 / 工作目录 / 各来源的结果文件路径），口径与 handler.RuntimeContextResolver
-	// 的 projectReport 分支保持一致。
+	// projectSvc / analysisSvc / summaryRepo 供报告相关只读逻辑使用，
+	// 口径与 handler.RuntimeContextResolver 的 projectReport 分支保持一致。
 	//
 	// 摘要条目只用到摘要的 ID / 标题 / 项目 ID，因此直接依赖 AISummaryRepository，
 	// 而不是 interfaces.AISummaryService：后者依赖 *agentservice.AgentService，而

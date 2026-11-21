@@ -984,9 +984,9 @@ type DatasetFileAddResult struct {
 
 // ProjectReportBrowser 抽象「按 ID 查看项目报告」的只读能力（get_report）。
 //
-// 与 ProjectReportContextResolver 互补：后者面向「撰写报告」给出工作目录与条目清单，
-// 本接口直接把报告正文（output.md）读回来，供模型回答「这份报告写了什么」或
-// 在 update_report 前确认当前内容。
+// 本接口把报告正文（output.md）读回来，供模型回答「这份报告写了什么」或
+// 在 update_report 前确认当前内容；撰写报告所需的分析证据由 list_session_resources
+// 与会话内分析节点 / 分析运行的结果文件提供。
 //
 // 由 container 的 projectResourceBrowser 实现，并在构造 builtin.Deps 时注入。
 type ProjectReportBrowser interface {
