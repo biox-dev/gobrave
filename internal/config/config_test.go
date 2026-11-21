@@ -1,7 +1,6 @@
 package config
 
 import (
-	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -232,15 +231,13 @@ func clearProxyEnv(t *testing.T) {
 	}
 }
 
-// TestProxyConfigProxyFunc 校验代理段解析：http/https 各自取对应代理，
-// no_proxy 命中的主机直连。
-func TestProxyConfigProxyFunc(t *testing.T) {
-	// 隔离宿主机环境变量，避免影响未配置代理的分支。
-	clearProxyEnv(t)
-
+// TestProxyConfigOutboundProxy 校验 proxy 段解析：配置只描述取值，
+// 并通过 OutboundProxy 暴露给 utils.ProxySettings.FromConfig；
+// 代理选择 / 直连行为由 utils.ProxySettings 自身测试覆盖。
+func TestProxyConfigOutboundProxy(t *testing.T) {
 	writeConfig(t, `proxy:
   http_proxy: http://10.110.1.11:7890
-  https_proxy: http://10.110.1.11:7890
+  https_proxy: http://10.110.1.12:7890
   no_proxy: internal.example.com
 `)
 	cfg, err := LoadConfig()
@@ -248,79 +245,28 @@ func TestProxyConfigProxyFunc(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 
-	proxyFunc := cfg.ProxyFunc()
-	cases := []struct {
-		target string
-		want   string
-	}{
-		{"http://example.com/a", "http://10.110.1.11:7890"},
-		{"https://example.com/a", "http://10.110.1.11:7890"},
-		{"http://internal.example.com/a", ""},
+	httpProxy, httpsProxy, noProxy := cfg.Proxy.OutboundProxy()
+	if httpProxy != "http://10.110.1.11:7890" {
+		t.Errorf("http_proxy = %q, want http://10.110.1.11:7890", httpProxy)
 	}
-	for _, c := range cases {
-		u, err := url.Parse(c.target)
-		if err != nil {
-			t.Fatalf("parse %s: %v", c.target, err)
-		}
-		got, err := proxyFunc(u)
-		if err != nil {
-			t.Fatalf("proxyFunc(%s): %v", c.target, err)
-		}
-		if c.want == "" {
-			if got != nil {
-				t.Errorf("proxyFunc(%s) = %v, want direct", c.target, got)
-			}
-			continue
-		}
-		if got == nil || got.String() != c.want {
-			t.Errorf("proxyFunc(%s) = %v, want %s", c.target, got, c.want)
-		}
+	if httpsProxy != "http://10.110.1.12:7890" {
+		t.Errorf("https_proxy = %q, want http://10.110.1.12:7890", httpsProxy)
 	}
-
-	// Transport 必须复用同一套代理选择逻辑。
-	transport := cfg.NewHTTPTransport()
-	if transport.Proxy == nil {
-		t.Fatal("transport proxy func should not be nil")
+	if noProxy != "internal.example.com" {
+		t.Errorf("no_proxy = %q, want internal.example.com", noProxy)
 	}
 }
 
-// TestProxyConfigIgnoresEnvironment 校验未配置代理时一律直连，
-// 即使宿主机设置了 http_proxy / https_proxy 等环境变量也不生效。
-func TestProxyConfigIgnoresEnvironment(t *testing.T) {
+// TestProxyConfigNilSource 校验 nil 的 ProxyConfig 作为代理来源时返回三个空串，
+// 且不读取环境变量（环境变量读取只发生在 utils.SystemProxySettings）。
+func TestProxyConfigNilSource(t *testing.T) {
 	clearProxyEnv(t)
 	t.Setenv("http_proxy", "http://env-proxy:8080")
 	t.Setenv("https_proxy", "http://env-proxy:8080")
-	t.Setenv("HTTP_PROXY", "http://env-proxy:8080")
-	t.Setenv("HTTPS_PROXY", "http://env-proxy:8080")
 
-	writeConfig(t, "server:\n  port: 8083\n")
-	cfg, err := LoadConfig()
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-
-	for _, target := range []string{"http://example.com", "https://example.com"} {
-		u, err := url.Parse(target)
-		if err != nil {
-			t.Fatalf("parse %s: %v", target, err)
-		}
-		got, err := cfg.ProxyFunc()(u)
-		if err != nil {
-			t.Fatalf("proxy func: %v", err)
-		}
-		if got != nil {
-			t.Errorf("proxyFunc(%s) = %v, want direct (env must be ignored)", target, got)
-		}
-	}
-
-	// cfg / proxy 段为 nil 同样直连。
-	nilURL, err := url.Parse("https://example.com")
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	var nilCfg *Config
-	if got, _ := nilCfg.ProxyFunc()(nilURL); got != nil {
-		t.Errorf("nil config proxy = %v, want direct", got)
+	httpProxy, httpsProxy, noProxy := (*ProxyConfig)(nil).OutboundProxy()
+	if httpProxy != "" || httpsProxy != "" || noProxy != "" {
+		t.Errorf("nil ProxyConfig.OutboundProxy() = (%q, %q, %q), want empty", httpProxy, httpsProxy, noProxy)
 	}
 }
 

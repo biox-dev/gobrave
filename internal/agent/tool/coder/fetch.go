@@ -59,10 +59,11 @@ TIPS:
 
 // NewFetch 返回 fetch 工具。
 //
-// 出站请求复用 config 中的代理配置（proxy.http_proxy / proxy.https_proxy /
-// proxy.no_proxy）；未配置时直连，不读取环境变量。
+// 出站请求使用的代理由装配层注入（Deps.Proxy，源自 config 的 proxy 段：
+// proxy.http_proxy / proxy.https_proxy / proxy.no_proxy）；
+// 未配置时直连，不读取环境变量。
 func NewFetch(deps Deps) tool.Tool {
-	return &fetchTool{client: deps.Config.NewHTTPClient(30 * time.Second)}
+	return &fetchTool{client: deps.Proxy.NewHTTPClient(30 * time.Second)}
 }
 
 // Definition 实现 tool.Tool。

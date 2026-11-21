@@ -5,6 +5,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/tool/coder/hostshell"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 // Deps 是 coder 工具集的进程级静态依赖，由 container 在构建工具注册表时一次性装配。
@@ -19,9 +20,13 @@ type Deps struct {
 	// 以「提供者」而不是客户端 map 注入：Clients() 在每次执行时取当前快照，
 	// 避免工具在构造期就把客户端集合固化下来。
 	LSP LSPClientProvider
-	// Config 是进程配置快照，供需要出站网络的工具（如 fetch）读取代理设置。
-	// 为 nil 或未配置代理时直连（不读取环境变量）。
+	// Config 是进程配置快照，供 bash 等工具读取执行位置等配置。
+	// 为 nil 时使用内置默认值（bash 在宿主机执行）。
 	Config *config.Config
+	// Proxy 是出站代理设置，供需要出站网络的工具（如 fetch）构造 Transport。
+	// 由装配层（container）从 config.Proxy 取值注入，工具不再直接拼接代理来源；
+	// 零值表示直连（不读取环境变量）。
+	Proxy utils.ProxySettings
 	// ContainerShell 是容器终端的最小服务（bash 在 container 模式下使用）。
 	//
 	// 为 nil 时 bash 一律在宿主机执行：仓库级单元测试等没有容器运行时的场景

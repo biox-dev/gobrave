@@ -4,8 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,7 +13,6 @@ import (
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/logger"
-	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/goccy/go-yaml"
 )
 
@@ -536,12 +533,13 @@ func ResolveGitIdentity(cfg *Config) (string, string) {
 	return name, email
 }
 
-// ProxyConfig 只负责出站 HTTP 代理配置。
+// ProxyConfig 只负责出站 HTTP 代理的配置解析与字段绑定。
 //
-// 出站代理（http_proxy / https_proxy / no_proxy）的实际实现在
-// internal/utils（utils.ProxySettings），本类型只负责配置解析与字段绑定。
-// 任何需要访问外部网络的组件都可以通过 (*Config).NewHTTPClient /
-// NewHTTPTransport 复用，而不只是 fetch 工具。未配置时一律直连，不读取环境变量。
+// 出站代理（http_proxy / https_proxy / no_proxy）的行为实现统一在
+// internal/utils（utils.ProxySettings）；配置包只保留字段，不提供任何
+// http.Client / Transport 构造能力。装配层（container）负责把 config.Proxy
+// 的值填进 utils.ProxySettings 再注入使用方，见 utils.ProxySettings.FromConfig。
+// 未配置时一律直连，不读取环境变量。
 //
 // 注意：内部服务地址（如容器代理上游）不属于出站代理，见 container.base_url。
 type ProxyConfig struct {
@@ -555,58 +553,13 @@ type ProxyConfig struct {
 	NoProxy string `yaml:"no_proxy" json:"no_proxy"`
 }
 
-// Settings 把 proxy 段转换为与配置包解耦的 utils.ProxySettings。
-// p 为 nil 时返回零值（即直连）。
-func (p *ProxyConfig) Settings() utils.ProxySettings {
+// OutboundProxy 实现 utils.ProxySource，供 utils.ProxySettings.FromConfig 读取三项取值。
+// p 为 nil 时返回三个空串（即直连）。
+func (p *ProxyConfig) OutboundProxy() (httpProxy, httpsProxy, noProxy string) {
 	if p == nil {
-		return utils.ProxySettings{}
+		return "", "", ""
 	}
-	return utils.ProxySettings{
-		HTTPProxy:  p.HTTPProxy,
-		HTTPSProxy: p.HTTPSProxy,
-		NoProxy:    p.NoProxy,
-	}
-}
-
-// ProxyFunc 返回按目标 URL 选择代理的函数（实现见 utils.ProxySettings.ProxyFunc）。
-// 未配置（或 p 为 nil）时一律直连，不读取 http_proxy / https_proxy 等环境变量。
-func (p *ProxyConfig) ProxyFunc() func(*url.URL) (*url.URL, error) {
-	return p.Settings().ProxyFunc()
-}
-
-// NewHTTPTransport 返回套用了代理配置的 Transport。
-func (p *ProxyConfig) NewHTTPTransport() *http.Transport {
-	return p.Settings().NewHTTPTransport()
-}
-
-// NewHTTPClient 返回套用了代理配置的 http.Client。
-func (p *ProxyConfig) NewHTTPClient(timeout time.Duration) *http.Client {
-	return p.Settings().NewHTTPClient(timeout)
-}
-
-// ProxyFunc 返回当前配置下的出站代理选择函数；cfg 或其 proxy 段为 nil、
-// 或未配置 http_proxy / https_proxy 时一律直连（忽略环境变量）。
-func (c *Config) ProxyFunc() func(*url.URL) (*url.URL, error) {
-	if c == nil {
-		return (*ProxyConfig)(nil).ProxyFunc()
-	}
-	return c.Proxy.ProxyFunc()
-}
-
-// NewHTTPTransport 返回当前配置下套用了代理的 Transport。
-func (c *Config) NewHTTPTransport() *http.Transport {
-	if c == nil {
-		return (*ProxyConfig)(nil).NewHTTPTransport()
-	}
-	return c.Proxy.NewHTTPTransport()
-}
-
-// NewHTTPClient 返回当前配置下套用了代理的 http.Client。
-func (c *Config) NewHTTPClient(timeout time.Duration) *http.Client {
-	if c == nil {
-		return (*ProxyConfig)(nil).NewHTTPClient(timeout)
-	}
-	return c.Proxy.NewHTTPClient(timeout)
+	return p.HTTPProxy, p.HTTPSProxy, p.NoProxy
 }
 
 type RouteConfig struct {

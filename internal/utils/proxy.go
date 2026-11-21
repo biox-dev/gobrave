@@ -27,6 +27,32 @@ type ProxySettings struct {
 	NoProxy string
 }
 
+// ProxySource 是「能提供出站代理三项取值」的最小接口，用于让 utils 主动
+// 从配置侧取值，而不是由配置包把取值灌回 utils 类型。
+//
+// *config.ProxyConfig 直接满足该接口（字段名不变、空值即未配置），
+// 因此装配层只需 utils.ProxySettings.FromConfig(cfg.Proxy)，
+// 无需在 utils 里声明别名字段或依赖配置包类型。
+type ProxySource interface {
+	// OutboundProxy 返回 http_proxy / https_proxy / no_proxy 三项取值。
+	OutboundProxy() (httpProxy, httpsProxy, noProxy string)
+}
+
+// FromConfig 从配置侧读取代理设置；src 为 nil 时返回零值（即直连）。
+//
+// 这是推荐的构造方式：代理行为与取值都收敛在 utils，配置包只保留字段。
+func (ProxySettings) FromConfig(src ProxySource) ProxySettings {
+	if src == nil {
+		return ProxySettings{}
+	}
+	httpProxy, httpsProxy, noProxy := src.OutboundProxy()
+	return ProxySettings{
+		HTTPProxy:  httpProxy,
+		HTTPSProxy: httpsProxy,
+		NoProxy:    noProxy,
+	}
+}
+
 // IsEmpty 报告是否未配置任何代理。
 // 仅配置了 no_proxy、却没有配置 http_proxy / https_proxy 时同样视为未配置代理。
 func (s ProxySettings) IsEmpty() bool {

@@ -304,7 +304,15 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 	for _, t := range builtin.All(builtinDeps) {
 		tools.Register(t)
 	}
-	for _, t := range coder.All(coder.Deps{History: in.Files, LSP: in.LSP, Config: in.Config, ContainerShell: in.ContainerShell}) {
+	for _, t := range coder.All(coder.Deps{
+		History: in.Files,
+		LSP:     in.LSP,
+		Config:  in.Config,
+		// 代理设置由装配层从配置取值后注入，工具只消费 utils.ProxySettings，
+		// 不自行从配置拼接代理来源。
+		Proxy:          utils.ProxySettings{}.FromConfig(configProxySource(in.Config)),
+		ContainerShell: in.ContainerShell,
+	}) {
 		tools.Register(t)
 	}
 	// 外部 MCP 服务提供的工具：工具名为 <服务名>_<工具名>，与内置工具同池调度（权限门禁复用）。
@@ -312,6 +320,15 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		tools.Register(t)
 	}
 	return tools
+}
+
+// configProxySource 返回 config.Proxy 作为出站代理来源（供 utils.ProxySettings.FromConfig 读取）。
+// cfg 或 proxy 段为 nil 时返回 nil，等价于直连。
+func configProxySource(cfg *config.Config) utils.ProxySource {
+	if cfg == nil || cfg.Proxy == nil {
+		return nil
+	}
+	return cfg.Proxy
 }
 
 // profilePromptWriter 构造 Profile 系统提示词写能力（update_profile_prompt 工具）。

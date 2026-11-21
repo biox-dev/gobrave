@@ -134,3 +134,34 @@ func TestProxySettingsNewTransport(t *testing.T) {
 		t.Errorf("transport.Proxy = %v, want http://10.110.1.11:7890", got)
 	}
 }
+
+// fakeProxySource 是 ProxySource 的测试替身。
+type fakeProxySource struct {
+	httpProxy, httpsProxy, noProxy string
+}
+
+func (f fakeProxySource) OutboundProxy() (string, string, string) {
+	return f.httpProxy, f.httpsProxy, f.noProxy
+}
+
+// TestProxySettingsFromConfig 校验 utils 主动从配置侧取值构造 ProxySettings，
+// 以及 nil 来源回退为零值（直连）。
+func TestProxySettingsFromConfig(t *testing.T) {
+	got := (ProxySettings{}).FromConfig(fakeProxySource{
+		httpProxy:  "http://10.110.1.11:7890",
+		httpsProxy: "http://10.110.1.12:7890",
+		noProxy:    "internal.example.com",
+	})
+	want := ProxySettings{
+		HTTPProxy:  "http://10.110.1.11:7890",
+		HTTPSProxy: "http://10.110.1.12:7890",
+		NoProxy:    "internal.example.com",
+	}
+	if got != want {
+		t.Errorf("FromConfig = %+v, want %+v", got, want)
+	}
+
+	if got := (ProxySettings{}).FromConfig(nil); !got.IsEmpty() {
+		t.Errorf("FromConfig(nil) = %+v, want empty", got)
+	}
+}
