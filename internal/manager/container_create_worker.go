@@ -394,6 +394,9 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 	for k, v := range projectEnvs {
 		envs[k] = v
 	}
+	// 出站代理（config.yml 的 proxy 段，默认全为空即不注入）：
+	// 仅把非空项落到容器环境变量上，空项不覆盖模板 / 项目里已有的同名变量。
+	applyProxyEnv(envs, w.cfg)
 
 	// volumes默认添加 cfg.Storage.BaseDir 目录的绑定，确保容器可以访问到这个目录下的文件（如Rprofile等）
 	volumes, err = w.appendStorageVolumes(ctx, volumes)
@@ -545,6 +548,29 @@ func (w *ContainerCreateWorker) buildInstanceSpec(
 	}
 
 	return spec
+}
+
+// applyProxyEnv 把 config.yml 中非空的 proxy 配置写入容器环境变量。
+//
+// proxy 段（config.ProxyConfig）没有默认值：三项均为空时不做任何改动，
+// 容器保持模板 / 项目自身的 env（不注入空值、也不读取宿主机环境变量）。
+// 非空项同时写入小写与大写两种约定（docker 镜像里两种写法都常见）。
+// 显式配置的代理优先于模板 / 项目 env 中的同名变量。
+func applyProxyEnv(envs map[string]string, cfg *config.Config) {
+	if envs == nil || cfg == nil || cfg.Proxy == nil {
+		return
+	}
+	setPair := func(key, value string) {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			return
+		}
+		envs[strings.ToLower(key)] = v
+		envs[strings.ToUpper(key)] = v
+	}
+	setPair("http_proxy", cfg.Proxy.HTTPProxy)
+	setPair("https_proxy", cfg.Proxy.HTTPSProxy)
+	setPair("no_proxy", cfg.Proxy.NoProxy)
 }
 
 func (w *ContainerCreateWorker) executeRecreate(ctx context.Context, instanceID int64) error {

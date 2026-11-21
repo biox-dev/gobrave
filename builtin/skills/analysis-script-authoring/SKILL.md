@@ -1,18 +1,20 @@
 ---
 name: analysis-script-authoring
-description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体、写 README.md（request_param 规范）、到 create_analysis_node_script 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、README.md 的固定模板与 request_param 写法要求（可直接复制的参数示例、扁平键、FileSelect 对象形态、产物登记、常见报错），在已创建节点里写 / 改脚本代码的约定（最简写法、tidyverse 读表、knitr::kable 打印、按 outputs 写 outputs.json）、生物分组不明确时必须先 ask_user、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码、写 README 或运行节点时使用。
+description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体、写 README.md（request_param 规范）、到 create_analysis_node_script 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、README.md 的固定模板与 request_param 写法要求（可直接复制的参数示例、扁平键、FileSelect 对象形态、产物登记、常见报错），在已创建节点里写 / 改脚本代码的约定（最简写法、tidyverse 读表、knitr::kable 打印、按 outputs 写 outputs.json）、软件安装规范（脚本所需 R 包 / Python 包 / conda 生信软件缺失时用 terminal_exec 装到系统指定的包目录、容器基础镜像里没有 rscript / python / conda 命令时不要安装而是告知用户、网络与系统库问题先反馈用户）、生物分组不明确时必须先 ask_user、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码、写 README、安装脚本依赖或运行节点时使用。
 ---
 
 ## 脚本创建与修改规范（总入口）
 
-本技能是「创建 / 修改分析脚本与分析节点」的唯一规范入口，覆盖五件事：
+本技能是「创建 / 修改分析脚本与分析节点」的唯一规范入口，覆盖六件事：
 
 1. **流程**：从建脚本到节点跑通要走的固定顺序；
 2. **契约**：io_schema.json 怎么写、request_param 怎么填；
 3. **代码**：脚本主体怎么写、产物怎么按 outputs 输出；
 4. **README**：README.md 怎么写，才能让后续 agent 只读 README 就直接调
    `create_analysis_node_script` 跑通（详见第三节）；
-5. **运行**：怎么跑、失败了怎么迭代。
+5. **运行**：怎么跑、失败了怎么迭代；
+6. **依赖**：脚本要的 R 包 / Python 包 / conda 生信软件缺失时怎么装、什么情况必须停下来找用户
+   （详见第六节）。
 
 > README.md 与 io_schema.json 是同一份契约的两个视图：io_schema 给机器解析参数，
 > README 给人和其他 agent 快速上手。`data-file-analysis` 技能默认只读 `get_script` 返回的
@@ -32,10 +34,21 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
    若无法从用户需求与数据结构中确定分组列与各组的生物学含义，**必须先调用 ask_user 向用户提问**，
    拿到答复后再进入第 1 步；不得先猜一个分组把流程跑完（详见「生物分组不明确时必须先 ask_user」）。
 
+0.1) **确认 container_template_id（未指定就必须问用户）**：脚本要绑定哪个容器模板是所有依赖安装与运行的前提。
+   - 用户消息里已明确给出容器模板（如 `@container:<id>`）或明确指定了模板 ID → 直接用；
+   - **没有指定时，必须先调用 `list_container_templates` 拿到全部可运行模板**，
+     再用 `ask_user`（`single_choice`）让用户选择，option 的 `label` 写「模板名 — 描述」，
+     `value` 写模板 ID（`definition_id`），必要时设 `allow_custom=true` 让用户补 ID；
+   - **不得自行挑选默认模板 / 凭名称猜一个写进 create_script**：模板决定了镜像里有没有 `Rscript` /
+     `python` / `conda`，选错会让后面所有依赖安装白做；
+   - 拿到用户选定的 ID 后，把它作为 `create_script` 的 `container_template_id` 传入，
+     后续 `terminal_exec` 装包也用同一个 ID（见第六节）；
+   - 用户已指定模板时不要重复提问，也不要再 `list_container_templates` 做确认。
+
 1) `create_script` → 只创建脚本，得到 `script_id` / `script_file_path` / `io_schema_path`
    （**不会创建分析节点**）。
-   - 调用时一次性给出 inputs / outputs（真实的参数契约），避免创建后再补齐；
-     也可以直接传 `script_content` / `io_schema` / `readme` 写入脚本主文件、io_schema.json、README.md。
+   - 调用时一次性给出 inputs / outputs（真实的参数契约）与 `container_template_id`（第 0.1 步用户选定的那个），
+     避免创建后再补齐；也可以直接传 `script_content` / `io_schema` / `readme` 写入脚本主文件、io_schema.json、README.md。
    - **create_script 的 `inputs` 就是 io_schema.json 的 `inputs`，`outputs` 就是 io_schema.json 的 `outputs`**：
      工具会把这两个数组原样写成 io_schema.json（并补齐 label / required，outputs 的 type 默认 file），
      不会再额外生成别的结构。因此这里填的每个条目都必须满足下文「io_schema.json 的生成规则」：
@@ -64,7 +77,15 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
    - 不要硬编码路径、样本名或分组，一律通过参数传入；
    - 具体写法见第四节「脚本代码怎么写」。
 
-5) **写 README.md（创建与修改脚本时都必须做）**：用 `update_script`（`file=readme`）写入脚本目录的
+5) **确认并安装脚本依赖（缺什么先装什么，见第六节）**：脚本正文写好后、建节点跑之前，
+   对代码里用到的每个 R 包 / Python 包 / conda 生信软件过一遍：
+   - 容器里已有就直接用，**不要重复安装**；
+   - 缺失时先判断基础容器里到底有没有对应运行时（`Rscript` / `python` / `conda`）；
+     **有**才用 `terminal_exec` 装到系统指定的包目录（`container_template_id` 就是脚本的
+     `container_template_id`）；**没有就停下来告知用户**，不要尝试安装运行时本身；
+   - 安装遇到网络失败、缺系统库等情况，先重试一次，仍不行立即反馈用户，不要自己改目录或换源折腾。
+
+6) **写 README.md（创建与修改脚本时都必须做）**：用 `update_script`（`file=readme`）写入脚本目录的
    README.md，按第三节「README.md：request_param 规范」的固定模板写：脚本用途 → 输入数据要求 →
    参数说明表（request_param 键 / 类型 / 说明）→ **可直接复制的 request_param 示例** → 输出产物 →
    注意事项。
@@ -73,7 +94,7 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
    - README 必须反映**当前**的 io_schema 与脚本实际读取的 `params$` 键，包括未声明的扁平键；
      这是后续 agent 走 `data-file-analysis` 技能时唯一依赖的「使用方法」。
 
-6) **建节点 = 一次 `create_analysis_node_script`（run=true）**，这是默认路径，一步到底：
+7) **建节点 = 一次 `create_analysis_node_script`（run=true）**，这是默认路径，一步到底：
    - 传入 `script_id` + `node_name` + **完整的 request_param**（= 第 3 步摸到的全部键，含未声明的扁平键）；
    - 默认 run=true：建好即跑完，返回 status / success / log，以及 `workspace_dir` / `params_path` /
      `log_path` / `script_file_path` / `io_schema_path`，直接拿来用，不必再去磁盘找路径；
@@ -82,25 +103,36 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
      `params_path`，确实要改才用 `build_analysis_node_params` 覆盖；
    - 只有用户明确要求「先别跑」时才传 run=false。
 
-7) `build_analysis_node_params`：**仅用于「节点已存在、要改参数」**——按 io_schema inputs 的 name
+8) `build_analysis_node_params`：**仅用于「节点已存在、要改参数」**——按 io_schema inputs 的 name
    组织 request_param，覆盖节点已有参数并重写 params.json。返回 warnings 时先确认是不是第 3 步摸到的
    未声明扁平键：属实的未声明键可以保留（它们确实要进 params.json）。
 
-8) `run_analysis_node` 运行并查看日志；失败时必须继续迭代：读日志定位原因 → 改脚本或改参数
+9) `run_analysis_node` 运行并查看日志；失败时必须继续迭代：读日志定位原因 → 改脚本或改参数
    → 参数有变化才重新 `build_analysis_node_params` → 再次 `run_analysis_node`，
-   直到返回 success=true 才算完成本次任务。
+   直到返回 success=true 才算完成本次任务。若日志显示缺少 R 包 / Python 包 / conda 软件，回到第六节
+   判断“容器里有没有对应运行时”，而不是无限重试。
 
-9) **收尾前做 README 一致性检查**：脚本最终能跑通后，核对 README 的参数表 / 示例 request_param /
+10) **收尾前做 README 一致性检查**：脚本最终能跑通后，核对 README 的参数表 / 示例 request_param /
    产物清单与最终 io_schema、脚本实际读取的键、outputs.json 键名是否完全一致；不一致就再改 README。
    README 里必须能直接复制出一份**真的能跑通**的 request_param 示例。
 
 ### 流程约束
 
 - **无依赖的工具调用必须同一轮合并发出**：`list_project_scripts` + `get_file` + 读文件头几行、
+  `list_container_templates` + `ask_user`（选择容器模板时）、
   `get_script` + 读 io_schema.json + `grep params$` 脚本，这几组内部互不依赖，
   应在同一轮里并行调用，不要按上面的编号串行等待（编号是逻辑顺序，不是调用批次）。
+- **创建脚本前必须锁定 container_template_id**：用户没指定时先 `list_container_templates` 再用 `ask_user` 让用户选，
+  不得自己填默认模板或猜一个 ID；这个 ID 同时决定第六节依赖安装的位置与运行时能力。
 - 任务未完成的标准只有一个：`run_analysis_node` 返回 success=true 且产物符合 io_schema outputs。
   不得在脚本尚未跑通时结束任务，也不得把「脚本已写好」「节点已创建」当作完成。
+- **安装依赖只用 `terminal_exec`、只装到系统指定的包目录**：R 包 / Python 包 / conda 生信软件的安装目录
+  已由系统通过环境变量指定并创建好，直接按第六节的命令安装，不传 `--library`、不改 `CONDA_ENVS_PATH` 之类目录参数。
+- **容器里没有运行时就不装**：`Rscript` / `python` / `conda` 命令不存在时不要用 apt / conda 自己装运行时
+  （装进容器也会随容器重启丢失），直接告诉用户「基础容器里没有该工具」，由用户换模板或自行处理（见第六节）；
+  此时也不要继续盲调 `terminal_exec` 装包——工具不存在，装包命令只会报错。
+- **安装前先探测、不要凭猜**：用 `command -v Rscript python python3 conda` 一次看清运行时，
+  再决定装哪种依赖、直接反馈还是停下；网络 / 系统库问题只重试一次，不自己换源改目录。
 - **创建或修改脚本时必须同时创建 / 更新 README.md**：参数、输入要求、输出产物有任何变化都要同步；
   `create_script` 时通过 `readme` 参数给，之后用 `update_script`（`file=readme`）维护。
   只改脚本不更 README，会让后续 agent 按旧 README 组出错误的 request_param。
@@ -489,7 +521,10 @@ create_analysis_node_script(
 **使用最简单的代码，尽量不使用函数**；图片直接在 qmd 中打印；不要读取其他文件，
 只需要用 `update_script`（`file=script_file`）修改脚本正文。
 
-- 读取 tsv / csv 时使用 tidyverse；无需确认 / 查找 R 包（用户手动安装），只需保证代码简洁清楚。
+- 读取 tsv / csv 时使用 tidyverse；代码只需简洁清楚。**但脚本要用的 R 包 / Python 包 / conda 生信软件
+  必须按第六节「软件安装规范」先确认容器里到底有没有**：已在容器里可用就直接用；缺失且容器里有对应运行时
+  （`Rscript` / `python` 或 `python3` / `conda`）才用 `terminal_exec` 装进系统指定的包目录；
+  容器里根本没有对应命令时不要尝试安装，立刻告知用户。
 - qmd 中打印表格需要使用 `knitr::kable()`。
 - 路径一律由参数拼出（`params$output_dir`、`params$<FileSelect>$path`），不硬编码路径 / 样本名 / 分组。
 - 不引入多余抽象：不加参数校验层、异常包装层、日志框架、命令行框架；读出来直接用。
@@ -557,7 +592,126 @@ jsonlite::write_json(outputs, file.path(params$output_dir, "outputs.json"), auto
 
 ---
 
-## 六、遇到重复性错误时写入 memory
+## 六、软件安装规范：R 包 / Python 包 / conda 生信软件
+
+脚本时常需要基础容器里没有的包或软件（R 包、Python 包、`bwa` 这类生信软件）。
+这类依赖一律用 `terminal_exec` 在**脚本所属的容器模板**里安装，并且**只装到系统已经指定的目录**。
+先按下面的决策顺序判断，不要跳步、不要自己找目录。
+
+### 1. 决策顺序（严格按此顺序判断）
+
+1. **容器里已有就直接用**：先确认再装，避免重复安装浪费时间。用 `terminal_exec` 查询：
+   - R 包：`Rscript -e 'cat(requireNamespace("ggplot2", quietly = TRUE))'`
+     （或 `Rscript -e 'cat("ggplot2" %in% rownames(installed.packages()))'`）；
+   - Python 包：`python -c 'import pandas'`（没有 `python` 就试 `python3`）；
+   - conda 软件：`command -v bwa` / `bwa 2>&1 | head -n 1`。
+
+2. **缺失时先确认基础容器里有没有对应运行时**（这是最关键的一步）：
+   - `command -v Rscript`、`command -v python || command -v python3`、`command -v conda`；
+   - **有哪个运行时，才允许装哪种依赖**：
+     - 有 `Rscript` → 才能装 R 包；
+     - 有 `python` / `python3` → 才能用 pip 装 Python 包；
+     - 有 `conda` → 才能用 conda 装生信软件（`bwa`、`samtools`、`fastqc` 等）；
+   - **容器里没有对应命令时，不要尝试安装它本身**（不要用 apt / apt-get / micromamba 引导安装 R、Python、conda）。
+     这类运行时属于基础镜像，装进容器也只是临时的，容器重启就会丢。此时**直接向用户返回**：
+     「该容器模板不存在脚本需要的 `Rscript` / `python` / `conda`，请换用安装了对应工具的容器模板，
+     或自行在基础容器里安装」，然后停下来等用户处理，不要在容器里反复试错。
+
+3. **确认运行时存在后，才用 `terminal_exec` 安装到系统指定目录**（见第 2 小节命令）。
+   `container_template_id` 就是脚本的 `container_template_id`（`get_script` / `list_project_scripts` /
+   `create_analysis_node_script` 返回的那个；新建脚本时就是第 0.1 步用户通过
+   `list_container_templates` + `ask_user` 选定的那个），**不要用其它模板 ID 去装包**，
+   否则包会装到别的容器目录，脚本依然找不到。
+
+4. **安装失败先重试一次**：同一个命令重跑一次仍失败，立即把真实报错与控制台输出反馈给用户，
+   让用户解决网络问题或自己装包；不要自行降级、换镜像源、改安装目录、切换版本继续折腾。
+
+### 2. 安装目录由系统指定，不要改动
+
+包安装目录由系统通过环境变量在容器创建时指定并已创建好
+（`internal/manager/container_create_worker.go` / `runtime_variable.go` 里的
+`R_PACKAGE_DIR`、`PYTHON_PACKAGE_DIR`、`CONDA_PACKAGE_DIR`，外加 `R_PROFILE`、`R_LIBS_USER` 等）：
+
+| 依赖类型 | 环境变量 | 安装命令（直接照用，不要改目录参数） |
+| --- | --- | --- |
+| R 包 | `R_PACKAGE_DIR` | `Rscript -e 'install.packages("ggplot2", repos="https://cloud.r-project.org")'` |
+| Python 包 | `PYTHON_PACKAGE_DIR` | `python -m pip install pandas`（有 `python3` 时用 `python3 -m pip`） |
+| conda 生信软件 | `CONDA_PACKAGE_DIR` | `conda install -y -p "$CONDA_PACKAGE_DIR/default" -c bioconda -c conda-forge bwa` |
+
+约束：
+
+- **不要在安装命令里手写 `-l / --library`、`--target`、`--prefix`、`--user`、`-p / --prefix` 等目录参数**，
+  也不要 `export R_LIBS_USER=...` / `export PYTHONPATH=...` / 换 conda 根目录：目录已经由系统设好，
+  自己改会让包装到运行时找不到的地方，节点依然报「没有这个包」。
+- 需要确认到底装到了哪里时，打印环境变量即可：`echo "$R_PACKAGE_DIR $PYTHON_PACKAGE_DIR $CONDA_PACKAGE_DIR"`，
+  不要 `ls` / `find` 到处找或自己新建目录。
+- 同一命令内可用 `&&` 串联多个包，一次性装完，比多次调用 `terminal_exec` 快；
+  安装属于「一次性终端」，**不要为了装包传 `persistent=true`**，也不要在一条命令里 `export R_LIBS_USER=...`
+  之后指望下次调用还生效（默认 `persistent=false`，命令结束容器即销毁，`cd` / `export` 状态不保留）。
+- 包目录是**容器内路径**（对应宿主项目目录下的 `package/R-<template_id>`、`package/python-<template_id>`、
+  `package/conda-<template_id>`），节点运行时用同一个环境变量，所以装在这里脚本一定找得到；
+  在宿主机器上直接操作这些目录没有意义，一切安装都在容器内用 `terminal_exec` 完成。
+- 代码里**不要**写死包目录（不要 `library(某包, lib.loc="/xxx")`、`sys.path.append("/xxx")`），
+  一律依赖运行时已注入的环境变量。
+
+### 3. conda 只装生信软件，不装 R / Python
+
+- conda 在本项目里只负责装 `bwa`、`samtools`、`fastqc`、`star` 这类**生信软件**；
+- **不要用 conda 装 R 或 Python 本身**，也不要用 conda 装 R 包 / Python 包（那会建出系统不认识的新环境）；
+  R 包用 `install.packages()`，Python 包用 pip，各走各的目录。
+- conda 装软件时使用固定前缀 `-p "$CONDA_PACKAGE_DIR/default"`（加上 `-c bioconda -c conda-forge`），
+  不要 `conda create -n xxx` 新建环境名，也不要在安装后到处 `conda activate`。
+
+### 4. 安装 R 包缺系统库：停下来反馈用户
+
+R 包编译/安装失败、报错指向缺少系统库时（典型如 `libcurl`、`openssl`、`libxml2`、`libpng`、`libjpeg`、`libz`、
+`gsl`，`configure: error: ... not found`、`/usr/bin/ld: cannot find -lxxx`、`fatal error: xxx.h: No such file`），
+说明基础镜像缺 apt 系统依赖，**这不是能用 R 包安装命令解决的**：
+
+- 不要自己 `apt-get install` 装系统库（容器里没有 root、也无法持久化）；
+- **立即把缺的库名与报错原文反馈给用户**，请用户在基础容器（容器模板镜像）里安装对应系统库，
+  或改用已包含该库的容器模板；
+- 反馈后停下手上的安装，不要同一个包反复重试，也不要改脚本绕开这个包。
+
+### 5. 何时反馈用户（归纳）
+
+遇到下列任一情况，**立即反馈用户并停下**，不要自己想办法绕过：
+
+- 容器里没有 `Rscript` / `python` / `conda`（即便装了也会随容器重启丢失）；
+- 安装命令重试一次后仍失败（网络问题、镜像不可达、下载超时、证书错误）；
+- R 包安装缺系统库，或报错指向镜像/编译器的系统依赖；
+- conda 安装找不到包 / 频道不可达、或需要新建环境才能装。
+
+反馈时写清：缺什么（包名 / 软件名）、在哪个 `container_template_id` 里试过、执行了什么命令、
+真实报错关键几行，并给出可选方案（换模板 / 用户装包 / 用户修网络）。反馈后等用户答复，再继续流程。
+
+尤其注意「换模板」这类需要用户拍板的事：容器没有运行时、或用户选定的模板缺依赖时，
+**不要自己换一个模板重新建脚本 / 重装**，把现状说清楚后用 `ask_user` 让用户决定是否换模板。
+
+尤其注意「换模板」这类需要用户拍板的事：容器没有运行时、或用户选定的模板缺依赖时，
+**不要自己换一个模板重新建脚本 / 重装**，而是把现状说清楚，用 `ask_user` 让用户决定是否换模板。
+
+### 6. 安装完的验证
+
+装完后在同一次 `terminal_exec` 里顺手验证一次，确认包真的能被脚本找到：
+
+```bash
+Rscript -e 'library(ggplot2); cat("ok\n")'
+python -c 'import pandas; print("ok")'
+command -v bwa && bwa 2>&1 | head -n 1
+```
+
+验证通过后再建节点 / 运行节点；验证不通过按第 5 小节反馈用户（仍是容器环境问题，不是脚本问题）。
+
+### 7. 在脚本里怎么用这些包
+
+安装只是让包**在容器里可用**，脚本里依旧按最简写法 `library(ggplot2)` / `import pandas`：
+不需要写 `install.packages()` / `pip install` 到脚本里（每次运行都会重新装，又慢又容易失败），
+也不需要加路径参数。脚本依赖的包清单直接照第六节的表格装一次即可。
+
+---
+
+## 七、遇到重复性错误时写入 memory
 
 工具调用「连续出现同一类错误」时**必须**把「如何避免再犯」写入长期记忆，避免后续轮次重复踩坑。
 
@@ -567,6 +721,8 @@ jsonlite::write_json(outputs, file.path(params$output_dir, "outputs.json"), auto
 - 同一个错误在**不同任务 / 不同会话**中重复出现（说明是稳定的坑，不是偶发）；
 - create_script / create_analysis_node_script / build_analysis_node_params 报错提示需要用户配置环境
   （容器模板、路径、依赖）等无法由代码修好的问题；
+- 依赖安装失败（容器没有 `Rscript` / `python` / `conda`、网络不可达、R 包缺系统库）并向用户反馈后，
+  用户说明了原因或拍板了做法；
 - 使用 ask_user 向用户确认后，用户明确纠正了某个参数格式 / 字段名 / 流程顺序。
 
 写入方式：调用 `save_memory` 工具，`kind` 用 `note`，`content` 按以下结构写（简明扼要，一段话即可）：
