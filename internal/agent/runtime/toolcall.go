@@ -111,19 +111,22 @@ func (r *ToolRunner) emitResult(ctx context.Context, call ToolCall, res tool.Res
 		return
 	}
 	_ = r.rt.Emit(ctx, StreamEvent{Type: StreamEventToolResult, Data: ToolResultEvent{
-		CallID:  call.ID,
-		Name:    call.Name,
-		Content: res.Content,
-		IsError: res.IsError,
+		ToolCallID: call.ID,
+		Name:       call.Name,
+		Content:    res.Content,
+		IsError:    res.IsError,
 	}})
 }
 
 // ToolResultEvent 是 tool_result 事件的结构化载荷。
+//
+// 字段名与 native Agent 的 emitToolResult 保持一致（tool_call_id），
+// 让前端无论走哪条执行路径都能用同一个字段把结果配对到对应的 tool_call（data.id）。
 type ToolResultEvent struct {
-	CallID  string `json:"call_id"`
-	Name    string `json:"name"`
-	Content string `json:"content"`
-	IsError bool   `json:"is_error"`
+	ToolCallID string `json:"tool_call_id"`
+	Name       string `json:"name"`
+	Content    string `json:"content"`
+	IsError    bool   `json:"is_error"`
 }
 
 // ToolCallProvider 由 Provider 提供：根据上一轮结果决定下一批待执行的工具调用。

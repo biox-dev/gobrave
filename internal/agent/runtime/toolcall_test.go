@@ -85,7 +85,7 @@ func TestToolRunnerEmitsEvents(t *testing.T) {
 	if !ok {
 		t.Fatalf("tool_result data type = %T", rt.events[1].Data)
 	}
-	if tr.CallID != "c1" || tr.IsError {
+	if tr.ToolCallID != "c1" || tr.IsError {
 		t.Fatalf("unexpected tool_result = %+v", tr)
 	}
 }
