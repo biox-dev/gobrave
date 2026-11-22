@@ -72,7 +72,7 @@ type AnalysisNodeBuildResult struct {
 // 与「保存独立节点」同一口径：
 //   - 节点工作目录为 <base_dir>/data/<project>/analysis_node/<script_id>/<node_id>，其余路径由它派生；
 //   - inputs_patterns / output_patterns 取自脚本最新 io_schema.json；
-//   - request_param 非空时按脚本表单解析出 resolved_inputs，并写入 request_param（含 analysis_node_id），
+//   - request_param 非空时按脚本表单解析出 resolved_inputs，并原样写入 request_param，
 //     使得节点落库后即可被 NodeRuntimePreparer 生成 params.json。
 //
 // 脚本表单由内部调用 workflowService.GetScriptFormJSONByScript 读取（调用方手上已有脚本对象，
@@ -158,8 +158,6 @@ func NewAnalysisNodeFromScript(
 
 	if resolvedInputs != nil {
 		node.ResolvedInputs = types.JSONMap(cloneAnyMap(resolvedInputs))
-		// 与保存独立节点一致：把节点主键写回 request_param，脚本侧可据此定位节点。
-		requestParam["analysis_node_id"] = node.ID
 	}
 	if len(requestParam) > 0 {
 		raw, err := json.Marshal(requestParam)
