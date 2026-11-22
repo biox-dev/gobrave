@@ -352,7 +352,7 @@ func (s *fakeSubAgentStore) AppendEvent(_ context.Context, sessionID, _ int64, e
 }
 
 func (s *fakeSubAgentStore) AppendFinalMessage(_ context.Context, sessionID, _ int64, content string) error {
-	return s.add(sessionID, "assistant", "assistant_final", content)
+	return s.add(sessionID, "assistant", "assistant", content)
 }
 
 func (s *fakeSubAgentStore) add(sessionID int64, role, kind, content string) error {
@@ -400,7 +400,7 @@ func TestAgentToolPersistsChildSessionAndMessages(t *testing.T) {
 		}
 		kinds[m.kind] = true
 	}
-	for _, want := range []string{"user", "reasoning", "assistant_final"} {
+	for _, want := range []string{"user", "reasoning", "assistant"} {
 		if !kinds[want] {
 			t.Fatalf("missing %q message: %+v", want, store.messages)
 		}

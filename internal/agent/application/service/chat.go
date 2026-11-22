@@ -250,7 +250,7 @@ func (s *ChatService) finishTurn(taskID, sessionID, ownerID int64, errMsg string
 
 	ctx := context.Background()
 
-	// 时间线（reasoning / message / tool_call / tool_result）与兜底 assistant_final
+	// 时间线（reasoning / message / tool_call / tool_result）与兜底 assistant
 	// 已由 AgentService/TimelineRecorder 在轮内写入 agent_messages；这里只补「轮末错误」。
 	if strings.TrimSpace(errMsg) != "" && !s.hasTaskErrorMessage(ctx, sessionID, taskID) {
 		_, _ = s.messages.Create(ctx, MessageCreateParams{
@@ -331,7 +331,7 @@ func shouldIncludeInPrompt(m Message) bool {
 		return true
 	case RoleAssistant:
 		switch m.Kind {
-		case "", KindAssistant, KindAssistantFinal, KindToolCall, KindToolResult:
+		case "", KindAssistant, KindToolCall, KindToolResult:
 			return true
 		default:
 			return false

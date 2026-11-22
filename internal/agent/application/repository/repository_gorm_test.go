@@ -189,7 +189,7 @@ func TestGormSessionStoreFork(t *testing.T) {
 	}
 	for _, in := range []agenttypes.MessageCreateParams{
 		{SessionID: src.ID, Role: agenttypes.RoleUser, Kind: agenttypes.KindUser, Content: "q1"},
-		{SessionID: src.ID, Role: agenttypes.RoleAssistant, Kind: agenttypes.KindAssistantFinal, Content: "a1", TaskID: 99},
+		{SessionID: src.ID, Role: agenttypes.RoleAssistant, Kind: agenttypes.KindAssistant, Content: "a1", TaskID: 99},
 		{SessionID: src.ID, Role: agenttypes.RoleAssistant, Kind: agenttypes.KindError, Content: "boom", TaskID: 99},
 	} {
 		if _, err := messages.Create(ctx, in); err != nil {
@@ -300,7 +300,7 @@ func TestGormSessionAndMessageStores(t *testing.T) {
 	if _, err := messages.Create(ctx, agenttypes.MessageCreateParams{SessionID: sess.ID, Role: agenttypes.RoleUser, Kind: agenttypes.KindUser, Content: "你好"}); err != nil {
 		t.Fatalf("Create user message: %v", err)
 	}
-	if _, err := messages.Create(ctx, agenttypes.MessageCreateParams{SessionID: sess.ID, Role: agenttypes.RoleAssistant, Kind: agenttypes.KindAssistantFinal, Content: "你好，有什么可以帮你？"}); err != nil {
+	if _, err := messages.Create(ctx, agenttypes.MessageCreateParams{SessionID: sess.ID, Role: agenttypes.RoleAssistant, Kind: agenttypes.KindAssistant, Content: "你好，有什么可以帮你？"}); err != nil {
 		t.Fatalf("Create assistant message: %v", err)
 	}
 

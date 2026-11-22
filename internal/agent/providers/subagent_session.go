@@ -15,7 +15,7 @@ import (
 // 它是 native.SubAgentSessionStore 的数据库实现：
 //   - 子会话的 ParentSessionID 指向父会话，便于按父会话追溯；
 //   - 消息 kind 与 ChatService 对父会话的投影规则保持一致
-//     （reasoning / tool_call / tool_result / assistant_final）。
+//     （reasoning / tool_call / tool_result / assistant）。
 type subAgentSessionStore struct {
 	sessions agentinterfaces.SessionService
 	messages agentinterfaces.MessageService
@@ -85,7 +85,7 @@ func (s subAgentSessionStore) AppendFinalMessage(ctx context.Context, sessionID,
 	if content = strings.TrimSpace(content); content == "" {
 		return nil
 	}
-	return s.append(ctx, sessionID, ownerID, agenttypes.RoleAssistant, agenttypes.KindAssistantFinal, content, nil)
+	return s.append(ctx, sessionID, ownerID, agenttypes.RoleAssistant, agenttypes.KindAssistant, content, nil)
 }
 
 func (s subAgentSessionStore) append(ctx context.Context, sessionID, ownerID int64, role, kind, content string, data any) error {

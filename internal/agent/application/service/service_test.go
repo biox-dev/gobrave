@@ -415,10 +415,10 @@ func TestAssistantMessageBlockPersistedInTurn(t *testing.T) {
 	}
 }
 
-// TestAssistantFinalFallbackWhenNoMessageBlock 验证「只发增量、不发完整 message 块」的
-// Provider 仍会用最终结果兜底写一条 assistant_final（TimelineRecorder.RecordResult），
+// TestAssistantFallbackWhenNoMessageBlock 验证「只发增量、不发完整 message 块」的
+// Provider 仍会用最终结果兜底写一条 assistant 消息（TimelineRecorder.RecordResult），
 // 刷新 / 恢复后的回答不会丢。
-func TestAssistantFinalFallbackWhenNoMessageBlock(t *testing.T) {
+func TestAssistantFallbackWhenNoMessageBlock(t *testing.T) {
 	svc, db := newTestServiceWithDB(t, deltaOnlyProvider{})
 	ctx := context.Background()
 
@@ -447,20 +447,14 @@ func TestAssistantFinalFallbackWhenNoMessageBlock(t *testing.T) {
 		t.Fatalf("query agent_messages: %v", err)
 	}
 
-	var assistant, final []agenttypes.Message
+	var assistant []agenttypes.Message
 	for _, row := range rows {
-		switch row.Kind {
-		case agenttypes.KindAssistant:
+		if row.Kind == agenttypes.KindAssistant {
 			assistant = append(assistant, row)
-		case agenttypes.KindAssistantFinal:
-			final = append(final, row)
 		}
 	}
-	if len(assistant) != 0 {
-		t.Fatalf("assistant blocks = %d, want 0 (provider emits no message block)", len(assistant))
-	}
-	if len(final) != 1 || final[0].Content != "delta answer" {
-		t.Fatalf("assistant_final = %+v, want exactly one with content %q", final, "delta answer")
+	if len(assistant) != 1 || assistant[0].Content != "delta answer" {
+		t.Fatalf("assistant messages = %+v, want exactly one with content %q", assistant, "delta answer")
 	}
 }
 

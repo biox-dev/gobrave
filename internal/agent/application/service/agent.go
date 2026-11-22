@@ -291,7 +291,7 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	case result == nil:
 		return s.failTask(ctx, task, rt, fmt.Errorf("agent: empty result"))
 	default:
-		// Provider 只发增量（没有完整 message 块）时，用最终结果补一条 assistant_final。
+		// Provider 只发增量（没有完整 message 块）时，用最终结果补一条 assistant 消息。
 		// 必须在 transitionTask 之前：终态会清理时间线缓存。
 		s.timeline.RecordResult(ctx, task.SessionID, task.ID, profile.ID, result.Content)
 		_ = s.transitionTask(ctx, task, TaskCompleted, "")
