@@ -467,3 +467,116 @@ func TestGormMemoryRepositoryRoundTrip(t *testing.T) {
 		t.Fatalf("expected ErrMemoryNotFound after delete, got %v", err)
 	}
 }
+
+// TestGormMessageStoreTaskScoped 校验按任务读写消息：user 消息带 TaskID 后
+// 可以被精确列出与删除，且不会影响同一会话中的其它轮次。
+func TestGormMessageStoreTaskScoped(t *testing.T) {
+	ctx := context.Background()
+	db := newGormTestDB(t)
+	messages := agentservice.NewMessageService(NewGormMessageStore(db))
+
+	for _, in := range []agenttypes.MessageCreateParams{
+		{SessionID: 10, Role: agenttypes.RoleUser, Kind: agenttypes.KindUser, Content: "q1", TaskID: 100},
+		{SessionID: 10, Role: agenttypes.RoleAssistant, Kind: agenttypes.KindAssistant, Content: "a1", TaskID: 100},
+		{SessionID: 10, Role: agenttypes.RoleUser, Kind: agenttypes.KindUser, Content: "q2", TaskID: 200},
+		{SessionID: 10, Role: agenttypes.RoleAssistant, Kind: agenttypes.KindAssistant, Content: "a2", TaskID: 200},
+		{SessionID: 10, Role: agenttypes.RoleAssistant, Kind: agenttypes.KindAssistant, Content: "no-task"},
+	} {
+		if _, err := messages.Create(ctx, in); err != nil {
+			t.Fatalf("create message: %v", err)
+		}
+	}
+
+	byTask, err := messages.ListByTask(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListByTask: %v", err)
+	}
+	if len(byTask) != 2 || byTask[0].Content != "q1" || byTask[1].Content != "a1" {
+		t.Fatalf("ListByTask = %+v, want [q1 a1]", byTask)
+	}
+
+	if err := messages.DeleteByTask(ctx, 100); err != nil {
+		t.Fatalf("DeleteByTask: %v", err)
+	}
+	rest, err := messages.List(ctx, 10)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	// 仅删除任务 100 的两条消息，任务 200 与无任务的消息保留。
+	if len(rest) != 3 {
+		t.Fatalf("remaining messages = %d, want 3", len(rest))
+	}
+	for _, m := range rest {
+		if m.TaskID == 100 {
+			t.Fatalf("task 100 message should be deleted: %+v", m)
+		}
+	}
+}
+
+// TestGormSessionStoreForkWithMessages 校验「从某一轮 fork」的原子写入：
+// 新会话的历史由回调映射写入，Create 失败时整体回滚（不留下半成品会话）。
+//
+// 这里直接使用 db 句子写消息：内存 sqlite 的每一层事务各持自己的连接，
+// 回调内若走 MessageService 会落到另一条连接而看不到测试库。
+func TestGormSessionStoreForkWithMessages(t *testing.T) {
+	ctx := context.Background()
+	db := newGormTestDB(t)
+	sessions := agentservice.NewSessionService(NewGormSessionStore(db))
+
+	src, err := sessions.Create(ctx, agenttypes.SessionCreateParams{UserID: 1, Title: "src"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := db.Create(&agenttypes.Message{
+		SessionID: src.ID, Role: agenttypes.RoleUser, Kind: agenttypes.KindUser, Content: "hello", TaskID: 1,
+	}).Error; err != nil {
+		t.Fatalf("create message: %v", err)
+	}
+
+	type msgs = []agenttypes.Message
+	const newTaskID int64 = 999
+	forked, err := sessions.ForkWithMessages(ctx, agenttypes.SessionForkParams{
+		SourceSessionID: src.ID, UserID: 1, Title: "branch",
+	}, func(tx *gorm.DB, target *agenttypes.Session) error {
+		var rows msgs
+		if err := tx.Where("session_id = ?", src.ID).Find(&rows).Error; err != nil {
+			return err
+		}
+		for i, m := range rows {
+			if err := tx.Create(&agenttypes.Message{
+				SessionID: target.ID, Seq: i, Role: m.Role, Kind: m.Kind,
+				TaskID: newTaskID, Content: m.Content,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ForkWithMessages: %v", err)
+	}
+	var copied msgs
+	if err := db.Where("session_id = ?", forked.ID).Order("seq ASC").Find(&copied).Error; err != nil {
+		t.Fatalf("list forked messages: %v", err)
+	}
+	if len(copied) != 1 || copied[0].TaskID != newTaskID || copied[0].Content != "hello" {
+		t.Fatalf("unexpected forked messages: %+v", copied)
+	}
+
+	// 回调失败：会话行与消息行一起回滚，源会话不受影响。
+	boom := errors.New("boom")
+	if _, err := sessions.ForkWithMessages(ctx, agenttypes.SessionForkParams{
+		SourceSessionID: src.ID, UserID: 1,
+	}, func(tx *gorm.DB, target *agenttypes.Session) error {
+		return boom
+	}); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want boom", err)
+	}
+	var count int64
+	if err := db.Model(&agenttypes.Session{}).Count(&count).Error; err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if count != 2 { // 源会话 + 成功的 fork
+		t.Fatalf("sessions = %d, want 2 (failed fork must roll back)", count)
+	}
+}

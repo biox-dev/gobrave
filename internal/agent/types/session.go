@@ -117,4 +117,7 @@ type SessionForkParams struct {
 	UpToSeq *int
 	// CopyFiles 为真时把源会话每个文件的最新版本作为初始版本写入新会话。
 	CopyFiles bool
+	// CopyResources 为真时复制源会话的「会话 ↔ 资源」关联行（只复制关联，
+	// 不复制脚本 / 工作流 / 计划等资源本身），使分叉出来的会话保留会话结果面板。
+	CopyResources bool
 }

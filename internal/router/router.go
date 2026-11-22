@@ -456,6 +456,9 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler, sess
 	r.GET("/agent/task/permissions", handler.GetPendingPermissions)
 	r.POST("/agent/task/cancel", handler.CancelTask)
 	r.POST("/agent/task/resume", handler.ResumeTask)
+	// 按任务 ID 操作某一轮：删除该轮消息（含 user 消息）/ 用原输入重试。
+	r.POST("/agent/task/delete", handler.DeleteTurn)
+	r.POST("/agent/task/retry", handler.RetryTurn)
 	r.POST("/agent/permission/approve", handler.ApprovePermission)
 	r.POST("/agent/permission/deny", handler.DenyPermission)
 
@@ -483,6 +486,9 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler, sess
 	r.GET("/agent/conversation/get", handler.GetSession)
 	r.POST("/agent/conversation/fork", handler.ForkSession)
 	r.POST("/agent/conversation/delete", handler.DeleteSession)
+	// 从某一轮 fork 出新会话并重新生成回答（源会话不变）。
+	r.POST("/agent/session/fork-retry", handler.ForkTurn)
+	r.POST("/agent/conversation/fork-retry", handler.ForkTurn)
 
 	r.GET("/agent/skill/list", handler.ListSkills)
 	r.GET("/agent/skill/get", handler.GetSkill)

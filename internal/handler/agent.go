@@ -1298,6 +1298,233 @@ func (h *AgentHandler) DeleteSession(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
 }
 
+// resolveTurnSession 校验任务存在、取所属会话，并校验当前用户对该会话的项目可见性。
+func (h *AgentHandler) resolveTurnSession(c *gin.Context, taskID string, userID int64) (int64, bool) {
+	id, err := parseAgentID(taskID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid task_id").WithDetails(err.Error()))
+		return 0, false
+	}
+	sessionID, err := h.chat.GetTaskTimelineOwner(c.Request.Context(), id)
+	if err != nil {
+		handleAgentError(c, err, "failed to load task")
+		return 0, false
+	}
+	sess, err := h.chat.GetSessionMeta(c.Request.Context(), sessionID)
+	if err != nil {
+		handleAgentError(c, err, "failed to get session")
+		return 0, false
+	}
+	if err := ensureProjectAccessible(c.Request.Context(), h.projects, sess.ProjectID, userID); err != nil {
+		c.Error(err)
+		return 0, false
+	}
+	return sessionID, true
+}
+
+// DeleteTurn godoc
+// @Summary      按任务删除一轮对话的消息
+// @Description  删除某个任务关联的全部消息（含该轮的 user 消息与时间线）；不删除任务记录本身；
+// @Description  任务仍在执行时返回 409
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      taskIDBody  true  "任务 ID"
+// @Success      200      {object}  gin.H
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      403      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/task/delete [post]
+func (h *AgentHandler) DeleteTurn(c *gin.Context) {
+	user, ok := getCurrentUser(c)
+	if !ok {
+		return
+	}
+	var body taskIDBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+	if _, ok := h.resolveTurnSession(c, body.ID, user.ID); !ok {
+		return
+	}
+
+	taskID, err := parseAgentID(body.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
+	if err := h.chat.DeleteTaskMessages(c.Request.Context(), taskID); err != nil {
+		handleAgentError(c, err, "failed to delete turn messages")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
+}
+
+// RetryTurn godoc
+// @Summary      重试某一轮
+// @Description  删除该任务关联的消息（含 user 消息），用该轮原用户输入重新发起一轮，由 Agent 重新生成；
+// @Description  返回新任务与会话 ID；任务仍在执行时返回 409
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      taskIDBody  true  "任务 ID"
+// @Success      200      {object}  gin.H
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      403      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      409      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/task/retry [post]
+func (h *AgentHandler) RetryTurn(c *gin.Context) {
+	user, ok := getCurrentUser(c)
+	if !ok {
+		return
+	}
+	var body taskIDBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+	sessionID, ok := h.resolveTurnSession(c, body.ID, user.ID)
+	if !ok {
+		return
+	}
+	taskID, err := parseAgentID(body.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
+
+	// 与 /agent/chat 完全一致的上下文解析（Profile / 业务上下文 / 工作目录）。
+	rc, facts, rcErr := h.runtimeCtx.ResolveWithFacts(c.Request.Context(), user.ID, user.AgentConfig.Env())
+	if rcErr != nil {
+		handleAgentError(c, rcErr, "failed to resolve runtime context")
+		return
+	}
+
+	task, sess, err := h.chat.RetryTurn(c.Request.Context(), agentservice.TurnInput{
+		UserID:         user.ID,
+		SessionID:      sessionID,
+		ProjectID:      facts.ProjectID,
+		RuntimeContext: rc,
+		ProfileID:      user.AgentConfig.ProfileID,
+		WorkingDir:     facts.WorkingDir,
+	}, taskID)
+	if err != nil {
+		handleAgentError(c, err, "failed to retry conversation turn")
+		return
+	}
+
+	h.subscribeSession(sess.ID, user.ID)
+	if err := h.chat.StartTurn(c.Request.Context(), task.ID); err != nil {
+		handleAgentError(c, err, "failed to start conversation turn")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"task_id":         strconv.FormatInt(task.ID, 10),
+		"conversation_id": strconv.FormatInt(sess.ID, 10),
+	})
+}
+
+// sessionForkTurnRequest 是「从某一轮 fork 并重试」的请求体。
+type sessionForkTurnRequest struct {
+	// ID 是源会话 ID。
+	ID string `json:"id" binding:"required"`
+	// UpToSeq 只复制 seq <= up_to_seq 的历史（含该条）；0 / 未传表示复制到末尾。
+	UpToSeq *int `json:"up_to_seq"`
+	// CopyFiles 是否同时复制文件历史最新版本。
+	CopyFiles bool `json:"copy_files"`
+	// Message 覆盖该轮的原用户输入（为空时取截止历史里的最后一条用户消息）。
+	Message  string `json:"message"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
+// ForkTurn godoc
+// @Summary      从某一轮 fork 并重试
+// @Description  以源会话截止到指定消息的历史创建新会话（消息归属到新任务），并把该轮的
+// @Description  用户输入重新交给 Agent 生成；源会话不变；返回新任务与新会话 ID
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.sessionForkTurnRequest  true  "fork 并重试参数"
+// @Success      200      {object}  gin.H
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      403      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/session/fork-retry [post]
+func (h *AgentHandler) ForkTurn(c *gin.Context) {
+	user, ok := getCurrentUser(c)
+	if !ok {
+		return
+	}
+	var req sessionForkTurnRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+	sessionID, err := parseAgentID(req.ID)
+	if err != nil {
+		c.Error(errors.NewValidationError("invalid id").WithDetails(err.Error()))
+		return
+	}
+	sess, err := h.chat.GetSessionMeta(c.Request.Context(), sessionID)
+	if err != nil {
+		handleAgentError(c, err, "failed to get session")
+		return
+	}
+	if err := ensureProjectAccessible(c.Request.Context(), h.projects, sess.ProjectID, user.ID); err != nil {
+		c.Error(err)
+		return
+	}
+
+	upToSeq := int64(0)
+	if req.UpToSeq != nil {
+		upToSeq = int64(*req.UpToSeq)
+	}
+
+	rc, facts, rcErr := h.runtimeCtx.ResolveWithFacts(c.Request.Context(), user.ID, user.AgentConfig.Env())
+	if rcErr != nil {
+		handleAgentError(c, rcErr, "failed to resolve runtime context")
+		return
+	}
+
+	task, forkedSess, err := h.chat.ForkTurn(c.Request.Context(), agentservice.TurnInput{
+		UserID:         user.ID,
+		SessionID:      sessionID,
+		ProjectID:      sess.ProjectID,
+		Message:        req.Message,
+		Provider:       req.Provider,
+		Model:          req.Model,
+		RuntimeContext: rc,
+		ProfileID:      user.AgentConfig.ProfileID,
+		WorkingDir:     facts.WorkingDir,
+	}, upToSeq, req.CopyFiles)
+	if err != nil {
+		handleAgentError(c, err, "failed to fork and retry turn")
+		return
+	}
+
+	h.subscribeSession(forkedSess.ID, user.ID)
+	if err := h.chat.StartTurn(c.Request.Context(), task.ID); err != nil {
+		handleAgentError(c, err, "failed to start conversation turn")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"task_id":         strconv.FormatInt(task.ID, 10),
+		"conversation_id": strconv.FormatInt(forkedSess.ID, 10),
+	})
+}
+
 // PagePermissions godoc
 // @Summary      分页查询权限请求
 // @Tags         Agent
@@ -1878,7 +2105,8 @@ func handleAgentError(c *gin.Context, err error, internalMsg string) {
 		stderrs.Is(err, agenttypes.ErrUnknownQuestionID),
 		stderrs.Is(err, agenttypes.ErrTaskAlreadyRunning),
 		stderrs.Is(err, agenttypes.ErrTaskNotResumable),
-		stderrs.Is(err, agenttypes.ErrSessionBusy):
+		stderrs.Is(err, agenttypes.ErrSessionBusy),
+		stderrs.Is(err, agentservice.ErrTurnRunning):
 		c.Error(errors.NewConflictError(err.Error()))
 	default:
 		c.Error(errors.NewInternalServerError(internalMsg).WithDetails(err.Error()))

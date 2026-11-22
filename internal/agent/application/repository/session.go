@@ -131,10 +131,11 @@ func collectSessionTree(tx *gorm.DB, root int64) ([]int64, error) {
 //   - 新会话是顶层会话（ParentSessionID = 0），CurrentTaskID 清 0，避免前端误判为
 //     有可续跑的任务；
 //   - 消息 ID / Seq 重新分配（雪花 ID + 会话内自增序号）；
-//   - 消息的 TaskID 原样保留：前端按 task_id 分组回填时间线，若清 0 会导致
-//     历史消息失去任务归属、与 fork 分支中的新消息混在一起；
+//   - 消息的任务归属跟着复制：源任务行会被复制成新任务（新 ID），消息的 TaskID
+//     映射到副本，两个分支各自拥有独立的任务，前端按 task_id 分组不会相互混淆；
 //   - kind=error 的消息跳过（上一轮失败的产物不属于新分支）；
 //   - UpToSeq > 0 时只复制 seq <= UpToSeq 的历史（从某条消息处分叉）；
+//   - CopyResources 时复制「会话 ↔ 资源」关联行（不复制资源本身）；
 //   - CopyFiles 时只复制每个 path 的最新版本，版本号重置为 initial。
 //
 // 事务只覆盖「会话行 + 消息行」；文件复制在事务提交后用独立连接执行，失败时补偿
@@ -185,6 +186,18 @@ func (r *gormSessionStore) Fork(ctx context.Context, params agent.SessionForkPar
 		if err := msgQuery.Order("seq ASC").Find(&messages).Error; err != nil {
 			return err
 		}
+		// 复制消息时重新映射 TaskID：分叉是独立分支，若沿用源任务的 TaskID，
+		// 前端按任务分组会与新分支里的同 ID 任务产生冲突。
+		taskIDs := make([]int64, 0, len(messages))
+		for _, m := range messages {
+			if m.TaskID > 0 {
+				taskIDs = append(taskIDs, m.TaskID)
+			}
+		}
+		taskMap, err := copyTasksForFork(tx, taskIDs, forked.ID, now)
+		if err != nil {
+			return err
+		}
 		seq := 0
 		for _, m := range messages {
 			if m.Kind == agent.KindError {
@@ -195,7 +208,8 @@ func (r *gormSessionStore) Fork(ctx context.Context, params agent.SessionForkPar
 				Seq:       seq,
 				Role:      m.Role,
 				Kind:      m.Kind,
-				TaskID:    m.TaskID,
+				// 源任务行不存在（历史数据）时退回保留原 TaskID，至少不丢失归属。
+				TaskID:    mapTaskID(taskMap, m.TaskID),
 				UserID:    m.UserID,
 				Content:   m.Content,
 				Data:      m.Data,
@@ -203,6 +217,11 @@ func (r *gormSessionStore) Fork(ctx context.Context, params agent.SessionForkPar
 			}
 			seq++
 			if err := tx.Session(&gorm.Session{}).Create(copied).Error; err != nil {
+				return err
+			}
+		}
+		if params.CopyResources {
+			if err := copySessionResourcesForFork(tx, source.ID, forked.ID, now); err != nil {
 				return err
 			}
 		}
@@ -222,6 +241,122 @@ func (r *gormSessionStore) Fork(ctx context.Context, params agent.SessionForkPar
 		}
 	}
 	return &forked, nil
+}
+
+// ForkWithMessages 与 Fork 相同，并在同一事务内让调用方把消息「映射」到新会话。
+//
+// 用途：分叉时把源会话的历史换成新任务（由 Agent 继续生成），因此消息不能原样复制，
+// 需要调用方按自己的规则重新构造消息行（新 TaskID / 新的 Seq）。create 在会话行
+// 创建之后、事务提交之前执行，失败时整体回滚。
+func (r *gormSessionStore) ForkWithMessages(ctx context.Context, params agent.SessionForkParams, create func(tx *gorm.DB, forked *agent.Session) error) (*agent.Session, error) {
+	var forked agent.Session
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var source agent.Session
+		if err := tx.Where("id = ?", params.SourceSessionID).First(&source).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return agent.ErrSessionNotFound
+			}
+			return err
+		}
+		if params.UserID != 0 && source.UserID != params.UserID {
+			return agent.ErrSessionNotFound
+		}
+
+		now := time.Now().UTC()
+		title := params.Title
+		if title == "" {
+			title = source.Title + " (fork)"
+		}
+		forked = agent.Session{
+			ProjectID: source.ProjectID,
+			Title:     title,
+			UserID:    source.UserID,
+			Provider:  source.Provider,
+			Model:     source.Model,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := tx.Session(&gorm.Session{}).Create(&forked).Error; err != nil {
+			return err
+		}
+		if create != nil {
+			return create(tx, &forked)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &forked, nil
+}
+
+// copyTasksForFork 把源任务复制为属于新会话的副本，返回「源任务 ID → 新任务 ID」映射。
+//
+// 只复制任务行本身（请求 / 事实 / 状态），消息在调用方按映射改写后写入；
+// 权限 / 提问属于源分支的执行事实，不复制。源任务不存在时不出现在映射里。
+func copyTasksForFork(tx *gorm.DB, ids []int64, sessionID int64, now time.Time) (map[int64]int64, error) {
+	mapping := make(map[int64]int64, len(ids))
+	if len(ids) == 0 {
+		return mapping, nil
+	}
+	var tasks []*agent.Task
+	if err := tx.Session(&gorm.Session{}).
+		Where("id IN ?", ids).
+		Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+	for _, t := range tasks {
+		copied := *t
+		copied.ID = 0
+		copied.SessionID = sessionID
+		copied.CreatedAt = now
+		copied.UpdatedAt = now
+		copied.ResumeState = nil
+		if err := tx.Session(&gorm.Session{}).Create(&copied).Error; err != nil {
+			return nil, err
+		}
+		mapping[t.ID] = copied.ID
+	}
+	return mapping, nil
+}
+
+// mapTaskID 返回源任务映射后的新任务 ID；没有映射时保留原值（0 仍为 0）。
+func mapTaskID(mapping map[int64]int64, id int64) int64 {
+	if id <= 0 {
+		return id
+	}
+	if mapped, ok := mapping[id]; ok {
+		return mapped
+	}
+	return id
+}
+
+// copySessionResourcesForFork 复制源会话的「会话 ↔ 资源」关联行（不复制资源本身）。
+func copySessionResourcesForFork(tx *gorm.DB, sourceID, targetID int64, now time.Time) error {
+	var resources []*agent.SessionResource
+	if err := tx.Session(&gorm.Session{}).
+		Where("session_id = ?", sourceID).
+		Find(&resources).Error; err != nil {
+		return err
+	}
+	for _, res := range resources {
+		copied := &agent.SessionResource{
+			SessionID:    targetID,
+			ResourceType: res.ResourceType,
+			ResourceID:   res.ResourceID,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		// 唯一键 (session_id, resource_type, resource_id) 正常不会冲突；
+		// 用 DoNothing 防御源会话本身存在的重复关联，避免整个 fork 失败。
+		if err := tx.Session(&gorm.Session{}).
+			Clauses(clause.OnConflict{DoNothing: true}).
+			Create(copied).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // copyLatestFiles 把源会话中每个 path 的最新版本复制为新会话的 initial 版本。

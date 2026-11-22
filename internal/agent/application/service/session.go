@@ -7,6 +7,7 @@ import (
 
 	. "github.com/biox-dev/gobrave/internal/agent/types"
 	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
+	"gorm.io/gorm"
 )
 
 // SessionService 提供会话的增删改查实现。
@@ -69,6 +70,18 @@ func (s *sessionService) Fork(ctx context.Context, params SessionForkParams) (Se
 		return Session{}, ErrSessionNotFound
 	}
 	forked, err := s.store.Fork(ctx, params)
+	if err != nil {
+		return Session{}, err
+	}
+	return *forked, nil
+}
+
+// ForkWithMessages 把源会话的消息经 create 映射后写入新会话（同一事务）。
+func (s *sessionService) ForkWithMessages(ctx context.Context, params SessionForkParams, create func(tx *gorm.DB, forked *Session) error) (Session, error) {
+	if params.SourceSessionID <= 0 {
+		return Session{}, ErrSessionNotFound
+	}
+	forked, err := s.store.ForkWithMessages(ctx, params, create)
 	if err != nil {
 		return Session{}, err
 	}

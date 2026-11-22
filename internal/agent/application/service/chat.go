@@ -10,6 +10,7 @@ import (
 	. "github.com/biox-dev/gobrave/internal/agent/types"
 	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	coreinterfaces "github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -35,6 +36,11 @@ type TurnInput struct {
 	RuntimeContext *runtimecontext.RuntimeContext
 	ProfileID      int64 // AgentProfile ID（为 0 取默认）
 	WorkingDir     string
+	// TaskID 是调用方预先分配的雪花任务 ID（为 0 时由 AgentService 分配）。
+	//
+	// user 消息在任务创建之前就要写入（历史拼接依赖它），因此任务 ID 必须先确定：
+	// 前端据此可以按 task_id 精确删除 / 重试这一轮的消息。
+	TaskID int64
 }
 
 // turnState 记录一轮执行期间的中间态（从 CreateTurn 到本轮结束）。
@@ -136,6 +142,14 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Sess
 	l := s.lockFor(sess.ID)
 	l.Lock()
 
+	// 任务 ID 在写 user 消息之前确定：user 消息必须带上 TaskID，
+	// 才能按任务精确删除 / 重试（见 DeleteTaskMessages / RetryTurn）。
+	// 未显式传入时在这里生成，交给 CreateTask 复用，保证两者一致。
+	taskID := in.TaskID
+	if taskID <= 0 {
+		taskID = utils.GenerateID()
+	}
+
 	// 追加 user 消息。
 	if _, err := s.messages.Create(ctx, MessageCreateParams{
 		SessionID: sess.ID,
@@ -143,6 +157,7 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Sess
 		Kind:      KindUser,
 		UserID:    in.UserID,
 		Content:   in.Message,
+		TaskID:    taskID,
 	}); err != nil {
 		l.Unlock()
 		return nil, Session{}, err
@@ -166,6 +181,7 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Sess
 		Stream:         true, // 会话轮次统一走流式，便于捕获 assistant 文本
 	}
 	facts := TaskFacts{
+		TaskID:     taskID,
 		UserID:     in.UserID,
 		SessionID:  sess.ID,
 		ProjectID:  sess.ProjectID,
@@ -402,13 +418,213 @@ func (s *ChatService) ListTaskMessages(ctx context.Context, sessionID, taskID in
 	}
 	out := make([]Message, 0, len(msgs))
 	for _, m := range msgs {
-		// user 消息由 CreateTurn 写入时不带 TaskID，按任务回填只取 assistant 侧时间线。
+		// 按任务回填只取 assistant 侧时间线：user 消息是这一轮的输入，不作为执行事实回放。
 		if m.TaskID != taskID || m.Role != RoleAssistant {
 			continue
 		}
 		out = append(out, m)
 	}
 	return out, nil
+}
+
+// ErrTurnRunning 表示该轮任务仍在执行，不能删除消息或重试。
+var ErrTurnRunning = errors.New("session: turn is still running")
+
+// isTurnRunning 判断任务是否仍在执行（只有本进程的活跃轮次可判定）。
+func (s *ChatService) isTurnRunning(taskID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.turns[taskID]
+	return ok
+}
+
+// GetTaskTimelineOwner 返回任务所属的会话 ID（任务不存在 / 不属于任何会话时报错）。
+//
+// 供「只传 task_id」的接口（删除 / 重试某一轮）反查会话，再做项目可见性校验。
+func (s *ChatService) GetTaskTimelineOwner(ctx context.Context, taskID int64) (int64, error) {
+	if taskID <= 0 {
+		return 0, ErrTaskNotFound
+	}
+	task, err := s.agent.GetTask(ctx, taskID)
+	if err != nil {
+		return 0, err
+	}
+	if task == nil || task.SessionID <= 0 || task.Facts().UserID == 0 {
+		return 0, ErrTaskNotFound
+	}
+	return task.SessionID, nil
+}
+
+// DeleteTaskMessages 删除某个任务关联的全部消息（含该轮的 user 消息与时间线）。
+//
+// 只删消息，不删任务记录：任务仍可用于审计 / 时间线查询，只是会话里不再展示这一轮。
+func (s *ChatService) DeleteTaskMessages(ctx context.Context, taskID int64) error {
+	sessionID, err := s.GetTaskTimelineOwner(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if s.isTurnRunning(taskID) {
+		return ErrTurnRunning
+	}
+	if err := s.messages.DeleteByTask(ctx, taskID); err != nil {
+		return err
+	}
+	s.clearCurrentTask(ctx, sessionID, taskID)
+	return nil
+}
+
+// RetryTurn 重试某一轮：删除该任务关联的消息（含 user 消息），用原来的用户输入
+// 在该会话上重新发起一轮（新任务由 Agent 重新生成）。
+func (s *ChatService) RetryTurn(ctx context.Context, in TurnInput, taskID int64) (*Task, Session, error) {
+	sessionID, err := s.GetTaskTimelineOwner(ctx, taskID)
+	if err != nil {
+		return nil, Session{}, err
+	}
+	if s.isTurnRunning(taskID) {
+		return nil, Session{}, ErrTurnRunning
+	}
+
+	// 原用户输入取自该任务的 user 消息；没有则说明这一轮没有可重试的提问。
+	msgs, err := s.messages.ListByTask(ctx, taskID)
+	if err != nil {
+		return nil, Session{}, err
+	}
+	message := ""
+	for _, m := range msgs {
+		if m.Role == RoleUser {
+			message = m.Content
+			break
+		}
+	}
+	if message == "" {
+		return nil, Session{}, ErrTaskNotFound
+	}
+
+	if err := s.messages.DeleteByTask(ctx, taskID); err != nil {
+		return nil, Session{}, err
+	}
+	s.clearCurrentTask(ctx, sessionID, taskID)
+
+	in.SessionID = sessionID
+	in.Message = message
+	return s.CreateTurn(ctx, in)
+}
+
+// clearCurrentTask 清理会话上指向 taskID 的「当前活跃轮次」，避免前端把已删除 /
+// 已重试的轮次误判为仍在执行。
+func (s *ChatService) clearCurrentTask(ctx context.Context, sessionID, taskID int64) {
+	sess, err := s.sessions.Get(ctx, sessionID)
+	if err != nil || sess.CurrentTaskID != taskID {
+		return
+	}
+	sess.CurrentTaskID = 0
+	_, _ = s.sessions.Save(ctx, sess)
+}
+
+// ForkTurn 从某一轮 fork 出一个新会话，并把该轮重新交给 Agent 生成。
+//
+// 与 ForkSession 的区别：新会话只携带截止到 upToSeq 的历史，且其中有任务归属的消息
+// 被重新映射到「为新会话重建的任务」，源会话不受影响。
+//
+// 执行顺序：先在事务里建好新会话与历史消息，事务提交后再创建新任务并启动，
+// 避免把 Agent 调用放进长事务；创建失败时不启动，历史保持完整。
+func (s *ChatService) ForkTurn(ctx context.Context, in TurnInput, upToSeq int64, copyFiles bool) (*Task, Session, error) {
+	if in.SessionID <= 0 {
+		return nil, Session{}, ErrSessionNotFound
+	}
+	source, err := s.sessions.Get(ctx, in.SessionID)
+	if err != nil {
+		return nil, Session{}, err
+	}
+	l := s.lockFor(source.ID)
+	l.Lock()
+
+	var (
+		taskMap  = make(map[int64]int64)
+		keptMsgs []Message
+	)
+	params := SessionForkParams{
+		SourceSessionID: source.ID,
+		UserID:          in.UserID,
+		CopyFiles:       copyFiles,
+		CopyResources:   true,
+	}
+	if upToSeq > 0 {
+		seq := int(upToSeq)
+		params.UpToSeq = &seq
+	}
+
+	forked, err := s.sessions.ForkWithMessages(ctx, params, func(tx *gorm.DB, target *Session) error {
+		msgs, err := s.messages.List(ctx, source.ID)
+		if err != nil {
+			return err
+		}
+		seqNo := 0
+		for _, m := range msgs {
+			if upToSeq > 0 && int64(m.Seq) > upToSeq {
+				continue
+			}
+			if m.Kind == KindError {
+				continue
+			}
+			newTaskID := int64(0)
+			if m.TaskID > 0 {
+				// 同一源任务的所有消息归到同一个新任务 ID，保留轮次边界。
+				newTaskID = taskMap[m.TaskID]
+				if newTaskID == 0 {
+					newTaskID = utils.GenerateID()
+					taskMap[m.TaskID] = newTaskID
+				}
+			}
+			copied := &Message{
+				SessionID: target.ID,
+				Seq:       seqNo,
+				Role:      m.Role,
+				Kind:      m.Kind,
+				TaskID:    newTaskID,
+				UserID:    m.UserID,
+				Content:   m.Content,
+				Data:      m.Data,
+				CreatedAt: target.CreatedAt,
+			}
+			seqNo++
+			if err := tx.Session(&gorm.Session{}).Create(copied).Error; err != nil {
+				return err
+			}
+			keptMsgs = append(keptMsgs, *copied)
+		}
+		return nil
+	})
+	if err != nil {
+		l.Unlock()
+		return nil, Session{}, err
+	}
+
+	// 该轮的原始 user 输入（未显式给出时取截止历史里的最后一条用户消息）。
+	message := strings.TrimSpace(in.Message)
+	if message == "" {
+		for i := len(keptMsgs) - 1; i >= 0; i-- {
+			if keptMsgs[i].Role == RoleUser {
+				message = keptMsgs[i].Content
+				break
+			}
+		}
+	}
+	if message == "" {
+		l.Unlock()
+		return nil, Session{}, ErrTaskNotFound
+	}
+
+	in.SessionID = forked.ID
+	in.Message = message
+	in.TaskID = 0
+	// CreateTurn 会在新会话上重新加同一把锁（newSessionID 的锁），与这里持有的源会话锁互不影响。
+	task, forkedSess, err := s.CreateTurn(ctx, in)
+	l.Unlock()
+	if err != nil {
+		return nil, Session{}, err
+	}
+	return task, forkedSess, nil
 }
 
 // GetTaskTimeline 按任务 ID 返回该任务的执行时间线（已落库的事实流）。

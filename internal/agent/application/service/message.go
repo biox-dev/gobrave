@@ -80,8 +80,26 @@ func (s *messageService) ListParticipants(ctx context.Context, sessionID int64) 
 	return s.store.ListParticipants(ctx, sessionID)
 }
 
+// ListByTask 返回某任务的全部消息（含该轮的 user 消息），按 Seq 升序。
+func (s *messageService) ListByTask(ctx context.Context, taskID int64) ([]Message, error) {
+	rows, err := s.store.ListByTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Message, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, *row)
+	}
+	return out, nil
+}
+
 func (s *messageService) Delete(ctx context.Context, id int64) error {
 	return s.store.Delete(ctx, id)
+}
+
+// DeleteByTask 删除某任务的全部消息（含该轮的 user 消息）。
+func (s *messageService) DeleteByTask(ctx context.Context, taskID int64) error {
+	return s.store.DeleteByTask(ctx, taskID)
 }
 
 func (s *messageService) DeleteSessionMessages(ctx context.Context, sessionID int64) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/biox-dev/gobrave/internal/agent/types"
+	"gorm.io/gorm"
 )
 
 // SessionService 提供会话的增删改查。
@@ -17,6 +18,9 @@ type SessionService interface {
 	CreateChildSession(ctx context.Context, params types.SessionChildParams) (types.Session, error)
 	// Fork 把源会话的历史复制到一个新会话，返回新会话。
 	Fork(ctx context.Context, params types.SessionForkParams) (types.Session, error)
+	// ForkWithMessages 把源会话的消息经 create 映射后写入新会话（同一事务），返回新会话。
+	// create 拿到新会话与事务句柄，负责按调用方规则写入消息行。
+	ForkWithMessages(ctx context.Context, params types.SessionForkParams, create func(tx *gorm.DB, forked *types.Session) error) (types.Session, error)
 	Get(ctx context.Context, id int64) (types.Session, error)
 	List(ctx context.Context, params types.SessionListParams) ([]types.Session, int64, error)
 	Save(ctx context.Context, session types.Session) (types.Session, error)
@@ -63,7 +67,11 @@ type MessageService interface {
 	ListPage(ctx context.Context, sessionID int64, beforeSeq, limit int) ([]types.Message, bool, error)
 	// ListParticipants 返回在某会话中发过言（写过 user 消息）的用户 ID 与显示名（去重）。
 	ListParticipants(ctx context.Context, sessionID int64) ([]types.SessionUser, error)
+	// ListByTask 返回某任务的全部消息（含该轮的 user 消息），按 Seq 升序。
+	ListByTask(ctx context.Context, taskID int64) ([]types.Message, error)
 	Delete(ctx context.Context, id int64) error
+	// DeleteByTask 删除某任务的全部消息（含该轮的 user 消息）。
+	DeleteByTask(ctx context.Context, taskID int64) error
 	DeleteSessionMessages(ctx context.Context, sessionID int64) error
 }
 

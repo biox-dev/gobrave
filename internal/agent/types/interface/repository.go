@@ -8,6 +8,7 @@ import (
 	"context"
 
 	"github.com/biox-dev/gobrave/internal/agent/types"
+	"gorm.io/gorm"
 )
 
 // TaskRepository 持久化 Agent 任务。
@@ -92,6 +93,10 @@ type SessionStore interface {
 	// 事务内完成「创建新会话 + 逐条复制消息 + 复制最新文件版本」，任一环节失败
 	// 整体回滚，不会留下半成品会话。
 	Fork(ctx context.Context, params types.SessionForkParams) (*types.Session, error)
+	// ForkWithMessages 与 Fork 相同，并把源消息逐条映射到新会话（重新分配 Seq）。
+	// create 返回目标会话 ID 时先写入映射后的消息行；返回 0 表示不写入（例如只建
+	// 空会话）。会话行与消息行在同一事务内创建，任一失败整体回滚。
+	ForkWithMessages(ctx context.Context, params types.SessionForkParams, create func(tx *gorm.DB, forked *types.Session) error) (*types.Session, error)
 }
 
 // MessageStore 是 Message 的持久化端口。
@@ -110,7 +115,11 @@ type MessageStore interface {
 	// 只统计 RoleUser 且 UserID > 0 的消息（Agent 侧消息的 UserID 是 Profile ID）；
 	// 用户名从 users 表回填，精简库（无 users 表）下 Username 为空但不影响 ID 返回。
 	ListParticipants(ctx context.Context, sessionID int64) ([]types.SessionUser, error)
+	// ListByTask 返回某任务的全部消息（含 user / assistant 时间线），按 Seq 升序。
+	ListByTask(ctx context.Context, taskID int64) ([]*types.Message, error)
 	Delete(ctx context.Context, id int64) error
+	// DeleteByTask 删除某任务的全部消息（含该轮的 user 消息）。
+	DeleteByTask(ctx context.Context, taskID int64) error
 	DeleteBySession(ctx context.Context, sessionID int64) error
 }
 

@@ -141,6 +141,9 @@ func (t *Task) Facts() TaskFacts {
 func NewTask(req Request, facts TaskFacts) *Task {
 	now := time.Now()
 	return &Task{
+		// TaskID 由调用方预先分配时直接复用（user 消息先于任务写入，必须共用同一 ID）；
+		// 为 0 时由 BeforeCreate 生成雪花 ID。
+		ID:                facts.TaskID,
 		SessionID:         facts.SessionID,
 		ProjectID:         facts.ProjectID,
 		UserID:            facts.UserID,

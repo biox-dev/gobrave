@@ -160,8 +160,30 @@ func (r *gormMessageStore) fillOwnerNames(ctx context.Context, rows []*agent.Mes
 	}
 }
 
+// ListByTask 返回某任务的全部消息（user 消息在创建时写入 TaskID，因此含该轮输入），按 Seq 升序。
+func (r *gormMessageStore) ListByTask(ctx context.Context, taskID int64) ([]*agent.Message, error) {
+	if taskID <= 0 {
+		return []*agent.Message{}, nil
+	}
+	var rows []*agent.Message
+	if err := r.db.WithContext(ctx).
+		Where("task_id = ?", taskID).
+		Order("seq ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 func (r *gormMessageStore) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&agent.Message{}).Error
+}
+
+func (r *gormMessageStore) DeleteByTask(ctx context.Context, taskID int64) error {
+	if taskID <= 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Where("task_id = ?", taskID).Delete(&agent.Message{}).Error
 }
 
 func (r *gormMessageStore) DeleteBySession(ctx context.Context, sessionID int64) error {
