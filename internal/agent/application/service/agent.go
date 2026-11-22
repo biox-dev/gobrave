@@ -39,6 +39,8 @@ type AgentService struct {
 	questions *QuestionManager
 	// timeline 把流式完整块事件即时投影为 agent_messages 记录。
 	timeline *TimelineRecorder
+	// live 保存会话「尚未落库」的流式尾巴，供中途进入的客户端续播。
+	live     *liveTail
 	bus      EventBus
 	policy   PermissionPolicy
 	memory   *MemoryManager
@@ -86,6 +88,7 @@ func NewService(cfg ServiceConfig) *AgentService {
 		perms:     cfg.Perms,
 		questions: cfg.Questions,
 		timeline:  NewTimelineRecorder(cfg.Messages),
+		live:      newLiveTail(),
 		bus:       cfg.Bus,
 		policy:    cfg.Policy,
 		memory:    cfg.Memory,
@@ -562,9 +565,32 @@ func (s *AgentService) publish(ctx context.Context, facts TaskFacts, typ AgentEv
 	if persist && typ == EventStream {
 		s.timeline.Record(ctx, facts.SessionID, facts.TaskID, facts.ProfileID, payload)
 	}
+	// 实时尾巴：记录尚未落库的增量，并给事件分配会话内序号。
+	// 必须在 bus.Publish 之前完成，保证「快照 seq ≥ 某事件的 seq」蕴含「快照已包含该事件」，
+	// 客户端据此丢弃重复推送（见 handler.SubscribeSession）。
+	if typ == EventStream {
+		if event, ok := payload.(StreamEvent); ok {
+			e.Seq = s.live.Observe(facts.SessionID, facts.TaskID, event)
+		}
+	}
+	switch typ {
+	case EventTaskCompleted, EventTaskFailed, EventTaskCanceled:
+		s.live.EndTask(facts.SessionID, facts.TaskID)
+	}
 	if s.bus != nil {
 		s.bus.Publish(ctx, *e)
 	}
+}
+
+// SessionLive 返回会话当前「未落库」的实时尾巴（订阅时随快照下发给客户端）。
+//
+// 只包含正在流式输出、还未写入 agent_messages 的 assistant / reasoning 段；
+// 完整块一旦落库就会从缓存移除，因此这里返回的数据量与当前段落长度同阶。
+func (s *AgentService) SessionLive(sessionID int64) SessionLive {
+	if s == nil || s.live == nil {
+		return SessionLive{SessionID: sessionID}
+	}
+	return s.live.Snapshot(sessionID)
 }
 
 // ---- Memory 调用面（供 HTTP / 上层业务操作记忆） ----

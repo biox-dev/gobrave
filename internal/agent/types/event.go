@@ -44,7 +44,13 @@ type AgentEvent struct {
 	SessionID int64          `json:"session_id,string,omitempty"`
 	Type      AgentEventType `json:"type"`
 	Payload   any            `json:"payload,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
+	// Seq 是会话内单调递增的流序号（仅 EventStream 事件有值）。
+	//
+	// 用途：客户端进入会话时会收到一份「未落库的实时尾巴」快照（见 SubscribeSession），
+	// 快照的 seq 表示它已包含到此为止的所有增量。之后若又收到 seq <= 快照 seq 的推送，
+	// 说明该增量已经包含在快照里，客户端丢弃即可，不会重复渲染。
+	Seq       int64     `json:"seq,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // EventHandler 是事件订阅回调。

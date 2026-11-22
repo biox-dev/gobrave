@@ -177,10 +177,13 @@ func (a *copilotAgent) Stream(ctx context.Context, req agenttypes.Request, rt ag
 			// if final.Len() == 0 && data.Content != "" {
 			// 	final.WriteString(data.Content)
 			// }
-			if len(data.ToolRequests) == 0 {
-				if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventMessage, Data: toMessageBlock(data)}); err != nil {
-					sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
-				}
+			// 完整 assistant 消息块：正文 + 本轮发起的工具调用。
+			//
+			// 无论是否带 tool call 都必须发送：带工具调用时模型往往也会输出一段叙述文本，
+			// 只发 tool_call 会让这段文本永远无法落库（刷新后消失）。
+			// 正文为空时 TimelineRecorder 会跳过，不会产生空消息。
+			if err := rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventMessage, Data: toMessageBlock(data)}); err != nil {
+				sendStreamResult(resultCh, copilotStreamResult{content: final.String(), err: err})
 			}
 		case *copilot.AssistantReasoningDeltaData:
 			if data.DeltaContent != "" {

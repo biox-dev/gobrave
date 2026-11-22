@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/realtime"
@@ -323,7 +324,20 @@ func (h *AgentHandler) setSessionSubscribed(c *gin.Context, subscribed bool) {
 	}
 
 	h.subscribeSession(sessionID, userID)
-	c.JSON(http.StatusOK, gin.H{"ok": true, "session_id": body.SessionID, "subscribed": true})
+	// 先登记、后取快照：登记之后到达的事件一定会推送；在此之前已被折叠进快照的事件，
+	// 即使稍后又推送一次，客户端也会按快照的 seq 丢弃（不会重复）。
+	// 返回的是「未落库」的尾巴（正在流式输出的 assistant / reasoning 段），
+	// 客户端把它拼在历史之后即可从中间无缝续播。
+	live := agentservice.SessionLive{SessionID: sessionID}
+	if h.svc != nil {
+		live = h.svc.SessionLive(sessionID)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ok":         true,
+		"session_id": body.SessionID,
+		"subscribed": true,
+		"live":       live,
+	})
 }
 
 // subscribeSession / unsubscribeSession 是内部入口（nil-safe），供 Chat / ResumeTask 复用。
