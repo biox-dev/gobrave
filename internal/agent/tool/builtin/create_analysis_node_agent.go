@@ -18,7 +18,7 @@ const CreateAnalysisNodeAgentToolName = "create_analysis_node_agent"
 // 避免把任务写到别的项目下。
 type CreateAnalysisNodeAgentInput struct {
 	Name string `json:"name"` // 节点名称（也用作容器资源名）
-	// ContainerTemplateID 可选：为空时使用系统默认容器模板（is_default）。
+	// ContainerTemplateID 必填：必须由 Agent 显式传入，不会回退到系统默认容器模板。
 	ContainerTemplateID string `json:"container_template_id"` // 容器模板 ID（字符串以保精度）
 	Command             string `json:"command"`               // 要执行的 shell 命令
 	// Run 可选：是否在创建后立即运行。nil / true 表示运行（默认），false 表示只创建节点。
@@ -49,7 +49,7 @@ type CreateAnalysisNodeAgentOutput struct {
 // 规则直接写进描述，模型只看工具描述就能写出「命令 + output/ 产物 + outputs.json 索引」的
 // 正确用法，而无需额外翻查技能文档。
 func createAnalysisNodeAgentDescription() string {
-	return `创建一个命令型分析节点：给定节点名称与一段 shell 命令（container_template_id 可选，留空时使用系统默认容器模板），系统在节点工作目录下生成 run.sh。run 可选，默认 true：为 true 时立即提交容器执行并等待结束，返回状态、退出码与命令日志；为 false 时只创建节点不运行，之后可用 run_analysis_node 再运行该节点。所属项目取自当前会话上下文，无需传入。
+	return `创建一个命令型分析节点：给定节点名称、容器模板 ID 与一段 shell 命令（container_template_id 必填，由你显式传入，不会回退到系统默认容器模板），系统在节点工作目录下生成 run.sh。run 可选，默认 true：为 true 时立即提交容器执行并等待结束，返回状态、退出码与命令日志；为 false 时只创建节点不运行，之后可用 run_analysis_node 再运行该节点。所属项目取自当前会话上下文，无需传入。
 
 Reference chips（界面插入的引用）：用户消息里可能出现 @container:<id>（选中的容器模板）、@dataset:<id>（选中的数据集）、@file:<id>（文件）、@report:<id>（项目报告）、@analysis_node:<id>（选中的分析节点）。遇到 @container:<id> 时，直接把冒号后的 ID 作为 container_template_id 传入，不要丢弃或改写；需要确认模板用途时先调用 get_container_template（返回 display_name 与 description）。遇到 @dataset:<id> 时可用 get_dataset 获取其工作目录绝对路径，并在 command 中直接使用该路径。遇到 @file:<id> 时可用 get_file 读取文件内容并拿到真实路径 file_path，command 中直接使用该路径（传冒号后的裸 ID，不要传 @file: 前缀）。遇到 @report:<id> 时可用 get_report 读取报告标题与正文。遇到 @analysis_node:<id> 时可用 get_analysis_node 查看节点名称 / 类型 / 工作目录 / 参数（该工具会容错剥离 @analysis_node: 前缀）。遇到 @script:<id> 时可用 get_script 查看脚本名称 / 描述 / 容器模板 / 脚本文件与 io_schema 路径（该工具会容错剥离 @script: 前缀）；不确定脚本 ID 时先用 list_project_scripts 列出当前项目脚本。
 
@@ -103,7 +103,9 @@ Before executing the command, please follow these steps:
 
 5. Usage notes:
  - name 必填，简短英文 / 数字，同时用作容器资源名。
- - container_template_id 可选：留空时使用系统默认容器模板；给出时必须是已存在的容器模板。
+ - container_template_id 必填：必须显式传入已存在的容器模板 ID，不会回退到系统默认模板；用户消息里
+   有 @container:<id> 时直接用该 ID，没有时先用 list_container_templates 查看，再用 ask_user 让
+   用户选择，不要猜测、不要省略。
  - timeout_seconds 可选：等待节点完成的超时（秒）；留空时使用服务端默认超时。
  - command 可多行（换行分隔）；路径、样本名、分组等不要硬编码。
  - 该工具会创建分析节点（写库并写出 run.sh），默认还会触发一次运行，因此声明 write 授权，
@@ -115,6 +117,7 @@ Before executing the command, please follow these steps:
 // 行为：
 //   - 从 RuntimeContext 取当前项目 ID；
 //   - 创建一个命令型 AnalysisNode（ContainerTemplateID + Command），run.sh 由 command 生成；
+//     ContainerTemplateID 必填，不回退到系统默认容器模板；
 //   - run 为 true（默认）时复用通用节点链路提交运行并等待终态；
 //     run 为 false 时只创建节点并生成 run.sh，不提交运行；
 //   - 返回节点状态、是否运行、退出码与命令日志。
@@ -127,11 +130,11 @@ func CreateAnalysisNodeAgent(runner runtimecontext.AgentAnalysisRunner) tool.Too
 		createAnalysisNodeAgentDescription(),
 		tool.Schema("创建命令型分析节点的入参", map[string]any{
 			"name":                  tool.StringProperty("节点名称（简短英文/数字，也用作容器资源名）。"),
-			"container_template_id": tool.StringProperty("容器模板 ID（整数，字符串以保精度），必须是已存在的容器模板；可直接使用用户消息里的 @container:<id>（冒号后的 ID）。可选：留空时使用系统默认容器模板（is_default）。"),
+			"container_template_id": tool.StringProperty("容器模板 ID（整数，字符串以保精度），必填，必须是已存在的容器模板；可直接使用用户消息里的 @container:<id>（冒号后的 ID）。未指定时先 list_container_templates 再用 ask_user 让用户选择，不要留空（不会回退到系统默认模板）。"),
 			"command":               tool.StringProperty("要执行的 shell 命令（多行可用换行分隔）。命令会写入节点工作目录的 run.sh 后执行。"),
 			"run":                   tool.BooleanProperty("是否在创建后立即运行，可选，默认 true。传 false 时只创建节点并生成 run.sh，不提交运行。"),
 			"timeout_seconds":       tool.IntegerProperty("等待节点完成的超时（秒），可选，默认 1800；run=false 时忽略。"),
-		}, "name", "command"),
+		}, "name", "container_template_id", "command"),
 		func(ctx context.Context, in CreateAnalysisNodeAgentInput) (CreateAnalysisNodeAgentOutput, error) {
 			projectID := tool.ProjectIDFrom(ctx)
 			if projectID <= 0 {
@@ -142,10 +145,16 @@ func CreateAnalysisNodeAgent(runner runtimecontext.AgentAnalysisRunner) tool.Too
 			if name == "" {
 				return CreateAnalysisNodeAgentOutput{}, fmt.Errorf("create_analysis_node_agent: name is required")
 			}
-			// container_template_id 可选：为空时解析为 0，由 runner 回退到系统默认容器模板。
+			// container_template_id 必填：模型必须显式指定容器模板，不回退到系统默认模板。
+			if strings.TrimSpace(in.ContainerTemplateID) == "" {
+				return CreateAnalysisNodeAgentOutput{}, fmt.Errorf("create_analysis_node_agent: container_template_id is required (no default container template fallback); use list_container_templates and ask_user to choose one")
+			}
 			containerTemplateID, err := parseContainerTemplateID(in.ContainerTemplateID)
 			if err != nil {
 				return CreateAnalysisNodeAgentOutput{}, fmt.Errorf("create_analysis_node_agent: %w", err)
+			}
+			if containerTemplateID <= 0 {
+				return CreateAnalysisNodeAgentOutput{}, fmt.Errorf("create_analysis_node_agent: container_template_id must be a positive integer")
 			}
 			command := strings.TrimSpace(in.Command)
 			if command == "" {

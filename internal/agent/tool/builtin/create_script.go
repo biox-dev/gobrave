@@ -216,7 +216,10 @@ func normalizeIOSchemaItems(items []map[string]any) []map[string]any {
 	return out
 }
 
-// parseContainerTemplateID 解析 container_template_id；为空时返回 0（由业务侧解析默认模板）。
+// parseContainerTemplateID 解析 container_template_id；为空时返回 0。
+//
+// 是否为 0 合法由调用方决定：create_script 会回退到系统默认模板，create_analysis_node_agent
+// 则要求必填（> 0）。
 // 容错处理用户 / 模型可能带上的 "@container:" 前缀（如 "@container:2109711590457610240"）。
 func parseContainerTemplateID(raw string) (int64, error) {
 	idStr := strings.TrimSpace(raw)

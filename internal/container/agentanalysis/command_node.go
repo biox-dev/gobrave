@@ -2,7 +2,6 @@ package agentanalysis
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/dag/prepare"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
-	"gorm.io/gorm"
 )
 
 // agentRunAnalysis 实现 runtimecontext.AgentAnalysisRunner：把「名称 + 容器模板 + 命令」的模型请求
@@ -76,11 +74,7 @@ func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in runtimeco
 
 	templateID := in.ContainerTemplateID
 	if templateID <= 0 {
-		resolved, err := r.resolveDefaultContainerTemplateID(ctx)
-		if err != nil {
-			return result, err
-		}
-		templateID = resolved
+		return result, fmt.Errorf("container_template_id is required: the agent must pass an existing container template id")
 	}
 
 	node, err := analysisform.NewAnalysisNodeFromCommand(analysisform.CommandNodeSpec{
@@ -151,28 +145,6 @@ func (r *agentRunAnalysis) fillRuntimeFacts(ctx context.Context, nodeID int64, r
 			result.ExitCode = *inst.ExitCode
 		}
 	}
-}
-
-// resolveDefaultContainerTemplateID 返回系统默认容器模板（is_default = true 的绑定行）。
-//
-// 模型未指定 container_template_id 时回退到默认模板；没有默认模板时返回带用户指引导的
-// 错误：模型会把错误原文回给用户，用户据此到「容器模板」页设置默认模板后重试。
-func (r *agentRunAnalysis) resolveDefaultContainerTemplateID(ctx context.Context) (int64, error) {
-	const guidance = "no container_template_id was provided and no default container template is configured; please ask the user to open the Container Template page and set one template as default"
-	if r.containerRepo == nil {
-		return 0, fmt.Errorf("%s", guidance)
-	}
-	definition, err := r.containerRepo.GetDefaultContainerTemplateDefinition(ctx)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 0, fmt.Errorf("%s", guidance)
-		}
-		return 0, fmt.Errorf("failed to resolve default container template: %w", err)
-	}
-	if definition == nil || definition.ID <= 0 {
-		return 0, fmt.Errorf("%s", guidance)
-	}
-	return definition.ID, nil
 }
 
 // storageBaseDir 返回 storage.base_dir；未配置时返回空串（由节点构建回落到 "."）。

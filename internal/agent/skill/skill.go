@@ -28,10 +28,6 @@ import (
 const (
 	// SkillFileName 是技能描述文件的文件名。
 	SkillFileName = "SKILL.md"
-	// MaxNameLength 是技能名允许的最大长度。
-	MaxNameLength = 64
-	// MaxDescriptionLength 是技能描述允许的最大长度。
-	MaxDescriptionLength = 1024
 )
 
 var (
@@ -90,9 +86,6 @@ func (s *Skill) Validate() error {
 	if s.Name == "" {
 		errs = append(errs, errors.New("name is required"))
 	} else {
-		if len(s.Name) > MaxNameLength {
-			errs = append(errs, fmt.Errorf("name exceeds %d characters", MaxNameLength))
-		}
 		if !namePattern.MatchString(s.Name) {
 			errs = append(errs, errors.New("name must be alphanumeric with hyphens, no leading/trailing/consecutive hyphens"))
 		}
@@ -103,8 +96,6 @@ func (s *Skill) Validate() error {
 
 	if s.Description == "" {
 		errs = append(errs, errors.New("description is required"))
-	} else if len(s.Description) > MaxDescriptionLength {
-		errs = append(errs, fmt.Errorf("description exceeds %d characters", MaxDescriptionLength))
 	}
 
 	return errors.Join(errs...)

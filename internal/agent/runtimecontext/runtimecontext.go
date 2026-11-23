@@ -179,7 +179,7 @@ type AgentAnalysisInput struct {
 	ProjectID int64
 	// Name 是任务名称（同时用作节点名称与容器资源名）。
 	Name string
-	// ContainerTemplateID 是模型选择的容器模板；<=0 表示未指定，由实现回退到系统默认模板。
+	// ContainerTemplateID 是模型选择的容器模板；必须 > 0（不回退到系统默认模板）。
 	ContainerTemplateID int64
 	// Command 是要执行的 shell 命令，由实现写入节点工作目录的 run.sh。
 	Command string

@@ -1,7 +1,13 @@
 ---
 name: paper-writing
-description: Use this skill whenever the user asks you to write, expand, revise, or edit any part of a manuscript, grant proposal, fellowship application, or research statement. Defines the SNAP group's academic writing style (concise, claim-first, no padding) and the mechanics of iterating on Overleaf projects via local git sync and in-place bracketed instructions. Trigger on: "paper", "manuscript", "grant", "proposal", "fellowship", "abstract", "intro", "methods", "discussion", "reviewer response".
-version: 1.0
+description: >-
+  Use this skill whenever the user asks you to write, expand, revise, or edit any part of a
+  manuscript, grant proposal, fellowship application, or research statement. Defines the SNAP
+  group's academic writing style (concise, claim-first, no padding) and the mechanics of
+  iterating on Overleaf projects via local git sync and in-place bracketed instructions.
+  Trigger on: "paper", "manuscript", "grant", "proposal", "fellowship", "abstract",
+  "intro", "methods", "discussion", "reviewer response".
+version: "1.0"
 ---
 
 # Paper & Grant Writing
