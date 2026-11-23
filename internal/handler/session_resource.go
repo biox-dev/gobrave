@@ -53,7 +53,11 @@ func NewSessionResourceHandler(
 }
 
 // sessionResourceItem 是会话结果列表项。
+//
+// ID 是 agent_session_resources 关联行的主键（不是资源 ID）：前端「取消关联」时
+// 按它删除关联行，ResourceID 仍然用于打开对应资源。
 type sessionResourceItem struct {
+	ID           int64     `json:"id,string"`
 	ResourceID   int64     `json:"resource_id,string"`
 	ResourceType string    `json:"resource_type"`
 	Name         string    `json:"name"`
@@ -201,6 +205,7 @@ func (h *SessionResourceHandler) buildItems(ctx context.Context, rows []agenttyp
 	items := make([]sessionResourceItem, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, sessionResourceItem{
+			ID:           row.ID,
 			ResourceID:   row.ResourceID,
 			ResourceType: string(row.ResourceType),
 			Name:         h.resolveName(ctx, row.ResourceType, row.ResourceID),
@@ -257,4 +262,71 @@ func (h *SessionResourceHandler) resolveName(ctx context.Context, resourceType a
 		}
 	}
 	return ""
+}
+
+// sessionResourceUnlinkBody 是「取消会话资源关联」的请求体。
+//
+// ID 是 agent_session_resources 关联行主键（列表返回项里的 id），不是资源 ID。
+type sessionResourceUnlinkBody struct {
+	ID string `json:"id" binding:"required"`
+}
+
+// UnlinkSessionResource godoc
+// @Summary      删除一条会话资源关联
+// @Description  按关联行 ID 删除「会话 ↔ 资源」关联；只删关联，不删除脚本 / 工作流 / 分析等资源本身。
+// @Description  关联所属会话须对当前用户可见（项目成员）。
+// @Tags         Agent
+// @Accept       json
+// @Produce      json
+// @Param        request  body      handler.sessionResourceUnlinkBody  true  "关联行 ID"
+// @Success      200      {object}  gin.H
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      403      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/session/resources/unlink [post]
+func (h *SessionResourceHandler) UnlinkSessionResource(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body sessionResourceUnlinkBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewValidationError("invalid request body").WithDetails(err.Error()))
+		return
+	}
+	id, err := parseAgentID(body.ID)
+	if err != nil || id <= 0 {
+		c.Error(errors.NewValidationError("invalid id"))
+		return
+	}
+
+	ctx := c.Request.Context()
+	// 先按关联行拿到会话，再做项目可见性校验，避免越权删除其它项目的会话结果。
+	row, err := h.resources.Get(ctx, id)
+	if err != nil {
+		handleAgentError(c, err, "failed to load session resource")
+		return
+	}
+	if row == nil {
+		c.Error(errors.NewNotFoundError("record not found"))
+		return
+	}
+	session, err := h.sessions.Get(ctx, row.SessionID)
+	if err != nil {
+		handleAgentError(c, err, "failed to get session")
+		return
+	}
+	if err := ensureProjectAccessible(ctx, h.projects, session.ProjectID, userID); err != nil {
+		c.Error(err)
+		return
+	}
+
+	if err := h.resources.Unlink(ctx, id); err != nil {
+		handleAgentError(c, err, "failed to unlink session resource")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": body.ID})
 }

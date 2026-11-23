@@ -133,6 +133,10 @@ type SessionResourceStore interface {
 	List(ctx context.Context, sessionID int64, resourceType types.SessionResourceType) ([]*types.SessionResource, error)
 	// ListBySession 返回某个会话关联的全部类型资源（按创建时间倒序）。
 	ListBySession(ctx context.Context, sessionID int64) ([]*types.SessionResource, error)
+	// Get 按关联行主键返回一条关联；不存在时返回 nil。
+	Get(ctx context.Context, id int64) (*types.SessionResource, error)
+	// Delete 按关联行主键删除一条关联（只删关联，不删脚本 / 工作流等资源本身）。
+	Delete(ctx context.Context, id int64) error
 	// DeleteBySession 删除某个会话的全部资源关联（会话删除时级联清理）。
 	DeleteBySession(ctx context.Context, sessionID int64) error
 }

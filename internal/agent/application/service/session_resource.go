@@ -112,6 +112,24 @@ func (s *sessionResourceService) ListBySession(ctx context.Context, sessionID in
 	return sessionResourceValues(rows), nil
 }
 
+// Get 按关联行主键返回一条关联；关联不存在时返回 nil。
+func (s *sessionResourceService) Get(ctx context.Context, id int64) (*agenttypes.SessionResource, error) {
+	if s == nil || s.store == nil || id <= 0 {
+		return nil, nil
+	}
+	return s.store.Get(ctx, id)
+}
+
+// Unlink 删除一条「会话 ↔ 资源」关联（不删除资源本身）。
+//
+// 只删关联行，脚本 / 工作流 / 分析运行等资源仍然保留，只是不再出现在该会话的结果面板里。
+func (s *sessionResourceService) Unlink(ctx context.Context, id int64) error {
+	if s == nil || s.store == nil || id <= 0 {
+		return nil
+	}
+	return s.store.Delete(ctx, id)
+}
+
 // sessionResourceValues 把指针列表转换为值列表，忽略 nil 行。
 func sessionResourceValues(rows []*agenttypes.SessionResource) []agenttypes.SessionResource {
 	out := make([]agenttypes.SessionResource, 0, len(rows))

@@ -40,6 +40,11 @@ type SessionResourceService interface {
 	List(ctx context.Context, sessionID int64, resourceType types.SessionResourceType) ([]types.SessionResource, error)
 	// ListBySession 返回某个会话关联的全部类型资源（按创建时间倒序）。
 	ListBySession(ctx context.Context, sessionID int64) ([]types.SessionResource, error)
+	// Get 按关联行主键返回一条关联；不存在时返回 nil。
+	Get(ctx context.Context, id int64) (*types.SessionResource, error)
+	// Unlink 按关联行主键删除一条关联：只删除「会话 ↔ 资源」关联行，
+	// 不删除脚本 / 工作流 / 分析等资源本身。关联不存在时视为成功（幂等）。
+	Unlink(ctx context.Context, id int64) error
 }
 
 // PlanService 提供计划（AgentPlan，项目级、可跨会话复用的步骤树）的增删改查。

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	agent "github.com/biox-dev/gobrave/internal/agent/types"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
@@ -71,6 +72,32 @@ func (r *gormSessionResourceStore) ListBySession(ctx context.Context, sessionID 
 		Order("created_at DESC, id DESC").
 		Find(&rows).Error
 	return rows, err
+}
+
+// Get 按关联行主键返回一条关联；不存在时返回 nil（由调用方决定 404 语义）。
+func (r *gormSessionResourceStore) Get(ctx context.Context, id int64) (*agent.SessionResource, error) {
+	if id <= 0 {
+		return nil, nil
+	}
+	var row agent.SessionResource
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &row, nil
+}
+
+// Delete 按关联行主键删除一条关联；关联不存在时视为成功（幂等）。
+func (r *gormSessionResourceStore) Delete(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("id = ?", id).
+		Delete(&agent.SessionResource{}).Error
 }
 
 func (r *gormSessionResourceStore) DeleteBySession(ctx context.Context, sessionID int64) error {
