@@ -744,10 +744,14 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		return lspmanager.NewManager()
 	}))
 	// Provide ChatService：多轮对话编排层（复用 AgentService 的任务状态机）。
-	// 会话按用户当前激活项目隔离；CreateTurn 通过 WorkspaceResolver 统一解析
-	// 项目与会话工作目录（<项目目录>/sessions/<sessionID>）。
-	must(container.Provide(func(svc *agentservice.AgentService, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService, projects interfaces.ProjectService, workspace agentservice.WorkspaceResolver) *agentservice.ChatService {
-		return agentservice.NewChatService(svc, sessions, messages, projects, workspace)
+	// 会话按项目隔离：项目 ID 由调用方（HTTP 层）随 TurnInput 提供；
+	// 会话工作目录由 Session.EnsureWorkingDir 从存储根目录派生（<项目目录>/sessions/<sessionID>）。
+	must(container.Provide(func(svc *agentservice.AgentService, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService, projects interfaces.ProjectService, cfg *config.Config) *agentservice.ChatService {
+		baseDir := ""
+		if cfg != nil && cfg.Storage != nil {
+			baseDir = cfg.Storage.BaseDir
+		}
+		return agentservice.NewChatService(svc, sessions, messages, projects, baseDir)
 	}))
 	must(container.Provide(manager.NewAISummaryContentProvider))
 	must(container.Provide(manager.NewAISummaryWorker))
@@ -982,11 +986,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// RuntimeContextResolver：把业务 env(type,id) 解析为系统提示词 + 工作目录，
 	// 供 Agent 会话（AgentHandler）使用。
 	must(container.Provide(handler.NewRuntimeContextResolver))
-	// 同一解析器以 WorkspaceResolver 接口暴露给 ChatService：CreateTurn 用它统一
-	// 解析当前用户项目与会话工作目录。
-	must(container.Provide(func(r *handler.RuntimeContextResolver) agentservice.WorkspaceResolver {
-		return r
-	}))
 	must(container.Provide(handler.NewAISummaryHandler))
 	must(container.Provide(handler.NewAgentHandler))
 	// 会话结果查询：按资源类型返回会话关联的脚本 / 工作流 / 分析节点。

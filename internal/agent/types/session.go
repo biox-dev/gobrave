@@ -2,6 +2,8 @@ package types
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/utils"
@@ -44,6 +46,32 @@ type Session struct {
 
 // TableName 返回会话表的表名。
 func (Session) TableName() string { return "agent_sessions" }
+
+// WorkingDir 返回会话的工作目录：<baseDir>/data/<projectID>/sessions/<sessionID>。
+//
+// baseDir 是存储根目录（config.Storage.BaseDir），会话目录与项目默认工作目录
+// （<baseDir>/data/<projectID>）同源，便于按项目统一管理。
+func (s Session) WorkingDir(baseDir string) string {
+	return utils.GetAgentSessionDir(utils.GetProjectDir(baseDir, s.ProjectID), s.ID)
+}
+
+// EnsureWorkingDir 返回会话工作目录，不存在时创建。
+//
+// 会话必须已有主键并归属项目；baseDir 为空时返回错误，避免在目录缺失的情况下
+// 继续执行 Agent（工具会读写错误的位置）。
+func (s Session) EnsureWorkingDir(baseDir string) (string, error) {
+	if s.ID <= 0 {
+		return "", fmt.Errorf("session id is required to resolve working directory")
+	}
+	if s.ProjectID <= 0 {
+		return "", fmt.Errorf("session project id is required to resolve working directory")
+	}
+	baseDir = strings.TrimSpace(baseDir)
+	if baseDir == "" {
+		return "", fmt.Errorf("storage base dir is empty")
+	}
+	return utils.EnsureAgentSessionDir(utils.GetProjectDir(baseDir, s.ProjectID), s.ID)
+}
 
 // BeforeCreate 在写入数据库前用雪花 ID 初始化主键。
 func (s *Session) BeforeCreate(_ *gorm.DB) error {

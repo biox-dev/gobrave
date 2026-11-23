@@ -10,7 +10,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	. "github.com/biox-dev/gobrave/internal/agent/types"
 	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
-	coretypes "github.com/biox-dev/gobrave/internal/types"
 	coreinterfaces "github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
@@ -27,10 +26,12 @@ import (
 
 // TurnInput 是一次「轮次」的输入，由 HTTP 层构造。
 //
-// 项目与会话工作目录由 ChatService 统一解析（见 CreateTurn / resolveWorkspace），
-// 调用方不再传入 ProjectID / WorkingDir。
+// 会话工作目录由 Session 统一派生（见 Session.EnsureWorkingDir），调用方只需提供
+// 当前激活项目 ID：新建会话时必填，续接已有会话时可省略（沿用会话自身的项目）。
 type TurnInput struct {
-	UserID    int64
+	UserID int64
+	// ProjectID 是当前激活项目 ID：新建会话时必填，续接会话时可为 0。
+	ProjectID int64
 	SessionID int64  // 为 0 则创建新会话
 	Message   string // 本轮用户输入
 	Provider  string
@@ -43,14 +44,6 @@ type TurnInput struct {
 	// user 消息在任务创建之前就要写入（历史拼接依赖它），因此任务 ID 必须先确定：
 	// 前端据此可以按 task_id 精确删除 / 重试这一轮的消息。
 	TaskID int64
-}
-
-// WorkspaceResolver 解析用户当前激活项目及其默认工作目录。
-//
-// 由 handler.RuntimeContextResolver 实现并在容器中注入；CreateTurn 据此统一生成
-// 「会话工作目录」（<项目工作目录>/sessions/<sessionID>）与会话归属项目。
-type WorkspaceResolver interface {
-	Resolve(ctx context.Context, userID int64) (string, *coretypes.Project, error)
 }
 
 // turnState 记录一轮执行期间的中间态（从 CreateTurn 到本轮结束）。
@@ -67,10 +60,10 @@ type ChatService struct {
 	agent    *AgentService
 	sessions SessionService
 	messages MessageService
-	// projects 用于解析当前用户激活项目，使会话按项目隔离。
+	// projects 用于校验会话 / 任务的项目成员可见性。
 	projects coreinterfaces.ProjectService
-	// workspace 解析用户激活项目与其默认工作目录（可为空，单元测试场景）。
-	workspace WorkspaceResolver
+	// baseDir 是存储根目录（config.Storage.BaseDir）：会话工作目录 = <项目目录>/sessions/<sessionID>。
+	baseDir string
 
 	mu    sync.Mutex
 	locks map[int64]*sync.Mutex // sessionID → 会话级轮次锁
@@ -81,15 +74,15 @@ type ChatService struct {
 //
 // 构造时把自己的轮次收尾挂到 AgentService 的任务终态回调上：即使 Provider 没有
 // 补发 done / error 事件，任务进入终态也会释放会话锁、写入兜底消息。
-func NewChatService(agent *AgentService, sessions SessionService, messages MessageService, projects coreinterfaces.ProjectService, workspace WorkspaceResolver) *ChatService {
+func NewChatService(agent *AgentService, sessions SessionService, messages MessageService, projects coreinterfaces.ProjectService, baseDir string) *ChatService {
 	s := &ChatService{
-		agent:     agent,
-		sessions:  sessions,
-		messages:  messages,
-		projects:  projects,
-		workspace: workspace,
-		locks:     make(map[int64]*sync.Mutex),
-		turns:     make(map[int64]*turnState),
+		agent:    agent,
+		sessions: sessions,
+		messages: messages,
+		projects: projects,
+		baseDir:  baseDir,
+		locks:    make(map[int64]*sync.Mutex),
+		turns:    make(map[int64]*turnState),
 	}
 	if agent != nil {
 		agent.SetTaskFinishedHandler(s.onTaskFinished)
@@ -136,16 +129,17 @@ func (s *ChatService) lockFor(sessionID int64) *sync.Mutex {
 func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Session, error) {
 	isNewSession := in.SessionID == 0
 
-	// 统一解析激活项目与项目工作目录：新建会话归属该项目，
-	// 会话工作目录 = <项目工作目录>/sessions/<sessionID>（见下方 facts）。
-	projectWorkingDir, projectID, err := s.resolveWorkspace(ctx, in.UserID)
+	// 会话归属项目：新建会话用调用方提供的激活项目；续接会话沿用会话自身的项目。
+	sess, err := s.getOrCreate(ctx, in)
 	if err != nil {
 		return nil, Session{}, err
 	}
-
-	sess, err := s.getOrCreate(ctx, in, projectID)
-	if err != nil {
-		return nil, Session{}, err
+	// 历史会话未归属项目（早期数据）：用本轮提供的激活项目补齐。
+	if sess.ProjectID <= 0 {
+		if in.ProjectID <= 0 {
+			return nil, Session{}, fmt.Errorf("session project id is missing")
+		}
+		sess.ProjectID = in.ProjectID
 	}
 
 	// 首轮对话时先用用户输入写入「占位标题」（截断到固定长度），保证会话列表立即可读；
@@ -201,19 +195,11 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Sess
 		Messages:       promptMessagesForRequest(history),
 		Stream:         true, // 会话轮次统一走流式，便于捕获 assistant 文本
 	}
-	// 统一 Agent 工作目录：<项目工作目录>/sessions/<sessionID>，必须创建成功，否则本轮直接失败。
-	if projectWorkingDir == "" {
-		l.Unlock()
-		return nil, Session{}, fmt.Errorf("project working directory is empty")
-	}
-	if sess.ID <= 0 {
-		l.Unlock()
-		return nil, Session{}, fmt.Errorf("session id is required to resolve working directory")
-	}
-	workingDir, dirErr := utils.EnsureAgentSessionDir(projectWorkingDir, sess.ID)
+	// 会话工作目录：<项目目录>/sessions/<sessionID>，必须创建成功，否则本轮直接失败。
+	workingDir, dirErr := sess.EnsureWorkingDir(s.baseDir)
 	if dirErr != nil {
 		l.Unlock()
-		return nil, Session{}, fmt.Errorf("failed to create session working directory under %q: %w", projectWorkingDir, dirErr)
+		return nil, Session{}, fmt.Errorf("failed to resolve session working directory: %w", dirErr)
 	}
 
 	facts := TaskFacts{
@@ -393,15 +379,14 @@ func shouldIncludeInPrompt(m Message) bool {
 	}
 }
 
-// ListSessions 分页查询当前激活项目下的所有会话（不限定发起人）。
+// ListSessions 分页查询指定项目下的所有会话（不限定发起人）。
 //
-// 会话按用户当前激活项目隔离：项目 ID 由 resolveWorkspace 统一解析，
+// 会话按项目隔离：projectID 由调用方（HTTP 层）按用户当前激活项目提供，
 // 因此同一项目内不同用户发起的会话都会返回（带 username）。
 // keyword 会同时匹配会话标题与发起人用户名，结果按 updated_at 倒序。
-func (s *ChatService) ListSessions(ctx context.Context, userID int64, keyword string, offset, limit int) ([]Session, int64, error) {
-	_, projectID, err := s.resolveWorkspace(ctx, userID)
-	if err != nil {
-		return nil, 0, err
+func (s *ChatService) ListSessions(ctx context.Context, projectID int64, keyword string, offset, limit int) ([]Session, int64, error) {
+	if projectID <= 0 {
+		return nil, 0, fmt.Errorf("project id is required to list sessions")
 	}
 	params := SessionListParams{
 		ProjectID: projectID,
@@ -827,43 +812,18 @@ func (s *ChatService) ForkSession(ctx context.Context, params SessionForkParams)
 	return s.GetSession(ctx, forked.ID, SessionMessageQuery{})
 }
 
-// getOrCreate 加载已有会话；SessionID 为 0 时在 projectID 下创建新会话。
-func (s *ChatService) getOrCreate(ctx context.Context, in TurnInput, projectID int64) (Session, error) {
+// getOrCreate 加载已有会话；SessionID 为 0 时在 in.ProjectID 下创建新会话。
+func (s *ChatService) getOrCreate(ctx context.Context, in TurnInput) (Session, error) {
 	if in.SessionID == 0 {
-		if projectID == 0 {
+		if in.ProjectID <= 0 {
 			return Session{}, fmt.Errorf("project id is required to create session")
 		}
 		return s.sessions.Create(ctx, SessionCreateParams{
 			UserID:    in.UserID,
-			ProjectID: projectID,
+			ProjectID: in.ProjectID,
 			Provider:  in.Provider,
 			Model:     in.Model,
 		})
 	}
 	return s.sessions.Get(ctx, in.SessionID)
-}
-
-// resolveWorkspace 解析用户当前激活项目及其默认工作目录。
-//
-// CreateTurn 依赖它生成会话工作目录，因此解析器未注入 / 目录为空时直接返回错误。
-func (s *ChatService) resolveWorkspace(ctx context.Context, userID int64) (string, int64, error) {
-	if s.workspace == nil {
-		return "", 0, fmt.Errorf("workspace resolver is not configured")
-	}
-	workingDir, project, err := s.workspace.Resolve(ctx, userID)
-	if err != nil {
-		return "", 0, err
-	}
-	workingDir = strings.TrimSpace(workingDir)
-	if workingDir == "" {
-		return "", 0, fmt.Errorf("project working directory is empty")
-	}
-	var projectID int64
-	if project != nil {
-		projectID = project.ID
-	}
-	if projectID == 0 {
-		return "", 0, fmt.Errorf("active project is empty")
-	}
-	return workingDir, projectID, nil
 }

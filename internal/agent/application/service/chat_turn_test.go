@@ -10,18 +10,8 @@ import (
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
-	coretypes "github.com/biox-dev/gobrave/internal/types"
 	"gorm.io/gorm"
 )
-
-// stubWorkspaceResolver 是测试用的 WorkspaceResolver：固定返回一个临时目录与一个项目。
-type stubWorkspaceResolver struct {
-	dir string
-}
-
-func (r stubWorkspaceResolver) Resolve(context.Context, int64) (string, *coretypes.Project, error) {
-	return r.dir, &coretypes.Project{ID: 1, ProjectName: "test"}, nil
-}
 
 // newTurnTestChat 构造一个带 mock Provider 的 ChatService，
 // 并返回会话 / 消息服务与底层 AgentService 便于造数据与断言。
@@ -39,9 +29,9 @@ func newTurnTestChat(t *testing.T) (
 	t.Cleanup(func() { turnTestDBs.Delete(svc) })
 	sessions := agentservice.NewSessionService(agentrepository.NewGormSessionStore(db))
 	messages := agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))
-	chat := agentservice.NewChatService(svc, sessions, messages, nil, stubWorkspaceResolver{dir: t.TempDir()})
+	chat := agentservice.NewChatService(svc, sessions, messages, nil, t.TempDir())
 
-	sess, err := sessions.Create(context.Background(), agenttypes.SessionCreateParams{UserID: 1, Title: "t"})
+	sess, err := sessions.Create(context.Background(), agenttypes.SessionCreateParams{UserID: 1, ProjectID: 1, Title: "t"})
 	if err != nil {
 		t.Fatalf("Create session: %v", err)
 	}

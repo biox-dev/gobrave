@@ -293,7 +293,7 @@ func TestRecoverInvokesTaskFinishedHandler(t *testing.T) {
 
 	svc := newServiceOnDB(t, db)
 	// 关键：ChatService 在 Recover 之前构造，注册任务终态回调。
-	agentservice.NewChatService(svc, sessions, messages, nil, nil)
+	agentservice.NewChatService(svc, sessions, messages, nil, "")
 
 	task := agenttypes.NewTask(agenttypes.Request{Provider: agenttypes.ProviderMock}, agenttypes.TaskFacts{SessionID: sess.ID})
 	task.SessionID = sess.ID
@@ -346,7 +346,7 @@ func TestCancelKeepsResumableCheckpoint(t *testing.T) {
 	sessions := agentservice.NewSessionService(agentrepository.NewGormSessionStore(db))
 	messages := agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))
 	svc := newServiceOnDB(t, db)
-	agentservice.NewChatService(svc, sessions, messages, nil, nil)
+	agentservice.NewChatService(svc, sessions, messages, nil, "")
 
 	sess, err := sessions.Create(ctx, agenttypes.SessionCreateParams{UserID: 1, Title: "t"})
 	if err != nil {

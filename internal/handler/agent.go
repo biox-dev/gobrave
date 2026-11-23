@@ -312,8 +312,21 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 			return
 		}
 	}
+
+	// 新建会话需要归属项目：由当前用户激活项目决定（续接会话沿用会话自身的项目）。
+	var projectID int64
+	if sessionID == 0 {
+		var err error
+		projectID, err = h.activeProjectID(c.Request.Context(), userID)
+		if err != nil {
+			handleAgentError(c, err, "failed to resolve active project")
+			return
+		}
+	}
+
 	task, sess, err := h.chat.CreateTurn(c.Request.Context(), agentservice.TurnInput{
 		UserID:    userID,
+		ProjectID: projectID,
 		SessionID: sessionID,
 		Message:   req.Message,
 		Provider:  req.Provider,
@@ -1102,7 +1115,13 @@ func (h *AgentHandler) PageSessions(c *gin.Context) {
 		return
 	}
 
-	sessions, total, err := h.chat.ListSessions(c.Request.Context(), userID, req.GetKeyword(), req.Offset(), req.Limit())
+	projectID, err := h.activeProjectID(c.Request.Context(), userID)
+	if err != nil {
+		handleAgentError(c, err, "failed to resolve active project")
+		return
+	}
+
+	sessions, total, err := h.chat.ListSessions(c.Request.Context(), projectID, req.GetKeyword(), req.Offset(), req.Limit())
 	if err != nil {
 		handleAgentError(c, err, "failed to page sessions")
 		return
@@ -2036,6 +2055,24 @@ func (h *AgentHandler) StopEventStream() {
 		presenceUnsub()
 	}
 	h.stream.stop()
+}
+
+// activeProjectID 返回当前用户激活项目 ID（新建会话 / 会话列表按项目隔离时使用）。
+//
+// 这里只暴露「userID → projectID」这一层能力：会话工作目录由
+// Session.EnsureWorkingDir 从存储根目录统一派生，不在 HTTP 层拼接路径。
+func (h *AgentHandler) activeProjectID(ctx context.Context, userID int64) (int64, error) {
+	if h.runtimeCtx == nil {
+		return 0, stderrs.New("runtime context resolver is not configured")
+	}
+	_, project, err := h.runtimeCtx.Resolve(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	if project == nil || project.ID == 0 {
+		return 0, stderrs.New("active project is empty")
+	}
+	return project.ID, nil
 }
 
 // getCurrentUser 从 gin 上下文读取当前登录用户（由认证中间件注入）。
