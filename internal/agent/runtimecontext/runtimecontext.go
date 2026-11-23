@@ -564,6 +564,14 @@ type AnalysisNodeBrowser interface {
 
 	// ReadAnalysisNodeFile 直接读取节点工作目录下指定文件的正文（command / params）。
 	ReadAnalysisNodeFile(ctx context.Context, projectID int64, nodeID int64, file ResourceFile) (ResourceFileContent, error)
+
+	// ListAnalysisNodeFiles 返回节点由系统自动登记到 go_file 的产物文件。
+	//
+	// 这些记录不是用户手工添加的：节点运行成功且输出校验通过后，由系统按节点类型
+	// 写入 go_file.analysis_node_id -> analysis_nodes.id（agent 命令节点来自
+	// output/outputs.json，script / scheduler 节点来自 output_patterns 中 type=file 的条目）。
+	// 节点没有产物时返回空切片而不是错误；projectID 必须为正数，节点必须属于当前激活项目。
+	ListAnalysisNodeFiles(ctx context.Context, projectID int64, nodeID int64) ([]AnalysisNodeFile, error)
 }
 
 // AnalysisNodeListFilters 是「列出项目分析节点」的过滤条件（全部可选）。
@@ -1041,6 +1049,29 @@ type ScriptDetail struct {
 	ScriptBrief
 	// ReadmeContent 是 README.md 的正文内容；文件不存在时为空（不视为错误）。
 	ReadmeContent string `json:"readme_content,omitempty"`
+}
+
+// AnalysisNodeFile 是分析节点产物在 go_file 中的登记记录（list_analysis_node_files 的 output_files）。
+//
+// 这些记录由系统在节点运行成功且输出校验通过后自动写入，不是用户手工添加：
+//   - agent 命令节点：来自命令写出的 output/outputs.json，role 固定为 DEFAULT；
+//   - script / scheduler 节点：来自 output_patterns 中 type=file 的条目，role 取条目声明。
+type AnalysisNodeFile struct {
+	// FileID 是 go_file 主键，可直接传给 get_file 读取正文。
+	FileID   int64  `json:"file_id,string"`
+	FileName string `json:"file_name,omitempty"`
+	// Path 是产物文件的绝对路径。
+	Path   string `json:"path"`
+	Format string `json:"format,omitempty"`
+	// Role 是产物在分析结果表单中发布的角色（缺省 DEFAULT）。
+	Role string `json:"role,omitempty"`
+	// FileKey 是登记键：agent 节点为 outputs.json 的 key，脚本节点为输出句柄名。
+	FileKey     string `json:"file_key,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	MD5         string `json:"md5,omitempty"`
+	Description string `json:"description,omitempty"`
+	// CreatedAt 是登记时间（RFC3339）。
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // AnalysisNodeBrief 是分析节点的只读摘要（工具回传给模型的最小字段集）。

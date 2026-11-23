@@ -51,6 +51,42 @@ type UpdateAnalysisNodeAgentOutput struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// updateAnalysisNodeAgentDescription 返回 update_analysis_node_agent 的工具描述（Markdown 格式）。
+//
+// 描述里写清适用节点类型、可更新字段、「更新后默认运行」，以及 agent 命令节点的
+// 产物如何被系统登记为 list_analysis_node_files 的 output_files、要新增 / 调整登记产物时
+// 应改 command 后重跑（而不是新建节点）。
+func updateAnalysisNodeAgentDescription() string {
+	return `## 用途
+
+更新 Agent 命令节点（creation_source=agent，无绑定脚本，run.sh 由 Agent 生成），默认更新后运行。仅适用于 get_analysis_node 返回 node_type=agent 的节点；script / scheduler 类型（绑定脚本）请改用 update_analysis_node_script。
+
+## 入参
+
+- **analysis_node_id**（必填）：要更新的节点 ID（整数，字符串以保精度）。
+- 下列可更新字段至少给出一个，未给出的保持原值：
+  - **node_name**：新的节点名称；
+  - **command**：新的 shell 命令（多行可用换行分隔），会写入节点 run.sh；
+  - **container_template_id**：新的容器模板 ID（必须是已存在的容器模板）；
+  - **file / content / old_string / new_string**：直接编辑 run.sh（content 整体覆盖，或 old_string → new_string 唯一替换）。
+- **run**（可选，默认 true）：为 true 时更新成功后立即运行并等待结束，返回状态、执行日志与日志路径；为 false 时只更新不运行（之后可用 run_analysis_node）。
+- **timeout_seconds**（可选，默认 600；run=false 时忽略）。
+
+command 会直接写入节点 run.sh（命令不落库），并重建 env.sh / params.json、清空节点输出目录（output）。
+
+## 产物登记（output_files）：让文件出现在 list_analysis_node_files 的结果里
+
+agent 命令节点没有 output_patterns：系统在节点运行成功、输出校验通过后，只把 output/outputs.json 中列出、且路径真实存在的文件登记到文件表 go_file（file_key 为 outputs.json 的 key，role 固定 DEFAULT）。list_analysis_node_files 的 output_files 就是这些登记记录。
+
+要让新增 / 修改后的产物出现在 output_files 中：
+
+1. 用 command（或 file/old_string/new_string 编辑 run.sh）让命令把产物写到 workspace_dir/output/ 下；
+2. 在命令最后写 output/outputs.json（key 为语义化名称，value 为产物绝对路径）；
+3. 保持 run=true（默认）重新运行。运行失败或路径不存在的条目不登记。
+
+未登记进 outputs.json 的文件不会出现在 output_files 里，也无法被下游节点 / 数据集直接引用。`
+}
+
 // UpdateAnalysisNodeAgent 返回一个「更新 Agent 命令节点」工具。
 //
 // 适用节点类型：仅 creation_source=agent（get_analysis_node 返回 node_type=agent）的
@@ -70,7 +106,7 @@ type UpdateAnalysisNodeAgentOutput struct {
 func UpdateAnalysisNodeAgent(updater runtimecontext.AnalysisNodeUpdater, runner runtimecontext.AnalysisNodeRunner, browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
 	return tool.NewFunc(
 		UpdateAnalysisNodeAgentToolName,
-		"更新 Agent 命令节点（creation_source=agent，无绑定脚本，run.sh 由 Agent 生成），默认更新后运行。仅适用于 get_analysis_node 返回 node_type=agent 的节点；script / scheduler 类型（绑定脚本）请改用 update_analysis_node_script。analysis_node_id 必填；可选给出 node_name / command / container_template_id，至少给出一个；未给出的字段保持原值。command 会直接写入节点 run.sh（命令不落库），并清空节点输出目录（output）。run 可选，默认 true：为 true 时更新成功后立即运行该节点并等待结束，返回状态、执行日志与日志路径；为 false 时只更新节点不运行（之后可用 run_analysis_node 运行）。timeout_seconds 可选，默认 600，run=false 时忽略。",
+		updateAnalysisNodeAgentDescription(),
 		tool.Schema("更新 agent（命令）节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("要更新的分析节点 ID（必填，整数，字符串以保精度）。"),
 			"node_name":        tool.StringProperty("新的节点名称，留空表示不修改。"),

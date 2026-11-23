@@ -93,7 +93,8 @@ func runAnalysisNodeDescription() string {
 
 ## 后续工具
 
-- 查看节点名称、工作目录与已保存参数用 get_analysis_node。`
+- 查看节点名称、工作目录与已保存参数用 get_analysis_node。
+- 运行成功后，系统会把节点产物自动登记到文件表（agent 命令节点来自 output/outputs.json，script / scheduler 节点来自 output_patterns 中 type=file 的条目），用 get_analysis_node 的 **output_files** 查看；未登记的文件需按对应节点的规则补齐后再重跑。`
 }
 
 // RunAnalysisNode 返回一个「运行分析节点」工具。

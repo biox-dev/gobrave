@@ -36,7 +36,7 @@ func getAnalysisWorkflowDescription() string {
 
 注意区分两个层级，别混用：
 - **analysis**（本工具）：一次工作流运行，含 job_status / 全部节点；
-- **analysis_node**（get_analysis_node）：这次运行里的单个节点，含工作目录 / params.json / 产物。
+- **analysis_node**（get_analysis_node）：这次运行里的单个节点，含工作目录 / params.json / 产物；需要系统登记的产物文件时用 list_analysis_node_files。
 
 ## 返回字段
 
@@ -50,7 +50,7 @@ func getAnalysisWorkflowDescription() string {
 
 ## 后续工具
 
-- 看单个节点的参数与产物用 get_analysis_node（节点 ID 来自 UI 或项目分析树）。
+- 看单个节点的参数用 get_analysis_node，看节点系统登记的产物文件用 list_analysis_node_files（节点 ID 来自 UI 或项目分析树）。
 - 改名称 / 参数 / 缓存策略用 update_analysis_workflow；新建一次运行用 create_analysis_workflow，重新提交运行用 run_analysis_workflow。
 - 看工作流定义用 get_workflow（workflow_id 已随本工具回传）。`
 }

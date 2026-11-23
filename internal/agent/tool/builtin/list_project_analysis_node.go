@@ -49,7 +49,7 @@ func listProjectAnalysisNodesDescription() string {
 ## 适用场景
 
 - 用户问「这个项目有哪些节点 / 某个脚本在哪些分析里跑过 / 哪些节点失败了」时，先用本工具按条件拉清单；
-- 想要找到节点再深入查看时：用本工具拿到 analysis_node_id，再用 get_analysis_node 看 params.json / 产物路径，用 run_analysis_node 重跑。
+- 想要找到节点再深入查看时：用本工具拿到 analysis_node_id，再用 get_analysis_node 看 params.json / 工作目录 / 输出目录，用 list_analysis_node_files 看系统自动登记的产物文件，用 run_analysis_node 重跑。
 
 ## 返回字段
 
@@ -72,7 +72,7 @@ func listProjectAnalysisNodesDescription() string {
 
 ## 后续工具
 
-查看单个节点详情 / 参数 / 产物用 get_analysis_node；重跑用 run_analysis_node；修改用 update_analysis_node_agent（agent 节点）或 update_analysis_node_script（script / scheduler 节点）；查看所属运行用 get_analysis_workflow。`
+查看单个节点详情 / 参数用 get_analysis_node，查看系统登记产物用 list_analysis_node_files；重跑用 run_analysis_node；修改用 update_analysis_node_agent（agent 节点）或 update_analysis_node_script（script / scheduler 节点）；查看所属运行用 get_analysis_workflow。`
 }
 
 // ListProjectAnalysisNodes 返回一个「列出当前项目分析节点」工具。

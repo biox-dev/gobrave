@@ -408,6 +408,21 @@ func (t *AnalysisNode) OutputsFile() string {
 	return filepath.Join(dir, AnalysisNodeOutputsFileName)
 }
 
+// AnalysisNodeOutputMarkdownFileName 是节点输出目录下的分析报告文件名。
+const AnalysisNodeOutputMarkdownFileName = "output.md"
+
+// OutputMarkdownFile 返回节点分析报告（OutputDirectory 下的 output.md）的路径。
+//
+// 与 OutputsFile 同一口径：路径只由 OutputDirectory 推导，调用方不再各自拼
+// filepath.Join(dir, "output.md")；无法推导输出目录时返回空串。
+func (t *AnalysisNode) OutputMarkdownFile() string {
+	dir := t.OutputDirectory()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, AnalysisNodeOutputMarkdownFileName)
+}
+
 // MarshalJSON 在序列化时补齐派生路径字段。
 //
 // 这些路径已不再是结构体字段（只由 WorkspaceDir 推导），但前端与既有接口契约

@@ -54,6 +54,39 @@ type UpdateAnalysisNodeScriptOutput struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// updateAnalysisNodeScriptDescription 返回 update_analysis_node_script 的工具描述（Markdown 格式）。
+//
+// 描述里写清适用节点类型、可更新字段、「更新后默认运行」，以及 script / scheduler 节点的
+// 产物如何按 output_patterns 被系统登记为 list_analysis_node_files 的 output_files、要新增 /
+// 调整登记产物时应先改脚本 io_schema 再重跑（本工具不直接改 output_patterns 内容）。
+func updateAnalysisNodeScriptDescription() string {
+	return `## 用途
+
+更新脚本节点（creation_source=script 或 scheduler，绑定脚本，参数按脚本 io_schema 解析），默认更新后运行。仅适用于 get_analysis_node 返回 node_type=script / scheduler 的节点；agent 类型（无脚本的命令节点）请改用 update_analysis_node_agent。
+
+## 入参
+
+- **analysis_node_id**（必填）：要更新的节点 ID（整数，字符串以保精度）。
+- 下列可更新字段至少给出一个，未给出的保持原值：
+  - **node_name**：新的节点名称；
+  - **request_param**：新的请求参数，键为脚本 io_schema.json inputs 中各条目的 name。给出时按 io_schema 重新解析、刷新 inputs_patterns / output_patterns，重新生成 params.json 并清空节点输出目录（output）；显式传空对象（{}）表示清空参数；
+  - **file / content / old_string / new_string**：直接编辑 params.json（必须是合法 JSON 对象），编辑结果等同于 request_param，不能与 request_param 同时使用。
+- **run**（可选，默认 true）：为 true 时更新成功后立即运行并等待结束，返回状态、执行日志与日志路径；为 false 时只更新不运行（之后可用 run_analysis_node）。
+- **timeout_seconds**（可选，默认 600；run=false 时忽略）。
+
+## 产物登记（output_files）：让文件出现在 list_analysis_node_files 的结果里
+
+script / scheduler 节点的产物按节点的 output_patterns 登记，而 output_patterns 来自脚本 io_schema.json 的 outputs：节点运行成功、输出校验通过后，系统把 output_patterns 中 type=file 的条目对应的真实产物写入文件表 go_file（file_key 为输出句柄名，role 取条目的 role 字段，缺省 DEFAULT）。list_analysis_node_files 的 output_files 就是这些登记记录。
+
+本工具只更新节点参数 / 名称，不直接修改 output_patterns 的内容本身。要让新增 / 修改后的产物出现在 output_files 中：
+
+1. 先用 update_script 修改脚本 io_schema.json 的 outputs，把产物句柄声明为 {"type": "file"}（需要固定角色时给出 role）；
+2. 确保脚本运行结束时把产物写到 output/ 下，并在 output/outputs.json 中按句柄给出真实产物路径；
+3. 调用本工具（默认 run=true；请求参数非空时按最新 io_schema 刷新 output_patterns，运行前也会按最新 io_schema 重建）或 run_analysis_node 重新运行。
+
+运行失败或 outputs.json 缺少句柄时节点判失败且不会登记文件；不要通过重复新建节点来调整产物登记。`
+}
+
 // UpdateAnalysisNodeScript 返回一个「更新脚本节点」工具。
 //
 // 适用节点类型：仅 creation_source=script 或 scheduler（get_analysis_node 返回
@@ -69,11 +102,15 @@ type UpdateAnalysisNodeScriptOutput struct {
 //   - run 可选且默认为 true：更新成功后立即运行该节点并等待结束，返回状态与执行日志；
 //     run=false 时只更新节点，不提交运行。
 //
+// 节点的产物由系统在运行成功后按 output_patterns 中 type=file 的条目自动登记到
+// go_file（用 list_analysis_node_files 查看）；本工具不直接改 output_patterns，
+// 相关规则写在工具描述里。
+//
 // 该工具会写库并重写 params.json，并在默认情况下触发一次节点运行，因此声明 write 授权。
 func UpdateAnalysisNodeScript(updater runtimecontext.AnalysisNodeUpdater, runner runtimecontext.AnalysisNodeRunner, browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
 	return tool.NewFunc(
 		UpdateAnalysisNodeScriptToolName,
-		"更新脚本节点（creation_source=script 或 scheduler，绑定脚本，参数按脚本 io_schema 解析），默认更新后运行。仅适用于 get_analysis_node 返回 node_type=script / scheduler 的节点；agent 类型（无脚本的命令节点）请改用 update_analysis_node_agent。analysis_node_id 必填；可选给出 node_name / request_param，至少给出一个；未给出的字段保持原值。request_param 的键为脚本 io_schema.json inputs 中各条目的 name，给出时会按 io_schema 重新解析并生成 params.json 并清空节点输出目录（output）（显式传空对象表示清空参数）。run 可选，默认 true：为 true 时更新成功后立即运行该节点并等待结束，返回状态、执行日志与日志路径；为 false 时只更新节点不运行（之后可用 run_analysis_node 运行）。timeout_seconds 可选，默认 600，run=false 时忽略。",
+		updateAnalysisNodeScriptDescription(),
 		tool.Schema("更新 script / scheduler 节点的入参", map[string]any{
 			"analysis_node_id": tool.StringProperty("要更新的分析节点 ID（必填，整数，字符串以保精度）。"),
 			"node_name":        tool.StringProperty("新的节点名称，留空表示不修改。"),

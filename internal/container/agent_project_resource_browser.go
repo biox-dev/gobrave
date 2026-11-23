@@ -1,12 +1,14 @@
 package container
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/config"
@@ -25,6 +27,7 @@ import (
 //   - list_project_scripts：按 RuntimeContext.ProjectID 列出全部脚本；
 //   - get_script：按 script_id 查看脚本名称 / 描述 / 主文件路径 / io_schema.json 路径 / README.md 正文；
 //   - get_analysis_node：按 analysis_node_id（兼容 @analysis_node:<id> 引用）查看节点名称 / 工作目录 / params.json / 输出目录 / 参数；
+//   - list_analysis_node_files：按 analysis_node_id 查看系统自动登记到 go_file 的节点产物文件（output_files）；
 //   - list_project_workflow：按 RuntimeContext.ProjectID 列出全部工作流（摘要 + DAG 节点 / 连线数）；
 //   - get_workflow：按 workflow_id（兼容 @workflow:<id> 引用）查看工作流元数据、DAG 定义与 io_schema 原文；
 //   - get_analysis_workflow：按 analysis_id（兼容 @analysis:<id> 引用）查看一次分析运行的状态 / 参数 / 节点分布；
@@ -229,9 +232,74 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 	}, nil
 }
 
-// ReadAnalysisNodeFile 直接读取节点工作目录下指定文件的正文（command / params）。
+// ListAnalysisNodeFiles 返回节点由系统自动登记到 go_file 的产物文件。
+//
+// go_file.analysis_node_id 由节点完成时的 recordNodeOutputFiles 写入
+// （agent 命令节点来自 output/outputs.json，script / scheduler 节点来自
+// output_patterns 中 type=file 的条目），这里只做只读读取，并校验节点属于当前激活项目。
+// 由独立工具 list_analysis_node_files 使用。
+func (b *projectResourceBrowser) ListAnalysisNodeFiles(ctx context.Context, projectID int64, nodeID int64) ([]runtimecontext.AnalysisNodeFile, error) {
+	if projectID <= 0 {
+		return nil, fmt.Errorf("list_analysis_node_files: project_id is required")
+	}
+	if nodeID <= 0 {
+		return nil, fmt.Errorf("list_analysis_node_files: analysis_node_id is required")
+	}
+	if b.analysisRepo == nil || b.dataSvc == nil {
+		return nil, fmt.Errorf("list_analysis_node_files: required services are not configured")
+	}
+
+	node, err := b.analysisRepo.GetAnalysisNodeByID(ctx, nodeID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("list_analysis_node_files: analysis node %d not found", nodeID)
+		}
+		return nil, fmt.Errorf("list_analysis_node_files: failed to load node: %w", err)
+	}
+	if node == nil || node.ID == 0 {
+		return nil, fmt.Errorf("list_analysis_node_files: analysis node %d not found", nodeID)
+	}
+	if node.ProjectID != projectID {
+		return nil, fmt.Errorf("list_analysis_node_files: analysis node %d does not belong to the active project %d", node.ID, projectID)
+	}
+
+	files, err := b.dataSvc.ListFileByAnalysisNodeID(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("list_analysis_node_files: failed to list files of node %d: %w", nodeID, err)
+	}
+
+	out := make([]runtimecontext.AnalysisNodeFile, 0, len(files))
+	for _, file := range files {
+		if file == nil {
+			continue
+		}
+		createdAt := ""
+		if !file.CreatedAt.IsZero() {
+			createdAt = file.CreatedAt.Format(time.RFC3339)
+		}
+		out = append(out, runtimecontext.AnalysisNodeFile{
+			FileID:      file.ID,
+			FileName:    file.FileName,
+			Path:        file.Path,
+			Format:      file.Format,
+			Role:        file.Role,
+			FileKey:     file.FileKey,
+			Size:        file.Size,
+			MD5:         file.MD5,
+			Description: file.Description,
+			CreatedAt:   createdAt,
+		})
+	}
+	return out, nil
+}
+
+// ReadAnalysisNodeFile 直接读取节点工作目录下指定文件的正文（command / params / output）。
+//
+// output 不是单个文件：它读取节点 output 目录下的产物正文（先用 output.md，再按登记顺序
+// 拼接 go_file 中该节点已登记的产物），多个文件以 "===== <path> =====" 分隔，见
+// readAnalysisNodeOutputBundle。
 func (b *projectResourceBrowser) ReadAnalysisNodeFile(ctx context.Context, projectID int64, nodeID int64, file runtimecontext.ResourceFile) (runtimecontext.ResourceFileContent, error) {
-	if !isOneOfResourceFile(file, runtimecontext.ResourceFileCommand, runtimecontext.ResourceFileParams) {
+	if !isOneOfResourceFile(file, runtimecontext.ResourceFileCommand, runtimecontext.ResourceFileParams, runtimecontext.ResourceFileOutput) {
 		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: unsupported file %q", file)
 	}
 	if b.analysisRepo == nil {
@@ -251,6 +319,9 @@ func (b *projectResourceBrowser) ReadAnalysisNodeFile(ctx context.Context, proje
 	if node.ProjectID != projectID {
 		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: analysis node %d does not belong to the active project %d", node.ID, projectID)
 	}
+	if file == runtimecontext.ResourceFileOutput {
+		return b.readAnalysisNodeOutputBundle(ctx, node)
+	}
 	path := node.CommandFile()
 	if file == runtimecontext.ResourceFileParams {
 		path = node.ParamsFile()
@@ -260,6 +331,94 @@ func (b *projectResourceBrowser) ReadAnalysisNodeFile(ctx context.Context, proje
 		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: %w", err)
 	}
 	return runtimecontext.NewResourceFileContent(file, path, data), nil
+}
+
+const (
+	// analysisNodeOutputBundleMaxBytes 是 files=["output"] 一次性回传产物正文的字节上限。
+	analysisNodeOutputBundleMaxBytes = 200 * 1024
+)
+
+// readAnalysisNodeOutputBundle 读取节点 output 目录下的产物正文，拼成单份返回。
+//
+// 读取顺序：先 output/output.md（分析报告），再按登记顺序读取 go_file 中该节点已登记的
+// 产物（跳过重复路径、二进制文件、不存在的文件）。每个文件前加 "===== <path> =====" 分隔，
+// 总长度超过 analysisNodeOutputBundleMaxBytes 时截断并在末尾注明。
+//
+// 没有可读正文时返回 Exists=false，Path 指向节点 output 目录，模型可改用 get_file 按
+// output_files 中的 file_id 读取具体产物。
+func (b *projectResourceBrowser) readAnalysisNodeOutputBundle(ctx context.Context, node *types.AnalysisNode) (runtimecontext.ResourceFileContent, error) {
+	outputDir := node.OutputDirectory()
+	content := runtimecontext.ResourceFileContent{File: runtimecontext.ResourceFileOutput, Path: outputDir}
+	if outputDir == "" {
+		return content, nil
+	}
+
+	paths := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	addPath := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		key := filepath.Clean(path)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		paths = append(paths, path)
+	}
+
+	// 分析报告优先，即便它没有被登记到 go_file 也先读。
+	addPath(node.OutputMarkdownFile())
+	if b.dataSvc != nil {
+		files, err := b.dataSvc.ListFileByAnalysisNodeID(ctx, node.ID)
+		if err != nil {
+			return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: failed to list output files of node %d: %w", node.ID, err)
+		}
+		for _, file := range files {
+			if file != nil {
+				addPath(file.Path)
+			}
+		}
+	}
+
+	var builder strings.Builder
+	written := 0
+	for _, path := range paths {
+		if written >= analysisNodeOutputBundleMaxBytes {
+			break
+		}
+		data, err := readFileIfExists(path)
+		if err != nil || data == nil {
+			continue
+		}
+		// 跳过二进制产物（图片 / 表格文件等），它们的正文对模型无意义且可能很大。
+		if bytes.IndexByte(data, 0) >= 0 {
+			continue
+		}
+		text := string(data)
+		remaining := analysisNodeOutputBundleMaxBytes - written
+		truncated := false
+		if len(text) > remaining {
+			text = text[:remaining]
+			truncated = true
+		}
+		fmt.Fprintf(&builder, "===== %s =====\n", path)
+		builder.WriteString(text)
+		if !strings.HasSuffix(text, "\n") {
+			builder.WriteString("\n")
+		}
+		if truncated {
+			builder.WriteString("... (truncated)\n")
+		}
+		written += len(text)
+	}
+
+	if written > 0 {
+		content.Content = builder.String()
+		content.Exists = true
+	}
+	return content, nil
 }
 
 // ListWorkflowsByProject 返回指定项目下的全部工作流（按 id 倒序，不分页）。

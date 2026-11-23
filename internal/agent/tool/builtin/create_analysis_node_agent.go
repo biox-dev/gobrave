@@ -45,9 +45,9 @@ type CreateAnalysisNodeAgentOutput struct {
 
 // createAnalysisNodeAgentDescription 返回 create_analysis_node_agent 的工具描述。
 //
-// 与 bash 工具（bashDescription）同风格：把执行步骤、产物目录约定与 outputs.json 的登记
-// 规则直接写进描述，模型只看工具描述就能写出「命令 + output/ 产物 + outputs.json 索引」的
-// 正确用法，而无需额外翻查技能文档。
+// 与 bash 工具（bashDescription）同风格：把执行步骤、产物目录约定、outputs.json 的登记
+// 规则以及「登记与 output_files 的关系」直接写进描述，模型只看工具描述就能写出
+// 「命令 + output/ 产物 + outputs.json 索引」的正确用法，而无需额外翻查技能文档。
 func createAnalysisNodeAgentDescription() string {
 	return `创建一个命令型分析节点：给定节点名称、容器模板 ID 与一段 shell 命令（container_template_id 必填，由你显式传入，不会回退到系统默认容器模板），系统在节点工作目录下生成 run.sh。run 可选，默认 true：为 true 时立即提交容器执行并等待结束，返回状态、退出码与命令日志；为 false 时只创建节点不运行，之后可用 run_analysis_node 再运行该节点。所属项目取自当前会话上下文，无需传入。
 
@@ -86,6 +86,15 @@ Before executing the command, please follow these steps:
  }
  EOF
  ~~~
+
+2.1 File registration（文件登记，决定 get_analysis_node 的 output_files）:
+ - 命令型节点没有 output_patterns：系统只登记 output/outputs.json 中列出、且路径真实存在的文件
+   （写入文件表 go_file，file_key 为 outputs.json 的 key，role 固定 DEFAULT）。
+ - 未写进 outputs.json 的文件不会出现在节点的 output_files 里，也无法被下游节点 / 数据集直接引用。
+ - 只有运行成功（输出校验无错）时才登记；失败或路径不存在的条目不登记。
+ - 因此：想让某个产物被系统收录，必须在 output/ 下生成该文件并把它写进 output/outputs.json。
+ - 之后要新增 / 调整登记范围：用 update_analysis_node_agent 修改 command（或直接编辑 run.sh）
+   后重新运行，不要重复新建节点。
 
 3. Return Result（运行与返回）:
  - run=true（默认）时立即执行命令，返回 status、success、exit_code 与命令日志 log。

@@ -52,6 +52,39 @@ type CreateAnalysisNodeScriptOutput struct {
 	Error       string `json:"error,omitempty"`
 }
 
+// createAnalysisNodeScriptDescription 返回 create_analysis_node_script 的工具描述（Markdown 格式）。
+//
+// 把「节点如何从脚本 io_schema 初始化输出契约」「系统在什么条件下把产物登记为
+// output_files」以及「要新增 / 调整登记产物时应改 io_schema 再重跑」写进描述，
+// 模型只看工具描述就能判断该节点会收录哪些文件、缺文件时改哪里。
+func createAnalysisNodeScriptDescription() string {
+	return `## 用途
+
+为已有脚本创建一个新的独立分析节点（可反复创建，用于同一脚本的多次独立分析）。所属项目取自当前会话上下文，无需传入。
+
+## 入参
+
+- **script_id**（必填）：脚本主键 ID（整数，字符串以保精度）。
+- **node_name**（可选）：节点名称，留空时使用脚本名称。
+- **request_param**（可选）：节点初始请求参数，键为脚本 io_schema.json inputs 中各条目的 name；传入时按 io_schema 解析并生成 params.json。
+- **run**（可选，默认 true）：为 true 时创建后立即运行并等待结束，返回状态、执行日志与日志路径；为 false 时只创建节点，之后用 run_analysis_node 运行。
+- **timeout_seconds**（可选，默认 600；run=false 时忽略）。
+
+## 返回字段
+
+节点 ID、节点名称、脚本 ID / 名称 / 类型、工作目录（workspace_dir）、params.json 路径、脚本主文件路径（script_file_path）、io_schema.json 路径（io_schema_path），以及运行状态 / 日志 / 日志路径。
+
+## 产物文件（output_files）：系统自动登记
+
+脚本节点（creation_source=script）在创建 / 每次运行时按脚本最新 io_schema.json 的 outputs 初始化节点的 output_patterns。节点运行成功且输出校验通过后，系统会把 output_patterns 中 type=file 的条目对应的真实产物登记到文件表 go_file（analysis_node_id 指向该节点），之后可用 list_analysis_node_files 查看，或在数据集 / 下游节点里引用：
+
+- file_key 为该输出的句柄名（io_schema outputs 条目的 name），role 取该条目的 role 字段（缺省 DEFAULT）。
+- 脚本必须把产物写到节点的 output/ 目录，并在 output/outputs.json 中按输出句柄给出真实产物路径；outputs.json 缺少句柄（或路径不存在）时输出校验失败，节点判失败且不会登记文件。
+- 只有运行成功才登记；重复运行按 (analysis_node_id, file_key) 覆盖更新。
+
+如果希望某些产物被系统收录：先用 update_script 修改脚本 io_schema.json 的 outputs（把产物句柄声明为 {"type": "file"}，必要时给出 role），确保脚本写出对应文件并登记到 output/outputs.json，再用 update_analysis_node_script（默认 run=true，运行前按最新 io_schema 刷新 output_patterns）或 run_analysis_node 重新运行，不要重复新建节点。`
+}
+
 // CreateAnalysisNodeScript 返回一个「为已有脚本创建分析节点（可选运行）」工具。
 //
 // 行为：按脚本最新 io_schema.json 初始化节点的 inputs_patterns / output_patterns；
@@ -59,12 +92,15 @@ type CreateAnalysisNodeScriptOutput struct {
 // params.json / run.sh 等运行期文件。run 为 true（默认）时紧接着用通用节点运行链路
 // 提交运行并等待终态，返回状态、执行日志与关键路径；run 为 false 时只创建节点。
 //
+// 节点的产物由系统在运行成功后按 output_patterns 中 type=file 的条目自动登记到
+// go_file（用 list_analysis_node_files 查看），相关规则写在工具描述里。
+//
 // 该工具会创建业务数据（写库 + 写盘），并在默认情况下触发一次节点运行，因此声明
 // write 授权。
 func CreateAnalysisNodeScript(creator runtimecontext.AnalysisNodeCreator, runner runtimecontext.AnalysisNodeRunner) tool.Tool {
 	return tool.NewFunc(
 		CreateAnalysisNodeScriptToolName,
-		"为已有脚本创建一个新的独立分析节点（可反复创建，用于同一脚本的多次独立分析）。script_id 必填；node_name 留空时使用脚本名称；可选传入 request_param（键为脚本 io_schema 的 name）作为节点的初始参数，传入时会按 io_schema 解析并生成 params.json。run 可选，默认 true：为 true 时创建后立即运行该节点并等待结束，返回状态、执行日志与日志路径；为 false 时只创建节点不运行（之后可用 run_analysis_node 运行）。返回节点 ID、工作目录、params.json 路径，以及脚本主文件路径（script_file_path）与 io_schema.json 路径（io_schema_path）。所属项目取自当前会话上下文，无需传入。",
+		createAnalysisNodeScriptDescription(),
 		tool.Schema("为已有脚本创建分析节点的入参", map[string]any{
 			"script_id": tool.StringProperty("脚本主键 ID（必填，整数，字符串以保精度）。"),
 			"node_name": tool.StringProperty("节点名称（可选），留空时使用脚本名称。"),

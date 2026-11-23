@@ -24,6 +24,7 @@ func TestAnalysisNodePathMethods(t *testing.T) {
 		{name: "command", got: node.CommandFile(), want: filepath.Join(ws, "run.sh")},
 		{name: "log", got: node.LogFile(), want: filepath.Join(ws, "command.log")},
 		{name: "outputs", got: node.OutputsFile(), want: filepath.Join(ws, "output", AnalysisNodeOutputsFileName)},
+		{name: "output_markdown", got: node.OutputMarkdownFile(), want: filepath.Join(ws, "output", AnalysisNodeOutputMarkdownFileName)},
 	} {
 		if tc.got != tc.want {
 			t.Fatalf("%s = %q, want %q", tc.name, tc.got, tc.want)
@@ -33,12 +34,13 @@ func TestAnalysisNodePathMethods(t *testing.T) {
 	// WorkspaceDir 为空时不产生悬空路径。
 	empty := &AnalysisNode{}
 	for name, got := range map[string]string{
-		"output":  empty.OutputDirectory(),
-		"cache":   empty.CacheDirectory(),
-		"params":  empty.ParamsFile(),
-		"command": empty.CommandFile(),
-		"log":     empty.LogFile(),
-		"outputs": empty.OutputsFile(),
+		"output":          empty.OutputDirectory(),
+		"cache":           empty.CacheDirectory(),
+		"params":          empty.ParamsFile(),
+		"command":         empty.CommandFile(),
+		"log":             empty.LogFile(),
+		"outputs":         empty.OutputsFile(),
+		"output_markdown": empty.OutputMarkdownFile(),
 	} {
 		if got != "" {
 			t.Fatalf("%s of a workspace-less node = %q, want empty", name, got)
@@ -48,6 +50,9 @@ func TestAnalysisNodePathMethods(t *testing.T) {
 	var nilNode *AnalysisNode
 	if got := nilNode.OutputsFile(); got != "" {
 		t.Fatalf("nil node outputs = %q, want empty", got)
+	}
+	if got := nilNode.OutputMarkdownFile(); got != "" {
+		t.Fatalf("nil node output markdown = %q, want empty", got)
 	}
 }
 

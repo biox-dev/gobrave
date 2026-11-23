@@ -36,6 +36,7 @@ func (f *fakeAnalysisBrowser) ReadAnalysisFile(_ context.Context, _ int64, _ int
 // fakeAnalysisNodeBrowser 实现 AnalysisNodeBrowser 的只读方法，供 list_project_analysis_node 测试使用。
 type fakeAnalysisNodeBrowser struct {
 	nodes   []runtimecontext.AnalysisNodeSummary
+	files   []runtimecontext.AnalysisNodeFile
 	filters runtimecontext.AnalysisNodeListFilters
 	called  bool
 }
@@ -52,6 +53,10 @@ func (f *fakeAnalysisNodeBrowser) GetAnalysisNodeByID(_ context.Context, _ int64
 
 func (f *fakeAnalysisNodeBrowser) ReadAnalysisNodeFile(_ context.Context, _ int64, _ int64, file runtimecontext.ResourceFile) (runtimecontext.ResourceFileContent, error) {
 	return runtimecontext.ResourceFileContent{File: file}, nil
+}
+
+func (f *fakeAnalysisNodeBrowser) ListAnalysisNodeFiles(_ context.Context, _ int64, _ int64) ([]runtimecontext.AnalysisNodeFile, error) {
+	return f.files, nil
 }
 
 // TestOptionalPositiveID 覆盖可选 ID 的解析（空值 / 引用前缀 / 非法值）。

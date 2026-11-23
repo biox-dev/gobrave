@@ -22,7 +22,7 @@ import (
 // 取值按资源域复用，但含义明确：
 //   - 脚本：script_file（主文件）/ io_schema / readme；
 //   - 工作流：dag_definition / io_schema / readme；
-//   - 分析节点：command（run.sh）/ params（params.json）；
+//   - 分析节点：command（run.sh）/ params（params.json）/ output（已登记的产物文件正文）；
 //   - 分析运行：params（params.json）。
 type ResourceFile string
 
@@ -39,6 +39,9 @@ const (
 	ResourceFileParams ResourceFile = "params"
 	// ResourceFileCommand 是命令型节点的 run.sh。
 	ResourceFileCommand ResourceFile = "command"
+	// ResourceFileOutput 是节点 output 目录下的产物正文：优先分析报告 output.md，
+	// 再按登记顺序拼接 go_file 中该节点已登记的产物文件（跳过二进制 / 不存在的文件）。
+	ResourceFileOutput ResourceFile = "output"
 )
 
 var resourceFileDescriptions = map[ResourceFile]string{
@@ -48,6 +51,7 @@ var resourceFileDescriptions = map[ResourceFile]string{
 	ResourceFileDagDefinition: "dag_definition.json（DAG 定义）",
 	ResourceFileParams:        "params.json（运行参数）",
 	ResourceFileCommand:       "command（命令型节点 run.sh）",
+	ResourceFileOutput:        "output（节点产物文件正文，含 output.md）",
 }
 
 // Valid 判断是否为已定义的资源文件类型。
@@ -73,6 +77,8 @@ var resourceFileAliases = map[ResourceFile]ResourceFile{
 	"dag_definition_path": ResourceFileDagDefinition,
 	"params_path":         ResourceFileParams,
 	"command_path":        ResourceFileCommand,
+	"output_dir":          ResourceFileOutput,
+	"output_files":        ResourceFileOutput,
 }
 
 // ParseResourceFile 解析并校验模型给出的文件类型。
