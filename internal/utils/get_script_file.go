@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -50,6 +51,31 @@ func GetAnalysisNodeEnvFile(workspaceDir string) string {
 
 func GetProjectDir(baseDir string, projectID int64) string {
 	return filepath.Join(baseDir, "data", projectDirName(projectID))
+}
+
+// EnsureProjectDir 返回项目数据目录（<base>/data/<projectID>），不存在则创建。
+func EnsureProjectDir(baseDir string, projectID int64) (string, error) {
+	dir := GetProjectDir(baseDir, projectID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// GetAgentSessionDir 返回某会话的 Agent 工作目录：<workspaceDir>/sessions/<sessionID>。
+//
+// workspaceDir 是项目数据目录（见 GetProjectDir / EnsureProjectDir）。
+func GetAgentSessionDir(workspaceDir string, sessionID int64) string {
+	return filepath.Join(workspaceDir, "sessions", projectDirName(sessionID))
+}
+
+// EnsureAgentSessionDir 返回某会话的 Agent 工作目录，不存在则创建。
+func EnsureAgentSessionDir(workspaceDir string, sessionID int64) (string, error) {
+	dir := GetAgentSessionDir(workspaceDir, sessionID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 func GetProjectReportDir(baseDir string, projectID int64, reportID string) string {

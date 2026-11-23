@@ -3,9 +3,6 @@ package handler
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
@@ -136,8 +133,8 @@ func (r *RuntimeContextResolver) resolveDefaultWorkingDirectory(ctx context.Cont
 		return "", nil, fmt.Errorf("storage.base_dir is empty")
 	}
 
-	workingDir := filepath.Join(baseDir, "data", strconv.FormatInt(project.ID, 10))
-	if err := os.MkdirAll(workingDir, 0o755); err != nil {
+	workingDir, err := utils.EnsureProjectDir(baseDir, project.ID)
+	if err != nil {
 		return "", nil, err
 	}
 	return workingDir, project, nil

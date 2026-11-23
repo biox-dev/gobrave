@@ -291,13 +291,6 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	// Profile 只能来自当前登录用户，忽略请求体中的 profile。
 	profileID := user.AgentConfig.ProfileID
 
-	// 工作目录固定为当前激活项目的默认目录（业务上下文 env 已移除）。
-	workingDir, project, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), userID)
-	if rcErr != nil {
-		handleAgentError(c, rcErr, "failed to resolve working directory")
-		return
-	}
-
 	// 1) 准备一轮：追加 user 消息、组装历史、创建任务（复用 AgentService 状态机）。
 	// 新的对话 conversation_id 可能为空字符串，表示新建会话（TurnInput.SessionID == 0）。
 	var sessionID int64
@@ -320,14 +313,12 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		}
 	}
 	task, sess, err := h.chat.CreateTurn(c.Request.Context(), agentservice.TurnInput{
-		UserID:     userID,
-		SessionID:  sessionID,
-		ProjectID:  project.ID,
-		Message:    req.Message,
-		Provider:   req.Provider,
-		Model:      req.Model,
-		ProfileID:  profileID,
-		WorkingDir: workingDir,
+		UserID:    userID,
+		SessionID: sessionID,
+		Message:   req.Message,
+		Provider:  req.Provider,
+		Model:     req.Model,
+		ProfileID: profileID,
 	})
 	if err != nil {
 		handleAgentError(c, err, "failed to create conversation turn")
@@ -1389,19 +1380,11 @@ func (h *AgentHandler) RetryTurn(c *gin.Context) {
 		return
 	}
 
-	// 与 /agent/chat 完全一致的上下文解析（Profile / 工作目录）。
-	workingDir, project, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), user.ID)
-	if rcErr != nil {
-		handleAgentError(c, rcErr, "failed to resolve working directory")
-		return
-	}
-
+	// 与 /agent/chat 完全一致的上下文解析（项目 / 工作目录由 ChatService 统一解析）。
 	task, sess, err := h.chat.RetryTurn(c.Request.Context(), agentservice.TurnInput{
-		UserID:     user.ID,
-		SessionID:  sessionID,
-		ProjectID:  project.ID,
-		ProfileID:  user.AgentConfig.ProfileID,
-		WorkingDir: workingDir,
+		UserID:    user.ID,
+		SessionID: sessionID,
+		ProfileID: user.AgentConfig.ProfileID,
 	}, taskID)
 	if err != nil {
 		handleAgentError(c, err, "failed to retry conversation turn")
@@ -1479,21 +1462,13 @@ func (h *AgentHandler) ForkTurn(c *gin.Context) {
 		upToSeq = int64(*req.UpToSeq)
 	}
 
-	workingDir, _, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), user.ID)
-	if rcErr != nil {
-		handleAgentError(c, rcErr, "failed to resolve working directory")
-		return
-	}
-
 	task, forkedSess, err := h.chat.ForkTurn(c.Request.Context(), agentservice.TurnInput{
-		UserID:     user.ID,
-		SessionID:  sessionID,
-		ProjectID:  sess.ProjectID,
-		Message:    req.Message,
-		Provider:   req.Provider,
-		Model:      req.Model,
-		ProfileID:  user.AgentConfig.ProfileID,
-		WorkingDir: workingDir,
+		UserID:    user.ID,
+		SessionID: sessionID,
+		Message:   req.Message,
+		Provider:  req.Provider,
+		Model:     req.Model,
+		ProfileID: user.AgentConfig.ProfileID,
 	}, upToSeq, req.CopyFiles)
 	if err != nil {
 		handleAgentError(c, err, "failed to fork and retry turn")

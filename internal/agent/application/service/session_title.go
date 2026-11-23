@@ -33,7 +33,7 @@ const (
 //   - 使用独立 goroutine + detached ctx，不阻塞本轮对话，也不受 HTTP 请求取消影响；
 //   - 调用 AgentService.CompleteText：不建任务、不写时间线、不暴露工具；
 //   - 仅当标题仍等于占位值时才覆盖，避免覆盖用户手动改名。
-func (s *ChatService) scheduleSessionTitle(ctx context.Context, sess Session, in TurnInput) {
+func (s *ChatService) scheduleSessionTitle(ctx context.Context, sess Session, in TurnInput, workingDir string) {
 	if s.agent == nil || strings.TrimSpace(in.Message) == "" {
 		return
 	}
@@ -48,7 +48,7 @@ func (s *ChatService) scheduleSessionTitle(ctx context.Context, sess Session, in
 		ctx, cancel := context.WithTimeout(base, sessionTitleTimeout)
 		defer cancel()
 
-		title, err := s.generateSessionTitle(ctx, sess, in)
+		title, err := s.generateSessionTitle(ctx, sess, in, workingDir)
 		if err != nil {
 			logger.Warnf(ctx, "[Chat] generate session title failed (session=%d): %v", sess.ID, err)
 			return
@@ -65,7 +65,7 @@ func (s *ChatService) scheduleSessionTitle(ctx context.Context, sess Session, in
 }
 
 // generateSessionTitle 调用一次无工具的 Agent 补全，根据用户问题生成标题。
-func (s *ChatService) generateSessionTitle(ctx context.Context, sess Session, in TurnInput) (string, error) {
+func (s *ChatService) generateSessionTitle(ctx context.Context, sess Session, in TurnInput, workingDir string) (string, error) {
 	// 与正式轮次保持一致：Profile 指定了 Provider / Model 时以 Profile 为准。
 	provider, model := in.Provider, in.Model
 	if profile, err := s.agent.ResolveProfile(ctx, in.ProfileID); err == nil && profile != nil {
@@ -89,7 +89,7 @@ func (s *ChatService) generateSessionTitle(ctx context.Context, sess Session, in
 			// 清理会话级资源（如持久 shell）；绑定真实会话会干扰正在执行的轮次。
 			SessionID:  0,
 			ProjectID:  sess.ProjectID,
-			WorkingDir: in.WorkingDir,
+			WorkingDir: workingDir,
 		},
 	})
 	if err != nil {
