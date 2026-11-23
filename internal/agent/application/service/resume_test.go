@@ -335,3 +335,61 @@ func TestRecoverInvokesTaskFinishedHandler(t *testing.T) {
 		t.Fatalf("expected an error message for interrupted task, messages=%+v", msgs)
 	}
 }
+
+// TestCancelKeepsResumableCheckpoint 验证用户手动终止（canceled）后：
+//   - 检查点被完整保留（不会因为终态清理而丢失）；
+//   - 会话的 CurrentTaskID 仍指向该任务，前端据此在该轮末尾展示「Continue」。
+func TestCancelKeepsResumableCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	sessions := agentservice.NewSessionService(agentrepository.NewGormSessionStore(db))
+	messages := agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))
+	svc := newServiceOnDB(t, db)
+	agentservice.NewChatService(svc, sessions, messages, nil)
+
+	sess, err := sessions.Create(ctx, agenttypes.SessionCreateParams{UserID: 1, Title: "t"})
+	if err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+
+	task := agenttypes.NewTask(agenttypes.Request{Provider: agenttypes.ProviderMock}, agenttypes.TaskFacts{SessionID: sess.ID})
+	task.SessionID = sess.ID
+	task.Status = agenttypes.TaskRunning
+	task.ResumeState = &agenttypes.TaskResumeState{Version: agenttypes.ResumeStateVersion}
+	if err := agentrepository.NewGormTaskRepository(db).Create(ctx, task); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	sess.CurrentTaskID = task.ID
+	if _, err := sessions.Save(ctx, sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	if err := svc.CancelTask(ctx, task.ID); err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	canceled, err := svc.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if canceled.Status != agenttypes.TaskCanceled {
+		t.Fatalf("status = %v, want canceled", canceled.Status)
+	}
+	if !canceled.Resumable {
+		t.Fatalf("canceled task must stay resumable: resumable=%v", canceled.Resumable)
+	}
+
+	got, err := sessions.Get(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("Get session: %v", err)
+	}
+	if got.CurrentTaskID != task.ID {
+		t.Fatalf("session CurrentTaskID = %d, want %d (resumable canceled task)", got.CurrentTaskID, task.ID)
+	}
+
+	// 用户点击 Continue：从检查点续跑应该被允许。
+	if err := svc.ResumeTask(ctx, task.ID); err != nil {
+		t.Fatalf("ResumeTask after cancel: %v", err)
+	}
+}

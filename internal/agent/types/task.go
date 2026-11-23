@@ -172,13 +172,14 @@ func (t *Task) TransitionTo(next TaskStatus) bool {
 
 // MarkResumed 把任务从「中断态」重新置为 running。
 //
-// 只允许 failed / waiting_permission / running（无活跃 goroutine 的挂起态）续跑；
-// completed / canceled / created 不允许通过该入口恢复（created 走 StartTask）。
-// 与 TransitionTo 分开是为了保持常规状态机的严格性：failed → running 只允许
+// 允许 failed / canceled / waiting_permission / running（无活跃 goroutine 的挂起态）续跑；
+// completed / created 不允许通过该入口恢复（created 走 StartTask）。
+// 用户手动终止（canceled）同样保留检查点，因此也属于可恢复的中断态。
+// 与 TransitionTo 分开是为了保持常规状态机的严格性：failed/canceled → running 只允许
 // 在“存在持久化检查点且人工 / 权限审批触发恢复”这一条路径上发生。
 func (t *Task) MarkResumed() bool {
 	switch t.Status {
-	case TaskFailed, TaskWaitingPermission, TaskRunning:
+	case TaskFailed, TaskCanceled, TaskWaitingPermission, TaskRunning:
 		now := time.Now()
 		t.Status = TaskRunning
 		t.Error = ""

@@ -93,9 +93,10 @@ func (s *ChatService) onTaskFinished(_ context.Context, task *Task) {
 	if task == nil {
 		return
 	}
-	// failed 且仍有检查点时不要把 CurrentTaskID 清成 0：会话需要继续指向这个
-	// 中断任务，前端才能展示「Continue」并从 /agent/task/resume 续跑。
-	keepCurrentTask := task.Status == TaskFailed && task.Resumable
+	// 只要仍保留检查点（resumable）就不要把 CurrentTaskID 清成 0：会话需要继续指向
+	// 这个中断任务，前端才能在该轮末尾展示「Continue」并从 /agent/task/resume 续跑。
+	// 覆盖三种中断来源：failed（后端重启 / 崩溃 / Provider 错误）与 canceled（用户手动终止）。
+	keepCurrentTask := task.Resumable
 	s.finishTurn(task.ID, task.SessionID, task.ResolvedProfileID, task.Error, keepCurrentTask)
 }
 

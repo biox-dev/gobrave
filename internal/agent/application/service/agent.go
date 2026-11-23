@@ -359,20 +359,22 @@ func (s *AgentService) transitionTask(ctx context.Context, task *Task, next Task
 		if errMsg != "" {
 			task.Error = errMsg
 		}
-		// 正常完成 / 主动取消后不再需要检查点：清理，避免任务被误判为可续跑。
-		// failed 保留检查点：无论是崩溃、panic 还是 Provider 临时错误，用户都可以手动续跑。
-		if next == TaskCompleted || next == TaskCanceled {
+		// 正常完成后不再需要检查点：清理，避免任务被误判为可续跑。
+		// failed / canceled 一律保留检查点：后端重启、panic、Provider 临时错误，
+		// 以及用户手动终止，都允许用户随后从 UI 点击「Continue」精确续跑。
+		// 用户不该为了「点错停止」重跑整个回合（工具调用、权限审批都要重来）。
+		if next == TaskCompleted {
 			task.ResumeState = nil
 			task.Resumable = false
 		}
 	}
 
-	// failed 任务可能因为执行期刚写入检查点而具备续跑能力；内存中的 Task 快照
-	// 未必包含最新检查点（Agent 循环通过 UpdateResumeState 单独写库），这里回查一次，
-	// 使 onTaskFinished 能据此决定是否保留会话的 CurrentTaskID。
-	if next == TaskFailed {
+	// 非正常结束的任务需要回查最新检查点：内存中的 Task 快照未必包含执行期
+	// 刚写入的检查点（Agent 循环通过 UpdateResumeState 单独写库），
+	// 而 onTaskFinished 要据此决定是否保留会话的 CurrentTaskID。
+	if next == TaskFailed || next == TaskCanceled {
 		if task.ResumeState == nil {
-			if latest, err := s.tasks.Get(ctx, task.ID); err == nil {
+			if latest, err := s.tasks.Get(ctx, task.ID); err == nil && latest != nil {
 				task.ResumeState = latest.ResumeState
 			}
 		}
@@ -386,9 +388,9 @@ func (s *AgentService) transitionTask(ctx context.Context, task *Task, next Task
 		return err
 	}
 
-	// Update 会 Omit resume_state；终态 completed / canceled 需要显式清理检查点。
-	// failed 保留检查点，供用户手动续跑。
-	if next == TaskCompleted || next == TaskCanceled {
+	// Update 会 Omit resume_state；只有正常完成才显式清理检查点，
+	// failed / canceled 保留检查点，供用户手动续跑。
+	if next == TaskCompleted {
 		if err := s.tasks.UpdateResumeState(ctx, task.ID, nil); err != nil {
 			logger.Warnf(ctx, "[agent] clear resume state for task %d failed: %v", task.ID, err)
 		}
@@ -901,7 +903,8 @@ func (s *AgentService) CancelTask(ctx context.Context, taskID int64) error {
 // 前置条件：
 //   - 任务存在检查点（Provider 在执行期写入）；
 //   - 任务无活跃 goroutine（否则返回 ErrTaskAlreadyRunning）；
-//   - 任务不是 completed / canceled（终态不可续跑）。
+//   - 任务不是 completed / created（正常完成与未开始的任务不可续跑）；
+//     手动终止的 canceled 任务保留检查点，允许用户点击「Continue」继续。
 //
 // 执行链：MarkResumed → 持久化 running → 启动 goroutine → Provider 读取检查点，
 // 重放未完成的工具调用（已批准的权限会被 consume 后直接放行），随后继续 Agent 循环。
@@ -913,7 +916,7 @@ func (s *AgentService) ResumeTask(ctx context.Context, taskID int64) error {
 	if task.ResumeState == nil {
 		return ErrTaskNotResumable
 	}
-	if task.Status == TaskCompleted || task.Status == TaskCanceled || task.Status == TaskCreated {
+	if task.Status == TaskCompleted || task.Status == TaskCreated {
 		return ErrTaskNotResumable
 	}
 
@@ -1017,16 +1020,8 @@ func (s *AgentService) Recover(ctx context.Context) error {
 		}
 
 		// 没有任何待处理交互却仍在 waiting：说明用户在上次进程退出前已经作出决策，
-		// 但执行循环没能恢复。有检查点时直接自动续跑；否则落到 failed（触发收尾回调），
-		// 避免任务永久悬挂。
-		if t.ResumeState != nil {
-			go func(id int64) {
-				if err := s.ResumeTask(context.Background(), id); err != nil {
-					logger.Warnf(context.Background(), "[agent] recover resume task %d failed: %v", id, err)
-				}
-			}(t.ID)
-			continue
-		}
+		// 但执行循环没能恢复。重启后不自行续跑：落到 failed 并保留检查点，
+		// 由用户在 UI 上点击「Continue」触发恢复。
 		_ = s.transitionTask(ctx, t, TaskFailed, "backend restarted: task was waiting but has no pending permission or question")
 	}
 	return nil
