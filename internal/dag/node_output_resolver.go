@@ -14,8 +14,9 @@ import (
 )
 
 // nodeOutputsFileName is the file a node writes its resolved outputs into,
-// located inside the node output directory.
-const nodeOutputsFileName = "outputs.json"
+// located inside the node output directory. The name itself lives next to the
+// path derivation in types.AnalysisNode.OutputsFile.
+const nodeOutputsFileName = types.AnalysisNodeOutputsFileName
 
 // nodeOutputResolver resolves the outputs produced by a finished node.
 type nodeOutputResolver interface {
@@ -45,8 +46,8 @@ func newFileSystemNodeOutputResolver() nodeOutputResolver {
 func (r *fileSystemNodeOutputResolver) Resolve(node *types.AnalysisNode, candidateOutputs map[string]any) (map[string]any, bool, []string) {
 	outputs := cloneMap(candidateOutputs)
 
-	path, ok := nodeOutputsPath(node)
-	if !ok {
+	path := node.OutputsFile()
+	if path == "" {
 		return outputs, true, nil
 	}
 
@@ -74,32 +75,6 @@ func (r *fileSystemNodeOutputResolver) Resolve(node *types.AnalysisNode, candida
 		outputs[handle] = value
 	}
 	return outputs, false, nil
-}
-
-// nodeOutputDir locates the directory a node writes its outputs into,
-// preferring the explicitly hydrated output dir and falling back to
-// <workspace>/output.
-func nodeOutputDir(node *types.AnalysisNode) (string, bool) {
-	if node == nil {
-		return "", false
-	}
-	if outputDir := strings.TrimSpace(node.OutputDir); outputDir != "" {
-		return outputDir, true
-	}
-	if workspaceDir := strings.TrimSpace(node.WorkspaceDir); workspaceDir != "" {
-		return filepath.Join(workspaceDir, "output"), true
-	}
-	return "", false
-}
-
-// nodeOutputsPath locates the outputs.json file for a node, preferring the
-// explicitly hydrated output dir and falling back to <workspace>/output.
-func nodeOutputsPath(node *types.AnalysisNode) (string, bool) {
-	dir, ok := nodeOutputDir(node)
-	if !ok {
-		return "", false
-	}
-	return filepath.Join(dir, nodeOutputsFileName), true
 }
 
 // outputProbeMaxEntries bounds how much of an output directory listing is spent

@@ -457,7 +457,8 @@ const (
 // handle, so a node that legitimately produces no outputs.json does not pay the
 // grace window.
 func (c *NodeCompletionCoordinator) resolveOutputsWithGrace(ctx context.Context, resolver nodeOutputResolver, node *types.AnalysisNode) (map[string]any, []string) {
-	dir, hasDir := nodeOutputDir(node)
+	dir := node.OutputDirectory()
+	hasDir := dir != ""
 	if hasDir {
 		refreshDirView(ctx, dir)
 	}
@@ -534,8 +535,8 @@ func (c *NodeCompletionCoordinator) logOutputValidationDiagnosis(ctx context.Con
 	if node == nil {
 		return
 	}
-	dir, ok := nodeOutputDir(node)
-	if !ok {
+	dir := node.OutputDirectory()
+	if dir == "" {
 		logger.Warnf(ctx, "[NodeCompletionCoordinator] output validation diagnosis: node has no output dir analysis_id=%d node_id=%s missing=%s",
 			node.AnalysisID, node.NodeID, strings.Join(outputErrors, "; "))
 		return
@@ -571,8 +572,8 @@ func (c *NodeCompletionCoordinator) scheduleOutputVisibilityPostMortem(node *typ
 	if node == nil {
 		return
 	}
-	path, ok := nodeOutputsPath(node)
-	if !ok {
+	path := node.OutputsFile()
+	if path == "" {
 		return
 	}
 	finishedAt := "unknown"
@@ -716,8 +717,8 @@ func resolveAgentOutputPath(node *types.AnalysisNode, path string) string {
 	if path == "" || filepath.IsAbs(path) {
 		return path
 	}
-	dir, ok := nodeOutputDir(node)
-	if !ok {
+	dir := node.OutputDirectory()
+	if dir == "" {
 		return path
 	}
 	return filepath.Join(dir, path)

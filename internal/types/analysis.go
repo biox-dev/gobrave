@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -346,6 +347,39 @@ func (t *AnalysisNode) HydrateDerivedPaths() {
 	t.CommandPath = l.CommandPath
 	t.ParamsPath = l.ParamsPath
 	t.LogPath = l.LogPath
+}
+
+// AnalysisNodeOutputsFileName 是节点把解析后的输出写回的文件名，位于节点输出目录下。
+const AnalysisNodeOutputsFileName = "outputs.json"
+
+// OutputDirectory 返回节点写出产物的目录：优先使用 HydrateDerivedPaths 填充的
+// OutputDir，未 hydrate 时回退到 <WorkspaceDir>/output。
+//
+// 两者都没有（既没有 OutputDir 也没有 WorkspaceDir）时返回空串，与
+// HydrateDerivedPaths 一致地避免产生悬空的路径。
+func (t *AnalysisNode) OutputDirectory() string {
+	if t == nil {
+		return ""
+	}
+	if outputDir := strings.TrimSpace(t.OutputDir); outputDir != "" {
+		return outputDir
+	}
+	if workspaceDir := strings.TrimSpace(t.WorkspaceDir); workspaceDir != "" {
+		return utils.GetAnalysisNodeOutputDir(workspaceDir)
+	}
+	return ""
+}
+
+// OutputsFile 返回节点 outputs.json 的路径（OutputDirectory 下的 outputs.json）。
+//
+// 节点完成时由 dag 的 nodeOutputResolver 读取；路径推导只保留这一处，调用方不再
+// 各自拼 filepath.Join(dir, "outputs.json")。无法推导输出目录时返回空串。
+func (t *AnalysisNode) OutputsFile() string {
+	dir := t.OutputDirectory()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, AnalysisNodeOutputsFileName)
 }
 
 // IsCommandNode 报告该节点是否为 Agent 创建的命令节点。
