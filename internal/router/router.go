@@ -480,6 +480,10 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler, sess
 	r.GET("/agent/session/resources", sessionResources.ListSessionResources)
 	// 会话结果：一次返回该会话的全部资源，并按资源类型分组（前端只发一次请求）。
 	r.GET("/agent/session/resources/all", sessionResources.ListAllSessionResources)
+	// 会话结果导出：在该会话工作目录的 report 目录下汇总分析节点输出与项目报告。
+	r.POST("/agent/session/resources/export", sessionResources.ExportSessionResources)
+	// 会话结果下载：打包 report 目录为 zip，压缩包名称取自会话标题。
+	r.GET("/agent/session/resources/export/download", sessionResources.DownloadSessionResources)
 	// 兼容旧路径（前端仍在使用 /agent/conversation/*）。
 	r.POST("/agent/conversation/page", handler.PageSessions)
 	r.GET("/agent/conversation/get", handler.GetSession)

@@ -8,6 +8,7 @@ import (
 
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,8 @@ type SessionResourceHandler struct {
 	plans agentinterfaces.PlanService
 	// projects 用于会话可见性判断：会话按项目隔离，项目成员都能查看。
 	projects interfaces.ProjectService
+	// cfg 提供 storage.base_dir，用于定位会话工作目录与报告正文文件。
+	cfg *config.Config
 }
 
 // NewSessionResourceHandler 创建会话资源处理器。
@@ -36,6 +39,7 @@ func NewSessionResourceHandler(
 	analysisRepo interfaces.AnalysisRepository,
 	plans agentinterfaces.PlanService,
 	projects interfaces.ProjectService,
+	cfg *config.Config,
 ) *SessionResourceHandler {
 	return &SessionResourceHandler{
 		sessions:     sessions,
@@ -44,6 +48,7 @@ func NewSessionResourceHandler(
 		analysisRepo: analysisRepo,
 		plans:        plans,
 		projects:     projects,
+		cfg:          cfg,
 	}
 }
 
