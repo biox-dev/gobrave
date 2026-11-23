@@ -12,7 +12,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/logging"
 	agentpolicy "github.com/biox-dev/gobrave/internal/agent/policy"
 	agentruntime "github.com/biox-dev/gobrave/internal/agent/runtime"
-	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	. "github.com/biox-dev/gobrave/internal/agent/types"
 	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
@@ -247,7 +246,7 @@ func (s *AgentService) execute(ctx context.Context, task *Task, rt Runtime) {
 // 异步（execute）与同步（RunTaskSync）共享这一执行路径。
 func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result, error) {
 	// 应用 Agent Profile：按 ID 解析 Profile → 覆盖模型 / Agent / 技能 → 渲染最终系统提示词。
-	// 最终系统提示词由 applyProfile 依据 Profile.SystemPrompt 模板 + RuntimeContext.SystemPromptVars
+	// 最终系统提示词由 buildSystemPrompt 依据 Profile.SystemPrompt 模板 + RuntimeContext.SystemPromptVars
 	// 渲染，并按 Profile.Context 开关注入记忆。
 	profile, err := s.profiles.Resolve(ctx, task.Request.ProfileID)
 	if err != nil {
@@ -265,7 +264,7 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	}
 	facts := task.Facts()
 	req := applyProfileOverrides(task.Request, profile)
-	req.SystemPrompt = s.GetSystemPromptByProfileWithContext(ctx, profile, req.RuntimeContext, facts, req.Skills)
+	req.SystemPrompt = s.buildSystemPrompt(ctx, profile, req.RuntimeContext.Vars(), facts, req.Skills)
 	task.Model = req.ModelID
 	if provider := strings.TrimSpace(req.Provider); provider != "" {
 		task.Provider = provider
@@ -760,42 +759,21 @@ func applyProfileOverrides(req Request, profile *Profile) Request {
 	return req
 }
 
-// applyProfile 依据 Profile 生成本轮最终的 SystemPrompt。
-//
-// 入参：
-//   - profile：已解析的 Agent Profile（为 nil 时返回空提示词，表示不附加系统提示词）；
-//   - vars：渲染 Profile.SystemPrompt（pongo2 模板）所用的变量，通常为 RuntimeContext.SystemPromptVars；
-//   - userID：记忆的归属用户（为空时不注入背景）；
-//   - selectedSkills：本轮启用的技能名（为空表示全部）；据此把技能元信息（name /
-//     description）注入提示词，正文由模型调用 get_skill 工具按需加载。
-//
-// 处理顺序：渲染 Profile 模板 → 注入技能指令 → 按 Profile.Context 开关注入记忆。
-// 模板渲染失败时退回原始模板，保证调用仍可进行。
-// GetSystemSpromptByProfile 按 Profile 渲染系统提示词，并按需注入技能说明与记忆背景。
-//
-// vars 是模板变量（来自 RuntimeContext.SystemPromptVars）；记忆注入的用户 / 上下文维度
-// 需要 TaskFacts，因此没有业务场景的调用请使用
-// GetSystemPromptByProfileWithContext（或 RenderSystemPrompt）。
-func (s *AgentService) GetSystemSpromptByProfile(ctx context.Context, profile *Profile, vars map[string]any, selectedSkills []string) string {
-	return s.buildSystemPrompt(ctx, profile, vars, TaskFacts{}, selectedSkills)
-}
-
-// GetSystemPromptByProfileWithContext 按 Profile 渲染系统提示词，并带上本次调用的
-// 运行时上下文（模板变量）与执行事实（用户 / 项目 / 会话），使记忆注入优先命中
-// 所属上下文。rc / facts 均可为零值。
-func (s *AgentService) GetSystemPromptByProfileWithContext(ctx context.Context, profile *Profile, rc *runtimecontext.RuntimeContext, facts TaskFacts, selectedSkills []string) string {
-	var vars map[string]any
-	if rc != nil {
-		vars = rc.Vars()
-	}
-	return s.buildSystemPrompt(ctx, profile, vars, facts, selectedSkills)
-}
-
 // buildSystemPrompt 是系统提示词渲染的单一实现：模板渲染 → 技能说明 → 记忆背景。
+//
+// vars 是渲染 Profile.SystemPrompt（pongo2 模板）所用的变量，通常为
+// RuntimeContext.SystemPromptVars；记忆注入的用户 / 项目 / 会话维度取自 facts，
+// 零值时跳过注入。profile 为 nil 时返回空串。
+//
+// 会话工作目录（facts.WorkingDir）会以 workspace_directory 合并进模板变量：
+// 它是执行事实，比调用方传入的旧值更准确，非空时覆盖同名变量。
 func (s *AgentService) buildSystemPrompt(ctx context.Context, profile *Profile, vars map[string]any, facts TaskFacts, selectedSkills []string) string {
 	if profile == nil {
 		return ""
 	}
+
+	// 0) 把会话工作目录注入模板变量，使 Profile 模板 / 技能可引用 {{ workspace_directory }}。
+	vars = withWorkspaceDirectory(vars, facts.WorkingDir)
 
 	// 1) 系统提示词：来源于 Profile —— 用调用方传入的变量渲染 Profile 的模板。
 	prompt := ""
@@ -855,6 +833,23 @@ func appendPromptBlock(prompt, block string) string {
 		return block
 	}
 	return prompt + "\n\n" + block
+}
+
+// withWorkspaceDirectory 返回一个包含会话工作目录的模板变量副本。
+//
+// 不修改调用方传入的 map（它可能来自持久化的 RuntimeContext，属于共享状态）。
+// workingDir 为空时原样返回 vars（无业务上下文的调用场景）。
+func withWorkspaceDirectory(vars map[string]any, workingDir string) map[string]any {
+	workingDir = strings.TrimSpace(workingDir)
+	if workingDir == "" {
+		return vars
+	}
+	merged := make(map[string]any, len(vars)+1)
+	for k, v := range vars {
+		merged[k] = v
+	}
+	merged["workspace_directory"] = workingDir
+	return merged
 }
 
 // extractMemory 在任务成功完成后调用记忆提取器，把提取出的记忆写入 Repository 并广播。

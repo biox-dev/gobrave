@@ -55,8 +55,8 @@ func outputMarkdownPath(dir string) string {
 }
 
 type RuntimeContextInfo struct {
-	Label        string         `json:"label"`                       // 人类可读的名称（当前激活项目名）
-	WorkingDir   string         `json:"working_dir"`                 // 工作目录
+	// Label        string         `json:"label"`                       // 人类可读的名称（当前激活项目名）
+	// WorkingDir   string         `json:"working_dir"`                 // 工作目录
 	SystemPrompt string         `json:"system_prompt,omitempty"`     // 用当前用户 Profile 模板渲染后的真实系统提示词
 	Vars         map[string]any `json:"vars,omitempty"`              // 渲染系统提示词模板所用的变量
 	ProfileName  string         `json:"profile_name,omitempty"`      // 用于渲染系统提示词的 Profile 名称
@@ -75,25 +75,24 @@ func (r *RuntimeContextResolver) Describe(ctx context.Context, userID int64, pro
 	if r.projectSvc == nil {
 		return nil, fmt.Errorf("project service is not initialized")
 	}
-	workingDir, project, err := r.resolveDefaultWorkingDirectory(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve working directory: %w", err)
-	}
-	workingDir = strings.TrimSpace(workingDir)
-	label := strings.TrimSpace(project.ProjectName)
-	if label == "" {
-		label = "Default workspace"
-	}
+	// workingDir, project, err := r.resolveDefaultWorkingDirectory(ctx, userID)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to resolve working directory: %w", err)
+	// }
+	// workingDir = strings.TrimSpace(workingDir)
+	// label := strings.TrimSpace(project.ProjectName)
+	// if label == "" {
+	// 	label = "Default workspace"
+	// }
 
 	vars := map[string]any{
-		"workspace_directory": workingDir,
-		"workspace_label":     label,
+		"workspace_directory": "workspace_directory", // 由 Provider 在工具执行期注入（builtin 工具可读取）
 	}
 
 	info := &RuntimeContextInfo{
-		Label:      label,
-		WorkingDir: workingDir,
-		Vars:       vars,
+		// Label:      label,
+		// WorkingDir: workingDir,
+		Vars: vars,
 	}
 
 	// Profile 可能解析失败（未配置 ProfileManager 等），此时只返回上下文事实。

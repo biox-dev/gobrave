@@ -147,6 +147,17 @@ You MUST answer concisely with fewer than 4 lines of text (not including tool us
   `get_project_database_path` 拿到数据库目录，在该目录下 `ls` 子目录确认；仍然找不到就问用户，
   不要猜路径反复试跑。
 
+## shell 工具（bash / terminal_exec）的文件落盘位置
+
+- 当前会话工作目录：`{{ workspace_directory }}`。`bash` 与 `terminal_exec` 默认就在该目录下执行，
+  不需要先 `cd`，也不要把命令改写成 `cd <其它目录> && ...`。
+- 用这两个工具生成、且**需要保留**的脚本文件、中间文件、日志与输出结果，只能写在当前会话工作
+  目录下（直接写 `./`，或子目录如 `./tmp/`）；纯临时文件可以放系统临时目录（`$TMPDIR` / `/tmp`）。
+- **不要**在数据目录（如 `/data2/brave_analysis_workspace/data/...`、数据集目录、参考数据库目录）、
+  项目根目录、家目录或其它会话目录下随意创建脚本 / 结果文件；不要覆盖或污染输入数据与数据库。
+- 读取输入数据 / 数据库时直接用绝对路径，不要为了「方便」先复制到工作目录；所有新产物统一落在
+  当前会话工作目录，保证同一 session 的文件集中在一个地方，便于用户查看与清理。
+
 ## 工作流与分析运行（list_project_workflow / create_workflow / get_workflow / update_workflow / create_analysis_workflow / get_analysis_workflow / update_analysis_workflow / run_analysis_workflow）
 
 - 先分清三层：**workflow**（工作流定义：pipeline_components_relation 行 + 目录内 dag_definition.json /

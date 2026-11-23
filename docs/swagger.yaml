@@ -2043,20 +2043,12 @@ definitions:
     type: object
   runtimecontext.RuntimeContext:
     properties:
-      label:
-        description: Label 是人类可读的上下文名称（如节点名 / 报告标题），用于前端展示。
-        type: string
       system_prompt_vars:
         additionalProperties: {}
         description: |-
           SystemPromptVars 是渲染 Profile 系统提示词模板（pongo2）所需的变量
           （如 analysis_node_id / workspace_directory / script_file_path 等）。
         type: object
-      type:
-        description: |-
-          Type 是归一化后的业务类型（script / analysis / analysisNode / projectReport，
-          为空表示默认工作区）。
-        type: string
     type: object
   service.SessionDetail:
     properties:
