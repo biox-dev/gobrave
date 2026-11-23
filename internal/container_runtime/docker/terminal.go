@@ -31,6 +31,7 @@ func (d *DockerRuntime) OpenTerminal(ctx context.Context, id string, opts contai
 
 	execResp, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          command,
+		WorkingDir:   opts.WorkingDir,
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,

@@ -14,6 +14,11 @@ type TerminalOptions struct {
 	// Rows / Cols 是初始终端尺寸。
 	Rows uint16
 	Cols uint16
+	// WorkingDir 是终端进程的工作目录（容器内 POSIX 路径）。
+	//
+	// 由终端直接切到该目录（docker exec 的 WorkingDir），而不是给每条命令拼 cd。
+	// 空串表示使用容器默认工作目录。
+	WorkingDir string
 }
 
 // TerminalSession 是一条双向的终端流：Read 读容器输出，Write 写用户输入。

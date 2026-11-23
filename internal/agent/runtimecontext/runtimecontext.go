@@ -238,6 +238,12 @@ type ContainerTerminalExecInput struct {
 	ContainerTemplateID int64
 	// Command 是要在终端里执行的 shell 命令。
 	Command string
+	// WorkingDir 是命令的执行目录（宿主路径，由执行事实 tool.TaskFactsFrom 提供）。
+	//
+	// 非空时实现方把终端的创建工作目录直接设为该目录（容器 WorkDir / exec WorkingDir），
+	// 而不是给每条命令拼 cd；路径按容器语义换算（Windows 宿主去掉盘符）。
+	// 空串表示沿用终端默认目录。
+	WorkingDir string
 	// TimeoutSeconds <= 0 时使用实现默认超时。
 	TimeoutSeconds int
 	// Wait 为 true 时等待命令结束。

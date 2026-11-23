@@ -353,6 +353,11 @@ type ContainerCreateOptions struct {
 	//
 	// Sync 为 false（默认）时保持旧行为：写 outbox，由 OutboxDispatcher 异步创建。
 	Sync bool
+	// WorkDir 覆盖容器的工作目录（容器内 POSIX 路径）。
+	//
+	// 仅在 Sync 创建时生效（终端替身用它把 shell 直接开在 Agent 会话目录下）；
+	// 为空时沿用模板 work_dir / PROJECT_DIR 默认值。
+	WorkDir string
 	// WaitTimeout 是 Sync=true 时等待容器 running 的上限；<=0 使用默认 2 分钟。
 	WaitTimeout time.Duration
 }
@@ -483,7 +488,7 @@ func (m *ContainerManager) createByTemplateSync(ctx context.Context, inst *types
 		return nil, fmt.Errorf("create container instance: %w", err)
 	}
 
-	if err := m.createWorker.executeCreateInstance(ctx, inst); err != nil {
+	if err := m.createWorker.executeCreateInstanceWithWorkDir(ctx, inst, opts.WorkDir); err != nil {
 		_ = m.containerRepo.DeleteContainerInstance(ctx, inst.ID)
 		return nil, err
 	}

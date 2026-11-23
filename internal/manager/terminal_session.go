@@ -121,6 +121,9 @@ type terminalCreateOptions struct {
 	persistent bool
 	// size 是新建 PTY 的尺寸；0 值表示使用默认 24x80。
 	size terminalSize
+	// workingDir 是终端的工作目录（宿主路径）：创建时换算成容器路径直接交给运行时
+	// （容器 WorkDir / exec WorkingDir），而不是给每条命令拼 cd。空串沿用容器默认目录。
+	workingDir string
 }
 
 const (
@@ -778,14 +781,18 @@ func (r *TerminalSessionRegistry) MarkPersistent(ctx context.Context, key Termin
 	}
 }
 
-// terminalOptions 按指定尺寸组装交互式终端参数。
-func terminalOptions(size terminalSize) containerruntime.TerminalOptions {
+// terminalOptions 按指定尺寸与工作目录组装交互式终端参数。
+//
+// workingDir 是宿主路径，这里统一换算成容器路径：它既用作新建容器的 WorkDir，
+// 也用作 docker exec 的 WorkingDir，终端因此直接开在该目录下，命令无需拼 cd。
+func terminalOptions(size terminalSize, workingDir string) containerruntime.TerminalOptions {
 	size = size.normalize()
 	return containerruntime.TerminalOptions{
-		Command: []string{"/bin/bash", "-l"},
-		TTY:     true,
-		Rows:    size.rows,
-		Cols:    size.cols,
+		Command:    []string{"/bin/bash", "-l"},
+		TTY:        true,
+		Rows:       size.rows,
+		Cols:       size.cols,
+		WorkingDir: containerruntime.ToContainerPath(workingDir),
 	}
 }
 
@@ -809,7 +816,7 @@ func (r *TerminalSessionRegistry) createOrAdopt(_ context.Context, key TerminalS
 	rec := r.loadRecord(createCtx, key)
 
 	// 1) 先尝试认领原容器：进程重启后容器还在，就在同一个容器上重新 exec shell。
-	adopted, err := r.adoptSession(createCtx, key, rec, resolved)
+	adopted, err := r.adoptSession(createCtx, key, rec, resolved, opts.workingDir)
 	if err == nil && adopted != nil {
 		if opts.persistent {
 			adopted.setPersistent(true)
@@ -855,7 +862,7 @@ func (r *TerminalSessionRegistry) createOrAdopt(_ context.Context, key TerminalS
 	key = key.ReplaceID(rec.ID)
 
 	// 3) 同步创建（或按 owner 重建）容器并打开 shell。
-	handle, err := r.opener.StartTerminalRuntime(createCtx, key.UserID, key.ProjectID, key.TemplateID, rec.ID, terminalOptions(resolved))
+	handle, err := r.opener.StartTerminalRuntime(createCtx, key.UserID, key.ProjectID, key.TemplateID, rec.ID, terminalOptions(resolved, opts.workingDir))
 	if err != nil {
 		// 容器没起来：会话记录也一并清掉，避免留下永远打不开的会话。
 		r.dropRecord(createCtx, rec)
@@ -891,7 +898,7 @@ func (r *TerminalSessionRegistry) loadRecord(ctx context.Context, key TerminalSe
 //
 // rec 是调用方（createOrAdopt）已经查到的会话记录：记录只查一次，认领失败后的
 // 重建路径也复用它（不会重复插入 AppSession）。rec 为 nil 表示没有可认领的会话。
-func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key TerminalSessionKey, rec *types.AppSession, size terminalSize) (*ManagedTerminalSession, error) {
+func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key TerminalSessionKey, rec *types.AppSession, size terminalSize, workingDir string) (*ManagedTerminalSession, error) {
 	// 只有已定位到主键的会话才可能被认领：UI 的「新建」永远是新会话，
 	// Agent 的身份在 ensure 里已经解析成了主键（见 resolveRecordKey）。
 	if r.instances == nil || key.ID <= 0 || rec == nil {
@@ -909,7 +916,7 @@ func (r *TerminalSessionRegistry) adoptSession(ctx context.Context, key Terminal
 	}
 
 	recKey := key.ReplaceID(rec.ID)
-	handle, err := r.opener.AttachTerminalRuntime(ctx, inst, terminalOptions(size))
+	handle, err := r.opener.AttachTerminalRuntime(ctx, inst, terminalOptions(size, workingDir))
 	if err != nil {
 		// 容器不可用时不能直接删会话（用户可能还想重开），只把容器实例清掉。
 		logger.Warnf(ctx, "[TerminalSession] attach session %s container %s failed: %v", recKey.SessionKey(), inst.RuntimeID, err)
@@ -1512,7 +1519,8 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 	// 先占位：保证「一次性会话 + 无 WS」时命令执行期间不会被回收。
 	sess := r.Lookup(key)
 	if sess == nil && in.CreateIfMissing {
-		created, _, _, err := r.ensure(ctx, key, terminalCreateOptions{})
+		// 终端直接开在会话工作目录下，后续命令无需自行 cd。
+		created, _, _, err := r.ensure(ctx, key, terminalCreateOptions{workingDir: in.WorkingDir})
 		if err != nil {
 			return runtimecontext.ContainerTerminalExecResult{}, err
 		}
@@ -1562,6 +1570,9 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 // EnsureAgentTerminal 按 (userID, projectID, templateID, agentSessionID) 创建或复用
 // Agent 会话的终端容器，返回终端会话主键。
 //
+// workingDir 是终端的工作目录（宿主路径）：新建终端时直接把它交给运行时
+// （容器 WorkDir / exec WorkingDir），之后命令天然就在该目录下执行，无需拼 cd。
+//
 // 与 GetPersistentShell 对应：供 hostshell.ContainerShell 在第一次执行命令时调用，
 // 之后同一 Agent 会话的多次调用复用同一个容器与 PTY。
 //
@@ -1569,14 +1580,14 @@ func (r *TerminalSessionRegistry) RunInTerminal(ctx context.Context, in runtimec
 // 由调用方在请求结束时通过 Close / CloseShell 回收（见 providers/custom.go 的 OnFinish）。
 // 若按一次性会话创建，命令一结束 execLoop 就会 scheduleReap 掉容器与会话记录，
 // 下一次 Exec 只能拿到 ErrTerminalSessionNotFound。
-func (r *TerminalSessionRegistry) EnsureAgentTerminal(ctx context.Context, userID, projectID, templateID, agentSessionID int64) (int64, error) {
+func (r *TerminalSessionRegistry) EnsureAgentTerminal(ctx context.Context, userID, projectID, templateID, agentSessionID int64, workingDir string) (int64, error) {
 	if agentSessionID <= 0 || templateID <= 0 {
 		return 0, fmt.Errorf("container shell: agent session id and template id are required")
 	}
 	key := NewAgentKey(userID, projectID, templateID, agentSessionID)
 	sess := r.Lookup(key)
 	if sess == nil {
-		created, _, _, err := r.ensure(ctx, key, terminalCreateOptions{persistent: true})
+		created, _, _, err := r.ensure(ctx, key, terminalCreateOptions{persistent: true, workingDir: workingDir})
 		if err != nil {
 			return 0, err
 		}
@@ -1648,8 +1659,8 @@ func (r *TerminalSessionRegistry) CloseTerminal(ctx context.Context, terminalID 
 // Get / Exec / Close 生命周期。
 
 // Ensure 实现 hostshell.ContainerShellService。
-func (r *TerminalSessionRegistry) Ensure(ctx context.Context, userID, projectID, templateID, agentSessionID int64) (int64, error) {
-	return r.EnsureAgentTerminal(ctx, userID, projectID, templateID, agentSessionID)
+func (r *TerminalSessionRegistry) Ensure(ctx context.Context, userID, projectID, templateID, agentSessionID int64, workingDir string) (int64, error) {
+	return r.EnsureAgentTerminal(ctx, userID, projectID, templateID, agentSessionID, workingDir)
 }
 
 // Exec 实现 hostshell.ContainerShellService。

@@ -348,6 +348,12 @@ func (w *ContainerCreateWorker) handleStartRequest(ctx context.Context, req Outb
 //
 // 启动命令、workload 类型、运行用户等差异全部来自 inst.Kind。
 func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst *types.ContainerInstance) error {
+	return w.executeCreateInstanceWithWorkDir(ctx, inst, "")
+}
+
+// executeCreateInstanceWithWorkDir 是 executeCreateInstance 的工作目录覆盖版：
+// workDir 非空时优先作为容器工作目录（终端替身用它把 shell 直接开在 Agent 会话目录下）。
+func (w *ContainerCreateWorker) executeCreateInstanceWithWorkDir(ctx context.Context, inst *types.ContainerInstance, workDir string) error {
 	if inst == nil || inst.ID == 0 {
 		return errors.New("container instance is required")
 	}
@@ -428,11 +434,14 @@ func (w *ContainerCreateWorker) executeCreateInstance(ctx context.Context, inst 
 		}
 	}
 
-	// 容器工作目录统一取项目的 PROJECT_DIR：容器模板不再提供 work_dir。
+	// 容器工作目录优先级：显式指定的 workDir（终端替身：Agent 会话目录）→ 模板 work_dir → 项目 PROJECT_DIR。
 	// 任务型容器（DAG 节点）已在 applyTaskRuntimeSpec 里按节点工作区 WORKSPACE_PATH 覆盖，
 	// 这里只补齐仍未设置的情况（应用会话 / 终端容器等），不会把 run.sh 所在的工作区替掉。
 	// 因此它必须在 resolver 之后执行。
-	if strings.TrimSpace(spec.WorkDir) == "" {
+	switch {
+	case strings.TrimSpace(workDir) != "":
+		spec.WorkDir = strings.TrimSpace(workDir)
+	case strings.TrimSpace(spec.WorkDir) == "":
 		spec.WorkDir = strings.TrimSpace(resolveVars["PROJECT_DIR"])
 	}
 
@@ -1160,6 +1169,7 @@ func (w *ContainerCreateWorker) StartTerminalRuntime(ctx context.Context, userID
 		OwnerID:     sessionID,
 		Name:        fmt.Sprintf("terminal-%d-%d", projectID, sessionID),
 		Kind:        types.ContainerInstanceKindTerminal,
+		WorkDir:     opts.WorkingDir,
 		Sync:        true,
 		WaitTimeout: terminalStartWait,
 	})

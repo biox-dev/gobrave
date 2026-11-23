@@ -15,8 +15,10 @@ import (
 //   - Exec 相当于 PersistentShell.Exec（把命令写入同一个 PTY 并等待结果）；
 //   - Close 相当于 ClosePersistentShell（结束容器并删除会话记录）。
 type ContainerShellService interface {
-	// Ensure 返回 terminalID 对应的终端会话 ID；不存在时按 (userID, projectID, templateID) 创建。
-	Ensure(ctx context.Context, userID, projectID, templateID, agentSessionID int64) (int64, error)
+	// Ensure 返回 terminalID 对应的终端会话 ID；不存在时按
+	// (userID, projectID, templateID, agentSessionID) 创建，并让终端直接以
+	// workingDir（宿主路径，由 manager 换算成容器路径）为工作目录。
+	Ensure(ctx context.Context, userID, projectID, templateID, agentSessionID int64, workingDir string) (int64, error)
 	// Exec 在 terminalID 对应的终端里执行命令（等待结束）。
 	Exec(ctx context.Context, terminalID int64, command string, timeoutSeconds int) (runtimecontext.ContainerTerminalExecResult, error)
 	// Close 关闭 terminalID 对应的终端会话（删除容器）。
@@ -32,6 +34,10 @@ type ContainerShell struct {
 	userID         int64
 	projectID      int64
 	templateID     int64
+	// workingDir 是终端的工作目录（宿主路径，由 manager 换算成容器路径后
+	// 直接用作容器 WorkDir / exec WorkingDir）。
+	// 与宿主机持久 shell 的初始 cwd 对齐：空串表示沿用容器默认目录。
+	workingDir string
 
 	svc ContainerShellService
 
@@ -50,7 +56,8 @@ var (
 // 会话结束后调用方必须调用 CloseContainerShell 释放容器。
 //
 // svc 为 nil 或 templateID <= 0 时返回 nil（未启用容器执行）。
-func GetContainerShell(svc ContainerShellService, agentSessionID, userID, projectID, templateID int64) *ContainerShell {
+// workingDir 与宿主机持久 shell 的初始 cwd 对齐：非空时终端直接开在该目录下。
+func GetContainerShell(svc ContainerShellService, agentSessionID, userID, projectID, templateID int64, workingDir string) *ContainerShell {
 	if svc == nil || agentSessionID <= 0 || templateID <= 0 {
 		return nil
 	}
@@ -65,6 +72,7 @@ func GetContainerShell(svc ContainerShellService, agentSessionID, userID, projec
 		userID:         userID,
 		projectID:      projectID,
 		templateID:     templateID,
+		workingDir:     workingDir,
 		svc:            svc,
 	}
 	containerShells[agentSessionID] = sh
@@ -84,6 +92,8 @@ func CloseContainerShell(agentSessionID int64) {
 }
 
 // Exec 在容器 shell 里执行命令（等待结束），返回与宿主机 shell 对齐的四元组。
+//
+// 命令的工作目录在创建终端时已由 workingDir 设定（见 ensure），这里不再逐条拼接 cd。
 func (s *ContainerShell) Exec(ctx context.Context, command string, timeoutMs int) (string, string, int, bool, error) {
 	terminalID, err := s.ensure(ctx)
 	if err != nil {
@@ -135,7 +145,7 @@ func (s *ContainerShell) ensure(ctx context.Context) (int64, error) {
 		return id, nil
 	}
 
-	id, err := s.svc.Ensure(ctx, s.userID, s.projectID, s.templateID, s.agentSessionID)
+	id, err := s.svc.Ensure(ctx, s.userID, s.projectID, s.templateID, s.agentSessionID, s.workingDir)
 	if err != nil {
 		return 0, err
 	}

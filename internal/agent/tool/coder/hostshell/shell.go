@@ -26,7 +26,8 @@ type ShellOptions struct {
 	Mode string
 	// SessionID 是 Agent 会话 ID：同会话复用同一个终端，必须 > 0。
 	SessionID int64
-	// WorkingDir 是宿主机终端的初始工作目录（仅 host 模式使用）。
+	// WorkingDir 是命令的工作目录（宿主路径），两种模式语义一致：
+	// host 模式作为终端初始 cwd；container 模式换算成容器路径后作为命令执行目录。
 	WorkingDir string
 
 	// Container 模式下需要的定位与能力：
@@ -43,9 +44,12 @@ type ShellOptions struct {
 // host 模式返回宿主机 *PersistentShell；container 模式返回 *ContainerShell。
 // 未启用（宿主机 shell 创建失败、容器服务缺失、模板 / 会话 / 项目信息不足）时返回 nil，
 // 调用方据此给出可读的错误。
+//
+// WorkingDir 对两种实现语义一致：它是「命令的工作目录」，host 模式作为终端初始目录，
+// container 模式则按容器路径换算后作为每条命令的执行目录。
 func AcquireShell(options ShellOptions) Shell {
 	if options.Mode == ModeContainer {
-		return GetContainerShell(options.Container, options.SessionID, options.UserID, options.ProjectID, options.TemplateID)
+		return GetContainerShell(options.Container, options.SessionID, options.UserID, options.ProjectID, options.TemplateID, options.WorkingDir)
 	}
 	return GetPersistentShell(options.SessionID, options.WorkingDir)
 }
