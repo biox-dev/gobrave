@@ -105,12 +105,6 @@ type chatRequest struct {
 	WorkingDir string `json:"working_dir"`
 }
 
-// describeEnvRequest 是解析业务上下文的请求体（无字段）。
-//
-// 业务上下文（llmEnv）不再由前端传入：它由业务页面通过 /auth/agent-env 写入当前
-// 用户记录（AgentConfig.EnvID / EnvType），后端直接读取当前登录用户的配置解析。
-type describeEnvRequest struct{}
-
 // ---- 分页请求结构（沿用 types.Pagination，与 Analysis 的分页接口保持一致） ----
 
 type agentTaskPageRequest struct {
@@ -240,12 +234,12 @@ func (h *AgentHandler) CreateTask(c *gin.Context) {
 		WorkingDir: body.WorkingDir,
 	}
 	if (facts.ProjectID == 0 || facts.WorkingDir == "") && h.runtimeCtx != nil {
-		if _, rf, err := h.runtimeCtx.ResolveWithFacts(c.Request.Context(), userID, nil); err == nil {
-			if facts.ProjectID == 0 {
-				facts.ProjectID = rf.ProjectID
+		if workingDir, project, err := h.runtimeCtx.Resolve(c.Request.Context(), userID); err == nil {
+			if facts.ProjectID == 0 && project != nil {
+				facts.ProjectID = project.ID
 			}
 			if facts.WorkingDir == "" {
-				facts.WorkingDir = rf.WorkingDir
+				facts.WorkingDir = workingDir
 			}
 		}
 	}
@@ -297,16 +291,12 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 	// Profile 只能来自当前登录用户，忽略请求体中的 profile。
 	profileID := user.AgentConfig.ProfileID
 
-	// 业务上下文（llmEnv）同样只能来自当前登录用户：由业务页面调用 /auth/agent-env
-	// 写入 user.AgentConfig.EnvID / EnvType，这里读取用户配置解析（不再接收请求体 env）。
-	// 解析结果 → 系统提示词模板变量 + 工作目录。
-	// 系统提示词本身不在这里拼装：它由 AgentService 依据 Profile 模板 + 这些变量渲染。
-	rc, facts, rcErr := h.runtimeCtx.ResolveWithFacts(c.Request.Context(), userID, user.AgentConfig.Env())
+	// 工作目录固定为当前激活项目的默认目录（业务上下文 env 已移除）。
+	workingDir, project, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), userID)
 	if rcErr != nil {
-		handleAgentError(c, rcErr, "failed to resolve runtime context")
+		handleAgentError(c, rcErr, "failed to resolve working directory")
 		return
 	}
-	workingDir := facts.WorkingDir
 
 	// 1) 准备一轮：追加 user 消息、组装历史、创建任务（复用 AgentService 状态机）。
 	// 新的对话 conversation_id 可能为空字符串，表示新建会话（TurnInput.SessionID == 0）。
@@ -330,15 +320,14 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 		}
 	}
 	task, sess, err := h.chat.CreateTurn(c.Request.Context(), agentservice.TurnInput{
-		UserID:         userID,
-		SessionID:      sessionID,
-		ProjectID:      facts.ProjectID,
-		Message:        req.Message,
-		Provider:       req.Provider,
-		Model:          req.Model,
-		RuntimeContext: rc,
-		ProfileID:      profileID,
-		WorkingDir:     workingDir,
+		UserID:     userID,
+		SessionID:  sessionID,
+		ProjectID:  project.ID,
+		Message:    req.Message,
+		Provider:   req.Provider,
+		Model:      req.Model,
+		ProfileID:  profileID,
+		WorkingDir: workingDir,
 	})
 	if err != nil {
 		handleAgentError(c, err, "failed to create conversation turn")
@@ -363,8 +352,8 @@ func (h *AgentHandler) Chat(c *gin.Context) {
 }
 
 // DescribeEnv godoc
-// @Summary      解析当前对话的业务上下文
-// @Description  读取当前登录用户的 AgentConfig.EnvID/EnvType，返回人类可读的上下文名称与工作目录，供前端展示当前对话环境
+// @Summary      解析当前对话的上下文
+// @Description  返回当前激活项目的默认工作目录与按 Profile 渲染后的系统提示词，供前端展示当前对话环境
 // @Tags         Agent
 // @Accept       json
 // @Produce      json
@@ -390,10 +379,10 @@ func (h *AgentHandler) DescribeEnv(c *gin.Context) {
 	if profileID == 0 {
 		profileID = agenttypes.BuiltinDefaultProfileID
 	}
-	// 业务上下文（llmEnv）从当前用户配置读取，不再接收前端传入的 env。
-	info, err := h.runtimeCtx.Describe(c.Request.Context(), user.ID, profileID, user.AgentConfig.Env())
+	// 工作目录固定为当前激活项目的默认目录；系统提示词按当前 Profile 渲染。
+	info, err := h.runtimeCtx.Describe(c.Request.Context(), user.ID, profileID)
 	if err != nil {
-		handleAgentError(c, err, "failed to describe runtime env")
+		handleAgentError(c, err, "failed to describe runtime context")
 		return
 	}
 
@@ -590,17 +579,17 @@ func (h *AgentHandler) ResolveSkill(c *gin.Context) {
 		return
 	}
 
-	// 业务上下文（llmEnv）与 DescribeEnv 同一来源：当前用户配置的 EnvID / EnvType。
-	// 解析出的 SystemPromptVars 随 RuntimeContext 注入 ctx，供技能正文的 pongo2 模板
-	// 按当前场景渲染（与 get_skill 工具执行期使用同一套变量与渲染实现）。
+	// 技能正文的 pongo2 模板用默认工作目录变量渲染（与 get_skill 工具执行期同一实现）。
 	ctx := c.Request.Context()
 	if h.runtimeCtx != nil {
-		resolved, err := h.runtimeCtx.Resolve(ctx, user.ID, user.AgentConfig.Env())
+		workingDir, _, err := h.runtimeCtx.Resolve(ctx, user.ID)
 		if err != nil {
-			handleAgentError(c, err, "failed to resolve runtime context")
+			handleAgentError(c, err, "failed to resolve working directory")
 			return
 		}
-		ctx = runtimecontext.WithRuntimeContext(ctx, resolved.Context)
+		ctx = runtimecontext.WithRuntimeContext(ctx, &runtimecontext.RuntimeContext{
+			SystemPromptVars: map[string]any{"workspace_directory": workingDir},
+		})
 	}
 
 	// version 留空：HTTP 接口使用当前已安装版本（与 get_skill 不传 version 时一致）。
@@ -1400,20 +1389,19 @@ func (h *AgentHandler) RetryTurn(c *gin.Context) {
 		return
 	}
 
-	// 与 /agent/chat 完全一致的上下文解析（Profile / 业务上下文 / 工作目录）。
-	rc, facts, rcErr := h.runtimeCtx.ResolveWithFacts(c.Request.Context(), user.ID, user.AgentConfig.Env())
+	// 与 /agent/chat 完全一致的上下文解析（Profile / 工作目录）。
+	workingDir, project, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), user.ID)
 	if rcErr != nil {
-		handleAgentError(c, rcErr, "failed to resolve runtime context")
+		handleAgentError(c, rcErr, "failed to resolve working directory")
 		return
 	}
 
 	task, sess, err := h.chat.RetryTurn(c.Request.Context(), agentservice.TurnInput{
-		UserID:         user.ID,
-		SessionID:      sessionID,
-		ProjectID:      facts.ProjectID,
-		RuntimeContext: rc,
-		ProfileID:      user.AgentConfig.ProfileID,
-		WorkingDir:     facts.WorkingDir,
+		UserID:     user.ID,
+		SessionID:  sessionID,
+		ProjectID:  project.ID,
+		ProfileID:  user.AgentConfig.ProfileID,
+		WorkingDir: workingDir,
 	}, taskID)
 	if err != nil {
 		handleAgentError(c, err, "failed to retry conversation turn")
@@ -1491,22 +1479,21 @@ func (h *AgentHandler) ForkTurn(c *gin.Context) {
 		upToSeq = int64(*req.UpToSeq)
 	}
 
-	rc, facts, rcErr := h.runtimeCtx.ResolveWithFacts(c.Request.Context(), user.ID, user.AgentConfig.Env())
+	workingDir, _, rcErr := h.runtimeCtx.Resolve(c.Request.Context(), user.ID)
 	if rcErr != nil {
-		handleAgentError(c, rcErr, "failed to resolve runtime context")
+		handleAgentError(c, rcErr, "failed to resolve working directory")
 		return
 	}
 
 	task, forkedSess, err := h.chat.ForkTurn(c.Request.Context(), agentservice.TurnInput{
-		UserID:         user.ID,
-		SessionID:      sessionID,
-		ProjectID:      sess.ProjectID,
-		Message:        req.Message,
-		Provider:       req.Provider,
-		Model:          req.Model,
-		RuntimeContext: rc,
-		ProfileID:      user.AgentConfig.ProfileID,
-		WorkingDir:     facts.WorkingDir,
+		UserID:     user.ID,
+		SessionID:  sessionID,
+		ProjectID:  sess.ProjectID,
+		Message:    req.Message,
+		Provider:   req.Provider,
+		Model:      req.Model,
+		ProfileID:  user.AgentConfig.ProfileID,
+		WorkingDir: workingDir,
 	}, upToSeq, req.CopyFiles)
 	if err != nil {
 		handleAgentError(c, err, "failed to fork and retry turn")

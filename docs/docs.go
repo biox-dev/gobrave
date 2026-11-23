@@ -26,7 +26,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "发送一条消息：新建会话或续接已有会话；返回本轮任务 ID，实时内容走 WS 推送",
+                "description": "发送一条消息：新建会话或续接已有会话；返回本轮任务 ID，实时内容走 WS 推送\n新建会话时先用首条问题写入占位标题，再异步调用 Agent 生成更贴切的标题（不阻塞本轮）",
                 "consumes": [
                     "application/json"
                 ],
@@ -67,6 +67,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/errors.AppError"
                         }
                     },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -83,7 +89,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "读取当前登录用户的 AgentConfig.EnvID/EnvType，返回人类可读的上下文名称与工作目录，供前端展示当前对话环境",
+                "description": "返回当前激活项目的默认工作目录与按 Profile 渲染后的系统提示词，供前端展示当前对话环境",
                 "consumes": [
                     "application/json"
                 ],
@@ -93,7 +99,7 @@ const docTemplate = `{
                 "tags": [
                     "Agent"
                 ],
-                "summary": "解析当前对话的业务上下文",
+                "summary": "解析当前对话的上下文",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -860,6 +866,195 @@ const docTemplate = `{
                 }
             }
         },
+        "/agent/session/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "删除会话（含子会话）并级联清理消息、文件历史、任务、权限 / 提问请求、\n会话资源关联与归属该会话的记忆；资源关联只删除关联行，不删除脚本 / 工作流等资源本身；\n会话按项目共享，项目成员均可删除；仍有正在执行的一轮任务时返回 409，需先取消任务或等待本轮结束",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "删除 Agent 会话",
+                "parameters": [
+                    {
+                        "description": "会话 ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.taskIDBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/session/fork": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "把源会话的消息复制成一个新的顶层会话并返回其详情（含首屏消息），源会话不变；\nup_to_seq 可指定只复制到某条消息为止的历史（从该消息处分叉）。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "Fork 会话（复制历史到新的独立会话）",
+                "parameters": [
+                    {
+                        "description": "fork 参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.sessionForkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/service.SessionDetail"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/session/fork-retry": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "以源会话截止到指定消息的历史创建新会话（消息归属到新任务），并把该轮的\n用户输入重新交给 Agent 生成；源会话不变；返回新任务与新会话 ID",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "从某一轮 fork 并重试",
+                "parameters": [
+                    {
+                        "description": "fork 并重试参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.sessionForkTurnRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/agent/session/get": {
             "get": {
                 "security": [
@@ -915,6 +1110,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/errors.AppError"
                         }
                     },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -931,6 +1132,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
+                "description": "返回当前激活项目下的所有会话（不限定发起人），带 username；按 updated_at 倒序，支持 keyword 标题/用户名搜索",
                 "consumes": [
                     "application/json"
                 ],
@@ -940,7 +1142,7 @@ const docTemplate = `{
                 "tags": [
                     "Agent"
                 ],
-                "summary": "分页查询当前用户的会话",
+                "summary": "分页查询当前项目下的所有会话",
                 "parameters": [
                     {
                         "description": "分页请求参数",
@@ -968,6 +1170,257 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/session/resources": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按资源类型返回当前用户的某个会话产生 / 修改过的结果（脚本 / 工作流 / 分析节点 / 分析运行 / 项目报告）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "查询会话关联的资源",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "会话 ID",
+                        "name": "session_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "资源类型：script / workflow / analysis_node / analysis / project_report / plan",
+                        "name": "resource_type",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/session/resources/all": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回当前用户的某个会话产生 / 修改过的全部结果，并按资源类型分组",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "一次查询会话关联的全部资源（按类型分组）",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "会话 ID",
+                        "name": "session_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/session/subscribe": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "进入会话页时调用：把当前用户登记为该会话的实时事件接收者。\n会话按项目共享，项目内所有成员都会收到同一份 WS 事件流。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "订阅会话实时事件",
+                "parameters": [
+                    {
+                        "description": "会话 ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.sessionSubscribeBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/session/unsubscribe": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "离开会话页时调用：撤销当前用户对该会话的实时事件订阅。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "退订会话实时事件",
+                "parameters": [
+                    {
+                        "description": "会话 ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.sessionSubscribeBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -1278,7 +1731,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "创建任务并异步启动执行；实时事件由全局事件桥按任务归属用户推送到 WS",
+                "description": "创建任务并异步启动执行；实时事件推送给订阅了该任务会话的用户（见 /agent/session/subscribe）",
                 "consumes": [
                     "application/json"
                 ],
@@ -1321,6 +1774,75 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/task/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "删除某个任务关联的全部消息（含该轮的 user 消息与时间线）；不删除任务记录本身；\n任务仍在执行时返回 409",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "按任务删除一轮对话的消息",
+                "parameters": [
+                    {
+                        "description": "任务 ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.taskIDBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -1635,6 +2157,75 @@ const docTemplate = `{
                 }
             }
         },
+        "/agent/task/retry": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "删除该任务关联的消息（含 user 消息），用该轮原用户输入重新发起一轮，由 Agent 重新生成；\n返回新任务与会话 ID；任务仍在执行时返回 409",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "重试某一轮",
+                "parameters": [
+                    {
+                        "description": "任务 ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.taskIDBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/agent/task/timeline": {
             "get": {
                 "security": [
@@ -1642,7 +2233,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "返回该任务已落库的时间线消息（reasoning / assistant / tool_call / tool_result / error），\n用于前端刷新 / 切换会话后回填「事实流」：增量事件（text / reasoning_delta）只广播\n不落库，完整块事件由 TimelineRecorder 即时写入 agent_messages。",
+                "description": "返回该任务已落库的时间线消息（reasoning / assistant / tool_call / tool_result / error），\n用于前端刷新 / 切换会话后回填「事实流」：增量事件（text / reasoning_delta）只广播\n不落库，完整块事件由 TimelineRecorder 即时写入 agent_messages。\n访问控制与会话详情一致：会话所属项目的成员都可以读取该会话下任务的时间线；\n不属于任何会话的一次性任务仍然只允许任务归属者读取（不可访问时返回 404）。",
                 "produces": [
                     "application/json"
                 ],
@@ -3018,70 +3609,10 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "properties": {
-                                "env_id": {
-                                    "type": "string"
-                                },
-                                "env_type": {
-                                    "type": "string"
-                                },
                                 "permissions": {
                                     "type": "object"
                                 },
                                 "profile_id": {
-                                    "type": "string"
-                                }
-                            }
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "更新成功",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "请求参数错误",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/auth/agent-env": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "只修改当前登录用户的 AgentConfig.EnvID / EnvType，用于业务页面进入时绑定当前上下文；不触碰 Profile 与权限",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "认证"
-                ],
-                "summary": "更新当前用户的业务上下文（llmEnv）",
-                "parameters": [
-                    {
-                        "description": "业务上下文",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "env_id": {
-                                    "type": "string"
-                                },
-                                "env_type": {
                                     "type": "string"
                                 }
                             }
@@ -9105,75 +9636,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/project/add-project-report-item": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "向指定报告添加条目。OwnerType 为 analysis/analysis_node/ai_summary 时需提供 OwnerID；同一报告下相同的 owner_type + owner_id 不能重复添加（重复时返回 409）。OwnerType 为 custom（章节占位/自定义内容）时只需提供 title。parent_id 为 0 时挂到根节点。",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "项目"
-                ],
-                "summary": "添加报告条目",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.addProjectReportItemRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "创建成功",
-                        "schema": {
-                            "$ref": "#/definitions/handler.projectReportItemDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "409": {
-                        "description": "同一报告下已存在相同的 owner_type + owner_id 条目",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
         "/project/add-project-to-user": {
             "post": {
                 "security": [
@@ -9546,6 +10008,47 @@ const docTemplate = `{
                 }
             }
         },
+        "/project/delete-plan": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "删除项目计划",
+                "parameters": [
+                    {
+                        "description": "计划ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.deletePlanRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/project/delete-project-report": {
             "post": {
                 "security": [
@@ -9605,72 +10108,6 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "服务器错误",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/project/delete-project-report-item": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "删除指定报告条目（含其所有子孙条目）",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "项目"
-                ],
-                "summary": "删除报告条目",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.deleteProjectReportItemRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -9912,6 +10349,34 @@ const docTemplate = `{
                 }
             }
         },
+        "/project/list-plan": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回当前激活项目下的全部计划（只含标题 / 目标 / 节点数，不含节点树）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "查询项目计划列表",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/handler.planSummary"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/project/list-project": {
             "get": {
                 "security": [
@@ -9991,68 +10456,6 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "服务器错误",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/project/list-project-report-item": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "查询指定报告下的所有条目，并按其 parent_id 组装成树返回",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "项目"
-                ],
-                "summary": "查询报告条目树",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "报告ID",
-                        "name": "report_id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/handler.projectReportItemNode"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -10183,27 +10586,26 @@ const docTemplate = `{
                 }
             }
         },
-        "/project/package-project-report-item": {
+        "/project/plan-detail": {
             "get": {
                 "security": [
                     {
                         "Bearer": []
                     }
                 ],
-                "description": "把报告条目树按层级导出到报告工作目录的 results 子目录：目录名即条目标题；custom 写入 README.md，analysis_node 拷贝节点输出目录，ai_summary 拷贝摘要正文文件，analysis 暂不处理。重复调用会覆盖上一次的打包结果。",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "项目"
                 ],
-                "summary": "打包报告条目树内容",
+                "summary": "查询单个计划",
                 "parameters": [
                     {
                         "type": "integer",
                         "format": "int64",
-                        "description": "报告ID",
-                        "name": "report_id",
+                        "description": "计划ID",
+                        "name": "id",
                         "in": "query",
                         "required": true
                     }
@@ -10212,94 +10614,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/project/project-report-content": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "汇总报告下所有条目并拼接成正文，返回报告标题与正文",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "项目"
-                ],
-                "summary": "查询报告聚合内容",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "报告ID",
-                        "name": "report_id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
+                            "$ref": "#/definitions/types.AgentPlan"
                         }
                     }
                 }
@@ -10613,191 +10928,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/project/project-report-item-content": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "入参为 ProjectReportItem ID，返回该条目解析后的 markdown 内容",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "项目"
-                ],
-                "summary": "查询报告条目 markdown 内容",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "条目ID",
-                        "name": "id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/project/project-report-item-detail": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "根据 id 查询条目详情，File 类型会返回文件内容",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "项目"
-                ],
-                "summary": "查询报告条目详情",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "条目ID",
-                        "name": "id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handler.projectReportItemDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/project/reorder-project-report-item": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按前端拖拽结果批量更新条目的 parent_id 与 sort_order，实现树形结构的移动与排序",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "项目"
-                ],
-                "summary": "重排报告条目树",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.reorderProjectReportItemRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
         "/project/revert-project-report-file": {
             "post": {
                 "security": [
@@ -10863,6 +10993,45 @@ const docTemplate = `{
                         "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/project/save-plan": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "id 为空时新建，否则整体覆盖标题 / 目标 / 节点树",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "项目"
+                ],
+                "summary": "新建 / 更新项目计划",
+                "parameters": [
+                    {
+                        "description": "计划",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.savePlanRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.AgentPlan"
                         }
                     }
                 }
@@ -11125,78 +11294,6 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "服务器错误",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/project/update-project-report-item": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "更新条目的排序、父节点或 owner 绑定；若变更 owner 后与同报告内其他条目重复则返回 409",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "项目"
-                ],
-                "summary": "更新报告条目",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.updateProjectReportItemRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "409": {
-                        "description": "同一报告下已存在相同的 owner_type + owner_id 条目",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -13826,14 +13923,6 @@ const docTemplate = `{
         "github_com_biox-dev_gobrave_internal_types.UserAgentConfig": {
             "type": "object",
             "properties": {
-                "env_id": {
-                    "description": "EnvID 是业务上下文对象 ID（如 project report id / analysis node id / analysis id）。",
-                    "type": "string"
-                },
-                "env_type": {
-                    "description": "EnvType 是业务上下文类型（见 handler 的 EnvType* 枚举，如 \"projectReport\" / \"analysisNode\"）。",
-                    "type": "string"
-                },
                 "permissions": {
                     "type": "object",
                     "additionalProperties": {
@@ -13985,7 +14074,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "label": {
-                    "description": "人类可读的名称",
+                    "description": "人类可读的名称（当前激活项目名）",
                     "type": "string"
                 },
                 "profile_id": {
@@ -14006,10 +14095,6 @@ const docTemplate = `{
                 },
                 "system_prompt": {
                     "description": "用当前用户 Profile 模板渲染后的真实系统提示词",
-                    "type": "string"
-                },
-                "type": {
-                    "description": "归一化后的业务类型（空表示默认工作区）",
                     "type": "string"
                 },
                 "vars": {
@@ -14216,39 +14301,6 @@ const docTemplate = `{
                 }
             }
         },
-        "handler.addProjectReportItemRequest": {
-            "type": "object",
-            "required": [
-                "owner_type",
-                "project_report_id"
-            ],
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "owner_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "owner_type": {
-                    "type": "string"
-                },
-                "parent_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "project_report_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "sort_order": {
-                    "type": "integer"
-                },
-                "title": {
-                    "type": "string"
-                }
-            }
-        },
         "handler.addProjectReportRequest": {
             "type": "object",
             "required": [
@@ -14291,6 +14343,10 @@ const docTemplate = `{
         "handler.agentMemoryPageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "kinds": {
                     "type": "array",
                     "items": {
@@ -14313,6 +14369,10 @@ const docTemplate = `{
         "handler.agentPermissionPageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -14338,6 +14398,10 @@ const docTemplate = `{
         "handler.agentQuestionPageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -14363,6 +14427,10 @@ const docTemplate = `{
         "handler.agentTaskPageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -14400,6 +14468,10 @@ const docTemplate = `{
         "handler.aiSummaryByProjectPageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -14416,6 +14488,10 @@ const docTemplate = `{
         "handler.analysisByProjectPageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -14438,6 +14514,10 @@ const docTemplate = `{
                 "analysis_id": {
                     "type": "string",
                     "example": "0"
+                },
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
                 },
                 "page": {
                     "description": "Page",
@@ -14516,6 +14596,10 @@ const docTemplate = `{
                 "analysis_node_id": {
                     "type": "string"
                 },
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -14535,6 +14619,10 @@ const docTemplate = `{
         "handler.assayByProjectPageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -14611,6 +14699,10 @@ const docTemplate = `{
         "handler.containerInstancePageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -14639,6 +14731,10 @@ const docTemplate = `{
         "handler.containerTemplatePageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -14655,6 +14751,10 @@ const docTemplate = `{
         "handler.containerTemplateSpecPageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -14896,6 +14996,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0"
                 },
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "metadata": {
                     "type": "string"
                 },
@@ -14924,7 +15028,7 @@ const docTemplate = `{
                 }
             }
         },
-        "handler.deleteProjectReportItemRequest": {
+        "handler.deletePlanRequest": {
             "type": "object",
             "required": [
                 "id"
@@ -15195,6 +15299,10 @@ const docTemplate = `{
         "handler.literaturePageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -15300,6 +15408,10 @@ const docTemplate = `{
         "handler.outboxEventPageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -15316,6 +15428,10 @@ const docTemplate = `{
         "handler.pageScriptRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -15335,6 +15451,10 @@ const docTemplate = `{
         "handler.pageWorkflowRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -15358,6 +15478,34 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "handler.planSummary": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "goal": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "item_count": {
+                    "type": "integer"
+                },
+                "project_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
                     "type": "string"
                 }
             }
@@ -15408,6 +15556,10 @@ const docTemplate = `{
         "handler.projectFilePageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -15511,82 +15663,6 @@ const docTemplate = `{
                 }
             }
         },
-        "handler.projectReportItemDTO": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "owner_id": {
-                    "type": "string"
-                },
-                "owner_type": {
-                    "type": "string"
-                },
-                "parent_id": {
-                    "type": "string"
-                },
-                "project_report_id": {
-                    "type": "string"
-                },
-                "sort_order": {
-                    "type": "integer"
-                },
-                "title": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "handler.projectReportItemNode": {
-            "type": "object",
-            "properties": {
-                "children": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/handler.projectReportItemNode"
-                    }
-                },
-                "content": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "owner_id": {
-                    "type": "string"
-                },
-                "owner_type": {
-                    "type": "string"
-                },
-                "parent_id": {
-                    "type": "string"
-                },
-                "project_report_id": {
-                    "type": "string"
-                },
-                "sort_order": {
-                    "type": "integer"
-                },
-                "title": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
         "handler.projectReportListItem": {
             "type": "object",
             "properties": {
@@ -15611,6 +15687,10 @@ const docTemplate = `{
         "handler.projectReportPageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -15646,44 +15726,6 @@ const docTemplate = `{
                 },
                 "path": {
                     "type": "string"
-                }
-            }
-        },
-        "handler.reorderProjectReportItemEntry": {
-            "type": "object",
-            "required": [
-                "id"
-            ],
-            "properties": {
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "parent_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "sort_order": {
-                    "type": "integer"
-                }
-            }
-        },
-        "handler.reorderProjectReportItemRequest": {
-            "type": "object",
-            "required": [
-                "items",
-                "report_id"
-            ],
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/handler.reorderProjectReportItemEntry"
-                    }
-                },
-                "report_id": {
-                    "type": "string",
-                    "example": "0"
                 }
             }
         },
@@ -15736,6 +15778,30 @@ const docTemplate = `{
                 },
                 "total_nodes": {
                     "type": "integer"
+                }
+            }
+        },
+        "handler.savePlanRequest": {
+            "type": "object",
+            "required": [
+                "title"
+            ],
+            "properties": {
+                "goal": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PlanItem"
+                    }
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },
@@ -15800,9 +15866,67 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.sessionForkRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "copy_files": {
+                    "description": "是否同时复制文件历史最新版本",
+                    "type": "boolean"
+                },
+                "id": {
+                    "description": "源会话 ID",
+                    "type": "string"
+                },
+                "title": {
+                    "description": "为空则沿用原标题 + \" (fork)\"",
+                    "type": "string"
+                },
+                "up_to_seq": {
+                    "description": "UpToSeq 只复制 seq \u003c= up_to_seq 的历史（含该条）；未传则复制到末尾。\n用指针区分「未传」与「传 0（只复制第一条）」。",
+                    "type": "integer"
+                }
+            }
+        },
+        "handler.sessionForkTurnRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "copy_files": {
+                    "description": "CopyFiles 是否同时复制文件历史最新版本。",
+                    "type": "boolean"
+                },
+                "id": {
+                    "description": "ID 是源会话 ID。",
+                    "type": "string"
+                },
+                "message": {
+                    "description": "Message 覆盖该轮的原用户输入（为空时取截止历史里的最后一条用户消息）。",
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "up_to_seq": {
+                    "description": "UpToSeq 只复制 seq \u003c= up_to_seq 的历史（含该条）；0 / 未传表示复制到末尾。",
+                    "type": "integer"
+                }
+            }
+        },
         "handler.sessionPageRequest": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -15813,6 +15937,17 @@ const docTemplate = `{
                     "type": "integer",
                     "maximum": 1000,
                     "minimum": 1
+                }
+            }
+        },
+        "handler.sessionSubscribeBody": {
+            "type": "object",
+            "required": [
+                "session_id"
+            ],
+            "properties": {
+                "session_id": {
+                    "type": "string"
                 }
             }
         },
@@ -15967,38 +16102,6 @@ const docTemplate = `{
                 "report_id": {
                     "type": "string",
                     "example": "0"
-                }
-            }
-        },
-        "handler.updateProjectReportItemRequest": {
-            "type": "object",
-            "required": [
-                "id"
-            ],
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "owner_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "owner_type": {
-                    "type": "string"
-                },
-                "parent_id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "sort_order": {
-                    "type": "integer"
-                },
-                "title": {
-                    "type": "string"
                 }
             }
         },
@@ -16314,6 +16417,17 @@ const docTemplate = `{
                 "user_id": {
                     "type": "string",
                     "example": "0"
+                },
+                "username": {
+                    "description": "Username 是会话所属用户的显示名。它不是 agent_sessions 表的列：会话列表接口\n会按 UserID 批量从 users 表回填，用于「项目内所有会话」视图展示发起人。",
+                    "type": "string"
+                },
+                "users": {
+                    "description": "Users 是使用过该会话的用户（发过 user 消息的用户，去重后按用户 ID 升序）。\n由消息表实时统计 + users 表回填用户名，不需要额外维护 session_user 关系表。",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.SessionUser"
+                    }
                 }
             }
         },
@@ -16327,10 +16441,15 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "instructions": {
+                    "description": "Instructions 是技能内容：默认为渲染后的指令正文；Raw=true 时为 SKILL.md 磁盘原文\n（含 YAML frontmatter）。",
                     "type": "string"
                 },
                 "name": {
                     "type": "string"
+                },
+                "raw": {
+                    "description": "Raw 标记 Instructions 是否为 SKILL.md 原文（未渲染、含 frontmatter），\n供模型判断能否把其中的文本直接用作 edit_skill 的 old_string。",
+                    "type": "boolean"
                 },
                 "resources": {
                     "type": "array",
@@ -16523,6 +16642,38 @@ const docTemplate = `{
                 },
                 "file": {
                     "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
+                }
+            }
+        },
+        "types.AgentPlan": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "goal": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "items": {
+                    "description": "Items 是节点树投影（数据源为 agent_plan_items），不落本表。",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PlanItem"
+                    }
+                },
+                "project_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -17510,6 +17661,10 @@ const docTemplate = `{
                 "kind": {
                     "type": "string"
                 },
+                "profile_name": {
+                    "description": "ProfileName 是 Agent 侧消息执行者的 Profile 展示名。它不是 agent_messages 表的列：\n会话详情接口会按 UserID 批量（IN 查询）从 agent_profiles 表回填。",
+                    "type": "string"
+                },
                 "role": {
                     "type": "string"
                 },
@@ -17523,6 +17678,15 @@ const docTemplate = `{
                 "task_id": {
                     "type": "string",
                     "example": "0"
+                },
+                "user_id": {
+                    "description": "UserID 是消息的归属者（一个会话可被多个用户共同使用）：\n  - 用户消息（KindUser）写发起人的用户 ID；\n  - Agent 侧消息（assistant / reasoning / tool_* / error）写实际执行的 Profile ID。\n仅作归属标识，不参与 Prompt 拼接。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "username": {
+                    "description": "Username 是用户消息所属用户的显示名。它不是 agent_messages 表的列：会话详情\n接口会按 UserID 批量（IN 查询）从 users 表回填，用于前端在用户头像下展示。",
+                    "type": "string"
                 }
             }
         },
@@ -17561,6 +17725,10 @@ const docTemplate = `{
         "types.Pagination": {
             "type": "object",
             "properties": {
+                "keyword": {
+                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "Page",
                     "type": "integer",
@@ -17642,6 +17810,95 @@ const docTemplate = `{
                 "PermissionExpired",
                 "PermissionCanceled",
                 "PermissionConsumed"
+            ]
+        },
+        "types.PlanItem": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "description": "ID 是节点主键（雪花 ID），也是「执行结果 ↔ 计划节点」关联的引用目标。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "note": {
+                    "description": "Note 是 agent 对本次状态变化的简短说明（可选）。",
+                    "type": "string"
+                },
+                "parent_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "plan_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "session_id": {
+                    "description": "SessionID 是推进该状态所在的会话，便于多会话协作时追溯「谁做的」。",
+                    "type": "string",
+                    "example": "0"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "source": {
+                    "$ref": "#/definitions/types.PlanSource"
+                },
+                "source_id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "status": {
+                    "description": "Status 是节点执行状态（空值等价于 pending）。",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.PlanItemStatus"
+                        }
+                    ]
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.PlanItemStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "in_progress",
+                "completed",
+                "skipped"
+            ],
+            "x-enum-varnames": [
+                "PlanItemPending",
+                "PlanItemInProgress",
+                "PlanItemCompleted",
+                "PlanItemSkipped"
+            ]
+        },
+        "types.PlanSource": {
+            "type": "string",
+            "enum": [
+                "custom",
+                "analysis",
+                "analysis_node",
+                "script",
+                "workflow"
+            ],
+            "x-enum-varnames": [
+                "PlanSourceCustom",
+                "PlanSourceAnalysis",
+                "PlanSourceAnalysisNode",
+                "PlanSourceScript",
+                "PlanSourceWorkflow"
             ]
         },
         "types.Profile": {
@@ -18011,6 +18268,10 @@ const docTemplate = `{
         "types.Request": {
             "type": "object",
             "properties": {
+                "disable_tools": {
+                    "description": "DisableTools 为真时本次调用不向模型暴露任何工具（优先于 Profile / 全局注册表）。\n\n供标题生成等内部一次性文本补全使用：这些调用只需要模型输出文本，\n不应携带工具定义，也不应触发工具调用。",
+                    "type": "boolean"
+                },
                 "env": {
                     "description": "Env 可选：额外环境变量（也可携带 Provider 特有开关）。",
                     "type": "object",
@@ -18253,6 +18514,7 @@ const docTemplate = `{
                     "example": "0"
                 },
                 "script_path": {
+                    "description": "ScriptPath 是脚本目录（不是主文件路径），前端用作标题与定位；\n主文件 / io_schema.json / README.md 的完整路径见 Script.Files(baseDir)。",
                     "type": "string"
                 },
                 "script_type": {
@@ -18271,6 +18533,18 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.SessionUser": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "username": {
                     "type": "string"
                 }
             }
@@ -18351,6 +18625,11 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.Request"
                         }
                     ]
+                },
+                "resolved_profile_id": {
+                    "description": "ResolvedProfileID 是本轮实际使用的 Agent Profile ID（已按 0 → 内置默认）解析），\n在 run 开始时写入（见 AgentService.run）。供工具在执行期定位当前 Profile。",
+                    "type": "string",
+                    "example": "0"
                 },
                 "resumable": {
                     "description": "Resumable 是非持久化派生字段：只要存在检查点就可以被手动 / 自动恢复。",

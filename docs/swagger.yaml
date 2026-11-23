@@ -295,14 +295,6 @@ definitions:
     - DecisionAsk
   github_com_biox-dev_gobrave_internal_types.UserAgentConfig:
     properties:
-      env_id:
-        description: EnvID 是业务上下文对象 ID（如 project report id / analysis node id / analysis
-          id）。
-        type: string
-      env_type:
-        description: EnvType 是业务上下文类型（见 handler 的 EnvType* 枚举，如 "projectReport" /
-          "analysisNode"）。
-        type: string
       permissions:
         additionalProperties:
           $ref: '#/definitions/github_com_biox-dev_gobrave_internal_types.PermissionDecision'
@@ -410,7 +402,7 @@ definitions:
   handler.RuntimeContextInfo:
     properties:
       label:
-        description: 人类可读的名称
+        description: 人类可读的名称（当前激活项目名）
         type: string
       profile_id:
         description: 用于渲染系统提示词的 Profile ID
@@ -429,9 +421,6 @@ definitions:
         type: array
       system_prompt:
         description: 用当前用户 Profile 模板渲染后的真实系统提示词
-        type: string
-      type:
-        description: 归一化后的业务类型（空表示默认工作区）
         type: string
       vars:
         additionalProperties: {}
@@ -574,29 +563,6 @@ definitions:
     required:
     - title
     type: object
-  handler.addProjectReportItemRequest:
-    properties:
-      content:
-        type: string
-      owner_id:
-        example: "0"
-        type: string
-      owner_type:
-        type: string
-      parent_id:
-        example: "0"
-        type: string
-      project_report_id:
-        example: "0"
-        type: string
-      sort_order:
-        type: integer
-      title:
-        type: string
-    required:
-    - owner_type
-    - project_report_id
-    type: object
   handler.addProjectReportRequest:
     properties:
       title:
@@ -625,6 +591,12 @@ definitions:
     type: object
   handler.agentMemoryPageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       kinds:
         items:
           $ref: '#/definitions/types.MemoryKind'
@@ -641,6 +613,12 @@ definitions:
     type: object
   handler.agentPermissionPageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -659,6 +637,12 @@ definitions:
     type: object
   handler.agentQuestionPageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -677,6 +661,12 @@ definitions:
     type: object
   handler.agentTaskPageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -703,6 +693,12 @@ definitions:
     type: object
   handler.aiSummaryByProjectPageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -715,6 +711,12 @@ definitions:
     type: object
   handler.analysisByProjectPageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -731,6 +733,12 @@ definitions:
     properties:
       analysis_id:
         example: "0"
+        type: string
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
         type: string
       page:
         description: Page
@@ -785,6 +793,12 @@ definitions:
     properties:
       analysis_node_id:
         type: string
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -799,6 +813,12 @@ definitions:
     type: object
   handler.assayByProjectPageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -853,6 +873,12 @@ definitions:
     type: object
   handler.containerInstancePageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -873,6 +899,12 @@ definitions:
     type: object
   handler.containerTemplatePageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -885,6 +917,12 @@ definitions:
     type: object
   handler.containerTemplateSpecPageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -1048,6 +1086,12 @@ definitions:
       id:
         example: "0"
         type: string
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       metadata:
         type: string
       page:
@@ -1068,7 +1112,7 @@ definitions:
     required:
     - id
     type: object
-  handler.deleteProjectReportItemRequest:
+  handler.deletePlanRequest:
     properties:
       id:
         example: "0"
@@ -1247,6 +1291,12 @@ definitions:
     type: object
   handler.literaturePageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -1323,6 +1373,12 @@ definitions:
     type: object
   handler.outboxEventPageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -1335,6 +1391,12 @@ definitions:
     type: object
   handler.pageScriptRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -1349,6 +1411,12 @@ definitions:
     type: object
   handler.pageWorkflowRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -1367,6 +1435,25 @@ definitions:
         type: string
     required:
     - id
+    type: object
+  handler.planSummary:
+    properties:
+      created_at:
+        type: string
+      goal:
+        type: string
+      id:
+        example: "0"
+        type: string
+      item_count:
+        type: integer
+      project_id:
+        example: "0"
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
     type: object
   handler.profileSaveRequest:
     properties:
@@ -1399,6 +1486,12 @@ definitions:
     type: object
   handler.projectFilePageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -1470,56 +1563,6 @@ definitions:
     required:
     - report_id
     type: object
-  handler.projectReportItemDTO:
-    properties:
-      content:
-        type: string
-      created_at:
-        type: string
-      id:
-        type: string
-      owner_id:
-        type: string
-      owner_type:
-        type: string
-      parent_id:
-        type: string
-      project_report_id:
-        type: string
-      sort_order:
-        type: integer
-      title:
-        type: string
-      updated_at:
-        type: string
-    type: object
-  handler.projectReportItemNode:
-    properties:
-      children:
-        items:
-          $ref: '#/definitions/handler.projectReportItemNode'
-        type: array
-      content:
-        type: string
-      created_at:
-        type: string
-      id:
-        type: string
-      owner_id:
-        type: string
-      owner_type:
-        type: string
-      parent_id:
-        type: string
-      project_report_id:
-        type: string
-      sort_order:
-        type: integer
-      title:
-        type: string
-      updated_at:
-        type: string
-    type: object
   handler.projectReportListItem:
     properties:
       created_at:
@@ -1536,6 +1579,12 @@ definitions:
     type: object
   handler.projectReportPageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -1561,32 +1610,6 @@ definitions:
         type: string
       path:
         type: string
-    type: object
-  handler.reorderProjectReportItemEntry:
-    properties:
-      id:
-        example: "0"
-        type: string
-      parent_id:
-        example: "0"
-        type: string
-      sort_order:
-        type: integer
-    required:
-    - id
-    type: object
-  handler.reorderProjectReportItemRequest:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/handler.reorderProjectReportItemEntry'
-        type: array
-      report_id:
-        example: "0"
-        type: string
-    required:
-    - items
-    - report_id
     type: object
   handler.runtimeSnapshotRequest:
     properties:
@@ -1621,6 +1644,22 @@ definitions:
         type: object
       total_nodes:
         type: integer
+    type: object
+  handler.savePlanRequest:
+    properties:
+      goal:
+        type: string
+      id:
+        example: "0"
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/types.PlanItem'
+        type: array
+      title:
+        type: string
+    required:
+    - title
     type: object
   handler.saveReadmeRequest:
     properties:
@@ -1664,8 +1703,54 @@ definitions:
         description: WorkflowID 是 workflow 表主键（int64），兼容 JSON 字符串（"123"）与数字（123）两种写法。
         type: integer
     type: object
+  handler.sessionForkRequest:
+    properties:
+      copy_files:
+        description: 是否同时复制文件历史最新版本
+        type: boolean
+      id:
+        description: 源会话 ID
+        type: string
+      title:
+        description: 为空则沿用原标题 + " (fork)"
+        type: string
+      up_to_seq:
+        description: |-
+          UpToSeq 只复制 seq <= up_to_seq 的历史（含该条）；未传则复制到末尾。
+          用指针区分「未传」与「传 0（只复制第一条）」。
+        type: integer
+    required:
+    - id
+    type: object
+  handler.sessionForkTurnRequest:
+    properties:
+      copy_files:
+        description: CopyFiles 是否同时复制文件历史最新版本。
+        type: boolean
+      id:
+        description: ID 是源会话 ID。
+        type: string
+      message:
+        description: Message 覆盖该轮的原用户输入（为空时取截止历史里的最后一条用户消息）。
+        type: string
+      model:
+        type: string
+      provider:
+        type: string
+      up_to_seq:
+        description: UpToSeq 只复制 seq <= up_to_seq 的历史（含该条）；0 / 未传表示复制到末尾。
+        type: integer
+    required:
+    - id
+    type: object
   handler.sessionPageRequest:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -1675,6 +1760,13 @@ definitions:
         maximum: 1000
         minimum: 1
         type: integer
+    type: object
+  handler.sessionSubscribeBody:
+    properties:
+      session_id:
+        type: string
+    required:
+    - session_id
     type: object
   handler.skillSaveRequest:
     properties:
@@ -1779,28 +1871,6 @@ definitions:
         type: string
     required:
     - report_id
-    type: object
-  handler.updateProjectReportItemRequest:
-    properties:
-      content:
-        type: string
-      id:
-        example: "0"
-        type: string
-      owner_id:
-        example: "0"
-        type: string
-      owner_type:
-        type: string
-      parent_id:
-        example: "0"
-        type: string
-      sort_order:
-        type: integer
-      title:
-        type: string
-    required:
-    - id
     type: object
   handler.updateProjectReportRequest:
     properties:
@@ -2031,6 +2101,18 @@ definitions:
       user_id:
         example: "0"
         type: string
+      username:
+        description: |-
+          Username 是会话所属用户的显示名。它不是 agent_sessions 表的列：会话列表接口
+          会按 UserID 批量从 users 表回填，用于「项目内所有会话」视图展示发起人。
+        type: string
+      users:
+        description: |-
+          Users 是使用过该会话的用户（发过 user 消息的用户，去重后按用户 ID 升序）。
+          由消息表实时统计 + users 表回填用户名，不需要额外维护 session_user 关系表。
+        items:
+          $ref: '#/definitions/types.SessionUser'
+        type: array
     type: object
   skill.AgentSkillDetail:
     properties:
@@ -2039,9 +2121,17 @@ definitions:
       error:
         type: string
       instructions:
+        description: |-
+          Instructions 是技能内容：默认为渲染后的指令正文；Raw=true 时为 SKILL.md 磁盘原文
+          （含 YAML frontmatter）。
         type: string
       name:
         type: string
+      raw:
+        description: |-
+          Raw 标记 Instructions 是否为 SKILL.md 原文（未渲染、含 frontmatter），
+          供模型判断能否把其中的文本直接用作 edit_skill 的 old_string。
+        type: boolean
       resources:
         items:
           type: string
@@ -2196,6 +2286,28 @@ definitions:
         $ref: '#/definitions/types.DatasetFile'
       file:
         $ref: '#/definitions/github_com_biox-dev_gobrave_internal_types.File'
+    type: object
+  types.AgentPlan:
+    properties:
+      created_at:
+        type: string
+      goal:
+        type: string
+      id:
+        example: "0"
+        type: string
+      items:
+        description: Items 是节点树投影（数据源为 agent_plan_items），不落本表。
+        items:
+          $ref: '#/definitions/types.PlanItem'
+        type: array
+      project_id:
+        example: "0"
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
     type: object
   types.AnalysisNode:
     properties:
@@ -2948,6 +3060,11 @@ definitions:
         type: string
       kind:
         type: string
+      profile_name:
+        description: |-
+          ProfileName 是 Agent 侧消息执行者的 Profile 展示名。它不是 agent_messages 表的列：
+          会话详情接口会按 UserID 批量（IN 查询）从 agent_profiles 表回填。
+        type: string
       role:
         type: string
       seq:
@@ -2957,6 +3074,19 @@ definitions:
         type: string
       task_id:
         example: "0"
+        type: string
+      user_id:
+        description: |-
+          UserID 是消息的归属者（一个会话可被多个用户共同使用）：
+            - 用户消息（KindUser）写发起人的用户 ID；
+            - Agent 侧消息（assistant / reasoning / tool_* / error）写实际执行的 Profile ID。
+          仅作归属标识，不参与 Prompt 拼接。
+        example: "0"
+        type: string
+      username:
+        description: |-
+          Username 是用户消息所属用户的显示名。它不是 agent_messages 表的列：会话详情
+          接口会按 UserID 批量（IN 查询）从 users 表回填，用于前端在用户头像下展示。
         type: string
     type: object
   types.Operation:
@@ -2987,6 +3117,12 @@ definitions:
     type: object
   types.Pagination:
     properties:
+      keyword:
+        description: |-
+          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
+          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
+          仓储层按各自实体的名称列实现 LIKE 过滤。
+        type: string
       page:
         description: Page
         minimum: 1
@@ -3051,6 +3187,71 @@ definitions:
     - PermissionExpired
     - PermissionCanceled
     - PermissionConsumed
+  types.PlanItem:
+    properties:
+      created_at:
+        type: string
+      id:
+        description: ID 是节点主键（雪花 ID），也是「执行结果 ↔ 计划节点」关联的引用目标。
+        example: "0"
+        type: string
+      note:
+        description: Note 是 agent 对本次状态变化的简短说明（可选）。
+        type: string
+      parent_id:
+        example: "0"
+        type: string
+      plan_id:
+        example: "0"
+        type: string
+      session_id:
+        description: SessionID 是推进该状态所在的会话，便于多会话协作时追溯「谁做的」。
+        example: "0"
+        type: string
+      sort_order:
+        type: integer
+      source:
+        $ref: '#/definitions/types.PlanSource'
+      source_id:
+        example: "0"
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/types.PlanItemStatus'
+        description: Status 是节点执行状态（空值等价于 pending）。
+      summary:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  types.PlanItemStatus:
+    enum:
+    - pending
+    - in_progress
+    - completed
+    - skipped
+    type: string
+    x-enum-varnames:
+    - PlanItemPending
+    - PlanItemInProgress
+    - PlanItemCompleted
+    - PlanItemSkipped
+  types.PlanSource:
+    enum:
+    - custom
+    - analysis
+    - analysis_node
+    - script
+    - workflow
+    type: string
+    x-enum-varnames:
+    - PlanSourceCustom
+    - PlanSourceAnalysis
+    - PlanSourceAnalysisNode
+    - PlanSourceScript
+    - PlanSourceWorkflow
   types.Profile:
     properties:
       context:
@@ -3321,6 +3522,13 @@ definitions:
     type: object
   types.Request:
     properties:
+      disable_tools:
+        description: |-
+          DisableTools 为真时本次调用不向模型暴露任何工具（优先于 Profile / 全局注册表）。
+
+          供标题生成等内部一次性文本补全使用：这些调用只需要模型输出文本，
+          不应携带工具定义，也不应触发工具调用。
+        type: boolean
       env:
         additionalProperties:
           type: string
@@ -3516,6 +3724,9 @@ definitions:
         example: "0"
         type: string
       script_path:
+        description: |-
+          ScriptPath 是脚本目录（不是主文件路径），前端用作标题与定位；
+          主文件 / io_schema.json / README.md 的完整路径见 Script.Files(baseDir)。
         type: string
       script_type:
         type: string
@@ -3529,6 +3740,14 @@ definitions:
         description: IOSchema            string `json:"io_schema" gorm:"column:io_schema;type:longtext"`
         type: string
       updated_at:
+        type: string
+    type: object
+  types.SessionUser:
+    properties:
+      id:
+        example: "0"
+        type: string
+      username:
         type: string
     type: object
   types.State:
@@ -3587,6 +3806,12 @@ definitions:
         allOf:
         - $ref: '#/definitions/types.Request'
         description: Request 保存原始请求，用于恢复时重建上下文。
+      resolved_profile_id:
+        description: |-
+          ResolvedProfileID 是本轮实际使用的 Agent Profile ID（已按 0 → 内置默认）解析），
+          在 run 开始时写入（见 AgentService.run）。供工具在执行期定位当前 Profile。
+        example: "0"
+        type: string
       resumable:
         description: Resumable 是非持久化派生字段：只要存在检查点就可以被手动 / 自动恢复。
         type: boolean
@@ -3913,7 +4138,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: 发送一条消息：新建会话或续接已有会话；返回本轮任务 ID，实时内容走 WS 推送
+      description: |-
+        发送一条消息：新建会话或续接已有会话；返回本轮任务 ID，实时内容走 WS 推送
+        新建会话时先用首条问题写入占位标题，再异步调用 Agent 生成更贴切的标题（不阻塞本轮）
       parameters:
       - description: 请求参数
         in: body
@@ -3936,6 +4163,10 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
         "404":
           description: Not Found
           schema:
@@ -3949,7 +4180,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 读取当前登录用户的 AgentConfig.EnvID/EnvType，返回人类可读的上下文名称与工作目录，供前端展示当前对话环境
+      description: 返回当前激活项目的默认工作目录与按 Profile 渲染后的系统提示词，供前端展示当前对话环境
       produces:
       - application/json
       responses:
@@ -3971,7 +4202,7 @@ paths:
             $ref: '#/definitions/errors.AppError'
       security:
       - Bearer: []
-      summary: 解析当前对话的业务上下文
+      summary: 解析当前对话的上下文
       tags:
       - Agent
   /agent/memory/delete:
@@ -4437,6 +4668,133 @@ paths:
       summary: 分页查询提问请求
       tags:
       - Agent
+  /agent/session/delete:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        删除会话（含子会话）并级联清理消息、文件历史、任务、权限 / 提问请求、
+        会话资源关联与归属该会话的记忆；资源关联只删除关联行，不删除脚本 / 工作流等资源本身；
+        会话按项目共享，项目成员均可删除；仍有正在执行的一轮任务时返回 409，需先取消任务或等待本轮结束
+      parameters:
+      - description: 会话 ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.taskIDBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 删除 Agent 会话
+      tags:
+      - Agent
+  /agent/session/fork:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        把源会话的消息复制成一个新的顶层会话并返回其详情（含首屏消息），源会话不变；
+        up_to_seq 可指定只复制到某条消息为止的历史（从该消息处分叉）。
+      parameters:
+      - description: fork 参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.sessionForkRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/service.SessionDetail'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: Fork 会话（复制历史到新的独立会话）
+      tags:
+      - Agent
+  /agent/session/fork-retry:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        以源会话截止到指定消息的历史创建新会话（消息归属到新任务），并把该轮的
+        用户输入重新交给 Agent 生成；源会话不变；返回新任务与新会话 ID
+      parameters:
+      - description: fork 并重试参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.sessionForkTurnRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 从某一轮 fork 并重试
+      tags:
+      - Agent
   /agent/session/get:
     get:
       description: 默认只返回最新一页消息；向上滚动时把响应的 next_cursor 作为 before_seq 继续加载更早的消息
@@ -4469,6 +4827,10 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
         "404":
           description: Not Found
           schema:
@@ -4482,6 +4844,7 @@ paths:
     post:
       consumes:
       - application/json
+      description: 返回当前激活项目下的所有会话（不限定发起人），带 username；按 updated_at 倒序，支持 keyword 标题/用户名搜索
       parameters:
       - description: 分页请求参数
         in: body
@@ -4507,7 +4870,171 @@ paths:
             $ref: '#/definitions/errors.AppError'
       security:
       - Bearer: []
-      summary: 分页查询当前用户的会话
+      summary: 分页查询当前项目下的所有会话
+      tags:
+      - Agent
+  /agent/session/resources:
+    get:
+      description: 按资源类型返回当前用户的某个会话产生 / 修改过的结果（脚本 / 工作流 / 分析节点 / 分析运行 / 项目报告）
+      parameters:
+      - description: 会话 ID
+        in: query
+        name: session_id
+        required: true
+        type: string
+      - description: 资源类型：script / workflow / analysis_node / analysis / project_report
+          / plan
+        in: query
+        name: resource_type
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 查询会话关联的资源
+      tags:
+      - Agent
+  /agent/session/resources/all:
+    get:
+      description: 返回当前用户的某个会话产生 / 修改过的全部结果，并按资源类型分组
+      parameters:
+      - description: 会话 ID
+        in: query
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 一次查询会话关联的全部资源（按类型分组）
+      tags:
+      - Agent
+  /agent/session/subscribe:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        进入会话页时调用：把当前用户登记为该会话的实时事件接收者。
+        会话按项目共享，项目内所有成员都会收到同一份 WS 事件流。
+      parameters:
+      - description: 会话 ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.sessionSubscribeBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 订阅会话实时事件
+      tags:
+      - Agent
+  /agent/session/unsubscribe:
+    post:
+      consumes:
+      - application/json
+      description: 离开会话页时调用：撤销当前用户对该会话的实时事件订阅。
+      parameters:
+      - description: 会话 ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.sessionSubscribeBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 退订会话实时事件
       tags:
       - Agent
   /agent/skill/delete:
@@ -4700,7 +5227,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 创建任务并异步启动执行；实时事件由全局事件桥按任务归属用户推送到 WS
+      description: 创建任务并异步启动执行；实时事件推送给订阅了该任务会话的用户（见 /agent/session/subscribe）
       parameters:
       - description: 请求参数
         in: body
@@ -4730,6 +5257,52 @@ paths:
       security:
       - Bearer: []
       summary: 创建 Agent 任务
+      tags:
+      - Agent
+  /agent/task/delete:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        删除某个任务关联的全部消息（含该轮的 user 消息与时间线）；不删除任务记录本身；
+        任务仍在执行时返回 409
+      parameters:
+      - description: 任务 ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.taskIDBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 按任务删除一轮对话的消息
       tags:
       - Agent
   /agent/task/get:
@@ -4925,12 +5498,60 @@ paths:
       summary: 从持久化检查点继续执行 Agent 任务
       tags:
       - Agent
+  /agent/task/retry:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        删除该任务关联的消息（含 user 消息），用该轮原用户输入重新发起一轮，由 Agent 重新生成；
+        返回新任务与会话 ID；任务仍在执行时返回 409
+      parameters:
+      - description: 任务 ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.taskIDBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 重试某一轮
+      tags:
+      - Agent
   /agent/task/timeline:
     get:
       description: |-
         返回该任务已落库的时间线消息（reasoning / assistant / tool_call / tool_result / error），
         用于前端刷新 / 切换会话后回填「事实流」：增量事件（text / reasoning_delta）只广播
         不落库，完整块事件由 TimelineRecorder 即时写入 agent_messages。
+        访问控制与会话详情一致：会话所属项目的成员都可以读取该会话下任务的时间线；
+        不属于任何会话的一次性任务仍然只允许任务归属者读取（不可访问时返回 404）。
       parameters:
       - description: 任务 ID
         in: query
@@ -5807,10 +6428,6 @@ paths:
         required: true
         schema:
           properties:
-            env_id:
-              type: string
-            env_type:
-              type: string
             permissions:
               type: object
             profile_id:
@@ -5831,41 +6448,6 @@ paths:
       security:
       - Bearer: []
       summary: 更新当前用户的 Agent 配置
-      tags:
-      - 认证
-  /auth/agent-env:
-    post:
-      consumes:
-      - application/json
-      description: 只修改当前登录用户的 AgentConfig.EnvID / EnvType，用于业务页面进入时绑定当前上下文；不触碰 Profile
-        与权限
-      parameters:
-      - description: 业务上下文
-        in: body
-        name: request
-        required: true
-        schema:
-          properties:
-            env_id:
-              type: string
-            env_type:
-              type: string
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: 更新成功
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: 请求参数错误
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 更新当前用户的业务上下文（llmEnv）
       tags:
       - 认证
   /auth/bottom-panel:
@@ -9715,52 +10297,6 @@ paths:
       summary: 添加项目报告
       tags:
       - 项目
-  /project/add-project-report-item:
-    post:
-      consumes:
-      - application/json
-      description: 向指定报告添加条目。OwnerType 为 analysis/analysis_node/ai_summary 时需提供 OwnerID；同一报告下相同的
-        owner_type + owner_id 不能重复添加（重复时返回 409）。OwnerType 为 custom（章节占位/自定义内容）时只需提供
-        title。parent_id 为 0 时挂到根节点。
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.addProjectReportItemRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: 创建成功
-          schema:
-            $ref: '#/definitions/handler.projectReportItemDTO'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "409":
-          description: 同一报告下已存在相同的 owner_type + owner_id 条目
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 添加报告条目
-      tags:
-      - 项目
   /project/add-project-to-user:
     post:
       consumes:
@@ -9997,6 +10533,31 @@ paths:
       summary: 删除文献
       tags:
       - 项目
+  /project/delete-plan:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 计划ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.deletePlanRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - Bearer: []
+      summary: 删除项目计划
+      tags:
+      - 项目
   /project/delete-project-report:
     post:
       consumes:
@@ -10037,48 +10598,6 @@ paths:
       security:
       - Bearer: []
       summary: 删除项目报告
-      tags:
-      - 项目
-  /project/delete-project-report-item:
-    post:
-      consumes:
-      - application/json
-      description: 删除指定报告条目（含其所有子孙条目）
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.deleteProjectReportItemRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 删除报告条目
       tags:
       - 项目
   /project/delete-user-project:
@@ -10230,6 +10749,23 @@ paths:
       summary: 分页查询文献池
       tags:
       - 项目
+  /project/list-plan:
+    get:
+      description: 返回当前激活项目下的全部计划（只含标题 / 目标 / 节点数，不含节点树）
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/handler.planSummary'
+            type: array
+      security:
+      - Bearer: []
+      summary: 查询项目计划列表
+      tags:
+      - 项目
   /project/list-project:
     get:
       description: 返回与当前登录用户关联的所有项目（通过 user_project 关系表过滤）
@@ -10282,46 +10818,6 @@ paths:
       security:
       - Bearer: []
       summary: 查询项目报告列表
-      tags:
-      - 项目
-  /project/list-project-report-item:
-    get:
-      description: 查询指定报告下的所有条目，并按其 parent_id 组装成树返回
-      parameters:
-      - description: 报告ID
-        format: int64
-        in: query
-        name: report_id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/handler.projectReportItemNode'
-            type: array
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 查询报告条目树
       tags:
       - 项目
   /project/list-project-report-page:
@@ -10403,15 +10899,13 @@ paths:
       summary: 查询文献详情
       tags:
       - 项目
-  /project/package-project-report-item:
+  /project/plan-detail:
     get:
-      description: 把报告条目树按层级导出到报告工作目录的 results 子目录：目录名即条目标题；custom 写入 README.md，analysis_node
-        拷贝节点输出目录，ai_summary 拷贝摘要正文文件，analysis 暂不处理。重复调用会覆盖上一次的打包结果。
       parameters:
-      - description: 报告ID
+      - description: 计划ID
         format: int64
         in: query
-        name: report_id
+        name: id
         required: true
         type: integer
       produces:
@@ -10420,67 +10914,10 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
+            $ref: '#/definitions/types.AgentPlan'
       security:
       - Bearer: []
-      summary: 打包报告条目树内容
-      tags:
-      - 项目
-  /project/project-report-content:
-    get:
-      description: 汇总报告下所有条目并拼接成正文，返回报告标题与正文
-      parameters:
-      - description: 报告ID
-        format: int64
-        in: query
-        name: report_id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 查询报告聚合内容
+      summary: 查询单个计划
       tags:
       - 项目
   /project/project-report-detail:
@@ -10685,125 +11122,6 @@ paths:
       summary: 导出报告为 HTML
       tags:
       - 项目
-  /project/project-report-item-content:
-    get:
-      description: 入参为 ProjectReportItem ID，返回该条目解析后的 markdown 内容
-      parameters:
-      - description: 条目ID
-        format: int64
-        in: query
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 查询报告条目 markdown 内容
-      tags:
-      - 项目
-  /project/project-report-item-detail:
-    get:
-      description: 根据 id 查询条目详情，File 类型会返回文件内容
-      parameters:
-      - description: 条目ID
-        format: int64
-        in: query
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/handler.projectReportItemDTO'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 查询报告条目详情
-      tags:
-      - 项目
-  /project/reorder-project-report-item:
-    post:
-      consumes:
-      - application/json
-      description: 按前端拖拽结果批量更新条目的 parent_id 与 sort_order，实现树形结构的移动与排序
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.reorderProjectReportItemRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 重排报告条目树
-      tags:
-      - 项目
   /project/revert-project-report-file:
     post:
       consumes:
@@ -10847,6 +11165,30 @@ paths:
       security:
       - Bearer: []
       summary: 撤回报告目录单个文件的未提交改动
+      tags:
+      - 项目
+  /project/save-plan:
+    post:
+      consumes:
+      - application/json
+      description: id 为空时新建，否则整体覆盖标题 / 目标 / 节点树
+      parameters:
+      - description: 计划
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.savePlanRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.AgentPlan'
+      security:
+      - Bearer: []
+      summary: 新建 / 更新项目计划
       tags:
       - 项目
   /project/unbind-literature:
@@ -11015,52 +11357,6 @@ paths:
       security:
       - Bearer: []
       summary: 更新报告自身文件
-      tags:
-      - 项目
-  /project/update-project-report-item:
-    post:
-      consumes:
-      - application/json
-      description: 更新条目的排序、父节点或 owner 绑定；若变更 owner 后与同报告内其他条目重复则返回 409
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.updateProjectReportItemRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "409":
-          description: 同一报告下已存在相同的 owner_type + owner_id 条目
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 更新报告条目
       tags:
       - 项目
   /project/update-project-sharing:

@@ -9,66 +9,17 @@ import (
 	"strings"
 
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
-	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
-	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
 	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
 
-// RuntimeEnvType 是与前端 llmEnv.type 约定的「业务上下文」枚举。
-//
-// 前端通过 setLLMEnv(id, type) 设置全局上下文，后端据此解析出：
-//   - SystemPromptVars：渲染 Profile 系统提示词模板所需的变量（如工作目录、脚本路径）；
-//   - WorkingDir：Agent 执行时的工作目录（作为执行事实写入 Task.WorkingDir）。
-//
-// 这些枚举是前端与后端之间的契约，新增业务上下文时在此登记并同步前端 llm-env.ts。
-const (
-	EnvTypeScript        = "script"        // 脚本工作区
-	EnvTypeAnalysis      = "analysis"      // 分析（analysis 级）
-	EnvTypeAnalysisNode  = "analysisNode"  // 分析节点
-	EnvTypeProjectReport = "projectReport" // 项目报告
-)
-
-// normalizeEnvType 把前端传入的 type 字符串规整为上述规范枚举。
-//
-// 前端历史版本曾使用 "analysisNodeId" / "analsyisNode" / "analysisId" 等字面量，
-// 这里做别名归一，保证旧调用方与 LLM 桥接链路不受影响。
-func normalizeEnvType(typ string) string {
-	switch strings.ToLower(strings.TrimSpace(typ)) {
-	case "script":
-		return EnvTypeScript
-	case "analysis", "analysisid":
-		return EnvTypeAnalysis
-	case "analysisnode", "analysisnodeid", "analsyisnode", "analysis_node", "analysis_node_id":
-		return EnvTypeAnalysisNode
-	case "projectreport", "project_report":
-		return EnvTypeProjectReport
-	default:
-		return ""
-	}
-}
-
-// RuntimeContext 是解析后的运行时上下文。
-//
-// 直接复用 runtimecontext.RuntimeContext：它只承载可序列化的业务事实（渲染 Profile 系统提示词模板
-// 所需的 SystemPromptVars），随 TurnInput → agenttypes.Request.RuntimeContext 一路
-// 传递到工具执行期，并随 Request 一起序列化进 agent_tasks.request 持久化（重启后可恢复）。
-// 工作目录属于执行事实，由 ResolveWithFacts 返回并落到 Task.WorkingDir。
-//
-// 工具执行期所需的服务能力（如 AnalysisNodeRunner）不在此结构内：它是进程级静态依赖，
-// 改由 agentclient.Options 注入（见 buildAgentClient），避免服务对象被序列化进 agent_tasks。
-type RuntimeContext = runtimecontext.RuntimeContext
-
-// RuntimeContextResolver 把「业务 env(type,id) → 系统提示词 + 工作目录」的解析逻辑
-// 从具体 Handler 中抽离出来，供 Agent 会话（AgentHandler）使用，避免重复实现导致的行为漂移。
+// RuntimeContextResolver 负责把「当前用户 → 默认工作目录」的解析逻辑从具体 Handler
+// 中抽离出来，供 Agent 会话（AgentHandler）使用，避免重复实现导致的行为漂移。
 type RuntimeContextResolver struct {
-	cfg         *config.Config
-	projectSvc  interfaces.ProjectService
-	workflowSvc interfaces.WorkflowService
-	analysisSvc interfaces.AnalysisService
-	// summarySvc 用于解析项目报告中的 AI 摘要条目（标题 + 摘要文件路径）。
-	summarySvc interfaces.AISummaryService
+	cfg        *config.Config
+	projectSvc interfaces.ProjectService
 	// agentSvc 用于在 Describe 中按用户 Profile 渲染真正的系统提示词（可为空）。
 	agentSvc *agentservice.AgentService
 }
@@ -77,179 +28,27 @@ type RuntimeContextResolver struct {
 func NewRuntimeContextResolver(
 	cfg *config.Config,
 	projectSvc interfaces.ProjectService,
-	workflowSvc interfaces.WorkflowService,
-	analysisSvc interfaces.AnalysisService,
-	summarySvc interfaces.AISummaryService,
 	agentSvc *agentservice.AgentService,
 ) *RuntimeContextResolver {
 	return &RuntimeContextResolver{
-		cfg:         cfg,
-		projectSvc:  projectSvc,
-		workflowSvc: workflowSvc,
-		analysisSvc: analysisSvc,
-		summarySvc:  summarySvc,
-		agentSvc:    agentSvc,
+		cfg:        cfg,
+		projectSvc: projectSvc,
+		agentSvc:   agentSvc,
 	}
 }
 
-// Resolved 是一次业务 env 的解析结果。
+// Resolve 解析当前激活项目，并返回其默认工作目录（data/<projectID>）。
 //
-// RuntimeContext 只承载业务变量；工作目录属于执行事实，由调用方写入 TaskFacts
-// （最终落到 Task.WorkingDir），不再重复存放在 RuntimeContext 里。
-type Resolved struct {
-	Context    *RuntimeContext
-	WorkingDir string
-}
-
-// Resolve 根据 env 解析出系统提示词模板变量与工作目录。
-//
-// 它不再返回拼装好的系统提示词，而是返回 SystemPromptVars；真正的系统提示词由
-// AgentService 依据 Profile 模板渲染（见 applyProfile / RenderSystemPrompt）。
-//
-// env 为 nil 或 type 为空时，回退到当前用户激活项目的默认工作目录。
-func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64, env map[string]any) (*Resolved, error) {
+// 业务上下文（env）已移除：Agent 一律在激活项目的默认工作目录下执行。
+func (r *RuntimeContextResolver) Resolve(ctx context.Context, userID int64) (string, *types.Project, error) {
 	if r.projectSvc == nil {
-		return nil, fmt.Errorf("project service is not initialized")
+		return "", nil, fmt.Errorf("project service is not initialized")
 	}
-
-	// vars 收集渲染 Profile 系统提示词模板所需的变量（业务上下文事实）。
-	vars := map[string]any{}
-
-	var workingDir string
-	var label string
-	var rtcType string
-	if env != nil {
-		envType := normalizeEnvType(toString(env["type"]))
-		if envType == "" {
-			dir, lbl, err := r.resolveDefaultWorkingDirectory(ctx, userID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to resolve working directory: %w", err)
-			}
-			workingDir = dir
-			label = lbl
-		} else {
-			rtcType = envType
-			id, err := parseEnvID(env["id"])
-			if err != nil {
-				return nil, err
-			}
-
-			var dir string
-			switch envType {
-			case EnvTypeScript:
-				files, fErr := r.workflowSvc.GetScriptFileByScriptID(ctx, id)
-				if fErr != nil {
-					return nil, fmt.Errorf("failed to get script file by script id: %w", fErr)
-				}
-				if s, sErr := r.workflowSvc.GetScriptByID(ctx, id); sErr == nil {
-					label = s.Name
-				}
-				vars["script_workspace_directory"] = files.Dir
-
-			case EnvTypeAnalysisNode:
-				node, nodeErr := r.analysisSvc.GetAnalysisNodeByID(ctx, id)
-
-				if nodeErr != nil {
-					return nil, nodeErr
-				}
-				script, err := r.workflowSvc.GetScriptByID(ctx, node.ScriptID)
-				if err != nil {
-					return nil, fmt.Errorf("failed to get script by id: %w", err)
-				}
-				// 脚本主文件与 io_schema.json 路径由脚本目录布局统一推导（不再需要 project）。
-				files := script.Files(r.cfg.Storage.BaseDir)
-
-				dir = node.WorkspaceDir
-				label = node.NodeName
-
-				vars["script_file_path"] = files.MainPath
-				vars["params_file_path"] = node.ParamsPath
-				vars["io_schema_path"] = files.IOSchemaFile
-				vars["output_directory"] = node.OutputDir
-				vars["script_type"] = script.ScriptType
-				vars["analysis_node_id"] = strconv.FormatInt(node.ID, 10)
-
-			case EnvTypeAnalysis:
-				analysis, analysisErr := r.analysisSvc.GetAnalysisByID(ctx, id)
-				if analysisErr != nil {
-					return nil, analysisErr
-				}
-				dir = analysis.WorkspaceDir
-				label = analysis.AnalysisName
-
-			case EnvTypeProjectReport:
-				report, reportErr := r.projectSvc.GetProjectReportByID(ctx, id)
-				if reportErr != nil {
-					return nil, reportErr
-				}
-				dir = report.WorkspaceDir(r.storageBaseDir())
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					return nil, fmt.Errorf("failed to create project report working directory: %w", err)
-				}
-				outputFile := report.OutputFile(r.storageBaseDir())
-				label = report.Title
-				// 科研报告撰写提示词由 Profile 模板负责组织，这里只提供变量（输出文件路径等）。
-				//
-				// 报告不绑定计划：一份报告可能综合多份 agent 计划。用户会在消息中指定依据哪些计划，
-				// agent 通过计划工具（list_plans / get_plan）自行查询，因此这里不再注入 plan_* 变量。
-				vars["output_file"] = outputFile
-				vars["report_title"] = report.Title
-
-			default:
-				return nil, fmt.Errorf("unsupported runtime env type: %s", envType)
-			}
-			workingDir = strings.TrimSpace(dir)
-		}
-	}
-
-	if strings.TrimSpace(workingDir) == "" {
-		dir, lbl, err := r.resolveDefaultWorkingDirectory(ctx, userID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve working directory: %w", err)
-		}
-		workingDir = dir
-		if label == "" {
-			label = lbl
-		}
-	}
-
-	if label == "" {
-		label = "Default workspace"
-	}
-
-	vars["workspace_directory"] = strings.TrimSpace(workingDir)
-	vars["workspace_label"] = label
-
-	return &Resolved{
-		Context: &RuntimeContext{
-			Type:             rtcType,
-			Label:            label,
-			SystemPromptVars: vars,
-		},
-		WorkingDir: workingDir,
-	}, nil
-}
-
-// ResolveWithFacts 解析业务上下文，并返回本次调用的执行事实（用户 / 项目 / 工作目录）。
-//
-// 会话 ID 由上层按具体会话补齐；工具通过 Runtime 注入的 TaskFacts 读取这些事实，
-// 不再从 RuntimeContext 里取。
-func (r *RuntimeContextResolver) ResolveWithFacts(ctx context.Context, userID int64, env map[string]any) (*RuntimeContext, agenttypes.TaskFacts, error) {
-	resolved, err := r.Resolve(ctx, userID, env)
+	workingDir, project, err := r.resolveDefaultWorkingDirectory(ctx, userID)
 	if err != nil {
-		return nil, agenttypes.TaskFacts{}, err
+		return "", nil, fmt.Errorf("failed to resolve working directory: %w", err)
 	}
-	var projectID int64
-	if r.projectSvc != nil {
-		if project, pErr := r.projectSvc.GetActiveProjectByUserID(ctx, userID); pErr == nil && project != nil {
-			projectID = project.ID
-		}
-	}
-	return resolved.Context, agenttypes.TaskFacts{
-		UserID:     userID,
-		ProjectID:  projectID,
-		WorkingDir: resolved.WorkingDir,
-	}, nil
+	return strings.TrimSpace(workingDir), project, nil
 }
 
 // outputMarkdownPath 拼接 owner（Analysis / AnalysisNode）输出目录下的 output.md 路径。
@@ -259,8 +58,7 @@ func outputMarkdownPath(dir string) string {
 }
 
 type RuntimeContextInfo struct {
-	Type         string         `json:"type"`                        // 归一化后的业务类型（空表示默认工作区）
-	Label        string         `json:"label"`                       // 人类可读的名称
+	Label        string         `json:"label"`                       // 人类可读的名称（当前激活项目名）
 	WorkingDir   string         `json:"working_dir"`                 // 工作目录
 	SystemPrompt string         `json:"system_prompt,omitempty"`     // 用当前用户 Profile 模板渲染后的真实系统提示词
 	Vars         map[string]any `json:"vars,omitempty"`              // 渲染系统提示词模板所用的变量
@@ -272,31 +70,44 @@ type RuntimeContextInfo struct {
 	Skills []string `json:"skills"`
 }
 
-// Describe 解析 env 并返回用于前端展示的上下文描述。
+// Describe 返回用于前端展示的上下文描述（工作目录 + 渲染后的系统提示词）。
 //
-// 与 Resolve 共享同一套解析逻辑：先用 env 解析出 SystemPromptVars，再按当前用户选中的
-// Profile（profileID）解析其系统提示词模板，用变量渲染出真正的系统提示词。
-func (r *RuntimeContextResolver) Describe(ctx context.Context, userID int64, profileID int64, env map[string]any) (*RuntimeContextInfo, error) {
-	resolved, err := r.Resolve(ctx, userID, env)
-	if err != nil {
-		return nil, err
+// 业务上下文（env）已移除：工作目录固定为当前激活项目的默认目录；
+// 系统提示词仍按当前用户选中的 Profile（profileID）模板 + 工作目录变量渲染。
+func (r *RuntimeContextResolver) Describe(ctx context.Context, userID int64, profileID int64) (*RuntimeContextInfo, error) {
+	if r.projectSvc == nil {
+		return nil, fmt.Errorf("project service is not initialized")
 	}
-	rc := resolved.Context
-
-	profile, systemPrompt, err := r.agentSvc.RenderSystemPrompt(ctx, userID, profileID, rc.SystemPromptVars)
+	workingDir, project, err := r.resolveDefaultWorkingDirectory(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to resolve working directory: %w", err)
+	}
+	workingDir = strings.TrimSpace(workingDir)
+	label := strings.TrimSpace(project.ProjectName)
+	if label == "" {
+		label = "Default workspace"
+	}
+
+	vars := map[string]any{
+		"workspace_directory": workingDir,
+		"workspace_label":     label,
 	}
 
 	info := &RuntimeContextInfo{
-		Type:         rc.Type,
-		Label:        rc.Label,
-		WorkingDir:   resolved.WorkingDir,
-		SystemPrompt: systemPrompt,
-		Vars:         rc.SystemPromptVars,
+		Label:      label,
+		WorkingDir: workingDir,
+		Vars:       vars,
 	}
 
 	// Profile 可能解析失败（未配置 ProfileManager 等），此时只返回上下文事实。
+	if r.agentSvc == nil {
+		return info, nil
+	}
+	profile, systemPrompt, err := r.agentSvc.RenderSystemPrompt(ctx, userID, profileID, vars)
+	if err != nil {
+		return nil, err
+	}
+	info.SystemPrompt = systemPrompt
 	if profile != nil {
 		info.ProfileName = profile.Name
 		info.ProfileID = profile.ID
@@ -310,26 +121,26 @@ func (r *RuntimeContextResolver) Describe(ctx context.Context, userID int64, pro
 	return info, nil
 }
 
-// resolveDefaultWorkingDirectory 返回当前用户激活项目的默认工作目录及其项目名（作为展示标签）。
-func (r *RuntimeContextResolver) resolveDefaultWorkingDirectory(ctx context.Context, userID int64) (string, string, error) {
+// resolveDefaultWorkingDirectory 返回当前用户激活项目及其默认工作目录。
+func (r *RuntimeContextResolver) resolveDefaultWorkingDirectory(ctx context.Context, userID int64) (string, *types.Project, error) {
 	project, err := r.projectSvc.GetActiveProjectByUserID(ctx, userID)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
 	if project == nil || project.ID == 0 {
-		return "", "", fmt.Errorf("active project is empty")
+		return "", nil, fmt.Errorf("active project is empty")
 	}
 
 	baseDir := r.storageBaseDir()
 	if baseDir == "" {
-		return "", "", fmt.Errorf("storage.base_dir is empty")
+		return "", nil, fmt.Errorf("storage.base_dir is empty")
 	}
 
 	workingDir := filepath.Join(baseDir, "data", strconv.FormatInt(project.ID, 10))
 	if err := os.MkdirAll(workingDir, 0o755); err != nil {
-		return "", "", err
+		return "", nil, err
 	}
-	return workingDir, strings.TrimSpace(project.ProjectName), nil
+	return workingDir, project, nil
 }
 
 // storageBaseDir 返回存储根目录（容忍 cfg/Storage 为空）。
@@ -338,24 +149,4 @@ func (r *RuntimeContextResolver) storageBaseDir() string {
 		return ""
 	}
 	return strings.TrimSpace(r.cfg.Storage.BaseDir)
-}
-
-// parseEnvID 解析 env.id（可能是 string / float64 / int64 等），返回 int64 业务对象 ID。
-func parseEnvID(v any) (int64, error) {
-	idStr, ok := v.(string)
-	if !ok {
-		idStr = fmt.Sprintf("%v", v)
-	}
-	idStr = strings.TrimSpace(idStr)
-	if idStr == "" || idStr == "<nil>" {
-		return 0, fmt.Errorf("env.id is required")
-	}
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid env.id: %w", err)
-	}
-	if id <= 0 {
-		return 0, fmt.Errorf("env.id must be a positive integer")
-	}
-	return id, nil
 }
