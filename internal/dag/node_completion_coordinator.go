@@ -111,7 +111,7 @@ func (c *NodeCompletionCoordinator) rewriteNodeOutputMarkdownImages(ctx context.
 	if node == nil {
 		return
 	}
-	dir := strings.TrimSpace(node.OutputDir)
+	dir := strings.TrimSpace(node.OutputDirectory())
 	if dir == "" {
 		return
 	}
@@ -334,7 +334,7 @@ func (c *NodeCompletionCoordinator) reconcileContainer(ctx context.Context, inst
 		// reads that disagree. The per-retry reads are logged at debug level, so this
 		// warning is the only place the outcome is stated.
 		logger.Warnf(ctx, "[NodeCompletionCoordinator] declared outputs missing after grace wait, source=%s analysis_id=%d node_id=%s instance_id=%d runtime_id=%s container_status=%s container_exit_code=%s container_started_at=%v container_finished_at=%v output_dir=%s missing=%s",
-			source, node.AnalysisID, node.NodeID, inst.ID, inst.RuntimeID, inst.Status, formatContainerExitCode(inst), inst.StartedAt, inst.FinishedAt, node.OutputDir, strings.Join(outputErrors, "; "))
+			source, node.AnalysisID, node.NodeID, inst.ID, inst.RuntimeID, inst.Status, formatContainerExitCode(inst), inst.StartedAt, inst.FinishedAt, node.OutputDirectory(), strings.Join(outputErrors, "; "))
 		finalStatus = StatusFailed
 		if exitCode == 0 {
 			exitCode = 1

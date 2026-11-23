@@ -149,9 +149,9 @@ func formatAnalysisNodesContext(project *types.Project, nodes []*types.AnalysisN
 			b.WriteString(" sample=")
 			b.WriteString(n.SampleID)
 		}
-		if strings.TrimSpace(n.OutputDir) != "" {
+		if outputDir := strings.TrimSpace(n.OutputDirectory()); outputDir != "" {
 			b.WriteString(" output=")
-			b.WriteString(n.OutputDir)
+			b.WriteString(outputDir)
 		}
 		b.WriteString("\n")
 	}

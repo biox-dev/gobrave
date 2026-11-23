@@ -46,7 +46,10 @@ func (r *recordingDataRepo) CreateFile(_ context.Context, file *types.File) erro
 // the node output dir, and the container metadata that buildResolvedOutputs adds
 // is not recorded as a file.
 func TestRecordNodeOutputFilesAgentNodeWalksResolvedOutputs(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "output")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create output dir: %v", err)
+	}
 	report := filepath.Join(dir, "report.md")
 	if err := os.WriteFile(report, []byte("report"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
@@ -67,7 +70,7 @@ func TestRecordNodeOutputFilesAgentNodeWalksResolvedOutputs(t *testing.T) {
 		NodeName:       "agent analysis",
 		CreationSource: types.AnalysisNodeCreationSourceAgent,
 		OutputPatterns: types.JSONMap{},
-		OutputDir:      dir,
+		WorkspaceDir:   filepath.Dir(dir),
 	}
 
 	repo := newRecordingDataRepo()
@@ -114,7 +117,10 @@ func TestRecordNodeOutputFilesAgentNodeWalksResolvedOutputs(t *testing.T) {
 // a script node records only the handles declared as file outputs, with the role
 // declared by the pattern, and ignores other resolved outputs.
 func TestRecordNodeOutputFilesScriptNodeUsesOutputPatterns(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "output")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create output dir: %v", err)
+	}
 	bam := filepath.Join(dir, "sample.bam")
 	if err := os.WriteFile(bam, []byte("bam"), 0o644); err != nil {
 		t.Fatalf("write bam: %v", err)
@@ -135,7 +141,7 @@ func TestRecordNodeOutputFilesScriptNodeUsesOutputPatterns(t *testing.T) {
 			"bam":   map[string]any{"type": "file", "role": "alignment"},
 			"stats": map[string]any{"type": "string"},
 		},
-		OutputDir: dir,
+		WorkspaceDir: filepath.Dir(dir),
 	}
 
 	repo := newRecordingDataRepo()

@@ -398,30 +398,17 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 		}
 
 		workspaceDir := filepath.Join(analysis.WorkspaceDir, fmt.Sprintf("%d", id))
-		layout := utils.NodeLayoutFor(workspaceDir)
-		outputDir := layout.OutputDir
-		cacheDir := layout.CacheDir
-		paramsPath := layout.ParamsPath
-		commandPath := layout.CommandPath
-		logPath := layout.LogPath
-
 		if existing != nil {
 			if strings.TrimSpace(existing.WorkspaceDir) != "" {
 				workspaceDir = existing.WorkspaceDir
-				// 派生路径跟随既有 workspace 重新推导，避免与磁盘布局脱节。
-				layout = utils.NodeLayoutFor(workspaceDir)
-				outputDir = layout.OutputDir
-				cacheDir = layout.CacheDir
-				paramsPath = layout.ParamsPath
-				commandPath = layout.CommandPath
-				logPath = layout.LogPath
 			}
 			if existing.ID != 0 {
 				id = existing.ID
 			}
 		}
 
-		if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		// 派生路径由 WorkspaceDir 推导（见 types.AnalysisNode 的方法），这里只需建好输出目录。
+		if err := os.MkdirAll(utils.NodeLayoutFor(workspaceDir).OutputDir, 0o755); err != nil {
 			return err
 		}
 
@@ -470,12 +457,7 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 			DownstreamIDs:          toJSONSlice(row["downstream_ids"]),
 			InputValidationErrors:  toJSONSlice(row["input_validation_errors"]),
 			OutputValidationErrors: toJSONSlice(row["output_validation_errors"]),
-			LogPath:                logPath,
 			WorkspaceDir:           workspaceDir,
-			OutputDir:              outputDir,
-			CommandPath:            commandPath,
-			CacheDir:               cacheDir,
-			ParamsPath:             paramsPath,
 			CreationSource:         types.AnalysisNodeCreationSourceScheduler,
 		}
 		if strings.TrimSpace(node.Status) == "" {

@@ -163,21 +163,20 @@ func (b *analysisNodeParamsBuilder) BuildAnalysisNodeParams(ctx context.Context,
 	if b.preparer == nil {
 		return result, fmt.Errorf("node runtime preparer is not configured")
 	}
-	// 派生路径由 WorkspaceDir 推导；Prepare 内部还会按需补齐缺失的路径。
-	node.HydrateDerivedPaths()
+	// 派生路径由 WorkspaceDir 推导（见 types.AnalysisNode 的方法），Prepare 负责创建目录与运行期文件。
 	if err := b.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
 		return result, fmt.Errorf("failed to prepare node runtime files: %w", err)
 	}
 
 	result.WorkspaceDir = node.WorkspaceDir
-	result.ParamsPath = node.ParamsPath
-	result.CommandPath = node.CommandPath
+	result.ParamsPath = node.ParamsFile()
+	result.CommandPath = node.CommandFile()
 	result.ResolvedInputs = resolvedInputs
 
 	// 回读刚写出的 params.json：模型据此确认参数映射结果，无需再读盘。
-	raw, err := os.ReadFile(node.ParamsPath)
+	raw, err := os.ReadFile(node.ParamsFile())
 	if err != nil {
-		return result, fmt.Errorf("failed to read generated params.json %s: %w", node.ParamsPath, err)
+		return result, fmt.Errorf("failed to read generated params.json %s: %w", node.ParamsFile(), err)
 	}
 	result.ParamsJSON = string(raw)
 

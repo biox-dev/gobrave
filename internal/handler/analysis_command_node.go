@@ -73,7 +73,7 @@ func (h *AnalysisHandler) CreateCommandAnalysisNode(c *gin.Context) {
 		}
 	}
 	// 命令不再落库：Prepare 只建目录 / params.json / env.sh，run.sh 由这里直接写入。
-	if err := prepare.WriteCommandRunScript(node.CommandPath, req.Command); err != nil {
+	if err := prepare.WriteCommandRunScript(node.CommandFile(), req.Command); err != nil {
 		_ = h.analysisRepo.DeleteAnalysisNodeByID(c.Request.Context(), node.ID)
 		c.Error(errors.NewInternalServerError("failed to write command analysis node run.sh").WithDetails(err.Error()))
 		return

@@ -214,11 +214,6 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 		return runtimecontext.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: analysis node %d does not belong to the active project %d", node.ID, projectID)
 	}
 
-	// 兜底：个别读取路径可能没有填充派生路径，这里按 WorkspaceDir 再推导一次（幂等）。
-	if (node.ParamsPath == "" || node.CommandPath == "" || node.OutputDir == "") && node.WorkspaceDir != "" {
-		node.HydrateDerivedPaths()
-	}
-
 	return runtimecontext.AnalysisNodeBrief{
 		AnalysisNodeID:      node.ID,
 		NodeName:            node.NodeName,
@@ -227,9 +222,9 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 		NodeTypeDescription: node.NodeTypeDescription(),
 		ScriptID:            node.ScriptID,
 		WorkspaceDir:        node.WorkspaceDir,
-		CommandPath:         node.CommandPath,
-		ParamsPath:          node.ParamsPath,
-		OutputDir:           node.OutputDir,
+		CommandPath:         node.CommandFile(),
+		ParamsPath:          node.ParamsFile(),
+		OutputDir:           node.OutputDirectory(),
 		RequestParam:        agentanalysis.DecodeRequestParam(node.RequestParam),
 	}, nil
 }
@@ -256,11 +251,9 @@ func (b *projectResourceBrowser) ReadAnalysisNodeFile(ctx context.Context, proje
 	if node.ProjectID != projectID {
 		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis node file: analysis node %d does not belong to the active project %d", node.ID, projectID)
 	}
-	node.HydrateDerivedPaths()
-
-	path := node.CommandPath
+	path := node.CommandFile()
 	if file == runtimecontext.ResourceFileParams {
-		path = node.ParamsPath
+		path = node.ParamsFile()
 	}
 	data, err := readFileIfExists(path)
 	if err != nil {
@@ -465,11 +458,6 @@ func (b *projectResourceBrowser) GetAnalysisByID(ctx context.Context, projectID 
 		return runtimecontext.AnalysisDetail{}, fmt.Errorf("get_analysis_workflow: analysis %d does not belong to the active project %d", analysis.ID, projectID)
 	}
 
-	// 兜底：个别读取路径可能没有填充派生路径，这里按 WorkspaceDir 再推导一次（幂等）。
-	if analysis.ParamsPath == "" && analysis.WorkspaceDir != "" {
-		analysis.HydrateDerivedPaths()
-	}
-
 	brief := runtimecontext.AnalysisBrief{
 		AnalysisID:    analysis.ID,
 		AnalysisKey:   analysis.AnalysisID,
@@ -480,7 +468,7 @@ func (b *projectResourceBrowser) GetAnalysisByID(ctx context.Context, projectID 
 		SchedulerMode: types.NormalizeSchedulerMode(analysis.SchedulerMode),
 		CacheType:     analysis.CacheType,
 		WorkspaceDir:  analysis.WorkspaceDir,
-		ParamsPath:    analysis.ParamsPath,
+		ParamsPath:    analysis.ParamsFile(),
 		RequestParam:  agentanalysis.DecodeRequestParam(analysis.RequestParam),
 	}
 	if b.workflowSvc != nil && analysis.WorkflowID > 0 {
@@ -533,13 +521,11 @@ func (b *projectResourceBrowser) ReadAnalysisFile(ctx context.Context, projectID
 	if analysis.ProjectID != projectID {
 		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis file: analysis %d does not belong to the active project %d", analysis.ID, projectID)
 	}
-	analysis.HydrateDerivedPaths()
-
-	data, err := readFileIfExists(analysis.ParamsPath)
+	data, err := readFileIfExists(analysis.ParamsFile())
 	if err != nil {
 		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read analysis file: %w", err)
 	}
-	return runtimecontext.NewResourceFileContent(file, analysis.ParamsPath, data), nil
+	return runtimecontext.NewResourceFileContent(file, analysis.ParamsFile(), data), nil
 }
 
 // workflowBrief 构造工作流的只读摘要：元数据 + 目录内文件路径 + DAG 节点 / 连线数。

@@ -76,8 +76,7 @@ func (m *analysisManager) UpdateAnalysis(ctx context.Context, in runtimecontext.
 		if err != nil {
 			return runtimecontext.AnalysisUpdateResult{}, fmt.Errorf("update_analysis_workflow: failed to load analysis %d: %w", in.AnalysisID, err)
 		}
-		analysis.HydrateDerivedPaths()
-		current, err := os.ReadFile(analysis.ParamsPath)
+		current, err := os.ReadFile(analysis.ParamsFile())
 		if err != nil && !os.IsNotExist(err) {
 			return runtimecontext.AnalysisUpdateResult{}, fmt.Errorf("update_analysis_workflow: failed to read params.json: %w", err)
 		}
@@ -349,12 +348,8 @@ func (m *analysisManager) brief(ctx context.Context, analysis *types.AnalysisWor
 		SchedulerMode: orchestrator.Name(),
 		CacheType:     analysis.CacheType,
 		WorkspaceDir:  analysis.WorkspaceDir,
-		ParamsPath:    analysis.ParamsPath,
+		ParamsPath:    analysis.ParamsFile(),
 		RequestParam:  DecodeRequestParam(analysis.RequestParam),
-	}
-	if brief.ParamsPath == "" && analysis.WorkspaceDir != "" {
-		analysis.HydrateDerivedPaths()
-		brief.ParamsPath = analysis.ParamsPath
 	}
 	if analysis.WorkflowID > 0 {
 		if workflow, err := m.workflowSvc.GetWorkflowByID(ctx, analysis.WorkflowID); err == nil && workflow != nil {

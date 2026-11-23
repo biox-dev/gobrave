@@ -74,7 +74,7 @@ func (o *dataflowDagOrchestratorV3) loadRecoveryInputs(ctx context.Context, item
 		return nil, nil, fmt.Errorf("workflow service is not configured, cannot rebuild dag definition")
 	}
 
-	paramsPath := strings.TrimSpace(item.ParamsPath)
+	paramsPath := strings.TrimSpace(item.ParamsFile())
 	if paramsPath == "" {
 		return nil, nil, fmt.Errorf("analysis params_path is empty, cannot rebuild runtime inputs")
 	}

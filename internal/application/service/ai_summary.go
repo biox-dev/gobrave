@@ -179,7 +179,7 @@ func resolveSummaryOwnerURLPrefix(ctx context.Context, analysisRepo interfaces.A
 			logger.Warnf(ctx, "[AISummary] resolve analysis node output dir failed, analysis_node_id=%d err=%v", ownerID, err)
 			return ""
 		}
-		outputDir = node.OutputDir
+		outputDir = node.OutputDirectory()
 	case types.SummaryOwnerAnalysis:
 		analysis, err := analysisRepo.GetAnalysisByID(ctx, ownerID)
 		if err != nil {

@@ -98,7 +98,7 @@ func (c *scriptNodeCreator) CreateAnalysisNode(ctx context.Context, in runtimeco
 		ScriptName:     script.Name,
 		ScriptType:     script.ScriptType,
 		WorkspaceDir:   node.WorkspaceDir,
-		ParamsPath:     node.ParamsPath,
+		ParamsPath:     node.ParamsFile(),
 		RequestParam:   in.RequestParam,
 	}
 	if baseDir := c.storageBaseDir(); baseDir != "" {
@@ -138,7 +138,6 @@ func (c *scriptNodeCreator) createNode(ctx context.Context, script *types.Script
 
 	// 运行期文件（params.json / run.sh / env.sh 与软链）；有 request_param 时 params.json 即已就绪。
 	if c.preparer != nil {
-		node.HydrateDerivedPaths()
 		if err := c.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
 			return nil, fmt.Errorf("failed to prepare node workspace: %w", err)
 		}

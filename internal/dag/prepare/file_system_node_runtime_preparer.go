@@ -85,15 +85,11 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	if err != nil {
 		return fmt.Errorf("load project failed: %w", err)
 	}
-	if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
+	if err := os.MkdirAll(node.OutputDirectory(), 0o755); err != nil {
 		return err
 	}
 	// create cached dir
-	// nodeCachedDir := filepath.Join(node.WorkspaceDir, "cached")
-	if strings.TrimSpace(node.CacheDir) == "" {
-		node.CacheDir = utils.GetAnalysisNodeCacheDir(node.WorkspaceDir) //filepath.Join(node.WorkspaceDir, "cached")
-	}
-	if err := os.MkdirAll(node.CacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(node.CacheDirectory(), 0o755); err != nil {
 		return err
 	}
 
@@ -120,11 +116,11 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 		return err
 	}
 	paramsPayload["project_dir"] = utils.GetProjectDir(p.baseDir(), project.ID)
-	paramsPayload["output_dir"] = node.OutputDir
-	paramsPayload["node_cached_dir"] = node.CacheDir
+	paramsPayload["output_dir"] = node.OutputDirectory()
+	paramsPayload["node_cached_dir"] = node.CacheDirectory()
 	// paramsPayload["project_cached_dir"] = projectCachedDir
 
-	if err := writeJSONAtomic(node.ParamsPath, paramsPayload, 0o644); err != nil {
+	if err := writeJSONAtomic(node.ParamsFile(), paramsPayload, 0o644); err != nil {
 		return fmt.Errorf("write params json failed: %w", err)
 	}
 
@@ -156,7 +152,7 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	}
 
 	if !shouldSkipCleanOutput(ctx) {
-		if err := cleanDirContents(node.OutputDir, prefix); err != nil {
+		if err := cleanDirContents(node.OutputDirectory(), prefix); err != nil {
 			return fmt.Errorf("clean output dir failed: %w", err)
 		}
 	}
@@ -177,18 +173,18 @@ func (p *FileSystemNodeRuntimePreparer) prepareCommandNode(ctx context.Context, 
 	if err := os.MkdirAll(node.WorkspaceDir, 0o755); err != nil {
 		return fmt.Errorf("create workspace dir failed: %w", err)
 	}
-	if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
+	if err := os.MkdirAll(node.OutputDirectory(), 0o755); err != nil {
 		return fmt.Errorf("create output dir failed: %w", err)
 	}
-	if err := os.MkdirAll(node.CacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(node.CacheDirectory(), 0o755); err != nil {
 		return fmt.Errorf("create cache dir failed: %w", err)
 	}
 
 	paramsPayload := cloneAnyMapForNode(map[string]interface{}(node.ResolvedInputs))
 	paramsPayload["project_dir"] = utils.GetProjectDir(p.baseDir(), project.ID)
-	paramsPayload["output_dir"] = node.OutputDir
-	paramsPayload["node_cached_dir"] = node.CacheDir
-	if err := writeJSONAtomic(node.ParamsPath, paramsPayload, 0o644); err != nil {
+	paramsPayload["output_dir"] = node.OutputDirectory()
+	paramsPayload["node_cached_dir"] = node.CacheDirectory()
+	if err := writeJSONAtomic(node.ParamsFile(), paramsPayload, 0o644); err != nil {
 		return fmt.Errorf("write params json failed: %w", err)
 	}
 
@@ -199,7 +195,7 @@ func (p *FileSystemNodeRuntimePreparer) prepareCommandNode(ctx context.Context, 
 
 	if !shouldSkipCleanOutput(ctx) {
 		prefix := filepath.Join(p.baseDir(), "data", strconv.FormatInt(project.ID, 10))
-		if err := cleanDirContents(node.OutputDir, prefix); err != nil {
+		if err := cleanDirContents(node.OutputDirectory(), prefix); err != nil {
 			return fmt.Errorf("clean output dir failed: %w", err)
 		}
 	}
@@ -259,7 +255,7 @@ func (p *FileSystemNodeRuntimePreparer) resolveBaseParams(ctx context.Context, n
 	if err := os.MkdirAll(node.WorkspaceDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create workspace dir failed: %w", err)
 	}
-	if err := os.MkdirAll(node.OutputDir, 0o755); err != nil {
+	if err := os.MkdirAll(node.OutputDirectory(), 0o755); err != nil {
 		return nil, fmt.Errorf("create output dir failed: %w", err)
 	}
 
@@ -280,7 +276,7 @@ func (p *FileSystemNodeRuntimePreparer) WriteCommand(node *types.AnalysisNode, s
 	if err != nil {
 		return fmt.Errorf("build run script failed: %w", err)
 	}
-	if err := writeTextAtomic(node.CommandPath, runScript, 0o755); err != nil {
+	if err := writeTextAtomic(node.CommandFile(), runScript, 0o755); err != nil {
 		return fmt.Errorf("write run.sh failed: %w", err)
 	}
 	return nil
@@ -300,32 +296,18 @@ func (p *FileSystemNodeRuntimePreparer) ensureNodePaths(node *types.AnalysisNode
 		node.WorkspaceDir = baseWorkspace
 	}
 
-	if strings.TrimSpace(node.OutputDir) == "" {
-		node.OutputDir = utils.GetAnalysisNodeOutputDir(baseWorkspace) //filepath.Join(baseWorkspace, "output")
-	}
-	if strings.TrimSpace(node.CacheDir) == "" {
-		node.CacheDir = utils.GetAnalysisNodeCacheDir(baseWorkspace) //filepath.Join(baseWorkspace, "cache")
-	}
-	if strings.TrimSpace(node.ParamsPath) == "" {
-		node.ParamsPath = filepath.Join(baseWorkspace, "params.json")
-	}
-	if strings.TrimSpace(node.CommandPath) == "" {
-		node.CommandPath = filepath.Join(baseWorkspace, "run.sh")
-	}
-
-	if err := os.MkdirAll(filepath.Dir(node.ParamsPath), 0o755); err != nil {
-		return fmt.Errorf("create params dir failed: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(node.CommandPath), 0o755); err != nil {
-		return fmt.Errorf("create command dir failed: %w", err)
+	// 派生路径统一由 WorkspaceDir 推导（见 types.AnalysisNode 的方法），这里只需保证
+	// 节点根目录存在：params.json / run.sh 都写在它下面，输出 / 缓存目录由 Prepare 创建。
+	if err := os.MkdirAll(node.WorkspaceDir, 0o755); err != nil {
+		return fmt.Errorf("create node workspace dir failed: %w", err)
 	}
 	return nil
 }
 
 func (p *FileSystemNodeRuntimePreparer) buildNodeParams(ctx context.Context, node *types.AnalysisNode, analysis *types.AnalysisWorkflow) (map[string]any, error) {
 	baseParams := map[string]any{}
-	if analysis != nil && strings.TrimSpace(analysis.ParamsPath) != "" {
-		raw, err := os.ReadFile(analysis.ParamsPath)
+	if analysis != nil && analysis.ParamsFile() != "" {
+		raw, err := os.ReadFile(analysis.ParamsFile())
 		if err != nil {
 			return nil, fmt.Errorf("read analysis params failed: %w", err)
 		}
@@ -363,7 +345,7 @@ func (p *FileSystemNodeRuntimePreparer) buildNodeParams(ctx context.Context, nod
 	}
 
 	// output_dir 是运行期公共参数，不依赖 formJson，始终注入。
-	merged["output_dir"] = node.OutputDir
+	merged["output_dir"] = node.OutputDirectory()
 
 	return merged, nil
 }

@@ -122,12 +122,12 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		return runtimecontext.AnalysisNodeRunResult{
 			NodeID:       nodeID,
 			Status:       node.Status,
-			Log:          readAnalysisNodeLog(node.LogPath, r.maxLogBytes),
+			Log:          readAnalysisNodeLog(node.LogFile(), r.maxLogBytes),
 			WorkspaceDir: node.WorkspaceDir,
-			CommandPath:  node.CommandPath,
-			ParamsPath:   node.ParamsPath,
-			LogPath:      node.LogPath,
-			ParamsJSON:   readParamsJSON(node.ParamsPath),
+			CommandPath:  node.CommandFile(),
+			ParamsPath:   node.ParamsFile(),
+			LogPath:      node.LogFile(),
+			ParamsJSON:   readParamsJSON(node.ParamsFile()),
 			RequestParam: DecodeRequestParam(node.RequestParam),
 		}, fmt.Errorf("analysis node is already %s", node.Status)
 	}
@@ -141,7 +141,6 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		if r.preparer == nil {
 			return runtimecontext.AnalysisNodeRunResult{NodeID: nodeID}, fmt.Errorf("node runtime preparer is not configured")
 		}
-		node.HydrateDerivedPaths()
 		// 不携带 prepare.WithSkipCleanOutput：运行前清空 output，避免上一轮残留文件
 		// 被当作本轮结果（尤其是命令节点输出校验 / 后续节点读取）。
 		if err := r.preparer.Prepare(ctx, node); err != nil {
@@ -149,8 +148,8 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 				NodeID:       nodeID,
 				Status:       "params_failed",
 				WorkspaceDir: node.WorkspaceDir,
-				CommandPath:  node.CommandPath,
-				ParamsPath:   node.ParamsPath,
+				CommandPath:  node.CommandFile(),
+				ParamsPath:   node.ParamsFile(),
 			}, fmt.Errorf("failed to prepare command node: %w", err)
 		}
 		return r.resetAndRun(ctx, node, timeout)
@@ -167,9 +166,9 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 			NodeID:       nodeID,
 			Status:       "params_failed",
 			WorkspaceDir: node.WorkspaceDir,
-			CommandPath:  node.CommandPath,
-			ParamsPath:   node.ParamsPath,
-			LogPath:      node.LogPath,
+			CommandPath:  node.CommandFile(),
+			ParamsPath:   node.ParamsFile(),
+			LogPath:      node.LogFile(),
 		}, fmt.Errorf("request_param is required: call build_analysis_node_params to save node params before running")
 	}
 
@@ -228,15 +227,14 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 	node.OutputPatterns = outputPatterns
 	node.ResolvedInputs = resolvedInputs
 	node.RequestParam = requestParamBytes
-	node.HydrateDerivedPaths()
 	// 不携带 prepare.WithSkipCleanOutput：运行前清空 output，保证本次结果不复用上一轮残留文件。
 	if err := r.preparer.Prepare(ctx, node); err != nil {
 		return runtimecontext.AnalysisNodeRunResult{
 			NodeID:         nodeID,
 			Status:         "params_failed",
 			WorkspaceDir:   node.WorkspaceDir,
-			CommandPath:    node.CommandPath,
-			ParamsPath:     node.ParamsPath,
+			CommandPath:    node.CommandFile(),
+			ParamsPath:     node.ParamsFile(),
 			RequestParam:   effectiveRequestParam,
 			ResolvedInputs: resolvedInputs,
 		}, fmt.Errorf("failed to build params.json: %w", err)
@@ -346,9 +344,9 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, node *types.
 	// 运行期路径全部由节点的 WorkspaceDir 派生，这里取一份，保证取消 / 超时等
 	// 非终态返回也能告诉模型文件在哪。
 	workspaceDir := strings.TrimSpace(node.WorkspaceDir)
-	commandPath := strings.TrimSpace(node.CommandPath)
-	paramsPath := strings.TrimSpace(node.ParamsPath)
-	logPath := strings.TrimSpace(node.LogPath)
+	commandPath := strings.TrimSpace(node.CommandFile())
+	paramsPath := strings.TrimSpace(node.ParamsFile())
+	logPath := strings.TrimSpace(node.LogFile())
 
 	// 订阅 NodeCompletionCoordinator.publishNodeResult 发出的节点完成 / 失败事件。
 	//
@@ -411,17 +409,18 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, node *types.
 			// 事件 / 兜底轮询重试；超时兜底仍在循环尾部生效。
 			logger.Warnf(ctx, "[analysisNodeRunner] failed to get node %d: %v", nodeID, err)
 		} else {
-			if lp := strings.TrimSpace(node.LogPath); lp != "" {
+			if lp := strings.TrimSpace(node.LogFile()); lp != "" {
 				logPath = lp
 			}
-			// 节点详情里带的是已还原的绝对路径，优先以它为准（repository 读取时会 hydrate）。
+			// 节点详情里带的是已还原的绝对路径，优先以它为准（repository 读取时会把
+			// WorkspaceDir 还原成绝对路径，派生路径由它推导）。
 			if v := strings.TrimSpace(node.WorkspaceDir); v != "" {
 				workspaceDir = v
 			}
-			if v := strings.TrimSpace(node.CommandPath); v != "" {
+			if v := strings.TrimSpace(node.CommandFile()); v != "" {
 				commandPath = v
 			}
-			if v := strings.TrimSpace(node.ParamsPath); v != "" {
+			if v := strings.TrimSpace(node.ParamsFile()); v != "" {
 				paramsPath = v
 			}
 			status := strings.ToLower(strings.TrimSpace(node.Status))
@@ -435,10 +434,10 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, node *types.
 					Log:          log,
 					Success:      success,
 					WorkspaceDir: node.WorkspaceDir,
-					CommandPath:  node.CommandPath,
-					ParamsPath:   node.ParamsPath,
+					CommandPath:  node.CommandFile(),
+					ParamsPath:   node.ParamsFile(),
 					LogPath:      logPath,
-					ParamsJSON:   readParamsJSON(node.ParamsPath),
+					ParamsJSON:   readParamsJSON(node.ParamsFile()),
 					// 校验错误取本次运行结束后的节点快照：运行前已清空上一轮错误，
 					// 编排器只在本次失败时填充，成功终态必然为空。
 					InputValidationErrors:  validationErrorSnapshot(node.InputValidationErrors),

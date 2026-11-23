@@ -215,7 +215,7 @@ func (h *SessionResourceHandler) exportAnalysisNodeResource(
 		return
 	}
 
-	srcDir := strings.TrimSpace(node.OutputDir)
+	srcDir := strings.TrimSpace(node.OutputDirectory())
 	if srcDir == "" {
 		result.fail(row, "analysis node output directory is empty")
 		return

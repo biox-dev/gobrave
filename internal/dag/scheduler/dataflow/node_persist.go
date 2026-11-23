@@ -10,7 +10,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/dag/nodebuild"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/types"
-	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 func (r *persistentDataflowRuntime) SubmitProcessInstance(ctx context.Context, req DataflowProcessRunRequest) error {
@@ -221,23 +220,9 @@ func (r *persistentDataflowRuntime) populateNodePathDefaults(ctx context.Context
 		}
 	}
 
+	// 派生路径由 WorkspaceDir 推导（见 types.AnalysisNode 的方法），这里只补节点根目录。
 	if strings.TrimSpace(node.WorkspaceDir) == "" {
 		node.WorkspaceDir = baseWorkspace
-	}
-	if strings.TrimSpace(node.OutputDir) == "" && baseWorkspace != "" {
-		node.OutputDir = utils.GetAnalysisNodeOutputDir(baseWorkspace) //filepath.Join(baseWorkspace, "output")
-	}
-	if strings.TrimSpace(node.CacheDir) == "" && baseWorkspace != "" {
-		node.CacheDir = utils.GetAnalysisNodeCacheDir(baseWorkspace) //filepath.Join(baseWorkspace, "cache")
-	}
-	if strings.TrimSpace(node.ParamsPath) == "" && baseWorkspace != "" {
-		node.ParamsPath = filepath.Join(baseWorkspace, "params.json")
-	}
-	if strings.TrimSpace(node.CommandPath) == "" && baseWorkspace != "" {
-		node.CommandPath = filepath.Join(baseWorkspace, "run.sh")
-	}
-	if strings.TrimSpace(node.LogPath) == "" && baseWorkspace != "" {
-		node.LogPath = filepath.Join(baseWorkspace, "command.log")
 	}
 }
 

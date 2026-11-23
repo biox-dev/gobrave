@@ -46,8 +46,8 @@ func TestBuildDynamicAnalysisNodeUsesSharedLayoutAndIdentity(t *testing.T) {
 	if node.WorkspaceDir != wantWorkspace {
 		t.Fatalf("workspace dir = %q, want %q", node.WorkspaceDir, wantWorkspace)
 	}
-	if node.OutputDir != filepath.Join(wantWorkspace, "output") {
-		t.Fatalf("output dir = %q", node.OutputDir)
+	if got := node.OutputDirectory(); got != filepath.Join(wantWorkspace, "output") {
+		t.Fatalf("output dir = %q", got)
 	}
 	if node.ProjectID != analysis.ProjectID {
 		t.Fatalf("project scoping not copied: %d", node.ProjectID)

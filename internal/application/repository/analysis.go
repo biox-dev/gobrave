@@ -44,7 +44,6 @@ func (r *analysisRepository) resolveAnalysis(item *types.AnalysisWorkflow) *type
 		return nil
 	}
 	item.WorkspaceDir = utils.ResolvePath(r.baseDir, item.WorkspaceDir)
-	item.HydrateDerivedPaths()
 	return item
 }
 
@@ -60,7 +59,6 @@ func (r *analysisRepository) resolveNode(item *types.AnalysisNode) *types.Analys
 		return nil
 	}
 	item.WorkspaceDir = utils.ResolvePath(r.baseDir, item.WorkspaceDir)
-	item.HydrateDerivedPaths()
 	return item
 }
 
@@ -544,7 +542,6 @@ func (r *analysisRepository) CreateAnalysisNodes(ctx context.Context, items []*t
 			continue
 		}
 		item.WorkspaceDir = absolute[i]
-		item.HydrateDerivedPaths()
 	}
 	return err
 }

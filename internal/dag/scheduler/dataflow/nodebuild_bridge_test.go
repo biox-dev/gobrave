@@ -88,11 +88,11 @@ func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 	if node.WorkspaceDir != wantWorkspace {
 		t.Fatalf("workspace dir = %q, want %q", node.WorkspaceDir, wantWorkspace)
 	}
-	if node.OutputDir != filepath.Join(wantWorkspace, "output") {
-		t.Fatalf("output dir = %q", node.OutputDir)
+	if got := node.OutputDirectory(); got != filepath.Join(wantWorkspace, "output") {
+		t.Fatalf("output dir = %q", got)
 	}
-	if node.ParamsPath != filepath.Join(wantWorkspace, "params.json") {
-		t.Fatalf("params path = %q", node.ParamsPath)
+	if got := node.ParamsFile(); got != filepath.Join(wantWorkspace, "params.json") {
+		t.Fatalf("params path = %q", got)
 	}
 	if node.ProjectID != analysis.ProjectID {
 		t.Fatalf("project scoping not copied: %d", node.ProjectID)

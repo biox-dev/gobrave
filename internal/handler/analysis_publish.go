@@ -205,7 +205,7 @@ func (h *AnalysisHandler) copyAnalysisNodesOutput(ctx context.Context, analysisI
 
 	for _, node := range analysisNodes {
 		destDir := filepath.Join(projectDocDir, fmt.Sprint(analysisID), fmt.Sprint(node.ID))
-		if err := utils.CopyDir(node.OutputDir, destDir); err != nil {
+		if err := utils.CopyDir(node.OutputDirectory(), destDir); err != nil {
 			return nil, errors.NewInternalServerError("failed to copy analysis node output to project doc dir").WithDetails(err.Error())
 		}
 	}
@@ -220,7 +220,7 @@ func (h *AnalysisHandler) copyAnalysisNodeOutput(ctx context.Context, analysisNo
 	}
 
 	destDir := filepath.Join(projectDocDir, fmt.Sprint(node.ID))
-	if err := utils.CopyDir(node.OutputDir, destDir); err != nil {
+	if err := utils.CopyDir(node.OutputDirectory(), destDir); err != nil {
 		return nil, errors.NewInternalServerError("failed to copy analysis node output to project doc dir").WithDetails(err.Error())
 	}
 	return node, nil

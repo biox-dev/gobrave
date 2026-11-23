@@ -30,9 +30,13 @@ func (r *scriptedOutputResolver) Resolve(_ *types.AnalysisNode, _ map[string]any
 
 func outputGraceTestNode(t *testing.T) *types.AnalysisNode {
 	t.Helper()
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "output"), 0o755); err != nil {
+		t.Fatalf("create output dir: %v", err)
+	}
 	return &types.AnalysisNode{
 		NodeID:         "output-grace-node",
-		OutputDir:      t.TempDir(),
+		WorkspaceDir:   workspace,
 		OutputPatterns: types.JSONMap{"feature_test_path": map[string]any{"type": "file"}},
 	}
 }
@@ -86,7 +90,8 @@ func TestResolveOutputsWithGraceGivesUpAfterWindow(t *testing.T) {
 // directory must not turn that refresh into a crash.
 func TestResolveOutputsWithGraceToleratesMissingOutputDir(t *testing.T) {
 	node := outputGraceTestNode(t)
-	node.OutputDir = filepath.Join(t.TempDir(), "gone")
+	// 指向一个没有 output 子目录的 workspace：派生出的输出目录不存在。
+	node.WorkspaceDir = t.TempDir()
 	resolver := &scriptedOutputResolver{misses: 1}
 	c := &NodeCompletionCoordinator{graceWait: time.Second, graceInterval: 5 * time.Millisecond}
 

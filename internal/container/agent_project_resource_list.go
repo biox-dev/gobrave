@@ -17,9 +17,9 @@ import (
 //   - list_project_analysis_node：按 RuntimeContext.ProjectID 列出分析节点。
 //
 // 两者都复用与 get_analysis_workflow / get_analysis_node 相同的路径口径：
-// WorkspaceDir 由 repository 还原成绝对路径后，派生路径一律走 HydrateDerivedPaths，
-// 不在调用点手写 join。列表只返回摘要，正文（params.json / run.sh）仍由按 ID 的
-// 查看工具按需读取。
+// WorkspaceDir 由 repository 还原成绝对路径后，派生路径一律走实体方法
+// （AnalysisNode.OutputDirectory / AnalysisWorkflow.ParamsFile 等），不在调用点手写 join。
+// 列表只返回摘要，正文（params.json / run.sh）仍由按 ID 的查看工具按需读取。
 
 // 列表工具的默认 / 最大返回条数（与 builtin 侧的归一化阈值保持一致）。
 const (
@@ -74,11 +74,6 @@ func (b *projectResourceBrowser) ListAnalysesByProject(ctx context.Context, proj
 // 节点状态分布复用 analysisRepo.ListAnalysisNodesByAnalysisID：统计失败不影响摘要返回
 // （此时 NodeCount 保持 0，避免把「统计失败」误报成「没有节点」）。
 func (b *projectResourceBrowser) analysisBrief(ctx context.Context, analysis *types.AnalysisWorkflow) runtimecontext.AnalysisBrief {
-	// repository 读取时已还原 WorkspaceDir 并填充派生路径；这里兜底再推导一次（幂等）。
-	if analysis.ParamsPath == "" && analysis.WorkspaceDir != "" {
-		analysis.HydrateDerivedPaths()
-	}
-
 	brief := runtimecontext.AnalysisBrief{
 		AnalysisID:    analysis.ID,
 		AnalysisKey:   analysis.AnalysisID,
@@ -89,7 +84,7 @@ func (b *projectResourceBrowser) analysisBrief(ctx context.Context, analysis *ty
 		SchedulerMode: types.NormalizeSchedulerMode(analysis.SchedulerMode),
 		CacheType:     analysis.CacheType,
 		WorkspaceDir:  analysis.WorkspaceDir,
-		ParamsPath:    analysis.ParamsPath,
+		ParamsPath:    analysis.ParamsFile(),
 		RequestParam:  agentanalysis.DecodeRequestParam(analysis.RequestParam),
 	}
 	if b.workflowSvc != nil && analysis.WorkflowID > 0 {
@@ -227,11 +222,6 @@ func (b *projectResourceBrowser) analysisNodeSummaries(ctx context.Context, proj
 
 // analysisNodeSummary 组装单个节点的列表摘要（节点自身 + 所属分析运行）。
 func (b *projectResourceBrowser) analysisNodeSummary(ctx context.Context, cache map[int64]*types.AnalysisWorkflow, node *types.AnalysisNode) runtimecontext.AnalysisNodeSummary {
-	// 兜底：个别读取路径可能没有填充派生路径，这里按 WorkspaceDir 再推导一次（幂等）。
-	if (node.ParamsPath == "" || node.OutputDir == "" || node.CommandPath == "") && node.WorkspaceDir != "" {
-		node.HydrateDerivedPaths()
-	}
-
 	brief := runtimecontext.AnalysisNodeBrief{
 		AnalysisNodeID:      node.ID,
 		NodeName:            node.NodeName,
@@ -240,9 +230,9 @@ func (b *projectResourceBrowser) analysisNodeSummary(ctx context.Context, cache 
 		NodeTypeDescription: node.NodeTypeDescription(),
 		ScriptID:            node.ScriptID,
 		WorkspaceDir:        node.WorkspaceDir,
-		CommandPath:         node.CommandPath,
-		ParamsPath:          node.ParamsPath,
-		OutputDir:           node.OutputDir,
+		CommandPath:         node.CommandFile(),
+		ParamsPath:          node.ParamsFile(),
+		OutputDir:           node.OutputDirectory(),
 		RequestParam:        agentanalysis.DecodeRequestParam(node.RequestParam),
 	}
 

@@ -559,7 +559,6 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 		}
 		if dir := strings.TrimSpace(existing.WorkspaceDir); dir != "" {
 			node.WorkspaceDir = dir
-			node.HydrateDerivedPaths()
 		}
 	}
 
@@ -1630,9 +1629,9 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to build visualization node payload").WithDetails(err.Error()))
 		return
 	}
-	prefix := utils.GetAnalysisURLPrefix(h.config.Storage.BaseDir, analysisNode.OutputDir)
+	prefix := utils.GetAnalysisURLPrefix(h.config.Storage.BaseDir, analysisNode.OutputDirectory())
 
-	result, err := visualizationResultsPath(analysisNode.OutputDir, analysisNode.CacheDir, prefix, scriptType, h.config)
+	result, err := visualizationResultsPath(analysisNode.OutputDirectory(), analysisNode.CacheDirectory(), prefix, scriptType, h.config)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to list visualization files").WithDetails(err.Error()))
 		return
@@ -1703,7 +1702,7 @@ func (h *AnalysisHandler) AnalysisNodeLogs(c *gin.Context) {
 	if analysisNode == nil {
 		return
 	}
-	logPath := strings.TrimSpace(analysisNode.LogPath)
+	logPath := strings.TrimSpace(analysisNode.LogFile())
 	if logPath == "" {
 		c.Error(errors.NewNotFoundError("log_path is empty"))
 		return
@@ -1727,7 +1726,7 @@ func (h *AnalysisHandler) AnalysisNodeParams(c *gin.Context) {
 	if analysisNode == nil {
 		return
 	}
-	paramsPath := strings.TrimSpace(analysisNode.ParamsPath)
+	paramsPath := strings.TrimSpace(analysisNode.ParamsFile())
 	if paramsPath == "" {
 		c.Error(errors.NewNotFoundError("params_path is empty"))
 		return
@@ -1783,7 +1782,7 @@ func (h *AnalysisHandler) GetAnalysisNodeCommand(c *gin.Context) {
 		return
 	}
 
-	commandPath := strings.TrimSpace(analysisNode.CommandPath)
+	commandPath := strings.TrimSpace(analysisNode.CommandFile())
 	if commandPath == "" {
 		c.Error(errors.NewValidationError("command_path is empty"))
 		return
@@ -1839,7 +1838,7 @@ func (h *AnalysisHandler) UpdateAnalysisNodeCommand(c *gin.Context) {
 		return
 	}
 
-	commandPath := strings.TrimSpace(analysisNode.CommandPath)
+	commandPath := strings.TrimSpace(analysisNode.CommandFile())
 	if commandPath == "" {
 		c.Error(errors.NewValidationError("command_path is empty"))
 		return

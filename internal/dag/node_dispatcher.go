@@ -188,14 +188,14 @@ func (d *NodeDispatcher) runCleanup(ctx context.Context, node *types.AnalysisNod
 // Failures are logged instead of returned: the digests only drive cache reuse, so
 // a missing baseline degrades to "run the node again" rather than to a wrong result.
 func (d *NodeDispatcher) persistArtifactFingerprint(ctx context.Context, node *types.AnalysisNode) {
-	commandMD5, err := fileMD5Hex(node.CommandPath)
+	commandMD5, err := fileMD5Hex(node.CommandFile())
 	if err != nil {
-		logger.Warnf(ctx, "[NodeDispatcher] hash run script failed, node_id=%s path=%s err=%v", node.NodeID, node.CommandPath, err)
+		logger.Warnf(ctx, "[NodeDispatcher] hash run script failed, node_id=%s path=%s err=%v", node.NodeID, node.CommandFile(), err)
 		return
 	}
-	paramsMD5, err := fileMD5Hex(node.ParamsPath)
+	paramsMD5, err := fileMD5Hex(node.ParamsFile())
 	if err != nil {
-		logger.Warnf(ctx, "[NodeDispatcher] hash params payload failed, node_id=%s path=%s err=%v", node.NodeID, node.ParamsPath, err)
+		logger.Warnf(ctx, "[NodeDispatcher] hash params payload failed, node_id=%s path=%s err=%v", node.NodeID, node.ParamsFile(), err)
 		return
 	}
 	if err := d.repo.UpdateAnalysisNodeByID(ctx, node.ID, map[string]any{

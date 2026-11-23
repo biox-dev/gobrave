@@ -103,18 +103,19 @@ func (p *aiSummaryContentProvider) resolveAnalysisNode(ctx context.Context, node
 		return AISummaryContent{}, err
 	}
 
-	outputFile := filepath.Join(n.OutputDir, "output.md")
+	outputDir := n.OutputDirectory()
+	outputFile := filepath.Join(outputDir, "output.md")
 	return AISummaryContent{
 		Title: fmt.Sprintf("%s: %s", script.Name, n.NodeName),
 		SystemPromptVars: map[string]any{
-			"workspace_directory": n.OutputDir,
+			"workspace_directory": outputDir,
 			"workspace_label":     n.NodeName,
-			"output_directory":    n.OutputDir,
+			"output_directory":    outputDir,
 			"output_file":         outputFile,
 			"node_name":           n.NodeName,
 			"script_name":         script.Name,
 		},
-		WorkingDir: n.OutputDir,
+		WorkingDir: outputDir,
 		ProjectID:  n.ProjectID,
 	}, nil
 }

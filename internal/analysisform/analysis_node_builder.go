@@ -154,7 +154,6 @@ func NewAnalysisNodeFromScript(
 		baseDir = "."
 	}
 	node.WorkspaceDir = joinNodeWorkspace(baseDir, spec.ProjectID, script.ID, node.ID)
-	node.HydrateDerivedPaths()
 
 	if resolvedInputs != nil {
 		node.ResolvedInputs = types.JSONMap(cloneAnyMap(resolvedInputs))
@@ -236,7 +235,6 @@ func NewAnalysisNodeFromCommand(spec CommandNodeSpec) (*types.AnalysisNode, erro
 		baseDir = "."
 	}
 	node.WorkspaceDir = utils.GetAgentNodeDir(baseDir, spec.ProjectID, node.ID)
-	node.HydrateDerivedPaths()
 	return node, nil
 }
 

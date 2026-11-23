@@ -162,27 +162,62 @@ type AnalysisWorkflow struct {
 	ExtraProjectIDs  string    `json:"extra_project_ids" gorm:"column:extra_project_ids;type:longtext"`
 	CreatedAt        time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt        time.Time `json:"updated_at" gorm:"column:updated_at"`
-
-	// 以下是 WorkspaceDir 的派生路径，一律不落库（gorm:"-"）。
-	// repository 在读取时通过 HydrateDerivedPaths 填充，保证磁盘布局只有一处定义。
-	ParamsPath      string `json:"params_path" gorm:"-"`
-	CommandPath     string `json:"command_path" gorm:"-"`
-	CommandLogPath  string `json:"command_log_path" gorm:"-"`
-	TraceFile       string `json:"trace_file" gorm:"-"`
-	WorkflowLogFile string `json:"workflow_log_file" gorm:"-"`
-	ExecutorLogFile string `json:"executor_log_file" gorm:"-"`
 }
 
-// HydrateDerivedPaths 从 WorkspaceDir 推导出全部派生路径。
-// WorkspaceDir 为空时派生路径全部为空，避免产生悬空的文件名。
-func (t *AnalysisWorkflow) HydrateDerivedPaths() {
-	l := utils.AnalysisLayoutFor(t.WorkspaceDir)
-	t.ParamsPath = l.ParamsPath
-	t.CommandPath = l.CommandPath
-	t.CommandLogPath = l.CommandLogPath
-	t.TraceFile = l.TraceFile
-	t.WorkflowLogFile = l.WorkflowLogFile
-	t.ExecutorLogFile = l.ExecutorLogFile
+// layout 返回本次分析在磁盘上的布局。
+//
+// 派生路径不再是结构体字段：唯一的输入是 WorkspaceDir，磁盘布局只在
+// utils.AnalysisLayoutFor 定义一处，调用方通过下方方法取值，避免字段在构造后
+// 忘记 hydrate 而读到空路径。
+func (t *AnalysisWorkflow) layout() utils.AnalysisLayout {
+	if t == nil {
+		return utils.AnalysisLayout{}
+	}
+	return utils.AnalysisLayoutFor(t.WorkspaceDir)
+}
+
+// ParamsFile 返回分析参数文件（<WorkspaceDir>/params.json）。
+func (t *AnalysisWorkflow) ParamsFile() string { return t.layout().ParamsPath }
+
+// CommandFile 返回分析主脚本（<WorkspaceDir>/run.sh）。
+func (t *AnalysisWorkflow) CommandFile() string { return t.layout().CommandPath }
+
+// CommandLogFile 返回分析命令日志（<WorkspaceDir>/run.log）。
+func (t *AnalysisWorkflow) CommandLogFile() string { return t.layout().CommandLogPath }
+
+// TraceFile 返回调度轨迹日志（<WorkspaceDir>/trace.log）。
+func (t *AnalysisWorkflow) TraceFile() string { return t.layout().TraceFile }
+
+// WorkflowLogFile 返回工作流日志（<WorkspaceDir>/workflow.log）。
+func (t *AnalysisWorkflow) WorkflowLogFile() string { return t.layout().WorkflowLogFile }
+
+// ExecutorLogFile 返回执行器日志（<WorkspaceDir>/.nextflow.log）。
+func (t *AnalysisWorkflow) ExecutorLogFile() string { return t.layout().ExecutorLogFile }
+
+// MarshalJSON 在序列化时补齐派生路径字段。
+//
+// 这些路径已不再是结构体字段（只由 WorkspaceDir 推导），但前端与既有接口契约
+// 仍按 params_path / command_path / ... 的 JSON key 读取，因此序列化时按原 key
+// 输出，响应形状与重构前保持一致。
+func (t AnalysisWorkflow) MarshalJSON() ([]byte, error) {
+	type alias AnalysisWorkflow
+	return json.Marshal(struct {
+		alias
+		ParamsPath      string `json:"params_path"`
+		CommandPath     string `json:"command_path"`
+		CommandLogPath  string `json:"command_log_path"`
+		TraceFile       string `json:"trace_file"`
+		WorkflowLogFile string `json:"workflow_log_file"`
+		ExecutorLogFile string `json:"executor_log_file"`
+	}{
+		alias:           alias(t),
+		ParamsPath:      t.ParamsFile(),
+		CommandPath:     t.CommandFile(),
+		CommandLogPath:  t.CommandLogFile(),
+		TraceFile:       t.TraceFile(),
+		WorkflowLogFile: t.WorkflowLogFile(),
+		ExecutorLogFile: t.ExecutorLogFile(),
+	})
 }
 
 func (t *AnalysisWorkflow) BeforeCreate(_ *gorm.DB) error {
@@ -328,47 +363,38 @@ type AnalysisNode struct {
 	FinishedAt     *time.Time `json:"finished_at" gorm:"column:finished_at"`
 	CreatedAt      time.Time  `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt      time.Time  `json:"updated_at" gorm:"column:updated_at"`
-
-	// 以下是 WorkspaceDir 的派生路径，一律不落库（gorm:"-"）。
-	// repository 在读取时通过 HydrateDerivedPaths 填充。
-	LogPath     string `json:"log_path" gorm:"-"`
-	OutputDir   string `json:"output_dir" gorm:"-"`
-	CacheDir    string `json:"cache_dir" gorm:"-"`
-	CommandPath string `json:"command_path" gorm:"-"`
-	ParamsPath  string `json:"params_path" gorm:"-"`
 }
 
-// HydrateDerivedPaths 从 WorkspaceDir 推导出全部派生路径。
-// WorkspaceDir 为空时派生路径全部为空，避免产生悬空的文件名。
-func (t *AnalysisNode) HydrateDerivedPaths() {
-	l := utils.NodeLayoutFor(t.WorkspaceDir)
-	t.OutputDir = l.OutputDir
-	t.CacheDir = l.CacheDir
-	t.CommandPath = l.CommandPath
-	t.ParamsPath = l.ParamsPath
-	t.LogPath = l.LogPath
+// layout 返回节点在磁盘上的布局。
+//
+// 派生路径不再是结构体字段：唯一的输入是 WorkspaceDir，磁盘布局只在
+// utils.NodeLayoutFor 定义一处，调用方通过下方方法取值，避免字段在构造后
+// 忘记 hydrate 而读到空路径。
+func (t *AnalysisNode) layout() utils.NodeLayout {
+	if t == nil {
+		return utils.NodeLayout{}
+	}
+	return utils.NodeLayoutFor(t.WorkspaceDir)
 }
 
 // AnalysisNodeOutputsFileName 是节点把解析后的输出写回的文件名，位于节点输出目录下。
 const AnalysisNodeOutputsFileName = "outputs.json"
 
-// OutputDirectory 返回节点写出产物的目录：优先使用 HydrateDerivedPaths 填充的
-// OutputDir，未 hydrate 时回退到 <WorkspaceDir>/output。
-//
-// 两者都没有（既没有 OutputDir 也没有 WorkspaceDir）时返回空串，与
-// HydrateDerivedPaths 一致地避免产生悬空的路径。
-func (t *AnalysisNode) OutputDirectory() string {
-	if t == nil {
-		return ""
-	}
-	if outputDir := strings.TrimSpace(t.OutputDir); outputDir != "" {
-		return outputDir
-	}
-	if workspaceDir := strings.TrimSpace(t.WorkspaceDir); workspaceDir != "" {
-		return utils.GetAnalysisNodeOutputDir(workspaceDir)
-	}
-	return ""
-}
+// OutputDirectory 返回节点写出产物的目录（<WorkspaceDir>/output）。
+// WorkspaceDir 为空时返回空串，避免产生悬空的路径。
+func (t *AnalysisNode) OutputDirectory() string { return t.layout().OutputDir }
+
+// CacheDirectory 返回节点中间缓存目录（<WorkspaceDir>/cached）。
+func (t *AnalysisNode) CacheDirectory() string { return t.layout().CacheDir }
+
+// ParamsFile 返回节点参数文件（<WorkspaceDir>/params.json）。
+func (t *AnalysisNode) ParamsFile() string { return t.layout().ParamsPath }
+
+// CommandFile 返回节点运行脚本（<WorkspaceDir>/run.sh）。
+func (t *AnalysisNode) CommandFile() string { return t.layout().CommandPath }
+
+// LogFile 返回节点命令日志（<WorkspaceDir>/command.log）。
+func (t *AnalysisNode) LogFile() string { return t.layout().LogPath }
 
 // OutputsFile 返回节点 outputs.json 的路径（OutputDirectory 下的 outputs.json）。
 //
@@ -380,6 +406,30 @@ func (t *AnalysisNode) OutputsFile() string {
 		return ""
 	}
 	return filepath.Join(dir, AnalysisNodeOutputsFileName)
+}
+
+// MarshalJSON 在序列化时补齐派生路径字段。
+//
+// 这些路径已不再是结构体字段（只由 WorkspaceDir 推导），但前端与既有接口契约
+// 仍按 log_path / output_dir / cache_dir / command_path / params_path 的 JSON key
+// 读取，因此序列化时按原 key 输出，响应形状与重构前保持一致。
+func (t AnalysisNode) MarshalJSON() ([]byte, error) {
+	type alias AnalysisNode
+	return json.Marshal(struct {
+		alias
+		LogPath     string `json:"log_path"`
+		OutputDir   string `json:"output_dir"`
+		CacheDir    string `json:"cache_dir"`
+		CommandPath string `json:"command_path"`
+		ParamsPath  string `json:"params_path"`
+	}{
+		alias:       alias(t),
+		LogPath:     t.LogFile(),
+		OutputDir:   t.OutputDirectory(),
+		CacheDir:    t.CacheDirectory(),
+		CommandPath: t.CommandFile(),
+		ParamsPath:  t.ParamsFile(),
+	})
 }
 
 // IsCommandNode 报告该节点是否为 Agent 创建的命令节点。

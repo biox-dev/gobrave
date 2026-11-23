@@ -25,7 +25,7 @@ func TestRewriteNodeOutputMarkdownImages(t *testing.T) {
 	}
 
 	c := &NodeCompletionCoordinator{cfg: &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}}}
-	node := &types.AnalysisNode{OutputDir: outputDir}
+	node := &types.AnalysisNode{WorkspaceDir: filepath.Dir(outputDir)}
 	c.rewriteNodeOutputMarkdownImages(context.Background(), node)
 
 	got, err := os.ReadFile(path)
@@ -56,7 +56,7 @@ func TestRewriteNodeOutputMarkdownImagesSkipsMissingInputs(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	node := &types.AnalysisNode{OutputDir: outputDir}
+	node := &types.AnalysisNode{WorkspaceDir: filepath.Dir(outputDir)}
 	(&NodeCompletionCoordinator{}).rewriteNodeOutputMarkdownImages(context.Background(), node)
 	(&NodeCompletionCoordinator{}).rewriteNodeOutputMarkdownImages(context.Background(), nil)
 	if _, err := os.Stat(filepath.Join(outputDir, types.DefaultProjectReportFilename)); !os.IsNotExist(err) {
@@ -66,14 +66,18 @@ func TestRewriteNodeOutputMarkdownImagesSkipsMissingInputs(t *testing.T) {
 
 // storage.base_dir 缺失时保留相对路径（绝不能把本机磁盘绝对路径写进 output.md）。
 func TestRewriteNodeOutputMarkdownImagesSkipsWithoutBaseDir(t *testing.T) {
-	outputDir := t.TempDir()
+	workspace := t.TempDir()
+	outputDir := filepath.Join(workspace, "output")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
 	path := filepath.Join(outputDir, types.DefaultProjectReportFilename)
 	const original = "![a](plot.png)\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	node := &types.AnalysisNode{OutputDir: outputDir}
+	node := &types.AnalysisNode{WorkspaceDir: workspace}
 	(&NodeCompletionCoordinator{}).rewriteNodeOutputMarkdownImages(context.Background(), node)
 
 	got, err := os.ReadFile(path)

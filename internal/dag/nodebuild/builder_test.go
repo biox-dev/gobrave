@@ -48,13 +48,13 @@ func TestMaterializePersistsCanonicalLayout(t *testing.T) {
 	if node.WorkspaceDir != wantDir {
 		t.Fatalf("workspace dir = %q, want %q", node.WorkspaceDir, wantDir)
 	}
-	if node.OutputDir != filepath.Join(wantDir, "output") {
-		t.Fatalf("output dir = %q", node.OutputDir)
+	if got := node.OutputDirectory(); got != filepath.Join(wantDir, "output") {
+		t.Fatalf("output dir = %q", got)
 	}
-	if node.ParamsPath != filepath.Join(wantDir, "params.json") || node.CommandPath != filepath.Join(wantDir, "run.sh") {
+	if node.ParamsFile() != filepath.Join(wantDir, "params.json") || node.CommandFile() != filepath.Join(wantDir, "run.sh") {
 		t.Fatalf("artifact paths not aligned to the layout: %+v", node)
 	}
-	if _, err := os.Stat(node.OutputDir); err != nil {
+	if _, err := os.Stat(node.OutputDirectory()); err != nil {
 		t.Fatalf("output dir should have been created: %v", err)
 	}
 	if node.AnalysisID != analysis.ID || node.ProjectID != analysis.ProjectID {

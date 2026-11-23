@@ -255,16 +255,16 @@ func (w *ContainerCreateWorker) buildDagNodeVariables(ctx context.Context, set *
 	set.add("NODE_ID", node.NodeID)
 	set.add("WORKSPACE_PATH", node.WorkspaceDir)
 	set.add("WORKSPACE_DIR", node.WorkspaceDir)
-	set.add("OUTPUT_DIR", node.OutputDir)
-	set.add("COMMAND_PATH", node.CommandPath)
+	set.add("OUTPUT_DIR", node.OutputDirectory())
+	set.add("COMMAND_PATH", node.CommandFile())
 
-	logPath := node.LogPath
+	logPath := node.LogFile()
 	if strings.TrimSpace(logPath) == "" {
-		if outputDir := strings.TrimSpace(node.OutputDir); outputDir != "" {
+		if outputDir := strings.TrimSpace(node.OutputDirectory()); outputDir != "" {
 			logPath = filepath.Join(outputDir, "run.log")
 		}
 	}
 	set.add("LOG_PATH", logPath)
 
-	w.ensureDirs(ctx, []string{node.WorkspaceDir, node.OutputDir})
+	w.ensureDirs(ctx, []string{node.WorkspaceDir, node.OutputDirectory()})
 }

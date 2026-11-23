@@ -62,11 +62,11 @@ func (f *PreparerFingerprinter) Fingerprint(ctx context.Context, node *types.Ana
 		return fmt.Errorf("prepare node runtime artifacts failed: %w", err)
 	}
 
-	commandMD5, err := fileMD5Hex(node.CommandPath)
+	commandMD5, err := fileMD5Hex(node.CommandFile())
 	if err != nil {
 		return fmt.Errorf("compute run.sh md5 failed: %w", err)
 	}
-	paramsMD5, err := fileMD5Hex(node.ParamsPath)
+	paramsMD5, err := fileMD5Hex(node.ParamsFile())
 	if err != nil {
 		return fmt.Errorf("compute params.json md5 failed: %w", err)
 	}

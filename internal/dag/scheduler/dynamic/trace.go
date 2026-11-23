@@ -95,7 +95,7 @@ func (o *dynamicDagOrchestratorV2) openRunTrace(analysis *types.AnalysisWorkflow
 	if analysis == nil {
 		return
 	}
-	path := strings.TrimSpace(analysis.TraceFile)
+	path := strings.TrimSpace(analysis.TraceFile())
 	if _, err := o.traceRegistry().Open(analysis.ID, path, trace.NodeSchema()); err != nil {
 		logger.Warnf(context.Background(),
 			"[DynamicDagOrchestratorV2] open run trace failed, analysis_id=%d path=%s err=%v",

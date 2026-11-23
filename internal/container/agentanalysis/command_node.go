@@ -98,7 +98,7 @@ func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in runtimeco
 		return result, fmt.Errorf("prepare node workspace: %w", err)
 	}
 	// 命令不再落库：Prepare 只建目录 / params.json / env.sh，run.sh 由这里直接写入。
-	if err := prepare.WriteCommandRunScript(node.CommandPath, command); err != nil {
+	if err := prepare.WriteCommandRunScript(node.CommandFile(), command); err != nil {
 		return result, fmt.Errorf("write node run.sh: %w", err)
 	}
 
@@ -109,7 +109,7 @@ func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in runtimeco
 			Status:          node.Status,
 			Ran:             false,
 			WorkspaceDir:    node.WorkspaceDir,
-			CommandPath:     node.CommandPath,
+			CommandPath:     node.CommandFile(),
 		}
 		r.fillRuntimeFacts(ctx, node.ID, &result)
 		return result, nil

@@ -52,8 +52,7 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 
 	// params.json 文件编辑：以磁盘正文为基准编辑，再解析回request_param走统一校验流程。
 	if !fileEdit.IsZero() {
-		node.HydrateDerivedPaths()
-		current, readErr := os.ReadFile(node.ParamsPath)
+		current, readErr := os.ReadFile(node.ParamsFile())
 		if readErr != nil {
 			if !os.IsNotExist(readErr) {
 				return result, fmt.Errorf("update_analysis_node_script: failed to read params.json of node %d: %w", node.ID, readErr)
@@ -140,7 +139,6 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 		if u.preparer == nil {
 			return result, fmt.Errorf("update_analysis_node_script: node runtime preparer is not configured")
 		}
-		node.HydrateDerivedPaths()
 		// 不携带 prepare.WithSkipCleanOutput：参数变更后旧输出已失效，重建运行期文件时
 		// 一并清空 output，避免后续把上一轮结果当成新参数的结果。
 		if err := u.preparer.Prepare(ctx, node); err != nil {
@@ -148,7 +146,6 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 		}
 	}
 
-	node.HydrateDerivedPaths()
 	requestParam := DecodeRequestParam(node.RequestParam)
 	if in.RequestParam != nil {
 		requestParam = in.RequestParam
@@ -164,8 +161,8 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 		NodeName:       node.NodeName,
 		ScriptID:       node.ScriptID,
 		WorkspaceDir:   node.WorkspaceDir,
-		ParamsPath:     node.ParamsPath,
-		CommandPath:    node.CommandPath,
+		ParamsPath:     node.ParamsFile(),
+		CommandPath:    node.CommandFile(),
 		RequestParam:   requestParam,
 		Warnings:       warnings,
 		Changed:        changed,

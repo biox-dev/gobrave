@@ -46,8 +46,7 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 	if node.NodeType() != types.AnalysisNodeCreationSourceAgent {
 		return result, fmt.Errorf("update_analysis_node_agent: analysis node %d is a %s node; only agent (command) nodes can be updated with this tool, use update_analysis_node_script for script / scheduler nodes", node.ID, node.NodeTypeDescription())
 	}
-	// 派生路径以 WorkspaceDir 为准随时重算，下面比较 / 写入 run.sh 都要用到 CommandPath。
-	node.HydrateDerivedPaths()
+	// 派生路径以 WorkspaceDir 为准随时推导（见 node.CommandFile()），下面比较 / 写入 run.sh 都要用到。
 
 	update := make(map[string]any, 3)
 	changed := make([]string, 0, 3)
@@ -76,7 +75,7 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 	}
 	if !fileEdit.IsZero() {
 		// 文件编辑以 run.sh 当前正文为基准：Content 覆盖，或 old_string → new_string 唯一替换。
-		current, readErr := prepare.ReadCommandRunScript(node.CommandPath)
+		current, readErr := prepare.ReadCommandRunScript(node.CommandFile())
 		if readErr != nil {
 			return result, fmt.Errorf("update_analysis_node_agent: failed to read run.sh of node %d: %w", node.ID, readErr)
 		}
@@ -87,7 +86,7 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 		command = strings.TrimSpace(after)
 	}
 	if command != "" {
-		current, readErr := prepare.ReadCommandRunScript(node.CommandPath)
+		current, readErr := prepare.ReadCommandRunScript(node.CommandFile())
 		if readErr != nil {
 			return result, fmt.Errorf("update_analysis_node_agent: failed to read run.sh of node %d: %w", node.ID, readErr)
 		}
@@ -123,7 +122,6 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 		if u.preparer == nil {
 			return result, fmt.Errorf("update_analysis_node_agent: node runtime preparer is not configured")
 		}
-		node.HydrateDerivedPaths()
 		// 不携带 prepare.WithSkipCleanOutput：命令变更后旧输出已失效，重建运行期文件时
 		// 一并清空 output，避免后续把上一轮结果当成新命令的结果。
 		if err := u.preparer.Prepare(ctx, node); err != nil {
@@ -133,15 +131,14 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 
 	// 命令变更时把新正文直接写入 run.sh（Prepare 只负责目录 / params.json / env.sh）。
 	if commandText != "" {
-		if err := prepare.WriteCommandRunScript(node.CommandPath, commandText); err != nil {
+		if err := prepare.WriteCommandRunScript(node.CommandFile(), commandText); err != nil {
 			return result, fmt.Errorf("update_analysis_node_agent: node %d updated but failed to write run.sh: %w", node.ID, err)
 		}
 	}
 
-	node.HydrateDerivedPaths()
 	// 回传当前 run.sh 正文（读失败时留空，不影响已经完成的更新）。
 	currentCommand := ""
-	if content, readErr := prepare.ReadCommandRunScript(node.CommandPath); readErr == nil {
+	if content, readErr := prepare.ReadCommandRunScript(node.CommandFile()); readErr == nil {
 		currentCommand = strings.TrimSpace(content)
 	}
 	// 记录「当前会话修改了该分析节点」：别的会话修改同一节点时会各记一条关联。
@@ -154,8 +151,8 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 		Command:             currentCommand,
 		ContainerTemplateID: node.ContainerTemplateID,
 		WorkspaceDir:        node.WorkspaceDir,
-		CommandPath:         node.CommandPath,
-		ParamsPath:          node.ParamsPath,
+		CommandPath:         node.CommandFile(),
+		ParamsPath:          node.ParamsFile(),
 		Changed:             changed,
 	}, nil
 }

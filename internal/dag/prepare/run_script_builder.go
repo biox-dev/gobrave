@@ -101,7 +101,7 @@ type RScriptBuilder struct{}
 func (RScriptBuilder) Name() string { return "r" }
 
 func (RScriptBuilder) Build(node *types.AnalysisNode, scriptPath, scriptWorkspacePath string, _ string, _ map[string]any) (string, error) {
-	return fmt.Sprintf("#!/usr/bin/env bash\nset -euo pipefail\nRscript %q %q %q\n", scriptPath, node.ParamsPath, node.OutputDir), nil
+	return fmt.Sprintf("#!/usr/bin/env bash\nset -euo pipefail\nRscript %q %q %q\n", scriptPath, node.ParamsFile(), node.OutputDirectory()), nil
 }
 
 type JupyterScriptBuilder struct{}
@@ -118,7 +118,7 @@ mkdir -p "$TMPDIR"
 
 set -euo pipefail
 jupyter nbconvert --to markdown --execute %q --output-dir %q  --output %q
-`, scriptWorkspacePath, node.OutputDir, outputFileName), nil
+`, scriptWorkspacePath, node.OutputDirectory(), outputFileName), nil
 }
 
 type QmdScriptBuilder struct{}
@@ -137,7 +137,7 @@ func (QmdScriptBuilder) Build(node *types.AnalysisNode, scriptPath, scriptWorksp
 	envFile := utils.GetAnalysisNodeEnvFile(node.WorkspaceDir)
 
 	outputFileName := "output.md"
-	outputFile := filepath.Join(node.OutputDir, outputFileName)
+	outputFile := filepath.Join(node.OutputDirectory(), outputFileName)
 	return fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
 source %q
@@ -148,7 +148,7 @@ mkdir -p "$TMPDIR"
 
 quarto render main.qmd --to md --output-dir %q --execute-dir %q --output - > output.md
 mv output.md %q
-`, envFile, node.OutputDir, node.WorkspaceDir, outputFile), nil
+`, envFile, node.OutputDirectory(), node.WorkspaceDir, outputFile), nil
 
 }
 
@@ -157,7 +157,7 @@ type PythonScriptBuilder struct{}
 func (PythonScriptBuilder) Name() string { return "python" }
 
 func (PythonScriptBuilder) Build(node *types.AnalysisNode, scriptPath, scriptWorkspacePath string, _ string, _ map[string]any) (string, error) {
-	return fmt.Sprintf("#!/usr/bin/env bash\nset -euo pipefail\npython %q %q %q\n", scriptPath, node.ParamsPath, node.OutputDir), nil
+	return fmt.Sprintf("#!/usr/bin/env bash\nset -euo pipefail\npython %q %q %q\n", scriptPath, node.ParamsFile(), node.OutputDirectory()), nil
 }
 
 type ShellScriptBuilder struct{}
