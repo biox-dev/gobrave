@@ -278,10 +278,10 @@ type ContainerTerminalExecResult struct {
 	OutputTruncated bool    `json:"output_truncated,omitempty"`
 }
 
-// FileReader 抽象「按 go_file 主键解析文件路径」与「读取 Excel 工作簿预览」的能力。
+// FileReader 抽象「按 go_file 主键解析文件路径」与「按行/行读取文件内容」的能力。
 //
-// 它把「file_id → 真实路径」与「xlsx → 列名/预览行文本」的业务细节收敛在上层实现
-// （见 container），tool 包只负责把它暴露给模型。
+// 它把「file_id → 真实路径」与「表格转分隔文本 / 文本按 offset-limit 分页 / 二进制识别」
+// 的业务细节收敛在上层实现（见 container），tool 包只负责把它暴露给模型。
 //
 // 与 AnalysisNodeRunner 一样，它是进程级静态依赖，由 builtin.Deps / coder.Deps 在构造工具时注入。
 type FileReader interface {
@@ -289,9 +289,40 @@ type FileReader interface {
 	//
 	// fileID 非法（<=0）或文件不存在时返回错误。
 	ReadFileByID(ctx context.Context, fileID int64) (FileReadResult, error)
-	// ReadSpreadsheet 读取 Excel 工作簿（xlsx），返回可直接展示的文本预览：
-	// 每个 sheet 的名称、列名与前若干行数据。
-	ReadSpreadsheet(ctx context.Context, path string) (string, error)
+	// ReadFileContent 读取文件内容：表格（csv/tsv、xlsx 转 TSV）返回分隔文本，
+	// 文本文件返回 [Offset, Offset+Limit) 行原文，二进制 / 图片返回说明。
+	ReadFileContent(ctx context.Context, in FileContentRequest) (FileContentResult, error)
+}
+
+// FileContentRequest 是 FileReader.ReadFileContent 的入参。
+type FileContentRequest struct {
+	// Path 是文件真实路径（通常取自 FileReadResult.FilePath）。
+	Path string
+	// Format 是文件格式（通常取自 FileReadResult.Format，即 go_file.format）；
+	// 为空时由实现回退到 Path 后缀推断。
+	Format string
+	// Offset 是 0-based 起始行/行号。
+	Offset int
+	// Limit 是最多返回的行/行数；<=0 由实现决定默认值。
+	Limit int
+	// MaxBytes 是内容字节预算；<=0 由实现决定默认值。
+	MaxBytes int
+}
+
+// FileContentResult 是 FileReader.ReadFileContent 的结果。
+type FileContentResult struct {
+	Format    string `json:"format,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Delimiter string `json:"delimiter,omitempty"`
+	Content   string `json:"content,omitempty"`
+	// Offset / LineCount / NextOffset 描述本次读取的窗口：
+	// Content 覆盖 [Offset, Offset+LineCount)，HasMore 为 true 时用 NextOffset 续读。
+	Offset     int    `json:"offset,omitempty"`
+	LineCount  int    `json:"line_count,omitempty"`
+	NextOffset int    `json:"next_offset,omitempty"`
+	HasMore    bool   `json:"has_more,omitempty"`
+	Truncated  bool   `json:"truncated,omitempty"`
+	Message    string `json:"message,omitempty"`
 }
 
 // FileReadResult 是按 ID 查询文件的结果（只含文件元信息）。

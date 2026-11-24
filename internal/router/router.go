@@ -40,7 +40,6 @@ type RouterParams struct {
 	GitHandler       *handler.GitHandler
 	SettingHandler   *handler.SettingHandler
 	ConfigHandler    *handler.ConfigHandler
-	SheetHandler     *handler.SheetHandler
 	UploadHandler    *handler.UploadHandler
 	FileHandler      *handler.FileHandler
 	ProxyHandler     *handler.ProxyHandler
@@ -104,7 +103,6 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterGitRoutes(v1, params.GitHandler)
 		RegisterSettingRoutes(v1, params.SettingHandler)
 		RegisterConfigRoutes(v1, params.ConfigHandler)
-		RegisterSheetRoutes(v1, params.SheetHandler)
 		RegisterFileRoutes(v1, params.FileHandler)
 		RegisterRealtimeRoutes(v1, params.RealtimeHandler)
 		RegisterAISummaryRoutes(v1, params.AISummaryHandler)
@@ -176,15 +174,10 @@ func RegisterProjectRoutes(r *gin.RouterGroup, handler *handler.ProjectHandler, 
 	r.POST("/project/list-literature-pool-page", handler.PageLiteraturePool)
 }
 
-func RegisterSheetRoutes(r *gin.RouterGroup, handler *handler.SheetHandler) {
-	r.GET("/sheet/workbook", handler.ReadWorkbook)
-	r.POST("/sheet/workbook/save", handler.WriteWorkbook)
-	r.GET("/sheet/workbook/by-file-id", handler.ReadWorkbookByFileID)
-	r.POST("/sheet/workbook/save/by-file-id", handler.WriteWorkbookByFileID)
-}
-
 func RegisterFileRoutes(r *gin.RouterGroup, handler *handler.FileHandler) {
 	r.GET("/file/list-project-dir", handler.ListProjectDir)
+	// 文件预览：表格返回分隔文本、文本文件返回原文、二进制返回不可预览提示。
+	r.GET("/file/preview", handler.PreviewFileByFileID)
 	r.GET("/file/search", handler.Search)
 	r.GET("/file/download", handler.Download)
 	r.POST("/file/upload", handler.Upload)

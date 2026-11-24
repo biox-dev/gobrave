@@ -24,7 +24,7 @@ type Deps struct {
 	Terminal runtimecontext.ContainerTerminalRunner
 	// UIActions 向当前用户的在线前端推送 UI 动作（ui_action）。
 	UIActions runtimecontext.UIActionPusher
-	// FileReader 按 go_file 主键解析文件路径并读取 Excel 工作簿预览（get_file）。
+	// FileReader 按 go_file 主键解析文件路径并读取文件内容（get_file）。
 	FileReader runtimecontext.FileReader
 	// ScriptCreator 创建脚本（create_script）；同时实现 ScriptUpdater 时也用于 update_script。
 	ScriptCreator runtimecontext.ScriptCreator

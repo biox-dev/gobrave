@@ -613,7 +613,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(func(registry *manager.TerminalSessionRegistry) hostshell.ContainerShellService {
 		return registry
 	}))
-	// 文件读取器：把「按 go_file 主键解析文件路径 + 读取 Excel 工作簿预览」能力暴露给内置工具
+	// 文件读取器：把「按 go_file 主键解析文件路径 + 读取文件内容」能力暴露给内置工具
 	// get_file，用于读取用户输入 @file:<id> 引用指向的文件（agent 传裸 ID）。
 	must(container.Provide(newFileReader))
 	// 脚本业务能力：agentscript.Creator 同时实现 runtimecontext.ScriptCreator（create_script）与
@@ -892,7 +892,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	}))
 	must(container.Provide(service.NewLLMService))
 	must(container.Provide(service.NewAISummaryService))
-	must(container.Provide(service.NewSheetFileService))
+	must(container.Provide(service.NewFileContentService))
 	// 导出/安装文件格式版本注册表（script.json / workflow.json 顶层的 version）。
 	// 新增一个版本 = 新写一个 exportcodec 子包 + 这里多 Register 一行，
 	// handler 侧只做 exportCodecs.Get(version)，不需要任何 switch version。
@@ -937,7 +937,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Provide(handler.NewGitHandler))
 	must(container.Provide(handler.NewSettingHandler))
 	must(container.Provide(handler.NewConfigHandler))
-	must(container.Provide(handler.NewSheetHandler))
 	must(container.Provide(handler.NewUploadHandler))
 	must(container.Provide(handler.NewFileHandler))
 	must(container.Provide(handler.NewProxyHandler))

@@ -1,12 +1,8 @@
 package builtin
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,12 +17,8 @@ const GetFileToolName = "get_file"
 const (
 	// readFileDefaultLimit 未显式传 limit 时最多读取的行数。
 	readFileDefaultLimit = 2000
-	// readFileMaxLineLength 是单行最大字符数，超出部分截断，避免超宽表格行占满上下文。
-	readFileMaxLineLength = 2000
 	// readFileMaxBytes 是单次回传 content 的字节预算，超出后提前结束并要求用 offset 续读。
 	readFileMaxBytes = 200 * 1024
-	// readFileSniffSize 是判定二进制文件时探测的字节数。
-	readFileSniffSize = 8192
 )
 
 // GetFileInput 是 get_file 工具的入参。
@@ -43,8 +35,8 @@ type GetFileInput struct {
 // GetFileOutput 是 get_file 工具返回给模型的结果。
 //
 // 无论格式如何都会返回 FilePath（真实绝对路径，可直接作为分析节点输入参数或传给
-// view / edit / bash）；文本文件额外返回 Content，xlsx / xlsm 返回各 sheet 的列名与
-// 预览行，图片与其它二进制文件只返回 file_path 与 format 并在 Message 里说明原因。
+// view / edit / bash）；文本文件额外返回 Content，xlsx / xlsm 返回首个工作表的 TSV
+// 文本，图片与其它二进制文件只返回 file_path 与 format 并在 Message 里说明原因。
 type GetFileOutput struct {
 	FileID   int64  `json:"file_id,string"`
 	FileName string `json:"file_name,omitempty"`
@@ -73,7 +65,7 @@ const getFileDescription = `按 file_id 读取文件内容，用于处理用户�
 
 - **file_path**：文件的真实绝对路径，可直接作为分析节点输入参数，或继续用 view / edit / bash 处理。
 - **format**：文件格式（如 csv / tsv / xlsx / bam）。
-- **content**：文本文件的内容（csv / tsv 首行即列名）；xlsx / xlsm 返回各 sheet 的列名与前若干行预览。图片与其它二进制文件不含 content，会在 message 里说明，此时用 file_path 交给容器命令读取。
+- **content**：文本文件的内容（csv / tsv 首行即列名）；xlsx / xlsm 返回首个工作表的 TSV 文本。图片与其它二进制文件不含 content，会在 message 里说明，此时用 file_path 交给容器命令读取。
 - **offset / line_count / next_offset / has_more / truncated**：大文件分批读取信息；has_more 为 true 时用 next_offset 继续读。
 
 ## 限制
@@ -85,9 +77,9 @@ const getFileDescription = `按 file_id 读取文件内容，用于处理用户�
 //
 // 行为：
 //   - 解析入参 file_id（容错剥离 @file: 前缀，模型应传裸 ID）；
-//   - 通过注入的 FileReader 按 ID 查出文件元信息（含真实路径）；
-//   - 文本文件回传内容（可按 offset / limit 分批），xlsx 回传 sheet 预览，
-//     图片 / 二进制只回传路径与格式；
+//   - 通过注入的 FileReader 按 ID 查出文件元信息（含真实路径 / format）；
+//   - 交给 FileReader.ReadFileContent 读取内容（可按 offset / limit 分批，并以
+//     文件元信息里的 format 判定解析方式），文本 / 表格回传内容，图片 / 二进制只回传路径与格式；
 //   - 文件不存在或不可读时回填 error 字段而不是直接失败，便于模型改用其它方式。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。
@@ -137,45 +129,11 @@ func GetFile(reader runtimecontext.FileReader) tool.Tool {
 	).WithPermission("read", "", "按文件 ID 读取文件内容")
 }
 
-// fillFileContent 按文件格式填充 Content / Message 与分批读取字段。
+// fillFileContent 读取文件内容并填充 Content / Message 与分批读取字段。
 //
-// 三种分支：
-//   - xlsx / xlsm：交给 FileReader.ReadSpreadsheet 渲染 sheet 列名与预览行；
-//   - 图片 / 二进制：不回传内容，只给出 file_path 与说明；
-//   - 文本：按 offset / limit 逐行读取，受字节预算约束。
+// 解析细节（表格转分隔文本、二进制 / 图片识别、按 offset / limit 分页）由
+// FileReader.ReadFileContent 统一处理，工具只透传分页与字节预算。
 func fillFileContent(ctx context.Context, reader runtimecontext.FileReader, out *GetFileOutput, offset, limit int) error {
-	info, err := os.Stat(out.FilePath)
-	if err != nil {
-		return fmt.Errorf("cannot access %s: %w", out.FilePath, err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("%s is a directory, not a file", out.FilePath)
-	}
-
-	switch out.Format {
-	case "xlsx", "xlsm":
-		preview, err := reader.ReadSpreadsheet(ctx, out.FilePath)
-		if err != nil {
-			return fmt.Errorf("failed to preview %s: %w", out.FilePath, err)
-		}
-		out.Content = preview
-		return nil
-	}
-
-	if isImageFormat(out.Format) {
-		out.Message = "图片文件，无法以文本展示；file_path 可直接交给容器命令或其它工具处理。"
-		return nil
-	}
-
-	binary, err := looksBinary(out.FilePath)
-	if err != nil {
-		return err
-	}
-	if binary {
-		out.Message = "二进制文件，无法以文本展示；file_path 可直接作为分析节点输入参数或交给容器命令处理。"
-		return nil
-	}
-
 	if offset < 0 {
 		offset = 0
 	}
@@ -183,85 +141,27 @@ func fillFileContent(ctx context.Context, reader runtimecontext.FileReader, out 
 		limit = readFileDefaultLimit
 	}
 
-	lines, hasMore, truncated, err := readFileLines(out.FilePath, offset, limit)
+	result, err := reader.ReadFileContent(ctx, runtimecontext.FileContentRequest{
+		// Format 取 go_file.format（normalizeFileFormat 已带路径后缀兜底），
+		// 让表格 / Excel / 二进制的判定以文件元信息为准，而不是只看路径后缀。
+		Path:     out.FilePath,
+		Format:   out.Format,
+		Offset:   offset,
+		Limit:    limit,
+		MaxBytes: readFileMaxBytes,
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read %s: %w", out.FilePath, err)
 	}
-	out.Offset = offset
-	out.LineCount = len(lines)
-	out.HasMore = hasMore
-	out.Truncated = truncated
-	if hasMore {
-		out.NextOffset = offset + len(lines)
-	}
-	out.Content = strings.Join(lines, "\n")
 
-	if len(lines) == 0 && !hasMore && offset > 0 {
-		out.Message = fmt.Sprintf("offset %d 超出文件行数，文件已读完。", offset)
-	}
+	out.Offset = result.Offset
+	out.LineCount = result.LineCount
+	out.NextOffset = result.NextOffset
+	out.HasMore = result.HasMore
+	out.Truncated = result.Truncated
+	out.Content = result.Content
+	out.Message = result.Message
 	return nil
-}
-
-// readFileLines 从 offset 行开始读取最多 limit 行。
-//
-// hasMore 表示文件在本次读取窗口之后还有内容（limit 或字节预算触顶）；
-// truncated 表示有行因超长被截断。字节预算 readFileMaxBytes 用于控制单次回传体积。
-func readFileLines(path string, offset, limit int) (lines []string, hasMore, truncated bool, err error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, false, false, fmt.Errorf("cannot open %s: %w", path, err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
-
-	for i := 0; i < offset && scanner.Scan(); i++ {
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, false, false, fmt.Errorf("failed reading %s: %w", path, err)
-	}
-
-	readBytes := 0
-	for scanner.Scan() {
-		if len(lines) >= limit {
-			// 还有未消费的行，说明本次窗口没读到底。
-			hasMore = true
-			break
-		}
-
-		line := strings.TrimSuffix(scanner.Text(), "\r")
-		if len(line) > readFileMaxLineLength {
-			line = line[:readFileMaxLineLength] + "..."
-			truncated = true
-		}
-		if readBytes+len(line)+1 > readFileMaxBytes {
-			hasMore = true
-			break
-		}
-		lines = append(lines, line)
-		readBytes += len(line) + 1
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, false, false, fmt.Errorf("failed reading %s: %w", path, err)
-	}
-	return lines, hasMore, truncated, nil
-}
-
-// looksBinary 通过探测文件头是否含 NUL 字节判断是否为二进制文件。
-func looksBinary(path string) (bool, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return false, fmt.Errorf("cannot open %s: %w", path, err)
-	}
-	defer file.Close()
-
-	buf := make([]byte, readFileSniffSize)
-	n, err := file.Read(buf)
-	if err != nil && err != io.EOF {
-		return false, fmt.Errorf("failed reading %s: %w", path, err)
-	}
-	return bytes.IndexByte(buf[:n], 0) >= 0, nil
 }
 
 // normalizeFileFormat 归一化文件格式：优先取元信息里的 format，为空时回退到路径后缀。
@@ -271,16 +171,6 @@ func normalizeFileFormat(format, path string) string {
 		normalized = strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	}
 	return normalized
-}
-
-// isImageFormat 判断是否为无法以文本展示的图片格式。
-func isImageFormat(format string) bool {
-	switch format {
-	case "jpg", "jpeg", "png", "gif", "bmp", "svg", "webp":
-		return true
-	default:
-		return false
-	}
 }
 
 // parseFileID 解析必填的文件 ID：为空或非法时返回错误。

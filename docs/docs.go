@@ -702,6 +702,37 @@ const docTemplate = `{
                 }
             }
         },
+        "/agent/profile/options": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回当前 agent.providers 中已配置的模型列表（含是否支持推理与默认推理强度），以及推理强度可选值",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "查看 Agent Profile 编辑选项",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.agentProfileOptionsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/agent/profile/save": {
             "post": {
                 "security": [
@@ -1273,6 +1304,198 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/session/resources/export": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "在该会话的 Agent 工作目录下创建 report 目录，并把会话关联的分析节点输出（按 NodeName 建子目录）与项目报告（重命名为 \u003c标题\u003e.md）拷贝进去",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "导出会话结果到会话目录",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "会话 ID",
+                        "name": "session_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/session/resources/export/download": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "先按 /agent/session/resources/export 的规则汇总分析节点输出与项目报告，再把 report 目录打包成 zip 下载，压缩包名称取自会话标题",
+                "produces": [
+                    "application/zip"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "下载会话结果压缩包",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "会话 ID",
+                        "name": "session_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "会话结果压缩包",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/agent/session/resources/unlink": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按关联行 ID 删除「会话 ↔ 资源」关联；只删关联，不删除脚本 / 工作流 / 分析等资源本身。\n关联所属会话须对当前用户可见（项目成员）。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent"
+                ],
+                "summary": "删除一条会话资源关联",
+                "parameters": [
+                    {
+                        "description": "关联行 ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.sessionResourceUnlinkBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
                         }
                     },
                     "400": {
@@ -9160,6 +9383,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/file/preview": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "根据 go_file 主键 ID 查找文件 path，由 path 后缀推断格式并返回可直接渲染的预览内容：\n表格（csv/tsv，xlsx 转 TSV）返回分隔文本由前端解析，fasta/gff 等返回原始文本，\ngz/rds 等二进制格式返回不能预览的提示。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "文件"
+                ],
+                "summary": "根据文件ID读取文件预览",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "文件主键 ID",
+                        "name": "id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/interfaces.FilePreviewResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/find-script/{id}": {
             "get": {
                 "security": [
@@ -11964,248 +12245,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/sheet/workbook": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "从本地文件读取工作簿并转换为 Univer 可用结构。当前优先支持 xlsx，csv/tsv 将在后续版本支持。",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "表格"
-                ],
-                "summary": "读取本地工作簿",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "本地文件路径（相对路径以 sheets 目录为根）",
-                        "name": "file_path",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "文件格式，可选：xlsx",
-                        "name": "format",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/interfaces.WorkbookReadResult"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/sheet/workbook/by-file-id": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "根据 go_file 主键 ID 查找文件 path，由 path 后缀推断读取格式（前端无需传递 format），再读取工作簿并转换为 Univer 可用结构。结果中附带文件信息；不支持的格式返回“页面不支持预览”。",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "表格"
-                ],
-                "summary": "根据文件ID读取工作簿",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "文件主键 ID",
-                        "name": "id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/interfaces.WorkbookReadResult"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/sheet/workbook/save": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "将 Univer 工作簿结构写入本地文件。当前优先支持 xlsx，csv/tsv 将在后续版本支持。",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "表格"
-                ],
-                "summary": "保存工作簿到本地",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.writeWorkbookRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/interfaces.WorkbookWriteResult"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/sheet/workbook/save/by-file-id": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "根据 go_file 主键 ID 查找文件 path，再将 Univer 工作簿结构写入本地文件。",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "表格"
-                ],
-                "summary": "根据文件ID保存工作簿",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.writeWorkbookByFileIDRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/interfaces.WorkbookWriteResult"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
         "/store/{storeId}/image": {
             "get": {
                 "security": [
@@ -13957,10 +13996,6 @@ const docTemplate = `{
         "handler.RuntimeContextInfo": {
             "type": "object",
             "properties": {
-                "label": {
-                    "description": "人类可读的名称（当前激活项目名）",
-                    "type": "string"
-                },
                 "profile_id": {
                     "description": "用于渲染系统提示词的 Profile ID",
                     "type": "string",
@@ -13978,17 +14013,13 @@ const docTemplate = `{
                     }
                 },
                 "system_prompt": {
-                    "description": "用当前用户 Profile 模板渲染后的真实系统提示词",
+                    "description": "Label        string         ` + "`" + `json:\"label\"` + "`" + `                       // 人类可读的名称（当前激活项目名）\nWorkingDir   string         ` + "`" + `json:\"working_dir\"` + "`" + `                 // 工作目录",
                     "type": "string"
                 },
                 "vars": {
                     "description": "渲染系统提示词模板所用的变量",
                     "type": "object",
                     "additionalProperties": {}
-                },
-                "working_dir": {
-                    "description": "工作目录",
-                    "type": "string"
                 }
             }
         },
@@ -14276,6 +14307,50 @@ const docTemplate = `{
                 },
                 "task_id": {
                     "type": "string"
+                }
+            }
+        },
+        "handler.agentProfileModelOption": {
+            "type": "object",
+            "properties": {
+                "can_reason": {
+                    "description": "CanReason 表示模型支持推理 / 思考过程。",
+                    "type": "boolean"
+                },
+                "label": {
+                    "description": "Label 是展示名（配置的 name，为空回退 api_model / key）。",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name 是 agent.providers 的 key，写入 Profile.Model。",
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "Provider 是模型厂商标识（openai / deepseek / anthropic …）。",
+                    "type": "string"
+                },
+                "reasoning_effort": {
+                    "description": "ReasoningEffort 是该模型配置的默认推理强度（为空表示未指定）。",
+                    "type": "string"
+                }
+            }
+        },
+        "handler.agentProfileOptionsResponse": {
+            "type": "object",
+            "properties": {
+                "models": {
+                    "description": "Models 是当前已配置的模型列表（按 key 升序）。",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.agentProfileModelOption"
+                    }
+                },
+                "reasoning_efforts": {
+                    "description": "ReasoningEfforts 是 ReasoningEffort 的可选值（none / low / medium / high / max）。",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -15419,6 +15494,10 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "reasoning_effort": {
+                    "description": "ReasoningEffort 思考模式与推理强度：none 关闭思考，low / high / max 开启；为空表示不指定。",
+                    "type": "string"
+                },
                 "skills": {
                     "type": "array",
                     "items": {
@@ -15797,6 +15876,17 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.sessionResourceUnlinkBody": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
         "handler.sessionSubscribeBody": {
             "type": "object",
             "required": [
@@ -15993,43 +16083,6 @@ const docTemplate = `{
                 }
             }
         },
-        "handler.writeWorkbookByFileIDRequest": {
-            "type": "object",
-            "required": [
-                "id",
-                "workbook_data"
-            ],
-            "properties": {
-                "id": {
-                    "description": "ID is the go_file primary key (go_file.id).",
-                    "type": "string",
-                    "example": "0"
-                },
-                "workbook_data": {
-                    "type": "object",
-                    "additionalProperties": {}
-                }
-            }
-        },
-        "handler.writeWorkbookRequest": {
-            "type": "object",
-            "required": [
-                "file_path",
-                "workbook_data"
-            ],
-            "properties": {
-                "file_path": {
-                    "type": "string"
-                },
-                "format": {
-                    "type": "string"
-                },
-                "workbook_data": {
-                    "type": "object",
-                    "additionalProperties": {}
-                }
-            }
-        },
         "interfaces.DagRunningInfo": {
             "type": "object",
             "properties": {
@@ -16066,11 +16119,32 @@ const docTemplate = `{
                 }
             }
         },
-        "interfaces.WorkbookReadResult": {
+        "interfaces.FilePreviewKind": {
+            "type": "string",
+            "enum": [
+                "table",
+                "text",
+                "binary"
+            ],
+            "x-enum-varnames": [
+                "FilePreviewKindTable",
+                "FilePreviewKindText",
+                "FilePreviewKindBinary"
+            ]
+        },
+        "interfaces.FilePreviewResult": {
             "type": "object",
             "properties": {
+                "content": {
+                    "description": "Content is the preview payload. Empty for binary files.",
+                    "type": "string"
+                },
+                "delimiter": {
+                    "description": "Delimiter is the column separator when Kind == table.",
+                    "type": "string"
+                },
                 "file": {
-                    "description": "File is the go_file row the workbook was read from. It is only populated\nby ReadWorkbookByFileID so the frontend can render the file metadata\nwithout an extra request.",
+                    "description": "File is the go_file row the preview was read from. It is only populated\nby the by-file-id API so the frontend can render file metadata.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
@@ -16083,20 +16157,29 @@ const docTemplate = `{
                 "format": {
                     "type": "string"
                 },
-                "workbook_data": {
-                    "type": "object",
-                    "additionalProperties": {}
-                }
-            }
-        },
-        "interfaces.WorkbookWriteResult": {
-            "type": "object",
-            "properties": {
-                "file_path": {
+                "has_more": {
+                    "type": "boolean"
+                },
+                "kind": {
+                    "$ref": "#/definitions/interfaces.FilePreviewKind"
+                },
+                "line_count": {
+                    "type": "integer"
+                },
+                "message": {
+                    "description": "Message is a human readable note (e.g. why a binary cannot be previewed).",
                     "type": "string"
                 },
-                "format": {
-                    "type": "string"
+                "next_offset": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "description": "Offset / LineCount / NextOffset describe the requested line/row window:\nContent covers [offset, offset+line_count). NextOffset is set when there\nis more data to read.",
+                    "type": "integer"
+                },
+                "truncated": {
+                    "description": "Truncated reports that Content was cut (line length, row or byte limit).",
+                    "type": "boolean"
                 }
             }
         },
@@ -16537,16 +16620,10 @@ const docTemplate = `{
                 "analysis_node_id": {
                     "type": "string"
                 },
-                "cache_dir": {
-                    "type": "string"
-                },
                 "cache_hit": {
                     "type": "boolean"
                 },
                 "command_md5": {
-                    "type": "string"
-                },
-                "command_path": {
                     "type": "string"
                 },
                 "container_template_id": {
@@ -16603,10 +16680,6 @@ const docTemplate = `{
                 "job_id": {
                     "type": "string"
                 },
-                "log_path": {
-                    "description": "以下是 WorkspaceDir 的派生路径，一律不落库（gorm:\"-\"）。\nrepository 在读取时通过 HydrateDerivedPaths 填充。",
-                    "type": "string"
-                },
                 "max_retry": {
                     "type": "integer"
                 },
@@ -16617,9 +16690,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "node_name": {
-                    "type": "string"
-                },
-                "output_dir": {
                     "type": "string"
                 },
                 "output_file_ids": {
@@ -16638,9 +16708,6 @@ const docTemplate = `{
                     "items": {}
                 },
                 "params_md5": {
-                    "type": "string"
-                },
-                "params_path": {
                     "type": "string"
                 },
                 "pid": {
@@ -17571,26 +17638,6 @@ const docTemplate = `{
                 }
             }
         },
-        "types.Pagination": {
-            "type": "object",
-            "properties": {
-                "keyword": {
-                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
-                    "type": "string"
-                },
-                "page": {
-                    "description": "Page",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "page_size": {
-                    "description": "Page size",
-                    "type": "integer",
-                    "maximum": 1000,
-                    "minimum": 1
-                }
-            }
-        },
         "types.PermissionRequest": {
             "type": "object",
             "properties": {
@@ -17783,6 +17830,10 @@ const docTemplate = `{
                 },
                 "provider": {
                     "description": "Provider 指定本 Profile 使用的 Agent（Provider）名称（mock | claude_code | codex | copilot | custom）。\n为空时回退到请求级 req.Provider（若仍未指定则由 Client 的默认 Provider 兜底）。",
+                    "type": "string"
+                },
+                "reasoning_effort": {
+                    "description": "ReasoningEffort 思考模式与推理强度：none 关闭思考，low / high / max 开启并指定强度。\n为空表示不指定（DeepSeek 默认开启思考、强度 high）；为空时也会回退到\n模型配置 agent.providers.\u003cmodel\u003e.reasoning_effort。",
                     "type": "string"
                 },
                 "skills": {
@@ -18150,6 +18201,10 @@ const docTemplate = `{
                 },
                 "provider": {
                     "description": "Provider 可选：强制指定 Provider 名称；为空则使用 Client 的默认 Provider。",
+                    "type": "string"
+                },
+                "reasoning_effort": {
+                    "description": "ReasoningEffort 可选：思考模式与推理强度（none 关闭思考，low / medium / high / max 开启）；\n为空时沿用模型配置 agent.providers.\u003cmodel\u003e.reasoning_effort。",
                     "type": "string"
                 },
                 "runtime_context": {

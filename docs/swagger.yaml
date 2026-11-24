@@ -401,9 +401,6 @@ definitions:
     type: object
   handler.RuntimeContextInfo:
     properties:
-      label:
-        description: 人类可读的名称（当前激活项目名）
-        type: string
       profile_id:
         description: 用于渲染系统提示词的 Profile ID
         example: "0"
@@ -420,15 +417,14 @@ definitions:
           type: string
         type: array
       system_prompt:
-        description: 用当前用户 Profile 模板渲染后的真实系统提示词
+        description: |-
+          Label        string         `json:"label"`                       // 人类可读的名称（当前激活项目名）
+          WorkingDir   string         `json:"working_dir"`                 // 工作目录
         type: string
       vars:
         additionalProperties: {}
         description: 渲染系统提示词模板所用的变量
         type: object
-      working_dir:
-        description: 工作目录
-        type: string
     type: object
   handler.VisualizationNodeFileResponse:
     properties:
@@ -634,6 +630,38 @@ definitions:
         type: array
       task_id:
         type: string
+    type: object
+  handler.agentProfileModelOption:
+    properties:
+      can_reason:
+        description: CanReason 表示模型支持推理 / 思考过程。
+        type: boolean
+      label:
+        description: Label 是展示名（配置的 name，为空回退 api_model / key）。
+        type: string
+      name:
+        description: Name 是 agent.providers 的 key，写入 Profile.Model。
+        type: string
+      provider:
+        description: Provider 是模型厂商标识（openai / deepseek / anthropic …）。
+        type: string
+      reasoning_effort:
+        description: ReasoningEffort 是该模型配置的默认推理强度（为空表示未指定）。
+        type: string
+    type: object
+  handler.agentProfileOptionsResponse:
+    properties:
+      models:
+        description: Models 是当前已配置的模型列表（按 key 升序）。
+        items:
+          $ref: '#/definitions/handler.agentProfileModelOption'
+        type: array
+      reasoning_efforts:
+        description: ReasoningEfforts 是 ReasoningEffort 的可选值（none / low / medium /
+          high / max）。
+        items:
+          type: string
+        type: array
     type: object
   handler.agentQuestionPageRequest:
     properties:
@@ -1470,6 +1498,9 @@ definitions:
         type: string
       name:
         type: string
+      reasoning_effort:
+        description: ReasoningEffort 思考模式与推理强度：none 关闭思考，low / high / max 开启；为空表示不指定。
+        type: string
       skills:
         items:
           type: string
@@ -1738,6 +1769,13 @@ definitions:
         minimum: 1
         type: integer
     type: object
+  handler.sessionResourceUnlinkBody:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
   handler.sessionSubscribeBody:
     properties:
       session_id:
@@ -1870,32 +1908,6 @@ definitions:
     required:
     - project_id
     type: object
-  handler.writeWorkbookByFileIDRequest:
-    properties:
-      id:
-        description: ID is the go_file primary key (go_file.id).
-        example: "0"
-        type: string
-      workbook_data:
-        additionalProperties: {}
-        type: object
-    required:
-    - id
-    - workbook_data
-    type: object
-  handler.writeWorkbookRequest:
-    properties:
-      file_path:
-        type: string
-      format:
-        type: string
-      workbook_data:
-        additionalProperties: {}
-        type: object
-    required:
-    - file_path
-    - workbook_data
-    type: object
   interfaces.DagRunningInfo:
     properties:
       analysis_id:
@@ -1920,29 +1932,56 @@ definitions:
       updated_at:
         type: string
     type: object
-  interfaces.WorkbookReadResult:
+  interfaces.FilePreviewKind:
+    enum:
+    - table
+    - text
+    - binary
+    type: string
+    x-enum-varnames:
+    - FilePreviewKindTable
+    - FilePreviewKindText
+    - FilePreviewKindBinary
+  interfaces.FilePreviewResult:
     properties:
+      content:
+        description: Content is the preview payload. Empty for binary files.
+        type: string
+      delimiter:
+        description: Delimiter is the column separator when Kind == table.
+        type: string
       file:
         allOf:
         - $ref: '#/definitions/github_com_biox-dev_gobrave_internal_types.File'
         description: |-
-          File is the go_file row the workbook was read from. It is only populated
-          by ReadWorkbookByFileID so the frontend can render the file metadata
-          without an extra request.
+          File is the go_file row the preview was read from. It is only populated
+          by the by-file-id API so the frontend can render file metadata.
       file_path:
         type: string
       format:
         type: string
-      workbook_data:
-        additionalProperties: {}
-        type: object
-    type: object
-  interfaces.WorkbookWriteResult:
-    properties:
-      file_path:
+      has_more:
+        type: boolean
+      kind:
+        $ref: '#/definitions/interfaces.FilePreviewKind'
+      line_count:
+        type: integer
+      message:
+        description: Message is a human readable note (e.g. why a binary cannot be
+          previewed).
         type: string
-      format:
-        type: string
+      next_offset:
+        type: integer
+      offset:
+        description: |-
+          Offset / LineCount / NextOffset describe the requested line/row window:
+          Content covers [offset, offset+line_count). NextOffset is set when there
+          is more data to read.
+        type: integer
+      truncated:
+        description: Truncated reports that Content was cut (line length, row or byte
+          limit).
+        type: boolean
     type: object
   manager.TerminalSessionStatus:
     properties:
@@ -2286,13 +2325,9 @@ definitions:
         type: string
       analysis_node_id:
         type: string
-      cache_dir:
-        type: string
       cache_hit:
         type: boolean
       command_md5:
-        type: string
-      command_path:
         type: string
       container_template_id:
         description: |-
@@ -2336,11 +2371,6 @@ definitions:
         $ref: '#/definitions/types.JSONMap'
       job_id:
         type: string
-      log_path:
-        description: |-
-          以下是 WorkspaceDir 的派生路径，一律不落库（gorm:"-"）。
-          repository 在读取时通过 HydrateDerivedPaths 填充。
-        type: string
       max_retry:
         type: integer
       memory:
@@ -2348,8 +2378,6 @@ definitions:
       node_id:
         type: string
       node_name:
-        type: string
-      output_dir:
         type: string
       output_file_ids:
         allOf:
@@ -2361,8 +2389,6 @@ definitions:
         items: {}
         type: array
       params_md5:
-        type: string
-      params_path:
         type: string
       pid:
         type: integer
@@ -3084,24 +3110,6 @@ definitions:
       type:
         $ref: '#/definitions/github_com_biox-dev_gobrave_internal_agent_types.OperationType'
     type: object
-  types.Pagination:
-    properties:
-      keyword:
-        description: |-
-          Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。
-          统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；
-          仓储层按各自实体的名称列实现 LIKE 过滤。
-        type: string
-      page:
-        description: Page
-        minimum: 1
-        type: integer
-      page_size:
-        description: Page size
-        maximum: 1000
-        minimum: 1
-        type: integer
-    type: object
   types.PermissionRequest:
     properties:
       created_at:
@@ -3249,6 +3257,12 @@ definitions:
         description: |-
           Provider 指定本 Profile 使用的 Agent（Provider）名称（mock | claude_code | codex | copilot | custom）。
           为空时回退到请求级 req.Provider（若仍未指定则由 Client 的默认 Provider 兜底）。
+        type: string
+      reasoning_effort:
+        description: |-
+          ReasoningEffort 思考模式与推理强度：none 关闭思考，low / high / max 开启并指定强度。
+          为空表示不指定（DeepSeek 默认开启思考、强度 high）；为空时也会回退到
+          模型配置 agent.providers.<model>.reasoning_effort。
         type: string
       skills:
         description: Skills 是本 Profile 启用的技能名列表；为空时回退到请求级 Skills（即默认全部技能）。
@@ -3521,6 +3535,11 @@ definitions:
         type: string
       provider:
         description: Provider 可选：强制指定 Provider 名称；为空则使用 Client 的默认 Provider。
+        type: string
+      reasoning_effort:
+        description: |-
+          ReasoningEffort 可选：思考模式与推理强度（none 关闭思考，low / medium / high / max 开启）；
+          为空时沿用模型配置 agent.providers.<model>.reasoning_effort。
         type: string
       runtime_context:
         allOf:
@@ -4534,6 +4553,25 @@ paths:
       summary: 查看 Agent Profile
       tags:
       - Agent
+  /agent/profile/options:
+    get:
+      description: 返回当前 agent.providers 中已配置的模型列表（含是否支持推理与默认推理强度），以及推理强度可选值
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.agentProfileOptionsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 查看 Agent Profile 编辑选项
+      tags:
+      - Agent
   /agent/profile/save:
     post:
       consumes:
@@ -4922,6 +4960,133 @@ paths:
       security:
       - Bearer: []
       summary: 一次查询会话关联的全部资源（按类型分组）
+      tags:
+      - Agent
+  /agent/session/resources/export:
+    post:
+      description: 在该会话的 Agent 工作目录下创建 report 目录，并把会话关联的分析节点输出（按 NodeName 建子目录）与项目报告（重命名为
+        <标题>.md）拷贝进去
+      parameters:
+      - description: 会话 ID
+        in: query
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 导出会话结果到会话目录
+      tags:
+      - Agent
+  /agent/session/resources/export/download:
+    get:
+      description: 先按 /agent/session/resources/export 的规则汇总分析节点输出与项目报告，再把 report 目录打包成
+        zip 下载，压缩包名称取自会话标题
+      parameters:
+      - description: 会话 ID
+        in: query
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/zip
+      responses:
+        "200":
+          description: 会话结果压缩包
+          schema:
+            type: file
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 下载会话结果压缩包
+      tags:
+      - Agent
+  /agent/session/resources/unlink:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        按关联行 ID 删除「会话 ↔ 资源」关联；只删关联，不删除脚本 / 工作流 / 分析等资源本身。
+        关联所属会话须对当前用户可见（项目成员）。
+      parameters:
+      - description: 关联行 ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.sessionResourceUnlinkBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 删除一条会话资源关联
       tags:
       - Agent
   /agent/session/subscribe:
@@ -9961,6 +10126,46 @@ paths:
       summary: 更新项目-数据集映射
       tags:
       - 数据管理
+  /file/preview:
+    get:
+      description: |-
+        根据 go_file 主键 ID 查找文件 path，由 path 后缀推断格式并返回可直接渲染的预览内容：
+        表格（csv/tsv，xlsx 转 TSV）返回分隔文本由前端解析，fasta/gff 等返回原始文本，
+        gz/rds 等二进制格式返回不能预览的提示。
+      parameters:
+      - description: 文件主键 ID
+        in: query
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/interfaces.FilePreviewResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 根据文件ID读取文件预览
+      tags:
+      - 文件
   /find-script/{id}:
     get:
       description: 查询 script：按主键 ID 查询并附带容器模板名称
@@ -11759,161 +11964,6 @@ paths:
       summary: 获取系统设置
       tags:
       - 系统设置
-  /sheet/workbook:
-    get:
-      description: 从本地文件读取工作簿并转换为 Univer 可用结构。当前优先支持 xlsx，csv/tsv 将在后续版本支持。
-      parameters:
-      - description: 本地文件路径（相对路径以 sheets 目录为根）
-        in: query
-        name: file_path
-        required: true
-        type: string
-      - description: 文件格式，可选：xlsx
-        in: query
-        name: format
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/interfaces.WorkbookReadResult'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 读取本地工作簿
-      tags:
-      - 表格
-  /sheet/workbook/by-file-id:
-    get:
-      description: 根据 go_file 主键 ID 查找文件 path，由 path 后缀推断读取格式（前端无需传递 format），再读取工作簿并转换为
-        Univer 可用结构。结果中附带文件信息；不支持的格式返回“页面不支持预览”。
-      parameters:
-      - description: 文件主键 ID
-        in: query
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/interfaces.WorkbookReadResult'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 根据文件ID读取工作簿
-      tags:
-      - 表格
-  /sheet/workbook/save:
-    post:
-      consumes:
-      - application/json
-      description: 将 Univer 工作簿结构写入本地文件。当前优先支持 xlsx，csv/tsv 将在后续版本支持。
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.writeWorkbookRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/interfaces.WorkbookWriteResult'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 保存工作簿到本地
-      tags:
-      - 表格
-  /sheet/workbook/save/by-file-id:
-    post:
-      consumes:
-      - application/json
-      description: 根据 go_file 主键 ID 查找文件 path，再将 Univer 工作簿结构写入本地文件。
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.writeWorkbookByFileIDRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/interfaces.WorkbookWriteResult'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 根据文件ID保存工作簿
-      tags:
-      - 表格
   /store/{storeId}/image:
     get:
       description: |-

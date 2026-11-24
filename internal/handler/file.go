@@ -23,10 +23,22 @@ import (
 type FileHandler struct {
 	cfg            *config.Config
 	projectService interfaces.ProjectService
+	dataService    interfaces.DataService
+	fileService    interfaces.FileContentService
 }
 
-func NewFileHandler(cfg *config.Config, projectService interfaces.ProjectService) *FileHandler {
-	return &FileHandler{cfg: cfg, projectService: projectService}
+func NewFileHandler(
+	cfg *config.Config,
+	projectService interfaces.ProjectService,
+	dataService interfaces.DataService,
+	fileService interfaces.FileContentService,
+) *FileHandler {
+	return &FileHandler{
+		cfg:            cfg,
+		projectService: projectService,
+		dataService:    dataService,
+		fileService:    fileService,
+	}
 }
 
 type fileItem struct {
@@ -145,6 +157,64 @@ func (h *FileHandler) ListProjectDir(c *gin.Context) {
 		Page:      page,
 		Limit:     limit,
 	})
+}
+
+type previewFileByFileIDQuery struct {
+	// ID is the go_file primary key (go_file.id).
+	ID int64 `form:"id" binding:"required"`
+}
+
+// PreviewFileByFileID godoc
+// @Summary      根据文件ID读取文件预览
+// @Description  根据 go_file 主键 ID 查找文件 path，优先用 go_file.format（为空时回退到 path 后缀）确定格式并返回可直接渲染的预览内容：
+// @Description  表格（csv/tsv，xlsx 转 TSV）返回分隔文本由前端解析，fasta/gff 等返回原始文本，
+// @Description  gz/rds 等二进制格式返回不能预览的提示。
+// @Tags         文件
+// @Produce      json
+// @Param        id       query     integer  true   "文件主键 ID"
+// @Success      200      {object}  interfaces.FilePreviewResult
+// @Failure      400      {object}  appErrors.AppError
+// @Failure      401      {object}  appErrors.AppError
+// @Failure      404      {object}  appErrors.AppError
+// @Failure      500      {object}  appErrors.AppError
+// @Security     Bearer
+// @Router       /file/preview [get]
+func (h *FileHandler) PreviewFileByFileID(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req previewFileByFileIDQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.Error(appErrors.NewValidationError("invalid query parameters").WithDetails(err.Error()))
+		return
+	}
+
+	file, err := h.dataService.GetFileByID(c.Request.Context(), req.ID)
+	if err != nil {
+		c.Error(appErrors.NewNotFoundError("file not found").WithDetails(err.Error()))
+		return
+	}
+
+	// 文件格式优先取 go_file.format（导入 / 建文件时记录），前端不再传递 format；
+	// format 为空时由 FileContentService 回退到路径后缀推断。
+	result, err := h.fileService.ReadFileContent(c.Request.Context(), interfaces.FileContentInput{
+		FilePath: file.Path,
+		Format:   file.Format,
+	})
+	if err != nil {
+		switch {
+		case stderrs.Is(err, os.ErrNotExist):
+			c.Error(appErrors.NewNotFoundError("file not found").WithDetails(err.Error()))
+		default:
+			c.Error(appErrors.NewInternalServerError("failed to read file preview").WithDetails(err.Error()))
+		}
+		return
+	}
+
+	result.File = file
+
+	c.JSON(http.StatusOK, result)
 }
 
 type createDirRequest struct {
