@@ -16,7 +16,7 @@ const GetFileToolName = "get_file"
 
 const (
 	// readFileDefaultLimit 未显式传 limit 时最多读取的行数。
-	readFileDefaultLimit = 2000
+	readFileDefaultLimit = 5
 	// readFileMaxBytes 是单次回传 content 的字节预算，超出后提前结束并要求用 offset 续读。
 	readFileMaxBytes = 200 * 1024
 )
@@ -70,7 +70,7 @@ const getFileDescription = `按 file_id 读取文件内容，用于处理用户�
 
 ## 限制
 
-- 单次最多返回约 200KB 文本、默认 2000 行；单行超过 2000 字符会被截断（truncated=true）。
+- 单次最多返回约 200KB 文本、默认 5 行；单行超过 2000 字符会被截断（truncated=true）。
 - 无法按 ID 逐行定位大文件时，先读结构（列名 / 前若干行），再用 file_path 走 bash / 脚本处理。`
 
 // GetFile 返回一个「按文件 ID 读取文件内容」工具。
@@ -90,7 +90,7 @@ func GetFile(reader runtimecontext.FileReader) tool.Tool {
 		tool.Schema("按文件 ID 读取文件内容的入参", map[string]any{
 			"file_id": tool.StringProperty("文件 ID（go_file 主键，字符串以保精度）。用户输入里有 @file:<id> 引用时传冒号后的裸数字 ID，不要带 @file: 前缀。"),
 			"offset":  tool.IntegerProperty("起始行号（0-based，默认 0）"),
-			"limit":   tool.IntegerProperty("最多读取的行数（默认 2000）"),
+			"limit":   tool.IntegerProperty("最多读取的行数（默认 5）"),
 		}, "file_id"),
 		func(ctx context.Context, in GetFileInput) (GetFileOutput, error) {
 			fileID, err := parseFileID(in.FileID)

@@ -36,3 +36,10 @@ func TestNormalizeFileFormat(t *testing.T) {
 		}
 	}
 }
+
+// readFileDefaultLimit 未显式传 limit 时只读取前 5 行。
+func TestReadFileDefaultLimit(t *testing.T) {
+	if readFileDefaultLimit != 5 {
+		t.Fatalf("readFileDefaultLimit = %d, want 5", readFileDefaultLimit)
+	}
+}
