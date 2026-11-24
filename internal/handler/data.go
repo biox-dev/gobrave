@@ -57,12 +57,6 @@ type projectFileQuery struct {
 	Roles     []string `form:"role"`
 }
 
-type projectFilePageRequest struct {
-	types.Pagination
-	// ProjectID string   `json:"project_id" binding:"required"`
-	Roles []string `json:"role"`
-}
-
 type assayByProjectPageRequest struct {
 	types.Pagination
 	// ProjectID string `json:"project_id" binding:"required"`
@@ -677,58 +671,6 @@ func (h *DataHandler) PageDatasetByProjectID(c *gin.Context) {
 	})
 }
 
-// PageFileByProjectID godoc
-// @Summary      按项目分页查询文件
-// @Description  根据 project_id 分页查询项目下关联文件，并返回 role、dataset_name、dataset_id 等信息
-// @Tags         数据管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      projectFilePageRequest  true  "分页请求参数"
-// @Success      200      {object}  map[string]interface{}
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/file/list-by-project-page [post]
-func (h *DataHandler) PageFileByProjectID(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
-
-	if !ok {
-		c.Error(errors.NewUnauthorizedError("unauthorized"))
-		return
-	}
-
-	var req projectFilePageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	roles := make([]string, 0, len(req.Roles))
-	for _, item := range req.Roles {
-		for _, role := range strings.Split(item, ",") {
-			role = strings.TrimSpace(role)
-			if role != "" {
-				roles = append(roles, role)
-			}
-		}
-	}
-	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
-
-	result, err := h.dataService.PageFileByProjectID(c.Request.Context(), &req.Pagination, project.ID, roles)
-	if err != nil {
-		handleDataError(c, err, "failed to page file by project id")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data":      result.Data,
-		"total":     result.Total,
-		"page":      result.Page,
-		"page_size": result.PageSize,
-	})
-}
-
 // CreateProjectDataset godoc
 // @Summary      创建项目-数据集映射
 // @Description  创建 ProjectDataset 记录
@@ -1203,52 +1145,6 @@ func (h *DataHandler) ListFileByProjectID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
-}
-
-// PageFileByProjectIDViaAnalysisNode godoc
-// @Summary      按当前激活项目分页查询分析节点产出的文件
-// @Description  根据当前用户激活的项目分页查询由分析节点（analysis_nodes）产出的文件，通过 go_file.analysis_node_id 关联
-// @Tags         数据管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      types.Pagination  true  "分页请求参数"
-// @Success      200      {object}  map[string]interface{}
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /data/file/list-by-project-analysis-node-page [post]
-func (h *DataHandler) PageFileByProjectIDViaAnalysisNode(c *gin.Context) {
-	userID, ok := getCurrentUserID(c)
-	if !ok {
-		c.Error(errors.NewUnauthorizedError("unauthorized"))
-		return
-	}
-
-	var req types.Pagination
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-
-	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
-	if err != nil {
-		handleDataError(c, err, "failed to get active project by user id")
-		return
-	}
-
-	result, err := h.dataService.PageFileByProjectIDViaAnalysisNode(c.Request.Context(), &req, project.ID)
-	if err != nil {
-		handleDataError(c, err, "failed to page analysis node file by project id")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data":      result.Data,
-		"total":     result.Total,
-		"page":      result.Page,
-		"page_size": result.PageSize,
-	})
 }
 
 // ListFileByProjectIDGroupByRole godoc

@@ -44,7 +44,6 @@ type DataService interface {
 	UpdateFile(ctx context.Context, file *types.File) error
 	DeleteFile(ctx context.Context, id int64) error
 	ListFile(ctx context.Context) ([]*types.File, error)
-	PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, roles []string) (*types.PageResult, error)
 	ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error)
 	ListFileByProjectIDGroupByRole(ctx context.Context, projectID int64) ([]*types.FileByProjectRoleGroup, error)
 	// ListFileByProjectIDViaAnalysisNode returns the files produced by the
@@ -53,9 +52,6 @@ type DataService interface {
 	// PK). Every node file is returned, keyed by its own go_file.role (the role
 	// its output_patterns entry declared, defaulted on write).
 	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID int64) ([]*types.FileWithDatasetInfo, error)
-	// PageFileByProjectIDViaAnalysisNode returns the same analysis-node files as
-	// ListFileByProjectIDViaAnalysisNode, paginated.
-	PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID int64) (*types.PageResult, error)
 	// ListFileByAssayID returns the files owned by one assay; an assay without
 	// files yields an empty slice (not an error).
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
@@ -133,10 +129,8 @@ type DataRepository interface {
 	UpdateFile(ctx context.Context, file *types.File) error
 	DeleteFile(ctx context.Context, id int64) error
 	ListFile(ctx context.Context) ([]*types.File, error)
-	PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, int64, error)
 	ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error)
 	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID int64) ([]*types.FileWithDatasetInfo, error)
-	PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.FileWithDatasetInfo, int64, error)
 	// ListFileByDatasetID returns the files bound to one dataset through
 	// go_dataset_file, ordered by binding id (newest first).
 	ListFileByDatasetID(ctx context.Context, datasetID int64) ([]*types.FileWithDatasetInfo, error)

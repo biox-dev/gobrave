@@ -8673,64 +8673,6 @@
                 }
             }
         },
-        "/data/file/list-by-project-analysis-node-page": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "根据当前用户激活的项目分页查询由分析节点（analysis_nodes）产出的文件，通过 go_file.analysis_node_id 关联",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "按当前激活项目分页查询分析节点产出的文件",
-                "parameters": [
-                    {
-                        "description": "分页请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.Pagination"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
         "/data/file/list-by-project-group": {
             "get": {
                 "security": [
@@ -8766,64 +8708,6 @@
                                     "$ref": "#/definitions/types.FileWithDatasetInfo"
                                 }
                             }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/data/file/list-by-project-page": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "根据 project_id 分页查询项目下关联文件，并返回 role、dataset_name、dataset_id 等信息",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "数据管理"
-                ],
-                "summary": "按项目分页查询文件",
-                "parameters": [
-                    {
-                        "description": "分页请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.projectFilePageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -15539,33 +15423,6 @@
                 },
                 "tools": {
                     "description": "工具名白名单；为空表示注入全部工具",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "handler.projectFilePageRequest": {
-            "type": "object",
-            "properties": {
-                "keyword": {
-                    "description": "Keyword 是所有分页列表共用的模糊搜索关键字（空表示不过滤）。\n统一放在 Pagination 上，使各分页接口无需各自新增字段即可支持搜索；\n仓储层按各自实体的名称列实现 LIKE 过滤。",
-                    "type": "string"
-                },
-                "page": {
-                    "description": "Page",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "page_size": {
-                    "description": "Page size",
-                    "type": "integer",
-                    "maximum": 1000,
-                    "minimum": 1
-                },
-                "role": {
-                    "description": "ProjectID string   `json:\"project_id\" binding:\"required\"`",
                     "type": "array",
                     "items": {
                         "type": "string"

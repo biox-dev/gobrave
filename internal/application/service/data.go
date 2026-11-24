@@ -386,19 +386,6 @@ func (s *dataService) PageDatasetByProjectID(ctx context.Context, pagination *ty
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-func (s *dataService) PageFileByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64, roles []string) (*types.PageResult, error) {
-	if pagination == nil {
-		pagination = &types.Pagination{}
-	}
-
-	items, total, err := s.dataRepo.PageFileByProjectID(ctx, pagination, projectID, roles)
-	if err != nil {
-		return nil, err
-	}
-
-	return types.NewPageResult(total, pagination, items), nil
-}
-
 func (s *dataService) CreateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error {
 	projectExists, err := s.dataRepo.ExistsProjectByID(ctx, projectDataset.ProjectID)
 	if err != nil {
@@ -553,19 +540,6 @@ func (s *dataService) ListFileByProjectID(ctx context.Context, projectID int64, 
 
 func (s *dataService) ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID int64) ([]*types.FileWithDatasetInfo, error) {
 	return s.dataRepo.ListFileByProjectIDViaAnalysisNode(ctx, projectID)
-}
-
-func (s *dataService) PageFileByProjectIDViaAnalysisNode(ctx context.Context, pagination *types.Pagination, projectID int64) (*types.PageResult, error) {
-	if pagination == nil {
-		pagination = &types.Pagination{}
-	}
-
-	items, total, err := s.dataRepo.PageFileByProjectIDViaAnalysisNode(ctx, pagination, projectID)
-	if err != nil {
-		return nil, err
-	}
-
-	return types.NewPageResult(total, pagination, items), nil
 }
 
 func (s *dataService) ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error) {
