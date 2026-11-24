@@ -746,12 +746,12 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// Provide ChatService：多轮对话编排层（复用 AgentService 的任务状态机）。
 	// 会话按项目隔离：项目 ID 由调用方（HTTP 层）随 TurnInput 提供；
 	// 会话工作目录由 Session.EnsureWorkingDir 从存储根目录派生（<项目目录>/sessions/<sessionID>）。
-	must(container.Provide(func(svc *agentservice.AgentService, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService, projects interfaces.ProjectService, cfg *config.Config) *agentservice.ChatService {
+	must(container.Provide(func(svc *agentservice.AgentService, sessions agentinterfaces.SessionService, messages agentinterfaces.MessageService, projects interfaces.ProjectService, cfg *config.Config, uiActions runtimecontext.UIActionPusher) *agentservice.ChatService {
 		baseDir := ""
 		if cfg != nil && cfg.Storage != nil {
 			baseDir = cfg.Storage.BaseDir
 		}
-		return agentservice.NewChatService(svc, sessions, messages, projects, baseDir)
+		return agentservice.NewChatService(svc, sessions, messages, projects, baseDir, uiActions)
 	}))
 	must(container.Provide(manager.NewAISummaryContentProvider))
 	must(container.Provide(manager.NewAISummaryWorker))

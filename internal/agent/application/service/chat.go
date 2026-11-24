@@ -60,6 +60,8 @@ type ChatService struct {
 	agent    *AgentService
 	sessions SessionService
 	messages MessageService
+	// uiActions 用于把异步标题生成等轻量 UI 状态变化推给当前用户。
+	uiActions runtimecontext.UIActionPusher
 	// projects 用于校验会话 / 任务的项目成员可见性。
 	projects coreinterfaces.ProjectService
 	// baseDir 是存储根目录（config.Storage.BaseDir）：会话工作目录 = <项目目录>/sessions/<sessionID>。
@@ -74,7 +76,7 @@ type ChatService struct {
 //
 // 构造时把自己的轮次收尾挂到 AgentService 的任务终态回调上：即使 Provider 没有
 // 补发 done / error 事件，任务进入终态也会释放会话锁、写入兜底消息。
-func NewChatService(agent *AgentService, sessions SessionService, messages MessageService, projects coreinterfaces.ProjectService, baseDir string) *ChatService {
+func NewChatService(agent *AgentService, sessions SessionService, messages MessageService, projects coreinterfaces.ProjectService, baseDir string, uiActions ...runtimecontext.UIActionPusher) *ChatService {
 	s := &ChatService{
 		agent:    agent,
 		sessions: sessions,
@@ -83,6 +85,9 @@ func NewChatService(agent *AgentService, sessions SessionService, messages Messa
 		baseDir:  baseDir,
 		locks:    make(map[int64]*sync.Mutex),
 		turns:    make(map[int64]*turnState),
+	}
+	if len(uiActions) > 0 {
+		s.uiActions = uiActions[0]
 	}
 	if agent != nil {
 		agent.SetTaskFinishedHandler(s.onTaskFinished)
@@ -483,7 +488,7 @@ func (s *ChatService) RetryTurn(ctx context.Context, in TurnInput, taskID int64)
 		return nil, Session{}, ErrTurnRunning
 	}
 
-	// 原用户输入取自该任务的 user 消息；没有则说明这一轮没有可重试的提问。
+	// 原用户输入取自该任务的 user 消消息；没有则说明这一轮没有可重试的提问。
 	msgs, err := s.messages.ListByTask(ctx, taskID)
 	if err != nil {
 		return nil, Session{}, err

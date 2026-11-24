@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,9 +57,27 @@ func (s *ChatService) scheduleSessionTitle(ctx context.Context, sess Session, in
 		if title == "" || title == priorTitle {
 			return
 		}
-		if err := s.updateSessionTitle(ctx, sess.ID, priorTitle, title); err != nil {
+		if updated, err := s.updateSessionTitle(ctx, sess.ID, priorTitle, title); err != nil {
 			logger.Warnf(ctx, "[Chat] update session title failed (session=%d): %v", sess.ID, err)
 			return
+		} else if !updated {
+			return
+		}
+		if s.uiActions != nil && sess.UserID != 0 {
+			// session_id 必须是字符串：雪花 ID 有 19 位，超过 JS 的
+			// Number.MAX_SAFE_INTEGER，作为 JSON number 下发会在前端被截断，
+			// 导致列表里对不上会话 ID 而静默不刷新（app-session 同样用字符串）。
+			if err := s.uiActions.PushUIAction(ctx, sess.UserID, "component.invoke", map[string]any{
+				"category": "agent-session",
+				"id":       "*",
+				"method":   "sessionTitleUpdated",
+				"args": map[string]any{
+					"session_id": strconv.FormatInt(sess.ID, 10),
+					"title":      title,
+				},
+			}); err != nil {
+				logger.Warnf(ctx, "[Chat] push session title event failed (session=%d): %v", sess.ID, err)
+			}
 		}
 		logger.Debugf(ctx, "[Chat] session title generated (session=%d): %s", sess.ID, title)
 	}()
@@ -102,15 +121,15 @@ func (s *ChatService) generateSessionTitle(ctx context.Context, sess Session, in
 //
 // 条件更新在数据库层原子完成：用户手动改名 / 轮次收尾的整行 Save 都不会被
 // 异步标题生成覆盖，也不会把陈旧的 CurrentTaskID 写回去。
-func (s *ChatService) updateSessionTitle(ctx context.Context, sessionID int64, priorTitle, title string) error {
+func (s *ChatService) updateSessionTitle(ctx context.Context, sessionID int64, priorTitle, title string) (bool, error) {
 	updated, err := s.sessions.UpdateTitleIfUnchanged(ctx, sessionID, priorTitle, title)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !updated {
 		logger.Debugf(ctx, "[Chat] session title changed concurrently, skip generated title (session=%d)", sessionID)
 	}
-	return nil
+	return updated, nil
 }
 
 // normalizeSessionTitle 清洗模型输出：取首行、压缩空白、去掉常见包裹符号与前缀。
