@@ -113,10 +113,13 @@ func TestRecordNodeOutputFilesAgentNodeWalksResolvedOutputs(t *testing.T) {
 	}
 }
 
-// TestRecordNodeOutputFilesScriptNodeUsesOutputPatterns pins the unchanged path:
-// a script node records only the handles declared as file outputs, with the role
-// declared by the pattern, and ignores other resolved outputs.
-func TestRecordNodeOutputFilesScriptNodeUsesOutputPatterns(t *testing.T) {
+// TestRecordNodeOutputFilesScriptNodeRecordsEveryFile pins the unified rule: a
+// script node records every resolved output whose value names an existing regular
+// file, not only the handles declared as file outputs. The declared handle keeps
+// the role declared by its pattern; an output that no output_patterns declared is
+// published with DefaultNodeOutputRole. Declared non-file values ("stats" = "42")
+// are not files and are therefore not recorded.
+func TestRecordNodeOutputFilesScriptNodeRecordsEveryFile(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "output")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("create output dir: %v", err)
@@ -153,11 +156,21 @@ func TestRecordNodeOutputFilesScriptNodeUsesOutputPatterns(t *testing.T) {
 		"extra": extra,
 	})
 
-	if len(fileIDs) != 1 {
-		t.Fatalf("expected only the declared file output recorded, got %v", fileIDs)
+	if len(fileIDs) != 2 {
+		t.Fatalf("expected the declared file and the undeclared file recorded, got %v", fileIDs)
 	}
 	if got := repo.files["sample_bam"]; got == nil || got.Role != "alignment" {
 		t.Fatalf("bam file row = %+v, want role alignment", got)
+	}
+	extraRow := repo.files["extra"]
+	if extraRow == nil || extraRow.Path != extra {
+		t.Fatalf("extra file row = %+v, want path %s", extraRow, extra)
+	}
+	if extraRow.Role != DefaultNodeOutputRole {
+		t.Fatalf("extra role = %q, want %q", extraRow.Role, DefaultNodeOutputRole)
+	}
+	if repo.files["stats"] != nil {
+		t.Fatalf("non-file value was recorded as a file: %+v", repo.files["stats"])
 	}
 }
 

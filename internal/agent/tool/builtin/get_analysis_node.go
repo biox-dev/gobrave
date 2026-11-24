@@ -102,13 +102,15 @@ func getAnalysisNodeDescription() string {
 
 ## output_files：系统自动登记，不是用户手工添加
 
-节点运行结束、输出校验通过后，系统会把节点产物自动登记到文件表 go_file（go_file.analysis_node_id 指向该节点），本工具直接回传这些登记记录。登记逻辑由节点类型决定：
+节点运行结束、输出校验通过后，系统会把节点产物自动登记到文件表 go_file（go_file.analysis_node_id 指向该节点），本工具直接回传这些登记记录。登记规则对 agent / script / scheduler 三种节点完全一致：
 
-- **agent 命令节点**：节点没有 output_patterns，系统遍历命令写出的 output/outputs.json，把其中「指向真实存在的文件」的条目全部登记；file_key 为 outputs.json 的 key，role 固定为 DEFAULT。没写进 outputs.json 的文件、或路径不存在的条目都不会出现。
-- **script / scheduler 节点**：系统按节点的 output_patterns 中 type=file 的条目登记。output_patterns 来自脚本 io_schema.json 的 outputs；file_key 为该输出的句柄名，role 取该条目的 role 字段（缺省 DEFAULT）。io_schema outputs 里没有声明为 type=file 的产物不会被登记。
+- 系统读取节点写出的 output/outputs.json（与容器元数据合并，outputs.json 覆盖同名键），把其中「指向真实存在的普通文件」的条目全部登记。没写进 outputs.json 的文件、非文件值（数字、文本）、目录、路径不存在的条目都不会出现。
+- file_key：条目里带 key 时用该 key，否则用 outputs.json 的键名。路径为相对路径时按节点 output 目录解析。
+- role：该键若在节点 output_patterns 中声明过，取该条目的 role 字段（缺省 DEFAULT）；没有声明过的键固定为 DEFAULT。
+- output_patterns 只决定两件事：节点成功必须产出哪些句柄（缺失即输出校验失败），以及上面登记的 role；它不再限制哪些产物会被登记——只要写进 outputs.json 且文件真实存在，就会登记。
 - 只有运行成功（输出校验无错）时才登记；失败或输出缺失的节点 output_files 为空。重复运行按 (analysis_node_id, file_key) 覆盖更新，不会重复堆积。
 
-让产物出现在 output_files：agent 命令节点用 update_analysis_node_agent 修改 command（或用 file/old_string/new_string 直接编辑 run.sh），让命令把产物写到 workspace_dir/output/ 下，并在最后写 output/outputs.json（key 为语义化名称，value 为产物绝对路径）；script / scheduler 节点先用 update_script 修改脚本 io_schema.json 的 outputs（声明 {"type": "file"}，需要固定角色时给出 role），并确保脚本结束前在 output/outputs.json 中按句柄写出真实产物路径，再用 update_analysis_node_script / run_analysis_node 重新运行。
+让产物出现在 output_files：让命令 / 脚本把产物写到 workspace_dir/output/ 下，并在最后写 output/outputs.json（key 为语义化名称，value 为产物路径，相对路径按 output 目录解析）。agent 命令节点用 update_analysis_node_agent 修改 command（或用 file/old_string/new_string 直接编辑 run.sh）；script / scheduler 节点用 update_script 修改脚本（确保脚本结束前写出 output/outputs.json），需要固定角色时在脚本 io_schema.json 的 outputs 中声明 {"type": "file", "role": "..."}，再用 update_analysis_node_script / run_analysis_node 重新运行。
 
 ## 读取产物正文
 
