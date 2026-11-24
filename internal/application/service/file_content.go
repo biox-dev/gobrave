@@ -194,6 +194,10 @@ func newTableContentResult(filePath, format, delimiter, content string, offset, 
 // readTextContent reads lines [offset, offset+limit) from a text file. A limit
 // <= 0 means no row limit (bounded by maxBytes). It returns the lines read,
 // whether more content remains, and whether Content was cut.
+//
+// When offset is inside the file, at least one line is always returned: a line
+// wider than the whole byte budget is truncated instead of dropping the page,
+// otherwise NextOffset would equal Offset and paging would never advance.
 func (s *fileContentService) readTextContent(filePath string, offset, limit, maxBytes int) (string, int, bool, bool, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -244,16 +248,27 @@ func (s *fileContentService) readTextContent(filePath string, offset, limit, max
 		if b.Len() > 0 {
 			cost++
 		}
-		if b.Len()+cost > maxBytes {
-			hasMore = true
-			truncated = true
-			break
+		budgetCut := b.Len()+cost > maxBytes
+		if budgetCut {
+			if lineCount > 0 {
+				hasMore = true
+				truncated = true
+				break
+			}
+			// Single line exceeds the whole budget: keep a truncated copy so
+			// the page is never empty and NextOffset still advances.
+			line = truncateForBudget(line, maxBytes-b.Len())
 		}
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
 		b.WriteString(line)
 		lineCount++
+		if budgetCut {
+			hasMore = true
+			truncated = true
+			break
+		}
 
 		if readErr == io.EOF {
 			break
@@ -268,6 +283,9 @@ func (s *fileContentService) readTextContent(filePath string, offset, limit, max
 
 // readDelimitedContent reads rows [offset, offset+limit) from a csv/tsv file and
 // re-serializes them with the same delimiter.
+//
+// When offset is inside the file, at least one record is always returned: a
+// record wider than the whole byte budget is truncated so NextOffset advances.
 func (s *fileContentService) readDelimitedContent(filePath, format string, delimiter rune, offset, limit, maxBytes int) (*interfaces.FilePreviewResult, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -313,15 +331,26 @@ func (s *fileContentService) readDelimitedContent(filePath, format string, delim
 		for _, field := range record {
 			cost += len(field) + 1
 		}
-		if b.Len()+cost > maxBytes {
-			hasMore = true
-			truncated = true
-			break
+		budgetCut := b.Len()+cost > maxBytes
+		if budgetCut {
+			if lineCount > 0 {
+				hasMore = true
+				truncated = true
+				break
+			}
+			// A single record exceeds the whole budget: truncate it instead of
+			// returning an empty page (which would stall offset-based paging).
+			record = truncateRecordForBudget(record, maxBytes-b.Len())
 		}
 		if err := writer.Write(record); err != nil {
 			return nil, err
 		}
 		lineCount++
+		if budgetCut {
+			hasMore = true
+			truncated = true
+			break
+		}
 	}
 	writer.Flush()
 	if err := writer.Error(); err != nil {
@@ -333,6 +362,9 @@ func (s *fileContentService) readDelimitedContent(filePath, format string, delim
 
 // readExcelContent converts the first worksheet to TSV rows
 // [offset, offset+limit). A limit <= 0 uses filePreviewDefaultRows.
+//
+// When offset is inside the sheet, at least one row is always returned: a row
+// wider than the whole byte budget is truncated so NextOffset advances.
 func (s *fileContentService) readExcelContent(filePath string, offset, limit, maxBytes int) (string, int, bool, bool, string, error) {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
@@ -381,16 +413,27 @@ func (s *fileContentService) readExcelContent(filePath string, offset, limit, ma
 		for _, field := range row {
 			cost += len(field) + 1
 		}
-		if b.Len()+cost > maxBytes {
-			hasMore = true
-			truncated = true
-			break
+		budgetCut := b.Len()+cost > maxBytes
+		if budgetCut {
+			if lineCount > 0 {
+				hasMore = true
+				truncated = true
+				break
+			}
+			// A single row exceeds the whole budget: truncate it instead of
+			// returning an empty page (which would stall offset-based paging).
+			row = truncateRecordForBudget(row, maxBytes-b.Len())
 		}
 		if err := writer.Write(row); err != nil {
 			return "", 0, false, false, "", err
 		}
 		lineCount++
 		rowIndex++
+		if budgetCut {
+			hasMore = true
+			truncated = true
+			break
+		}
 	}
 	if err := rows.Error(); err != nil {
 		return "", 0, false, false, "", err
@@ -405,6 +448,45 @@ func (s *fileContentService) readExcelContent(filePath string, offset, limit, ma
 		note = "仅显示第一个工作表：" + sheetNames[0]
 	}
 	return b.String(), lineCount, hasMore, truncated, note, nil
+}
+
+// truncateForBudget shortens s so it occupies at most budget bytes, keeping the
+// result valid UTF-8. A budget <= 0 yields an empty string; callers still count
+// the line so pagination makes progress.
+func truncateForBudget(s string, budget int) string {
+	if budget >= len(s) {
+		return s
+	}
+	if budget <= 0 {
+		return ""
+	}
+	return strings.ToValidUTF8(s[:budget], "")
+}
+
+// truncateRecordForBudget returns a copy of record whose serialized width fits
+// roughly within budget bytes, cutting fields as needed. At least one field is
+// always returned so the caller emits a non-empty row and NextOffset advances.
+func truncateRecordForBudget(record []string, budget int) []string {
+	out := make([]string, 0, len(record))
+	remaining := budget
+	for i, field := range record {
+		if i > 0 {
+			remaining-- // delimiter between fields
+		}
+		if remaining <= 0 {
+			break
+		}
+		if len(field) > remaining {
+			out = append(out, truncateForBudget(field, remaining))
+			break
+		}
+		out = append(out, field)
+		remaining -= len(field)
+	}
+	if len(out) == 0 {
+		out = append(out, "")
+	}
+	return out
 }
 
 func normalizePreviewFormat(format, filePath string) string {
