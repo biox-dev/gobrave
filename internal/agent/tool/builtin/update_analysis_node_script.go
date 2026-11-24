@@ -57,7 +57,7 @@ type UpdateAnalysisNodeScriptOutput struct {
 // updateAnalysisNodeScriptDescription 返回 update_analysis_node_script 的工具描述（Markdown 格式）。
 //
 // 描述里写清适用节点类型、可更新字段、「更新后默认运行」，以及 script / scheduler 节点的
-// 产物如何按 output_patterns 被系统登记为 list_analysis_node_files 的 output_files、要新增 /
+// 产物如何按 output_patterns 被系统登记为 get_analysis_node 的 output_files、要新增 /
 // 调整登记产物时应先改脚本 io_schema 再重跑（本工具不直接改 output_patterns 内容）。
 func updateAnalysisNodeScriptDescription() string {
 	return `## 用途
@@ -74,9 +74,9 @@ func updateAnalysisNodeScriptDescription() string {
 - **run**（可选，默认 true）：为 true 时更新成功后立即运行并等待结束，返回状态、执行日志与日志路径；为 false 时只更新不运行（之后可用 run_analysis_node）。
 - **timeout_seconds**（可选，默认 600；run=false 时忽略）。
 
-## 产物登记（output_files）：让文件出现在 list_analysis_node_files 的结果里
+## 产物登记（output_files）：让文件出现在 get_analysis_node 的结果里
 
-script / scheduler 节点的产物按节点的 output_patterns 登记，而 output_patterns 来自脚本 io_schema.json 的 outputs：节点运行成功、输出校验通过后，系统把 output_patterns 中 type=file 的条目对应的真实产物写入文件表 go_file（file_key 为输出句柄名，role 取条目的 role 字段，缺省 DEFAULT）。list_analysis_node_files 的 output_files 就是这些登记记录。
+script / scheduler 节点的产物按节点的 output_patterns 登记，而 output_patterns 来自脚本 io_schema.json 的 outputs：节点运行成功、输出校验通过后，系统把 output_patterns 中 type=file 的条目对应的真实产物写入文件表 go_file（file_key 为输出句柄名，role 取条目的 role 字段，缺省 DEFAULT）。get_analysis_node 返回的 output_files 就是这些登记记录。
 
 本工具只更新节点参数 / 名称，不直接修改 output_patterns 的内容本身。要让新增 / 修改后的产物出现在 output_files 中：
 
@@ -103,7 +103,7 @@ script / scheduler 节点的产物按节点的 output_patterns 登记，而 outp
 //     run=false 时只更新节点，不提交运行。
 //
 // 节点的产物由系统在运行成功后按 output_patterns 中 type=file 的条目自动登记到
-// go_file（用 list_analysis_node_files 查看）；本工具不直接改 output_patterns，
+// go_file（用 get_analysis_node 的 output_files 查看）；本工具不直接改 output_patterns，
 // 相关规则写在工具描述里。
 //
 // 该工具会写库并重写 params.json，并在默认情况下触发一次节点运行，因此声明 write 授权。

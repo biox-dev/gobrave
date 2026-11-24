@@ -19,7 +19,7 @@ const GetAnalysisNodeToolName = "get_analysis_node"
 // 项目归属取自执行事实（tool.ProjectIDFrom），节点必须属于当前激活项目。
 type GetAnalysisNodeInput struct {
 	AnalysisNodeID string   `json:"analysis_node_id"` // 分析节点主键 ID（必填，支持 "@analysis_node:<id>" 形式，字符串以保精度）
-	Files          []string `json:"files"`            // command / params；留空时不回传文件正文
+	Files          []string `json:"files"`            // command / params / output；留空时不回传文件正文
 }
 
 // GetAnalysisNodeOutput 是 get_analysis_node 工具返回给模型的结果。
@@ -54,6 +54,14 @@ type GetAnalysisNodeOutput struct {
 	OutputDir string `json:"output_dir"`
 	// RequestParam 仅 script / scheduler 节点返回（键为脚本 io_schema inputs 的 name）；agent 节点不返回。
 	RequestParam map[string]any `json:"request_param,omitempty"`
+	// OutputFiles 是系统自动登记到 go_file 的节点产物（go_file.analysis_node_id 绑定），
+	// 不是用户手工添加的记录；每项含 file_id（可直接传给 get_file 读正文）、file_name、
+	// path（绝对路径）、format、role、file_key、size、md5、created_at。没有产物时为空数组。
+	OutputFiles []runtimecontext.AnalysisNodeFile `json:"output_files"`
+	// Total 是 output_files 的条数。
+	Total int `json:"total"`
+	// Message 是 output_files 为空时的提示（说明可能的原因与下一步）。
+	Message string `json:"message,omitempty"`
 	// Files 是指定文件的正文（command → run.sh，params → params.json，output → 产物正文）。
 	Files map[string]runtimecontext.ResourceFileContent `json:"files,omitempty"`
 	Error string                                        `json:"error,omitempty"`
@@ -67,9 +75,8 @@ const analysisNodeTypeAgent = "agent"
 // getAnalysisNodeDescription 返回 get_analysis_node 的工具描述（Markdown 格式）。
 //
 // 与 bash 工具（bashDescription）同风格：把回传字段、按节点类型区分的字段口径、
-// 「解释分析结果时优先读 output_dir/output.md」的要求直接写进描述。产物文件的登记记录
-// （file_id / role 等元数据）已拆到独立工具 list_analysis_node_files，这里只保留
-// files=["output"] 读取正文的说明并指向该工具。
+// 系统登记产物（output_files）的登记规则、「解释分析结果时优先读 output_dir/output.md」
+// 的要求直接写进描述。
 func getAnalysisNodeDescription() string {
 	return `## 用途
 
@@ -83,6 +90,9 @@ func getAnalysisNodeDescription() string {
 - **workspace_dir**：节点工作目录绝对路径，output / params.json / run.sh / command.log 均在其下。
 - **params_path**：节点 params.json 路径。
 - **output_dir**：节点输出目录绝对路径（即 workspace_dir/output），运行前会被清空，运行产物（含分析报告 output.md）在此目录下可直接读取。
+- **output_files**：系统自动登记到 go_file 的节点产物记录列表（见下节），每项包含 file_id、file_name、path（绝对路径）、format、role、file_key、size、md5、created_at；没有产物时为空数组。
+- **total**：output_files 的条数。
+- **message**：output_files 为空时的提示（说明可能的原因与下一步）。
 - **files**：本次显式请求读取的正文（入参 files 指定：command → run.sh，params → params.json，output → 节点 output 目录下的产物正文）。
 
 回传字段按节点类型区分：
@@ -90,26 +100,34 @@ func getAnalysisNodeDescription() string {
 - node_type=agent：返回 **command_path**（节点 run.sh 绝对路径，可直接读取以复核命令），不返回 script_id / request_param。
 - node_type=script / scheduler：返回 **script_id** 与 **request_param**（节点上已保存的请求参数，键为脚本 io_schema 中的 name），不返回 command_path。
 
-## 产物文件：用 list_analysis_node_files
+## output_files：系统自动登记，不是用户手工添加
 
-本工具不回传产物文件的登记记录（file_id / file_name / path / format / role / file_key / size / md5 / created_at）。系统在节点运行成功、输出校验通过后会把节点产物自动登记到文件表 go_file（go_file.analysis_node_id 指向该节点）；需要查看这些记录时调用 **list_analysis_node_files**（同样只传 analysis_node_id）。
+节点运行结束、输出校验通过后，系统会把节点产物自动登记到文件表 go_file（go_file.analysis_node_id 指向该节点），本工具直接回传这些登记记录。登记逻辑由节点类型决定：
 
-需要直接读取产物正文时，可以用本工具 files=["output"]：先读 output/output.md（分析报告），再按登记顺序拼接已登记产物正文；每个文件前有 "===== <path> =====" 分隔。
+- **agent 命令节点**：节点没有 output_patterns，系统遍历命令写出的 output/outputs.json，把其中「指向真实存在的文件」的条目全部登记；file_key 为 outputs.json 的 key，role 固定为 DEFAULT。没写进 outputs.json 的文件、或路径不存在的条目都不会出现。
+- **script / scheduler 节点**：系统按节点的 output_patterns 中 type=file 的条目登记。output_patterns 来自脚本 io_schema.json 的 outputs；file_key 为该输出的句柄名，role 取该条目的 role 字段（缺省 DEFAULT）。io_schema outputs 里没有声明为 type=file 的产物不会被登记。
+- 只有运行成功（输出校验无错）时才登记；失败或输出缺失的节点 output_files 为空。重复运行按 (analysis_node_id, file_key) 覆盖更新，不会重复堆积。
+
+让产物出现在 output_files：agent 命令节点用 update_analysis_node_agent 修改 command（或用 file/old_string/new_string 直接编辑 run.sh），让命令把产物写到 workspace_dir/output/ 下，并在最后写 output/outputs.json（key 为语义化名称，value 为产物绝对路径）；script / scheduler 节点先用 update_script 修改脚本 io_schema.json 的 outputs（声明 {"type": "file"}，需要固定角色时给出 role），并确保脚本结束前在 output/outputs.json 中按句柄写出真实产物路径，再用 update_analysis_node_script / run_analysis_node 重新运行。
+
+## 读取产物正文
+
+可以用本工具 files=["output"]：先读 output/output.md（分析报告），再按登记顺序拼接已登记产物正文；每个文件前有 "===== <path> =====" 分隔。
 
 - 自动跳过二进制 / 不存在的文件；总长度上限约 200KB，超出会截断并在末尾注明。
-- 需要单个大产物（如 csv）正文时，优先用 list_analysis_node_files 返回的 file_id 调 get_file（支持 offset / limit 分批读取）。
+- 需要单个大产物（如 csv）正文时，优先用 output_files 里的 file_id 调 get_file（支持 offset / limit 分批读取）。
 
 ## 解释分析结果
 
 当用户输入 @analysis_node:<id>（如 @analysis_node:xxxxxxx）并询问对分析结果的解释时，必须查看本工具返回的 **output_dir** 路径下的内容，基于真实产物进行解释：
 
 1. **优先读取 output_dir/output.md**：它是该节点的分析报告（脚本节点为渲染后的分析结论），先完整读其内容，据此解释分析结果。也可以用 files=["output"] 一次把 output.md 与已登记产物正文都读回来。
-2. output.md 不存在或为空时，先调用 **list_analysis_node_files** 看登记产物（用返回的 file_id 调 get_file 读正文），再尝试读取 output_dir 下的其它文件。
+2. output.md 不存在或为空时，先用 output_files 里登记的记录（用 file_id 调 get_file 读正文），再尝试读取 output_dir 下的其它文件。
 3. 禁止只凭节点名称 / 参数臆造结果；产物缺失或为空时必须明确说明。
 
 ## 后续工具
 
-修改节点前先看 node_type：agent 类型用 update_analysis_node_agent，script / scheduler 类型用 update_analysis_node_script；三种类型都可以用 run_analysis_node 运行，脚本型节点重算参数用 build_analysis_node_params；查看系统自动登记的产物文件用 list_analysis_node_files。`
+修改节点前先看 node_type：agent 类型用 update_analysis_node_agent，script / scheduler 类型用 update_analysis_node_script；三种类型都可以用 run_analysis_node 运行，脚本型节点重算参数用 build_analysis_node_params；读取登记产物的正文用 get_file（file_id 来自 output_files）。`
 }
 
 // GetAnalysisNode 返回一个「按 ID 查看分析节点」工具。
@@ -123,10 +141,9 @@ func getAnalysisNodeDescription() string {
 //     不回传 script_id / request_param；script / scheduler 节点回传 script_id 与
 //     已保存的 request_param，不回传 command_path。
 //   - 入参 files 支持 output：一次性读回节点产物正文（output.md + 已登记产物，见
-//     runtimecontext.ResourceFileOutput）；产物文件的登记记录（file_id / role 等元数据）
-//     由独立工具 list_analysis_node_files 提供。
-//   - 入参 files 支持 output：一次性读回节点产物正文（output.md + 已登记产物，见
-//     runtimecontext.ResourceFileOutput），与 output_files 元数据互补。
+//     runtimecontext.ResourceFileOutput）。
+//   - 直接回传系统自动登记到 go_file 的节点产物记录（output_files / total），
+//     即原 list_analysis_node_files 工具的返回内容；没有产物时返回空数组与提示 message。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。
 func GetAnalysisNode(browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
@@ -179,8 +196,22 @@ func GetAnalysisNode(browser runtimecontext.AnalysisNodeBrowser) tool.Tool {
 				out.RequestParam = node.RequestParam
 			}
 
-			// 产物文件的登记记录由独立工具 list_analysis_node_files 提供，
-			// 本工具只负责节点详情与 files 指定的正文读取。
+			// 系统登记产物的记录（go_file.analysis_node_id 绑定）随节点详情一并回传，
+			// 不需要再单独调用一个工具。
+			outputFiles, err := browser.ListAnalysisNodeFiles(ctx, projectID, nodeID)
+			if err != nil {
+				out.OutputFiles = []runtimecontext.AnalysisNodeFile{}
+				out.Error = err.Error()
+				return out, nil
+			}
+			out.OutputFiles = outputFiles
+			if out.OutputFiles == nil {
+				out.OutputFiles = []runtimecontext.AnalysisNodeFile{}
+			}
+			out.Total = len(out.OutputFiles)
+			if out.Total == 0 {
+				out.Message = "该节点目前没有登记产物：可能尚未运行、运行失败 / 输出校验未通过，或产物没有写进 output/outputs.json（agent 命令节点）或脚本 io_schema 的 outputs（script / scheduler 节点）。"
+			}
 
 			files, err := collectResourceFiles(in.Files, GetAnalysisNodeToolName, nil,
 				runtimecontext.ResourceFileCommand, runtimecontext.ResourceFileParams, runtimecontext.ResourceFileOutput)

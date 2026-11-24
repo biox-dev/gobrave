@@ -65,7 +65,7 @@ func CreateAnalysisWorkflow(creator runtimecontext.AnalysisCreator, runner runti
 
 返回：analysis_id（后续 get_analysis_workflow / update_analysis_workflow / run_analysis_workflow 都用它）、analysis_key、analysis_name、workflow_id / workflow_name、job_status、scheduler_mode、workspace_dir、params_path、request_param、节点分布，以及 ran / started / scheduler。
 
-跑起来之后用 get_analysis_workflow 查看 job_status 与 node_status_counts；看单个节点详情用 get_analysis_node，看系统登记的产物文件用 list_analysis_node_files。所属项目取自当前会话上下文，无需传入。`,
+跑起来之后用 get_analysis_workflow 查看 job_status 与 node_status_counts；看单个节点详情与系统登记的产物文件（output_files）用 get_analysis_node。所属项目取自当前会话上下文，无需传入。`,
 		tool.Schema("创建工作流的一次分析运行的入参", map[string]any{
 			"workflow_id":   tool.StringProperty("工作流主键 ID（必填，整数，字符串以保精度）；可直接使用 @workflow:<id>（冒号后的 ID）。"),
 			"analysis_name": tool.StringProperty("分析名称；留空时使用工作流名称。"),

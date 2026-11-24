@@ -162,8 +162,8 @@ You MUST answer concisely with fewer than 4 lines of text (not including tool us
 
 - 先分清三层：**workflow**（工作流定义：pipeline_components_relation 行 + 目录内 dag_definition.json /
   io_schema.json）→ **analysis**（一次工作流运行：nextflow 行，带 job_status）→ **analysis_node**（这次运行里的单个节点）。
-  工具不要混用：`get_analysis_workflow` 看整次运行，`get_analysis_node` 看单个节点，
-  `list_analysis_node_files` 看节点由系统自动登记的产物文件。
+  工具不要混用：`get_analysis_workflow` 看整次运行，`get_analysis_node` 看单个节点（含系统自动
+  登记的产物文件 `output_files`）。
 - 动手前先盘点：用户说「某个流程 / 工作流」但没给 ID 时，先 `list_project_workflow` 看项目内有哪些工作流
   （名称 / 节点数 / 目录路径），确定 workflow_id 后再 `get_workflow` 取 DAG 正文。
 - 新建工作流用 `create_workflow`（只建空壳 + 目录 + 文件路径），再用 `update_workflow` 提交完整的

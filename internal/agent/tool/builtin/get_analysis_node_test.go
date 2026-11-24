@@ -55,3 +55,68 @@ func TestGetAnalysisNodeReadsOutputBundle(t *testing.T) {
 		t.Fatalf("files[output].file = %q, want %q", content.File, runtimecontext.ResourceFileOutput)
 	}
 }
+
+// TestGetAnalysisNodeReturnsOutputFiles 覆盖节点详情直接回传系统登记的产物文件记录
+// （原 list_analysis_node_files 的能力已合并进 get_analysis_node）。
+func TestGetAnalysisNodeReturnsOutputFiles(t *testing.T) {
+	browser := &fakeAnalysisNodeBrowser{files: []runtimecontext.AnalysisNodeFile{
+		{FileID: 42, FileName: "result.csv", Path: "/ws/output/result.csv", Format: "csv", Role: "DEFAULT", FileKey: "result_csv"},
+	}}
+	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 8})
+
+	raw, err := GetAnalysisNode(browser).Execute(ctx, json.RawMessage(`{"analysis_node_id":"@analysis_node:101"}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	out, ok := raw.(GetAnalysisNodeOutput)
+	if !ok {
+		t.Fatalf("unexpected output type %T", raw)
+	}
+	if out.Error != "" {
+		t.Fatalf("unexpected error: %s", out.Error)
+	}
+	if out.AnalysisNodeID != 101 {
+		t.Fatalf("analysis_node_id = %d, want 101", out.AnalysisNodeID)
+	}
+	if out.Total != 1 || len(out.OutputFiles) != 1 {
+		t.Fatalf("total/output_files = %d/%#v, want 1 record", out.Total, out.OutputFiles)
+	}
+	if out.OutputFiles[0].FileID != 42 || out.OutputFiles[0].FileKey != "result_csv" {
+		t.Fatalf("output_files = %#v", out.OutputFiles)
+	}
+}
+
+// TestGetAnalysisNodeOutputFilesEmpty 覆盖没有登记产物时返回空数组与提示，而不是 null。
+func TestGetAnalysisNodeOutputFilesEmpty(t *testing.T) {
+	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 8})
+
+	raw, err := GetAnalysisNode(&fakeAnalysisNodeBrowser{}).Execute(ctx, json.RawMessage(`{"analysis_node_id":"101"}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	out, ok := raw.(GetAnalysisNodeOutput)
+	if !ok {
+		t.Fatalf("unexpected output type %T", raw)
+	}
+	if out.Error != "" {
+		t.Fatalf("unexpected error: %s", out.Error)
+	}
+	if out.Total != 0 || len(out.OutputFiles) != 0 {
+		t.Fatalf("total/output_files = %d/%#v, want empty", out.Total, out.OutputFiles)
+	}
+	if out.OutputFiles == nil {
+		t.Fatalf("output_files = nil, want empty slice")
+	}
+	if out.Message == "" {
+		t.Fatalf("message is empty, want hint for empty output_files")
+	}
+}
+
+// TestGetAnalysisNodeRequiresNodeID 覆盖必填入参校验（缺失时直接报错）。
+func TestGetAnalysisNodeRequiresNodeID(t *testing.T) {
+	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 8})
+
+	if _, err := GetAnalysisNode(&fakeAnalysisNodeBrowser{}).Execute(ctx, json.RawMessage(`{}`)); err == nil {
+		t.Fatalf("expected error when analysis_node_id is missing")
+	}
+}

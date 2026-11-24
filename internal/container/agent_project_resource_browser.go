@@ -26,8 +26,7 @@ import (
 // 只读内置工具共用同一份实现：
 //   - list_project_scripts：按 RuntimeContext.ProjectID 列出全部脚本；
 //   - get_script：按 script_id 查看脚本名称 / 描述 / 主文件路径 / io_schema.json 路径 / README.md 正文；
-//   - get_analysis_node：按 analysis_node_id（兼容 @analysis_node:<id> 引用）查看节点名称 / 工作目录 / params.json / 输出目录 / 参数；
-//   - list_analysis_node_files：按 analysis_node_id 查看系统自动登记到 go_file 的节点产物文件（output_files）；
+//   - get_analysis_node：按 analysis_node_id（兼容 @analysis_node:<id> 引用）查看节点名称 / 工作目录 / params.json / 输出目录 / 参数，并直接回传系统自动登记到 go_file 的节点产物文件（output_files）；
 //   - list_project_workflow：按 RuntimeContext.ProjectID 列出全部工作流（摘要 + DAG 节点 / 连线数）；
 //   - get_workflow：按 workflow_id（兼容 @workflow:<id> 引用）查看工作流元数据、DAG 定义与 io_schema 原文；
 //   - get_analysis_workflow：按 analysis_id（兼容 @analysis:<id> 引用）查看一次分析运行的状态 / 参数 / 节点分布；
@@ -237,35 +236,35 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 // go_file.analysis_node_id 由节点完成时的 recordNodeOutputFiles 写入
 // （agent 命令节点来自 output/outputs.json，script / scheduler 节点来自
 // output_patterns 中 type=file 的条目），这里只做只读读取，并校验节点属于当前激活项目。
-// 由独立工具 list_analysis_node_files 使用。
+// 由 get_analysis_node 的 output_files 使用。
 func (b *projectResourceBrowser) ListAnalysisNodeFiles(ctx context.Context, projectID int64, nodeID int64) ([]runtimecontext.AnalysisNodeFile, error) {
 	if projectID <= 0 {
-		return nil, fmt.Errorf("list_analysis_node_files: project_id is required")
+		return nil, fmt.Errorf("get_analysis_node: project_id is required")
 	}
 	if nodeID <= 0 {
-		return nil, fmt.Errorf("list_analysis_node_files: analysis_node_id is required")
+		return nil, fmt.Errorf("get_analysis_node: analysis_node_id is required")
 	}
 	if b.analysisRepo == nil || b.dataSvc == nil {
-		return nil, fmt.Errorf("list_analysis_node_files: required services are not configured")
+		return nil, fmt.Errorf("get_analysis_node: required services are not configured")
 	}
 
 	node, err := b.analysisRepo.GetAnalysisNodeByID(ctx, nodeID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("list_analysis_node_files: analysis node %d not found", nodeID)
+			return nil, fmt.Errorf("get_analysis_node: analysis node %d not found", nodeID)
 		}
-		return nil, fmt.Errorf("list_analysis_node_files: failed to load node: %w", err)
+		return nil, fmt.Errorf("get_analysis_node: failed to load node: %w", err)
 	}
 	if node == nil || node.ID == 0 {
-		return nil, fmt.Errorf("list_analysis_node_files: analysis node %d not found", nodeID)
+		return nil, fmt.Errorf("get_analysis_node: analysis node %d not found", nodeID)
 	}
 	if node.ProjectID != projectID {
-		return nil, fmt.Errorf("list_analysis_node_files: analysis node %d does not belong to the active project %d", node.ID, projectID)
+		return nil, fmt.Errorf("get_analysis_node: analysis node %d does not belong to the active project %d", node.ID, projectID)
 	}
 
 	files, err := b.dataSvc.ListFileByAnalysisNodeID(ctx, nodeID)
 	if err != nil {
-		return nil, fmt.Errorf("list_analysis_node_files: failed to list files of node %d: %w", nodeID, err)
+		return nil, fmt.Errorf("get_analysis_node: failed to list files of node %d: %w", nodeID, err)
 	}
 
 	out := make([]runtimecontext.AnalysisNodeFile, 0, len(files))

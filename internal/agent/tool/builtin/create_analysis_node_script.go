@@ -76,7 +76,7 @@ func createAnalysisNodeScriptDescription() string {
 
 ## 产物文件（output_files）：系统自动登记
 
-脚本节点（creation_source=script）在创建 / 每次运行时按脚本最新 io_schema.json 的 outputs 初始化节点的 output_patterns。节点运行成功且输出校验通过后，系统会把 output_patterns 中 type=file 的条目对应的真实产物登记到文件表 go_file（analysis_node_id 指向该节点），之后可用 list_analysis_node_files 查看，或在数据集 / 下游节点里引用：
+脚本节点（creation_source=script）在创建 / 每次运行时按脚本最新 io_schema.json 的 outputs 初始化节点的 output_patterns。节点运行成功且输出校验通过后，系统会把 output_patterns 中 type=file 的条目对应的真实产物登记到文件表 go_file（analysis_node_id 指向该节点），之后可用 get_analysis_node 的 output_files 查看，或在数据集 / 下游节点里引用：
 
 - file_key 为该输出的句柄名（io_schema outputs 条目的 name），role 取该条目的 role 字段（缺省 DEFAULT）。
 - 脚本必须把产物写到节点的 output/ 目录，并在 output/outputs.json 中按输出句柄给出真实产物路径；outputs.json 缺少句柄（或路径不存在）时输出校验失败，节点判失败且不会登记文件。
@@ -93,7 +93,7 @@ func createAnalysisNodeScriptDescription() string {
 // 提交运行并等待终态，返回状态、执行日志与关键路径；run 为 false 时只创建节点。
 //
 // 节点的产物由系统在运行成功后按 output_patterns 中 type=file 的条目自动登记到
-// go_file（用 list_analysis_node_files 查看），相关规则写在工具描述里。
+// go_file（用 get_analysis_node 的 output_files 查看），相关规则写在工具描述里。
 //
 // 该工具会创建业务数据（写库 + 写盘），并在默认情况下触发一次节点运行，因此声明
 // write 授权。

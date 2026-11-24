@@ -1082,7 +1082,7 @@ type ScriptDetail struct {
 	ReadmeContent string `json:"readme_content,omitempty"`
 }
 
-// AnalysisNodeFile 是分析节点产物在 go_file 中的登记记录（list_analysis_node_files 的 output_files）。
+// AnalysisNodeFile 是分析节点产物在 go_file 中的登记记录（get_analysis_node 的 output_files）。
 //
 // 这些记录由系统在节点运行成功且输出校验通过后自动写入，不是用户手工添加：
 //   - agent 命令节点：来自命令写出的 output/outputs.json，role 固定为 DEFAULT；

@@ -46,10 +46,9 @@ func All(d Deps) []tool.Tool {
 		CreateScript(d.ScriptCreator),
 		UpdateScript(d.scriptUpdater(), d.ScriptBrowser),
 
-		// 分析节点：列出 / 查看 / 产物 / 创建 / 更新 / 参数 / 运行。
+		// 分析节点：列出 / 查看（含系统登记产物）/ 创建 / 更新 / 参数 / 运行。
 		ListProjectAnalysisNodes(d.NodeBrowser),
 		GetAnalysisNode(d.NodeBrowser),
-		ListAnalysisNodeFiles(d.NodeBrowser),
 		CreateAnalysisNodeScript(d.NodeCreator, d.Runner),
 		CreateAnalysisNodeAgent(d.AgentRunner),
 		UpdateAnalysisNodeScript(d.NodeUpdater, d.Runner, d.NodeBrowser),

@@ -54,7 +54,7 @@ type UpdateAnalysisNodeAgentOutput struct {
 // updateAnalysisNodeAgentDescription 返回 update_analysis_node_agent 的工具描述（Markdown 格式）。
 //
 // 描述里写清适用节点类型、可更新字段、「更新后默认运行」，以及 agent 命令节点的
-// 产物如何被系统登记为 list_analysis_node_files 的 output_files、要新增 / 调整登记产物时
+// 产物如何被系统登记为 get_analysis_node 的 output_files、要新增 / 调整登记产物时
 // 应改 command 后重跑（而不是新建节点）。
 func updateAnalysisNodeAgentDescription() string {
 	return `## 用途
@@ -74,9 +74,9 @@ func updateAnalysisNodeAgentDescription() string {
 
 command 会直接写入节点 run.sh（命令不落库），并重建 env.sh / params.json、清空节点输出目录（output）。
 
-## 产物登记（output_files）：让文件出现在 list_analysis_node_files 的结果里
+## 产物登记（output_files）：让文件出现在 get_analysis_node 的结果里
 
-agent 命令节点没有 output_patterns：系统在节点运行成功、输出校验通过后，只把 output/outputs.json 中列出、且路径真实存在的文件登记到文件表 go_file（file_key 为 outputs.json 的 key，role 固定 DEFAULT）。list_analysis_node_files 的 output_files 就是这些登记记录。
+agent 命令节点没有 output_patterns：系统在节点运行成功、输出校验通过后，只把 output/outputs.json 中列出、且路径真实存在的文件登记到文件表 go_file（file_key 为 outputs.json 的 key，role 固定 DEFAULT）。get_analysis_node 返回的 output_files 就是这些登记记录。
 
 要让新增 / 修改后的产物出现在 output_files 中：
 

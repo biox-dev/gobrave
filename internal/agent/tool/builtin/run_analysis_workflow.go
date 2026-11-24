@@ -52,7 +52,7 @@ func runAnalysisWorkflowDescription() string {
 ## 后续工具
 
 - 还没有分析运行记录时，先用 create_analysis_workflow 按 workflow_id 新建一次运行；
-- 查看提交后的运行状态与节点分布用 get_analysis_workflow；看单个节点详情用 get_analysis_node，看系统登记的产物文件用 list_analysis_node_files。`
+- 查看提交后的运行状态与节点分布用 get_analysis_workflow；看单个节点详情与系统登记的产物文件（output_files）用 get_analysis_node。`
 }
 
 // RunAnalysisWorkflow 返回一个「提交分析运行」工具。
