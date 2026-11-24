@@ -180,6 +180,8 @@ type profileSaveRequest struct {
 	Tools        []string                 `json:"tools"` // 工具名白名单；为空表示注入全部工具
 	Context      agenttypes.ContextConfig `json:"context"`
 	IsDefault    bool                     `json:"is_default"`
+	// ReasoningEffort 思考模式与推理强度：none 关闭思考，low / high / max 开启；为空表示不指定。
+	ReasoningEffort string `json:"reasoning_effort"`
 }
 
 // parseAgentID 把字符串 ID 解析为 int64（任务 / 会话 / 权限 ID 统一为雪花 ID）。
@@ -797,17 +799,19 @@ func (h *AgentHandler) SaveProfile(c *gin.Context) {
 		existing.Tools = req.Tools
 		existing.Context = req.Context
 		existing.IsDefault = req.IsDefault
+		existing.ReasoningEffort = strings.ToLower(strings.TrimSpace(req.ReasoningEffort))
 		profile = existing
 	} else {
 		profile = &agenttypes.Profile{
-			Name:         req.Name,
-			Description:  req.Description,
-			SystemPrompt: req.SystemPrompt,
-			Model:        req.Model,
-			Skills:       req.Skills,
-			Tools:        req.Tools,
-			Context:      req.Context,
-			IsDefault:    req.IsDefault,
+			Name:            req.Name,
+			Description:     req.Description,
+			SystemPrompt:    req.SystemPrompt,
+			Model:           req.Model,
+			Skills:          req.Skills,
+			Tools:           req.Tools,
+			Context:         req.Context,
+			IsDefault:       req.IsDefault,
+			ReasoningEffort: strings.ToLower(strings.TrimSpace(req.ReasoningEffort)),
 		}
 	}
 

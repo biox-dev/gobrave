@@ -87,6 +87,10 @@ type Profile struct {
 	// 本次调用暴露给模型的工具集合（内置 ask_user / agent 工具始终可用）。
 	Tools   []string      `json:"tools" gorm:"column:tools;serializer:json"`
 	Context ContextConfig `json:"context" gorm:"column:context;serializer:json"`
+	// ReasoningEffort 思考模式与推理强度：none 关闭思考，low / high / max 开启并指定强度。
+	// 为空表示不指定（DeepSeek 默认开启思考、强度 high）；为空时也会回退到
+	// 模型配置 agent.providers.<model>.reasoning_effort。
+	ReasoningEffort string `json:"reasoning_effort" gorm:"column:reasoning_effort;type:varchar(32)"`
 
 	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt time.Time `json:"updated_at" gorm:"column:updated_at"`

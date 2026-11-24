@@ -73,6 +73,9 @@ type Request struct {
 	Env map[string]string `json:"env"`
 	// MaxTokens 可选：最大输出 token 数，0 表示不限制。
 	MaxTokens int `json:"max_tokens"`
+	// ReasoningEffort 可选：思考模式与推理强度（none 关闭思考，low / medium / high / max 开启）；
+	// 为空时沿用模型配置 agent.providers.<model>.reasoning_effort。
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// Stream 可选：任务模式下是否使用流式调用；默认 false 使用 Invoke。
 	Stream bool `json:"stream"`
 	// Timeout 可选：单次调用超时，0 表示不限制。

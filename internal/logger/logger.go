@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/sirupsen/logrus"
@@ -21,6 +22,10 @@ var (
 	loggerMu      sync.Mutex
 	activeLogFile io.WriteCloser
 )
+
+// llmRequestLogEnabled 控制是否打印 LLM 原始 API 请求（由 log.llm_requests 配置）。
+// 它只被 Configure 写入，读取方见 LLMRequestLogEnabled。
+var llmRequestLogEnabled atomic.Bool
 
 var appLogger = logrus.New()
 
@@ -52,6 +57,22 @@ func GetLogger(c context.Context) *logrus.Entry {
 // Fatalf 使用格式化字符串输出致命级别的日志并退出程序
 func Fatalf(c context.Context, format string, args ...interface{}) {
 	addCaller(GetLogger(c), 2).Fatalf(format, args...)
+}
+
+// DebugEnabled 报告当前日志级别是否包含 debug。
+//
+// 供「采集调试信息本身有开销」的场景先做判断（如读取并打印请求体），
+// 避免非 debug 级别下做无谓的读取与字符串分配。
+func DebugEnabled(c context.Context) bool {
+	return GetLogger(c).Logger.IsLevelEnabled(logrus.DebugLevel)
+}
+
+// LLMRequestLogEnabled 报告是否应打印 LLM 原始 API 请求。
+//
+// 需要同时满足：日志级别为 debug，且 log.llm_requests 已开启。
+// 请求体可能包含 prompt / 历史 / 工具定义，因此默认不打印，需显式开启。
+func LLMRequestLogEnabled(c context.Context) bool {
+	return llmRequestLogEnabled.Load() && DebugEnabled(c)
 }
 
 // Debugf 使用格式化字符串输出调试级别的日志
@@ -296,6 +317,9 @@ type Options struct {
 	// Output 输出去向：auto（默认，stdout + 文件）/file（仅文件）/stdout（仅标准输出）。
 	// 桌面端这类没有控制台的 GUI 进程应使用 file，避免写无效的 stdout。
 	Output string
+	// LLMRequests 是否打印 LLM 原始 API 请求（仅 debug 级别生效）。
+	// 请求体包含 prompt / 历史 / 工具定义，默认关闭。
+	LLMRequests bool
 }
 
 // resolveOutput 解析 Options.Output，返回是否写 stdout、是否写文件。
@@ -353,6 +377,7 @@ func Configure(opts Options) {
 	}
 
 	appLogger.SetLevel(resolveLevel(opts))
+	llmRequestLogEnabled.Store(opts.LLMRequests)
 
 	useStdout, useFile := resolveOutput(opts.Output)
 

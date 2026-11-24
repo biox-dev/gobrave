@@ -195,6 +195,7 @@ func (s *ChatService) CreateTurn(ctx context.Context, in TurnInput) (*Task, Sess
 		Messages:       promptMessagesForRequest(history),
 		Stream:         true, // 会话轮次统一走流式，便于捕获 assistant 文本
 	}
+	// 思考模式 / 推理强度由 Profile 在 run 时覆盖（见 applyProfileOverrides）。
 	// 会话工作目录：<项目目录>/sessions/<sessionID>，必须创建成功，否则本轮直接失败。
 	workingDir, dirErr := sess.EnsureWorkingDir(s.baseDir)
 	if dirErr != nil {

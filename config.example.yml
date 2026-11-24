@@ -101,6 +101,9 @@ log:
   # 输出去向：auto（stdout + 文件，默认）/ file（仅文件）/ stdout（仅标准输出）。
   # 无控制台的 GUI 进程（如桌面端打包版）建议设为 file。
   output: auto
+  # 是否打印 LLM 原始 API 请求（method / URL / 请求体）。
+  # 需要同时把 level 设为 debug 才生效；请求体包含 prompt / 历史 / 工具定义，默认关闭。
+  llm_requests: false
 
 llm:
   cli_url: "localhost:4321"

@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/shared"
 )
 
 // openaiClient 是 OpenAI Chat Completions 协议客户端。
@@ -23,7 +23,8 @@ type openaiClient struct {
 }
 
 func newOpenAIClient(opts Options) Client {
-	requestOptions := []option.RequestOption{}
+	// debug 级别下打印实际发出的请求体（含 reasoning_effort 等非标准字段）。
+	requestOptions := []option.RequestOption{option.WithMiddleware(debugMiddleware)}
 	if opts.APIKey != "" {
 		requestOptions = append(requestOptions, option.WithAPIKey(opts.APIKey))
 	}
@@ -36,6 +37,9 @@ func newOpenAIClient(opts Options) Client {
 // Stream 实现 Client：把增量文本 / 推理内容逐块发出，结束时发送完整聚合结果。
 func (c *openaiClient) Stream(ctx context.Context, messages []Message, tools []Tool) <-chan Event {
 	params := c.params(messages, tools)
+	// 厂商扩展参数（reasoning_effort）以请求体 JSON 补丁的形式追加，
+	// 每次尝试都复用同一组选项。
+	extraOptions := c.extraOptions()
 	events := make(chan Event)
 
 	go func() {
@@ -43,7 +47,7 @@ func (c *openaiClient) Stream(ctx context.Context, messages []Message, tools []T
 		attempts := 0
 		for {
 			attempts++
-			stream := c.client.Chat.Completions.NewStreaming(ctx, params)
+			stream := c.client.Chat.Completions.NewStreaming(ctx, params, extraOptions...)
 			acc := openai.ChatCompletionAccumulator{}
 			content := ""
 
@@ -100,11 +104,23 @@ func (c *openaiClient) params(messages []Message, tools []Tool) openai.ChatCompl
 	}
 	if c.opts.Model.CanReason {
 		params.MaxCompletionTokens = openai.Int(c.opts.MaxTokens)
-		params.ReasoningEffort = openaiReasoningEffort(c.opts.ReasoningEffort)
 	} else {
 		params.MaxTokens = openai.Int(c.opts.MaxTokens)
 	}
 	return params
+}
+
+// extraOptions 返回 OpenAI 兼容厂商的扩展请求参数。
+//
+// reasoning_effort 不在 openai-go 的类型定义里（DeepSeek 等厂商扩展），
+// 只能用 WithJSONSet 在序列化后的请求体上追加；为空时不发送，由厂商默认决定。
+// DeepSeek 语义：none 关闭思考模式，low / high / max 开启并指定强度。
+func (c *openaiClient) extraOptions() []option.RequestOption {
+	effort := strings.TrimSpace(c.opts.ReasoningEffort)
+	if effort == "" {
+		return nil
+	}
+	return []option.RequestOption{option.WithJSONSet("reasoning_effort", effort)}
 }
 
 func (c *openaiClient) apiModel() string {
@@ -215,17 +231,6 @@ func openaiFinishReason(reason string) FinishReason {
 		return FinishToolUse
 	default:
 		return FinishUnknown
-	}
-}
-
-func openaiReasoningEffort(effort string) shared.ReasoningEffort {
-	switch effort {
-	case "low":
-		return shared.ReasoningEffortLow
-	case "high":
-		return shared.ReasoningEffortHigh
-	default:
-		return shared.ReasoningEffortMedium
 	}
 }
 

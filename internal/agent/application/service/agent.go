@@ -727,7 +727,8 @@ func (s *AgentService) RenderSystemPrompt(ctx context.Context, userID int64, pro
 // 	return profile
 // }
 
-// applyProfileOverrides 用 Profile 覆盖请求级的模型 / Agent（Provider）/ 技能 / 工具选择。
+// applyProfileOverrides 用 Profile 覆盖请求级的模型 / Agent（Provider）/ 技能 / 工具 /
+// 思考参数选择。
 //
 // 覆盖规则：Profile 中非空的字段优先，为空时保留 req 原值（作为兜底）。
 func applyProfileOverrides(req Request, profile *Profile) Request {
@@ -743,6 +744,11 @@ func applyProfileOverrides(req Request, profile *Profile) Request {
 	// Agent（Provider）选择：Profile 指定了 Agent 时，以 Profile 为准。
 	if provider := strings.TrimSpace(profile.Provider); provider != "" {
 		req.Provider = provider
+	}
+
+	// 思考模式与推理强度：Profile 显式配置时覆盖请求级参数（none 表示关闭思考）。
+	if effort := strings.ToLower(strings.TrimSpace(profile.ReasoningEffort)); effort != "" {
+		req.ReasoningEffort = effort
 	}
 
 	// 技能选择：Profile.Skills 非空时限制本次调用可见的技能集合。

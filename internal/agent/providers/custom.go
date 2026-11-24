@@ -154,8 +154,9 @@ func (a *customAgent) llmOptions(ctx context.Context, req agenttypes.Request, fa
 			CostPer1MInCached:   pc.CostPer1MInCached,
 			CostPer1MOutCached:  pc.CostPer1MOutCached,
 		},
-		MaxTokens:       maxTokens,
-		ReasoningEffort: strings.TrimSpace(pc.ReasoningEffort),
+		MaxTokens: maxTokens,
+		// 请求级参数优先（来自 Profile），未指定时回退到模型配置。
+		ReasoningEffort: firstNonEmpty(strings.TrimSpace(req.ReasoningEffort), strings.TrimSpace(pc.ReasoningEffort)),
 	}, nil
 }
 

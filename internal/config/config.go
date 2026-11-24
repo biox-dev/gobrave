@@ -126,6 +126,9 @@ type LogConfig struct {
 	// Output 输出去向：auto（默认，stdout + 文件）/file（仅文件）/stdout（仅标准输出）。
 	// 无控制台的 GUI 进程（如桌面端打包版）应设为 file。
 	Output string `yaml:"output" json:"output"`
+	// LLMRequests 是否打印 LLM 原始 API 请求（含 prompt / 历史 / 工具定义）。
+	// 需要同时把 Level 设为 debug 才会生效，默认关闭。
+	LLMRequests bool `yaml:"llm_requests" json:"llm_requests"`
 }
 
 // DefaultLogConfig 返回 log 段在代码中的默认配置。
@@ -1041,10 +1044,11 @@ func applyLogConfig(cfg *Config) {
 		cfg.Log = logCfg
 	}
 	logger.Configure(logger.Options{
-		Level:  logCfg.Level,
-		Path:   logCfg.Path,
-		Color:  logCfg.Color,
-		Output: logCfg.Output,
+		Level:       logCfg.Level,
+		Path:        logCfg.Path,
+		Color:       logCfg.Color,
+		Output:      logCfg.Output,
+		LLMRequests: logCfg.LLMRequests,
 	})
 }
 

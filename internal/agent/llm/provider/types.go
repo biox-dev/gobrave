@@ -101,12 +101,14 @@ type Tool struct {
 
 // Options 描述一次调用的连接与模型参数。
 type Options struct {
-	Provider        models.ModelProvider
-	BaseURL         string
-	APIKey          string
-	SystemPrompt    string
-	Model           models.Model
-	MaxTokens       int64
+	Provider     models.ModelProvider
+	BaseURL      string
+	APIKey       string
+	SystemPrompt string
+	Model        models.Model
+	MaxTokens    int64
+	// ReasoningEffort 思考模式与推理强度（none 关闭思考，low / high / max 开启）；
+	// 空表示不发送该参数，由厂商默认决定。
 	ReasoningEffort string
 }
 

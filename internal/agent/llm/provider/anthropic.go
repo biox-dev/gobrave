@@ -19,7 +19,8 @@ type anthropicClient struct {
 }
 
 func newAnthropicClient(opts Options) Client {
-	requestOptions := []option.RequestOption{}
+	// debug 级别下打印实际发出的请求体。
+	requestOptions := []option.RequestOption{option.WithMiddleware(debugMiddleware)}
 	if opts.APIKey != "" {
 		requestOptions = append(requestOptions, option.WithAPIKey(opts.APIKey))
 	}
