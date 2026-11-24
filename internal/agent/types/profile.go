@@ -40,6 +40,27 @@ const (
 	BuiltinPromptSummary = "summary" // builtin/prompts/summary.md
 )
 
+// Profile.ReasoningEffort 的可选值。
+//
+// none 关闭思考模式；low / medium / high / max 开启并指定强度。
+// 空字符串表示不指定（沿用模型配置 agent.providers.<model>.reasoning_effort）。
+const (
+	ReasoningEffortNone   = "none"
+	ReasoningEffortLow    = "low"
+	ReasoningEffortMedium = "medium"
+	ReasoningEffortHigh   = "high"
+	ReasoningEffortMax    = "max"
+)
+
+// ReasoningEfforts 是 ReasoningEffort 的全部可选值（按强度升序）。
+var ReasoningEfforts = []string{
+	ReasoningEffortNone,
+	ReasoningEffortLow,
+	ReasoningEffortMedium,
+	ReasoningEffortHigh,
+	ReasoningEffortMax,
+}
+
 // Profile 相关错误。
 var (
 	// ErrProfileNotFound 表示 Profile 不存在。

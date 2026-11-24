@@ -506,6 +506,8 @@ func RegisterAgentRoutes(r *gin.RouterGroup, handler *handler.AgentHandler, sess
 	r.GET("/agent/tool/get", handler.GetTool)
 
 	r.GET("/agent/profile/list", handler.ListProfiles)
+	// Profile 编辑选项：模型下拉（来自 agent.providers）与推理强度可选值。
+	r.GET("/agent/profile/options", handler.GetProfileOptions)
 	r.GET("/agent/profile/get", handler.GetProfile)
 	r.POST("/agent/profile/save", handler.SaveProfile)
 	r.POST("/agent/profile/delete", handler.DeleteProfile)

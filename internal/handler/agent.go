@@ -5,6 +5,7 @@ import (
 	stderrs "errors"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/skill"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
 	"github.com/biox-dev/gobrave/internal/realtime"
 	"github.com/biox-dev/gobrave/internal/types"
@@ -43,6 +45,8 @@ type AgentHandler struct {
 	runtimeCtx *RuntimeContextResolver
 	// projects 用于会话可见性判断：会话按项目隔离，项目成员都能查看与订阅。
 	projects interfaces.ProjectService
+	// cfg 提供 agent.providers 模型配置表，用于 Profile 编辑时的模型下拉选项。
+	cfg *config.Config
 
 	// stream 是会话级实时事件路由（SessionID → 订阅用户集合）。
 	stream *sessionEventBridge
@@ -55,7 +59,7 @@ type AgentHandler struct {
 }
 
 // NewAgentHandler 创建 AgentHandler。
-func NewAgentHandler(svc *agentservice.AgentService, chat *agentservice.ChatService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry, skillStore *skill.Store, tools *tool.Registry, projects interfaces.ProjectService) *AgentHandler {
+func NewAgentHandler(svc *agentservice.AgentService, chat *agentservice.ChatService, hub *realtime.Hub, runtimeCtx *RuntimeContextResolver, skills *skill.Registry, skillStore *skill.Store, tools *tool.Registry, projects interfaces.ProjectService, cfg *config.Config) *AgentHandler {
 	return &AgentHandler{
 		svc:        svc,
 		chat:       chat,
@@ -65,6 +69,7 @@ func NewAgentHandler(svc *agentservice.AgentService, chat *agentservice.ChatServ
 		tools:      tools,
 		runtimeCtx: runtimeCtx,
 		projects:   projects,
+		cfg:        cfg,
 		stream:     newSessionEventBridge(hub),
 	}
 }
@@ -730,6 +735,77 @@ func (h *AgentHandler) DeleteSkill(c *gin.Context) {
 	h.skills.Unregister(name)
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": name})
+}
+
+// agentProfileModelOption 是 Profile 编辑弹窗的模型下拉选项。
+type agentProfileModelOption struct {
+	// Name 是 agent.providers 的 key，写入 Profile.Model。
+	Name string `json:"name"`
+	// Label 是展示名（配置的 name，为空回退 api_model / key）。
+	Label string `json:"label"`
+	// Provider 是模型厂商标识（openai / deepseek / anthropic …）。
+	Provider string `json:"provider,omitempty"`
+	// CanReason 表示模型支持推理 / 思考过程。
+	CanReason bool `json:"can_reason"`
+	// ReasoningEffort 是该模型配置的默认推理强度（为空表示未指定）。
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+}
+
+// agentProfileOptionsResponse 是 Profile 编辑选项接口的响应。
+//
+// 前端据此渲染「模型下拉框 → 推理强度下拉框」，模型列表来自当前生效的
+// agent.providers 配置（与 Profile.Model 的取值一一对应）。
+type agentProfileOptionsResponse struct {
+	// Models 是当前已配置的模型列表（按 key 升序）。
+	Models []agentProfileModelOption `json:"models"`
+	// ReasoningEfforts 是 ReasoningEffort 的可选值（none / low / medium / high / max）。
+	ReasoningEfforts []string `json:"reasoning_efforts"`
+}
+
+// GetProfileOptions godoc
+// @Summary      查看 Agent Profile 编辑选项
+// @Description  返回当前 agent.providers 中已配置的模型列表（含是否支持推理与默认推理强度），以及推理强度可选值
+// @Tags         Agent
+// @Produce      json
+// @Success      200  {object}  handler.agentProfileOptionsResponse
+// @Failure      401  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /agent/profile/options [get]
+func (h *AgentHandler) GetProfileOptions(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	models := make([]agentProfileModelOption, 0)
+	if h.cfg != nil && h.cfg.Agent != nil {
+		keys := make([]string, 0, len(h.cfg.Agent.Providers))
+		for key := range h.cfg.Agent.Providers {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			pc := h.cfg.Agent.Providers[key]
+			label := strings.TrimSpace(pc.Name)
+			if label == "" {
+				label = strings.TrimSpace(pc.APIModel)
+			}
+			if label == "" {
+				label = key
+			}
+			models = append(models, agentProfileModelOption{
+				Name:            key,
+				Label:           label,
+				Provider:        strings.TrimSpace(pc.Provider),
+				CanReason:       pc.CanReason,
+				ReasoningEffort: strings.ToLower(strings.TrimSpace(pc.ReasoningEffort)),
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, agentProfileOptionsResponse{
+		Models:           models,
+		ReasoningEfforts: agenttypes.ReasoningEfforts,
+	})
 }
 
 // ListProfiles godoc
