@@ -67,8 +67,12 @@ type Request struct {
 	// Provider 只读该字段。因此不随 Request 持久化（json:"-"）：
 	// 任务恢复时会按 Profile 重新渲染，避免把过期快照写进 agent_tasks.request。
 	SystemPrompt string `json:"-"`
-	// Messages 对话上下文（不含 SystemPrompt）。
-	Messages []Message `json:"messages"`
+	// Messages 是本次调用的对话输入（不含 SystemPrompt）。
+	//
+	// 会话轮次不会把历史快照写进这里：历史只存 agent_messages，执行时按会话重建
+	// （见 AgentService.conversationHistory），避免 agent_tasks.request 随对话增长膨胀。
+	// 无会话的一次性调用（子 Agent / 摘要等）仍通过它传入输入。
+	Messages []Message `json:"messages,omitempty"`
 	// Env 可选：额外环境变量（也可携带 Provider 特有开关）。
 	Env map[string]string `json:"env"`
 	// MaxTokens 可选：最大输出 token 数，0 表示不限制。

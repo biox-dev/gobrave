@@ -68,7 +68,8 @@ type Task struct {
 	Status            TaskStatus `json:"status" gorm:"column:status;type:varchar(32);index"`
 	WorkingDir        string     `json:"working_dir,omitempty" gorm:"column:working_dir;type:text"`
 
-	// Request 保存原始请求，用于恢复时重建上下文。
+	// Request 保存原始请求（Provider / 模型 / Profile / 提示词变量等），
+	// 用于恢复时重建上下文；会话轮次的对话历史不在这里，见 conversationHistory。
 	Request Request `json:"request,omitempty" gorm:"serializer:json"`
 	// Resumable 是非持久化派生字段：任务处于中断态（failed / canceled /
 	// waiting_permission）时为真，前端据此在轮末展示「Continue」。
@@ -151,6 +152,11 @@ func (t *Task) Facts() TaskFacts {
 // 执行事实（用户 / 会话 / 项目）由调用方显式提供：它们是任务的生命周期属性，
 // 不再散落在 Request / RuntimeContext 里。
 func NewTask(req Request, facts TaskFacts) *Task {
+	// 会话轮次的历史由 agent_messages 承载（执行时重建），不再快照进任务请求：
+	// 否则 agent_tasks.request 会随对话增长而膨胀。
+	if facts.SessionID > 0 {
+		req.Messages = nil
+	}
 	now := time.Now()
 	return &Task{
 		// TaskID 由调用方预先分配时直接复用（user 消息先于任务写入，必须共用同一 ID）；

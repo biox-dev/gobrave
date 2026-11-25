@@ -17622,7 +17622,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "turn_id": {
-                    "description": "TurnID 是产生该消息的模型响应轮次（仅 Agent 侧消息有值）。\n\n同一轮次的 assistant 文本 / tool_call / tool_result 共享 TurnID：任务中断后\nAgent 循环据此把它们归为一组，算出「这一轮还有哪些工具没执行」并精确续跑\n（见 native.rebuildRounds）。它是恢复执行的唯一轮次依据，不再单独存检查点。",
+                    "description": "TurnID 是产生该消息的模型响应轮次（仅 Agent 侧消息有值）。\n\n同一轮次的 assistant 文本 / tool_call / tool_result 共享 TurnID：任务中断后\nAgent 循环据此把它们归为一组，算出「这一轮还有哪些工具没执行」并精确续跑。\n它是恢复执行的唯一轮次依据，不再单独存检查点。",
                     "type": "string"
                 },
                 "user_id": {
@@ -18214,7 +18214,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "messages": {
-                    "description": "Messages 对话上下文（不含 SystemPrompt）。",
+                    "description": "Messages 是本次调用的对话输入（不含 SystemPrompt）。\n\n会话轮次不会把历史快照写进这里：历史只存 agent_messages，执行时按会话重建\n（见 AgentService.conversationHistory），避免 agent_tasks.request 随对话增长膨胀。\n无会话的一次性调用（子 Agent / 摘要等）仍通过它传入输入。",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/types.Message"
@@ -18553,7 +18553,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "request": {
-                    "description": "Request 保存原始请求，用于恢复时重建上下文。",
+                    "description": "Request 保存原始请求（Provider / 模型 / Profile / 提示词变量等），\n用于恢复时重建上下文；会话轮次的对话历史不在这里，见 conversationHistory。",
                     "allOf": [
                         {
                             "$ref": "#/definitions/types.Request"

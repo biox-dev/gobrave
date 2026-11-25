@@ -38,7 +38,7 @@ func (c *Config) restore(ctx context.Context, executor *tool.Executor, rt agenti
 		logger.Warnf(ctx, "native agent: load task messages failed: %v", err)
 		return nil, "", false
 	}
-	rounds := groupRounds(msgs)
+	rounds := agenttypes.GroupToolRounds(msgs)
 	if len(rounds) == 0 {
 		return nil, "", false
 	}
@@ -59,82 +59,12 @@ func (c *Config) restore(ctx context.Context, executor *tool.Executor, rt agenti
 	return history, "", true
 }
 
-// groupRounds 把本任务的消息按 turn_id 归为若干轮（保持落库顺序）。
-//
-// user 消息不参与分组：它已经由 req.Messages 承载。error 不是模型对话的一部分，
-// 直接忽略；reasoning 作为该轮的思考内容挂在轮上（思考模式要求随 assistant 回传）。
-func groupRounds(msgs []agenttypes.Message) []agenttypes.ToolRound {
-	rounds := make([]agenttypes.ToolRound, 0, 4)
-	index := make(map[string]int, 4)
-
-	// round 返回指定轮次的可写引用；首次出现时按顺序追加。
-	round := func(turnID string) *agenttypes.ToolRound {
-		if i, ok := index[turnID]; ok {
-			return &rounds[i]
-		}
-		rounds = append(rounds, agenttypes.ToolRound{TurnID: turnID})
-		index[turnID] = len(rounds) - 1
-		return &rounds[len(rounds)-1]
-	}
-
-	for _, m := range msgs {
-		switch m.Kind {
-		case agenttypes.KindAssistant:
-			r := round(m.TurnID)
-			if r.Content != "" {
-				r.Content += "\n"
-			}
-			r.Content += m.Content
-		case agenttypes.KindReasoning:
-			// 思考内容必须与 assistant 消息一起回传，否则思考模式下的续跑请求会被拒绝。
-			if content, ok := agenttypes.ReasoningBlockContent(m.Data); ok && strings.TrimSpace(content) != "" {
-				r := round(m.TurnID)
-				r.Reasoning = content
-			}
-		case agenttypes.KindToolCall:
-			if call, ok := agenttypes.ToolCallFromData(m.Data); ok {
-				r := round(m.TurnID)
-				r.Calls = append(r.Calls, call)
-			}
-		case agenttypes.KindToolResult:
-			if res, ok := agenttypes.ToolResultFromData(m.Data); ok {
-				r := round(m.TurnID)
-				r.Results = append(r.Results, res)
-			}
-		}
-	}
-	return rounds
-}
-
 // completedMessages 把一轮已完成的工具往返转换为 Provider 消息。
+//
+// 复用 ToolRound.Messages 的还原规则（assistant(tool_calls) + tool(results)），
+// 再交给 requestMessages 映射，保证「历史轮次」与「请求自带历史」两条路径同源。
 func completedMessages(r agenttypes.ToolRound) []provider.Message {
-	if len(r.Calls) == 0 {
-		if r.Content == "" {
-			return nil
-		}
-		return []provider.Message{{Role: provider.RoleAssistant, Content: r.Content}}
-	}
-
-	calls := make([]provider.ToolCall, 0, len(r.Calls))
-	results := make([]provider.ToolResult, 0, len(r.Calls))
-	for _, call := range r.Calls {
-		calls = append(calls, toProviderToolCall(call))
-		res, ok := r.Result(call.ID)
-		if !ok {
-			// 结果缺失（落库失败 / 数据被清理）：补一条错误结果，保持
-			// assistant(tool_calls) 与 tool 消息一一对应，避免 Provider 拒绝请求。
-			res = agenttypes.ToolResultBlock{
-				ToolCallID: call.ID,
-				Content:    "tool result was not persisted",
-				IsError:    true,
-			}
-		}
-		results = append(results, toProviderToolResult(res))
-	}
-	return []provider.Message{
-		{Role: provider.RoleAssistant, Content: r.Content, Reasoning: r.Reasoning, ToolCalls: calls},
-		{Role: provider.RoleTool, ToolResults: results},
-	}
+	return requestMessages(agenttypes.Request{Messages: r.Messages()})
 }
 
 // replayPending 重放中断轮次：已有结果的工具复用，缺少结果的重新执行。

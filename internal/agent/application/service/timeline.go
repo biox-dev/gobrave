@@ -10,6 +10,7 @@ import (
 	. "github.com/biox-dev/gobrave/internal/agent/types"
 	. "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/logger"
+	"github.com/google/uuid"
 )
 
 // 本文件是「流式事件 → 会话消息」的唯一投影规则。
@@ -234,7 +235,10 @@ func (r *TimelineRecorder) RecordResult(ctx context.Context, sessionID, taskID, 
 		Kind:      KindAssistant,
 		TaskID:    taskID,
 		UserID:    ownerID,
-		Content:   content,
+		// 兜底回答自成一“轮”：时间线上每条 Agent 侧消息都应有轮次标识，
+		// 跨轮还原 prompt 时才不会把它和别的轮次并到一起。
+		TurnID:  uuid.NewString(),
+		Content: content,
 	}); err != nil {
 		logger.Warnf(persistCtx, "[agent] persist assistant fallback failed: task=%d err=%v", taskID, err)
 	}

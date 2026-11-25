@@ -31,6 +31,29 @@ func newGormTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+// TestGormTaskRepositoryKeepsMessagesWithoutSession 验证无会话的一次性任务仍然
+// 携带输入消息：它们没有 agent_messages 可回放，只能靠 Request 保存。
+func TestGormTaskRepositoryKeepsMessagesWithoutSession(t *testing.T) {
+	ctx := context.Background()
+	repo := NewGormTaskRepository(newGormTestDB(t))
+
+	task := agenttypes.NewTask(agenttypes.Request{
+		Provider: agenttypes.ProviderMock,
+		Messages: []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hi"}},
+	}, agenttypes.TaskFacts{})
+	if err := repo.Create(ctx, task); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := repo.Get(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Request.Messages) != 1 || got.Request.Messages[0].Content != "hi" {
+		t.Fatalf("messages not preserved: %+v", got.Request.Messages)
+	}
+}
+
 func TestGormTaskRepositoryRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	repo := NewGormTaskRepository(newGormTestDB(t))
@@ -51,9 +74,9 @@ func TestGormTaskRepositoryRoundTrip(t *testing.T) {
 	if got.ID != task.ID || got.Status != agenttypes.TaskCreated {
 		t.Fatalf("unexpected task: %+v", got)
 	}
-	// 校验序列化字段往返：Request.Messages / Env 应被 JSON 序列化后正确还原。
-	if len(got.Request.Messages) != 1 || got.Request.Messages[0].Content != "hi" {
-		t.Fatalf("messages not preserved: %+v", got.Request.Messages)
+	// 会话轮次的历史只存在 agent_messages，不随 Request 持久化（否则任务行会随对话膨胀）。
+	if len(got.Request.Messages) != 0 {
+		t.Fatalf("session task must not persist messages: %+v", got.Request.Messages)
 	}
 	if got.Request.Env["K"] != "V" {
 		t.Fatalf("env not preserved: %+v", got.Request.Env)

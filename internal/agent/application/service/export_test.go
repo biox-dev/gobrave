@@ -14,6 +14,11 @@ func (s *AgentService) InjectMemoryForTest(ctx context.Context, prompt string, f
 	return s.injectMemoryWithContext(ctx, prompt, facts)
 }
 
+// ConversationHistoryForTest 暴露 AgentService.conversationHistory 供外部测试调用。
+func (s *AgentService) ConversationHistoryForTest(ctx context.Context, task *Task) []Message {
+	return s.conversationHistory(ctx, task)
+}
+
 // ExtractMemoryForTest 暴露 AgentService.extractMemory 供外部测试调用。
 func (s *AgentService) ExtractMemoryForTest(ctx context.Context, task *Task, req Request, result *Result) {
 	s.extractMemory(ctx, task, req, result)

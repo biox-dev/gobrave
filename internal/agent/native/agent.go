@@ -83,12 +83,10 @@ func (c *Config) Run(ctx context.Context, req agenttypes.Request, rt agentinterf
 			return nil, err
 		}
 
-		// 本次模型响应的轮次标识：同轮的 assistant 文本 / tool_call / tool_result
-		// 共享它，任务中断后据此分组重建执行现场（见 replay.go）。
-		turnID := ""
-		if len(response.ToolCalls) > 0 {
-			turnID = uuid.NewString()
-		}
+		// 本次模型响应的轮次标识：同轮的 assistant 文本 / 思考 / tool_call /
+		// tool_result 共享它。恢复执行与跨轮 prompt 还原都据此分组，因此每一轮
+		// （包括没有工具调用的最终回答）都必须有自己的标识。
+		turnID := uuid.NewString()
 
 		// 完整思考块 / 消息块：作为时间线锚点持久化（增量已实时下发）。
 		if strings.TrimSpace(thinking) != "" {
@@ -304,19 +302,41 @@ func (c *Config) emitToolResult(ctx context.Context, rt agentinterfaces.Runtime,
 	})
 }
 
-// requestMessages 把请求历史转换为模型消息：只保留 user / assistant 文本。
+// requestMessages 把请求历史转换为模型消息。
+//
+// assistant 的工具调用与 tool 的工具结果按结构化形式透传（不是压成正文 JSON），
+// 思考内容也只挂在带 tool_calls 的 assistant 消息上——思考模式的厂商要求如此。
 func requestMessages(req agenttypes.Request) []provider.Message {
 	out := make([]provider.Message, 0, len(req.Messages))
 	for _, msg := range req.Messages {
-		content := strings.TrimSpace(msg.Content)
-		if content == "" {
-			continue
-		}
 		switch strings.ToLower(strings.TrimSpace(msg.Role)) {
 		case agenttypes.RoleUser:
+			if strings.TrimSpace(msg.Content) == "" {
+				continue
+			}
 			out = append(out, provider.Message{Role: provider.RoleUser, Content: msg.Content})
 		case agenttypes.RoleAssistant:
-			out = append(out, provider.Message{Role: provider.RoleAssistant, Content: msg.Content})
+			if strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 {
+				continue
+			}
+			assistant := provider.Message{
+				Role:      provider.RoleAssistant,
+				Content:   msg.Content,
+				Reasoning: msg.Reasoning,
+			}
+			for _, call := range msg.ToolCalls {
+				assistant.ToolCalls = append(assistant.ToolCalls, toProviderToolCall(call))
+			}
+			out = append(out, assistant)
+		case agenttypes.RoleTool:
+			if len(msg.ToolResults) == 0 {
+				continue
+			}
+			toolMsg := provider.Message{Role: provider.RoleTool}
+			for _, res := range msg.ToolResults {
+				toolMsg.ToolResults = append(toolMsg.ToolResults, toProviderToolResult(res))
+			}
+			out = append(out, toolMsg)
 		}
 	}
 	return out

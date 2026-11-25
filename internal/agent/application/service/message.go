@@ -20,14 +20,16 @@ func NewMessageService(store MessageStore) MessageService {
 
 func (s *messageService) Create(ctx context.Context, params MessageCreateParams) (Message, error) {
 	message := &Message{
-		SessionID: params.SessionID,
-		Role:      params.Role,
-		Kind:      params.Kind,
-		TaskID:    params.TaskID,
-		UserID:    params.UserID,
-		Content:   params.Content,
-		Data:      params.Data,
-		CreatedAt: time.Now(),
+		SessionID:  params.SessionID,
+		Role:       params.Role,
+		Kind:       params.Kind,
+		TaskID:     params.TaskID,
+		UserID:     params.UserID,
+		TurnID:     params.TurnID,
+		ToolCallID: params.ToolCallID,
+		Content:    params.Content,
+		Data:       params.Data,
+		CreatedAt:  time.Now(),
 	}
 	if err := s.store.Create(ctx, message); err != nil {
 		return Message{}, err

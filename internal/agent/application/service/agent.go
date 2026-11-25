@@ -249,7 +249,7 @@ func (s *AgentService) execute(ctx context.Context, task *Task, rt Runtime) {
 	_, _ = s.run(ctx, task, rt)
 }
 
-// run 执行任务主体：置为 running → 解析 Provider → 调用 Agent → 更新终态并返回结果。
+// run 执行任务主体：置为 running → 重建历史 → 解析 Provider → 调用 Agent → 更新终态。
 //
 // 异步（execute）与同步（RunTaskSync）共享这一执行路径。
 func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result, error) {
@@ -272,6 +272,9 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	}
 	facts := task.Facts()
 	req := applyProfileOverrides(task.Request, profile)
+	// 历史不随 Request 持久化：会话轮次在这里从 agent_messages 重建，因此
+	// agent_tasks.request 不会随对话增长而膨胀，恢复执行也天然拿到最新历史。
+	req.Messages = s.conversationHistory(ctx, task)
 	req.SystemPrompt = s.buildSystemPrompt(ctx, profile, req.RuntimeContext.Vars(), facts, req.Skills)
 	task.Model = req.ModelID
 	if provider := strings.TrimSpace(req.Provider); provider != "" {
@@ -309,6 +312,39 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 		s.extractMemory(ctx, task, req, result)
 		return result, nil
 	}
+}
+
+// conversationHistory 返回本轮执行可见的对话历史。
+//
+// 会话轮次的历史只有一份：agent_messages。它不再随 Request 快照进 agent_tasks，
+// 因此这里按会话重建（结构化的 assistant 工具调用 + tool 结果，见 promptMessages）。
+//
+// 本任务已经产生的 Agent 侧消息被排除在外：Provider 会单独从任务消息里回放这一轮
+// （见 native.restore），重复注入会让同一轮内容在历史里出现两次。
+//
+// 无会话的一次性任务（如 AI 摘要）没有别处可存，仍使用 Request 自带的 Messages。
+func (s *AgentService) conversationHistory(ctx context.Context, task *Task) []Message {
+	if task == nil {
+		return nil
+	}
+	if task.SessionID <= 0 || s.messages == nil {
+		return task.Request.Messages
+	}
+	msgs, err := s.messages.List(ctx, task.SessionID)
+	if err != nil {
+		logger.Warnf(ctx, "[agent] load session history failed: task=%d session=%d err=%v",
+			task.ID, task.SessionID, err)
+		return nil
+	}
+	history := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		// 本轮自己的 user 消息属于上下文；本轮产生的 assistant / 工具消息由回放补齐。
+		if m.TaskID == task.ID && m.Role != RoleUser {
+			continue
+		}
+		history = append(history, m)
+	}
+	return promptMessages(history)
 }
 
 // failTask 统一处理任务失败：记录日志 → 补发可序列化的 error 流事件 → 置为 failed。
@@ -448,6 +484,7 @@ func (s *AgentService) GetTask(ctx context.Context, id int64) (*Task, error) {
 // 供 UI 调试 / 审计使用。注意：这里返回的是任务创建时的原始请求，未应用 Agent Profile；
 // 真正发送给 Provider 的系统提示词在任务执行时由 run 经 applyProfile 渲染
 // （Profile 模板 + RuntimeContext.SystemPromptVars + 背景注入）。
+// 会话轮次的对话历史不在这里（只存 agent_messages），因此 Messages 为空。
 func (s *AgentService) GetTaskRequest(ctx context.Context, taskID int64) (*Request, error) {
 	task, err := s.tasks.Get(ctx, taskID)
 	if err != nil {

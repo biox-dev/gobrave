@@ -178,13 +178,14 @@ func TestRestoreWithoutMessages(t *testing.T) {
 	}
 }
 
-// TestGroupRoundsMergesAssistantTextIntoItsTurn 验证同一轮的多段 assistant 文本合并。
+// TestGroupRoundsMergesAssistantTextIntoItsTurn 验证同一轮的多段 assistant 文本合并，
+// 且思考内容从消息 Data 中取到同一轮上。
 func TestGroupRoundsMergesAssistantTextIntoItsTurn(t *testing.T) {
-	rounds := groupRounds([]agenttypes.Message{
+	rounds := agenttypes.GroupToolRounds([]agenttypes.Message{
 		{Kind: agenttypes.KindAssistant, TurnID: "t1", Content: "a"},
+		{Kind: agenttypes.KindReasoning, TurnID: "t1", Data: agenttypes.ReasoningBlock{ID: "r1", TurnID: "t1", Content: "think"}},
 		toolCallMsg("t1", "c1", `{}`),
 		{Kind: agenttypes.KindAssistant, TurnID: "t1", Content: "b"},
-		{Kind: agenttypes.KindReasoning, TurnID: "t1", Content: "ignored"},
 	})
 
 	if len(rounds) != 1 {
@@ -192,6 +193,9 @@ func TestGroupRoundsMergesAssistantTextIntoItsTurn(t *testing.T) {
 	}
 	if rounds[0].Content != "a\nb" {
 		t.Fatalf("content = %q, want merged", rounds[0].Content)
+	}
+	if rounds[0].Reasoning != "think" {
+		t.Fatalf("reasoning = %q, want think", rounds[0].Reasoning)
 	}
 	if len(rounds[0].Calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(rounds[0].Calls))

@@ -71,9 +71,17 @@ type Message struct {
 	// ToolCallID 关联一次工具调用与它的结果（仅 KindToolCall / KindToolResult 有值）。
 	ToolCallID string `json:"tool_call_id,omitempty" gorm:"column:tool_call_id;type:varchar(128);index"`
 	// Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。
-	Content   string    `json:"content,omitempty" gorm:"column:content;type:longtext"`
-	Data      any       `json:"data,omitempty" gorm:"serializer:json"`
-	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
+	Content string `json:"content,omitempty" gorm:"column:content;type:longtext"`
+	Data    any    `json:"data,omitempty" gorm:"serializer:json"`
+	// 以下三个字段只在「拼装模型 prompt」时使用，不是 agent_messages 的列：
+	// 工具调用 / 结果的结构化内容存放在 Data 列，prompt 组装时按轮还原到这里，
+	// 避免把工具调用压成 assistant 正文的 JSON 摘要发给模型。
+	//
+	// 它们随 Request 一起持久化（任务恢复后仍能重建结构化历史），但不出现在接口文档里。
+	Reasoning   string            `json:"reasoning,omitempty" gorm:"-" swaggerignore:"true"`
+	ToolCalls   []ToolCall        `json:"tool_calls,omitempty" gorm:"-" swaggerignore:"true"`
+	ToolResults []ToolResultBlock `json:"tool_results,omitempty" gorm:"-" swaggerignore:"true"`
+	CreatedAt   time.Time         `json:"created_at" gorm:"column:created_at"`
 }
 
 // TableName 返回消息表的表名。
