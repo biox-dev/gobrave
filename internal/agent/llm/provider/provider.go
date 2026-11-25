@@ -38,7 +38,7 @@ func New(opts Options) (Client, error) {
 func defaultBaseURL(p models.ModelProvider) string {
 	switch p {
 	case models.ProviderDeepSeek:
-		return "https://api.deepseek.com/v1"
+		return "https://api.deepseek.com"
 	case models.ProviderGroq:
 		return "https://api.groq.com/openai/v1"
 	case models.ProviderOpenRouter:

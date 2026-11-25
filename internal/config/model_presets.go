@@ -83,9 +83,9 @@ var modelVendorCatalog = []ModelVendorPreset{
 	{
 		Type:           ModelVendorDeepSeek,
 		Name:           "DeepSeek",
-		BaseURL:        "https://api.deepseek.com/v1",
+		BaseURL:        "https://api.deepseek.com",
 		APIModelPrefix: "deepseek-",
-		Models:         []string{"deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"},
+		Models:         []string{"deepseek-v4-flash", "deepseek-v4-pro"},
 	},
 	{
 		Type:           ModelVendorGemini,
@@ -157,10 +157,8 @@ var modelVendorOverrides = map[string]ModelVendorOverride{
 		"claude-3-5-haiku-20241022":  {ContextWindow: 200_000, DefaultMaxTokens: 8_192, SupportsAttachments: true, CostPer1MIn: 0.8, CostPer1MOut: 4, CostPer1MInCached: 0.08, CostPer1MOutCached: 1},
 	},
 	ModelVendorDeepSeek: {
-		"deepseek-v4-flash": {ContextWindow: 128_000, DefaultMaxTokens: 8_192, CanReason: true},
-		"deepseek-v4-pro":   {ContextWindow: 128_000, DefaultMaxTokens: 8_192, CanReason: true},
-		"deepseek-chat":     {ContextWindow: 64_000, DefaultMaxTokens: 8_192},
-		"deepseek-reasoner": {ContextWindow: 64_000, DefaultMaxTokens: 8_192, CanReason: true},
+		"deepseek-v4-flash": {ContextWindow: 1_000_000, DefaultMaxTokens: 384_000, CanReason: true},
+		"deepseek-v4-pro":   {ContextWindow: 1_000_000, DefaultMaxTokens: 384_000, CanReason: true},
 	},
 	ModelVendorGemini: {
 		"gemini-2.5-pro":   {ContextWindow: 1_048_576, DefaultMaxTokens: 65_536, CanReason: true, SupportsAttachments: true, CostPer1MIn: 1.25, CostPer1MOut: 10},
