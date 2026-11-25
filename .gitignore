@@ -17,3 +17,4 @@ embed/
 bin/
 
 *.exe
+cp_skill.sh

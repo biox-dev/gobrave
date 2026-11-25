@@ -1,6 +1,6 @@
 ---
 name: analysis-script-authoring
-description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体、写 README.md（request_param 规范）、到 create_analysis_node_script 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、README.md 的固定模板与 request_param 写法要求（可直接复制的参数示例、扁平键、FileSelect 对象形态、产物登记、常见报错），在已创建节点里写 / 改脚本代码的约定（最简写法、tidyverse 读表、knitr::kable 打印、按 outputs 写 outputs.json）、软件安装规范（脚本里直接使用 R 包 / Python 包 / conda 生信软件、不提前探测安装，只有运行报错提示包或软件不存在时才用 terminal_exec 检查并尝试装到系统指定的包目录、容器基础镜像里没有 rscript / python / conda 命令时不要安装而是告知用户、网络与系统库问题先反馈用户）、生物分组不明确时必须先 ask_user、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码、写 README、安装脚本依赖或运行节点时使用。
+description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体、写 README.md（request_param 规范）、到 create_analysis_node_script 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、README.md 的固定模板与 request_param 写法要求（可直接复制的参数示例、扁平键、FileSelect 对象形态、产物登记、常见报错）、在已创建节点里写 / 改脚本代码的约定（最简写法、可复用解析器优先而非手工切分（GFF 用 rtracklayer、表格用 readr）、tidyverse 读表与 left_join/pivot_longer、列名归一化与列表列压平、knitr::kable 打印、按 outputs 写 outputs.json）、软件安装规范（脚本里直接使用 R 包 / Python 包 / conda 生信软件、不提前探测安装，只有运行报错提示包或软件不存在时才用 terminal_exec 检查并尝试装到系统指定的包目录、容器基础镜像里没有 rscript / python / conda 命令时不要安装而是告知用户、网络与系统库问题先反馈用户）、生物分组不明确时必须先 ask_user、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码、写 R 代码、写 README、安装脚本依赖或运行节点时使用。
 ---
 
 ## 脚本创建与修改规范（总入口）
@@ -531,6 +531,86 @@ create_analysis_node_script(
 - 路径一律由参数拼出（`params$output_dir`、`params$<FileSelect>$path`），不硬编码路径 / 样本名 / 分组。
 - 不引入多余抽象：不加参数校验层、异常包装层、日志框架、命令行框架；读出来直接用。
 - 最后一步总是写 outputs.json（见本节「输出约定」）。
+
+### R 代码编写规范：能用解析器 + tidyverse，就不要手写解析
+
+写 R 脚本时按下面的规范，目标是一眼看懂、列名干净、少踩坑。
+
+1. **解析结构化格式优先用专用 R 包，不要手工 `readLines` / `strsplit` 切分**：
+
+   | 格式 | 用什么 | 备注 |
+   | --- | --- | --- |
+   | GFF / GFF3 | `rtracklayer::import(path, format = "gff3")` → `as.data.frame()` | 自动跳过 `#` 注释行、**遇 `##FASTA` 停止**；手工切分会把 FASTA 序列行当成特征 |
+   | BED / bigWig / chain | `rtracklayer::import()` | 同上，返回 GRanges |
+   | VCF | `vcfR::read.vcfR()`（容器里有时才用） | 先按报错再装包，不提前假设 |
+   | tsv / csv / txt | `readr::read_tsv()` / `read_csv()` | 固定列类型、自动去 BOM |
+   | xlsx | `readxl::read_excel()` | |
+   | 生信软件的制表符输出（eggNOG、BLAST 等） | `readr::read_tsv(comment = "##")` + 参数归一化表头 | 见第 4 条 |
+
+   真实教训：同一份 Prokka GFF，手工 `readLines` + `str_split_fixed` 得到 41863 行「特征」，
+   其中 37340 行其实是 `##FASTA` 之后的序列；`rtracklayer` 解析只有 4523 行真实特征。
+
+2. **参数与读表就三行，不要包函数**：
+
+   ~~~r
+   params <- jsonlite::fromJSON("params.json")
+   gff    <- as.data.frame(import(params$gff$path, format = "gff3")) %>% rename(seqid = seqnames) %>% select(-width)
+   anno   <- read_tsv(params$anno$path, comment = "##", show_col_types = FALSE)
+   ~~~
+
+3. **join 用 `left_join` + `by = setNames()` 直接指定两侧列名**，不要为了连接先造一个同名的临时 ID 列：
+
+   ~~~r
+   joined <- left_join(gff_features, anno, by = setNames(anno_query_col, join_key))
+   ~~~
+
+   命中统计也直接算，不需要临时列：`sum(joined[[join_key]] %in% anno[[anno_query_col]])`。
+
+4. **列名归一化要显式做**：`readr` 会把表头首列的 `#` 去掉（eggNOG 的 `#query` → `query`），
+   而参数里用户仍会写 `#query`。两侧都归一化再取列，否则永远匹配不上：
+
+   ~~~r
+   names(anno)    <- sub("^#+", "", names(anno))
+   anno_query_col <- sub("^#+", "", anno_query_col)
+   ~~~
+
+5. **列表型列（多值属性）先压平成字符串**：`rtracklayer` 的 `Parent` / `db_xref` 等是 `CharacterList`，
+   直接 `write_tsv` 会写成 `c("a", "b")`。统一压平：
+
+   ~~~r
+   for (col in names(gff)) {
+     if (is.list(gff[[col]])) gff[[col]] <- vapply(gff[[col]], paste, character(1), collapse = ",")
+   }
+   ~~~
+
+6. **宽长转换、筛选、派生列一律用 tidyverse 动词**，不写 `for` 循环拼 `data.frame`，
+   也不用 `do.call(rbind, list)`：
+
+   ~~~r
+   attrs_long <- gff %>%
+     select(row_id, seqid, type, start, end, all_of(attr_cols)) %>%
+     pivot_longer(all_of(attr_cols), names_to = "key", values_to = "value") %>%
+     filter(!is.na(value), value != "")
+   ~~~
+
+7. **核心列 / 属性列用变量区分**，只在产物里保留真正需要的列（去掉 `width`、临时 `row_id` 等）：
+
+   ~~~r
+   core_cols <- c("seqid", "source", "type", "start", "end", "score", "strand", "phase")
+   attr_cols <- setdiff(names(gff), core_cols)
+   ~~~
+
+8. **写产物统一 `readr::write_tsv(x, path, na = "")`**（空值留空，不写 `NA` 字样）；
+   需要保序、不去引号时不加 `quote = FALSE` 之类参数，`write_tsv` 默认就是无引号制表符分隔。
+
+9. **报错信息带上可选值清单**，省掉下一轮猜名字：
+   `stop("注释表里没有连接列: ", col, "（可用: ", paste(names(anno), collapse = ", "), "）")`。
+
+10. **注释只在关键步骤写一行中文**（「读 GFF」「按 key 左连接」「写产物」），
+    不要给每行代码配注释；参数名 / 变量名用英文且见名知义（`gff`、`anno`、`joined`、`attrs_long`）。
+
+11. **整份脚本的控制流应当是从上到下平铺的 5~7 步**：读参数 → 解析输入 → 可选筛选 → 连接 → 写产物 + outputs.json。
+    如果出现多层嵌套 `if` / 自定义函数 / 中间落盘再读回，先把它压回平铺写法。
 
 ### 输出约定：按 outputs 产出并写 outputs.json
 
