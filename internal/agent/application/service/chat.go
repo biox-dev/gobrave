@@ -727,6 +727,19 @@ type SessionDetail struct {
 	HasMore bool `json:"has_more"`
 	// NextCursor 是继续向上翻页的游标（本页最小 Seq）；HasMore 为 false 时无意义。
 	NextCursor int `json:"next_cursor"`
+	// ActiveTask 是 CurrentTaskID 指向的任务状态快照（仅当 CurrentTaskID 非 0 时返回）。
+	// 前端据此一次请求即可判断「运行中 / 等待授权 / 可续跑」，无需再按 taskId 查任务。
+	ActiveTask *ActiveTaskStatus `json:"active_task,omitempty"`
+}
+
+// ActiveTaskStatus 是会话当前轮次的状态快照。
+//
+// 只包含前端判定 UI 所需的最小字段：任务 ID 复用 Session.CurrentTaskID，
+// request / resume_state / 时间戳等详情仅供任务详情接口使用。
+type ActiveTaskStatus struct {
+	Status    TaskStatus `json:"status"`
+	Resumable bool       `json:"resumable"`
+	Error     string     `json:"error,omitempty"`
 }
 
 // GetSession 查询会话及一页历史消息（默认最新一页，按 Seq 升序）。
@@ -771,7 +784,27 @@ func (s *ChatService) GetSession(ctx context.Context, id int64, q SessionMessage
 		Users:      users,
 		HasMore:    hasMore,
 		NextCursor: nextCursor,
+		ActiveTask: s.loadActiveTask(ctx, sess.CurrentTaskID),
 	}, nil
+}
+
+// loadActiveTask 加载会话当前轮次的状态快照。
+//
+// 无活跃任务（CurrentTaskID 为 0）或查询失败时返回 nil：调用方按「无快照」处理，
+// 由前端保持现状而不是误判为已结束。
+func (s *ChatService) loadActiveTask(ctx context.Context, taskID int64) *ActiveTaskStatus {
+	if taskID <= 0 || s.agent == nil {
+		return nil
+	}
+	task, err := s.agent.GetTask(ctx, taskID)
+	if err != nil || task == nil {
+		return nil
+	}
+	return &ActiveTaskStatus{
+		Status:    task.Status,
+		Resumable: task.Resumable,
+		Error:     task.Error,
+	}
 }
 
 // GetSessionMeta 只返回会话本体（不含历史消息），用于鉴权等轻量场景。
