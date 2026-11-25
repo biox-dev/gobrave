@@ -334,13 +334,16 @@ func (s *ChatService) hasTaskErrorMessage(ctx context.Context, sessionID, taskID
 // promptMessages 把会话历史还原为发送给模型的消息序列。
 //
 // 与时间线共用同一套分组规则（GroupToolRounds）：同一个 turn_id 的 assistant 文本 /
-// 思考 / 工具调用 / 工具结果合并成 assistant(tool_calls) + tool(results) 两条消息，
-// 而不是把工具调用的 JSON 摘要当成 assistant 正文发回去——那样模型会以为自己说过
-// 一串 JSON，工具输出也会在历史里重复占 token。
+// 工具调用 / 工具结果合并成 assistant(tool_calls) + tool(results)，而不是把工具调用
+// 压成 assistant 正文里的 JSON 摘要——那样模型会以为自己说过一串 JSON，也看不到工具
+// 实际返回的内容。
 //
-// user 消息按原顺序保留（它们是轮次边界）；reasoning / error 之类不是模型对话内容，
-// 由分组规则自行忽略。用户消息之间的 Agent 侧消息逐段归组，保证跨任务的轮次不会
-// 因为 turn_id 为空而被合并。
+// 跨轮不回放思考内容（KindReasoning）：CoT 只服务它当次的决策，重发既贵又会干扰后续
+// 推理。必须回传它的场景只有轮内工具续跑（见 native.restore），所以过滤放在这里而不是
+// GroupToolRounds，避免打断恢复路径。
+//
+// user 消息按原顺序保留（它们是轮次边界）；error 之类不是模型对话内容，分组时自然忽略。
+// 用户消息之间的 Agent 侧消息逐段归组，保证跨任务的轮次不会因为 turn_id 为空而被合并。
 func promptMessages(history []Message) []Message {
 	out := make([]Message, 0, len(history))
 	segment := make([]Message, 0, len(history))
@@ -361,6 +364,9 @@ func promptMessages(history []Message) []Message {
 			if strings.TrimSpace(m.Content) != "" {
 				out = append(out, Message{Role: RoleUser, Content: m.Content})
 			}
+			continue
+		}
+		if m.Kind == KindReasoning {
 			continue
 		}
 		segment = append(segment, m)

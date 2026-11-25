@@ -17,7 +17,8 @@ func userMsg(content string) Message {
 }
 
 // TestPromptMessagesRebuildsToolRounds 验证历史工具往返被还原成
-// assistant(tool_calls) + tool(results)，而不是两条 assistant 纯文本 JSON 摘要。
+// assistant(tool_calls) + tool(results)，而不是两条 assistant 纯文本 JSON 摘要；
+// 同时验证跨轮不回放思考内容（KindReasoning）。
 func TestPromptMessagesRebuildsToolRounds(t *testing.T) {
 	history := []Message{
 		userMsg("分析一下"),
@@ -28,40 +29,45 @@ func TestPromptMessagesRebuildsToolRounds(t *testing.T) {
 		agentMsg(KindToolResult, "t1", "c2", ToolResultBlock{ToolCallID: "c2", TurnID: "t1", Content: "B"}),
 		{Role: RoleAssistant, Kind: KindAssistant, TurnID: "t2", Content: "结论",
 			Data: MessageBlock{ID: "m1", TurnID: "t2", Content: "结论"}},
+		userMsg("继续"),
 	}
 
 	out := promptMessages(history)
-	if len(out) != 4 {
-		t.Fatalf("len = %d, want user + assistant(calls) + tool + assistant; got %+v", len(out), out)
+	wantRoles := []string{RoleUser, RoleAssistant, RoleTool, RoleAssistant, RoleUser}
+	if len(out) != len(wantRoles) {
+		t.Fatalf("len = %d, want %d (user + assistant(calls) + tool + assistant + user); got %+v", len(out), len(wantRoles), out)
 	}
-
-	if out[0].Role != RoleUser || out[0].Content != "分析一下" {
-		t.Fatalf("out[0] = %+v, want user", out[0])
+	for i, want := range wantRoles {
+		if out[i].Role != want {
+			t.Fatalf("out[%d].role = %s, want %s (out=%+v)", i, out[i].Role, want, out)
+		}
 	}
 
 	assistant := out[1]
-	if assistant.Role != RoleAssistant || len(assistant.ToolCalls) != 2 {
-		t.Fatalf("out[1] = %+v, want assistant with 2 tool calls", assistant)
+	if len(assistant.ToolCalls) != 2 {
+		t.Fatalf("assistant tool calls = %+v, want 2", assistant.ToolCalls)
 	}
 	if assistant.ToolCalls[0].ID != "c1" || assistant.ToolCalls[1].ID != "c2" {
 		t.Fatalf("tool call order = %+v, want c1, c2", assistant.ToolCalls)
 	}
-	if assistant.Reasoning != "先读文件" {
-		t.Fatalf("reasoning = %q, want 先读文件", assistant.Reasoning)
+	if assistant.Reasoning != "" {
+		t.Fatalf("historical reasoning = %q, want dropped", assistant.Reasoning)
 	}
 
 	toolMsg := out[2]
-	if toolMsg.Role != RoleTool || len(toolMsg.ToolResults) != 2 {
-		t.Fatalf("out[2] = %+v, want tool with 2 results", toolMsg)
+	if len(toolMsg.ToolResults) != 2 {
+		t.Fatalf("tool results = %+v, want 2", toolMsg.ToolResults)
 	}
 	if toolMsg.ToolResults[0].Content != "A" || toolMsg.ToolResults[1].Content != "B" {
 		t.Fatalf("results = %+v, want A, B", toolMsg.ToolResults)
 	}
 
-	// 最终回答是一条纯文本 assistant，且不带思考内容（跨轮 CoT 不参与上下文）。
 	final := out[3]
-	if final.Role != RoleAssistant || final.Content != "结论" || final.Reasoning != "" {
+	if final.Content != "结论" || final.Reasoning != "" || len(final.ToolCalls) != 0 {
 		t.Fatalf("out[3] = %+v, want plain assistant answer", final)
+	}
+	if out[4].Content != "继续" {
+		t.Fatalf("out[4] = %+v, want user 继续", out[4])
 	}
 }
 
@@ -77,10 +83,11 @@ func TestPromptMessagesKeepsTurnBoundaries(t *testing.T) {
 	}
 
 	out := promptMessages(history)
-	if len(out) != 6 {
-		t.Fatalf("len = %d, want 6 (2 x user + assistant + tool)", len(out))
+	wantRoles := []string{RoleUser, RoleAssistant, RoleTool, RoleUser, RoleAssistant, RoleTool}
+	if len(out) != len(wantRoles) {
+		t.Fatalf("len = %d, want %d (2 x user + assistant + tool): %+v", len(out), len(wantRoles), out)
 	}
-	for i, want := range []string{RoleUser, RoleAssistant, RoleTool, RoleUser, RoleAssistant, RoleTool} {
+	for i, want := range wantRoles {
 		if out[i].Role != want {
 			t.Fatalf("out[%d].role = %s, want %s", i, out[i].Role, want)
 		}
@@ -100,7 +107,7 @@ func TestPromptMessagesFillsMissingResults(t *testing.T) {
 
 	out := promptMessages(history)
 	if len(out) != 3 {
-		t.Fatalf("len = %d, want user + assistant + tool", len(out))
+		t.Fatalf("len = %d, want user + assistant + tool: %+v", len(out), out)
 	}
 	results := out[2].ToolResults
 	if len(results) != 1 || results[0].ToolCallID != "c1" || !results[0].IsError {
@@ -120,5 +127,34 @@ func TestPromptMessagesSkipsEmptyAndErrorMessages(t *testing.T) {
 	out := promptMessages(history)
 	if len(out) != 1 || out[0].Role != RoleUser {
 		t.Fatalf("out = %+v, want only the user message", out)
+	}
+}
+
+// TestPromptMessagesKeepsInterruptedTurnTools 验证被中断的轮次（有工具调用但没有
+// 收尾文本）仍按结构化工具往返回放：模型需要看到自己执行过什么，而不是整轮消失。
+func TestPromptMessagesKeepsInterruptedTurnTools(t *testing.T) {
+	history := []Message{
+		userMsg("跑一下"),
+		agentMsg(KindReasoning, "t1", "", ReasoningBlock{ID: "r1", TurnID: "t1", Content: "先调用工具"}),
+		agentMsg(KindToolCall, "t1", "c1", ToolCall{ID: "c1", TurnID: "t1", Name: "echo"}),
+		agentMsg(KindToolResult, "t1", "c1", ToolResultBlock{ToolCallID: "c1", TurnID: "t1", Content: "1"}),
+		userMsg("新问题"),
+	}
+
+	out := promptMessages(history)
+	wantRoles := []string{RoleUser, RoleAssistant, RoleTool, RoleUser}
+	if len(out) != len(wantRoles) {
+		t.Fatalf("len = %d, want %d (user + assistant + tool + user): %+v", len(out), len(wantRoles), out)
+	}
+	for i, want := range wantRoles {
+		if out[i].Role != want {
+			t.Fatalf("out[%d].role = %s, want %s", i, out[i].Role, want)
+		}
+	}
+	if out[1].Reasoning != "" || len(out[1].ToolCalls) != 1 {
+		t.Fatalf("out[1] = %+v, want one tool call without reasoning", out[1])
+	}
+	if out[2].ToolResults[0].Content != "1" {
+		t.Fatalf("out[2] = %+v, want tool result 1", out[2])
 	}
 }

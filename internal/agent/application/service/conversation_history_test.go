@@ -11,7 +11,9 @@ import (
 
 // TestConversationHistoryRebuiltFromMessages 验证会话轮次的历史在执行时从
 // agent_messages 重建，而不是来自 Request 快照：
-//   - 历史工具往返被还原成 assistant(tool_calls) + tool(results)；
+//   - 历史工具往返被还原成 assistant(tool_calls) + tool(results)，模型能看到
+//     自己读过什么、工具返回了什么；
+//   - 跨轮不回放思考内容（KindReasoning）；
 //   - 本轮（当前任务）已产生的 Agent 侧消息被排除（由 Provider 回放补齐）；
 //   - 任务行不持久化消息，因此不会随对话增长膨胀。
 func TestConversationHistoryRebuiltFromMessages(t *testing.T) {
@@ -69,7 +71,7 @@ func TestConversationHistoryRebuiltFromMessages(t *testing.T) {
 
 	wantRoles := []string{agenttypes.RoleUser, agenttypes.RoleAssistant, agenttypes.RoleTool, agenttypes.RoleAssistant, agenttypes.RoleUser}
 	if len(out) != len(wantRoles) {
-		t.Fatalf("len = %d, want %d: %+v", len(out), len(wantRoles), out)
+		t.Fatalf("len = %d, want %d (user + assistant(calls) + tool + assistant + user): %+v", len(out), len(wantRoles), out)
 	}
 	for i, want := range wantRoles {
 		if out[i].Role != want {
@@ -79,12 +81,12 @@ func TestConversationHistoryRebuiltFromMessages(t *testing.T) {
 	if out[0].Content != "第一问" || out[4].Content != "第二问" {
 		t.Fatalf("user messages = %q / %q", out[0].Content, out[4].Content)
 	}
-	// 历史工具往返是结构化的，且思考内容挂在带 tool_calls 的 assistant 上。
+	// 历史工具往返是结构化的，但跨轮不带思考内容。
 	if calls := out[1].ToolCalls; len(calls) != 1 || calls[0].ID != "c1" {
 		t.Fatalf("assistant tool calls = %+v, want c1", calls)
 	}
-	if out[1].Reasoning != "先读文件" {
-		t.Fatalf("assistant reasoning = %q, want 先读文件", out[1].Reasoning)
+	if out[1].Reasoning != "" {
+		t.Fatalf("historical reasoning = %q, want dropped", out[1].Reasoning)
 	}
 	if results := out[2].ToolResults; len(results) != 1 || results[0].Content != "A" {
 		t.Fatalf("tool results = %+v, want A", results)

@@ -317,7 +317,7 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 // conversationHistory 返回本轮执行可见的对话历史。
 //
 // 会话轮次的历史只有一份：agent_messages。它不再随 Request 快照进 agent_tasks，
-// 因此这里按会话重建（结构化的 assistant 工具调用 + tool 结果，见 promptMessages）。
+// 因此这里按会话重建（已结束的轮次还原为结构化的工具往返，见 promptMessages）。
 //
 // 本任务已经产生的 Agent 侧消息被排除在外：Provider 会单独从任务消息里回放这一轮
 // （见 native.restore），重复注入会让同一轮内容在历史里出现两次。
