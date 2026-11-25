@@ -22,6 +22,8 @@ const (
 	ModelVendorAnthropic = "anthropic"
 	// ModelVendorDeepSeek 深度求索（OpenAI 兼容协议）。
 	ModelVendorDeepSeek = "deepseek"
+	// ModelVendorZhipu 智谱 GLM（OpenAI 兼容协议）。
+	ModelVendorZhipu = "zhipu"
 	// ModelVendorGemini Google Gemini。
 	ModelVendorGemini = "gemini"
 	// ModelVendorOpenRouter OpenRouter 聚合网关（OpenAI 兼容协议）。
@@ -86,6 +88,13 @@ var modelVendorCatalog = []ModelVendorPreset{
 		BaseURL:        "https://api.deepseek.com",
 		APIModelPrefix: "deepseek-",
 		Models:         []string{"deepseek-v4-flash", "deepseek-v4-pro"},
+	},
+	{
+		Type:           ModelVendorZhipu,
+		Name:           "Zhipu (GLM)",
+		BaseURL:        "https://open.bigmodel.cn/api/paas/v4",
+		APIModelPrefix: "glm-",
+		Models:         []string{"glm-5.4", "glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"},
 	},
 	{
 		Type:           ModelVendorGemini,
@@ -159,6 +168,12 @@ var modelVendorOverrides = map[string]ModelVendorOverride{
 	ModelVendorDeepSeek: {
 		"deepseek-v4-flash": {ContextWindow: 1_000_000, DefaultMaxTokens: 384_000, CanReason: true},
 		"deepseek-v4-pro":   {ContextWindow: 1_000_000, DefaultMaxTokens: 384_000, CanReason: true},
+	},
+	ModelVendorZhipu: {
+		"glm-5.4":        {ContextWindow: 1_000_000, DefaultMaxTokens: 128_000},
+		"glm-5.3":        {ContextWindow: 1_000_000, DefaultMaxTokens: 128_000},
+		"glm-5.3-flash":  {ContextWindow: 1_000_000, DefaultMaxTokens: 128_000, SupportsAttachments: true},
+		"glm-5.3-flashx": {ContextWindow: 1_000_000, DefaultMaxTokens: 128_000, SupportsAttachments: true},
 	},
 	ModelVendorGemini: {
 		"gemini-2.5-pro":   {ContextWindow: 1_048_576, DefaultMaxTokens: 65_536, CanReason: true, SupportsAttachments: true, CostPer1MIn: 1.25, CostPer1MOut: 10},

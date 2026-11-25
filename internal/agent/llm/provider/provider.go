@@ -13,14 +13,14 @@ const maxRetries = 8
 // New 按厂商类型创建对应的协议客户端。
 //
 // 目前支持：
-//   - OpenAI 及 OpenAI 兼容网关（deepseek / groq / openrouter / xai / local）；
+//   - OpenAI 及 OpenAI 兼容网关（deepseek / zhipu / groq / openrouter / xai / local）；
 //   - Anthropic（Claude）；
 //   - Google Gemini。
 //
 // azure / vertexai / bedrock 需要额外的认证与部署参数，暂未迁移，调用时返回明确错误。
 func New(opts Options) (Client, error) {
 	switch opts.Provider {
-	case models.ProviderOpenAI, models.ProviderDeepSeek, models.ProviderGroq,
+	case models.ProviderOpenAI, models.ProviderDeepSeek, models.ProviderZhipu, models.ProviderGroq,
 		models.ProviderOpenRouter, models.ProviderXAI, models.ProviderLocal:
 		return newOpenAIClient(opts), nil
 	case models.ProviderAnthropic:
@@ -39,6 +39,8 @@ func defaultBaseURL(p models.ModelProvider) string {
 	switch p {
 	case models.ProviderDeepSeek:
 		return "https://api.deepseek.com"
+	case models.ProviderZhipu:
+		return "https://open.bigmodel.cn/api/paas/v4"
 	case models.ProviderGroq:
 		return "https://api.groq.com/openai/v1"
 	case models.ProviderOpenRouter:

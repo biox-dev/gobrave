@@ -15,7 +15,7 @@ import (
 
 // openaiClient 是 OpenAI Chat Completions 协议客户端。
 //
-// 所有 OpenAI 兼容网关（deepseek / groq / openrouter / xai / 自建网关）共用它，
+// 所有 OpenAI 兼容网关（deepseek / zhipu / groq / openrouter / xai / 自建网关）共用它，
 // 仅 BaseURL 与默认参数不同。
 type openaiClient struct {
 	opts   Options

@@ -242,6 +242,8 @@ func inferProviderFromModel(modelID string) string {
 		return "anthropic"
 	case strings.HasPrefix(name, "deepseek-"):
 		return "deepseek"
+	case strings.HasPrefix(name, "glm-"):
+		return "zhipu"
 	case strings.HasPrefix(name, "gemini-"):
 		return "gemini"
 	case strings.HasPrefix(name, "grok-"):

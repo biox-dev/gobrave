@@ -17,6 +17,7 @@ const (
 	ProviderOpenAI     ModelProvider = "openai"
 	ProviderAnthropic  ModelProvider = "anthropic"
 	ProviderDeepSeek   ModelProvider = "deepseek"
+	ProviderZhipu      ModelProvider = "zhipu"
 	ProviderGemini     ModelProvider = "gemini"
 	ProviderOpenRouter ModelProvider = "openrouter"
 	ProviderXAI        ModelProvider = "xai"
