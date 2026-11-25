@@ -147,8 +147,9 @@ func IsBlockEvent(t StreamEventType) bool {
 
 // ReasoningBlock 是一段完整的思考内容（对应 Provider 的完整 reasoning 事件）。
 type ReasoningBlock struct {
-	ID      string `json:"id"`      // reasoningId
-	Content string `json:"content"` // 完整思考文本
+	ID      string `json:"id"`                // reasoningId
+	TurnID  string `json:"turn_id,omitempty"` // 所属轮次（与同轮 assistant / tool 消息一致）
+	Content string `json:"content"`           // 完整思考文本
 }
 
 // ToolCall 是一次完整的工具调用（对应 AssistantMessageToolRequest）。
@@ -169,12 +170,41 @@ type MessageBlock struct {
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
-// MessageBlockTurnID 从 message 事件体读取轮次标识（兼容内存态与 JSON map 形态）。
-func MessageBlockTurnID(data any) string {
+// ReasoningBlockContent 从 reasoning 事件体提取完整思考文本
+// （兼容内存态结构体与数据库读回的 JSON map）。
+func ReasoningBlockContent(data any) (string, bool) {
+	switch v := data.(type) {
+	case ReasoningBlock:
+		return v.Content, true
+	case *ReasoningBlock:
+		if v == nil {
+			return "", false
+		}
+		return v.Content, true
+	case map[string]any:
+		content, ok := v["content"].(string)
+		return content, ok
+	default:
+		return "", false
+	}
+}
+
+// TurnIDFromData 从事件体读取轮次标识（兼容内存态结构体与数据库读回的 JSON map）。
+//
+// 同一次模型响应的 reasoning / message / tool_call / tool_result 共用一个轮次，
+// 恢复执行时据此分组（见 native 包的 replay.go）。
+func TurnIDFromData(data any) string {
 	switch v := data.(type) {
 	case MessageBlock:
 		return v.TurnID
 	case *MessageBlock:
+		if v == nil {
+			return ""
+		}
+		return v.TurnID
+	case ReasoningBlock:
+		return v.TurnID
+	case *ReasoningBlock:
 		if v == nil {
 			return ""
 		}

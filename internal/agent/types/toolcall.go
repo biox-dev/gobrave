@@ -32,8 +32,11 @@ type ToolResultBlock struct {
 type ToolRound struct {
 	TurnID  string
 	Content string
-	Calls   []ToolCall
-	Results []ToolResultBlock
+	// Reasoning 是本轮 assistant 的思考内容。思考模式下带 tool_calls 的消息必须把它
+	// 原样回传给厂商（DeepSeek 等会把缺失视为请求非法）。
+	Reasoning string
+	Calls     []ToolCall
+	Results   []ToolResultBlock
 }
 
 // Result 返回指定工具调用的执行结果。

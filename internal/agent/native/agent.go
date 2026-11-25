@@ -94,7 +94,7 @@ func (c *Config) Run(ctx context.Context, req agenttypes.Request, rt agentinterf
 		if strings.TrimSpace(thinking) != "" {
 			_ = rt.Emit(ctx, agenttypes.StreamEvent{
 				Type: agenttypes.StreamEventReasoning,
-				Data: agenttypes.ReasoningBlock{ID: uuid.NewString(), Content: thinking},
+				Data: agenttypes.ReasoningBlock{ID: uuid.NewString(), TurnID: turnID, Content: thinking},
 			})
 		}
 		if strings.TrimSpace(response.Content) != "" {
@@ -121,9 +121,13 @@ func (c *Config) Run(ctx context.Context, req agenttypes.Request, rt agentinterf
 
 		results := c.executeTools(ctx, executor, response.ToolCalls, turnID, rt)
 
+		// Reasoning 必须随 assistant 消息回传：思考模式下带 tool_calls 的消息缺少
+		// reasoning_content 会被厂商拒绝（DeepSeek 等）。它和上面的 ReasoningBlock
+		// 同源（本次响应的思考增量聚合），保证实时与恢复两条路径发出去的完全一致。
 		history = append(history, provider.Message{
 			Role:      provider.RoleAssistant,
 			Content:   response.Content,
+			Reasoning: thinking,
 			ToolCalls: response.ToolCalls,
 		})
 		history = append(history, provider.Message{Role: provider.RoleTool, ToolResults: results})

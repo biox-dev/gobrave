@@ -197,3 +197,55 @@ func TestGroupRoundsMergesAssistantTextIntoItsTurn(t *testing.T) {
 		t.Fatalf("calls = %d, want 1", len(rounds[0].Calls))
 	}
 }
+
+// TestRestoreCarriesReasoning 验证恢复时把思考内容一起回传给模型。
+//
+// 思考模式下带 tool_calls 的 assistant 消息缺少 reasoning_content 会被厂商拒绝
+// （DeepSeek: The `reasoning_content` in the thinking mode must be passed back to the API），
+// 因此已完成轮次与正在重放的轮次都必须带上它。
+func TestRestoreCarriesReasoning(t *testing.T) {
+	reasoningMsg := func(turnID, content string) agenttypes.Message {
+		return agenttypes.Message{
+			Kind:    agenttypes.KindReasoning,
+			TurnID:  turnID,
+			Content: content,
+			Data:    agenttypes.ReasoningBlock{ID: "r1", TurnID: turnID, Content: content},
+		}
+	}
+
+	t.Run("completed round", func(t *testing.T) {
+		var ran []string
+		rt := &replayRuntime{msgs: []agenttypes.Message{
+			reasoningMsg("t1", "think-1"),
+			toolCallMsg("t1", "c1", `{}`),
+			toolResultMsg("t1", "c1", "done-1"),
+		}}
+
+		history, _, ok := (&Config{}).restore(context.Background(), newReplayExecutor(&ran), rt, replayRequest())
+		if !ok {
+			t.Fatal("restore should be resumable")
+		}
+		if got := history[1].Reasoning; got != "think-1" {
+			t.Fatalf("assistant reasoning = %q, want think-1", got)
+		}
+	})
+
+	t.Run("pending round", func(t *testing.T) {
+		var ran []string
+		rt := &replayRuntime{msgs: []agenttypes.Message{
+			reasoningMsg("t1", "think-1"),
+			toolCallMsg("t1", "c1", `{}`),
+		}}
+
+		history, _, ok := (&Config{}).restore(context.Background(), newReplayExecutor(&ran), rt, replayRequest())
+		if !ok {
+			t.Fatal("restore should be resumable")
+		}
+		if got := history[1].Reasoning; got != "think-1" {
+			t.Fatalf("assistant reasoning = %q, want think-1", got)
+		}
+		if len(ran) != 1 {
+			t.Fatalf("executed = %v, want the pending call", ran)
+		}
+	})
+}

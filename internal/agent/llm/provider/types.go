@@ -40,9 +40,16 @@ type ToolResult struct {
 // 与 gobrave 的 message.Message 不同，它额外承载工具调用 / 结果，用于在
 // Agent 循环内部维护「assistant(tool_calls) → tool(results)」的完整往返。
 type Message struct {
-	Role        Role
-	Content     string
-	ToolCalls   []ToolCall
+	Role      Role
+	Content   string
+	ToolCalls []ToolCall
+	// Reasoning 是本条 assistant 消息的思考内容（thinking 模式）。
+	//
+	// DeepSeek 等厂商要求：思考模式下，带 tool_calls 的 assistant 消息必须把
+	// 上一轮的 reasoning_content 原样回传，否则请求会被拒绝
+	// （The `reasoning_content` in the thinking mode must be passed back to the API）。
+	// 由 native 循环在历史里带上，openai 兼容客户端据此补 reasoning_content 字段。
+	Reasoning   string
 	ToolResults []ToolResult
 }
 

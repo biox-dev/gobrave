@@ -40,6 +40,7 @@ func ProjectTimelineEvent(sessionID, taskID, ownerID int64, event StreamEvent) (
 			Kind:      KindReasoning,
 			TaskID:    taskID,
 			UserID:    ownerID,
+			TurnID:    TurnIDFromData(event.Data),
 			Content:   content,
 			Data:      event.Data,
 		}, true
@@ -68,7 +69,7 @@ func ProjectTimelineEvent(sessionID, taskID, ownerID int64, event StreamEvent) (
 			Kind:      KindAssistant,
 			TaskID:    taskID,
 			UserID:    ownerID,
-			TurnID:    MessageBlockTurnID(event.Data),
+			TurnID:    TurnIDFromData(event.Data),
 			Content:   content,
 			Data:      event.Data,
 		}, true
@@ -87,24 +88,6 @@ func ProjectTimelineEvent(sessionID, taskID, ownerID int64, event StreamEvent) (
 		}, ok
 	default:
 		return MessageCreateParams{}, false
-	}
-}
-
-// ReasoningBlockContent 从 reasoning 事件体中提取完整思考文本。
-func ReasoningBlockContent(data any) (string, bool) {
-	switch v := data.(type) {
-	case ReasoningBlock:
-		return v.Content, true
-	case *ReasoningBlock:
-		if v == nil {
-			return "", false
-		}
-		return v.Content, true
-	case map[string]any:
-		content, ok := v["content"].(string)
-		return content, ok
-	default:
-		return "", false
 	}
 }
 

@@ -61,8 +61,8 @@ func (c *Config) restore(ctx context.Context, executor *tool.Executor, rt agenti
 
 // groupRounds 把本任务的消息按 turn_id 归为若干轮（保持落库顺序）。
 //
-// user 消息不参与分组：它已经由 req.Messages 承载。reasoning / error 不是模型对话
-// 的一部分，直接忽略。
+// user 消息不参与分组：它已经由 req.Messages 承载。error 不是模型对话的一部分，
+// 直接忽略；reasoning 作为该轮的思考内容挂在轮上（思考模式要求随 assistant 回传）。
 func groupRounds(msgs []agenttypes.Message) []agenttypes.ToolRound {
 	rounds := make([]agenttypes.ToolRound, 0, 4)
 	index := make(map[string]int, 4)
@@ -85,6 +85,12 @@ func groupRounds(msgs []agenttypes.Message) []agenttypes.ToolRound {
 				r.Content += "\n"
 			}
 			r.Content += m.Content
+		case agenttypes.KindReasoning:
+			// 思考内容必须与 assistant 消息一起回传，否则思考模式下的续跑请求会被拒绝。
+			if content, ok := agenttypes.ReasoningBlockContent(m.Data); ok && strings.TrimSpace(content) != "" {
+				r := round(m.TurnID)
+				r.Reasoning = content
+			}
 		case agenttypes.KindToolCall:
 			if call, ok := agenttypes.ToolCallFromData(m.Data); ok {
 				r := round(m.TurnID)
@@ -126,7 +132,7 @@ func completedMessages(r agenttypes.ToolRound) []provider.Message {
 		results = append(results, toProviderToolResult(res))
 	}
 	return []provider.Message{
-		{Role: provider.RoleAssistant, Content: r.Content, ToolCalls: calls},
+		{Role: provider.RoleAssistant, Content: r.Content, Reasoning: r.Reasoning, ToolCalls: calls},
 		{Role: provider.RoleTool, ToolResults: results},
 	}
 }
@@ -150,7 +156,7 @@ func (c *Config) replayPending(ctx context.Context, executor *tool.Executor, rt 
 		results = append(results, res)
 	}
 	return []provider.Message{
-		{Role: provider.RoleAssistant, Content: r.Content, ToolCalls: calls},
+		{Role: provider.RoleAssistant, Content: r.Content, Reasoning: r.Reasoning, ToolCalls: calls},
 		{Role: provider.RoleTool, ToolResults: results},
 	}
 }

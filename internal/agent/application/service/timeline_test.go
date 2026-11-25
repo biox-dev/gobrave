@@ -63,3 +63,61 @@ func TestProjectTimelineEventIgnoresLifecycleEvents(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectTimelineEventCarriesRoundIdentity 验证工具调用 / 结果 / 思考块都带上
+// 轮次与调用标识：这是「任务中断后按轮重组、只重放未完成调用」的全部依据。
+func TestProjectTimelineEventCarriesRoundIdentity(t *testing.T) {
+	cases := []struct {
+		name       string
+		event      StreamEvent
+		wantKind   string
+		wantTurnID string
+		wantCallID string
+	}{
+		{
+			name: "reasoning",
+			event: StreamEvent{Type: StreamEventReasoning, Data: ReasoningBlock{
+				ID: "r1", TurnID: "turn-1", Content: "thinking",
+			}},
+			wantKind:   KindReasoning,
+			wantTurnID: "turn-1",
+		},
+		{
+			name: "message",
+			event: StreamEvent{Type: StreamEventMessage, Data: MessageBlock{
+				ID: "m1", TurnID: "turn-1", Content: "hello",
+			}},
+			wantKind:   KindAssistant,
+			wantTurnID: "turn-1",
+		},
+		{
+			name: "tool_call",
+			event: StreamEvent{Type: StreamEventToolCall, Data: ToolCall{
+				ID: "call-1", TurnID: "turn-1", Name: "echo", Arguments: `{}`,
+			}},
+			wantKind:   KindToolCall,
+			wantTurnID: "turn-1",
+			wantCallID: "call-1",
+		},
+		{
+			name: "tool_result",
+			event: StreamEvent{Type: StreamEventToolResult, Data: ToolResultBlock{
+				ToolCallID: "call-1", TurnID: "turn-1", Content: "ok",
+			}},
+			wantKind:   KindToolResult,
+			wantTurnID: "turn-1",
+			wantCallID: "call-1",
+		},
+	}
+
+	for _, tc := range cases {
+		params, ok := ProjectTimelineEvent(1, 2, 3, tc.event)
+		if !ok {
+			t.Fatalf("%s: should be projected", tc.name)
+		}
+		if params.Kind != tc.wantKind || params.TurnID != tc.wantTurnID || params.ToolCallID != tc.wantCallID {
+			t.Fatalf("%s: kind/turn/call = %s/%q/%q, want %s/%q/%q", tc.name,
+				params.Kind, params.TurnID, params.ToolCallID, tc.wantKind, tc.wantTurnID, tc.wantCallID)
+		}
+	}
+}

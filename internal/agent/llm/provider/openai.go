@@ -161,6 +161,12 @@ func (c *openaiClient) convertMessages(messages []Message) []openai.ChatCompleti
 					})
 				}
 			}
+			// reasoning_content 是厂商扩展字段（DeepSeek 等），openai-go 没有对应字段，
+			// 只能作为额外字段并入消息 JSON。思考模式下带 tool_calls 的 assistant 消息
+			// 必须原样回传，否则厂商会拒绝后续请求。
+			if msg.Reasoning != "" {
+				assistant.WithExtraFields(map[string]any{"reasoning_content": msg.Reasoning})
+			}
 			out = append(out, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant})
 
 		case RoleTool:
