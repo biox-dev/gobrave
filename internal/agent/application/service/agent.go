@@ -48,6 +48,9 @@ type AgentService struct {
 
 	mu     sync.Mutex
 	active map[int64]context.CancelFunc // taskID → 取消函数
+	// canceled 标记已被用户手动终止的任务：执行上下文被取消后执行循环只会以
+	// context canceled 退出，需要据此跳过 failed 覆盖。
+	canceled map[int64]struct{}
 
 	// onTaskFinished 是任务进入终态后的回调（可能为空）。由上层编排层通过
 	// SetTaskFinishedHandler 注册，用于把「轮次收尾」绑定到任务状态机。
@@ -94,6 +97,7 @@ func NewService(cfg ServiceConfig) *AgentService {
 		profiles:  cfg.Profiles,
 		skills:    cfg.Skills,
 		active:    make(map[int64]context.CancelFunc),
+		canceled:  make(map[int64]struct{}),
 	}
 }
 
@@ -223,6 +227,7 @@ func (s *AgentService) execute(ctx context.Context, task *Task, rt Runtime) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.active, task.ID)
+		delete(s.canceled, task.ID)
 		s.mu.Unlock()
 	}()
 
@@ -315,6 +320,14 @@ func (s *AgentService) failTask(ctx context.Context, task *Task, rt Runtime, err
 	}
 	logger.Errorf(ctx, "agent: task %d failed (provider=%s model=%s session=%d): %v",
 		task.ID, task.Provider, task.Model, task.SessionID, err)
+	// 用户手动取消导致的中断不是失败：任务已由 CancelTask 置为 canceled，
+	// 这里只透出取消原因，不再改写终态。
+	if s.wasCanceled(task.ID) {
+		if rt != nil {
+			_ = rt.Emit(ctx, StreamEvent{Type: StreamEventError, Content: "canceled by user"})
+		}
+		return nil, err
+	}
 	if rt != nil {
 		_ = rt.Emit(ctx, StreamEvent{Type: StreamEventError, Content: err.Error(), Err: err})
 	}
@@ -885,18 +898,35 @@ func (s *AgentService) extractMemory(ctx context.Context, task *Task, req Reques
 }
 
 // CancelTask 取消任务：取消执行上下文并置为 canceled。
+//
+// 执行上下文被取消后，执行循环会以 context canceled 退出。先打上「用户取消」标记，
+// 让 failTask 不再把终态改写成 failed（否则前端会收到误导性的终态事件，
+// 已取消的一轮被重新标记为失败 / 运行中）。重复取消直接成功，便于前端幂等重试。
 func (s *AgentService) CancelTask(ctx context.Context, taskID int64) error {
 	s.mu.Lock()
-	cancel, ok := s.active[taskID]
+	s.canceled[taskID] = struct{}{}
+	cancel := s.active[taskID]
 	s.mu.Unlock()
-	if ok {
+
+	if cancel != nil {
 		cancel()
 	}
 	task, err := s.tasks.Get(ctx, taskID)
 	if err != nil {
 		return err
 	}
+	if task.Status == TaskCanceled {
+		return nil
+	}
 	return s.transitionTask(ctx, task, TaskCanceled, "canceled by user")
+}
+
+// wasCanceled 判断任务是否已被用户手动终止。
+func (s *AgentService) wasCanceled(taskID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.canceled[taskID]
+	return ok
 }
 
 // ResumeTask 从持久化检查点续跑任务（供 UI 手动触发，或权限 / 提问决策后自动触发）。

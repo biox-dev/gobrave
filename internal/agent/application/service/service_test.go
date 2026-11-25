@@ -218,6 +218,84 @@ func TestServiceDenyPermissionFlow(t *testing.T) {
 	}
 }
 
+// TestCancelTaskKeepsCanceledStatus 验证用户取消后任务保持 canceled。
+//
+// 取消会中断执行上下文，执行循环随后以 context canceled 退出；若该路径按失败处理，
+// 终态会被改写为 failed 并再次广播终态事件，前端据此把已取消的一轮重新标成失败。
+func TestCancelTaskKeepsCanceledStatus(t *testing.T) {
+	svc := newTestService(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	events := make(chan agenttypes.AgentEvent, 128)
+	unsub := svc.Subscribe(func(_ context.Context, ev agenttypes.AgentEvent) error {
+		events <- ev
+		return nil
+	})
+	defer unsub()
+
+	// 固定使用 mock Profile，避免内置默认 Profile（custom）发起真实 LLM 调用。
+	profile := &agenttypes.Profile{Name: "cancel-flow", Provider: agenttypes.ProviderMock}
+	if err := svc.SaveProfile(ctx, profile); err != nil {
+		t.Fatalf("SaveProfile: %v", err)
+	}
+	task, err := svc.RunTask(ctx, agenttypes.Request{
+		Provider:  agenttypes.ProviderMock,
+		ProfileID: profile.ID,
+		Stream:    true,
+		Env:       map[string]string{"MOCK_PERMISSION_DEMO": "true"},
+		Messages:  []agenttypes.Message{{Role: agenttypes.RoleUser, Content: "hello"}},
+	}, agenttypes.TaskFacts{WorkingDir: "/tmp"})
+	if err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+
+	// 等权限请求出现：说明执行循环已进入等待，取消会打断这次等待。
+	for {
+		if ev := readEvent(t, ctx, events); ev.Type == agenttypes.EventPermissionCreated {
+			break
+		}
+	}
+
+	if err := svc.CancelTask(ctx, task.ID); err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+	// 重复取消必须幂等（前端双击停止 / 并发请求不应报错）。
+	if err := svc.CancelTask(ctx, task.ID); err != nil {
+		t.Fatalf("CancelTask again: %v", err)
+	}
+
+	// 首个终态必须是 canceled；之后不允许再出现第二个终态覆盖它。
+	for terminal := false; !terminal; {
+		ev := readEvent(t, ctx, events)
+		switch ev.Type {
+		case agenttypes.EventTaskCanceled:
+			terminal = true
+		case agenttypes.EventTaskCompleted, agenttypes.EventTaskFailed:
+			t.Fatalf("unexpected terminal event: %s", ev.Type)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	for drained := false; !drained; {
+		select {
+		case ev := <-events:
+			if ev.Type == agenttypes.EventTaskCompleted || ev.Type == agenttypes.EventTaskFailed {
+				t.Fatalf("terminal event after cancel: %s", ev.Type)
+			}
+		default:
+			drained = true
+		}
+	}
+
+	got, err := svc.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != agenttypes.TaskCanceled {
+		t.Fatalf("task status = %s (error=%q), want canceled", got.Status, got.Error)
+	}
+}
+
 // TestStandaloneInvoke 验证 Client.Invoke 的一次性调用语义（AI 摘要等场景）不受影响。
 // func TestStandaloneInvoke(t *testing.T) {
 // 	registry := agentclient.NewRegistry(agentproviders.All()...)
