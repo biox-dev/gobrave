@@ -77,6 +77,12 @@ func (r *gormSessionStore) Delete(ctx context.Context, id int64) error {
 		if err := tx.Where("session_id IN ?", ids).Delete(&agent.Message{}).Error; err != nil {
 			return err
 		}
+		// 会话摘要跟随会话一起删除，避免残留水位行。
+		if tx.Migrator().HasTable(&agent.SessionSummary{}) {
+			if err := tx.Where("session_id IN ?", ids).Delete(&agent.SessionSummary{}).Error; err != nil {
+				return err
+			}
+		}
 		if err := tx.Where("session_id IN ?", ids).Delete(&agent.File{}).Error; err != nil {
 			return err
 		}

@@ -131,6 +131,26 @@ agent:
   # false：已存在的内置 Profile 保持原样、不再更新，仅创建数据库中缺失的记录。
   overwrite_builtin_profile: true
 
+  # 跨轮会话历史压缩：agent_messages 原文始终保留，只有在拼装模型 Prompt 时
+  # 用「摘要 + 最近若干轮原文」替换过早的历史，避免会话变长后超出上下文窗口。
+  compaction:
+    # 关闭自动压缩（已生成的摘要仍会继续使用）。默认开启。
+    enabled: true
+    # 同步压缩阈值：估算 token / 可用预算 超过该比例时，本轮执行前先压缩。
+    trigger_ratio: 0.85
+    # 轮末异步预压缩阈值：任务成功结束后后台压缩，下一轮直接命中摘要。
+    # 应小于 trigger_ratio。
+    pre_compact_ratio: 0.60
+    # 保留原文的最近轮数（一轮 = 一次用户输入）。
+    keep_turns: 6
+    # 摘要输出最大 token 数。
+    max_summary_tokens: 1024
+    # 摘要调用使用的模型；留空沿用本轮对话模型。
+    # provider: "deepseek"
+    # model: "deepseek-v4-flash"
+    # 单次摘要调用超时（秒）。
+    timeout_seconds: 90
+
   # 模型提供商配置表（key 为模型名，与 Profile.model 对应，统一小写）。
   # 一次请求使用的模型由 Profile.model 指定，据此在此表中查找 base_url / api_key 等 LLM 配置。
   #

@@ -176,6 +176,31 @@ type AgentConfig struct {
 	// 保证升级后自动生效（历史行为）。
 	// false：已存在的内置 Profile 保持原样、不再更新，仅创建数据库中缺失的记录。
 	OverwriteBuiltinProfile *bool `yaml:"overwrite_builtin_profile" json:"overwrite_builtin_profile"`
+
+	// Compaction 是跨轮会话历史压缩配置。
+	Compaction AgentCompactionConfig `yaml:"compaction" json:"compaction"`
+}
+
+// AgentCompactionConfig 控制跨轮会话历史压缩。
+//
+// 压缩只影响「发给模型的历史」，agent_messages 原文始终保留。
+type AgentCompactionConfig struct {
+	// Enabled 为 false 时关闭自动压缩（已生成的摘要仍会继续使用）。
+	// 未配置时默认开启。
+	Enabled *bool `yaml:"enabled" json:"enabled"`
+	// TriggerRatio 是同步压缩阈值（估算用量 / 可用预算），默认 0.85。
+	TriggerRatio float64 `yaml:"trigger_ratio" json:"trigger_ratio"`
+	// PreCompactRatio 是轮末异步预压缩阈值，默认 0.60，应小于 TriggerRatio。
+	PreCompactRatio float64 `yaml:"pre_compact_ratio" json:"pre_compact_ratio"`
+	// KeepTurns 是保留原文的最近轮数（一轮 = 一次用户输入），默认 6。
+	KeepTurns int `yaml:"keep_turns" json:"keep_turns"`
+	// MaxSummaryTokens 是摘要输出的最大 token 数，默认 1024。
+	MaxSummaryTokens int `yaml:"max_summary_tokens" json:"max_summary_tokens"`
+	// Provider / Model 是摘要调用使用的模型；为空时沿用本轮对话模型。
+	Provider string `yaml:"provider" json:"provider"`
+	Model    string `yaml:"model" json:"model"`
+	// TimeoutSeconds 是单次摘要调用的超时，默认 90 秒。
+	TimeoutSeconds int `yaml:"timeout_seconds" json:"timeout_seconds"`
 }
 
 // OverwriteBuiltinProfileEnabled 报告启动同步内置 Profile 时是否覆盖已存在的记录。

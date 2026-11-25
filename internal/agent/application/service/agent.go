@@ -40,6 +40,10 @@ type AgentService struct {
 	timeline *TimelineRecorder
 	// messages 读取 agent_messages：恢复执行时按任务回放已落库的轮次 / 工具调用。
 	messages MessageService
+	// summaries 读取 / 推进会话历史摘要水位（跨轮压缩）。
+	summaries SessionSummaryService
+	// compaction 是历史压缩配置（零值在 NewService 中补齐）。
+	compaction CompactionOptions
 	// live 保存会话「尚未落库」的流式尾巴，供中途进入的客户端续播。
 	live     *liveTail
 	bus      EventBus
@@ -67,11 +71,15 @@ type ServiceConfig struct {
 	Questions *QuestionManager
 	// Messages 是时间线消息（agent_messages）的持久化服务。
 	Messages MessageService
-	Bus      EventBus
-	Policy   PermissionPolicy
-	Memory   *MemoryManager
-	Profiles *ProfileManager
-	Skills   *skill.Registry
+	// Summaries 是会话历史摘要的持久化服务；为 nil 时不做跨轮压缩。
+	Summaries SessionSummaryService
+	// Compaction 是历史压缩配置。
+	Compaction CompactionOptions
+	Bus        EventBus
+	Policy     PermissionPolicy
+	Memory     *MemoryManager
+	Profiles   *ProfileManager
+	Skills     *skill.Registry
 }
 
 // NewService 创建 AgentService，未提供的依赖使用安全的默认值。
@@ -87,20 +95,22 @@ func NewService(cfg ServiceConfig) *AgentService {
 		cfg.Policy = agentpolicy.DefaultPermissionPolicy()
 	}
 	return &AgentService{
-		client:    cfg.Client,
-		tasks:     cfg.Tasks,
-		perms:     cfg.Perms,
-		questions: cfg.Questions,
-		timeline:  NewTimelineRecorder(cfg.Messages),
-		messages:  cfg.Messages,
-		live:      newLiveTail(),
-		bus:       cfg.Bus,
-		policy:    cfg.Policy,
-		memory:    cfg.Memory,
-		profiles:  cfg.Profiles,
-		skills:    cfg.Skills,
-		active:    make(map[int64]context.CancelFunc),
-		canceled:  make(map[int64]struct{}),
+		client:     cfg.Client,
+		tasks:      cfg.Tasks,
+		perms:      cfg.Perms,
+		questions:  cfg.Questions,
+		timeline:   NewTimelineRecorder(cfg.Messages),
+		messages:   cfg.Messages,
+		summaries:  cfg.Summaries,
+		compaction: cfg.Compaction.withDefaults(),
+		live:       newLiveTail(),
+		bus:        cfg.Bus,
+		policy:     cfg.Policy,
+		memory:     cfg.Memory,
+		profiles:   cfg.Profiles,
+		skills:     cfg.Skills,
+		active:     make(map[int64]context.CancelFunc),
+		canceled:   make(map[int64]struct{}),
 	}
 }
 
@@ -274,8 +284,9 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 	req := applyProfileOverrides(task.Request, profile)
 	// 历史不随 Request 持久化：会话轮次在这里从 agent_messages 重建，因此
 	// agent_tasks.request 不会随对话增长而膨胀，恢复执行也天然拿到最新历史。
-	req.Messages = s.conversationHistory(ctx, task)
+	// 先渲染系统提示词：历史压缩的预算需要把它占用的 token 一起扣掉。
 	req.SystemPrompt = s.buildSystemPrompt(ctx, profile, req.RuntimeContext.Vars(), facts, req.Skills)
+	req.Messages = s.conversationHistory(ctx, task, req)
 	task.Model = req.ModelID
 	if provider := strings.TrimSpace(req.Provider); provider != "" {
 		task.Provider = provider
@@ -310,6 +321,8 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 		_ = s.transitionTask(ctx, task, TaskCompleted, "")
 		// 任务成功完成后，从本轮执行中提取值得长期记住的记忆。
 		s.extractMemory(ctx, task, req, result)
+		// 轮末异步预压缩：下一轮开始时通常已能命中摘要，避免首 token 前等待摘要。
+		s.scheduleCompaction(ctx, task, req)
 		return result, nil
 	}
 }
@@ -319,32 +332,58 @@ func (s *AgentService) run(ctx context.Context, task *Task, rt Runtime) (*Result
 // 会话轮次的历史只有一份：agent_messages。它不再随 Request 快照进 agent_tasks，
 // 因此这里按会话重建（已结束的轮次还原为结构化的工具往返，见 promptMessages）。
 //
+// 跨轮压缩只改变「喂给模型的历史」：当估算 token 接近模型窗口时，较早的完整轮次
+// 会被合并进会话级摘要（agent_session_summaries），原文仍然保留在 agent_messages。
+//
 // 本任务已经产生的 Agent 侧消息被排除在外：Provider 会单独从任务消息里回放这一轮
 // （见 native.restore），重复注入会让同一轮内容在历史里出现两次。
 //
 // 无会话的一次性任务（如 AI 摘要）没有别处可存，仍使用 Request 自带的 Messages。
-func (s *AgentService) conversationHistory(ctx context.Context, task *Task) []Message {
+func (s *AgentService) conversationHistory(ctx context.Context, task *Task, req Request) []Message {
 	if task == nil {
 		return nil
 	}
 	if task.SessionID <= 0 || s.messages == nil {
 		return task.Request.Messages
 	}
-	msgs, err := s.messages.List(ctx, task.SessionID)
+
+	var summary *SessionSummary
+	if s.summaries != nil {
+		var err error
+		summary, err = s.summaries.Get(ctx, task.SessionID)
+		if err != nil {
+			logger.Warnf(ctx, "[agent] load session summary failed: session=%d err=%v", task.SessionID, err)
+			summary = nil
+		}
+	}
+
+	// 只加载水位之后的消息：更早的历史已经合并进摘要，不必再读回内存。
+	msgs, err := s.messages.ListAfter(ctx, task.SessionID, watermark(summary))
 	if err != nil {
 		logger.Warnf(ctx, "[agent] load session history failed: task=%d session=%d err=%v",
 			task.ID, task.SessionID, err)
 		return nil
 	}
-	history := make([]Message, 0, len(msgs))
-	for _, m := range msgs {
-		// 本轮自己的 user 消息属于上下文；本轮产生的 assistant / 工具消息由回放补齐。
-		if m.TaskID == task.ID && m.Role != RoleUser {
-			continue
+
+	if s.summaries != nil && s.compaction.Enabled {
+		updated, cerr := s.compactIfNeeded(ctx, task, req, msgs, summary, s.compaction.TriggerRatio)
+		if cerr != nil {
+			// 压缩失败降级：继续用原文，绝不阻塞本轮对话。
+			logger.Warnf(ctx, "[agent] session history compaction failed: session=%d err=%v", task.SessionID, cerr)
+		} else {
+			summary = updated
 		}
-		history = append(history, m)
 	}
-	return promptMessages(history)
+
+	return s.historyPrompt(msgs, summary, task)
+}
+
+// watermark 返回摘要水位；没有摘要时用 -1（Seq 从 0 开始，-1 表示全部保留）。
+func watermark(summary *SessionSummary) int {
+	if summary == nil {
+		return noSummarySeq
+	}
+	return summary.UpToSeq
 }
 
 // failTask 统一处理任务失败：记录日志 → 补发可序列化的 error 流事件 → 置为 failed。

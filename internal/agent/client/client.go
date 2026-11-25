@@ -69,6 +69,21 @@ func (c *Client) options() Options {
 	return opts
 }
 
+// ModelLimits 返回模型的上下文窗口与默认最大输出 token；未知时返回 0。
+//
+// 供历史压缩估算预算使用：模型能力元信息只存在于 ProviderSource，
+// 未配置时调用方应跳过压缩，而不是猜测一个窗口大小。
+func (c *Client) ModelLimits(modelKey string) (contextWindow, maxOutput int64) {
+	if c == nil {
+		return 0, 0
+	}
+	pc := c.options().ResolveProvider(modelKey)
+	if pc == nil {
+		return 0, 0
+	}
+	return pc.ContextWindow, pc.DefaultMaxTokens
+}
+
 // resolve 解析请求应使用的 Agent 实例。
 //
 // 模型提供商配置不在此时解析：Options 只携带 ProviderSource，由 Provider 在每次调用时

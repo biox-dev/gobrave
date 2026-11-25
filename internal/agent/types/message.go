@@ -46,8 +46,8 @@ const (
 // （Role / Content / Kind / TaskID / Data），因此 agent.Request.Messages 直接复用该类型。
 type Message struct {
 	ID        int64  `json:"id,string" gorm:"column:id;primaryKey;type:bigint;autoIncrement:false"`
-	SessionID int64  `json:"session_id,string" gorm:"column:session_id;type:bigint;index;index:idx_agent_messages_session_participant,priority:1"`
-	Seq       int    `json:"seq" gorm:"column:seq;index"`
+	SessionID int64  `json:"session_id,string" gorm:"column:session_id;type:bigint;index;index:idx_agent_messages_session_participant,priority:1;index:idx_agent_messages_session_seq,priority:1"`
+	Seq       int    `json:"seq" gorm:"column:seq;index;index:idx_agent_messages_session_seq,priority:2"`
 	Role      string `json:"role" gorm:"column:role;type:varchar(32);index:idx_agent_messages_session_participant,priority:2"`
 	Kind      string `json:"kind,omitempty" gorm:"column:kind;type:varchar(32);index"`
 	TaskID    int64  `json:"task_id,string,omitempty" gorm:"column:task_id;type:bigint;index"`

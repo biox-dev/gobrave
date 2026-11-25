@@ -64,6 +64,19 @@ func (s *messageService) List(ctx context.Context, sessionID int64) ([]Message, 
 	return out, nil
 }
 
+// ListAfter 返回某会话中 Seq 大于 afterSeq 的消息（按 Seq 升序）。
+func (s *messageService) ListAfter(ctx context.Context, sessionID int64, afterSeq int) ([]Message, error) {
+	rows, err := s.store.ListAfter(ctx, sessionID, afterSeq)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Message, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, *row)
+	}
+	return out, nil
+}
+
 // ListPage 分页查询会话消息（按 Seq 升序）；beforeSeq 为向上翻页游标。
 func (s *messageService) ListPage(ctx context.Context, sessionID int64, beforeSeq, limit int) ([]Message, bool, error) {
 	rows, hasMore, err := s.store.ListPage(ctx, sessionID, beforeSeq, limit)

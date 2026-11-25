@@ -102,6 +102,9 @@ type MessageStore interface {
 	Update(ctx context.Context, m *types.Message) error
 	Get(ctx context.Context, id int64) (*types.Message, error)
 	List(ctx context.Context, sessionID int64) ([]*types.Message, error)
+	// ListAfter 返回某会话中 Seq 大于 afterSeq 的消息（按 Seq 升序）。
+	// 用于只加载「会话摘要水位之后」的原文，避免每轮都把全量历史读进内存。
+	ListAfter(ctx context.Context, sessionID int64, afterSeq int) ([]*types.Message, error)
 	// ListPage 分页查询某会话的消息（按 Seq 升序返回）。
 	//
 	// beforeSeq > 0 时只返回 Seq 更小的消息（向上翻页），0 表示从最新消息开始。
@@ -120,6 +123,14 @@ type MessageStore interface {
 	// DeleteByTask 删除某任务的全部消息（含该轮的 user 消息）。
 	DeleteByTask(ctx context.Context, taskID int64) error
 	DeleteBySession(ctx context.Context, sessionID int64) error
+}
+
+// SessionSummaryStore 是会话历史摘要的持久化端口。
+type SessionSummaryStore interface {
+	// Get 返回会话摘要；不存在时返回 (nil, nil)。
+	Get(ctx context.Context, sessionID int64) (*types.SessionSummary, error)
+	// Upsert 写入或推进摘要水位；UpToSeq 不大于已有值时静默忽略（保证幂等）。
+	Upsert(ctx context.Context, summary *types.SessionSummary) error
 }
 
 // SessionResourceStore 是「会话 ↔ 资源」关联的持久化端口。

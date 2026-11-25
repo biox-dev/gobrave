@@ -59,6 +59,21 @@ func (r *gormMessageStore) List(ctx context.Context, sessionID int64) ([]*agent.
 	return rows, nil
 }
 
+// ListAfter 返回 Seq 大于 afterSeq 的消息（按 Seq 升序）。
+//
+// (session_id, seq) 走范围扫描，代价与「水位之后的消息量」成正比，
+// 而不是与会话历史总量成正比。
+func (r *gormMessageStore) ListAfter(ctx context.Context, sessionID int64, afterSeq int) ([]*agent.Message, error) {
+	var rows []*agent.Message
+	if err := r.db.WithContext(ctx).
+		Where("session_id = ? AND seq > ?", sessionID, afterSeq).
+		Order("seq ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // ListPage 按 Seq 倒序取一页（最新 / 游标之前的）消息，返回前翻转为 Seq 升序。
 //
 // 多取一条用于判断 hasMore，避免额外的 COUNT 查询；seq 上有索引，
@@ -193,18 +208,62 @@ func (r *gormMessageStore) HasAssistantContent(ctx context.Context, taskID int64
 }
 
 func (r *gormMessageStore) Delete(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&agent.Message{}).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var m agent.Message
+		if err := tx.Select("session_id").Where("id = ?", id).First(&m).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if err := invalidateSessionSummaries(tx, []int64{m.SessionID}); err != nil {
+			return err
+		}
+		return tx.Where("id = ?", id).Delete(&agent.Message{}).Error
+	})
 }
 
 func (r *gormMessageStore) DeleteByTask(ctx context.Context, taskID int64) error {
 	if taskID <= 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Where("task_id = ?", taskID).Delete(&agent.Message{}).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var sessionIDs []int64
+		if err := tx.Model(&agent.Message{}).
+			Where("task_id = ?", taskID).
+			Distinct().
+			Pluck("session_id", &sessionIDs).Error; err != nil {
+			return err
+		}
+		if err := invalidateSessionSummaries(tx, sessionIDs); err != nil {
+			return err
+		}
+		return tx.Where("task_id = ?", taskID).Delete(&agent.Message{}).Error
+	})
 }
 
 func (r *gormMessageStore) DeleteBySession(ctx context.Context, sessionID int64) error {
-	return r.db.WithContext(ctx).Where("session_id = ?", sessionID).Delete(&agent.Message{}).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := invalidateSessionSummaries(tx, []int64{sessionID}); err != nil {
+			return err
+		}
+		return tx.Where("session_id = ?", sessionID).Delete(&agent.Message{}).Error
+	})
+}
+
+// invalidateSessionSummaries 在消息被删除后作废对应会话摘要。
+//
+// 摘要可能已经包含被删除的内容（例如用户删除了某一轮历史）。整体作废而不是
+// 尝试回退水位：下一轮会按剩余消息重新摘要，语义最清晰，也不会把已删除内容
+// 继续发给模型。精简库（单测）没有摘要表时静默跳过。
+func invalidateSessionSummaries(tx *gorm.DB, sessionIDs []int64) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	if !tx.Migrator().HasTable(&agent.SessionSummary{}) {
+		return nil
+	}
+	return tx.Where("session_id IN ?", sessionIDs).Delete(&agent.SessionSummary{}).Error
 }
 
 // ListParticipants 返回在某会话中发过言（写过 user 消息）的用户（去重，按用户 ID 升序）。

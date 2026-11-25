@@ -688,11 +688,28 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		perms agentinterfaces.PermissionRepository,
 		questions agentinterfaces.QuestionRepository,
 		messages agentinterfaces.MessageService,
+		summaries agentinterfaces.SessionSummaryService,
 		mems *agentservice.MemoryManager,
 		profiles *agentservice.ProfileManager,
 		skills *skill.Registry,
 		userRepo interfaces.UserRepository,
+		cfg *config.Config,
 	) *agentservice.AgentService {
+
+		compaction := agentservice.CompactionOptions{Enabled: true}
+		if cfg != nil && cfg.Agent != nil {
+			ac := cfg.Agent.Compaction
+			compaction.Enabled = ac.Enabled == nil || *ac.Enabled
+			compaction.TriggerRatio = ac.TriggerRatio
+			compaction.PreCompactRatio = ac.PreCompactRatio
+			compaction.KeepTurns = ac.KeepTurns
+			compaction.MaxSummaryTokens = ac.MaxSummaryTokens
+			compaction.SummaryProvider = ac.Provider
+			compaction.SummaryModel = ac.Model
+			if ac.TimeoutSeconds > 0 {
+				compaction.SummaryTimeout = time.Duration(ac.TimeoutSeconds) * time.Second
+			}
+		}
 
 		return agentservice.NewService(agentservice.ServiceConfig{
 			Client:    client,
@@ -700,11 +717,13 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 			Perms:     agentservice.NewPermissionManager(perms),
 			Questions: agentservice.NewQuestionManager(questions),
 			// 时间线消息（agent_messages）由 AgentService 在轮内即时持久化。
-			Messages: messages,
-			Memory:   mems,
-			Profiles: profiles,
-			Skills:   skills,
-			Policy:   agentpolicy.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
+			Messages:   messages,
+			Summaries:  summaries,
+			Compaction: compaction,
+			Memory:     mems,
+			Profiles:   profiles,
+			Skills:     skills,
+			Policy:     agentpolicy.NewUserPermissionPolicy(userAgentConfigProvider{repo: userRepo}),
 		})
 	}))
 	// Provide agentinterfaces.SessionService / agentinterfaces.MessageService：会话与消息的增删改查（参考 opencode 分层）。
@@ -733,6 +752,10 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	}))
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.MessageService {
 		return agentservice.NewMessageService(agentrepository.NewGormMessageStore(db))
+	}))
+	// 会话历史摘要（跨轮压缩）：agent_session_summaries，按会话一条 + 水位 UpToSeq。
+	must(container.Provide(func(db *gorm.DB) agentinterfaces.SessionSummaryService {
+		return agentservice.NewSessionSummaryService(agentrepository.NewGormSessionSummaryStore(db))
 	}))
 	// Provide agentinterfaces.HistoryService：会话内文件版本历史（Write / Edit / Patch 落版本）。
 	must(container.Provide(func(db *gorm.DB) agentinterfaces.HistoryService {
@@ -1307,6 +1330,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		&agenttypes.QuestionRequest{},
 		&agenttypes.Session{},
 		&agenttypes.Message{},
+		&agenttypes.SessionSummary{},
 		&agenttypes.File{},
 		&agenttypes.SessionResource{},
 		// Agent 计划（跨会话共享的步骤树）：计划头 + 节点（一行一个）。

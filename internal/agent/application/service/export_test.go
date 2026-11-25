@@ -16,7 +16,22 @@ func (s *AgentService) InjectMemoryForTest(ctx context.Context, prompt string, f
 
 // ConversationHistoryForTest 暴露 AgentService.conversationHistory 供外部测试调用。
 func (s *AgentService) ConversationHistoryForTest(ctx context.Context, task *Task) []Message {
-	return s.conversationHistory(ctx, task)
+	return s.conversationHistory(ctx, task, Request{})
+}
+
+// ConversationHistoryWithRequestForTest 暴露带请求的 conversationHistory（可触发压缩）。
+func (s *AgentService) ConversationHistoryWithRequestForTest(ctx context.Context, task *Task, req Request) []Message {
+	return s.conversationHistory(ctx, task, req)
+}
+
+// CompactionOptionsForTest 暴露生效后的压缩配置。
+func (s *AgentService) CompactionOptionsForTest() CompactionOptions {
+	return s.compaction
+}
+
+// ScheduleCompactionForTest 暴露轮末异步预压缩入口。
+func (s *AgentService) ScheduleCompactionForTest(ctx context.Context, task *Task, req Request) {
+	s.scheduleCompaction(ctx, task, req)
 }
 
 // ExtractMemoryForTest 暴露 AgentService.extractMemory 供外部测试调用。

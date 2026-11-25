@@ -161,6 +161,7 @@ func newServiceOnDB(t *testing.T, db *gorm.DB, extra ...agentclient.Provider) *a
 		Client:    client,
 		Tasks:     agentrepository.NewGormTaskRepository(db),
 		Messages:  messages,
+		Summaries: agentservice.NewSessionSummaryService(agentrepository.NewGormSessionSummaryStore(db)),
 		Perms:     agentservice.NewPermissionManager(agentrepository.NewGormPermissionRepository(db)),
 		Questions: agentservice.NewQuestionManager(agentrepository.NewGormQuestionRepository(db)),
 		Profiles:  agentservice.NewProfileManager(agentrepository.NewGormProfileRepository(db)),

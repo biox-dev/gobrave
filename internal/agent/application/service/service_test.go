@@ -33,7 +33,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("get sql db: %v", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&agenttypes.Task{}, &agenttypes.PermissionRequest{}, &agenttypes.QuestionRequest{}, &agenttypes.Session{}, &agenttypes.Message{}, &agenttypes.Memory{}, &agenttypes.Profile{}, &agenttypes.SessionResource{}); err != nil {
+	if err := db.AutoMigrate(&agenttypes.Task{}, &agenttypes.PermissionRequest{}, &agenttypes.QuestionRequest{}, &agenttypes.Session{}, &agenttypes.Message{}, &agenttypes.SessionSummary{}, &agenttypes.Memory{}, &agenttypes.Profile{}, &agenttypes.SessionResource{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return db
@@ -63,6 +63,7 @@ func newTestServiceWithDB(t *testing.T, extra ...agentclient.Provider) (*agentse
 		Client:    client,
 		Tasks:     agentrepository.NewGormTaskRepository(db),
 		Messages:  agentservice.NewMessageService(agentrepository.NewGormMessageStore(db)),
+		Summaries: agentservice.NewSessionSummaryService(agentrepository.NewGormSessionSummaryStore(db)),
 		Perms:     agentservice.NewPermissionManager(agentrepository.NewGormPermissionRepository(db)),
 		Questions: agentservice.NewQuestionManager(agentrepository.NewGormQuestionRepository(db)),
 		Memory:    agentservice.NewMemoryManager(agentservice.MemoryConfig{Repo: agentrepository.NewGormMemoryRepository(db)}),
