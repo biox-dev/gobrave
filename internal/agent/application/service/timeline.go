@@ -17,6 +17,10 @@ import (
 // TimelineRecorder 在轮内即时写入父会话时间线，子 Agent 会话（执行期实时记录）共用同一规则，
 // 避免两套规则漂移：reasoning / message / tool_call / tool_result 产生消息，其余事件
 // （增量、turn_*、done/error 等）不产生消息——user 消息与轮末的 error 由 ChatService 写入。
+//
+// 这张表同时是「任务可恢复执行」的唯一事实源：tool_call / tool_result 消息带上
+// turn_id（轮次）与 tool_call_id（调用配对），Agent 循环中断后据此算出还有哪些工具
+// 没执行并精确续跑，不再有独立的检查点存储。
 
 // ProjectTimelineEvent 把一条流式完整块事件投影为可持久化的会话消息。
 //
@@ -40,15 +44,18 @@ func ProjectTimelineEvent(sessionID, taskID, ownerID int64, event StreamEvent) (
 			Data:      event.Data,
 		}, true
 	case StreamEventToolCall:
+		call, ok := ToolCallFromData(event.Data)
 		return MessageCreateParams{
-			SessionID: sessionID,
-			Role:      RoleAssistant,
-			Kind:      KindToolCall,
-			TaskID:    taskID,
-			UserID:    ownerID,
-			Content:   TimelineEventSummary("tool", event.Data),
-			Data:      event.Data,
-		}, true
+			SessionID:  sessionID,
+			Role:       RoleAssistant,
+			Kind:       KindToolCall,
+			TaskID:     taskID,
+			UserID:     ownerID,
+			TurnID:     call.TurnID,
+			ToolCallID: call.ID,
+			Content:    TimelineEventSummary("tool", event.Data),
+			Data:       event.Data,
+		}, ok
 	case StreamEventMessage:
 		// assistant 文本块：内容为空（只发起工具调用的消息）时不产生时间线消息。
 		content, ok := MessageBlockContent(event.Data)
@@ -61,19 +68,23 @@ func ProjectTimelineEvent(sessionID, taskID, ownerID int64, event StreamEvent) (
 			Kind:      KindAssistant,
 			TaskID:    taskID,
 			UserID:    ownerID,
+			TurnID:    MessageBlockTurnID(event.Data),
 			Content:   content,
 			Data:      event.Data,
 		}, true
 	case StreamEventToolResult:
+		res, ok := ToolResultFromData(event.Data)
 		return MessageCreateParams{
-			SessionID: sessionID,
-			Role:      RoleAssistant,
-			Kind:      KindToolResult,
-			TaskID:    taskID,
-			UserID:    ownerID,
-			Content:   TimelineEventSummary("tool_result", event.Data),
-			Data:      event.Data,
-		}, true
+			SessionID:  sessionID,
+			Role:       RoleAssistant,
+			Kind:       KindToolResult,
+			TaskID:     taskID,
+			UserID:     ownerID,
+			TurnID:     res.TurnID,
+			ToolCallID: res.ToolCallID,
+			Content:    TimelineEventSummary("tool_result", event.Data),
+			Data:       event.Data,
+		}, ok
 	default:
 		return MessageCreateParams{}, false
 	}
@@ -229,6 +240,11 @@ func (r *TimelineRecorder) RecordResult(ctx context.Context, sessionID, taskID, 
 	}
 
 	persistCtx := context.WithoutCancel(ctx)
+	// 进程重启后内存缓存为空：回查数据库，避免恢复路径把已有的最终回答再写一遍。
+	if exists, err := r.messages.HasAssistantContent(persistCtx, taskID, content); err == nil && exists {
+		return
+	}
+
 	if _, err := r.messages.Create(persistCtx, MessageCreateParams{
 		SessionID: sessionID,
 		Role:      RoleAssistant,

@@ -62,6 +62,14 @@ type Message struct {
 	// ProfileName 是 Agent 侧消息执行者的 Profile 展示名。它不是 agent_messages 表的列：
 	// 会话详情接口会按 UserID 批量（IN 查询）从 agent_profiles 表回填。
 	ProfileName string `json:"profile_name,omitempty" gorm:"-"`
+	// TurnID 是产生该消息的模型响应轮次（仅 Agent 侧消息有值）。
+	//
+	// 同一轮次的 assistant 文本 / tool_call / tool_result 共享 TurnID：任务中断后
+	// Agent 循环据此把它们归为一组，算出「这一轮还有哪些工具没执行」并精确续跑。
+	// 它是恢复执行的唯一轮次依据，不再单独存检查点。
+	TurnID string `json:"turn_id,omitempty" gorm:"column:turn_id;type:varchar(64);index"`
+	// ToolCallID 关联一次工具调用与它的结果（仅 KindToolCall / KindToolResult 有值）。
+	ToolCallID string `json:"tool_call_id,omitempty" gorm:"column:tool_call_id;type:varchar(128);index"`
 	// Content 可能包含完整工具输出 / 长回复，64KB 的 text 会触发 1406，这里用 longtext。
 	Content   string    `json:"content,omitempty" gorm:"column:content;type:longtext"`
 	Data      any       `json:"data,omitempty" gorm:"serializer:json"`
@@ -88,6 +96,9 @@ type MessageCreateParams struct {
 	Kind      string
 	TaskID    int64
 	UserID    int64
-	Content   string
-	Data      any
+	TurnID    string
+	// ToolCallID 关联一次工具调用与它的结果（KindToolCall / KindToolResult）。
+	ToolCallID string
+	Content    string
+	Data       any
 }

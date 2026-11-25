@@ -2066,8 +2066,23 @@ definitions:
           （如 analysis_node_id / workspace_directory / script_file_path 等）。
         type: object
     type: object
+  service.ActiveTaskStatus:
+    properties:
+      error:
+        type: string
+      resumable:
+        type: boolean
+      status:
+        $ref: '#/definitions/types.TaskStatus'
+    type: object
   service.SessionDetail:
     properties:
+      active_task:
+        allOf:
+        - $ref: '#/definitions/service.ActiveTaskStatus'
+        description: |-
+          ActiveTask 是 CurrentTaskID 指向的任务状态快照（仅当 CurrentTaskID 非 0 时返回）。
+          前端据此一次请求即可判断「运行中 / 等待授权 / 可续跑」，无需再按 taskId 查任务。
       created_at:
         type: string
       current_task_id:
@@ -3070,6 +3085,17 @@ definitions:
       task_id:
         example: "0"
         type: string
+      tool_call_id:
+        description: ToolCallID 关联一次工具调用与它的结果（仅 KindToolCall / KindToolResult 有值）。
+        type: string
+      turn_id:
+        description: |-
+          TurnID 是产生该消息的模型响应轮次（仅 Agent 侧消息有值）。
+
+          同一轮次的 assistant 文本 / tool_call / tool_result 共享 TurnID：任务中断后
+          Agent 循环据此把它们归为一组，算出「这一轮还有哪些工具没执行」并精确续跑
+          （见 native.rebuildRounds）。它是恢复执行的唯一轮次依据，不再单独存检查点。
+        type: string
       user_id:
         description: |-
           UserID 是消息的归属者（一个会话可被多个用户共同使用）：
@@ -3801,7 +3827,12 @@ definitions:
         example: "0"
         type: string
       resumable:
-        description: Resumable 是非持久化派生字段：只要存在检查点就可以被手动 / 自动恢复。
+        description: |-
+          Resumable 是非持久化派生字段：任务处于中断态（failed / canceled /
+          waiting_permission）时为真，前端据此在轮末展示「Continue」。
+
+          它能成立是因为恢复所需的事实（assistant 轮次 / 工具调用 / 工具结果）全部落在
+          agent_messages：原生循环可以跳过已完成的工具精确续跑，其它 Provider 则重跑本请求。
         type: boolean
       session_id:
         example: "0"
@@ -10129,7 +10160,7 @@ paths:
   /file/preview:
     get:
       description: |-
-        根据 go_file 主键 ID 查找文件 path，由 path 后缀推断格式并返回可直接渲染的预览内容：
+        根据 go_file 主键 ID 查找文件 path，优先用 go_file.format（为空时回退到 path 后缀）确定格式并返回可直接渲染的预览内容：
         表格（csv/tsv，xlsx 转 TSV）返回分隔文本由前端解析，fasta/gff 等返回原始文本，
         gz/rds 等二进制格式返回不能预览的提示。
       parameters:

@@ -312,7 +312,6 @@ func copyTasksForFork(tx *gorm.DB, ids []int64, sessionID int64, now time.Time) 
 		copied.SessionID = sessionID
 		copied.CreatedAt = now
 		copied.UpdatedAt = now
-		copied.ResumeState = nil
 		if err := tx.Session(&gorm.Session{}).Create(&copied).Error; err != nil {
 			return nil, err
 		}

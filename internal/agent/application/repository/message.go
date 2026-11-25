@@ -175,6 +175,23 @@ func (r *gormMessageStore) ListByTask(ctx context.Context, taskID int64) ([]*age
 	return rows, nil
 }
 
+// HasAssistantContent 判断某任务是否已经落过相同内容的 assistant 文本。
+//
+// 供轮末兜底去重：进程重启后内存里的「已落 assistant」缓存为空，无法据此判断，
+// 只能回到数据库确认，避免同一段最终回答被写两次。
+func (r *gormMessageStore) HasAssistantContent(ctx context.Context, taskID int64, content string) (bool, error) {
+	if taskID <= 0 || content == "" {
+		return false, nil
+	}
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&agent.Message{}).
+		Where("task_id = ? AND kind = ? AND content = ?", taskID, agent.KindAssistant, content).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (r *gormMessageStore) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&agent.Message{}).Error
 }

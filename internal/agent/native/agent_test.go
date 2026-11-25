@@ -83,7 +83,7 @@ func TestExecuteToolsRunsAgentCallsConcurrently(t *testing.T) {
 	}
 
 	cfg := &Config{}
-	results := cfg.executeTools(context.Background(), tool.NewExecutor(registry), calls, testRuntime{}, nil)
+	results := cfg.executeTools(context.Background(), tool.NewExecutor(registry), calls, "", testRuntime{})
 
 	if len(results) != 2 {
 		t.Fatalf("len(results) = %d, want 2", len(results))

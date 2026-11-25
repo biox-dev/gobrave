@@ -64,10 +64,14 @@ func (c *Config) Run(ctx context.Context, req agenttypes.Request, rt agentinterf
 		defer c.OnFinish(ctx)
 	}
 
-	// 检查点（任务模式下可用）：先尝试从持久化状态恢复未完成的工具往返。
-	cw := newCheckpointWriter(rt)
-	history, resumed := c.restoreCheckpoint(ctx, executor, rt, cw)
-	if !resumed {
+	// 恢复：从已落库的消息重建执行现场（已完成的轮次 / 未完成的工具调用）。
+	history, done, resumed := c.restore(ctx, executor, rt, req)
+	switch {
+	case done != "":
+		// 模型已经给出最终回答，只是进程在收尾前退出：不再重复生成。
+		_ = rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventDone})
+		return &agenttypes.Result{Content: done}, nil
+	case !resumed:
 		history = requestMessages(req)
 	}
 
@@ -77,6 +81,13 @@ func (c *Config) Run(ctx context.Context, req agenttypes.Request, rt agentinterf
 		if err != nil {
 			logger.Errorf(ctx, "native agent: iteration %d failed: %v", i+1, err)
 			return nil, err
+		}
+
+		// 本次模型响应的轮次标识：同轮的 assistant 文本 / tool_call / tool_result
+		// 共享它，任务中断后据此分组重建执行现场（见 replay.go）。
+		turnID := ""
+		if len(response.ToolCalls) > 0 {
+			turnID = uuid.NewString()
 		}
 
 		// 完整思考块 / 消息块：作为时间线锚点持久化（增量已实时下发）。
@@ -89,19 +100,18 @@ func (c *Config) Run(ctx context.Context, req agenttypes.Request, rt agentinterf
 		if strings.TrimSpace(response.Content) != "" {
 			_ = rt.Emit(ctx, agenttypes.StreamEvent{
 				Type: agenttypes.StreamEventMessage,
-				Data: agenttypes.MessageBlock{ID: uuid.NewString(), Content: response.Content},
+				Data: agenttypes.MessageBlock{ID: uuid.NewString(), TurnID: turnID, Content: response.Content},
 			})
 		}
 		final = response.Content
 
-		// 没有工具调用：本轮结束。正常结束必须清理检查点，避免任务被误判为可续跑。
+		// 没有工具调用：本轮结束。
 		if len(response.ToolCalls) == 0 {
 			history = append(history, provider.Message{
 				Role:      provider.RoleAssistant,
 				Content:   response.Content,
 				ToolCalls: nil,
 			})
-			cw.clear(ctx)
 			_ = rt.Emit(ctx, agenttypes.StreamEvent{Type: agenttypes.StreamEventDone})
 			return &agenttypes.Result{
 				Content: final,
@@ -109,16 +119,7 @@ func (c *Config) Run(ctx context.Context, req agenttypes.Request, rt agentinterf
 			}, nil
 		}
 
-		// 在「模型已响应、工具尚未执行」这一安全点落检查点：
-		// 若工具在等待权限时进程退出，重启后可据此精确续跑。
-		state := newResumeState(req, history, response)
-		cw.save(ctx, state)
-
-		// 每完成一个工具就把结果合并进检查点：正常重启不会重复执行已完成的工具。
-		results := c.executeTools(ctx, executor, response.ToolCalls, rt, func(_ provider.ToolCall, res provider.ToolResult) {
-			state.MarkToolResult(toResumeToolResult(res))
-			cw.save(ctx, state)
-		})
+		results := c.executeTools(ctx, executor, response.ToolCalls, turnID, rt)
 
 		history = append(history, provider.Message{
 			Role:      provider.RoleAssistant,
@@ -126,62 +127,11 @@ func (c *Config) Run(ctx context.Context, req agenttypes.Request, rt agentinterf
 			ToolCalls: response.ToolCalls,
 		})
 		history = append(history, provider.Message{Role: provider.RoleTool, ToolResults: results})
-		state.CompleteTurn()
-		cw.save(ctx, state)
 	}
 
 	err := fmt.Errorf("native agent: exceeded %d tool iterations", maxIterations)
 	logger.Errorf(ctx, "native agent: %v", err)
 	return nil, err
-}
-
-// restoreCheckpoint 从持久化检查点恢复执行现场。
-//
-// 返回 ok=false 表示没有可用检查点，调用方应使用请求自带的历史重新开始。
-// 有检查点时：
-//   - History 还原为已完成的多轮对话；
-//   - Pending 中的 assistant 响应重新入栈；
-//   - 已完成结果的工具直接复用，未完成的工具重新执行（权限 / 提问会按 tool_call_id 复用决策）。
-func (c *Config) restoreCheckpoint(ctx context.Context, executor *tool.Executor, rt agentinterfaces.Runtime, cw *checkpointWriter) ([]provider.Message, bool) {
-	if !cw.enabled() {
-		return nil, false
-	}
-	state := cw.load(ctx)
-	if state == nil || state.Version != agenttypes.ResumeStateVersion {
-		return nil, false
-	}
-	// 空检查点没有恢复价值：回退到请求自带历史，避免让模型收到空对话。
-	if state.Pending == nil && len(state.History) == 0 {
-		return nil, false
-	}
-
-	history := fromResumeHistory(state.History)
-	if state.Pending == nil {
-		return history, true
-	}
-
-	logger.Infof(ctx, "native agent: resuming from checkpoint (history=%d, pending_tools=%d)",
-		len(history), len(state.Pending.Assistant.ToolCalls))
-
-	assistant := fromResumeMessage(state.Pending.Assistant)
-	results := make([]provider.ToolResult, 0, len(assistant.ToolCalls))
-	for _, call := range assistant.ToolCalls {
-		if done, ok := state.CompletedResult(call.ID); ok {
-			results = append(results, fromResumeToolResult(done))
-			continue
-		}
-		res := c.executeTool(ctx, executor, call)
-		c.emitToolResult(ctx, rt, call, res)
-		results = append(results, res)
-		state.MarkToolResult(toResumeToolResult(res))
-		cw.save(ctx, state)
-	}
-
-	history = append(history, assistant)
-	history = append(history, provider.Message{Role: provider.RoleTool, ToolResults: results})
-	state.CompleteTurn()
-	cw.save(ctx, state)
-	return history, true
 }
 
 // streamOnce 执行一轮模型调用，转发增量事件并返回聚合结果。
@@ -233,15 +183,17 @@ const maxConcurrentAgentCalls = 4
 //   - agent 工具调用彼此独立，允许并发执行，缩短多子 Agent 场景的总耗时；
 //   - 其它工具保持顺序执行，避免 bash / edit / write 等写操作互相干扰；
 //   - 结果按模型给出的调用顺序回填（与 tool_call_id 一一对应），并发完成顺序不影响语义。
-//   - onResult 在每个工具完成时回调，用于把结果增量写入持久化检查点（可为 nil）。
-func (c *Config) executeTools(ctx context.Context, executor *tool.Executor, calls []provider.ToolCall, rt agentinterfaces.Runtime, onResult func(provider.ToolCall, provider.ToolResult)) []provider.ToolResult {
+//
+// turnID 是本轮的轮次标识：工具调用与结果都以它落库，任务中断后据此分组重建现场。
+func (c *Config) executeTools(ctx context.Context, executor *tool.Executor, calls []provider.ToolCall, turnID string, rt agentinterfaces.Runtime) []provider.ToolResult {
 	results := make([]provider.ToolResult, len(calls))
 
 	// 先按顺序下发全部 tool_call 事件，保证时间线里调用顺序与模型输出一致。
+	// 这一步必须在执行之前完成：它是「本轮有哪些调用」的唯一落库依据。
 	for _, call := range calls {
 		_ = rt.Emit(ctx, agenttypes.StreamEvent{
 			Type: agenttypes.StreamEventToolCall,
-			Data: agenttypes.ToolCall{ID: call.ID, Name: call.Name, Arguments: call.Input},
+			Data: agenttypes.ToolCall{ID: call.ID, TurnID: turnID, Name: call.Name, Arguments: call.Input},
 		})
 	}
 
@@ -290,17 +242,11 @@ func (c *Config) executeTools(ctx context.Context, executor *tool.Executor, call
 			continue
 		}
 		results[i] = c.executeTool(ctx, executor, call)
-		c.emitToolResult(ctx, rt, call, results[i])
-		if onResult != nil {
-			onResult(call, results[i])
-		}
+		c.emitToolResult(ctx, rt, call, turnID, results[i])
 	}
 	// 子 Agent 结果按完成顺序下发（tool_call_id 仍能正确对应）。
 	for i := range done {
-		c.emitToolResult(ctx, rt, calls[i], results[i])
-		if onResult != nil {
-			onResult(calls[i], results[i])
-		}
+		c.emitToolResult(ctx, rt, calls[i], turnID, results[i])
 	}
 	return results
 }
@@ -339,14 +285,17 @@ func truncateLog(s string, max int) string {
 }
 
 // emitToolResult 下发一次完整的工具结果事件。
-func (c *Config) emitToolResult(ctx context.Context, rt agentinterfaces.Runtime, call provider.ToolCall, res provider.ToolResult) {
+//
+// 事件即事实：它落库后（agent_messages）就代表该工具调用已完成，恢复时不再重放。
+func (c *Config) emitToolResult(ctx context.Context, rt agentinterfaces.Runtime, call provider.ToolCall, turnID string, res provider.ToolResult) {
 	_ = rt.Emit(ctx, agenttypes.StreamEvent{
 		Type: agenttypes.StreamEventToolResult,
-		Data: map[string]any{
-			"tool_call_id": call.ID,
-			"name":         call.Name,
-			"content":      res.Content,
-			"is_error":     res.IsError,
+		Data: agenttypes.ToolResultBlock{
+			ToolCallID: call.ID,
+			TurnID:     turnID,
+			Name:       call.Name,
+			Content:    res.Content,
+			IsError:    res.IsError,
 		},
 	})
 }

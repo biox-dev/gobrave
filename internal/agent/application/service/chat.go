@@ -735,7 +735,7 @@ type SessionDetail struct {
 // ActiveTaskStatus 是会话当前轮次的状态快照。
 //
 // 只包含前端判定 UI 所需的最小字段：任务 ID 复用 Session.CurrentTaskID，
-// request / resume_state / 时间戳等详情仅供任务详情接口使用。
+// request / 时间戳等详情仅供任务详情接口使用。
 type ActiveTaskStatus struct {
 	Status    TaskStatus `json:"status"`
 	Resumable bool       `json:"resumable"`

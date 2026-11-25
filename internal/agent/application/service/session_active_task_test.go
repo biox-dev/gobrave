@@ -3,7 +3,6 @@ package service_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	agentrepository "github.com/biox-dev/gobrave/internal/agent/application/repository"
 	agentservice "github.com/biox-dev/gobrave/internal/agent/application/service"
@@ -48,13 +47,7 @@ func TestGetSessionIncludesActiveTask(t *testing.T) {
 		t.Fatalf("status = %q, want %q", detail.ActiveTask.Status, agenttypes.TaskRunning)
 	}
 
-	// failed + 检查点：resumable 为真，error 一并带出（供前端补错误气泡）。
-	if err := tasks.UpdateResumeState(ctx, task.ID, &agenttypes.TaskResumeState{
-		Version:   agenttypes.ResumeStateVersion,
-		UpdatedAt: time.Now(),
-	}); err != nil {
-		t.Fatalf("update resume state: %v", err)
-	}
+	// failed（中断态）：resumable 为真，error 一并带出（供前端补错误气泡）。
 	task.Status = agenttypes.TaskFailed
 	task.Error = "boom"
 	if err := tasks.Update(ctx, task); err != nil {

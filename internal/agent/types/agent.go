@@ -153,8 +153,10 @@ type ReasoningBlock struct {
 
 // ToolCall 是一次完整的工具调用（对应 AssistantMessageToolRequest）。
 type ToolCall struct {
-	ID        string `json:"id"`   // toolCallId
-	Name      string `json:"name"` // 工具名
+	ID   string `json:"id"` // toolCallId
+	Name string `json:"name"`
+	// TurnID 是发起该调用的模型响应轮次；同一轮的全部工具调用共享它。
+	TurnID    string `json:"turn_id,omitempty"`
 	Arguments any    `json:"arguments,omitempty"`
 }
 
@@ -165,6 +167,24 @@ type MessageBlock struct {
 	TurnID    string     `json:"turn_id,omitempty"` // 所属 turn
 	Content   string     `json:"content"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+}
+
+// MessageBlockTurnID 从 message 事件体读取轮次标识（兼容内存态与 JSON map 形态）。
+func MessageBlockTurnID(data any) string {
+	switch v := data.(type) {
+	case MessageBlock:
+		return v.TurnID
+	case *MessageBlock:
+		if v == nil {
+			return ""
+		}
+		return v.TurnID
+	case map[string]any:
+		id, _ := v["turn_id"].(string)
+		return id
+	default:
+		return ""
+	}
 }
 
 // TurnBlock 描述一轮（turn）的边界（对应 turn_start / turn_end 事件）。

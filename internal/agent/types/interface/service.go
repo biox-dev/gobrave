@@ -74,6 +74,8 @@ type MessageService interface {
 	ListParticipants(ctx context.Context, sessionID int64) ([]types.SessionUser, error)
 	// ListByTask 返回某任务的全部消息（含该轮的 user 消息），按 Seq 升序。
 	ListByTask(ctx context.Context, taskID int64) ([]types.Message, error)
+	// HasAssistantContent 判断某任务是否已经落过相同内容的 assistant 文本（轮末兜底去重用）。
+	HasAssistantContent(ctx context.Context, taskID int64, content string) (bool, error)
 	Delete(ctx context.Context, id int64) error
 	// DeleteByTask 删除某任务的全部消息（含该轮的 user 消息）。
 	DeleteByTask(ctx context.Context, taskID int64) error

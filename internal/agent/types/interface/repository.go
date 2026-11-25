@@ -16,9 +16,6 @@ type TaskRepository interface {
 	Create(ctx context.Context, task *types.Task) error
 	Get(ctx context.Context, id int64) (*types.Task, error)
 	Update(ctx context.Context, task *types.Task) error
-	// UpdateResumeState 只更新可恢复执行检查点，避免与状态迁移并发时互相覆盖。
-	// state 为 nil 表示清理检查点。
-	UpdateResumeState(ctx context.Context, id int64, state *types.TaskResumeState) error
 	ListByStatus(ctx context.Context, statuses ...types.TaskStatus) ([]*types.Task, error)
 	// Page 分页查询任务（按 CreatedAt 升序）；statuses 为空表示全部状态。
 	Page(ctx context.Context, offset, limit int, statuses ...types.TaskStatus) ([]*types.Task, int64, error)
@@ -117,6 +114,8 @@ type MessageStore interface {
 	ListParticipants(ctx context.Context, sessionID int64) ([]types.SessionUser, error)
 	// ListByTask 返回某任务的全部消息（含 user / assistant 时间线），按 Seq 升序。
 	ListByTask(ctx context.Context, taskID int64) ([]*types.Message, error)
+	// HasAssistantContent 判断某任务是否已经落过相同内容的 assistant 文本。
+	HasAssistantContent(ctx context.Context, taskID int64, content string) (bool, error)
 	Delete(ctx context.Context, id int64) error
 	// DeleteByTask 删除某任务的全部消息（含该轮的 user 消息）。
 	DeleteByTask(ctx context.Context, taskID int64) error

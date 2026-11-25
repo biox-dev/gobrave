@@ -47,18 +47,16 @@ type Agent interface {
 	Stream(ctx context.Context, req types.Request, rt Runtime) (*types.Result, error)
 }
 
-// CheckpointRuntime 是 Runtime 的可选扩展：Agent 循环通过它读写任务的持久化检查点。
+// MessageReplay 是 Runtime 的可选扩展：Agent 循环据此读取本任务已落库的会话消息，
+// 在进程重启后重建执行现场。
 //
-// taskRuntime 实现了该接口；native 包通过类型断言使用它，避免把持久化细节耦合进
-// Agent 循环本身。Runtime 未实现该接口时，Agent 循环退化为纯内存执行。
-type CheckpointRuntime interface {
+// 恢复所需的事实只有一份：agent_messages。native 循环按 turn_id 把 assistant 文本、
+// 工具调用与工具结果归为一轮，已完成的工具不重放，未完成的重新执行（权限 / 提问按
+// tool_call_id 复用已落库的决策）。Runtime 未实现该接口时，Agent 循环退化为纯内存执行。
+type MessageReplay interface {
 	Runtime
-	// LoadCheckpoint 读取当前任务的检查点；不存在时返回 nil。
-	LoadCheckpoint(ctx context.Context) *types.TaskResumeState
-	// SaveCheckpoint 覆盖写入检查点（检查点必须可以在一次写入中完整表达）。
-	SaveCheckpoint(ctx context.Context, state *types.TaskResumeState) error
-	// ClearCheckpoint 在任务正常结束后清理检查点。
-	ClearCheckpoint(ctx context.Context) error
+	// TaskMessages 返回本任务已落库的消息（按 Seq 升序，含该轮的 user 消息）。
+	TaskMessages(ctx context.Context) ([]types.Message, error)
 }
 
 // EventBus 是实时通知层接口：只负责“告诉 UI 状态发生了变化”，不承担状态存储。

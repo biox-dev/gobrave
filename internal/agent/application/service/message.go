@@ -93,6 +93,11 @@ func (s *messageService) ListByTask(ctx context.Context, taskID int64) ([]Messag
 	return out, nil
 }
 
+// HasAssistantContent 判断某任务是否已经落过相同内容的 assistant 文本。
+func (s *messageService) HasAssistantContent(ctx context.Context, taskID int64, content string) (bool, error) {
+	return s.store.HasAssistantContent(ctx, taskID, content)
+}
+
 func (s *messageService) Delete(ctx context.Context, id int64) error {
 	return s.store.Delete(ctx, id)
 }

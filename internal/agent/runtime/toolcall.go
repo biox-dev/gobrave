@@ -122,12 +122,8 @@ func (r *ToolRunner) emitResult(ctx context.Context, call ToolCall, res tool.Res
 //
 // 字段名与 native Agent 的 emitToolResult 保持一致（tool_call_id），
 // 让前端无论走哪条执行路径都能用同一个字段把结果配对到对应的 tool_call（data.id）。
-type ToolResultEvent struct {
-	ToolCallID string `json:"tool_call_id"`
-	Name       string `json:"name"`
-	Content    string `json:"content"`
-	IsError    bool   `json:"is_error"`
-}
+// 它是 agenttypes.ToolResultBlock 的别名：时间线投影与恢复逻辑共用同一份结构。
+type ToolResultEvent = ToolResultBlock
 
 // ToolCallProvider 由 Provider 提供：根据上一轮结果决定下一批待执行的工具调用。
 // 返回空切片表示不再有工具调用，循环结束。

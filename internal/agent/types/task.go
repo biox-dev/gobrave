@@ -70,12 +70,11 @@ type Task struct {
 
 	// Request 保存原始请求，用于恢复时重建上下文。
 	Request Request `json:"request,omitempty" gorm:"serializer:json"`
-	// ResumeState 是可恢复执行检查点（Agent 循环的对话历史 / 待执行工具调用）。
-	// 为空表示该任务不可续跑（例如 Provider 未实现检查点，或任务从未开始执行）。
-	// 该列只由 TaskRepository.UpdateResumeState 维护，普通 Update 会显式 Omit，
-	// 避免内存中的旧 Task 快照在状态迁移时把检查点覆盖成 NULL。
-	ResumeState *TaskResumeState `json:"-" gorm:"column:resume_state;type:longtext;serializer:json"`
-	// Resumable 是非持久化派生字段：只要存在检查点就可以被手动 / 自动恢复。
+	// Resumable 是非持久化派生字段：任务处于中断态（failed / canceled /
+	// waiting_permission）时为真，前端据此在轮末展示「Continue」。
+	//
+	// 它能成立是因为恢复所需的事实（assistant 轮次 / 工具调用 / 工具结果）全部落在
+	// agent_messages：原生循环可以跳过已完成的工具精确续跑，其它 Provider 则重跑本请求。
 	Resumable bool `json:"resumable" gorm:"-"`
 	// Error 保存最近一次错误信息（Status == failed 时有效）。
 	Error string `json:"error,omitempty" gorm:"column:error;type:text"`
@@ -97,15 +96,28 @@ func (t *Task) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
-// AfterFind 在从数据库加载任务后派生 Resumable 字段，前端无需感知检查点细节。
+// AfterFind 在从数据库加载任务后派生 Resumable 字段，前端无需感知中断细节。
 func (t *Task) AfterFind(*gorm.DB) error {
-	t.Resumable = t.ResumeState != nil
+	t.Resumable = t.Status.Resumable()
 	return nil
+}
+
+// Resumable 判断任务是否处于可续跑的中断态。
+//
+// completed / created 不属于中断态：前者已正常结束，后者应走 StartTask。
+// 是否真的还有工具需要重放由 Provider 从 agent_messages 自行判断。
+func (s TaskStatus) Resumable() bool {
+	switch s {
+	case TaskFailed, TaskCanceled, TaskWaitingPermission:
+		return true
+	default:
+		return false
+	}
 }
 
 // TaskFacts 是一次 Agent 执行所需的只读任务事实快照。
 //
-// 与 *Task 不同，它不含 Status / ResumeState / 时间戳等可变状态：
+// 与 *Task 不同，它不含 Status / 时间戳等可变状态：
 // 因此可以安全地被 Runtime 持有并跨 goroutine 读取，也不会让 Agent 层依赖持久化实体。
 // 「谁在执行」这类事实（任务 / 会话 / 项目 / 用户）与工作目录统一从这里读取。
 type TaskFacts struct {
@@ -156,7 +168,6 @@ func NewTask(req Request, facts TaskFacts) *Task {
 		CreatedAt:         now,
 		UpdatedAt:         now,
 		Resumable:         false,
-		ResumeState:       nil,
 	}
 }
 
@@ -174,9 +185,9 @@ func (t *Task) TransitionTo(next TaskStatus) bool {
 //
 // 允许 failed / canceled / waiting_permission / running（无活跃 goroutine 的挂起态）续跑；
 // completed / created 不允许通过该入口恢复（created 走 StartTask）。
-// 用户手动终止（canceled）同样保留检查点，因此也属于可恢复的中断态。
+// 用户手动终止（canceled）同样属于可恢复的中断态。
 // 与 TransitionTo 分开是为了保持常规状态机的严格性：failed/canceled → running 只允许
-// 在“存在持久化检查点且人工 / 权限审批触发恢复”这一条路径上发生。
+// 在「人工点击继续 / 权限审批」这一条路径上发生。
 func (t *Task) MarkResumed() bool {
 	switch t.Status {
 	case TaskFailed, TaskCanceled, TaskWaitingPermission, TaskRunning:

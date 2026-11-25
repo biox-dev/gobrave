@@ -293,35 +293,12 @@ func (r *taskRuntime) resolveExistingQuestion(ctx context.Context, q *QuestionRe
 	}
 }
 
-// ---- CheckpointRuntime：把 Agent 循环的可恢复检查点持久化到任务行 ----
+// ---- MessageReplay：把本任务已落库的会话消息交给 Agent 循环重建执行现场 ----
 
-// LoadCheckpoint 读取当前任务的检查点；不存在时返回 nil。
-func (r *taskRuntime) LoadCheckpoint(ctx context.Context) *TaskResumeState {
-	if r.svc == nil || r.svc.tasks == nil {
-		return nil
+// TaskMessages 返回本任务已落库的消息（按 Seq 升序），是恢复执行的唯一事实源。
+func (r *taskRuntime) TaskMessages(ctx context.Context) ([]Message, error) {
+	if r.svc == nil || r.svc.messages == nil {
+		return nil, nil
 	}
-	task, err := r.svc.tasks.Get(ctx, r.facts.TaskID)
-	if err != nil {
-		return nil
-	}
-	return task.ResumeState
-}
-
-// SaveCheckpoint 覆盖写入检查点。
-//
-// 检查点写入属于“事后必须完成”的持久化动作：使用 WithoutCancel 解绑 Provider / 工具
-// 的取消信号，避免工具返回后 ctx 被取消导致检查点静默丢失。
-func (r *taskRuntime) SaveCheckpoint(ctx context.Context, state *TaskResumeState) error {
-	if r.svc == nil || r.svc.tasks == nil {
-		return nil
-	}
-	return r.svc.tasks.UpdateResumeState(context.WithoutCancel(ctx), r.facts.TaskID, state)
-}
-
-// ClearCheckpoint 清理检查点（任务正常结束 / 取消时）。
-func (r *taskRuntime) ClearCheckpoint(ctx context.Context) error {
-	if r.svc == nil || r.svc.tasks == nil {
-		return nil
-	}
-	return r.svc.tasks.UpdateResumeState(context.WithoutCancel(ctx), r.facts.TaskID, nil)
+	return r.svc.messages.ListByTask(context.WithoutCancel(ctx), r.facts.TaskID)
 }
