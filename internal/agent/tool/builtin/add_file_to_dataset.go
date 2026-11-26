@@ -52,13 +52,13 @@ type AddFileToDatasetOutput struct {
 func AddFileToDataset(writer runtimecontext.DatasetWriter) tool.Tool {
 	return tool.NewFunc(
 		AddFileToDatasetToolName,
-		"把一个文件添加到数据集。传入 dataset_id（数据集 ID，支持 @dataset:<id>）与 path（文件路径）：绝对路径必须位于项目存储根目录内，相对路径相对数据集工作目录解析。可选 role（文件角色，如 BAM / VCF / DEFAULT，缺省 DEFAULT）、file_name（展示文件名，缺省取文件名）、is_prefix（把 path 当作前缀批量场景，不校验文件存在）、is_copy（先把文件复制到数据集目录再登记）。完成后文件会出现在该数据集的文件列表中。",
+		"把一个文件添加到数据集。传入 dataset_id（数据集 ID，支持 @dataset:<id>）与 path（文件路径）：绝对路径必须位于项目存储根目录内，相对路径相对数据集工作目录解析。可选 role（文件角色，如 BAM / VCF / DEFAULT，缺省 DEFAULT；登记参考数据库 / 基因组索引时传 DATABASE）、file_name（展示文件名，缺省取文件名）、is_prefix（把 path 当作前缀批量场景，不校验文件存在；基因组索引只登记前缀时用）、is_copy（先把文件复制到数据集目录再登记）。每个数据库只登记一个 file：一个数据库目录登记一次即可，不要逐个文件登记。完成后文件会出现在该数据集的文件列表中。",
 		tool.Schema("把文件添加到数据集的入参", map[string]any{
 			"dataset_id": tool.StringProperty("数据集 ID（go_dataset 主键，字符串以保精度）。来自用户输入里的 @dataset:<id> 引用。"),
-			"path":       tool.StringProperty("要添加的文件路径。绝对路径必须在项目存储根目录内；相对路径相对数据集工作目录（get_dataset 返回的 path）解析。"),
-			"role":       tool.StringProperty("文件角色（go_file.role），可选值 DEFAULT / TABLE / DATABASE；缺省 DEFAULT。"),
+			"path":       tool.StringProperty("要添加的文件路径。绝对路径必须在项目存储根目录内；相对路径相对数据集工作目录（get_dataset 返回的 path）解析。数据库目录 / 基因组索引可直接传前缀或目录路径。"),
+			"role":       tool.StringProperty("文件角色（go_file.role），可选值 DEFAULT / TABLE / DATABASE；缺省 DEFAULT。数据库 / 参考索引请传 DATABASE。"),
 			"file_name":  tool.StringProperty("展示文件名；缺省取路径的 basename。"),
-			"is_prefix":  tool.BooleanProperty("为 true 时把 path 当作前缀（批量目录导入场景），不校验文件是否存在。"),
+			"is_prefix":  tool.BooleanProperty("为 true 时把 path 当作前缀（批量目录导入 / 基因组索引前缀场景），不校验文件是否存在。"),
 			"is_copy":    tool.BooleanProperty("为 true 时先把文件复制到数据集目录（文件名加时间戳前缀）再登记。"),
 		}, "dataset_id", "path"),
 		func(ctx context.Context, in AddFileToDatasetInput) (AddFileToDatasetOutput, error) {

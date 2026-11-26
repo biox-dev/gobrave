@@ -1073,15 +1073,10 @@ type FileUpdateResult struct {
 	Changed     []string   `json:"changed,omitempty"`
 }
 
-// DatasetWriter 抽象「按 key 准备数据集 / 向数据集添加文件」的写能力
-// （get_project_database_path / add_file_to_dataset）。
+// DatasetWriter 抽象「向数据集添加文件」的写能力（add_file_to_dataset）。
 //
-// 与 DatasetBrowser 分开：写操作需要创建数据集、登记文件，属于会改库 / 改盘的能力。
+// 与 DatasetBrowser 分开：写操作需要登记文件，属于会改库 / 改盘的能力。
 type DatasetWriter interface {
-	// EnsureDatasetByKey 返回当前激活项目下 dataset_key 匹配的数据集；不存在时按
-	// key 作为名称创建并绑定到项目。第二个返回值表示本次是否新建。
-	EnsureDatasetByKey(ctx context.Context, projectID int64, datasetKey string) (DatasetBrief, bool, error)
-
 	// AddFileToDataset 把 Path 指向的文件登记为 DatasetID 的数据集文件。
 	//
 	// 绝对路径必须在存储根目录（storage.base_dir）内；相对路径相对数据集工作目录

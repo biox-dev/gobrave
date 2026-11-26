@@ -38,7 +38,6 @@ func All(d Deps) []tool.Tool {
 		GetDataset(d.DatasetBrowser),
 		CreateDataset(d.DatasetListWriter),
 		UpdateDataset(d.DatasetListWriter),
-		GetProjectDatabasePath(d.DatasetWriter),
 		AddFileToDataset(d.DatasetWriter),
 
 		// 容器模板：列出 / 查看 / 创建 / 更新共享运行配置与绑定行。

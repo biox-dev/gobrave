@@ -66,8 +66,7 @@ type Deps struct {
 	Plan planService
 	// SessionResources 读取当前会话产出的资源（list_session_resources）。
 	SessionResources sessionResourceLister
-	// DatasetWriter 准备已知 key 的数据集 / 向数据集登记文件
-	// （get_project_database_path / add_file_to_dataset）。
+	// DatasetWriter 向数据集登记文件（add_file_to_dataset）。
 	DatasetWriter runtimecontext.DatasetWriter
 	// DatasetListWriter 在当前项目下创建 / 更新数据集（create_dataset / update_dataset）。
 	DatasetListWriter runtimecontext.DatasetListWriter

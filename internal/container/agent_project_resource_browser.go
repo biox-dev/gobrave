@@ -34,7 +34,6 @@ import (
 //   - list_container_templates：列出全部容器模板（definition ID + 绑定行的 name / description）；
 //   - get_container_template：按 @container:<id> 引用查看绑定行的 name / description；
 //   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径；
-//   - get_project_database_path：按固定 dataset_key=DATABASES 准备并返回项目数据库目录；
 //   - add_file_to_dataset：把文件登记到当前项目的数据集；
 //   - get_report：按 @report:<id> 引用读回报告标题 / 正文文件路径 / 正文内容。
 //
@@ -838,51 +837,6 @@ func (b *projectResourceBrowser) GetDatasetByID(ctx context.Context, projectID i
 		Description: dataset.Description,
 		Path:        utils.GetDatasetDir(absBaseDir, projectID, datasetID),
 	}, nil
-}
-
-// EnsureDatasetByKey 返回当前激活项目下 dataset_key 匹配的数据集，不存在时创建
-// （get_project_database_path）。
-//
-// 固定 key 的数据集（如 types.DatasetKeyDatabases）由 Agent 按需准备：先按
-// go_project_dataset 绑定列出项目数据集并匹配 dataset_key，未命中时以 key 为名称
-// 创建数据集并绑定到项目（CreateDataset 同时会确保工作目录存在）。第二个返回值
-// 表示本次是否新建。
-func (b *projectResourceBrowser) EnsureDatasetByKey(ctx context.Context, projectID int64, datasetKey string) (runtimecontext.DatasetBrief, bool, error) {
-	const toolName = "get_project_database_path"
-	key := strings.TrimSpace(datasetKey)
-	if projectID <= 0 {
-		return runtimecontext.DatasetBrief{}, false, fmt.Errorf("%s: project_id is required", toolName)
-	}
-	if key == "" {
-		return runtimecontext.DatasetBrief{}, false, fmt.Errorf("%s: dataset_key is required", toolName)
-	}
-	if b.dataSvc == nil {
-		return runtimecontext.DatasetBrief{}, false, fmt.Errorf("%s: required services are not configured", toolName)
-	}
-
-	datasets, err := b.dataSvc.ListDatasetByProjectID(ctx, projectID)
-	if err != nil {
-		return runtimecontext.DatasetBrief{}, false, fmt.Errorf("%s: failed to list project datasets: %w", toolName, err)
-	}
-	for _, dataset := range datasets {
-		if dataset == nil || !strings.EqualFold(strings.TrimSpace(dataset.DatasetKey), key) {
-			continue
-		}
-		brief, err := b.toDatasetBrief(toolName, projectID, dataset)
-		return brief, false, err
-	}
-
-	dataset := &types.Dataset{
-		DatasetKey:  key,
-		DatasetName: key,
-		Description: "由 Agent 自动创建的数据集（dataset_key=" + key + "）",
-	}
-	if err := b.dataSvc.CreateDataset(ctx, dataset, projectID); err != nil {
-		return runtimecontext.DatasetBrief{}, false, fmt.Errorf("%s: failed to create dataset %q: %w", toolName, key, err)
-	}
-
-	brief, err := b.toDatasetBrief(toolName, projectID, dataset)
-	return brief, true, err
 }
 
 // toDatasetBrief 把数据集映射为工具回传的摘要，Path 由 utils.GetDatasetDir 推导。

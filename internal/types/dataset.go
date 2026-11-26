@@ -9,9 +9,8 @@ import (
 )
 
 // DatasetKeyDatabases is the dataset_key of the project's default database
-// directory. The dataset is provisioned on demand by the
-// get_project_database_path agent tool and holds reference databases shared by
-// the project's analysis scripts.
+// directory. It holds reference databases shared by the project's analysis
+// scripts; scripts look them up through list_file with role DATABASE.
 const DatasetKeyDatabases = "DATABASES"
 
 type Dataset struct {

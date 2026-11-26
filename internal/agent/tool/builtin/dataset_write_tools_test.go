@@ -13,20 +13,8 @@ import (
 
 // fakeDatasetWriter 记录工具调用并回放固定结果。
 type fakeDatasetWriter struct {
-	ensureKey   string
-	addInput    runtimecontext.DatasetFileAddInput
-	ensureCalls int
-	addCalls    int
-}
-
-func (f *fakeDatasetWriter) EnsureDatasetByKey(_ context.Context, _ int64, datasetKey string) (runtimecontext.DatasetBrief, bool, error) {
-	f.ensureCalls++
-	f.ensureKey = datasetKey
-	return runtimecontext.DatasetBrief{
-		DatasetID:   42,
-		DatasetName: types.DatasetKeyDatabases,
-		Path:        "/data/7/dataset/42",
-	}, true, nil
+	addInput runtimecontext.DatasetFileAddInput
+	addCalls int
 }
 
 func (f *fakeDatasetWriter) AddFileToDataset(_ context.Context, in runtimecontext.DatasetFileAddInput) (runtimecontext.DatasetFileAddResult, error) {
@@ -41,32 +29,6 @@ func (f *fakeDatasetWriter) AddFileToDataset(_ context.Context, in runtimecontex
 		Format:    "db",
 		Size:      1024,
 	}, nil
-}
-
-func TestGetProjectDatabasePathTool(t *testing.T) {
-	writer := &fakeDatasetWriter{}
-	exec := tool.NewExecutor(tool.NewRegistryWith(GetProjectDatabasePath(writer)))
-
-	ctx := tool.WithTaskFacts(context.Background(), agenttypes.TaskFacts{ProjectID: 7})
-	res := exec.Execute(ctx, tool.Call{
-		ID:        "c1",
-		Name:      GetProjectDatabasePathToolName,
-		Arguments: json.RawMessage(`{}`),
-	})
-	if res.IsError {
-		t.Fatalf("unexpected error: %v", res.Content)
-	}
-
-	var out GetProjectDatabasePathOutput
-	if err := json.Unmarshal([]byte(res.Content), &out); err != nil {
-		t.Fatalf("unmarshal result %q: %v", res.Content, err)
-	}
-	if writer.ensureCalls != 1 || writer.ensureKey != types.DatasetKeyDatabases {
-		t.Fatalf("ensure = (%d, %q), want (1, %q)", writer.ensureCalls, writer.ensureKey, types.DatasetKeyDatabases)
-	}
-	if out.Path != "/data/7/dataset/42" || !out.Created || out.DatasetID != 42 {
-		t.Fatalf("unexpected output: %+v", out)
-	}
 }
 
 func TestAddFileToDatasetTool(t *testing.T) {
