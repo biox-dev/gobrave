@@ -45,7 +45,7 @@ type GetScriptOutput struct {
 func GetScript(browser runtimecontext.ScriptBrowser) tool.Tool {
 	return tool.NewFunc(
 		GetScriptToolName,
-		"按 script_id 查看单个分析脚本。返回 name / description / container_template_id 与三个文件路径（script_file_path / io_schema_path / readme_file），并直接回传文件正文（files：script_file / io_schema / readme，留空时全部返回），无需再用 view / bash 读取。不确定 script_id 时先用 list_project_scripts 列出当前项目脚本。修改脚本用 update_script（file + content 或 old_string/new_string）。",
+		"按 script_id 查看单个分析脚本。返回 name / description / container_template_id 与三个文件路径（script_file_path / io_schema_path / readme_file），并直接回传文件正文（files：script_file / io_schema / readme，留空时全部返回），无需再用 view / bash 读取。不确定 script_id 时先用 list_project_scripts 列出当前项目脚本。修改脚本用 update_script（name / description / container_template_id 或 file + content 或 old_string/new_string）。",
 		tool.Schema("按 ID 查看脚本的入参", map[string]any{
 			"script_id": tool.StringProperty("脚本主键 ID（必填，整数，字符串以保精度）。来自用户输入里的 @script:<id> 引用时直接使用冒号后的 ID，也可来自 list_project_scripts 的结果。"),
 			"files":     resourceFilesSchema("要直接读取正文的文件列表；留空时返回全部三个文件。", runtimecontext.ResourceFileScript, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme),

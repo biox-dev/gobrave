@@ -405,22 +405,22 @@ type AnalysisNodeCreator interface {
 	CreateAnalysisNode(ctx context.Context, input AnalysisNodeCreateInput) (AnalysisNodeCreateResult, error)
 }
 
-// ScriptUpdater 抽象「更新已有脚本基本信息（name / description）」的业务能力。
+// ScriptUpdater 抽象「更新已有脚本基本信息（name / description / 容器模板）」的业务能力。
 //
-// 它只覆盖脚本名称与描述这两个元数据字段，不触碰脚本内容（脚本主文件由模型直接读写）、
-// io_schema 与容器模板，因此实现必须是「读改写」：先按 script_id 读出完整 Script 记录，
-// 只覆盖请求中给出的字段，再整体回写，避免把未提交的字段写成零值
+// 它只覆盖脚本的名称、描述与绑定的容器模板这三个元数据字段，不触碰脚本内容
+// （脚本主文件由模型直接读写）与 io_schema，因此实现必须是「读改写」：先按 script_id
+// 读出完整 Script 记录，只覆盖请求中给出的字段，再整体回写，避免把未提交的字段写成零值
 // （workflowRepository.UpdateScript 是整体替换语义）。
 //
 // 与 ScriptCreator 一样，它是进程级静态依赖，由 builtin.Deps 在构造工具时注入。
 type ScriptUpdater interface {
-	// UpdateScriptInfo 更新脚本的 name / description，返回更新后的关键信息。
+	// UpdateScriptInfo 更新脚本的 name / description / container_template_id，返回更新后的关键信息。
 	//
 	// projectID 取自 RuntimeContext.ProjectID（当前用户激活项目）：脚本必须属于该项目，
 	// 否则返回错误（避免模型改到别的项目的脚本）。
 	// scriptID 是 Script 主键（int64），必须为正数。
-	// name / description 为指针：nil 表示「不修改该字段」，非 nil 时按值覆盖
-	// （description 允许被显式置为空字符串以清空描述）。
+	// name / description / containerTemplateID 为指针：nil 表示「不修改该字段」，非 nil 时按值覆盖
+	// （description 允许被显式置为空字符串以清空描述；container_template_id 必须为正数）。
 	UpdateScriptInfo(ctx context.Context, input ScriptUpdateInput) (ScriptUpdateResult, error)
 }
 
@@ -433,6 +433,9 @@ type ScriptUpdateInput struct {
 	// Name / Description 为 nil 表示不修改；非 nil 时覆盖对应字段。
 	Name        *string `json:"name,omitempty"`
 	Description *string `json:"description,omitempty"`
+	// ContainerTemplateID 为 nil 表示不修改；非 nil 时覆盖脚本绑定的容器模板
+	// （go_container_template_definition 主键，必须为正数）。
+	ContainerTemplateID *int64 `json:"container_template_id,omitempty,string"`
 	// File 指向要编辑的脚本文件（script_file / io_schema / readme）。
 	//
 	// File 非空时按 ResourceFileEdit 的语义编辑该文件：Content != nil 为整体覆盖，
@@ -456,7 +459,12 @@ type ScriptUpdateResult struct {
 	ScriptType     string `json:"script_type,omitempty"`
 	ScriptFilePath string `json:"script_file_path,omitempty"`
 	IOSchemaPath   string `json:"io_schema_path,omitempty"`
-	// Changed 列出本次实际被修改的字段名（name / description），便于模型确认。
+	// ContainerTemplateID / ContainerTemplateName 是脚本更新后绑定的容器模板
+	// （ID 为 go_container_template_definition 主键；未显式修改时回传当前绑定值）。
+	ContainerTemplateID   int64  `json:"container_template_id,string,omitempty"`
+	ContainerTemplateName string `json:"container_template_name,omitempty"`
+	// Changed 列出本次实际被修改的字段名（name / description / container_template_id），
+	// 便于模型确认。
 	Changed []string `json:"changed,omitempty"`
 }
 

@@ -15,20 +15,23 @@ const UpdateScriptToolName = "update_script"
 
 // UpdateScriptInput 是 update_script 工具的入参。
 //
-// 两类修改可在同一次调用中完成：
-//   - 元数据：name / description（空串表示不修改）；
+// 三类修改可在同一次调用中完成：
+//   - 元数据：name / description / container_template_id（空串表示不修改）；
 //   - 文件：file（script_file / io_schema / readme）+ content（整体覆盖）
 //     或 old_string → new_string（唯一文本替换）。
 //
 // ScriptID 为必填：模型必须显式给出要更新的脚本 ID，不再从运行时上下文回退。
 type UpdateScriptInput struct {
-	ScriptID    string  `json:"script_id"`   // 脚本主键 ID（必填，字符串以保精度）
-	Name        string  `json:"name"`        // 新脚本名称，留空表示不修改
-	Description string  `json:"description"` // 新脚本描述，留空表示不修改
-	File        string  `json:"file"`        // script_file / io_schema / readme，留空表示不改文件
-	Content     *string `json:"content"`     // 整体覆盖正文；nil 表示不覆盖
-	OldString   string  `json:"old_string"`  // 文本替换的原文（必须唯一出现）
-	NewString   string  `json:"new_string"`  // 文本替换后的内容
+	ScriptID    string `json:"script_id"`   // 脚本主键 ID（必填，字符串以保精度）
+	Name        string `json:"name"`        // 新脚本名称，留空表示不修改
+	Description string `json:"description"` // 新脚本描述，留空表示不修改
+	// ContainerTemplateID 是新容器模板 ID（支持 "@container:<id>" 形式），
+	// 留空表示不修改；给出时必须是已存在的容器模板。
+	ContainerTemplateID string  `json:"container_template_id"`
+	File                string  `json:"file"`       // script_file / io_schema / readme，留空表示不改文件
+	Content             *string `json:"content"`    // 整体覆盖正文；nil 表示不覆盖
+	OldString           string  `json:"old_string"` // 文本替换的原文（必须唯一出现）
+	NewString           string  `json:"new_string"` // 文本替换后的内容
 }
 
 // UpdateScriptOutput 是 update_script 工具返回给模型的结果。
@@ -41,32 +44,38 @@ type UpdateScriptOutput struct {
 	ScriptType     string `json:"script_type,omitempty"`
 	ScriptFilePath string `json:"script_file_path,omitempty"`
 	IOSchemaPath   string `json:"io_schema_path,omitempty"`
-	// Changed 列出本次实际被修改的字段（name / description）。
+	// ContainerTemplateID / ContainerTemplateName 是脚本当前绑定的容器模板
+	// （未修改时回传原绑定值）。
+	ContainerTemplateID   int64  `json:"container_template_id,string,omitempty"`
+	ContainerTemplateName string `json:"container_template_name,omitempty"`
+	// Changed 列出本次实际被修改的字段（name / description / container_template_id）。
 	Changed []string `json:"changed,omitempty"`
 	Error   string   `json:"error,omitempty"`
 }
 
-// UpdateScript 返回一个「更新脚本 name / description」工具。
+// UpdateScript 返回一个「更新脚本 name / description / container_template_id」工具。
 //
 // 行为：
 //   - script_id 为必填，缺省直接报错；
 //   - 只覆盖本次给出的字段，未给出的字段保持数据库原值；
+//   - container_template_id 给出时必须是已存在的容器模板（正整数）；
 //   - 项目归属取自执行事实（tool.ProjectIDFrom），脚本必须属于当前激活项目，否则报错；
-//   - 回传更新后的名称 / 描述与脚本主文件、io_schema.json 路径。
+//   - 回传更新后的名称 / 描述 / 容器模板与脚本主文件、io_schema.json 路径。
 //
 // 该工具会修改业务数据（写库），因此声明 write 授权：上层在执行前会先走权限门禁。
 func UpdateScript(updater runtimecontext.ScriptUpdater, browser runtimecontext.ScriptBrowser) tool.Tool {
 	return tool.NewFunc(
 		UpdateScriptToolName,
-		"更新已有分析脚本。script_id 必填。可同时修改元数据（name / description）与脚本文件：file 取 script_file / io_schema / readme，配合 content（整体覆盖）或 old_string → new_string（唯一文本替换）直接编辑文件正文，无需再用 write / edit / bash。未给出的字段保持原值；返回更新后的名称、描述与脚本文件路径。",
+		"更新已有分析脚本。script_id 必填。可同时修改元数据（name / description / container_template_id）与脚本文件：file 取 script_file / io_schema / readme，配合 content（整体覆盖）或 old_string → new_string（唯一文本替换）直接编辑文件正文，无需再用 write / edit / bash。container_template_id 用于替换脚本绑定的容器模板（必须是已存在的模板；用户消息里的 @container:<id> 直接用冒号后的 ID），无需新建脚本或节点，已创建脚本节点运行时会沿用新模板。未给出的字段保持原值；返回更新后的名称、描述、容器模板与脚本文件路径。",
 		tool.Schema("更新脚本的入参", map[string]any{
-			"script_id":   tool.StringProperty("脚本主键 ID（必填，整数，字符串以保精度）。"),
-			"name":        tool.StringProperty("新的脚本名称。留空表示不修改名称。"),
-			"description": tool.StringProperty("新的脚本描述。留空表示不修改描述。"),
-			"file":        tool.StringProperty("要编辑的脚本文件：script_file / io_schema / readme。留空表示不改文件。"),
-			"content":     tool.StringProperty("整体覆盖该文件正文；与 old_string/new_string 二选一。"),
-			"old_string":  tool.StringProperty("文本替换模式：要替换的原文，必须在文件中唯一出现。"),
-			"new_string":  tool.StringProperty("文本替换模式：替换后的文本。"),
+			"script_id":             tool.StringProperty("脚本主键 ID（必填，整数，字符串以保精度）。"),
+			"name":                  tool.StringProperty("新的脚本名称。留空表示不修改名称。"),
+			"description":           tool.StringProperty("新的脚本描述。留空表示不修改描述。"),
+			"container_template_id": tool.StringProperty("新的容器模板 ID（整数，字符串以保精度），留空表示不修改；给出时必须是已存在的容器模板，可直接使用用户消息里的 @container:<id>（冒号后的 ID）。不确定模板时先用 list_container_templates / get_container_template。"),
+			"file":                  tool.StringProperty("要编辑的脚本文件：script_file / io_schema / readme。留空表示不改文件。"),
+			"content":               tool.StringProperty("整体覆盖该文件正文；与 old_string/new_string 二选一。"),
+			"old_string":            tool.StringProperty("文本替换模式：要替换的原文，必须在文件中唯一出现。"),
+			"new_string":            tool.StringProperty("文本替换模式：替换后的文本。"),
 		}, "script_id"),
 		func(ctx context.Context, in UpdateScriptInput) (UpdateScriptOutput, error) {
 			projectID := tool.ProjectIDFrom(ctx)
@@ -77,6 +86,18 @@ func UpdateScript(updater runtimecontext.ScriptUpdater, browser runtimecontext.S
 			name := strings.TrimSpace(in.Name)
 			description := strings.TrimSpace(in.Description)
 
+			var containerTemplateID *int64
+			if strings.TrimSpace(in.ContainerTemplateID) != "" {
+				id, err := parseContainerTemplateID(in.ContainerTemplateID)
+				if err != nil {
+					return UpdateScriptOutput{}, fmt.Errorf("update_script: %w", err)
+				}
+				if id <= 0 {
+					return UpdateScriptOutput{}, fmt.Errorf("update_script: container_template_id must be a positive integer")
+				}
+				containerTemplateID = &id
+			}
+
 			file, err := parseResourceFile(in.File, UpdateScriptToolName,
 				runtimecontext.ResourceFileScript, runtimecontext.ResourceFileIOSchema, runtimecontext.ResourceFileReadme)
 			if err != nil {
@@ -86,8 +107,8 @@ func UpdateScript(updater runtimecontext.ScriptUpdater, browser runtimecontext.S
 			if err != nil {
 				return UpdateScriptOutput{}, err
 			}
-			if name == "" && description == "" && edit.IsZero() {
-				return UpdateScriptOutput{}, fmt.Errorf("update_script: at least one of name / description / file edit must be provided")
+			if name == "" && description == "" && containerTemplateID == nil && edit.IsZero() {
+				return UpdateScriptOutput{}, fmt.Errorf("update_script: at least one of name / description / container_template_id / file edit must be provided")
 			}
 
 			if updater == nil {
@@ -124,12 +145,13 @@ func UpdateScript(updater runtimecontext.ScriptUpdater, browser runtimecontext.S
 			}
 
 			updateInput := runtimecontext.ScriptUpdateInput{
-				ProjectID: projectID,
-				ScriptID:  scriptID,
-				File:      edit.File,
-				Content:   edit.Content,
-				OldString: edit.OldString,
-				NewString: edit.NewString,
+				ProjectID:           projectID,
+				ScriptID:            scriptID,
+				ContainerTemplateID: containerTemplateID,
+				File:                edit.File,
+				Content:             edit.Content,
+				OldString:           edit.OldString,
+				NewString:           edit.NewString,
 			}
 			if name != "" {
 				updateInput.Name = &name
@@ -144,13 +166,15 @@ func UpdateScript(updater runtimecontext.ScriptUpdater, browser runtimecontext.S
 			}
 
 			return UpdateScriptOutput{
-				ScriptID:       result.ScriptID,
-				ScriptName:     result.ScriptName,
-				Description:    result.Description,
-				ScriptType:     result.ScriptType,
-				ScriptFilePath: result.ScriptFilePath,
-				IOSchemaPath:   result.IOSchemaPath,
-				Changed:        result.Changed,
+				ScriptID:              result.ScriptID,
+				ScriptName:            result.ScriptName,
+				Description:           result.Description,
+				ScriptType:            result.ScriptType,
+				ScriptFilePath:        result.ScriptFilePath,
+				IOSchemaPath:          result.IOSchemaPath,
+				ContainerTemplateID:   result.ContainerTemplateID,
+				ContainerTemplateName: result.ContainerTemplateName,
+				Changed:               result.Changed,
 			}, nil
 		},
 	)
