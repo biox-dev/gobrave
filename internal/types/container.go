@@ -79,12 +79,16 @@ type ContainerTemplateDefinition struct {
 	// container.imagePullPolicy。
 	PullPolicy string `json:"pull_policy" gorm:"type:varchar(32);index;not null;default:IfNotPresent"`
 
-	// DisplayName 为空时，对外名称回退到 ContainerTemplateConfig.Name。
-	DisplayName string `json:"display_name" gorm:"type:varchar(255)"`
+	// Name 是该绑定行（一个可直接运行的容器模板）的展示名，与共享运行配置的
+	// ContainerTemplateSpec.Name（描述“怎么跑”）相互独立：同一套配置绑定不同镜像时，
+	// 每个绑定行都可以有自己的展示名；为空时展示层可回退到 spec.Name。
+	//
+	// 物理列沿用历史名 display_name，避免仅字段改名就引入一次数据迁移。
+	Name string `json:"name" gorm:"column:display_name;type:varchar(255)"`
 
 	// Description 是绑定行自身的描述（长文本），与共享运行配置 ContainerTemplateSpec.Description
 	// 相互独立：spec 描述“怎么跑”，这里描述“这个可运行模板是做什么的 / 适用什么场景”。
-	// Agent 工具 get_container_template 会把 DisplayName 与 Description 一起回传给模型。
+	// Agent 工具 get_container_template 会把 Name 与 Description 一起回传给模型。
 	Description string `json:"description" gorm:"type:longtext"`
 
 	// IsDefault 标记「默认容器模板」：只能有一行处于默认状态，由服务层在写入时互斥维护。
@@ -122,18 +126,13 @@ type ContainerTemplate struct {
 	ID     int64 `json:"id,string"`
 	SpecID int64 `json:"spec_id,string"`
 
-	Name        string `json:"name"`
+	// Name 原样取自绑定行 ContainerTemplateDefinition.Name（该可运行模板的展示名）。
+	Name string `json:"name"`
+	// Description 原样取自绑定行 ContainerTemplateDefinition.Description（长文本）。
 	Description string `json:"description"`
 	// ImageName / PullPolicy 原样取自绑定行 ContainerTemplateDefinition。
 	ImageName  string `json:"image_name"`
 	PullPolicy string `json:"pull_policy"`
-	// DisplayName 原样取自绑定行 ContainerTemplateDefinition.DisplayName（不做回退）。
-	// Name 才是对外展示名：DisplayName 非空时覆盖共享配置名，否则回退到 spec.Name。
-	// 编辑表单必须读写 DisplayName，否则会把回退出来的配置名误固化成绑定行展示名。
-	DisplayName string `json:"display_name"`
-	// DefinitionDescription 原样取自绑定行 ContainerTemplateDefinition.Description（长文本）。
-	// 与 Description（共享运行配置 spec 的描述）相互独立，编辑表单需读写本字段。
-	DefinitionDescription string `json:"definition_description"`
 	// IsDefault 原样取自绑定行 ContainerTemplateDefinition.IsDefault。
 	IsDefault bool `json:"is_default"`
 
@@ -162,11 +161,13 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 	}
 
 	tpl := &ContainerTemplate{
-		ID:         binding.ID,
-		SpecID:     binding.SpecID,
-		ImageName:  binding.ImageName,
-		PullPolicy: binding.PullPolicy,
-		IsDefault:  binding.IsDefault,
+		ID:          binding.ID,
+		SpecID:      binding.SpecID,
+		Name:        binding.Name,
+		Description: binding.Description,
+		ImageName:   binding.ImageName,
+		PullPolicy:  binding.PullPolicy,
+		IsDefault:   binding.IsDefault,
 	}
 	// 历史数据可能没有拉取策略，空值统一按 IfNotPresent 对外暴露。
 	if tpl.PullPolicy == "" {
@@ -179,12 +180,7 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 		tpl.UpdatedAt = *binding.UpdatedAt
 	}
 
-	tpl.DisplayName = binding.DisplayName
-	tpl.DefinitionDescription = binding.Description
-
 	if spec != nil {
-		tpl.Name = spec.Name
-		tpl.Description = spec.Description
 		tpl.Command = spec.Command
 		tpl.CPU = spec.CPU
 		tpl.Memory = spec.Memory
@@ -199,10 +195,6 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 		if spec.UpdatedAt != nil && spec.UpdatedAt.After(tpl.UpdatedAt) {
 			tpl.UpdatedAt = *spec.UpdatedAt
 		}
-	}
-
-	if binding.DisplayName != "" {
-		tpl.Name = binding.DisplayName
 	}
 
 	return tpl
@@ -250,8 +242,8 @@ func (t *ContainerTemplate) ToExport(spec *ContainerTemplateSpec) *ContainerTemp
 		SpecID:      t.SpecID,
 		ImageName:   t.ImageName,
 		PullPolicy:  t.PullPolicy,
-		DisplayName: t.DisplayName,
-		Description: t.DefinitionDescription,
+		Name:        t.Name,
+		Description: t.Description,
 	})
 	if spec != nil {
 		exportedSpec := *spec
@@ -263,16 +255,15 @@ func (t *ContainerTemplate) ToExport(spec *ContainerTemplateSpec) *ContainerTemp
 	return bundle
 }
 
-// ToTemplateSpec 把读模型里平铺的运行配置字段还原成 ContainerTemplateSpec（主键取 SpecID）。
-// 读模型没有配置的元数据（created_at 等），需要完整配置时请按 SpecID 单独读取。
+// ToTemplateSpec 把读模型里平铺的“怎么跑”字段还原成 ContainerTemplateSpec（主键取 SpecID）。
+// 读模型只暴露绑定行的 Name / Description，不携带共享配置自身的名称与描述，
+// 因此返回值的 Name / Description 为空；需要完整配置时请按 SpecID 单独读取。
 func (t *ContainerTemplate) ToTemplateSpec() *ContainerTemplateSpec {
 	if t == nil {
 		return nil
 	}
 	return &ContainerTemplateSpec{
 		ID:                   t.SpecID,
-		Name:                 t.Name,
-		Description:          t.Description,
 		Command:              t.Command,
 		CPU:                  t.CPU,
 		Memory:               t.Memory,

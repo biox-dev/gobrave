@@ -22,7 +22,7 @@
       "spec_id": "2112483153338699776",
       "image_name": "registry.cn-hangzhou.aliyuncs.com/wybioinfo/ubuntu",
       "pull_policy": "IfNotPresent",
-      "display_name": "ubuntu",
+      "name": "ubuntu",
       "description": ""
     }
   ]

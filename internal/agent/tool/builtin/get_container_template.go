@@ -22,12 +22,12 @@ type GetContainerTemplateInput struct {
 
 // GetContainerTemplateOutput 是 get_container_template 工具返回给模型的结果。
 //
-// DisplayName / Description 原样取自绑定行 ContainerTemplateDefinition：
-// DisplayName 是模板展示名，Description 是该模板（可运行配置 × 镜像）自身的说明。
+// Name / Description 原样取自绑定行 ContainerTemplateDefinition：
+// Name 是模板展示名，Description 是该模板（可运行配置 × 镜像）自身的说明。
 type GetContainerTemplateOutput struct {
 	ContainerTemplateID int64  `json:"container_template_id,string"`
 	SpecID              int64  `json:"spec_id,string"`
-	DisplayName         string `json:"display_name"`
+	Name                string `json:"name"`
 	Description         string `json:"description"`
 	ImageName           string `json:"image_name,omitempty"`
 	PullPolicy          string `json:"pull_policy,omitempty"`
@@ -42,14 +42,14 @@ type GetContainerTemplateOutput struct {
 // 行为：
 //   - 解析入参 container_template_id（容错剥离 @container: 前缀）；
 //   - 按主键读取 go_container_template_definition（容器模板是全局资产，不按项目隔离）；
-//   - 回传绑定行自身的 display_name / description，以及 image_name / pull_policy /
+//   - 回传绑定行自身的 name / description，以及 image_name / pull_policy /
 //     is_default / spec_name 等运行信息。
 //
 // 该工具是只读的，因此声明 read 授权：上层在执行前会先走权限门禁。
 func GetContainerTemplate(browser runtimecontext.ContainerTemplateBrowser) tool.Tool {
 	return tool.NewFunc(
 		GetContainerTemplateToolName,
-		"按 container_template_id 查看单个可运行容器模板（ContainerTemplateDefinition）。用于回答用户对 @container:<id> 引用的提问，也用于在创建脚本 / 分析节点前确认模板用途。返回 display_name（模板展示名）、description（模板自身的长描述）、image_name、pull_policy、is_default（是否系统默认模板）与 spec_name（关联的共享运行配置名）。该 ID 可原样作为 create_script / create_analysis_node_agent 的 container_template_id。不确定有哪些模板时先用 list_container_templates 列出全部模板。",
+		"按 container_template_id 查看单个可运行容器模板（ContainerTemplateDefinition）。用于回答用户对 @container:<id> 引用的提问，也用于在创建脚本 / 分析节点前确认模板用途。返回 name（模板展示名）、description（模板自身的长描述）、image_name、pull_policy、is_default（是否系统默认模板）与 spec_name（关联的共享运行配置名）。该 ID 可原样作为 create_script / create_analysis_node_agent 的 container_template_id。不确定有哪些模板时先用 list_container_templates 列出全部模板。",
 		tool.Schema("按 ID 查看容器模板的入参", map[string]any{
 			"container_template_id": tool.StringProperty("容器模板 ID（go_container_template_definition 主键）。来自用户输入里的 @container:<id> 引用或 list_container_templates 的结果；字符串以保精度。"),
 		}, "container_template_id"),
@@ -77,7 +77,7 @@ func GetContainerTemplate(browser runtimecontext.ContainerTemplateBrowser) tool.
 			return GetContainerTemplateOutput{
 				ContainerTemplateID: detail.DefinitionID,
 				SpecID:              detail.SpecID,
-				DisplayName:         detail.DisplayName,
+				Name:                detail.Name,
 				Description:         detail.Description,
 				ImageName:           detail.ImageName,
 				PullPolicy:          detail.PullPolicy,

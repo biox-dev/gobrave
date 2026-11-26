@@ -30,8 +30,8 @@ import (
 //   - list_project_workflow：按 RuntimeContext.ProjectID 列出全部工作流（摘要 + DAG 节点 / 连线数）；
 //   - get_workflow：按 workflow_id（兼容 @workflow:<id> 引用）查看工作流元数据、DAG 定义与 io_schema 原文；
 //   - get_analysis_workflow：按 analysis_id（兼容 @analysis:<id> 引用）查看一次分析运行的状态 / 参数 / 节点分布；
-//   - list_container_templates：列出全部容器模板（definition ID + spec 的 name / description）；
-//   - get_container_template：按 @container:<id> 引用查看绑定行的 display_name / description；
+//   - list_container_templates：列出全部容器模板（definition ID + 绑定行的 name / description）；
+//   - get_container_template：按 @container:<id> 引用查看绑定行的 name / description；
 //   - get_dataset：按 @dataset:<id> 引用查看数据集名称 / 描述 / 工作目录绝对路径；
 //   - get_project_database_path：按固定 dataset_key=DATABASES 准备并返回项目数据库目录；
 //   - add_file_to_dataset：把文件登记到当前项目的数据集；
@@ -713,10 +713,7 @@ func (b *projectResourceBrowser) workflowBrief(baseDir string, workflow *types.W
 }
 
 // ListContainerTemplates 返回全部可运行容器模板：每行一个绑定行（definition），
-// 名称 / 描述取自该绑定行关联的共享运行配置（spec）。
-//
-// ListContainerTemplate 的读模型会把 DisplayName 优先填进 Name，而本工具要求返回
-// spec 自身的 Name，因此这里按 SpecID 回查 spec（同一分组的多个镜像只查一次）。
+// 名称 / 描述直接取自读模型 ContainerTemplate（同源于绑定行本身），不再回查共享配置。
 func (b *projectResourceBrowser) ListContainerTemplates(ctx context.Context) ([]runtimecontext.ContainerTemplateBrief, error) {
 	if b.containerSvc == nil {
 		return nil, fmt.Errorf("list_container_templates: required services are not configured")
@@ -727,38 +724,24 @@ func (b *projectResourceBrowser) ListContainerTemplates(ctx context.Context) ([]
 		return nil, fmt.Errorf("list_container_templates: failed to list container templates: %w", err)
 	}
 
-	specs := make(map[int64]*types.ContainerTemplateSpec)
-	resolved := make(map[int64]bool)
 	out := make([]runtimecontext.ContainerTemplateBrief, 0, len(templates))
 	for _, tpl := range templates {
 		if tpl == nil {
 			continue
 		}
-
-		brief := runtimecontext.ContainerTemplateBrief{
+		out = append(out, runtimecontext.ContainerTemplateBrief{
 			DefinitionID: tpl.ID,
 			SpecID:       tpl.SpecID,
-		}
-		if !resolved[tpl.SpecID] {
-			spec, err := b.containerSvc.GetContainerTemplateSpecByID(ctx, tpl.SpecID)
-			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, fmt.Errorf("list_container_templates: failed to load template spec %d: %w", tpl.SpecID, err)
-			}
-			specs[tpl.SpecID] = spec
-			resolved[tpl.SpecID] = true
-		}
-		if spec := specs[tpl.SpecID]; spec != nil {
-			brief.Name = spec.Name
-			brief.Description = spec.Description
-		}
-		out = append(out, brief)
+			Name:         tpl.Name,
+			Description:  tpl.Description,
+		})
 	}
 	return out, nil
 }
 
 // GetContainerTemplateByID 按主键读取单个容器模板（供 get_container_template 解析 @container:<id>）。
 //
-// 返回绑定行自身的 DisplayName / Description（longtext），并额外带上 spec 名称与镜像信息，
+// 返回绑定行自身的 Name / Description（longtext），并额外带上 spec 名称与镜像信息，
 // 便于模型确认“这个模板到底是什么、能不能跑当前任务”。
 func (b *projectResourceBrowser) GetContainerTemplateByID(ctx context.Context, containerTemplateID int64) (runtimecontext.ContainerTemplateDetail, error) {
 	if containerTemplateID <= 0 {
@@ -782,13 +765,13 @@ func (b *projectResourceBrowser) GetContainerTemplateByID(ctx context.Context, c
 	detail := runtimecontext.ContainerTemplateDetail{
 		DefinitionID: tpl.ID,
 		SpecID:       tpl.SpecID,
-		DisplayName:  tpl.DisplayName,
-		Description:  tpl.DefinitionDescription,
+		Name:         tpl.Name,
+		Description:  tpl.Description,
 		ImageName:    tpl.ImageName,
 		PullPolicy:   tpl.PullPolicy,
 		IsDefault:    tpl.IsDefault,
 	}
-	// 读模型里的 Name 可能是 DisplayName 的回退值，这里按 SpecID 回查共享配置名。
+	// 读模型里的 Name 是绑定行展示名，这里按 SpecID 回查共享配置名。
 	if spec, specErr := b.containerSvc.GetContainerTemplateSpecByID(ctx, tpl.SpecID); specErr == nil && spec != nil {
 		detail.SpecName = spec.Name
 	}

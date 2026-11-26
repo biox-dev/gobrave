@@ -1128,7 +1128,7 @@ type AnalysisNodeBrief struct {
 //
 // DefinitionID 是 go_container_template_definition 主键（即对外 ContainerTemplate.ID，
 // 也是 script.container_template_id / app_session.container_template_id 引用的值）；
-// SpecID 是它关联的 go_container_template_spec 主键；Name / Description 取自该共享配置。
+// SpecID 是它关联的 go_container_template_spec 主键；Name / Description 取自绑定行（ContainerTemplate）。
 type ContainerTemplateBrief struct {
 	DefinitionID int64  `json:"definition_id"`
 	SpecID       int64  `json:"spec_id"`
@@ -1138,13 +1138,13 @@ type ContainerTemplateBrief struct {
 
 // ContainerTemplateDetail 是单个容器模板的只读详情（供 get_container_template 回传）。
 //
-// DisplayName / Description 原样取自绑定行 go_container_template_definition 自身
+// Name / Description 原样取自绑定行 go_container_template_definition 自身
 // （Description 为 longtext）；SpecName 取自关联的共享运行配置，便于模型区分
 // 「模板展示名」与「运行配置名」。
 type ContainerTemplateDetail struct {
 	DefinitionID int64  `json:"definition_id"`
 	SpecID       int64  `json:"spec_id"`
-	DisplayName  string `json:"display_name"`
+	Name         string `json:"name"`
 	Description  string `json:"description"`
 	ImageName    string `json:"image_name,omitempty"`
 	PullPolicy   string `json:"pull_policy,omitempty"`

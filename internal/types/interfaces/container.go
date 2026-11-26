@@ -12,10 +12,7 @@ type ContainerService interface {
 	// GetMaxConcurrency() int
 	RecreateAppSessionContainer(ctx context.Context, userID int64, appSessionID int64) error
 
-	CreateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error
 	GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error)
-	UpdateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error
-	DeleteContainerTemplate(ctx context.Context, id int64) error
 	ListContainerTemplate(ctx context.Context) ([]*types.ContainerTemplate, error)
 	// ListContainerTemplateBySpecID 列出同一套共享运行配置下绑定不同镜像的所有对外模板。
 	ListContainerTemplateBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplate, error)
@@ -34,8 +31,8 @@ type ContainerService interface {
 
 	// ===== 容器模板：按主键直接 upsert 两层实体（安装 script.json / workflow.json 用）=====
 	// 安装侧拿到的导出内容已经是拆开的 ContainerTemplateSpec / ContainerTemplateDefinition
-	// （各自带主键），不能走 CreateContainerTemplate/UpdateContainerTemplate 那套读模型逻辑：
-	// 读模型会重新拼装 spec 与绑定行，无法保留导出文件里的 spec_id / 绑定行主键。
+	// （各自带主键），因此界面/安装都直接操作两层实体，不再经过读模型重新拼装：
+	// 读模型无法保留导出文件里的 spec_id / 绑定行主键。
 	CreateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error
 	GetContainerTemplateSpecByID(ctx context.Context, id int64) (*types.ContainerTemplateSpec, error)
 	UpdateContainerTemplateSpec(ctx context.Context, item *types.ContainerTemplateSpec) error
@@ -46,6 +43,8 @@ type ContainerService interface {
 	CreateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
 	GetContainerTemplateDefinitionByID(ctx context.Context, id int64) (*types.ContainerTemplateDefinition, error)
 	UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error
+	// DeleteContainerTemplateDefinition 删除一条绑定行；共享运行配置保留。
+	DeleteContainerTemplateDefinition(ctx context.Context, id int64) error
 
 	CreateAppSessionByTemplate(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string) (*types.AppSession, error)
 	CreateAppSessionByTemplateForAnalysisNode(ctx context.Context, userID int64, projectID int64, containerTemplateID int64, name string, analysisNodeID int64, workspacePath string) (*types.AppSession, error)

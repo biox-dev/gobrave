@@ -31,7 +31,7 @@
       "spec_id": "202606160002",
       "image_name": "registry.cn-hangzhou.aliyuncs.com/wybioinfo/rocker-tidyverse-r:4.6.0",
       "pull_policy": "IfNotPresent",
-      "display_name": "",
+      "name": "rstudio-tidyverse-r",
       "is_default": true
     }
   ]

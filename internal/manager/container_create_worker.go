@@ -1131,7 +1131,9 @@ type TerminalRuntimeHandle struct {
 	Cleanup             func()
 }
 
-// ContainerTemplateName 返回模板的展示名与名称，供终端会话生成默认展示名。
+// ContainerTemplateName 返回模板的展示名（Name），供终端会话生成默认展示名。
+//
+// 第二个返回值保留给接口兼容，当前恒为空（展示名与名称已统一为 Name）。
 //
 // 模板不可读 / 未配置时返回空串，调用方会回退到模板 ID。
 func (w *ContainerCreateWorker) ContainerTemplateName(ctx context.Context, templateID int64) (string, string) {
@@ -1142,7 +1144,7 @@ func (w *ContainerCreateWorker) ContainerTemplateName(ctx context.Context, templ
 	if err != nil || tpl == nil {
 		return "", ""
 	}
-	return tpl.DisplayName, tpl.Name
+	return tpl.Name, ""
 }
 
 // StartTerminalRuntime 创建终端容器并打开交互式 shell。

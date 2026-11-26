@@ -2636,18 +2636,8 @@ definitions:
         type: number
       created_at:
         type: string
-      definition_description:
-        description: |-
-          DefinitionDescription 原样取自绑定行 ContainerTemplateDefinition.Description（长文本）。
-          与 Description（共享运行配置 spec 的描述）相互独立，编辑表单需读写本字段。
-        type: string
       description:
-        type: string
-      display_name:
-        description: |-
-          DisplayName 原样取自绑定行 ContainerTemplateDefinition.DisplayName（不做回退）。
-          Name 才是对外展示名：DisplayName 非空时覆盖共享配置名，否则回退到 spec.Name。
-          编辑表单必须读写 DisplayName，否则会把回退出来的配置名误固化成绑定行展示名。
+        description: Description 原样取自绑定行 ContainerTemplateDefinition.Description（长文本）。
         type: string
       env:
         items:
@@ -2673,6 +2663,7 @@ definitions:
           type: integer
         type: array
       name:
+        description: Name 原样取自绑定行 ContainerTemplateDefinition.Name（该可运行模板的展示名）。
         type: string
       port:
         type: integer
@@ -2708,10 +2699,7 @@ definitions:
         description: |-
           Description 是绑定行自身的描述（长文本），与共享运行配置 ContainerTemplateSpec.Description
           相互独立：spec 描述“怎么跑”，这里描述“这个可运行模板是做什么的 / 适用什么场景”。
-          Agent 工具 get_container_template 会把 DisplayName 与 Description 一起回传给模型。
-        type: string
-      display_name:
-        description: DisplayName 为空时，对外名称回退到 ContainerTemplateConfig.Name。
+          Agent 工具 get_container_template 会把 Name 与 Description 一起回传给模型。
         type: string
       id:
         example: "0"
@@ -2727,6 +2715,14 @@ definitions:
           创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。
           导出时会置为 false（omitempty 使其不出现在导出文件里）。
         type: boolean
+      name:
+        description: |-
+          Name 是该绑定行（一个可直接运行的容器模板）的展示名，与共享运行配置的
+          ContainerTemplateSpec.Name（描述“怎么跑”）相互独立：同一套配置绑定不同镜像时，
+          每个绑定行都可以有自己的展示名；为空时展示层可回退到 spec.Name。
+
+          物理列沿用历史名 display_name，避免仅字段改名就引入一次数据迁移。
+        type: string
       pull_policy:
         description: |-
           PullPolicy 是该绑定行的镜像拉取策略，取值 Always / IfNotPresent / Never，空值按 IfNotPresent 处理。
@@ -7605,6 +7601,136 @@ paths:
       summary: 卸载容器运行时
       tags:
       - 容器管理
+  /container/template-definition/create:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        只新增一条绑定行（ContainerTemplateDefinition）：用 spec_id 引用已有的共享运行配置，
+        并写入镜像名 / 拉取策略 / 展示名 / 描述 / 默认标记。返回新建的绑定行。
+        共享运行配置请先通过 /container/template-spec/create 创建。
+      parameters:
+      - description: 请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.ContainerTemplateDefinition'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.ContainerTemplateDefinition'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 创建容器模板（绑定行）
+      tags:
+      - 容器管理
+  /container/template-definition/delete:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        按绑定行 ID（ContainerTemplateDefinition.ID）删除该镜像绑定；
+        共享运行配置（ContainerTemplateSpec）不受影响。
+      parameters:
+      - description: 请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.idBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 删除容器模板（绑定行）
+      tags:
+      - 容器管理
+  /container/template-definition/update:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        按绑定行 ID（ContainerTemplateDefinition.ID）只更新绑定行本体：
+        image_name / pull_policy / name / description / is_default。
+        共享运行配置（命令、资源、端口、环境变量、挂载等）请走 /container/template-spec/update。
+      parameters:
+      - description: 请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.ContainerTemplateDefinition'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.ContainerTemplateDefinition'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 更新容器模板（绑定行）
+      tags:
+      - 容器管理
   /container/template-spec/create:
     post:
       consumes:
@@ -7826,50 +7952,6 @@ paths:
       summary: 更新容器运行配置
       tags:
       - 容器管理
-  /container/template/create:
-    post:
-      consumes:
-      - application/json
-      description: |-
-        创建对外容器模板（ContainerTemplate = 共享运行配置 ContainerTemplateSpec × 镜像绑定 ContainerTemplateDefinition）。
-        spec_id 为空：用请求体里的运行配置字段新建配置，再建第一条绑定；
-        spec_id 非空：复用该配置，只在它下面新增一个镜像绑定（同一套配置挂多个镜像）。
-        返回组装后的读模型，含 spec_id / image_name / pull_policy。
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/types.ContainerTemplate'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.ContainerTemplate'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 创建容器模板
-      tags:
-      - 容器管理
   /container/template/default:
     get:
       description: |-
@@ -7894,50 +7976,6 @@ paths:
       security:
       - Bearer: []
       summary: 获取默认容器模板
-      tags:
-      - 容器管理
-  /container/template/delete:
-    post:
-      consumes:
-      - application/json
-      description: |-
-        按绑定行 ID（ContainerTemplateDefinition.ID）删除该镜像绑定；
-        当这张绑定所属的共享运行配置已无任何其他镜像绑定时，一并清理该配置。
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.idBody'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 删除容器模板
       tags:
       - 容器管理
   /container/template/export:
@@ -8206,48 +8244,6 @@ paths:
       security:
       - Bearer: []
       summary: 设置默认容器模板
-      tags:
-      - 容器管理
-  /container/template/update:
-    post:
-      consumes:
-      - application/json
-      description: |-
-        按绑定行 ID（ContainerTemplateDefinition.ID）更新：请求体里的运行配置字段写入绑行指向的 ContainerTemplateSpec，
-        image_name / pull_policy 与包目录字段写入绑定行本体。返回组装后的读模型。
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/types.ContainerTemplate'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.ContainerTemplate'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 更新容器模板
       tags:
       - 容器管理
   /container/terminal/session/{id}:

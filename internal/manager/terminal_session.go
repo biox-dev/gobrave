@@ -388,7 +388,7 @@ type TerminalRuntimeOpener interface {
 	StartTerminalRuntime(ctx context.Context, userID, projectID, templateID, sessionID int64, opts containerruntime.TerminalOptions) (*TerminalRuntimeHandle, error)
 	AttachTerminalRuntime(ctx context.Context, instance *types.ContainerInstance, opts containerruntime.TerminalOptions) (*TerminalRuntimeHandle, error)
 	DropTerminalRuntime(ctx context.Context, runtimeName, runtimeID string)
-	// ContainerTemplateName 返回模板的展示名与名称，供新建会话生成默认展示名。
+	// ContainerTemplateName 返回模板的展示名（展示名与名称已统一为 Name），供新建会话生成默认展示名。
 	// 模板不可读时返回空串，调用方回退到模板 ID。
 	ContainerTemplateName(ctx context.Context, templateID int64) (displayName, name string)
 }

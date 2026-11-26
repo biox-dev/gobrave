@@ -101,7 +101,7 @@ func TestExportContainerTemplateReturnsFlatBundle(t *testing.T) {
 			300: {ID: 300, Name: "spec-300", Command: "R -e 1", Port: 8787, CreatedAt: &now, UpdatedAt: &now},
 		},
 		definitions: map[int64]*types.ContainerTemplateDefinition{
-			200: {ID: 200, SpecID: 300, ImageName: "docker.io/rocker/rstudio:4.4", PullPolicy: types.PullPolicyAlways, DisplayName: "RStudio", IsDefault: true, CreatedAt: &now, UpdatedAt: &now},
+			200: {ID: 200, SpecID: 300, ImageName: "docker.io/rocker/rstudio:4.4", PullPolicy: types.PullPolicyAlways, Name: "RStudio", IsDefault: true, CreatedAt: &now, UpdatedAt: &now},
 		},
 	}
 	svc := &containerService{containerRepo: repo}
@@ -152,7 +152,7 @@ func TestImportContainerTemplateUpsertsByID(t *testing.T) {
 			{ID: 300, Name: "spec-300", Command: "python main.py"},
 		},
 		ContainerTemplateDefinitions: []types.ContainerTemplateDefinition{
-			{ID: 200, SpecID: 300, ImageName: "docker.io/new:1", PullPolicy: types.PullPolicyNever, DisplayName: "imported"},
+			{ID: 200, SpecID: 300, ImageName: "docker.io/new:1", PullPolicy: types.PullPolicyNever, Name: "imported"},
 		},
 	})
 	if err != nil {

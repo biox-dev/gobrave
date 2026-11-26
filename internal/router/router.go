@@ -242,10 +242,7 @@ func RegisterDataRoutes(r *gin.RouterGroup, handler *handler.DataHandler) {
 }
 
 func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandler) {
-	r.POST("/container/template/create", handler.CreateContainerTemplate)
 	r.GET("/container/template/get", handler.GetContainerTemplate)
-	r.POST("/container/template/update", handler.UpdateContainerTemplate)
-	r.POST("/container/template/delete", handler.DeleteContainerTemplate)
 	r.GET("/container/template/list", handler.ListContainerTemplate)
 	r.POST("/container/template/list-by-page", handler.PageContainerTemplate)
 	r.POST("/container/template/list-by-spec", handler.ListContainerTemplateBySpec)
@@ -265,6 +262,12 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 	r.POST("/container/terminal/session/:id/terminal/exec", handler.ContainerTemplateTerminalExec)
 	r.GET("/container/terminal/session/:id/status", handler.ContainerTemplateTerminalStatus)
 	r.DELETE("/container/terminal/session/:id", handler.ContainerTemplateTerminalClose)
+
+	// 绑定行（ContainerTemplateDefinition）自身的增删改：只动镜像 / 拉取策略 / 展示名 / 描述 / 默认标记，
+	// 不触碰共享运行配置（“怎么跑”的字段在 /container/template-spec/*）。
+	r.POST("/container/template-definition/create", handler.CreateContainerTemplateDefinition)
+	r.POST("/container/template-definition/update", handler.UpdateContainerTemplateDefinition)
+	r.POST("/container/template-definition/delete", handler.DeleteContainerTemplateDefinition)
 
 	r.POST("/container/template-spec/create", handler.CreateContainerTemplateSpec)
 	r.GET("/container/template-spec/get", handler.GetContainerTemplateSpec)

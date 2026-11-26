@@ -57,10 +57,7 @@ func (s *containerService) CreateTerminalAppSession(ctx context.Context, in type
 	if name == "" {
 		tpl, err := s.containerRepo.GetContainerTemplateByID(ctx, in.ContainerTemplateID)
 		if err == nil && tpl != nil {
-			name = strings.TrimSpace(tpl.DisplayName)
-			if name == "" {
-				name = strings.TrimSpace(tpl.Name)
-			}
+			name = strings.TrimSpace(tpl.Name)
 		}
 		if name == "" {
 			name = strconv.FormatInt(in.ContainerTemplateID, 10)
@@ -108,8 +105,8 @@ func (s *containerService) createAppSessionByTemplate(ctx context.Context, userI
 
 	if strings.TrimSpace(name) == "" {
 		name = fmt.Sprintf("app-session-%d-%d", projectID, containerTemplateID)
-		if strings.TrimSpace(tpl.Name) != "" {
-			name = fmt.Sprintf("%s-%d", strings.TrimSpace(tpl.Name), projectID)
+		if displayName := strings.TrimSpace(tpl.Name); displayName != "" {
+			name = fmt.Sprintf("%s-%d", displayName, projectID)
 		}
 	}
 

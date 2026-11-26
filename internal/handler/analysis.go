@@ -2195,10 +2195,7 @@ func (h *AnalysisHandler) attachContainerTemplateInfoToNode(c *gin.Context, temp
 		status = "exist"
 	}
 
-	name := strings.TrimSpace(tpl.DisplayName)
-	if name == "" {
-		name = strings.TrimSpace(tpl.Name)
-	}
+	name := strings.TrimSpace(tpl.Name)
 
 	node["container_id"] = strconv.FormatInt(templateID, 10)
 	node["container_name"] = name

@@ -84,31 +84,34 @@ func NewContainerHandler(containerService interfaces.ContainerService,
 	}
 }
 
-// CreateContainerTemplate godoc
-// @Summary      创建容器模板
-// @Description  创建对外容器模板（ContainerTemplate = 共享运行配置 ContainerTemplateSpec × 镜像绑定 ContainerTemplateDefinition）。
-// @Description  spec_id 为空：用请求体里的运行配置字段新建配置，再建第一条绑定；
-// @Description  spec_id 非空：复用该配置，只在它下面新增一个镜像绑定（同一套配置挂多个镜像）。
-// @Description  返回组装后的读模型，含 spec_id / image_name / pull_policy。
+// CreateContainerTemplateDefinition godoc
+// @Summary      创建容器模板（绑定行）
+// @Description  只新增一条绑定行（ContainerTemplateDefinition）：用 spec_id 引用已有的共享运行配置，
+// @Description  并写入镜像名 / 拉取策略 / 展示名 / 描述 / 默认标记。返回新建的绑定行。
+// @Description  共享运行配置请先通过 /container/template-spec/create 创建。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
-// @Param        request  body      types.ContainerTemplate  true  "请求参数"
-// @Success      200      {object}  types.ContainerTemplate
+// @Param        request  body      types.ContainerTemplateDefinition  true  "请求参数"
+// @Success      200      {object}  types.ContainerTemplateDefinition
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /container/template/create [post]
-func (h *ContainerHandler) CreateContainerTemplate(c *gin.Context) {
+// @Router       /container/template-definition/create [post]
+func (h *ContainerHandler) CreateContainerTemplateDefinition(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
-	var req types.ContainerTemplate
+	var req types.ContainerTemplateDefinition
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+	if req.SpecID == 0 {
+		c.Error(errors.NewValidationError("spec_id is required"))
 		return
 	}
 	if strings.TrimSpace(req.ImageName) == "" {
@@ -116,15 +119,14 @@ func (h *ContainerHandler) CreateContainerTemplate(c *gin.Context) {
 		return
 	}
 
-	if err := h.containerService.CreateContainerTemplate(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to create container template")
+	if err := h.containerService.CreateContainerTemplateDefinition(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to create container template definition")
 		return
 	}
 
-	// 重新读取组装后的读模型，让调用方直接看到生效的 spec_id / image_name / pull_policy。
-	item, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ID)
+	item, err := h.containerService.GetContainerTemplateDefinitionByID(c.Request.Context(), req.ID)
 	if err != nil {
-		handleDataError(c, err, "failed to get container template")
+		handleDataError(c, err, "failed to get container template definition")
 		return
 	}
 
@@ -164,27 +166,28 @@ func (h *ContainerHandler) GetContainerTemplate(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
-// UpdateContainerTemplate godoc
-// @Summary      更新容器模板
-// @Description  按绑定行 ID（ContainerTemplateDefinition.ID）更新：请求体里的运行配置字段写入绑行指向的 ContainerTemplateSpec，
-// @Description  image_name / pull_policy 与包目录字段写入绑定行本体。返回组装后的读模型。
+// UpdateContainerTemplateDefinition godoc
+// @Summary      更新容器模板（绑定行）
+// @Description  按绑定行 ID（ContainerTemplateDefinition.ID）只更新绑定行本体：
+// @Description  image_name / pull_policy / name / description / is_default。
+// @Description  共享运行配置（命令、资源、端口、环境变量、挂载等）请走 /container/template-spec/update。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
-// @Param        request  body      types.ContainerTemplate  true  "请求参数"
-// @Success      200      {object}  types.ContainerTemplate
+// @Param        request  body      types.ContainerTemplateDefinition  true  "请求参数"
+// @Success      200      {object}  types.ContainerTemplateDefinition
 // @Failure      400      {object}  errors.AppError
 // @Failure      401      {object}  errors.AppError
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /container/template/update [post]
-func (h *ContainerHandler) UpdateContainerTemplate(c *gin.Context) {
+// @Router       /container/template-definition/update [post]
+func (h *ContainerHandler) UpdateContainerTemplateDefinition(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
 
-	var req types.ContainerTemplate
+	var req types.ContainerTemplateDefinition
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
 		return
@@ -198,14 +201,14 @@ func (h *ContainerHandler) UpdateContainerTemplate(c *gin.Context) {
 		return
 	}
 
-	if err := h.containerService.UpdateContainerTemplate(c.Request.Context(), &req); err != nil {
-		handleDataError(c, err, "failed to update container template")
+	if err := h.containerService.UpdateContainerTemplateDefinition(c.Request.Context(), &req); err != nil {
+		handleDataError(c, err, "failed to update container template definition")
 		return
 	}
 
-	item, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ID)
+	item, err := h.containerService.GetContainerTemplateDefinitionByID(c.Request.Context(), req.ID)
 	if err != nil {
-		handleDataError(c, err, "failed to get container template")
+		handleDataError(c, err, "failed to get container template definition")
 		return
 	}
 
@@ -426,10 +429,10 @@ func (h *ContainerHandler) PageContainerTemplateSpec(c *gin.Context) {
 	})
 }
 
-// DeleteContainerTemplate godoc
-// @Summary      删除容器模板
+// DeleteContainerTemplateDefinition godoc
+// @Summary      删除容器模板（绑定行）
 // @Description  按绑定行 ID（ContainerTemplateDefinition.ID）删除该镜像绑定；
-// @Description  当这张绑定所属的共享运行配置已无任何其他镜像绑定时，一并清理该配置。
+// @Description  共享运行配置（ContainerTemplateSpec）不受影响。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json
@@ -440,8 +443,8 @@ func (h *ContainerHandler) PageContainerTemplateSpec(c *gin.Context) {
 // @Failure      404      {object}  errors.AppError
 // @Failure      500      {object}  errors.AppError
 // @Security     Bearer
-// @Router       /container/template/delete [post]
-func (h *ContainerHandler) DeleteContainerTemplate(c *gin.Context) {
+// @Router       /container/template-definition/delete [post]
+func (h *ContainerHandler) DeleteContainerTemplateDefinition(c *gin.Context) {
 	if _, ok := getCurrentUserID(c); !ok {
 		return
 	}
@@ -452,12 +455,12 @@ func (h *ContainerHandler) DeleteContainerTemplate(c *gin.Context) {
 		return
 	}
 
-	if err := h.containerService.DeleteContainerTemplate(c.Request.Context(), req.ID); err != nil {
-		handleDataError(c, err, "failed to delete container template")
+	if err := h.containerService.DeleteContainerTemplateDefinition(c.Request.Context(), req.ID); err != nil {
+		handleDataError(c, err, "failed to delete container template definition")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "container template deleted successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "container template definition deleted successfully"})
 }
 
 // ListContainerTemplate godoc

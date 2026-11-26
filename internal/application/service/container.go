@@ -27,26 +27,6 @@ func NewContainerService(containerRepo interfaces.ContainerRepository, container
 	return &containerService{containerRepo: containerRepo, containerMgr: containerMgr, cfg: config}
 }
 
-// containerTemplateSpecFromReadModel 从对外模板抽出"怎么跑"的字段，用于写入 go_container_template_spec。
-// 工作目录不属于模板（创建容器时统一取 PROJECT_DIR），因此不再透传。
-func containerTemplateSpecFromReadModel(tpl *types.ContainerTemplate) *types.ContainerTemplateSpec {
-	return &types.ContainerTemplateSpec{
-		ID:                   tpl.SpecID,
-		Name:                 tpl.Name,
-		Description:          tpl.Description,
-		Command:              tpl.Command,
-		CPU:                  tpl.CPU,
-		Memory:               tpl.Memory,
-		Port:                 tpl.Port,
-		AppType:              tpl.AppType,
-		Env:                  tpl.Env,
-		Mounts:               tpl.Mounts,
-		SchedulingConstraint: tpl.SchedulingConstraint,
-		Labels:               tpl.Labels,
-		ChangeUID:            tpl.ChangeUID,
-	}
-}
-
 // ExportContainerTemplate 导出单条容器模板，返回统一平铺格式（与 script.json / workflow.json 相同）：
 // container_template_specs / container_template_definitions 各一条。
 // 两个列表都不含时间字段，可直接交给 ImportContainerTemplate 原样导入。
@@ -55,20 +35,6 @@ func (s *containerService) ExportContainerTemplate(ctx context.Context, definiti
 		return nil, fmt.Errorf("container template id is required")
 	}
 	return exportcodec.ExportContainerAssets(ctx, s.containerRepo, definitionID)
-}
-
-// containerTemplateDefinitionFromReadModel 从对外模板抽出绑定行字段。
-// 只搬 DisplayName / DefinitionDescription：读模型里的 Name / Description 可能是配置名的回退值，
-// 直接写入会把配置信息误固化成绑定行内容，所以这两个字段必须由请求显式携带。
-func containerTemplateDefinitionFromReadModel(tpl *types.ContainerTemplate) *types.ContainerTemplateDefinition {
-	return &types.ContainerTemplateDefinition{
-		ID:          tpl.ID,
-		SpecID:      tpl.SpecID,
-		ImageName:   strings.TrimSpace(tpl.ImageName),
-		PullPolicy:  normalizePullPolicy(tpl.PullPolicy),
-		DisplayName: strings.TrimSpace(tpl.DisplayName),
-		Description: strings.TrimSpace(tpl.DefinitionDescription),
-	}
 }
 
 // normalizePullPolicy 归一化拉取策略：空值与无法识别的值统一按 IfNotPresent 处理。
@@ -91,7 +57,7 @@ func (s *containerService) applyDefaultFlag(ctx context.Context, tx interfaces.C
 	if err := tx.ClearContainerTemplateDefinitionDefault(ctx); err != nil {
 		return err
 	}
-	// 先读出整行再置位：绑定行的更新是整行语义（display_name 支持显式清空），
+	// 先读出整行再置位：绑定行的更新是整行语义（name 支持显式清空），
 	// 只传 ID + IsDefault 会把其它字段覆盖成零值。
 	binding, err := tx.GetContainerTemplateDefinitionByID(ctx, definitionID)
 	if err != nil {
@@ -158,54 +124,6 @@ func EnsureDefaultContainerTemplate(ctx context.Context, containerRepo interface
 	})
 }
 
-// createContainerTemplate 写入"共享配置 + 镜像绑定"，并回填 tpl.ID / tpl.SpecID。
-//
-//	tpl.SpecID != 0：复用已有配置，只在它下面新增一个镜像绑定（同一套运行配置挂多个镜像）。
-//	tpl.SpecID == 0：用 tpl 里的运行配置字段新建配置，再建第一个绑定。
-func (s *containerService) createContainerTemplate(ctx context.Context, tpl *types.ContainerTemplate) error {
-	definition := containerTemplateDefinitionFromReadModel(tpl)
-
-	if tpl.SpecID != 0 {
-		spec, err := s.containerRepo.GetContainerTemplateSpecByID(ctx, tpl.SpecID)
-		if err != nil {
-			return err
-		}
-		if err := s.ensureImageNameNotBound(ctx, tpl.SpecID, definition.ImageName); err != nil {
-			return err
-		}
-		if err := s.containerRepo.CreateContainerTemplateDefinition(ctx, definition); err != nil {
-			return err
-		}
-
-		tpl.ID = definition.ID
-		tpl.Name = spec.Name
-		if definition.DisplayName != "" {
-			tpl.Name = definition.DisplayName
-		}
-		return s.applyDefaultFlag(ctx, s.containerRepo, definition.ID)
-	}
-
-	spec := containerTemplateSpecFromReadModel(tpl)
-
-	err := s.containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		if err := tx.CreateContainerTemplateSpec(ctx, spec); err != nil {
-			return err
-		}
-		definition.SpecID = spec.ID
-		if err := tx.CreateContainerTemplateDefinition(ctx, definition); err != nil {
-			return err
-		}
-		return s.applyDefaultFlag(ctx, tx, definition.ID)
-	})
-	if err != nil {
-		return err
-	}
-
-	tpl.ID = definition.ID
-	tpl.SpecID = spec.ID
-	return nil
-}
-
 // ensureImageNameNotBound 防止同一套配置重复绑定同一个镜像（DB 里也有唯一索引兜底）。
 func (s *containerService) ensureImageNameNotBound(ctx context.Context, specID int64, imageName string) error {
 	imageName = strings.TrimSpace(imageName)
@@ -224,59 +142,8 @@ func (s *containerService) ensureImageNameNotBound(ctx context.Context, specID i
 	return nil
 }
 
-// updateContainerTemplate 更新共享配置（按绑定行指向的 spec）与该绑定行本身。
-func (s *containerService) updateContainerTemplate(ctx context.Context, tpl *types.ContainerTemplate) error {
-	binding, err := s.containerRepo.GetContainerTemplateDefinitionByID(ctx, tpl.ID)
-	if err != nil {
-		return err
-	}
-
-	spec := containerTemplateSpecFromReadModel(tpl)
-	spec.ID = binding.SpecID
-	// display_name 归绑定行所有：请求没带 name 时不要用空值覆盖共享配置名
-	// （UpdateContainerTemplateSpec 会跳过零值，这里保持 Name 默认为空即可）。
-	definition := containerTemplateDefinitionFromReadModel(tpl)
-	definition.ID = binding.ID
-	definition.SpecID = binding.SpecID
-
-	return s.containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		if err := tx.UpdateContainerTemplateSpec(ctx, spec); err != nil {
-			return err
-		}
-		if err := tx.UpdateContainerTemplateDefinition(ctx, definition); err != nil {
-			return err
-		}
-		// IsDefault 不在上面的通用更新里处理（它是全局互斥状态，需要先清空其它行）；
-		// 只有请求显式要求「这个模板为默认」时才走 set-default 流程。
-		if tpl.IsDefault {
-			return s.applyDefaultFlag(ctx, tx, binding.ID)
-		}
-		return nil
-	})
-}
-
-func (s *containerService) CreateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error {
-	if item == nil {
-		return fmt.Errorf("container template is required")
-	}
-	if err := ensureImageName(item.ImageName); err != nil {
-		return err
-	}
-	return s.createContainerTemplate(ctx, item)
-}
-
 func (s *containerService) GetContainerTemplateByID(ctx context.Context, id int64) (*types.ContainerTemplate, error) {
 	return s.containerRepo.GetContainerTemplateByID(ctx, id)
-}
-
-func (s *containerService) UpdateContainerTemplate(ctx context.Context, item *types.ContainerTemplate) error {
-	if item == nil || item.ID == 0 {
-		return fmt.Errorf("container template id is required")
-	}
-	if err := ensureImageName(item.ImageName); err != nil {
-		return err
-	}
-	return s.updateContainerTemplate(ctx, item)
 }
 
 // ensureImageName 校验绑定行的镜像名非空（镜像名直接存在绑定行上）。
@@ -287,26 +154,13 @@ func ensureImageName(imageName string) error {
 	return nil
 }
 
-func (s *containerService) DeleteContainerTemplate(ctx context.Context, id int64) error {
+// DeleteContainerTemplateDefinition 按主键删除一条绑定行；共享运行配置（ContainerTemplateSpec）保留。
+func (s *containerService) DeleteContainerTemplateDefinition(ctx context.Context, id int64) error {
 	binding, err := s.containerRepo.GetContainerTemplateDefinitionByID(ctx, id)
 	if err != nil {
 		return err
 	}
-
-	return s.containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		if err := tx.DeleteContainerTemplateDefinition(ctx, binding.ID); err != nil {
-			return err
-		}
-		// 该套配置已无任何镜像绑定时顺带清理，避免留下孤儿配置行。
-		// remain, err := tx.ListContainerTemplateDefinitionBySpecID(ctx, binding.SpecID)
-		// if err != nil {
-		// 	return err
-		// }
-		// if len(remain) == 0 {
-		// 	return tx.DeleteContainerTemplateSpec(ctx, binding.SpecID)
-		// }
-		return nil
-	})
+	return s.containerRepo.DeleteContainerTemplateDefinition(ctx, binding.ID)
 }
 
 func (s *containerService) ListContainerTemplate(ctx context.Context) ([]*types.ContainerTemplate, error) {
@@ -403,7 +257,7 @@ func (s *containerService) UpdateContainerTemplateSpec(ctx context.Context, item
 
 // DeleteContainerTemplateSpec 删除共享运行配置。
 // 仍被绑定行引用时拒绝删除（返回 409），避免绑定行的 spec_id 变成空引用；
-// 需要强制删除时先删掉这些绑定行（DeleteContainerTemplate 会在最后一行绑定删除后顺带清理配置）。
+// 需要强制删除时先删掉这些绑定行（DeleteContainerTemplateDefinition）。
 func (s *containerService) DeleteContainerTemplateSpec(ctx context.Context, id int64) error {
 	bindings, err := s.containerRepo.ListContainerTemplateDefinitionBySpecID(ctx, id)
 	if err != nil {
@@ -435,9 +289,9 @@ func (s *containerService) PageContainerTemplateSpec(ctx context.Context, pagina
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-// CreateContainerTemplateDefinition 新增一条绑定行。
-// 绑定行带镜像名与拉取策略，因此这里校验镜像名非空、且同一套配置下不重复绑定同一镜像
-// （与 CreateContainerTemplate 走同一条不变量，DB 唯一索引 uk_template_spec_image_name 兜底）。
+// CreateContainerTemplateDefinition 新增一条绑定行（只写定义，不创建/改动共享运行配置）。
+// 校验：运行配置存在、镜像名非空、同一套配置下不重复绑定同一镜像
+// （DB 唯一索引 uk_template_spec_image_name 兜底）。
 func (s *containerService) CreateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {
 	if item == nil {
 		return fmt.Errorf("container template definition is required")
@@ -445,11 +299,16 @@ func (s *containerService) CreateContainerTemplateDefinition(ctx context.Context
 	if item.SpecID == 0 {
 		return fmt.Errorf("container template spec id is required")
 	}
+	if _, err := s.containerRepo.GetContainerTemplateSpecByID(ctx, item.SpecID); err != nil {
+		return err
+	}
 	item.ImageName = strings.TrimSpace(item.ImageName)
 	if err := ensureImageName(item.ImageName); err != nil {
 		return err
 	}
 	item.PullPolicy = normalizePullPolicy(item.PullPolicy)
+	item.Name = strings.TrimSpace(item.Name)
+	item.Description = strings.TrimSpace(item.Description)
 	if err := s.ensureImageNameNotBound(ctx, item.SpecID, item.ImageName); err != nil {
 		return err
 	}
@@ -461,7 +320,9 @@ func (s *containerService) GetContainerTemplateDefinitionByID(ctx context.Contex
 }
 
 // UpdateContainerTemplateDefinition 按主键更新绑定行（不动 created_at）。
-// 不校验 (spec_id, image_name) 唯一性：更新的是同一行，唯一索引不会冲突。
+// 只写绑定行本体（镜像名、拉取策略、展示名、描述、默认标记），不触碰共享运行配置
+// ContainerTemplateSpec：命令 / 资源 / 端口等“怎么跑”的字段请走 UpdateContainerTemplateSpec。
+// is_default=true 时额外走互斥的默认标记流程（先清空其它行）。
 func (s *containerService) UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {
 	if item == nil || item.ID == 0 {
 		return fmt.Errorf("container template definition id is required")
@@ -471,7 +332,46 @@ func (s *containerService) UpdateContainerTemplateDefinition(ctx context.Context
 		return err
 	}
 	item.PullPolicy = normalizePullPolicy(item.PullPolicy)
-	return s.containerRepo.UpdateContainerTemplateDefinition(ctx, item)
+	item.Name = strings.TrimSpace(item.Name)
+	item.Description = strings.TrimSpace(item.Description)
+
+	existing, err := s.containerRepo.GetContainerTemplateDefinitionByID(ctx, item.ID)
+	if err != nil {
+		return err
+	}
+	// spec_id 是引用键：请求未携带时沿用库里已绑定的运行配置。
+	if item.SpecID == 0 {
+		item.SpecID = existing.SpecID
+	} else if item.SpecID != existing.SpecID {
+		if _, err := s.containerRepo.GetContainerTemplateSpecByID(ctx, item.SpecID); err != nil {
+			return err
+		}
+	}
+	// 同一套运行配置下不允许重复绑定同一镜像（与 CreateContainerTemplateDefinition 同一条不变量，
+	// 更新时跳过自己所在的行）。
+	bindings, err := s.containerRepo.ListContainerTemplateDefinitionBySpecID(ctx, item.SpecID)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		if binding.ID == item.ID {
+			continue
+		}
+		if strings.TrimSpace(binding.ImageName) == item.ImageName {
+			return fmt.Errorf("image %q is already bound to container template spec %d", item.ImageName, item.SpecID)
+		}
+	}
+
+	return s.containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
+		if err := tx.UpdateContainerTemplateDefinition(ctx, item); err != nil {
+			return err
+		}
+		// IsDefault 是全局互斥状态，整行更新不能表达“先清空其它行”，需要单独走默认标记流程。
+		if item.IsDefault {
+			return s.applyDefaultFlag(ctx, tx, item.ID)
+		}
+		return nil
+	})
 }
 
 // upsertContainerTemplateSpec 按主键 upsert 共享运行配置：fallbackID 为绑定行里携带的引用 id。

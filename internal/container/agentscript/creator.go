@@ -91,9 +91,9 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.Scri
 			return runtimecontext.ScriptCreateResult{}, err
 		}
 		containerTemplateID = resolved.ID
-		containerTemplateName = resolved.Name
+		containerTemplateName = containerTemplateDisplayName(resolved)
 	} else if tpl, err := c.containerRepo.GetContainerTemplateByID(ctx, containerTemplateID); err == nil && tpl != nil {
-		containerTemplateName = tpl.Name
+		containerTemplateName = containerTemplateDisplayName(tpl)
 	}
 
 	baseDir := c.storageBaseDir()
@@ -172,6 +172,14 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.Scri
 		ContainerTemplateID:   containerTemplateID,
 		ContainerTemplateName: containerTemplateName,
 	}, nil
+}
+
+// containerTemplateDisplayName 返回容器模板的人类可读名：直接取绑定行展示名（Name）。
+func containerTemplateDisplayName(tpl *types.ContainerTemplate) string {
+	if tpl == nil {
+		return ""
+	}
+	return strings.TrimSpace(tpl.Name)
 }
 
 // resolveDefaultContainerTemplate 返回系统默认容器模板（is_default = true 的绑定行）。

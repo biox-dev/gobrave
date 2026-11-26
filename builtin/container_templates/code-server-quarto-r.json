@@ -45,7 +45,7 @@
       "spec_id": "2089923556677783552",
       "image_name": "registry.cn-hangzhou.aliyuncs.com/wybioinfo/code-server-quarto-r",
       "pull_policy": "IfNotPresent",
-      "display_name": ""
+      "name": "code-server-quarto-r"
     }
   ]
 }

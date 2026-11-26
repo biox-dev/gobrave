@@ -5386,6 +5386,198 @@
                 }
             }
         },
+        "/container/template-definition/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "只新增一条绑定行（ContainerTemplateDefinition）：用 spec_id 引用已有的共享运行配置，\n并写入镜像名 / 拉取策略 / 展示名 / 描述 / 默认标记。返回新建的绑定行。\n共享运行配置请先通过 /container/template-spec/create 创建。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "创建容器模板（绑定行）",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.ContainerTemplateDefinition"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.ContainerTemplateDefinition"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/template-definition/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按绑定行 ID（ContainerTemplateDefinition.ID）删除该镜像绑定；\n共享运行配置（ContainerTemplateSpec）不受影响。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "删除容器模板（绑定行）",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.idBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/container/template-definition/update": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按绑定行 ID（ContainerTemplateDefinition.ID）只更新绑定行本体：\nimage_name / pull_policy / name / description / is_default。\n共享运行配置（命令、资源、端口、环境变量、挂载等）请走 /container/template-spec/update。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "更新容器模板（绑定行）",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.ContainerTemplateDefinition"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.ContainerTemplateDefinition"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/container/template-spec/create": {
             "post": {
                 "security": [
@@ -5734,69 +5926,6 @@
                 }
             }
         },
-        "/container/template/create": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "创建对外容器模板（ContainerTemplate = 共享运行配置 ContainerTemplateSpec × 镜像绑定 ContainerTemplateDefinition）。\nspec_id 为空：用请求体里的运行配置字段新建配置，再建第一条绑定；\nspec_id 非空：复用该配置，只在它下面新增一个镜像绑定（同一套配置挂多个镜像）。\n返回组装后的读模型，含 spec_id / image_name / pull_policy。",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "创建容器模板",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.ContainerTemplate"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.ContainerTemplate"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
         "/container/template/default": {
             "get": {
                 "security": [
@@ -5822,72 +5951,6 @@
                     },
                     "401": {
                         "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/container/template/delete": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按绑定行 ID（ContainerTemplateDefinition.ID）删除该镜像绑定；\n当这张绑定所属的共享运行配置已无任何其他镜像绑定时，一并清理该配置。",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "删除容器模板",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.idBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -6274,69 +6337,6 @@
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/handler.idBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.ContainerTemplate"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/container/template/update": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按绑定行 ID（ContainerTemplateDefinition.ID）更新：请求体里的运行配置字段写入绑行指向的 ContainerTemplateSpec，\nimage_name / pull_policy 与包目录字段写入绑定行本体。返回组装后的读模型。",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "更新容器模板",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.ContainerTemplate"
                         }
                     }
                 ],
@@ -17012,15 +17012,8 @@
                 "created_at": {
                     "type": "string"
                 },
-                "definition_description": {
-                    "description": "DefinitionDescription 原样取自绑定行 ContainerTemplateDefinition.Description（长文本）。\n与 Description（共享运行配置 spec 的描述）相互独立，编辑表单需读写本字段。",
-                    "type": "string"
-                },
                 "description": {
-                    "type": "string"
-                },
-                "display_name": {
-                    "description": "DisplayName 原样取自绑定行 ContainerTemplateDefinition.DisplayName（不做回退）。\nName 才是对外展示名：DisplayName 非空时覆盖共享配置名，否则回退到 spec.Name。\n编辑表单必须读写 DisplayName，否则会把回退出来的配置名误固化成绑定行展示名。",
+                    "description": "Description 原样取自绑定行 ContainerTemplateDefinition.Description（长文本）。",
                     "type": "string"
                 },
                 "env": {
@@ -17057,6 +17050,7 @@
                     }
                 },
                 "name": {
+                    "description": "Name 原样取自绑定行 ContainerTemplateDefinition.Name（该可运行模板的展示名）。",
                     "type": "string"
                 },
                 "port": {
@@ -17105,11 +17099,7 @@
                     "type": "string"
                 },
                 "description": {
-                    "description": "Description 是绑定行自身的描述（长文本），与共享运行配置 ContainerTemplateSpec.Description\n相互独立：spec 描述“怎么跑”，这里描述“这个可运行模板是做什么的 / 适用什么场景”。\nAgent 工具 get_container_template 会把 DisplayName 与 Description 一起回传给模型。",
-                    "type": "string"
-                },
-                "display_name": {
-                    "description": "DisplayName 为空时，对外名称回退到 ContainerTemplateConfig.Name。",
+                    "description": "Description 是绑定行自身的描述（长文本），与共享运行配置 ContainerTemplateSpec.Description\n相互独立：spec 描述“怎么跑”，这里描述“这个可运行模板是做什么的 / 适用什么场景”。\nAgent 工具 get_container_template 会把 Name 与 Description 一起回传给模型。",
                     "type": "string"
                 },
                 "id": {
@@ -17123,6 +17113,10 @@
                 "is_default": {
                     "description": "IsDefault 标记「默认容器模板」：只能有一行处于默认状态，由服务层在写入时互斥维护。\n创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。\n导出时会置为 false（omitempty 使其不出现在导出文件里）。",
                     "type": "boolean"
+                },
+                "name": {
+                    "description": "Name 是该绑定行（一个可直接运行的容器模板）的展示名，与共享运行配置的\nContainerTemplateSpec.Name（描述“怎么跑”）相互独立：同一套配置绑定不同镜像时，\n每个绑定行都可以有自己的展示名；为空时展示层可回退到 spec.Name。\n\n物理列沿用历史名 display_name，避免仅字段改名就引入一次数据迁移。",
+                    "type": "string"
                 },
                 "pull_policy": {
                     "description": "PullPolicy 是该绑定行的镜像拉取策略，取值 Always / IfNotPresent / Never，空值按 IfNotPresent 处理。\n落地方式由 runtime 决定：docker 在 create 前按策略决定是否 pull；kubernetes 直接映射为\ncontainer.imagePullPolicy。",
