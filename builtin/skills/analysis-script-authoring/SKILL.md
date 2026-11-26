@@ -1,6 +1,6 @@
 ---
 name: analysis-script-authoring
-description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体、写 README.md（request_param 规范）、到 create_analysis_node_script 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、README.md 的固定模板与 request_param 写法要求（可直接复制的参数示例、扁平键、FileSelect 对象形态、产物登记、常见报错）、在已创建节点里写 / 改脚本代码的约定（最简写法、可复用解析器优先而非手工切分（GFF 用 rtracklayer、表格用 readr）、tidyverse 读表与 left_join/pivot_longer、列名归一化与列表列压平、knitr::kable 打印、按 outputs 写 outputs.json）、软件安装规范（脚本里直接使用 R 包 / Python 包 / conda 生信软件、不提前探测安装，只有运行报错提示包或软件不存在时才用 terminal_exec 检查并尝试装到系统指定的包目录、容器基础镜像里没有 rscript / python / conda 命令时不要安装而是告知用户、网络与系统库问题先反馈用户）、生物分组不明确时必须先 ask_user、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码、写 R 代码、写 README、安装脚本依赖或运行节点时使用。
+description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体、写 README.md（request_param 规范）、到 create_analysis_node_script 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、README.md 的固定模板与 request_param 写法要求（可直接复制的参数示例、扁平键、FileSelect 对象形态、产物登记、常见报错）、在已创建节点里写 / 改脚本代码的约定（最简写法、可复用解析器优先而非手工切分（GFF 用 rtracklayer、表格用 readr）、tidyverse 读表与 left_join/pivot_longer、列名归一化与列表列压平、knitr::kable 打印、按 outputs 写 outputs.json）、软件安装规范（脚本里直接使用 R 包 / Python 包 / 生信软件、不提前探测安装，只有运行报错提示包或软件不存在时才用 terminal_exec 检查并尝试装到系统指定的包目录；生信软件如 prokka 优先用 mamba 安装、装进以软件名命名的 conda 环境，调用一律用 mamba run -n <env> / conda run -n <env> 命令而不写死安装 bin 绝对路径；容器基础镜像里没有 rscript / python / conda 命令时不要安装而是告知用户、网络与系统库问题先反馈用户）、生物分组不明确时必须先 ask_user、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码、写 R 代码、写 README、安装脚本依赖或运行节点时使用。
 ---
 
 ## 脚本创建与修改规范（总入口）
@@ -724,7 +724,7 @@ jsonlite::write_json(outputs, file.path(params$output_dir, "outputs.json"), auto
 | --- | --- | --- |
 | R 包 | `R_PACKAGE_DIR` | `Rscript -e 'install.packages("ggplot2", repos="https://cloud.r-project.org")'` |
 | Python 包 | `PYTHON_PACKAGE_DIR` | `python -m pip install pandas`（有 `python3` 时用 `python3 -m pip`） |
-| conda 生信软件 | `CONDA_PACKAGE_DIR` | `conda install -y -p "$CONDA_PACKAGE_DIR/default" -c bioconda -c conda-forge bwa` |
+| conda 生信软件 | `CONDA_PACKAGE_DIR` | **优先 mamba**：`mamba install -y -n bwa -c conda-forge -c bioconda bwa`；没有 mamba 时才 `conda install -y -n bwa -c conda-forge -c bioconda bwa` |
 
 约束：
 
@@ -740,15 +740,33 @@ jsonlite::write_json(outputs, file.path(params$output_dir, "outputs.json"), auto
   `package/conda-<template_id>`），节点运行时用同一个环境变量，所以装在这里脚本一定找得到；
   在宿主机器上直接操作这些目录没有意义，一切安装都在容器内用 `terminal_exec` 完成。
 - 代码里**不要**写死包目录（不要 `library(某包, lib.loc="/xxx")`、`sys.path.append("/xxx")`），
-  一律依赖运行时已注入的环境变量。
+  一律依赖运行时已注入的环境变量；生信软件同理，**脚本里不写死软件安装路径**
+  （不要 `export PATH=/…/envs/prokka/bin:$PATH`、也不要 `/…/prokka/bin/prokka` 这种绝对路径），
+  一律用命令调用（见第 3 小节）。
 
-### 3. conda 只装生信软件，不装 R / Python
+### 3. 生信软件优先用 mamba 安装，调用一律用命令
 
-- conda 在本项目里只负责装 `bwa`、`samtools`、`fastqc`、`star` 这类**生信软件**；
+- conda / mamba 在本项目里只负责装 `bwa`、`samtools`、`fastqc`、`star`、`prokka` 这类**生信软件**；
 - **不要用 conda 装 R 或 Python 本身**，也不要用 conda 装 R 包 / Python 包（那会建出系统不认识的新环境）；
   R 包用 `install.packages()`，Python 包用 pip，各走各的目录。
-- conda 装软件时使用固定前缀 `-p "$CONDA_PACKAGE_DIR/default"`（加上 `-c bioconda -c conda-forge`），
-  不要 `conda create -n xxx` 新建环境名，也不要在安装后到处 `conda activate`。
+- **安装优先用 mamba**：先 `command -v mamba`，有就用 `mamba install`（求解快、不易卡 resolver），
+  没有再用 `conda install`。频道顺序固定 `-c conda-forge -c bioconda`。
+- 软件装进**以软件名命名的环境**：`mamba install -y -n prokka -c conda-forge -c bioconda prokka`。
+  环境目录由系统 `envs_dirs` 决定，**不要手写 `-p` / `--prefix` 绝对路径**，也不要 `conda activate`
+  （一次性终端里 activate 不持久，节点运行也不会继承）。
+- **调用已安装的软件一律走命令，不在脚本 / 命令节点里写死安装路径**：
+
+  ~~~bash
+  mamba run -n prokka prokka --version
+  mamba run -n prokka prokka --outdir out --prefix demo genome.fsa
+  ~~~
+
+  - 有 mamba 用 `mamba run -n <env> <cmd>`；没有则用 `conda run -n <env> --no-capture-output <cmd>`
+    （加 `--no-capture-output` 才能把软件日志实时打出来）；
+  - **禁止**写 `export PATH=.../envs/prokka/bin:$PATH`、`/data2/.../package/conda-<id>/prokka/bin/prokka`
+    这类绝对路径：换容器 / 换项目就失效，也违反「不硬编码路径」的约定；
+  - 软件装在 `-p` 前缀目录（历史遗留）时同理用
+    `conda run -p "$CONDA_PACKAGE_DIR/<软件名>" --no-capture-output <cmd>`，仍不写 bin 绝对路径。
 
 ### 4. 安装 R 包缺系统库：停下来反馈用户
 
@@ -786,7 +804,7 @@ R 包编译/安装失败、报错指向缺少系统库时（典型如 `libcurl`�
 ```bash
 Rscript -e 'library(ggplot2); cat("ok\n")'
 python -c 'import pandas; print("ok")'
-command -v bwa && bwa 2>&1 | head -n 1
+mamba run -n bwa bwa 2>&1 | head -n 1   # 无 mamba 时用 conda run -n bwa --no-capture-output bwa
 ```
 
 验证通过后再重新 `run_analysis_node`（节点已建好，直接重跑即可）；验证不通过按第 5 小节反馈用户
@@ -797,6 +815,17 @@ command -v bwa && bwa 2>&1 | head -n 1
 安装只是让包**在容器里可用**，脚本里依旧按最简写法 `library(ggplot2)` / `import pandas`：
 不需要写 `install.packages()` / `pip install` 到脚本里（每次运行都会重新装，又慢又容易失败），
 也不需要加路径参数。脚本里直接引用依赖、不提前探测；某个依赖报「不存在」时再照第六节的表格装一次。
+
+生信软件在脚本 / 命令节点里一律用命令调用，不写死安装路径：
+
+~~~bash
+# 对：走 mamba run / conda run，脚本可移植
+mamba run -n prokka prokka --outdir "$OD" --prefix demo --kingdom Bacteria --genus Ligilactobacillus "$IN"
+
+# 错：写死环境里的 bin 路径，换容器 / 换项目即失效
+export PATH="/…/package/conda-<id>/prokka/bin:$PATH"
+/…/package/conda-<id>/prokka/bin/prokka --version
+~~~
 
 ---
 
