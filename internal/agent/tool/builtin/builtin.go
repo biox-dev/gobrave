@@ -44,6 +44,10 @@ func All(d Deps) []tool.Tool {
 		CreateContainerTemplateDefinition(d.ContainerTemplateDefinitionWriter),
 		UpdateContainerTemplateDefinition(d.ContainerTemplateDefinitionWriter),
 
+		// 应用会话：按容器模板创建 Web / 终端会话（容器由服务层拉起）。
+		CreateWebAppSession(d.AppSessions),
+		CreateTerminalAppSession(d.AppSessions),
+
 		// 脚本：列出 / 查看 / 创建 / 更新。
 		ListProjectScripts(d.ScriptBrowser),
 		GetScript(d.ScriptBrowser),

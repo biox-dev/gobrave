@@ -54,6 +54,9 @@ type Deps struct {
 	// 运行配置 × 镜像 绑定行（create/update_container_template_definition）。
 	ContainerTemplateSpecWriter       runtimecontext.ContainerTemplateSpecWriter
 	ContainerTemplateDefinitionWriter runtimecontext.ContainerTemplateDefinitionWriter
+	// AppSessions 按容器模板创建 Web / 终端应用会话
+	// （create_web_app_session / create_terminal_app_session）。
+	AppSessions runtimecontext.AppSessionCreator
 	// ReportBrowser 按 ID 查看项目报告及正文（get_report）。
 	ReportBrowser runtimecontext.ProjectReportBrowser
 	// Plan agent 计划的读写能力（create / list / get / update / delete_plan）。

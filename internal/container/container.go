@@ -234,7 +234,10 @@ type agentToolDeps struct {
 	Browser         *projectResourceBrowser
 	// ReportWriter 创建 / 更新项目报告（create_report / update_report）。
 	ReportWriter *projectReportWriter
-	Skills       *skill.Registry
+	// AppSessions 按容器模板创建 Web / 终端应用会话
+	// （create_web_app_session / create_terminal_app_session）。
+	AppSessions runtimecontext.AppSessionCreator
+	Skills      *skill.Registry
 	// SkillStore 用户技能的文件存储（create_skill / edit_skill 落盘用）。
 	SkillStore *skill.Store
 	// Profiles Profile 管理器（update_profile_prompt 修改当前 Profile 的系统提示词）。
@@ -294,10 +297,12 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		// 容器模板写能力：共享运行配置与「运行配置 × 镜像」绑定行。
 		ContainerTemplateSpecWriter:       in.Browser,
 		ContainerTemplateDefinitionWriter: in.Browser,
-		Plan:                              in.Plan,
-		SessionResources:                  in.SessionResources,
-		Skills:                            skillResolver,
-		SkillWriter:                       skillWriter,
+		// 应用会话创建能力：按容器模板创建 Web / 终端应用会话。
+		AppSessions:      in.AppSessions,
+		Plan:             in.Plan,
+		SessionResources: in.SessionResources,
+		Skills:           skillResolver,
+		SkillWriter:      skillWriter,
 		// Profile 写能力：修改当前 Profile 的系统提示词（update_profile_prompt）。
 		// 同时告知 Writer 启动时是否会覆盖内置提示词，使其能提醒用户「本次修改会在重启后被覆盖」。
 		ProfilePromptWriter: profilePromptWriter(in),
@@ -615,6 +620,14 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 同一注册表再暴露为容器 shell 服务，供 bash 工具在 container 模式下注入。
 	must(container.Provide(func(registry *manager.TerminalSessionRegistry) hostshell.ContainerShellService {
 		return registry
+	}))
+	// 应用会话创建能力：把「按容器模板创建 Web / 终端应用会话」暴露给内置工具
+	// create_web_app_session（ContainerService.CreateAppSessionByTemplate）与
+	// create_terminal_app_session（TerminalSessionRegistry.CreateForTemplate）。
+	// Provide 是惰性的，interfaces.ContainerService 在后面的 service.NewContainerService
+	// 注册即可满足解析（只要本 Provide 早于 buildAgentTools 的 Invoke）。
+	must(container.Provide(func(containerSvc interfaces.ContainerService, registry *manager.TerminalSessionRegistry) runtimecontext.AppSessionCreator {
+		return newAgentAppSessionCreator(containerSvc, registry)
 	}))
 	// 文件读取器：把「按 go_file 主键解析文件路径 + 读取文件内容」能力暴露给内置工具
 	// get_file，用于读取用户输入 @file:<id> 引用指向的文件（agent 传裸 ID）。
