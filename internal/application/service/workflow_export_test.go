@@ -48,7 +48,7 @@ func TestExportContainerAssetsDeduplicates(t *testing.T) {
 			300: {ID: 300, Name: "spec-300", Command: "R -e 1", Port: 8787},
 		},
 		definitions: map[int64]*types.ContainerTemplateDefinition{
-			200: {ID: 200, SpecID: 300, ImageName: "docker.io/rocker/rstudio:4.4", PullPolicy: types.PullPolicyIfNotPresent, IsDefault: true},
+			200: {ID: 200, SpecID: 300, ImageName: "docker.io/rocker/rstudio:4.4", PullPolicy: types.PullPolicyIfNotPresent},
 		},
 	}
 
@@ -69,9 +69,6 @@ func TestExportContainerAssetsDeduplicates(t *testing.T) {
 	definition := bundle.ContainerTemplateDefinitions[0]
 	if definition.ID != 200 || definition.SpecID != 300 || definition.ImageName != "docker.io/rocker/rstudio:4.4" {
 		t.Fatalf("definition = %#v", definition)
-	}
-	if definition.IsDefault {
-		t.Fatalf("exported definition must not carry is_default")
 	}
 	if bundle.ContainerTemplateSpecs[0].ID != 300 || bundle.ContainerTemplateSpecs[0].Name != "spec-300" {
 		t.Fatalf("spec = %#v", bundle.ContainerTemplateSpecs[0])

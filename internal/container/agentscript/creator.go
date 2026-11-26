@@ -2,7 +2,6 @@ package agentscript
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // scriptCreator 实现 runtimecontext.ScriptCreator：把「创建脚本」能力暴露给内置工具 create_script。
@@ -33,7 +31,7 @@ type scriptCreator struct {
 	/* 依赖注入的服务能力 */
 	workflowSvc interfaces.WorkflowService
 	projectRepo interfaces.ProjectRepository
-	// containerRepo 用于解析默认容器模板（create_script 未传 container_template_id 时）。
+	// containerRepo 用于解析 create_script 指定的容器模板展示名。
 	containerRepo interfaces.ContainerRepository
 	// resources 记录「当前会话 ↔ 脚本」的关联（创建 / 更新成功后写入）。
 	resources agentinterfaces.SessionResourceService
@@ -63,8 +61,9 @@ func NewCreator(
 
 // CreateScript 只创建脚本（不创建分析节点），返回脚本 ID 与关键路径。
 //
-// 步骤：解析默认容器模板 → 落库 Script → 初始化脚本目录（主文件 + io_schema.json）。
+// 步骤：校验容器模板 → 落库 Script → 初始化脚本目录（主文件 + io_schema.json）。
 // 分析节点由 create_analysis_node_script（agentanalysis）单独创建，因此这里不需要任何节点名称 / 节点目录。
+// container_template_id 必填，不再回退到系统默认模板。
 func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.ScriptCreateInput) (runtimecontext.ScriptCreateResult, error) {
 	if in.ProjectID <= 0 {
 		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: project_id is required")
@@ -81,19 +80,16 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.Scri
 		scriptType = builtin.DefaultScriptType
 	}
 
-	// 未显式指定容器模板时回落到系统默认模板；没有默认模板则直接报错，
-	// 让模型提示用户先到「容器模板」页把某个模板设为默认。
+	// container_template_id 必填：不再回退到系统默认模板。
 	containerTemplateID := in.ContainerTemplateID
-	containerTemplateName := ""
 	if containerTemplateID <= 0 {
-		resolved, err := c.resolveDefaultContainerTemplate(ctx)
-		if err != nil {
-			return runtimecontext.ScriptCreateResult{}, err
+		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: container_template_id is required")
+	}
+	containerTemplateName := ""
+	if c.containerRepo != nil {
+		if tpl, err := c.containerRepo.GetContainerTemplateByID(ctx, containerTemplateID); err == nil && tpl != nil {
+			containerTemplateName = containerTemplateDisplayName(tpl)
 		}
-		containerTemplateID = resolved.ID
-		containerTemplateName = containerTemplateDisplayName(resolved)
-	} else if tpl, err := c.containerRepo.GetContainerTemplateByID(ctx, containerTemplateID); err == nil && tpl != nil {
-		containerTemplateName = containerTemplateDisplayName(tpl)
 	}
 
 	baseDir := c.storageBaseDir()
@@ -180,33 +176,6 @@ func containerTemplateDisplayName(tpl *types.ContainerTemplate) string {
 		return ""
 	}
 	return strings.TrimSpace(tpl.Name)
-}
-
-// resolveDefaultContainerTemplate 返回系统默认容器模板（is_default = true 的绑定行）。
-//
-// 没有默认模板时返回带用户指引导的错误：模型会把错误原文回给用户，
-// 用户据此到「容器模板」页设置默认模板后重试。
-func (c *scriptCreator) resolveDefaultContainerTemplate(ctx context.Context) (*types.ContainerTemplate, error) {
-	if c.containerRepo == nil {
-		return nil, fmt.Errorf("create_script: no container_template_id was provided and the container repository is not available; please ask the user to configure a default container template")
-	}
-
-	definition, err := c.containerRepo.GetDefaultContainerTemplateDefinition(ctx)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("create_script: no container_template_id was provided and no default container template is configured; please ask the user to open the Container Template page and set one template as default")
-		}
-		return nil, fmt.Errorf("create_script: failed to resolve default container template: %w", err)
-	}
-
-	tpl, err := c.containerRepo.GetContainerTemplateByID(ctx, definition.ID)
-	if err != nil {
-		return nil, fmt.Errorf("create_script: failed to load default container template %d: %w", definition.ID, err)
-	}
-	if tpl == nil {
-		return nil, fmt.Errorf("create_script: default container template %d not found; please set another template as default", definition.ID)
-	}
-	return tpl, nil
 }
 
 // storageBaseDir 返回存储根目录（容忍 cfg/Storage 为空）。

@@ -349,8 +349,7 @@ type ScriptCreator interface {
 	// CreateScript 创建脚本并初始化脚本目录，返回脚本 ID 与主文件 / io_schema.json 路径。
 	//
 	// projectID 取自 RuntimeContext.ProjectID（当前用户激活项目），必须为正数。
-	// input.ContainerTemplateID 为空（0）时由实现解析系统默认容器模板；
-	// 没有配置默认模板时返回错误，提示用户先到容器模板页设置默认模板。
+	// input.ContainerTemplateID 必填（> 0）；为 0 时实现返回错误。
 	CreateScript(ctx context.Context, input ScriptCreateInput) (ScriptCreateResult, error)
 }
 
@@ -1156,7 +1155,6 @@ type ContainerTemplateDetail struct {
 	Description  string `json:"description"`
 	ImageName    string `json:"image_name,omitempty"`
 	PullPolicy   string `json:"pull_policy,omitempty"`
-	IsDefault    bool   `json:"is_default"`
 	SpecName     string `json:"spec_name,omitempty"`
 }
 
@@ -1394,7 +1392,7 @@ type ScriptCreateInput struct {
 	// 以下为 Script 字段。
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	// ContainerTemplateID 为 0 时表示未指定，由实现解析系统默认容器模板。
+	// ContainerTemplateID 是必填的容器模板 ID（> 0）。
 	ContainerTemplateID int64  `json:"container_template_id,string"`
 	ScriptType          string `json:"script_type"`
 	// Inputs / Outputs 是脚本的输入输出契约（io_schema.json 的 inputs / outputs）。
@@ -1424,7 +1422,7 @@ type ScriptCreateResult struct {
 	// ScriptType 是实际生效的脚本类型（未传时为默认类型）。
 	ScriptType string `json:"script_type,omitempty"`
 
-	// ContainerTemplateID 是脚本最终使用的容器模板 ID（未显式指定时为解析出的默认模板）。
+	// ContainerTemplateID 是脚本使用的容器模板 ID。
 	ContainerTemplateID   int64  `json:"container_template_id,string"`
 	ContainerTemplateName string `json:"container_template_name,omitempty"`
 }

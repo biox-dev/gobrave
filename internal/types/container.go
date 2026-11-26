@@ -91,11 +91,6 @@ type ContainerTemplateDefinition struct {
 	// Agent 工具 get_container_template 会把 Name 与 Description 一起回传给模型。
 	Description string `json:"description" gorm:"type:longtext"`
 
-	// IsDefault 标记「默认容器模板」：只能有一行处于默认状态，由服务层在写入时互斥维护。
-	// 创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。
-	// 导出时会置为 false（omitempty 使其不出现在导出文件里）。
-	IsDefault bool `json:"is_default,omitempty" gorm:"not null;default:false;index"`
-
 	// 指针类型是为了让导出可以显式清空（omitempty 也因此生效）；接口响应仍会带上时间字段。
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
@@ -133,8 +128,6 @@ type ContainerTemplate struct {
 	// ImageName / PullPolicy 原样取自绑定行 ContainerTemplateDefinition。
 	ImageName  string `json:"image_name"`
 	PullPolicy string `json:"pull_policy"`
-	// IsDefault 原样取自绑定行 ContainerTemplateDefinition.IsDefault。
-	IsDefault bool `json:"is_default"`
 
 	Command string  `json:"command"`
 	CPU     float64 `json:"cpu"`
@@ -167,7 +160,6 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 		Description: binding.Description,
 		ImageName:   binding.ImageName,
 		PullPolicy:  binding.PullPolicy,
-		IsDefault:   binding.IsDefault,
 	}
 	// 历史数据可能没有拉取策略，空值统一按 IfNotPresent 对外暴露。
 	if tpl.PullPolicy == "" {
@@ -235,8 +227,7 @@ func (t *ContainerTemplate) ToExport(spec *ContainerTemplateSpec) *ContainerTemp
 	}
 
 	bundle := NewContainerTemplateBundle()
-	// 导出格式不含时间字段与 is_default（默认模板是本地状态，不随资产导出），
-	// 但展示名、镜像名与拉取策略属于资产本身，必须原样带出。
+	// 导出格式不含时间字段，但展示名、镜像名与拉取策略属于资产本身，必须原样带出。
 	bundle.ContainerTemplateDefinitions = append(bundle.ContainerTemplateDefinitions, ContainerTemplateDefinition{
 		ID:          t.ID,
 		SpecID:      t.SpecID,

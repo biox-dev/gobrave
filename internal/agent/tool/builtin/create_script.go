@@ -23,7 +23,7 @@ const DefaultScriptType = "qmd"
 type CreateScriptInput struct {
 	Name                string `json:"name"`                  // 脚本名称（Script.Name）
 	Description         string `json:"description"`           // 脚本描述（Script.Description）
-	ContainerTemplateID string `json:"container_template_id"` // 容器运行配置 ID（字符串以保精度），为空时取默认模板
+	ContainerTemplateID string `json:"container_template_id"` // 容器运行配置 ID（字符串以保精度），必填
 	ScriptType          string `json:"script_type"`           // 脚本类型：qmd（默认）/ r / python / shell / jupyter
 	// Inputs / Outputs 是脚本的输入输出契约（写入 io_schema.json 的 inputs / outputs）。
 	// 为空时使用系统的默认 schema。
@@ -55,8 +55,7 @@ type CreateScriptOutput struct {
 	// ScriptType 是实际生效的脚本类型（未传时为 qmd）。
 	ScriptType string `json:"script_type,omitempty"`
 
-	// ContainerTemplateID / ContainerTemplateName 是实际生效的容器模板：
-	// 未传 container_template_id 时为系统默认模板。
+	// ContainerTemplateID / ContainerTemplateName 是脚本使用的容器模板。
 	ContainerTemplateID   int64  `json:"container_template_id,string,omitempty"`
 	ContainerTemplateName string `json:"container_template_name,omitempty"`
 
@@ -68,8 +67,7 @@ type CreateScriptOutput struct {
 // 行为：
 //   - 从 RuntimeContext 取当前项目 ID（缺失时直接报错，避免写到错误项目）；
 //   - script_type 为空时按 DefaultScriptType（qmd）处理；
-//   - container_template_id 为空时由 ScriptCreator 解析系统默认容器模板，
-//     没有默认模板时回到模型一个错误提示，让用户先去容器模板页配置默认模板；
+//   - container_template_id 必填（> 0），不再回退到系统默认模板；
 //   - inputs / outputs 非空时写入脚本目录的 io_schema.json（这是脚本的参数契约，
 //     之后 create_analysis_node_script 会按它初始化节点的 inputs_patterns / output_patterns）；
 //   - 通过注入的 ScriptCreator 落库 Script 并初始化脚本目录（主文件、io_schema.json）；
@@ -79,18 +77,18 @@ type CreateScriptOutput struct {
 func CreateScript(creator runtimecontext.ScriptCreator) tool.Tool {
 	return tool.NewFunc(
 		CreateScriptToolName,
-		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径。可直接用 script_content / io_schema / readme 一次性写入三个文件正文（对应 script_file / io_schema / readme），无需再用 write / edit / bash；inputs / outputs 仅在未提供 io_schema 时用于生成 io_schema.json。需要运行脚本时，再调用 create_analysis_node_script（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd；未指定 container_template_id 时使用系统默认容器模板（没有默认模板时会报错，需让用户先去容器模板页设置默认）。用户消息里的 @container:<id> 直接把冒号后的 ID 作为 container_template_id；需要确认模板时可先调用 get_container_template。",
+		"创建一个新的分析脚本（只创建脚本，不创建分析节点）。返回脚本 ID、脚本主文件路径与 io_schema.json 路径。可直接用 script_content / io_schema / readme 一次性写入三个文件正文（对应 script_file / io_schema / readme），无需再用 write / edit / bash；inputs / outputs 仅在未提供 io_schema 时用于生成 io_schema.json。需要运行脚本时，再调用 create_analysis_node_script（传入本工具返回的 script_id）创建分析节点。未指定 script_type 时默认使用 qmd。container_template_id 必填：必须显式传入一个容器模板 ID（用户消息里的 @container:<id> 直接把冒号后的 ID 传入；不确定有哪些模板时先调用 list_container_templates 或 get_container_template）。",
 		tool.Schema("创建脚本的入参", map[string]any{
 			"name":                  tool.StringProperty("脚本名称（同名脚本在同一项目下应唯一，由业务侧校验）。"),
 			"description":           tool.StringProperty("脚本用途描述（可选），用于说明该脚本做什么。"),
-			"container_template_id": tool.StringProperty("容器运行配置 ID（整数，字符串以保精度）；可直接使用用户消息里的 @container:<id>（冒号后的 ID）。为空时使用系统默认容器模板。"),
+			"container_template_id": tool.StringProperty("容器运行配置 ID（必填，整数，字符串以保精度）；可直接使用用户消息里的 @container:<id>（冒号后的 ID）。"),
 			"script_type":           tool.StringProperty("脚本类型：qmd（默认）/ r / python / shell / jupyter（决定主文件名与初始化模板）。"),
 			"script_content":        tool.StringProperty("脚本主文件正文（write to script_file）。为空时使用该脚本类型的默认模板。"),
 			"io_schema":             tool.StringProperty("io_schema.json 原文（write to io_schema）。给出时忽略 inputs / outputs；为空时按 inputs / outputs 生成。"),
 			"readme":                tool.StringProperty("README.md 正文（write to readme）。为空时不写 README。"),
 			"inputs":                ioItemsSchema("脚本输入契约列表（io_schema.json 的 inputs）。name 即 params.json 中的参数名，脚本内需按该名取参数；type 常见值：BaseInput / file / string / number / boolean 等。"),
 			"outputs":               ioItemsSchema("脚本输出契约列表（io_schema.json 的 outputs）。name 为输出名，type 通常为 file。"),
-		}, "name"),
+		}, "name", "container_template_id"),
 		func(ctx context.Context, in CreateScriptInput) (CreateScriptOutput, error) {
 			projectID := tool.ProjectIDFrom(ctx)
 			if projectID <= 0 {
@@ -218,8 +216,7 @@ func normalizeIOSchemaItems(items []map[string]any) []map[string]any {
 
 // parseContainerTemplateID 解析 container_template_id；为空时返回 0。
 //
-// 是否为 0 合法由调用方决定：create_script 会回退到系统默认模板，create_analysis_node_agent
-// 则要求必填（> 0）。
+// 是否为 0 合法由调用方决定：create_script 与 create_analysis_node_agent 都要求必填（> 0）。
 // 容错处理用户 / 模型可能带上的 "@container:" 前缀（如 "@container:2109711590457610240"）。
 func parseContainerTemplateID(raw string) (int64, error) {
 	idStr := strings.TrimSpace(raw)

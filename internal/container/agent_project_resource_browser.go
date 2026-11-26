@@ -769,7 +769,6 @@ func (b *projectResourceBrowser) GetContainerTemplateByID(ctx context.Context, c
 		Description:  tpl.Description,
 		ImageName:    tpl.ImageName,
 		PullPolicy:   tpl.PullPolicy,
-		IsDefault:    tpl.IsDefault,
 	}
 	// 读模型里的 Name 是绑定行展示名，这里按 SpecID 回查共享配置名。
 	if spec, specErr := b.containerSvc.GetContainerTemplateSpecByID(ctx, tpl.SpecID); specErr == nil && spec != nil {

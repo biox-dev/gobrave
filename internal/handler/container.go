@@ -169,7 +169,7 @@ func (h *ContainerHandler) GetContainerTemplate(c *gin.Context) {
 // UpdateContainerTemplateDefinition godoc
 // @Summary      更新容器模板（绑定行）
 // @Description  按绑定行 ID（ContainerTemplateDefinition.ID）只更新绑定行本体：
-// @Description  image_name / pull_policy / name / description / is_default。
+// @Description  image_name / pull_policy / name / description。
 // @Description  共享运行配置（命令、资源、端口、环境变量、挂载等）请走 /container/template-spec/update。
 // @Tags         容器管理
 // @Accept       json
@@ -525,76 +525,6 @@ func (h *ContainerHandler) PageContainerTemplate(c *gin.Context) {
 	})
 }
 
-// ===== 默认容器模板 =====
-
-// GetDefaultContainerTemplate godoc
-// @Summary      获取默认容器模板
-// @Description  返回 is_default=true 的容器模板（ContainerTemplate 读模型）；没有默认模板时返回 data=null。
-// @Description  create_script 未显式指定 container_template_id 时会使用这一条。
-// @Tags         容器管理
-// @Produce      json
-// @Success      200      {object}  map[string]interface{}
-// @Failure      401      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /container/template/default [get]
-func (h *ContainerHandler) GetDefaultContainerTemplate(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	item, err := h.containerService.GetDefaultContainerTemplate(c.Request.Context())
-	if err != nil {
-		handleDataError(c, err, "failed to get default container template")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"data": item})
-}
-
-// SetDefaultContainerTemplate godoc
-// @Summary      设置默认容器模板
-// @Description  按绑定行 ID（ContainerTemplateDefinition.ID）把该模板设为唯一默认模板，并清空其它模板的默认标记。
-// @Tags         容器管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body      idBody  true  "请求参数"
-// @Success      200      {object}  types.ContainerTemplate
-// @Failure      400      {object}  errors.AppError
-// @Failure      401      {object}  errors.AppError
-// @Failure      404      {object}  errors.AppError
-// @Failure      500      {object}  errors.AppError
-// @Security     Bearer
-// @Router       /container/template/set-default [post]
-func (h *ContainerHandler) SetDefaultContainerTemplate(c *gin.Context) {
-	if _, ok := getCurrentUserID(c); !ok {
-		return
-	}
-
-	var req idBody
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
-		return
-	}
-	if req.ID == 0 {
-		c.Error(errors.NewValidationError("id is required"))
-		return
-	}
-
-	if err := h.containerService.SetDefaultContainerTemplate(c.Request.Context(), req.ID); err != nil {
-		handleDataError(c, err, "failed to set default container template")
-		return
-	}
-
-	item, err := h.containerService.GetContainerTemplateByID(c.Request.Context(), req.ID)
-	if err != nil {
-		handleDataError(c, err, "failed to get container template")
-		return
-	}
-
-	c.JSON(http.StatusOK, item)
-}
-
 // ListContainerTemplateBySpec godoc
 // @Summary      按共享配置列出容器模板// @Description  列出同一套 ContainerTemplateSpec 下绑定不同镜像的所有对外模板（一个配置 × 多个镜像）
 // @Tags         容器管理
@@ -677,7 +607,7 @@ func (h *ContainerHandler) ExportContainerTemplate(c *gin.Context) {
 // @Description  导入统一平铺格式（与 /container/template/export、script.json / workflow.json 同构）：
 // @Description  container_template_specs / container_template_definitions。
 // @Description  两张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为
-// @Description  「运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。
+// @Description  「运行配置 → 绑定行」。
 // @Tags         容器管理
 // @Accept       json
 // @Produce      json

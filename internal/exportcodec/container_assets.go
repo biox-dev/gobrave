@@ -43,7 +43,7 @@ type ContainerAssetService interface {
 // 与 containerService.ExportContainerTemplate 同一逻辑：definitionID 就是绑定行主键
 // （脚本的 container_template_id），按「绑定行 → 运行配置」各取一条；
 // 取不到（绑定行已删除、spec 缺失）时只跳过，不当作错误。
-// 返回的绑定行固定 is_default=false 且不含时间字段，可原样写入 script.json / workflow.json。
+// 返回的绑定行不含时间字段，可原样写入 script.json / workflow.json。
 func ExportContainerAssets(ctx context.Context, svc ContainerAssetService, definitionID int64) (*types.ContainerTemplateBundle, error) {
 	if definitionID == 0 || svc == nil {
 		return types.NewContainerTemplateBundle(), nil
@@ -61,7 +61,6 @@ func ExportContainerAssets(ctx context.Context, svc ContainerAssetService, defin
 	exportedDefinition := *definition
 	exportedDefinition.CreatedAt = nil
 	exportedDefinition.UpdatedAt = nil
-	exportedDefinition.IsDefault = false
 	bundle.ContainerTemplateDefinitions = append(bundle.ContainerTemplateDefinitions, exportedDefinition)
 
 	spec, err := svc.GetContainerTemplateSpecByID(ctx, definition.SpecID)

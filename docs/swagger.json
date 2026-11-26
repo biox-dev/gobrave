@@ -5522,7 +5522,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "按绑定行 ID（ContainerTemplateDefinition.ID）只更新绑定行本体：\nimage_name / pull_policy / name / description / is_default。\n共享运行配置（命令、资源、端口、环境变量、挂载等）请走 /container/template-spec/update。",
+                "description": "按绑定行 ID（ContainerTemplateDefinition.ID）只更新绑定行本体：\nimage_name / pull_policy / name / description。\n共享运行配置（命令、资源、端口、环境变量、挂载等）请走 /container/template-spec/update。",
                 "consumes": [
                     "application/json"
                 ],
@@ -5926,44 +5926,6 @@
                 }
             }
         },
-        "/container/template/default": {
-            "get": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "返回 is_default=true 的容器模板（ContainerTemplate 读模型）；没有默认模板时返回 data=null。\ncreate_script 未显式指定 container_template_id 时会使用这一条。",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "获取默认容器模板",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
         "/container/template/export": {
             "post": {
                 "security": [
@@ -6092,7 +6054,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "导入统一平铺格式（与 /container/template/export、script.json / workflow.json 同构）：\ncontainer_template_specs / container_template_definitions。\n两张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为\n「运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。",
+                "description": "导入统一平铺格式（与 /container/template/export、script.json / workflow.json 同构）：\ncontainer_template_specs / container_template_definitions。\n两张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为\n「运行配置 → 绑定行」。",
                 "consumes": [
                     "application/json"
                 ],
@@ -6282,69 +6244,6 @@
                             "items": {
                                 "$ref": "#/definitions/types.ContainerTemplate"
                             }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/errors.AppError"
-                        }
-                    }
-                }
-            }
-        },
-        "/container/template/set-default": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "description": "按绑定行 ID（ContainerTemplateDefinition.ID）把该模板设为唯一默认模板，并清空其它模板的默认标记。",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "容器管理"
-                ],
-                "summary": "设置默认容器模板",
-                "parameters": [
-                    {
-                        "description": "请求参数",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.idBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.ContainerTemplate"
                         }
                     },
                     "400": {
@@ -17030,10 +16929,6 @@
                     "description": "ImageName / PullPolicy 原样取自绑定行 ContainerTemplateDefinition。",
                     "type": "string"
                 },
-                "is_default": {
-                    "description": "IsDefault 原样取自绑定行 ContainerTemplateDefinition.IsDefault。",
-                    "type": "boolean"
-                },
                 "labels": {
                     "type": "array",
                     "items": {
@@ -17109,10 +17004,6 @@
                 "image_name": {
                     "description": "ImageName 是完整镜像名（含 registry / namespace / tag），如 docker.io/rocker/rstudio:4.4。\n同一运行配置下不允许重复绑定同一镜像由服务层校验（不用唯一索引，便于旧数据迁移）。",
                     "type": "string"
-                },
-                "is_default": {
-                    "description": "IsDefault 标记「默认容器模板」：只能有一行处于默认状态，由服务层在写入时互斥维护。\n创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。\n导出时会置为 false（omitempty 使其不出现在导出文件里）。",
-                    "type": "boolean"
                 },
                 "name": {
                     "description": "Name 是该绑定行（一个可直接运行的容器模板）的展示名，与共享运行配置的\nContainerTemplateSpec.Name（描述“怎么跑”）相互独立：同一套配置绑定不同镜像时，\n每个绑定行都可以有自己的展示名；为空时展示层可回退到 spec.Name。\n\n物理列沿用历史名 display_name，避免仅字段改名就引入一次数据迁移。",

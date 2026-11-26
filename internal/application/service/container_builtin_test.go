@@ -10,14 +10,12 @@ import (
 )
 
 // fakeBuiltinContainerService 只实现内置模板导入用到的方法：
-// 安装侧（InstallContainerAssets 的 Create / Get / Update）与默认标记（SetDefaultContainerTemplate）。
+// 安装侧（InstallContainerAssets 的 Create / Get / Update）。
 // 其余方法由嵌入的（nil）接口提供，一旦被测代码走到未实现的方法会直接 panic。
 type fakeBuiltinContainerService struct {
 	interfaces.ContainerService
 	specs       map[int64]*types.ContainerTemplateSpec
 	definitions map[int64]*types.ContainerTemplateDefinition
-	// defaultID 记录最后一次被设为默认的绑定行（0 表示从未设置）。
-	defaultID int64
 }
 
 func newFakeBuiltinContainerService() *fakeBuiltinContainerService {
@@ -69,14 +67,8 @@ func (f *fakeBuiltinContainerService) UpdateContainerTemplateDefinition(_ contex
 	return nil
 }
 
-func (f *fakeBuiltinContainerService) SetDefaultContainerTemplate(_ context.Context, definitionID int64) error {
-	f.defaultID = definitionID
-	return nil
-}
-
 // TestInstallBuiltinContainerTemplatesImportsEmbeddedFiles 内置模板必须能被解析并导入：
-// 内嵌 JSON（code-server-quarto-r / rstudio-tidyverse-r / ubuntu）都按导出文件里的主键落库，
-// 且文件里 is_default=true 的绑定行会被设为默认模板。
+// 内嵌 JSON（code-server-quarto-r / rstudio-tidyverse-r / ubuntu）都按导出文件里的主键落库。
 func TestInstallBuiltinContainerTemplatesImportsEmbeddedFiles(t *testing.T) {
 	// 指向不存在的目录 → 回退到 go:embed 内嵌副本。
 	SetBuiltinContainerTemplateDir(t.TempDir())
@@ -111,11 +103,6 @@ func TestInstallBuiltinContainerTemplatesImportsEmbeddedFiles(t *testing.T) {
 
 	if len(svc.specs) != 3 || len(svc.definitions) != 3 {
 		t.Fatalf("counts = (%d,%d), want (3,3)", len(svc.specs), len(svc.definitions))
-	}
-
-	// 只有 rstudio 标记了默认；code-server 的 is_default=false 不应设置默认。
-	if svc.defaultID != 202606160002 {
-		t.Fatalf("defaultID = %d, want 202606160002", svc.defaultID)
 	}
 }
 

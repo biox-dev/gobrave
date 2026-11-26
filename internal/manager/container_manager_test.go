@@ -130,27 +130,6 @@ func (m *mockContainerRepo) DeleteContainerTemplateDefinition(ctx context.Contex
 	return nil
 }
 
-// ClearContainerTemplateDefinitionDefault 清空全部绑定行的默认标记（与 DB 实现语义一致）。
-func (m *mockContainerRepo) ClearContainerTemplateDefinitionDefault(ctx context.Context) error {
-	for id, item := range m.definitions {
-		item.IsDefault = false
-		m.refreshTemplateCache(item)
-		delete(m.definitions, id)
-		m.definitions[id] = item
-	}
-	return nil
-}
-
-// GetDefaultContainerTemplateDefinition 返回默认绑定行；没有时返回 gorm.ErrRecordNotFound。
-func (m *mockContainerRepo) GetDefaultContainerTemplateDefinition(ctx context.Context) (*types.ContainerTemplateDefinition, error) {
-	for _, item := range m.definitions {
-		if item.IsDefault {
-			return item, nil
-		}
-	}
-	return nil, gorm.ErrRecordNotFound
-}
-
 func (m *mockContainerRepo) ListContainerTemplateDefinitionBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplateDefinition, error) {
 	items := make([]*types.ContainerTemplateDefinition, 0, len(m.definitions))
 	for _, v := range m.definitions {

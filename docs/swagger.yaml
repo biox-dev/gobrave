@@ -2649,9 +2649,6 @@ definitions:
       image_name:
         description: ImageName / PullPolicy 原样取自绑定行 ContainerTemplateDefinition。
         type: string
-      is_default:
-        description: IsDefault 原样取自绑定行 ContainerTemplateDefinition.IsDefault。
-        type: boolean
       labels:
         items:
           type: integer
@@ -2709,12 +2706,6 @@ definitions:
           ImageName 是完整镜像名（含 registry / namespace / tag），如 docker.io/rocker/rstudio:4.4。
           同一运行配置下不允许重复绑定同一镜像由服务层校验（不用唯一索引，便于旧数据迁移）。
         type: string
-      is_default:
-        description: |-
-          IsDefault 标记「默认容器模板」：只能有一行处于默认状态，由服务层在写入时互斥维护。
-          创建脚本（create_script）未显式指定 container_template_id 时，优先取这一行。
-          导出时会置为 false（omitempty 使其不出现在导出文件里）。
-        type: boolean
       name:
         description: |-
           Name 是该绑定行（一个可直接运行的容器模板）的展示名，与共享运行配置的
@@ -7694,7 +7685,7 @@ paths:
       - application/json
       description: |-
         按绑定行 ID（ContainerTemplateDefinition.ID）只更新绑定行本体：
-        image_name / pull_policy / name / description / is_default。
+        image_name / pull_policy / name / description。
         共享运行配置（命令、资源、端口、环境变量、挂载等）请走 /container/template-spec/update。
       parameters:
       - description: 请求参数
@@ -7952,32 +7943,6 @@ paths:
       summary: 更新容器运行配置
       tags:
       - 容器管理
-  /container/template/default:
-    get:
-      description: |-
-        返回 is_default=true 的容器模板（ContainerTemplate 读模型）；没有默认模板时返回 data=null。
-        create_script 未显式指定 container_template_id 时会使用这一条。
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 获取默认容器模板
-      tags:
-      - 容器管理
   /container/template/export:
     post:
       consumes:
@@ -8066,7 +8031,7 @@ paths:
         导入统一平铺格式（与 /container/template/export、script.json / workflow.json 同构）：
         container_template_specs / container_template_definitions。
         两张表都按主键 upsert：id 已存在则更新，不存在则按同一 id 新增；安装顺序固定为
-        「运行配置 → 绑定行」。definition.is_default 为 true 时同时设为唯一默认模板。
+        「运行配置 → 绑定行」。
       parameters:
       - description: 请求参数
         in: body
@@ -8204,46 +8169,6 @@ paths:
       - Bearer: []
       summary: 按共享配置列出容器模板// @Description  列出同一套 ContainerTemplateSpec 下绑定不同镜像的所有对外模板（一个配置
         × 多个镜像）
-      tags:
-      - 容器管理
-  /container/template/set-default:
-    post:
-      consumes:
-      - application/json
-      description: 按绑定行 ID（ContainerTemplateDefinition.ID）把该模板设为唯一默认模板，并清空其它模板的默认标记。
-      parameters:
-      - description: 请求参数
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/handler.idBody'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.ContainerTemplate'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/errors.AppError'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/errors.AppError'
-      security:
-      - Bearer: []
-      summary: 设置默认容器模板
       tags:
       - 容器管理
   /container/terminal/session/{id}:

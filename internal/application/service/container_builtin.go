@@ -29,8 +29,7 @@ import (
 //     按主键 upsert），不再维护第二套写入逻辑；
 //   - 新增内置模板 = 往目录里放一个 JSON 文件，无需改代码。
 //
-// 导入语义：以文件为准。已存在的行会被文件内容覆盖（相当于每次启动重新安装一遍内置模板），
-// is_default=true 的绑定行额外走互斥的默认标记流程（与 ImportContainerTemplate 一致）。
+// 导入语义：以文件为准。已存在的行会被文件内容覆盖（相当于每次启动重新安装一遍内置模板）。
 // 单个文件解析 / 写入失败只记录日志，不影响其它模板，也不阻断启动。
 
 // BuiltinContainerTemplateDir 是内置容器模板源码目录（相对工作目录，与内置提示词一致）。
@@ -74,20 +73,6 @@ func InstallBuiltinContainerTemplates(ctx context.Context, svc interfaces.Contai
 				firstErr = fmt.Errorf("install builtin container template %q: %w", item.Name, err)
 			}
 			continue
-		}
-
-		// 文件里标记为默认的绑定行走互斥的默认标记流程（默认模板全局唯一）。
-		for _, definition := range item.Bundle.ContainerTemplateDefinitions {
-			if !definition.IsDefault {
-				continue
-			}
-			if err := svc.SetDefaultContainerTemplate(ctx, definition.ID); err != nil {
-				logger.Warnf(ctx, "[Container] Failed to set default for builtin container template %q: %v", item.Name, err)
-				if firstErr == nil {
-					firstErr = fmt.Errorf("set default for builtin container template %q: %w", item.Name, err)
-				}
-			}
-			break
 		}
 
 		logger.Debugf(ctx, "[Container] Installed builtin container template %q (specs=%d definitions=%d)",

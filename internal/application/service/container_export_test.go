@@ -85,13 +85,6 @@ func (r *stubExportRepo) ListContainerTemplateDefinitionBySpecID(_ context.Conte
 	return items, nil
 }
 
-func (r *stubExportRepo) ClearContainerTemplateDefinitionDefault(_ context.Context) error {
-	for _, definition := range r.definitions {
-		definition.IsDefault = false
-	}
-	return nil
-}
-
 // TestExportContainerTemplateReturnsFlatBundle 导出必须是统一平铺格式：两张表各一条，
 // 且都带主键（导入依赖这些 id 保持引用关系）；镜像名与拉取策略随绑定行一起导出。
 func TestExportContainerTemplateReturnsFlatBundle(t *testing.T) {
@@ -101,7 +94,7 @@ func TestExportContainerTemplateReturnsFlatBundle(t *testing.T) {
 			300: {ID: 300, Name: "spec-300", Command: "R -e 1", Port: 8787, CreatedAt: &now, UpdatedAt: &now},
 		},
 		definitions: map[int64]*types.ContainerTemplateDefinition{
-			200: {ID: 200, SpecID: 300, ImageName: "docker.io/rocker/rstudio:4.4", PullPolicy: types.PullPolicyAlways, Name: "RStudio", IsDefault: true, CreatedAt: &now, UpdatedAt: &now},
+			200: {ID: 200, SpecID: 300, ImageName: "docker.io/rocker/rstudio:4.4", PullPolicy: types.PullPolicyAlways, Name: "RStudio", CreatedAt: &now, UpdatedAt: &now},
 		},
 	}
 	svc := &containerService{containerRepo: repo}
@@ -126,10 +119,6 @@ func TestExportContainerTemplateReturnsFlatBundle(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "\"created_at\"") || strings.Contains(string(raw), "\"updated_at\"") {
 		t.Fatalf("bundle export must not contain timestamps: %s", raw)
-	}
-	// 导出不含 is_default（默认模板是本地状态）。
-	if strings.Contains(string(raw), "\"is_default\"") {
-		t.Fatalf("bundle export must not contain is_default: %s", raw)
 	}
 	// pull_policy 属于资产内容，必须随绑定行导出。
 	if !strings.Contains(string(raw), "\"pull_policy\"") {

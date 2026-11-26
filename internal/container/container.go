@@ -678,10 +678,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Invoke(func(cfg *config.Config, repo agentinterfaces.ProfileRepository) error {
 		return agentservice.EnsureBuiltinProfiles(ctx, repo, config.ResolveOverwriteBuiltinProfile(cfg))
 	}))
-	// 说明：默认容器模板的兜底（EnsureDefaultContainerTemplate）只在下面的
-	// InstallBuiltinContainerTemplates 之后执行一次，避免在内置模板导入前
-	// 抢先选中一条旧的绑定行作为默认。
-
 	must(container.Provide(func(
 		client *agentclient.Client,
 		tasks agentinterfaces.TaskRepository,
@@ -896,8 +892,7 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	}))
 	// 系统启动时导入内置容器模板（builtin/container_templates/*.json）：
 	// 复用 InstallContainerAssets 按主键 upsert（镜像 → 运行配置 → 绑定行），
-	// 因此每次启动都会把内置模板刷新成代码里的最新定义；文件里 is_default=true 的
-	// 绑定行会被设为唯一默认模板。
+	// 因此每次启动都会把内置模板刷新成代码里的最新定义。
 	//
 	// 必须放在 service.NewContainerService 之后：dig 在 Invoke 时立即解析
 	// interfaces.ContainerService，提前调用会报 “missing type” 并 panic。
@@ -907,11 +902,6 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 			logger.Warnf(ctx, "[Container] Failed to install builtin container templates: %v", err)
 		}
 		return nil
-	}))
-	// 内置模板导入可能写入新的绑定行：再兜底一次默认模板，保证导入后仍有默认模板可用
-	// （已存在默认行时该函数不做任何改动，不会覆盖用户在 UI 上的选择）。
-	must(container.Invoke(func(containerRepo interfaces.ContainerRepository) error {
-		return service.EnsureDefaultContainerTemplate(ctx, containerRepo)
 	}))
 	must(container.Provide(service.NewLLMService))
 	must(container.Provide(service.NewAISummaryService))

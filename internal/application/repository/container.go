@@ -93,7 +93,7 @@ func (r *containerRepository) UpdateContainerTemplateDefinition(ctx context.Cont
 	if item == nil || item.ID == 0 {
 		return errors.New("container template definition id is required")
 	}
-	// 先按零值规则更新其余字段（is_default 等不受影响）。
+	// 先按零值规则更新其余字段。
 	if err := r.db.WithContext(ctx).
 		Model(&types.ContainerTemplateDefinition{}).
 		Where("id = ?", item.ID).
@@ -113,23 +113,6 @@ func (r *containerRepository) UpdateContainerTemplateDefinition(ctx context.Cont
 
 func (r *containerRepository) DeleteContainerTemplateDefinition(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.ContainerTemplateDefinition{}).Error
-}
-
-// ClearContainerTemplateDefinitionDefault 清除全部默认标记（写入新默认前调用，保证默认模板唯一）。
-func (r *containerRepository) ClearContainerTemplateDefinitionDefault(ctx context.Context) error {
-	return r.db.WithContext(ctx).
-		Model(&types.ContainerTemplateDefinition{}).
-		Where("is_default = ?", true).
-		Update("is_default", false).Error
-}
-
-// GetDefaultContainerTemplateDefinition 返回默认绑定行；无默认时返回 gorm.ErrRecordNotFound。
-func (r *containerRepository) GetDefaultContainerTemplateDefinition(ctx context.Context) (*types.ContainerTemplateDefinition, error) {
-	item := &types.ContainerTemplateDefinition{}
-	if err := r.db.WithContext(ctx).Where("is_default = ?", true).Order("id ASC").Take(item).Error; err != nil {
-		return nil, err
-	}
-	return item, nil
 }
 
 func (r *containerRepository) ListContainerTemplateDefinitionBySpecID(ctx context.Context, specID int64) ([]*types.ContainerTemplateDefinition, error) {

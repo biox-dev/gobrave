@@ -47,83 +47,6 @@ func normalizePullPolicy(policy string) string {
 	}
 }
 
-// applyDefaultFlag 把「某绑定行为默认」写入库：先清空其它行的默认标记，再置位目标行。
-// 默认模板必须全局唯一（创建脚本未指定 container_template_id 时依赖它取默认值）。
-// definitionID 为 0 表示不改变默认标记。
-func (s *containerService) applyDefaultFlag(ctx context.Context, tx interfaces.ContainerRepository, definitionID int64) error {
-	if definitionID == 0 {
-		return nil
-	}
-	if err := tx.ClearContainerTemplateDefinitionDefault(ctx); err != nil {
-		return err
-	}
-	// 先读出整行再置位：绑定行的更新是整行语义（name 支持显式清空），
-	// 只传 ID + IsDefault 会把其它字段覆盖成零值。
-	binding, err := tx.GetContainerTemplateDefinitionByID(ctx, definitionID)
-	if err != nil {
-		return err
-	}
-	binding.IsDefault = true
-	return tx.UpdateContainerTemplateDefinition(ctx, binding)
-}
-
-// GetDefaultContainerTemplate 返回默认容器模板（对外读模型）；没有默认行时返回 (nil, nil)。
-func (s *containerService) GetDefaultContainerTemplate(ctx context.Context) (*types.ContainerTemplate, error) {
-	definition, err := s.containerRepo.GetDefaultContainerTemplateDefinition(ctx)
-	if err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return s.containerRepo.GetContainerTemplateByID(ctx, definition.ID)
-}
-
-// SetDefaultContainerTemplate 把指定绑定行设为唯一默认模板。
-func (s *containerService) SetDefaultContainerTemplate(ctx context.Context, definitionID int64) error {
-	if definitionID <= 0 {
-		return fmt.Errorf("container template definition id is required")
-	}
-	if _, err := s.containerRepo.GetContainerTemplateDefinitionByID(ctx, definitionID); err != nil {
-		return err
-	}
-	return s.containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		return s.applyDefaultFlag(ctx, tx, definitionID)
-	})
-}
-
-// EnsureDefaultContainerTemplate 在没有任何默认模板时，把库里最早的绑定行设为默认。
-//
-// 仅在服务启动时调用（存量数据没有默认标记，否则 create_script 无法解析默认值）。
-// 已存在默认行时不做任何改动，因此不会覆盖用户在 UI 上的选择。
-func EnsureDefaultContainerTemplate(ctx context.Context, containerRepo interfaces.ContainerRepository) error {
-	if containerRepo == nil {
-		return nil
-	}
-	s := &containerService{containerRepo: containerRepo}
-
-	defaultDefinition, err := containerRepo.GetDefaultContainerTemplateDefinition(ctx)
-	if err == nil && defaultDefinition != nil {
-		return nil
-	}
-	if err != nil && !stderrs.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-
-	templates, err := containerRepo.ListContainerTemplate(ctx)
-	if err != nil {
-		return err
-	}
-	if len(templates) == 0 {
-		return nil
-	}
-
-	candidateID := templates[len(templates)-1].ID // ListContainerTemplate 按 id DESC 返回，末尾是最早的一条
-	return containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		return s.applyDefaultFlag(ctx, tx, candidateID)
-	})
-}
-
 // ensureImageNameNotBound 防止同一套配置重复绑定同一个镜像（DB 里也有唯一索引兜底）。
 func (s *containerService) ensureImageNameNotBound(ctx context.Context, specID int64, imageName string) error {
 	imageName = strings.TrimSpace(imageName)
@@ -196,7 +119,6 @@ func (s *containerService) PageContainerTemplate(ctx context.Context, pagination
 //
 // 两张表都按主键 upsert（id 已存在则更新，不存在则按同一 id 新增），顺序固定为
 // 「运行配置 → 绑定行」；导入完成后把所有绑定行去重汇总成返回值。
-// is_default=true 的绑定行额外走互斥的默认标记流程。
 func (s *containerService) ImportContainerTemplate(ctx context.Context, bundle *types.ContainerTemplateBundle) (*types.ContainerTemplateBundle, error) {
 	if bundle == nil {
 		return nil, fmt.Errorf("container template bundle is required")
@@ -205,15 +127,6 @@ func (s *containerService) ImportContainerTemplate(ctx context.Context, bundle *
 	if _, err := exportcodec.InstallContainerAssets(ctx, s.containerRepo,
 		bundle.ContainerTemplateSpecs, bundle.ContainerTemplateDefinitions); err != nil {
 		return nil, err
-	}
-
-	for _, definition := range bundle.ContainerTemplateDefinitions {
-		if definition.IsDefault {
-			if err := s.applyDefaultFlag(ctx, s.containerRepo, definition.ID); err != nil {
-				return nil, err
-			}
-			break
-		}
 	}
 
 	result := types.NewContainerTemplateBundle()
@@ -320,9 +233,8 @@ func (s *containerService) GetContainerTemplateDefinitionByID(ctx context.Contex
 }
 
 // UpdateContainerTemplateDefinition 按主键更新绑定行（不动 created_at）。
-// 只写绑定行本体（镜像名、拉取策略、展示名、描述、默认标记），不触碰共享运行配置
+// 只写绑定行本体（镜像名、拉取策略、展示名、描述），不触碰共享运行配置
 // ContainerTemplateSpec：命令 / 资源 / 端口等“怎么跑”的字段请走 UpdateContainerTemplateSpec。
-// is_default=true 时额外走互斥的默认标记流程（先清空其它行）。
 func (s *containerService) UpdateContainerTemplateDefinition(ctx context.Context, item *types.ContainerTemplateDefinition) error {
 	if item == nil || item.ID == 0 {
 		return fmt.Errorf("container template definition id is required")
@@ -362,16 +274,7 @@ func (s *containerService) UpdateContainerTemplateDefinition(ctx context.Context
 		}
 	}
 
-	return s.containerRepo.WithTransaction(ctx, func(tx interfaces.ContainerRepository) error {
-		if err := tx.UpdateContainerTemplateDefinition(ctx, item); err != nil {
-			return err
-		}
-		// IsDefault 是全局互斥状态，整行更新不能表达“先清空其它行”，需要单独走默认标记流程。
-		if item.IsDefault {
-			return s.applyDefaultFlag(ctx, tx, item.ID)
-		}
-		return nil
-	})
+	return s.containerRepo.UpdateContainerTemplateDefinition(ctx, item)
 }
 
 // upsertContainerTemplateSpec 按主键 upsert 共享运行配置：fallbackID 为绑定行里携带的引用 id。
