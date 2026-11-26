@@ -906,6 +906,15 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	must(container.Invoke(func(mgr *manager.ContainerManager, worker *manager.ContainerCreateWorker) {
 		mgr.SetCreateWorker(worker)
 	}))
+	// 回填 ContainerManager 的「路由清理」依赖：清理全部容器时同时清空进程内网关路由
+	// 与外部注册中心（traefik / k8s-ingress）里按容器实例绑定的路径。
+	//
+	// 与 SetCreateWorker / SetHub 一样用 Invoke 回填：这里会立即解析 *ContainerManager
+	// （连带 interfaces.WorkflowService 等全部构造依赖），所以必须放在
+	// service.NewWorkflowService / service.NewContainerService 之后。
+	must(container.Invoke(func(mgr *manager.ContainerManager, gw *route.Gateway, reg *route.Registry) {
+		mgr.SetRoutes(gw, reg)
+	}))
 	// 系统启动时导入内置容器模板（builtin/container_templates/*.json）：
 	// 复用 InstallContainerAssetsWithOptions(SkipExisting=true) 按主键只补缺失
 	// （运行配置 → 绑定行），已存在的行不会被文件覆盖，用户修改得以保留；

@@ -13,6 +13,7 @@ import (
 	containerruntime "github.com/biox-dev/gobrave/internal/container_runtime"
 	"github.com/biox-dev/gobrave/internal/container_runtime/provision"
 	"github.com/biox-dev/gobrave/internal/errors"
+	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/manager"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
@@ -808,6 +809,63 @@ func (h *ContainerHandler) DescribeContainerInstance(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, desc)
+}
+
+type cleanupAllContainersRequest struct {
+	// Confirm 必须为 true：该接口会删除全部容器实例、会话与网关路由，属于不可逆操作。
+	Confirm bool `json:"confirm"`
+}
+
+// CleanupAllContainers godoc
+// @Summary      清理全部容器资源
+// @Description  删除系统中的全部容器资源（运行中 + 已停止）：
+// @Description  清空网关路由、同步删除所有 ContainerInstance 及其 docker / k8s 运行时容器，
+// @Description  并删除全部 AppSession（Web 应用会话 + 终端会话）。必须显式传 confirm=true。
+// @Description  清理是尽力而为的，单条失败不中断，失败原因汇总在返回的 errors 里。
+// @Tags         容器管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      cleanupAllContainersRequest  true  "确认参数"
+// @Success      200      {object}  types.ContainerCleanupResult
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/instance/cleanup-all [post]
+func (h *ContainerHandler) CleanupAllContainers(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	var req cleanupAllContainersRequest
+	// 允许空 body：缺省的 confirm=false 会直接拒绝，避免误触删除全部。
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+			return
+		}
+	}
+	if !req.Confirm {
+		c.Error(errors.NewBadRequestError("cleanup all containers requires confirm=true"))
+		return
+	}
+
+	// 先关闭进程内的终端会话（PTY），避免容器删除后仍残留 shell 句柄。
+	if h.terminalRegistry != nil {
+		if closed := h.terminalRegistry.CloseAll(); closed > 0 {
+			logger.Infof(c.Request.Context(), "[ContainerHandler] cleanup-all closed %d terminal session(s)", closed)
+		}
+	}
+
+	result, err := h.containerService.DeleteAllContainerResources(c.Request.Context())
+	if err != nil {
+		// 容器侧是尽力而为的；这里只会在 AppSession 整批删除失败时返回错误，
+		// 调用方可以放心重试（重复执行是幂等的）。
+		handleDataError(c, err, "failed to cleanup all containers")
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 // ListRuntimeMonitoringSnapshot godoc

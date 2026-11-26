@@ -17,6 +17,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/event"
 	"github.com/biox-dev/gobrave/internal/logger"
 	"github.com/biox-dev/gobrave/internal/realtime"
+	"github.com/biox-dev/gobrave/internal/route"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"gorm.io/gorm"
@@ -66,6 +67,13 @@ type ContainerManager struct {
 	// 由容器装配阶段回填（见 internal/container），避免 ContainerManager 与
 	// ContainerCreateWorker 构造顺序互相依赖。
 	createWorker *ContainerCreateWorker
+
+	// gateway / routeRegistry 是「清理全部容器」时同步回收路由所需的依赖：
+	//   - gateway：进程内网关（go_gateway_route，按路径转发到容器）；
+	//   - routeRegistry：外部注册中心（traefik / k8s-ingress）。
+	// 由装配阶段用 SetRoutes 回填（可为空，缺省时跳过路由清理）。
+	gateway       *route.Gateway
+	routeRegistry *route.Registry
 
 	// statusMu/statusWaiters 保存「等待某个 ContainerInstance 进入指定状态」的订阅者。
 	// OnEvent 应用完运行时事件后向订阅者广播最新状态，供创建方等待
@@ -126,6 +134,18 @@ func (s *ContainerManager) SetCreateWorker(worker *ContainerCreateWorker) {
 		worker.lifecycle = s.lifecycle
 	}
 	worker.owner = s
+}
+
+// SetRoutes 回填「清理全部容器」所需的路由依赖（进程内网关 + 外部注册中心）。
+//
+// 与 SetHub / SetCreateWorker 一致：由容器装配阶段用 Invoke 调用一次，避免把
+// 装配顺序（Provide 的先后）绑进构造函数签名。两个参数都允许为 nil。
+func (s *ContainerManager) SetRoutes(gateway *route.Gateway, registry *route.Registry) {
+	if s == nil {
+		return
+	}
+	s.gateway = gateway
+	s.routeRegistry = registry
 }
 
 func (s *ContainerManager) TransitionContainerAndEnqueueOutbox(ctx context.Context, inst *types.ContainerInstance, to types.ContainerStatus, eventType string) error {
@@ -741,6 +761,106 @@ func (m *ContainerManager) Delete(ctx context.Context, id int64) error {
 	// }
 
 	logger.Infof(ctx, "[ContainerManager] enqueued delete request, instance_id=%d", inst.ID)
+	return nil
+}
+
+// DeleteAllInstances 同步清理系统中的全部容器实例（运行中 + 已停止），
+// 并回收它们关联的进程内网关路由与外部注册中心（traefik / k8s-ingress）路由。
+//
+// 与 Delete（异步 outbox 链路）不同，这里直接执行运行时删除，接口返回时容器
+// 已经真正被删除。清理是尽力而为的：单条实例失败只记录到 Errors 并继续处理，
+// 便于重复调用收敛（幂等）。返回值只填充容器 / 路由相关计数，AppSession 的
+// 删除由调用方（服务层）负责。
+func (m *ContainerManager) DeleteAllInstances(ctx context.Context) *types.ContainerCleanupResult {
+	result := &types.ContainerCleanupResult{}
+	if m == nil || m.containerRepo == nil {
+		return result
+	}
+
+	instances, err := m.containerRepo.ListContainerInstance(ctx)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("list container instances: %v", err))
+		return result
+	}
+	result.ContainersTotal = len(instances)
+
+	// 先清空进程内网关路由：返回的计数就是清理前的真实路由条数，且能保证
+	// 即使后面的运行时删除失败 / 中途退出，也不会再有流量被转发到这些实例。
+	if m.gateway != nil {
+		deleted, err := m.gateway.DeleteAllRoutes(ctx)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("clear gateway routes: %v", err))
+		} else {
+			result.GatewayRoutesDeleted = deleted
+		}
+	}
+
+	for _, inst := range instances {
+		if inst == nil || inst.ID == 0 {
+			continue
+		}
+		// 外部注册中心（traefik / k8s-ingress）没有「清空」语义，按容器实例逐条删；
+		// 必须先于实例行删除，否则 instance_id 的引用就断了。
+		m.deleteRoutesForInstance(ctx, inst.ID, result)
+
+		if err := m.deleteInstanceForce(ctx, inst); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("delete container instance %d: %v", inst.ID, err))
+			continue
+		}
+		result.ContainersDeleted++
+	}
+
+	logger.Infof(ctx, "[ContainerManager] delete all instances done: total=%d deleted=%d gateway_routes=%d errors=%d",
+		result.ContainersTotal, result.ContainersDeleted, result.GatewayRoutesDeleted, len(result.Errors))
+	return result
+}
+
+// deleteRoutesForInstance 删除某个容器实例在外注册中心（traefik / k8s-ingress）的路由。
+// 进程内网关由 DeleteAllInstances 末尾的 DeleteAllRoutes 统一清空。
+func (m *ContainerManager) deleteRoutesForInstance(ctx context.Context, instanceID int64, result *types.ContainerCleanupResult) {
+	if m.routeRegistry == nil {
+		return
+	}
+	for _, reg := range m.routeRegistry.List() {
+		if reg == nil {
+			continue
+		}
+		if err := reg.DeleteRouteByContainerInstanceID(ctx, instanceID); err != nil {
+			result.Errors = append(result.Errors,
+				fmt.Sprintf("delete external routes for instance %d: %v", instanceID, err))
+		}
+	}
+}
+
+// deleteInstanceForce 同步删除单个容器实例：优先复用 worker 的删除链路
+// （含 FSM 状态迁移与 outbox 事件），失败后退化为「直接删运行时资源 + 删实例行」。
+//
+// 退化路径用于清理卡在 create_pending / recreating 等 FSM 没有 delete 边的实例，
+// 保证「清理全部容器」不会因为个别实例的状态而残留。
+func (m *ContainerManager) deleteInstanceForce(ctx context.Context, inst *types.ContainerInstance) error {
+	if m.createWorker != nil {
+		err := m.createWorker.executeDelete(ctx, inst.ID)
+		if err == nil || errors.Is(err, errWorkerInstanceGone) {
+			return nil
+		}
+		logger.Warnf(ctx, "[ContainerManager] executeDelete failed, fallback to force delete, instance_id=%d err=%v", inst.ID, err)
+	}
+
+	// 兜底：直接删运行时资源（docker / k8s），然后删实例行。删除失败也继续删行，
+	// 与 executeDelete 的语义保持一致（运行时不可达时至少收敛实例记录）。
+	if runtimeID := strings.TrimSpace(inst.RuntimeID); runtimeID != "" {
+		if rt, err := m.getRuntimeByInstance(inst); err == nil {
+			if delErr := rt.Delete(ctx, runtimeID); delErr != nil {
+				logger.Warnf(ctx, "[ContainerManager] force delete runtime failed, instance_id=%d runtime_id=%s err=%v", inst.ID, runtimeID, delErr)
+			}
+		} else {
+			logger.Warnf(ctx, "[ContainerManager] resolve runtime failed when force delete, instance_id=%d err=%v", inst.ID, err)
+		}
+	}
+
+	if err := m.containerRepo.DeleteContainerInstance(ctx, inst.ID); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
 	return nil
 }
 

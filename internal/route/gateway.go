@@ -146,6 +146,35 @@ func (r *Gateway) DeleteRouteByContainerInstanceID(ctx context.Context, containe
 	return nil
 }
 
+// DeleteAllRoutes 清空网关的全部路由映射（内存索引 + 数据库），返回被删除的记录数。
+//
+// 供「清理全部容器资源」这类整体回收使用：按容器实例逐条删除之后仍可能有孤儿路由
+// （例如实例行早已被外部删除），一次清空可保证内存与 go_gateway_route 表都不再残留。
+// 内存索引先清空再写库：即使写库失败，回滚也会按 DB 真实内容重建，不会出现
+// 「库里有、内存里没有」的中间态。
+func (r *Gateway) DeleteAllRoutes(ctx context.Context) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.routesByKey = make(map[string]Registration)
+	r.keyByPrefix = make(map[string]string)
+	r.prefixes = r.prefixes[:0]
+
+	// GORM 默认禁止无条件的整表删除，这里显式给出恒真条件。
+	res := r.db.WithContext(ctx).Where("1 = 1").Delete(&types.GatewayRoute{})
+	if res.Error != nil {
+		_ = r.rebuildFromDBLocked(ctx)
+		return 0, res.Error
+	}
+
+	logger.Infof(ctx, "[Gateway] delete all routes, rows=%d", res.RowsAffected)
+	return res.RowsAffected, nil
+}
+
 func (r *Gateway) loadFromDB() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

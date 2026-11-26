@@ -1406,6 +1406,33 @@ func (r *TerminalSessionRegistry) CloseSession(key TerminalSessionKey) bool {
 	return sess != nil
 }
 
+// CloseAll 关闭注册表内所有存活终端会话（关闭 PTY / 释放 shell），返回关闭数量。
+//
+// 只回收进程内资源：不删除持久层记录，也不单独删容器 —— 这些由「清理全部容器」
+// 的调用方统一处理（AppSession 批量删除 + ContainerInstance 同步删除），
+// 避免 PTY 已死但容器 / 记录仍残留的中间态。
+func (r *TerminalSessionRegistry) CloseAll() int {
+	if r == nil {
+		return 0
+	}
+
+	r.mu.Lock()
+	sessions := make([]*ManagedTerminalSession, 0, len(r.sessions))
+	for id, sess := range r.sessions {
+		delete(r.sessions, id)
+		if sess != nil {
+			sessions = append(sessions, sess)
+		}
+	}
+	r.mu.Unlock()
+
+	for _, sess := range sessions {
+		sess.Close()
+		r.notifySessionEvent(sess.key.UserID, sess.key.ProjectID, sess.key.TemplateID, sess.recordID(), "sessionDeleted")
+	}
+	return len(sessions)
+}
+
 // Execute 把命令写入会话的串行队列。
 //
 // 定位规则（见 ensure）：

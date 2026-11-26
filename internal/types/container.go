@@ -553,6 +553,23 @@ func (GatewayRoute) TableName() string {
 	return "go_gateway_route"
 }
 
+// ContainerCleanupResult 汇总一次「清理全部容器资源」的结果。
+//
+// 清理是尽力而为的：单条容器 / 会话删除失败不会中断整体流程，失败原因收集在
+// Errors 里，调用方可以据此判断是否需要重试（重复调用是幂等的）。
+type ContainerCleanupResult struct {
+	// ContainersTotal 是清理前扫描到的 ContainerInstance 总数。
+	ContainersTotal int `json:"containers_total"`
+	// ContainersDeleted 是成功删除的容器数（运行时资源 + 实例行）。
+	ContainersDeleted int `json:"containers_deleted"`
+	// GatewayRoutesDeleted 是清空的网关路由（go_gateway_route）行数。
+	GatewayRoutesDeleted int64 `json:"gateway_routes_deleted"`
+	// AppSessionsDeleted 是删除的 AppSession 行数（Web 会话 + 终端会话）。
+	AppSessionsDeleted int64 `json:"app_sessions_deleted"`
+	// Errors 是逐条失败原因（容器 / 路由 / 会话），为空表示全部成功。
+	Errors []string `json:"errors,omitempty"`
+}
+
 type ContainerSpec struct {
 	Image                string
 	Entrypoint           []string

@@ -228,6 +228,12 @@ func (m *mockContainerRepo) DeleteAppSession(ctx context.Context, id int64) erro
 	return nil
 }
 
+func (m *mockContainerRepo) DeleteAllAppSession(ctx context.Context) (int64, error) {
+	count := int64(len(m.sessions))
+	m.sessions = map[int64]*types.AppSession{}
+	return count, nil
+}
+
 func (m *mockContainerRepo) ListAppSession(ctx context.Context) ([]*types.AppSession, error) {
 	items := make([]*types.AppSession, 0, len(m.sessions))
 	for _, v := range m.sessions {
@@ -560,6 +566,7 @@ type dockerMockRuntime struct {
 	lastImage  string
 	lastPolicy string
 	monitored  []string
+	deleted    []string
 	startErr   error
 	stopErr    error
 	deleteErr  error
@@ -593,7 +600,10 @@ func (d *dockerMockRuntime) Stop(ctx context.Context, runtimeID string) error   
 func (d *dockerMockRuntime) Pause(ctx context.Context, runtimeID string) error  { return nil }
 func (d *dockerMockRuntime) Resume(ctx context.Context, runtimeID string) error { return nil }
 
-func (d *dockerMockRuntime) Delete(ctx context.Context, runtimeID string) error { return d.deleteErr }
+func (d *dockerMockRuntime) Delete(ctx context.Context, runtimeID string) error {
+	d.deleted = append(d.deleted, runtimeID)
+	return d.deleteErr
+}
 
 func (d *dockerMockRuntime) Logs(ctx context.Context, runtimeID string, tail int) (string, error) {
 	if d.logsResult == "" {

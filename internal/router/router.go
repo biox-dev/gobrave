@@ -286,6 +286,9 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 
 	r.POST("/container/instance/list-by-page", handler.PageContainerInstance)
 	r.GET("/container/instance/describe", handler.DescribeContainerInstance)
+	// 清理全部容器资源（运行中 + 已停止）：删网关路由 + 同步删所有 ContainerInstance
+	// 及其 docker / k8s 容器 + 删全部 AppSession。必须显式传 confirm=true。
+	r.POST("/container/instance/cleanup-all", handler.CleanupAllContainers)
 	// r.POST("/container/event/list-by-page", handler.PageContainerEvent)
 	r.POST("/container/outbox/list-by-page", handler.PageOutboxEvent)
 	r.GET("/container/runtime/monitoring/list", handler.ListRuntimeMonitoringSnapshot)

@@ -239,6 +239,16 @@ func (r *containerRepository) DeleteAppSession(ctx context.Context, id int64) er
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.AppSession{}).Error
 }
 
+// DeleteAllAppSession 删除全部应用会话（Web / 终端会话），返回删除行数。
+// GORM 默认禁止无条件的整表删除，这里显式给出恒真条件。
+func (r *containerRepository) DeleteAllAppSession(ctx context.Context) (int64, error) {
+	res := r.db.WithContext(ctx).Where("1 = 1").Delete(&types.AppSession{})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
 func (r *containerRepository) ListAppSession(ctx context.Context) ([]*types.AppSession, error) {
 	items := make([]*types.AppSession, 0)
 	err := r.db.WithContext(ctx).Order("id DESC").Find(&items).Error

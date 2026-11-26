@@ -357,6 +357,37 @@ func (s *containerService) PageContainerInstance(ctx context.Context, pagination
 	return types.NewPageResult(total, pagination, items), nil
 }
 
+// DeleteAllContainerResources 清理系统中的全部容器资源（运行中 + 已停止）。
+//
+// 执行顺序：
+//  1. 同步删除所有 ContainerInstance，并删除其对应的 docker / k8s 运行时资源，
+//     同时回收进程内网关路由与外部注册中心（traefik / k8s-ingress）路由；
+//  2. 删除全部 AppSession（Web 应用会话 + 终端会话）。
+//
+// 容器侧是尽力而为的（单条失败不中断，原因汇总到结果的 Errors 里）；
+// AppSession 删除失败则整体返回错误，避免「容器都没了但会话还在」的脏状态。
+func (s *containerService) DeleteAllContainerResources(ctx context.Context) (*types.ContainerCleanupResult, error) {
+	if s.containerMgr == nil {
+		return nil, fmt.Errorf("container manager is not available")
+	}
+
+	result := s.containerMgr.DeleteAllInstances(ctx)
+	if result == nil {
+		result = &types.ContainerCleanupResult{}
+	}
+
+	// 会话记录放在容器删除之后：容器事件（ContainerDeleted）会按 owner 回写会话状态，
+	// 先删会话会让这些回写落到不存在的行上（无害，但日志噪声更多）。
+	sessions, err := s.containerRepo.DeleteAllAppSession(ctx)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("delete app sessions: %v", err))
+		return result, fmt.Errorf("delete all app sessions: %w", err)
+	}
+	result.AppSessionsDeleted = sessions
+
+	return result, nil
+}
+
 // func (s *containerService) PageContainerEvent(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error) {
 // 	if pagination == nil {
 // 		pagination = &types.Pagination{}

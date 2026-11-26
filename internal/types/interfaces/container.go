@@ -56,6 +56,12 @@ type ContainerService interface {
 	DeleteContainerInstancesByOwnerTypeAndOwnerIDs(ctx context.Context, ownerType types.ContainerOwnerType, ownerIDs []int64) error
 
 	PageContainerInstance(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
+	// DeleteAllContainerResources 清理系统中的全部容器资源（运行中 + 已停止）：
+	//   - 清空进程内网关路由（go_gateway_route）；
+	//   - 同步删除全部 ContainerInstance，并删除其对应的 docker / k8s 运行时资源；
+	//   - 删除全部 AppSession（Web 应用会话 + 终端会话）。
+	// 清理是尽力而为的：单条失败不中断整体流程，错误汇总在返回值里。
+	DeleteAllContainerResources(ctx context.Context) (*types.ContainerCleanupResult, error)
 	// PageContainerEvent(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
 	PageOutboxEvent(ctx context.Context, pagination *types.Pagination) (*types.PageResult, error)
 }
@@ -90,6 +96,8 @@ type ContainerRepository interface {
 	GetAppSessionByID(ctx context.Context, id int64) (*types.AppSession, error)
 	UpdateAppSession(ctx context.Context, item *types.AppSession) error
 	DeleteAppSession(ctx context.Context, id int64) error
+	// DeleteAllAppSession 删除全部应用会话（Web / 终端会话），返回删除行数。
+	DeleteAllAppSession(ctx context.Context) (int64, error)
 	ListAppSession(ctx context.Context) ([]*types.AppSession, error)
 	PageAppSessionByUserID(ctx context.Context, userID int64, pagination *types.Pagination, query *types.AppSessionPageQuery) ([]*types.AppSession, int64, error)
 	// PageAppSession 按查询条件分页，不加 user_id 过滤（供按 AgentSessionID 等归属字段查询）。
