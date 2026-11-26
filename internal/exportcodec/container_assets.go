@@ -19,10 +19,14 @@ import (
 // 两者通过主键互相引用（definition.spec_id → spec.id），而 definition.id 就是脚本
 // container_template_id 引用的值；镜像名与拉取策略直接挂在绑定行上，因此：
 //   - 导出不写 created_at / updated_at（主键才是引用键，时间戳只会产生无意义的 git diff）；
-//   - 安装顺序固定为「运行配置 → 绑定行」，两者都按主键 upsert。
+//   - 安装顺序固定为「运行配置 → 绑定行」，两者都按主键处理。
+//
+// 主键已存在时有两种语义，由 ContainerAssetInstallOptions 选择：
+//   - 默认（覆盖）：导出文件是权威内容，已存在的行按文件更新（script.json / workflow.json 安装）；
+//   - SkipExisting：只补缺失，已存在的行完全跳过（内置容器模板，用户改过的内容不被覆盖）。
 //
 // 本文件只放这两件事：导出侧按绑定行取资产（ExportContainerAssets）与安装侧落库（InstallContainerAssets），
-// script.json、workflow.json 与容器模板导出共用同一份实现。
+// script.json、workflow.json 与内置容器模板共用同一份实现。
 
 // ContainerAssetService 是导出 / 安装容器资产所需的最小服务能力。
 //
@@ -112,17 +116,38 @@ func hasSpec(b *types.ContainerTemplateBundle, id int64) bool {
 	return false
 }
 
-// ContainerAssetInstallResult 是安装容器资产的结果（按主键 upsert 的数量）。
-type ContainerAssetInstallResult struct {
-	SpecCount       int
-	DefinitionCount int
+// ContainerAssetInstallOptions 控制「主键已存在」时的处理方式。
+type ContainerAssetInstallOptions struct {
+	// SkipExisting 为 true 时只补缺失：主键已存在的行完全跳过，不做任何写入。
+	//
+	// 内置容器模板使用它，使每次启动只补齐被删掉的行，用户对已有行的修改得以保留；
+	// 想恢复成文件里的最新定义，删掉对应行（先删绑定行再删运行配置）后重启即可。
+	// 为 false（默认）时按文件覆盖已有行，供 script.json / workflow.json 安装使用。
+	SkipExisting bool
 }
 
-// InstallContainerAssets 按主键 upsert 两张表，返回各类数量。
+// ContainerAssetInstallResult 是安装容器资产的结果。
+type ContainerAssetInstallResult struct {
+	// SpecCount / DefinitionCount 是文件里出现的行数（含已存在而被跳过的）。
+	SpecCount       int
+	DefinitionCount int
+	// CreatedSpecCount / CreatedDefinitionCount 是本次真正新增的行数，
+	// 因此 SpecCount-CreatedSpecCount 就是 SkipExisting 下跳过的行数。
+	CreatedSpecCount       int
+	CreatedDefinitionCount int
+}
+
+// InstallContainerAssets 按主键安装两张表（已存在则按文件覆盖），返回各类数量。
 //
 // 安装顺序固定为「运行配置 → 绑定行」：绑定行引用运行配置，id 为 0 视为导出文件损坏直接报错
 // （id 是唯一的引用键）。
 func InstallContainerAssets(ctx context.Context, svc ContainerAssetService, specs []types.ContainerTemplateSpec, definitions []types.ContainerTemplateDefinition) (*ContainerAssetInstallResult, error) {
+	return InstallContainerAssetsWithOptions(ctx, svc, specs, definitions, ContainerAssetInstallOptions{})
+}
+
+// InstallContainerAssetsWithOptions 是 InstallContainerAssets 的可配置版本，
+// 由 opts 决定「主键已存在」时覆盖还是跳过（语义见 ContainerAssetInstallOptions）。
+func InstallContainerAssetsWithOptions(ctx context.Context, svc ContainerAssetService, specs []types.ContainerTemplateSpec, definitions []types.ContainerTemplateDefinition, opts ContainerAssetInstallOptions) (*ContainerAssetInstallResult, error) {
 	if len(specs) == 0 && len(definitions) == 0 {
 		return &ContainerAssetInstallResult{}, nil
 	}
@@ -130,12 +155,19 @@ func InstallContainerAssets(ctx context.Context, svc ContainerAssetService, spec
 		return nil, errors.New("container service is not configured")
 	}
 
+	result := &ContainerAssetInstallResult{}
+
 	for i := range specs {
 		if specs[i].ID == 0 {
 			return nil, errors.New("container template spec id is required in export file")
 		}
-		if err := upsertContainerTemplateSpec(ctx, svc, &specs[i]); err != nil {
+		created, err := installContainerTemplateSpec(ctx, svc, &specs[i], opts)
+		if err != nil {
 			return nil, fmt.Errorf("failed to install container template spec %d: %w", specs[i].ID, err)
+		}
+		result.SpecCount++
+		if created {
+			result.CreatedSpecCount++
 		}
 	}
 
@@ -143,35 +175,45 @@ func InstallContainerAssets(ctx context.Context, svc ContainerAssetService, spec
 		if definitions[i].ID == 0 {
 			return nil, errors.New("container template definition id is required in export file")
 		}
-		if err := upsertContainerTemplateDefinition(ctx, svc, &definitions[i]); err != nil {
+		created, err := installContainerTemplateDefinition(ctx, svc, &definitions[i], opts)
+		if err != nil {
 			return nil, fmt.Errorf("failed to install container template definition %d: %w", definitions[i].ID, err)
 		}
+		result.DefinitionCount++
+		if created {
+			result.CreatedDefinitionCount++
+		}
 	}
 
-	return &ContainerAssetInstallResult{
-		SpecCount:       len(specs),
-		DefinitionCount: len(definitions),
-	}, nil
+	return result, nil
 }
 
-// upsertContainerTemplateSpec 按主键更新运行配置，主键不存在则按同一主键新增。
-func upsertContainerTemplateSpec(ctx context.Context, svc ContainerAssetService, spec *types.ContainerTemplateSpec) error {
+// installContainerTemplateSpec 安装一条运行配置，返回是否新建。
+// 主键不存在则按同一主键新增；已存在时按 opts 覆盖或跳过。
+func installContainerTemplateSpec(ctx context.Context, svc ContainerAssetService, spec *types.ContainerTemplateSpec, opts ContainerAssetInstallOptions) (bool, error) {
 	if _, err := svc.GetContainerTemplateSpecByID(ctx, spec.ID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return svc.CreateContainerTemplateSpec(ctx, spec)
+			return true, svc.CreateContainerTemplateSpec(ctx, spec)
 		}
-		return err
+		return false, err
 	}
-	return svc.UpdateContainerTemplateSpec(ctx, spec)
+	if opts.SkipExisting {
+		return false, nil
+	}
+	return false, svc.UpdateContainerTemplateSpec(ctx, spec)
 }
 
-// upsertContainerTemplateDefinition 按主键更新绑定行，主键不存在则按同一主键新增。
-func upsertContainerTemplateDefinition(ctx context.Context, svc ContainerAssetService, definition *types.ContainerTemplateDefinition) error {
+// installContainerTemplateDefinition 安装一条绑定行，返回是否新建。
+// 主键不存在则按同一主键新增；已存在时按 opts 覆盖或跳过。
+func installContainerTemplateDefinition(ctx context.Context, svc ContainerAssetService, definition *types.ContainerTemplateDefinition, opts ContainerAssetInstallOptions) (bool, error) {
 	if _, err := svc.GetContainerTemplateDefinitionByID(ctx, definition.ID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return svc.CreateContainerTemplateDefinition(ctx, definition)
+			return true, svc.CreateContainerTemplateDefinition(ctx, definition)
 		}
-		return err
+		return false, err
 	}
-	return svc.UpdateContainerTemplateDefinition(ctx, definition)
+	if opts.SkipExisting {
+		return false, nil
+	}
+	return false, svc.UpdateContainerTemplateDefinition(ctx, definition)
 }

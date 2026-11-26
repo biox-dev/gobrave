@@ -907,8 +907,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 		mgr.SetCreateWorker(worker)
 	}))
 	// 系统启动时导入内置容器模板（builtin/container_templates/*.json）：
-	// 复用 InstallContainerAssets 按主键 upsert（镜像 → 运行配置 → 绑定行），
-	// 因此每次启动都会把内置模板刷新成代码里的最新定义。
+	// 复用 InstallContainerAssetsWithOptions(SkipExisting=true) 按主键只补缺失
+	// （运行配置 → 绑定行），已存在的行不会被文件覆盖，用户修改得以保留；
+	// 想恢复成代码里的最新定义，删掉对应行后重启即可自动重新写入。
 	//
 	// 必须放在 service.NewContainerService 之后：dig 在 Invoke 时立即解析
 	// interfaces.ContainerService，提前调用会报 “missing type” 并 panic。

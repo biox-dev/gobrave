@@ -19,17 +19,18 @@ import (
 )
 
 // 内置容器模板：源码位于仓库 builtin/container_templates/*.json，
-// 由 go:embed 打包进二进制；系统每次启动都会把它们按主键 upsert 进数据库。
+// 由 go:embed 打包进二进制；系统每次启动都会把它们按主键导入数据库（只补缺失）。
 //
 // 为什么用「导出格式的 JSON 文件」而不是在 Go 代码里硬编码结构体：
 //   - 一个文件就是一份完整的容器资产包（container_template_specs /
 //     container_template_definitions），与 script.json / workflow.json 里的容器资产结构完全一致，
 //     可以直接从「容器模板导出」接口拿到的 JSON 粘贴过来；
-//   - 导入逻辑直接复用 exportcodec.InstallContainerAssets（运行配置 → 绑定行，
-//     按主键 upsert），不再维护第二套写入逻辑；
+//   - 导入逻辑直接复用 exportcodec.InstallContainerAssetsWithOptions（运行配置 → 绑定行，
+//     按主键新增 / SkipExisting 跳过），不再维护第二套写入逻辑；
 //   - 新增内置模板 = 往目录里放一个 JSON 文件，无需改代码。
 //
-// 导入语义：以文件为准。已存在的行会被文件内容覆盖（相当于每次启动重新安装一遍内置模板）。
+// 导入语义：只补缺失。文件里的主键在库里不存在时新增；已存在则完全跳过（不覆盖用户修改）。
+// 想更新内置模板：先删绑定行、再删运行配置（后者被引用时不允许删），重启后系统会自动重新写入。
 // 单个文件解析 / 写入失败只记录日志，不影响其它模板，也不阻断启动。
 
 // BuiltinContainerTemplateDir 是内置容器模板源码目录（相对工作目录，与内置提示词一致）。
@@ -50,8 +51,9 @@ func SetBuiltinContainerTemplateDir(dir string) {
 // 读取顺序与内置提示词 / 技能一致：先读磁盘 <base>/builtin/container_templates/*.json
 // （便于运维直接修改部署目录里的文件），目录不存在时回退到编译进二进制的内嵌副本。
 //
-// 每个文件是一次独立的 InstallContainerAssets（各自一个事务内按主键 upsert），
-// 某个文件失败时记录日志并继续处理后面的文件；返回第一个错误，便于测试断言。
+// 每个文件是一次独立的 InstallContainerAssetsWithOptions（SkipExisting=true：
+// 主键不存在才新增，已存在则跳过），某个文件失败时记录日志并继续处理后面的文件；
+// 返回第一个错误，便于测试断言。
 func InstallBuiltinContainerTemplates(ctx context.Context, svc interfaces.ContainerService) error {
 	if svc == nil {
 		return nil
@@ -65,9 +67,11 @@ func InstallBuiltinContainerTemplates(ctx context.Context, svc interfaces.Contai
 
 	var firstErr error
 	for _, item := range bundles {
-		if _, err := exportcodec.InstallContainerAssets(ctx, svc,
+		result, err := exportcodec.InstallContainerAssetsWithOptions(ctx, svc,
 			item.Bundle.ContainerTemplateSpecs,
-			item.Bundle.ContainerTemplateDefinitions); err != nil {
+			item.Bundle.ContainerTemplateDefinitions,
+			exportcodec.ContainerAssetInstallOptions{SkipExisting: true})
+		if err != nil {
 			logger.Warnf(ctx, "[Container] Failed to install builtin container template %q: %v", item.Name, err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("install builtin container template %q: %w", item.Name, err)
@@ -75,8 +79,10 @@ func InstallBuiltinContainerTemplates(ctx context.Context, svc interfaces.Contai
 			continue
 		}
 
-		logger.Debugf(ctx, "[Container] Installed builtin container template %q (specs=%d definitions=%d)",
-			item.Name, len(item.Bundle.ContainerTemplateSpecs), len(item.Bundle.ContainerTemplateDefinitions))
+		logger.Debugf(ctx, "[Container] Installed builtin container template %q (specs created=%d skipped=%d, definitions created=%d skipped=%d)",
+			item.Name,
+			result.CreatedSpecCount, result.SpecCount-result.CreatedSpecCount,
+			result.CreatedDefinitionCount, result.DefinitionCount-result.CreatedDefinitionCount)
 	}
 	return firstErr
 }

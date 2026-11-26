@@ -97,7 +97,7 @@ func TestInstallBuiltinContainerTemplatesImportsEmbeddedFiles(t *testing.T) {
 	}
 
 	// ubuntu
-	if def := svc.definitions[2112483278714834944]; def == nil || def.ImageName != "ubuntu" {
+	if def := svc.definitions[2112483278714834944]; def == nil || def.ImageName != "registry.cn-hangzhou.aliyuncs.com/wybioinfo/ubuntu" {
 		t.Fatalf("ubuntu definition = %#v", def)
 	}
 
@@ -106,21 +106,71 @@ func TestInstallBuiltinContainerTemplatesImportsEmbeddedFiles(t *testing.T) {
 	}
 }
 
-// TestInstallBuiltinContainerTemplatesIsIdempotent 每次系统启动都会调用一次，
-// 因此重复导入必须是「按主键更新」而不是重复新增。
-func TestInstallBuiltinContainerTemplatesIsIdempotent(t *testing.T) {
+// TestInstallBuiltinContainerTemplatesKeepsExistingRows 每次系统启动都会调用一次，
+// 但导入语义是「只补缺失」：主键已存在的行不会被文件覆盖（用户改过的内容得以保留），
+// 重复导入也不会重复新增。
+func TestInstallBuiltinContainerTemplatesKeepsExistingRows(t *testing.T) {
 	SetBuiltinContainerTemplateDir(t.TempDir())
 	t.Cleanup(func() { SetBuiltinContainerTemplateDir("") })
 
+	const (
+		ubuntuSpecID       int64 = 2112483153338699776
+		ubuntuDefinitionID int64 = 2112483278714834944
+	)
+
 	svc := newFakeBuiltinContainerService()
+	// 预置一份「被用户改过」的内置行：重启后必须原样保留。
+	svc.specs[ubuntuSpecID] = &types.ContainerTemplateSpec{ID: ubuntuSpecID, Name: "user-edited", Command: "sleep 1", Port: 1234}
+	svc.definitions[ubuntuDefinitionID] = &types.ContainerTemplateDefinition{ID: ubuntuDefinitionID, SpecID: ubuntuSpecID, ImageName: "user/ubuntu:1"}
+
 	for i := 0; i < 2; i++ {
 		if err := InstallBuiltinContainerTemplates(context.Background(), svc); err != nil {
 			t.Fatalf("run %d: InstallBuiltinContainerTemplates: %v", i, err)
 		}
 	}
 
+	if spec := svc.specs[ubuntuSpecID]; spec.Name != "user-edited" || spec.Command != "sleep 1" || spec.Port != 1234 {
+		t.Fatalf("existing spec was overwritten: %#v", spec)
+	}
+	if def := svc.definitions[ubuntuDefinitionID]; def.ImageName != "user/ubuntu:1" {
+		t.Fatalf("existing definition was overwritten: %#v", def)
+	}
+
+	// 缺失的行仍然被补齐，且不会因为重复导入而重复新增。
 	if len(svc.specs) != 3 || len(svc.definitions) != 3 {
 		t.Fatalf("counts after re-install = (%d,%d), want (3,3)", len(svc.specs), len(svc.definitions))
+	}
+}
+
+// TestInstallBuiltinContainerTemplatesRecreatesDeletedRows 「想更新内置模板」的操作方式是
+// 删掉对应的行（先删绑定行，再删运行配置）后重启：缺失的主键会被重新写入文件里的定义。
+func TestInstallBuiltinContainerTemplatesRecreatesDeletedRows(t *testing.T) {
+	SetBuiltinContainerTemplateDir(t.TempDir())
+	t.Cleanup(func() { SetBuiltinContainerTemplateDir("") })
+
+	const (
+		ubuntuSpecID       int64 = 2112483153338699776
+		ubuntuDefinitionID int64 = 2112483278714834944
+	)
+
+	svc := newFakeBuiltinContainerService()
+	if err := InstallBuiltinContainerTemplates(context.Background(), svc); err != nil {
+		t.Fatalf("InstallBuiltinContainerTemplates: %v", err)
+	}
+
+	// 模拟用户删除「运行配置 × 镜像」绑定行与共享运行配置。
+	delete(svc.definitions, ubuntuDefinitionID)
+	delete(svc.specs, ubuntuSpecID)
+
+	if err := InstallBuiltinContainerTemplates(context.Background(), svc); err != nil {
+		t.Fatalf("InstallBuiltinContainerTemplates after delete: %v", err)
+	}
+
+	if spec := svc.specs[ubuntuSpecID]; spec == nil || spec.Name != "bioinfo" {
+		t.Fatalf("deleted spec not recreated: %#v", spec)
+	}
+	if def := svc.definitions[ubuntuDefinitionID]; def == nil || def.ImageName != "registry.cn-hangzhou.aliyuncs.com/wybioinfo/ubuntu" || def.SpecID != ubuntuSpecID {
+		t.Fatalf("deleted definition not recreated: %#v", def)
 	}
 }
 

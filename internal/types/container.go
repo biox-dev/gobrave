@@ -27,7 +27,7 @@ type ContainerTemplateSpec struct {
 	ID int64 `json:"id,string" gorm:"primaryKey;type:bigint;autoIncrement:false"`
 
 	Name        string `json:"name" gorm:"type:varchar(255);not null;index"`
-	Description string `json:"description" gorm:"type:text"`
+	Description string `json:"description" gorm:"type:longtext"`
 
 	Command string `json:"command" gorm:"type:text"`
 
@@ -201,8 +201,10 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 // 两者通过主键互相引用（definition.spec_id → spec.id），而 definition.id 就是脚本
 // container_template_id 引用的值；镜像名与拉取策略直接挂在绑定行上，因此：
 //   - 导出不写 created_at / updated_at（主键才是引用键，时间戳只会产生无意义的 git diff）；
-//   - 导入按主键 upsert，顺序固定为「运行配置 → 绑定行」
-//     （实现见 exportcodec.InstallContainerAssets，script / workflow 复用同一份逻辑）。
+//   - 导入按主键处理，顺序固定为「运行配置 → 绑定行」
+//     （实现见 exportcodec.InstallContainerAssets，script / workflow 复用同一份逻辑）：
+//     script.json / workflow.json 安装按文件覆盖已有行，内置容器模板只补缺失的行
+//     （SkipExisting，见 InstallContainerAssetsWithOptions）。
 type ContainerTemplateBundle struct {
 	ContainerTemplateSpecs       []ContainerTemplateSpec       `json:"container_template_specs"`
 	ContainerTemplateDefinitions []ContainerTemplateDefinition `json:"container_template_definitions"`
