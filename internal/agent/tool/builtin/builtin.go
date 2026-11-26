@@ -36,9 +36,13 @@ func All(d Deps) []tool.Tool {
 		GetProjectDatabasePath(d.DatasetWriter),
 		AddFileToDataset(d.DatasetWriter),
 
-		// 容器模板。
+		// 容器模板：列出 / 查看 / 创建 / 更新共享运行配置与绑定行。
 		ListContainerTemplates(d.TemplateBrowser),
 		GetContainerTemplate(d.TemplateBrowser),
+		CreateContainerTemplateSpec(d.ContainerTemplateSpecWriter),
+		UpdateContainerTemplateSpec(d.ContainerTemplateSpecWriter),
+		CreateContainerTemplateDefinition(d.ContainerTemplateDefinitionWriter),
+		UpdateContainerTemplateDefinition(d.ContainerTemplateDefinitionWriter),
 
 		// 脚本：列出 / 查看 / 创建 / 更新。
 		ListProjectScripts(d.ScriptBrowser),

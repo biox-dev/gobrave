@@ -49,6 +49,11 @@ type Deps struct {
 	AnalysisBrowser runtimecontext.AnalysisBrowser
 	TemplateBrowser runtimecontext.ContainerTemplateBrowser
 	DatasetBrowser  runtimecontext.DatasetBrowser
+
+	// 容器模板写能力：共享运行配置（create/update_container_template_spec）与
+	// 运行配置 × 镜像 绑定行（create/update_container_template_definition）。
+	ContainerTemplateSpecWriter       runtimecontext.ContainerTemplateSpecWriter
+	ContainerTemplateDefinitionWriter runtimecontext.ContainerTemplateDefinitionWriter
 	// ReportBrowser 按 ID 查看项目报告及正文（get_report）。
 	ReportBrowser runtimecontext.ProjectReportBrowser
 	// Plan agent 计划的读写能力（create / list / get / update / delete_plan）。
