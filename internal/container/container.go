@@ -234,6 +234,8 @@ type agentToolDeps struct {
 	Browser         *projectResourceBrowser
 	// ReportWriter 创建 / 更新项目报告（create_report / update_report）。
 	ReportWriter *projectReportWriter
+	// StoreTools 组件仓库（store）查询 / 发布 / 安装（page_store / publish_* / install_*）。
+	StoreTools *storeTools
 	// AppSessions 按容器模板创建 Web / 终端应用会话
 	// （create_web_app_session / create_terminal_app_session）。
 	AppSessions runtimecontext.AppSessionCreator
@@ -294,6 +296,10 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		DatasetWriter:   in.Browser,
 		ReportBrowser:   in.Browser,
 		ReportWriter:    in.ReportWriter,
+		// 组件仓库（store）：分页查询 / 发布 / 安装（page_store / publish_* / install_*）。
+		StoreBrowser:   in.StoreTools,
+		StorePublisher: in.StoreTools,
+		StoreInstaller: in.StoreTools,
 		// 容器模板写能力：共享运行配置与「运行配置 × 镜像」绑定行。
 		ContainerTemplateSpecWriter:       in.Browser,
 		ContainerTemplateDefinitionWriter: in.Browser,
@@ -654,6 +660,9 @@ func BuildContainer(container *dig.Container, cfg *config.Config) *dig.Container
 	// 项目报告写能力：创建 / 更新报告并落盘正文文件 output.md
 	// （create_report / update_report）。
 	must(container.Provide(newProjectReportWriter))
+	// 组件仓库（store）能力：分页查询 / 发布 / 安装（page_store / publish_workflow /
+	// publish_script / install_workflow / install_script），与 handler 的 store 端点头寸一致。
+	must(container.Provide(newStoreTools))
 	// 记忆管理器以具体类型提供一次：既供 AgentService 使用，也供 memorySaver（save_memory 工具）
 	// 复用同一个实例，避免记忆域出现两份独立的状态入口。
 	must(container.Provide(func(mems agentinterfaces.MemoryRepository) *agentservice.MemoryManager {

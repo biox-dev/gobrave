@@ -69,6 +69,13 @@ type Deps struct {
 	// ReportWriter 创建 / 更新项目报告（create_report / update_report）。
 	ReportWriter runtimecontext.ProjectReportWriter
 
+	// StoreBrowser 分页查询组件仓库（page_store）。
+	StoreBrowser runtimecontext.StoreBrowser
+	// StorePublisher 把本地脚本 / 工作流发布到 store（publish_workflow / publish_script）。
+	StorePublisher runtimecontext.StoreComponentPublisher
+	// StoreInstaller 从 store 安装脚本 / 工作流（install_workflow / install_script）。
+	StoreInstaller runtimecontext.StoreComponentInstaller
+
 	// Skills 技能解析能力（get_skill / load_skill_resource）。
 	Skills runtimecontext.SkillResolver
 	// SkillWriter 技能写能力（create_skill / edit_skill）。

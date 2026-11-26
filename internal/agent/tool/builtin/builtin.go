@@ -19,7 +19,7 @@ import (
 // All 返回框架内置的全部工具。新增内置工具时在此追加，并把所需依赖从 Deps 传入。
 //
 // 排序按资源域分组（同一资源的 list / get / create / update 相邻），便于对照维护：
-// 交互 → 文件 / 数据集 → 容器模板 → 脚本 → 分析节点 → 工作流 → 分析运行 → 报告 → 技能 / Profile。
+// 交互 → 文件 / 数据集 → 容器模板 → 脚本 → 分析节点 → 工作流 → 分析运行 → 报告 → 组件仓库 → 技能 / Profile。
 func All(d Deps) []tool.Tool {
 	return []tool.Tool{
 		// 交互与通用能力。
@@ -90,6 +90,13 @@ func All(d Deps) []tool.Tool {
 		GetReport(d.ReportBrowser),
 		CreateReport(d.ReportWriter),
 		UpdateReport(d.ReportWriter),
+
+		// 组件仓库（store）：分页查询 / 发布 / 安装（与 handler 的 store、publish、install 端点 1:1）。
+		PageStore(d.StoreBrowser),
+		PublishWorkflowToStore(d.StorePublisher),
+		PublishScriptToStore(d.StorePublisher),
+		InstallWorkflowFromStore(d.StoreInstaller),
+		InstallScriptFromStore(d.StoreInstaller),
 
 		// 技能：指令正文与附属资源都按需通过工具加载（渐进式披露）。
 		skill.GetSkill(d.Skills),
