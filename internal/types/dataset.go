@@ -29,10 +29,6 @@ type Dataset struct {
 
 	Metadata string `json:"metadata" gorm:"type:text"`
 
-	// Path is the dataset workspace directory (utils.GetDatasetDir). It is
-	// derived at read time from the active project and is never persisted.
-	Path string `json:"path,omitempty" gorm:"-"`
-
 	CreatedAt time.Time `json:"created_at"`
 
 	UpdatedAt time.Time `json:"updated_at"`
@@ -40,6 +36,17 @@ type Dataset struct {
 
 func (Dataset) TableName() string {
 	return "go_dataset"
+}
+
+// WorkspaceDir 返回数据集工作目录（<baseDir>/data/<projectId>/dataset/<datasetId>）。
+//
+// 路径推导只保留这一处，调用方（service / agent 工具）不再各自拼 utils.GetDatasetDir，
+// 也不再把推导结果缓存进实体字段。
+func (t *Dataset) WorkspaceDir(baseDir string, projectID int64) string {
+	if t == nil {
+		return ""
+	}
+	return utils.GetDatasetDir(baseDir, projectID, t.ID)
 }
 
 func (t *Dataset) BeforeCreate(_ *gorm.DB) error {
@@ -106,16 +113,22 @@ type ProjectDataset struct {
 
 	DatasetID int64 `json:"dataset_id,string" gorm:"index;not null"`
 
-	// Path is the bound dataset's workspace directory
-	// (utils.GetDatasetDir(baseDir, project_id, dataset_id)). It is derived at
-	// read time and is never persisted.
-	Path string `json:"path,omitempty" gorm:"-"`
-
 	CreatedAt time.Time `json:"created_at"`
 }
 
 func (ProjectDataset) TableName() string {
 	return "go_project_dataset"
+}
+
+// WorkspaceDir 返回绑定数据集的工作目录
+// （<baseDir>/data/<projectId>/dataset/<datasetId>）。
+//
+// 与 Dataset.WorkspaceDir 同构：路径只按 ProjectID / DatasetID 推导，不落库。
+func (t *ProjectDataset) WorkspaceDir(baseDir string) string {
+	if t == nil {
+		return ""
+	}
+	return utils.GetDatasetDir(baseDir, t.ProjectID, t.DatasetID)
 }
 
 func (t *ProjectDataset) BeforeCreate(_ *gorm.DB) error {

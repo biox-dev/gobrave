@@ -72,7 +72,6 @@ func (s *dataService) CreateDataset(ctx context.Context, dataset *types.Dataset,
 		return err
 	}
 
-	dataset.Path = s.datasetPath(projectID, dataset.ID)
 	return nil
 }
 
@@ -117,40 +116,7 @@ func (s *dataService) datasetPath(projectID int64, datasetID int64) string {
 	if err != nil {
 		return ""
 	}
-	return utils.GetDatasetDir(absBaseDir, projectID, datasetID)
-}
-
-// fillDatasetPaths sets Path on every dataset bound to the project.
-func (s *dataService) fillDatasetPaths(items []*types.Dataset, projectID int64) {
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		item.Path = s.datasetPath(projectID, item.ID)
-	}
-}
-
-// fillDatasetPath resolves the project binding of the dataset and sets its Path.
-// It is best-effort: an unbound dataset simply keeps an empty Path.
-func (s *dataService) fillDatasetPath(ctx context.Context, dataset *types.Dataset) {
-	if dataset == nil || dataset.ID == 0 {
-		return
-	}
-	binding, err := s.dataRepo.GetProjectDatasetByDatasetID(ctx, dataset.ID)
-	if err != nil || binding == nil {
-		return
-	}
-	dataset.Path = s.datasetPath(binding.ProjectID, dataset.ID)
-}
-
-// fillProjectDatasetPaths sets Path on project-dataset bindings.
-func (s *dataService) fillProjectDatasetPaths(items []*types.ProjectDataset) {
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		item.Path = s.datasetPath(item.ProjectID, item.DatasetID)
-	}
+	return (&types.ProjectDataset{ProjectID: projectID, DatasetID: datasetID}).WorkspaceDir(absBaseDir)
 }
 
 // ensureDatasetDir creates utils.GetDatasetDir(baseDir, projectID, datasetID)
@@ -337,7 +303,6 @@ func (s *dataService) GetDatasetByID(ctx context.Context, id int64) (*types.Data
 	if err != nil {
 		return nil, err
 	}
-	s.fillDatasetPath(ctx, dataset)
 	return dataset, nil
 }
 
@@ -362,12 +327,7 @@ func (s *dataService) ListDataset(ctx context.Context) ([]*types.Dataset, error)
 }
 
 func (s *dataService) ListDatasetByProjectID(ctx context.Context, projectID int64) ([]*types.Dataset, error) {
-	items, err := s.dataRepo.ListDatasetByProjectID(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	s.fillDatasetPaths(items, projectID)
-	return items, nil
+	return s.dataRepo.ListDatasetByProjectID(ctx, projectID)
 }
 
 func (s *dataService) PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID int64) (*types.PageResult, error) {
@@ -379,8 +339,6 @@ func (s *dataService) PageDatasetByProjectID(ctx context.Context, pagination *ty
 	if err != nil {
 		return nil, err
 	}
-
-	s.fillDatasetPaths(items, projectID)
 
 	return types.NewPageResult(total, pagination, items), nil
 }
@@ -406,19 +364,11 @@ func (s *dataService) CreateProjectDataset(ctx context.Context, projectDataset *
 		return err
 	}
 
-	projectDataset.Path = s.datasetPath(projectDataset.ProjectID, projectDataset.DatasetID)
 	return nil
 }
 
 func (s *dataService) GetProjectDatasetByID(ctx context.Context, id int64) (*types.ProjectDataset, error) {
-	item, err := s.dataRepo.GetProjectDatasetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if item != nil {
-		item.Path = s.datasetPath(item.ProjectID, item.DatasetID)
-	}
-	return item, nil
+	return s.dataRepo.GetProjectDatasetByID(ctx, id)
 }
 
 func (s *dataService) UpdateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error {
@@ -447,7 +397,6 @@ func (s *dataService) UpdateProjectDataset(ctx context.Context, projectDataset *
 		return err
 	}
 
-	projectDataset.Path = s.datasetPath(projectDataset.ProjectID, projectDataset.DatasetID)
 	return nil
 }
 
@@ -460,12 +409,7 @@ func (s *dataService) DeleteProjectDataset(ctx context.Context, id int64) error 
 }
 
 func (s *dataService) ListProjectDataset(ctx context.Context) ([]*types.ProjectDataset, error) {
-	items, err := s.dataRepo.ListProjectDataset(ctx)
-	if err != nil {
-		return nil, err
-	}
-	s.fillProjectDatasetPaths(items)
-	return items, nil
+	return s.dataRepo.ListProjectDataset(ctx)
 }
 
 // ensureFileAssayExists verifies the owning assay of a file. assayID 0 means the
