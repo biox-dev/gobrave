@@ -974,13 +974,101 @@ type ContainerTemplateBrowser interface {
 	GetContainerTemplateByID(ctx context.Context, containerTemplateID int64) (ContainerTemplateDetail, error)
 }
 
-// DatasetBrowser 抽象「按 ID 查看数据集」的只读能力（get_dataset）。
+// DatasetBrowser 抽象「按 ID 查看 / 按项目列出数据集」与「按角色列出项目文件」的只读能力
+// （get_dataset / list_dataset / list_file）。
 type DatasetBrowser interface {
 	// GetDatasetByID 按主键读取数据集（必须属于当前激活项目，否则返回错误）。
 	//
 	// 用于解析用户输入里的 @dataset:<id> 引用：返回数据集名称 / 描述与其工作目录的
 	// 绝对路径（utils.GetDatasetDir），模型可直接按该路径读取 / 写入数据集文件。
 	GetDatasetByID(ctx context.Context, projectID int64, datasetID int64) (DatasetBrief, error)
+
+	// ListDatasetsByProject 列出当前激活项目下的全部数据集（含工作目录绝对路径）。
+	ListDatasetsByProject(ctx context.Context, projectID int64) ([]DatasetBrief, error)
+
+	// ListFilesByProject 列出当前激活项目下的文件（go_project_dataset -> go_dataset_file ->
+	// go_file），可按 go_file.role 过滤；roles 为空表示不过滤。
+	ListFilesByProject(ctx context.Context, projectID int64, roles []string) ([]ProjectFileBrief, error)
+}
+
+// DatasetListWriter 抽象「在当前激活项目下创建 / 更新数据集」的写能力
+// （create_dataset / update_dataset）。
+//
+// 与 DatasetBrowser 分开：写操作会改库并可能初始化数据集目录，属于会改盘的能力。
+type DatasetListWriter interface {
+	// CreateDataset 在当前激活项目下创建数据集并绑定到项目（并确保工作目录存在）。
+	CreateDataset(ctx context.Context, in DatasetCreateInput) (DatasetBrief, error)
+
+	// UpdateDataset 更新当前激活项目下已有数据集的名称 / 描述 / key（空串表示不修改）。
+	UpdateDataset(ctx context.Context, in DatasetUpdateInput) (DatasetBrief, error)
+}
+
+// FileUpdater 抽象「更新当前激活项目下的文件元数据」的写能力（update_file）。
+type FileUpdater interface {
+	// UpdateFile 更新属于当前激活项目的文件的元数据；空串 / 0 字段表示不修改。
+	UpdateFile(ctx context.Context, in FileUpdateInput) (FileUpdateResult, error)
+}
+
+// DatasetCreateInput 是 create_dataset 的入参。
+//
+// ProjectID 取自执行事实（tool.ProjectIDFrom，当前用户激活项目）。
+type DatasetCreateInput struct {
+	ProjectID   int64
+	DatasetName string
+	DatasetKey  string
+	Description string
+	Metadata    string
+}
+
+// DatasetUpdateInput 是 update_dataset 的入参；空串字段表示不修改。
+type DatasetUpdateInput struct {
+	ProjectID   int64
+	DatasetID   int64
+	DatasetName string
+	DatasetKey  string
+	Description string
+	Metadata    string
+}
+
+// ProjectFileBrief 是项目内单个文件的只读摘要（list_file 回传）。
+type ProjectFileBrief struct {
+	FileID         int64  `json:"file_id"`
+	FileName       string `json:"file_name,omitempty"`
+	Path           string `json:"path"`
+	Format         string `json:"format,omitempty"`
+	Role           string `json:"role,omitempty"`
+	DatasetID      int64  `json:"dataset_id,string"`
+	DatasetName    string `json:"dataset_name,omitempty"`
+	AnalysisNodeID int64  `json:"analysis_node_id,string,omitempty"`
+	Size           int64  `json:"size,omitempty"`
+	MD5            string `json:"md5,omitempty"`
+	Storage        string `json:"storage,omitempty"`
+	Description    string `json:"description,omitempty"`
+}
+
+// FileUpdateInput 是 update_file 的入参；空串 / 0 字段表示不修改。
+type FileUpdateInput struct {
+	ProjectID   int64
+	FileID      int64
+	FileName    string
+	Path        string
+	Format      string
+	FileKey     string
+	Role        string
+	Storage     string
+	Description string
+}
+
+// FileUpdateResult 是 update_file 的结果。
+type FileUpdateResult struct {
+	FileID      int64    `json:"file_id"`
+	FileName    string   `json:"file_name,omitempty"`
+	Path        string   `json:"path"`
+	Format      string   `json:"format,omitempty"`
+	Role        string   `json:"role,omitempty"`
+	FileKey     string   `json:"file_key,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Changed     []string `json:"changed,omitempty"`
 }
 
 // DatasetWriter 抽象「按 key 准备数据集 / 向数据集添加文件」的写能力

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -899,6 +900,264 @@ func (b *projectResourceBrowser) toDatasetBrief(toolName string, projectID int64
 		Description: dataset.Description,
 		Path:        utils.GetDatasetDir(absBaseDir, projectID, dataset.ID),
 	}, nil
+}
+
+// ListDatasetsByProject 列出当前激活项目下的全部数据集（list_dataset）。
+func (b *projectResourceBrowser) ListDatasetsByProject(ctx context.Context, projectID int64) ([]runtimecontext.DatasetBrief, error) {
+	const toolName = "list_dataset"
+	if projectID <= 0 {
+		return nil, fmt.Errorf("%s: project_id is required", toolName)
+	}
+	if b.dataSvc == nil {
+		return nil, fmt.Errorf("%s: required services are not configured", toolName)
+	}
+
+	datasets, err := b.dataSvc.ListDatasetByProjectID(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to list datasets: %w", toolName, err)
+	}
+
+	out := make([]runtimecontext.DatasetBrief, 0, len(datasets))
+	for _, dataset := range datasets {
+		if dataset == nil || dataset.ID == 0 {
+			continue
+		}
+		brief, briefErr := b.toDatasetBrief(toolName, projectID, dataset)
+		if briefErr != nil {
+			return nil, briefErr
+		}
+		out = append(out, brief)
+	}
+	return out, nil
+}
+
+// ListFilesByProject 列出当前激活项目下的文件（list_file），roles 为空表示不过滤。
+func (b *projectResourceBrowser) ListFilesByProject(ctx context.Context, projectID int64, roles []string) ([]runtimecontext.ProjectFileBrief, error) {
+	const toolName = "list_file"
+	if projectID <= 0 {
+		return nil, fmt.Errorf("%s: project_id is required", toolName)
+	}
+	if b.dataSvc == nil {
+		return nil, fmt.Errorf("%s: required services are not configured", toolName)
+	}
+
+	normalizedRoles := make([]string, 0, len(roles))
+	for _, role := range roles {
+		if trimmed := strings.TrimSpace(role); trimmed != "" {
+			normalizedRoles = append(normalizedRoles, trimmed)
+		}
+	}
+
+	items, err := b.dataSvc.ListFileByProjectID(ctx, projectID, normalizedRoles)
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to list files: %w", toolName, err)
+	}
+
+	out := make([]runtimecontext.ProjectFileBrief, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		out = append(out, toProjectFileBrief(item))
+	}
+	return out, nil
+}
+
+// toProjectFileBrief 把 types.FileWithDatasetInfo 映射为工具回传的文件摘要。
+func toProjectFileBrief(item *types.FileWithDatasetInfo) runtimecontext.ProjectFileBrief {
+	datasetID, _ := strconv.ParseInt(strings.TrimSpace(item.DatasetID), 10, 64)
+	return runtimecontext.ProjectFileBrief{
+		FileID:         item.FileID,
+		FileName:       item.FileName,
+		Path:           item.Path,
+		Format:         item.Format,
+		Role:           item.Role,
+		DatasetID:      datasetID,
+		DatasetName:    item.DatasetName,
+		AnalysisNodeID: item.AnalysisNodeID,
+		Size:           item.Size,
+		MD5:            item.MD5,
+		Storage:        item.Storage,
+		Description:    item.Description,
+	}
+}
+
+// CreateDataset 在当前激活项目下创建数据集（create_dataset）。
+func (b *projectResourceBrowser) CreateDataset(ctx context.Context, in runtimecontext.DatasetCreateInput) (runtimecontext.DatasetBrief, error) {
+	const toolName = "create_dataset"
+	if in.ProjectID <= 0 {
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: project_id is required", toolName)
+	}
+	name := strings.TrimSpace(in.DatasetName)
+	if name == "" {
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: dataset_name is required", toolName)
+	}
+	if b.dataSvc == nil {
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: required services are not configured", toolName)
+	}
+
+	dataset := &types.Dataset{
+		DatasetName: name,
+		DatasetKey:  strings.TrimSpace(in.DatasetKey),
+		Description: in.Description,
+		Metadata:    in.Metadata,
+	}
+	if err := b.dataSvc.CreateDataset(ctx, dataset, in.ProjectID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: project %d not found", toolName, in.ProjectID)
+		}
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: failed to create dataset: %w", toolName, err)
+	}
+
+	return b.toDatasetBrief(toolName, in.ProjectID, dataset)
+}
+
+// UpdateDataset 更新当前激活项目下已有数据集（update_dataset）。
+//
+// 空串字段表示不修改：先读取现有记录并合并，再整体回写，避免误清空未提供的列。
+func (b *projectResourceBrowser) UpdateDataset(ctx context.Context, in runtimecontext.DatasetUpdateInput) (runtimecontext.DatasetBrief, error) {
+	const toolName = "update_dataset"
+	if in.ProjectID <= 0 {
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: project_id is required", toolName)
+	}
+	if in.DatasetID <= 0 {
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: dataset_id is required", toolName)
+	}
+	if b.dataSvc == nil {
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: required services are not configured", toolName)
+	}
+
+	if err := b.ensureDatasetInProject(ctx, toolName, in.ProjectID, in.DatasetID); err != nil {
+		return runtimecontext.DatasetBrief{}, err
+	}
+
+	dataset, err := b.dataSvc.GetDatasetByID(ctx, in.DatasetID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: dataset %d not found", toolName, in.DatasetID)
+		}
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: failed to load dataset: %w", toolName, err)
+	}
+
+	if name := strings.TrimSpace(in.DatasetName); name != "" {
+		dataset.DatasetName = name
+	}
+	if key := strings.TrimSpace(in.DatasetKey); key != "" {
+		dataset.DatasetKey = key
+	}
+	if in.Description != "" {
+		dataset.Description = in.Description
+	}
+	if in.Metadata != "" {
+		dataset.Metadata = in.Metadata
+	}
+	if err := b.dataSvc.UpdateDataset(ctx, dataset); err != nil {
+		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: failed to update dataset: %w", toolName, err)
+	}
+
+	return b.toDatasetBrief(toolName, in.ProjectID, dataset)
+}
+
+// UpdateFile 更新当前激活项目下的文件元数据（update_file）。
+//
+// 仅允许修改 dataset 归属文件（go_project_dataset -> go_dataset_file -> go_file），
+// 以避免越权改到其它项目的文件。空串字段表示不修改。
+func (b *projectResourceBrowser) UpdateFile(ctx context.Context, in runtimecontext.FileUpdateInput) (runtimecontext.FileUpdateResult, error) {
+	const toolName = "update_file"
+	if in.ProjectID <= 0 {
+		return runtimecontext.FileUpdateResult{}, fmt.Errorf("%s: project_id is required", toolName)
+	}
+	if in.FileID <= 0 {
+		return runtimecontext.FileUpdateResult{}, fmt.Errorf("%s: file_id is required", toolName)
+	}
+	if b.dataSvc == nil {
+		return runtimecontext.FileUpdateResult{}, fmt.Errorf("%s: required services are not configured", toolName)
+	}
+
+	// 校验文件属于当前激活项目：用项目文件列表里是否存在该 file_id 判定。
+	files, err := b.dataSvc.ListFileByProjectID(ctx, in.ProjectID, nil)
+	if err != nil {
+		return runtimecontext.FileUpdateResult{}, fmt.Errorf("%s: failed to verify project binding: %w", toolName, err)
+	}
+	belongs := false
+	for _, item := range files {
+		if item != nil && item.FileID == in.FileID {
+			belongs = true
+			break
+		}
+	}
+	if !belongs {
+		return runtimecontext.FileUpdateResult{}, fmt.Errorf("%s: file %d does not belong to the active project %d", toolName, in.FileID, in.ProjectID)
+	}
+
+	file, err := b.dataSvc.GetFileByID(ctx, in.FileID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return runtimecontext.FileUpdateResult{}, fmt.Errorf("%s: file %d not found", toolName, in.FileID)
+		}
+		return runtimecontext.FileUpdateResult{}, fmt.Errorf("%s: failed to load file: %w", toolName, err)
+	}
+
+	changed := make([]string, 0, 4)
+	if v := strings.TrimSpace(in.FileName); v != "" && v != file.FileName {
+		file.FileName = v
+		changed = append(changed, "file_name")
+	}
+	if v := strings.TrimSpace(in.Path); v != "" && v != file.Path {
+		file.Path = v
+		changed = append(changed, "path")
+	}
+	if v := strings.TrimSpace(in.Format); v != "" && v != file.Format {
+		file.Format = v
+		changed = append(changed, "format")
+	}
+	if v := strings.TrimSpace(in.FileKey); v != "" && v != file.FileKey {
+		file.FileKey = v
+		changed = append(changed, "file_key")
+	}
+	if v := strings.TrimSpace(in.Role); v != "" && v != file.Role {
+		file.Role = v
+		changed = append(changed, "role")
+	}
+	if v := strings.TrimSpace(in.Storage); v != "" && v != file.Storage {
+		file.Storage = v
+		changed = append(changed, "storage")
+	}
+	if in.Description != "" && in.Description != file.Description {
+		file.Description = in.Description
+		changed = append(changed, "description")
+	}
+
+	if len(changed) > 0 {
+		if err := b.dataSvc.UpdateFile(ctx, file); err != nil {
+			return runtimecontext.FileUpdateResult{}, fmt.Errorf("%s: failed to update file: %w", toolName, err)
+		}
+	}
+
+	return runtimecontext.FileUpdateResult{
+		FileID:      file.ID,
+		FileName:    file.FileName,
+		Path:        file.Path,
+		Format:      file.Format,
+		Role:        file.Role,
+		FileKey:     file.FileKey,
+		Description: file.Description,
+		Changed:     changed,
+	}, nil
+}
+
+// ensureDatasetInProject 校验数据集属于当前激活项目（go_project_dataset 绑定）。
+func (b *projectResourceBrowser) ensureDatasetInProject(ctx context.Context, toolName string, projectID, datasetID int64) error {
+	datasets, err := b.dataSvc.ListDatasetByProjectID(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("%s: failed to verify project binding: %w", toolName, err)
+	}
+	for _, dataset := range datasets {
+		if dataset != nil && dataset.ID == datasetID {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: dataset %d does not belong to the active project %d", toolName, datasetID, projectID)
 }
 
 // AddFileToDataset 把文件登记到数据集（add_file_to_dataset）。

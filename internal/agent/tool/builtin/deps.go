@@ -26,7 +26,10 @@ type Deps struct {
 	UIActions runtimecontext.UIActionPusher
 	// FileReader 按 go_file 主键解析文件路径并读取文件内容（get_file）。
 	FileReader runtimecontext.FileReader
-	// ScriptCreator 创建脚本（create_script）；同时实现 ScriptUpdater 时也用于 update_script。
+	// FileBrowser 按项目列出文件、按项目列出数据集（list_file / list_dataset）。
+	FileBrowser runtimecontext.DatasetBrowser
+	// FileUpdater 更新项目下文件元数据（update_file）。
+	FileUpdater   runtimecontext.FileUpdater // ScriptCreator 创建脚本（create_script）；同时实现 ScriptUpdater 时也用于 update_script。
 	ScriptCreator runtimecontext.ScriptCreator
 	// NodeCreator 为已有脚本创建分析节点（create_analysis_node_script）。
 	NodeCreator runtimecontext.AnalysisNodeCreator
@@ -66,6 +69,8 @@ type Deps struct {
 	// DatasetWriter 准备已知 key 的数据集 / 向数据集登记文件
 	// （get_project_database_path / add_file_to_dataset）。
 	DatasetWriter runtimecontext.DatasetWriter
+	// DatasetListWriter 在当前项目下创建 / 更新数据集（create_dataset / update_dataset）。
+	DatasetListWriter runtimecontext.DatasetListWriter
 	// ReportWriter 创建 / 更新项目报告（create_report / update_report）。
 	ReportWriter runtimecontext.ProjectReportWriter
 

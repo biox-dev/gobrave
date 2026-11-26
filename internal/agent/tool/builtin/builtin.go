@@ -31,8 +31,13 @@ func All(d Deps) []tool.Tool {
 		SaveMemory(d.MemorySaver),
 
 		// 文件 / 数据集。
+		ListFile(d.FileBrowser),
 		GetFile(d.FileReader),
+		UpdateFile(d.FileUpdater),
+		ListDataset(d.FileBrowser),
 		GetDataset(d.DatasetBrowser),
+		CreateDataset(d.DatasetListWriter),
+		UpdateDataset(d.DatasetListWriter),
 		GetProjectDatabasePath(d.DatasetWriter),
 		AddFileToDataset(d.DatasetWriter),
 

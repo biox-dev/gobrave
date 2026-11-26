@@ -26,7 +26,7 @@ type Dataset struct {
 	// has no project column; the binding lives in go_project_dataset).
 	DatasetKey string `json:"dataset_key" gorm:"type:varchar(64);index"`
 
-	Description string `json:"description" gorm:"type:text"`
+	Description string `json:"description" gorm:"type:longtext"`
 
 	Metadata string `json:"metadata" gorm:"type:text"`
 

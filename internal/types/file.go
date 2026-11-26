@@ -46,7 +46,7 @@ type File struct {
 
 	Storage string `json:"storage" gorm:"type:varchar(32);default:LOCAL"`
 
-	Description string `json:"description" gorm:"type:text"`
+	Description string `json:"description" gorm:"type:longtext"`
 
 	CreatedAt time.Time `json:"created_at"`
 

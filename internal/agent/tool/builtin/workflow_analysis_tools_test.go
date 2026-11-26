@@ -355,6 +355,11 @@ func TestBuiltinNamesIncludeWorkflowAndAnalysisTools(t *testing.T) {
 		UpdateAnalysisWorkflowToolName,
 		RunAnalysisWorkflowToolName,
 		CreateAnalysisWorkflowToolName,
+		ListFileToolName,
+		ListDatasetToolName,
+		CreateDatasetToolName,
+		UpdateDatasetToolName,
+		UpdateFileToolName,
 	} {
 		if _, ok := index[want]; !ok {
 			t.Fatalf("tool %q not registered in Names()", want)
