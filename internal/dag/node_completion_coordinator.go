@@ -606,7 +606,7 @@ func (c *NodeCompletionCoordinator) scheduleOutputVisibilityPostMortem(node *typ
 // when it declares none. It is the analysis_result key the frontend reads for
 // node output files that cannot be matched to any item's accept_formats
 // (ComponentsRender resolves them as dataMap["DEFAULT"]).
-const DefaultNodeOutputRole = "DEFAULT"
+const DefaultNodeOutputRole = types.RoleDefault
 
 // recordNodeOutputFiles mirrors a completed node's file outputs into the go_file
 // table so they become visible to the file/dataset layer, and returns the
@@ -706,18 +706,18 @@ func isExistingFile(path string) bool {
 // nodeOutputRole reads the role an output_patterns entry publishes its file under,
 // defaulting to DefaultNodeOutputRole when the entry declares none. The role is
 // the analysis_result key the consuming form item resolves via dataMap[role], so
-// it mirrors the way input items declare their accepted roles.
-func nodeOutputRole(pattern any) string {
+// it mirrors the way input items declare their accepted roles. Unknown values fall
+// back to DefaultNodeOutputRole because Role is an enum.
+func nodeOutputRole(pattern any) types.Role {
 	m, ok := pattern.(map[string]any)
 	if !ok {
 		return DefaultNodeOutputRole
 	}
 	role, _ := m["role"].(string)
-	role = strings.TrimSpace(role)
-	if role == "" {
-		return DefaultNodeOutputRole
+	if normalized := types.NormalizeRole(role); normalized != "" {
+		return normalized
 	}
-	return role
+	return DefaultNodeOutputRole
 }
 
 // resolveNodeOutputFile extracts the on-disk path and the file key from one
@@ -762,7 +762,7 @@ func outputStringField(fields map[string]any, key string) string {
 // can group the file under the matching analysis_result key. It returns the
 // go_file primary key id (File.ID) of the recorded row, which is the value
 // SelectAssay inputs reference in `{"files": "<id>"}`.
-func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, node *types.AnalysisNode, path, fileKey, role string) (string, error) {
+func (c *NodeCompletionCoordinator) upsertNodeOutputFile(ctx context.Context, node *types.AnalysisNode, path, fileKey string, role types.Role) (string, error) {
 	existing, err := c.dataRepo.GetFileByAnalysisNodeIDAndFileKey(ctx, node.ID, fileKey)
 	fileName := fmt.Sprintf("%s (%s)", node.NodeName, filepath.Base(path))
 	switch {

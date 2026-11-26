@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 // 本文件提供「工具执行期运行时上下文」的载体。
@@ -988,7 +990,7 @@ type DatasetBrowser interface {
 
 	// ListFilesByProject 列出当前激活项目下的文件（go_project_dataset -> go_dataset_file ->
 	// go_file），可按 go_file.role 过滤；roles 为空表示不过滤。
-	ListFilesByProject(ctx context.Context, projectID int64, roles []string) ([]ProjectFileBrief, error)
+	ListFilesByProject(ctx context.Context, projectID int64, roles []types.Role) ([]ProjectFileBrief, error)
 }
 
 // DatasetListWriter 抽象「在当前激活项目下创建 / 更新数据集」的写能力
@@ -1032,18 +1034,18 @@ type DatasetUpdateInput struct {
 
 // ProjectFileBrief 是项目内单个文件的只读摘要（list_file 回传）。
 type ProjectFileBrief struct {
-	FileID         int64  `json:"file_id"`
-	FileName       string `json:"file_name,omitempty"`
-	Path           string `json:"path"`
-	Format         string `json:"format,omitempty"`
-	Role           string `json:"role,omitempty"`
-	DatasetID      int64  `json:"dataset_id,string"`
-	DatasetName    string `json:"dataset_name,omitempty"`
-	AnalysisNodeID int64  `json:"analysis_node_id,string,omitempty"`
-	Size           int64  `json:"size,omitempty"`
-	MD5            string `json:"md5,omitempty"`
-	Storage        string `json:"storage,omitempty"`
-	Description    string `json:"description,omitempty"`
+	FileID         int64      `json:"file_id"`
+	FileName       string     `json:"file_name,omitempty"`
+	Path           string     `json:"path"`
+	Format         string     `json:"format,omitempty"`
+	Role           types.Role `json:"role,omitempty"`
+	DatasetID      int64      `json:"dataset_id,string"`
+	DatasetName    string     `json:"dataset_name,omitempty"`
+	AnalysisNodeID int64      `json:"analysis_node_id,string,omitempty"`
+	Size           int64      `json:"size,omitempty"`
+	MD5            string     `json:"md5,omitempty"`
+	Storage        string     `json:"storage,omitempty"`
+	Description    string     `json:"description,omitempty"`
 }
 
 // FileUpdateInput 是 update_file 的入参；空串 / 0 字段表示不修改。
@@ -1054,21 +1056,21 @@ type FileUpdateInput struct {
 	Path        string
 	Format      string
 	FileKey     string
-	Role        string
+	Role        string // 原始输入，由实现经 types.NormalizeRole 归一化
 	Storage     string
 	Description string
 }
 
 // FileUpdateResult 是 update_file 的结果。
 type FileUpdateResult struct {
-	FileID      int64    `json:"file_id"`
-	FileName    string   `json:"file_name,omitempty"`
-	Path        string   `json:"path"`
-	Format      string   `json:"format,omitempty"`
-	Role        string   `json:"role,omitempty"`
-	FileKey     string   `json:"file_key,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Changed     []string `json:"changed,omitempty"`
+	FileID      int64      `json:"file_id"`
+	FileName    string     `json:"file_name,omitempty"`
+	Path        string     `json:"path"`
+	Format      string     `json:"format,omitempty"`
+	Role        types.Role `json:"role,omitempty"`
+	FileKey     string     `json:"file_key,omitempty"`
+	Description string     `json:"description,omitempty"`
+	Changed     []string   `json:"changed,omitempty"`
 }
 
 // DatasetWriter 抽象「按 key 准备数据集 / 向数据集添加文件」的写能力
@@ -1097,7 +1099,7 @@ type DatasetFileAddInput struct {
 	// Path 是要登记的文件路径：绝对路径或相对数据集工作目录的路径。
 	Path string
 	// Role 是文件角色（go_file.role），空时由实现回退到 DEFAULT。
-	Role string
+	Role types.Role
 	// FileName 是展示文件名，空时由实现取 Path 的 basename。
 	FileName string
 	// IsPrefix 为 true 时把 Path 当作前缀（不校验文件是否存在）。
@@ -1108,13 +1110,13 @@ type DatasetFileAddInput struct {
 
 // DatasetFileAddResult 是一次 add_file_to_dataset 调用的结果。
 type DatasetFileAddResult struct {
-	DatasetID int64  `json:"dataset_id"`
-	FileID    int64  `json:"file_id"`
-	FilePath  string `json:"file_path"`
-	FileName  string `json:"file_name"`
-	Role      string `json:"role,omitempty"`
-	Format    string `json:"format,omitempty"`
-	Size      int64  `json:"size,omitempty"`
+	DatasetID int64      `json:"dataset_id"`
+	FileID    int64      `json:"file_id"`
+	FilePath  string     `json:"file_path"`
+	FileName  string     `json:"file_name"`
+	Role      types.Role `json:"role,omitempty"`
+	Format    string     `json:"format,omitempty"`
+	Size      int64      `json:"size,omitempty"`
 }
 
 // ProjectReportBrowser 抽象「按 ID 查看项目报告」的只读能力（get_report）。
@@ -1189,8 +1191,8 @@ type AnalysisNodeFile struct {
 	// Path 是产物文件的绝对路径。
 	Path   string `json:"path"`
 	Format string `json:"format,omitempty"`
-	// Role 是产物在分析结果表单中发布的角色（缺省 DEFAULT）。
-	Role string `json:"role,omitempty"`
+	// Role 是产物在分析结果表单中发布的角色（缺省 DEFAULT，取值见 types.Role*）。
+	Role types.Role `json:"role,omitempty"`
 	// FileKey 是登记键：agent 节点为 outputs.json 的 key，脚本节点为输出句柄名。
 	FileKey     string `json:"file_key,omitempty"`
 	Size        int64  `json:"size,omitempty"`

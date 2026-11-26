@@ -281,15 +281,14 @@ func (s *dataService) ListDatasetDirFiles(ctx context.Context, datasetID int64, 
 // directory that is not yet bound to the dataset. A file counts as existing when
 // the same go_file.path is already linked to the dataset through
 // go_dataset_file, so re-running the import is idempotent.
-func (s *dataService) ImportDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64, role string) (*types.ImportDatasetDirFilesResult, error) {
+func (s *dataService) ImportDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64, role types.Role) (*types.ImportDatasetDirFilesResult, error) {
 	_, files, err := s.ListDatasetDirFiles(ctx, datasetID, projectID)
 	if err != nil {
 		return nil, err
 	}
 
-	role = strings.TrimSpace(role)
-	if role == "" {
-		role = "DEFAULT"
+	if types.NormalizeRole(string(role)) == "" {
+		role = types.RoleDefault
 	}
 
 	result := &types.ImportDatasetDirFilesResult{Total: len(files)}
@@ -534,7 +533,7 @@ func (s *dataService) ListFile(ctx context.Context) ([]*types.File, error) {
 	return s.dataRepo.ListFile(ctx)
 }
 
-func (s *dataService) ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error) {
+func (s *dataService) ListFileByProjectID(ctx context.Context, projectID int64, roles []types.Role) ([]*types.FileWithDatasetInfo, error) {
 	return s.dataRepo.ListFileByProjectID(ctx, projectID, roles)
 }
 
@@ -546,7 +545,7 @@ func (s *dataService) ListFileByAssayID(ctx context.Context, assayID int64) ([]*
 	return s.dataRepo.ListFileByAssayID(ctx, assayID)
 }
 
-func (s *dataService) ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error) {
+func (s *dataService) ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []types.Role) ([]*types.File, error) {
 	return s.dataRepo.ListFileByAssayIDAndRole(ctx, assayID, roles)
 }
 
@@ -561,7 +560,7 @@ func (s *dataService) ListFileByProjectIDGroupByRole(ctx context.Context, projec
 	}
 
 	groups := make([]*types.FileByProjectRoleGroup, 0)
-	groupIndex := make(map[string]int)
+	groupIndex := make(map[types.Role]int)
 	for _, item := range items {
 		idx, ok := groupIndex[item.Role]
 		if !ok {
@@ -682,9 +681,9 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 		}
 	}
 
-	role := strings.TrimSpace(req.Role)
+	role := types.NormalizeRole(string(req.Role))
 	if role == "" {
-		role = "DEFAULT"
+		role = types.RoleDefault
 	}
 
 	// Files are assay-private: a path registered outside of any assay (assayID 0)
@@ -761,7 +760,7 @@ func (s *dataService) UploadFileToDataset(
 	ctx context.Context,
 	datasetID int64,
 	projectID int64,
-	role string,
+	role types.Role,
 	fileName string,
 	src io.Reader,
 ) (*types.AddFileToDatasetResponse, error) {
@@ -892,7 +891,7 @@ func (s *dataService) PageAssayByProjectID(ctx context.Context, pagination *type
 	return types.NewPageResult(total, pagination, items), nil
 }
 
-func (s *dataService) ListAssayByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.AssayWithDatasetInfo, error) {
+func (s *dataService) ListAssayByProjectID(ctx context.Context, projectID int64, roles []types.Role) ([]*types.AssayWithDatasetInfo, error) {
 	return s.dataRepo.ListAssayByProjectID(ctx, projectID, roles)
 }
 
@@ -922,7 +921,7 @@ func (s *dataService) CreateDatasetAssay(ctx context.Context, datasetAssay *type
 // ensureAssayNameUniqueInDataset enforces that sample_name + role is unique
 // inside one dataset (excluding excludeAssayID). The same name may exist in
 // other datasets.
-func (s *dataService) ensureAssayNameUniqueInDataset(ctx context.Context, datasetID int64, sampleName, role string, excludeAssayID int64) error {
+func (s *dataService) ensureAssayNameUniqueInDataset(ctx context.Context, datasetID int64, sampleName string, role types.Role, excludeAssayID int64) error {
 	exists, err := s.dataRepo.ExistsAssayNameInDataset(ctx, datasetID, sampleName, role, excludeAssayID)
 	if err != nil {
 		return err
@@ -985,7 +984,7 @@ func (s *dataService) ListDatasetAssay(ctx context.Context) ([]*types.DatasetAss
 var importAssayColumns = map[string]func(*types.Assay, string){
 	"sample_name": func(a *types.Assay, v string) { a.SampleName = v },
 	"assay_type":  func(a *types.Assay, v string) { a.AssayType = v },
-	"assay_role":  func(a *types.Assay, v string) { a.Role = v },
+	"assay_role":  func(a *types.Assay, v string) { a.Role = types.NormalizeRole(v) },
 	"platform":    func(a *types.Assay, v string) { a.Platform = v },
 	"library_id":  func(a *types.Assay, v string) { a.LibraryID = v },
 	"metadata":    func(a *types.Assay, v string) { a.Metadata = v },
@@ -1077,7 +1076,7 @@ func (s *dataService) ImportAssayTSV(ctx context.Context, req *types.ImportAssay
 					fmt.Sprintf("tsv row %d: sample_name is required", i+2))
 			}
 
-			assay, err := upsertImportAssay(ctx, tx, req.DatasetID, sampleName, strings.TrimSpace(row["assay_role"]), row, result)
+			assay, err := upsertImportAssay(ctx, tx, req.DatasetID, sampleName, row["assay_role"], row, result)
 			if err != nil {
 				return err
 			}
@@ -1154,7 +1153,11 @@ func applyImportColumns[T any](entity *T, row map[string]string, setters map[str
 
 // upsertImportAssay resolves an assay by dataset + sample_name + role, creating
 // it (plus its go_dataset_assay binding) when missing and updating it otherwise.
-func upsertImportAssay(ctx context.Context, repo interfaces.DataRepository, datasetID int64, sampleName, role string, row map[string]string, result *types.ImportAssayTSVResult) (*types.Assay, error) {
+func upsertImportAssay(ctx context.Context, repo interfaces.DataRepository, datasetID int64, sampleName string, rawRole string, row map[string]string, result *types.ImportAssayTSVResult) (*types.Assay, error) {
+	role := types.NormalizeRole(rawRole)
+	if role == "" {
+		role = types.RoleDefault
+	}
 	assay, err := repo.GetAssayByNameAndDatasetID(ctx, datasetID, sampleName, role)
 	switch {
 	case err == nil:

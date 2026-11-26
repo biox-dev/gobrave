@@ -932,7 +932,7 @@ func (b *projectResourceBrowser) ListDatasetsByProject(ctx context.Context, proj
 }
 
 // ListFilesByProject 列出当前激活项目下的文件（list_file），roles 为空表示不过滤。
-func (b *projectResourceBrowser) ListFilesByProject(ctx context.Context, projectID int64, roles []string) ([]runtimecontext.ProjectFileBrief, error) {
+func (b *projectResourceBrowser) ListFilesByProject(ctx context.Context, projectID int64, roles []types.Role) ([]runtimecontext.ProjectFileBrief, error) {
 	const toolName = "list_file"
 	if projectID <= 0 {
 		return nil, fmt.Errorf("%s: project_id is required", toolName)
@@ -941,14 +941,7 @@ func (b *projectResourceBrowser) ListFilesByProject(ctx context.Context, project
 		return nil, fmt.Errorf("%s: required services are not configured", toolName)
 	}
 
-	normalizedRoles := make([]string, 0, len(roles))
-	for _, role := range roles {
-		if trimmed := strings.TrimSpace(role); trimmed != "" {
-			normalizedRoles = append(normalizedRoles, trimmed)
-		}
-	}
-
-	items, err := b.dataSvc.ListFileByProjectID(ctx, projectID, normalizedRoles)
+	items, err := b.dataSvc.ListFileByProjectID(ctx, projectID, roles)
 	if err != nil {
 		return nil, fmt.Errorf("%s: failed to list files: %w", toolName, err)
 	}
@@ -1115,7 +1108,7 @@ func (b *projectResourceBrowser) UpdateFile(ctx context.Context, in runtimeconte
 		file.FileKey = v
 		changed = append(changed, "file_key")
 	}
-	if v := strings.TrimSpace(in.Role); v != "" && v != file.Role {
+	if v := types.NormalizeRole(in.Role); v != "" && v != file.Role {
 		file.Role = v
 		changed = append(changed, "role")
 	}
@@ -1201,7 +1194,7 @@ func (b *projectResourceBrowser) AddFileToDataset(ctx context.Context, in runtim
 		DatasetID: in.DatasetID,
 		ProjectID: in.ProjectID,
 		Path:      path,
-		Role:      strings.TrimSpace(in.Role),
+		Role:      types.NormalizeRole(string(in.Role)),
 		FileName:  strings.TrimSpace(in.FileName),
 		IsPrefix:  in.IsPrefix,
 		IsCopy:    in.IsCopy,

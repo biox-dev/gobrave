@@ -49,14 +49,14 @@ type UpdateFileOutput struct {
 func UpdateFile(updater runtimecontext.FileUpdater) tool.Tool {
 	return tool.NewFunc(
 		UpdateFileToolName,
-		"更新当前激活项目下文件的元数据（go_file）。file_id 必填（来自 list_file / get_file 返回的 file_id，或用户输入里的 @file:<id>）。可修改 file_name / path / format / file_key / role / storage / description，未给出的字段保持原值。返回更新后的字段与本次实际改动的字段列表（changed）。文件必须属于当前项目，跨项目会报错。仅改元数据，不移动 / 不复制物理文件。",
+		"更新当前激活项目下文件的元数据（go_file）。file_id 必填（来自 list_file / get_file 返回的 file_id，或用户输入里的 @file:<id>）。可修改 file_name / path / format / file_key / role / storage / description，未给出的字段保持原值。role 取值为 DEFAULT / TABLE / DATABASE。返回更新后的字段与本次实际改动的字段列表（changed）。文件必须属于当前项目，跨项目会报错。仅改元数据，不移动 / 不复制物理文件。",
 		tool.Schema("更新文件元数据的入参", map[string]any{
 			"file_id":     tool.StringProperty("文件 ID（必填，go_file 主键，字符串以保精度）。支持 @file:<id> 形式。"),
 			"file_name":   tool.StringProperty("新的展示文件名。留空表示不修改。"),
 			"path":        tool.StringProperty("新的物理路径。留空表示不修改（仅改数据库记录，不移动物理文件）。"),
 			"format":      tool.StringProperty("新的文件格式（如 bam / vcf / csv）。留空表示不修改。"),
 			"file_key":    tool.StringProperty("新的 file_key（文件在其 assay 内的键，如 FASTQ_R1 / BAM）。留空表示不修改。"),
-			"role":        tool.StringProperty("新的角色（go_file.role，如 BAM / VCF / DEFAULT）。留空表示不修改。"),
+			"role":        tool.StringProperty("新的角色（go_file.role），可选值 DEFAULT / TABLE / DATABASE。留空表示不修改。"),
 			"storage":     tool.StringProperty("新的存储类型（如 LOCAL）。留空表示不修改。"),
 			"description": tool.StringProperty("新的文件描述。留空表示不修改。"),
 		}, "file_id"),
@@ -99,7 +99,7 @@ func UpdateFile(updater runtimecontext.FileUpdater) tool.Tool {
 				FileName:    result.FileName,
 				Path:        result.Path,
 				Format:      result.Format,
-				Role:        result.Role,
+				Role:        string(result.Role),
 				FileKey:     result.FileKey,
 				Description: result.Description,
 				Changed:     result.Changed,

@@ -3,9 +3,9 @@ package handler
 import (
 	"context"
 	"sort"
-	"strings"
 
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
+	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
 	"github.com/biox-dev/gobrave/internal/utils"
 )
@@ -52,8 +52,8 @@ func resolveFormAnalysisResult(
 	formJSONWrap []interface{},
 	projectID int64,
 ) (map[string]interface{}, error) {
-	assayRoleSet := make(map[string]struct{})
-	fileRoleSet := make(map[string]struct{})
+	assayRoleSet := make(map[types.Role]struct{})
+	fileRoleSet := make(map[types.Role]struct{})
 
 	for _, item := range formJSONWrap {
 		formItem, ok := item.(map[string]interface{})
@@ -70,7 +70,7 @@ func resolveFormAnalysisResult(
 		if inputType == "assay" {
 			target = assayRoleSet
 		}
-		for _, role := range utils.AcceptFormats(formItem) {
+		for _, role := range types.NormalizeRoles(utils.AcceptFormats(formItem)) {
 			target[role] = struct{}{}
 		}
 	}
@@ -89,7 +89,7 @@ func resolveFormAnalysisResult(
 			return nil, err
 		}
 
-		grouped := make(map[string][]map[string]interface{}, len(roles))
+		grouped := make(map[types.Role][]map[string]interface{}, len(roles))
 		for _, role := range roles {
 			grouped[role] = make([]map[string]interface{}, 0)
 		}
@@ -101,7 +101,7 @@ func resolveFormAnalysisResult(
 			grouped[assay.Role] = append(grouped[assay.Role], compatItem)
 		}
 		for role, items := range grouped {
-			analysisResult[role] = items
+			analysisResult[string(role)] = items
 		}
 	}
 
@@ -113,7 +113,7 @@ func resolveFormAnalysisResult(
 			return nil, err
 		}
 
-		grouped := make(map[string][]map[string]interface{}, len(roles))
+		grouped := make(map[types.Role][]map[string]interface{}, len(roles))
 		for _, role := range roles {
 			grouped[role] = make([]map[string]interface{}, 0)
 		}
@@ -125,7 +125,7 @@ func resolveFormAnalysisResult(
 			grouped[file.Role] = append(grouped[file.Role], compatItem)
 		}
 		for role, items := range grouped {
-			analysisResult[role] = items
+			analysisResult[string(role)] = items
 		}
 	}
 
@@ -146,10 +146,7 @@ func resolveFormAnalysisResult(
 		if err != nil {
 			return nil, err
 		}
-		role := strings.TrimSpace(file.Role)
-		if role == "" {
-			role = defaultAnalysisResultRole
-		}
+		role := string(file.NormalizedRole())
 		// Append rather than overwrite so a node output file whose role collides
 		// with a dataset role does not drop the dataset's own candidates.
 		existing, _ := analysisResult[role].([]map[string]interface{})
@@ -165,12 +162,12 @@ func resolveFormAnalysisResult(
 // without a role lands under the same key the frontend reads as dataMap["DEFAULT"].
 const defaultAnalysisResultRole = dagruntime.DefaultNodeOutputRole
 
-func sortedKeys(set map[string]struct{}) []string {
-	keys := make([]string, 0, len(set))
+func sortedKeys[K ~string](set map[K]struct{}) []K {
+	keys := make([]K, 0, len(set))
 	for key := range set {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	return keys
 }
 

@@ -906,7 +906,7 @@ func resolveAssayInputValue(
 	}
 
 	// accept_formats 决定保留哪些 assay role；空表示不按 role 过滤。
-	acceptFormats := utils.AcceptFormats(formItem)
+	acceptFormats := types.NormalizeRoles(utils.AcceptFormats(formItem))
 	assayRoleToPath := make(map[int64]map[string]string)
 
 	// Files are assay-private (go_file.assay_id), so every selected assay is
@@ -970,7 +970,7 @@ func resolveAssayInputValue(
 			row["sample_name"] = strings.TrimSpace(assay.SampleName)
 			row["assay_type"] = strings.TrimSpace(assay.AssayType)
 			row["platform"] = strings.TrimSpace(assay.Platform)
-			row["role"] = strings.TrimSpace(assay.Role)
+			row["role"] = string(assay.Role)
 		}
 
 		// Every kept file of the assay is added under its own file_key.

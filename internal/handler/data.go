@@ -53,8 +53,9 @@ type datasetByProjectPageRequest struct {
 }
 
 type projectFileQuery struct {
-	ProjectID int64    `form:"project_id" binding:"required"`
-	Roles     []string `form:"role"`
+	ProjectID int64 `form:"project_id" binding:"required"`
+	// Roles 支持重复的 role 参数，也支持单个参数内用逗号分隔多个角色。
+	Roles []string `form:"role"`
 }
 
 type assayByProjectPageRequest struct {
@@ -398,8 +399,7 @@ func (h *DataHandler) ListDatasetDirFiles(c *gin.Context) {
 }
 
 // ImportDatasetDirFiles godoc
-// @Summary      批量导入数据集目录文件
-// @Description  将数据集工作目录（utils.GetDatasetDir）下尚未绑定的文件注册为 go_file 并绑定到数据集；按 path + dataset_id 判重
+// @Summary      批量导入数据集目录文件// @Description  将数据集工作目录（utils.GetDatasetDir）下尚未绑定的文件注册为 go_file 并绑定到数据集；按 path + dataset_id 判重
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -429,7 +429,7 @@ func (h *DataHandler) ImportDatasetDirFiles(c *gin.Context) {
 		return
 	}
 
-	result, err := h.dataService.ImportDatasetDirFiles(c.Request.Context(), req.DatasetID, project.ID, req.Role)
+	result, err := h.dataService.ImportDatasetDirFiles(c.Request.Context(), req.DatasetID, project.ID, types.NormalizeRole(req.Role))
 	if err != nil {
 		handleDataError(c, err, "failed to import dataset dir files")
 		return
@@ -1094,6 +1094,23 @@ func (h *DataHandler) GetFileColumns(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"file_id": item.ID, "columns": columns})
 }
 
+// ListFileRoles godoc
+// @Summary      查询文件角色选项
+// @Description  返回 go_file.role / go_assay.role 的合法取值（DEFAULT / TABLE / DATABASE），供前端下拉框使用
+// @Tags         数据管理
+// @Produce      json
+// @Success      200  {array}   types.RoleOption
+// @Failure      401  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/file/roles [get]
+func (h *DataHandler) ListFileRoles(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	c.JSON(http.StatusOK, types.Roles())
+}
+
 // ListFileByProjectID godoc
 // @Summary      按项目查询文件列表
 // @Description  根据 project_id 查询关联的所有文件；支持按 go_file.role 过滤
@@ -1118,15 +1135,7 @@ func (h *DataHandler) ListFileByProjectID(c *gin.Context) {
 		return
 	}
 
-	roles := make([]string, 0, len(req.Roles))
-	for _, item := range req.Roles {
-		for _, role := range strings.Split(item, ",") {
-			role = strings.TrimSpace(role)
-			if role != "" {
-				roles = append(roles, role)
-			}
-		}
-	}
+	roles := types.NormalizeRoles(req.Roles)
 
 	items, err := h.dataService.ListFileByProjectID(c.Request.Context(), req.ProjectID, roles)
 	if err != nil {
@@ -1187,7 +1196,7 @@ func (h *DataHandler) ListFileByProjectIDGroupByRole(c *gin.Context) {
 			}
 			groupItems = append(groupItems, compatItem)
 		}
-		result[group.Role] = groupItems
+		result[string(group.Role)] = groupItems
 	}
 
 	c.JSON(http.StatusOK, result)
@@ -1300,7 +1309,7 @@ func (h *DataHandler) UploadFileToDataset(c *gin.Context) {
 		c.Request.Context(),
 		form.DatasetID,
 		project.ID,
-		form.Role,
+		types.NormalizeRole(form.Role),
 		fileName,
 		src,
 	)

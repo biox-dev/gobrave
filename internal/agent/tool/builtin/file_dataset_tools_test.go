@@ -8,11 +8,12 @@ import (
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
 	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 // fakeFileDatasetBrowser 记录工具调用并回放固定结果。
 type fakeFileDatasetBrowser struct {
-	listedRoles []string
+	listedRoles []types.Role
 	listedFiles []runtimecontext.ProjectFileBrief
 	datasets    []runtimecontext.DatasetBrief
 }
@@ -25,7 +26,7 @@ func (f *fakeFileDatasetBrowser) ListDatasetsByProject(_ context.Context, _ int6
 	return f.datasets, nil
 }
 
-func (f *fakeFileDatasetBrowser) ListFilesByProject(_ context.Context, _ int64, roles []string) ([]runtimecontext.ProjectFileBrief, error) {
+func (f *fakeFileDatasetBrowser) ListFilesByProject(_ context.Context, _ int64, roles []types.Role) ([]runtimecontext.ProjectFileBrief, error) {
 	f.listedRoles = roles
 	return f.listedFiles, nil
 }
@@ -61,7 +62,7 @@ func (f *fakeFileUpdater) UpdateFile(_ context.Context, in runtimecontext.FileUp
 	return runtimecontext.FileUpdateResult{
 		FileID:  in.FileID,
 		FileKey: in.FileKey,
-		Role:    in.Role,
+		Role:    types.NormalizeRole(in.Role),
 		Changed: []string{"file_key", "role"},
 	}, nil
 }
@@ -72,19 +73,20 @@ func testProjectCtx() context.Context {
 
 func TestListFileTool(t *testing.T) {
 	browser := &fakeFileDatasetBrowser{
-		listedFiles: []runtimecontext.ProjectFileBrief{{FileID: 99, Path: "/data/x.bam", Role: "BAM"}},
+		listedFiles: []runtimecontext.ProjectFileBrief{{FileID: 99, Path: "/data/x.bam", Role: types.RoleDefault}},
 	}
 	exec := tool.NewExecutor(tool.NewRegistryWith(ListFile(browser)))
 
 	res := exec.Execute(testProjectCtx(), tool.Call{
 		ID:        "c1",
 		Name:      ListFileToolName,
-		Arguments: json.RawMessage(`{"roles":["BAM"]}`),
+		Arguments: json.RawMessage(`{"roles":["default","unknown"]}`),
 	})
 	if res.IsError {
 		t.Fatalf("unexpected error: %v", res.Content)
 	}
-	if len(browser.listedRoles) != 1 || browser.listedRoles[0] != "BAM" {
+	// 未知角色被丢弃，合法角色按枚举归一化。
+	if len(browser.listedRoles) != 1 || browser.listedRoles[0] != types.RoleDefault {
 		t.Fatalf("unexpected roles: %v", browser.listedRoles)
 	}
 	var out ListFileOutput
@@ -180,12 +182,12 @@ func TestUpdateFileTool(t *testing.T) {
 	res := exec.Execute(testProjectCtx(), tool.Call{
 		ID:        "c1",
 		Name:      UpdateFileToolName,
-		Arguments: json.RawMessage(`{"file_id":"@file:99","role":"VCF","file_key":"VCF_1"}`),
+		Arguments: json.RawMessage(`{"file_id":"@file:99","role":"table","file_key":"TABLE_1"}`),
 	})
 	if res.IsError {
 		t.Fatalf("unexpected error: %v", res.Content)
 	}
-	if updater.calls != 1 || updater.input.ProjectID != 7 || updater.input.FileID != 99 || updater.input.Role != "VCF" {
+	if updater.calls != 1 || updater.input.ProjectID != 7 || updater.input.FileID != 99 || updater.input.Role != "table" {
 		t.Fatalf("unexpected input: %+v", updater.input)
 	}
 	var out UpdateFileOutput

@@ -293,7 +293,7 @@ func (r *dataRepository) ListFileByAssayID(ctx context.Context, assayID int64) (
 // in roles. An empty roles slice adds no role condition at all, so every file of
 // the assay is returned — matching ListAssayByProjectID's "empty roles means no
 // condition" convention. The assay's role lives on go_assay, hence the join.
-func (r *dataRepository) ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error) {
+func (r *dataRepository) ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []types.Role) ([]*types.File, error) {
 	items := make([]*types.File, 0)
 	query := r.db.WithContext(ctx).
 		Table("go_file AS f").
@@ -302,7 +302,7 @@ func (r *dataRepository) ListFileByAssayIDAndRole(ctx context.Context, assayID i
 		Where("f.assay_id = ?", assayID)
 
 	if len(roles) > 0 {
-		query = query.Where("a.role IN ?", roles)
+		query = query.Where("a.role IN ?", types.RoleStrings(roles))
 	}
 
 	err := query.Order("f.id ASC").Find(&items).Error
@@ -362,7 +362,7 @@ func (r *dataRepository) ListFileByDatasetID(ctx context.Context, datasetID int6
 	return items, nil
 }
 
-func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error) {
+func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID int64, roles []types.Role) ([]*types.FileWithDatasetInfo, error) {
 	items := make([]*types.FileWithDatasetInfo, 0)
 	query := r.db.WithContext(ctx).
 		Table("go_project_dataset AS pd").
@@ -388,7 +388,7 @@ func (r *dataRepository) ListFileByProjectID(ctx context.Context, projectID int6
 		Where("pd.project_id = ?", projectID)
 
 	if len(roles) > 0 {
-		query = query.Where("f.role IN ?", roles)
+		query = query.Where("f.role IN ?", types.RoleStrings(roles))
 	}
 
 	err := query.Order("f.id DESC").Find(&items).Error
@@ -606,12 +606,12 @@ func (r *dataRepository) PageAssayByProjectID(ctx context.Context, pagination *t
 // project's datasets. When roles is non-empty the query filters on
 // go_assay.role; an empty roles slice adds no role condition at all, so every
 // assay of the project is returned.
-func (r *dataRepository) ListAssayByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.AssayWithDatasetInfo, error) {
+func (r *dataRepository) ListAssayByProjectID(ctx context.Context, projectID int64, roles []types.Role) ([]*types.AssayWithDatasetInfo, error) {
 	items := make([]*types.AssayWithDatasetInfo, 0)
 	query := r.assayByProjectBase(ctx, projectID)
 
 	if len(roles) > 0 {
-		query = query.Where("a.role IN ?", roles)
+		query = query.Where("a.role IN ?", types.RoleStrings(roles))
 	}
 
 	err := query.
@@ -694,7 +694,7 @@ func (r *dataRepository) ExistsAssayByID(ctx context.Context, id int64) (bool, e
 // sample_name + role (excluding excludeAssayID) is already bound to datasetID.
 // sample_name is only unique inside a dataset (per role), so the check joins
 // go_dataset_assay instead of looking at go_assay alone.
-func (r *dataRepository) ExistsAssayNameInDataset(ctx context.Context, datasetID int64, sampleName, role string, excludeAssayID int64) (bool, error) {
+func (r *dataRepository) ExistsAssayNameInDataset(ctx context.Context, datasetID int64, sampleName string, role types.Role, excludeAssayID int64) (bool, error) {
 	if datasetID == 0 || strings.TrimSpace(sampleName) == "" {
 		return false, nil
 	}
@@ -718,7 +718,7 @@ func (r *dataRepository) ExistsAssayNameInDataset(ctx context.Context, datasetID
 // go_dataset_assay, so the lookup joins that binding; it returns
 // gorm.ErrRecordNotFound when no assay is bound to the dataset yet (the importer
 // then creates the assay and the binding).
-func (r *dataRepository) GetAssayByNameAndDatasetID(ctx context.Context, datasetID int64, sampleName, role string) (*types.Assay, error) {
+func (r *dataRepository) GetAssayByNameAndDatasetID(ctx context.Context, datasetID int64, sampleName string, role types.Role) (*types.Assay, error) {
 	item := &types.Assay{}
 	err := r.db.WithContext(ctx).
 		Table("go_assay AS a").

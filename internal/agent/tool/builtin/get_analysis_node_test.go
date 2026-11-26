@@ -7,7 +7,8 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
-	"github.com/biox-dev/gobrave/internal/agent/types"
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 // TestParseAnalysisNodeID 覆盖分析节点 ID 的解析与引用前缀容错。
@@ -34,7 +35,7 @@ func TestGetAnalysisNodeReadsOutputBundle(t *testing.T) {
 	browser := &fakeAnalysisNodeBrowser{files: []runtimecontext.AnalysisNodeFile{
 		{FileID: 7, FileName: "result.csv", Path: "/ws/output/result.csv"},
 	}}
-	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 8})
+	ctx := tool.WithTaskFacts(context.Background(), agenttypes.TaskFacts{ProjectID: 8})
 
 	raw, err := GetAnalysisNode(browser).Execute(ctx, json.RawMessage(`{"analysis_node_id":"101","files":["output"]}`))
 	if err != nil {
@@ -60,9 +61,9 @@ func TestGetAnalysisNodeReadsOutputBundle(t *testing.T) {
 // （原 list_analysis_node_files 的能力已合并进 get_analysis_node）。
 func TestGetAnalysisNodeReturnsOutputFiles(t *testing.T) {
 	browser := &fakeAnalysisNodeBrowser{files: []runtimecontext.AnalysisNodeFile{
-		{FileID: 42, FileName: "result.csv", Path: "/ws/output/result.csv", Format: "csv", Role: "DEFAULT", FileKey: "result_csv"},
+		{FileID: 42, FileName: "result.csv", Path: "/ws/output/result.csv", Format: "csv", Role: types.RoleDefault, FileKey: "result_csv"},
 	}}
-	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 8})
+	ctx := tool.WithTaskFacts(context.Background(), agenttypes.TaskFacts{ProjectID: 8})
 
 	raw, err := GetAnalysisNode(browser).Execute(ctx, json.RawMessage(`{"analysis_node_id":"@analysis_node:101"}`))
 	if err != nil {
@@ -88,7 +89,7 @@ func TestGetAnalysisNodeReturnsOutputFiles(t *testing.T) {
 
 // TestGetAnalysisNodeOutputFilesEmpty 覆盖没有登记产物时返回空数组与提示，而不是 null。
 func TestGetAnalysisNodeOutputFilesEmpty(t *testing.T) {
-	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 8})
+	ctx := tool.WithTaskFacts(context.Background(), agenttypes.TaskFacts{ProjectID: 8})
 
 	raw, err := GetAnalysisNode(&fakeAnalysisNodeBrowser{}).Execute(ctx, json.RawMessage(`{"analysis_node_id":"101"}`))
 	if err != nil {
@@ -114,7 +115,7 @@ func TestGetAnalysisNodeOutputFilesEmpty(t *testing.T) {
 
 // TestGetAnalysisNodeRequiresNodeID 覆盖必填入参校验（缺失时直接报错）。
 func TestGetAnalysisNodeRequiresNodeID(t *testing.T) {
-	ctx := tool.WithTaskFacts(context.Background(), types.TaskFacts{ProjectID: 8})
+	ctx := tool.WithTaskFacts(context.Background(), agenttypes.TaskFacts{ProjectID: 8})
 
 	if _, err := GetAnalysisNode(&fakeAnalysisNodeBrowser{}).Execute(ctx, json.RawMessage(`{}`)); err == nil {
 		t.Fatalf("expected error when analysis_node_id is missing")

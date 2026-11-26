@@ -141,7 +141,7 @@ func TestRecordNodeOutputFilesScriptNodeRecordsEveryFile(t *testing.T) {
 		ScriptID:       11,
 		CreationSource: types.AnalysisNodeCreationSourceScript,
 		OutputPatterns: types.JSONMap{
-			"bam":   map[string]any{"type": "file", "role": "alignment"},
+			"bam":   map[string]any{"type": "file", "role": "table"},
 			"stats": map[string]any{"type": "string"},
 		},
 		WorkspaceDir: filepath.Dir(dir),
@@ -159,8 +159,8 @@ func TestRecordNodeOutputFilesScriptNodeRecordsEveryFile(t *testing.T) {
 	if len(fileIDs) != 2 {
 		t.Fatalf("expected the declared file and the undeclared file recorded, got %v", fileIDs)
 	}
-	if got := repo.files["sample_bam"]; got == nil || got.Role != "alignment" {
-		t.Fatalf("bam file row = %+v, want role alignment", got)
+	if got := repo.files["sample_bam"]; got == nil || got.Role != types.RoleTable {
+		t.Fatalf("bam file row = %+v, want role %q", got, types.RoleTable)
 	}
 	extraRow := repo.files["extra"]
 	if extraRow == nil || extraRow.Path != extra {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/agent/tool"
+	"github.com/biox-dev/gobrave/internal/types"
 )
 
 // AddFileToDatasetToolName 是「把文件添加到数据集」的工具名。
@@ -55,7 +56,7 @@ func AddFileToDataset(writer runtimecontext.DatasetWriter) tool.Tool {
 		tool.Schema("把文件添加到数据集的入参", map[string]any{
 			"dataset_id": tool.StringProperty("数据集 ID（go_dataset 主键，字符串以保精度）。来自用户输入里的 @dataset:<id> 引用。"),
 			"path":       tool.StringProperty("要添加的文件路径。绝对路径必须在项目存储根目录内；相对路径相对数据集工作目录（get_dataset 返回的 path）解析。"),
-			"role":       tool.StringProperty("文件角色（go_file.role），如 BAM / VCF / DEFAULT；缺省 DEFAULT。"),
+			"role":       tool.StringProperty("文件角色（go_file.role），可选值 DEFAULT / TABLE / DATABASE；缺省 DEFAULT。"),
 			"file_name":  tool.StringProperty("展示文件名；缺省取路径的 basename。"),
 			"is_prefix":  tool.BooleanProperty("为 true 时把 path 当作前缀（批量目录导入场景），不校验文件是否存在。"),
 			"is_copy":    tool.BooleanProperty("为 true 时先把文件复制到数据集目录（文件名加时间戳前缀）再登记。"),
@@ -84,7 +85,7 @@ func AddFileToDataset(writer runtimecontext.DatasetWriter) tool.Tool {
 				ProjectID: projectID,
 				DatasetID: datasetID,
 				Path:      path,
-				Role:      in.Role,
+				Role:      types.NormalizeRole(in.Role),
 				FileName:  in.FileName,
 				IsPrefix:  in.IsPrefix,
 				IsCopy:    in.IsCopy,
@@ -102,7 +103,7 @@ func AddFileToDataset(writer runtimecontext.DatasetWriter) tool.Tool {
 				FileID:    result.FileID,
 				FilePath:  result.FilePath,
 				FileName:  result.FileName,
-				Role:      result.Role,
+				Role:      string(result.Role),
 				Format:    result.Format,
 				Size:      result.Size,
 				Message:   "文件已添加到数据集。",

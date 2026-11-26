@@ -20,7 +20,7 @@ type DataService interface {
 	// ImportDatasetDirFiles registers every file under the dataset workspace
 	// directory that is not yet bound to the dataset (matched by
 	// go_file.path + go_dataset_file.dataset_id).
-	ImportDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64, role string) (*types.ImportDatasetDirFilesResult, error)
+	ImportDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64, role types.Role) (*types.ImportDatasetDirFilesResult, error)
 	// ListDatasetFiles returns every file bound to one dataset (go_dataset_file ->
 	// go_file), newest binding first.
 	ListDatasetFiles(ctx context.Context, datasetID int64) ([]*types.FileWithDatasetInfo, error)
@@ -44,7 +44,7 @@ type DataService interface {
 	UpdateFile(ctx context.Context, file *types.File) error
 	DeleteFile(ctx context.Context, id int64) error
 	ListFile(ctx context.Context) ([]*types.File, error)
-	ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error)
+	ListFileByProjectID(ctx context.Context, projectID int64, roles []types.Role) ([]*types.FileWithDatasetInfo, error)
 	ListFileByProjectIDGroupByRole(ctx context.Context, projectID int64) ([]*types.FileByProjectRoleGroup, error)
 	// ListFileByProjectIDViaAnalysisNode returns the files produced by the
 	// project's analysis nodes, resolved through go_file.analysis_node_id ->
@@ -59,7 +59,7 @@ type DataService interface {
 	// the owning assay's role (go_assay.role). An empty roles slice adds no role
 	// condition, so every file of the assay is returned (mirrors
 	// ListAssayByProjectID).
-	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error)
+	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []types.Role) ([]*types.File, error)
 	// ListFileByAnalysisNodeID returns the files produced by one DAG analysis
 	// node, resolved through go_file.analysis_node_id -> analysis_nodes.id. A node
 	// without files yields an empty slice (not an error).
@@ -69,7 +69,7 @@ type DataService interface {
 	AddFileToDataset(ctx context.Context, req *types.AddFileToDatasetRequest) (*types.AddFileToDatasetResponse, error)
 	// UploadFileToDataset stores an uploaded file into the dataset workspace
 	// directory and registers it as a dataset file with the given role.
-	UploadFileToDataset(ctx context.Context, datasetID int64, projectID int64, role, fileName string, src io.Reader) (*types.AddFileToDatasetResponse, error)
+	UploadFileToDataset(ctx context.Context, datasetID int64, projectID int64, role types.Role, fileName string, src io.Reader) (*types.AddFileToDatasetResponse, error)
 	GetDatasetFileByID(ctx context.Context, id int64) (*types.DatasetFile, error)
 	DeleteDatasetFile(ctx context.Context, id int64) error
 	ListDatasetFile(ctx context.Context) ([]*types.DatasetFile, error)
@@ -84,7 +84,7 @@ type DataService interface {
 	// project's datasets (go_project_dataset -> go_dataset_assay -> go_assay).
 	// When roles is non-empty the assays are filtered on go_assay.role; an empty
 	// roles slice adds no role condition and returns every assay.
-	ListAssayByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.AssayWithDatasetInfo, error)
+	ListAssayByProjectID(ctx context.Context, projectID int64, roles []types.Role) ([]*types.AssayWithDatasetInfo, error)
 
 	CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
 	GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error)
@@ -129,13 +129,13 @@ type DataRepository interface {
 	UpdateFile(ctx context.Context, file *types.File) error
 	DeleteFile(ctx context.Context, id int64) error
 	ListFile(ctx context.Context) ([]*types.File, error)
-	ListFileByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.FileWithDatasetInfo, error)
+	ListFileByProjectID(ctx context.Context, projectID int64, roles []types.Role) ([]*types.FileWithDatasetInfo, error)
 	ListFileByProjectIDViaAnalysisNode(ctx context.Context, projectID int64) ([]*types.FileWithDatasetInfo, error)
 	// ListFileByDatasetID returns the files bound to one dataset through
 	// go_dataset_file, ordered by binding id (newest first).
 	ListFileByDatasetID(ctx context.Context, datasetID int64) ([]*types.FileWithDatasetInfo, error)
 	ListFileByAssayID(ctx context.Context, assayID int64) ([]*types.File, error)
-	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []string) ([]*types.File, error)
+	ListFileByAssayIDAndRole(ctx context.Context, assayID int64, roles []types.Role) ([]*types.File, error)
 	ListFileByAnalysisNodeID(ctx context.Context, analysisNodeID int64) ([]*types.File, error)
 
 	CreateDatasetFile(ctx context.Context, datasetFile *types.DatasetFile) error
@@ -155,7 +155,7 @@ type DataRepository interface {
 	DeleteAssay(ctx context.Context, id int64) error
 	ListAssay(ctx context.Context) ([]*types.Assay, error)
 	PageAssayByProjectID(ctx context.Context, pagination *types.Pagination, projectID int64) ([]*types.AssayWithDatasetInfo, int64, error)
-	ListAssayByProjectID(ctx context.Context, projectID int64, roles []string) ([]*types.AssayWithDatasetInfo, error)
+	ListAssayByProjectID(ctx context.Context, projectID int64, roles []types.Role) ([]*types.AssayWithDatasetInfo, error)
 
 	CreateDatasetAssay(ctx context.Context, datasetAssay *types.DatasetAssay) error
 	GetDatasetAssayByID(ctx context.Context, id int64) (*types.DatasetAssay, error)
@@ -166,7 +166,7 @@ type DataRepository interface {
 
 	// Import lookups: resolve each hierarchy level by its natural key so the TSV
 	// importer can decide between insert and update.
-	GetAssayByNameAndDatasetID(ctx context.Context, datasetID int64, sampleName, role string) (*types.Assay, error)
+	GetAssayByNameAndDatasetID(ctx context.Context, datasetID int64, sampleName string, role types.Role) (*types.Assay, error)
 	GetFileByAssayIDAndFileKey(ctx context.Context, assayID int64, fileKey string) (*types.File, error)
 
 	// GetFileByAnalysisNodeIDAndFileKey resolves a file produced by a DAG node by
@@ -179,7 +179,7 @@ type DataRepository interface {
 	//
 	// ExistsAssayNameInDataset reports whether another assay with the same
 	// sample_name + role (excluding excludeAssayID) is bound to datasetID.
-	ExistsAssayNameInDataset(ctx context.Context, datasetID int64, sampleName, role string, excludeAssayID int64) (bool, error)
+	ExistsAssayNameInDataset(ctx context.Context, datasetID int64, sampleName string, role types.Role, excludeAssayID int64) (bool, error)
 
 	ExistsProjectByID(ctx context.Context, id int64) (bool, error)
 	ExistsDatasetByID(ctx context.Context, id int64) (bool, error)

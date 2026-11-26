@@ -1,10 +1,29 @@
 package types
 
 import (
+	"strings"
 	"time"
 
 	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
+)
+
+// Role 是文件 / assay 的角色，决定其在分析表单 analysis_result 里发布到哪个 key
+// （前端按 dataMap[role] 取值）。它是枚举而不是自由文本：
+//
+//	go_file.role      文件角色
+//	go_assay.role     assay 角色
+//
+// 表单 item 的 resolver.accept_formats 按同一套取值与之匹配。
+type Role string
+
+const (
+	// RoleDefault 是未声明角色时的默认取值，前端按 dataMap["DEFAULT"] 读取。
+	RoleDefault Role = "DEFAULT"
+	// RoleTable 是表格型产物（如统计表）。
+	RoleTable Role = "TABLE"
+	// RoleDatabase 是数据库型产物（如 sqlite）。
+	RoleDatabase Role = "DATABASE"
 )
 
 // File is a physical file. A file belongs to at most one Assay (Assay -> File is
@@ -31,14 +50,11 @@ type File struct {
 	// Analysis form inputs use it to map the file onto the matching key of
 	// their resolver.accept_formats (see buildParseAnalysisResult).
 	FileKey string `json:"file_key" gorm:"type:varchar(64)"`
-	// Role is the role the file is published under in the workflow form's
-	// analysis_result map, e.g. BAM / VCF / DEFAULT. A node output file takes it
-	// from its output_patterns entry (see NodeCompletionCoordinator.recordNodeOutputFiles),
-	// defaulting to dag.DefaultNodeOutputRole ("DEFAULT") when the pattern declares
-	// none; resolveFormAnalysisResult groups the node output files by it so the
-	// frontend reads them as dataMap[role] just like dataset files.
-	Role           string `json:"role" gorm:"type:varchar(64);index"`
-	AnalysisNodeID int64  `json:"analysis_node_id" gorm:"type:bigint;index"`
+	// Role 是文件在分析表单 analysis_result 中发布到哪个 key（dataMap[role]），
+	// 取值见 Role*。DAG 节点产物的角色取自其 output_patterns 条目（未声明时为
+	// RoleDefault，见 dag.DefaultNodeOutputRole）。
+	Role           Role  `json:"role" gorm:"type:varchar(64);index"`
+	AnalysisNodeID int64 `json:"analysis_node_id" gorm:"type:bigint;index"`
 
 	Size int64 `json:"size"`
 
@@ -61,6 +77,72 @@ func (t *File) BeforeCreate(_ *gorm.DB) error {
 		t.ID = utils.GenerateID()
 	}
 	return nil
+}
+
+// NormalizeRole 把原始字符串归一化为合法 Role；空值或未知取值返回 ""。
+// 大小写与首尾空白不敏感（"table" → RoleTable）。
+func NormalizeRole(raw string) Role {
+	switch role := Role(strings.ToUpper(strings.TrimSpace(raw))); role {
+	case RoleDefault, RoleTable, RoleDatabase:
+		return role
+	default:
+		return ""
+	}
+}
+
+// NormalizedRole 返回文件的角色，未设置时回退到 RoleDefault。
+func (f *File) NormalizedRole() Role {
+	if f == nil {
+		return RoleDefault
+	}
+	if role := NormalizeRole(string(f.Role)); role != "" {
+		return role
+	}
+	return RoleDefault
+}
+
+// NormalizeRoles 把一组原始角色归一化：丢弃空值与未知取值，按首次出现顺序去重。
+// 返回空切片表示「没有声明角色」，调用方据此决定不过滤（与 utils.AcceptFormats 一致）。
+func NormalizeRoles(raw []string) []Role {
+	seen := make(map[Role]struct{}, len(raw))
+	roles := make([]Role, 0, len(raw))
+	for _, one := range raw {
+		role := NormalizeRole(one)
+		if role == "" {
+			continue
+		}
+		if _, ok := seen[role]; ok {
+			continue
+		}
+		seen[role] = struct{}{}
+		roles = append(roles, role)
+	}
+	return roles
+}
+
+// RoleStrings 把 Role 切片还原为底层字符串切片，便于写库 / 拼装通用结构。
+func RoleStrings(roles []Role) []string {
+	out := make([]string, 0, len(roles))
+	for _, role := range roles {
+		out = append(out, string(role))
+	}
+	return out
+}
+
+// RoleOption 是 Roles() 的响应条目，供前端渲染角色下拉框（value 即写库值）。
+type RoleOption struct {
+	Label string `json:"label"`
+	Value Role   `json:"value"`
+}
+
+// Roles 返回全部合法角色，顺序即前端下拉的推荐展示顺序。新增 Role 常量时
+// 只需在这里补一行，前端无需再维护一份写死的选项列表。
+func Roles() []RoleOption {
+	return []RoleOption{
+		{Label: string(RoleDefault), Value: RoleDefault},
+		{Label: string(RoleTable), Value: RoleTable},
+		{Label: string(RoleDatabase), Value: RoleDatabase},
+	}
 }
 
 // DatasetFile is the pure join row binding a File to a Dataset. The file's role
@@ -92,7 +174,7 @@ type AddFileToDatasetRequest struct {
 	ProjectID      int64  `json:"-"`
 	AnalysisNodeID int64  `json:"analysis_node_id,string,omitempty"` // optional, if provided, the file will be linked to the analysis node
 	Path           string `json:"path" binding:"required"`
-	Role           string `json:"role"`
+	Role           Role   `json:"role"` // 取值见 Role*；零值按 RoleDefault 处理
 	FileName       string `json:"file_name" gorm:"type:varchar(255)"`
 	IsCopy         bool   `json:"is_copy"`   // if true, copy the file to the dataset, otherwise just link it
 	IsPrefix       bool   `json:"is_prefix"` // if true, the path is a prefix, and all files under the prefix will be added to the dataset
@@ -137,13 +219,21 @@ type FileWithDatasetInfo struct {
 
 	DatasetName string `json:"dataset_name"`
 
-	Role string `json:"role"`
+	Role Role `json:"role"`
 }
 
 type FileByProjectRoleGroup struct {
-	Role string `json:"role"`
+	Role Role `json:"role"`
 
 	Items []*FileWithDatasetInfo `json:"items"`
+}
+
+// NormalizedRole 返回文件的角色，未设置时回退到 RoleDefault。
+func (f *FileWithDatasetInfo) NormalizedRole() Role {
+	if f == nil || f.Role == "" {
+		return RoleDefault
+	}
+	return f.Role
 }
 
 // DatasetDirFile describes one physical file discovered under a dataset's

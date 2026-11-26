@@ -23,10 +23,10 @@ type Assay struct {
 
 	LibraryID string `json:"library_id" gorm:"type:varchar(255)"`
 
-	// Role 是该 assay 的角色（列 go_assay.role），例如 DEFAULT / TABLE；
-	// input_type=assay 的表单输入用 resolver.accept_formats 与之匹配（与
-	// go_file.role 对文件的口径一致）。空表示不参与角色过滤。
-	Role string `json:"role" gorm:"type:varchar(64);index"`
+	// Role 是该 assay 的角色（列 go_assay.role），取值见 Role*（DEFAULT / TABLE /
+	// DATABASE）。input_type=assay 的表单输入用 resolver.accept_formats 与之匹配
+	// （与 go_file.role 口径一致）。
+	Role Role `json:"role" gorm:"type:varchar(64);index"`
 
 	Metadata string `json:"metadata" gorm:"type:text"`
 
@@ -51,10 +51,10 @@ type AssayWithDatasetInfo struct {
 
 	LibraryID string `json:"library_id"`
 
-	// Role 是该 assay 的角色（go_assay.role），例如 DEFAULT / TABLE；
+	// Role 是该 assay 的角色（go_assay.role），取值见 Role*；
 	// input_type=assay 的表单输入用 resolver.accept_formats 与之匹配，
 	// resolveFormAnalysisResult 据此把 assay 分组挂到 analysis_result[role]。
-	Role string `json:"role"`
+	Role Role `json:"role"`
 
 	Metadata string `json:"metadata"`
 
