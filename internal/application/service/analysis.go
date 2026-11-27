@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	agenttypes "github.com/biox-dev/gobrave/internal/agent/types"
+	agentinterfaces "github.com/biox-dev/gobrave/internal/agent/types/interface"
 	"github.com/biox-dev/gobrave/internal/config"
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
 	"github.com/biox-dev/gobrave/internal/logger"
@@ -24,6 +26,8 @@ type analysisService struct {
 	workflowRepo     interfaces.WorkflowRepository
 	projectRepo      interfaces.ProjectRepository
 	containerService interfaces.ContainerService
+	// sessionResources 用于删除资源后清理「会话 ↔ 资源」关联，避免会话结果里残留孤儿节点。
+	sessionResources agentinterfaces.SessionResourceStore
 	cfg              *config.Config
 }
 
@@ -32,6 +36,7 @@ func NewAnalysisService(
 	workflowRepo interfaces.WorkflowRepository,
 	projectRepo interfaces.ProjectRepository,
 	containerService interfaces.ContainerService,
+	sessionResources agentinterfaces.SessionResourceStore,
 	cfg *config.Config,
 ) interfaces.AnalysisService {
 	return &analysisService{
@@ -39,6 +44,7 @@ func NewAnalysisService(
 		workflowRepo:     workflowRepo,
 		projectRepo:      projectRepo,
 		containerService: containerService,
+		sessionResources: sessionResources,
 		cfg:              cfg,
 	}
 }
@@ -279,7 +285,23 @@ func (s *analysisService) DeleteAnalysisNode(ctx context.Context, id int64) erro
 			logger.Warnf(ctx, "[AnalysisService] failed to delete containers for analysis node id=%d, err=%v", id, err)
 		}
 	}
-	return s.analysisRepo.DeleteAnalysisNodeByID(ctx, id)
+	if err := s.analysisRepo.DeleteAnalysisNodeByID(ctx, id); err != nil {
+		return err
+	}
+	// 节点记录删除后同步清理指向它的「会话 ↔ 资源」关联，避免会话结果面板残留孤儿节点。
+	// 关联清理失败不影响删除结果，仅记录日志。
+	s.deleteSessionResources(ctx, agenttypes.SessionResourceTypeAnalysisNode, []int64{id})
+	return nil
+}
+
+// deleteSessionResources 清理指向已删除资源的会话关联；store 缺失时直接跳过（便于测试）。
+func (s *analysisService) deleteSessionResources(ctx context.Context, resourceType agenttypes.SessionResourceType, resourceIDs []int64) {
+	if s == nil || s.sessionResources == nil || len(resourceIDs) == 0 {
+		return
+	}
+	if err := s.sessionResources.DeleteByResources(ctx, resourceType, resourceIDs); err != nil {
+		logger.Warnf(ctx, "[AnalysisService] failed to delete session resources type=%s ids=%v, err=%v", resourceType, resourceIDs, err)
+	}
 }
 
 func (s *analysisService) DeleteAnalysis(ctx context.Context, id int64) error {
@@ -350,6 +372,10 @@ func (s *analysisService) DeleteAnalysis(ctx context.Context, id int64) error {
 		logger.Warnf(ctx, "[AnalysisService] failed to delete analysis nodes for analysis id=%d, err=%v", id, err)
 		return err
 	}
+
+	// 6.1 清理这些节点以及分析运行本身对应的「会话 ↔ 资源」关联。
+	s.deleteSessionResources(ctx, agenttypes.SessionResourceTypeAnalysisNode, nodeIDs)
+	s.deleteSessionResources(ctx, agenttypes.SessionResourceTypeAnalysis, []int64{id})
 
 	// 7. Delete the analysis workspace
 	if strings.TrimSpace(analysis.WorkspaceDir) != "" {

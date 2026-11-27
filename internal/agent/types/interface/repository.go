@@ -150,6 +150,9 @@ type SessionResourceStore interface {
 	Get(ctx context.Context, id int64) (*types.SessionResource, error)
 	// Delete 按关联行主键删除一条关联（只删关联，不删脚本 / 工作流等资源本身）。
 	Delete(ctx context.Context, id int64) error
+	// DeleteByResources 按资源批量删除关联：资源本身被删除时清理指向它的关联，
+	// 避免前端会话资源面板残留已不存在的资源。
+	DeleteByResources(ctx context.Context, resourceType types.SessionResourceType, resourceIDs []int64) error
 	// DeleteBySession 删除某个会话的全部资源关联（会话删除时级联清理）。
 	DeleteBySession(ctx context.Context, sessionID int64) error
 }

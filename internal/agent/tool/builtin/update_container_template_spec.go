@@ -39,11 +39,13 @@ type UpdateContainerTemplateSpecInput struct {
 //   - 只覆盖本次给出的字段，未给出的字段保持数据库原值；
 //   - 回传更新后的记录。
 //
-// 该工具会修改业务数据（写库），因此声明 write 授权：上层在执行前会先走权限门禁。
+// 该工具会修改业务数据（写库），且会同时影响所有绑定到该配置的镜像，
+// 因此提示模型「非必要不修改、修改前需用户确认」；同时声明 write 授权，
+// 上层在执行前会先走权限门禁。
 func UpdateContainerTemplateSpec(writer runtimecontext.ContainerTemplateSpecWriter) tool.Tool {
 	return tool.NewFunc(
 		UpdateContainerTemplateSpecToolName,
-		"Update a SHARED container run configuration (ContainerTemplateSpec) by spec_id: command, CPU/memory, port, env, mounts, labels, scheduling constraints and change_uid. Only fields you pass are changed; every image bound to this spec (ContainerTemplateDefinition rows) keeps using it, so already created scripts / sessions pick up the new values on next run. 运行配置的命令 / 资源 / 端口 / 环境变量属于这一层，镜像名请改用 update_container_template_definition。",
+		"Update a SHARED container run configuration (ContainerTemplateSpec) by spec_id: command, CPU/memory, port, env, mounts, labels, scheduling constraints and change_uid. Only fields you pass are changed; every image bound to this spec (ContainerTemplateDefinition rows) keeps using it, so already created scripts / sessions pick up the new values on next run. This affects all bound images, so do not call it unless the change is really necessary, and confirm the intent with the user before making any change. 运行配置的命令 / 资源 / 端口 / 环境变量属于这一层，镜像名请改用 update_container_template_definition；非必要不修改，修改前需先与用户确认。",
 		tool.Schema("更新共享运行配置的入参", map[string]any{
 			"spec_id":               tool.StringProperty("共享运行配置 ID（go_container_template_spec 主键，必填，字符串以保精度）。"),
 			"name":                  tool.StringProperty("新的运行配置名称；不传表示不修改。"),

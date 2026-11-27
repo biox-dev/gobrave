@@ -100,6 +100,28 @@ func (r *gormSessionResourceStore) Delete(ctx context.Context, id int64) error {
 		Delete(&agent.SessionResource{}).Error
 }
 
+// DeleteByResources 按资源批量删除关联；非法类型或空列表视为无需清理（幂等）。
+//
+// 资源被删除（脚本 / 工作流 / 分析节点 / 分析运行等）后必须清理这些关联行，
+// 否则会话资源面板会残留指向已不存在资源的孤儿条目。
+func (r *gormSessionResourceStore) DeleteByResources(ctx context.Context, resourceType agent.SessionResourceType, resourceIDs []int64) error {
+	if !resourceType.Valid() {
+		return nil
+	}
+	ids := make([]int64, 0, len(resourceIDs))
+	for _, id := range resourceIDs {
+		if id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("resource_type = ? AND resource_id IN ?", resourceType, ids).
+		Delete(&agent.SessionResource{}).Error
+}
+
 func (r *gormSessionResourceStore) DeleteBySession(ctx context.Context, sessionID int64) error {
 	return r.db.WithContext(ctx).
 		Where("session_id = ?", sessionID).
