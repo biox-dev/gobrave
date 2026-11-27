@@ -8,7 +8,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
-	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -36,14 +35,15 @@ func resolveStorageBaseDir(cfg *config.Config) string {
 
 // --- 路径解析 --------------------------------------------------------------
 //
-// 数据库只保存相对 base_dir 的路径（唯一例外是历史行里遗留的绝对路径，
-// ResolvePath 会原样返回以保证兼容）。派生的子路径不落库，读取时统一重建。
+// 数据库不再保存任何目录：每条记录只保存自己的主键，目录由 storage.base_dir +
+// 主键推导（见 types.AnalysisWorkflow.Dir / types.AnalysisNode.Dir）。读库时把
+// base_dir 注入实体即可，所以 relocating storage root 只需拷贝目录。
 
 func (r *analysisRepository) resolveAnalysis(item *types.AnalysisWorkflow) *types.AnalysisWorkflow {
 	if item == nil {
 		return nil
 	}
-	item.WorkspaceDir = utils.ResolvePath(r.baseDir, item.WorkspaceDir)
+	item.SetBaseDir(r.baseDir)
 	return item
 }
 
@@ -58,7 +58,7 @@ func (r *analysisRepository) resolveNode(item *types.AnalysisNode) *types.Analys
 	if item == nil {
 		return nil
 	}
-	item.WorkspaceDir = utils.ResolvePath(r.baseDir, item.WorkspaceDir)
+	item.SetBaseDir(r.baseDir)
 	return item
 }
 
@@ -69,9 +69,10 @@ func (r *analysisRepository) resolveNodes(items []*types.AnalysisNode) []*types.
 	return items
 }
 
-// analysisDerivedPathColumns 是 Analysis 上由 WorkspaceDir 派生的列。
-// 它们不再落库，任何试图写入的调用都应被丢弃而不是报 "unknown column"。
+// analysisDerivedPathColumns 是 Analysis 上由 Dir() 派生的列。
+// 它们不落库，任何试图写入的调用都应被丢弃而不是报 "unknown column"。
 var analysisDerivedPathColumns = map[string]struct{}{
+	"workspace_dir":     {},
 	"work_dir":          {},
 	"output_dir":        {},
 	"params_path":       {},
@@ -82,17 +83,17 @@ var analysisDerivedPathColumns = map[string]struct{}{
 	"executor_log_file": {},
 }
 
-// analysisNodeDerivedPathColumns 是 AnalysisNode 上由 WorkspaceDir 派生的列。
+// analysisNodeDerivedPathColumns 是 AnalysisNode 上由 Dir() 派生的列。
 var analysisNodeDerivedPathColumns = map[string]struct{}{
-	"output_dir":   {},
-	"cache_dir":    {},
-	"command_path": {},
-	"params_path":  {},
-	"log_path":     {},
+	"workspace_dir": {},
+	"output_dir":    {},
+	"cache_dir":     {},
+	"command_path":  {},
+	"params_path":   {},
+	"log_path":      {},
 }
 
-// sanitizeAnalysisUpdate 把更新 map 收敛到仍然存在的列：
-// 派生路径列被丢弃，workspace_dir 被转成相对路径。
+// sanitizeAnalysisUpdate 把更新 map 收敛到仍然存在的列：派生路径列（含 workspace_dir）被丢弃。
 func (r *analysisRepository) sanitizeAnalysisUpdate(values map[string]any) map[string]any {
 	out := make(map[string]any, len(values))
 	for key, value := range values {
@@ -100,11 +101,6 @@ func (r *analysisRepository) sanitizeAnalysisUpdate(values map[string]any) map[s
 			continue
 		}
 		out[key] = value
-	}
-	if _, ok := out["workspace_dir"]; ok {
-		if path, isString := out["workspace_dir"].(string); isString {
-			out["workspace_dir"] = utils.RelPath(r.baseDir, path)
-		}
 	}
 	return out
 }
@@ -117,11 +113,6 @@ func (r *analysisRepository) sanitizeNodeUpdate(values map[string]any) map[strin
 			continue
 		}
 		out[key] = value
-	}
-	if _, ok := out["workspace_dir"]; ok {
-		if path, isString := out["workspace_dir"].(string); isString {
-			out["workspace_dir"] = utils.RelPath(r.baseDir, path)
-		}
 	}
 	return out
 }
@@ -137,12 +128,9 @@ func (r *analysisRepository) CreateAnalysis(ctx context.Context, item *types.Ana
 	if item == nil {
 		return nil
 	}
-	absolute := item.WorkspaceDir
-	item.WorkspaceDir = utils.RelPath(r.baseDir, absolute)
-	err := r.db.WithContext(ctx).Create(item).Error
-	// 还原调用方持有的绝对路径，避免 handler 直接把相对路径返回给前端。
-	item.WorkspaceDir = absolute
-	return err
+	// 目录不落库，只注入存储根，保证调用方拿到的对象能直接推导路径。
+	item.SetBaseDir(r.baseDir)
+	return r.db.WithContext(ctx).Create(item).Error
 }
 
 func (r *analysisRepository) TryMarkAnalysisRunning(ctx context.Context, analysisID int64, now time.Time, staleBefore time.Time) (bool, error) {
@@ -527,23 +515,13 @@ func (r *analysisRepository) CreateAnalysisNodes(ctx context.Context, items []*t
 	if len(items) == 0 {
 		return nil
 	}
-	// 落库前把绝对路径转成相对路径，写完后还原，避免调用方拿到相对路径。
-	absolute := make([]string, len(items))
-	for i, item := range items {
+	for _, item := range items {
 		if item == nil {
 			continue
 		}
-		absolute[i] = item.WorkspaceDir
-		item.WorkspaceDir = utils.RelPath(r.baseDir, absolute[i])
+		item.SetBaseDir(r.baseDir)
 	}
-	err := r.db.WithContext(ctx).Create(&items).Error
-	for i, item := range items {
-		if item == nil {
-			continue
-		}
-		item.WorkspaceDir = absolute[i]
-	}
-	return err
+	return r.db.WithContext(ctx).Create(&items).Error
 }
 
 func (r *analysisRepository) DeleteAnalysisEdgesByAnalysisID(ctx context.Context, analysisID int64) error {

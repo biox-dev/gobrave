@@ -150,21 +150,16 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 		}
 
 		baseDir := s.resolveStorageBaseDir()
-		if existing == nil && analysisID == 0 {
+		if existing != nil {
+			analysisID = existing.ID
+		}
+		if analysisID == 0 {
 			analysisID = utils.GenerateID()
 		}
 
-		analsyisDir := utils.GetAnalysisDir(baseDir, input.Project.ID, workflow.ID)
-
-		// workspaceDir 是本次分析的根目录。它会相对 base_dir 落库，
-		// 其余路径（params.json / run.sh / 各种 log）都由它派生，不再持久化。
-		workspaceDir := filepath.Join(analsyisDir, fmt.Sprintf("%d", analysisID))
-		if existing != nil && cacheType != types.CacheTypeRerunAll {
-			analysisID = existing.ID
-			if strings.TrimSpace(existing.WorkspaceDir) != "" {
-				workspaceDir = existing.WorkspaceDir
-			}
-		}
+		// 分析根目录由 base_dir + 项目 / 工作流 / 分析三个主键推导，不落库
+		// （见 types.AnalysisWorkflow.Dir），其余路径由它派生。
+		workspaceDir := utils.GetAnalysisDir(baseDir, input.Project.ID, workflow.ID, analysisID)
 
 		if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
 			return err
@@ -194,9 +189,7 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 				// "analysis_type": analysisType,
 				// "is_report":          input.IsReport,
 				"data_component_ids": dataComponentIDs,
-				// repository 会把绝对路径转成相对 base_dir 的形式再落库。
-				"workspace_dir": workspaceDir,
-				"updated_at":    time.Now().UTC(),
+				"updated_at":         time.Now().UTC(),
 			}
 			if strings.TrimSpace(existing.JobStatus) != "running" {
 				updateValues["job_status"] = "updated"
@@ -216,7 +209,6 @@ func (s *analysisService) SaveAnalysisController(ctx context.Context, input *typ
 				WorkflowID: workflowID,
 				// AnalysisType:    analysisType,
 				AnalysisName: analysisName,
-				WorkspaceDir: workspaceDir,
 				RequestParam: string(requestParamJSON),
 				JobStatus:    "created",
 				// ServerStatus:     "",
@@ -264,14 +256,15 @@ func (s *analysisService) DeleteAnalysisNode(ctx context.Context, id int64) erro
 		return err
 	}
 	prefix := filepath.Join(s.cfg.Storage.BaseDir, "data", strconv.FormatInt(project.ID, 10))
+	workspaceDir := node.Dir()
 	//判断是否以prefix开头 如果不是就不删除
-	if !strings.HasPrefix(node.WorkspaceDir, prefix) {
-		logger.Warnf(ctx, "[NodeOrchestrator] workspace dir=%s is not under project data dir=%s, skip delete", node.WorkspaceDir, prefix)
+	if !strings.HasPrefix(workspaceDir, prefix) {
+		logger.Warnf(ctx, "[NodeOrchestrator] workspace dir=%s is not under project data dir=%s, skip delete", workspaceDir, prefix)
 		return fmt.Errorf("workspace dir is not under project data dir")
 	}
 	// 	删除工作目录
-	if err := os.RemoveAll(node.WorkspaceDir); err != nil {
-		logger.Warnf(ctx, "[NodeOrchestrator] failed to remove workspace dir=%s, err=%v", node.WorkspaceDir, err)
+	if err := os.RemoveAll(workspaceDir); err != nil {
+		logger.Warnf(ctx, "[NodeOrchestrator] failed to remove workspace dir=%s, err=%v", workspaceDir, err)
 		return err
 	}
 	if id <= 0 {
@@ -338,13 +331,13 @@ func (s *analysisService) DeleteAnalysis(ctx context.Context, id int64) error {
 		nodeIDs = append(nodeIDs, node.ID)
 
 		// 3. Delete each node's workspace directory
-		if strings.TrimSpace(node.WorkspaceDir) != "" {
-			if strings.HasPrefix(node.WorkspaceDir, projectDataDir) {
-				if err := os.RemoveAll(node.WorkspaceDir); err != nil {
-					logger.Warnf(ctx, "[AnalysisService] failed to remove node workspace dir=%s, err=%v", node.WorkspaceDir, err)
+		if dir := node.Dir(); dir != "" {
+			if strings.HasPrefix(dir, projectDataDir) {
+				if err := os.RemoveAll(dir); err != nil {
+					logger.Warnf(ctx, "[AnalysisService] failed to remove node workspace dir=%s, err=%v", dir, err)
 				}
 			} else {
-				logger.Warnf(ctx, "[AnalysisService] node workspace dir=%s is not under project data dir=%s, skip delete", node.WorkspaceDir, projectDataDir)
+				logger.Warnf(ctx, "[AnalysisService] node workspace dir=%s is not under project data dir=%s, skip delete", dir, projectDataDir)
 			}
 		}
 	}
@@ -378,13 +371,13 @@ func (s *analysisService) DeleteAnalysis(ctx context.Context, id int64) error {
 	s.deleteSessionResources(ctx, agenttypes.SessionResourceTypeAnalysis, []int64{id})
 
 	// 7. Delete the analysis workspace
-	if strings.TrimSpace(analysis.WorkspaceDir) != "" {
-		if strings.HasPrefix(analysis.WorkspaceDir, projectDataDir) {
-			if err := os.RemoveAll(analysis.WorkspaceDir); err != nil {
-				logger.Warnf(ctx, "[AnalysisService] failed to remove analysis workspace dir=%s, err=%v", analysis.WorkspaceDir, err)
+	if dir := analysis.Dir(); dir != "" {
+		if strings.HasPrefix(dir, projectDataDir) {
+			if err := os.RemoveAll(dir); err != nil {
+				logger.Warnf(ctx, "[AnalysisService] failed to remove analysis workspace dir=%s, err=%v", dir, err)
 			}
 		} else {
-			logger.Warnf(ctx, "[AnalysisService] analysis workspace dir=%s is not under project data dir=%s, skip delete", analysis.WorkspaceDir, projectDataDir)
+			logger.Warnf(ctx, "[AnalysisService] analysis workspace dir=%s is not under project data dir=%s, skip delete", dir, projectDataDir)
 		}
 	}
 
@@ -412,30 +405,20 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 		if nodeID == "" {
 			continue
 		}
-		// 存在的 node 保持原有的 analysis_node_id、workspace_dir、output_dir、params_path、command_path、log_path 等字段，避免重复创建和覆盖
+		// 存在的 node 保持原有主键 / analysis_node_id，避免重复创建。
 		existing := existingByNodeID[nodeID]
 		analysisNodeID := strings.TrimSpace(toString(row["analysis_node_id"]))
 		id := utils.GenerateID()
-		if existing != nil && strings.TrimSpace(existing.AnalysisNodeID) != "" {
-			analysisNodeID = existing.AnalysisNodeID
-		}
-		if analysisNodeID == "" {
-			analysisNodeID = "node-" + uuid.NewString()
-		}
-
-		workspaceDir := filepath.Join(analysis.WorkspaceDir, fmt.Sprintf("%d", id))
 		if existing != nil {
-			if strings.TrimSpace(existing.WorkspaceDir) != "" {
-				workspaceDir = existing.WorkspaceDir
+			if strings.TrimSpace(existing.AnalysisNodeID) != "" {
+				analysisNodeID = existing.AnalysisNodeID
 			}
 			if existing.ID != 0 {
 				id = existing.ID
 			}
 		}
-
-		// 派生路径由 WorkspaceDir 推导（见 types.AnalysisNode 的方法），这里只需建好输出目录。
-		if err := os.MkdirAll(utils.NodeLayoutFor(workspaceDir).OutputDir, 0o755); err != nil {
-			return err
+		if analysisNodeID == "" {
+			analysisNodeID = "node-" + uuid.NewString()
 		}
 
 		status := fallbackString(toString(row["status"]), dagruntime.StatusPending)
@@ -483,8 +466,12 @@ func (s *analysisService) persistDagRuntime(ctx context.Context, repo interfaces
 			DownstreamIDs:          toJSONSlice(row["downstream_ids"]),
 			InputValidationErrors:  toJSONSlice(row["input_validation_errors"]),
 			OutputValidationErrors: toJSONSlice(row["output_validation_errors"]),
-			WorkspaceDir:           workspaceDir,
 			CreationSource:         types.AnalysisNodeCreationSourceScheduler,
+		}
+		// 目录由 base_dir + 项目 + 节点主键推导（见 types.AnalysisNode.Dir），这里只需建好输出目录。
+		node.SetBaseDir(analysis.BaseDir())
+		if err := os.MkdirAll(node.OutputDirectory(), 0o755); err != nil {
+			return err
 		}
 		if strings.TrimSpace(node.Status) == "" {
 			node.Status = dagruntime.StatusPending

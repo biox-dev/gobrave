@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/types"
@@ -153,7 +151,8 @@ func NewAnalysisNodeFromScript(
 	if baseDir == "" {
 		baseDir = "."
 	}
-	node.WorkspaceDir = joinNodeWorkspace(baseDir, spec.ProjectID, script.ID, node.ID)
+	// 节点目录由 base_dir + 项目 + 节点主键推导（见 types.AnalysisNode.Dir）。
+	node.SetBaseDir(baseDir)
 
 	if resolvedInputs != nil {
 		node.ResolvedInputs = types.JSONMap(cloneAnyMap(resolvedInputs))
@@ -234,18 +233,10 @@ func NewAnalysisNodeFromCommand(spec CommandNodeSpec) (*types.AnalysisNode, erro
 	if baseDir == "" {
 		baseDir = "."
 	}
-	node.WorkspaceDir = utils.GetAgentNodeDir(baseDir, spec.ProjectID, node.ID)
+	// 命令节点与脚本节点共用同一套目录约定（见 types.AnalysisNode.Dir）。
+	node.SetBaseDir(baseDir)
 	return node, nil
 }
-
-// joinNodeWorkspace 返回 <base_dir>/data/<project>/analysis_node/<script_id>/<node_id>。
-func joinNodeWorkspace(baseDir string, projectID int64, scriptID int64, nodeID int64) string {
-	return filepath.Join(utils.GetAnalysisNodeDir(baseDir, projectID, strconv.FormatInt(scriptID, 10)), strconv.FormatInt(nodeID, 10))
-}
-
-// func joinAgentNodeWorkspace(baseDir string, projectID int64, , nodeID int64) string {
-// 	return filepath.Join(utils.GetAnalysisNodeDir(baseDir, projectID, strconv.FormatInt(scriptID, 10)), strconv.FormatInt(nodeID, 10))
-// }
 
 // cloneAnyMap 复制一层 map，避免节点记录与解析结果共享同一个底层映射。
 func cloneAnyMap(in map[string]any) map[string]any {

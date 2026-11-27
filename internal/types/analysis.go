@@ -134,13 +134,9 @@ type AnalysisWorkflow struct {
 	// 列名 workflow_id（历史列名为 relation_id，迁移见 migrations/2026-09-21-analysis-workflow-id）。
 	WorkflowID int64 `json:"workflow_id,string" gorm:"column:workflow_id;type:bigint;index:idx_nextflow_workflow_id"`
 	// AnalysisType        string    `json:"analysis_type" gorm:"column:analysis_type;type:varchar(255)"`
-	AnalysisName   string `json:"analysis_name" gorm:"column:analysis_name;type:varchar(255)"`
-	InputFile      string `json:"input_file" gorm:"column:input_file;type:varchar(255)"`
-	AnalysisMethod string `json:"analysis_method" gorm:"column:analysis_method;type:varchar(255)"`
-	// WorkspaceDir 是本次分析的根目录。落库时相对 storage.base_dir 存储，
-	// 读取时由 repository 还原成绝对路径，因此 base_dir 变更只需拷贝目录，
-	// 无需回写数据库。其余路径全部由它派生（见下方 gorm:"-" 字段）。
-	WorkspaceDir        string `json:"workspace_dir" gorm:"column:workspace_dir;type:varchar(255)"`
+	AnalysisName        string `json:"analysis_name" gorm:"column:analysis_name;type:varchar(255)"`
+	InputFile           string `json:"input_file" gorm:"column:input_file;type:varchar(255)"`
+	AnalysisMethod      string `json:"analysis_method" gorm:"column:analysis_method;type:varchar(255)"`
 	RequestParam        string `json:"request_param" gorm:"column:request_param;type:longtext"`
 	OutputFormat        string `json:"output_format" gorm:"column:output_format;type:longtext"`
 	PipelineScript      string `json:"pipeline_script" gorm:"column:pipeline_script;type:varchar(255)"`
@@ -162,47 +158,84 @@ type AnalysisWorkflow struct {
 	ExtraProjectIDs  string    `json:"extra_project_ids" gorm:"column:extra_project_ids;type:longtext"`
 	CreatedAt        time.Time `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt        time.Time `json:"updated_at" gorm:"column:updated_at"`
+
+	// baseDir 是存储根目录（storage.base_dir）。它不是数据库列，由 repository
+	// 在读取时注入；所有目录都由它 + 本行的自身字段推导（见 Dir），
+	// 因此 base_dir 变更只需拷贝目录，无需回写数据库。
+	baseDir string
+}
+
+// SetBaseDir 注入存储根目录（storage.base_dir）。只由 repository / 构造入口调用。
+func (t *AnalysisWorkflow) SetBaseDir(baseDir string) {
+	if t == nil {
+		return
+	}
+	t.baseDir = strings.TrimSpace(baseDir)
+}
+
+// BaseDir 返回注入的存储根目录。
+func (t *AnalysisWorkflow) BaseDir() string {
+	if t == nil {
+		return ""
+	}
+	return t.baseDir
+}
+
+// Dir 返回本次分析的根目录：
+// <base>/data/<projectID>/analysis/<workflowID>/<analysisID>。
+//
+// 与 Script.Dir / Workflow.Dir 同构：除注入的 baseDir 外，其余输入全部是自身字段。
+// 缺少 baseDir 或任一主键时返回空串，避免产生悬空的相对路径。
+func (t *AnalysisWorkflow) Dir() string {
+	if t == nil {
+		return ""
+	}
+	baseDir := strings.TrimSpace(t.baseDir)
+	if baseDir == "" || t.ProjectID <= 0 || t.WorkflowID <= 0 || t.ID <= 0 {
+		return ""
+	}
+	return utils.GetAnalysisDir(baseDir, t.ProjectID, t.WorkflowID, t.ID)
 }
 
 // layout 返回本次分析在磁盘上的布局。
 //
-// 派生路径不再是结构体字段：唯一的输入是 WorkspaceDir，磁盘布局只在
-// utils.AnalysisLayoutFor 定义一处，调用方通过下方方法取值，避免字段在构造后
-// 忘记 hydrate 而读到空路径。
+// 派生路径不再是结构体字段：唯一的输入是 Dir()，磁盘布局只在
+// utils.AnalysisLayoutFor 定义一处，调用方通过下方方法取值。
 func (t *AnalysisWorkflow) layout() utils.AnalysisLayout {
 	if t == nil {
 		return utils.AnalysisLayout{}
 	}
-	return utils.AnalysisLayoutFor(t.WorkspaceDir)
+	return utils.AnalysisLayoutFor(t.Dir())
 }
 
-// ParamsFile 返回分析参数文件（<WorkspaceDir>/params.json）。
+// ParamsFile 返回分析参数文件（<Dir>/params.json）。
 func (t *AnalysisWorkflow) ParamsFile() string { return t.layout().ParamsPath }
 
-// CommandFile 返回分析主脚本（<WorkspaceDir>/run.sh）。
+// CommandFile 返回分析主脚本（<Dir>/run.sh）。
 func (t *AnalysisWorkflow) CommandFile() string { return t.layout().CommandPath }
 
-// CommandLogFile 返回分析命令日志（<WorkspaceDir>/run.log）。
+// CommandLogFile 返回分析命令日志（<Dir>/run.log）。
 func (t *AnalysisWorkflow) CommandLogFile() string { return t.layout().CommandLogPath }
 
-// TraceFile 返回调度轨迹日志（<WorkspaceDir>/trace.log）。
+// TraceFile 返回调度轨迹日志（<Dir>/trace.log）。
 func (t *AnalysisWorkflow) TraceFile() string { return t.layout().TraceFile }
 
-// WorkflowLogFile 返回工作流日志（<WorkspaceDir>/workflow.log）。
+// WorkflowLogFile 返回工作流日志（<Dir>/workflow.log）。
 func (t *AnalysisWorkflow) WorkflowLogFile() string { return t.layout().WorkflowLogFile }
 
-// ExecutorLogFile 返回执行器日志（<WorkspaceDir>/.nextflow.log）。
+// ExecutorLogFile 返回执行器日志（<Dir>/.nextflow.log）。
 func (t *AnalysisWorkflow) ExecutorLogFile() string { return t.layout().ExecutorLogFile }
 
 // MarshalJSON 在序列化时补齐派生路径字段。
 //
-// 这些路径已不再是结构体字段（只由 WorkspaceDir 推导），但前端与既有接口契约
-// 仍按 params_path / command_path / ... 的 JSON key 读取，因此序列化时按原 key
-// 输出，响应形状与重构前保持一致。
+// 这些路径已不再是结构体字段（只由 Dir() 推导），但前端与既有接口契约
+// 仍按 workspace_dir / params_path / command_path / ... 的 JSON key 读取，
+// 因此序列化时按原 key 输出，响应形状与重构前保持一致。
 func (t AnalysisWorkflow) MarshalJSON() ([]byte, error) {
 	type alias AnalysisWorkflow
 	return json.Marshal(struct {
 		alias
+		WorkspaceDir    string `json:"workspace_dir"`
 		ParamsPath      string `json:"params_path"`
 		CommandPath     string `json:"command_path"`
 		CommandLogPath  string `json:"command_log_path"`
@@ -211,6 +244,7 @@ func (t AnalysisWorkflow) MarshalJSON() ([]byte, error) {
 		ExecutorLogFile string `json:"executor_log_file"`
 	}{
 		alias:           alias(t),
+		WorkspaceDir:    t.Dir(),
 		ParamsPath:      t.ParamsFile(),
 		CommandPath:     t.CommandFile(),
 		CommandLogPath:  t.CommandLogFile(),
@@ -326,74 +360,108 @@ type AnalysisNode struct {
 	// ScriptName 不是 analysis_nodes 的列，而是按 ScriptID join pipeline_components
 	// 取到的脚本名称（component_name 列）。只有显式 join 的查询才会填充，
 	// 因此用 gorm:"-" 排除在 schema 之外，避免其他查询误选该列。
-	ScriptName             string    `json:"script_name" gorm:"-"`
-	InputsPatterns         JSONMap   `json:"inputs_patterns" gorm:"column:inputs_patterns;type:json"`
-	ResolvedInputs         JSONMap   `json:"resolved_inputs" gorm:"column:resolved_inputs;type:json"`
-	OutputPatterns         JSONMap   `json:"output_patterns" gorm:"column:output_patterns;type:json"`
-	ResolvedOutputs        JSONMap   `json:"resolved_outputs" gorm:"column:resolved_outputs;type:json"`
-	OutputFileIDs          JSONMap   `json:"output_file_ids" gorm:"column:output_file_ids;type:json"` // 输出句柄 -> go_file id，供下游 SelectAssay 输入还原为 {"files": "<id>"}
-	RequestParam           string    `json:"request_param" gorm:"column:request_param;type:longtext"`
-	CPU                    int       `json:"cpu" gorm:"column:cpu"`
-	Memory                 string    `json:"memory" gorm:"column:memory;type:varchar(64)"`
-	Disk                   string    `json:"disk" gorm:"column:disk;type:varchar(64)"`
-	GPU                    int       `json:"gpu" gorm:"column:gpu"`
-	Status                 string    `json:"status" gorm:"column:status;type:varchar(64);index:idx_analysis_nodes_analysis_id_status,priority:2"`
-	ServerStatus           string    `json:"server_status" gorm:"column:server_status;type:varchar(64)"`
-	PID                    int       `json:"pid" gorm:"column:pid"`
-	JobID                  string    `json:"job_id" gorm:"column:job_id;type:varchar(255)"`
-	Executor               string    `json:"executor" gorm:"column:executor;type:varchar(64)"`
-	Retry                  int       `json:"retry" gorm:"column:retry;default:0"`
-	MaxRetry               int       `json:"max_retry" gorm:"column:max_retry;default:3"`
-	ExitCode               int       `json:"exit_code" gorm:"column:exit_code"`
-	ErrorMessage           string    `json:"error_message" gorm:"column:error_message;type:text"`
-	RerunReason            string    `json:"rerun_reason" gorm:"column:rerun_reason;type:text"`
-	InputHash              string    `json:"input_hash" gorm:"column:input_hash;type:varchar(255)"`
-	CacheHit               bool      `json:"cache_hit" gorm:"column:cache_hit"`
-	UpstreamIDs            JSONSlice `json:"upstream_ids" gorm:"column:upstream_ids;type:json"`
-	DownstreamIDs          JSONSlice `json:"downstream_ids" gorm:"column:downstream_ids;type:json"`
-	InputValidationErrors  JSONSlice `json:"input_validation_errors" gorm:"column:input_validation_errors;type:json"`
-	OutputValidationErrors JSONSlice `json:"output_validation_errors" gorm:"column:output_validation_errors;type:json"`
-	// WorkspaceDir 是节点根目录。落库时相对 storage.base_dir 存储，
-	// 读取时由 repository 还原成绝对路径。其余路径全部由它派生。
-	WorkspaceDir   string     `json:"workspace_dir" gorm:"column:workspace_dir;type:varchar(255)"`
-	CommandMD5     string     `json:"command_md5" gorm:"column:command_md5;type:varchar(64)"`
-	ParamsMD5      string     `json:"params_md5" gorm:"column:params_md5;type:varchar(64)"`
-	CreationSource string     `json:"creation_source" gorm:"column:creation_source;type:varchar(32)"`
-	StartedAt      *time.Time `json:"started_at" gorm:"column:started_at"`
-	FinishedAt     *time.Time `json:"finished_at" gorm:"column:finished_at"`
-	CreatedAt      time.Time  `json:"created_at" gorm:"column:created_at"`
-	UpdatedAt      time.Time  `json:"updated_at" gorm:"column:updated_at"`
+	ScriptName             string     `json:"script_name" gorm:"-"`
+	InputsPatterns         JSONMap    `json:"inputs_patterns" gorm:"column:inputs_patterns;type:json"`
+	ResolvedInputs         JSONMap    `json:"resolved_inputs" gorm:"column:resolved_inputs;type:json"`
+	OutputPatterns         JSONMap    `json:"output_patterns" gorm:"column:output_patterns;type:json"`
+	ResolvedOutputs        JSONMap    `json:"resolved_outputs" gorm:"column:resolved_outputs;type:json"`
+	OutputFileIDs          JSONMap    `json:"output_file_ids" gorm:"column:output_file_ids;type:json"` // 输出句柄 -> go_file id，供下游 SelectAssay 输入还原为 {"files": "<id>"}
+	RequestParam           string     `json:"request_param" gorm:"column:request_param;type:longtext"`
+	CPU                    int        `json:"cpu" gorm:"column:cpu"`
+	Memory                 string     `json:"memory" gorm:"column:memory;type:varchar(64)"`
+	Disk                   string     `json:"disk" gorm:"column:disk;type:varchar(64)"`
+	GPU                    int        `json:"gpu" gorm:"column:gpu"`
+	Status                 string     `json:"status" gorm:"column:status;type:varchar(64);index:idx_analysis_nodes_analysis_id_status,priority:2"`
+	ServerStatus           string     `json:"server_status" gorm:"column:server_status;type:varchar(64)"`
+	PID                    int        `json:"pid" gorm:"column:pid"`
+	JobID                  string     `json:"job_id" gorm:"column:job_id;type:varchar(255)"`
+	Executor               string     `json:"executor" gorm:"column:executor;type:varchar(64)"`
+	Retry                  int        `json:"retry" gorm:"column:retry;default:0"`
+	MaxRetry               int        `json:"max_retry" gorm:"column:max_retry;default:3"`
+	ExitCode               int        `json:"exit_code" gorm:"column:exit_code"`
+	ErrorMessage           string     `json:"error_message" gorm:"column:error_message;type:text"`
+	RerunReason            string     `json:"rerun_reason" gorm:"column:rerun_reason;type:text"`
+	InputHash              string     `json:"input_hash" gorm:"column:input_hash;type:varchar(255)"`
+	CacheHit               bool       `json:"cache_hit" gorm:"column:cache_hit"`
+	UpstreamIDs            JSONSlice  `json:"upstream_ids" gorm:"column:upstream_ids;type:json"`
+	DownstreamIDs          JSONSlice  `json:"downstream_ids" gorm:"column:downstream_ids;type:json"`
+	InputValidationErrors  JSONSlice  `json:"input_validation_errors" gorm:"column:input_validation_errors;type:json"`
+	OutputValidationErrors JSONSlice  `json:"output_validation_errors" gorm:"column:output_validation_errors;type:json"`
+	CommandMD5             string     `json:"command_md5" gorm:"column:command_md5;type:varchar(64)"`
+	ParamsMD5              string     `json:"params_md5" gorm:"column:params_md5;type:varchar(64)"`
+	CreationSource         string     `json:"creation_source" gorm:"column:creation_source;type:varchar(32)"`
+	StartedAt              *time.Time `json:"started_at" gorm:"column:started_at"`
+	FinishedAt             *time.Time `json:"finished_at" gorm:"column:finished_at"`
+	CreatedAt              time.Time  `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt              time.Time  `json:"updated_at" gorm:"column:updated_at"`
+
+	// baseDir 是存储根目录（storage.base_dir）。它不是数据库列，由 repository
+	// 在读取时注入；节点目录由它 + 本行的自身字段推导（见 Dir），
+	// 因此 base_dir 变更只需拷贝目录，无需回写数据库。
+	baseDir string
+}
+
+// SetBaseDir 注入存储根目录（storage.base_dir）。只由 repository / 构造入口调用。
+func (t *AnalysisNode) SetBaseDir(baseDir string) {
+	if t == nil {
+		return
+	}
+	t.baseDir = strings.TrimSpace(baseDir)
+}
+
+// BaseDir 返回注入的存储根目录。
+func (t *AnalysisNode) BaseDir() string {
+	if t == nil {
+		return ""
+	}
+	return t.baseDir
+}
+
+// Dir 返回节点根目录：<base>/data/<projectID>/analysis_node/<scriptID>/<nodeID>。
+//
+// 与 Script.Dir / Workflow.Dir 同构：除注入的 baseDir 外，其余输入全部是自身字段。
+// 脚本节点 / 调度器节点按绑定脚本分目录，Agent 命令节点没有脚本（scriptID 为 0）；
+// 节点主键兜底唯一性，所以三者在磁盘上仍是同一种布局。
+// 缺少 baseDir 或主键时返回空串，避免产生悬空的相对路径。
+func (t *AnalysisNode) Dir() string {
+	if t == nil {
+		return ""
+	}
+	baseDir := strings.TrimSpace(t.baseDir)
+	if baseDir == "" || t.ProjectID <= 0 || t.ID <= 0 {
+		return ""
+	}
+	return utils.GetAnalysisNodeDir(baseDir, t.ProjectID, t.ScriptID, t.ID)
 }
 
 // layout 返回节点在磁盘上的布局。
 //
-// 派生路径不再是结构体字段：唯一的输入是 WorkspaceDir，磁盘布局只在
-// utils.NodeLayoutFor 定义一处，调用方通过下方方法取值，避免字段在构造后
-// 忘记 hydrate 而读到空路径。
+// 派生路径不再是结构体字段：唯一的输入是 Dir()，磁盘布局只在
+// utils.NodeLayoutFor 定义一处，调用方通过下方方法取值。
 func (t *AnalysisNode) layout() utils.NodeLayout {
 	if t == nil {
 		return utils.NodeLayout{}
 	}
-	return utils.NodeLayoutFor(t.WorkspaceDir)
+	return utils.NodeLayoutFor(t.Dir())
 }
 
 // AnalysisNodeOutputsFileName 是节点把解析后的输出写回的文件名，位于节点输出目录下。
 const AnalysisNodeOutputsFileName = "outputs.json"
 
-// OutputDirectory 返回节点写出产物的目录（<WorkspaceDir>/output）。
-// WorkspaceDir 为空时返回空串，避免产生悬空的路径。
+// OutputDirectory 返回节点写出产物的目录（<Dir>/output）。
+// Dir 为空时返回空串，避免产生悬空的路径。
 func (t *AnalysisNode) OutputDirectory() string { return t.layout().OutputDir }
 
-// CacheDirectory 返回节点中间缓存目录（<WorkspaceDir>/cached）。
+// CacheDirectory 返回节点中间缓存目录（<Dir>/cached）。
 func (t *AnalysisNode) CacheDirectory() string { return t.layout().CacheDir }
 
-// ParamsFile 返回节点参数文件（<WorkspaceDir>/params.json）。
+// ParamsFile 返回节点参数文件（<Dir>/params.json）。
 func (t *AnalysisNode) ParamsFile() string { return t.layout().ParamsPath }
 
-// CommandFile 返回节点运行脚本（<WorkspaceDir>/run.sh）。
+// CommandFile 返回节点运行脚本（<Dir>/run.sh）。
 func (t *AnalysisNode) CommandFile() string { return t.layout().CommandPath }
 
-// LogFile 返回节点命令日志（<WorkspaceDir>/command.log）。
+// LogFile 返回节点命令日志（<Dir>/command.log）。
 func (t *AnalysisNode) LogFile() string { return t.layout().LogPath }
 
 // OutputsFile 返回节点 outputs.json 的路径（OutputDirectory 下的 outputs.json）。
@@ -425,25 +493,27 @@ func (t *AnalysisNode) OutputMarkdownFile() string {
 
 // MarshalJSON 在序列化时补齐派生路径字段。
 //
-// 这些路径已不再是结构体字段（只由 WorkspaceDir 推导），但前端与既有接口契约
-// 仍按 log_path / output_dir / cache_dir / command_path / params_path 的 JSON key
-// 读取，因此序列化时按原 key 输出，响应形状与重构前保持一致。
+// 这些路径已不再是结构体字段（只由 Dir() 推导），但前端与既有接口契约
+// 仍按 workspace_dir / log_path / output_dir / cache_dir / command_path / params_path
+// 的 JSON key 读取，因此序列化时按原 key 输出，响应形状与重构前保持一致。
 func (t AnalysisNode) MarshalJSON() ([]byte, error) {
 	type alias AnalysisNode
 	return json.Marshal(struct {
 		alias
-		LogPath     string `json:"log_path"`
-		OutputDir   string `json:"output_dir"`
-		CacheDir    string `json:"cache_dir"`
-		CommandPath string `json:"command_path"`
-		ParamsPath  string `json:"params_path"`
+		WorkspaceDir string `json:"workspace_dir"`
+		LogPath      string `json:"log_path"`
+		OutputDir    string `json:"output_dir"`
+		CacheDir     string `json:"cache_dir"`
+		CommandPath  string `json:"command_path"`
+		ParamsPath   string `json:"params_path"`
 	}{
-		alias:       alias(t),
-		LogPath:     t.LogFile(),
-		OutputDir:   t.OutputDirectory(),
-		CacheDir:    t.CacheDirectory(),
-		CommandPath: t.CommandFile(),
-		ParamsPath:  t.ParamsFile(),
+		alias:        alias(t),
+		WorkspaceDir: t.Dir(),
+		LogPath:      t.LogFile(),
+		OutputDir:    t.OutputDirectory(),
+		CacheDir:     t.CacheDirectory(),
+		CommandPath:  t.CommandFile(),
+		ParamsPath:   t.ParamsFile(),
 	})
 }
 

@@ -14,7 +14,9 @@ import (
 // 这样报告聚合/HTML 导出/前端渲染都不用再各自维护图片前缀。
 func TestRewriteNodeOutputMarkdownImages(t *testing.T) {
 	baseDir := t.TempDir()
-	outputDir := filepath.Join(baseDir, "data", "34", "analysis_node", "100", "200", "output")
+	node := &types.AnalysisNode{ID: 200, ProjectID: 34, ScriptID: 7}
+	node.SetBaseDir(baseDir)
+	outputDir := node.OutputDirectory()
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -25,14 +27,13 @@ func TestRewriteNodeOutputMarkdownImages(t *testing.T) {
 	}
 
 	c := &NodeCompletionCoordinator{cfg: &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}}}
-	node := &types.AnalysisNode{WorkspaceDir: filepath.Dir(outputDir)}
 	c.rewriteNodeOutputMarkdownImages(context.Background(), node)
 
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	want := "![a](/34/analysis_node/100/200/output/plot.png)\n\n![b](/images/x.png)\n"
+	want := "![a](/34/analysis_node/7/200/output/plot.png)\n\n![b](/images/x.png)\n"
 	if string(got) != want {
 		t.Fatalf("output.md = %q, want %q", string(got), want)
 	}
@@ -50,13 +51,13 @@ func TestRewriteNodeOutputMarkdownImages(t *testing.T) {
 
 // 没有 output.md、目录为空或 cfg 缺失时都必须静默跳过，不能影响节点结论。
 func TestRewriteNodeOutputMarkdownImagesSkipsMissingInputs(t *testing.T) {
-	baseDir := t.TempDir()
-	outputDir := filepath.Join(baseDir, "data", "34", "output")
+	node := &types.AnalysisNode{ID: 200, ProjectID: 34}
+	node.SetBaseDir(t.TempDir())
+	outputDir := node.OutputDirectory()
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	node := &types.AnalysisNode{WorkspaceDir: filepath.Dir(outputDir)}
 	(&NodeCompletionCoordinator{}).rewriteNodeOutputMarkdownImages(context.Background(), node)
 	(&NodeCompletionCoordinator{}).rewriteNodeOutputMarkdownImages(context.Background(), nil)
 	if _, err := os.Stat(filepath.Join(outputDir, types.DefaultProjectReportFilename)); !os.IsNotExist(err) {
@@ -66,8 +67,9 @@ func TestRewriteNodeOutputMarkdownImagesSkipsMissingInputs(t *testing.T) {
 
 // storage.base_dir 缺失时保留相对路径（绝不能把本机磁盘绝对路径写进 output.md）。
 func TestRewriteNodeOutputMarkdownImagesSkipsWithoutBaseDir(t *testing.T) {
-	workspace := t.TempDir()
-	outputDir := filepath.Join(workspace, "output")
+	node := &types.AnalysisNode{ID: 200, ProjectID: 34}
+	node.SetBaseDir(t.TempDir())
+	outputDir := node.OutputDirectory()
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -77,7 +79,6 @@ func TestRewriteNodeOutputMarkdownImagesSkipsWithoutBaseDir(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	node := &types.AnalysisNode{WorkspaceDir: workspace}
 	(&NodeCompletionCoordinator{}).rewriteNodeOutputMarkdownImages(context.Background(), node)
 
 	got, err := os.ReadFile(path)

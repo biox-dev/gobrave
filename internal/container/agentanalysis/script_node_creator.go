@@ -97,7 +97,7 @@ func (c *scriptNodeCreator) CreateAnalysisNode(ctx context.Context, in runtimeco
 		ScriptID:       script.ID,
 		ScriptName:     script.Name,
 		ScriptType:     script.ScriptType,
-		WorkspaceDir:   node.WorkspaceDir,
+		WorkspaceDir:   node.Dir(),
 		ParamsPath:     node.ParamsFile(),
 		RequestParam:   in.RequestParam,
 	}

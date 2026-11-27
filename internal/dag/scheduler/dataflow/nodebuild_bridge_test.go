@@ -3,7 +3,6 @@ package dataflow
 import (
 	"context"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
@@ -60,7 +59,8 @@ func requireSnowflakeV3(t *testing.T) {
 func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 	requireSnowflakeV3(t)
 
-	analysis := &types.AnalysisWorkflow{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 9, ProjectID: 2, WorkflowID: 1}
+	analysis.SetBaseDir(t.TempDir())
 	repo := &stubAnalysisRepoV3{analysis: analysis}
 	runtime := &persistentDataflowRuntime{
 		repo:         repo,
@@ -84,9 +84,9 @@ func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 		t.Fatalf("expected exactly one created row, got %d", repo.created)
 	}
 
-	wantWorkspace := filepath.Join(analysis.WorkspaceDir, strconv.FormatInt(node.ID, 10))
-	if node.WorkspaceDir != wantWorkspace {
-		t.Fatalf("workspace dir = %q, want %q", node.WorkspaceDir, wantWorkspace)
+	wantWorkspace := utils.GetAnalysisNodeDir(analysis.BaseDir(), analysis.ProjectID, node.ScriptID, node.ID)
+	if node.Dir() != wantWorkspace {
+		t.Fatalf("workspace dir = %q, want %q", node.Dir(), wantWorkspace)
 	}
 	if got := node.OutputDirectory(); got != filepath.Join(wantWorkspace, "output") {
 		t.Fatalf("output dir = %q", got)
@@ -110,7 +110,8 @@ func TestV3PersistBuildsNodeWithSharedLayout(t *testing.T) {
 func TestV3PersistReusesV2MaterializedNode(t *testing.T) {
 	requireSnowflakeV3(t)
 
-	analysis := &types.AnalysisWorkflow{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 9, ProjectID: 2, WorkflowID: 1}
+	analysis.SetBaseDir(t.TempDir())
 	resolved := types.JSONMap{"bam": "a.bam"}
 
 	// Simulate a previous run that persisted this node through the V2 path.

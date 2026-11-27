@@ -163,12 +163,12 @@ func (b *analysisNodeParamsBuilder) BuildAnalysisNodeParams(ctx context.Context,
 	if b.preparer == nil {
 		return result, fmt.Errorf("node runtime preparer is not configured")
 	}
-	// 派生路径由 WorkspaceDir 推导（见 types.AnalysisNode 的方法），Prepare 负责创建目录与运行期文件。
+	// 派生路径由节点目录推导（见 types.AnalysisNode.Dir），Prepare 负责创建目录与运行期文件。
 	if err := b.preparer.Prepare(prepare.WithSkipCleanOutput(ctx), node); err != nil {
 		return result, fmt.Errorf("failed to prepare node runtime files: %w", err)
 	}
 
-	result.WorkspaceDir = node.WorkspaceDir
+	result.WorkspaceDir = node.Dir()
 	result.ParamsPath = node.ParamsFile()
 	result.CommandPath = node.CommandFile()
 	result.ResolvedInputs = resolvedInputs

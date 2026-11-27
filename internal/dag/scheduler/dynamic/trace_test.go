@@ -31,7 +31,8 @@ func readTraceLines(t *testing.T, path string) []string {
 // header plus one row per observation, node rows carry the node columns, and a
 // new run rewrites the file from scratch instead of appending to the old one.
 func TestRunTraceIsATruncatedAppendOnlyTable(t *testing.T) {
-	analysis := &types.AnalysisWorkflow{ID: 7, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 7, ProjectID: 1, WorkflowID: 1}
+	analysis.SetBaseDir(t.TempDir())
 
 	orchestrator := &dynamicDagOrchestratorV2{}
 	orchestrator.openRunTrace(analysis, false)
@@ -177,7 +178,8 @@ func TestNodeTraceFilterKeepsOnlyNodeLifecycleEvents(t *testing.T) {
 // columns of the node row: the events themselves only carry the numeric key, so the
 // row is what has to supply analysis_node_id.
 func TestTraceNodeEventRecordsRunningAndTerminalRows(t *testing.T) {
-	analysis := &types.AnalysisWorkflow{ID: 7, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 7, ProjectID: 1, WorkflowID: 1}
+	analysis.SetBaseDir(t.TempDir())
 
 	repo := &traceNodeRepoStub{nodes: map[int64]*types.AnalysisNode{
 		100: {ID: 100, AnalysisID: 7, AnalysisNodeID: "node-1", NodeID: "align", NodeName: "Align", SampleID: "s1", ScriptID: 42, Status: dagruntime.StatusRunning},
@@ -234,7 +236,8 @@ func TestTraceNodeEventDegradesWithoutNodeRow(t *testing.T) {
 		Name: dagruntime.EventNodeRunning, AnalysisID: 7, AnalysisNodeID: 100, NodeID: "align",
 	})
 
-	analysis := &types.AnalysisWorkflow{ID: 7, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 7, ProjectID: 1, WorkflowID: 1}
+	analysis.SetBaseDir(t.TempDir())
 	// The stub knows no rows, so the lookup fails.
 	orchestrator := &dynamicDagOrchestratorV2{repo: &traceNodeRepoStub{}}
 

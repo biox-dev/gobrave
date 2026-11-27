@@ -186,7 +186,7 @@ func resolveSummaryOwnerURLPrefix(ctx context.Context, analysisRepo interfaces.A
 			logger.Warnf(ctx, "[AISummary] resolve analysis output dir failed, analysis_id=%d err=%v", ownerID, err)
 			return ""
 		}
-		outputDir = analysis.WorkspaceDir
+		outputDir = analysis.Dir()
 	default:
 		return ""
 	}

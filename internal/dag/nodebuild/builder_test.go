@@ -19,7 +19,9 @@ func init() {
 
 func testAnalysis(t *testing.T) *types.AnalysisWorkflow {
 	t.Helper()
-	return &types.AnalysisWorkflow{ID: 100, ProjectID: 7, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 100, ProjectID: 7, WorkflowID: 3}
+	analysis.SetBaseDir(t.TempDir())
+	return analysis
 }
 
 func TestMaterializePersistsCanonicalLayout(t *testing.T) {
@@ -44,9 +46,9 @@ func TestMaterializePersistsCanonicalLayout(t *testing.T) {
 	if node.ID == 0 {
 		t.Fatal("expected a generated primary key")
 	}
-	wantDir := filepath.Join(analysis.WorkspaceDir, itoa(node.ID))
-	if node.WorkspaceDir != wantDir {
-		t.Fatalf("workspace dir = %q, want %q", node.WorkspaceDir, wantDir)
+	wantDir := utils.GetAnalysisNodeDir(analysis.BaseDir(), analysis.ProjectID, node.ScriptID, node.ID)
+	if node.Dir() != wantDir {
+		t.Fatalf("workspace dir = %q, want %q", node.Dir(), wantDir)
 	}
 	if got := node.OutputDirectory(); got != filepath.Join(wantDir, "output") {
 		t.Fatalf("output dir = %q", got)
@@ -74,8 +76,8 @@ func TestMaterializeLeavesPathsEmptyWithoutAnalysisOutputDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Materialize failed: %v", err)
 	}
-	if node.WorkspaceDir != "" {
-		t.Fatalf("workspace dir should stay empty, got %q", node.WorkspaceDir)
+	if node.Dir() != "" {
+		t.Fatalf("workspace dir should stay empty, got %q", node.Dir())
 	}
 }
 
@@ -158,9 +160,9 @@ func TestMaterializeSkipsGetFinishedAt(t *testing.T) {
 func TestProbeKeepsIdentityAndRefreshsTemplate(t *testing.T) {
 	existing := &types.AnalysisNode{
 		ID:             5,
+		ProjectID:      7,
 		AnalysisNodeID: "node-a",
 		NodeID:         "a",
-		WorkspaceDir:   "/tmp/5",
 		ResolvedInputs: types.JSONMap{"p": "old"},
 		Status:         dagruntime.StatusDone,
 	}
@@ -172,8 +174,8 @@ func TestProbeKeepsIdentityAndRefreshsTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Probe failed: %v", err)
 	}
-	if probe.ID != existing.ID || probe.AnalysisNodeID != existing.AnalysisNodeID || probe.WorkspaceDir != existing.WorkspaceDir {
-		t.Fatalf("probe must keep the node identity/workspace: %+v", probe)
+	if probe.ID != existing.ID || probe.AnalysisNodeID != existing.AnalysisNodeID || probe.ProjectID != existing.ProjectID {
+		t.Fatalf("probe must keep the node identity: %+v", probe)
 	}
 	if probe.ResolvedInputs["p"] != "new" {
 		t.Fatalf("probe should carry the freshly compiled inputs, got %#v", probe.ResolvedInputs)

@@ -593,7 +593,7 @@ func (h *ContainerHandler) CreateAppSessionByAnalysisNode(c *gin.Context) {
 		scriptItem.ContainerTemplateID,
 		req.Name,
 		int64(analysisNode.ID),
-		analysisNode.WorkspaceDir,
+		analysisNode.Dir(),
 	)
 	if err != nil {
 		handleDataError(c, err, "failed to create app session")

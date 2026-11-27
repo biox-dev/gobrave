@@ -2,8 +2,6 @@ package dataflow
 
 import (
 	"context"
-	"fmt"
-	"path/filepath"
 	"strings"
 
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
@@ -207,44 +205,6 @@ func (r *persistentDataflowRuntime) persistAnalysisNode(ctx context.Context, pay
 	return item, true, nil
 }
 
-func (r *persistentDataflowRuntime) populateNodePathDefaults(ctx context.Context, node *types.AnalysisNode) {
-	if node == nil {
-		return
-	}
-
-	baseWorkspace := strings.TrimSpace(node.WorkspaceDir)
-	if baseWorkspace == "" {
-		analysisOutputDir := r.lookupAnalysisOutputDir(ctx, node.AnalysisID)
-		if analysisOutputDir != "" {
-			baseWorkspace = filepath.Join(analysisOutputDir, fmt.Sprintf("%d", node.ID))
-		}
-	}
-
-	// 派生路径由 WorkspaceDir 推导（见 types.AnalysisNode 的方法），这里只补节点根目录。
-	if strings.TrimSpace(node.WorkspaceDir) == "" {
-		node.WorkspaceDir = baseWorkspace
-	}
-}
-
-func (r *persistentDataflowRuntime) lookupAnalysisOutputDir(ctx context.Context, analysisID int64) string {
-	if r == nil || r.repo == nil || analysisID <= 0 {
-		return ""
-	}
-	analysis, err := r.repo.GetAnalysisByID(ctx, analysisID)
-	if err != nil {
-		logger.Warnf(ctx,
-			"[DataflowDagOrchestratorV3] lookup analysis output_dir failed, analysis_id=%d err=%v",
-			analysisID,
-			err,
-		)
-		return ""
-	}
-	if analysis == nil {
-		return ""
-	}
-	return strings.TrimSpace(analysis.WorkspaceDir)
-}
-
 func (r *persistentDataflowRuntime) incrementInflight(analysisNodeID int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -312,15 +272,11 @@ func (r *persistentDataflowRuntime) buildAnalysisNode(ctx context.Context, scrip
 		Analysis:       analysis,
 		Spec:           buildNodeSpec(script, payload),
 		Status:         status,
-		WorkspaceDir:   strings.TrimSpace(payload.WorkspaceDir),
 		CreationSource: nodebuild.CreationSourceScheduler,
 	})
 	if err != nil {
 		return nil, err
 	}
-	// Fallback for analyses without a configured output directory; normally the
-	// builder already derived every path.
-	r.populateNodePathDefaults(ctx, node)
 	return node, nil
 }
 

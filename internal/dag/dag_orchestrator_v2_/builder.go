@@ -3,8 +3,6 @@ package orchestratorv2
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -13,37 +11,6 @@ import (
 	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/google/uuid"
 )
-
-// WorkspaceLayout is the on-disk contract of a single analysis node.
-type WorkspaceLayout struct {
-	// Dir is the node root directory.
-	Dir string
-	// OutputDir receives produced artifacts.
-	OutputDir string
-	// CacheDir holds intermediate cache artifacts.
-	CacheDir string
-	// ParamsPath is the generated params.json path.
-	ParamsPath string
-	// CommandPath is the generated run.sh path.
-	CommandPath string
-	// LogPath is the captured command log path.
-	LogPath string
-}
-
-// newWorkspaceLayout allocates a fresh directory tree below the analysis
-// output directory. The node primary key doubles as the directory name so the
-// on-disk layout stays traceable from the database.
-func newWorkspaceLayout(analysisOutputDir string, nodeID int64) WorkspaceLayout {
-	dir := filepath.Join(analysisOutputDir, strconv.FormatInt(nodeID, 10))
-	return WorkspaceLayout{
-		Dir:         dir,
-		OutputDir:   utils.GetAnalysisNodeOutputDir(dir),
-		CacheDir:    utils.GetAnalysisNodeCacheDir(dir),
-		ParamsPath:  filepath.Join(dir, "params.json"),
-		CommandPath: filepath.Join(dir, "run.sh"),
-		LogPath:     filepath.Join(dir, "command.log"),
-	}
-}
 
 // NodeBuilder assembles analysis_node entities from compiled templates.
 //
@@ -90,14 +57,9 @@ func (b *NodeBuilder) Materialize(req MaterializeRequest) (*types.AnalysisNode, 
 	}
 
 	nodeID := utils.GenerateID()
-	layout := newWorkspaceLayout(req.Analysis.WorkspaceDir, nodeID)
 
 	resolvedInputs := cloneJSONMap(req.Spec.ResolvedInputs)
 	mergeUpstreamInputs(req.Spec, resolvedInputs, req.Incoming, req.Upstream)
-
-	if err := os.MkdirAll(layout.OutputDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create node output dir failed: %w", err)
-	}
 
 	var finishedAt *time.Time
 	if req.Status == dagruntime.StatusSkipped {
@@ -105,7 +67,7 @@ func (b *NodeBuilder) Materialize(req MaterializeRequest) (*types.AnalysisNode, 
 		finishedAt = &now
 	}
 
-	return &types.AnalysisNode{
+	node := &types.AnalysisNode{
 		ID:                     nodeID,
 		AnalysisNodeID:         fallbackString(strings.TrimSpace(req.Spec.AnalysisNodeID), "node-"+uuid.NewString()),
 		AnalysisID:             req.Analysis.ID,
@@ -127,12 +89,19 @@ func (b *NodeBuilder) Materialize(req MaterializeRequest) (*types.AnalysisNode, 
 		DownstreamIDs:          types.JSONSlice(stringSliceToAny(req.Spec.DownstreamIDs)),
 		InputValidationErrors:  cloneJSONSlice(req.Spec.InputValidationErrors),
 		OutputValidationErrors: types.JSONSlice{},
-		WorkspaceDir:           layout.Dir,
 		ErrorMessage:           req.ErrorMessage,
 		RerunReason:            req.Spec.RerunReason,
 		CreationSource:         creationSourceScheduler,
 		FinishedAt:             finishedAt,
-	}, nil
+	}
+	// 节点目录由 base_dir + 项目 + 节点主键推导（见 types.AnalysisNode.Dir）。
+	node.SetBaseDir(req.Analysis.BaseDir())
+	if outDir := node.OutputDirectory(); outDir != "" {
+		if err := os.MkdirAll(outDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create node output dir failed: %w", err)
+		}
+	}
+	return node, nil
 }
 
 // Probe rewrites the volatile fields of an existing node with the freshly

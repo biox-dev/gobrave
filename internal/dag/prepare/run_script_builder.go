@@ -127,14 +127,14 @@ func (QmdScriptBuilder) Name() string { return "qmd" }
 
 func (QmdScriptBuilder) Build(node *types.AnalysisNode, scriptPath, scriptWorkspacePath string, _ string, _ map[string]any) (string, error) {
 	// quarto preview chapter_5.qmd --to md --no-watch-inputs --no-browse
-	// 判断node.WorkspaceDir 是否存在 main.qmd文件，不存在创建 链接 ln -s scriptPath main.qmd
-	// mainFile := filepath.Join(node.WorkspaceDir, "main.qmd")
+	// 判断 node.Dir() 是否存在 main.qmd文件，不存在创建 链接 ln -s scriptPath main.qmd
+	// mainFile := filepath.Join(node.Dir(), "main.qmd")
 	// if _, err := os.Stat(mainFile); os.IsNotExist(err) {
 	// 	if err := os.Symlink(scriptPath, mainFile); err != nil {
 	// 		return "", fmt.Errorf("failed to create symlink for main.qmd: %w", err)
 	// 	}
 	// }
-	envFile := utils.GetAnalysisNodeEnvFile(node.WorkspaceDir)
+	envFile := utils.GetAnalysisNodeEnvFile(node.Dir())
 
 	outputFileName := "output.md"
 	outputFile := filepath.Join(node.OutputDirectory(), outputFileName)
@@ -148,7 +148,7 @@ mkdir -p "$TMPDIR"
 
 quarto render main.qmd --to md --output-dir %q --execute-dir %q --output - > output.md
 mv output.md %q
-`, envFile, node.OutputDirectory(), node.WorkspaceDir, outputFile), nil
+`, envFile, node.OutputDirectory(), node.Dir(), outputFile), nil
 
 }
 

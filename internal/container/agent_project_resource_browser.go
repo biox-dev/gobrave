@@ -39,8 +39,8 @@ import (
 //
 // 路径口径与 create_script / update_script 完全一致：脚本主文件 / io_schema.json / README.md
 // 一律由 types.Script 的逐文件方法（MainFile / IOSchemaFile / ReadmeFile）推导，不在各调用点手写 join；
-// 节点工作目录与 params.json 取自 analysisRepository 在读取时
-// 还原的绝对路径（WorkspaceDir 落库为相对 storage.base_dir 的路径）。
+// 节点工作目录与 params.json 取自 repository 注入 storage.base_dir 后由
+// types.AnalysisNode.Dir 推导的路径。
 
 // projectResourceBrowser 同时实现 runtimecontext 的多个窄接口，由 container 单点装配。
 type projectResourceBrowser struct {
@@ -201,7 +201,7 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 		return runtimecontext.AnalysisNodeBrief{}, fmt.Errorf("get_analysis_node: required services are not configured")
 	}
 
-	// repository 读取时已把 WorkspaceDir 还原成绝对路径，并填充 ParamsPath 等派生路径。
+	// repository 读取时已注入 storage.base_dir，Dir / ParamsPath 等路径由实体方法推导。
 	node, err := b.analysisRepo.GetAnalysisNodeByID(ctx, nodeID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -223,7 +223,7 @@ func (b *projectResourceBrowser) GetAnalysisNodeByID(ctx context.Context, projec
 		NodeType:            node.NodeType(),
 		NodeTypeDescription: node.NodeTypeDescription(),
 		ScriptID:            node.ScriptID,
-		WorkspaceDir:        node.WorkspaceDir,
+		WorkspaceDir:        node.Dir(),
 		CommandPath:         node.CommandFile(),
 		ParamsPath:          node.ParamsFile(),
 		OutputDir:           node.OutputDirectory(),
@@ -589,7 +589,7 @@ func (b *projectResourceBrowser) workflowGraphSummary(ctx context.Context, proje
 
 // GetAnalysisByID 按主键读取一次分析运行（nextflow 行），并校验其属于当前激活项目。
 //
-// WorkspaceDir 由 repository 还原成绝对路径，ParamsPath 按 WorkspaceDir 派生；
+// repository 读取时注入 storage.base_dir，Dir / ParamsPath 等路径由实体方法推导；
 // 同时回传工作流名称与节点状态分布，便于模型判断这次运行当前处于什么阶段。
 func (b *projectResourceBrowser) GetAnalysisByID(ctx context.Context, projectID int64, analysisID int64) (runtimecontext.AnalysisDetail, error) {
 	if projectID <= 0 {
@@ -625,7 +625,7 @@ func (b *projectResourceBrowser) GetAnalysisByID(ctx context.Context, projectID 
 		JobStatus:     analysis.JobStatus,
 		SchedulerMode: types.NormalizeSchedulerMode(analysis.SchedulerMode),
 		CacheType:     analysis.CacheType,
-		WorkspaceDir:  analysis.WorkspaceDir,
+		WorkspaceDir:  analysis.Dir(),
 		ParamsPath:    analysis.ParamsFile(),
 		RequestParam:  agentanalysis.DecodeRequestParam(analysis.RequestParam),
 	}

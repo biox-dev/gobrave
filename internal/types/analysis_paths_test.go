@@ -7,11 +7,18 @@ import (
 )
 
 // TestAnalysisNodePathMethods pins the single source of a node's derived paths:
-// WorkspaceDir. Every path is computed on demand, so a node built by any caller
-// (and never "hydrated") still reports the same layout.
+// Dir() = <baseDir>/data/<project>/analysis_node/<nodeID>. Every path is computed
+// on demand from the entity's own keys plus the injected storage root, so a node
+// built by any caller still reports the same layout.
 func TestAnalysisNodePathMethods(t *testing.T) {
-	ws := filepath.Join(t.TempDir(), "node")
-	node := &AnalysisNode{WorkspaceDir: ws}
+	base := t.TempDir()
+	node := &AnalysisNode{ID: 200, ProjectID: 34, ScriptID: 7}
+	node.SetBaseDir(base)
+	ws := filepath.Join(base, "data", "34", "analysis_node", "7", "200")
+
+	if got := node.Dir(); got != ws {
+		t.Fatalf("dir = %q, want %q", got, ws)
+	}
 
 	for _, tc := range []struct {
 		name string
@@ -31,19 +38,28 @@ func TestAnalysisNodePathMethods(t *testing.T) {
 		}
 	}
 
-	// WorkspaceDir 为空时不产生悬空路径。
-	empty := &AnalysisNode{}
-	for name, got := range map[string]string{
-		"output":          empty.OutputDirectory(),
-		"cache":           empty.CacheDirectory(),
-		"params":          empty.ParamsFile(),
-		"command":         empty.CommandFile(),
-		"log":             empty.LogFile(),
-		"outputs":         empty.OutputsFile(),
-		"output_markdown": empty.OutputMarkdownFile(),
+	// 缺 baseDir 或主键时不产生悬空路径。
+	withoutKeys := &AnalysisNode{ID: 200}
+	withoutKeys.SetBaseDir(base)
+	for name, empty := range map[string]*AnalysisNode{
+		"no base dir":   {},
+		"no project id": withoutKeys,
 	} {
-		if got != "" {
-			t.Fatalf("%s of a workspace-less node = %q, want empty", name, got)
+		if got := empty.Dir(); got != "" {
+			t.Fatalf("%s dir = %q, want empty", name, got)
+		}
+		for pathName, got := range map[string]string{
+			"output":          empty.OutputDirectory(),
+			"cache":           empty.CacheDirectory(),
+			"params":          empty.ParamsFile(),
+			"command":         empty.CommandFile(),
+			"log":             empty.LogFile(),
+			"outputs":         empty.OutputsFile(),
+			"output_markdown": empty.OutputMarkdownFile(),
+		} {
+			if got != "" {
+				t.Fatalf("%s %s of a path-less node = %q, want empty", name, pathName, got)
+			}
 		}
 	}
 
@@ -60,8 +76,12 @@ func TestAnalysisNodePathMethods(t *testing.T) {
 // are no longer struct fields, but they must still be serialized under the same
 // JSON keys the frontend reads.
 func TestAnalysisNodeJSONKeepsDerivedKeys(t *testing.T) {
-	ws := filepath.Join("/data", "34", "analysis_node", "100", "200")
-	raw, err := json.Marshal(&AnalysisNode{ID: 1, NodeID: "align", WorkspaceDir: ws})
+	base := t.TempDir()
+	node := &AnalysisNode{ID: 200, ProjectID: 34, NodeID: "align"}
+	node.SetBaseDir(base)
+	ws := node.Dir()
+
+	raw, err := json.Marshal(node)
 	if err != nil {
 		t.Fatalf("marshal node: %v", err)
 	}
@@ -106,10 +126,14 @@ func TestAnalysisNodeJSONKeepsDerivedKeys(t *testing.T) {
 }
 
 // TestAnalysisWorkflowJSONKeepsDerivedKeys is the workflow counterpart of the
-// node contract: the same JSON keys, all derived from WorkspaceDir.
+// node contract: the same JSON keys, all derived from Dir().
 func TestAnalysisWorkflowJSONKeepsDerivedKeys(t *testing.T) {
-	ws := filepath.Join("/data", "34", "analysis", "run")
-	raw, err := json.Marshal(&AnalysisWorkflow{ID: 1, AnalysisID: "a-1", WorkspaceDir: ws})
+	base := t.TempDir()
+	analysis := &AnalysisWorkflow{ID: 1, ProjectID: 34, WorkflowID: 7, AnalysisID: "a-1"}
+	analysis.SetBaseDir(base)
+	ws := analysis.Dir()
+
+	raw, err := json.Marshal(analysis)
 	if err != nil {
 		t.Fatalf("marshal analysis: %v", err)
 	}

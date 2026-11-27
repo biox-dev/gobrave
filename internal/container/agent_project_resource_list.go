@@ -83,7 +83,7 @@ func (b *projectResourceBrowser) analysisBrief(ctx context.Context, analysis *ty
 		JobStatus:     analysis.JobStatus,
 		SchedulerMode: types.NormalizeSchedulerMode(analysis.SchedulerMode),
 		CacheType:     analysis.CacheType,
-		WorkspaceDir:  analysis.WorkspaceDir,
+		WorkspaceDir:  analysis.Dir(),
 		ParamsPath:    analysis.ParamsFile(),
 		RequestParam:  agentanalysis.DecodeRequestParam(analysis.RequestParam),
 	}
@@ -229,7 +229,7 @@ func (b *projectResourceBrowser) analysisNodeSummary(ctx context.Context, cache 
 		NodeType:            node.NodeType(),
 		NodeTypeDescription: node.NodeTypeDescription(),
 		ScriptID:            node.ScriptID,
-		WorkspaceDir:        node.WorkspaceDir,
+		WorkspaceDir:        node.Dir(),
 		CommandPath:         node.CommandFile(),
 		ParamsPath:          node.ParamsFile(),
 		OutputDir:           node.OutputDirectory(),

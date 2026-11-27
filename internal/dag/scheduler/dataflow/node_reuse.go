@@ -118,7 +118,7 @@ func (r *persistentDataflowRuntime) buildReuseProbe(ctx context.Context, payload
 		return existing, nil
 	}
 	probe.Status = dagruntime.StatusReady
-	r.populateNodePathDefaults(ctx, probe)
+	// 目录由 base_dir + 主键推导，探针只用于指纹对比，无需补路径。
 	return probe, nil
 }
 

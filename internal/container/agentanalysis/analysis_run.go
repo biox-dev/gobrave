@@ -347,7 +347,7 @@ func (m *analysisManager) brief(ctx context.Context, analysis *types.AnalysisWor
 		JobStatus:     analysis.JobStatus,
 		SchedulerMode: orchestrator.Name(),
 		CacheType:     analysis.CacheType,
-		WorkspaceDir:  analysis.WorkspaceDir,
+		WorkspaceDir:  analysis.Dir(),
 		ParamsPath:    analysis.ParamsFile(),
 		RequestParam:  DecodeRequestParam(analysis.RequestParam),
 	}

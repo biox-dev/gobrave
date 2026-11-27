@@ -160,7 +160,7 @@ func (u *analysisNodeUpdater) UpdateScriptAnalysis(ctx context.Context, in runti
 		AnalysisNodeID: node.ID,
 		NodeName:       node.NodeName,
 		ScriptID:       node.ScriptID,
-		WorkspaceDir:   node.WorkspaceDir,
+		WorkspaceDir:   node.Dir(),
 		ParamsPath:     node.ParamsFile(),
 		CommandPath:    node.CommandFile(),
 		RequestParam:   requestParam,

@@ -108,7 +108,7 @@ func (r *agentRunAnalysis) CreateAgentAnalysis(ctx context.Context, in runtimeco
 			AgentAnalysisID: node.ID,
 			Status:          node.Status,
 			Ran:             false,
-			WorkspaceDir:    node.WorkspaceDir,
+			WorkspaceDir:    node.Dir(),
 			CommandPath:     node.CommandFile(),
 		}
 		r.fillRuntimeFacts(ctx, node.ID, &result)

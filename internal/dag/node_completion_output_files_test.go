@@ -46,7 +46,17 @@ func (r *recordingDataRepo) CreateFile(_ context.Context, file *types.File) erro
 // the node output dir, and the container metadata that buildResolvedOutputs adds
 // is not recorded as a file.
 func TestRecordNodeOutputFilesAgentNodeWalksResolvedOutputs(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "output")
+	node := &types.AnalysisNode{
+		ID:             7,
+		ProjectID:      1,
+		AnalysisID:     34,
+		NodeID:         "node-agent",
+		NodeName:       "agent analysis",
+		CreationSource: types.AnalysisNodeCreationSourceAgent,
+		OutputPatterns: types.JSONMap{},
+	}
+	node.SetBaseDir(t.TempDir())
+	dir := node.OutputDirectory()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("create output dir: %v", err)
 	}
@@ -61,16 +71,6 @@ func TestRecordNodeOutputFilesAgentNodeWalksResolvedOutputs(t *testing.T) {
 	counts := filepath.Join(sub, "counts.tsv")
 	if err := os.WriteFile(counts, []byte("a\tb\n"), 0o644); err != nil {
 		t.Fatalf("write counts: %v", err)
-	}
-
-	node := &types.AnalysisNode{
-		ID:             7,
-		AnalysisID:     34,
-		NodeID:         "node-agent",
-		NodeName:       "agent analysis",
-		CreationSource: types.AnalysisNodeCreationSourceAgent,
-		OutputPatterns: types.JSONMap{},
-		WorkspaceDir:   filepath.Dir(dir),
 	}
 
 	repo := newRecordingDataRepo()
@@ -120,7 +120,21 @@ func TestRecordNodeOutputFilesAgentNodeWalksResolvedOutputs(t *testing.T) {
 // published with DefaultNodeOutputRole. Declared non-file values ("stats" = "42")
 // are not files and are therefore not recorded.
 func TestRecordNodeOutputFilesScriptNodeRecordsEveryFile(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "output")
+	node := &types.AnalysisNode{
+		ID:             9,
+		ProjectID:      1,
+		AnalysisID:     34,
+		NodeID:         "node-script",
+		NodeName:       "align",
+		ScriptID:       11,
+		CreationSource: types.AnalysisNodeCreationSourceScript,
+		OutputPatterns: types.JSONMap{
+			"bam":   map[string]any{"type": "file", "role": "table"},
+			"stats": map[string]any{"type": "string"},
+		},
+	}
+	node.SetBaseDir(t.TempDir())
+	dir := node.OutputDirectory()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("create output dir: %v", err)
 	}
@@ -131,20 +145,6 @@ func TestRecordNodeOutputFilesScriptNodeRecordsEveryFile(t *testing.T) {
 	extra := filepath.Join(dir, "extra.txt")
 	if err := os.WriteFile(extra, []byte("extra"), 0o644); err != nil {
 		t.Fatalf("write extra: %v", err)
-	}
-
-	node := &types.AnalysisNode{
-		ID:             9,
-		AnalysisID:     34,
-		NodeID:         "node-script",
-		NodeName:       "align",
-		ScriptID:       11,
-		CreationSource: types.AnalysisNodeCreationSourceScript,
-		OutputPatterns: types.JSONMap{
-			"bam":   map[string]any{"type": "file", "role": "table"},
-			"stats": map[string]any{"type": "string"},
-		},
-		WorkspaceDir: filepath.Dir(dir),
 	}
 
 	repo := newRecordingDataRepo()

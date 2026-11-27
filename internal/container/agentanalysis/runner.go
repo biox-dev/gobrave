@@ -123,7 +123,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 			NodeID:       nodeID,
 			Status:       node.Status,
 			Log:          readAnalysisNodeLog(node.LogFile(), r.maxLogBytes),
-			WorkspaceDir: node.WorkspaceDir,
+			WorkspaceDir: node.Dir(),
 			CommandPath:  node.CommandFile(),
 			ParamsPath:   node.ParamsFile(),
 			LogPath:      node.LogFile(),
@@ -147,7 +147,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 			return runtimecontext.AnalysisNodeRunResult{
 				NodeID:       nodeID,
 				Status:       "params_failed",
-				WorkspaceDir: node.WorkspaceDir,
+				WorkspaceDir: node.Dir(),
 				CommandPath:  node.CommandFile(),
 				ParamsPath:   node.ParamsFile(),
 			}, fmt.Errorf("failed to prepare command node: %w", err)
@@ -165,7 +165,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		return runtimecontext.AnalysisNodeRunResult{
 			NodeID:       nodeID,
 			Status:       "params_failed",
-			WorkspaceDir: node.WorkspaceDir,
+			WorkspaceDir: node.Dir(),
 			CommandPath:  node.CommandFile(),
 			ParamsPath:   node.ParamsFile(),
 			LogPath:      node.LogFile(),
@@ -232,7 +232,7 @@ func (r *analysisNodeRunner) RunAnalysisNode(ctx context.Context, nodeID int64, 
 		return runtimecontext.AnalysisNodeRunResult{
 			NodeID:         nodeID,
 			Status:         "params_failed",
-			WorkspaceDir:   node.WorkspaceDir,
+			WorkspaceDir:   node.Dir(),
 			CommandPath:    node.CommandFile(),
 			ParamsPath:     node.ParamsFile(),
 			RequestParam:   effectiveRequestParam,
@@ -341,9 +341,9 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, node *types.
 	// publishNodeResult 填入的正是 node.ID，因此节点维度的匹配用它。
 	nodeID := node.ID
 	scriptID := node.ScriptID
-	// 运行期路径全部由节点的 WorkspaceDir 派生，这里取一份，保证取消 / 超时等
+	// 运行期路径全部由节点目录派生（见 types.AnalysisNode.Dir），这里取一份，保证取消 / 超时等
 	// 非终态返回也能告诉模型文件在哪。
-	workspaceDir := strings.TrimSpace(node.WorkspaceDir)
+	workspaceDir := strings.TrimSpace(node.Dir())
 	commandPath := strings.TrimSpace(node.CommandFile())
 	paramsPath := strings.TrimSpace(node.ParamsFile())
 	logPath := strings.TrimSpace(node.LogFile())
@@ -412,9 +412,8 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, node *types.
 			if lp := strings.TrimSpace(node.LogFile()); lp != "" {
 				logPath = lp
 			}
-			// 节点详情里带的是已还原的绝对路径，优先以它为准（repository 读取时会把
-			// WorkspaceDir 还原成绝对路径，派生路径由它推导）。
-			if v := strings.TrimSpace(node.WorkspaceDir); v != "" {
+			// 节点详情里的目录由 base_dir + 主键推导，优先以它为准。
+			if v := strings.TrimSpace(node.Dir()); v != "" {
 				workspaceDir = v
 			}
 			if v := strings.TrimSpace(node.CommandFile()); v != "" {
@@ -433,7 +432,7 @@ func (r *analysisNodeRunner) waitForCompletion(ctx context.Context, node *types.
 					Status:       node.Status,
 					Log:          log,
 					Success:      success,
-					WorkspaceDir: node.WorkspaceDir,
+					WorkspaceDir: node.Dir(),
 					CommandPath:  node.CommandFile(),
 					ParamsPath:   node.ParamsFile(),
 					LogPath:      logPath,

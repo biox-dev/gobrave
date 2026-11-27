@@ -28,7 +28,8 @@ package nodebuild
 //   - InstanceInputHash is a stable digest of NodeID + resolved inputs + params
 //     and distinguishes the several instances a scattered process can produce.
 //
-// The workspace layout is analysis.output_dir/<node record id>/ with run.sh,
-// params.json, command.log, output/ and cached/ below it. Both schedulers derive
-// it through ResolveLayout, so the artifact paths stored on the row always point
-// at the same files no matter which scheduler created the node.
+// The workspace layout is <base_dir>/data/<project>/analysis_node/<script id>/<node id>/
+// with run.sh, params.json, command.log, output/ and cached/ below it (a command node
+// has no script, so its segment is 0). Both schedulers derive it from
+// types.AnalysisNode.Dir (the single source of truth), so the artifact paths always
+// point at the same files no matter which scheduler created the node.

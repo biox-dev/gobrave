@@ -259,8 +259,8 @@ func (w *ContainerCreateWorker) buildDagNodeVariables(ctx context.Context, set *
 	set.add("ANALYSIS_NODE_ID", strconv.FormatUint(uint64(node.ID), 10))
 	set.add("ANALYSIS_ID", strconv.FormatInt(node.AnalysisID, 10))
 	set.add("NODE_ID", node.NodeID)
-	set.add("WORKSPACE_PATH", node.WorkspaceDir)
-	set.add("WORKSPACE_DIR", node.WorkspaceDir)
+	set.add("WORKSPACE_PATH", node.Dir())
+	set.add("WORKSPACE_DIR", node.Dir())
 	set.add("OUTPUT_DIR", node.OutputDirectory())
 	set.add("COMMAND_PATH", node.CommandFile())
 
@@ -272,5 +272,5 @@ func (w *ContainerCreateWorker) buildDagNodeVariables(ctx context.Context, set *
 	}
 	set.add("LOG_PATH", logPath)
 
-	w.ensureDirs(ctx, []string{node.WorkspaceDir, node.OutputDirectory()})
+	w.ensureDirs(ctx, []string{node.Dir(), node.OutputDirectory()})
 }

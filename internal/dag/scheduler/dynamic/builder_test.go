@@ -3,7 +3,6 @@ package dynamic
 import (
 	"context"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	dagruntime "github.com/biox-dev/gobrave/internal/dag"
@@ -27,7 +26,8 @@ func TestBuildDynamicAnalysisNodeUsesSharedLayoutAndIdentity(t *testing.T) {
 	requireSnowflake(t)
 
 	orchestrator := &dynamicDagOrchestratorV2{}
-	analysis := &types.AnalysisWorkflow{ID: 9, ProjectID: 2, WorkspaceDir: t.TempDir()}
+	analysis := &types.AnalysisWorkflow{ID: 9, ProjectID: 2, WorkflowID: 4}
+	analysis.SetBaseDir(t.TempDir())
 	row := map[string]any{
 		"node_id":         "align",
 		"node_name":       "align",
@@ -42,9 +42,9 @@ func TestBuildDynamicAnalysisNodeUsesSharedLayoutAndIdentity(t *testing.T) {
 		t.Fatalf("buildDynamicAnalysisNode failed: %v", err)
 	}
 
-	wantWorkspace := filepath.Join(analysis.WorkspaceDir, strconv.FormatInt(node.ID, 10))
-	if node.WorkspaceDir != wantWorkspace {
-		t.Fatalf("workspace dir = %q, want %q", node.WorkspaceDir, wantWorkspace)
+	wantWorkspace := utils.GetAnalysisNodeDir(analysis.BaseDir(), analysis.ProjectID, node.ScriptID, node.ID)
+	if node.Dir() != wantWorkspace {
+		t.Fatalf("workspace dir = %q, want %q", node.Dir(), wantWorkspace)
 	}
 	if got := node.OutputDirectory(); got != filepath.Join(wantWorkspace, "output") {
 		t.Fatalf("output dir = %q", got)
@@ -65,9 +65,9 @@ func TestBuildCacheProbeIsACopyWithFreshParams(t *testing.T) {
 	orchestrator := &dynamicDagOrchestratorV2{}
 	existing := &types.AnalysisNode{
 		ID:             1,
+		ProjectID:      2,
 		AnalysisNodeID: "node-align",
 		NodeID:         "align",
-		WorkspaceDir:   "/tmp/1",
 		Status:         dagruntime.StatusDone,
 		ResolvedInputs: types.JSONMap{"threads": 1},
 	}
@@ -84,8 +84,8 @@ func TestBuildCacheProbeIsACopyWithFreshParams(t *testing.T) {
 	if probe == existing {
 		t.Fatal("probe must be a copy, not the persisted node")
 	}
-	if probe.ID != existing.ID || probe.AnalysisNodeID != existing.AnalysisNodeID || probe.WorkspaceDir != existing.WorkspaceDir {
-		t.Fatalf("probe must keep the node identity/workspace: %+v", probe)
+	if probe.ID != existing.ID || probe.AnalysisNodeID != existing.AnalysisNodeID || probe.ProjectID != existing.ProjectID {
+		t.Fatalf("probe must keep the node identity: %+v", probe)
 	}
 	if probe.ResolvedInputs["threads"] != 4 {
 		t.Fatalf("probe should carry the freshly compiled inputs, got %#v", probe.ResolvedInputs)

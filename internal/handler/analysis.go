@@ -548,15 +548,13 @@ func (h *AnalysisHandler) SaveAnalysisNodeControllerWithScript(c *gin.Context) {
 	}
 
 	node := built.Node
-	// 保存既有节点时保持原主键 / 业务 ID / 工作目录，只覆盖面向上层的字段。
+	// 保存既有节点时保持原主键 / 业务 ID，只覆盖面向上层的字段。
+	// 目录由 base_dir + 项目 + 主键推导（见 types.AnalysisNode.Dir），无需保留旧路径。
 	if existing != nil {
 		node.ID = existing.ID
 		node.AnalysisNodeID = strings.TrimSpace(existing.AnalysisNodeID)
 		if node.AnalysisNodeID == "" {
 			node.AnalysisNodeID = fmt.Sprintf("node-%d", node.ID)
-		}
-		if dir := strings.TrimSpace(existing.WorkspaceDir); dir != "" {
-			node.WorkspaceDir = dir
 		}
 	}
 

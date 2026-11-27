@@ -78,16 +78,16 @@ func (p *aiSummaryContentProvider) resolveAnalysis(ctx context.Context, analysis
 	return AISummaryContent{
 		Title: fmt.Sprintf("%s: %s", workflow.Name, a.AnalysisName),
 		SystemPromptVars: map[string]any{
-			"workspace_directory": a.WorkspaceDir,
+			"workspace_directory": a.Dir(),
 			"workspace_label":     a.AnalysisName,
-			"output_directory":    a.WorkspaceDir,
+			"output_directory":    a.Dir(),
 			"analysis_name":       a.AnalysisName,
 			"analysis_method":     a.AnalysisMethod,
 			"job_status":          a.JobStatus,
 			"output_format":       a.OutputFormat,
 			"workflow_name":       workflow.Name,
 		},
-		WorkingDir: a.WorkspaceDir,
+		WorkingDir: a.Dir(),
 		ProjectID:  a.ProjectID,
 	}, nil
 }

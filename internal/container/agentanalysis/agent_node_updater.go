@@ -150,7 +150,7 @@ func (u *analysisNodeUpdater) UpdateAgentAnalysis(ctx context.Context, in runtim
 		NodeName:            node.NodeName,
 		Command:             currentCommand,
 		ContainerTemplateID: node.ContainerTemplateID,
-		WorkspaceDir:        node.WorkspaceDir,
+		WorkspaceDir:        node.Dir(),
 		CommandPath:         node.CommandFile(),
 		ParamsPath:          node.ParamsFile(),
 		Changed:             changed,

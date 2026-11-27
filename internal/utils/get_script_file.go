@@ -35,15 +35,31 @@ func GetWorkflowFileDir(baseDir string, projectID int64, workflowID string) stri
 func GetWorkflowDir(baseDir string, projectID int64) string {
 	return filepath.Join(baseDir, "data", projectDirName(projectID), "pipeline", "workflow")
 }
-func GetAnalysisDir(baseDir string, projectID int64, workflow int64) string {
-	return filepath.Join(baseDir, "data", projectDirName(projectID), "analysis", fmt.Sprintf("%d", workflow))
-}
-func GetAnalysisNodeDir(baseDir string, projectID int64, scriptID string) string {
-	return filepath.Join(baseDir, "data", projectDirName(projectID), "analysis_node", scriptID)
+
+// GetAnalysisDir 返回一次分析的根目录：
+// <base>/data/<project>/analysis/<workflowID>/<analysisID>。
+//
+// 目录由「项目 + 工作流 + 分析」三个主键唯一确定，不落库，调用方统一走
+// types.AnalysisWorkflow.Dir，不要自己拼。
+func GetAnalysisDir(baseDir string, projectID int64, workflowID int64, analysisID int64) string {
+	return filepath.Join(
+		baseDir, "data", projectDirName(projectID), "analysis",
+		strconv.FormatInt(workflowID, 10),
+		strconv.FormatInt(analysisID, 10),
+	)
 }
 
-func GetAgentNodeDir(baseDir string, projectID int64, nodeID int64) string {
-	return filepath.Join(baseDir, "data", projectDirName(projectID), "analysis_node", fmt.Sprint(nodeID))
+// GetAnalysisNodeDir 返回分析节点的根目录：
+// <base>/data/<project>/analysis_node/<scriptID>/<nodeID>。
+//
+// 脚本节点 / 调度器节点用绑定的 scriptID，Agent 命令节点没有脚本，scriptID 为 0；
+// nodeID 是节点主键，因此同目录不会冲突。调用方统一走 types.AnalysisNode.Dir，不要自己拼。
+func GetAnalysisNodeDir(baseDir string, projectID int64, scriptID int64, nodeID int64) string {
+	return filepath.Join(
+		baseDir, "data", projectDirName(projectID), "analysis_node",
+		strconv.FormatInt(scriptID, 10),
+		strconv.FormatInt(nodeID, 10),
+	)
 }
 
 func GetAnalysisNodeEnvFile(workspaceDir string) string {

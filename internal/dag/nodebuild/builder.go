@@ -87,9 +87,8 @@ type MaterializeRequest struct {
 	// Parser optionally produces the structured recipe for inputs whose declared
 	// type needs the original request form (currently SelectAssay). nil skips it.
 	Parser dagruntime.NodeRequestParser
-	// WorkspaceDir overrides the derived workspace root when a caller has
-	// already allocated one.
-	WorkspaceDir string
+	// WorkspaceDir is gone: the node directory is derived from the analysis'
+	// storage root plus the node's own keys (see types.AnalysisNode.Dir).
 	// NodeRecordID overrides the generated primary key (tests only).
 	NodeRecordID int64
 }
@@ -134,21 +133,12 @@ func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 	if nodeRecordID == 0 {
 		nodeRecordID = utils.GenerateID()
 	}
-	layout := ResolveLayout(req.Analysis.WorkspaceDir, req.WorkspaceDir, nodeRecordID)
 
 	resolvedInputs := cloneJSONMap(req.Spec.ResolvedInputs)
 	MergeUpstreamInputs(req.Spec, resolvedInputs, req.Incoming, req.Upstream)
 	requestParam := encodeRequestParam(req.Spec.RequestParam)
 	resolvedInputs, requestParam = applyUpstreamBindings(req.Ctx, req.Parser, req.Analysis, req.Spec, req.Incoming, req.Upstream, resolvedInputs, requestParam)
 	resolvedInputs, requestParam = applyRequestParamParse(req.Ctx, req.Parser, req.Analysis, req.Spec, resolvedInputs, requestParam)
-
-	// Only create the tree when a workspace could be derived; a caller that
-	// supplies paths later owns creating them (see v3's populateNodePathDefaults).
-	if !layout.IsZero() {
-		if err := os.MkdirAll(layout.OutputDir, 0o755); err != nil {
-			return nil, fmt.Errorf("create node output dir failed: %w", err)
-		}
-	}
 
 	inputHash := strings.TrimSpace(req.Spec.InputHash)
 	if inputHash == "" {
@@ -171,7 +161,7 @@ func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 		analysisNodeID = "node-" + uuid.NewString()
 	}
 
-	return &types.AnalysisNode{
+	node := &types.AnalysisNode{
 		ID:                     nodeRecordID,
 		AnalysisNodeID:         analysisNodeID,
 		AnalysisID:             req.Analysis.ID,
@@ -195,12 +185,20 @@ func Materialize(req MaterializeRequest) (*types.AnalysisNode, error) {
 		DownstreamIDs:          types.JSONSlice(stringSliceToAny(req.Spec.DownstreamIDs)),
 		InputValidationErrors:  cloneJSONSlice(req.Spec.InputValidationErrors),
 		OutputValidationErrors: types.JSONSlice{},
-		WorkspaceDir:           layout.Dir,
 		ErrorMessage:           req.ErrorMessage,
 		RerunReason:            req.Spec.RerunReason,
 		CreationSource:         creationSource,
 		FinishedAt:             finishedAt,
-	}, nil
+	}
+	node.SetBaseDir(req.Analysis.BaseDir())
+	// Only create the tree when a directory can be derived; an analysis without a
+	// storage root leaves every path empty instead of producing dangling relative paths.
+	if outDir := node.OutputDirectory(); outDir != "" {
+		if err := os.MkdirAll(outDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create node output dir failed: %w", err)
+		}
+	}
+	return node, nil
 }
 
 // Probe rewrites the volatile fields of an existing node with the freshly

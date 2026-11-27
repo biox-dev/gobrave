@@ -127,22 +127,22 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	paramsPayload["script_dir"] = scriptDir
 
 	// 软链脚本：若已存在但目标失效（或指向其它脚本），先删除再重建。
-	scriptWorkspacePath := filepath.Join(node.WorkspaceDir, script.MainFileName())
+	scriptWorkspacePath := filepath.Join(node.Dir(), script.MainFileName())
 	if err := ensureSymlink(scriptWorkspacePath, scriptPath); err != nil {
 		return fmt.Errorf("symlink script %s -> %s failed: %w", scriptWorkspacePath, scriptPath, err)
 	}
 
 	// synlink io_schema.json：同样在目标失效或指向错误时重建。
 	ioSchemaPath := script.IOSchemaFile(p.baseDir())
-	scriptWorkspaceIoSchemaPath := filepath.Join(node.WorkspaceDir, utils.IOSchemaFileName)
+	scriptWorkspaceIoSchemaPath := filepath.Join(node.Dir(), utils.IOSchemaFileName)
 	if _, err := os.Lstat(ioSchemaPath); err == nil {
 		if err := ensureSymlink(scriptWorkspaceIoSchemaPath, ioSchemaPath); err != nil {
 			return fmt.Errorf("symlink io_schema %s -> %s failed: %w", scriptWorkspaceIoSchemaPath, ioSchemaPath, err)
 		}
 	}
-	// 在 node.WorkspaceDir/env.sh 中写入
+	// 在 node.Dir()/env.sh 中写入
 	//  export PATH={scriptDir}:$PATH
-	envFilePath := utils.GetAnalysisNodeEnvFile(node.WorkspaceDir)
+	envFilePath := utils.GetAnalysisNodeEnvFile(node.Dir())
 	if err := p.WriteEnvFile(ctx, envFilePath, node, scriptDir); err != nil {
 		return fmt.Errorf("write env.sh failed: %w", err)
 	}
@@ -169,7 +169,10 @@ func (p *FileSystemNodeRuntimePreparer) prepareCommandNode(ctx context.Context, 
 	if err != nil {
 		return fmt.Errorf("load project failed: %w", err)
 	}
-	if err := os.MkdirAll(node.WorkspaceDir, 0o755); err != nil {
+	if node.Dir() == "" {
+		return fmt.Errorf("node dir is empty: missing storage base dir, project id or node id")
+	}
+	if err := os.MkdirAll(node.Dir(), 0o755); err != nil {
 		return fmt.Errorf("create workspace dir failed: %w", err)
 	}
 	if err := os.MkdirAll(node.OutputDirectory(), 0o755); err != nil {
@@ -188,7 +191,7 @@ func (p *FileSystemNodeRuntimePreparer) prepareCommandNode(ctx context.Context, 
 	}
 
 	projectDir := utils.GetProjectDir(p.baseDir(), project.ID)
-	if err := p.WriteEnvFile(ctx, utils.GetAnalysisNodeEnvFile(node.WorkspaceDir), node, projectDir); err != nil {
+	if err := p.WriteEnvFile(ctx, utils.GetAnalysisNodeEnvFile(node.Dir()), node, projectDir); err != nil {
 		return fmt.Errorf("write env.sh failed: %w", err)
 	}
 
@@ -251,9 +254,6 @@ func (p *FileSystemNodeRuntimePreparer) resolveBaseParams(ctx context.Context, n
 	if err := p.ensureNodePaths(node, analysis); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(node.WorkspaceDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create workspace dir failed: %w", err)
-	}
 	if err := os.MkdirAll(node.OutputDirectory(), 0o755); err != nil {
 		return nil, fmt.Errorf("create output dir failed: %w", err)
 	}
@@ -282,22 +282,17 @@ func (p *FileSystemNodeRuntimePreparer) WriteCommand(node *types.AnalysisNode, s
 }
 
 func (p *FileSystemNodeRuntimePreparer) ensureNodePaths(node *types.AnalysisNode, analysis *types.AnalysisWorkflow) error {
-	baseWorkspace := strings.TrimSpace(node.WorkspaceDir)
-	if baseWorkspace == "" {
-		analysisOutputDir := ""
-		if analysis != nil {
-			analysisOutputDir = strings.TrimSpace(analysis.WorkspaceDir)
-		}
-		if analysisOutputDir == "" {
-			return fmt.Errorf("node workspace_dir is empty and analysis output_dir is empty")
-		}
-		baseWorkspace = filepath.Join(analysisOutputDir, fmt.Sprintf("%d", node.ID))
-		node.WorkspaceDir = baseWorkspace
+	// 节点目录由 base_dir + 项目 + 节点主键推导（见 types.AnalysisNode.Dir）。
+	// 节点自身未注入 base_dir 时（例如调度器内存里构造的实例）退回所属分析的主目录。
+	if node.BaseDir() == "" && analysis != nil {
+		node.SetBaseDir(analysis.BaseDir())
+	}
+	if node.Dir() == "" {
+		return fmt.Errorf("node dir is empty: missing storage base dir, project id or node id")
 	}
 
-	// 派生路径统一由 WorkspaceDir 推导（见 types.AnalysisNode 的方法），这里只需保证
-	// 节点根目录存在：params.json / run.sh 都写在它下面，输出 / 缓存目录由 Prepare 创建。
-	if err := os.MkdirAll(node.WorkspaceDir, 0o755); err != nil {
+	// 只需保证节点根目录存在：params.json / run.sh 都写在它下面，输出 / 缓存目录由 Prepare 创建。
+	if err := os.MkdirAll(node.Dir(), 0o755); err != nil {
 		return fmt.Errorf("create node workspace dir failed: %w", err)
 	}
 	return nil
