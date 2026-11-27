@@ -47,22 +47,45 @@ var bannedCommands = []string{
 	"http-prompt", "chrome", "firefox", "safari",
 }
 
-// safeReadOnlyCommands 是不需要授权即可执行的只读命令（对齐 opencode）。
+// safeReadOnlyCommands 是不需要授权即可执行的只读命令。
+//
+// 只收录本身无副作用的命令：不收录 set/unset/env 这类可以包裹任意命令的前缀，
+// 也不收录 kill/killall/timeout/nohup 这类会改变进程状态或包装其它命令的命令。
 var safeReadOnlyCommands = []string{
-	"ls", "echo", "pwd", "date", "cal", "uptime", "whoami", "id", "groups", "env", "printenv", "set", "unset", "which", "type", "whereis",
-	"whatis", "uname", "hostname", "df", "du", "free", "top", "ps", "kill", "killall", "nice", "nohup", "time", "timeout",
+	"ls", "echo", "pwd", "date", "cal", "uptime", "whoami", "id", "groups", "printenv",
+	"which", "type", "whereis", "whatis", "uname", "hostname", "df", "du", "free", "top", "ps",
 
 	"git status", "git log", "git diff", "git show", "git branch", "git tag", "git remote", "git ls-files", "git ls-remote",
 	"git rev-parse", "git config --get", "git config --list", "git describe", "git blame", "git grep", "git shortlog",
 
-	"go version", "go help", "go list", "go env", "go doc", "go vet", "go fmt", "go mod", "go test", "go build", "go run", "go install", "go clean",
+	"go version", "go help", "go list", "go env", "go doc", "go vet",
 }
 
-// isSafeReadOnlyCommand 报告命令是否为无需授权的只读命令。
+// isSafeReadOnlyCommand 报告整条命令是否都是无需授权的只读命令。
+//
+// 命令先按换行、;、&&、||、| 拆成多条子命令，每条都要命中只读白名单；
+// 含重定向、命令替换、子 shell 的写法无法静态判断，一律按需要授权处理。
 func isSafeReadOnlyCommand(command string) bool {
-	cmdLower := strings.ToLower(command)
+	segments, ok := splitCommandSegments(command)
+	if !ok || len(segments) == 0 {
+		return false
+	}
+	for _, segment := range segments {
+		if !isReadOnlySegment(segment) {
+			return false
+		}
+	}
+	return true
+}
+
+// isReadOnlySegment 判断单条子命令是否命中只读白名单。
+func isReadOnlySegment(segment string) bool {
+	cmdLower := strings.ToLower(stripAssignments(segment))
+	if cmdLower == "" {
+		return true
+	}
 	for _, safe := range safeReadOnlyCommands {
-		if !strings.HasPrefix(cmdLower, strings.ToLower(safe)) {
+		if !strings.HasPrefix(cmdLower, safe) {
 			continue
 		}
 		if len(cmdLower) == len(safe) || cmdLower[len(safe)] == ' ' || cmdLower[len(safe)] == '-' {
@@ -70,6 +93,116 @@ func isSafeReadOnlyCommand(command string) bool {
 		}
 	}
 	return false
+}
+
+// stripAssignments 去掉子命令开头的变量赋值（如 SRC=/data），它们本身没有副作用。
+func stripAssignments(segment string) string {
+	fields := strings.Fields(segment)
+	i := 0
+	for i < len(fields) && isAssignment(fields[i]) {
+		i++
+	}
+	return strings.Join(fields[i:], " ")
+}
+
+// isAssignment 判断 token 是否为 NAME=value 形式的变量赋值。
+func isAssignment(token string) bool {
+	name, _, ok := strings.Cut(token, "=")
+	if !ok || name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+		case r >= '0' && r <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// splitCommandSegments 把命令按换行、;、&&、||、| 拆成子命令。
+//
+// 第二个返回值为 false 表示命令含有重定向、命令替换、子 shell 等无法静态判断的写法。
+func splitCommandSegments(command string) ([]string, bool) {
+	var (
+		segments []string
+		current  strings.Builder
+		quote    rune // 0 表示不在引号内
+	)
+	flush := func() {
+		if s := strings.TrimSpace(current.String()); s != "" {
+			segments = append(segments, s)
+		}
+		current.Reset()
+	}
+
+	runes := []rune(command)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		switch {
+		case quote != 0:
+			if r == '\\' && i+1 < len(runes) {
+				current.WriteRune(r)
+				i++
+				current.WriteRune(runes[i])
+				continue
+			}
+			if r == quote {
+				quote = 0
+			}
+			current.WriteRune(r)
+		case r == '\'' || r == '"':
+			quote = r
+			current.WriteRune(r)
+		case r == '\\':
+			if i+1 < len(runes) {
+				current.WriteRune(r)
+				i++
+				current.WriteRune(runes[i])
+			}
+		case r == '\n' || r == '\r' || r == ';':
+			flush()
+		case r == '&' || r == '|':
+			flush()
+			if i+1 < len(runes) && runes[i+1] == r {
+				i++
+			}
+		case r == '>' || r == '<' || r == '`' || r == '(' || r == ')':
+			return nil, false
+		default:
+			current.WriteRune(r)
+		}
+	}
+	flush()
+	return segments, true
+}
+
+// bannedCommand 返回命令中第一个被禁用的命令名，没有则返回空串。
+func bannedCommand(command string) string {
+	segments, ok := splitCommandSegments(command)
+	if !ok {
+		segments = []string{command}
+	}
+	for _, segment := range segments {
+		name := commandName(segment)
+		for _, banned := range bannedCommands {
+			if strings.EqualFold(name, banned) {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// commandName 取出子命令的可执行文件名，忽略开头的变量赋值与包裹的引号。
+func commandName(segment string) string {
+	fields := strings.Fields(stripAssignments(segment))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Trim(fields[0], `"'`)
 }
 
 func bashDescription() string {
@@ -255,15 +388,12 @@ func (b *bashTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 		params.Timeout = DefaultTimeout
 	}
 
-	if params.Command == "" {
+	if strings.TrimSpace(params.Command) == "" {
 		return nil, toolError("missing command")
 	}
 
-	baseCmd := strings.Fields(params.Command)[0]
-	for _, banned := range bannedCommands {
-		if strings.EqualFold(baseCmd, banned) {
-			return nil, toolError(fmt.Sprintf("command '%s' is not allowed", baseCmd))
-		}
+	if banned := bannedCommand(params.Command); banned != "" {
+		return nil, toolError(fmt.Sprintf("command '%s' is not allowed", banned))
 	}
 
 	if !isSafeReadOnlyCommand(params.Command) {

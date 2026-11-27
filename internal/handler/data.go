@@ -80,8 +80,9 @@ type datasetIDQuery struct {
 	DatasetID int64 `form:"dataset_id" binding:"required"`
 }
 
-// importDatasetDirFilesRequest imports every physical file under the dataset
-// workspace directory into go_file/go_dataset_file. role defaults to DEFAULT.
+// importDatasetDirFilesRequest imports every physical file directly inside the
+// dataset workspace directory (top level only) into go_file/go_dataset_file.
+// role defaults to DEFAULT.
 type importDatasetDirFilesRequest struct {
 	DatasetID int64  `json:"dataset_id,string" binding:"required"`
 	Role      string `json:"role"`

@@ -17,9 +17,10 @@ type DataService interface {
 	// (utils.GetDatasetDir) and every physical file found under it (recursively),
 	// flagging the ones already bound to the dataset.
 	ListDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64) (string, []*types.DatasetDirFile, error)
-	// ImportDatasetDirFiles registers every file under the dataset workspace
-	// directory that is not yet bound to the dataset (matched by
-	// go_file.path + go_dataset_file.dataset_id).
+	// ImportDatasetDirFiles registers every file directly inside the dataset
+	// workspace directory (top level only, nested directories are skipped) that
+	// is not yet bound to the dataset (matched by go_file.path +
+	// go_dataset_file.dataset_id).
 	ImportDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64, role types.Role) (*types.ImportDatasetDirFilesResult, error)
 	// ListDatasetFiles returns every file bound to one dataset (go_dataset_file ->
 	// go_file), newest binding first.

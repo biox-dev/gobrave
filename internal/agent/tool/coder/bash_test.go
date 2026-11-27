@@ -52,3 +52,60 @@ func TestBashToolRunsCommand(t *testing.T) {
 		t.Fatalf("command took %s, expected a fast execution", elapsed)
 	}
 }
+
+// TestIsSafeReadOnlyCommand 覆盖只读判定：多行/串联/管道的命令必须逐段校验，
+// 不能因为首个子命令在白名单里就整条放行。
+func TestIsSafeReadOnlyCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{"simple read only", "ls -l /tmp", true},
+		{"multi line read only", "ls\npwd", true},
+		{"variable assignment prefix", "SRC=/data ls \"$SRC\"", true},
+		{"quoted separator", "ls \"a;b\"", true},
+
+		{"set -e then mv", "set -e\nSRC=/data/a\nDST=/data/b\nmv \"$SRC\" \"$DST\"", false},
+		{"semicolon chain", "echo hi; rm -rf /data", false},
+		{"and chain", "git status && git reset --hard", false},
+		{"pipe chain", "ps aux | xargs kill -9", false},
+		{"redirect", "df -h > /etc/passwd", false},
+		{"command substitution", "echo $(rm -rf /data)", false},
+		{"backtick", "echo `rm -rf /data`", false},
+		{"subshell", "(cd /data && ls)", false},
+		{"bare set", "set -e", false},
+		{"empty", "   ", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSafeReadOnlyCommand(tc.command); got != tc.want {
+				t.Fatalf("isSafeReadOnlyCommand(%q) = %v, want %v", tc.command, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBannedCommand 覆盖禁用命令检查：串联命令里的禁用命令也要被发现。
+func TestBannedCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{"direct", "curl http://example.com", "curl"},
+		{"after and", "echo ok && wget http://example.com", "wget"},
+		{"after semicolon", "ls; alias", "alias"},
+		{"quoted", "\"curl\" http://example.com", "curl"},
+		{"clean", "ls -l /tmp", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bannedCommand(tc.command); got != tc.want {
+				t.Fatalf("bannedCommand(%q) = %q, want %q", tc.command, got, tc.want)
+			}
+		})
+	}
+}

@@ -164,6 +164,13 @@ func (s *dataService) datasetDir(ctx context.Context, datasetID int64, projectID
 // it is already bound to the dataset (go_file.path +
 // go_dataset_file.dataset_id), which is what the batch import skips on.
 func (s *dataService) ListDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64) (string, []*types.DatasetDirFile, error) {
+	return s.listDatasetDirFiles(ctx, datasetID, projectID, true)
+}
+
+// listDatasetDirFiles is the shared implementation of the dir-file listing.
+// recursive=false only returns the files sitting directly in the dataset
+// workspace directory; nested directories are skipped entirely.
+func (s *dataService) listDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64, recursive bool) (string, []*types.DatasetDirFile, error) {
 	dir, err := s.datasetDir(ctx, datasetID, projectID)
 	if err != nil {
 		return "", nil, err
@@ -187,6 +194,11 @@ func (s *dataService) ListDatasetDirFiles(ctx context.Context, datasetID int64, 
 			return walkErr
 		}
 		if entry.IsDir() {
+			// The dataset directory itself is always visited; when recursion is
+			// disabled every sub directory is skipped instead of descended into.
+			if !recursive && path != dir {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		// Symlinks can point outside the dataset directory; skip them so the
@@ -232,12 +244,13 @@ func (s *dataService) ListDatasetDirFiles(ctx context.Context, datasetID int64, 
 	return dir, items, nil
 }
 
-// ImportDatasetDirFiles registers every file under the dataset workspace
-// directory that is not yet bound to the dataset. A file counts as existing when
-// the same go_file.path is already linked to the dataset through
-// go_dataset_file, so re-running the import is idempotent.
+// ImportDatasetDirFiles registers every file directly inside the dataset
+// workspace directory (top level only; nested directories are not imported)
+// that is not yet bound to the dataset. A file counts as existing when the same
+// go_file.path is already linked to the dataset through go_dataset_file, so
+// re-running the import is idempotent.
 func (s *dataService) ImportDatasetDirFiles(ctx context.Context, datasetID int64, projectID int64, role types.Role) (*types.ImportDatasetDirFilesResult, error) {
-	_, files, err := s.ListDatasetDirFiles(ctx, datasetID, projectID)
+	_, files, err := s.listDatasetDirFiles(ctx, datasetID, projectID, false)
 	if err != nil {
 		return nil, err
 	}
