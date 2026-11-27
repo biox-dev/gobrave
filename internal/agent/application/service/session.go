@@ -127,6 +127,21 @@ func (s *sessionService) UpdateTitleIfUnchanged(ctx context.Context, id int64, p
 	return s.store.UpdateTitleIfUnchanged(ctx, id, priorTitle, title)
 }
 
+func (s *sessionService) UpdateTitle(ctx context.Context, id int64, title string) (Session, error) {
+	// 先读取，既确认会话存在，也让调用方拿到更新后的完整会话（含 ProjectID / UserID）。
+	session, err := s.store.Get(ctx, id)
+	if err != nil {
+		return Session{}, err
+	}
+	now := time.Now().UTC()
+	if err := s.store.UpdateTitle(ctx, id, title); err != nil {
+		return Session{}, err
+	}
+	session.Title = title
+	session.UpdatedAt = now
+	return *session, nil
+}
+
 func (s *sessionService) Delete(ctx context.Context, id int64) error {
 	return s.store.Delete(ctx, id)
 }

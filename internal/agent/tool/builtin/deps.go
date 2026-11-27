@@ -44,6 +44,8 @@ type Deps struct {
 	AnalysisRunner runtimecontext.AnalysisRunner
 	// MemorySaver 保存用户长期记忆（save_memory）。
 	MemorySaver runtimecontext.MemorySaver
+	// SessionTitle 更新当前会话标题（update_session_title）。
+	SessionTitle runtimecontext.SessionTitleUpdater
 
 	// 以下为只读浏览能力，按资源拆成窄接口。
 	ScriptBrowser   runtimecontext.ScriptBrowser

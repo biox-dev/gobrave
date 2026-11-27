@@ -29,6 +29,8 @@ func All(d Deps) []tool.Tool {
 		TerminalExec(d.Terminal),
 		UIAction(d.UIActions),
 		SaveMemory(d.MemorySaver),
+		// 会话：只允许改当前会话的标题（目标取自执行事实，不接受模型指定 session_id）。
+		UpdateSessionTitle(d.SessionTitle),
 
 		// 文件 / 数据集。
 		ListFile(d.FileBrowser),

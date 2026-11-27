@@ -14208,13 +14208,6 @@ const docTemplate = `{
         "handler.VisualizationResultResponse": {
             "type": "object",
             "properties": {
-                "cache_files": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": true
-                    }
-                },
                 "htmls": {
                     "type": "array",
                     "items": {
@@ -14223,13 +14216,6 @@ const docTemplate = `{
                     }
                 },
                 "images": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": true
-                    }
-                },
-                "output_files": {
                     "type": "array",
                     "items": {
                         "type": "object",

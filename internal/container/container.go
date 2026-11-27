@@ -287,6 +287,7 @@ func buildAgentTools(in agentToolDeps) *tool.Registry {
 		WorkflowCreator:   in.WorkflowCreator,
 		AnalysisRunner:    in.AnalysisRunner,
 		MemorySaver:       in.MemorySaver,
+		SessionTitle:      newSessionTitleUpdater(in.Sessions, in.UIActions),
 		ScriptBrowser:     in.Browser,
 		NodeBrowser:       in.Browser,
 		WorkflowBrowser:   in.Browser,

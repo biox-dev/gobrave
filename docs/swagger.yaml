@@ -467,22 +467,12 @@ definitions:
     type: object
   handler.VisualizationResultResponse:
     properties:
-      cache_files:
-        items:
-          additionalProperties: true
-          type: object
-        type: array
       htmls:
         items:
           additionalProperties: true
           type: object
         type: array
       images:
-        items:
-          additionalProperties: true
-          type: object
-        type: array
-      output_files:
         items:
           additionalProperties: true
           type: object

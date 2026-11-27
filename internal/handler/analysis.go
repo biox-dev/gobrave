@@ -80,11 +80,9 @@ type EditNodeParamsResponse struct {
 }
 
 type VisualizationResultResponse struct {
-	Images      []map[string]interface{} `json:"images"`
-	Tables      []map[string]interface{} `json:"tables"`
-	HTMLs       []map[string]interface{} `json:"htmls"`
-	OutputFiles []map[string]interface{} `json:"output_files"`
-	CacheFiles  []map[string]interface{} `json:"cache_files"`
+	Images []map[string]interface{} `json:"images"`
+	Tables []map[string]interface{} `json:"tables"`
+	HTMLs  []map[string]interface{} `json:"htmls"`
 }
 
 type VisualizationNodeFileResponse struct {
@@ -1629,9 +1627,7 @@ func (h *AnalysisHandler) VisualizationNodeFile(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to build visualization node payload").WithDetails(err.Error()))
 		return
 	}
-	prefix := utils.GetAnalysisURLPrefix(h.config.Storage.BaseDir, analysisNode.OutputDirectory())
-
-	result, err := visualizationResultsPath(analysisNode.OutputDirectory(), analysisNode.CacheDirectory(), prefix, scriptType, h.config)
+	result, err := visualizationResultsPath(analysisNode.OutputDirectory(), scriptType, h.config)
 	if err != nil {
 		c.Error(errors.NewInternalServerError("failed to list visualization files").WithDetails(err.Error()))
 		return
@@ -2238,13 +2234,11 @@ func (h *AnalysisHandler) attachContainerInfoToNode(c *gin.Context, scriptID int
 	return node, nil
 }
 
-func visualizationResultsPath(outputDir, cacheDir, prefix string, scriptType string, cfg *config.Config) (VisualizationResultResponse, error) {
+func visualizationResultsPath(outputDir, scriptType string, cfg *config.Config) (VisualizationResultResponse, error) {
 	result := VisualizationResultResponse{
-		Images:      make([]map[string]interface{}, 0),
-		Tables:      make([]map[string]interface{}, 0),
-		HTMLs:       make([]map[string]interface{}, 0),
-		OutputFiles: make([]map[string]interface{}, 0),
-		CacheFiles:  make([]map[string]interface{}, 0),
+		Images: make([]map[string]interface{}, 0),
+		Tables: make([]map[string]interface{}, 0),
+		HTMLs:  make([]map[string]interface{}, 0),
 	}
 
 	outputDir = strings.TrimSpace(outputDir)
@@ -2271,42 +2265,6 @@ func visualizationResultsPath(outputDir, cacheDir, prefix string, scriptType str
 			return result, nil
 		}
 		return result, err
-	}
-
-	// add  filename and filepath in result.Files
-	for _, entry := range outputEntries {
-		if entry.IsDir() {
-			continue
-		}
-		filename := entry.Name()
-		fullPath := filepath.Join(outputDir, filename)
-
-		result.OutputFiles = append(result.OutputFiles, map[string]interface{}{
-			"filename": filename,
-			"filepath": fullPath,
-			"url":      filepath.Join(prefix, filename),
-		})
-	}
-
-	// 如果cacheDir存在才读取
-	if cacheDir != "" {
-
-		cacheEntries, err := os.ReadDir(cacheDir)
-		if err == nil {
-			for _, entry := range cacheEntries {
-				if entry.IsDir() {
-					continue
-				}
-				filename := entry.Name()
-				fullPath := filepath.Join(cacheDir, filename)
-
-				result.CacheFiles = append(result.CacheFiles, map[string]interface{}{
-					"filename": filename,
-					"filepath": fullPath,
-					// "url":      filepath.Join(prefix, filename),
-				})
-			}
-		}
 	}
 
 	imageGroups := make(map[string][]map[string]interface{})

@@ -86,6 +86,10 @@ type SessionStore interface {
 	// 用一条原子 UPDATE 完成「比较 + 写入」：避免异步标题生成与用户改名 /
 	// 轮次收尾（同样是整行 Save）并发时互相覆盖。
 	UpdateTitleIfUnchanged(ctx context.Context, id int64, priorTitle, title string) (bool, error)
+	// UpdateTitle 直接更新标题（只写 title / updated_at 两列，不整行覆盖）。
+	//
+	// 供 update_session_title 工具使用：用户明确要求改名时不再与旧标题比较。
+	UpdateTitle(ctx context.Context, id int64, title string) error
 	Delete(ctx context.Context, id int64) error
 	List(ctx context.Context, params types.SessionListParams) ([]*types.Session, int64, error)
 	// Fork 在一个事务内复制源会话的消息（可选复制文件历史最新版本）到新会话。

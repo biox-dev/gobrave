@@ -26,6 +26,11 @@ type SessionService interface {
 	Save(ctx context.Context, session types.Session) (types.Session, error)
 	// UpdateTitleIfUnchanged 仅当当前标题仍等于 priorTitle 时更新标题，返回是否命中。
 	UpdateTitleIfUnchanged(ctx context.Context, id int64, priorTitle, title string) (bool, error)
+	// UpdateTitle 直接更新会话标题，返回更新后的会话。
+	//
+	// 只写 title / updated_at 两列，避免整行 Save 把陈旧的 CurrentTaskID 等字段
+	// 写回；供 update_session_title 工具（用户明确要求改名）使用。
+	UpdateTitle(ctx context.Context, id int64, title string) (types.Session, error)
 	Delete(ctx context.Context, id int64) error
 }
 
