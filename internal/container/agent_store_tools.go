@@ -103,21 +103,25 @@ func (s *storeTools) PageStore(ctx context.Context, userID int64, in runtimecont
 	return out, nil
 }
 
-// toStoreItem 把 store 记录转成工具返回的摘要（含绝对目录与标签列表）。
+// toStoreItem 把 store 记录转成工具返回的摘要（含绝对目录、标签列表与仓库里的 description）。
+//
+// description 不从数据库读（store 表没有该列），而是与 handler.PageStore 同口径地
+// 从 store 裸仓库 HEAD 的 workflow.json / script.json 里取；读不到时为空串。
 func (s *storeTools) toStoreItem(store *types.Store, installed bool, installedID string) runtimecontext.StoreItem {
-	item := runtimecontext.StoreItem{
+	storePath := s.storeDir(store)
+	return runtimecontext.StoreItem{
 		StoreID:     store.ID,
 		StoreType:   store.StoreType,
 		Name:        store.Name,
+		Description: exportcodec.StoreDescription(storePath, store.StoreType),
 		Origin:      store.Origin,
 		Category:    store.Category,
 		Tags:        decodeStoreTags(store.Tags),
 		PathName:    store.PathName,
-		StorePath:   s.storeDir(store),
+		StorePath:   storePath,
 		Installed:   installed,
 		InstalledID: installedID,
 	}
-	return item
 }
 
 // decodeStoreTags 把 store.tags（JSON 列）解码成字符串列表。

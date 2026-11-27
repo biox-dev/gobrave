@@ -2,12 +2,16 @@ package container
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/biox-dev/gobrave/internal/agent/runtimecontext"
 	"github.com/biox-dev/gobrave/internal/config"
+	"github.com/biox-dev/gobrave/internal/exportcodec"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"gorm.io/datatypes"
 )
 
@@ -104,6 +108,45 @@ func TestStoreToolsPageStoreRequiresUser(t *testing.T) {
 	svc := &fakeStoreService{}
 	if _, err := newStoreToolsForTest(svc).PageStore(context.Background(), 0, runtimecontext.StorePageInput{StoreType: "script"}); err == nil {
 		t.Fatalf("expected user_id required error")
+	}
+}
+
+// TestStoreToolsPageStoreFillsDescription 校验 page_store 的 description 口径：
+// 从 store 裸仓库 HEAD 的 workflow.json / script.json 读取，与 handler.PageStore 一致。
+func TestStoreToolsPageStoreFillsDescription(t *testing.T) {
+	baseDir := t.TempDir()
+	storePath := utils.GetWorkflowOrScriptStoreDir(baseDir, "wf-desc")
+
+	src := t.TempDir()
+	repo, err := utils.EnsureGitRepo(src)
+	if err != nil {
+		t.Fatalf("utils.EnsureGitRepo: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, exportcodec.WorkflowJSONFileName),
+		[]byte(`{"version":"v1","workflow_id":"wf-1","workflow":{"name":"wf","description":"仓库里的工作流描述"}}`), 0o644); err != nil {
+		t.Fatalf("write workflow.json: %v", err)
+	}
+	if _, err := utils.CommitAll(repo, "test", utils.GitIdentity{Name: "test", Email: "test@example.com"}); err != nil {
+		t.Fatalf("utils.CommitAll: %v", err)
+	}
+	if _, err := utils.EnsureBareGitRepo(storePath); err != nil {
+		t.Fatalf("utils.EnsureBareGitRepo: %v", err)
+	}
+	if _, err := utils.PushDirToRepo(context.Background(), src, storePath); err != nil {
+		t.Fatalf("utils.PushDirToRepo: %v", err)
+	}
+
+	svc := &fakeStoreService{pageResult: types.NewPageResult(1, &types.Pagination{Page: 1, PageSize: 20}, []*types.StoreDTO{
+		{Store: types.Store{ID: 11, StoreType: "workflow", Name: "wf", PathName: "wf-desc"}},
+	})}
+	tools := newStoreTools(svc, nil, nil, nil, &config.Config{Storage: &config.StorageConfig{BaseDir: baseDir}})
+
+	out, err := tools.PageStore(context.Background(), 9, runtimecontext.StorePageInput{StoreType: "workflow"})
+	if err != nil {
+		t.Fatalf("page store: %v", err)
+	}
+	if len(out.Stores) != 1 || out.Stores[0].Description != "仓库里的工作流描述" {
+		t.Fatalf("stores = %+v", out.Stores)
 	}
 }
 

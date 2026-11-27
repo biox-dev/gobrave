@@ -705,14 +705,10 @@ func (h *WorkflowHandler) readWorkflowRawFromDir(workflowDir string) (exportcode
 // readStoreExportJSON 读取 store 仓库 HEAD 提交里的导出文件（workflow.json / script.json）内容。
 //
 // store 是裸仓库（本地 publish 与远程 clone 都是裸仓库），没有工作区文件，
-// 只能从 git 对象里读（utils.ReadFileFromGitRepo）；文件在仓库内的位置不固定，
-// 由 utils.FindFileInGitRepo 按「根目录优先、其次任意层级（忽略大小写）」查找。
+// 只能从 git 对象里读；具体实现与 container 的 page_store 工具共用
+// exportcodec.ReadStoreExportJSON，避免两处口径漂移。
 func readStoreExportJSON(storeDir, fileName string) ([]byte, error) {
-	relPath, err := utils.FindFileInGitRepo(storeDir, fileName)
-	if err != nil {
-		return nil, err
-	}
-	return utils.ReadFileFromGitRepo(storeDir, relPath)
+	return exportcodec.ReadStoreExportJSON(storeDir, fileName)
 }
 
 // func buildStorePathNameFromURL(rawURL string) (string, error) {

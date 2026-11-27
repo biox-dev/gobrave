@@ -32,6 +32,8 @@ type StorePageInput struct {
 
 // StoreItem 是分页结果里的单条 store 摘要。
 //
+// Description 是 store 仓库 HEAD 提交里 workflow.json / script.json 记录的 description
+// （只读推导、不落库，读不到时为空串）。
 // Installed / InstalledID 描述「当前激活项目是否已安装该 store」：
 //   - workflow：Installed 为 true 即项目内已有同一 store 的工作流，InstalledID 是 workflow 主键；
 //   - script：InstalledID 是已安装脚本的主键（0 表示未安装）。
@@ -39,6 +41,7 @@ type StoreItem struct {
 	StoreID     int64    `json:"store_id,string"`
 	StoreType   string   `json:"store_type"`
 	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
 	Origin      string   `json:"origin,omitempty"`
 	Category    string   `json:"category,omitempty"`
 	Tags        []string `json:"tags,omitempty"`

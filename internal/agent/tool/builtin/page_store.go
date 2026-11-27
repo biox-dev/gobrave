@@ -39,7 +39,7 @@ type PageStoreOutput struct {
 //   - store_type 必填（workflow / script），可按关键字搜索与分页 / 排序；
 //   - user_id 取自执行事实，由服务层据此解析当前激活项目并回填 installed / installed_id；
 //   - 返回每条 store 的 store_id（字符串，可直接传给 install_workflow / install_script）、
-//     名称 / 分类 / 标签 / 本地目录，以及当前项目是否已安装。
+//     名称 / 描述 / 分类 / 标签 / 本地目录，以及当前项目是否已安装。
 //
 // 该工具是只读的，因此声明 read 授权。
 func PageStore(browser runtimecontext.StoreBrowser) tool.Tool {
@@ -56,7 +56,7 @@ store 有两种组件类型，必须通过 store_type 指定其一：
 - page / page_size：分页（page_size 上限 1000，默认 20）；
 - sort_by：id / name / category / created_at / updated_at；sort_order：ASC / DESC。
 
-返回每条的 store_id（字符串，直接传给安装工具）、store_type、name、category、tags、origin（local=本地发布，remote=远程下载）、store_path（store 裸仓库目录）、installed / installed_id（当前激活项目是否已安装该组件及其主键）。需要先看清仓库里有什么、再决定安装哪个时使用。`,
+返回每条的 store_id（字符串，直接传给安装工具）、store_type、name、description（store 仓库里 workflow.json / script.json 记录的组件描述，可用于判断该组件是做什么的）、category、tags、origin（local=本地发布，remote=远程下载）、store_path（store 裸仓库目录）、installed / installed_id（当前激活项目是否已安装该组件及其主键）。需要先看清仓库里有什么、再决定安装哪个时使用。`,
 		tool.Schema("分页查询组件仓库的入参", map[string]any{
 			"store_type": map[string]any{
 				"type":        "string",

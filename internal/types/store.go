@@ -34,10 +34,15 @@ type Store struct {
 	// Remotes 是 store 裸仓库上配置的远程仓库列表（github / gitee / origin ...），
 	// 与 StorePath 一样只在响应里返回、不落库（gorm:"-"）：发布到远程时写入的是
 	// store 仓库的 git remote 配置，读取侧统一通过 utils.ReadGitRemotes 实时推导。
-	Remotes  []utils.GitRemote `json:"remotes,omitempty" gorm:"-"`
-	Category string            `json:"category" gorm:"type:varchar(255);index"`
-	Tags     datatypes.JSON    `json:"tags" gorm:"type:json"`
-	Img      string            `json:"img" gorm:"type:varchar(255)"`
+	Remotes []utils.GitRemote `json:"remotes,omitempty" gorm:"-"`
+	// Description 是 store 仓库 HEAD 提交里 workflow.json / script.json 记录的 description，
+	// 与 StorePath / Remotes 一样只在响应里返回、不落库（gorm:"-"）：
+	// store 表没有该列，读取侧由 handler.fillStoreDescription 从仓库内容实时推导，
+	// 重新发布后自动跟着变，避免数据库与仓库两份状态漂移。
+	Description string         `json:"description" gorm:"-"`
+	Category    string         `json:"category" gorm:"type:varchar(255);index"`
+	Tags        datatypes.JSON `json:"tags" gorm:"type:json"`
+	Img         string         `json:"img" gorm:"type:varchar(255)"`
 	// PublishURLs datatypes.JSON `json:"publish_urls" gorm:"column:publish_urls;type:json"`
 	Log string `json:"log" gorm:"type:longtext"`
 

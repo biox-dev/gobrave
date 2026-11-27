@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/biox-dev/gobrave/internal/config"
 	"github.com/biox-dev/gobrave/internal/errors"
@@ -100,6 +101,7 @@ func (h *StoreHandler) GetStore(c *gin.Context) {
 	}
 
 	fillStorePath(h.cfg, item)
+	fillStoreDescription(h.cfg, item)
 	fillStoreRemotes(h.cfg, item)
 
 	c.JSON(http.StatusOK, item)
@@ -123,6 +125,7 @@ func (h *StoreHandler) GetStoreByStoreID(c *gin.Context) {
 	}
 
 	fillStorePath(h.cfg, item)
+	fillStoreDescription(h.cfg, item)
 	fillStoreRemotes(h.cfg, item)
 
 	c.JSON(http.StatusOK, item)
@@ -680,7 +683,18 @@ func fillStorePath(cfg *config.Config, item *types.Store) {
 	item.StorePath = resolveStoreDir(cfg, item)
 }
 
-// fillStorePathForPage 为分页结果里的每条 store 记录回填 store_path。
+// storePageFillConcurrency 是分页回填响应字段时的并发度。
+//
+// store_path 只做字符串拼接，description 则要为每条 store 打开一次 git 仓库读 HEAD 里的
+// 导出文件（workflow.json / script.json）。页大小较大时顺序读会把 git IO 延迟叠加起来，
+// 因此按固定并发度并行；上限取小值，避免一页几百条时把磁盘打满。
+const storePageFillConcurrency = 8
+
+// fillStorePathForPage 为分页结果里的每条 store 记录回填响应专属字段：
+// store_path（由 PathName 推导）与 description（从 store 仓库 HEAD 的导出文件读取）。
+//
+// 两者都不落库，以磁盘上的 store 仓库为准；description 读取失败只让该条为空，
+// 不影响整页响应（见 fillStoreDescription）。
 func fillStorePathForPage(cfg *config.Config, result *types.PageResult) {
 	if result == nil {
 		return
@@ -689,12 +703,37 @@ func fillStorePathForPage(cfg *config.Config, result *types.PageResult) {
 	if !ok {
 		return
 	}
+
+	sem := make(chan struct{}, storePageFillConcurrency)
+	var wg sync.WaitGroup
 	for _, dto := range dtos {
 		if dto == nil {
 			continue
 		}
-		fillStorePath(cfg, &dto.Store)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(item *types.Store) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fillStorePath(cfg, item)
+			fillStoreDescription(cfg, item)
+		}(&dto.Store)
 	}
+	wg.Wait()
+}
+
+// fillStoreDescription 用 store 仓库 HEAD 提交里的导出文件回填 description（响应专属字段）。
+//
+// store 表没有 description 列：本地发布与远程下载的 store 都是裸仓库，组件元数据随
+// workflow.json / script.json 一起提交在仓库里，因此这里直接读仓库内容，与 store_path
+// 一样以磁盘为准，重新发布后自动跟着变。读取口径与 page_store 工具共用
+// exportcodec.StoreDescription；目录缺失、文件不存在、JSON 损坏等情况一律为空，
+// 不影响接口本身。
+func fillStoreDescription(cfg *config.Config, item *types.Store) {
+	if item == nil {
+		return
+	}
+	item.Description = exportcodec.StoreDescription(resolveStoreDir(cfg, item), item.StoreType)
 }
 
 // fillStoreRemotes 把 store 裸仓库上配置的 git remote 列表写进响应的 remotes 字段。
