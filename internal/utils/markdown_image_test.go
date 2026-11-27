@@ -72,3 +72,50 @@ func TestPrefixMarkdownImageURLs(t *testing.T) {
 		t.Fatalf("PrefixMarkdownImageURLs() is not idempotent, got %q", got)
 	}
 }
+
+func TestRewriteMarkdownImageBaseDirPaths(t *testing.T) {
+	baseDir := "/data2/brave_analysis_workspace"
+
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "absolute baseDir path is rewritten to data-relative path",
+			content: "![a](" + baseDir + "/data/36/analysis_node/1/2/output/a.png)",
+			want:    "![a](/36/analysis_node/1/2/output/a.png)",
+		},
+		{
+			name:    "nested image dir keeps the rest of the path",
+			content: "![a](" + baseDir + "/data/36/project_report/1/output/img/a.png)",
+			want:    "![a](/36/project_report/1/output/img/a.png)",
+		},
+		{
+			name:    "data-relative path stays untouched",
+			content: "![a](/36/analysis_node/1/2/output/a.png)",
+			want:    "![a](/36/analysis_node/1/2/output/a.png)",
+		},
+		{
+			name:    "path outside baseDir stays untouched",
+			content: "![a](/tmp/other/a.png) ![b](https://example.com/a.png)",
+			want:    "![a](/tmp/other/a.png) ![b](https://example.com/a.png)",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RewriteMarkdownImageBaseDirPaths(tc.content, baseDir); got != tc.want {
+				t.Fatalf("RewriteMarkdownImageBaseDirPaths() = %q, want %q", got, tc.want)
+			}
+			// 幂等：改写结果再跑一次不应变化。
+			if got := RewriteMarkdownImageBaseDirPaths(RewriteMarkdownImageBaseDirPaths(tc.content, baseDir), baseDir); got != tc.want {
+				t.Fatalf("RewriteMarkdownImageBaseDirPaths() is not idempotent, got %q", got)
+			}
+		})
+	}
+
+	if got := RewriteMarkdownImageBaseDirPaths("![a]("+baseDir+"/data/a.png)", ""); got != "![a]("+baseDir+"/data/a.png)" {
+		t.Fatalf("RewriteMarkdownImageBaseDirPaths() with empty baseDir changed content, got %q", got)
+	}
+}

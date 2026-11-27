@@ -15,6 +15,7 @@ import (
 	"github.com/biox-dev/gobrave/internal/htmlreport"
 	"github.com/biox-dev/gobrave/internal/types"
 	"github.com/biox-dev/gobrave/internal/types/interfaces"
+	"github.com/biox-dev/gobrave/internal/utils"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -799,6 +800,11 @@ func (h *ProjectHandler) GetProjectReportFile(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to get project report file").WithDetails(err.Error()))
 		return
 	}
+
+	// 正文里的图片可能是以本机存储根目录（storage.base_dir）开头的绝对路径：
+	// 返回前端前把 baseDir 这一段替换成数据目录相对前缀（见 utils.GetAnalysisURLPrefix），
+	// 浏览器才能通过 /data-analysis 补前缀后加载到，也不再暴露部署路径。
+	content = utils.RewriteMarkdownImageBaseDirPaths(content, h.storageBaseDir())
 
 	c.JSON(http.StatusOK, gin.H{
 		"report_id": strconv.FormatInt(req.ReportID, 10),
