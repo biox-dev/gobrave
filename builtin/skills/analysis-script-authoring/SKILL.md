@@ -1,11 +1,11 @@
 ---
 name: analysis-script-authoring
-description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体、写 README.md（request_param 规范）、到 create_analysis_node_script 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、README.md 的固定模板与 request_param 写法要求（可直接复制的参数示例、扁平键、FileSelect 对象形态、产物登记、常见报错）、在已创建节点里写 / 改脚本代码的约定（最简写法、可复用解析器优先而非手工切分（GFF 用 rtracklayer、表格用 readr）、tidyverse 读表与 left_join/pivot_longer、列名归一化与列表列压平、knitr::kable 打印、按 outputs 写 outputs.json）、软件安装规范（脚本里直接使用 R 包 / Python 包 / 生信软件、不提前探测安装，只有运行报错提示包或软件不存在时才用 terminal_exec 检查并尝试装到系统指定的包目录；生信软件如 prokka 优先用 mamba 安装、装进以软件名命名的 conda 环境，调用一律用 mamba run -n <env> / conda run -n <env> 命令而不写死安装 bin 绝对路径；容器基础镜像里没有 rscript / python / conda 命令时不要安装而是告知用户、网络与系统库问题先反馈用户）、生物分组不明确时必须先 ask_user、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码、写 R 代码、写 README、安装脚本依赖或运行节点时使用。
+description: 脚本创建与修改规范总入口：从 create_script 建脚本、确认 io_schema.json 契约、写脚本主体、写 README.md（request_param 规范）、到 create_analysis_node_script 建节点、build_analysis_node_params 组参数、run_analysis_node 跑通并迭代的固定流程；包含 io_schema.json 生成规则（inputs 组件类型、outputs 的 role、FileSelect 输入输出写法、request_param 与 params.json 的对应）、README.md 的固定模板与 request_param 写法要求（可直接复制的参数示例、扁平键、FileSelect 对象形态、产物登记、常见报错）、在已创建节点里写 / 改脚本代码的约定（最简写法、可复用解析器优先而非手工切分（GFF 用 rtracklayer、表格用 readr）、tidyverse 读表与 left_join/pivot_longer、列名归一化与列表列压平、knitr::kable 打印、按 outputs 写 outputs.json）、软件安装规范（脚本里直接使用 R 包 / Python 包 / 生信软件、不提前探测安装，只有运行报错提示包或软件不存在时才用 terminal_exec 检查并尝试装到系统指定的包目录；生信软件如 prokka 优先用 mamba 安装、装进以软件名命名的 conda 环境，调用一律用 mamba run -n <env> / conda run -n <env> 命令而不写死安装 bin 绝对路径；容器基础镜像里没有 rscript / python / conda 命令时不要安装而是告知用户、网络与系统库问题先反馈用户）、生物分组不明确时必须先 ask_user、参考数据库（注释库 / 基因组索引）下载与登记规范（先用 list_file roles=DATABASE 查已登记库；不存在时才下载，用户未指定下载位置必须 ask_user 选 dataset，在 dataset 下建独立库目录并在目录内写 wget -c 下载脚本后执行该脚本，下载完成用 add_file_to_dataset 以 role=DATABASE 登记，path 可为目录 / 单文件 / 索引前缀，一个库只登记一个 file，脚本内不写下载逻辑，网络失败立即反馈用户）、失败迭代与重复性错误写入 memory。用户要求新建分析脚本 / 分析节点、修改脚本、补充输出、写代码、写 R 代码、写 README、安装脚本依赖或运行节点时使用。
 ---
 
 ## 脚本创建与修改规范（总入口）
 
-本技能是「创建 / 修改分析脚本与分析节点」的唯一规范入口，覆盖六件事：
+本技能是「创建 / 修改分析脚本与分析节点」的唯一规范入口，覆盖七件事：
 
 1. **流程**：从建脚本到节点跑通要走的固定顺序；
 2. **契约**：io_schema.json 怎么写、request_param 怎么填；
@@ -14,7 +14,9 @@ description: 脚本创建与修改规范总入口：从 create_script 建脚本�
    `create_analysis_node_script` 跑通（详见第三节）；
 5. **运行**：怎么跑、失败了怎么迭代；
 6. **依赖**：脚本里直接使用 R 包 / Python 包 / conda 生信软件，只有运行报错提示依赖不存在时才检查安装、
-   什么情况必须停下来找用户（详见第六节）。
+   什么情况必须停下来找用户（详见第六节）；
+7. **数据库**：注释库 / 基因组索引这类参考资源的「先查已登记 → 问用户下载到哪个 dataset → 建目录 →
+   写 wget 下载脚本并执行 → 登记回 dataset」固定流程（详见第七节）。
 
 > README.md 与 io_schema.json 是同一份契约的两个视图：io_schema 给机器解析参数，
 > README 给人和其他 agent 快速上手。`data-file-analysis` 技能默认只读 `get_script` 返回的
@@ -829,7 +831,121 @@ export PATH="/…/package/conda-<id>/prokka/bin:$PATH"
 
 ---
 
-## 七、遇到重复性错误时写入 memory
+## 七、参考数据库（注释库 / 基因组索引）下载与登记规范
+
+参考资源包括 eggNOG / KEGG / dbCAN / PICRUSt / AGORA / GTDB / 参考基因组及其索引（`.fai` / `.bt2` /
+`.fa` / `bowtie2` 索引等）。它们体积大、只读、被多个脚本复用，因此**不走数据集里的普通文件路径**，
+统一按下述固定流程处理。**脚本里永远不写下载 / 解压逻辑**，只按登记后的路径读取。
+
+### 1. 先查已登记的数据库，不要重复下载
+
+```
+list_file(roles=["DATABASE"])
+```
+
+- 有匹配的库 → 直接用返回的 `path`（索引可能只是一个**前缀**，如 `.../GRCh38/genome`，
+  按该前缀去找实际的 `.fai` / `.bt2` / `.fa`）；
+- 没有匹配的库 → 才进入第 2 步下载流程。
+
+### 2. 用户没指定下载位置时，必须问用户下载到哪个 dataset
+
+- 用户已明确指定默认数据集 / 目录 → 直接用该位置；
+- **用户没指定 → 先 `list_dataset` 拿到数据集列表（名称 + `path`），再用 `ask_user`（single_choice）
+  让用户选下载到哪个 dataset**：option 的 `label` 写「数据集名 — path」，`value` 写 `dataset_id`，
+  并设 `allow_custom=true` 让用户可以直接填别的目录。
+  **不得自己挑一个数据集或往项目根 / 工作区根塞数据库**；共享库通常下载到名字里带「共享 / DATABASES」
+  的数据集，但仍必须由用户确认。
+
+### 3. 在目标 dataset 下建独立的数据库子目录
+
+- 每个数据库单独一个子目录：`<dataset path>/<库名>/`（如 `<path>/eggnog/`、`<path>/dbcan/`）；
+- 先 `mkdir -p` 建目录，**不要**把库文件散落在 dataset 目录根、也不要覆盖用户已有文件；
+- 目录名用「库名」或「库名-版本」（如 `eggnog` / `eggnog-mapper-5.0.2`），便于后续登记与复用。
+
+### 4. 在数据库目录里创建下载脚本，然后执行该脚本
+
+**下载一律用 `wget` / `wget -c`（断点续传），并且必须落成数据库目录内的下载脚本再执行**，
+不要用一长串内联 bash 命令直接下载、更不要自己写多线程 / Range 分片下载器：
+
+~~~bash
+#!/bin/bash
+# eggNOG-mapper 5.0.2 数据库下载脚本（wget -c 断点续传）
+set -uo pipefail
+
+BASE="http://eggnog5.embl.de/download/emapperdb-5.0.2"
+cd "$(dirname "$0")" || exit 1
+
+for F in eggnog.db.gz eggnog_proteins.dmnd.gz eggnog.taxa.tar.gz; do
+  echo "开始下载 $F"
+  wget -c --tries=0 --retry-connrefused --timeout=120 -O "$F" "$BASE/$F" > "$F.log" 2>&1 &
+done
+wait
+
+echo "下载结束，文件大小："
+ls -l eggnog.db.gz eggnog_proteins.dmnd.gz eggnog.taxa.tar.gz
+
+# 解压（已解压则跳过）
+[ -s eggnog.db ] || gunzip -kf eggnog.db.gz
+[ -s eggnog_proteins.dmnd ] || gunzip -kf eggnog_proteins.dmnd.gz
+[ -d eggnog.taxa ] || tar -zxf eggnog.taxa.tar.gz
+~~~
+
+写脚本与执行的约定：
+
+- 脚本文件名固定可预期：`download_<库名>.sh`，**放在该数据库目录内**（`cd "$(dirname "$0")"` 之后所有
+  路径都是相对当前目录），下次换机器只需重跑这一个脚本；
+- 每个文件一个 `wget -c`，各自 `> <文件>.log` 后台跑 + `wait`，便于单独看进度与失败原因；
+- 解压 / 建索引也写在同一个脚本里，且用 `[ -s 目标 ] ||` 幂等判断，重复执行不重复解压；
+- 用 `bash <dir>/download_<库名>.sh` 执行（长下载用 `setsid nohup ... > download_all.log 2>&1 &`
+  投递后台，再轮询 `ls -l` / `du -sh` 看进度），不要在前台一次等几十分钟；
+- **统一顺序 `wget -c`，不要自研并发分片**：实测在带代理的环境里用自定义 `Range` 分片并发下载会把
+  已下好的文件截成 0 字节（代理对 `Range` 支持不完整），而 `wget -c` 顺序续传稳定可靠；
+- 下载中间产物（`.part`、`.log`、`.tmp`）只留在该数据库目录内，不要写到会话工作目录或 `/tmp` 之外。
+
+### 5. 下载完成后登记回 dataset（一个库只登记一个 file）
+
+```
+add_file_to_dataset(dataset_id="<目标 dataset>", path="<库路径>", role="DATABASE",
+                    file_name="<库名-版本>", is_prefix=<见下>)
+```
+
+按数据库形态选 `path` 与 `is_prefix`：
+
+| 数据库形态 | `path` 传什么 | `is_prefix` | 说明 |
+| --- | --- | --- | --- |
+| 目录型（一个库 = 一个目录，多数注释库） | 目录绝对路径 | `true` | `add_file_to_dataset` 直接传目录会报 `file path is a directory`，必须 `is_prefix=true` |
+| 单文件型（如一个 `.hmm` / 一个 `.dmnd` / 一个 `.tar.gz`） | 文件绝对路径 | 不传 | 普通文件登记 |
+| 基因组索引（多扩展名同一前缀，如 `genome.fa{,.fai,.amb,.ann,.bwt,.pac,.sa}`） | 索引**前缀**（不含扩展名） | `true` | 不校验文件存在，按前缀批量场景登记 |
+
+- **只登记一个 file**：一个数据库目录登记一次即可，不要逐个文件登记（否则 `list_file` 会被刷屏，
+  下游也不知道该用哪个 path）；
+- `file_name` 写清「库名 + 版本」（如 `eggnog-mapper-5.0.2`），便于用户在下拉框里辨认；
+- 登记后回到 `list_file(roles=["DATABASE"])` 核对 `path` 正确，再把该 `path`（或索引前缀）写进脚本
+  io_schema 的数据库参数 `initialValue` 与 README。
+
+### 6. 脚本侧只读登记后的路径
+
+- 数据库目录参数建议用 `FileSelect`（`type=FileSelect` + `input_type=file` + `db=true` +
+  `resolver.accept_formats=["DATABASE","DEFAULT"]`），让用户在表单里从已登记数据库中选择；
+  脚本读 `params.<name>.path`，并兼容用户直接给字符串的旧写法
+  （bash：`jq -r '.db_dir.path // .db_dir'`；R：`params$db_dir$path %||% params$db_dir`）；
+- 脚本内**不写任何 `wget` / `curl` / `git clone` / `download.file()`**，只做「路径存在性检查 + 使用」，
+  缺库时报一条含期望路径的中文错误并退出；
+- 库的位置 / 版本变了之后，**必须同步更新**：脚本 io_schema 的 `initialValue`、README 里的数据库路径
+  与参数示例、以及下文提到的登记记录。
+
+### 7. 下载出问题时不折腾，直接反馈用户
+
+遇到超时、连接中断、DNS / 代理失败、403 / 404、下载不完整、镜像不可达等情况：
+
+- **不要反复重试、不要到处换镜像、不要改协议（http↔ftp）/ 换站点乱试**；
+- 立即停止下载，把**失败的下载地址、目标目录、错误信息关键几行、已下的文件大小**告诉用户，
+  让用户解决网络问题或自行下载后放到该目录，再继续后续步骤；
+- 用户自行拷入数据库后，跳过下载直接做「解压（如需）→ 登记 → 用库跑分析」即可。
+
+---
+
+## 八、遇到重复性错误时写入 memory
 
 工具调用「连续出现同一类错误」时**必须**把「如何避免再犯」写入长期记忆，避免后续轮次重复踩坑。
 
