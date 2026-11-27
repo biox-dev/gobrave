@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/biox-dev/gobrave/internal/config"
@@ -30,6 +32,13 @@ const (
 	filePreviewMaxLineLength = 2000
 	// filePreviewBinarySampleSize is the prefix scanned for binary content.
 	filePreviewBinarySampleSize = 8192
+	// fileTreeMaxDepth caps how many directory levels a directory preview
+	// expands (1 means only the immediate children of the previewed dir).
+	fileTreeMaxDepth = 3
+	// fileTreeMaxChildren caps how many entries are listed per directory.
+	fileTreeMaxChildren = 500
+	// fileTreeMaxNodes caps the total number of nodes in one directory preview.
+	fileTreeMaxNodes = 2000
 )
 
 // binaryPreviewFormats are formats that cannot be rendered as text in the UI.
@@ -109,7 +118,7 @@ func (s *fileContentService) ReadFileContent(ctx context.Context, in interfaces.
 		return nil, err
 	}
 	if info.IsDir() {
-		return nil, fmt.Errorf("%s is a directory, not a file", resolvedPath)
+		return s.readDirTreeResult(ctx, resolvedPath, normalizedFormat), nil
 	}
 
 	switch normalizedFormat {
@@ -166,6 +175,129 @@ func (s *fileContentService) ReadFileContent(ctx context.Context, in interfaces.
 		result.Message = fmt.Sprintf("offset %d 超出文件行数，文件已读取完毕。", offset)
 	}
 	return result, nil
+}
+
+// readDirTreeResult builds a directory preview payload: Tree for the UI to
+// render a file tree, plus an indented text listing in Content so text-only
+// consumers (the Agent get_file tool) can still read the structure.
+func (s *fileContentService) readDirTreeResult(ctx context.Context, dirPath, normalizedFormat string) *interfaces.FilePreviewResult {
+	builder := newFileTreeBuilder()
+	nodes := builder.build(ctx, dirPath, "", 1)
+
+	format := normalizedFormat
+	if format == "" {
+		format = "dir"
+	}
+
+	result := &interfaces.FilePreviewResult{
+		FilePath:  dirPath,
+		Format:    format,
+		Kind:      interfaces.FilePreviewKindTree,
+		Tree:      nodes,
+		Content:   renderFileTreeText(nodes),
+		Truncated: builder.truncated,
+	}
+	switch {
+	case builder.count == 0:
+		result.Message = "目录为空"
+	case builder.truncated:
+		result.Message = fmt.Sprintf(
+			"目录共 %d 个条目（最多展开 %d 层 / %d 个条目），未完全展开。",
+			builder.count, fileTreeMaxDepth, fileTreeMaxNodes,
+		)
+	default:
+		result.Message = fmt.Sprintf("目录共 %d 个条目。", builder.count)
+	}
+	return result
+}
+
+// fileTreeBuilder accumulates a bounded directory tree. The budget is shared by
+// the whole tree so one huge directory cannot blow the preview payload.
+type fileTreeBuilder struct {
+	remaining int
+	count     int
+	truncated bool
+}
+
+func newFileTreeBuilder() *fileTreeBuilder {
+	return &fileTreeBuilder{remaining: fileTreeMaxNodes}
+}
+
+// build lists absDir and, within the depth budget, recurses into subdirectories.
+// depth is 1 for the immediate children of the previewed root; relDir is the
+// slash path of absDir relative to that root ("" for the root itself).
+func (b *fileTreeBuilder) build(ctx context.Context, absDir, relDir string, depth int) []interfaces.FileTreeNode {
+	entries, err := os.ReadDir(absDir)
+	if err != nil {
+		logger.Warnf(ctx, "[FileContent] read dir for preview failed: dir=%s err=%v", absDir, err)
+		b.truncated = true
+		return nil
+	}
+
+	// Directories first, then case-insensitive name order.
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].IsDir() != entries[j].IsDir() {
+			return entries[i].IsDir()
+		}
+		return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
+	})
+
+	nodes := make([]interfaces.FileTreeNode, 0, len(entries))
+	for _, entry := range entries {
+		if b.remaining <= 0 || len(nodes) >= fileTreeMaxChildren {
+			b.truncated = true
+			break
+		}
+
+		info, statErr := entry.Info()
+		if statErr != nil {
+			continue
+		}
+		b.remaining--
+		b.count++
+
+		relPath := path.Join(relDir, entry.Name())
+		node := interfaces.FileTreeNode{
+			Name:     entry.Name(),
+			Path:     "/" + strings.TrimPrefix(relPath, "/"),
+			IsDir:    entry.IsDir(),
+			Modified: info.ModTime().Unix(),
+		}
+		if entry.IsDir() {
+			if depth < fileTreeMaxDepth {
+				node.Children = b.build(ctx, filepath.Join(absDir, entry.Name()), relPath, depth+1)
+			} else {
+				node.Truncated = true
+			}
+		} else {
+			size := info.Size()
+			node.Size = &size
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+// renderFileTreeText renders the tree as an indented listing for text consumers.
+func renderFileTreeText(nodes []interfaces.FileTreeNode) string {
+	var b strings.Builder
+	var walk func(nodes []interfaces.FileTreeNode, prefix string)
+	walk = func(nodes []interfaces.FileTreeNode, prefix string) {
+		for _, node := range nodes {
+			b.WriteString(prefix)
+			b.WriteString(node.Name)
+			if node.IsDir {
+				b.WriteByte('/')
+			}
+			if node.Truncated {
+				b.WriteString(" …")
+			}
+			b.WriteByte('\n')
+			walk(node.Children, prefix+"  ")
+		}
+	}
+	walk(nodes, "")
+	return b.String()
 }
 
 // newTableContentResult builds a table result and derives the paging fields.

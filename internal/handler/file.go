@@ -168,7 +168,7 @@ type previewFileByFileIDQuery struct {
 // @Summary      根据文件ID读取文件预览
 // @Description  根据 go_file 主键 ID 查找文件 path，优先用 go_file.format（为空时回退到 path 后缀）确定格式并返回可直接渲染的预览内容：
 // @Description  表格（csv/tsv，xlsx 转 TSV）返回分隔文本由前端解析，fasta/gff 等返回原始文本，
-// @Description  gz/rds 等二进制格式返回不能预览的提示。
+// @Description  gz/rds 等二进制格式返回不能预览的提示；path 为目录时返回目录树（kind=tree，tree 字段）供前端渲染文件树。
 // @Tags         文件
 // @Produce      json
 // @Param        id       query     integer  true   "文件主键 ID"

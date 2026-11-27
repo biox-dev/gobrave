@@ -4941,6 +4941,63 @@ const docTemplate = `{
                 }
             }
         },
+        "/container/instance/cleanup-all": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "删除系统中的全部容器资源（运行中 + 已停止）：\n清空网关路由、同步删除所有 ContainerInstance 及其 docker / k8s 运行时容器，\n并删除全部 AppSession（Web 应用会话 + 终端会话）。必须显式传 confirm=true。\n清理是尽力而为的，单条失败不中断，失败原因汇总在返回的 errors 里。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "容器管理"
+                ],
+                "summary": "清理全部容器资源",
+                "parameters": [
+                    {
+                        "description": "确认参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.cleanupAllContainersRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.ContainerCleanupResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/container/instance/describe": {
             "get": {
                 "security": [
@@ -7696,6 +7753,69 @@ const docTemplate = `{
                 }
             }
         },
+        "/data/dataset/add-shared": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "把选中的共享数据集（go_dataset.shared = true）绑定到当前用户激活项目（写 go_project_dataset）；已绑定则跳过，接口幂等",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "添加共享数据集到当前项目",
+                "parameters": [
+                    {
+                        "description": "请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.addSharedDatasetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.AddSharedDatasetsResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/data/dataset/create": {
             "post": {
                 "security": [
@@ -8075,7 +8195,6 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "将数据集工作目录（utils.GetDatasetDir）下尚未绑定的文件注册为 go_file 并绑定到数据集；按 path + dataset_id 判重",
                 "consumes": [
                     "application/json"
                 ],
@@ -8085,7 +8204,7 @@ const docTemplate = `{
                 "tags": [
                     "数据管理"
                 ],
-                "summary": "批量导入数据集目录文件",
+                "summary": "批量导入数据集目录文件// @Description  将数据集工作目录（utils.GetDatasetDir）下尚未绑定的文件注册为 go_file 并绑定到数据集；按 path + dataset_id 判重",
                 "parameters": [
                     {
                         "description": "请求参数",
@@ -8224,7 +8343,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "根据当前用户激活的项目分页查询关联的 Dataset 列表",
+                "description": "根据当前用户激活的项目分页查询关联的 Dataset 列表（只查项目下的数据集，不做 shared 过滤）",
                 "consumes": [
                     "application/json"
                 ],
@@ -8262,6 +8381,70 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/data/dataset/list-shared-page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "分页查询所有 go_dataset.shared = true 的数据集，并标记当前用户激活项目是否已绑定（bound）",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "分页查询共享数据集",
+                "parameters": [
+                    {
+                        "description": "分页请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.datasetByProjectPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/errors.AppError"
                         }
@@ -8860,6 +9043,40 @@ const docTemplate = `{
                 }
             }
         },
+        "/data/file/roles": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回 go_file.role / go_assay.role 的合法取值（DEFAULT / TABLE / DATABASE），供前端下拉框使用",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "数据管理"
+                ],
+                "summary": "查询文件角色选项",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/types.RoleOption"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/data/file/update": {
             "post": {
                 "security": [
@@ -9289,7 +9506,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "根据 go_file 主键 ID 查找文件 path，优先用 go_file.format（为空时回退到 path 后缀）确定格式并返回可直接渲染的预览内容：\n表格（csv/tsv，xlsx 转 TSV）返回分隔文本由前端解析，fasta/gff 等返回原始文本，\ngz/rds 等二进制格式返回不能预览的提示。",
+                "description": "根据 go_file 主键 ID 查找文件 path，优先用 go_file.format（为空时回退到 path 后缀）确定格式并返回可直接渲染的预览内容：\n表格（csv/tsv，xlsx 转 TSV）返回分隔文本由前端解析，fasta/gff 等返回原始文本，\ngz/rds 等二进制格式返回不能预览的提示；path 为目录时返回目录树（kind=tree，tree 字段）供前端渲染文件树。",
                 "produces": [
                     "application/json"
                 ],
@@ -13705,8 +13922,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "role": {
-                    "description": "Role is the role the file is published under in the workflow form's\nanalysis_result map, e.g. BAM / VCF / DEFAULT. A node output file takes it\nfrom its output_patterns entry (see NodeCompletionCoordinator.recordNodeOutputFiles),\ndefaulting to dag.DefaultNodeOutputRole (\"DEFAULT\") when the pattern declares\nnone; resolveFormAnalysisResult groups the node output files by it so the\nfrontend reads them as dataMap[role] just like dataset files.",
-                    "type": "string"
+                    "description": "Role 是文件在分析表单 analysis_result 中发布到哪个 key（dataMap[role]），\n取值见 Role*。DAG 节点产物的角色取自其 output_patterns 条目（未声明时为\nRoleDefault，见 dag.DefaultNodeOutputRole）。",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.Role"
+                        }
+                    ]
                 },
                 "size": {
                     "type": "integer"
@@ -14143,6 +14364,21 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.addSharedDatasetRequest": {
+            "type": "object",
+            "required": [
+                "dataset_ids"
+            ],
+            "properties": {
+                "dataset_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "handler.addUserProjectRequest": {
             "type": "object",
             "required": [
@@ -14533,6 +14769,15 @@ const docTemplate = `{
                 },
                 "working_dir": {
                     "type": "string"
+                }
+            }
+        },
+        "handler.cleanupAllContainersRequest": {
+            "type": "object",
+            "properties": {
+                "confirm": {
+                    "description": "Confirm 必须为 true：该接口会删除全部容器实例、会话与网关路由，属于不可逆操作。",
+                    "type": "boolean"
                 }
             }
         },
@@ -16023,12 +16268,14 @@ const docTemplate = `{
             "enum": [
                 "table",
                 "text",
-                "binary"
+                "binary",
+                "tree"
             ],
             "x-enum-varnames": [
                 "FilePreviewKindTable",
                 "FilePreviewKindText",
-                "FilePreviewKindBinary"
+                "FilePreviewKindBinary",
+                "FilePreviewKindTree"
             ]
         },
         "interfaces.FilePreviewResult": {
@@ -16076,8 +16323,51 @@ const docTemplate = `{
                     "description": "Offset / LineCount / NextOffset describe the requested line/row window:\nContent covers [offset, offset+line_count). NextOffset is set when there\nis more data to read.",
                     "type": "integer"
                 },
+                "tree": {
+                    "description": "Tree is the directory listing when Kind == tree.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/interfaces.FileTreeNode"
+                    }
+                },
                 "truncated": {
                     "description": "Truncated reports that Content was cut (line length, row or byte limit).",
+                    "type": "boolean"
+                }
+            }
+        },
+        "interfaces.FileTreeNode": {
+            "type": "object",
+            "properties": {
+                "children": {
+                    "description": "Children holds the entries of a directory node. Empty when the node is a\nfile, the directory is empty, or it was not expanded.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/interfaces.FileTreeNode"
+                    }
+                },
+                "is_dir": {
+                    "description": "IsDir reports whether the node is a directory.",
+                    "type": "boolean"
+                },
+                "modified": {
+                    "description": "Modified is the entry mtime as a Unix timestamp.",
+                    "type": "integer"
+                },
+                "name": {
+                    "description": "Name is the entry name (base name only).",
+                    "type": "string"
+                },
+                "path": {
+                    "description": "Path is the slash path relative to the previewed directory, e.g.\n\"/sub/file.txt\". File names reported by the tree are not go_file IDs.",
+                    "type": "string"
+                },
+                "size": {
+                    "description": "Size is set for files only.",
+                    "type": "integer"
+                },
+                "truncated": {
+                    "description": "Truncated marks a directory whose children were not fully listed (depth\nor entry budget reached).",
                     "type": "boolean"
                 }
             }
@@ -16479,7 +16769,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "role": {
-                    "type": "string"
+                    "description": "取值见 Role*；零值按 RoleDefault 处理",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.Role"
+                        }
+                    ]
                 },
                 "source": {
                     "description": "data analysis external",
@@ -16495,6 +16790,23 @@ const docTemplate = `{
                 },
                 "file": {
                     "$ref": "#/definitions/github_com_biox-dev_gobrave_internal_types.File"
+                }
+            }
+        },
+        "types.AddSharedDatasetsResult": {
+            "type": "object",
+            "properties": {
+                "added": {
+                    "type": "integer"
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "skipped": {
+                    "type": "integer"
                 }
             }
         },
@@ -16845,8 +17157,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "role": {
-                    "description": "Role 是该 assay 的角色（列 go_assay.role），例如 DEFAULT / TABLE；\ninput_type=assay 的表单输入用 resolver.accept_formats 与之匹配（与\ngo_file.role 对文件的口径一致）。空表示不参与角色过滤。",
-                    "type": "string"
+                    "description": "Role 是该 assay 的角色（列 go_assay.role），取值见 Role*（DEFAULT / TABLE /\nDATABASE）。input_type=assay 的表单输入用 resolver.accept_formats 与之匹配\n（与 go_file.role 口径一致）。",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.Role"
+                        }
+                    ]
                 },
                 "sample_name": {
                     "description": "SampleName 是样本的业务编号兼展示名（列 go_assay.sample_name），例如\nS-001 / 脾脏-6。无需全局唯一，只在同一个 dataset 下唯一（经\ngo_dataset_assay 绑定判定）；同一个名字可以出现在不同 dataset。",
@@ -16889,14 +17205,46 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "role": {
-                    "description": "Role 是该 assay 的角色（go_assay.role），例如 DEFAULT / TABLE；\ninput_type=assay 的表单输入用 resolver.accept_formats 与之匹配，\nresolveFormAnalysisResult 据此把 assay 分组挂到 analysis_result[role]。",
-                    "type": "string"
+                    "description": "Role 是该 assay 的角色（go_assay.role），取值见 Role*；\ninput_type=assay 的表单输入用 resolver.accept_formats 与之匹配，\nresolveFormAnalysisResult 据此把 assay 分组挂到 analysis_result[role]。",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.Role"
+                        }
+                    ]
                 },
                 "sample_name": {
                     "type": "string"
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "types.ContainerCleanupResult": {
+            "type": "object",
+            "properties": {
+                "app_sessions_deleted": {
+                    "description": "AppSessionsDeleted 是删除的 AppSession 行数（Web 会话 + 终端会话）。",
+                    "type": "integer"
+                },
+                "containers_deleted": {
+                    "description": "ContainersDeleted 是成功删除的容器数（运行时资源 + 实例行）。",
+                    "type": "integer"
+                },
+                "containers_total": {
+                    "description": "ContainersTotal 是清理前扫描到的 ContainerInstance 总数。",
+                    "type": "integer"
+                },
+                "errors": {
+                    "description": "Errors 是逐条失败原因（容器 / 路由 / 会话），为空表示全部成功。",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "gateway_routes_deleted": {
+                    "description": "GatewayRoutesDeleted 是清空的网关路由（go_gateway_route）行数。",
+                    "type": "integer"
                 }
             }
         },
@@ -17119,6 +17467,10 @@ const docTemplate = `{
                 },
                 "metadata": {
                     "type": "string"
+                },
+                "shared": {
+                    "description": "Shared stores the dataset workspace under \u003cbaseDir\u003e/shared/dataset/\u003cid\u003e so\nseveral projects can bind the same dataset. Defaults to false.",
+                    "type": "boolean"
                 }
             }
         },
@@ -17145,9 +17497,9 @@ const docTemplate = `{
                 "metadata": {
                     "type": "string"
                 },
-                "path": {
-                    "description": "Path is the dataset workspace directory (utils.GetDatasetDir). It is\nderived at read time from the active project and is never persisted.",
-                    "type": "string"
+                "shared": {
+                    "description": "Shared marks a dataset whose workspace lives in the storage-wide shared\narea (\u003cbaseDir\u003e/shared/dataset/\u003cid\u003e) instead of a project directory, so it\ncan be bound to (and read/written by) several projects.",
+                    "type": "boolean"
                 },
                 "updated_at": {
                     "type": "string"
@@ -17281,7 +17633,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "role": {
-                    "type": "string"
+                    "$ref": "#/definitions/types.Role"
                 },
                 "size": {
                     "type": "integer"
@@ -17787,10 +18139,6 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0"
                 },
-                "path": {
-                    "description": "Path is the bound dataset's workspace directory\n(utils.GetDatasetDir(baseDir, project_id, dataset_id)). It is derived at\nread time and is never persisted.",
-                    "type": "string"
-                },
                 "project_id": {
                     "type": "string",
                     "example": "0"
@@ -18147,6 +18495,30 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "types.Role": {
+            "type": "string",
+            "enum": [
+                "DEFAULT",
+                "TABLE",
+                "DATABASE"
+            ],
+            "x-enum-varnames": [
+                "RoleDefault",
+                "RoleTable",
+                "RoleDatabase"
+            ]
+        },
+        "types.RoleOption": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string"
+                },
+                "value": {
+                    "$ref": "#/definitions/types.Role"
                 }
             }
         },
@@ -18534,6 +18906,9 @@ const docTemplate = `{
                 },
                 "metadata": {
                     "type": "string"
+                },
+                "shared": {
+                    "type": "boolean"
                 }
             }
         },

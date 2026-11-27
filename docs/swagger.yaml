@@ -260,14 +260,12 @@ definitions:
       path:
         type: string
       role:
+        allOf:
+        - $ref: '#/definitions/types.Role'
         description: |-
-          Role is the role the file is published under in the workflow form's
-          analysis_result map, e.g. BAM / VCF / DEFAULT. A node output file takes it
-          from its output_patterns entry (see NodeCompletionCoordinator.recordNodeOutputFiles),
-          defaulting to dag.DefaultNodeOutputRole ("DEFAULT") when the pattern declares
-          none; resolveFormAnalysisResult groups the node output files by it so the
-          frontend reads them as dataMap[role] just like dataset files.
-        type: string
+          Role 是文件在分析表单 analysis_result 中发布到哪个 key（dataMap[role]），
+          取值见 Role*。DAG 节点产物的角色取自其 output_patterns 条目（未声明时为
+          RoleDefault，见 dag.DefaultNodeOutputRole）。
       size:
         type: integer
       storage:
@@ -578,6 +576,16 @@ definitions:
     - project_id
     - user_id
     type: object
+  handler.addSharedDatasetRequest:
+    properties:
+      dataset_ids:
+        items:
+          type: string
+        minItems: 1
+        type: array
+    required:
+    - dataset_ids
+    type: object
   handler.addUserProjectRequest:
     properties:
       share_code:
@@ -885,6 +893,12 @@ definitions:
         type: string
     required:
     - message
+    type: object
+  handler.cleanupAllContainersRequest:
+    properties:
+      confirm:
+        description: Confirm 必须为 true：该接口会删除全部容器实例、会话与网关路由，属于不可逆操作。
+        type: boolean
     type: object
   handler.configFileResponse:
     properties:
@@ -1937,11 +1951,13 @@ definitions:
     - table
     - text
     - binary
+    - tree
     type: string
     x-enum-varnames:
     - FilePreviewKindTable
     - FilePreviewKindText
     - FilePreviewKindBinary
+    - FilePreviewKindTree
   interfaces.FilePreviewResult:
     properties:
       content:
@@ -1978,9 +1994,46 @@ definitions:
           Content covers [offset, offset+line_count). NextOffset is set when there
           is more data to read.
         type: integer
+      tree:
+        description: Tree is the directory listing when Kind == tree.
+        items:
+          $ref: '#/definitions/interfaces.FileTreeNode'
+        type: array
       truncated:
         description: Truncated reports that Content was cut (line length, row or byte
           limit).
+        type: boolean
+    type: object
+  interfaces.FileTreeNode:
+    properties:
+      children:
+        description: |-
+          Children holds the entries of a directory node. Empty when the node is a
+          file, the directory is empty, or it was not expanded.
+        items:
+          $ref: '#/definitions/interfaces.FileTreeNode'
+        type: array
+      is_dir:
+        description: IsDir reports whether the node is a directory.
+        type: boolean
+      modified:
+        description: Modified is the entry mtime as a Unix timestamp.
+        type: integer
+      name:
+        description: Name is the entry name (base name only).
+        type: string
+      path:
+        description: |-
+          Path is the slash path relative to the previewed directory, e.g.
+          "/sub/file.txt". File names reported by the tree are not go_file IDs.
+        type: string
+      size:
+        description: Size is set for files only.
+        type: integer
+      truncated:
+        description: |-
+          Truncated marks a directory whose children were not fully listed (depth
+          or entry budget reached).
         type: boolean
     type: object
   manager.TerminalSessionStatus:
@@ -2295,7 +2348,9 @@ definitions:
       path:
         type: string
       role:
-        type: string
+        allOf:
+        - $ref: '#/definitions/types.Role'
+        description: 取值见 Role*；零值按 RoleDefault 处理
       source:
         description: data analysis external
         type: string
@@ -2309,6 +2364,17 @@ definitions:
         $ref: '#/definitions/types.DatasetFile'
       file:
         $ref: '#/definitions/github_com_biox-dev_gobrave_internal_types.File'
+    type: object
+  types.AddSharedDatasetsResult:
+    properties:
+      added:
+        type: integer
+      errors:
+        items:
+          type: string
+        type: array
+      skipped:
+        type: integer
     type: object
   types.AgentPlan:
     properties:
@@ -2578,11 +2644,12 @@ definitions:
       platform:
         type: string
       role:
+        allOf:
+        - $ref: '#/definitions/types.Role'
         description: |-
-          Role 是该 assay 的角色（列 go_assay.role），例如 DEFAULT / TABLE；
-          input_type=assay 的表单输入用 resolver.accept_formats 与之匹配（与
-          go_file.role 对文件的口径一致）。空表示不参与角色过滤。
-        type: string
+          Role 是该 assay 的角色（列 go_assay.role），取值见 Role*（DEFAULT / TABLE /
+          DATABASE）。input_type=assay 的表单输入用 resolver.accept_formats 与之匹配
+          （与 go_file.role 口径一致）。
       sample_name:
         description: |-
           SampleName 是样本的业务编号兼展示名（列 go_assay.sample_name），例如
@@ -2614,15 +2681,36 @@ definitions:
       platform:
         type: string
       role:
+        allOf:
+        - $ref: '#/definitions/types.Role'
         description: |-
-          Role 是该 assay 的角色（go_assay.role），例如 DEFAULT / TABLE；
+          Role 是该 assay 的角色（go_assay.role），取值见 Role*；
           input_type=assay 的表单输入用 resolver.accept_formats 与之匹配，
           resolveFormAnalysisResult 据此把 assay 分组挂到 analysis_result[role]。
-        type: string
       sample_name:
         type: string
       updated_at:
         type: string
+    type: object
+  types.ContainerCleanupResult:
+    properties:
+      app_sessions_deleted:
+        description: AppSessionsDeleted 是删除的 AppSession 行数（Web 会话 + 终端会话）。
+        type: integer
+      containers_deleted:
+        description: ContainersDeleted 是成功删除的容器数（运行时资源 + 实例行）。
+        type: integer
+      containers_total:
+        description: ContainersTotal 是清理前扫描到的 ContainerInstance 总数。
+        type: integer
+      errors:
+        description: Errors 是逐条失败原因（容器 / 路由 / 会话），为空表示全部成功。
+        items:
+          type: string
+        type: array
+      gateway_routes_deleted:
+        description: GatewayRoutesDeleted 是清空的网关路由（go_gateway_route）行数。
+        type: integer
     type: object
   types.ContainerTemplate:
     properties:
@@ -2785,6 +2873,11 @@ definitions:
         type: string
       metadata:
         type: string
+      shared:
+        description: |-
+          Shared stores the dataset workspace under <baseDir>/shared/dataset/<id> so
+          several projects can bind the same dataset. Defaults to false.
+        type: boolean
     required:
     - dataset_name
     type: object
@@ -2809,11 +2902,12 @@ definitions:
         type: string
       metadata:
         type: string
-      path:
+      shared:
         description: |-
-          Path is the dataset workspace directory (utils.GetDatasetDir). It is
-          derived at read time from the active project and is never persisted.
-        type: string
+          Shared marks a dataset whose workspace lives in the storage-wide shared
+          area (<baseDir>/shared/dataset/<id>) instead of a project directory, so it
+          can be bound to (and read/written by) several projects.
+        type: boolean
       updated_at:
         type: string
     type: object
@@ -2915,7 +3009,7 @@ definitions:
       path:
         type: string
       role:
-        type: string
+        $ref: '#/definitions/types.Role'
       size:
         type: integer
       storage:
@@ -3307,12 +3401,6 @@ definitions:
       id:
         example: "0"
         type: string
-      path:
-        description: |-
-          Path is the bound dataset's workspace directory
-          (utils.GetDatasetDir(baseDir, project_id, dataset_id)). It is derived at
-          read time and is never persisted.
-        type: string
       project_id:
         example: "0"
         type: string
@@ -3589,6 +3677,23 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  types.Role:
+    enum:
+    - DEFAULT
+    - TABLE
+    - DATABASE
+    type: string
+    x-enum-varnames:
+    - RoleDefault
+    - RoleTable
+    - RoleDatabase
+  types.RoleOption:
+    properties:
+      label:
+        type: string
+      value:
+        $ref: '#/definitions/types.Role'
     type: object
   types.Script:
     properties:
@@ -3887,6 +3992,8 @@ definitions:
         type: string
       metadata:
         type: string
+      shared:
+        type: boolean
     required:
     - dataset_name
     - id
@@ -7298,6 +7405,46 @@ paths:
       summary: 停止应用会话
       tags:
       - 容器管理
+  /container/instance/cleanup-all:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        删除系统中的全部容器资源（运行中 + 已停止）：
+        清空网关路由、同步删除所有 ContainerInstance 及其 docker / k8s 运行时容器，
+        并删除全部 AppSession（Web 应用会话 + 终端会话）。必须显式传 confirm=true。
+        清理是尽力而为的，单条失败不中断，失败原因汇总在返回的 errors 里。
+      parameters:
+      - description: 确认参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.cleanupAllContainersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.ContainerCleanupResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 清理全部容器资源
+      tags:
+      - 容器管理
   /container/instance/describe:
     get:
       description: 按 ContainerInstance ID 从运行时获取 inspect/describe 详情（兼容 docker 与 k8s）
@@ -9073,6 +9220,46 @@ paths:
       summary: 上传本地文件到数据集
       tags:
       - 数据管理
+  /data/dataset/add-shared:
+    post:
+      consumes:
+      - application/json
+      description: 把选中的共享数据集（go_dataset.shared = true）绑定到当前用户激活项目（写 go_project_dataset）；已绑定则跳过，接口幂等
+      parameters:
+      - description: 请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.addSharedDatasetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.AddSharedDatasetsResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 添加共享数据集到当前项目
+      tags:
+      - 数据管理
   /data/dataset/create:
     post:
       consumes:
@@ -9315,8 +9502,6 @@ paths:
     post:
       consumes:
       - application/json
-      description: 将数据集工作目录（utils.GetDatasetDir）下尚未绑定的文件注册为 go_file 并绑定到数据集；按 path
-        + dataset_id 判重
       parameters:
       - description: 请求参数
         in: body
@@ -9349,7 +9534,8 @@ paths:
             $ref: '#/definitions/errors.AppError'
       security:
       - Bearer: []
-      summary: 批量导入数据集目录文件
+      summary: 批量导入数据集目录文件// @Description  将数据集工作目录（utils.GetDatasetDir）下尚未绑定的文件注册为
+        go_file 并绑定到数据集；按 path + dataset_id 判重
       tags:
       - 数据管理
   /data/dataset/list:
@@ -9410,7 +9596,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 根据当前用户激活的项目分页查询关联的 Dataset 列表
+      description: 根据当前用户激活的项目分页查询关联的 Dataset 列表（只查项目下的数据集，不做 shared 过滤）
       parameters:
       - description: 分页请求参数
         in: body
@@ -9441,6 +9627,47 @@ paths:
       security:
       - Bearer: []
       summary: 按项目分页查询数据集
+      tags:
+      - 数据管理
+  /data/dataset/list-shared-page:
+    post:
+      consumes:
+      - application/json
+      description: 分页查询所有 go_dataset.shared = true 的数据集，并标记当前用户激活项目是否已绑定（bound）
+      parameters:
+      - description: 分页请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.datasetByProjectPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 分页查询共享数据集
       tags:
       - 数据管理
   /data/dataset/update:
@@ -9816,6 +10043,27 @@ paths:
       summary: 按项目查询文件列表并按角色分组
       tags:
       - 数据管理
+  /data/file/roles:
+    get:
+      description: 返回 go_file.role / go_assay.role 的合法取值（DEFAULT / TABLE / DATABASE），供前端下拉框使用
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/types.RoleOption'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.AppError'
+      security:
+      - Bearer: []
+      summary: 查询文件角色选项
+      tags:
+      - 数据管理
   /data/file/update:
     post:
       consumes:
@@ -10090,7 +10338,7 @@ paths:
       description: |-
         根据 go_file 主键 ID 查找文件 path，优先用 go_file.format（为空时回退到 path 后缀）确定格式并返回可直接渲染的预览内容：
         表格（csv/tsv，xlsx 转 TSV）返回分隔文本由前端解析，fasta/gff 等返回原始文本，
-        gz/rds 等二进制格式返回不能预览的提示。
+        gz/rds 等二进制格式返回不能预览的提示；path 为目录时返回目录树（kind=tree，tree 字段）供前端渲染文件树。
       parameters:
       - description: 文件主键 ID
         in: query
