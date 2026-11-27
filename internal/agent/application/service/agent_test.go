@@ -47,6 +47,16 @@ func (f *fakeTaskRepository) ListByStatus(_ context.Context, statuses ...TaskSta
 	return out, nil
 }
 
+func (f *fakeTaskRepository) ListByIDs(_ context.Context, ids []int64) ([]*Task, error) {
+	out := make([]*Task, 0, len(ids))
+	for _, id := range ids {
+		if task, ok := f.tasks[id]; ok {
+			out = append(out, task)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeTaskRepository) Page(_ context.Context, _, _ int, _ ...TaskStatus) ([]*Task, int64, error) {
 	return nil, 0, nil
 }

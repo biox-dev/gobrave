@@ -55,6 +55,18 @@ func (r *gormTaskRepository) ListByStatus(ctx context.Context, statuses ...agent
 	return tasks, nil
 }
 
+// ListByIDs 按 ID 批量查询任务；ids 为空时直接返回空集，不发查询。
+func (r *gormTaskRepository) ListByIDs(ctx context.Context, ids []int64) ([]*agent.Task, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var tasks []*agent.Task
+	if err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
 func (r *gormTaskRepository) Page(ctx context.Context, offset, limit int, statuses ...agent.TaskStatus) ([]*agent.Task, int64, error) {
 	q := r.db.WithContext(ctx).Model(&agent.Task{})
 	if len(statuses) > 0 {

@@ -17,6 +17,9 @@ type TaskRepository interface {
 	Get(ctx context.Context, id int64) (*types.Task, error)
 	Update(ctx context.Context, task *types.Task) error
 	ListByStatus(ctx context.Context, statuses ...types.TaskStatus) ([]*types.Task, error)
+	// ListByIDs 按 ID 批量查询任务，用于会话列表批量回填活跃轮次状态（避免 N+1）。
+	// 不存在的 ID 不会出现在结果中，由调用方按「状态未知」处理。
+	ListByIDs(ctx context.Context, ids []int64) ([]*types.Task, error)
 	// Page 分页查询任务（按 CreatedAt 升序）；statuses 为空表示全部状态。
 	Page(ctx context.Context, offset, limit int, statuses ...types.TaskStatus) ([]*types.Task, int64, error)
 }

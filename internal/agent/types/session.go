@@ -39,9 +39,15 @@ type Session struct {
 	// CurrentTaskID 记录当前活跃轮次（running / waiting_permission）的任务 ID；
 	// 轮次正常结束时置空。failed 但仍有检查点（可续跑）的任务会保留该指针，
 	// 供前端刷新 / 切换会话时展示「Continue」并从 /agent/task/resume 恢复执行。
-	CurrentTaskID int64     `json:"current_task_id,string" gorm:"column:current_task_id;type:bigint"`
-	CreatedAt     time.Time `json:"created_at" gorm:"column:created_at"`
-	UpdatedAt     time.Time `json:"updated_at" gorm:"column:updated_at"`
+	CurrentTaskID int64 `json:"current_task_id,string" gorm:"column:current_task_id;type:bigint"`
+	// ActiveTaskStatus 是 CurrentTaskID 指向任务的当前状态（running / waiting_permission /
+	// failed / canceled 等），由会话列表接口批量回填（gorm:"-" 不落库）。
+	//
+	// 不能只看 CurrentTaskID 是否非 0 判断「是否在执行」：用户取消或失败但保留检查点时
+	// 该指针会保留（用于 Continue），因此前端需要状态才能区分「运行中」与「可续跑」。
+	ActiveTaskStatus TaskStatus `json:"active_task_status,omitempty" gorm:"-"`
+	CreatedAt        time.Time  `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt        time.Time  `json:"updated_at" gorm:"column:updated_at"`
 }
 
 // TableName 返回会话表的表名。

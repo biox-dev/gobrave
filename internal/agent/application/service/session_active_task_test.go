@@ -88,3 +88,32 @@ func TestGetSessionActiveTaskMissingForStalePointer(t *testing.T) {
 		t.Fatalf("CurrentTaskID should stay non-zero")
 	}
 }
+
+// TestListSessionsBackfillsActiveTaskStatus 校验会话列表批量回填当前轮次状态：
+// 只回填一次任务表，且 canceled（保留指针可续跑）不再被前端误判为运行中。
+func TestListSessionsBackfillsActiveTaskStatus(t *testing.T) {
+	ctx := context.Background()
+	chat, svc, sess, sessions, _ := newTurnTestChat(t)
+	tasks := agentrepository.NewGormTaskRepository(turnTestDB(t, svc))
+
+	task := seedTurnTask(t, svc, sess.ID)
+	sess.CurrentTaskID = task.ID
+	if _, err := sessions.Save(ctx, sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	task.Status = agenttypes.TaskCanceled
+	if err := tasks.Update(ctx, task); err != nil {
+		t.Fatalf("update task: %v", err)
+	}
+
+	list, total, err := chat.ListSessions(ctx, sess.ProjectID, "", 0, 10)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if total != 1 || len(list) != 1 {
+		t.Fatalf("total = %d, len = %d, want 1/1", total, len(list))
+	}
+	if list[0].ActiveTaskStatus != agenttypes.TaskCanceled {
+		t.Fatalf("ActiveTaskStatus = %q, want %q", list[0].ActiveTaskStatus, agenttypes.TaskCanceled)
+	}
+}

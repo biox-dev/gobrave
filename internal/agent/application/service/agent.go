@@ -518,6 +518,17 @@ func (s *AgentService) GetTask(ctx context.Context, id int64) (*Task, error) {
 	return s.tasks.Get(ctx, id)
 }
 
+// GetTasksByIDs 按 ID 批量查询任务。
+//
+// 供会话列表批量回填 CurrentTaskID 对应的任务状态，避免逐条查询的 N+1。
+// 不存在的 ID 不会出现在结果中，由调用方按「状态未知」处理。
+func (s *AgentService) GetTasksByIDs(ctx context.Context, ids []int64) ([]*Task, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return s.tasks.ListByIDs(ctx, ids)
+}
+
 // GetTaskRequest 按任务 ID 加载任务，返回任务持久化的 Request 内容。
 //
 // 供 UI 调试 / 审计使用。注意：这里返回的是任务创建时的原始请求，未应用 Agent Profile；

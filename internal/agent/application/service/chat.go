@@ -412,7 +412,47 @@ func (s *ChatService) ListSessions(ctx context.Context, projectID int64, keyword
 		Offset:    offset,
 		Limit:     limit,
 	}
-	return s.sessions.List(ctx, params)
+	sessions, total, err := s.sessions.List(ctx, params)
+	if err != nil {
+		return nil, 0, err
+	}
+	// 批量回填活跃轮次状态：CurrentTaskID 在 canceled / failed（可续跑）时仍会保留，
+	// 前端只有拿到 status 才能区分「仍在执行」与「已中断可续跑」。
+	s.attachActiveTaskStatus(ctx, sessions)
+	return sessions, total, nil
+}
+
+// attachActiveTaskStatus 为会话列表批量回填 ActiveTaskStatus。
+//
+// 只查一次任务表；回填失败不影响列表本身（前端按「状态未知」处理，不显示运行标记）。
+func (s *ChatService) attachActiveTaskStatus(ctx context.Context, sessions []Session) {
+	if len(sessions) == 0 || s.agent == nil {
+		return
+	}
+	ids := make([]int64, 0, len(sessions))
+	for _, sess := range sessions {
+		if sess.CurrentTaskID > 0 {
+			ids = append(ids, sess.CurrentTaskID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	tasks, err := s.agent.GetTasksByIDs(ctx, ids)
+	if err != nil {
+		return
+	}
+	statusByID := make(map[int64]TaskStatus, len(tasks))
+	for _, task := range tasks {
+		if task != nil {
+			statusByID[task.ID] = task.Status
+		}
+	}
+	for i := range sessions {
+		if sessions[i].CurrentTaskID > 0 {
+			sessions[i].ActiveTaskStatus = statusByID[sessions[i].CurrentTaskID]
+		}
+	}
 }
 
 // ListMessages 查询某个会话的全部历史消息（按 Seq 升序）。
@@ -790,13 +830,18 @@ func (s *ChatService) GetSession(ctx context.Context, id int64, q SessionMessage
 	if len(msgs) > 0 {
 		nextCursor = msgs[0].Seq
 	}
+	activeTask := s.loadActiveTask(ctx, sess.CurrentTaskID)
+	if activeTask != nil {
+		// 详情与列表保持同一字段语义：前端无需分叉两套判断。
+		sess.ActiveTaskStatus = activeTask.Status
+	}
 	return SessionDetail{
 		Session:    sess,
 		Messages:   msgs,
 		Users:      users,
 		HasMore:    hasMore,
 		NextCursor: nextCursor,
-		ActiveTask: s.loadActiveTask(ctx, sess.CurrentTaskID),
+		ActiveTask: activeTask,
 	}, nil
 }
 
