@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +16,89 @@ const (
 	PullPolicyIfNotPresent = "IfNotPresent"
 	PullPolicyNever        = "Never"
 )
+
+// TemplateLanguage 是容器模板支持的程序语言，决定创建容器时注入哪些包目录变量：
+//
+//	R      → R_PACKAGE_DIR      （<packageRoot>/R-<templateID>）
+//	PYTHON → PYTHON_PACKAGE_DIR （<packageRoot>/python-<templateID>）
+//	CONDA  → CONDA_PACKAGE_DIR  （<packageRoot>/conda-<templateID>）
+//
+// 与 Role 一样是枚举而不是自由文本；包目录根（packageRoot）由模板的 UseSharedDir 决定。
+type TemplateLanguage string
+
+const (
+	TemplateLanguageR      TemplateLanguage = "R"
+	TemplateLanguagePython TemplateLanguage = "PYTHON"
+	TemplateLanguageConda  TemplateLanguage = "CONDA"
+)
+
+// templateLanguageSpec 是每种语言的包目录元数据。
+type templateLanguageSpec struct {
+	// DirName 是包目录子目录前缀（<packageRoot>/<DirName>-<templateID>）。
+	DirName string
+	// DirVar 是创建容器时注入的包目录变量名。
+	DirVar string
+}
+
+var templateLanguageSpecs = map[TemplateLanguage]templateLanguageSpec{
+	TemplateLanguageR:      {DirName: "R", DirVar: "R_PACKAGE_DIR"},
+	TemplateLanguagePython: {DirName: "python", DirVar: "PYTHON_PACKAGE_DIR"},
+	TemplateLanguageConda:  {DirName: "conda", DirVar: "CONDA_PACKAGE_DIR"},
+}
+
+// PackageDirName 返回该语言包目录的子目录前缀；未知语言返回空串。
+func (l TemplateLanguage) PackageDirName() string {
+	return templateLanguageSpecs[l].DirName
+}
+
+// PackageDirVariable 返回该语言包目录注入的变量名；未知语言返回空串。
+func (l TemplateLanguage) PackageDirVariable() string {
+	return templateLanguageSpecs[l].DirVar
+}
+
+// NormalizeTemplateLanguage 把原始字符串归一化为合法 TemplateLanguage；
+// 空值或未知取值返回 ""。大小写与首尾空白不敏感（"python" → PYTHON）。
+func NormalizeTemplateLanguage(raw string) TemplateLanguage {
+	switch lang := TemplateLanguage(strings.ToUpper(strings.TrimSpace(raw))); lang {
+	case TemplateLanguageR, TemplateLanguagePython, TemplateLanguageConda:
+		return lang
+	default:
+		return ""
+	}
+}
+
+// NormalizeTemplateLanguages 归一化并去重（保持首次出现顺序），丢弃空值与未知取值。
+func NormalizeTemplateLanguages(raw []TemplateLanguage) []TemplateLanguage {
+	seen := make(map[TemplateLanguage]struct{}, len(raw))
+	langs := make([]TemplateLanguage, 0, len(raw))
+	for _, one := range raw {
+		lang := NormalizeTemplateLanguage(string(one))
+		if lang == "" {
+			continue
+		}
+		if _, ok := seen[lang]; ok {
+			continue
+		}
+		seen[lang] = struct{}{}
+		langs = append(langs, lang)
+	}
+	return langs
+}
+
+// TemplateLanguageOption 是 TemplateLanguages() 的响应条目，供前端渲染多选框。
+type TemplateLanguageOption struct {
+	Label string           `json:"label"`
+	Value TemplateLanguage `json:"value"`
+}
+
+// TemplateLanguages 返回全部支持的语言，顺序即前端展示顺序。
+func TemplateLanguages() []TemplateLanguageOption {
+	return []TemplateLanguageOption{
+		{Label: "R", Value: TemplateLanguageR},
+		{Label: "Python", Value: TemplateLanguagePython},
+		{Label: "Conda", Value: TemplateLanguageConda},
+	}
+}
 
 // ===== 持久化实体：共享的容器运行配置 =====
 
@@ -91,6 +176,15 @@ type ContainerTemplateDefinition struct {
 	// Agent 工具 get_container_template 会把 Name 与 Description 一起回传给模型。
 	Description string `json:"description" gorm:"type:longtext"`
 
+	// Languages 是该模板支持的程序语言（见 TemplateLanguage*），决定创建容器时注入
+	// 哪些包目录变量：R → R_PACKAGE_DIR、PYTHON → PYTHON_PACKAGE_DIR、
+	// CONDA → CONDA_PACKAGE_DIR。空列表表示不注入任何包目录变量。
+	Languages []TemplateLanguage `json:"languages" gorm:"column:languages;serializer:json"`
+
+	// UseSharedDir 为 true 时包目录放在 <baseDir>/shared/package 下（跨项目共享）；
+	// false 时放在项目数据目录 <baseDir>/data/<projectID>/package 下。
+	UseSharedDir bool `json:"use_shared_dir" gorm:"not null;default:false"`
+
 	// 指针类型是为了让导出可以显式清空（omitempty 也因此生效）；接口响应仍会带上时间字段。
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
@@ -128,6 +222,9 @@ type ContainerTemplate struct {
 	// ImageName / PullPolicy 原样取自绑定行 ContainerTemplateDefinition。
 	ImageName  string `json:"image_name"`
 	PullPolicy string `json:"pull_policy"`
+	// Languages / UseSharedDir 原样取自绑定行，供创建容器时决定包目录变量与位置。
+	Languages    []TemplateLanguage `json:"languages"`
+	UseSharedDir bool               `json:"use_shared_dir"`
 
 	Command string  `json:"command"`
 	CPU     float64 `json:"cpu"`
@@ -154,12 +251,14 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 	}
 
 	tpl := &ContainerTemplate{
-		ID:          binding.ID,
-		SpecID:      binding.SpecID,
-		Name:        binding.Name,
-		Description: binding.Description,
-		ImageName:   binding.ImageName,
-		PullPolicy:  binding.PullPolicy,
+		ID:           binding.ID,
+		SpecID:       binding.SpecID,
+		Name:         binding.Name,
+		Description:  binding.Description,
+		ImageName:    binding.ImageName,
+		PullPolicy:   binding.PullPolicy,
+		Languages:    binding.Languages,
+		UseSharedDir: binding.UseSharedDir,
 	}
 	// 历史数据可能没有拉取策略，空值统一按 IfNotPresent 对外暴露。
 	if tpl.PullPolicy == "" {
@@ -190,6 +289,29 @@ func NewContainerTemplate(spec *ContainerTemplateSpec, binding *ContainerTemplat
 	}
 
 	return tpl
+}
+
+// PackageDir 返回某语言的包目录（<packageRoot>/<R|python|conda>-<templateID>）。
+//
+// 与 Dataset.WorkspaceDir 同构：路径只按模板与项目推导，不落库。
+// packageRoot 由 UseSharedDir 决定：
+//   - true ：<baseDir>/shared/package（跨项目共享）；
+//   - false：<baseDir>/data/<projectID>/package（项目私有）。
+//
+// 未知语言返回空串。
+func (t *ContainerTemplate) PackageDir(baseDir string, projectID int64, lang TemplateLanguage) string {
+	if t == nil {
+		return ""
+	}
+	dirName := lang.PackageDirName()
+	if dirName == "" {
+		return ""
+	}
+	root := utils.GetProjectPackageRoot(baseDir, projectID)
+	if t.UseSharedDir {
+		root = utils.GetSharedPackageRoot(baseDir)
+	}
+	return filepath.Join(root, fmt.Sprintf("%s-%d", dirName, t.ID))
 }
 
 // ContainerTemplateBundle 是容器模板的导出 / 导入格式，也是 script.json 与 workflow.json
@@ -231,12 +353,14 @@ func (t *ContainerTemplate) ToExport(spec *ContainerTemplateSpec) *ContainerTemp
 	bundle := NewContainerTemplateBundle()
 	// 导出格式不含时间字段，但展示名、镜像名与拉取策略属于资产本身，必须原样带出。
 	bundle.ContainerTemplateDefinitions = append(bundle.ContainerTemplateDefinitions, ContainerTemplateDefinition{
-		ID:          t.ID,
-		SpecID:      t.SpecID,
-		ImageName:   t.ImageName,
-		PullPolicy:  t.PullPolicy,
-		Name:        t.Name,
-		Description: t.Description,
+		ID:           t.ID,
+		SpecID:       t.SpecID,
+		ImageName:    t.ImageName,
+		PullPolicy:   t.PullPolicy,
+		Name:         t.Name,
+		Description:  t.Description,
+		Languages:    t.Languages,
+		UseSharedDir: t.UseSharedDir,
 	})
 	if spec != nil {
 		exportedSpec := *spec

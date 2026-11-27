@@ -266,6 +266,7 @@ func RegisterContainerRoutes(r *gin.RouterGroup, handler *handler.ContainerHandl
 
 	// 绑定行（ContainerTemplateDefinition）自身的增删改：只动镜像 / 拉取策略 / 展示名 / 描述 / 默认标记，
 	// 不触碰共享运行配置（“怎么跑”的字段在 /container/template-spec/*）。
+	r.GET("/container/template-definition/languages", handler.ListContainerTemplateLanguages)
 	r.POST("/container/template-definition/create", handler.CreateContainerTemplateDefinition)
 	r.POST("/container/template-definition/update", handler.UpdateContainerTemplateDefinition)
 	r.POST("/container/template-definition/delete", handler.DeleteContainerTemplateDefinition)

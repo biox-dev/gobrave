@@ -85,6 +85,24 @@ func NewContainerHandler(containerService interfaces.ContainerService,
 	}
 }
 
+// ListContainerTemplateLanguages godoc
+// @Summary      查询容器模板支持的程序语言选项
+// @Description  返回绑定行 languages 字段的合法取值（R / PYTHON / CONDA），供前端多选框使用。
+// @Description  选中某个语言后，创建容器时会注入对应的包目录变量（R_PACKAGE_DIR / PYTHON_PACKAGE_DIR / CONDA_PACKAGE_DIR）。
+// @Tags         容器管理
+// @Produce      json
+// @Success      200  {array}   types.TemplateLanguageOption
+// @Failure      401  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /container/template-definition/languages [get]
+func (h *ContainerHandler) ListContainerTemplateLanguages(c *gin.Context) {
+	if _, ok := getCurrentUserID(c); !ok {
+		return
+	}
+
+	c.JSON(http.StatusOK, types.TemplateLanguages())
+}
+
 // CreateContainerTemplateDefinition godoc
 // @Summary      创建容器模板（绑定行）
 // @Description  只新增一条绑定行（ContainerTemplateDefinition）：用 spec_id 引用已有的共享运行配置，

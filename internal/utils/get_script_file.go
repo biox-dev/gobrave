@@ -152,6 +152,22 @@ func GetSharedDatasetDir(baseDir string, datasetID int64) string {
 	return filepath.Join(baseDir, "shared", "dataset", fmt.Sprintf("%d", datasetID))
 }
 
+// GetProjectPackageRoot 返回项目包目录根（<base>/data/<projectID>/package）。
+// 各语言子目录为 <root>/<R|python|conda>-<templateID>，是否共享由
+// types.ContainerTemplate.UseSharedDir 决定，调用方统一走 ContainerTemplate.PackageDir。
+func GetProjectPackageRoot(baseDir string, projectID int64) string {
+	return filepath.Join(GetProjectDir(baseDir, projectID), "package")
+}
+
+// GetSharedPackageRoot 返回共享包目录根（<base>/shared/package）。
+//
+// 共享包目录不挂在任何项目下，多个项目使用同一份语言包（R / python / conda）；
+// 是否共享由 types.ContainerTemplate.UseSharedDir 决定，调用方统一走
+// ContainerTemplate.PackageDir，不要直接拼这个路径。
+func GetSharedPackageRoot(baseDir string) string {
+	return filepath.Join(baseDir, "shared", "package")
+}
+
 func GetStoreDir(baseDir string) string {
 	return filepath.Join(baseDir, "store")
 }

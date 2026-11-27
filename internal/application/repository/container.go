@@ -93,22 +93,14 @@ func (r *containerRepository) UpdateContainerTemplateDefinition(ctx context.Cont
 	if item == nil || item.ID == 0 {
 		return errors.New("container template definition id is required")
 	}
-	// 先按零值规则更新其余字段。
-	if err := r.db.WithContext(ctx).
-		Model(&types.ContainerTemplateDefinition{}).
-		Where("id = ?", item.ID).
-		Updates(item).Error; err != nil {
-		return err
-	}
-	// name（物理列 display_name）/ description 需要支持「清空」：GORM 的 Updates(struct)
-	// 会跳过零值字段，所以这里单独写一次，保证空字符串也能落库。
+	// Select 显式列出要写入的列，保证空值 / false / 空列表也能落库：
+	// languages 是 serializer:json 字段，GORM 只在「结构体 + Select」时才会序列化；
+	// display_name / description / use_shared_dir 也需要支持清空或置回 false。
 	return r.db.WithContext(ctx).
 		Model(&types.ContainerTemplateDefinition{}).
 		Where("id = ?", item.ID).
-		Updates(map[string]any{
-			"display_name": item.Name,
-			"description":  item.Description,
-		}).Error
+		Select("SpecID", "ImageName", "PullPolicy", "Name", "Description", "Languages", "UseSharedDir").
+		Updates(item).Error
 }
 
 func (r *containerRepository) DeleteContainerTemplateDefinition(ctx context.Context, id int64) error {

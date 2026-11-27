@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -173,28 +172,33 @@ func (w *ContainerCreateWorker) buildSystemVariables(set *RuntimeVariableSet, in
 }
 
 // buildPackageVariables 负责 R/Python/Conda 包目录与 Rprofile 路径。
+//
+// 注入哪些包目录变量由模板的 Languages 决定（R → R_PACKAGE_DIR，
+// PYTHON → PYTHON_PACKAGE_DIR，CONDA → CONDA_PACKAGE_DIR）；目录位置由
+// ContainerTemplate.PackageDir 推导：共享目录 <baseDir>/shared/package，否则项目目录
+// <baseDir>/data/<projectID>/package，语言子目录为 <R|python|conda>-<templateID>。
 func (w *ContainerCreateWorker) buildPackageVariables(ctx context.Context, set *RuntimeVariableSet, in *runtimeVariableBuildInput) {
 	baseDir := in.baseDir
-	// 包目录按容器模板 ID 隔离（镜像名不再有独立主键，模板 ID 同样一模板一个目录）。
-	templateID := in.tpl.ID
 
 	packageDir := w.paths.Join(baseDir, "package")
 	profilePath := w.paths.Join(packageDir, "Rprofile")
 	ensureEmptyFileIfNotExists(ctx, w.paths, profilePath)
 	set.add("R_PROFILE", profilePath)
 	set.add("PACKAGE_DIR", packageDir)
-	projectDir := w.paths.Join(baseDir, "data", strconv.FormatInt(in.ownerCtx.project.ID, 10))
 
-	rPackageDir := w.paths.Join(projectDir, "package", fmt.Sprintf("R-%d", templateID))
-	set.add("R_PACKAGE_DIR", rPackageDir)
-
-	pythonPackageDir := w.paths.Join(projectDir, "package", fmt.Sprintf("python-%d", templateID))
-	set.add("PYTHON_PACKAGE_DIR", pythonPackageDir)
-
-	condaPackageDir := w.paths.Join(projectDir, "package", fmt.Sprintf("conda-%d", templateID))
-	set.add("CONDA_PACKAGE_DIR", condaPackageDir)
-
-	w.ensureDirs(ctx, []string{rPackageDir, pythonPackageDir, condaPackageDir})
+	projectID := in.ownerCtx.project.ID
+	dirs := make([]string, 0, len(in.tpl.Languages))
+	for _, lang := range in.tpl.Languages {
+		dirVar := lang.PackageDirVariable()
+		if dirVar == "" {
+			continue
+		}
+		// PackageDir 返回宿主路径；Join 负责换算成容器内 POSIX 路径。
+		dir := w.paths.Join(in.tpl.PackageDir(baseDir, projectID, lang))
+		set.add(dirVar, dir)
+		dirs = append(dirs, dir)
+	}
+	w.ensureDirs(ctx, dirs)
 }
 
 // buildProjectVariables 负责 PROJECT_DIR/PROJECT_CONFIG_DIR。

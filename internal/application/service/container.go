@@ -222,6 +222,7 @@ func (s *containerService) CreateContainerTemplateDefinition(ctx context.Context
 	item.PullPolicy = normalizePullPolicy(item.PullPolicy)
 	item.Name = strings.TrimSpace(item.Name)
 	item.Description = strings.TrimSpace(item.Description)
+	item.Languages = types.NormalizeTemplateLanguages(item.Languages)
 	if err := s.ensureImageNameNotBound(ctx, item.SpecID, item.ImageName); err != nil {
 		return err
 	}
@@ -246,6 +247,7 @@ func (s *containerService) UpdateContainerTemplateDefinition(ctx context.Context
 	item.PullPolicy = normalizePullPolicy(item.PullPolicy)
 	item.Name = strings.TrimSpace(item.Name)
 	item.Description = strings.TrimSpace(item.Description)
+	item.Languages = types.NormalizeTemplateLanguages(item.Languages)
 
 	existing, err := s.containerRepo.GetContainerTemplateDefinitionByID(ctx, item.ID)
 	if err != nil {
