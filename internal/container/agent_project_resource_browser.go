@@ -835,11 +835,11 @@ func (b *projectResourceBrowser) GetDatasetByID(ctx context.Context, projectID i
 		DatasetID:   dataset.ID,
 		DatasetName: dataset.DatasetName,
 		Description: dataset.Description,
-		Path:        utils.GetDatasetDir(absBaseDir, projectID, datasetID),
+		Path:        dataset.WorkspaceDir(absBaseDir, projectID),
 	}, nil
 }
 
-// toDatasetBrief 把数据集映射为工具回传的摘要，Path 由 utils.GetDatasetDir 推导。
+// toDatasetBrief 把数据集映射为工具回传的摘要，Path 由 Dataset.WorkspaceDir 推导。
 func (b *projectResourceBrowser) toDatasetBrief(toolName string, projectID int64, dataset *types.Dataset) (runtimecontext.DatasetBrief, error) {
 	if dataset == nil || dataset.ID == 0 {
 		return runtimecontext.DatasetBrief{}, fmt.Errorf("%s: dataset is invalid", toolName)
@@ -852,7 +852,7 @@ func (b *projectResourceBrowser) toDatasetBrief(toolName string, projectID int64
 		DatasetID:   dataset.ID,
 		DatasetName: dataset.DatasetName,
 		Description: dataset.Description,
-		Path:        utils.GetDatasetDir(absBaseDir, projectID, dataset.ID),
+		Path:        dataset.WorkspaceDir(absBaseDir, projectID),
 	}, nil
 }
 
@@ -1123,7 +1123,7 @@ func (b *projectResourceBrowser) AddFileToDataset(ctx context.Context, in runtim
 		return runtimecontext.DatasetFileAddResult{}, fmt.Errorf("%s: required services are not configured", toolName)
 	}
 
-	path, err := b.resolveDatasetFilePath(toolName, in.ProjectID, in.DatasetID, in.Path)
+	path, err := b.resolveDatasetFilePath(ctx, toolName, in.ProjectID, in.DatasetID, in.Path)
 	if err != nil {
 		return runtimecontext.DatasetFileAddResult{}, err
 	}
@@ -1178,8 +1178,8 @@ func (b *projectResourceBrowser) AddFileToDataset(ctx context.Context, in runtim
 }
 
 // resolveDatasetFilePath 把工具入参的 path 解析为绝对路径：绝对路径原样返回，
-// 相对路径相对数据集工作目录（utils.GetDatasetDir）解析。
-func (b *projectResourceBrowser) resolveDatasetFilePath(toolName string, projectID int64, datasetID int64, rawPath string) (string, error) {
+// 相对路径相对数据集工作目录（Dataset.WorkspaceDir，共享数据集为 shared 目录）解析。
+func (b *projectResourceBrowser) resolveDatasetFilePath(ctx context.Context, toolName string, projectID int64, datasetID int64, rawPath string) (string, error) {
 	path := strings.TrimSpace(rawPath)
 	if path == "" {
 		return "", fmt.Errorf("%s: path is required", toolName)
@@ -1191,7 +1191,14 @@ func (b *projectResourceBrowser) resolveDatasetFilePath(toolName string, project
 	if err != nil {
 		return "", fmt.Errorf("%s: failed to resolve storage base dir: %w", toolName, err)
 	}
-	return filepath.Join(utils.GetDatasetDir(absBaseDir, projectID, datasetID), path), nil
+	dataset, err := b.dataSvc.GetDatasetByID(ctx, datasetID)
+	if err != nil {
+		return "", fmt.Errorf("%s: failed to load dataset: %w", toolName, err)
+	}
+	if dataset == nil || dataset.ID == 0 {
+		return "", fmt.Errorf("%s: dataset %d not found", toolName, datasetID)
+	}
+	return filepath.Join(dataset.WorkspaceDir(absBaseDir, projectID), path), nil
 }
 
 // GetReportByID 按主键读取项目报告及其正文（get_report）。

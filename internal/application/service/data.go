@@ -67,8 +67,9 @@ func (s *dataService) CreateDataset(ctx context.Context, dataset *types.Dataset,
 	}
 
 	// Ensure the dataset workspace directory exists (created lazily on first
-	// use by downstream steps otherwise).
-	if err := s.ensureDatasetDir(projectID, dataset.ID); err != nil {
+	// use by downstream steps otherwise). Shared datasets live under
+	// <baseDir>/shared/dataset/<id> instead of the project directory.
+	if err := s.ensureDatasetDir(dataset, projectID); err != nil {
 		return err
 	}
 
@@ -83,7 +84,8 @@ func (s *dataService) EnsureDatasetDir(ctx context.Context, datasetID int64, pro
 		return "", gorm.ErrRecordNotFound
 	}
 
-	if _, err := s.dataRepo.GetDatasetByID(ctx, datasetID); err != nil {
+	dataset, err := s.dataRepo.GetDatasetByID(ctx, datasetID)
+	if err != nil {
 		if stderrs.Is(err, gorm.ErrRecordNotFound) {
 			return "", gorm.ErrRecordNotFound
 		}
@@ -94,39 +96,24 @@ func (s *dataService) EnsureDatasetDir(ctx context.Context, datasetID int64, pro
 		return "", fmt.Errorf("storage base dir is required")
 	}
 
-	if err := s.ensureDatasetDir(projectID, datasetID); err != nil {
+	if err := s.ensureDatasetDir(dataset, projectID); err != nil {
 		return "", err
 	}
 
-	return utils.GetDatasetDir(s.baseDir, projectID, datasetID), nil
+	return dataset.WorkspaceDir(s.baseDir, projectID), nil
 }
 
-// datasetPath resolves the absolute dataset workspace directory
-// (utils.GetDatasetDir) used to annotate API responses. It returns an empty
-// string when the storage base dir or the ids are missing.
-func (s *dataService) datasetPath(projectID int64, datasetID int64) string {
-	if projectID == 0 || datasetID == 0 {
-		return ""
-	}
-	baseDir := strings.TrimSpace(s.baseDir)
-	if baseDir == "" {
-		return ""
-	}
-	absBaseDir, err := utils.ResolveExternalPath(baseDir)
-	if err != nil {
-		return ""
-	}
-	return (&types.ProjectDataset{ProjectID: projectID, DatasetID: datasetID}).WorkspaceDir(absBaseDir)
-}
-
-// ensureDatasetDir creates utils.GetDatasetDir(baseDir, projectID, datasetID)
+// ensureDatasetDir creates the dataset workspace directory (Dataset.WorkspaceDir)
 // when it is missing. A blank baseDir disables directory provisioning.
-func (s *dataService) ensureDatasetDir(projectID int64, datasetID int64) error {
+func (s *dataService) ensureDatasetDir(dataset *types.Dataset, projectID int64) error {
 	if strings.TrimSpace(s.baseDir) == "" {
 		return nil
 	}
+	if dataset == nil || dataset.ID == 0 {
+		return gorm.ErrRecordNotFound
+	}
 
-	dir := utils.GetDatasetDir(s.baseDir, projectID, datasetID)
+	dir := dataset.WorkspaceDir(s.baseDir, projectID)
 	info, err := os.Stat(dir)
 	switch {
 	case err == nil && info.IsDir():
@@ -144,7 +131,8 @@ func (s *dataService) ensureDatasetDir(projectID int64, datasetID int64) error {
 }
 
 // datasetDir resolves the absolute dataset workspace directory
-// (utils.GetDatasetDir) for an existing dataset and project.
+// (Dataset.WorkspaceDir, i.e. the shared dir for shared datasets) for an
+// existing dataset and project.
 func (s *dataService) datasetDir(ctx context.Context, datasetID int64, projectID int64) (string, error) {
 	if datasetID == 0 {
 		return "", gorm.ErrRecordNotFound
@@ -153,7 +141,8 @@ func (s *dataService) datasetDir(ctx context.Context, datasetID int64, projectID
 		return "", fmt.Errorf("project id is required")
 	}
 
-	if _, err := s.dataRepo.GetDatasetByID(ctx, datasetID); err != nil {
+	dataset, err := s.dataRepo.GetDatasetByID(ctx, datasetID)
+	if err != nil {
 		return "", err
 	}
 
@@ -167,7 +156,7 @@ func (s *dataService) datasetDir(ctx context.Context, datasetID int64, projectID
 		return "", err
 	}
 
-	return utils.GetDatasetDir(absBaseDir, projectID, datasetID), nil
+	return dataset.WorkspaceDir(absBaseDir, projectID), nil
 }
 
 // ListDatasetDirFiles returns the dataset workspace directory path and every
@@ -341,6 +330,115 @@ func (s *dataService) PageDatasetByProjectID(ctx context.Context, pagination *ty
 	}
 
 	return types.NewPageResult(total, pagination, items), nil
+}
+
+// PageSharedDataset pages every shared dataset, marking the ones already bound
+// to the project so the picker can disable them.
+func (s *dataService) PageSharedDataset(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID int64) (*types.PageResult, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	items, total, err := s.dataRepo.PageSharedDataset(ctx, pagination, query)
+	if err != nil {
+		return nil, err
+	}
+
+	boundIDs := make(map[int64]struct{})
+	if projectID != 0 {
+		bound, err := s.dataRepo.ListDatasetByProjectID(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range bound {
+			if item != nil {
+				boundIDs[item.ID] = struct{}{}
+			}
+		}
+	}
+
+	result := make([]*types.SharedDatasetItem, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		_, isBound := boundIDs[item.ID]
+		result = append(result, &types.SharedDatasetItem{Dataset: *item, Bound: isBound})
+	}
+
+	return types.NewPageResult(total, pagination, result), nil
+}
+
+// AddSharedDatasetsToProject binds shared datasets to the project. Datasets that
+// are missing or not shared are rejected in Errors; already bound ones are only
+// counted in Skipped so repeated calls are idempotent.
+func (s *dataService) AddSharedDatasetsToProject(ctx context.Context, projectID int64, datasetIDs []int64) (*types.AddSharedDatasetsResult, error) {
+	if projectID == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	if len(datasetIDs) == 0 {
+		return nil, apperrors.NewValidationError("dataset_ids is required")
+	}
+
+	projectExists, err := s.dataRepo.ExistsProjectByID(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if !projectExists {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	bound, err := s.dataRepo.ListDatasetByProjectID(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	boundIDs := make(map[int64]struct{}, len(bound))
+	for _, item := range bound {
+		if item != nil {
+			boundIDs[item.ID] = struct{}{}
+		}
+	}
+
+	result := &types.AddSharedDatasetsResult{}
+	seen := make(map[int64]struct{}, len(datasetIDs))
+	for _, datasetID := range datasetIDs {
+		if datasetID == 0 {
+			continue
+		}
+		if _, duplicated := seen[datasetID]; duplicated {
+			continue
+		}
+		seen[datasetID] = struct{}{}
+
+		if _, alreadyBound := boundIDs[datasetID]; alreadyBound {
+			result.Skipped++
+			continue
+		}
+
+		dataset, err := s.dataRepo.GetDatasetByID(ctx, datasetID)
+		if err != nil {
+			if stderrs.Is(err, gorm.ErrRecordNotFound) {
+				result.Errors = append(result.Errors, fmt.Sprintf("dataset %d not found", datasetID))
+				continue
+			}
+			return nil, err
+		}
+		if !dataset.Shared {
+			result.Errors = append(result.Errors, fmt.Sprintf("dataset %d is not shared", datasetID))
+			continue
+		}
+
+		if err := s.dataRepo.CreateProjectDataset(ctx, &types.ProjectDataset{
+			ProjectID: projectID,
+			DatasetID: datasetID,
+		}); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("dataset %d: %v", datasetID, err))
+			continue
+		}
+		result.Added++
+	}
+
+	return result, nil
 }
 
 func (s *dataService) CreateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error {
@@ -600,7 +698,7 @@ func (s *dataService) AddFileToDataset(ctx context.Context, req *types.AddFileTo
 		size = info.Size()
 		// If copy is requested, copy file to analysis_result dir with timestamp prefix
 		if req.IsCopy {
-			destDir := utils.GetDatasetDir(absBaseDir, req.ProjectID, dataset.ID) //filepath.Join(absBaseDir, req.ProjectID, "dataset", fmt.Sprintf("%d", dataset.ID))
+			destDir := dataset.WorkspaceDir(absBaseDir, req.ProjectID)
 			if err := os.MkdirAll(destDir, 0755); err != nil {
 				return nil, fmt.Errorf("failed to create destination directory: %w", err)
 			}
@@ -734,7 +832,7 @@ func (s *dataService) UploadFileToDataset(
 	}
 
 	// Keep the uploaded file inside the dataset workspace directory.
-	destDir := utils.GetDatasetDir(absBaseDir, projectID, datasetID)
+	destDir := dataset.WorkspaceDir(absBaseDir, projectID)
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create dataset directory: %w", err)
 	}
@@ -964,12 +1062,9 @@ func (s *dataService) ImportAssayTSV(ctx context.Context, req *types.ImportAssay
 		return nil, apperrors.NewValidationError("content is required")
 	}
 
-	datasetExists, err := s.dataRepo.ExistsDatasetByID(ctx, req.DatasetID)
+	importDataset, err := s.dataRepo.GetDatasetByID(ctx, req.DatasetID)
 	if err != nil {
 		return nil, err
-	}
-	if !datasetExists {
-		return nil, gorm.ErrRecordNotFound
 	}
 
 	header, rows := parseTSV(req.Content)
@@ -1002,9 +1097,9 @@ func (s *dataService) ImportAssayTSV(ctx context.Context, req *types.ImportAssay
 
 	// Organize the dataset workspace so imported files have a home even though
 	// the TSV paths themselves are referenced in place (not copied).
-	if req.ProjectID != 0 && strings.TrimSpace(s.baseDir) != "" {
+	if req.ProjectID != 0 && strings.TrimSpace(s.baseDir) != "" && importDataset != nil {
 		if absBaseDir, err := utils.ResolveExternalPath(s.baseDir); err == nil && absBaseDir != "" {
-			if err := os.MkdirAll(utils.GetDatasetDir(absBaseDir, req.ProjectID, req.DatasetID), 0755); err != nil {
+			if err := os.MkdirAll(importDataset.WorkspaceDir(absBaseDir, req.ProjectID), 0755); err != nil {
 				return nil, fmt.Errorf("failed to create dataset directory: %w", err)
 			}
 		}

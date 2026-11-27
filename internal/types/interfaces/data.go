@@ -31,7 +31,16 @@ type DataService interface {
 	// ListDatasetByProjectID returns every dataset bound to the project
 	// (go_project_dataset -> go_dataset), newest first.
 	ListDatasetByProjectID(ctx context.Context, projectID int64) ([]*types.Dataset, error)
+	// PageDatasetByProjectID pages the datasets bound to the project; it is
+	// project-scoped only (shared datasets bound to the project are included).
 	PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID int64) (*types.PageResult, error)
+	// PageSharedDataset pages every shared dataset (go_dataset.shared = true),
+	// flagging the ones already bound to the given project (Bound=true).
+	PageSharedDataset(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID int64) (*types.PageResult, error)
+	// AddSharedDatasetsToProject binds the given shared datasets to the project.
+	// Datasets that are not shared or not found are reported in Errors; already
+	// bound ones are only counted in Skipped, so the call is idempotent.
+	AddSharedDatasetsToProject(ctx context.Context, projectID int64, datasetIDs []int64) (*types.AddSharedDatasetsResult, error)
 
 	CreateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error
 	GetProjectDatasetByID(ctx context.Context, id int64) (*types.ProjectDataset, error)
@@ -109,6 +118,8 @@ type DataRepository interface {
 	ListDataset(ctx context.Context) ([]*types.Dataset, error)
 	ListDatasetByProjectID(ctx context.Context, projectID int64) ([]*types.Dataset, error)
 	PageDatasetByProjectID(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset, projectID int64) ([]*types.Dataset, int64, error)
+	// PageSharedDataset pages every shared dataset (go_dataset.shared = true).
+	PageSharedDataset(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset) ([]*types.Dataset, int64, error)
 
 	CreateProjectDataset(ctx context.Context, projectDataset *types.ProjectDataset) error
 	GetProjectDatasetByID(ctx context.Context, id int64) (*types.ProjectDataset, error)

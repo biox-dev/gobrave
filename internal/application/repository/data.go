@@ -37,6 +37,7 @@ func (r *dataRepository) UpdateDataset(ctx context.Context, dataset *types.Datas
 			"dataset_key":  dataset.DatasetKey,
 			"description":  dataset.Description,
 			"metadata":     dataset.Metadata,
+			"shared":       dataset.Shared,
 		}).Error
 }
 
@@ -60,7 +61,7 @@ func (r *dataRepository) ListDatasetByProjectID(ctx context.Context, projectID i
 	items := make([]*types.Dataset, 0)
 	err := r.db.WithContext(ctx).
 		Table("go_dataset AS dataset").
-		Select("dataset.id, dataset.dataset_name, dataset.dataset_key, dataset.description, dataset.metadata, dataset.created_at, dataset.updated_at").
+		Select("dataset.id, dataset.dataset_name, dataset.dataset_key, dataset.description, dataset.metadata, dataset.shared, dataset.created_at, dataset.updated_at").
 		Joins("JOIN go_project_dataset AS pd ON pd.dataset_id = dataset.id").
 		Where("pd.project_id = ?", projectID).
 		Distinct().
@@ -130,7 +131,81 @@ func (r *dataRepository) PageDatasetByProjectID(ctx context.Context, pagination 
 	}
 
 	err := baseQuery.
-		Select("dataset.id, dataset.dataset_name, dataset.dataset_key, dataset.description, dataset.metadata, dataset.created_at, dataset.updated_at").
+		Select("dataset.id, dataset.dataset_name, dataset.dataset_key, dataset.description, dataset.metadata, dataset.shared, dataset.created_at, dataset.updated_at").
+		Distinct().
+		Order("dataset.id DESC").
+		Offset(pagination.Offset()).
+		Limit(pagination.Limit()).
+		Find(&items).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if len(items) == 0 {
+		return []*types.Dataset{}, total, nil
+	}
+
+	return items, total, nil
+}
+
+// PageSharedDataset pages every shared dataset (go_dataset.shared = true),
+// regardless of project binding. It backs the shared-dataset picker used to add
+// a shared dataset to the active project.
+func (r *dataRepository) PageSharedDataset(ctx context.Context, pagination *types.Pagination, query *types.QueryDataset) ([]*types.Dataset, int64, error) {
+	if pagination == nil {
+		pagination = &types.Pagination{}
+	}
+
+	items := make([]*types.Dataset, 0)
+	var total int64
+
+	buildQuery := func() *gorm.DB {
+		return r.db.WithContext(ctx).
+			Table("go_dataset AS dataset").
+			Where("dataset.shared = ?", true)
+	}
+
+	applyFilters := func(db *gorm.DB) *gorm.DB {
+		if keyword := pagination.GetKeyword(); keyword != "" {
+			like := "%" + keyword + "%"
+			db = db.Where("(dataset.dataset_name LIKE ? OR dataset.dataset_key LIKE ? OR dataset.description LIKE ?)", like, like, like)
+		}
+
+		if query == nil {
+			return db
+		}
+
+		if query.ID != nil {
+			db = db.Where("dataset.id = ?", *query.ID)
+		}
+
+		if datasetName := query.GetDatasetName(); datasetName != "" {
+			db = db.Where("dataset.dataset_name LIKE ?", "%"+datasetName+"%")
+		}
+
+		if datasetKey := query.GetDatasetKey(); datasetKey != "" {
+			db = db.Where("dataset.dataset_key = ?", datasetKey)
+		}
+
+		if description := query.GetDescription(); description != "" {
+			db = db.Where("dataset.description LIKE ?", "%"+description+"%")
+		}
+
+		if metadata := query.GetMetadata(); metadata != "" {
+			db = db.Where("dataset.metadata LIKE ?", "%"+metadata+"%")
+		}
+
+		return db
+	}
+
+	if err := applyFilters(buildQuery()).
+		Select("COUNT(DISTINCT dataset.id)").
+		Scan(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := applyFilters(buildQuery()).
+		Select("dataset.id, dataset.dataset_name, dataset.dataset_key, dataset.description, dataset.metadata, dataset.shared, dataset.created_at, dataset.updated_at").
 		Distinct().
 		Order("dataset.id DESC").
 		Offset(pagination.Offset()).

@@ -143,6 +143,15 @@ func GetDatasetDir(baseDir string, projectID int64, datasetID int64) string {
 	return filepath.Join(projectDir, "dataset", fmt.Sprintf("%d", datasetID))
 }
 
+// GetSharedDatasetDir 返回共享数据集目录（<base>/shared/dataset/<datasetID>）。
+//
+// 共享数据集不挂在任何项目下，多个项目绑定同一个 dataset 时读写的是同一份文件，
+// 因此目录里没有 project 这一段。是否共享由 types.Dataset.Shared 决定，
+// 调用方统一走 Dataset.WorkspaceDir，不要直接拼这个路径。
+func GetSharedDatasetDir(baseDir string, datasetID int64) string {
+	return filepath.Join(baseDir, "shared", "dataset", fmt.Sprintf("%d", datasetID))
+}
+
 func GetStoreDir(baseDir string) string {
 	return filepath.Join(baseDir, "store")
 }

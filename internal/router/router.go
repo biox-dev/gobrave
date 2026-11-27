@@ -195,6 +195,8 @@ func RegisterDataRoutes(r *gin.RouterGroup, handler *handler.DataHandler) {
 	r.GET("/data/dataset/list", handler.ListDataset)
 	r.GET("/data/dataset/list-by-project", handler.ListDatasetByProjectID)
 	r.POST("/data/dataset/list-by-project-page", handler.PageDatasetByProjectID)
+	r.POST("/data/dataset/list-shared-page", handler.PageSharedDataset)
+	r.POST("/data/dataset/add-shared", handler.AddSharedDatasetToProject)
 	r.POST("/data/dataset/ensure-dir", handler.EnsureDatasetDir)
 	r.GET("/data/dataset/dir-files", handler.ListDatasetDirFiles)
 	r.GET("/data/dataset/files", handler.ListDatasetFiles)

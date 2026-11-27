@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	appservice "github.com/biox-dev/gobrave/internal/application/service"
@@ -628,7 +629,7 @@ func (h *DataHandler) ListDatasetByProjectID(c *gin.Context) {
 
 // PageDatasetByProjectID godoc
 // @Summary      按项目分页查询数据集
-// @Description  根据当前用户激活的项目分页查询关联的 Dataset 列表
+// @Description  根据当前用户激活的项目分页查询关联的 Dataset 列表（只查项目下的数据集，不做 shared 过滤）
 // @Tags         数据管理
 // @Accept       json
 // @Produce      json
@@ -669,6 +670,110 @@ func (h *DataHandler) PageDatasetByProjectID(c *gin.Context) {
 		"page":      result.Page,
 		"page_size": result.PageSize,
 	})
+}
+
+// PageSharedDataset godoc
+// @Summary      分页查询共享数据集
+// @Description  分页查询所有 go_dataset.shared = true 的数据集，并标记当前用户激活项目是否已绑定（bound）
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      datasetByProjectPageRequest  true  "分页请求参数"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/dataset/list-shared-page [post]
+func (h *DataHandler) PageSharedDataset(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req datasetByProjectPageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project")
+		return
+	}
+
+	result, err := h.dataService.PageSharedDataset(c.Request.Context(), &req.Pagination, &req.QueryDataset, project.ID)
+	if err != nil {
+		handleDataError(c, err, "failed to page shared dataset")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":       result.Data,
+		"total":      result.Total,
+		"page":       result.Page,
+		"page_size":  result.PageSize,
+		"project_id": project.ID,
+	})
+}
+
+// addSharedDatasetRequest binds shared datasets to the active project. IDs are
+// JSON strings to match the int64-as-string convention of the data API.
+type addSharedDatasetRequest struct {
+	DatasetIDs []string `json:"dataset_ids" binding:"required,min=1"`
+}
+
+// AddSharedDatasetToProject godoc
+// @Summary      添加共享数据集到当前项目
+// @Description  把选中的共享数据集（go_dataset.shared = true）绑定到当前用户激活项目（写 go_project_dataset）；已绑定则跳过，接口幂等
+// @Tags         数据管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body      addSharedDatasetRequest  true  "请求参数"
+// @Success      200      {object}  types.AddSharedDatasetsResult
+// @Failure      400      {object}  errors.AppError
+// @Failure      401      {object}  errors.AppError
+// @Failure      404      {object}  errors.AppError
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Router       /data/dataset/add-shared [post]
+func (h *DataHandler) AddSharedDatasetToProject(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		return
+	}
+
+	var req addSharedDatasetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	datasetIDs := make([]int64, 0, len(req.DatasetIDs))
+	for _, raw := range req.DatasetIDs {
+		id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err != nil || id == 0 {
+			c.Error(errors.NewValidationError("invalid dataset id").WithDetails(raw))
+			return
+		}
+		datasetIDs = append(datasetIDs, id)
+	}
+
+	project, err := h.projectService.GetActiveProjectByUserID(c.Request.Context(), userID)
+	if err != nil {
+		handleDataError(c, err, "failed to get active project")
+		return
+	}
+
+	result, err := h.dataService.AddSharedDatasetsToProject(c.Request.Context(), project.ID, datasetIDs)
+	if err != nil {
+		handleDataError(c, err, "failed to add shared dataset to project")
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 // CreateProjectDataset godoc

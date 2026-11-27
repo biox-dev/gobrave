@@ -29,6 +29,11 @@ type Dataset struct {
 
 	Metadata string `json:"metadata" gorm:"type:text"`
 
+	// Shared marks a dataset whose workspace lives in the storage-wide shared
+	// area (<baseDir>/shared/dataset/<id>) instead of a project directory, so it
+	// can be bound to (and read/written by) several projects.
+	Shared bool `json:"shared" gorm:"not null;default:false"`
+
 	CreatedAt time.Time `json:"created_at"`
 
 	UpdatedAt time.Time `json:"updated_at"`
@@ -45,6 +50,9 @@ func (Dataset) TableName() string {
 func (t *Dataset) WorkspaceDir(baseDir string, projectID int64) string {
 	if t == nil {
 		return ""
+	}
+	if t.Shared {
+		return utils.GetSharedDatasetDir(baseDir, t.ID)
 	}
 	return utils.GetDatasetDir(baseDir, projectID, t.ID)
 }
@@ -64,6 +72,9 @@ type CreateDatasetRequest struct {
 	DatasetKey  string `json:"dataset_key"`
 	Description string `json:"description"`
 	Metadata    string `json:"metadata"`
+	// Shared stores the dataset workspace under <baseDir>/shared/dataset/<id> so
+	// several projects can bind the same dataset. Defaults to false.
+	Shared bool `json:"shared"`
 }
 
 // ToDataset converts the request into a Dataset entity. ID and audit fields are
@@ -78,6 +89,7 @@ func (r *CreateDatasetRequest) ToDataset() *Dataset {
 		DatasetKey:  strings.TrimSpace(r.DatasetKey),
 		Description: r.Description,
 		Metadata:    r.Metadata,
+		Shared:      r.Shared,
 	}
 }
 
@@ -89,6 +101,7 @@ type UpdateDatasetRequest struct {
 	DatasetKey  string `json:"dataset_key"`
 	Description string `json:"description"`
 	Metadata    string `json:"metadata"`
+	Shared      bool   `json:"shared"`
 }
 
 // ToDataset converts the request into a Dataset entity for the update path.
@@ -103,6 +116,7 @@ func (r *UpdateDatasetRequest) ToDataset() *Dataset {
 		DatasetKey:  strings.TrimSpace(r.DatasetKey),
 		Description: r.Description,
 		Metadata:    r.Metadata,
+		Shared:      r.Shared,
 	}
 }
 
@@ -124,6 +138,8 @@ func (ProjectDataset) TableName() string {
 // （<baseDir>/data/<projectId>/dataset/<datasetId>）。
 //
 // 与 Dataset.WorkspaceDir 同构：路径只按 ProjectID / DatasetID 推导，不落库。
+// 注意：共享数据集（Dataset.Shared=true）的目录在 <baseDir>/shared/dataset/<id>，
+// 只有拿到 Dataset 实体才能确定，因此需要绝对路径时优先用 Dataset.WorkspaceDir。
 func (t *ProjectDataset) WorkspaceDir(baseDir string) string {
 	if t == nil {
 		return ""
@@ -177,4 +193,26 @@ func (q *QueryDataset) GetMetadata() string {
 		return ""
 	}
 	return strings.TrimSpace(q.Metadata)
+}
+
+// SharedDatasetItem is the read model of the shared-dataset picker: a shared
+// dataset plus whether the caller's active project already binds it.
+type SharedDatasetItem struct {
+	Dataset
+	Bound bool `json:"bound"`
+}
+
+// AddSharedDatasetsRequest binds one or more shared datasets to the caller's
+// active project. IDs are strings because the primary key is a snowflake int64
+// serialized as a JSON string everywhere else in the data API.
+type AddSharedDatasetsRequest struct {
+	DatasetIDs []string `json:"dataset_ids" binding:"required,min=1"`
+}
+
+// AddSharedDatasetsResult summarizes a bind run. Re-binding an already bound
+// dataset only counts as skipped, so the call is idempotent.
+type AddSharedDatasetsResult struct {
+	Added   int      `json:"added"`
+	Skipped int      `json:"skipped"`
+	Errors  []string `json:"errors,omitempty"`
 }
