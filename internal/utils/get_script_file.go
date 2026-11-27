@@ -19,7 +19,8 @@ func projectDirName(projectID int64) string {
 }
 
 // GetScriptFileDir 返回脚本目录（<base>/data/<project>/pipeline/script/<scriptID>）。
-// 目录内含主文件 / io_schema.json / README.md，一次性取全部路径请用 ScriptLayout。
+// 目录内含主文件 / io_schema.json / README.md，单文件路径请分别用
+// ScriptMainFilePath / ScriptIOSchemaPath / ScriptReadmePath 派生。
 func GetScriptFileDir(baseDir string, projectID int64, scriptID string) string {
 	scriptDir := GetScriptDir(baseDir, projectID)
 	return filepath.Join(scriptDir, scriptID)
@@ -183,7 +184,7 @@ func GetWorkflowOrScriptStoreDir(baseDir, id string) string {
 	return filepath.Join(baseDir, RelStoreDir(id))
 }
 
-// mainFileByScriptType 是「脚本类型 → 主文件名」的唯一映射（ScriptLayout 使用）。
+// mainFileByScriptType 是「脚本类型 → 主文件名」的唯一映射（ScriptMainFileName 使用）。
 //
 // 不要再在其它包里复制一份：dag/prepare 曾经有一份只支持 r/python/shell、
 // 且默认回退成 main.sh 的副本，导致 jupyter / qmd 脚本在节点运行期软链到不存在的文件。

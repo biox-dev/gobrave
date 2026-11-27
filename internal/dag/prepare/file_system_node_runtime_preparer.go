@@ -100,11 +100,10 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	// 	return err
 	// }
 	// 脚本路径统一绝对化，供软链与 run script 构造共用。
-	// 主文件名 / io_schema.json 均取自脚本目录布局（utils.ScriptLayout），
+	// 主文件名 / io_schema.json 均取自脚本目录（types.Script 的逐文件方法），
 	// 不再在本地维护一份 mainFileByScriptType，避免与脚本创建侧的口径漂移。
-	files := script.Files(p.baseDir())
-	scriptDir := files.Dir
-	scriptPath := files.MainPath
+	scriptDir := script.Dir(p.baseDir())
+	scriptPath := script.MainFile(p.baseDir())
 	if !filepath.IsAbs(scriptPath) {
 		scriptPath = filepath.Join(p.baseDir(), scriptPath)
 	}
@@ -128,13 +127,13 @@ func (p *FileSystemNodeRuntimePreparer) Prepare(ctx context.Context, node *types
 	paramsPayload["script_dir"] = scriptDir
 
 	// 软链脚本：若已存在但目标失效（或指向其它脚本），先删除再重建。
-	scriptWorkspacePath := filepath.Join(node.WorkspaceDir, files.MainFile)
+	scriptWorkspacePath := filepath.Join(node.WorkspaceDir, script.MainFileName())
 	if err := ensureSymlink(scriptWorkspacePath, scriptPath); err != nil {
 		return fmt.Errorf("symlink script %s -> %s failed: %w", scriptWorkspacePath, scriptPath, err)
 	}
 
 	// synlink io_schema.json：同样在目标失效或指向错误时重建。
-	ioSchemaPath := files.IOSchemaFile
+	ioSchemaPath := script.IOSchemaFile(p.baseDir())
 	scriptWorkspaceIoSchemaPath := filepath.Join(node.WorkspaceDir, utils.IOSchemaFileName)
 	if _, err := os.Lstat(ioSchemaPath); err == nil {
 		if err := ensureSymlink(scriptWorkspaceIoSchemaPath, ioSchemaPath); err != nil {

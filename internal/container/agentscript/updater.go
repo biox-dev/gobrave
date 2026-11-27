@@ -122,9 +122,8 @@ func (c *scriptCreator) UpdateScriptInfo(ctx context.Context, in runtimecontext.
 		Changed:               changed,
 	}
 	if baseDir != "" {
-		files := script.Files(baseDir)
-		result.ScriptFilePath = files.MainPath
-		result.IOSchemaPath = files.IOSchemaFile
+		result.ScriptFilePath = script.MainFile(baseDir)
+		result.IOSchemaPath = script.IOSchemaFile(baseDir)
 	}
 	return result, nil
 }

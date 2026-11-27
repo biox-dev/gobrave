@@ -5,7 +5,6 @@ import (
 	stderrs "errors"
 
 	"github.com/biox-dev/gobrave/internal/types"
-	"github.com/biox-dev/gobrave/internal/utils"
 )
 
 var ErrInvalidDagDefinitionJSON = stderrs.New("dag_definition is not valid JSON format")
@@ -36,8 +35,6 @@ type WorkflowService interface {
 	ScriptToNode(ctx context.Context, workflowID int64, scriptID int64) (map[string]any, error)
 	// 后续废除
 	// GetScriptMainFileByScriptID(ctx context.Context, scriptID string) (string, string, error)
-	// GetScriptFileByScriptID 返回脚本目录布局（目录 / 主文件 / io_schema.json / README.md）。
-	GetScriptFileByScriptID(ctx context.Context, scriptID int64) (utils.ScriptFiles, error)
 	GetScriptContainerSnapshotByScriptID(ctx context.Context, scriptID int64) (*types.ScriptContainerSnapshot, error)
 	GenerateWorkflowJSONByWorkflowID(ctx context.Context, workflowID int64, storageBaseDir string) (*types.WorkflowJSONExportResponse, error)
 	GenerateScriptJSONByScriptID(ctx context.Context, scriptID int64) (*types.ScriptJSONExportResponse, error)

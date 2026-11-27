@@ -48,11 +48,30 @@ func (t *Script) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
-// Files 返回脚本目录下各文件的绝对路径（目录 / 主文件 / io_schema.json / README.md）。
-//
-// 派生路径的唯一入口：调用方不再各自 filepath.Join，避免目录口径与文件名常量漂移。
-func (t *Script) Files(baseDir string) utils.ScriptFiles {
-	return utils.ScriptLayout(baseDir, t.ProjectID, t.ScriptType, t.ScriptID)
+// Dir 返回脚本目录（<base>/data/<project>/pipeline/script/<scriptID>）。
+func (t *Script) Dir(baseDir string) string {
+	return utils.GetScriptFileDir(baseDir, t.ProjectID, t.ScriptID)
+}
+
+// MainFileName 返回脚本主文件名（main.R / main.py / main.sh / main.ipynb / main.qmd），
+// 由脚本类型决定。需要绝对路径时用 MainFile。
+func (t *Script) MainFileName() string {
+	return utils.ScriptMainFileName(t.ScriptType)
+}
+
+// MainFile 返回脚本主文件的绝对路径。
+func (t *Script) MainFile(baseDir string) string {
+	return utils.ScriptMainFilePath(baseDir, t.ProjectID, t.ScriptType, t.ScriptID)
+}
+
+// IOSchemaFile 返回脚本目录下 io_schema.json 的绝对路径。
+func (t *Script) IOSchemaFile(baseDir string) string {
+	return utils.ScriptIOSchemaPath(baseDir, t.ProjectID, t.ScriptID)
+}
+
+// ReadmeFile 返回脚本目录下 README.md 的绝对路径。
+func (t *Script) ReadmeFile(baseDir string) string {
+	return utils.ScriptReadmePath(baseDir, t.ProjectID, t.ScriptID)
 }
 
 type Workflow struct {
@@ -91,6 +110,26 @@ func (t *Workflow) BeforeCreate(_ *gorm.DB) error {
 }
 func (Workflow) TableName() string {
 	return "pipeline_components_relation"
+}
+
+// Dir 返回工作流目录（<base>/data/<project>/pipeline/workflow/<workflowID>）。
+func (t *Workflow) Dir(baseDir string) string {
+	return utils.GetWorkflowFileDir(baseDir, t.ProjectID, t.WorkflowID)
+}
+
+// DagDefinitionFile 返回工作流目录下 dag_definition.json 的绝对路径。
+func (t *Workflow) DagDefinitionFile(baseDir string) string {
+	return utils.WorkflowDagDefinitionPath(baseDir, t.ProjectID, t.WorkflowID)
+}
+
+// IOSchemaFile 返回工作流目录下 io_schema.json 的绝对路径。
+func (t *Workflow) IOSchemaFile(baseDir string) string {
+	return utils.WorkflowIOSchemaPath(baseDir, t.ProjectID, t.WorkflowID)
+}
+
+// ReadmeFile 返回工作流目录下 README.md 的绝对路径。
+func (t *Workflow) ReadmeFile(baseDir string) string {
+	return utils.WorkflowReadmePath(baseDir, t.ProjectID, t.WorkflowID)
 }
 
 // ScriptContainerSnapshot is a read model for analysis node visualization.
@@ -148,7 +187,7 @@ type WorkflowVersion struct {
 	// UpdatedAt          time.Time      `json:"updated_at"`
 	Workflow
 	StorePath string `json:"store_path"`
-	// WorkflowPath 是工作流目录（与 WorkflowFiles.Dir 同口径），不是某个具体文件。
+	// WorkflowPath 是工作流目录（与 Workflow.Dir 同口径），不是某个具体文件。
 	WorkflowPath string `json:"workflow_path"`
 	// DagDefinition 实时读取自工作流目录的 dag_definition.json（不再是数据库字段）。
 	// 用于工作流可视化编辑与 DAG 运行时编译（见 GetWorkflowVisByWorkflowID / SaveWorkflow）。
@@ -170,7 +209,8 @@ type ScriptVersion struct {
 	// StoreVersion string `json:"store_version"`
 	StorePath string `json:"store_path"`
 	// ScriptPath 是脚本目录（不是主文件路径），前端用作标题与定位；
-	// 主文件 / io_schema.json / README.md 的完整路径见 Script.Files(baseDir)。
+	// 主文件 / io_schema.json / README.md 的完整路径见
+	// Script.MainFile / Script.IOSchemaFile / Script.ReadmeFile。
 	ScriptPath string `json:"script_path"`
 	// IOSchema 实时读取自脚本目录的 io_schema.json（不再是数据库字段）。
 	IOSchema string `json:"io_schema"`

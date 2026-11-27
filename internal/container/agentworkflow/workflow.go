@@ -119,8 +119,7 @@ func (m *workflowManager) CreateWorkflow(ctx context.Context, in runtimecontext.
 	}
 
 	// 2) 初始化工作流目录：dag_definition.json / io_schema.json / README.md。
-	files := utils.WorkflowLayout(baseDir, workflow.ProjectID, workflow.WorkflowID)
-	if err := os.MkdirAll(files.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(workflow.Dir(baseDir), 0o755); err != nil {
 		return runtimecontext.WorkflowCreateResult{}, fmt.Errorf("create_workflow: failed to prepare workflow dir: %w", err)
 	}
 	warnings := make([]string, 0, 1)
@@ -348,7 +347,7 @@ func (m *workflowManager) regenerateWorkflowJSON(ctx context.Context, workflow *
 		WorkflowPK:  workflow.ID,
 		ProjectID:   workflow.ProjectID,
 		BaseDir:     baseDir,
-		WorkflowDir: utils.GetWorkflowFileDir(baseDir, workflow.ProjectID, workflow.WorkflowID),
+		WorkflowDir: workflow.Dir(baseDir),
 	}
 	if _, err := codec.WriteWorkflowFiles(ctx, request); err != nil {
 		return fmt.Sprintf("workflow.json 重新生成失败（组件已保存，可在 UI 侧再保存一次）：%v", err)
@@ -358,7 +357,6 @@ func (m *workflowManager) regenerateWorkflowJSON(ctx context.Context, workflow *
 
 // brief 构造工作流的只读摘要（含 DAG 节点 / 连线数）。
 func (m *workflowManager) brief(baseDir string, workflow *types.Workflow) runtimecontext.WorkflowBrief {
-	files := utils.WorkflowLayout(baseDir, workflow.ProjectID, workflow.WorkflowID)
 	brief := runtimecontext.WorkflowBrief{
 		WorkflowID:        workflow.ID,
 		WorkflowKey:       workflow.WorkflowID,
@@ -366,10 +364,10 @@ func (m *workflowManager) brief(baseDir string, workflow *types.Workflow) runtim
 		Description:       workflow.Description,
 		Category:          workflow.Category,
 		ProjectID:         workflow.ProjectID,
-		WorkflowDir:       files.Dir,
-		DagDefinitionPath: files.DagDefinition,
-		IOSchemaPath:      files.IOSchemaFile,
-		ReadmeFile:        files.ReadmeFile,
+		WorkflowDir:       workflow.Dir(baseDir),
+		DagDefinitionPath: workflow.DagDefinitionFile(baseDir),
+		IOSchemaPath:      workflow.IOSchemaFile(baseDir),
+		ReadmeFile:        workflow.ReadmeFile(baseDir),
 	}
 	if dagDefinition, err := utils.ReadWorkflowDagDefinition(baseDir, workflow.ProjectID, workflow.WorkflowID); err == nil {
 		nodes, _ := dagDefinition["nodes"].([]any)

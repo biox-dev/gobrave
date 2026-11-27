@@ -783,7 +783,7 @@ type AnalysisRunner interface {
 // WorkflowBrief 是工作流的只读摘要（get_workflow / create_workflow / update_workflow 共用）。
 //
 // WorkflowKey 是 relation_id（UUID，工作流目录名），WorkflowDir / DagDefinitionPath /
-// IOSchemaPath / ReadmeFile 由 utils.WorkflowLayout 推导，模型可据此直接读写目录内文件。
+// IOSchemaPath / ReadmeFile 由 types.Workflow 的逐文件方法推导，模型可据此直接读写目录内文件。
 type WorkflowBrief struct {
 	WorkflowID  int64  `json:"workflow_id,string"`
 	WorkflowKey string `json:"workflow_key"`
@@ -1143,8 +1143,8 @@ type ProjectReportDetail struct {
 
 // ScriptBrief 是脚本的只读摘要（工具回传给模型的最小字段集）。
 //
-// ScriptFilePath / IOSchemaPath / ReadmeFile 由 types.Script.Files（utils.ScriptLayout）
-// 推导，模型可直接按这三个路径读写脚本主文件、io_schema.json 与 README.md。
+// ScriptFilePath / IOSchemaPath / ReadmeFile 由 types.Script 的逐文件方法
+// （MainFile / IOSchemaFile / ReadmeFile）推导，模型可直接按这三个路径读写脚本主文件、io_schema.json 与 README.md。
 // 所有回传脚本摘要的工具（list_project_scripts / get_script）共用本类型，
 // 避免各自维护一份同名字段。
 type ScriptBrief struct {

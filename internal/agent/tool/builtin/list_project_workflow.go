@@ -19,7 +19,7 @@ type ListProjectWorkflowsInput struct{}
 
 // ProjectWorkflowItem 是单个工作流的摘要（工具回传给模型的字段）。
 //
-// 直接复用 runtimecontext.WorkflowBrief：路径字段由 utils.WorkflowLayout 统一推导，
+// 直接复用 runtimecontext.WorkflowBrief：路径字段由 types.Workflow 的逐文件方法统一推导，
 // 工具层不再重复声明一份同构字段。
 type ProjectWorkflowItem = runtimecontext.WorkflowBrief
 

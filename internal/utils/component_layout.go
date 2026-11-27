@@ -1,61 +1,26 @@
 package utils
 
-import "path/filepath"
-
-// 本文件是「脚本 / 工作流目录布局」的唯一事实源：目录里有哪几个文件、分别叫什么，
-// 只在这里定义一次。需要新增目录内文件时先在这里加字段，再由调用方按字段取路径，
-// 避免在业务代码里手写 filepath.Join(dir, "some.json") 造成多处路径漂移。
+// 本文件是「脚本 / 工作流目录内文件」的命名入口说明。
 //
-// 路径原语（GetScriptFileDir / GetWorkflowFileDir）仍在本文件的依赖函数里，
-// 单文件路径函数（ScriptReadmePath / WorkflowIOSchemaPath 等）只是本文件的命名便捷入口，
-// 二者共用同一组文件名常量（IOSchemaFileName / ReadmeFileName / DagDefinitionFileName）。
-
-// ScriptFiles 是脚本目录下各文件的绝对路径集合。
+// 目录里有哪几个文件、分别叫什么，只由 utils 里的单文件路径函数定义一次，
+// 调用方（含 types.Script / types.Workflow 的逐文件方法）一律按单个文件取值，
+// 不再用「一次性返回全部路径」的聚合结构，避免在业务代码里手写
+// filepath.Join(dir, "some.json") 造成多处路径漂移：
 //
-// Dir / MainFile 由脚本目录与脚本类型决定，其余文件与脚本类型无关：
-//   - MainPath：脚本主文件（main.R / main.py / main.sh / ...），模型与节点运行期直接读写；
-//   - IOSchemaFile：io_schema.json，输入输出契约（唯一数据源，不落库）；
-//   - ReadmeFile：README.md，脚本说明文档。
-type ScriptFiles struct {
-	Dir          string
-	MainFile     string
-	MainPath     string
-	IOSchemaFile string
-	ReadmeFile   string
-}
-
-// ScriptLayout 计算脚本目录布局。scriptType 决定主文件名（见 mainFileByScriptType）。
-func ScriptLayout(baseDir string, projectID int64, scriptType, scriptID string) ScriptFiles {
-	dir := GetScriptFileDir(baseDir, projectID, scriptID)
-	mainFile := mainFileByScriptType(scriptType)
-	return ScriptFiles{
-		Dir:          dir,
-		MainFile:     mainFile,
-		MainPath:     filepath.Join(dir, mainFile),
-		IOSchemaFile: filepath.Join(dir, IOSchemaFileName),
-		ReadmeFile:   filepath.Join(dir, ReadmeFileName),
-	}
-}
-
-// WorkflowFiles 是工作流目录下各文件的绝对路径集合。
+// 脚本目录（GetScriptFileDir）：
+//   - ScriptMainFilePath：主文件（main.R / main.py / main.sh / main.ipynb / main.qmd）
+//   - ScriptIOSchemaPath：io_schema.json
+//   - ScriptReadmePath：README.md
 //
-//   - DagDefinition：dag_definition.json，DAG 定义（唯一数据源，不落库）；
-//   - IOSchemaFile：io_schema.json，工作流级输入输出契约（唯一数据源，不落库）；
-//   - ReadmeFile：README.md，工作流说明文档。
-type WorkflowFiles struct {
-	Dir           string
-	DagDefinition string
-	IOSchemaFile  string
-	ReadmeFile    string
-}
+// 工作流目录（GetWorkflowFileDir）：
+//   - WorkflowDagDefinitionPath：dag_definition.json
+//   - WorkflowIOSchemaPath：io_schema.json
+//   - WorkflowReadmePath：README.md
 
-// WorkflowLayout 计算工作流目录布局。
-func WorkflowLayout(baseDir string, projectID int64, workflowID string) WorkflowFiles {
-	dir := GetWorkflowFileDir(baseDir, projectID, workflowID)
-	return WorkflowFiles{
-		Dir:           dir,
-		DagDefinition: filepath.Join(dir, DagDefinitionFileName),
-		IOSchemaFile:  filepath.Join(dir, IOSchemaFileName),
-		ReadmeFile:    filepath.Join(dir, ReadmeFileName),
-	}
+// ScriptMainFileName 返回脚本主文件名，由脚本类型决定（见 mainFileByScriptType）。
+//
+// 与 ScriptMainFilePath 共用同一份类型映射，需要「文件名」（如软链到节点工作目录时）
+// 用本函数，需要「绝对路径」用 ScriptMainFilePath。
+func ScriptMainFileName(scriptType string) string {
+	return mainFileByScriptType(scriptType)
 }

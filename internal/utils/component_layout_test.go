@@ -5,13 +5,9 @@ import (
 	"testing"
 )
 
-// TestScriptLayout 锁定脚本目录布局：目录口径、主文件名（含 jupyter / qmd）与固定文件名。
+// TestScriptMainFileName 锁定脚本主文件名映射（含 jupyter / qmd）。
 // 主文件名曾在 dag/prepare 里有一份会回退成 main.sh 的副本，这里是唯一的期望值来源。
-func TestScriptLayout(t *testing.T) {
-	const baseDir = "/storage"
-	const projectID int64 = 7
-	const scriptID = "script-1"
-
+func TestScriptMainFileName(t *testing.T) {
 	cases := []struct {
 		scriptType string
 		wantMain   string
@@ -25,48 +21,51 @@ func TestScriptLayout(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.scriptType, func(t *testing.T) {
-			files := ScriptLayout(baseDir, projectID, tc.scriptType, scriptID)
-
-			wantDir := filepath.Join(baseDir, "data", "7", "pipeline", "script", scriptID)
-			if files.Dir != wantDir {
-				t.Fatalf("unexpected dir: got=%q want=%q", files.Dir, wantDir)
-			}
-			if files.MainFile != tc.wantMain {
-				t.Fatalf("unexpected main file: got=%q want=%q", files.MainFile, tc.wantMain)
-			}
-			if files.MainPath != filepath.Join(wantDir, tc.wantMain) {
-				t.Fatalf("unexpected main path: got=%q", files.MainPath)
-			}
-			if files.IOSchemaFile != filepath.Join(wantDir, IOSchemaFileName) {
-				t.Fatalf("unexpected io schema path: got=%q", files.IOSchemaFile)
-			}
-			if files.ReadmeFile != filepath.Join(wantDir, ReadmeFileName) {
-				t.Fatalf("unexpected readme path: got=%q", files.ReadmeFile)
-			}
-		})
+		if got := ScriptMainFileName(tc.scriptType); got != tc.wantMain {
+			t.Fatalf("script type %q: unexpected main file name: got=%q want=%q", tc.scriptType, got, tc.wantMain)
+		}
 	}
 }
 
-// TestWorkflowLayout 锁定工作流目录布局：dag_definition.json / io_schema.json / README.md。
-func TestWorkflowLayout(t *testing.T) {
+// TestScriptFilesLayout 锁定脚本目录内各文件的路径口径（逐文件函数）。
+func TestScriptFilesLayout(t *testing.T) {
+	const baseDir = "/storage"
+	const projectID int64 = 7
+	const scriptID = "script-1"
+	const scriptType = "python"
+
+	wantDir := filepath.Join(baseDir, "data", "7", "pipeline", "script", scriptID)
+	if got := GetScriptFileDir(baseDir, projectID, scriptID); got != wantDir {
+		t.Fatalf("unexpected dir: got=%q want=%q", got, wantDir)
+	}
+	if got := ScriptMainFilePath(baseDir, projectID, scriptType, scriptID); got != filepath.Join(wantDir, "main.py") {
+		t.Fatalf("unexpected main path: got=%q", got)
+	}
+	if got := ScriptIOSchemaPath(baseDir, projectID, scriptID); got != filepath.Join(wantDir, IOSchemaFileName) {
+		t.Fatalf("unexpected io schema path: got=%q", got)
+	}
+	if got := ScriptReadmePath(baseDir, projectID, scriptID); got != filepath.Join(wantDir, ReadmeFileName) {
+		t.Fatalf("unexpected readme path: got=%q", got)
+	}
+}
+
+// TestWorkflowFilesLayout 锁定工作流目录内各文件的路径口径（逐文件函数）。
+func TestWorkflowFilesLayout(t *testing.T) {
 	const baseDir = "/storage"
 	const projectID int64 = 7
 	const workflowID = "wf-1"
 
-	files := WorkflowLayout(baseDir, projectID, workflowID)
-
 	wantDir := filepath.Join(baseDir, "data", "7", "pipeline", "workflow", workflowID)
-	if files.Dir != wantDir {
-		t.Fatalf("unexpected dir: got=%q want=%q", files.Dir, wantDir)
+	if got := GetWorkflowFileDir(baseDir, projectID, workflowID); got != wantDir {
+		t.Fatalf("unexpected dir: got=%q want=%q", got, wantDir)
 	}
-	if files.DagDefinition != filepath.Join(wantDir, DagDefinitionFileName) {
-		t.Fatalf("unexpected dag definition path: got=%q", files.DagDefinition)
+	if got := WorkflowDagDefinitionPath(baseDir, projectID, workflowID); got != filepath.Join(wantDir, DagDefinitionFileName) {
+		t.Fatalf("unexpected dag definition path: got=%q", got)
 	}
-	if files.IOSchemaFile != filepath.Join(wantDir, IOSchemaFileName) {
-		t.Fatalf("unexpected io schema path: got=%q", files.IOSchemaFile)
+	if got := WorkflowIOSchemaPath(baseDir, projectID, workflowID); got != filepath.Join(wantDir, IOSchemaFileName) {
+		t.Fatalf("unexpected io schema path: got=%q", got)
 	}
-	if files.ReadmeFile != filepath.Join(wantDir, ReadmeFileName) {
-		t.Fatalf("unexpected readme path: got=%q", files.ReadmeFile)
+	if got := WorkflowReadmePath(baseDir, projectID, workflowID); got != filepath.Join(wantDir, ReadmeFileName) {
+		t.Fatalf("unexpected readme path: got=%q", got)
 	}
 }

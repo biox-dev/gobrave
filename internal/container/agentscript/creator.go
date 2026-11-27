@@ -129,8 +129,7 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.Scri
 	//
 	// 工具可直接传入三类文件正文（script_content / io_schema / readme），
 	// 因此模型创建脚本时无需再走 coder write / bash；未传时保持原默认行为。
-	files := script.Files(baseDir)
-	if err := os.MkdirAll(files.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(script.Dir(baseDir), 0o755); err != nil {
 		return runtimecontext.ScriptCreateResult{}, fmt.Errorf("create_script: failed to prepare script dir: %w", err)
 	}
 	scriptContent := in.ScriptContent
@@ -162,8 +161,8 @@ func (c *scriptCreator) CreateScript(ctx context.Context, in runtimecontext.Scri
 		ScriptID:              script.ID,
 		ScriptKey:             script.ScriptID,
 		ScriptName:            script.Name,
-		ScriptFilePath:        files.MainPath,
-		IOSchemaPath:          files.IOSchemaFile,
+		ScriptFilePath:        script.MainFile(baseDir),
+		IOSchemaPath:          script.IOSchemaFile(baseDir),
 		ScriptType:            script.ScriptType,
 		ContainerTemplateID:   containerTemplateID,
 		ContainerTemplateName: containerTemplateName,

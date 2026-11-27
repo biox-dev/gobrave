@@ -38,7 +38,7 @@ import (
 //   - get_report：按 @report:<id> 引用读回报告标题 / 正文文件路径 / 正文内容。
 //
 // 路径口径与 create_script / update_script 完全一致：脚本主文件 / io_schema.json / README.md
-// 一律由 types.Script.Files（utils.ScriptLayout）推导，不在各调用点手写 join；
+// 一律由 types.Script 的逐文件方法（MainFile / IOSchemaFile / ReadmeFile）推导，不在各调用点手写 join；
 // 节点工作目录与 params.json 取自 analysisRepository 在读取时
 // 还原的绝对路径（WorkspaceDir 落库为相对 storage.base_dir 的路径）。
 
@@ -172,15 +172,15 @@ func (b *projectResourceBrowser) ReadScriptFile(ctx context.Context, projectID i
 		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read script file: script %d does not belong to the active project %d", script.ID, projectID)
 	}
 
-	files := script.Files(b.storageBaseDir())
+	baseDir := b.storageBaseDir()
 	path := ""
 	switch file {
 	case runtimecontext.ResourceFileScript:
-		path = files.MainPath
+		path = script.MainFile(baseDir)
 	case runtimecontext.ResourceFileIOSchema:
-		path = files.IOSchemaFile
+		path = script.IOSchemaFile(baseDir)
 	case runtimecontext.ResourceFileReadme:
-		path = files.ReadmeFile
+		path = script.ReadmeFile(baseDir)
 	}
 	data, err := readFileIfExists(path)
 	if err != nil {
@@ -531,15 +531,15 @@ func (b *projectResourceBrowser) ReadWorkflowFile(ctx context.Context, projectID
 		return runtimecontext.ResourceFileContent{}, fmt.Errorf("read workflow file: workflow %d does not belong to the active project %d", workflow.ID, projectID)
 	}
 
-	files := utils.WorkflowLayout(b.storageBaseDir(), workflow.ProjectID, workflow.WorkflowID)
+	baseDir := b.storageBaseDir()
 	path := ""
 	switch file {
 	case runtimecontext.ResourceFileDagDefinition:
-		path = files.DagDefinition
+		path = workflow.DagDefinitionFile(baseDir)
 	case runtimecontext.ResourceFileIOSchema:
-		path = files.IOSchemaFile
+		path = workflow.IOSchemaFile(baseDir)
 	case runtimecontext.ResourceFileReadme:
-		path = files.ReadmeFile
+		path = workflow.ReadmeFile(baseDir)
 	}
 	data, err := readFileIfExists(path)
 	if err != nil {
@@ -690,7 +690,6 @@ func (b *projectResourceBrowser) ReadAnalysisFile(ctx context.Context, projectID
 //
 // DAG 文件缺失 / 非法时节点数保持 0（不视为错误）；正文由调用方按需读取。
 func (b *projectResourceBrowser) workflowBrief(baseDir string, workflow *types.Workflow) runtimecontext.WorkflowBrief {
-	files := utils.WorkflowLayout(baseDir, workflow.ProjectID, workflow.WorkflowID)
 	brief := runtimecontext.WorkflowBrief{
 		WorkflowID:        workflow.ID,
 		WorkflowKey:       workflow.WorkflowID,
@@ -698,10 +697,10 @@ func (b *projectResourceBrowser) workflowBrief(baseDir string, workflow *types.W
 		Description:       workflow.Description,
 		Category:          workflow.Category,
 		ProjectID:         workflow.ProjectID,
-		WorkflowDir:       files.Dir,
-		DagDefinitionPath: files.DagDefinition,
-		IOSchemaPath:      files.IOSchemaFile,
-		ReadmeFile:        files.ReadmeFile,
+		WorkflowDir:       workflow.Dir(baseDir),
+		DagDefinitionPath: workflow.DagDefinitionFile(baseDir),
+		IOSchemaPath:      workflow.IOSchemaFile(baseDir),
+		ReadmeFile:        workflow.ReadmeFile(baseDir),
 	}
 	if dagDefinition, err := utils.ReadWorkflowDagDefinition(baseDir, workflow.ProjectID, workflow.WorkflowID); err == nil {
 		nodes, _ := dagDefinition["nodes"].([]any)
@@ -1262,10 +1261,9 @@ func (b *projectResourceBrowser) toScriptBrief(baseDir string, script *types.Scr
 	if baseDir == "" {
 		return brief
 	}
-	files := script.Files(baseDir)
-	brief.ScriptFilePath = files.MainPath
-	brief.IOSchemaPath = files.IOSchemaFile
-	brief.ReadmeFile = files.ReadmeFile
+	brief.ScriptFilePath = script.MainFile(baseDir)
+	brief.IOSchemaPath = script.IOSchemaFile(baseDir)
+	brief.ReadmeFile = script.ReadmeFile(baseDir)
 	return brief
 }
 

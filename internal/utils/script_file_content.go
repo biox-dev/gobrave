@@ -8,7 +8,7 @@ import (
 // ScriptMainFilePath 返回脚本主文件（main.R / main.py / main.sh / ...）的绝对路径。
 // 主文件名由 script_type 决定，脚本目录与类型无关（与 io_schema.json 同目录）。
 func ScriptMainFilePath(baseDir string, projectID int64, scriptType, scriptID string) string {
-	return ScriptLayout(baseDir, projectID, scriptType, scriptID).MainPath
+	return filepath.Join(GetScriptFileDir(baseDir, projectID, scriptID), ScriptMainFileName(scriptType))
 }
 
 // ReadScriptFileContent 读取脚本主文件内容。
